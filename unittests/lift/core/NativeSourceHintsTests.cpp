@@ -351,6 +351,52 @@ TEST(NativeSourceHints, UIColorIntAlphaAllocatorUsesMixedSwiftRegisters) {
       sdk::swiftMangledUIColorIntAlphaAllocatorSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, UIColorIntAllocatorAuthenticatesNumericSwiftInput) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$sSo7UIColorC13WMFComponentsEyABSicfC", 0x1000, 0, true});
+  const auto Hint =
+      sdk::swiftMangledUIColorIntAllocatorSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Hint->Parameters.size(), 2U);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[1].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name =
+      "_$sSo7UIColorC13WMFComponentsE_5alphaABSi_12CoreGraphics7CGFloatVtcfC";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo7NSColorC13WMFComponentsEyABSicfC";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo7UIColorC13WMFComponentsEyABSicfc";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints, ZeroArgClassVoidAndBoolMethodsUseSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
@@ -452,8 +498,9 @@ TEST(NativeSourceHints, SwiftClassScalarSetterUsesValueAndSwiftSelf) {
   EXPECT_TRUE(validateSourceABI(*IntegerHint, Error)) << Error;
 
   auto CGFloat = Image;
-  CGFloat.Symbols[0].Name =
-      "_$s6Lottie23CompatibleAnimationViewC04loopC5Count12CoreGraphics7CGFloatVvs";
+  CGFloat.Symbols[0].Name = "_$"
+                            "s6Lottie23CompatibleAnimationViewC04loopC5Count12C"
+                            "oreGraphics7CGFloatVvs";
   const auto CGFloatHint =
       sdk::swiftMangledClassScalarSetterSourceABI(CGFloat, 0x1000);
   ASSERT_TRUE(CGFloatHint);
@@ -498,8 +545,8 @@ TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   Text.Data.resize(0x100);
   Image.Segments.push_back(std::move(Text));
   Image.Symbols.push_back(
-      {"_$s3WMF24WMFAuthenticationManagerC20authStateIsTemporarySbvg",
-       0x1000, 0, true});
+      {"_$s3WMF24WMFAuthenticationManagerC20authStateIsTemporarySbvg", 0x1000,
+       0, true});
   auto Hint = sdk::swiftMangledClassScalarGetterSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Int);
@@ -510,14 +557,14 @@ TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
 
   auto CGFloat = Image;
-  CGFloat.Symbols[0].Name =
-      "_$s3WMF25ArticleCollectionViewCellC24swipeTranslationWhenOpen12CoreGraphics7CGFloatVvg";
+  CGFloat.Symbols[0].Name = "_$"
+                            "s3WMF25ArticleCollectionViewCellC24swipeTranslatio"
+                            "nWhenOpen12CoreGraphics7CGFloatVvg";
   Hint = sdk::swiftMangledClassScalarGetterSourceABI(CGFloat, 0x1000);
   ASSERT_TRUE(Hint);
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
   EXPECT_EQ(Hint->ReturnType->Size, 8U);
-  EXPECT_EQ(Hint->ReturnLocation.Kind,
-            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::FloatingRegister);
   EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
             getTargetRegInfo(Arch::AArch64).FPReturnReg);
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
@@ -567,8 +614,8 @@ TEST(NativeSourceHints, SwiftClassReferenceGetterUsesSwiftSelf) {
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
 
-  Image.Symbols[0].Name =
-      "_$s3WMF12TimelineViewC18squiggleShapeLayer33_CCCFBA6168377C4D3BACC0F9F7AE2E61LLSo07CAShapeF0Cvg";
+  Image.Symbols[0].Name = "_$s3WMF12TimelineViewC18squiggleShapeLayer33_"
+                          "CCCFBA6168377C4D3BACC0F9F7AE2E61LLSo07CAShapeF0Cvg";
   Hint = sdk::swiftMangledClassReferenceGetterSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
@@ -644,8 +691,7 @@ TEST(NativeSourceHints, ZeroArgClassInitializerUsesSwiftSelf) {
   Text.Data.resize(0x100);
   Image.Segments.push_back(std::move(Text));
   Image.Symbols.push_back(
-      {"_$s3WMF31WMFArticlePreviewViewControllerCACycfc", 0x1000, 0,
-       true});
+      {"_$s3WMF31WMFArticlePreviewViewControllerCACycfc", 0x1000, 0, true});
   const auto Hint =
       sdk::swiftMangledZeroArgClassInitializerSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
@@ -660,19 +706,18 @@ TEST(NativeSourceHints, ZeroArgClassInitializerUsesSwiftSelf) {
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
 
   auto Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s3WMF31WMFArticlePreviewViewControllerCACycfC";
-  EXPECT_FALSE(sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong,
-                                                                  0x1000));
+  Wrong.Symbols[0].Name = "_$s3WMF31WMFArticlePreviewViewControllerCACycfC";
+  EXPECT_FALSE(
+      sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols[0].Name =
       "_$s3WMF31WMFArticlePreviewViewControllerC5coderACSo7NSCoderC_tcfc";
-  EXPECT_FALSE(sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
-  EXPECT_FALSE(sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong, 0x1000));
 }
 
 TEST(NativeSourceHints, CGRectClassInitializerUsesFourFPLanesAndSwiftSelf) {
@@ -687,8 +732,7 @@ TEST(NativeSourceHints, CGRectClassInitializerUsesFourFPLanesAndSwiftSelf) {
   Text.Data.resize(0x100);
   Image.Segments.push_back(std::move(Text));
   Image.Symbols.push_back(
-      {"_$s3WMF11ActionsViewC5frameACSo6CGRectV_tcfc", 0x1000, 0,
-       true});
+      {"_$s3WMF11ActionsViewC5frameACSo6CGRectV_tcfc", 0x1000, 0, true});
   const auto Hint =
       sdk::swiftMangledCGRectClassInitializerSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
@@ -701,27 +745,20 @@ TEST(NativeSourceHints, CGRectClassInitializerUsesFourFPLanesAndSwiftSelf) {
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
 
   auto Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s3WMF11ActionsViewC5frameACSo6CGRectV_tcfC";
-  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong,
-                                                                 0x1000));
+  Wrong.Symbols[0].Name = "_$s3WMF11ActionsViewC5frameACSo6CGRectV_tcfC";
+  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s3WMF11ActionsViewC5frameACSo6CGSizeV_tcfc";
-  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong,
-                                                                 0x1000));
+  Wrong.Symbols[0].Name = "_$s3WMF11ActionsViewC5frameACSo6CGSizeV_tcfc";
+  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols[0].Name += "To";
-  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong,
-                                                                 0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
-  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong,
-                                                                 0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Arch = Arch::X64;
-  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong,
-                                                                 0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCGRectClassInitializerSourceABI(Wrong, 0x1000));
 }
 
 TEST(NativeSourceHints, AnyClassInitializerUsesExistentialAndSwiftSelf) {
@@ -780,8 +817,8 @@ TEST(NativeSourceHints, OptionalStringExtensionGetterUsesSwiftSelfAndPair) {
   Text.Data.resize(0x100);
   Image.Segments.push_back(std::move(Text));
   Image.Symbols.push_back(
-      {"_$sSo5NSURLC7WMFDataE23wmf_languageVariantCodeSSSgvg", 0x1000,
-       0, true});
+      {"_$sSo5NSURLC7WMFDataE23wmf_languageVariantCodeSSSgvg", 0x1000, 0,
+       true});
   const auto Hint =
       sdk::swiftMangledObjCOptionalStringGetterSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
@@ -798,27 +835,26 @@ TEST(NativeSourceHints, OptionalStringExtensionGetterUsesSwiftSelfAndPair) {
   EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
 
   auto Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$sSo5NSURLC7WMFDataE23wmf_languageVariantCodeSSvg";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong,
-                                                                  0x1000));
+  Wrong.Symbols[0].Name = "_$sSo5NSURLC7WMFDataE23wmf_languageVariantCodeSSvg";
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols[0].Name =
       "_$sSo5NSURLC7WMFDataE23wmf_languageVariantCodeSiSgvg";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols[0].Name += "To";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Arch = Arch::X64;
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong,
-                                                                  0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalStringGetterSourceABI(Wrong, 0x1000));
 }
 
 TEST(NativeSourceHints, OptionalUInt64AndObjCClassGettersKeepTheirReturns) {
@@ -849,8 +885,7 @@ TEST(NativeSourceHints, OptionalUInt64AndObjCClassGettersKeepTheirReturns) {
   std::string Error;
   EXPECT_TRUE(validateSourceABI(*UInt64, Error)) << Error;
 
-  Image.Symbols[0].Name =
-      "_$sSo10WMFArticleC3WMFE8locationSo10CLLocationCSgvg";
+  Image.Symbols[0].Name = "_$sSo10WMFArticleC3WMFE8locationSo10CLLocationCSgvg";
   const auto Class =
       sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Image, 0x1000);
   ASSERT_TRUE(Class);
@@ -878,26 +913,24 @@ TEST(NativeSourceHints, OptionalUInt64AndObjCClassGettersKeepTheirReturns) {
 
   auto Wrong = Image;
   Wrong.Symbols[0].Name += "To";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-      Wrong, 0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$sSo10WMFArticleC3WMFE8locationSo10CLLocationCvg";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-      Wrong, 0x1000));
+  Wrong.Symbols[0].Name = "_$sSo10WMFArticleC3WMFE8locationSo10CLLocationCvg";
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$sSo10WMFArticleC3WMFE7quadKeySiSgvg";
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-      Wrong, 0x1000));
+  Wrong.Symbols[0].Name = "_$sSo10WMFArticleC3WMFE7quadKeySiSgvg";
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-      Wrong, 0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Arch = Arch::X64;
-  EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-      Wrong, 0x1000));
+  EXPECT_FALSE(
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Wrong, 0x1000));
 }
 
 TEST(NativeSourceHints, OptionalDictionaryExtensionGetterUsesSwiftSelf) {
@@ -1020,8 +1053,7 @@ TEST(NativeSourceHints, CoderClassInitializerUsesSwiftSelf) {
   Text.Data.resize(0x100);
   Image.Segments.push_back(std::move(Text));
   Image.Symbols.push_back(
-      {"_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfc", 0x1000, 0,
-       true});
+      {"_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfc", 0x1000, 0, true});
   const auto Hint =
       sdk::swiftMangledCoderClassInitializerSourceABI(Image, 0x1000);
   ASSERT_TRUE(Hint);
@@ -1040,8 +1072,8 @@ TEST(NativeSourceHints, CoderClassInitializerUsesSwiftSelf) {
   auto Nonfailable = Image;
   Nonfailable.Symbols[0].Name =
       "_$s4main16NonfailableCoderC5coderACSo7NSCoderC_tcfc";
-  const auto Plain = sdk::swiftMangledCoderClassInitializerSourceABI(
-      Nonfailable, 0x1000);
+  const auto Plain =
+      sdk::swiftMangledCoderClassInitializerSourceABI(Nonfailable, 0x1000);
   ASSERT_TRUE(Plain);
   EXPECT_EQ(Plain->ReturnLocation.RegisterOffset, a64reg::X0);
   EXPECT_EQ(Plain->Parameters[0].Location.RegisterOffset, a64reg::X0);
@@ -1049,32 +1081,23 @@ TEST(NativeSourceHints, CoderClassInitializerUsesSwiftSelf) {
   EXPECT_TRUE(validateSourceABI(*Plain, Error)) << Error;
 
   auto Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfC";
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  Wrong.Symbols[0].Name = "_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfC";
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols[0].Name += "To";
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s4main13TestCoderViewC5coderSSSo7NSCoderC_tcfc";
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  Wrong.Symbols[0].Name = "_$s4main13TestCoderViewC5coderSSSo7NSCoderC_tcfc";
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
-  Wrong.Symbols[0].Name =
-      "_$s4main13TestCoderViewC5coderACSgSo8NSObjectC_tcfc";
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  Wrong.Symbols[0].Name = "_$s4main13TestCoderViewC5coderACSgSo8NSObjectC_tcfc";
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Arch = Arch::X64;
-  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong,
-                                                                0x1000));
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
 }
 
 namespace {
@@ -1269,15 +1292,14 @@ TEST(NativeSourceHints,
   Trapping.Preds = {0};
   MedOp Trap;
   Trap.Opcode = NdOp::INTRINSIC;
-  Trap.addInput(
-      MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Brk), 2));
+  Trap.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Brk), 2));
   Trapping.Ops.push_back(Trap);
   Fixture.Med.Blocks.push_back(Trapping);
 
   std::string Error;
-  const auto Pair = inferNativeSourceTypeHint(
-      Fixture.Image, Fixture.Med, Fixture.High, Fixture.Audit, Error, nullptr,
-      true);
+  const auto Pair =
+      inferNativeSourceTypeHint(Fixture.Image, Fixture.Med, Fixture.High,
+                                Fixture.Audit, Error, nullptr, true);
   ASSERT_TRUE(Pair) << Error;
   EXPECT_EQ(Pair->ReturnType->Kind, NdTypeKind::Struct);
   ASSERT_EQ(Pair->ReturnComponents.size(), 2U);
@@ -3524,13 +3546,12 @@ TEST(NativeSourceHints,
   auto CallHint = std::make_shared<SourceCallTypeHint>(
       *Fixture.Med.Blocks[0].Ops[0].SourceCallHint);
   CallHint->CallKind = SourceCallTypeHint::Kind::ObjCSuper2;
-  CallHint->Signature.Origin =
-      SourceFunctionTypeHint::OriginKind::ObjCRuntime;
+  CallHint->Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCRuntime;
   CallHint->Signature.Parameters.push_back(
       {"selector", NdType::makePtr(NdType::makeVoid())});
   std::string Error;
-  ASSERT_TRUE(assignDarwinObjCSourceABI(CallHint->Signature, Arch::AArch64,
-                                       Error));
+  ASSERT_TRUE(
+      assignDarwinObjCSourceABI(CallHint->Signature, Arch::AArch64, Error));
   auto &MedCall = Fixture.Med.Blocks[0].Ops[0];
   MedCall.SourceCallHint = CallHint;
 
@@ -3675,14 +3696,12 @@ TEST(NativeSourceHints,
   ASSERT_NE(Restore, Ops.end());
   const size_t Insert = std::distance(Ops.begin(), Restore) + 1;
   Ops.insert(Ops.begin() + Insert,
-             {NativeVoidFrameFixture::op(NdOp::INT_ZEXT,
-                                         NdVar::reg(V8, 16),
+             {NativeVoidFrameFixture::op(NdOp::INT_ZEXT, NdVar::reg(V8, 16),
                                          {NdVar::reg(V8, 8)}, 0x1020),
-              NativeVoidFrameFixture::op(
-                  NdOp::SUBBYTES, NdVar::reg(V8, 8),
-                  {NdVar::reg(V8, 16), NdVar::cst(0, 8)}, 0x1020),
-              NativeVoidFrameFixture::op(NdOp::INT_ZEXT,
-                                         NdVar::reg(V8, 16),
+              NativeVoidFrameFixture::op(NdOp::SUBBYTES, NdVar::reg(V8, 8),
+                                         {NdVar::reg(V8, 16), NdVar::cst(0, 8)},
+                                         0x1020),
+              NativeVoidFrameFixture::op(NdOp::INT_ZEXT, NdVar::reg(V8, 16),
                                          {NdVar::reg(V8, 8)}, 0x1020)});
 
   std::string Error;
@@ -3712,14 +3731,12 @@ TEST(NativeSourceHints,
   Fixture.Image.ImportPtrSlots[ImportSlot] = Import;
   ASSERT_TRUE(Fixture.Image.recordDyldBindSlot(
       ImportSlot, Import, 0, "/usr/lib/swift/libswiftCore.dylib", false));
-  const auto Runtime =
-      swiftRuntimeSourceCallHint(Fixture.Image, ImportSlot);
+  const auto Runtime = swiftRuntimeSourceCallHint(Fixture.Image, ImportSlot);
   ASSERT_TRUE(Runtime);
   ASSERT_EQ(Runtime->Signature.Parameters.size(), 4U);
 
   auto &MedCall = Fixture.Med.Blocks[0].Ops[0];
-  MedCall.SourceCallHint =
-      std::make_shared<const SourceCallTypeHint>(*Runtime);
+  MedCall.SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Runtime);
   MedCall.NumInputs = 1;
   MedCall.addInput(Fixture.Med.Params[0]);
   MedCall.addInput(MedVar::makeConst(0, 8));
@@ -3736,11 +3753,60 @@ TEST(NativeSourceHints,
       NdVar::cst(96, 8);
   Fixture.FrameBytes = 96;
   Ops.insert(Ops.begin() + Fixture.CallIndex,
-             NativeVoidFrameFixture::op(
-                 NdOp::INT_ADD, NdVar::reg(TRI.IntParamRegs[1], 8),
-                 {SP, NdVar::cst(32, 8)}));
+             NativeVoidFrameFixture::op(NdOp::INT_ADD,
+                                        NdVar::reg(TRI.IntParamRegs[1], 8),
+                                        {SP, NdVar::cst(32, 8)}));
   ++Fixture.CallIndex;
   ++Fixture.RestoreIndex;
+
+  std::string Error;
+  const auto Hint = Fixture.inferVoid(Error);
+  ASSERT_TRUE(Hint) << Error;
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+
+  auto Overlap = Fixture;
+  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] = NdVar::cst(0, 8);
+  EXPECT_FALSE(Overlap.inferVoid(Error));
+
+  auto Forged = Fixture;
+  auto ForgedBinding = std::make_shared<SourceCallTypeHint>(
+      *Forged.Med.Blocks[0].Ops[0].SourceCallHint);
+  ForgedBinding->TargetName += "_forged";
+  Forged.Med.Blocks[0].Ops[0].SourceCallHint = std::move(ForgedBinding);
+  EXPECT_FALSE(Forged.inferVoid(Error));
+}
+
+TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
+  NativeVoidFrameFixture Fixture(Arch::AArch64);
+  constexpr va_t ImportSlot = 0x2000;
+  constexpr llvm::StringLiteral Import = "_swift_endAccess";
+  Segment Data;
+  Data.VA = ImportSlot;
+  Data.Size = Data.FileSz = 8;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(8);
+  Fixture.Image.Segments.push_back(std::move(Data));
+  Fixture.Image.ImportPtrSlots[ImportSlot] = Import.str();
+  ASSERT_TRUE(Fixture.Image.recordDyldBindSlot(
+      ImportSlot, Import.str(), 0, "/usr/lib/swift/libswiftCore.dylib", false));
+  const auto Runtime = swiftRuntimeSourceCallHint(Fixture.Image, ImportSlot);
+  ASSERT_TRUE(Runtime);
+  ASSERT_EQ(Runtime->Signature.Parameters.size(), 1U);
+  Fixture.Med.Blocks[0].Ops[0].SourceCallHint =
+      std::make_shared<const SourceCallTypeHint>(*Runtime);
+
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto &Ops = Fixture.Low.Blocks[0].Ops;
+  const auto SP = NdVar::reg(TRI.StackPointer, 8);
+  Ops.front().Inputs[1] = NdVar::cst(96, 8);
+  Ops[Fixture.RestoreIndex + Fixture.Saved.size() * 2].Inputs[1] =
+      NdVar::cst(96, 8);
+  Fixture.FrameBytes = 96;
+  Ops.insert(Ops.begin() + Fixture.CallIndex,
+             NativeVoidFrameFixture::op(NdOp::INT_ADD,
+                                        NdVar::reg(TRI.IntParamRegs[0], 8),
+                                        {SP, NdVar::cst(32, 8)}));
+  ++Fixture.CallIndex;
 
   std::string Error;
   const auto Hint = Fixture.inferVoid(Error);
@@ -4365,11 +4431,10 @@ TEST(NativeSourceHints,
 
     auto Binding = std::make_shared<SourceCallTypeHint>(
         *Fixture.Med.Blocks[0].Ops[0].SourceCallHint);
-    Binding->Signature.Parameters.push_back(
-        {"value", NdType::makeFloat(8)});
+    Binding->Signature.Parameters.push_back({"value", NdType::makeFloat(8)});
     std::string Error;
-    ASSERT_TRUE(assignDarwinScalarSourceABI(Binding->Signature, Architecture,
-                                            Error));
+    ASSERT_TRUE(
+        assignDarwinScalarSourceABI(Binding->Signature, Architecture, Error));
 
     MedOp Extract;
     Extract.Opcode = NdOp::SUBBYTES;
@@ -4391,8 +4456,7 @@ TEST(NativeSourceHints,
     ASSERT_EQ(Hint->Parameters.size(), 2U);
     EXPECT_EQ(Hint->Parameters[1].Type->Kind, NdTypeKind::Float);
     EXPECT_EQ(Hint->Parameters[1].Type->Size, 8U);
-    EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset,
-              TRI.FPParamRegs[0]);
+    EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, TRI.FPParamRegs[0]);
     EXPECT_EQ(Hint->Parameters[1].Location.ValueBytes, 8U);
   }
 }
@@ -4657,8 +4721,8 @@ struct NativeTerminalContextFixture : NativeFixture {
     Med.Blocks[0].Ops = {Store, Call};
     HighStmt Statement;
     Statement.Kind = StmtKind::Call;
-    Statement.CallExpr = HighExpr::makeCall(Runtime->TargetName, 0x1080,
-                                           std::move(Arguments));
+    Statement.CallExpr =
+        HighExpr::makeCall(Runtime->TargetName, 0x1080, std::move(Arguments));
     Statement.CallExpr->Type = NdType::makeVoid();
     Statement.CallExpr->SourceCallHint = Call.SourceCallHint;
     High.Body = {Statement};
@@ -4670,8 +4734,8 @@ struct NativeTerminalContextFixture : NativeFixture {
     const auto Address = NdVar::tmp(TmpBase, 8);
     Low.Blocks[0].Ops = {
         F::op(NdOp::INT_SUB, SP, {SP, NdVar::cst(32, 8)}, 0x1000),
-        F::op(NdOp::STORE, {},
-              {NdVar::reg(Context, 8), NdVar::cst(0, 8)}, 0x1004),
+        F::op(NdOp::STORE, {}, {NdVar::reg(Context, 8), NdVar::cst(0, 8)},
+              0x1004),
         F::op(NdOp::STORE, {}, {SP, NdVar::cst(115, 8)}, 0x1008),
         F::op(NdOp::INT_ADD, Address, {SP, NdVar::cst(8, 8)}, 0x100c),
         F::op(NdOp::STORE, {}, {Address, NdVar::cst(0, 4)}, 0x100c),
@@ -4689,9 +4753,9 @@ struct NativeTerminalContextFixture : NativeFixture {
     Image.Segments.push_back(std::move(Data));
     const std::string Import = "_swift_unknownObjectWeakInit";
     Image.ImportPtrSlots[ReturningImportSlot] = Import;
-    ASSERT_TRUE(Image.recordDyldBindSlot(
-        ReturningImportSlot, Import, 0, "/usr/lib/swift/libswiftCore.dylib",
-        false));
+    ASSERT_TRUE(Image.recordDyldBindSlot(ReturningImportSlot, Import, 0,
+                                         "/usr/lib/swift/libswiftCore.dylib",
+                                         false));
     const auto Runtime = swiftRuntimeSourceCallHint(Image, ReturningImportSlot);
     ASSERT_TRUE(Runtime);
     ASSERT_FALSE(Runtime->DoesNotReturn);
@@ -4704,10 +4768,10 @@ struct NativeTerminalContextFixture : NativeFixture {
     for (const auto &Parameter : Runtime->Signature.Parameters)
       Call.addInput(MedVar::makeConst(0, Parameter.Type->Size));
     Med.Blocks[0].Ops.insert(Med.Blocks[0].Ops.begin() + 1, Call);
-    Low.Blocks[0].Ops.insert(
-        Low.Blocks[0].Ops.begin() + 2,
-        NativeVoidFrameFixture::op(NdOp::CALL, {}, {NdVar::cst(0x1090, 8)},
-                                   0x1006));
+    Low.Blocks[0].Ops.insert(Low.Blocks[0].Ops.begin() + 2,
+                             NativeVoidFrameFixture::op(NdOp::CALL, {},
+                                                        {NdVar::cst(0x1090, 8)},
+                                                        0x1006));
   }
 
   std::optional<SourceFunctionTypeHint> inferContext(std::string &Error) const {
@@ -4738,8 +4802,9 @@ TEST(NativeSourceHints, TerminalEntryBytesRequireEffectsOnlyAndProvenExit) {
       if (Mutation == 3)
         Changed.Blocks[0].Succs = {99};
     }
-    EXPECT_FALSE(observedMedSourceEntryBytes(
-        Changed, Signature, SourceEntryDemand::EffectsOnly)) << Mutation;
+    EXPECT_FALSE(observedMedSourceEntryBytes(Changed, Signature,
+                                             SourceEntryDemand::EffectsOnly))
+        << Mutation;
   }
 }
 
@@ -4777,13 +4842,15 @@ TEST(NativeSourceHints, TerminalRuntimePrefixRequiresIndependentCallEvidence) {
     F.addReturningRuntimeCall();
     auto &Ops = F.Low.Blocks[0].Ops;
     auto &MedOps = F.Med.Blocks[0].Ops;
-    auto Binding = std::make_shared<SourceCallTypeHint>(*MedOps[1].SourceCallHint);
+    auto Binding =
+        std::make_shared<SourceCallTypeHint>(*MedOps[1].SourceCallHint);
     MedOps[1].SourceCallHint = Binding;
     using Op = NativeVoidFrameFixture;
     const auto SP = NdVar::reg(a64reg::SP, 8);
     switch (Mutation) {
     case 0:
-      F.Image.DyldBindSlots[F.ReturningImportSlot].Module = "/tmp/foreign.dylib";
+      F.Image.DyldBindSlots[F.ReturningImportSlot].Module =
+          "/tmp/foreign.dylib";
       break;
     case 1:
       F.Image.DyldBindSlots.erase(F.ReturningImportSlot);
@@ -4832,9 +4899,8 @@ TEST(NativeSourceHints, TerminalRuntimePrefixRequiresIndependentCallEvidence) {
     case 11:
       // A caller-clobbered copy cannot retain the entry identity across the
       // prefix call merely because the source graph still names X20.
-      Ops.insert(Ops.begin() + 1,
-                 Op::op(NdOp::COPY, NdVar::reg(a64reg::X9, 8),
-                        {NdVar::reg(F.Context, 8)}, 0x1004));
+      Ops.insert(Ops.begin() + 1, Op::op(NdOp::COPY, NdVar::reg(a64reg::X9, 8),
+                                         {NdVar::reg(F.Context, 8)}, 0x1004));
       Ops[2].Inputs[0] = NdVar::cst(0x3000, 8);
       Ops.insert(Ops.begin() + 4,
                  Op::op(NdOp::STORE, {},
@@ -4934,8 +5000,8 @@ TEST(NativeSourceHints, TerminalContextRequiresExactCallAndCompleteFrameProof) {
                  Op::op(NdOp::BRANCH, {}, {NdVar::cst(0x1010, 8)}, 0x1004));
       break;
     case 22:
-      Ops.push_back(Op::op(NdOp::RETURN, {},
-                           {NdVar::reg(a64reg::X30, 8)}, 0x1014));
+      Ops.push_back(
+          Op::op(NdOp::RETURN, {}, {NdVar::reg(a64reg::X30, 8)}, 0x1014));
       break;
     case 23:
       F.Low.Blocks.emplace_back();
@@ -5082,8 +5148,7 @@ TEST(NativeSourceHints, ReadOnlyContextsRetainObservedPreservedRegisters) {
   }
 }
 
-TEST(NativeSourceHints,
-     PreservedContextsAllowASeparateArchitecturalTrapPath) {
+TEST(NativeSourceHints, PreservedContextsAllowASeparateArchitecturalTrapPath) {
   const auto Context = a64reg::X20;
   LowFunc Function;
   Function.Entry = 0x1000;
@@ -5104,8 +5169,7 @@ TEST(NativeSourceHints,
   LowOp Reverse;
   Reverse.Opcode = NdOp::INTRINSIC;
   Reverse.Output = NdVar::tmp(TmpBase + 8, 8);
-  Reverse.addInput(
-      NdVar::cst(static_cast<uint64_t>(Intrinsic::A64_Rbit), 2));
+  Reverse.addInput(NdVar::cst(static_cast<uint64_t>(Intrinsic::A64_Rbit), 2));
   Reverse.addInput(Read.Output);
   Function.Blocks[0].Ops.push_back(Reverse);
 
@@ -5310,8 +5374,7 @@ TEST(NativeSourceHints,
   }
 }
 
-TEST(NativeSourceHints,
-     RestoredContextRequiresANonPreservationEntryUse) {
+TEST(NativeSourceHints, RestoredContextRequiresANonPreservationEntryUse) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
     const auto Context = *std::find_if(

@@ -127,7 +127,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     uint64_t RO = CurOp.Inputs[0].RegOff;
     // A floating-point result lives in the FP return register; the RETURN's
     // default integer-register operand does not carry it.
-    if (!TRI.isFrameOrLinkReg(RO) &&
+    if (!TRI.isReturnControlReg(RO) &&
         (!(ExplicitABI || UsesFPReturnReg) || RO == ReturnReg))
       RetVal = medvarToExpr(CurOp.Inputs[0]);
   }

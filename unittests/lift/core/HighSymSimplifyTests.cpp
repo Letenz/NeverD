@@ -200,6 +200,104 @@ TEST(HighSymSimplify, CollapsesAnExpressionThatIsSecretlyConstant) {
   EXPECT_EQ(returnedExpr(B.finish(NdOp::INT_SUB, {LessX, Y})), "0");
 }
 
+TEST(HighSymSimplify, FoldedScalarLiteralsRetainNumericProvenance) {
+  using P = ConstantAddressProvenance;
+  for (P FirstProvenance : {P::Scalar, P::Unknown}) {
+    auto Color = HighExpr::makeBinop(
+        NdOp::INT_OR,
+        HighExpr::makeBinop(NdOp::INT_OR,
+                            HighExpr::makeConst(0x3B0000, 8, FirstProvenance),
+                            HighExpr::makeConst(0x5B00, 8, P::Scalar)),
+        HighExpr::makeConst(0x1B, 8, P::Scalar));
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = std::move(Color);
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    ASSERT_EQ(Body[0].RetVal->Kind, ExprKind::Const);
+    EXPECT_EQ(Body[0].RetVal->ConstVal, 0x3B5B1BU);
+    EXPECT_EQ(Body[0].RetVal->ConstProvenance, FirstProvenance);
+  }
+}
+
+TEST(HighSymSimplify, ExtractionIndexDoesNotEraseScalarLiteralProvenance) {
+  using P = ConstantAddressProvenance;
+  for (P FragmentProvenance : {P::Scalar, P::Unknown, P::DataAddress}) {
+    SCOPED_TRACE(static_cast<int>(FragmentProvenance));
+    auto Word = HighExpr::makeBinop(
+        NdOp::INT_OR,
+        HighExpr::makeBinop(NdOp::INT_OR,
+                            HighExpr::makeConst(0xCAA8, 4, FragmentProvenance),
+                            HighExpr::makeConst(0x30000, 4, P::Scalar)),
+        HighExpr::makeConst(0, 4, P::Scalar));
+    auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Word);
+    Extended->Type = NdType::makeInt(8, false);
+    auto Extract = HighExpr::makeBinop(NdOp::SUBBYTES, Extended,
+                                       HighExpr::makeConst(0, 4, P::Unknown));
+    Extract->Type = NdType::makeInt(4, false);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = std::move(Extract);
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    if (FragmentProvenance == P::DataAddress) {
+      EXPECT_NE(Body[0].RetVal->Kind, ExprKind::Const);
+      continue;
+    }
+    ASSERT_EQ(Body[0].RetVal->Kind, ExprKind::Const) << Body[0].RetVal->str();
+    EXPECT_EQ(Body[0].RetVal->ConstVal, 0x3CAA8U);
+    EXPECT_EQ(Body[0].RetVal->ConstProvenance,
+              FragmentProvenance == P::Scalar ? P::Scalar : P::Unknown);
+  }
+}
+
+TEST(HighSymSimplify, OpaqueSelectDoesNotTaintFoldedScalarOperand) {
+  using P = ConstantAddressProvenance;
+  for (P FragmentProvenance : {P::Scalar, P::Unknown, P::DataAddress}) {
+    SCOPED_TRACE(static_cast<int>(FragmentProvenance));
+    auto Word = HighExpr::makeBinop(
+        NdOp::INT_OR,
+        HighExpr::makeBinop(NdOp::INT_AND,
+                            HighExpr::makeConst(0xCAA8, 4, FragmentProvenance),
+                            HighExpr::makeConst(0xFFFF, 4, P::Scalar)),
+        HighExpr::makeConst(0x30000, 4, P::Scalar));
+    auto Select = std::make_shared<HighExpr>();
+    Select->Kind = ExprKind::BinOp;
+    Select->Op = NdOp::SELECT;
+    Select->Type = NdType::makeInt(4, false);
+    MedVar Input;
+    Input.Kind = MedVar::Temp;
+    Input.TheArch = Arch::X64;
+    Input.Id = 1;
+    Input.SSAVer = 1;
+    Input.Size = 4;
+    Select->Operands = {HighExpr::makeVar(Input), HighExpr::makeConst(1, 4),
+                        HighExpr::makeConst(0, 4)};
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeBinop(NdOp::INT_AND, Word, Select);
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    ExprPtr Folded;
+    std::vector<ExprPtr> Work{Body[0].RetVal};
+    while (!Work.empty()) {
+      ExprPtr Current = Work.back();
+      Work.pop_back();
+      if (Current->Kind == ExprKind::Const && Current->ConstVal == 0x3CAA8)
+        Folded = Current;
+      Work.insert(Work.end(), Current->Operands.begin(),
+                  Current->Operands.end());
+    }
+    if (FragmentProvenance == P::DataAddress) {
+      EXPECT_FALSE(Folded);
+      continue;
+    }
+    ASSERT_TRUE(Folded) << Body[0].RetVal->str();
+    EXPECT_EQ(Folded->ConstProvenance,
+              FragmentProvenance == P::Scalar ? P::Scalar : P::Unknown);
+  }
+}
+
 TEST(HighSymSimplify, LeavesAnOrdinaryExpressionAlone) {
   // Nothing here is hiding anything, and the pass must not churn it.
   FunctionBuilder B;

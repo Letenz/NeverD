@@ -359,7 +359,7 @@ public:
   /// with no HighIR spelling.  Unreachable as things stand — every candidate
   /// the solver builds is made of operators that came from here — but the
   /// alternative to checking is emitting something wrong.
-  ExprPtr out(sym::SymRef R, uint32_t Width);
+  ExprPtr out(sym::SymRef R, uint32_t Width, bool ScalarLiterals);
 
   bool sawAnything() const { return !Sources.empty(); }
 
@@ -721,26 +721,23 @@ sym::SymRef Translator::in(const ExprPtr &E) {
 /// cover what measuring a wide word actually produces: a small negative and a
 /// high run of ones each leave a magnitude that fits.  Negation is tried first
 /// because `-1` is what a reader expects where `~0` would also do.
-ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes) {
-  // Only numeric literals enter this symbolic translation. Address-bearing
-  // expressions remain opaque and are restored from Sources instead. Mark
-  // newly synthesized literals as scalars so a coincident image/string VA
-  // cannot acquire pointer identity when a backend renders the result.
+ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes,
+                    bool ScalarLiterals) {
+  const auto Provenance = ScalarLiterals ? ConstantAddressProvenance::Scalar
+                                         : ConstantAddressProvenance::Unknown;
   if (std::optional<uint64_t> Direct = Val.tryZExtValue())
-    return HighExpr::makeConst(*Direct, Bytes,
-                               ConstantAddressProvenance::Scalar);
+    return HighExpr::makeConst(*Direct, Bytes, Provenance);
   if (std::optional<uint64_t> Magnitude = (-Val).tryZExtValue())
     return HighExpr::makeUnary(
-        NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes,
-                                            ConstantAddressProvenance::Scalar));
+        NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes, Provenance));
   if (std::optional<uint64_t> Complement = (~Val).tryZExtValue())
     return HighExpr::makeUnary(
-        NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes,
-                                           ConstantAddressProvenance::Scalar));
+      NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes, Provenance));
   return nullptr;
 }
 
-ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
+ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
+                        bool ScalarLiterals) {
   struct WorkItem {
     sym::SymRef Ref;
     bool ChildrenReady = false;
@@ -800,7 +797,7 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
     case sym::SymOp::Const:
       // Null when the value is one HighIR cannot write at all, which abandons
       // the rewrite rather than recording a truncation of it.
-      Result = literalExpr(Ctx.constValue(Item.Ref), ByteSize);
+      Result = literalExpr(Ctx.constValue(Item.Ref), ByteSize, ScalarLiterals);
       break;
 
     case sym::SymOp::Var: {
@@ -828,10 +825,13 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
         Plus.push_back(Term);
       }
 
-      ExprPtr Acc = Plus.empty()
-                        ? HighExpr::makeConst(0, ByteSize,
-                                              ConstantAddressProvenance::Scalar)
-                        : binop(NdOp::INT_ADD, Plus);
+      ExprPtr Acc =
+          Plus.empty()
+              ? HighExpr::makeConst(0, ByteSize,
+                                    ScalarLiterals
+                                        ? ConstantAddressProvenance::Scalar
+                                        : ConstantAddressProvenance::Unknown)
+              : binop(NdOp::INT_ADD, Plus);
       for (sym::SymRef Term : Minus) {
         if (!Acc)
           break;
@@ -940,6 +940,47 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
   return It->second;
 }
 
+/// All literal leaves actually read by the symbolic region must be known
+/// scalars before a newly folded literal can carry scalar provenance. Visible
+/// definitions participate because the translator reads them at the same
+/// width. Unknown or owned address literals keep the conservative provenance.
+bool hasOnlyScalarLiteralInputs(const ExprPtr &Root,
+                                const AvailableDefinitions &Definitions) {
+  std::vector<ExprPtr> Work{Root};
+  std::unordered_set<const HighExpr *> Seen;
+  size_t Budget = 4096;
+  while (!Work.empty()) {
+    ExprPtr Current = Work.back();
+    Work.pop_back();
+    if (!Current || !Budget--)
+      return false;
+    if (!Seen.insert(Current.get()).second)
+      continue;
+    if (Current->Kind == ExprKind::Const) {
+      if (Current->ConstProvenance != ConstantAddressProvenance::Scalar ||
+          Current->AddressOwnerVA != InvalidVA)
+        return false;
+      continue;
+    }
+    if (isScalarLocal(Current)) {
+      auto It = Definitions.find(highSourceLocalIdentity(Current->Var));
+      if (It != Definitions.end() &&
+          bitWidthOf(It->second.Value) == bitWidthOf(Current))
+        Work.push_back(It->second.Value);
+    }
+    // Match Translator::in: a slice reads its source but uses the second
+    // operand only as an extraction index. Unsupported nodes are opaque, so
+    // literals inside their operands cannot contribute to a folded constant.
+    if (isIntegerConversion(Current) || isIntegerSlice(Current)) {
+      Work.push_back(Current->Operands[0]);
+    } else if (canTranslateOperands(Current, bitWidthOf)) {
+      Work.insert(Work.end(), Current->Operands.begin(),
+                  Current->Operands.end());
+    }
+  }
+  return true;
+}
+
 /// Simplify one expression, in place, if there is anything to gain.
 void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   const uint32_t Width = bitWidthOf(E);
@@ -958,11 +999,18 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   // Constructor identities can already recover the result while translating
   // exact slices and extensions. Compare the final HighIR tree with the input,
   // including that work, rather than requiring another solver rewrite.
-  sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before);
+  // This pass visits every source expression, including large copy-propagated
+  // compiler output. Give each optional rewrite a bounded share of work;
+  // callers explicitly simplifying an obfuscated MBA retain the solver's
+  // larger default budget. Exhausted regions remain unchanged.
+  sym::MBAOptions Options;
+  Options.MaxWork = size_t(1) << 16;
+  sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before, Options);
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
 
-  ExprPtr After = Xlat.out(Result.Expr, Width);
+  ExprPtr After =
+      Xlat.out(Result.Expr, Width, hasOnlyScalarLiteralInputs(E, Definitions));
   if (!After)
     return;
   if (After->Kind == ExprKind::Var && E->Type && After->Type &&

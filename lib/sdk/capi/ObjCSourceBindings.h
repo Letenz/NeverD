@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <optional>
 
 namespace neverd::sdk {
@@ -59,6 +60,7 @@ struct ObjCSourceBindingResult {
       SwiftTypeMetadataPairs;
   std::map<va_t, std::string> SwiftNominalDescriptors;
   std::map<va_t, std::string> SwiftNominalMetadata;
+  std::map<va_t, std::string> SwiftWitnessTables;
   /// Cache address -> exact accessor entry, revalidated when helpers render.
   std::map<va_t, va_t> SwiftWitnessCaches;
   /// Exact compiler-emitted Swift lazy global addressors used by this body.
@@ -1002,6 +1004,72 @@ swiftDirectTypeMetadataDescriptor(const BinaryImage &Image,
                               : std::nullopt;
 }
 
+/// Swift emits a private descriptor for the imported Darwin lock record in
+/// each image. Its public textual mangling resolves that same record metadata
+/// without linking the image-private descriptor into recovered source.
+inline std::optional<std::string>
+swiftLocalImportedLockType(const BinaryImage &Image, va_t Address) {
+  if (Image.Arch != Arch::AArch64 || Address > InvalidVA - 16 ||
+      Image.hasExecutableCodeOwnerAt(Address) ||
+      overlapsPointerStorage(Image, Address, 16))
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  const auto *Bytes = Image.readVA(Address, 16);
+  if (!Section || !Segment || !Bytes || !Section->isReadable() ||
+      Section->isWritable() || !Segment->isReadable() ||
+      Segment->isWritable() ||
+      llvm::support::endian::read32le(Bytes) != 0x20011)
+    return std::nullopt;
+  constexpr llvm::StringLiteral Descriptor = "_$sSo16os_unfair_lock_sVMn";
+  constexpr llvm::StringLiteral Module = "_$sSoMXM";
+  constexpr llvm::StringLiteral Accessor = "_$sSo16os_unfair_lock_sVMa";
+  const auto Parent = swiftRelativeAddress(Image, Address + 4);
+  const auto Name = swiftRelativeAddress(Image, Address + 8);
+  const auto Access = swiftRelativeAddress(Image, Address + 12);
+  const auto *NameBytes = Name ? Image.readVA(*Name, 17) : nullptr;
+  if (!Parent || !Name || !Access || !NameBytes ||
+      std::memcmp(NameBytes, "os_unfair_lock_s", 17) != 0 ||
+      !Image.isCodeAddress(*Access))
+    return std::nullopt;
+  const auto ImmutableData = [&](va_t Target, uint64_t Width) {
+    const auto *DataSection = Image.getSectionFor(Target);
+    const auto *DataSegment = Image.getSegmentFor(Target);
+    return DataSection && DataSegment && Width &&
+           Target <= InvalidVA - (Width - 1) &&
+           Image.getSectionFor(Target + Width - 1) == DataSection &&
+           DataSection->isReadable() && !DataSection->isWritable() &&
+           DataSegment->isReadable() && !DataSegment->isWritable() &&
+           !Image.hasExecutableCodeOwnerAt(Target) &&
+           !overlapsPointerStorage(Image, Target, Width);
+  };
+  if (!ImmutableData(*Parent, 4) || !ImmutableData(*Name, 17))
+    return std::nullopt;
+  auto UniqueSymbol = [&](va_t Target, llvm::StringRef Expected,
+                          bool IsFunction) {
+    size_t Matches = 0;
+    for (const auto &Candidate : Image.Symbols)
+      if (Candidate.Addr == Target) {
+        if (Candidate.Name != Expected || Candidate.IsFunc != IsFunction)
+          return false;
+        ++Matches;
+      }
+    return Matches == 1;
+  };
+  if (!UniqueSymbol(Address, Descriptor, false) ||
+      !UniqueSymbol(*Parent, Module, false) ||
+      !UniqueSymbol(*Access, Accessor, true))
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr == Address || Export.Name == Descriptor)
+      return std::nullopt;
+  const auto *ParentBytes = Image.readVA(*Parent, 4);
+  if (!ParentBytes ||
+      (llvm::support::endian::read32le(ParentBytes) & 0x1f) != 0)
+    return std::nullopt;
+  return "So16os_unfair_lock_sV";
+}
+
 inline std::optional<SourceCallTypeHint>
 swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -1016,6 +1084,72 @@ swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
       SourceCallTypeHint::Kind::RuntimeSwiftNominalDescriptorAddress;
   Hint.TargetAddress = Address;
   Hint.TargetName = *Symbol;
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
+    return std::nullopt;
+  return Hint;
+}
+
+inline std::optional<SourceCallTypeHint>
+swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  if (!Section || !Segment || !Section->isReadable() ||
+      !Segment->isReadable() || !Segment->ReadOnlyAfterRelocations ||
+      Image.hasExecutableCodeOwnerAt(Address))
+    return std::nullopt;
+  const Symbol *Table = nullptr;
+  for (const auto &Candidate : Image.Symbols) {
+    if (Candidate.Addr != Address || Candidate.IsFunc || Candidate.Name.empty())
+      continue;
+    if (Table)
+      return std::nullopt;
+    Table = &Candidate;
+  }
+  if (!Table || !llvm::StringRef(Table->Name).starts_with("_$s") ||
+      !llvm::StringRef(Table->Name).ends_with("WP"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed =
+      llvm::swiftDemangle(llvm::StringRef(Table->Name).drop_front(1), Options);
+  if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
+      Parsed.Root->Text || Parsed.Root->Index ||
+      Parsed.Root->Children.size() != 1 ||
+      Parsed.Root->Children[0].Kind != "ProtocolWitnessTable" ||
+      Parsed.Root->Children[0].Text || Parsed.Root->Children[0].Index ||
+      Parsed.Root->Children[0].Children.size() != 1 ||
+      Parsed.Root->Children[0].Children[0].Kind != "ProtocolConformance" ||
+      Parsed.Root->Children[0].Children[0].Text ||
+      Parsed.Root->Children[0].Children[0].Index ||
+      Parsed.Root->Children[0].Children[0].Children.size() != 3 ||
+      Parsed.Root->Children[0].Children[0].Children[0].Kind != "Type" ||
+      Parsed.Root->Children[0].Children[0].Children[1].Kind != "Type" ||
+      Parsed.Root->Children[0].Children[0].Children[2].Kind != "Module")
+    return std::nullopt;
+  size_t MatchingExports = 0;
+  for (const auto &Export : Image.Exports) {
+    if (Export.Addr == Address && Export.Name == Table->Name)
+      ++MatchingExports;
+    else if (Export.Addr == Address || Export.Name == Table->Name)
+      return std::nullopt;
+  }
+  if (MatchingExports != 1)
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress;
+  Hint.TargetAddress = Address;
+  Hint.TargetName = Table->Name;
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
   Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   std::string Reason;
@@ -1103,10 +1237,11 @@ inline bool swiftSingletonDescriptorForwardedByNativeHelper(
   return Valid && RuntimeCalls == 1;
 }
 
-// A value-witness call needs the original concrete metadata identity. A
-// copied metadata record would have different runtime identity and witness
-// pointers, so accept only one exported Swift struct metadata symbol whose
-// descriptor word points to its matching exported nominal descriptor.
+// A value-witness call and a direct metadata reference need the original
+// concrete metadata identity. A copied metadata record would have different
+// runtime identity and witness pointers, so accept only an exported Swift
+// struct or enum metadata symbol whose descriptor word points to its matching
+// exported nominal descriptor.
 inline std::optional<SourceCallTypeHint>
 swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -1118,8 +1253,7 @@ swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   const auto Bytes = readImmutableImageBytes(Image, Address, 8);
   const auto DescriptorAddress = readImmutableImagePointer(Image, Address + 8);
   if (!Section || Image.getSectionFor(Address + 15) != Section || !Bytes ||
-      !DescriptorAddress ||
-      llvm::support::endian::read64le(Bytes->data()) != 0x200)
+      !DescriptorAddress)
     return std::nullopt;
   const Symbol *Metadata = nullptr;
   for (const auto &Candidate : Image.Symbols)
@@ -1132,7 +1266,11 @@ swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   if (!Metadata || (Metadata->Size && Metadata->Size < 16))
     return std::nullopt;
   llvm::StringRef Name(Metadata->Name);
-  if (!Name.starts_with("_$s") || !Name.ends_with("VN"))
+  if (!Name.starts_with("_$s") ||
+      !((Name.ends_with("VN") &&
+         llvm::support::endian::read64le(Bytes->data()) == 0x200) ||
+        (Name.ends_with("ON") &&
+         llvm::support::endian::read64le(Bytes->data()) == 0x201)))
     return std::nullopt;
   const auto Descriptor =
       swiftDirectTypeMetadataDescriptor(Image, *DescriptorAddress);
@@ -1240,16 +1378,19 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     return std::nullopt;
 
   constexpr size_t MaxDescriptors = 8;
+  size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
   std::string Expanded = "$s";
+  std::string Rebuilt;
   for (uint32_t I = 0; I < Length;) {
     if (TypeBytes[I] != 1 && TypeBytes[I] != 2) {
       if (TypeBytes[I] < 0x21 || TypeBytes[I] > 0x7e)
         return std::nullopt;
-      Expanded.push_back(static_cast<char>(TypeBytes[I++]));
+      Expanded.push_back(static_cast<char>(TypeBytes[I]));
+      Rebuilt.push_back(static_cast<char>(TypeBytes[I++]));
       continue;
     }
-    if (Length - I < 5 || Descriptors.size() >= MaxDescriptors)
+    if (Length - I < 5 || ++SymbolicReferences > MaxDescriptors)
       return std::nullopt;
     const auto DescriptorAddress =
         swiftRelativeAddress(Image, *TypeReference + I + 1);
@@ -1258,7 +1399,18 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
         : TypeBytes[I] == 1
             ? swiftDirectTypeMetadataDescriptor(Image, *DescriptorAddress)
             : swiftTypeMetadataDescriptor(Image, *DescriptorAddress);
-    if (!DescriptorAddress || !DescriptorSymbol)
+    if (!DescriptorAddress)
+      return std::nullopt;
+    if (!DescriptorSymbol && TypeBytes[I] == 1) {
+      const auto Inline = swiftLocalImportedLockType(Image, *DescriptorAddress);
+      if (!Inline)
+        return std::nullopt;
+      Expanded += *Inline;
+      Rebuilt += *Inline;
+      I += 5;
+      continue;
+    }
+    if (!DescriptorSymbol)
       return std::nullopt;
     llvm::StringRef Descriptor(*DescriptorSymbol);
     Descriptor.consume_front("_");
@@ -1269,22 +1421,23 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     // Rebuild direct local descriptors through a private pointer cell too.
     // Swift's indirect symbolic-reference kind resolves the same exported
     // descriptor without requiring a new relative relocation at link time.
-    Descriptors.push_back({I, *DescriptorAddress, *DescriptorSymbol});
+    Descriptors.push_back({static_cast<uint32_t>(Rebuilt.size()),
+                           *DescriptorAddress, *DescriptorSymbol});
+    Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
   }
-  if (Expanded != Base || !swiftMangledType(Expanded))
+  if (Rebuilt.size() > 256 || Expanded != Base || !swiftMangledType(Expanded))
     return std::nullopt;
 
-  const std::string TypeReferenceBytes(
-      reinterpret_cast<const char *>(TypeBytes), Length);
   return SwiftTypeMetadataPairProof{
       SourceCallTypeHint::SwiftTypeMetadataAddress{
           Cache->Addr, Reference->Addr, *TypeReference,
           Descriptors.empty() ? 0 : Descriptors.front().Target,
           Descriptors.empty() ? std::string{} : Descriptors.front().Symbol,
-          Descriptors.empty() ? TypeReferenceBytes
-                              : TypeReferenceBytes.substr(5)},
-      std::move(Descriptors), TypeReferenceBytes};
+          Descriptors.empty() || Descriptors.front().Offset != 0
+              ? Rebuilt
+              : Rebuilt.substr(5)},
+      std::move(Descriptors), std::move(Rebuilt)};
 }
 
 inline std::optional<SourceCallTypeHint::SwiftTypeMetadataAddress>
@@ -1684,6 +1837,131 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
              : std::nullopt;
 }
 
+// An inline Swift String is two value words, not a pointer to its bytes.
+// Authenticate both the complete tag and the narrow W-register construction
+// before a full-width store whose payload happens to equal an image VA is
+// treated as numeric. The four instructions are an indivisible local recipe:
+// MOVZ Wn, MOVK Wn, MOVZ Xm, STP Xn, Xm, [Xbase].
+inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
+                                            const HighStmt &Second,
+                                            const HighFunc &Function,
+                                            const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      Image.MachOChainedFixupsAmbiguous || First.Kind != StmtKind::Store ||
+      Second.Kind != StmtKind::Store || !First.Addr ||
+      First.Addr != Second.Addr || First.Addr < Function.Entry ||
+      First.Addr - Function.Entry < 12 || First.Addr > InvalidVA - 3 ||
+      First.MemoryOrdering != NdMemoryOrdering::None ||
+      Second.MemoryOrdering != NdMemoryOrdering::None ||
+      First.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Second.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      !First.StoreVal || !Second.StoreVal ||
+      First.StoreVal->Kind != ExprKind::Const ||
+      Second.StoreVal->Kind != ExprKind::Const || !First.StoreVal->Type ||
+      !Second.StoreVal->Type || First.StoreVal->Type->Kind != NdTypeKind::Int ||
+      Second.StoreVal->Type->Kind != NdTypeKind::Int ||
+      First.StoreVal->Type->Size != 8 || Second.StoreVal->Type->Size != 8 ||
+      !First.StoreVal->Operands.empty() || !Second.StoreVal->Operands.empty() ||
+      First.StoreVal->IntrinsicId != Intrinsic::None ||
+      Second.StoreVal->IntrinsicId != Intrinsic::None ||
+      !First.StoreVal->IntrinsicOutputs.empty() ||
+      !Second.StoreVal->IntrinsicOutputs.empty() ||
+      First.StoreVal->IndirectTarget || Second.StoreVal->IndirectTarget ||
+      First.StoreVal->ConstProvenance != ConstantAddressProvenance::Scalar ||
+      isAddressProvenance(Second.StoreVal->ConstProvenance) ||
+      First.StoreVal->AddressOwnerVA != InvalidVA ||
+      Second.StoreVal->AddressOwnerVA != InvalidVA ||
+      !Image.getSectionFor(First.StoreVal->ConstVal))
+    return false;
+
+  const uint64_t Payload = First.StoreVal->ConstVal;
+  const uint64_t Tag = Second.StoreVal->ConstVal;
+  const uint8_t Marker = Tag >> 56;
+  if ((Marker & 0xf0) != 0xe0)
+    return false;
+  const unsigned Length = Marker & 0x0f;
+  for (unsigned Index = 0; Index < 15; ++Index) {
+    const uint8_t Byte =
+        Index < 8 ? Payload >> (Index * 8) : Tag >> ((Index - 8) * 8);
+    if ((Index < Length && Byte >= 0x80) || (Index >= Length && Byte != 0))
+      return false;
+  }
+
+  const auto SameAddress = [&](auto &&Self, const ExprPtr &Left,
+                               const ExprPtr &Right, unsigned Depth) -> bool {
+    if (!Left || !Right || Depth > 4 || !Left->Type || !Right->Type ||
+        Left->Type->Kind != NdTypeKind::Int ||
+        Right->Type->Kind != NdTypeKind::Int || Left->Type->Size != 8 ||
+        Right->Type->Size != 8 ||
+        Left->MemoryOrdering != NdMemoryOrdering::None ||
+        Right->MemoryOrdering != NdMemoryOrdering::None ||
+        Left->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Right->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Left->IntrinsicId != Intrinsic::None ||
+        Right->IntrinsicId != Intrinsic::None ||
+        !Left->IntrinsicOutputs.empty() || !Right->IntrinsicOutputs.empty() ||
+        Left->IndirectTarget || Right->IndirectTarget ||
+        Left->Kind != Right->Kind)
+      return false;
+    if (Left->Kind == ExprKind::Var)
+      return Left->Operands.empty() && Right->Operands.empty() &&
+             Left->Var.Size == 8 && Right->Var.Size == 8 &&
+             Left->Var == Right->Var;
+    return Left->Kind == ExprKind::BinOp && Left->Op == NdOp::INT_ADD &&
+           Right->Op == NdOp::INT_ADD && Left->Operands.size() == 2 &&
+           Right->Operands.size() == 2 &&
+           Self(Self, Left->Operands[0], Right->Operands[0], Depth + 1) &&
+           Self(Self, Left->Operands[1], Right->Operands[1], Depth + 1);
+  };
+  const auto &Address = Second.StoreAddr;
+  if (!Address || Address->Kind != ExprKind::BinOp ||
+      Address->Op != NdOp::INT_ADD || Address->Operands.size() != 2 ||
+      !Address->Type || Address->Type->Kind != NdTypeKind::Int ||
+      Address->Type->Size != 8)
+    return false;
+  const auto &Offset = Address->Operands[1];
+  if (!Offset || Offset->Kind != ExprKind::Const || !Offset->Type ||
+      Offset->Type->Kind != NdTypeKind::Int || Offset->Type->Size != 8 ||
+      Offset->ConstVal != 8 ||
+      Offset->ConstProvenance != ConstantAddressProvenance::Scalar ||
+      Offset->AddressOwnerVA != InvalidVA || !Offset->Operands.empty() ||
+      Offset->IntrinsicId != Intrinsic::None || Offset->IndirectTarget ||
+      !SameAddress(SameAddress, First.StoreAddr, Address->Operands[0], 0))
+    return false;
+
+  const auto *Section = Image.getSectionFor(First.Addr - 12);
+  if (!Section || !Section->isExecutable() ||
+      Image.getSectionFor(First.Addr + 3) != Section)
+    return false;
+  for (va_t Address = First.Addr - 12; Address <= First.Addr; Address += 4)
+    if (Image.hasRelocationProvenanceAt(Address) ||
+        Image.DataAddressRelocOperands.count(Address) ||
+        Image.CodeAddressRelocOperands.count(Address))
+      return false;
+  const auto *Code = Image.readVA(First.Addr - 12, 16);
+  if (!Code)
+    return false;
+  const uint32_t Low = llvm::support::endian::read32le(Code);
+  const uint32_t High = llvm::support::endian::read32le(Code + 4);
+  const uint32_t MarkerWord = llvm::support::endian::read32le(Code + 8);
+  const uint32_t Pair = llvm::support::endian::read32le(Code + 12);
+  const unsigned LowRegister = Low & 31;
+  const unsigned MarkerRegister = MarkerWord & 31;
+  if ((Low & 0x7f800000) != 0x52800000 || (High & 0x7f800000) != 0x72800000 ||
+      (MarkerWord & 0xff800000) != 0xd2800000 ||
+      (Pair & 0xffc00000) != 0xa9000000 || ((Low >> 21) & 3) != 0 ||
+      ((High >> 21) & 3) != 1 || ((MarkerWord >> 21) & 3) != 3 ||
+      ((Pair >> 15) & 127) != 0 || LowRegister == 31 || MarkerRegister == 31 ||
+      LowRegister == MarkerRegister || (High & 31) != LowRegister ||
+      (Pair & 31) != LowRegister || ((Pair >> 10) & 31) != MarkerRegister)
+    return false;
+  const uint64_t DecodedPayload =
+      ((Low >> 5) & 0xffff) | (uint64_t((High >> 5) & 0xffff) << 16);
+  const uint64_t DecodedTag = uint64_t((MarkerWord >> 5) & 0xffff) << 48;
+  return Payload == DecodedPayload && Tag == DecodedTag;
+}
+
 // Swift can leave a file-private literal array of (String, String) pairs in
 // writable __data without an nlist entry for the array itself. The two words
 // immediately before it give the pair and string counts; the next data symbol
@@ -1735,10 +2013,9 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
       return std::nullopt;
     if (Symbol.Addr == Address + Width && !Symbol.IsFunc)
       ++BoundarySymbols;
-    if (Symbol.Size &&
-        (Symbol.Addr > InvalidVA - Symbol.Size ||
-         (Symbol.Addr < Address + Width &&
-          Address < Symbol.Addr + Symbol.Size)))
+    if (Symbol.Size && (Symbol.Addr > InvalidVA - Symbol.Size ||
+                        (Symbol.Addr < Address + Width &&
+                         Address < Symbol.Addr + Symbol.Size)))
       return std::nullopt;
   }
   if (BoundarySymbols != 1)
@@ -2028,9 +2305,9 @@ inline bool exactParameterValue(const ExprPtr &Value, size_t Parameter,
 /// comparing it with the context parameter. Rebuild the register's definition
 /// only when it has one exact image-address definition and every read is that
 /// callback comparison; other uses must retain the image-data diagnostic.
-inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
-    const HighFunc &Function, const BinaryImage &Image,
-    std::optional<size_t> ContextParameter) {
+inline std::map<HighSourceLocalIdentity, va_t>
+kvoContextLocalAliases(const HighFunc &Function, const BinaryImage &Image,
+                       std::optional<size_t> ContextParameter) {
   std::map<HighSourceLocalIdentity, va_t> Aliases;
   if (!ContextParameter)
     return Aliases;
@@ -2051,8 +2328,8 @@ inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
     auto &Def = Definitions[highSourceLocalIdentity(Statement.Dst->Var)];
     ++Def.Count;
     const auto &Value = Statement.Val;
-    Def.Valid = Def.Count == 1 && Statement.Kind == StmtKind::Assign &&
-                Value && Value->Kind == ExprKind::Const && Value->Type &&
+    Def.Valid = Def.Count == 1 && Statement.Kind == StmtKind::Assign && Value &&
+                Value->Kind == ExprKind::Const && Value->Type &&
                 Value->Type->Size == 8 && Statement.Dst->Type &&
                 Statement.Dst->Type->Size == 8 &&
                 isExactAddressProvenance(Value->ConstProvenance) &&
@@ -2066,9 +2343,9 @@ inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
   std::map<HighSourceLocalIdentity, unsigned> Reads, ComparedReads;
   size_t Budget = 1000000;
   bool Complete = true;
-  std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)> Scan =
-      [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
-          unsigned Depth) {
+  std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)>
+      Scan = [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
+                 unsigned Depth) {
         if (!Value)
           return;
         if (Depth > 200 || !Budget--) {
@@ -3328,6 +3605,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     return true;
   };
   std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool, bool)> Copy;
+  const std::map<va_t, const HighFunc *> EmptyFunctions;
   Copy = [&](const ExprPtr &Original, unsigned Depth, bool NumericOperand,
              bool AddressContext, bool MemoryAddress) -> ExprPtr {
     if (!Original)
@@ -3438,6 +3716,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Expression->SourceCallHint =
               std::make_shared<SourceCallTypeHint>(std::move(*Identity));
           Result.StaticIdentities.insert(*Address);
+          return Expression;
+        }
+      if (ObjectAddress && Address)
+        if (auto Metadata = swiftNominalMetadataAddressHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Metadata));
+          Result.SwiftNominalMetadata[*Address] =
+              Expression->SourceCallHint->TargetName;
+          return Expression;
+        }
+      if (ObjectAddress && Address)
+        if (auto Table = swiftWitnessTableAddressHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Table));
+          Result.SwiftWitnessTables[*Address] =
+              Expression->SourceCallHint->TargetName;
           return Expression;
         }
       if (Address)
@@ -4406,6 +4704,74 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             Parameters[Index].Type->Kind == NdTypeKind::Ptr)
           OperandAddress = true;
       }
+      // A compiler-authenticated Swift.Int argument is numeric even when a
+      // folded color literal happens to equal an address in the image. Do not
+      // grant this to inferred native integer carriers or address-provenance
+      // constants: those may still carry pointer identity.
+      if (Operand && Operand->Kind == ExprKind::Const &&
+          Operand->AddressOwnerVA == InvalidVA &&
+          (Operand->ConstProvenance == ConstantAddressProvenance::Unknown ||
+           Operand->ConstProvenance == ConstantAddressProvenance::Scalar) &&
+          !OperandAddress && !MemoryAddress &&
+          Expression->Kind == ExprKind::Call && !Expression->IsIndirectCall &&
+          Expression->SourceCallHint &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::Native &&
+          Expression->CallAddr == Expression->SourceCallHint->TargetAddress &&
+          Expression->SourceCallHint->Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+          Expression->SourceCallHint->Signature.HasExplicitABI &&
+          Expression->SourceCallHint->Signature.Convention ==
+              SourceFunctionTypeHint::ConventionKind::Swift &&
+          Expression->Operands.size() ==
+              Expression->SourceCallHint->Signature.Parameters.size() &&
+          Index < Expression->SourceCallHint->Signature.Parameters.size() &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type->Kind ==
+              NdTypeKind::Int &&
+          Operand->Type && Operand->Type->Kind == NdTypeKind::Int &&
+          Operand->Type->Size ==
+              Expression->SourceCallHint->Signature.Parameters[Index]
+                  .Type->Size) {
+        auto Scalar = std::make_shared<HighExpr>(*Operand);
+        Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+        Operand = Copy(Scalar, Depth + 1, true, false, false);
+        continue;
+      }
+      // A selector stub and an exact receiver declaration authenticate an
+      // Objective-C integer parameter. Preserve a proven scalar immediate
+      // even when its bits coincide with an unrelated image address. Unknown
+      // or address-derived constants still require a relocation binding.
+      if (Operand && Operand->Kind == ExprKind::Const &&
+          Operand->ConstProvenance == ConstantAddressProvenance::Scalar &&
+          Operand->AddressOwnerVA == InvalidVA && Operand->Type &&
+          Operand->Type->Kind == NdTypeKind::Int &&
+          Image.getSectionFor(Operand->ConstVal) && !OperandAddress &&
+          !MemoryAddress && Expression->Kind == ExprKind::Call &&
+          Expression->SourceCallHint && !Expression->IsIndirectCall) {
+        const auto &Binding = *Expression->SourceCallHint;
+        const auto &Signature = Binding.Signature;
+        if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+            Binding.Receiver &&
+            Signature.Origin ==
+                SourceFunctionTypeHint::OriginKind::ObjCRuntime &&
+            Signature.HasExplicitABI &&
+            Expression->CallAddr == Binding.TargetAddress &&
+            Expression->Operands.size() == Signature.Parameters.size() &&
+            Index < Signature.Parameters.size() &&
+            Signature.Parameters[Index].Type &&
+            Signature.Parameters[Index].Type->Kind == NdTypeKind::Int &&
+            Signature.Parameters[Index].Type->Size == Operand->Type->Size &&
+            objcSelectorStubMatches(Image, Binding.TargetAddress,
+                                    Binding.SelectorReferenceAddress,
+                                    Binding.Selector) &&
+            objcSourceCallBound(*Expression, Image,
+                                Functions ? *Functions : EmptyFunctions,
+                                ProfileStorage, nullptr, &Function)) {
+          Operand = Copy(Operand, Depth + 1, true, false, false);
+          continue;
+        }
+      }
       const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
                             Expression->Kind == ExprKind::UnaryOp) &&
                            isNumericConstantOperand(Expression->Op, Index);
@@ -4422,8 +4788,13 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       Fail("source reference control flow exceeds its depth budget");
       return;
     }
-    for (auto &Statement : Body) {
+    for (size_t Index = 0; Index < Body.size(); ++Index) {
+      auto &Statement = Body[Index];
       StatementAddress = Statement.Addr;
+      const bool InlineSmallStringPayload =
+          Index + 1 < Body.size() &&
+          swiftInlineSmallStringStorePair(Statement, Body[Index + 1], Function,
+                                          Image);
       const bool BoundStore =
           Statement.Kind == StmtKind::Store && Statement.StoreVal &&
           BindMemoryAddress(Statement.StoreAddr, Statement.StoreVal->Type,
@@ -4466,13 +4837,28 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             }
           }
         }
-        if (!BoundStore || Expression != Statement.StoreAddr)
+        if (!BoundStore || Expression != Statement.StoreAddr) {
+          // A direct sub-pointer-width integer store retains the literal bits.
+          // A full word does so only for an authenticated inline Swift String
+          // payload produced by W-register immediates at this exact store.
+          const bool NumericStoreValue =
+              Expression == Statement.StoreVal && Expression &&
+              Expression->Kind == ExprKind::Const && Expression->Type &&
+              Image.Bits == Bitness::Bits64 &&
+              (Image.Arch == Arch::AArch64 || Image.Arch == Arch::X64) &&
+              Expression->Type->Kind == NdTypeKind::Int &&
+              Expression->Type->Size > 0 &&
+              (Expression->Type->Size < 8 || InlineSmallStringPayload) &&
+              Expression->ConstProvenance ==
+                  ConstantAddressProvenance::Scalar &&
+              Expression->AddressOwnerVA == InvalidVA;
           Expression =
-              Copy(Expression, 0, false,
+              Copy(Expression, 0, NumericStoreValue,
                    Expression == Statement.StoreAddr ||
                        (Expression == Statement.RetVal && Function.ReturnType &&
                         Function.ReturnType->Kind == NdTypeKind::Ptr),
                    Expression == Statement.StoreAddr);
+        }
       });
       Walk(Statement.Body, Depth + 1);
       Walk(Statement.ElseBody, Depth + 1);
@@ -4861,6 +5247,19 @@ inline bool objcSourceCallBound(
       SourceCallTypeHint::Kind::RuntimeSwiftNominalMetadataAddress) {
     const auto Expected =
         swiftNominalMetadataAddressHint(Image, Binding.TargetAddress);
+    return Expected && Binding.TargetName == Expected->TargetName &&
+           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+           !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
+           Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
+           !Expression.CallAddr && Expression.CallTarget.empty() &&
+           Expression.IntrinsicOutputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+  if (Binding.CallKind ==
+      SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress) {
+    const auto Expected =
+        swiftWitnessTableAddressHint(Image, Binding.TargetAddress);
     return Expected && Binding.TargetName == Expected->TargetName &&
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
@@ -5844,6 +6243,29 @@ inline std::string renderObjCSwiftNominalMetadataHelpers(
       throw std::runtime_error("Swift nominal metadata is no longer valid");
     const std::string Stem =
         "neverd_swift_nominal_metadata_" + llvm::utohexstr(Address, true);
+    SharedFunctions.insert(Stem + "_address");
+    Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
+              Symbol + "\");\n";
+    Source += "uintptr_t " + Stem +
+              "_address(void) {\n"
+              "  return (uintptr_t)" +
+              Stem + "_bytes;\n}\n";
+  }
+  return Source;
+}
+
+inline std::string
+renderObjCSwiftWitnessTableHelpers(const BinaryImage &Image,
+                                   const std::map<va_t, std::string> &Tables,
+                                   std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  for (const auto &[Address, Symbol] : Tables) {
+    const auto Expected =
+        objc_binding_detail::swiftWitnessTableAddressHint(Image, Address);
+    if (!Expected || Expected->TargetName != Symbol)
+      throw std::runtime_error("Swift witness table is no longer valid");
+    const std::string Stem =
+        "neverd_swift_witness_table_" + llvm::utohexstr(Address, true);
     SharedFunctions.insert(Stem + "_address");
     Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
               Symbol + "\");\n";

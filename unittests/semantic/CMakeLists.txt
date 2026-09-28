@@ -659,6 +659,7 @@ add_neverd_unittest(NeverDSemanticTests
   arm32/ARM32_SMMulWordRTTests.cpp
   arm32/ARM32_SatArithRTTests.cpp
   arm32/ARM32_SemanticTests.cpp
+  arm32/ARM32_InterworkingPatchRTTests.cpp
   arm32/ARM32_ShiftAmountSatRTTests.cpp
   arm32/ARM32_ShiftCarryRTTests.cpp
   arm32/ARM32_ShiftCountRTTests.cpp
@@ -865,6 +866,10 @@ target_compile_definitions(NeverDSemanticTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
+set_source_files_properties(arm32/ARM32_InterworkingPatchRTTests.cpp
+  PROPERTIES COMPILE_DEFINITIONS
+    "NEVERD_TEST_CLANG=\"${NEVERD_TEST_CLANG_EXECUTABLE}\"")
+
 target_include_directories(NeverDSemanticTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_SOURCE_DIR}/include
@@ -889,6 +894,30 @@ target_link_libraries(NeverDSemanticTests PRIVATE
 
 if(TARGET neverd)
   add_dependencies(NeverDSemanticTests neverd)
+endif()
+
+# Local fast path for the linked ARM/Thumb rewrite regression. The same TU is
+# kept in NeverDSemanticTests so the aggregate semantic CI suite owns it.
+add_neverd_unittest(NeverDARM32InterworkingTests
+  arm32/ARM32_InterworkingPatchRTTests.cpp
+  LINK_COMPONENTS Loader
+)
+target_compile_definitions(NeverDARM32InterworkingTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_include_directories(NeverDARM32InterworkingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+  ${CMAKE_SOURCE_DIR}/third_party/unicorn/include
+)
+target_link_libraries(NeverDARM32InterworkingTests PRIVATE
+  unicorn
+  neverd_shared
+  LLVMSupport
+)
+if(TARGET neverd)
+  add_dependencies(NeverDARM32InterworkingTests neverd)
 endif()
 
 # --- Patch (instruction-substitution) equivalence suite ---

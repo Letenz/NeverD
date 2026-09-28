@@ -184,6 +184,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     COptions.EmitRecordGuards = false;
     COptions.UseDebugNames = false;
     HighCEmitter Emitter;
+    Emitter.prepareImageFunctionNames(S->Img);
     std::string NativeSource;
     // Summary mode still renders and checks every publishable method below.
     // The unrelated whole-image native source is only returned by full export.
@@ -709,6 +710,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           SwiftTypeMetadataPairs;
       std::map<va_t, std::string> SwiftNominalDescriptors;
       std::map<va_t, std::string> SwiftNominalMetadata;
+      std::map<va_t, std::string> SwiftWitnessTables;
       std::map<va_t, va_t> SwiftWitnessCaches;
       std::set<va_t> SwiftOnceAccessors;
       std::set<va_t> ProfileSections;
@@ -756,6 +758,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           if (!Added && It->second != Symbol)
             throw std::runtime_error(
                 "conflicting Swift nominal metadata identities");
+        }
+        for (const auto &[Address, Symbol] :
+             Projections.at(Entry).SwiftWitnessTables) {
+          const auto [It, Added] = SwiftWitnessTables.emplace(Address, Symbol);
+          if (!Added && It->second != Symbol)
+            throw std::runtime_error(
+                "conflicting Swift witness table identities");
         }
         for (const auto &[Address, Accessor] :
              Projections.at(Entry).SwiftWitnessCaches) {
@@ -840,6 +849,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
               S->Img, SwiftNominalDescriptors, SharedStorageFunctions) +
           renderObjCSwiftNominalMetadataHelpers(S->Img, SwiftNominalMetadata,
                                                 SharedStorageFunctions) +
+          renderObjCSwiftWitnessTableHelpers(S->Img, SwiftWitnessTables,
+                                             SharedStorageFunctions) +
           renderObjCSwiftWitnessCacheHelpers(
               S->Img, SwiftWitnessCaches, Functions, SharedStorageFunctions) +
           renderSwiftOnceAddressorHelpers(S->Img, SwiftOnceAccessors, OncePlan,

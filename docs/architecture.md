@@ -46,15 +46,33 @@ but it does not bypass the C API to drive the engine.
 
 ARM32 ELF code mode is taken from defined executable function symbols,
 ARM/Thumb mapping symbols and an executable entry point, before normalizing
-Thumb address tags. `BinaryImage` currently has one mode for the whole image;
-homogeneous ARM or Thumb code is supported. Distinct ARM and Thumb regions
-produce explicit mixed-mode metadata, preserving symbol and relocation access;
-conflicting evidence at the same address is rejected. Decoding, lifting and
-rewriting require a single supported mode and refuse mixed images. Loading
-mixed metadata into an existing SDK session clears its old decoder, so later
-operations cannot reuse stale architecture state. Data symbols and unrelated
-names do not select a decoder mode. Supporting interworking execution requires
-a per-address mode contract throughout discovery, decoding and rewriting.
+Thumb address tags. Distinct ARM and Thumb regions produce explicit mixed-mode
+metadata; `BinaryImage::instructionModeAt` is the shared address-specific mode
+contract for discovery, decoding, lifting, SDK disassembly and rewriting.
+Conflicting evidence at one address is rejected, and `$d` mapping intervals
+cannot be decoded as instructions. CFG edges carry their incoming mode when
+the target lacks stronger mapping evidence. For linked ELF images without
+mapping symbols, the loader follows direct branches from exact code entries
+and records only the decoded instruction spans. Unreached gaps remain unknown
+even when all reached instructions use one mode. An exact ARM literal branch
+veneer may supply an additional executable target, but function discovery must
+verify it before treating it as callable. ELF section and in-place rewriting
+compile each authenticated source function in its own mode, encode Thumb code
+pointers with bit 0, and validate final direct calls before publication.
+Unsupported cross-state branches that need a veneer fail clearly. Loading a
+new image into an SDK session resets its previous decoder state; data symbols
+and unrelated names do not select a decoder mode. A fully stripped image can
+leave an indirect target's state unknowable from static bytes alone; the
+file-level default is not proof that all of its executable bytes use one mode.
+
+After ARM call-arity recovery, MedIR propagates a proven pointer parameter
+through direct calls only when the argument is the exact incoming parameter;
+computed register versions do not inherit that role. HighC uses the same
+parameter type as LLVM emission. For private frame addresses, HighC projects a
+power-of-two alignment only when the input is a certified entry-stack offset
+within the synthetic frame. LLVMC preserves a host pointer through a mask
+that is an identity at the target pointer width, so generated C does not
+truncate valid host address bits.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -655,21 +673,30 @@ It emits the authenticated runtime lookup directly and retains no image cache.
 A Swift concrete-metadata cache/reference pair may rebuild its mangled type
 reference only when the zero cache, immutable metadata-reference record, every
 relative descriptor slot, and the exact `MR`/`Md` symbol spelling agree. The
-type reference consists of printable mangling bytes and at most eight indirect
-`0x02` context descriptors; expanding every descriptor must reproduce a
+type reference consists of printable mangling bytes and at most eight symbolic
+context descriptors; expanding every descriptor must reproduce a
 complete symbol name that itself passes a bounded Swift type demangle. Imported
 nominal descriptors require a bounded demangle and the exact system-framework
 install name derived from the declared module.
 Local protocols and bounded module/class/structure/enum nominal paths require a
 resolved read-only relocation to one unique data symbol with exactly one
-matching export. Direct `0x01` or other symbolic references, unexported private
-contexts, weak or mismatched providers, malformed records, and ambiguous
-symbols remain unsupported.
+matching export. On AArch64, the exact private imported Darwin
+`os_unfair_lock_s` descriptor may instead be converted from a direct `0x01`
+reference to its public textual mangling after checking its immutable flags,
+parent module, name, accessor, and unique local symbols. Other direct `0x01`
+or symbolic references, unexported private contexts, weak or mismatched
+providers, malformed records, and ambiguous symbols remain unsupported.
 When the exact pair passes that proof but its addresses travel through local
 variables, source projection may bind the defining constants. Each local must
 have one direct constant definition, be definitely assigned before use, and be
 read only as an argument in typed native calls carrying that same proven pair.
 Any reassignment or other use leaves the address unbound.
+
+On 64-bit AArch64 and x64 images, a direct integer store value narrower than a
+pointer remains numeric when its exact IR occurrence has scalar provenance,
+even if its bits collide with a mapped image address. Full-width values,
+unknown or address provenance, address consumers, and pointer-typed values
+still require a relocatable binding.
 
 An explicit pointer-typed load or store supplies the same eight-byte cell extent
 as an integer machine carrier. It uses the existing named writable-storage and
@@ -1886,3 +1913,9 @@ Swift lazy object getters also admit a separately authenticated `swift_retain` f
 The Swift `NSObject` equality candidate uses the independently verified device and simulator ABI `swiftcc i1(ptr, ptr, ptr swiftself)`: object arguments occupy x0/x1 and metadata occupies x20. It requires the exact strong import from `libswiftObjectiveC`, immutable storage and the existing complete caller normalization proof. HighC derives the `_Bool` prototype and `swift_context` parameter from the same canonical input contract; lookup alone never publishes a byte-return ABI.
 
 A fixed zero-argument Objective-C object getter may occur inside that normalization proof only as an opaque identical-state call. The current selector stub, all 20 immutable instruction bytes, selector reference, strong `objc_msgSend` import and exact SDK pointer ABI must agree; failed `__objc_stubs` evidence cannot fall back to an unknown native call. This grants no clobber, result or source-binding fact, so every physical register, flag and memory observation must already be identical at the occurrence.
+
+The shared HighIR private-frame address proof accepts either operand order for target-width integer addition when one operand is a proven frame base and the other is a bounded constant offset. Subtraction remains ordered. This lets exact Objective-C nil-terminated argument spills be revalidated without accepting an unproved frame address.
+
+For AArch64 source binding, a full-width store whose scalar bits coincide with an image address stays numeric only when an exact local instruction sequence constructs a zero-extended W-register payload and a canonical inline Swift String tag, then stores both contiguous words with one STP. The instruction bytes and absence of relocation are rechecked; a missing pair or unproved provenance remains unresolved.
+
+Native source inference can borrow the exact 24-byte private scratch record passed to authenticated libswiftCore `swift_beginAccess` and `swift_endAccess` calls. The begin call writes its second argument; the end call may modify its first. The existing LowIR proof still checks the call ABI, bounded frame offset, separation from saved registers, and complete state restoration before accepting the helper.

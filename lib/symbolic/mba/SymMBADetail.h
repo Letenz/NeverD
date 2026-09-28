@@ -255,6 +255,7 @@ public:
 
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
+  bool unlimited() const { return Unlimited; }
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }
@@ -438,6 +439,10 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
 /// Fold small exact complement sums in the already selected answer.
 SymRef completeComplementarySums(SymContext &Ctx, SymRef Root,
                                  const MBAOptions &Opts, WorkBudget &Budget);
+
+/// Complete a selected sum when its two terms partition a shared bit mask.
+SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
+                              const llvm::APInt &Offset);
 
 /// Factor complete immediate operands before other readings erase their
 /// shared spelling; measure at most two quotients using the same budget.

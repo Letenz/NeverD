@@ -77,10 +77,6 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
     S->setError("no binary loaded");
     return dupStr(std::string("[]"));
   }
-  if (S->Img.Mode == InstructionMode::MixedARMThumb) {
-    S->setError("mixed ARM/Thumb decoding unsupported");
-    return dupStr(std::string("[]"));
-  }
 
   if (S->Img.Arch == Arch::EVM) {
     if (!S->ensurePipeline() || !S->PipeResult.EVM)
@@ -146,6 +142,7 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
 
   llvm::json::Array Arr;
   va_t Cur = Addr;
+  std::optional<InstructionMode> PathMode = S->Img.instructionModeAt(Addr);
   uint64_t Span = 0;
   for (const auto &F : S->Functions) {
     if (F.Entry == Addr) {
@@ -179,9 +176,18 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
       break;
     const uint8_t *Bytes = Seg->Data.data() + Off;
 
+    if (!S->Dec.selectMode(S->Img, Cur, PathMode)) {
+      S->setError("unknown or conflicting instruction mode at address");
+      break;
+    }
+    PathMode = S->Dec.currentMode();
     DecodedInsn DI;
     int Sz = S->Dec.decodeOne(Bytes, static_cast<size_t>(Avail64), Cur, DI);
     if (Sz <= 0)
+      break;
+    if (S->Img.Arch == Arch::ARM &&
+        S->Img.instructionModeAt(Cur + Sz - 1, S->Dec.currentMode()) !=
+            S->Dec.currentMode())
       break;
 
     std::string BytesHex;
@@ -216,10 +222,6 @@ const char *neverd_disasm_text(neverd_session_t Sess,
   auto *S = static_cast<Session *>(Sess);
   if (!S || !S->Loaded)
     return nullptr;
-  if (S->Img.Mode == InstructionMode::MixedARMThumb) {
-    S->setError("mixed ARM/Thumb decoding unsupported");
-    return nullptr;
-  }
 
   if (S->Img.Arch == Arch::EVM) {
     if (!S->ensurePipeline() || !S->PipeResult.EVM)
@@ -321,7 +323,7 @@ const char *neverd_disasm_text(neverd_session_t Sess,
   if (!Seg)
     return nullptr;
 
-  if (!S->Dec.init(S->Img.Arch, S->Img.Mode))
+  if (!S->Dec.init(S->Img))
     return nullptr;
 
   std::string Buf;
@@ -330,6 +332,7 @@ const char *neverd_disasm_text(neverd_session_t Sess,
      << ", " << Function->Size << " bytes)\n";
 
   va_t Addr = Function->Entry;
+  std::optional<InstructionMode> PathMode = S->Img.instructionModeAt(Addr);
   uint64_t Span = Function->Size > 0 ? Function->Size : 0x100;
   while (Addr >= Function->Entry && Addr - Function->Entry < Span &&
          Seg->contains(Addr)) {
@@ -345,9 +348,18 @@ const char *neverd_disasm_text(neverd_session_t Sess,
         Seg->Size - Off64,
         std::min<uint64_t>(Seg->Data.size() - Off,
                            Span - (Addr - Function->Entry))));
+    if (!S->Dec.selectMode(S->Img, Addr, PathMode)) {
+      S->setError("unknown or conflicting instruction mode at address");
+      break;
+    }
+    PathMode = S->Dec.currentMode();
     DecodedInsn Insn;
     int Sz = S->Dec.decodeOne(Bytes, Remain, Addr, Insn);
     if (Sz <= 0)
+      break;
+    if (S->Img.Arch == Arch::ARM &&
+        S->Img.instructionModeAt(Addr + Sz - 1, S->Dec.currentMode()) !=
+            S->Dec.currentMode())
       break;
     OS << "  0x" << llvm::utohexstr(Addr) << "  ";
     for (int I = 0; I < Sz && I < 8; ++I)

@@ -113,7 +113,9 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
                                      llvm::Module &Mod,
                                      const BinaryImage &Image,
                                      Arch TargetArch) {
-  if (!isSingleInstructionMode(Image.Mode)) {
+  if (!isSingleInstructionMode(Image.Mode) &&
+      !(Image.Mode == InstructionMode::MixedARMThumb &&
+        TargetArch == Arch::ARM && Image.Format == BinaryFormat::ELF)) {
     llvm::WithColor::error()
         << "inplace: rewriting requires a single instruction mode (got "
         << getInstructionModeName(Image.Mode) << ")\n";
@@ -154,6 +156,7 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     /// original runtime entry can be replaced atomically with codegen's new
     /// `.pdata/.xdata` rather than leaving stale prologue metadata in place.
     bool HasExceptionMetadata = false;
+    InstructionMode Mode = InstructionMode::Default;
   };
   std::vector<FuncPlan> Plans;
 
@@ -207,6 +210,17 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     P.OrigSize = OrigSize;
     P.HasExceptionMetadata =
         Image.ExceptionMetadata.findFunction(OrigVA) != nullptr;
+    if (Image.Mode == InstructionMode::MixedARMThumb) {
+      const auto Mode = Image.instructionModeAt(OrigVA);
+      if (!Mode) {
+        llvm::WithColor::error()
+            << "inplace: function has no authenticated ARM mode\n";
+        return PatchResult{};
+      }
+      P.Mode = *Mode;
+    } else {
+      P.Mode = Image.Mode;
+    }
     Plans.push_back(std::move(P));
   }
 
@@ -221,8 +235,34 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
       [](const FuncPlan &A, const FuncPlan &B) { return A.OrigVA < B.OrigVA; });
 
   std::map<std::string, uint64_t> FuncOrigVAs;
-  for (auto &P : Plans)
+  for (auto &P : Plans) {
     FuncOrigVAs[P.IRName] = P.OrigVA;
+    if (Image.Mode != InstructionMode::MixedARMThumb)
+      continue;
+    llvm::Function *Function = Mod.getFunction(P.IRName);
+    if (!Function)
+      return PatchResult{};
+    Function->addFnAttr("disable-tail-calls", "true");
+    const llvm::StringRef Wanted =
+        P.Mode == InstructionMode::Thumb ? "+thumb-mode" : "-thumb-mode";
+    const llvm::StringRef Conflict =
+        P.Mode == InstructionMode::Thumb ? "-thumb-mode" : "+thumb-mode";
+    const llvm::Attribute Existing =
+        Function->getFnAttribute("target-features");
+    std::string Features =
+        Existing.isValid() ? Existing.getValueAsString().str() : std::string();
+    if (llvm::StringRef(Features).contains(Conflict)) {
+      llvm::WithColor::error()
+          << "inplace: function target features contradict ARM mode\n";
+      return PatchResult{};
+    }
+    if (!llvm::StringRef(Features).contains(Wanted)) {
+      if (!Features.empty())
+        Features += ',';
+      Features += Wanted.str();
+      Function->addFnAttr("target-features", Features);
+    }
+  }
 
   auto Resolver = createRelocResolver();
   if (!Resolver->populateFromImage(Image, TargetArch))
@@ -246,9 +286,14 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     RequireGeneratedEHContinuations =
         !EHPlanOrErr->LanguageExceptionFunctionEntries.empty();
   }
-  InstructionMode ResolveMode = Image.Mode;
-  auto SerializeResolvedCode = [&](uint64_t VA, bool IsCode) {
-    return IsCode ? serializeCodePointer(VA, TargetArch, ResolveMode) : VA;
+  auto SerializeResolvedCode = [&](uint64_t VA,
+                                   bool IsCode) -> std::optional<uint64_t> {
+    if (!IsCode)
+      return VA;
+    const auto Mode = Image.instructionModeAt(VA);
+    return Mode ? std::optional<uint64_t>(
+                      serializeCodePointer(VA, TargetArch, *Mode))
+                : std::nullopt;
   };
   auto IsExecutable = [&](uint64_t VA) { return Image.isCodeAddress(VA); };
   std::map<std::string, uint64_t> ExportAddrs;
@@ -286,6 +331,15 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
       std::string AliasKey = resolveSymbolAlias(Name, SymByName);
       if (!AliasKey.empty())
         return SerializeResolvedCode(SymByName[AliasKey].Addr, true);
+      if (Image.isELF() && isSynthesizedFuncName(Name)) {
+        llvm::StringRef Spelling(Name);
+        if (Spelling.consume_front(kAutoFuncPrefix)) {
+          va_t Address = 0;
+          if (!Spelling.getAsInteger(16, Address) &&
+              Image.hasAuthenticatedFunctionEntryAt(Address))
+            return SerializeResolvedCode(Address, true);
+        }
+      }
       return std::nullopt;
     };
 
@@ -306,6 +360,14 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     }
     if (!ProbeImage.Success) {
       llvm::WithColor::error() << "inplace: rewrite image layout is invalid\n";
+      return PatchResult{};
+    }
+    std::string InterworkingDetail;
+    if (!repairMixedARMInterworkingCalls(ProbeImage, Image,
+                                         InterworkingDetail)) {
+      llvm::WithColor::error()
+          << "inplace: ARM interworking validation failed: "
+          << InterworkingDetail << "\n";
       return PatchResult{};
     }
     if (ProbeImage.Sections.empty())
@@ -418,6 +480,15 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
       std::string AliasKey = resolveSymbolAlias(Name, SymByName);
       if (!AliasKey.empty())
         return SerializeResolvedCode(SymByName[AliasKey].Addr, true);
+      if (Image.isELF() && isSynthesizedFuncName(Name)) {
+        llvm::StringRef Spelling(Name);
+        if (Spelling.consume_front(kAutoFuncPrefix)) {
+          va_t Address = 0;
+          if (!Spelling.getAsInteger(16, Address) &&
+              Image.hasAuthenticatedFunctionEntryAt(Address))
+            return SerializeResolvedCode(Address, true);
+        }
+      }
       return std::nullopt;
     };
 
@@ -430,6 +501,13 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     if (!ImageOut.Success || ImageOut.Bytes.empty()) {
       llvm::WithColor::error()
           << "inplace: grower recompile produced no code\n";
+      return PatchResult{};
+    }
+    std::string InterworkingDetail;
+    if (!repairMixedARMInterworkingCalls(ImageOut, Image, InterworkingDetail)) {
+      llvm::WithColor::error()
+          << "inplace: ARM interworking validation failed: "
+          << InterworkingDetail << "\n";
       return PatchResult{};
     }
 
@@ -471,12 +549,11 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
                   CopySize);
       if (CopySize < Plan.OrigSize)
         padWithNops(State.Binary.data() + FileOff + CopySize,
-                    Plan.OrigSize - CopySize, TargetArch, Image.Mode);
+                    Plan.OrigSize - CopySize, TargetArch, Plan.Mode);
       RecordApplied(Plan);
     }
 
     // Install a trampoline at each grower's original VA -> its new VA.
-    auto TCI = getTargetCodegenInfo(TargetArch, Image.Mode);
     auto findNewVA = [&](const std::string &IRName) -> uint64_t {
       for (const std::string &Cand :
            {IRName, "_" + IRName,
@@ -508,6 +585,7 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
         return PatchResult{};
       }
       uint64_t FileOff = State.TL.SectionFileoff + TextDelta;
+      const auto TCI = getTargetCodegenInfo(TargetArch, Plan.Mode);
       uint64_t TrampolineSize = TCI.trampolineSize();
       if (TrampolineSize == 0 || FileOff > State.Binary.size() ||
           State.Binary.size() - FileOff < TrampolineSize) {
@@ -610,7 +688,7 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
     std::memcpy(State.Binary.data() + FileOff, Plan.NewBytes.data(), CopySize);
     if (CopySize < Plan.OrigSize)
       padWithNops(State.Binary.data() + FileOff + CopySize,
-                  Plan.OrigSize - CopySize, TargetArch, Image.Mode);
+                  Plan.OrigSize - CopySize, TargetArch, Plan.Mode);
 
     LLVM_DEBUG(llvm::dbgs()
                << "inplace: replaced '" << Plan.Name << "' at VA=0x"

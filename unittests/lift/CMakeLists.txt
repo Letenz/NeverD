@@ -993,6 +993,10 @@ target_include_directories(NeverDObjCSourceCallTests PRIVATE
 target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
+if(MSVC)
+  target_compile_options(NeverDLiftTests PRIVATE /bigobj)
+  target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
+endif()
 
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.

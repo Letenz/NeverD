@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "SymMBATestsDetail.h"
 #include "gtest/gtest.h"
 
@@ -167,5 +168,40 @@ TEST(SymMBA, PolynomialReadingHasNoSixteenInputIndexCeiling) {
   EXPECT_EQ(Result.Outcome, MBAOutcome::Rewritten);
   EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
   EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+}
+
+TEST(SymMBA, PolynomialExpansionChargesCumulativeProductsBeforeDiscarding) {
+  SymContext Ctx;
+  constexpr unsigned Width = 8;
+  SymRef X = Ctx.mkVar("x", Width);
+  SymRef Y = Ctx.mkVar("y", Width);
+  llvm::SmallVector<uint32_t, 2> Atoms;
+  Ctx.collectVars(Ctx.mkAdd(X, Y), Atoms);
+
+  detail::PolyTerm Product{llvm::APInt(Width, 1), {X, Y}};
+  llvm::SmallVector<detail::PolyTerm, 2> Terms{Product, Product};
+  for (size_t Limit : {size_t(0), size_t(3), size_t(4), size_t(7)}) {
+    detail::WorkBudget Budget(Limit);
+    EXPECT_FALSE(detail::expandOverMinterms(Ctx, Terms, Atoms, Width, Budget));
+    EXPECT_EQ(Budget.used(), Limit);
+    EXPECT_TRUE(Budget.exhausted());
+  }
+
+  detail::WorkBudget Complete(8);
+  auto Form = detail::expandOverMinterms(Ctx, Terms, Atoms, Width, Complete);
+  ASSERT_TRUE(Form);
+  EXPECT_EQ(Complete.used(), 8u);
+  EXPECT_FALSE(Complete.exhausted());
+  EXPECT_EQ(Form->Higher.size(), 4u);
+
+  // A later invalid factor must leave only the preceding product's work
+  // charged, just as the ordinary term-order traversal does.
+  SymRef Invalid = Ctx.mkAdd(X, Ctx.mkConst(Width, 1));
+  Terms[1] = detail::PolyTerm{llvm::APInt(Width, 1), {Invalid}};
+  detail::WorkBudget InvalidBudget(8);
+  EXPECT_FALSE(
+      detail::expandOverMinterms(Ctx, Terms, Atoms, Width, InvalidBudget));
+  EXPECT_EQ(InvalidBudget.used(), 4u);
+  EXPECT_FALSE(InvalidBudget.exhausted());
 }
 } // namespace

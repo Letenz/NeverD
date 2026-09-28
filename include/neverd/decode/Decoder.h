@@ -112,6 +112,12 @@ public:
 
   bool init(Arch A, InstructionMode Mode = InstructionMode::Default);
 
+  /// Start from image evidence, then select the mode at each decoded address.
+  bool init(const BinaryImage &Img);
+  bool selectMode(const BinaryImage &Img, va_t Addr,
+                  std::optional<InstructionMode> IncomingMode = {});
+  InstructionMode currentMode() const { return CurrentMode; }
+
   /// Release active decoder state. Decoding returns failure until init
   /// succeeds.
   void reset();
@@ -232,6 +238,7 @@ private:
   csh Handle = 0;
   cs_insn *InsnBuf = nullptr;
   Arch TargetArch = Arch::Unknown;
+  InstructionMode CurrentMode = InstructionMode::Default;
   bool Strict = true;
   bool Detail = true;
 

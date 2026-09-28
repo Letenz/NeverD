@@ -1322,6 +1322,12 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   auto Name = Inst.getType()->isVoidTy() ? "" : getName(&Inst);
 
   if (Inst.isBinaryOp()) {
+    if (auto Identity =
+            targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Identity << ";\n";
+      return;
+    }
     if (Inst.getOpcode() == llvm::Instruction::URem ||
         Inst.getOpcode() == llvm::Instruction::SRem) {
       if (std::string Rem = indexExprStr(&Inst); !Rem.empty()) {
@@ -1330,10 +1336,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         return;
       }
     }
-    const bool NeedsIntegerPointerOperand =
-        Inst.getOpcode() == llvm::Instruction::Or ||
-        Inst.getOpcode() == llvm::Instruction::Add ||
-        Inst.getOpcode() == llvm::Instruction::Sub;
+    const bool NeedsIntegerPointerOperand = Inst.getType()->isIntegerTy();
     auto LHS =
         logicalShiftLhs(Inst, NeedsIntegerPointerOperand
                                   ? integerPointerOperandStr(Inst.getOperand(0))
@@ -3280,6 +3283,15 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
       IID == llvm::Intrinsic::localescape ||
       IID == llvm::Intrinsic::localrecover)
     return true;
+  if (IID == llvm::Intrinsic::returnaddress) {
+    if (Call.arg_size() != 1 ||
+        !llvm::isa<llvm::ConstantInt>(Call.getArgOperand(0)) ||
+        !llvm::cast<llvm::ConstantInt>(Call.getArgOperand(0))->isZero())
+      throw std::runtime_error("unsupported return-address depth");
+    emitIndent(Indent);
+    OS << getName(&Call) << " = __builtin_return_address(0);\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::localaddress) {
     // Keep the target-specific LLVM intrinsic: it can select SP, FP, or a base
     // pointer depending on stack realignment. __builtin_frame_address differs.

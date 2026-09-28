@@ -494,13 +494,15 @@ bool hasNativeSourceStateContract(
       if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
         Contract.ReadOnlyFrameParameters.emplace(0, 16);
       // These exact libswiftCore imports may borrow bounded private-frame
-      // storage. swift_beginAccess writes its three-word ValueBuffer;
+      // storage. swift_beginAccess writes its three-word ValueBuffer and
+      // swift_endAccess may update that same private scratch record;
       // Hasher's 72-byte value is written through x8, then passed inout to
       // String.hash and _finalize. Independently authenticate the current
       // import and ABI before invalidating those frame bytes. A borrow may
       // neither escape nor overlap a saved register.
       if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
           (Binding.TargetName == "swift_beginAccess" ||
+           Binding.TargetName == "swift_endAccess" ||
            Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" ||
            Binding.TargetName == "$sSS4hash4intoys6HasherVz_tF" ||
            Binding.TargetName == "$ss6HasherV9_finalizeSiyF") &&
@@ -517,6 +519,8 @@ bool hasNativeSourceStateContract(
             equalSourceABIs(Expected->Signature, Binding.Signature)) {
           if (Binding.TargetName == "swift_beginAccess")
             Contract.WritableFrameParameters.emplace(1, 3 * sizeof(uint64_t));
+          else if (Binding.TargetName == "swift_endAccess")
+            Contract.WritableFrameParameters.emplace(0, 3 * sizeof(uint64_t));
           else if (Image.Arch == Arch::AArch64 &&
                    !Binding.Signature.Parameters.empty()) {
             const auto &Buffer = Binding.Signature.Parameters[0];

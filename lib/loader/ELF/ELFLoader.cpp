@@ -149,10 +149,11 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   // --- Apply relocations for relocatable objects (.o files) ---
   // PC-relative references in .text to .rodata need fixup so the lifter
   // sees correct displacements for constant pool loads.
-  if (IsRelocatable)
-    elf_loader::detail::applyRelocations<ELFT>(ELF, *SectionsOr, Data, Size,
-                                               SecBase, IsRelocatable, Img);
-  else
+  if (IsRelocatable) {
+    if (llvm::Error E = elf_loader::detail::applyRelocations<ELFT>(
+            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Img))
+      return E;
+  } else
     elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
                                                               Data, Size, Img);
 
@@ -258,6 +259,20 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
   }();
   if (Loaded)
     return std::move(Loaded);
+
+  // An ET_EXEC synthesized from an unlinked object can still contain
+  // unresolved branch relocations. Only follow the encoded targets after a
+  // program-header-backed link has fixed their executable addresses.
+  const bool HasProgramHeaders = [&] {
+    if (auto *ELF32 = llvm::dyn_cast<llvm::object::ELF32LEObjectFile>(Obj))
+      return ELF32->getELFFile().getHeader().e_phnum != 0;
+    if (auto *ELF64 = llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(Obj))
+      return ELF64->getELFFile().getHeader().e_phnum != 0;
+    return false;
+  }();
+  if (Img.Arch == Arch::ARM && !Img.IsRelocatable && HasProgramHeaders)
+    if (llvm::Error E = discoverARMReachableModes(Img))
+      return std::move(E);
 
   runPostLoadDiscovery(Img, "elf: loaded " + Path.filename().string());
   // Classified before any table is read: a decoder that finds an Itanium LSDA

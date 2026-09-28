@@ -147,8 +147,7 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
         "FS/GS memory address spaces require an x86 C target");
 }
 
-bool useMsvcSegmentedRead(const CEmitterOptions &Opts,
-                          const HighFunc *Func) {
+bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
   return (Func && Func->ExceptionMetadata) ||
          (Opts.Image && Opts.Image->Format == BinaryFormat::COFF);
 }
@@ -369,8 +368,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
         (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
-        E.Kind == ExprKind::Load &&
-        useMsvcSegmentedRead(Opts, CurrentFunc);
+        E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
       if (!MsvcSegmentedScalar)
@@ -692,7 +690,8 @@ std::string HighCWriter::atomicCompareExchangeExpr(
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
-  return "({ " + Type + " neverd_expected = " + atomicValueCast(Type, Expected) +
+  return "({ " + Type +
+         " neverd_expected = " + atomicValueCast(Type, Expected) +
          "; (void)__atomic_compare_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) +
          ", &neverd_expected, " + atomicValueCast(Type, Desired) + ", 0, " +
@@ -960,6 +959,12 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 "neverd_swift_nominal_metadata_" +
                 llvm::utohexstr(Hint.TargetAddress, true) + "_address");
         } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_swift_witness_table_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::RuntimeSwiftWitnessCacheAddress) {
           if (Hint.TargetAddress)
             SourceObjectAddressHelpers.insert(
@@ -1070,6 +1075,16 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
   }
 }
 
+static std::unordered_set<std::string_view>
+collectImageFunctionNameViews(const BinaryImage &Image) {
+  std::unordered_set<std::string_view> Names;
+  Names.reserve(Image.Symbols.size());
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && !Sym.Name.empty() && !Image.findImportAt(Sym.Addr))
+      Names.insert(Sym.Name);
+  return Names;
+}
+
 bool HighCWriter::isOwnFunctionName(llvm::StringRef Name,
                                     const std::vector<HighFunc> &Funcs) {
   llvm::StringRef Clean = Name;
@@ -1081,16 +1096,15 @@ bool HighCWriter::isOwnFunctionName(llvm::StringRef Name,
   }
   if (!Opts.Image)
     return false;
-  if (!ImageFunctionNames) {
-    ImageFunctionNames.emplace();
-    for (const Symbol &Sym : Opts.Image->Symbols)
-      if (Sym.IsFunc && !Sym.Name.empty() &&
-          !Opts.Image->findImportAt(Sym.Addr))
-        ImageFunctionNames->insert(Sym.Name);
+  const auto *Names = SharedImageFunctionNames;
+  if (!Names) {
+    if (!ImageFunctionNames)
+      ImageFunctionNames.emplace(collectImageFunctionNameViews(*Opts.Image));
+    Names = &*ImageFunctionNames;
   }
-  return ImageFunctionNames->count(Name.str()) ||
-         ImageFunctionNames->count(Clean.str()) ||
-         ImageFunctionNames->count(("_" + Clean).str());
+  return Names->count({Name.data(), Name.size()}) ||
+         Names->count({Clean.data(), Clean.size()}) ||
+         Names->count(("_" + Clean).str());
 }
 
 void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
@@ -1119,8 +1133,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
         for (const auto &Parameter : Expr->SourceCallHint->Signature.Parameters)
           CheckType(Parameter.Type);
       }
-      for (size_t I = 0; I < Expr->Operands.size() &&
-                         I < debugCallArgLimit(*Expr); ++I)
+      for (size_t I = 0;
+           I < Expr->Operands.size() && I < debugCallArgLimit(*Expr); ++I)
         CheckType(displayCallArgType(*Expr, I));
     }
     for (const auto &Operand : Expr->Operands)
@@ -1315,6 +1329,35 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
     OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
   }
+
+  // Direct calls can precede the callee's body in address order. Declare the
+  // recovered internal signature before any body so C does not infer an
+  // obsolete implicit int/no-parameter declaration at that call site.
+  for (const auto &[Name, Function] : DefinedFunctionsByIdentifier) {
+    if (!CallTargets.count(Name) || !Prototyped.insert(Function).second)
+      continue;
+    CurrentFunc = Function;
+    Analysis = {};
+    runAnalysisPasses(*Function);
+    const auto ReturnType =
+        InferredVoid ? NdType::makeVoid() : Function->ReturnType;
+    if (Function->SourceTypeHint)
+      OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
+    if (Function->DoesNotReturn)
+      OS << "_Noreturn ";
+    std::string Declarator = Name + "(";
+    const size_t ParamCount = emittedParamCount(*Function);
+    for (size_t I = 0; I < ParamCount; ++I) {
+      if (I)
+        Declarator += ", ";
+      Declarator += typeToC(Function->Params[I].Type);
+    }
+    if (ParamCount == 0)
+      Declarator += "void";
+    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+  }
+  CurrentFunc = nullptr;
+  Analysis = {};
 
   for (auto &Name : CallTargets) {
     if (HiddenCxxCtorIdentifiers.count(Name))
@@ -1529,8 +1572,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (!E.Operands[I])
         continue;
       const TypeRef Expected = expectedDebugCallArgType(*Callee, I);
-      if (!Expected || Expected->Kind != NdTypeKind::Ptr || !Expected->Pointee ||
-          Expected->Pointee->SourceName.empty())
+      if (!Expected || Expected->Kind != NdTypeKind::Ptr ||
+          !Expected->Pointee || Expected->Pointee->SourceName.empty())
         continue;
       if (auto VA = imageLoadVA(*E.Operands[I]))
         noteImageObject(*VA, Expected, false);
@@ -1539,7 +1582,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   for (const HighFunc &Func : Funcs)
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Kind == StmtKind::Store &&
-          S.MemoryAddressSpace == NdMemoryAddressSpace::Default && S.StoreAddr) {
+          S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          S.StoreAddr) {
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);
@@ -1780,12 +1824,21 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
+  PreparedImage = nullptr;
+  PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
+  PreparedImage = &Image;
+}
+
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
   std::vector<HighFunc> Working = Funcs;
   attachCxxFuncletBodies(Working);
-  HighCWriter W(Out, Opts, Dbg);
+  HighCWriter W(Out, Opts, Dbg, true,
+                Opts.Image && Opts.Image == PreparedImage
+                    ? &PreparedImageFunctionNames
+                    : nullptr);
   W.writeAll(Working);
   return true;
 }

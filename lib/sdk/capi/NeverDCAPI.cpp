@@ -207,8 +207,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Decoder::init retains its existing state on failure, so it is the final
   // preparation step before publishing the replacement.
   if (Image.Arch != Arch::EVM && Image.Arch != Arch::SBF &&
-      Image.Mode != InstructionMode::MixedARMThumb &&
-      !S.Dec.init(Image.Arch, Image.Mode)) {
+      !S.Dec.init(Image)) {
     S.setError("failed to init decoder for arch");
     return 0;
   }
@@ -216,8 +215,6 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Dispose analysis while the image/debug objects it was built from still
   // exist. clearPipeline also releases LLVM modules before their context.
   S.clearPipeline();
-  if (Image.Mode == InstructionMode::MixedARMThumb)
-    S.Dec.reset();
   S.Img = std::move(Image);
   S.FilePath = std::move(Path);
   S.SanitizeSourcePath = std::move(SanitizeSourcePath);

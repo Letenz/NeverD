@@ -96,6 +96,7 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
   std::set<std::pair<va_t, llvm::StringRef>> ExportKeys;
   std::optional<InstructionMode> ARMMode;
   std::map<va_t, InstructionMode> ARMCodeModes;
+  std::map<std::pair<uint32_t, va_t>, ARMCodeRegionKind> ARMMappingPoints;
   auto RecordARMMode = [&](va_t Address, InstructionMode Mode) -> llvm::Error {
     const auto [It, Inserted] = ARMCodeModes.emplace(Address, Mode);
     if (!Inserted && It->second != Mode)
@@ -173,11 +174,14 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
         const bool IsThumbMapping =
             Bind == STB_LOCAL && Type == STT_NOTYPE &&
             (*NameOr == "$t" || NameOr->starts_with("$t."));
+        const bool IsDataMapping =
+            Bind == STB_LOCAL && Type == STT_NOTYPE &&
+            (*NameOr == "$d" || NameOr->starts_with("$d."));
         const auto SymbolMode =
             IsThumbMapping || (IsFunction && (Sym.st_value & 1u))
                 ? InstructionMode::Thumb
                 : InstructionMode::ARM;
-        if ((IsFunction || IsARMMapping || IsThumbMapping) &&
+        if ((IsFunction || IsARMMapping || IsThumbMapping || IsDataMapping) &&
             Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
           const Elf_Shdr &Owner = Sections[Sym.st_shndx];
           const va_t OwnerVA =
@@ -185,14 +189,29 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
           if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
                   (SHF_ALLOC | SHF_EXECINSTR) &&
               Value >= OwnerVA && Value - OwnerVA < Owner.sh_size) {
-            const unsigned Alignment =
-                SymbolMode == InstructionMode::Thumb ? 2 : 4;
+            const unsigned Alignment = IsDataMapping ? 1
+                                       : SymbolMode == InstructionMode::Thumb
+                                           ? 2
+                                           : 4;
             if (Value % Alignment != 0)
               return llvm::make_error<llvm::StringError>(
                   "elf: misaligned ARM/Thumb code-mode symbol",
                   llvm::inconvertibleErrorCode());
-            if (auto Error = RecordARMMode(Value, SymbolMode))
-              return Error;
+            if (IsARMMapping || IsThumbMapping || IsDataMapping) {
+              const ARMCodeRegionKind Kind =
+                  IsDataMapping    ? ARMCodeRegionKind::Data
+                  : IsThumbMapping ? ARMCodeRegionKind::Thumb
+                                   : ARMCodeRegionKind::ARM;
+              const auto [It, Inserted] = ARMMappingPoints.emplace(
+                  std::make_pair(Sym.st_shndx, Value), Kind);
+              if (!Inserted && It->second != Kind)
+                return llvm::make_error<llvm::StringError>(
+                    "elf: conflicting ARM/Thumb mapping symbols",
+                    llvm::inconvertibleErrorCode());
+            }
+            if (!IsDataMapping)
+              if (auto Error = RecordARMMode(Value, SymbolMode))
+                return Error;
           }
         }
       }
@@ -237,8 +256,51 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
   for (const Elf_Shdr &SH : Sections)
     if (auto Error = AddSymbolsFrom(SH))
       return Error;
-  if (Img.Arch == Arch::ARM)
+  if (Img.Arch == Arch::ARM) {
+    for (uint32_t Index = 0; Index < Sections.size(); ++Index) {
+      const Elf_Shdr &Owner = Sections[Index];
+      if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) !=
+              (SHF_ALLOC | SHF_EXECINSTR) ||
+          Owner.sh_size == 0)
+        continue;
+      const va_t Start = sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Index);
+      if (Owner.sh_size > InvalidVA - Start)
+        return llvm::make_error<llvm::StringError>(
+            "elf: ARM code mapping range overflows",
+            llvm::inconvertibleErrorCode());
+      const va_t End = Start + Owner.sh_size;
+      auto Point = ARMMappingPoints.lower_bound({Index, Start});
+      while (Point != ARMMappingPoints.end() && Point->first.first == Index) {
+        const auto Next = std::next(Point);
+        const va_t RegionEnd =
+            Next != ARMMappingPoints.end() && Next->first.first == Index
+                ? Next->first.second
+                : End;
+        if (Point->first.second < RegionEnd)
+          Img.ARMCodeRegions.push_back(
+              {Point->first.second, RegionEnd, Point->second});
+        Point = Next;
+      }
+    }
+    std::sort(Img.ARMCodeRegions.begin(), Img.ARMCodeRegions.end(),
+              [](const ARMCodeRegion &Left, const ARMCodeRegion &Right) {
+                return Left.Start < Right.Start;
+              });
+    for (size_t Index = 1; Index < Img.ARMCodeRegions.size(); ++Index)
+      if (Img.ARMCodeRegions[Index].Start < Img.ARMCodeRegions[Index - 1].End)
+        return llvm::make_error<llvm::StringError>(
+            "elf: overlapping ARM code mapping regions",
+            llvm::inconvertibleErrorCode());
+    Img.ARMCodeModeEntries = std::move(ARMCodeModes);
     Img.Mode = ARMMode.value_or(InstructionMode::ARM);
+    for (const auto &[Address, Mode] : Img.ARMCodeModeEntries) {
+      const auto Mapped = Img.instructionModeAt(Address);
+      if (!Mapped || *Mapped != Mode)
+        return llvm::make_error<llvm::StringError>(
+            "elf: conflicting ARM/Thumb instruction modes at one code address",
+            llvm::inconvertibleErrorCode());
+    }
+  }
   return llvm::Error::success();
 }
 
