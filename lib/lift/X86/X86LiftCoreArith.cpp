@@ -688,6 +688,18 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
+    // Keep the identity explicit without losing the register write: writing
+    // EAX must still trigger the post-lift zero extension of RAX.
+    if (InsnId == X86_INS_AND && X86.operands[0].type == X86_OP_REG &&
+        X86.operands[1].type == X86_OP_REG &&
+        X86.operands[0].reg == X86.operands[1].reg) {
+      NdVar DstR = readArithmeticOperand(X86.operands[0]);
+      NdVar DstW = L.operandWrite(X86.operands[0]);
+      S.emit(NdOp::COPY, DstW, {DstR});
+      L.emitFlagsLogic(S, DstW);
+      break;
+    }
+
     NdVar Src = readArithmeticOperand(X86.operands[1]);
     NdVar DstR = readArithmeticOperand(X86.operands[0]);
     NdVar DstW = L.operandWrite(X86.operands[0]);
