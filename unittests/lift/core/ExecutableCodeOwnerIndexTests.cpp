@@ -264,6 +264,45 @@ TEST(ExecutableCodeOwnerIndex, KeepsMappingPrecedenceAndLiveEntryEvidence) {
   }
 }
 
+TEST(ExecutableCodeOwnerIndex,
+     ArmELFMappingDataBeatsExecutableSectionAndFunctionExtent) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::ELF;
+  Image.Arch = Arch::ARM;
+  Image.Mode = InstructionMode::ARM;
+  Segment Text;
+  Text.VA = 0x100;
+  Text.Size = 0x80;
+  Text.Data.resize(0x80);
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Image.Segments.push_back(Text);
+  Section TextSection;
+  TextSection.VA = Text.VA;
+  TextSection.Size = Text.Size;
+  TextSection.Flags = Text.Flags;
+  Image.Sections.push_back(TextSection);
+  Image.Symbols = {Symbol::makeFunc(0x100, 0x80)};
+
+  // Without mapping symbols the section remains the only code evidence.
+  EXPECT_TRUE(Image.isCodeAddress(0x148));
+  Image.ARMCodeRegions = {{0x100, 0x140, ARMCodeRegionKind::ARM},
+                          {0x140, 0x160, ARMCodeRegionKind::Data},
+                          {0x160, 0x180, ARMCodeRegionKind::ARM}};
+  const ExecutableCodeOwnerIndex Index(Image);
+  EXPECT_TRUE(Image.isCodeRange(0x130, 4));
+  EXPECT_FALSE(Image.isCodeRange(0x130, 0x38));
+  EXPECT_FALSE(Image.isCodeRange(0x13c, 8));
+  EXPECT_TRUE(Image.isCodeRange(0x160, 4));
+  for (va_t Addr : {0x140ull, 0x148ull, 0x15full}) {
+    EXPECT_FALSE(Image.isCodeAddress(Addr));
+    EXPECT_TRUE(Image.isDataAddress(Addr));
+    EXPECT_FALSE(Image.hasExecutableCodeOwnerAt(Addr));
+    EXPECT_FALSE(Image.hasExecutableCodeOwnerAt(Addr, &Index));
+    EXPECT_EQ(Image.mappedObjectOwnerEnd(Addr), 0x160u);
+  }
+  EXPECT_TRUE(Image.hasExecutableCodeOwnerAt(0x160, &Index));
+}
+
 TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
   for (BinaryFormat Format :
        {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})

@@ -4531,6 +4531,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   const JumpTableValueQuery *ActiveValueQuery = nullptr;
   std::optional<bool> MemoOccurrenceRootMode;
   std::optional<bool> MemoPrivateFrameCallMode;
+  std::optional<bool> MemoScalarConstantFoldMode;
 
   auto constantValue = [&](const NdVar &V) -> ResolverResult {
     if (!V.isConst() || V.Size == 0)
@@ -6238,6 +6239,43 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                             std::move(ScalarModelOrigin));
           }
         }
+      } else if (ActiveValueQuery && ActiveValueQuery->FoldScalarConstantOps &&
+                 (Def.Opcode == NdOp::INT_AND || Def.Opcode == NdOp::INT_OR ||
+                  Def.Opcode == NdOp::INT_LEFT) &&
+                 Def.NumInputs >= 2 && Def.Output.Size != 0 &&
+                 Def.Output.Size <= sizeof(uint64_t)) {
+        // Materialized scalar masks often span several instructions (for
+        // example, two immediate halves joined by a shift and OR). Prove
+        // their exact value at the queried use instead of trusting a linear
+        // prefix fold that cannot account for alternate control-flow paths.
+        ResolverResult Left = applyNumericOperandRole(
+            Def, 0, resolveOperand(Block, I, Def.Inputs[0], Depth + 1));
+        ResolverResult Right = applyNumericOperandRole(
+            Def, 1, resolveOperand(Block, I, Def.Inputs[1], Depth + 1));
+        auto Scalar = [&](const ResolverResult &Value) {
+          return Value.Kind == ResolverResultKind::Value && Value.Value &&
+                 Value.Value->K == ResolverValueExpr::Kind::Constant &&
+                 Value.Value->Provenance == ConstantAddressProvenance::Scalar;
+        };
+        if (Scalar(Left) && Scalar(Right) &&
+            Left.Value->Size == Def.Output.Size &&
+            (Def.Opcode == NdOp::INT_LEFT ||
+             Right.Value->Size == Def.Output.Size)) {
+          const uint64_t Width = Def.Output.Size * 8;
+          const uint64_t A = Left.Value->Constant;
+          const uint64_t B = Right.Value->Constant;
+          std::optional<uint64_t> Folded;
+          if (Def.Opcode == NdOp::INT_AND)
+            Folded = A & B;
+          else if (Def.Opcode == NdOp::INT_OR)
+            Folded = A | B;
+          else if (B < Width)
+            Folded = A << B;
+          if (Folded)
+            Full = budgetedResolverConstant(
+                *Folded & resolverWidthMask(Def.Output.Size), Def.Output.Size,
+                ConstantAddressProvenance::Scalar, InvalidVA, consumeEvidence);
+        }
       } else if (Def.Opcode == NdOp::SELECT && Def.NumInputs >= 3) {
         ResolverResult TrueValue =
             resolveOperand(Block, I, Def.Inputs[1], Depth + 1);
@@ -7655,6 +7693,13 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       FrameMemo.clear();
     }
     MemoPrivateFrameCallMode = Query.AllowPrivateFrameMemoryAcrossCalls;
+    if (MemoScalarConstantFoldMode &&
+        *MemoScalarConstantFoldMode != Query.FoldScalarConstantOps) {
+      ValueMemo.clear();
+      MemoryMemo.clear();
+      FrameMemo.clear();
+    }
+    MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
     if (Query.Candidate.Size == 0 ||
         (Query.Relation != JumpTableValueRelation::UnsignedLessThan &&
          Query.Relation != JumpTableValueRelation::ResolvableValue &&

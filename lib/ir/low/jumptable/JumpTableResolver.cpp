@@ -3316,9 +3316,16 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     const Section *Section = Img.getSectionFor(Info.BaseAddr);
     const std::optional<va_t> OwnerEnd =
         Img.mappedObjectOwnerEnd(Info.BaseAddr);
+    // ARM ELF $d mapping symbols can put a literal table inside .text.  Its
+    // mapped data interval gives a tighter storage ceiling than the function
+    // or section, while the edge proof still authenticates every table read.
+    const ARMCodeRegion *Mapping = Img.armMappingRegionAt(Info.BaseAddr);
+    const bool InlineStorage =
+        Img.isCodeAddress(Info.BaseAddr) ||
+        (Mapping && Mapping->Kind == ARMCodeRegionKind::Data);
     if (Segment && Segment->isReadable() && !Segment->isWritable() &&
         (!Section || (Section->isReadable() && !Section->isWritable())) &&
-        Img.isCodeAddress(Info.BaseAddr) && OwnerEnd) {
+        InlineStorage && OwnerEnd) {
       const va_t End =
           std::min(*OwnerEnd, AuthoritativeCurrentFuncRange->second);
       if (End > Info.BaseAddr && End - Info.BaseAddr >= Info.EntrySize) {

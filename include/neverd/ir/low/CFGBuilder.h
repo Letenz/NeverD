@@ -1211,6 +1211,9 @@ private:
     std::vector<uint16_t> AlternativeFrameValueOffsets;
     std::vector<JumpTableValueOccurrence> AuthenticatedFrameStoreWriters;
     std::vector<JumpTableValueOccurrence> AuthenticatedFrameMemcpyWriters;
+    /// Fold pure, exactly sized scalar AND/OR/SHL nodes while proving a
+    /// constant at this use. Other relations retain producer identity.
+    bool FoldScalarConstantOps = false;
   };
 
   struct JumpTableFrameAddressUse {
