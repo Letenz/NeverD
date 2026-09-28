@@ -56,6 +56,12 @@ min/max de enteros con y sin signo i1/8/16/32/64/128 con O0/O2: resultados
 asignados o integrados, orden de los productores y evaluación única. Los anchos
 escalares no admitidos y los operandos mal formados deben fallar explícitamente.
 
+## Comprobaciones de control y llamadas en C estructurado
+
+`HighControlFlowSemantics.*` comprueba que mover salidas o bloques finales de bucles conserve las etiquetas referenciadas por otros saltos. Las entradas directas a las salidas iniciales y finales y la sustitución de break ejecutan el C generado con O0/O2 frente a valores de retorno esperados independientes.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` comprueba que los argumentos de registro obligatorios inferidos conserven las posiciones finales desconocidas. Evaluar un argumento obligatorio o una condición desconocida debe provocar una trampa explícita; los operandos omitidos, nulos o anidados no deben convertirse silenciosamente en cero. Los valores conocidos y los operandos adicionales cuya ausencia de lectura esté demostrada siguen siendo ejecutables. Una trampa es un límite de diagnóstico, no una prueba de equivalencia del comportamiento recuperado.
+
 ## Comprobaciones de emulación de controladores
 
 Active `NEVERD_ENABLE_DRIVER_EMULATION=ON` junto con `BUILD_TESTING=ON` para

@@ -47,6 +47,12 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends`는 정의되지 않은 동작 트랩을 활성화하여 O0/O2에서 두 복원 C 경로를 실행하며 모든 바이트 값과 원시 시프트 횟수를 다룹니다.
 `NeverDLLVMCIntrinsicSemanticTests`는 i1/8/16/32/64/128 부호 있는/없는 정수 min/max도 O0/O2에서 실행하여 대입 및 인라인 결과, 피연산자 생성 순서와 단일 평가를 검사합니다. 지원하지 않는 스칼라 너비와 잘못된 피연산자는 명시적으로 실패해야 합니다.
 
+## 구조화된 C 제어 흐름 및 호출 검사
+
+`HighControlFlowSemantics.*`는 루프의 종료 지점이나 뒷부분을 이동할 때 다른 점프가 참조하는 레이블을 보존하는지 검사합니다. 루프 앞뒤 종료 지점으로 직접 진입하는 경우와 break 교체를 다루며, 생성된 C를 O0/O2로 실행해 독립적인 반환값 기준과 비교합니다.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead`는 추론된 필수 레지스터 인수의 끝에 있는 알 수 없는 슬롯이 유지되는지 검사합니다. 알 수 없는 필수 인수나 조건을 평가하면 명시적으로 트랩해야 하며, 생략된 피연산자, null 피연산자 및 중첩 피연산자를 조용히 0으로 바꾸면 안 됩니다. 알려진 값과 읽히지 않음이 입증된 추가 피연산자는 계속 실행할 수 있습니다. 트랩은 진단 경계이며 복원된 동작의 동등성을 증명하지 않습니다.
+
 ## 드라이버 에뮬레이션 검사
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON`과 `BUILD_TESTING=ON`을 함께 활성화하면 전용 실행 스위트와 공유 C API/CLI 검사를 빌드할 수 있습니다.

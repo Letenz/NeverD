@@ -113,8 +113,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     if (!Op)
       return false;
     const HighExpr *Cur = unwrapIntegerView(Op.get());
-    return Cur && (Cur->Kind == ExprKind::Undef ||
-                   (Cur->Kind == ExprKind::Const && Cur->ConstVal == 0));
+    return Cur && Cur->Kind == ExprKind::Const && Cur->ConstVal == 0;
   };
   if (E.Operands.size() == 2 &&
       (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_OR ||
@@ -136,8 +135,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     return std::string(Name) + "(" + exprStr(*E.Operands[0]) + ", " +
            exprStr(*E.Operands[1]) + ")";
   }
-  // MSVC `sbb r, r` after a compare is `0 - (CF - 0)` / `0 - (undef - cond)`.
-  // Fold to `cond` so the printed body is not `0 /* unknown */`.
+  // Fold `0 - (0 - value)` only when both zero operands are known constants.
+  // Unknown operands must retain their failure at the point of use.
   if (E.Op == NdOp::INT_SUB && E.Operands.size() == 2 &&
       IsZeroLike(E.Operands[0]) && E.Operands[1]) {
     const HighExpr *Inner = unwrapIntegerView(E.Operands[1].get());

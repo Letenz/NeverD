@@ -48,6 +48,12 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` は未定義動作のトラップを有効にし、O0/O2 で両方の復元 C 経路を実行し、すべてのバイト値と生のシフト回数を網羅します。
 `NeverDLLVMCIntrinsicSemanticTests` は i1/8/16/32/64/128 の符号付き・符号なし整数 min/max も O0/O2 で実行し、代入とインラインの結果、生成処理の順序、単一評価を検査します。未対応のスカラー幅と不正なオペランドは明示的に失敗する必要があります。
 
+## 構造化 C の制御フローと呼び出しの検証
+
+`HighControlFlowSemantics.*` は、ループの出口や末尾を移動しても、他のジャンプが参照するラベルが保持されることを検証します。先頭・末尾の出口への直接ジャンプと break の置換を対象に、生成 C を O0/O2 で実行し、独立した期待戻り値と比較します。
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` は、推定された必須レジスタ引数の末尾にある未知スロットが保持されることを検証します。未知の必須引数や条件を評価すると明示的にトラップし、省略・null・入れ子のオペランドを黙ってゼロに置き換えてはいけません。既知の値と、読み取られないことが証明された余分なオペランドは実行可能なままです。トラップは診断境界であり、復元動作の等価性の証明ではありません。
+
 ## ドライバーエミュレーションの検査
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON` と `BUILD_TESTING=ON` を両方有効にすると、専用の実行スイートと共有 C API／CLI の検査をビルドできます。

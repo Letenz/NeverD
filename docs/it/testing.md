@@ -56,6 +56,12 @@ i1/8/16/32/64/128 a O0/O2, verificando risultati assegnati e incorporati,
 ordine dei produttori e valutazione singola. Le larghezze scalari non supportate
 e gli operandi malformati devono fallire esplicitamente.
 
+## Verifiche di controllo e chiamata nel C strutturato
+
+`HighControlFlowSemantics.*` verifica che spostare uscite o code dei cicli conservi le etichette raggiunte da altri salti. Gli ingressi diretti nelle uscite iniziali e finali e la sostituzione di break eseguono il C generato a O0/O2 confrontandolo con valori di ritorno attesi indipendenti.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` verifica che gli argomenti di registro obbligatori dedotti mantengano le posizioni finali sconosciute. La valutazione di un argomento obbligatorio o di una condizione sconosciuta deve causare una trap esplicita; gli operandi omessi, nulli o annidati non devono diventare silenziosamente zero. I valori noti e gli operandi aggiuntivi di cui è dimostrata la mancata lettura restano eseguibili. Una trap è un limite diagnostico, non una prova di equivalenza del comportamento ricostruito.
+
 ## Verifiche dell’emulazione dei driver
 
 Abilitare `NEVERD_ENABLE_DRIVER_EMULATION=ON` insieme a `BUILD_TESTING=ON` per

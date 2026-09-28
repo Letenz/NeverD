@@ -265,6 +265,12 @@ integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
 results, producer ordering, and single evaluation. Unsupported scalar widths
 and malformed operands must fail explicitly.
 
+## Structured C control and call checks
+
+`HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
+
 ## Driver emulation checks
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`

@@ -1089,7 +1089,9 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
           } else {
             continue;
           }
-          Exit.Addr = 0;
+          // A jump to the child goto bypasses the condition and leaves the
+          // loop. Keep that exact entry on the moved goto; only the enclosing
+          // test's entered address prevents this rewrite.
           L.insert(L.begin() + K + 1, std::move(Exit));
           Changed = true;
         }
@@ -1194,6 +1196,9 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
           // Replace the break with a block of the tail; it never falls through.
           HighStmt Moved;
           Moved.Kind = StmtKind::Block;
+          // Entering the break originally continued at the tail. The block
+          // now owns that same entry, including jumps from outside the loop.
+          Moved.Addr = Break->Addr;
           Moved.Body = std::move(Tail);
           *Break = std::move(Moved);
           L.erase(L.begin() + K + 1, L.end());
