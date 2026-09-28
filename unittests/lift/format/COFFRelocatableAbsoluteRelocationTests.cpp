@@ -1074,6 +1074,61 @@ _data_target:
 }
 
 TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32PreservesThumbFunctionAtObjectAddressZero) {
+  const fs::path Object =
+      compileCOFF("macho_thumb_at_zero", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.thumb_func _first
+.globl _first
+_first:
+  adds r0, r0, r1
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  const Symbol *First = findSymbol(Img, "_first");
+  ASSERT_NE(First, nullptr);
+  ASSERT_EQ(First->Addr, 0u);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(2), InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32TracksReachableMixedFunctionModes) {
+  const fs::path Object = tmpFile("macho_mixed_mode.o");
+  const RunResult Compiled = exec(
+      NEVERD_TEST_CLANG,
+      {"-target", "armv7-apple-darwin", "-O0", "-ffreestanding", "-nostdinc",
+       "-fno-stack-protector", "-fno-inline", "-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_mixed.c").string(),
+       "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  EXPECT_EQ(Img.Mode, InstructionMode::MixedARMThumb);
+  for (const auto &[Name, Mode] :
+       {std::pair{"_arm_mba", InstructionMode::ARM},
+        std::pair{"_thumb_mba", InstructionMode::Thumb},
+        std::pair{"_thumb_calls_arm", InstructionMode::Thumb},
+        std::pair{"_arm_calls_thumb", InstructionMode::ARM},
+        std::pair{"_thumb_calls_arm_calls_thumb", InstructionMode::Thumb}}) {
+    const Symbol *Function = findSymbol(Img, Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    EXPECT_EQ(Img.instructionModeAt(Function->Addr), Mode) << Name;
+  }
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
        MachOARM32AppliesThumbBranchRelocations) {
   const fs::path Object =
       compileCOFF("macho_thumb32_branches", "armv7-apple-darwin", R"(

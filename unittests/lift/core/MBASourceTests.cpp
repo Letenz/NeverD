@@ -1118,6 +1118,93 @@ INSTANTIATE_TEST_SUITE_P(
              (Info.param.LLVM ? "LLVMC" : "HighC");
     });
 
+class MBAMachOARMThumbSourceTest : public MBAExecutableSourceTest,
+                                   public ::testing::WithParamInterface<bool> {
+};
+
+TEST_P(MBAMachOARMThumbSourceTest, RecoversMixedModeCallsAndArithmetic) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const bool LLVM = GetParam();
+  SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+  const auto Object = tmpFile("macho-mixed-mba.o");
+  const auto Compiled = exec(
+      NEVERD_TEST_CLANG,
+      {"-target", "armv7-apple-darwin", "-O0", "-ffreestanding", "-nostdinc",
+       "-fno-stack-protector", "-fno-inline", "-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_mixed.c").string(),
+       "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-mixed-mba.c");
+  std::vector<std::string> Args{"decompile", "--no-debug"};
+  if (LLVM)
+    Args.push_back("--llvm");
+  Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Args);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  for (const char *Name : {"arm_mba", "thumb_mba", "thumb_calls_arm",
+                           "arm_calls_thumb", "thumb_calls_arm_calls_thumb"}) {
+    EXPECT_FALSE(functionBody(Source, Name).empty());
+    expectNoResidualMBA(Output, Name);
+  }
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(uint32_t a, uint32_t b) {
+  uint32_t expected = a + b;
+  if ((uint32_t)arm_mba(a, b) != expected ||
+      (uint32_t)thumb_mba(a, b) != expected ||
+      (uint32_t)thumb_calls_arm(a, b) != expected ||
+      (uint32_t)arm_calls_thumb(a, b) != expected ||
+      (uint32_t)thumb_calls_arm_calls_thumb(a, b) != expected) {
+    fprintf(stderr, "mixed-mode arithmetic mismatch a=%u b=%u\n", a, b);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x693d1ac74b20fe85);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t a = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check(a, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-mixed-mba-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-mixed-mba-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(HighCAndLLVMC, MBAMachOARMThumbSourceTest,
+                         ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool> &Info) {
+                           return Info.param ? "LLVMC" : "HighC";
+                         });
+
 struct NativeFiveCase {
   const char *Name;
   const char *Triple;
