@@ -930,6 +930,40 @@ SwiftTypeMetadataFixture swiftStdlibTypeMetadataFixture() {
   return F;
 }
 
+SwiftTypeMetadataFixture swiftDispatchTypeMetadataFixture(bool TimerFlags) {
+  SwiftTypeMetadataFixture F(Arch::AArch64);
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  const std::string Descriptor =
+      TimerFlags ? "_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMn"
+                 : "_$s8Dispatch0A13WorkItemFlagsVMn";
+  const std::string Base =
+      TimerFlags ? "_$sSaySo18OS_dispatch_sourceC8DispatchE10TimerFlagsVG"
+                 : "_$sSay8Dispatch0A13WorkItemFlagsVG";
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      SwiftTypeMetadataFixture::DescriptorSlot, Descriptor, 0,
+      "/usr/lib/swift/libswiftDispatch.dylib", false));
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(
+      Data.data() + SwiftTypeMetadataFixture::Reference + 4 - 0x1000, 9);
+  auto *Type =
+      Data.data() + SwiftTypeMetadataFixture::TypeReference - 0x1000;
+  Type[0] = 'S';
+  Type[1] = 'a';
+  Type[2] = 'y';
+  Type[3] = 2;
+  llvm::support::endian::write32le(
+      Type + 4, static_cast<uint32_t>(static_cast<int32_t>(
+                    SwiftTypeMetadataFixture::DescriptorSlot -
+                    (SwiftTypeMetadataFixture::TypeReference + 4))));
+  Type[8] = 'G';
+  Type[9] = 0;
+  return F;
+}
+
 SwiftTypeMetadataFixture swiftDictionaryTypeMetadataFixture() {
   auto F = swiftStdlibTypeMetadataFixture();
   F.Image.ImportPtrSlots.clear();
@@ -2303,6 +2337,48 @@ TEST(ObjCSourceBindings,
   EXPECT_FALSE(objc_binding_detail::swiftSystemFrameworkNominalDescriptor(
       "_$s7Combine9PublisherMp",
       "/System/Library/Frameworks/Combine.framework/Combine"));
+}
+
+TEST(ObjCSourceBindings,
+     SwiftDispatchMetadataPairsRequireExactStrongRuntimeDescriptorBind) {
+  for (const bool TimerFlags : {false, true}) {
+    SCOPED_TRACE(TimerFlags);
+    auto F = swiftDispatchTypeMetadataFixture(TimerFlags);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, SwiftTypeMetadataFixture::Cache,
+        SwiftTypeMetadataFixture::Reference);
+    ASSERT_TRUE(Proof);
+    EXPECT_EQ(Proof->Descriptors.size(), 1U);
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+    EXPECT_EQ(Result.SwiftTypeMetadataPairs.at(SwiftTypeMetadataFixture::Cache)
+                  .DescriptorSymbol,
+              TimerFlags ? "_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMn"
+                         : "_$s8Dispatch0A13WorkItemFlagsVMn");
+
+    auto Rejected = [&](auto Change) {
+      auto Modified = swiftDispatchTypeMetadataFixture(TimerFlags);
+      Change(Modified.Image);
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          Modified.Image, SwiftTypeMetadataFixture::Cache,
+          SwiftTypeMetadataFixture::Reference));
+    };
+    Rejected([](BinaryImage &Image) {
+      Image.DyldBindSlots[SwiftTypeMetadataFixture::DescriptorSlot].Module =
+          "/tmp/libswiftDispatch.dylib";
+    });
+    Rejected([](BinaryImage &Image) {
+      Image.DyldBindSlots[SwiftTypeMetadataFixture::DescriptorSlot].WeakImport =
+          true;
+    });
+    Rejected([](BinaryImage &Image) {
+      Image.DyldBindSlots[SwiftTypeMetadataFixture::DescriptorSlot].Addend = 8;
+    });
+    Rejected([](BinaryImage &Image) {
+      Image.Segments[2].ReadOnlyAfterRelocations = false;
+    });
+  }
 }
 
 TEST(ObjCSourceBindings,

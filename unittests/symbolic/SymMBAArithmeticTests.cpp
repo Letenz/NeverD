@@ -153,6 +153,300 @@ TEST(SymMBAArithmetic, ProvesWideParityPartitionsBeforeCornerMeasurement) {
   }
 }
 
+TEST(SymMBAArithmetic, ProvesWideOrPartitionsBeforeCornerMeasurement) {
+  for (uint32_t Width : {3u, 8u, 64u, 257u}) {
+    for (bool DirectComplement : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(DirectComplement);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        SymRef Value = Ctx.mkVar("value", Width);
+        llvm::SmallVector<SymRef, 32> Vars;
+        for (unsigned I = 0; I < 24; ++I)
+          Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+        SymRef Mask = Ctx.mkXor(Vars);
+        SymRef Opposite;
+        if (DirectComplement) {
+          Opposite = Ctx.mkNot(Mask);
+        } else {
+          Vars[0] = Ctx.mkNot(Vars[0]);
+          Opposite = Ctx.mkXor(Vars);
+        }
+        SymRef Input =
+            Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, Opposite));
+        SymRef Expected = Ctx.mkAdd(Value, Ctx.mkOnes(Width));
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkAdd(Value, Ctx.mkConst(Width, 4));
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, WideOrPartitionsRejectNearMissesAndLowBudgets) {
+  constexpr unsigned Width = 8;
+  SymContext Ctx;
+  SymRef Value = Ctx.mkVar("value", Width);
+  llvm::SmallVector<SymRef, 32> Vars;
+  for (unsigned I = 0; I < 24; ++I)
+    Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+  SymRef Mask = Ctx.mkXor(Vars);
+  Vars[0] = Ctx.mkNot(Vars[0]);
+  Vars[1] = Ctx.mkNot(Vars[1]);
+  SymRef EvenParity = Ctx.mkXor(Vars);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(Ctx, Ctx.mkOr(Value, Mask),
+                                              Ctx.mkOr(Value, EvenParity),
+                                              llvm::APInt(Width, 0)));
+
+  SymRef OtherValue = Ctx.mkVar("other", Width);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(
+      Ctx, Ctx.mkOr(Value, Mask), Ctx.mkOr(OtherValue, Ctx.mkNot(Mask)),
+      llvm::APInt(Width, 0)));
+
+  SymRef Input =
+      Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, Ctx.mkNot(Mask)));
+  for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+    MBAOptions Opts;
+    Opts.MaxWork = Limit;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Input);
+      EXPECT_LE(Result.Work, Limit);
+    }
+  }
+  MBAOptions NoStorage;
+  NoStorage.MaxTableBytes = 128;
+  NoStorage.MaxWork = 4096;
+  NoStorage.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+  EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+}
+
+TEST(SymMBAArithmetic, ProvesWideFlattenedDeMorganPartitions) {
+  for (uint32_t Width : {3u, 64u, 257u}) {
+    for (bool OuterOr : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(OuterOr);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        SymRef Value = Ctx.mkVar("value", Width);
+        llvm::SmallVector<SymRef, 32> Vars, Negated;
+        for (unsigned I = 0; I < 30; ++I) {
+          SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+          Vars.push_back(Var);
+          Negated.push_back(Ctx.mkNot(Var));
+        }
+        SymRef Mask = Ctx.mkAnd(Vars);
+        SymRef Opposite = Ctx.mkOr(Negated);
+        SymRef Input =
+            OuterOr
+                ? Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, Opposite))
+                : Ctx.mkAdd(Ctx.mkAnd(Value, Mask), Ctx.mkAnd(Value, Opposite));
+        SymRef Expected = OuterOr ? Ctx.mkAdd(Value, Ctx.mkOnes(Width)) : Value;
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkAdd(Value, Ctx.mkConst(Width, OuterOr ? 4 : 5));
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, FlattenedDeMorganPartitionsRespectProofAndBounds) {
+  constexpr unsigned Width = 64;
+  SymContext Ctx;
+  SymRef Value = Ctx.mkVar("value", Width);
+  SymRef Other = Ctx.mkVar("other", Width);
+  llvm::SmallVector<SymRef, 32> Vars, Negated;
+  for (unsigned I = 0; I < 30; ++I) {
+    SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+    Vars.push_back(Var);
+    Negated.push_back(Ctx.mkNot(Var));
+  }
+  SymRef Mask = Ctx.mkAnd(Vars);
+  SymRef Opposite = Ctx.mkOr(Negated);
+  for (bool OuterOr : {false, true}) {
+    SymRef Input = OuterOr ? Ctx.mkAdd(Ctx.mkOr({Value, Other, Mask}),
+                                       Ctx.mkOr({Value, Other, Opposite}))
+                           : Ctx.mkAdd(Ctx.mkAnd({Value, Other, Mask}),
+                                       Ctx.mkAnd({Value, Other, Opposite}));
+    SymRef Shared = OuterOr ? Ctx.mkOr(Value, Other) : Ctx.mkAnd(Value, Other);
+    SymRef Expected = OuterOr ? Ctx.mkAdd(Shared, Ctx.mkOnes(Width)) : Shared;
+    MBAOptions Opts;
+    Opts.MaxWork = 4096;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    }
+
+    for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+      MBAOptions Bounded = Opts;
+      Bounded.MaxWork = Limit;
+      for (bool Deep : {false, true}) {
+        MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Bounded)
+                                : simplifyMBA(Ctx, Input, Bounded);
+        EXPECT_EQ(Result.Expr, Input);
+        EXPECT_LE(Result.Work, Limit);
+      }
+    }
+    MBAOptions NoStorage = Opts;
+    NoStorage.MaxTableBytes = 128;
+    EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+    EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+  }
+
+  Negated[0] = Ctx.mkNot(Ctx.mkVar("replacement", Width));
+  SymRef WrongOpposite = Ctx.mkOr(Negated);
+  MBAOptions Opts;
+  Opts.MaxWork = 4096;
+  SymRef WrongAnd =
+      Ctx.mkAdd(Ctx.mkAnd(Value, Mask), Ctx.mkAnd(Value, WrongOpposite));
+  SymRef WrongOr =
+      Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, WrongOpposite));
+  EXPECT_NE(simplifyMBA(Ctx, WrongAnd, Opts).Expr, Value);
+  EXPECT_NE(simplifyMBADeep(Ctx, WrongAnd, Opts).Expr, Value);
+  EXPECT_NE(simplifyMBA(Ctx, WrongOr, Opts).Expr,
+            Ctx.mkAdd(Value, Ctx.mkOnes(Width)));
+  EXPECT_NE(simplifyMBADeep(Ctx, WrongOr, Opts).Expr,
+            Ctx.mkAdd(Value, Ctx.mkOnes(Width)));
+}
+
+TEST(SymMBAArithmetic, ProvesWideComplementSumsBeforeCornerMeasurement) {
+  for (uint32_t Width : {1u, 3u, 64u, 257u}) {
+    for (bool XorPair : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(XorPair);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        llvm::SmallVector<SymRef, 32> Vars, Negated;
+        for (unsigned I = 0; I < 30; ++I) {
+          SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+          Vars.push_back(Var);
+          Negated.push_back(Ctx.mkNot(Var));
+        }
+        SymRef A, B;
+        if (XorPair) {
+          A = Ctx.mkXor(Vars);
+          Vars[0] = Negated[0];
+          B = Ctx.mkXor(Vars);
+        } else {
+          A = Ctx.mkAnd(Vars);
+          B = Ctx.mkOr(Negated);
+        }
+        SymRef Input = Ctx.mkAdd(A, B);
+        SymRef Expected = Ctx.mkOnes(Width);
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkConst(Width, 4);
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, WideComplementSumsRespectBoundsAndNearMisses) {
+  constexpr unsigned Width = 8;
+  SymContext Ctx;
+  llvm::SmallVector<SymRef, 32> Vars, Negated;
+  for (unsigned I = 0; I < 30; ++I) {
+    SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+    Vars.push_back(Var);
+    Negated.push_back(Ctx.mkNot(Var));
+  }
+  SymRef Input = Ctx.mkAdd(Ctx.mkAnd(Vars), Ctx.mkOr(Negated));
+  for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+    MBAOptions Opts;
+    Opts.MaxWork = Limit;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Input);
+      EXPECT_LE(Result.Work, Limit);
+    }
+  }
+  MBAOptions NoStorage;
+  NoStorage.MaxTableBytes = 128;
+  NoStorage.MaxWork = 4096;
+  NoStorage.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+  EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+
+  Negated[0] = Ctx.mkNot(Ctx.mkVar("replacement", Width));
+  SymRef NearMiss = Ctx.mkAdd(Ctx.mkAnd(Vars), Ctx.mkOr(Negated));
+  MBAOptions Opts;
+  Opts.MaxWork = 4096;
+  EXPECT_NE(simplifyMBA(Ctx, NearMiss, Opts).Expr, Ctx.mkOnes(Width));
+  EXPECT_NE(simplifyMBADeep(Ctx, NearMiss, Opts).Expr, Ctx.mkOnes(Width));
+
+  llvm::SmallVector<SymRef, 32> EvenParity(Vars.begin(), Vars.end());
+  EvenParity[0] = Ctx.mkNot(Vars[0]);
+  EvenParity[1] = Ctx.mkNot(Vars[1]);
+  SymRef XorNearMiss = Ctx.mkAdd(Ctx.mkXor(Vars), Ctx.mkXor(EvenParity));
+  EXPECT_NE(simplifyMBA(Ctx, XorNearMiss, Opts).Expr, Ctx.mkOnes(Width));
+  EXPECT_NE(simplifyMBADeep(Ctx, XorNearMiss, Opts).Expr, Ctx.mkOnes(Width));
+}
+
+TEST(SymMBAArithmetic, WideComplementSumsMatchMixedPolarity) {
+  constexpr unsigned Width = 64;
+  SymContext Ctx;
+  llvm::SmallVector<SymRef, 32> AndTerms, OrTerms;
+  for (unsigned I = 0; I < 30; ++I) {
+    SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+    AndTerms.push_back(I % 2 ? Ctx.mkNot(Var) : Var);
+    OrTerms.push_back(I % 2 ? Var : Ctx.mkNot(Var));
+  }
+  SymRef Input = Ctx.mkAdd(Ctx.mkAnd(AndTerms), Ctx.mkOr(OrTerms));
+  MBAOptions Opts;
+  Opts.MaxWork = 4096;
+  Opts.VerifySamples = 0;
+  for (bool Deep : {false, true}) {
+    MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                            : simplifyMBA(Ctx, Input, Opts);
+    EXPECT_EQ(Result.Expr, Ctx.mkOnes(Width));
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+  }
+}
+
 TEST(SymMBAArithmetic, WideParityPartitionRejectsNearMissesAndLowBudgets) {
   SymContext Ctx;
   constexpr unsigned Width = 8;
