@@ -74,9 +74,10 @@ static cl::opt<std::string>
             cl::init(""));
 static cl::opt<bool> References(
     "references",
-    cl::desc("State the routines each COFF function branches to directly as "
-             "^offset name references, which matching checks against the "
-             "image; loaders older than the references reject such lines"),
+    cl::desc("State the routines each COFF or ELF function branches to "
+             "directly as ^offset name references, which matching checks "
+             "against the image; loaders older than the references reject "
+             "such lines"),
     cl::init(false));
 static cl::opt<bool>
     Verify("verify",
