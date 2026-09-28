@@ -173,7 +173,10 @@ MedOp buildCmpOp(CondCode CC, const MedVar &A, const MedVar &B,
                  const MedVar &OutputVar, va_t Addr) {
   MedOp Op;
   Op.Addr = Addr;
-  Op.Opcode = condToOpcode(CC);
+  // Every VS fold here requires a genuine INT_SUB source. Its V flag is the
+  // signed overflow of A-B (INT_SBOR), not the overflow of A+B (INT_SOVF).
+  // ADD-derived VS conditions stay in the original flag chain.
+  Op.Opcode = CC == CondCode::VS ? NdOp::INT_SBOR : condToOpcode(CC);
   if (condSwapsOperands(CC)) {
     Op.addInput(B);
     Op.addInput(A);
