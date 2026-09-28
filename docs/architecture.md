@@ -84,6 +84,12 @@ within the synthetic frame. LLVMC preserves a host pointer through a mask
 that is an identity at the target pointer width, so generated C does not
 truncate valid host address bits.
 
+Before either source route, MedIR can replace a stack-alignment mask with an
+exact offset only when an authenticated entry-SP definition and the target
+ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
+keep the original operation. The LLVM-to-C route explicitly requests this
+source projection even though it otherwise uses the direct LLVM pipeline.
+
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
 use this graph. Bounded partitions track repeated equality tests between scalar

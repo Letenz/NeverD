@@ -158,6 +158,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           if (!Callee)
             continue;
           const auto IID = Callee->getIntrinsicID();
+          if (IID == llvm::Intrinsic::memcpy ||
+              IID == llvm::Intrinsic::memmove || IID == llvm::Intrinsic::memset)
+            Headers.insert("string.h");
           if (IID == llvm::Intrinsic::fshl || IID == llvm::Intrinsic::fshr) {
             const auto *Ty = llvm::dyn_cast<llvm::IntegerType>(CI->getType());
             const unsigned Width = Ty ? Ty->getBitWidth() : 0;

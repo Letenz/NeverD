@@ -99,6 +99,13 @@ mixed samples only to discard candidates. `NeverDSolverTests` checks that an
 exact proof accepts equivalent arithmetic and rejects rare counterexamples or
 an incomplete proof.
 
+ARM, Thumb-1 and Thumb-2 Mach-O objects additionally run a complete
+two-function five-input case through both C routes. The check includes
+function-size recovery, a call to the first function at object address zero,
+source MBA elimination, and host-recompiled `-O0`/`-O2` execution. Dedicated
+MedIR tests cover exact stack-alignment offsets and reject dynamic, ambiguous,
+and stronger-than-ABI masks.
+
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
 through both C backends. Repeated private-frame reloads must reduce to

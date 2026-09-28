@@ -1129,6 +1129,10 @@ _thumb_back_caller:
   ASSERT_NE(ThumbCallee, nullptr);
   ASSERT_NE(ARMCallee, nullptr);
   ASSERT_NE(BackCaller, nullptr);
+  EXPECT_EQ(Caller->Size, 20u);
+  EXPECT_EQ(ThumbCallee->Size, 2u);
+  EXPECT_EQ(ARMCallee->Size, 4u);
+  EXPECT_EQ(BackCaller->Size, 6u);
   const uint8_t *Instructions = Img.readVA(Caller->Addr, 18);
   ASSERT_NE(Instructions, nullptr);
 
