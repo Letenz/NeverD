@@ -45,6 +45,8 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 Die Kerntests prüfen Kontexttrennung, Fixpunkt-Zusammenführungen, dynamische Schleifen, überlappende Register, Alias-Invalidierung, endlichen Dispatch und Ablehnung ohne teilweisen Ersatz. Die Quelltexttests assemblieren eigenständige x64-Maschinen mit Registern, Stack und endlichen Adressen; sie umfassen zusammenhängende Kontrollfelder und ein unabhängiges natives SysV-/Win64-Oracle. Beide C-Pfade werden unter O0/O2 mit Fallen für undefiniertes Verhalten kompiliert und mit einem vorzeichenlosen Oracle für Berechnungen, Speicherzugriffe und Ausgabewächter verglichen. Negative Fälle prüfen fehlende Zertifikate und unzureichende Budgets. Die öffentliche CLI und ihre Berichte prüfen Kontrollfelder, Budgets, Zähler und Ablehnungen. Benötigt werden Clang mit Cross-Target-Unterstützung und LLD; die Ausführung des ursprünglichen ELF erfordert außerdem einen x64-Linux-Host. Fehlende Werkzeuge oder ein ungeeigneter Host bedeuten übersprungene Abdeckung, keinen Erfolg.
 
+`ControlStateRecovery.LongTransparentLoop*` prüft eine unabhängig entwickelte Schleife mit 20 Phasen, dynamische arithmetische Orakel, die Ablehnung unbekannter Selektoren und Budgeterschöpfung. `LongTransparentPhasesKeepExactBitDemands` prüft, dass unabhängige Bits im Byte des Selektors beobachtbare Laufzeitdaten bleiben und nicht zu Kontrollanforderungen werden. `ProducerClosureChargesWorkBeforeAnotherRestart` prüft, dass Rückwärtserkennung und erneute Auswertung bereits vor dem Start eines neuen Graphen gemeinsame Budgets verbrauchen und kein Teilergebnis veröffentlichen.
+
 ## Prüfungen der Treiberemulation
 
 Aktivieren Sie `NEVERD_ENABLE_DRIVER_EMULATION=ON` zusammen mit `BUILD_TESTING=ON`,

@@ -776,6 +776,11 @@ provider owns immutable image evidence, `SymExec` owns instruction semantics,
 and the residual CFG reuses the ordinary SSA and source backends. Recovery
 evidence remains separate from native occurrence and binary patch certificates.
 
+`InterpreterSpecialization` owns bounded backward propagation of pending bit
+demands after a failed attempt. It reuses the scalar evaluator without changing
+graph facts or allocating control fields or contexts; all work remains
+budgeted and publication requires a fresh complete proof.
+
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
 | LowIR | Architecture-neutral `NdOp` operations, basic blocks, CFG, and jump-table metadata | `include/neverd/ir/low`, `lib/ir/low`, produced by `lib/decode` + `lib/lift` |

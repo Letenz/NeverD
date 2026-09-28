@@ -39,6 +39,8 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 核心測試檢查上下文拆分、固定點匯合、動態迴圈、重疊暫存器、別名失效、有限目標派發，以及拒絕時不提供部分替代程式碼。原始碼測試組譯原創的暫存器式、堆疊式與有限位址 x64 機器，還原兩條 C 輸出路徑，在 O0/O2 下啟用未定義行為陷阱編譯，並與獨立的無號算術和記憶體參考實作對照執行。有限位址 fixture 涵蓋輸入選擇的記錄與相關游標／key 控制欄位；原生檢查涵蓋 SysV 和 Win64 呼叫慣例。測試也涵蓋公開 CLI、還原預算及不支援輸入的報告。需要支援跨目標編譯的 Clang 與 LLD；原始 ELF 的執行另需 x64 Linux 主機。缺少工具或主機不符屬於略過的涵蓋範圍，不代表通過。
 
+`ControlStateRecovery.LongTransparentLoop*` 涵蓋獨立撰寫的 20 階段迴圈、動態算術參考實作、未知 selector 拒絕及預算耗盡。`LongTransparentPhasesKeepExactBitDemands` 檢查 selector 同位元組內的無關位元仍是可觀察的執行期資料，不會成為控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 檢查反向探索及重播在新圖啟動前消耗共用預算，且不發布部分結果。
+
 ## 驅動程式模擬檢查
 
 同時啟用 `NEVERD_ENABLE_DRIVER_EMULATION=ON` 與 `BUILD_TESTING=ON`，即可建置專項執行套件及共享 C API／CLI 檢查：

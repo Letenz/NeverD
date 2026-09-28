@@ -72,6 +72,8 @@ sémantique des instructions et le CFG résiduel réutilise SSA et les générat
 de source ordinaires. Les preuves de récupération restent distinctes des
 certificats d’occurrences natives et de patch binaire.
 
+`InterpreterSpecialization` gère la propagation arrière bornée des demandes de bits après une tentative échouée. Il réutilise l’évaluateur scalaire sans modifier les faits du graphe ni ajouter de champs de contrôle ou de contextes ; tout travail reste soumis aux budgets et la publication exige une nouvelle preuve complète.
+
 | Représentation | Rôle | Définitions et transformations principales |
 |----------------|------|--------------------------------------------|
 | LowIR | Opérations `NdOp` indépendantes de l’architecture, blocs de base, CFG et métadonnées de tables de saut | `include/neverd/ir/low`, `lib/ir/low`, produit par `lib/decode` + `lib/lift` |

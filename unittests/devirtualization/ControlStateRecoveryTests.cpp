@@ -204,6 +204,31 @@ BankProvider makeBankProgram(bool Loop,
   return P;
 }
 
+void insertTransparentPhases(BankProvider &Provider, va_t Predecessor,
+                             va_t Successor, unsigned PhaseCount) {
+  if (!PhaseCount)
+    return;
+  constexpr va_t PhaseBase = 0x2000;
+  auto Operations = Provider.Code.at(Predecessor).Ops;
+  Operations.back() = jump(PhaseBase);
+  Provider.Code.erase(Predecessor);
+  Provider.add(Predecessor, Operations);
+  for (unsigned Phase = 0; Phase < PhaseCount; ++Phase)
+    Provider.add(
+        PhaseBase + 0x20 * Phase,
+        {jump(Phase + 1 == PhaseCount ? Successor
+                                      : PhaseBase + 0x20 * (Phase + 1))});
+}
+
+BankProvider
+makeLongControlLoop(SelectorInput Input = SelectorInput::MaskedScalar) {
+  auto Provider = makeBankProgram(true, Input);
+  // These native phases transport the same selector without rebuilding its
+  // bound. Its only bounds come from entry and the loop handlers' updates.
+  insertTransparentPhases(Provider, Reload, Dispatch, 20);
+  return Provider;
+}
+
 constexpr va_t FirstPhaseEntry = 0x200;
 constexpr uint64_t FirstSelectorRegister = 0x300;
 constexpr int64_t FirstSelectorSlot = -112;
@@ -465,7 +490,7 @@ BankProvider makeFiniteDependencyProgram() {
   return Provider;
 }
 
-BankProvider makeCrossPhaseBitDemandProgram() {
+BankProvider makeCrossPhaseBitDemandProgram(unsigned TransparentPhases = 0) {
   auto Provider = makeFiniteDependencyProgram();
   constexpr va_t PrefixReload = 0x220;
   constexpr va_t PrefixDispatch = 0x240;
@@ -515,6 +540,8 @@ BankProvider makeCrossPhaseBitDemandProgram() {
                                {r(ResultRegister), r(PrefixContribution)}));
   Provider.Code.erase(HandlerBase);
   Provider.add(HandlerBase, ConsumerOps);
+  insertTransparentPhases(Provider, PrefixReload, PrefixDispatch,
+                          TransparentPhases);
   return Provider;
 }
 
@@ -777,6 +804,122 @@ TEST(ControlStateRecovery, AutomaticFieldsNeverPartitionLoopCounterContexts) {
         Expected += (Input ^ 45) + 3 + 11 * ((Input + Iteration) & 3);
       EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
     }
+}
+
+TEST(ControlStateRecovery,
+     LongTransparentLoopPhasesDoNotConsumeOneRefinementEach) {
+  auto Provider = makeLongControlLoop();
+  const auto CheckOracle = [](const SpecializationResult &Result) {
+    for (uint64_t High : {0ULL, 0x123456789abcdef0ULL, ~3ULL})
+      for (uint64_t Lane = 0; Lane < 4; ++Lane)
+        for (uint64_t Limit : {1ULL, 3ULL, 9ULL}) {
+          const uint64_t Input = High | Lane;
+          SCOPED_TRACE(Input);
+          SCOPED_TRACE(Limit);
+          uint64_t Expected = 0;
+          for (uint64_t Iteration = 0; Iteration < Limit; ++Iteration)
+            Expected += (Input ^ 45) + 3 + 11 * ((Input + Iteration) & 3);
+          EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
+        }
+  };
+
+  // Establish that the loop is finite-control recoverable before checking
+  // discovery. Neither the payload nor the business counter is a hint.
+  const auto Hinted =
+      specializeInterpreter(Provider, {Entry}, bankOptions(true, true));
+  ASSERT_TRUE(Hinted.complete()) << Hinted.Diagnostic;
+  CheckOracle(Hinted);
+
+  auto Options = automaticBankOptions();
+  Options.MaxContextsPerAddress = 1;
+  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(Result.DiscoveredContextFields, 0u);
+  EXPECT_LE(Result.DiscoveredControlFields, Options.MaxControlFields);
+  EXPECT_LE(Result.ControlRefinements, Options.MaxControlRefinements);
+  EXPECT_LE(Result.DiscoveryVisits, Options.MaxDiscoveryVisits);
+  CheckOracle(Result);
+}
+
+TEST(ControlStateRecovery, LongTransparentLoopCannotBoundUnknownSelectors) {
+  for (auto Input :
+       {SelectorInput::UnboundedScalar, SelectorInput::UnknownMemory}) {
+    SCOPED_TRACE(static_cast<unsigned>(Input));
+    auto Provider = makeLongControlLoop(Input);
+    expectNoPublication(
+        specializeInterpreter(Provider, {Entry}, bankOptions(true, true)));
+    auto Options = automaticBankOptions();
+    Options.MaxContextsPerAddress = 1;
+    expectNoPublication(specializeInterpreter(Provider, {Entry}, Options));
+  }
+}
+
+TEST(ControlStateRecovery, LongTransparentLoopKeepsRefinementAndWorkBudgets) {
+  for (unsigned Budget = 0; Budget < 3; ++Budget) {
+    SCOPED_TRACE(Budget);
+    auto Provider = makeLongControlLoop();
+    auto Options = automaticBankOptions();
+    Options.MaxContextsPerAddress = 1;
+    switch (Budget) {
+    case 0:
+      Options.MaxControlRefinements = 0;
+      break;
+    case 1:
+      Options.MaxDiscoveryVisits = 1;
+      break;
+    case 2:
+      Options.MaxOperations = 1;
+      break;
+    }
+    expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+  }
+}
+
+TEST(ControlStateRecovery, ProducerClosureChargesWorkBeforeAnotherRestart) {
+  auto Provider = makeLongControlLoop();
+  auto Options = automaticBankOptions();
+  Options.MaxContextsPerAddress = 1;
+  const auto Complete = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(Complete.complete()) << Complete.Diagnostic;
+  ASSERT_GT(Complete.ControlRefinements, 1u);
+
+  // Stop after the first field has been installed, immediately before the
+  // next dependency closure. This measures the same prefix of work instead
+  // of relying on a fixed evaluator or discovery count.
+  auto BoundaryOptions = Options;
+  BoundaryOptions.MaxControlRefinements = 1;
+  const auto Boundary =
+      specializeInterpreter(Provider, {Entry}, BoundaryOptions);
+  expectBudgetRefusal(Boundary);
+  ASSERT_EQ(Boundary.ControlRefinements, BoundaryOptions.MaxControlRefinements);
+  ASSERT_LT(Boundary.NodeEvaluations + 1, Complete.NodeEvaluations);
+  ASSERT_LT(Boundary.EvaluatedOperations + 1, Complete.EvaluatedOperations);
+  ASSERT_LT(Boundary.DiscoveryVisits + 1, Complete.DiscoveryVisits);
+
+  for (unsigned Budget = 0; Budget < 3; ++Budget) {
+    SCOPED_TRACE(Budget);
+    auto Limited = Options;
+    switch (Budget) {
+    case 0:
+      Limited.MaxNodeEvaluations = Boundary.NodeEvaluations + 1;
+      break;
+    case 1:
+      Limited.MaxOperations = Boundary.EvaluatedOperations + 1;
+      break;
+    case 2:
+      Limited.MaxDiscoveryVisits = Boundary.DiscoveryVisits + 1;
+      break;
+    }
+    const auto Result = specializeInterpreter(Provider, {Entry}, Limited);
+    expectBudgetRefusal(Result);
+    // Closure work has begun, but no fresh fixed point has started. Discovery
+    // may stop while building its predecessor graph, before a node replay.
+    if (Budget == 2)
+      EXPECT_GT(Result.DiscoveryVisits, Boundary.DiscoveryVisits);
+    else
+      EXPECT_GT(Result.NodeEvaluations, Boundary.NodeEvaluations);
+    EXPECT_EQ(Result.ControlRefinements, Boundary.ControlRefinements);
+  }
 }
 
 TEST(ControlStateRecovery, DiscoveryIgnoresUnrelatedControlRegisterReuse) {
@@ -1119,6 +1262,34 @@ TEST(ControlStateRecovery, BitDemandsDoNotExpandAcrossProducerPhases) {
     uint64_t Combined = 0;
     for (unsigned I = 0; I < FirstProducerInputs; ++I) {
       const auto Value = (Seed + 23 * I) ^ (Seed >> I);
+      Combined ^= Value;
+      ExtraRegisters.emplace(FirstProducerRegister + I * 8, Value);
+    }
+    for (uint64_t Input : {0ULL, 1ULL, 6ULL, 17ULL, 0xabcdefULL, ~0ULL})
+      EXPECT_EQ(run(Result.Residual, Input, 0, ExtraRegisters),
+                (Input ^ 83) + 9 + 16 * (Combined & 15));
+  }
+}
+
+TEST(ControlStateRecovery, LongTransparentPhasesKeepExactBitDemands) {
+  auto Provider = makeCrossPhaseBitDemandProgram(20);
+  const auto Options = finiteDependencyOptions(false, true);
+  // The low bit controls a one-record table; 17 unrelated inputs supply the
+  // same byte's observable upper nibble. Backward closure across the branch
+  // chain must retain only the demanded bit, not enroll the whole byte.
+  ASSERT_GT(FirstProducerInputs, Options.MaxControlFields);
+  const auto Result =
+      specializeInterpreter(Provider, {FirstPhaseEntry}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_LE(Result.DiscoveredControlFields, Options.MaxControlFields);
+  EXPECT_LE(Result.ControlRefinements, Options.MaxControlRefinements);
+  EXPECT_LE(Result.DiscoveryVisits, Options.MaxDiscoveryVisits);
+  EXPECT_LE(Result.SolverQueries, Options.MaxSolverQueries);
+  for (uint64_t Seed : {0ULL, 37ULL, ~0ULL}) {
+    std::map<uint64_t, uint64_t> ExtraRegisters;
+    uint64_t Combined = 0;
+    for (unsigned I = 0; I < FirstProducerInputs; ++I) {
+      const uint64_t Value = (Seed + 23 * I) ^ (Seed >> I);
       Combined ^= Value;
       ExtraRegisters.emplace(FirstProducerRegister + I * 8, Value);
     }

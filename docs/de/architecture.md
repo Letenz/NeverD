@@ -72,6 +72,8 @@ die Instruktionssemantik. Das verbleibende CFG verwendet die gewöhnlichen
 SSA- und Quelltext-Backends. Rekonstruktionsnachweise bleiben von Nachweisen
 nativer Instruktionsvorkommen und binärer Patches getrennt.
 
+`InterpreterSpecialization` verantwortet die begrenzte Rückwärtspropagierung von Bit-Anforderungen nach einem fehlgeschlagenen Versuch. Es nutzt den skalaren Auswerter, ohne Graphfakten zu ändern oder Kontrollfelder und Kontexte hinzuzufügen; sämtliche Arbeit bleibt budgetiert und die Veröffentlichung erfordert einen neuen vollständigen Beweis.
+
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |
 |-------------|-------|--------------------------------------------|
 | LowIR | Architekturunabhängige `NdOp`-Operationen, Basisblöcke, CFG und Sprungtabellenmetadaten | `include/neverd/ir/low`, `lib/ir/low`, erzeugt durch `lib/decode` + `lib/lift` |

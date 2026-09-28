@@ -179,6 +179,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
 
+`ControlStateRecovery.LongTransparentLoop*` covers an independently authored
+20-phase loop, dynamic arithmetic oracles, unknown-selector refusal and budget
+exhaustion. `LongTransparentPhasesKeepExactBitDemands` checks that unrelated
+bits in the selector's byte remain observable runtime data without becoming
+control demands. `ProducerClosureChargesWorkBeforeAnotherRestart` checks that
+backward discovery and replay consume the shared budgets before a new graph
+starts, with no partial publication.
+
 `VMShapeSourceTests.cpp` adds three original shapes recovered without manual
 control hints: direct-threaded pointer bytecode, a bounded software CALL/RET
 stack with nested virtual calls, and a loop with rotating opcode-decoder state.
