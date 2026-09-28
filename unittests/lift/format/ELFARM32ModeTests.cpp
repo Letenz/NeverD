@@ -101,6 +101,31 @@ protected:
     Output.close();
     return ELFLoader().load(Stripped);
   }
+
+  /// Links \p Source as an ARM32 shared library and strips its symbol table,
+  /// as an Android JNI library ships: only the dynamic symbols, the PLT, and
+  /// the imports remain.
+  llvm::Expected<BinaryImage>
+  loadStrippedSharedAssembly(const std::string &Name,
+                             const std::string &Source) {
+    const auto Assembly = tmpFile(Name + ".s");
+    std::ofstream(Assembly) << Source;
+    const auto Object = tmpFile(Name + ".o");
+    const auto Library = tmpFile(Name + ".so");
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                                 Assembly.string(), "-o", Object.string()});
+    if (!Compiled.ok())
+      return llvm::make_error<llvm::StringError>(
+          Compiled.err, llvm::inconvertibleErrorCode());
+    const auto LinkedOk =
+        exec("ld.lld", {"-m", "armelf_linux_eabi", "-shared", "--strip-all",
+                        Object.string(), "-o", Library.string()});
+    if (!LinkedOk.ok())
+      return llvm::make_error<llvm::StringError>(
+          LinkedOk.err, llvm::inconvertibleErrorCode());
+    return ELFLoader().load(Library);
+  }
 };
 
 TEST_F(ELFARM32ModeTest, PreservesThumbModeBeforeNormalizingFunctionAddresses) {
@@ -817,6 +842,197 @@ whole:
   const std::string Message = llvm::toString(Image.takeError());
   EXPECT_NE(Message.find("overlaps the instruction at"), std::string::npos)
       << Message;
+}
+
+// A routine that ends in exit_group never returns, so what follows a call
+// to it is not the caller's: here, a Thumb routine the caller also calls.
+TEST_F(ELFARM32ModeTest, StopsAfterACallToARoutineThatExits) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("exits", R"(
+.syntax unified
+.text
+.arm
+.globl _start
+.type _start,%function
+_start:
+  blx helper
+  bl die
+.thumb
+.thumb_func
+helper:
+  adds r0, r0, #1
+  bx lr
+.arm
+die:
+  ldr r7, =248
+  svc #0
+  mov r0, r0
+.ltorg
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  const va_t Helper = Entry + 8, Die = Entry + 12;
+  // `helper` returns, so the caller goes on to call `die`.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 4), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Helper), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Helper + 2), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Die), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Die + 4), InstructionMode::ARM);
+  // The instruction after the exiting system call is never reached.
+  EXPECT_FALSE(Image->instructionModeAt(Die + 8));
+}
+
+// Nor does a system call the path cannot prove is exit end it: a routine
+// that may take either branch returns.
+TEST_F(ELFARM32ModeTest, FollowsACallToARoutineThatMayReturn) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("returns", R"(
+.syntax unified
+.text
+.arm
+.globl _start
+.type _start,%function
+_start:
+  bl maybe
+  mov r0, #1
+  bl other
+  b _start
+maybe:
+  cmp r0, #0
+  bxeq lr
+  mov r7, #248
+  svc #0
+other:
+  mov r7, #20
+  svc #0
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 4), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 12), InstructionMode::ARM);
+  // getpid returns, and so does the routine that makes it.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 40), InstructionMode::ARM);
+}
+
+// A trap does not go on either, and a call that runs only under a condition
+// always may.
+TEST_F(ELFARM32ModeTest, StopsAtATrapButNotAfterAConditionalCall) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("trap", R"(
+.syntax unified
+.text
+.thumb
+.globl _start
+.type _start,%function
+.thumb_func
+_start:
+  cmp r0, #0
+  it eq
+  bleq die
+  blx arm_part
+  udf #254
+.arm
+.p2align 2
+arm_part:
+  add r0, r0, #1
+  bx lr
+die:
+  mov r7, #1
+  svc #0
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  // cmp, it, bleq (4), blx (4), udf: the call to `die` falls through, the
+  // trap does not, and the padding after it is nobody's.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 8), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 12), InstructionMode::Thumb);
+  EXPECT_FALSE(Image->instructionModeAt(Entry + 14));
+  EXPECT_EQ(Image->instructionModeAt(Entry + 16), InstructionMode::ARM);
+}
+
+// An Android library calls abort through a PLT veneer in ARM code, and its
+// Thumb caller is followed by an ARM routine.  The image has both modes, so
+// its PLT is not paired with the imports; the veneer's own instructions
+// still say which import it forwards to.
+TEST_F(ELFARM32ModeTest, StopsAfterAVeneerToAnImportThatDoesNotReturn) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("import", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  blx callee
+  bl abort
+.arm
+.p2align 2
+.globl callee
+.type callee,%function
+callee:
+  add r0, r0, #1
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+}
+
+// A library's veneer for a routine the library defines goes to that
+// definition, whose code says it never returns: a C++ runtime's throw
+// helpers end in __cxa_throw without being on any list.
+TEST_F(ELFARM32ModeTest, StopsAfterAVeneerToTheLibrarysOwnThrowHelper) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("helper", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  blx callee
+  bl throw_helper
+.arm
+.p2align 2
+.globl callee
+.type callee,%function
+callee:
+  add r0, r0, #1
+  bx lr
+.thumb
+.globl throw_helper
+.type throw_helper,%function
+.thumb_func
+throw_helper:
+  push {r4, lr}
+  bl __cxa_throw
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
 }
 
 TEST_F(ELFARM32ModeTest, UsesAddressSpecificModesInMixedImages) {

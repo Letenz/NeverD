@@ -19,6 +19,7 @@
 
 #include "llvm/Object/ELFObjectFile.h"
 
+#include <map>
 #include <optional>
 
 namespace neverd {
@@ -67,6 +68,10 @@ void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
 /// in the table -- the layout a lazily bound PLT happens to have is not the
 /// one `-z now`, `.plt.sec`, or an IFUNC produces.
 size_t recordARMPLTVeneers(BinaryImage &Img);
+
+/// The ARM `.plt` veneers of \p Img and the imports they forward to, found
+/// as \ref recordARMPLTVeneers finds them, without recording anything.
+std::map<va_t, size_t> findARMPLTVeneers(const BinaryImage &Img);
 
 /// Add function symbols from the .eh_frame_hdr section's binary-search
 /// table.  Template \p ShdrT must match the ELF class (Elf32_Shdr /
