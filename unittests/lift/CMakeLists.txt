@@ -142,6 +142,7 @@ add_neverd_unittest(NeverDLiftTests
   ../backend/HighSwiftEmitterTests.cpp
   ../loader/SwiftMetadataTests.cpp
   ../loader/SwiftValueWitnessCallTests.cpp
+  ../loader/SwiftVirtualCallTests.cpp
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/HighCIntegerWidthTests.cpp
@@ -952,6 +953,7 @@ if(MSVC)
 endif()
 add_neverd_unittest(NeverDObjCSourceCallTests
   ../loader/SwiftValueWitnessCallTests.cpp
+  ../loader/SwiftVirtualCallTests.cpp
   core/ObjCCategoryTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp

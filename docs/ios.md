@@ -387,3 +387,5 @@ The ARM64 Swift `UIColor.init(_ value: Int)` extension gets a source ABI only af
 HighIR preserves scalar provenance across a symbolic fold only when every contributing literal, including those reached through visible local definitions, is already a proven scalar. Unknown or address-derived inputs do not gain numeric provenance.
 
 Objective-C selector-stub calls also retain an address-shaped scalar as an integer argument only when the exact receiver declaration and selector stub revalidate, the parameter has the matching integer width, and the literal has scalar provenance without an address owner. Unknown or address-derived values still require relocation evidence.
+
+On ARM64 Mach-O, a Swift CGFloat getter exposed as an Objective-C method can project a virtual call only when the exact double-returning method encoding, unique Swift getter thunk symbol, receiver ivar-offset reference, strong libswiftCore _swift_isaMask import, masked-isa table load, and blr x21 target all agree. Generated C keeps the table load before retain/release and calls the target with swiftcall and swift_context; other virtual shapes remain unrecovered.

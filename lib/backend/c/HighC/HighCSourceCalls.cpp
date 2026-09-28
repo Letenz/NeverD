@@ -211,6 +211,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("weak import belongs to another binding kind");
   if (Hint.ValueWitness && Hint.CallKind != Kind::SwiftValueWitness)
     return bad("value-witness operation belongs to another binding kind");
+  if (Hint.Virtual && Hint.CallKind != Kind::SwiftVirtual)
+    return bad("Swift virtual evidence belongs to another binding kind");
   if (Hint.CallKind == Kind::SwiftValueWitness) {
     if (!isSwiftValueWitnessSourceCallHint(Hint, Opts.TheArch) ||
         !E.IsIndirectCall || E.CallAddr || !Hint.ValueWitness ||
@@ -253,6 +255,40 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return Result
                ? *Result
                : bad("Swift value-witness result carrier disagrees with ABI");
+  }
+  if (Hint.CallKind == Kind::SwiftVirtual) {
+    if (!Hint.Virtual || !CurrentFunc ||
+        CurrentFunc->Entry != Hint.Virtual->MethodEntry ||
+        !E.IsIndirectCall || E.CallAddr || !E.IndirectTarget ||
+        E.IndirectTarget->Kind != ExprKind::Var || E.Operands.size() != 1 ||
+        !E.Operands[0] || Signature.Architecture != Arch::AArch64 ||
+        Opts.TheArch != Arch::AArch64 || !Signature.HasExplicitABI ||
+        Signature.Convention !=
+            SourceFunctionTypeHint::ConventionKind::Swift ||
+        !Signature.ReturnType ||
+        Signature.ReturnType->Kind != NdTypeKind::Float ||
+        Signature.ReturnType->Size != 8 ||
+        Signature.Parameters.size() != 1 ||
+        Signature.Parameters[0].TheRole !=
+            SourceParameterTypeHint::Role::SwiftContext ||
+        !Signature.Parameters[0].Type ||
+        Signature.Parameters[0].Type->Kind != NdTypeKind::Ptr ||
+        Signature.Parameters[0].Type->Size != 8)
+      return bad("invalid Swift virtual binding");
+    auto Argument = sourceValue(exprStr(*E.Operands[0]), E.Operands[0]->Type,
+                                Signature.Parameters[0].Type);
+    if (!Argument)
+      return bad("Swift context carrier disagrees with ABI");
+    const std::string Prototype =
+        typeToC(Signature.ReturnType) +
+        " __attribute__((swiftcall)) (*)(" +
+        sourceParameterType(Signature.Parameters[0]) + ")";
+    const std::string Call = "((" + Prototype + ")(uintptr_t)(" +
+                             exprStr(*E.IndirectTarget) + "))(" +
+                             *Argument + ")";
+    auto Result = sourceValue(Call, Signature.ReturnType, E.Type);
+    return Result ? *Result
+                  : bad("Swift virtual result carrier disagrees with ABI");
   }
   if ((Hint.CallKind == Kind::SwiftStringBridge ||
        Hint.CallKind == Kind::SwiftStringFromNSString) &&
