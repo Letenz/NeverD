@@ -34,6 +34,17 @@ réussite de la cible.
 Consultez [CONTRIBUTING.md](CONTRIBUTING.md) pour le clone, les profils
 de compilation et LLVM précompilé sur macOS.
 
+## Vérifications de la récupération d’interpréteur
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+Les tests du cœur vérifient la séparation des contextes, les jonctions au point fixe, les boucles dynamiques, les registres superposés, l’invalidation des alias, la distribution finie et le refus sans remplacement partiel. Les tests de source assemblent des machines x64 originales à registres, à pile et à adresses finies ; ils incluent des champs de contrôle liés et un oracle natif indépendant SysV/Win64. Les deux parcours C sont compilés en O0/O2 avec pièges de comportement indéfini et comparés à un oracle non signé pour les calculs, écritures mémoire et sentinelles de sortie. Les cas négatifs vérifient les certificats manquants et les budgets insuffisants. La CLI publique et ses rapports vérifient les contrôles, budgets, compteurs et refus. Clang multicible et LLD sont requis ; l’exécution de l’ELF original exige aussi un hôte Linux x64. Un outil absent ou un hôte incompatible signifie une couverture ignorée, et non un succès.
+
 ## Vérifications de l’émulation des pilotes
 
 Activez `NEVERD_ENABLE_DRIVER_EMULATION=ON` avec `BUILD_TESTING=ON` pour compiler

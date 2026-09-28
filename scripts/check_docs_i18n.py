@@ -711,6 +711,7 @@ ENGLISH_DOCS = (
     Path("docs/windows-exception-reconstruction.md"),
     *(Path(f"docs/{stem}.md") for stem in GUIDE_STEMS),
     Path("docs/driver-emulation.md"),
+    Path("docs/interpreter-recovery.md"),
 )
 
 
@@ -732,6 +733,7 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/android.md"),
         Path(f"docs/{locale}/ios.md"),
         Path(f"docs/{locale}/driver-emulation.md"),
+        Path(f"docs/{locale}/interpreter-recovery.md"),
     )
 
 
@@ -2672,7 +2674,17 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             android_guide,
             ios_guide,
             _driver_guide,
+            _interpreter_guide,
         ) = localized_paths(locale)
+        require_tokens(
+            _interpreter_guide,
+            ("--devirtualize", "--vm-control", "--vm-control-stack=-16:8",
+             "neverd_devirtualize_source_v1", "neverd_free_string", "testing.md"),
+            errors,
+            view,
+        )
+        require_tokens(index, ("interpreter-recovery.md",), errors, view)
+        require_tokens(project_readme, ("--devirtualize", "interpreter-recovery.md"), errors, view)
         require_tokens(
             project_readme,
             (

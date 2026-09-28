@@ -73,6 +73,17 @@ metadata、Low/Med/High IR、検証済み LLVM、portable C11、安全な stable
 
 復元範囲は、対応しているコードパターンによって異なります。制限事項は各ガイドを参照してください。
 
+### インタープリターのソース復元（実験的）
+
+`neverd decompile --devirtualize` は、リンク済み x64 ELF/PE の単一関数を予算内で特化し、十分な証拠で解決できるディスパッチを除去して、HighC または LLVMC のソース出力を利用します。制御ヒントは実行時入力の値を与えません。未解決の制御フローや予算超過は失敗となり、部分的な置換コードを出力しません。
+
+```sh
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+```
+
+イメージの内容とアクセス権は固定し、外部由来のすべてのストア先範囲が入口の戻りアドレススロットと重ならないことを呼び出し元／環境が保証する必要があります。バイナリ patch や例外アンワインドの安全性を証明する機能ではありません。入力依存のバイトコードアドレスやデコーダー状態の関係は、一般には未対応です。契約、`--llvm` 経路、制限の詳細は[インタープリターのソース復元ガイド](interpreter-recovery.md)を参照してください。
+
 ## 仕組み
 
 ```text

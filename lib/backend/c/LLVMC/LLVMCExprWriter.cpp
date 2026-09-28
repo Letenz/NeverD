@@ -1232,6 +1232,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     }
   }
   if (!Owner && Synthesize && FrameBaseOffset != 0) {
+    if (OverlappingFrameAccessOffsets.count(Off))
+      return std::nullopt;
     const std::string Syn = syntheticFrameSlotName(Disp);
     if (!Syn.empty() && !isReservedFrameName(Syn)) {
       NamedFrameSlot &Slot = FrameSlots[Off];

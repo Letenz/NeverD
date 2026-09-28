@@ -31,6 +31,17 @@ fixture をコンパイル/リンクできずスキップされたテストは�
 クローン、ビルドプロファイル、macOS のプリビルド LLVM は
 [CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。
 
+## インタープリター復元の検査
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+コアテストはコンテキスト分離、不動点への合流、動的ループ、重複レジスタ、エイリアス無効化、有限ターゲット、拒否時に部分的な置換を出さないことを確認します。ソーステストは独自のレジスタ型、スタック型、有限アドレス型の x64 マシンを組み立て、両 C 経路を復元して、未定義動作トラップを有効にした O0/O2 でコンパイルし、独立した符号なし算術とメモリの参照実装と実行を比較します。有限アドレス fixture は入力で選ぶレコードとカーソル／キーの相関を検査し、ネイティブ検査は SysV/Win64 を対象にします。公開 CLI、復元予算、未対応入力のレポートも検査します。クロスターゲット Clang と LLD が必要で、元の ELF の実行には x64 Linux ホストも必要です。ツール不足やホスト不一致でのスキップは未実行の範囲であり、成功ではありません。
+
 ## ドライバーエミュレーションの検査
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON` と `BUILD_TESTING=ON` を両方有効にすると、専用の実行スイートと共有 C API／CLI の検査をビルドできます。

@@ -113,6 +113,24 @@ cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
 ```
 
+## Interpreter recovery checks
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
+
+The flag-state fixture retains `PUSHFQ` and `POPFQ` across finite indirect
+dispatch, then executes recovered HighC and LLVMC at O0/O2. Core negative cases
+reject malformed flag intrinsics, snapshots of unbound entry flags, flag-derived
+writes without return-slot nonalias evidence, and unbounded flag-derived targets.
+They also reject direct reads of unbound flags after algebraic cancellation or
+a control-flow join where only one predecessor defines the flag.
+
 ## Driver emulation checks
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`

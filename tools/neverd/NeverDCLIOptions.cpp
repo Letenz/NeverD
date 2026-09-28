@@ -336,6 +336,31 @@ cl::opt<bool>
     LlvmRoute("llvm", cl::desc("Emit LLVM-to-C (goto-style) instead of HighC"),
               cl::sub(DecompileCmd), cl::sub(ExportCmd));
 
+cl::opt<bool> Devirtualize(
+    "devirtualize",
+    cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
+    cl::sub(DecompileCmd));
+cl::list<std::string> VMControlRegisters(
+    "vm-control",
+    cl::desc("Full GPR used to separate interpreter contexts (repeatable)"),
+    cl::ZeroOrMore, cl::sub(DecompileCmd));
+cl::list<std::string> VMControlFrameSlots(
+    "vm-control-stack",
+    cl::desc("Entry-RSP-relative context slot offset:bytes (repeatable)"),
+    cl::ZeroOrMore, cl::sub(DecompileCmd));
+cl::opt<unsigned> VMMaxNodes("vm-max-nodes", cl::desc("Recovery node budget"),
+                             cl::init(4096), cl::sub(DecompileCmd));
+cl::opt<unsigned> VMMaxContexts("vm-max-contexts",
+                                cl::desc("Contexts per native address"),
+                                cl::init(64), cl::sub(DecompileCmd));
+cl::opt<uint64_t> VMMaxOperations("vm-max-operations",
+                                  cl::desc("Recovery operation budget"),
+                                  cl::init(262144), cl::sub(DecompileCmd));
+cl::opt<std::string>
+    VMRecoveryReport("recovery-report",
+                     cl::desc("Write local recovery evidence JSON"),
+                     cl::sub(DecompileCmd));
+
 cl::opt<neverd_output_language_t>
     OutputLanguage("language", cl::desc("Output source language"),
                    cl::ValuesClass({

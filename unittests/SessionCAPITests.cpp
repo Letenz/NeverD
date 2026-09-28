@@ -45,6 +45,50 @@
 
 namespace {
 
+TEST(SessionInterpreterRecovery, RejectsTruncatedOptionsBeforeReadingFields) {
+  neverd_session_t Session = neverd_session_create();
+  ASSERT_NE(Session, nullptr);
+  // Only the size field is accessible through this versioned options prefix.
+  size_t SizeOnly = sizeof(size_t);
+  const char *Report = nullptr;
+  const char *Source = neverd_devirtualize_source_v1(
+      Session, 0,
+      reinterpret_cast<const neverd_devirtualize_options_v1 *>(&SizeOnly),
+      &Report);
+  EXPECT_EQ(Source, nullptr);
+  ASSERT_NE(Report, nullptr);
+  auto Parsed = llvm::json::parse(Report);
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  ASSERT_NE(Parsed->getAsObject(), nullptr);
+  EXPECT_EQ(Parsed->getAsObject()->getBoolean("complete"), false);
+  EXPECT_TRUE(Parsed->getAsObject()->getString("error").has_value());
+  neverd_free_string(Report);
+  neverd_session_destroy(Session);
+}
+
+TEST(SessionInterpreterRecovery, RejectsUnknownFlagsWithoutPublishingSource) {
+  neverd_session_t Session = neverd_session_create();
+  ASSERT_NE(Session, nullptr);
+  neverd_devirtualize_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.reserved = 1;
+  const char *Report = nullptr;
+  EXPECT_EQ(neverd_devirtualize_source_v1(Session, 0, &Options, &Report),
+            nullptr);
+  ASSERT_NE(Report, nullptr);
+  EXPECT_NE(std::string(Report).find("invalid devirtualize flags"),
+            std::string::npos);
+  neverd_free_string(Report);
+  neverd_session_destroy(Session);
+}
+
+TEST(SessionInterpreterRecovery, NullSessionClearsTheReportDestination) {
+  const char *Report = "previous";
+  EXPECT_EQ(neverd_devirtualize_source_v1(nullptr, 0, nullptr, &Report),
+            nullptr);
+  EXPECT_EQ(Report, nullptr);
+}
+
 std::string takeString(const char *Value) {
   if (!Value)
     return {};

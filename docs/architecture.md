@@ -734,6 +734,12 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## IR representations and routes
 
+The experimental [interpreter recovery stage](interpreter-recovery.md)
+specializes strictly lifted LowIR before the common MedIR boundary. Its
+provider owns immutable image evidence, `SymExec` owns instruction semantics,
+and the residual CFG reuses the ordinary SSA and source backends. Recovery
+evidence remains separate from native occurrence and binary patch certificates.
+
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
 | LowIR | Architecture-neutral `NdOp` operations, basic blocks, CFG, and jump-table metadata | `include/neverd/ir/low`, `lib/ir/low`, produced by `lib/decode` + `lib/lift` |

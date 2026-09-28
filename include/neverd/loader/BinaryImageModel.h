@@ -34,6 +34,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -529,6 +530,10 @@ struct BinaryImage {
   /// Empty for formats/targets without a supported exception directory.
   ExceptionInfo ExceptionMetadata;
   std::vector<uint8_t> Raw;
+  /// Digest of the exact file buffer consumed by the loader. Kept when a
+  /// restricted load omits Raw; never recomputed by reopening a mutable path.
+  /// Absent for in-memory synthetic images or loaders without file evidence.
+  std::optional<std::array<uint8_t, 32>> InputFileSHA256;
 
   bool is64Bit() const { return neverd::is64Bit(Bits); }
   bool is32Bit() const { return neverd::is32Bit(Bits); }

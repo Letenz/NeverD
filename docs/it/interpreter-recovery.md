@@ -1,0 +1,134 @@
+**Lingue**: [English](../interpreter-recovery.md) | [简体中文](../zh-CN/interpreter-recovery.md) | [繁體中文](../zh-TW/interpreter-recovery.md) | [日本語](../ja/interpreter-recovery.md) | [한국어](../ko/interpreter-recovery.md) | [Français](../fr/interpreter-recovery.md) | [Deutsch](../de/interpreter-recovery.md) | [Español](../es/interpreter-recovery.md) | [Italiano](interpreter-recovery.md) | [Русский](../ru/interpreter-recovery.md) | [العربية](../ar/interpreter-recovery.md)
+
+# Recupero del sorgente da interpreti
+
+[← Indice della documentazione](README.md)
+
+La fase sperimentale di specializzazione degli interpreti elimina il dispatch
+risolto staticamente da una funzione x64 già collegata, conservandone gli input
+a runtime, gli effetti sulla memoria, le diramazioni e i cicli. Usa la semantica
+delle istruzioni, senza firme degli handler né tabelle di opcode specifiche di
+un particolare sistema di protezione.
+
+```sh
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --llvm -o recovered-llvm.c
+```
+
+`--vm-control` seleziona registri generali interi che distinguono i contesti
+dell’interprete. Può essere ripetuto e non fornisce valori concreti. Si può
+selezionare, per esempio, un cursore del bytecode il cui valore viene stabilito
+dal codice d’ingresso. Un input a runtime usato come contatore deve restare
+dinamico. Una separazione insufficiente dei contesti può interrompere il
+recupero quando confluiscono valori diversi del cursore; il motore non deve
+compensare indovinando una destinazione di dispatch. Per un cursore salvato
+sullo stack, `--vm-control-stack=-16:8` seleziona otto byte a RSP d’ingresso meno
+16. L’offset è relativo all’ingresso della funzione, non al puntatore dello
+stack dopo le successive modifiche.
+
+L’API C è `neverd_devirtualize_source_v1()`, dichiarata in
+`neverd/sdk/NeverDCAPIDevirtualize.h`. Esegue una transazione separata senza
+modificare la normale cache di decompilazione della sessione. Un errore non
+restituisce sorgente, ma può comunque restituire una diagnosi JSON. Entrambe
+le stringhe allocate si liberano con `neverd_free_string()`.
+
+## Contratto di esecuzione
+
+L’adattatore binario accetta attualmente immagini x64 ELF e PE già collegate,
+agli indirizzi in cui sono mappate. Mappature, byte e permessi devono restare
+invariati, senza modifiche concorrenti. Il lifting rigoroso su richiesta segue
+il codice macchina raggiungibile. Istruzioni non supportate, chiamate,
+operazioni opache, accessi alla memoria ordinati, controllo non risolto e
+gestione delle eccezioni del linguaggio interrompono il recupero.
+
+Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazioni globali e i record delle eccezioni. La CLI li carica prima di applicare `--func`; chi usa l’API C non deve prima limitare la sessione con `neverd_session_restrict_function()`. L’adattatore rifiuta immagini caricate con un insieme ristretto di funzioni, perché i metadati omessi non dimostrano l’assenza di correzioni del loader o archi di eccezione.
+
+Solo intervalli completi di sola lettura, sostenuti dal file e privi di
+mappature sovrapposte o correzioni del loader, possono fornire letture costanti
+dell’immagine. Tabelle scrivibili, rilocazioni non risolte e istantanee campionate
+durante l’esecuzione non provano l’immutabilità. Le rilocazioni COPY e le directory delle eccezioni strutturalmente incomplete
+vengono rifiutate. Se la directory PE e gli intervalli delle funzioni sono
+completi, un gestore sconosciuto in un’altra funzione non blocca l’analisi
+dell’ingresso scelto; raggiungere il codice che copre interrompe il recupero. Il dominio
+ammesso richiede ritorni ABI ordinari: l’intervallo di destinazione di ogni
+scrittura di origine esterna deve essere disgiunto dallo slot dell’indirizzo
+di ritorno all’ingresso. È una precondizione esplicita per chiamante e ambiente,
+anche per indirizzi calcolati da interi esterni; l’assenza di provenienza dal
+frame dello stack non prova la disgiunzione numerica. Gli indirizzi di scrittura
+derivati dal frame devono dimostrare tale disgiunzione e il puntatore dello
+stack originale deve essere ripristinato al ritorno. Le informazioni di origine
+sopravvivono ai salvataggi sullo stack e alle confluenze; perdere un’espressione
+affine non la trasforma in un puntatore esterno. Pivot dello stack, ritorni che
+rimuovono gli argomenti nella funzione chiamata e dispatch basato su RET sono
+attualmente rifiutati. L’adattatore impone la semantica little-endian di x64.
+
+Il risultato è sorgente e IR per l’analisi. Non dimostra la sicurezza di
+rilocazione, unwinding, eccezioni asincrone o sostituzione binaria. La modalità
+patch rifiuta questa opzione. Non si garantisce il supporto di ogni interprete
+o configurazione di protezione.
+
+Le forme x64 esatte di `PUSHFQ`/`POPFQ` restano nel programma residuo. L’analisi tratta ogni istantanea dei flag della macchina come un valore di runtime sconosciuto; il lifter combina separatamente i flag aritmetici modellati. Anche il ripristino dei flag resta un effetto di runtime. Un indirizzo derivato da flag sconosciuti non può usare il contratto di non sovrapposizione del puntatore esterno con lo slot dell’indirizzo di ritorno; un dispatch derivato senza destinazioni dimostrate finite continua a fallire.
+
+Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direzione modellato deve essere definito nella funzione recuperata. Ogni lettura diretta di un flag richiede inoltre una definizione su tutti i percorsi predecessori raggiungibili, anche se la semplificazione simbolica ne annulla il valore. Altrimenti il recupero viene rifiutato, invece di emettere C con una trappola per un registro sconosciuto.
+
+## Limiti attuali
+
+Gli indirizzi di bytecode dipendenti dall’ingresso e le relazioni fra stati del decodificatore sono supportati solo quando i domini finiti e le correlazioni necessari sono dimostrabili entro i limiti configurati. Questo non dimostra il supporto di qualsiasi schema di decodifica indiretta. Rami e cicli dinamici possono essere recuperati se ogni destinazione di dispatch è dimostrata; la copertura dei normali rami non basta a provarlo. Controllo irrisolto o esaurimento di un budget di prova necessario costituiscono un errore, senza pubblicare sorgenti recuperati o sostituzioni parziali. Chiamate ausiliarie native, confini di eccezione o rientro, codice modificabile e altre architetture restano fuori dal contratto dell’adattatore.
+
+## Implementazione condivisa
+
+`SpecializationProvider` fornisce istruzioni completamente sottoposte a lifting
+e prove delle letture immutabili. `NeverDInterpreterSpecialization` usa la
+semantica esistente di `SymExec` per valutare parzialmente le operazioni intere
+e di controllo. L’adattatore binario gestisce mappature e decodifica; non
+implementa un secondo valutatore delle istruzioni.
+
+Per un indirizzo di lettura simbolico con dominio finito, il risolutore di vettori di bit integrato enumera gli indirizzi candidati sotto i vincoli correnti. L’insieme viene accettato solo dopo un risultato UNSAT finale che dimostri l’assenza di altre possibilità, e ogni indirizzo deve avere un certificato completo di lettura immutabile che non provochi errori di memoria. Tale lettura certificata può essere sostituita in LowIR da una cattura dell’indirizzo e una catena esatta di SELECT; le normali letture non certificate restano dinamiche. Un campione di indirizzi non sostituisce mai l’insieme completo. I registri di controllo e gli slot del frame d’ingresso selezionati possono conservare tuple congiunte limitate fra nodi, per esempio la relazione fra cursore e chiave di decodifica. Unioni e allargamenti restano conservativi. Modelli SAT parziali o risultati sconosciuti non provano la completezza dell’insieme di indirizzi o destinazioni. Questo meccanismo non richiede il backend Z3 opzionale.
+
+Un nodo è identificato dal cursore nativo, dalla modalità delle istruzioni e dalle costanti selezionate dei registri di controllo e degli slot del frame d’ingresso. Gli altri fatti a livello di byte si uniscono per intersezione. Quando un fatto in ingresso si indebolisce, il nodo viene valutato nuovamente. Così i cicli del programma restano cicli, senza espandere ogni iterazione osservata. Tutti i valori raggiungibili di una destinazione indiretta devono appartenere a un insieme limitato la cui completezza sia dimostrata; le destinazioni selezionate diventano confronti residui espliciti e archi del CFG.
+
+Operazioni dinamiche e normali letture/scritture restano in LowIR. Costanti scalari, puntatori
+affini relativi al frame d’ingresso e byte del frame provati costanti possono
+attraversare i nodi; le altre espressioni vengono scartate anziché espanse senza
+limite. La memoria del frame usa l’invalidazione conservativa degli alias dello
+stato simbolico esistente. Una scrittura tramite un puntatore sconosciuto che
+potrebbe sovrapporsi invalida i fatti in conflitto. Non si presume che uno slot
+dello stack sia privato né se ne eliminano gli effetti in base a un contratto
+di assenza di alias non dimostrato.
+
+Etichette sintetiche uniche delle istruzioni distinguono i contesti clonati.
+I confini delle istruzioni originali restano in una mappa d’origine separata;
+le certificazioni originali di rilocazioni, eccezioni e tabelle di salto non
+vengono copiate sulle nuove occorrenze. Il LowIR recuperato entra nella normale
+conversione LowIR-MedIR prima della separazione tra HighC e LLVM, condividendo
+la gestione di registri, stack, CFG, SSA e ABI. Il percorso HighC richiede anche
+che la verifica MedIR riesca.
+
+Budget per nodi, contesti per indirizzo, operazioni, valutazioni dei nodi e
+destinazioni finite limitano l’analisi. Se un budget si esaurisce o la semantica
+non è supportata, non viene pubblicata alcuna funzione residua. Un grafo di
+controllo completo è distinto dalla corretta emissione del sorgente; l’API
+pubblica verifica entrambi i risultati e ne segnala la differenza.
+
+Gli insiemi finiti di indirizzi di lettura, le tuple congiunte di controllo e il numero di campi di controllo hanno limiti espliciti. Un limite globale alle interrogazioni del risolutore e limiti per interrogazione a porte, conflitti, propagazioni e visite ai letterali sorvegliati delimitano il lavoro di prova; il limite ai nodi simbolici delimita la crescita delle espressioni. Il rapporto JSON include questi budget insieme a `solverQueries` e `relationalWidenings`.
+
+## Evidenze e test
+
+Il report JSON locale facoltativo include hash dell’input, controlli scelti,
+budget, stato, contatori del lavoro, numero di blocchi residui, posizioni delle
+istruzioni originali e byte immutabili usati nel recupero. Contiene informazioni
+derivate dall’input e viene scritto solo nel percorso locale richiesto.
+
+I test pubblici usano macchine originali con dispatch tramite registri e stack,
+ciascuna con programmi aritmetici, diramazioni con confluenze e cicli a runtime.
+Un oracolo indipendente senza segno verifica ritorni, scritture in memoria,
+riporti/prestiti e sentinelle di uscita. HighC e LLVMC recuperati vengono compilati
+a O0/O2 con trap per comportamento indefinito ed eseguiti contro l’oracolo.
+I casi negativi coprono dispatch non risolto o scrivibile, ordine dei byte
+incompatibile, metadati delle eccezioni e budget.
+
+Ulteriori fixture originali a indirizzi finiti usano record di sola lettura selezionati dall’ingresso, campi di controllo cursore/chiave correlati e uno stesso handler in posizioni virtuali diverse. Coprono rami con ricongiungimenti e cicli la cui selezione del record dipende dallo stato corrente del programma. L’oracolo nativo indipendente usa le convenzioni SysV e Win64; entrambi i percorsi C recuperati vengono verificati in O0/O2 con trap per comportamento indefinito e sentinelle di uscita. Certificati di lettura mancanti o budget di prova insufficienti non devono pubblicare risultati parziali.
+
+I target di test mirati sono descritti in [testing.md](testing.md).

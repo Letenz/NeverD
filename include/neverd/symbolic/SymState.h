@@ -58,6 +58,20 @@ struct SymRegisterRange {
   uint16_t Bytes = 0;
 };
 
+/// One proven constant byte in register or temporary storage. Memory is
+/// deliberately excluded: carrying memory facts requires an alias/effect
+/// contract in addition to the scalar lattice used by partial evaluation.
+struct SymConstantByte {
+  SymSpace Space = SymSpace::Register;
+  uint64_t Offset = 0;
+  uint8_t Value = 0;
+};
+
+struct SymConstantRegionByte {
+  uint64_t Offset = 0;
+  uint8_t Value = 0;
+};
+
 /// The state is a regular value: copying one is what forking a path is, so it
 /// has to sit in a container and be assigned like anything else.  A copy is a
 /// handful of maps of small integers, which is cheap enough that nothing more
@@ -157,6 +171,17 @@ public:
   /// on, which trades the exactness of a per-path answer for a cheaper walk.
   /// Where the states already agree there is nothing to trade.
   bool mergeIdentical(const SymState &Other);
+
+  /// Read-only scalar projection. Does not materialise unknown bytes and does
+  /// not expose symbolic identities, epochs, or memory-region assumptions.
+  llvm::SmallVector<SymConstantByte, 32> constantScalarBytes() const;
+
+  /// Constant bytes currently retained for this exact symbolic region base.
+  /// All guest writes have already applied store()'s alias invalidation. This
+  /// read-only projection does not claim that the region is private or create
+  /// missing bytes, and returns nothing for an absent/invalid base.
+  llvm::SmallVector<SymConstantRegionByte, 32>
+  constantRegionBytes(SymRef Base) const;
 
   /// A value nothing determines, of the given width.  Every unknown the engine
   /// invents comes from here, so they are all named and none can collide.

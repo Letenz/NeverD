@@ -65,6 +65,13 @@ Il loader valida grafi limitati e aciclici di stringhe costanti, oggetti interi,
 
 ## Rappresentazioni IR e percorsi
 
+La [fase sperimentale di recupero degli interpreti](interpreter-recovery.md)
+specializza LowIR ottenuto con lifting rigoroso prima del confine MedIR comune.
+Il provider gestisce le prove di immutabilità dell’immagine, `SymExec` la
+semantica delle istruzioni e il CFG residuo riutilizza SSA e i normali backend
+del sorgente. Le prove del recupero restano separate dalle certificazioni delle
+occorrenze native e delle patch binarie.
+
 | Rappresentazione | Scopo | Definizioni e trasformazioni principali |
 |------------------|-------|-----------------------------------------|
 | LowIR | Operazioni `NdOp` indipendenti dall’architettura, basic block, CFG e metadati delle jump table | `include/neverd/ir/low`, `lib/ir/low`, prodotto da `lib/decode` + `lib/lift` |

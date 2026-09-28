@@ -908,7 +908,9 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
       } else {
         Result->Kind = ExprKind::BinOp;
         Result->Op = NdOp::SUBBYTES;
-        Result->Operands = {Operand, HighExpr::makeConst(Low / 8, 4)};
+        Result->Operands = {
+            Operand,
+            HighExpr::makeConst(Low / 8, 4, ConstantAddressProvenance::Scalar)};
       }
       break;
     }

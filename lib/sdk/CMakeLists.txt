@@ -6,6 +6,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIBenchDecode.cpp
     capi/NeverDCAPIConcolic.cpp
     capi/NeverDCAPIDecompile.cpp
+    capi/NeverDCAPIDevirtualize.cpp
     capi/NeverDCAPIEmulation.cpp
     capi/NeverDCAPIObjC.cpp
     capi/NeverDCAPISwift.cpp
@@ -144,6 +145,7 @@ set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPITypes.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISession.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDisasm.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDevirtualize.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIEmulation.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIQuery.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISymbolic.h

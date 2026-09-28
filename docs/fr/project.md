@@ -40,6 +40,14 @@ La CLI expérimentale `neverd mobile app.apk -o recovered-app` restaure Java dep
 
 Le traitement iOS expérimental `neverd mobile App.ipa -o recovered-ios` exporte du C natif et des sources Objective-C/Swift prises en charge depuis IPA, `.app` ou Mach-O. Dispositions runtime, unités source et omissions par méthode restent explicites ; le code généré n’utilise aucun pont vers le binaire original. Voir le [guide iOS](ios.md) pour la configuration, la couverture et la recompilation indépendante.
 
+La récupération expérimentale `neverd decompile --devirtualize` spécialise les
+interpréteurs dans les images x64 ELF/PE déjà liées et produit du C via HighC ou
+LLVMC. Elle exige une image fixe et des préconditions explicites sur l’emplacement
+de retour ABI ; les cibles inconnues et budgets épuisés provoquent un échec.
+Le résultat sert à l’analyse et ne constitue pas une preuve de sûreté pour un
+patch ou les exceptions. Voir le [guide de récupération](interpreter-recovery.md)
+pour les contrôles, rapports et limites.
+
 ## Pourquoi NeverD ?
 
 - **Sémantique 1:1** — lifters manuscrits ; opcodes non supportés lèvent une exception en mode strict par défaut
@@ -123,6 +131,10 @@ cmake --build build
 ./build/bin/neverd lift -o out.ll binary
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
+
+# Récupération expérimentale de sources d’interpréteur
+./build/bin/neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
 
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
