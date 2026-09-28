@@ -193,6 +193,11 @@ class SourceFlow {
                HighSourceFlowIssue::MalformedExpression);
         Pending.emplace_back(Operand.get(), Depth + 1);
       }
+      // The function an indirect call runs is read like an operand.
+      if (Expression->IndirectTarget) {
+        spend(1);
+        Pending.emplace_back(Expression->IndirectTarget.get(), Depth + 1);
+      }
     }
   }
   static bool terminates(const ExprPtr &Expression) {

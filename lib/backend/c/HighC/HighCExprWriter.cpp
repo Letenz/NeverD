@@ -600,8 +600,11 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
 
   if (E.IntrinsicId == Intrinsic::None)
     Name = functionIdentifier(Name);
+  // A call through a parameter is named after it, but the parameter is only
+  // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
-      (Name.empty() || Name == "indirect" || Name == "indirect_call"))
+      (Name.empty() || Name == "indirect" || Name == "indirect_call" ||
+       E.IndirectParamIdx >= 0))
     Name = indirectCalleeStr(*E.IndirectTarget, E.Type);
 
   // A callee defined in this file has a prototype: convert between pointer
@@ -2278,6 +2281,10 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
     Base = Cur->Operands[0].get();
     Cur = peelIntegerViewOps(Base);
   }
+  // A slot of this function's frame prints as its local, the way every other
+  // load of it does.
+  if (Depth == 1 && Base && (namedFrameSlot(*Base) || frameDisplacement(*Base)))
+    return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
   if (Depth >= 1 && Base) {

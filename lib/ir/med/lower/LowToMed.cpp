@@ -218,6 +218,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     for (int8_t I = 0; I < 4; ++I)
       if ((DispatchCallDefinedArgs >> I) & 1)
         Count = I + 1;
+    // The function called is the one in RAX, not the dispatcher.
+    MOp.Opcode = NdOp::INDIR_CALL;
+    MOp.Inputs[0] = ndVarToMedVar(NdVar::reg(x86reg::RAX, 8));
     for (int8_t I = 0; I < Count; ++I)
       MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
     MOp.CalleeRegisterArgs = Count;

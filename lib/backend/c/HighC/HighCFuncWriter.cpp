@@ -4552,6 +4552,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     for (const ExprPtr &Operand : Expr.Operands)
       if (Operand)
         Self(Self, *Operand);
+    if (Expr.IndirectTarget)
+      Self(Self, *Expr.IndirectTarget);
   };
   auto ConsiderFrameUse = [&](const HighStmt &Stmt) {
     if ((NeedsFrameStorage && ProjectFrameAliasesIntoStorage) ||

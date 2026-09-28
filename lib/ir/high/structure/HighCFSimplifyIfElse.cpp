@@ -3505,6 +3505,23 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     if (!Def || DefI >= Body.size()) {
       continue;
     }
+    // The default moves ahead of the statements between the if and its old
+    // place. None of them may define what it reads or read what it defines,
+    // and a call, being work, may only move when nothing runs in between.
+    const bool DefIsWork = exprHasObservableEffect(Def.get());
+    bool MovesAcrossUse = false;
+    for (size_t K = P + 1; K < DefI && !MovesAcrossUse; ++K) {
+      if (isSkippablePad(Body[K]))
+        continue;
+      MedVar Written;
+      ExprPtr WrittenVal;
+      MovesAcrossUse = DefIsWork ||
+                       (isValueAssign(Body[K], Written, WrittenVal) &&
+                        exprUsesVar(Def.get(), Written)) ||
+                       stmtUsesJoinDest(Body[K], Dest);
+    }
+    if (MovesAcrossUse)
+      continue;
     // Only an `if` gives the default a new home for its label. Erasing an
     // entered default under an if/else would lose the jump's target.
     if (Prev.Kind == StmtKind::IfElse &&

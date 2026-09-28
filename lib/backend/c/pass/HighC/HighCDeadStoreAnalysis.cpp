@@ -44,6 +44,8 @@ void walkExprNodes(const HighExpr &Root, Visitor &&Visit) {
     if (!Seen.insert(Expr).second)
       continue;
     Visit(*Expr);
+    if (Expr->IndirectTarget)
+      Work.push_back(Expr->IndirectTarget.get());
     for (auto It = Expr->Operands.rbegin(); It != Expr->Operands.rend(); ++It)
       if (*It)
         Work.push_back(It->get());

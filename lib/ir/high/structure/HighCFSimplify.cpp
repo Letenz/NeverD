@@ -122,8 +122,16 @@ static void simplifyNestedGotos(std::vector<HighStmt> &Stmts) {
           if (!ElseStmts.empty() && ElseStmts.back().Kind == StmtKind::Goto)
             ElseMergeAddr = ElseStmts.back().GotoTarget;
 
+          // The statements after the else part replace the goto only when
+          // they are its target; otherwise the jump stays in the then arm.
           std::vector<HighStmt> IfStmts;
-          if (IfGotoTarget != 0 && EndJ < S.Body.size()) {
+          const bool TargetFollows =
+              IfGotoTarget != 0 && IfGotoTarget != InvalidVA &&
+              EndJ < S.Body.size() &&
+              (S.Body[EndJ].Addr == IfGotoTarget ||
+               (S.Body[EndJ].Kind == StmtKind::While &&
+                S.Body[EndJ].LoopHeaderAddr == IfGotoTarget));
+          if (TargetFollows) {
             size_t IfEnd = EndJ;
             for (size_t K = EndJ; K < S.Body.size(); ++K) {
               if (ElseMergeAddr != 0 && S.Body[K].Addr == ElseMergeAddr)

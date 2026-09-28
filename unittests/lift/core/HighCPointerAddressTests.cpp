@@ -40328,8 +40328,9 @@ TEST(HighCPointerAddresses, ExRaiseStatusEndsTheColdPath) {
 TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
   // ObpRemoveObjectRoutine: an indirect call through _guard_dispatch_icall
   // sets only RCX.  The dispatcher jumps to RAX with whatever registers it
-  // is given, but R8 and R9 here are just the caller's incoming values, so
-  // they are neither arguments of the call nor parameters of the caller.
+  // is given, so the call is to the function loaded into RAX.  R8 and R9
+  // here are just the caller's incoming values, so they are neither
+  // arguments of the call nor parameters of the caller.
   constexpr va_t Entry = 0x140001000;
   constexpr va_t Dispatch = 0x140001020;
   std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
@@ -40347,8 +40348,40 @@ TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(guard_dispatch_icall\([^,()]+\))")))
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, GuardDispatchTargetChosenOnTwoPathsStaysAssigned) {
+  // IovpCancelRoutine: RAX is a loaded callback, or the caller's third
+  // argument when there is none.  The dispatch call reads the value that
+  // reaches it on each path, so both assignments must stay before it.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Dispatch = 0x140001040;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28, // sub rsp, 28h
+                               0x48, 0x85, 0xc9,       // test rcx, rcx
+                               0x74, 0x09,             // je default
+                               0x48, 0x8b, 0x41, 0x08, // mov rax, [rcx+8]
+                               0x48, 0x85, 0xc0,       // test rax, rax
+                               0x75, 0x03,             // jne call
+                               0x4c, 0x89, 0xc0,       // default: mov rax, r8
+                               0xe8, 0x26, 0x00, 0x00, 0x00, // call dispatch
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Dispatch - Entry, 0xcc);
+  Code.insert(Code.end(), {0xff, 0xe0}); // jmp rax
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol DSym = Symbol::makeFunc(Dispatch);
+  DSym.Name = "_guard_dispatch_icall";
+  Img.Symbols.push_back(DSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("= arg2;"), std::string::npos) << HighC;
+  EXPECT_TRUE(
+      std::regex_search(HighC, std::regex(R"(= neverd_mem_load_\d+\()")))
       << HighC;
 }
 
