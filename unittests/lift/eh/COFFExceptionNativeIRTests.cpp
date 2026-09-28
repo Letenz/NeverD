@@ -1852,7 +1852,9 @@ TEST(COFFExceptionIR, NativeSEHHandlerReadsTheCatchPadExceptionCode) {
   Code.Kind = MedVar::SEHExceptionCode;
   Code.TheArch = Arch::X64;
   Code.Id = MedVar::SEHExceptionCodeId;
+  Code.SSAVer = 1;
   Code.Size = 4;
+  Code.ConstVal = Func.Entry + 0x20;
   MedOp StoreCode;
   StoreCode.Opcode = NdOp::STORE;
   StoreCode.Addr = Func.Entry + 0x20;

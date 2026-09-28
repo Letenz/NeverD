@@ -508,18 +508,28 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   if (TargetArch == Arch::X64 && Low.ExceptionMetadata &&
       Low.ExceptionMetadata->SEH) {
     auto IdsIt = RegOffToIds.find(TRI.IntReturnReg);
+    // Each handler entry receives its own code.  One shared value would let a
+    // later handler's code stand in for an earlier one that is still live.
+    std::vector<int> Handlers;
     for (int B = 0; B < N && IdsIt != RegOffToIds.end(); ++B) {
       const auto &Preds = Func.Blocks[B].ExceptionalPreds;
-      if (std::none_of(Preds.begin(), Preds.end(),
-                       [](const ExceptionalEdge &E) {
-                         return E.Kind == ExceptionalEdgeKind::SEHHandler;
-                       }))
-        continue;
+      if (std::any_of(Preds.begin(), Preds.end(), [](const ExceptionalEdge &E) {
+            return E.Kind == ExceptionalEdgeKind::SEHHandler;
+          }))
+        Handlers.push_back(B);
+    }
+    std::stable_sort(Handlers.begin(), Handlers.end(), [&](int L, int R) {
+      return Func.Blocks[L].StartAddr < Func.Blocks[R].StartAddr;
+    });
+    int Ordinal = 0;
+    for (int B : Handlers) {
       MedVar Code;
       Code.Kind = MedVar::SEHExceptionCode;
       Code.TheArch = TargetArch;
       Code.Id = MedVar::SEHExceptionCodeId;
+      Code.SSAVer = ++Ordinal;
       Code.Size = 4;
+      Code.ConstVal = Func.Blocks[B].StartAddr;
       std::vector<MedOp> Defs;
       for (int Id : IdsIt->second) {
         MedOp Def;

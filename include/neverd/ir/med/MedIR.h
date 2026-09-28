@@ -49,7 +49,9 @@ struct MedVar {
     Const,
     EHException,
     EHSelector,
-    /// The exception code a Windows __except handler is entered with.
+    /// The exception code a Windows __except handler is entered with.  Each
+    /// handler entry has its own value: SSAVer numbers the entries from 1 in
+    /// address order and ConstVal holds the entry's address.
     SEHExceptionCode
   };
   /// The id of every SEHExceptionCode value.  Value maps key a variable by

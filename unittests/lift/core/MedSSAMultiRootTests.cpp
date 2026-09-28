@@ -481,6 +481,42 @@ TEST(MedSEHHandlerEntry, EAXHoldsTheExceptionCode) {
   auto Code = storedValueAt(Med, Img.Entry + 0x20);
   ASSERT_TRUE(Code);
   EXPECT_EQ(Code->Kind, MedVar::SEHExceptionCode) << Code->display();
+  EXPECT_EQ(Code->SSAVer, 1);
+  EXPECT_EQ(Code->ConstVal, Img.Entry + 0x20);
+}
+
+// A second scope guards the nop before the first one and resumes at 0x13,
+// before the first handler.
+BinaryImage makeTwoSEHHandlerImage() {
+  BinaryImage Img = makeSEHHandlerRegisterImage();
+  auto &Data = Img.Segments.front().Data;
+  // Second handler: [rsp+40]=eax; jmp join.
+  const uint8_t Handler[] = {0x89, 0x44, 0x24, 0x28, 0xeb, 0x17};
+  std::copy(std::begin(Handler), std::end(Handler), Data.begin() + 0x13);
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Img.Entry + 0xf, Img.Entry + 0x10};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Img.Entry + 0x13;
+  Img.ExceptionMetadata.Functions.front().SEH->Scopes.push_back(Scope);
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+TEST(MedSEHHandlerEntry, EachHandlerEntryHasItsOwnExceptionCode) {
+  auto Img = makeTwoSEHHandlerImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-two-handlers"));
+  auto Early = storedValueAt(Med, Img.Entry + 0x13);
+  auto Late = storedValueAt(Med, Img.Entry + 0x20);
+  ASSERT_TRUE(Early && Late);
+  ASSERT_EQ(Early->Kind, MedVar::SEHExceptionCode) << Early->display();
+  ASSERT_EQ(Late->Kind, MedVar::SEHExceptionCode) << Late->display();
+  // Numbered in address order and keyed by the entry each handler starts at.
+  EXPECT_EQ(Early->SSAVer, 1);
+  EXPECT_EQ(Late->SSAVer, 2);
+  EXPECT_EQ(Early->ConstVal, Img.Entry + 0x13);
+  EXPECT_EQ(Late->ConstVal, Img.Entry + 0x20);
 }
 
 TEST(MedSEHHandlerEntry, ScratchRegisterIsNotTheNormalPathValue) {

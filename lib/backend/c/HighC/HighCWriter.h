@@ -444,9 +444,10 @@ public:
   /// Labels already printed in the current function; C allows each once.
   std::set<va_t> EmittedLabels;
   bool HasCIntrinsics = false;
-  /// The current function reads the code its __except handlers start with.
-  bool UsesSEHExceptionCode = false;
-  std::string sehExceptionCodeName() const;
+  /// Handler entry address -> the name its __except arm captures
+  /// GetExceptionCode() into, for each handler whose code is read.
+  std::map<va_t, std::string> SEHExceptionCodeNames;
+  void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   bool NeedsX87FpremHelpers = false;
   bool NeedsX64SyscallHelper = false;
   bool NeedsFEnvAccess = false;

@@ -2037,8 +2037,9 @@ private:
   /// each emitted landingpad stores its pair here before the recovered handler
   /// body reads it.
   llvm::AllocaInst *EHExceptionAlloca = nullptr;
-  /// The code each native SEH catch pad stores for its __except handler.
-  llvm::AllocaInst *SEHExceptionCodeAlloca = nullptr;
+  /// Handler entry address -> the slot its native SEH catch pad stores the
+  /// exception code in for the __except handler to read.
+  std::map<uint64_t, llvm::AllocaInst *> SEHExceptionCodeSlots;
   llvm::AllocaInst *EHSelectorAlloca = nullptr;
 
   // Dynamic (VLA / alloca) allocation bases of the current function, keyed by

@@ -29757,14 +29757,15 @@ HighStmt gotoStmt(va_t Addr, va_t Target) {
   return S;
 }
 
-HighStmt exceptTry(std::vector<HighStmt> Body, std::vector<HighStmt> Handler) {
+HighStmt exceptTry(std::vector<HighStmt> Body, std::vector<HighStmt> Handler,
+                   va_t HandlerVA = 0x14000104C) {
   HighStmt Try;
   Try.Kind = StmtKind::SEHTry;
   Try.EHIsReducible = true;
   Try.Body = std::move(Body);
   HighEHClause Except;
   Except.Kind = HighEHClauseKind::SEHExcept;
-  Except.HandlerVA = 0x14000104C;
+  Except.HandlerVA = HandlerVA;
   Try.EHClauses.push_back(Except);
   Try.EHClauseBodies.push_back(std::move(Handler));
   return Try;
@@ -29811,7 +29812,9 @@ TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
   MedVar Code;
   Code.Kind = MedVar::SEHExceptionCode;
   Code.Id = MedVar::SEHExceptionCodeId;
+  Code.SSAVer = 1;
   Code.Size = 4;
+  Code.ConstVal = 0x14000104C;
   Code.TheArch = Arch::X64;
   HighStmt Save;
   Save.Kind = StmtKind::Store;
@@ -29828,6 +29831,62 @@ TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
   EXPECT_NE(Source.find("exception_code)", CaptureAt + 1), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("exception_code;"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, NestedExceptArmKeepsTheOuterExceptionCode) {
+  // The outer handler runs a nested __try before storing its own code.  The
+  // inner arm captures into its handler's name, so the outer store still
+  // reads the outer code.
+  HighFunc Func;
+  Func.Name = "nested_exception_codes";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  const va_t OuterVA = 0x14000104C;
+  const va_t InnerVA = 0x140001060;
+  auto CodeOf = [](int Ordinal, va_t HandlerVA) {
+    MedVar Code;
+    Code.Kind = MedVar::SEHExceptionCode;
+    Code.Id = MedVar::SEHExceptionCodeId;
+    Code.SSAVer = Ordinal;
+    Code.Size = 4;
+    Code.ConstVal = HandlerVA;
+    Code.TheArch = Arch::X64;
+    return HighExpr::makeVar(Code, NdType::makeInt(4));
+  };
+  auto StoreAt = [](uint64_t Offset, ExprPtr Value) {
+    HighStmt Save;
+    Save.Kind = StmtKind::Store;
+    Save.StoreAddr = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                         HighExpr::makeConst(Offset, 8));
+    Save.StoreVal = std::move(Value);
+    return Save;
+  };
+  HighStmt Inner = exceptTry({callStmt("Cleanup", 0x140002100, {})},
+                             {StoreAt(16, CodeOf(2, InnerVA))}, InnerVA);
+  Func.Body = {exceptTry({callStmt("Probe", 0x140002000, {})},
+                         {Inner, StoreAt(8, CodeOf(1, OuterVA))}, OuterVA)};
+  const std::string Source = emitFunctions({Func});
+  const size_t OuterArm = Source.find("__except");
+  ASSERT_NE(OuterArm, std::string::npos) << Source;
+  const size_t OuterCapture =
+      Source.find("exception_code = GetExceptionCode();", OuterArm);
+  ASSERT_NE(OuterCapture, std::string::npos) << Source;
+  const size_t InnerCapture =
+      Source.find("exception_code_2 = GetExceptionCode();", OuterCapture);
+  ASSERT_NE(InnerCapture, std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 16), exception_code_2);", InnerCapture),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("+ 8), exception_code);", InnerCapture),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.substr(0, OuterArm).find(" exception_code;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.substr(0, OuterArm).find(" exception_code_2;"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, TryExitPastHandlerJoinStaysPrinted) {

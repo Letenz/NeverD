@@ -841,16 +841,17 @@ llvm::Value *MedLLVMEmitter::getRawSegmentOffset(const MedVar &V,
 llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
                                     llvm::IRBuilder<> &Builder) {
   if (V.Kind == MedVar::SEHExceptionCode) {
-    // The native SEH lowering stores each catch pad's code here.  Without
-    // it no edge reaches a handler, so this read is unreachable.
-    if (!SEHExceptionCodeAlloca) {
+    // The native SEH lowering stores the handler's catch pad code here.
+    // Without it no edge reaches the handler, so this read is unreachable.
+    llvm::AllocaInst *&Slot = SEHExceptionCodeSlots[V.ConstVal];
+    if (!Slot) {
       auto &Entry = CurFunc->getEntryBlock();
       llvm::IRBuilder<> AllocBuilder(&Entry, Entry.begin());
-      SEHExceptionCodeAlloca = AllocBuilder.CreateAlloca(
-          llvm::Type::getInt32Ty(*Ctx), nullptr, "seh.exception_code.slot");
+      Slot = AllocBuilder.CreateAlloca(llvm::Type::getInt32Ty(*Ctx), nullptr,
+                                       "seh.exception_code.slot");
     }
-    llvm::Value *Code = Builder.CreateLoad(
-        llvm::Type::getInt32Ty(*Ctx), SEHExceptionCodeAlloca, "exception_code");
+    llvm::Value *Code = Builder.CreateLoad(llvm::Type::getInt32Ty(*Ctx), Slot,
+                                           "exception_code");
     auto *WantedTy = sizeToType(V.Size);
     if (Code->getType() != WantedTy)
       Code = WantedTy->getIntegerBitWidth() < 32

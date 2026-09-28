@@ -215,6 +215,16 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
 
 void HighCWriter::emitIndent(int Indent) { emitCIndent(OS, Indent); }
 
+// GetExceptionCode() is only valid in the __except arm, so the arm stores it
+// in the name its handler's code reads.
+void HighCWriter::writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent) {
+  auto It = SEHExceptionCodeNames.find(HandlerVA);
+  if (It == SEHExceptionCodeNames.end())
+    return;
+  emitIndent(Indent);
+  OS << It->second << " = GetExceptionCode();\n";
+}
+
 void HighCWriter::emitRenderedStatement(int Indent, llvm::StringRef Text) {
   while (!Text.empty()) {
     auto [Line, Rest] = Text.split('\n');
@@ -1022,10 +1032,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       writeTryBody(Stmt.Body, Indent + 1);
       emitIndent(Indent);
       OS << "} __except (EXCEPTION_EXECUTE_HANDLER) {\n";
-      if (UsesSEHExceptionCode) {
-        emitIndent(Indent + 1);
-        OS << sehExceptionCodeName() << " = GetExceptionCode();\n";
-      }
+      for (const HighEHClause &Clause : Stmt.EHClauses)
+        writeSEHExceptionCodeCapture(Clause.HandlerVA, Indent + 1);
       emitIndent(Indent + 1);
       OS << "/* unstructured SEH region [0x"
          << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
@@ -1082,10 +1090,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       OS << ") {\n";
       // GetExceptionCode() is only valid in the __except arm; the handler
       // code, attached here or at its label, reads the captured value.
-      if (UsesSEHExceptionCode) {
-        emitIndent(Indent + 1);
-        OS << sehExceptionCodeName() << " = GetExceptionCode();\n";
-      }
+      writeSEHExceptionCodeCapture(Clause.HandlerVA, Indent + 1);
       {
         const bool SavedHandler = InEHClauseBody;
         InEHClauseBody = true;

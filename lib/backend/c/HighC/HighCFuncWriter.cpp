@@ -242,12 +242,12 @@ bool HighCWriter::isAnalysisOnlyFunction(const HighFunc &Func) const {
 }
 
 void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
-  UsesSEHExceptionCode = false;
+  SEHExceptionCodeNames.clear();
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
-      UsesSEHExceptionCode |=
-          (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-          E.Var.Kind == MedVar::SEHExceptionCode;
+      if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+          E.Var.Kind == MedVar::SEHExceptionCode)
+        SEHExceptionCodeNames.emplace(E.Var.ConstVal, varName(E.Var));
       E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
     };
     for (const ExprPtr *E :
@@ -579,10 +579,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         DeferredDecls.emplace(Name, DeferredDecl{Ty, {}});
   }
 
-  // The `__except` arm captures GetExceptionCode() into this name, so it is
-  // declared even when no printed statement reads it.
-  if (UsesSEHExceptionCode) {
-    const std::string Name = sehExceptionCodeName();
+  // Each `__except` arm captures GetExceptionCode() into its handler's name,
+  // so the name is declared even when no printed statement reads it.
+  for (const auto &[HandlerVA, Name] : SEHExceptionCodeNames) {
+    (void)HandlerVA;
     UsedVars.try_emplace(Name, NdType::makeInt(4, false));
     VisibleAssigned.insert(Name);
   }

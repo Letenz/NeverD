@@ -139,7 +139,8 @@ std::string HighCWriter::varName(const MedVar &V) const {
   case MedVar::EHSelector:
     return "eh_selector";
   case MedVar::SEHExceptionCode:
-    return "exception_code";
+    return V.SSAVer <= 1 ? std::string("exception_code")
+                         : "exception_code_" + std::to_string(V.SSAVer);
   case MedVar::Temp:
     return "t" + std::to_string(V.Id) +
            (V.SSAVer == 0 ? "" : "_" + std::to_string(V.SSAVer));
@@ -769,14 +770,6 @@ std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
   return std::nullopt;
 }
 
-std::string HighCWriter::sehExceptionCodeName() const {
-  MedVar Code;
-  Code.Kind = MedVar::SEHExceptionCode;
-  Code.Id = MedVar::SEHExceptionCodeId;
-  Code.Size = 4;
-  return varName(Code);
-}
-
 void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
   UnknownOnlyNames.clear();
   AssignedNames.clear();
@@ -797,9 +790,11 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
     if (!Name.empty())
       AssignedNames.insert(Name);
   });
-  // The `__except` arm assigns GetExceptionCode() to this name directly.
-  if (UsesSEHExceptionCode)
-    AssignedNames.insert(sehExceptionCodeName());
+  // Each `__except` arm assigns GetExceptionCode() to its handler's name.
+  for (const auto &[HandlerVA, Name] : SEHExceptionCodeNames) {
+    (void)HandlerVA;
+    AssignedNames.insert(Name);
+  }
   bool Changed = true;
   unsigned Guard = 0;
   while (Changed && Guard++ < 8) {

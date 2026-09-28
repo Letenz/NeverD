@@ -393,11 +393,12 @@ bool MedLLVMEmitter::emitNativeSEH(
             : static_cast<llvm::Value *>(R.Callback);
     auto *Pad = PB.CreateCatchPad(Switch, {Filter}, "seh.catch.pad.token");
     // The handler reads the exception code the pad receives.
-    if (SEHExceptionCodeAlloca)
+    if (auto Slot = SEHExceptionCodeSlots.find(R.Scope->HandlerVA);
+        Slot != SEHExceptionCodeSlots.end())
       PB.CreateStore(PB.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
                                        Mod, llvm::Intrinsic::eh_exceptioncode),
                                    {Pad}),
-                     SEHExceptionCodeAlloca);
+                     Slot->second);
     if (!med_llvm_eh::attachRewriteWinEHSemanticToken(*Pad, R.SemanticToken))
       llvm_unreachable("prevalidated SEH semantic token was rejected");
     med_llvm_eh::emitWindowsEHProvenanceAnchor(
