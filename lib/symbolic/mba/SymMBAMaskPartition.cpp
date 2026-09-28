@@ -98,9 +98,10 @@ bool isMaskComplement(const SymContext &Ctx, SymRef A, SymRef B) {
   return false;
 }
 
-SymRef sharedPartitionFactor(const SymContext &Ctx, SymRef A, SymRef B) {
-  if (Ctx.op(A) != SymOp::And || Ctx.op(B) != SymOp::And ||
-      Ctx.numOperands(A) != 2 || Ctx.numOperands(B) != 2)
+SymRef sharedPartitionFactor(const SymContext &Ctx, SymRef A, SymRef B,
+                             SymOp Op) {
+  if (Ctx.op(A) != Op || Ctx.op(B) != Op || Ctx.numOperands(A) != 2 ||
+      Ctx.numOperands(B) != 2)
     return SymRef();
   llvm::ArrayRef<SymRef> AF = Ctx.operands(A);
   llvm::ArrayRef<SymRef> BF = Ctx.operands(B);
@@ -117,10 +118,12 @@ SymRef detail::foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
                                       const llvm::APInt &Offset) {
   if (isXorComplement(Ctx, A, B))
     return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(A), 1));
-  SymRef Factor = sharedPartitionFactor(Ctx, A, B);
-  if (!Factor.isValid())
-    return SymRef();
-  return Offset.isZero() ? Factor : Ctx.mkAdd(Ctx.mkConst(Offset), Factor);
+  if (SymRef Factor = sharedPartitionFactor(Ctx, A, B, SymOp::And))
+    return Offset.isZero() ? Factor : Ctx.mkAdd(Ctx.mkConst(Offset), Factor);
+  if (SymRef Factor = sharedPartitionFactor(Ctx, A, B, SymOp::Or))
+    return Ctx.mkAdd(Ctx.mkConst(Offset - llvm::APInt(Ctx.width(A), 1)),
+                     Factor);
+  return SymRef();
 }
 
 } // namespace neverd::symbolic

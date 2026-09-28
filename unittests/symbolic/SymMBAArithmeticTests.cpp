@@ -153,6 +153,89 @@ TEST(SymMBAArithmetic, ProvesWideParityPartitionsBeforeCornerMeasurement) {
   }
 }
 
+TEST(SymMBAArithmetic, ProvesWideOrPartitionsBeforeCornerMeasurement) {
+  for (uint32_t Width : {3u, 8u, 64u, 257u}) {
+    for (bool DirectComplement : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(DirectComplement);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        SymRef Value = Ctx.mkVar("value", Width);
+        llvm::SmallVector<SymRef, 32> Vars;
+        for (unsigned I = 0; I < 24; ++I)
+          Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+        SymRef Mask = Ctx.mkXor(Vars);
+        SymRef Opposite;
+        if (DirectComplement) {
+          Opposite = Ctx.mkNot(Mask);
+        } else {
+          Vars[0] = Ctx.mkNot(Vars[0]);
+          Opposite = Ctx.mkXor(Vars);
+        }
+        SymRef Input =
+            Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, Opposite));
+        SymRef Expected = Ctx.mkAdd(Value, Ctx.mkOnes(Width));
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkAdd(Value, Ctx.mkConst(Width, 4));
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, WideOrPartitionsRejectNearMissesAndLowBudgets) {
+  constexpr unsigned Width = 8;
+  SymContext Ctx;
+  SymRef Value = Ctx.mkVar("value", Width);
+  llvm::SmallVector<SymRef, 32> Vars;
+  for (unsigned I = 0; I < 24; ++I)
+    Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+  SymRef Mask = Ctx.mkXor(Vars);
+  Vars[0] = Ctx.mkNot(Vars[0]);
+  Vars[1] = Ctx.mkNot(Vars[1]);
+  SymRef EvenParity = Ctx.mkXor(Vars);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(Ctx, Ctx.mkOr(Value, Mask),
+                                              Ctx.mkOr(Value, EvenParity),
+                                              llvm::APInt(Width, 0)));
+
+  SymRef OtherValue = Ctx.mkVar("other", Width);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(
+      Ctx, Ctx.mkOr(Value, Mask), Ctx.mkOr(OtherValue, Ctx.mkNot(Mask)),
+      llvm::APInt(Width, 0)));
+
+  SymRef Input =
+      Ctx.mkAdd(Ctx.mkOr(Value, Mask), Ctx.mkOr(Value, Ctx.mkNot(Mask)));
+  for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+    MBAOptions Opts;
+    Opts.MaxWork = Limit;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Input);
+      EXPECT_LE(Result.Work, Limit);
+    }
+  }
+  MBAOptions NoStorage;
+  NoStorage.MaxTableBytes = 128;
+  NoStorage.MaxWork = 4096;
+  NoStorage.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+  EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+}
+
 TEST(SymMBAArithmetic, ProvesWideComplementSumsBeforeCornerMeasurement) {
   for (uint32_t Width : {1u, 3u, 64u, 257u}) {
     for (bool XorPair : {false, true}) {

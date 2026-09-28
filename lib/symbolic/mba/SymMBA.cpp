@@ -523,8 +523,9 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
        llvm::any_of(Ctx.operands(B),
                     [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }));
   bool SharedPartition = false;
-  if (AOp == SymOp::And && BOp == SymOp::And && Ctx.numOperands(A) == 2 &&
-      Ctx.numOperands(B) == 2) {
+  const bool PartitionTypes = (AOp == SymOp::And && BOp == SymOp::And) ||
+                              (AOp == SymOp::Or && BOp == SymOp::Or);
+  if (PartitionTypes && Ctx.numOperands(A) == 2 && Ctx.numOperands(B) == 2) {
     llvm::ArrayRef<SymRef> AF = Ctx.operands(A), BF = Ctx.operands(B);
     for (SymRef F : AF)
       SharedPartition |= llvm::is_contained(BF, F);
