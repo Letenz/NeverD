@@ -31,7 +31,7 @@ SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});
 
-/// Evidence for the original, unpruned, direct-control acyclic leaf graph.
+/// Evidence for complete original native execution paths, before recovery.
 /// This is an undefined-state independence certificate, not a proof of the
 /// lifter, a processor's undefined-bit choice, or native-to-source equivalence.
 struct BinaryUndefinedIndependenceCertificate {
@@ -41,6 +41,8 @@ struct BinaryUndefinedIndependenceCertificate {
   std::string InputDigest;
   LowIRIndependenceCertificate LowIR;
   std::vector<SpecializationInstruction> Instructions;
+  /// Exact provider-certified immutable reads, also bound to their mappings.
+  std::vector<SpecializationReadWitness> Reads;
 };
 
 struct BinaryUndefinedIndependenceResult {
@@ -50,13 +52,17 @@ struct BinaryUndefinedIndependenceResult {
   bool proved() const { return Proof.proved() && Certificate.has_value(); }
 };
 
-/// Collect both arms of every original direct branch before partial evaluation.
-/// Missing bytes, overlapping instructions, calls, indirect transfers and
-/// structural cycles refuse proof. Requires an explicit normal, nonfaulting,
+/// Collect both arms of original direct branches before feasibility pruning.
+/// Physical near calls capture their target before pushing the continuation;
+/// internal returns load their actual stack target. Indirect control requires
+/// paired target independence and a complete bounded target set. Every feasible
+/// path must finish; budgets never certify a prefix. Missing bytes, overlapping
+/// instructions, incomplete architecture evidence and direct structural cycles
+/// refuse proof. Requires an explicit normal, nonfaulting,
 /// CET-disabled x64 profile and a readable/writable frame disjoint from the
 /// immutable image. Frame must be rooted at entry RSP and contain [0, 8).
 /// The checker additionally proves entry RSP and the entry return slot are
-/// restored on every return, before the final native return-address pop.
+/// restored on every outer return, before the final native return-address pop.
 /// Entry constants and byte order must match Options; only Contract's stated
 /// observations are certified. Limits bound collection as well as proof.
 BinaryUndefinedIndependenceResult

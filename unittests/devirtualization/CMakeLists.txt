@@ -12,6 +12,8 @@ add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp
+  NativeStackControlTests.cpp
+  NativeUndefinedIndependenceTests.cpp
   MemoryCallSpecializationTests.cpp
   ControlStateRecoveryTests.cpp
   MaskedControlRelationTests.cpp

@@ -6,6 +6,8 @@
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 
+#include "interpreter/NativeUndefinedIndependence.h"
+
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -324,17 +326,38 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   return Result;
 }
 namespace {
-std::string binaryIndependenceDigest(
-    const BinaryImage &Image, const SpecializationOptions &Options,
-    const LowIRIndependenceCertificate &Proof,
-    llvm::ArrayRef<SpecializationInstruction> Instructions) {
+std::string
+binaryIndependenceDigest(const BinaryImage &Image,
+                         const SpecializationOptions &Options,
+                         const LowIRIndependenceCertificate &Proof,
+                         llvm::ArrayRef<SpecializationInstruction> Instructions,
+                         llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-original-direct-leaf-independence-v1");
+  Hash.update("neverd-original-native-control-independence-v2");
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
       Bytes[I] = static_cast<uint8_t>(Value >> (I * 8));
     Hash.update(llvm::ArrayRef<uint8_t>(Bytes));
+  };
+  const auto Variable = [&](const NdVar &V) {
+    Number(static_cast<unsigned>(V.Space));
+    Number(V.Offset);
+    Number(V.Size);
+    Number(static_cast<unsigned>(V.Provenance));
+    Number(V.AddressOwnerVA);
+  };
+  const auto Mappings = [&](va_t Address) {
+    for (const auto &Mapping : Image.Segments)
+      if (Mapping.contains(Address)) {
+        Number(Mapping.VA);
+        Number(Mapping.Size);
+        Number(Mapping.FileOff);
+        Number(Mapping.FileSz);
+        Number(Mapping.Data.size());
+        Number(static_cast<unsigned>(Mapping.Flags));
+        Number(Mapping.ReadOnlyAfterRelocations);
+      }
   };
   Number(static_cast<unsigned>(Image.Arch));
   Number(static_cast<unsigned>(Image.Format));
@@ -344,11 +367,36 @@ std::string binaryIndependenceDigest(
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
   Number(static_cast<unsigned>(Image.ExceptionMetadata.ParseStatus));
+  Number(static_cast<unsigned>(Proof.Scope));
   Number(Proof.InputDigest.size());
   Hash.update(Proof.InputDigest);
   Number(Instructions.size());
   for (const auto &Instruction : Instructions) {
     Number(Instruction.Origin.Address);
+    Number(static_cast<unsigned>(Instruction.Origin.Mode));
+    Number(Instruction.Origin.Size);
+    Number(Instruction.Origin.FirstOp);
+    Number(Instruction.Origin.OpCount);
+    Number(static_cast<unsigned>(Instruction.Origin.Control));
+    Number(static_cast<unsigned>(Instruction.Origin.ControlFlags));
+    Number(static_cast<unsigned>(Instruction.Origin.TargetMode));
+    Number(Instruction.Origin.Immediate.has_value());
+    Number(Instruction.Origin.Immediate.value_or(0));
+    Hash.update(lowUndefinedOperationDigest(Instruction.Ops));
+    Hash.update(Instruction.UndefinedEffects.OperationDigest);
+    const auto &Effects = Instruction.UndefinedEffects;
+    Number(static_cast<unsigned>(Effects.Coverage));
+    Number(Effects.OpCount);
+    Number(Effects.Effects.size());
+    for (const auto &Effect : Effects.Effects) {
+      Number(Effect.AfterOp);
+      Variable(Effect.Output);
+      Number(Effect.BitOffset);
+      Number(Effect.BitCount);
+      Number(Effect.When.has_value());
+      if (Effect.When)
+        Variable(*Effect.When);
+    }
     Number(Instruction.NativeBytes.size());
     Hash.update(Instruction.NativeBytes);
     Number(Instruction.Fallthrough.Address);
@@ -357,16 +405,18 @@ std::string binaryIndependenceDigest(
     Number(Instruction.IsNativeCall);
     // The provider has already checked uniqueness, permissions, full file
     // coverage and absence of fixups for this exact native instruction.
-    for (const auto &Mapping : Image.Segments)
-      if (Mapping.contains(Instruction.Origin.Address)) {
-        Number(Mapping.VA);
-        Number(Mapping.Size);
-        Number(Mapping.FileOff);
-        Number(Mapping.FileSz);
-        Number(Mapping.Data.size());
-        Number(static_cast<unsigned>(Mapping.Flags));
-        Number(Mapping.ReadOnlyAfterRelocations);
-      }
+    Mappings(Instruction.Origin.Address);
+  }
+  Number(Reads.size());
+  for (const auto &Read : Reads) {
+    Number(Read.InstructionAddress);
+    Number(static_cast<uint64_t>(Read.OpSeq));
+    Number(Read.Address);
+    Mappings(Read.Address);
+    Number(Read.Bytes.size());
+    Hash.update(Read.Bytes);
+    Number(Read.Evidence.size());
+    Hash.update(Read.Evidence);
   }
   return llvm::toHex(Hash.final());
 }
@@ -456,123 +506,17 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
   }
 
   ImageProvider Provider(Image, Options);
-  LowFunc Original;
-  Original.Entry = Entry;
-  std::vector<SpecializationInstruction> Instructions;
-  std::vector<LowIRUndefinedInstruction> Records;
-  std::vector<va_t> Pending{Entry};
-  std::map<va_t, int> Ids{{Entry, 0}};
-  std::map<va_t, va_t> Ranges;
-  uint64_t Operations = 0;
-  for (size_t Index = 0; Index != Pending.size(); ++Index) {
-    const va_t Address = Pending[Index];
-    Result.Proof.InstructionAddress = Address;
-    if (Pending.size() > Limits.MaxInstructions ||
-        Pending.size() > Limits.MaxBlockVisits || Pending.size() > INT_MAX)
-      return Fail(Status::BudgetExceeded,
-                  "original instruction graph budget exhausted");
-    auto Decoded = Provider.instruction({Address, Image.Mode});
-    if (!Decoded)
-      return Fail(Status::Unsupported, llvm::toString(Decoded.takeError()));
-    auto Instruction = std::move(*Decoded);
-    if (Instruction.IsNativeCall)
-      return Fail(Status::Unsupported,
-                  "original-graph proof requires call-free direct control");
-    if (Instruction.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
-      return Fail(
-          Status::Unsupported,
-          "original instruction lacks complete undefined-output evidence");
-    const auto &Boundary = Instruction.Origin;
-    const va_t End = Address + Boundary.Size;
-    auto Next = Ranges.lower_bound(Address);
-    if ((Next != Ranges.end() && Next->first < End) ||
-        (Next != Ranges.begin() && std::prev(Next)->second > Address))
-      return Fail(Status::Unsupported,
-                  "overlapping original instruction ranges");
-    Ranges.emplace(Address, End);
-    if (Instruction.Ops.size() > Limits.MaxOperations - Operations)
-      return Fail(Status::BudgetExceeded,
-                  "original operation budget exhausted");
-    Operations += Instruction.Ops.size();
-    std::vector<va_t> Successors;
-    bool Terminated = false;
-    for (size_t I = 0; I != Instruction.Ops.size(); ++I) {
-      const auto &Op = Instruction.Ops[I];
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-          Op.Opcode == NdOp::INDIR_BR)
-        return Fail(Status::Unsupported,
-                    "original-graph proof requires call-free direct control");
-      if (Op.Opcode != NdOp::RETURN && Op.Opcode != NdOp::BRANCH &&
-          Op.Opcode != NdOp::COND_BR)
-        continue;
-      if (Terminated || I + 1 != Instruction.Ops.size())
-        return Fail(Status::Unsupported, "original control is not terminal");
-      Terminated = true;
-      if (Op.Opcode == NdOp::RETURN) {
-        if (Instruction.NativeStackControl !=
-            SpecializationNativeStackControl::Return)
-          return Fail(Status::Unsupported,
-                      "missing physical near-return evidence");
-      } else {
-        if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
-            Boundary.TargetMode != LowInstructionTargetMode::Preserve)
-          return Fail(Status::Unsupported, "unresolved original branch target");
-        Successors.push_back(Op.Inputs[0].Offset);
-        if (Op.Opcode == NdOp::COND_BR &&
-            Instruction.Fallthrough.Address != Op.Inputs[0].Offset)
-          Successors.push_back(Instruction.Fallthrough.Address);
-      }
-    }
-    if (!Terminated)
-      Successors.push_back(Instruction.Fallthrough.Address);
-    LowBlock Block;
-    Block.Id = static_cast<int>(Index);
-    Block.StartAddr = Address;
-    Block.EndAddr = End;
-    Block.Ops = Instruction.Ops;
-    Block.InstructionBoundaries.push_back(Boundary);
-    for (va_t Target : Successors) {
-      auto It = Ids.find(Target);
-      if (It == Ids.end()) {
-        if (Pending.size() >= Limits.MaxInstructions ||
-            Pending.size() >= Limits.MaxBlockVisits ||
-            Pending.size() >= INT_MAX)
-          return Fail(Status::BudgetExceeded,
-                      "original instruction graph budget exhausted");
-        It = Ids.emplace(Target, static_cast<int>(Pending.size())).first;
-        Pending.push_back(Target);
-      }
-      Block.Succs.push_back(It->second);
-    }
-    Records.push_back({Block.Id, Boundary, Instruction.UndefinedEffects});
-    Original.Blocks.push_back(std::move(Block));
-    Instructions.push_back(std::move(Instruction));
-  }
-  // Refuse even structurally cyclic arms before any symbolic feasibility
-  // pruning. Bounded unrolling cannot stand in for a loop invariant.
-  std::vector<size_t> Incoming(Original.Blocks.size());
-  for (const auto &Block : Original.Blocks)
-    for (int Successor : Block.Succs)
-      ++Incoming[Successor];
-  std::vector<int> Ready;
-  for (size_t I = 0; I != Incoming.size(); ++I)
-    if (!Incoming[I])
-      Ready.push_back(static_cast<int>(I));
-  for (size_t I = 0; I != Ready.size(); ++I)
-    for (int Successor : Original.Blocks[Ready[I]].Succs)
-      if (!--Incoming[Successor])
-        Ready.push_back(Successor);
-  if (Ready.size() != Original.Blocks.size())
-    return Fail(Status::Unsupported,
-                "original graph requires a loop invariant");
-  Result.Proof =
-      checkLowIRUndefinedIndependence(Original, Records, Effective, Limits);
+  auto Checked = detail::checkNativeUndefinedIndependence(
+      Provider, {Entry, Image.Mode}, Effective, Limits);
+  Result.Proof = std::move(Checked.Proof);
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
-    Certificate.InputDigest = binaryIndependenceDigest(
-        Image, Options, *Result.Proof.Certificate, Instructions);
+    Certificate.InputDigest =
+        binaryIndependenceDigest(Image, Options, *Result.Proof.Certificate,
+                                 Checked.Instructions, Checked.Reads);
     Certificate.LowIR = *Result.Proof.Certificate;
-    Certificate.Instructions = std::move(Instructions);
+    Certificate.Instructions = std::move(Checked.Instructions);
+    Certificate.Reads = std::move(Checked.Reads);
     Result.Certificate = std::move(Certificate);
   }
   return Result;
