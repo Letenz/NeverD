@@ -786,6 +786,11 @@ its matrix arithmetic is not approximated with scalar multiply/add.
 Inline and materialized LLVM GEP expressions share data-layout-derived byte
 offsets, including nested aggregates and signed dynamic indices. Ordinary raw
 scalar accesses with insufficient alignment use exact-width byte copies.
+Integer comparisons share one LLVMC rendering rule across inline expressions,
+assigned results, and inverted branches. Operands retain their LLVM bit width
+before C integer promotion, and signed predicates interpret that width's sign
+bit. A comparison with zero must preserve modular truncation before any Boolean
+shorthand is applied.
 
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline
@@ -1407,6 +1412,30 @@ same local matcher handles split sign flags and their byte-sized Boolean
 carriers. Width adapters preserve zero extension versus sign extension;
 full-word consumers retain their original values. Node/edge limits and unknown
 shapes leave the original expression intact without invoking a solver.
+
+`SymState` separately owns memory-input creation provenance and historical
+load provenance. `memoryInputOrigins()` records a symbolic region, byte offset,
+and width when untouched input bytes are first materialized; later stores or
+loads of equal or forwarded values do not change that origin. Unknown inputs
+created after memory clobbering have no node-entry memory origin.
+`loadOrigins()` retains historical observations for its existing consumers.
+Interpreter control discovery uses creation origins to nominate exact
+entry-frame-relative fields. Historical load addresses may still explain
+address dependencies, but do not establish entry slots. Neither record proves
+current memory contents, accessibility, or disjointness.
+
+Interpreter specialization owns finite-query reuse in its run-local
+`FiniteQueryCache`. Complete domains and proved domain-limit excesses are
+keyed by the full ordered expression DAG under consistent free-variable
+renaming, retaining widths, constants, semantic payloads, and sharing. No
+symbolic references or inconclusive results cross contexts. Key construction
+and retained storage are bounded; misses use the existing `FiniteValues`
+proof path and all global work budgets remain in force. Relation projection
+can reuse a complete single varying column when all other columns are proved
+singletons under the same reachable predicate. A complete masked domain is
+omitted as an unconstrained factor only after the shared bit-origin proof
+establishes independence from the predicate and all other columns. Marginal
+domains alone never authorize a Cartesian-product assumption.
 
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
 Split-word arithmetic recovery also lives there as a solver-independent
