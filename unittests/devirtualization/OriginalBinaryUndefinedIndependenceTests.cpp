@@ -222,6 +222,37 @@ TEST(OriginalBinaryUndefinedIndependence, ExecutionProfileIsMandatory) {
   }
 }
 
+TEST(OriginalBinaryUndefinedIndependence,
+     LinkedFormatsRequireCompleteImageAndExceptionCoverage) {
+  for (auto Format : {BinaryFormat::ELF, BinaryFormat::COFF}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    Program P({0xb8, 7, 0, 0, 0, 0xc3}); // mov eax,7; ret
+    P.Image.Format = Format;
+    const auto Baseline = P.recover();
+    ASSERT_TRUE(Baseline.Independence.proved())
+        << Baseline.Independence.Proof.Diagnostic;
+    ASSERT_TRUE(Baseline.Recovery.complete()) << Baseline.Recovery.Diagnostic;
+
+    // Partial coverage has no structural or localized-function evidence in
+    // this fixture; it must not acquire the meaning of an empty complete map.
+    for (auto Parse :
+         {ExceptionParseStatus::Partial, ExceptionParseStatus::Malformed}) {
+      SCOPED_TRACE(static_cast<unsigned>(Parse));
+      P.Image.ExceptionMetadata.ParseStatus = Parse;
+      expectRefusal(P, Status::Unsupported);
+    }
+    P.Image.ExceptionMetadata.ParseStatus = ExceptionParseStatus::Complete;
+    P.Image.IsRelocatable = true;
+    expectRefusal(P, Status::Invalid);
+    P.Image.IsRelocatable = false;
+
+    if (Format == BinaryFormat::COFF) {
+      P.Image.LoadOnlyFunctionEntries.insert(Entry);
+      expectRefusal(P, Status::Unsupported);
+    }
+  }
+}
+
 TEST(OriginalBinaryUndefinedIndependence, EntryContractsMustMatchRecovery) {
   Program MissingFrame({0xb8, 7, 0, 0, 0, 0xc3});
   MissingFrame.Contract.Frame.reset();
