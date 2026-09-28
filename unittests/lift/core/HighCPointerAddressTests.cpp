@@ -39935,7 +39935,7 @@ TEST(HighCPointerAddresses, IntegerVectorIntrinsicsTakeVectorOperands) {
   EXPECT_NE(HighC.find("_mm256_shuffle_epi8(__builtin_bit_cast(__m256i, "),
             std::string::npos)
       << HighC;
-  expectCompilesForMsvc("#include <intrin.h>\n" + HighC);
+  expectCompilesForMsvc("#include <immintrin.h>\n" + HighC);
 }
 
 TEST(HighCPointerAddresses, SelfLoopTargetKeepsItsLabel) {
