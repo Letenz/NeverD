@@ -246,6 +246,15 @@ Temporary-definition tests require every byte to be written earlier in the
 same lifted native instruction, even when an undefined value cancels
 algebraically or reuses the previous instruction's temporary offset.
 
+`X86ShiftCarry.*` checks narrow arithmetic-right-shift carry, masked counts,
+and APX destination/flag-suppression behavior against repeated one-bit shifts.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` executes both recovered C
+routes at O0/O2 with undefined-behavior traps, including every byte value and
+raw count. `NeverDLLVMCIntrinsicSemanticTests` also executes signed/unsigned
+integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
+results, producer ordering, and single evaluation. Unsupported scalar widths
+and malformed operands must fail explicitly.
+
 ## Driver emulation checks
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`

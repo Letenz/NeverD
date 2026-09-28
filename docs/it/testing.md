@@ -46,6 +46,16 @@ I test del nucleo verificano separazione dei contesti, ricongiungimenti a punto 
 
 `ControlStateRecovery.LongTransparentLoop*` copre un ciclo indipendente di 20 fasi, oracoli aritmetici dinamici, il rifiuto dei selettori sconosciuti e l’esaurimento dei budget. `LongTransparentPhasesKeepExactBitDemands` verifica che i bit non pertinenti nello stesso byte del selettore restino dati osservabili a runtime senza diventare richieste di controllo. `ProducerClosureChargesWorkBeforeAnotherRestart` verifica che l’individuazione inversa e la rivalutazione consumino i budget condivisi prima dell’avvio di un nuovo grafo, senza pubblicare risultati parziali.
 
+`X86ShiftCarry.*` verifica il riporto degli shift aritmetici a destra stretti,
+i conteggi mascherati, le destinazioni APX e la soppressione dei flag usando
+shift ripetuti di un bit. `NarrowArithmeticShiftCarrySurvivesBothSourceBackends`
+esegue entrambe le uscite C a O0/O2 con trap per comportamento indefinito,
+coprendo tutti i valori di byte e i conteggi originali.
+`NeverDLLVMCIntrinsicSemanticTests` esegue anche min/max interi con e senza segno
+i1/8/16/32/64/128 a O0/O2, verificando risultati assegnati e incorporati,
+ordine dei produttori e valutazione singola. Le larghezze scalari non supportate
+e gli operandi malformati devono fallire esplicitamente.
+
 ## Verifiche dell’emulazione dei driver
 
 Abilitare `NEVERD_ENABLE_DRIVER_EMULATION=ON` insieme a `BUILD_TESTING=ON` per

@@ -94,7 +94,8 @@ struct StosFixture {
 // Compile the emitted C itself. It checks both diagnostics and behavior, so a
 // renderer that prints a plausible mnemonic but drops the memory effect fails.
 void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
-                     llvm::ArrayRef<llvm::StringRef> ExpectedIR = {}) {
+                     llvm::ArrayRef<llvm::StringRef> ExpectedIR = {},
+                     llvm::StringRef Optimization = "-O1") {
   auto Compiler = llvm::sys::findProgramByName("clang");
   ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
   llvm::SmallString<128> Input, Output, Errors;
@@ -115,7 +116,7 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
   llvm::SmallVector<llvm::StringRef, 16> Args{
       *Compiler,
       "-std=c11",
-      "-O1",
+      Optimization,
       "-Werror=int-conversion",
       "-Werror=incompatible-pointer-types",
       "-Werror=uninitialized",
@@ -151,6 +152,262 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
               0)
         << Error << Source;
   }
+}
+
+TEST(LLVMCIntrinsicSemantics, IntegerMinMaxKeepsWidthsSignednessAndProducers) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-minmax", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Wide = Builder.getInt128Ty();
+  auto Producer = Module.getOrInsertFunction("produce128", Wide, Wide);
+  auto *Collision = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt8Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt8Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "neverd_llvm_umin_i8", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Collision));
+  Builder.CreateRet(
+      Builder.CreateXor(Collision->getArg(0), Collision->getArg(1)));
+  const llvm::Intrinsic::ID Kinds[] = {
+      llvm::Intrinsic::umin, llvm::Intrinsic::umax, llvm::Intrinsic::smin,
+      llvm::Intrinsic::smax};
+  std::string Table;
+  for (unsigned Bits : {1u, 8u, 16u, 32u, 64u, 128u}) {
+    for (unsigned Kind = 0; Kind != 4; ++Kind) {
+      for (bool Assigned : {false, true}) {
+        const std::string Name = "minmax_" + std::to_string(Bits) + "_" +
+                                 std::to_string(Kind) + "_" +
+                                 std::to_string(Assigned);
+        Table += Name + ",";
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Wide, {Wide, Wide, Builder.getPtrTy()},
+                                    false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        auto *Left = Builder.CreateCall(Producer, {Function->getArg(0)});
+        auto *Right = Builder.CreateCall(Producer, {Function->getArg(1)});
+        auto *Integer = Builder.getIntNTy(Bits);
+        auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, Kinds[Kind], {Integer});
+        auto *Chosen = Builder.CreateCall(
+            Intrinsic, {Builder.CreateTruncOrBitCast(Left, Integer),
+                        Builder.CreateTruncOrBitCast(Right, Integer)});
+        // Two direct uses exercise assigned calls; one exercises inline calls.
+        Builder.CreateStore(Assigned ? Builder.CreateZExtOrBitCast(Chosen, Wide)
+                                     : Left,
+                            Function->getArg(2));
+        Builder.CreateRet(Builder.CreateZExtOrBitCast(Chosen, Wide));
+      }
+    }
+  }
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x2E_"), std::string::npos) << Text;
+  // Runtime compilers may happen to evaluate C arguments left to right. Also
+  // reject an expression that leaves these LLVM-ordered calls unsequenced.
+  llvm::SmallVector<llvm::StringRef, 64> Lines;
+  llvm::StringRef(Text).split(Lines, '\n');
+  for (llvm::StringRef Line : Lines) {
+    const auto First = Line.find("produce128(");
+    if (First != llvm::StringRef::npos)
+      EXPECT_EQ(Line.find("produce128(", First + 1), llvm::StringRef::npos)
+          << Line.str();
+  }
+  const std::string Source = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                             Text + R"(
+typedef unsigned __int128 U128;
+static unsigned calls;
+static U128 observed[2];
+U128 produce128(U128 value) {
+  if (calls < 2) observed[calls] = value;
+  ++calls;
+  return value;
+}
+int main(void) {
+  if (neverd_llvm_umin_i8(0xf0, 0x33) != 0xc3) return 4;
+  U128 (*functions[])(U128, U128, void *) = {)" +
+                             Table + R"(};
+  const unsigned widths[] = {1, 8, 16, 32, 64, 128};
+  for (unsigned width = 0; width < 6; ++width) {
+    const unsigned bits = widths[width];
+    const U128 mask = ~(U128)0 >> (128 - bits);
+    const U128 sign = (U128)1 << (bits - 1);
+    const U128 values[] = {0, 1, sign - 1, sign, sign + 1, mask,
+                          ~(U128)0, ((U128)1 << 100) | 0xabcdef};
+    for (unsigned a = 0; a < 8; ++a)
+      for (unsigned b = 0; b < 8; ++b)
+        for (unsigned kind = 0; kind < 4; ++kind)
+          for (unsigned assigned = 0; assigned < 2; ++assigned) {
+            const U128 left = values[a] & mask, right = values[b] & mask;
+            const int different_signs = !!(left & sign) != !!(right & sign);
+            const int less = kind >= 2 && different_signs
+                               ? !!(left & sign) : left < right;
+            const U128 expected = (kind & 1) ? (less ? right : left)
+                                             : (less ? left : right);
+            U128 stored = 0;
+            calls = 0;
+            if (functions[width * 8 + kind * 2 + assigned](
+                    values[a], values[b], &stored) != expected) return 1;
+            if (stored != (assigned ? expected : values[a])) return 2;
+            if (calls != 2 || observed[0] != values[a] ||
+                observed[1] != values[b]) return 3;
+          }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization);
+}
+
+TEST(LLVMCIntrinsicSemantics, IntegerMinMaxRejectsUnsupportedScalarWidths) {
+  for (unsigned Bits : {2u, 7u, 24u, 65u, 129u}) {
+    SCOPED_TRACE(Bits);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unsupported-minmax", Context);
+    llvm::IRBuilder<> Builder(Context);
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Integer, {Integer, Integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "bad_minmax", Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::umin, {Integer});
+    Builder.CreateRet(Builder.CreateCall(
+        Intrinsic, {Function->getArg(0), Function->getArg(1)}));
+    std::string Text;
+    llvm::raw_string_ostream Output(Text);
+    EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, IntegerMinMaxRejectsMismatchedOperands) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("malformed-minmax", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt8Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt16Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "bad_minmax", Module);
+  auto *Malformed = llvm::Function::Create(Function->getFunctionType(),
+                                           llvm::GlobalValue::ExternalLinkage,
+                                           "llvm.umin.i8", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(Builder.CreateCall(
+      Malformed, {Function->getArg(0), Function->getArg(1)}));
+  std::string Text;
+  llvm::raw_string_ostream Output(Text);
+  EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+}
+
+TEST(LLVMCIntrinsicSemantics, IntegerMinMaxRejectsMismatchedCallsite) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mismatched-minmax-callsite", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt16Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt8Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "bad_minmax", Module);
+  auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::umin, {Builder.getInt8Ty()});
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  // Opaque pointers permit constructing this malformed call, for which
+  // getCalledFunction() returns null rather than the known declaration.
+  auto *Call = Builder.CreateCall(Function->getFunctionType(), Intrinsic,
+                                  {Function->getArg(0), Function->getArg(1)});
+  ASSERT_EQ(Call->getCalledFunction(), nullptr);
+  Builder.CreateRet(Call);
+  std::string Text;
+  llvm::raw_string_ostream Output(Text);
+  EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+}
+
+TEST(LLVMCIntrinsicSemantics, SingleUseCallsKeepEffectsAndExecutionPaths) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("ordered-calls", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Word = Builder.getInt64Ty();
+  auto Producer = Module.getOrInsertFunction("next_value", Word, Word);
+  auto Consumer =
+      Module.getOrInsertFunction("combine_values", Word, Word, Word);
+  auto Read = Module.getOrInsertFunction("read_cell", Word, Builder.getPtrTy());
+
+  auto *Pair = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word, Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "ordered_pair", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Pair));
+  auto *Left = Builder.CreateCall(Producer, {Pair->getArg(0)});
+  auto *Right = Builder.CreateCall(Producer, {Pair->getArg(1)});
+  Builder.CreateRet(Builder.CreateAdd(
+      Builder.CreateCall(Consumer, {Left, Right}), Builder.getInt64(1)));
+
+  auto *Memory = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Builder.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "read_before_store", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Memory));
+  auto *ReadBefore = Builder.CreateCall(Read, {Memory->getArg(0)});
+  Builder.CreateStore(Builder.getInt64(7), Memory->getArg(0));
+  Builder.CreateRet(Builder.CreateAdd(ReadBefore, Builder.getInt64(1)));
+
+  auto *Conditional = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "call_before_branch", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Conditional);
+  auto *Then = llvm::BasicBlock::Create(Context, "then", Conditional);
+  auto *Else = llvm::BasicBlock::Create(Context, "else", Conditional);
+  Builder.SetInsertPoint(Entry);
+  auto *Always = Builder.CreateCall(Producer, {Conditional->getArg(0)});
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Conditional->getArg(0), Builder.getInt64(0)), Then,
+      Else);
+  Builder.SetInsertPoint(Then);
+  Builder.CreateRet(Builder.CreateAdd(Always, Builder.getInt64(1)));
+  Builder.SetInsertPoint(Else);
+  Builder.CreateRet(Builder.getInt64(99));
+
+  const std::string Text = emit(Module);
+  llvm::SmallVector<llvm::StringRef, 64> Lines;
+  llvm::StringRef(Text).split(Lines, '\n');
+  for (llvm::StringRef Line : Lines) {
+    const auto First = Line.find("next_value(");
+    if (First != llvm::StringRef::npos)
+      EXPECT_EQ(Line.find("next_value(", First + 1), llvm::StringRef::npos)
+          << Line.str();
+  }
+  const std::string Source =
+      "#include <stdint.h>\n#include <stdbool.h>\n" + Text + R"(
+static unsigned calls;
+static uint64_t observed[2];
+uint64_t next_value(uint64_t value) {
+  if (calls < 2) observed[calls] = value;
+  ++calls;
+  return value;
+}
+uint64_t combine_values(uint64_t left, uint64_t right) {
+  if (calls != 2 || observed[0] != left || observed[1] != right) return 999;
+  return left * 10 + right;
+}
+uint64_t read_cell(void *pointer) { return *(uint64_t *)pointer; }
+int main(void) {
+  calls = 0;
+  if (ordered_pair(3, 5) != 36 || calls != 2) return 1;
+  uint64_t cell = 41;
+  if (read_before_store(&cell) != 42 || cell != 7) return 2;
+  for (uint64_t value = 0; value < 2; ++value) {
+    calls = 0;
+    if (call_before_branch(value) != (value ? value + 1 : 99) ||
+        calls != 1 || observed[0] != value) return 3;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization);
 }
 
 TEST(LLVMCIntrinsicSemantics, RepStosFrameBufferSharesBackingWithIndexedLoads) {

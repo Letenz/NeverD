@@ -47,6 +47,16 @@ Les tests du cœur vérifient la séparation des contextes, les jonctions au poi
 
 `ControlStateRecovery.LongTransparentLoop*` couvre une boucle indépendante de 20 phases, des oracles arithmétiques dynamiques, le refus des sélecteurs inconnus et l’épuisement des budgets. `LongTransparentPhasesKeepExactBitDemands` vérifie que les bits sans rapport dans l’octet du sélecteur restent des données d’exécution observables sans devenir des demandes de contrôle. `ProducerClosureChargesWorkBeforeAnotherRestart` vérifie que la découverte arrière et la réexécution consomment les budgets communs avant le démarrage d’un nouveau graphe, sans publication partielle.
 
+`X86ShiftCarry.*` compare la retenue des décalages arithmétiques à droite étroits,
+les comptes masqués et les destinations et suppressions de drapeaux APX à des
+décalages successifs d’un bit. `NarrowArithmeticShiftCarrySurvivesBothSourceBackends`
+exécute les deux sorties C à O0/O2 avec détection des comportements indéfinis,
+pour toutes les valeurs d’octet et tous les comptes bruts.
+`NeverDLLVMCIntrinsicSemanticTests` exécute aussi les min/max entiers signés et
+non signés i1/8/16/32/64/128 à O0/O2 : résultats affectés ou intégrés, ordre des
+producteurs et évaluation unique. Les largeurs scalaires non prises en charge
+et les opérandes mal formés doivent échouer explicitement.
+
 ## Vérifications de l’émulation des pilotes
 
 Activez `NEVERD_ENABLE_DRIVER_EMULATION=ON` avec `BUILD_TESTING=ON` pour compiler

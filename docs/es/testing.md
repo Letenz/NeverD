@@ -46,6 +46,16 @@ Las pruebas del núcleo comprueban la separación de contextos, uniones de punto
 
 `ControlStateRecovery.LongTransparentLoop*` cubre un bucle de 20 fases escrito de forma independiente, oráculos aritméticos dinámicos, el rechazo de selectores desconocidos y el agotamiento de presupuestos. `LongTransparentPhasesKeepExactBitDemands` comprueba que los bits ajenos del mismo byte del selector sigan siendo datos observables en ejecución sin convertirse en demandas de control. `ProducerClosureChargesWorkBeforeAnotherRestart` comprueba que el descubrimiento inverso y la reevaluación consuman los presupuestos compartidos antes de iniciar un nuevo grafo, sin publicar resultados parciales.
 
+`X86ShiftCarry.*` comprueba el acarreo del desplazamiento aritmético a la derecha
+de enteros estrechos, los conteos enmascarados y los destinos y la supresión de
+flags APX mediante desplazamientos sucesivos de un bit.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` ejecuta ambas salidas C
+con O0/O2 y trampas de comportamiento indefinido, cubriendo todos los valores de
+byte y conteos originales. `NeverDLLVMCIntrinsicSemanticTests` ejecuta también
+min/max de enteros con y sin signo i1/8/16/32/64/128 con O0/O2: resultados
+asignados o integrados, orden de los productores y evaluación única. Los anchos
+escalares no admitidos y los operandos mal formados deben fallar explícitamente.
+
 ## Comprobaciones de emulación de controladores
 
 Active `NEVERD_ENABLE_DRIVER_EMULATION=ON` junto con `BUILD_TESTING=ON` para

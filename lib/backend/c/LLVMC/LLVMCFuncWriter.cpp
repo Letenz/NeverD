@@ -561,6 +561,47 @@ bool LLVMCWriter::sameSlotDestructorBetween(
 }
 
 void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
+  auto CanSinkCall = [&](const llvm::CallInst &Call,
+                         const llvm::Instruction &Sink) {
+    // C does not sequence sibling operands. Moving a call to its printed use
+    // must neither cross an observable operation nor change its executions.
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Blocks;
+    Blocks.insert(Call.getParent());
+    const llvm::Instruction *Cur = Call.getNextNode();
+    unsigned Budget = 4096;
+    while (Cur && Budget--) {
+      if (Cur == &Sink)
+        return true;
+      if (const auto *Branch = llvm::dyn_cast<llvm::UncondBrInst>(Cur)) {
+        const auto *Next = Branch->getSuccessor(0);
+        if (Next->getSinglePredecessor() != Cur->getParent() ||
+            !Blocks.insert(Next).second)
+          return false;
+        Cur = &Next->front();
+        continue;
+      }
+      if (Cur->isTerminator())
+        return false;
+      if (Cur->mayReadOrWriteMemory() || Cur->mayHaveSideEffects()) {
+        // Register homes already removed by the source projection cannot
+        // alias a call. All other reads, writes and calls remain barriers.
+        const llvm::Value *Pointer = nullptr;
+        if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
+          if (Load->isSimple())
+            Pointer = Load->getPointerOperand();
+        } else if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Cur)) {
+          if (Store->isSimple())
+            Pointer = Store->getPointerOperand();
+        }
+        const auto *Slot = Pointer ? asAllocaPointer(Pointer) : nullptr;
+        if (!Slot || allocaAddressTaken(Slot) || instructionIsPrinted(*Cur))
+          return false;
+      }
+      Cur = Cur->getNextNode();
+    }
+    return false;
+  };
+
   for (llvm::BasicBlock &BB : Fn) {
     for (llvm::Instruction &Inst : BB) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
@@ -690,6 +731,7 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       };
       Walk(Call);
       if (!Blocked && Sinks.size() == 1 &&
+          CanSinkCall(*Call, **Sinks.begin()) &&
           !sameSlotDestructorBetween(*Call, **Sinks.begin()))
         Analysis.Inlinable.insert(Call);
     }

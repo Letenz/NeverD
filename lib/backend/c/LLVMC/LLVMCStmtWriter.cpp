@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LLVMCIntegerMinMax.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -3695,6 +3696,17 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     if (Pending == &Call)
       return getName(&Call);
   RenderingCalls.push_back(&Call);
+
+  if (scalarIntegerMinMax(Call)) {
+    // An actual function captures each argument once, including when the
+    // intrinsic itself is inlined into another rendered expression.
+    const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +
+                             "(" + callArgStr(Call.getArgOperand(0), Call, 0) +
+                             ", " + callArgStr(Call.getArgOperand(1), Call, 1) +
+                             ")";
+    RenderingCalls.pop_back();
+    return Expr;
+  }
 
   if (const auto *Callee = Call.getCalledFunction()) {
     const auto IID = Callee->getIntrinsicID();

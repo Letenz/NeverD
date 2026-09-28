@@ -18,6 +18,96 @@ std::string readPublicationFile(const fs::path &Path) {
 
 class RecoverySourcePublicationTest : public NeverDLiftTest {};
 
+TEST_F(RecoverySourcePublicationTest,
+       NarrowArithmeticShiftCarrySurvivesBothSourceBackends) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "source recovery checks require clang";
+  for (unsigned Width : {8u, 16u}) {
+    SCOPED_TRACE(Width);
+    const auto Assembly = tmpFile("narrow-carry.S");
+    const auto Binary = tmpFile("narrow-carry.elf");
+    {
+      std::ofstream Output(Assembly);
+      Output << ".text\n.globl carry_probe\n.type carry_probe,@function\n"
+                "carry_probe:\n  xorl %eax, %eax\n  movl %esi, %ecx\n";
+      Output << (Width == 8 ? "  movb %dil, %al\n" : "  movw %di, %ax\n");
+      Output << "  btl $0, %edx\n";
+      Output << (Width == 8 ? "  sarb %cl, %al\n" : "  sarw %cl, %ax\n");
+      Output << "  setc %dl\n  movzbl %dl, %edx\n";
+      Output << (Width == 8 ? "  movzbl %al, %eax\n" : "  movzwl %ax, %eax\n");
+      Output << "  shll $" << Width
+             << ", %edx\n  orl %edx, %eax\n  ret\n"
+                ".size carry_probe, .-carry_probe\n";
+    }
+    const auto Built =
+        exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-fuse-ld=lld",
+                                 "-nostdlib", "-static", "-Wl,-e,carry_probe",
+                                 Assembly.string(), "-o", Binary.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      const auto Source = tmpFile(LLVM ? "carry-llvm.c" : "carry-high.c");
+      std::vector<std::string> Args{
+          "decompile",          "--func", "carry_probe",   "--devirtualize",
+          "--vm-machine-state", "-o",     Source.string(), Binary.string()};
+      if (LLVM)
+        Args.push_back("--llvm");
+      const auto Recovered = exec(ndBin(), Args);
+      ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+      {
+        std::ofstream Output(Source, std::ios::app);
+        Output << R"(
+#include <stdint.h>
+int main(void) {
+  const unsigned width = )"
+               << Width << R"(;
+  const uint64_t sign = UINT64_C(1) << (width - 1);
+  const uint64_t mask = (sign << 1) - 1;
+  const uint64_t words[] = {0, 1, 2, 0x7f, 0x80, 0xff, 0x100,
+                           0x7fff, 0x8000, 0x8001, 0xfffe, 0xffff};
+  const unsigned values = width == 8 ? 256 : sizeof(words) / sizeof(words[0]);
+  for (unsigned v = 0; v < values; ++v)
+    for (unsigned count = 0; count < 256; ++count)
+      for (unsigned initial = 0; initial < 2; ++initial) {
+        uint64_t value = (width == 8 ? v : words[v]) & mask;
+        uint64_t expected = value, carry = initial;
+        // An independent sequence of one-bit arithmetic shifts avoids a
+        // signed C right shift or a shift by/above the host operand width.
+        for (unsigned i = 0; i < (count & 31); ++i) {
+          carry = expected & 1;
+          expected = (expected >> 1) | (expected & sign);
+        }
+        uint64_t state[17] = {0}, stack[8] = {0};
+        state[2] = initial;
+        state[4] = (uintptr_t)&stack[4];
+        state[6] = count;
+        state[7] = value;
+        state[16] = 2;
+        if (carry_probe((void *)state) != 0)
+          return 1;
+        if (state[0] != (expected | (carry << width)))
+          return 2;
+      }
+  return 0;
+}
+)";
+      }
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile("carry-check");
+        const auto Compiled =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Optimization, "-fsanitize=undefined",
+                  "-fno-sanitize-recover=all", Source.string(), "-o",
+                  Executable.string()});
+        ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+        const auto Ran = exec(Executable.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err << Ran.out;
+      }
+    }
+  }
+}
+
 TEST_F(RecoverySourcePublicationTest, UnboundEntryBytesRequireExplicitState) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "source publication checks require clang";
