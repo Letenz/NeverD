@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -273,10 +274,15 @@ SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Rebuilt;
 }
 
+SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep);
+
 /// Measure \p E as one region, splitting a wide one into independent parts and
 /// a masked one into mask-uniform columns.
 SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep) {
+  if (SymRef Fast = tryFastPartitionedSum(Ctx, E, Opts, Budget, Rep); Fast != E)
+    return Fast;
   SymRef Solved = solveOneRegion(Ctx, E, Opts, Budget, Rep);
   return Solved == E ? solveMasked(Ctx, E, Opts, Budget, Rep) : Solved;
 }
@@ -468,6 +474,54 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
   return Partitioned.isValid() ? Partitioned : R;
 }
 
+SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep) {
+  if (Ctx.op(E) != SymOp::Add || Opts.MaxTableBytes < 4096 ||
+      !Budget.canConsume(16))
+    return E;
+  llvm::ArrayRef<SymRef> Terms = Ctx.operands(E);
+  if (Terms.size() < 2 || Terms.size() > 3)
+    return E;
+  SymRef A, B;
+  llvm::APInt Offset(Ctx.width(E), 0);
+  for (SymRef Term : Terms) {
+    if (Ctx.isConst(Term)) {
+      Offset += Ctx.constValue(Term);
+    } else if (!A.isValid()) {
+      A = Term;
+    } else if (!B.isValid()) {
+      B = Term;
+    } else {
+      return E;
+    }
+  }
+  if (!A.isValid() || !B.isValid() || Ctx.op(A) != SymOp::And ||
+      Ctx.op(B) != SymOp::And || Ctx.numOperands(A) != 2 ||
+      Ctx.numOperands(B) != 2)
+    return E;
+  llvm::ArrayRef<SymRef> AF = Ctx.operands(A), BF = Ctx.operands(B);
+  bool Shared = false;
+  for (SymRef F : AF)
+    Shared |= llvm::is_contained(BF, F);
+  if (!Shared)
+    return E;
+
+  // The pair is a plausible partition. Bound the linear matcher and its
+  // scratch before considering it, including on the deep walk's first visit.
+  const size_t Nodes = Ctx.dagSize(E);
+  if (Nodes > Opts.MaxTableBytes / 64 ||
+      Nodes > std::numeric_limits<size_t>::max() / 4 ||
+      !Budget.canConsume(4 * Nodes))
+    return E;
+  Budget.consume(4 * Nodes);
+  SymRef Fast = foldPartitionedMaskSum(Ctx, A, B, Offset);
+  if (!Fast.isValid() || readingScore(Ctx, Fast) >= readingScore(Ctx, E))
+    return E;
+  Rep.Outcome = MBAOutcome::Rewritten;
+  Rep.Evidence = MBAEvidence::Derivation;
+  return Fast;
+}
+
 } // namespace
 
 SymRef detail::completeComplementarySums(SymContext &Ctx, SymRef Root,
@@ -656,6 +710,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     return Result;
   Result.SizeBefore = readingCost(Ctx, E);
   Result.SizeAfter = Result.SizeBefore;
+  WorkBudget Budget(Opts.MaxWork);
+  SolveReport FastRep;
+  if (SymRef Fast = tryFastPartitionedSum(Ctx, E, Opts, Budget, FastRep);
+      Fast != E) {
+    Result.Expr = Fast;
+    Result.SizeAfter = readingCost(Ctx, Fast);
+    Result.Changed = true;
+    Result.Outcome = MBAOutcome::Rewritten;
+    Result.Evidence = MBAEvidence::Derivation;
+    Result.Work = Budget.used();
+    return Result;
+  }
 
   // Walking children before parents means that by the time a node is reached,
   // everything below it has already been shortened, so each layer is measured
@@ -664,7 +730,6 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   // expressions nest deeply enough that recursion is a real hazard.
   const std::vector<uint32_t> Order = reachableInOrder(Ctx, E);
   llvm::DenseMap<uint32_t, SymRef> Solved;
-  WorkBudget Budget(Opts.MaxWork);
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
   auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {

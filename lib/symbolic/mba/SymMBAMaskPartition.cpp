@@ -5,11 +5,14 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Completes bounded sums of complementary XOR masks after candidate selection.
+/// Completes sums of complementary XOR masks before measurement or after
+/// candidate selection.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "SymMBADetail.h"
+
+#include "llvm/ADT/DenseMap.h"
 
 #include <algorithm>
 
@@ -26,26 +29,39 @@ bool isXorComplement(const SymContext &Ctx, SymRef A, SymRef B) {
     return false;
   llvm::ArrayRef<SymRef> ATerms = Ctx.operands(A);
   llvm::ArrayRef<SymRef> BTerms = Ctx.operands(B);
-  if (ATerms.size() != BTerms.size() || ATerms.size() > 8)
+  if (ATerms.size() != BTerms.size())
     return false;
-  bool Used[8] = {};
+  // XOR construction has removed duplicate and complementary pairs. Match
+  // each surviving operand once, independently of its position in the two
+  // canonical lists. This also keeps wide parity masks linear in their arity.
+  llvm::DenseMap<uint32_t, unsigned> Exact, Negated;
+  for (unsigned J = 0; J < BTerms.size(); ++J) {
+    Exact[BTerms[J].index()] = J;
+    if (Ctx.op(BTerms[J]) == SymOp::Not)
+      Negated[Ctx.operand(BTerms[J], 0).index()] = J;
+  }
+  llvm::SmallVector<uint8_t, 8> Used(BTerms.size(), 0);
   unsigned Flips = 0;
   for (SymRef Term : ATerms) {
-    unsigned Match = BTerms.size();
-    for (unsigned J = 0; J < BTerms.size(); ++J)
-      if (!Used[J] && BTerms[J] == Term) {
-        Match = J;
-        break;
-      }
+    auto Same = Exact.find(Term.index());
+    unsigned Match = Same == Exact.end() ? BTerms.size() : Same->second;
     if (Match == BTerms.size()) {
-      for (unsigned J = 0; J < BTerms.size(); ++J)
-        if (!Used[J] && isDirectComplement(Ctx, Term, BTerms[J])) {
-          Match = J;
-          ++Flips;
-          break;
-        }
+      unsigned Opposite = BTerms.size();
+      if (Ctx.op(Term) == SymOp::Not) {
+        auto It = Exact.find(Ctx.operand(Term, 0).index());
+        if (It != Exact.end())
+          Opposite = It->second;
+      } else {
+        auto It = Negated.find(Term.index());
+        if (It != Negated.end())
+          Opposite = It->second;
+      }
+      if (Opposite != BTerms.size()) {
+        Match = Opposite;
+        ++Flips;
+      }
     }
-    if (Match == BTerms.size())
+    if (Match == BTerms.size() || Used[Match])
       return false;
     Used[Match] = true;
   }
@@ -68,7 +84,7 @@ SymRef minusTwoMinusOperand(const SymContext &Ctx, SymRef R) {
 }
 
 bool isMaskComplement(const SymContext &Ctx, SymRef A, SymRef B) {
-  if (isXorComplement(Ctx, A, B))
+  if (isDirectComplement(Ctx, A, B) || isXorComplement(Ctx, A, B))
     return true;
   for (unsigned Swap = 0; Swap < 2; ++Swap) {
     SymRef Negated = negatedOperand(Ctx, A);
