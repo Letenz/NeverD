@@ -309,10 +309,10 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
     for (bool Thumb : {false, true}) {
       BinaryImage Image = makeMetadataImage(Format, Thumb);
       Image.KnownCodeRanges = {
-          {0x100, 0x140}, {0x100, 0x120}, {0x110, 0x150},
-          {0x140, 0x180}, {0x180, 0x180}, {0x190, 0x188},
+          {0x100, 0x140},     {0x100, 0x120}, {0x110, 0x150},
+          {0x140, 0x180},     {0x180, 0x180}, {0x190, 0x188},
           {0x200, InvalidVA}, {0x300, 0x340}, {0x300, 0x310},
-          {0x401, 0x411}, {0, 0x10}, {InvalidVA - 8, InvalidVA}};
+          {0x401, 0x411},     {0, 0x10},      {InvalidVA - 8, InvalidVA}};
       Image.Symbols = {Symbol::makeFunc(0, 4),
                        Symbol::makeFunc(0x100, 0x18),
                        Symbol::makeFunc(0x200, 0x20),
@@ -327,14 +327,26 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
       Data.Addr = 0x500;
       Data.Size = 4;
       Image.Symbols.push_back(Data);
-      const std::pair<va_t, va_t> Expected[] = {
-          {0, 4}, {1, InvalidVA}, {0x100, 0x118}, {0x108, InvalidVA},
-          {0x110, 0x150}, {0x140, 0x180}, {0x180, InvalidVA},
-          {0x190, InvalidVA}, {0x200, 0x220}, {0x220, InvalidVA},
-          {0x230, InvalidVA}, {0x240, InvalidVA}, {0x300, 0x310},
-          {0x400, InvalidVA}, {0x401, 0x405}, {0x402, InvalidVA},
-          {0x500, InvalidVA}, {InvalidVA - 16, InvalidVA - 8},
-          {InvalidVA - 8, InvalidVA}, {InvalidVA, InvalidVA}};
+      const std::pair<va_t, va_t> Expected[] = {{0, 4},
+                                                {1, InvalidVA},
+                                                {0x100, 0x118},
+                                                {0x108, InvalidVA},
+                                                {0x110, 0x150},
+                                                {0x140, 0x180},
+                                                {0x180, InvalidVA},
+                                                {0x190, InvalidVA},
+                                                {0x200, 0x220},
+                                                {0x220, InvalidVA},
+                                                {0x230, InvalidVA},
+                                                {0x240, InvalidVA},
+                                                {0x300, 0x310},
+                                                {0x400, InvalidVA},
+                                                {0x401, 0x405},
+                                                {0x402, InvalidVA},
+                                                {0x500, InvalidVA},
+                                                {InvalidVA - 16, InvalidVA - 8},
+                                                {InvalidVA - 8, InvalidVA},
+                                                {InvalidVA, InvalidVA}};
       for (unsigned Order = 0; Order < 2; ++Order) {
         {
           const ExecutableCodeOwnerIndex Index(Image);
@@ -344,7 +356,8 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
                 << Entry;
           }
         }
-        std::reverse(Image.KnownCodeRanges.begin(), Image.KnownCodeRanges.end());
+        std::reverse(Image.KnownCodeRanges.begin(),
+                     Image.KnownCodeRanges.end());
         std::reverse(Image.Symbols.begin(), Image.Symbols.end());
       }
     }
@@ -375,7 +388,14 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndScopeObservesEditsAndImageMismatch) {
 }
 
 TEST(ExecutableCodeOwnerIndex, IndexedFunctionEndsPreserveNativeInteriorRoots) {
-  enum class Bound { Metadata, Exception, NextEntry, NextOnly, Containing, None };
+  enum class Bound {
+    Metadata,
+    Exception,
+    NextEntry,
+    NextOnly,
+    Containing,
+    None
+  };
   constexpr va_t Entry = 0x1000;
   for (Arch TargetArch : {Arch::AArch64, Arch::X64})
     for (Bound Kind : {Bound::Metadata, Bound::Exception, Bound::NextEntry,
@@ -424,8 +444,8 @@ TEST(ExecutableCodeOwnerIndex, IndexedFunctionEndsPreserveNativeInteriorRoots) {
       if (Kind == Bound::Exception || Kind == Bound::Containing) {
         ExceptionFunction Metadata;
         Metadata.Kind = RuntimeFunctionKind::Primary;
-        Metadata.CodeRange = {
-            Kind == Bound::Exception ? Entry : Entry - 0x10, Entry + 0x20};
+        Metadata.CodeRange = {Kind == Bound::Exception ? Entry : Entry - 0x10,
+                              Entry + 0x20};
         Image.ExceptionMetadata.Functions.push_back(Metadata);
         if (Kind == Bound::Exception)
           Expected.erase(Entry + 0x20);
