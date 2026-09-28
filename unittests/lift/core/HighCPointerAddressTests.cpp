@@ -7262,6 +7262,39 @@ TEST(HighCPointerAddresses, SlotCalleeThroughUnknownRegisterFailsAtUse) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, ParameterUsedOnlyAsCallTargetStaysDeclared) {
+  // A forwarder whose seventh parameter is only the call target: compacting
+  // unused leading parameters must still declare it and name it consistently.
+  HighFunc Func;
+  Func.Name = "forward_through";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  for (int I = 0; I < 7; ++I)
+    Func.Params.push_back({"arg" + std::to_string(I), NdType::makeInt(8)});
+  HighStmt Call;
+  Call.Kind = StmtKind::Return;
+  Call.RetVal = HighExpr::makeCall("indirect", 0, {parameter(4), parameter(5)});
+  Call.RetVal->IsIndirectCall = true;
+  Call.RetVal->IndirectTarget = parameter(6);
+  Func.Body = {Call};
+  const std::string Source = emitFunctions({Func});
+  const size_t Open = Source.find("forward_through(");
+  ASSERT_NE(Open, std::string::npos) << Source;
+  const std::string Signature =
+      Source.substr(Open, Source.find(')', Open) - Open);
+  const size_t Body = Source.find('{', Open);
+  ASSERT_NE(Body, std::string::npos) << Source;
+  // Every parameter name the body prints is one the signature declares.
+  for (int I = 0; I < 7; ++I) {
+    const std::string Name = "arg" + std::to_string(I);
+    const bool InBody = Source.find(Name + ")", Body) != std::string::npos ||
+                        Source.find(Name + ",", Body) != std::string::npos;
+    if (InBody)
+      EXPECT_NE(Signature.find(Name), std::string::npos) << Name << "\n"
+                                                         << Source;
+  }
+}
+
 TEST(HighCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   HighFunc Func;
   Func.Name = "look";
