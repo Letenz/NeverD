@@ -28,19 +28,25 @@ class DevirtualizationIntegrationTests(unittest.TestCase):
         options = abi.NeverDDevirtualizeOptionsV1()
         options.struct_size = ctypes.sizeof(options)
         options.reserved = 1
-        report = ctypes.c_void_p()
-        source = host.owned_string(
-            "neverd_devirtualize_source_v1", session, 0,
-            ctypes.byref(options), ctypes.byref(report),
-        )
-        self.assertIsNone(source)
-        self.assertTrue(report.value)
-        try:
-            result = json.loads(ctypes.string_at(report.value))
-            self.assertFalse(result["complete"])
-            self.assertEqual(result["error"], "invalid devirtualize flags")
-        finally:
-            host.call("neverd_free_string", ctypes.cast(report, ctypes.c_char_p))
+        for entry_point, source_abi in (
+            ("neverd_devirtualize_source_v1", "ordinary-source"),
+            ("neverd_devirtualize_machine_source_v1", "x64-machine-state-v1"),
+        ):
+            with self.subTest(entry_point=entry_point):
+                report = ctypes.c_void_p()
+                source = host.owned_string(
+                    entry_point, session, 0,
+                    ctypes.byref(options), ctypes.byref(report),
+                )
+                self.assertIsNone(source)
+                self.assertTrue(report.value)
+                try:
+                    result = json.loads(ctypes.string_at(report.value))
+                    self.assertFalse(result["complete"])
+                    self.assertEqual(result["error"], "invalid devirtualize flags")
+                    self.assertEqual(result["sourceABI"], source_abi)
+                finally:
+                    host.call("neverd_free_string", ctypes.cast(report, ctypes.c_char_p))
 
 
 if __name__ == "__main__":
