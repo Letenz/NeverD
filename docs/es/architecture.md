@@ -74,6 +74,8 @@ separadas de los certificados de apariciones nativas y parches binarios.
 
 `InterpreterSpecialization` se encarga de la propagación inversa acotada de demandas de bits tras un intento fallido. Reutiliza el evaluador escalar sin cambiar hechos del grafo ni añadir campos de control o contextos; todo el trabajo sigue sujeto a los presupuestos y la publicación exige una nueva prueba completa.
 
+El lifter de arquitectura gestiona de forma transaccional los metadatos adjuntos de salidas indefinidas: borra las pruebas anteriores antes de cada intento y publica efectos solo para el lifting exacto que haya terminado correctamente. `Missing` significa ausencia de pruebas, no una descripción `Complete` vacía. LowIR conserva los valores deterministas elegidos. `LowIRUndefinedIndependence` se encarga de la prueba relacional acotada de un grafo LowIR completo y acíclico suministrado, compartiendo entradas ordinarias y preservando las correlaciones de los nuevos valores indefinidos. Vincula límites completos de instrucciones y resúmenes de operaciones, y rechaza pruebas incompletas. Certificar el grafo nativo completo antes de podar el control, los invariantes de bucle y la equivalencia del código nativo con C sigue siendo trabajo independiente pendiente.
+
 | Representación | Propósito | Definiciones y transformaciones principales |
 |----------------|-----------|----------------------------------------------|
 | LowIR | Operaciones `NdOp` independientes de arquitectura, bloques básicos, CFG y metadatos de jump tables | `include/neverd/ir/low`, `lib/ir/low`, producido por `lib/decode` + `lib/lift` |

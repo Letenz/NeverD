@@ -828,6 +828,21 @@ target_include_directories(NeverDX86APXAtomicSemanticTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
+  x86_64/X86_64_CarryArithmeticFlagTests.cpp
+  LINK_COMPONENTS Decode Lift Loader
+)
+
+add_neverd_unittest(NeverDX86UndefinedEffectsTests
+  x86_64/X86_64_UndefinedEffectsTests.cpp
+  LINK_COMPONENTS Decode Lift Loader
+)
+
+add_neverd_unittest(NeverDX86LogicIdentityTests
+  x86_64/X86_64_LogicIdentityTests.cpp
+  LINK_COMPONENTS Decode Lift Loader
+)
+
 # Keeps APX promoted NDD dataflow and NF flag suppression independently
 # runnable through decode, lift, and strict concrete emulation.
 add_neverd_unittest(NeverDX86APXNddNfSemanticTests

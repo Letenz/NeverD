@@ -37,6 +37,20 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` 檢查完整無環 LowIR 圖的兩次執行獨立性。兩側共用一般入口輸入；每次新產生的架構未定義值在複製、重疊寫入、溢出儲存與重新載入中保持來源關聯。控制述詞先於路徑假設接受檢查。憑證要求 `Complete` 效果中繼資料，並精確綁定每條指令的完整邊界與操作摘要。缺少證據、可達迴圈、呼叫、未知別名或預算耗盡都會拒絕憑證。結論受明確觀察項與無故障堆疊框架契約限制，並非原生程式碼到 C 的完整等價證明。
+
+`NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下仍清零 32 位元目的暫存器的高半部，同時保留窄位寬寫入未涵蓋的位元。
+
 核心測試檢查上下文拆分、固定點匯合、動態迴圈、重疊暫存器、別名失效、有限目標派發，以及拒絕時不提供部分替代程式碼。原始碼測試組譯原創的暫存器式、堆疊式與有限位址 x64 機器，還原兩條 C 輸出路徑，在 O0/O2 下啟用未定義行為陷阱編譯，並與獨立的無號算術和記憶體參考實作對照執行。有限位址 fixture 涵蓋輸入選擇的記錄與相關游標／key 控制欄位；原生檢查涵蓋 SysV 和 Win64 呼叫慣例。測試也涵蓋公開 CLI、還原預算及不支援輸入的報告。需要支援跨目標編譯的 Clang 與 LLD；原始 ELF 的執行另需 x64 Linux 主機。缺少工具或主機不符屬於略過的涵蓋範圍，不代表通過。
 
 `ControlStateRecovery.LongTransparentLoop*` 涵蓋獨立撰寫的 20 階段迴圈、動態算術參考實作、未知 selector 拒絕及預算耗盡。`LongTransparentPhasesKeepExactBitDemands` 檢查 selector 同位元組內的無關位元仍是可觀察的執行期資料，不會成為控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 檢查反向探索及重播在新圖啟動前消耗共用預算，且不發布部分結果。

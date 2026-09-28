@@ -684,23 +684,13 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.emit(NdOp::COPY, NdVar::reg(x86reg::PF, 1), {NdVar::scalar(1, 1)});
       S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
       S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
+      S.recordUndefinedBits(NdVar::reg(x86reg::AF, 1), 0, 1);
       break;
     }
 
     NdVar Src = readArithmeticOperand(X86.operands[1]);
     NdVar DstR = readArithmeticOperand(X86.operands[0]);
     NdVar DstW = L.operandWrite(X86.operands[0]);
-
-    // Idiom: test reg, reg (AND with itself) → just set flags, don't overwrite
-    // reg
-    if (InsnId == X86_INS_AND && X86.operands[0].type == X86_OP_REG &&
-        X86.operands[1].type == X86_OP_REG &&
-        X86.operands[0].reg == X86.operands[1].reg) {
-      NdVar TmpV = S.makeTemp(DstR.Size);
-      S.emit(NdOp::INT_AND, TmpV, {DstR, Src});
-      L.emitFlagsLogic(S, TmpV);
-      break;
-    }
 
     NdOp Opc = NdOp::INT_AND;
     if (InsnId == X86_INS_OR)
@@ -979,6 +969,7 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emit(NdOp::INT_LESS, BorrowOuter, {A, Adj});
     S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::CF, 1), {CarryInner, BorrowOuter});
     L.emitZSPF(S, Result);
+    L.emitAF(S, Result, A, B);
     // OF: two-stage sborrow XOR — sborrow(Dst,Src) ^ sborrow(Dst-Src, Cf).
     // Using INT_SBOR(Dst, Adj) alone is WRONG when Src+CF wraps
     // (e.g. Src=0x7F, CF=1 → Adj=0x80 flips the sign of the subtrahend).
@@ -1019,6 +1010,7 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emit(NdOp::INT_ADD, Adj, {B, CfExt});
     S.emit(NdOp::INT_ADD, Result, {A, Adj});
     L.emitZSPF(S, Result);
+    L.emitAF(S, Result, A, B);
     NdVar CarryOuter = S.makeTemp(1);
     S.emit(NdOp::INT_CARRY, CarryOuter, {A, Adj});
     S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::CF, 1), {CarryInner, CarryOuter});

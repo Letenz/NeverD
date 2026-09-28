@@ -74,6 +74,8 @@ nativer Instruktionsvorkommen und binärer Patches getrennt.
 
 `InterpreterSpecialization` verantwortet die begrenzte Rückwärtspropagierung von Bit-Anforderungen nach einem fehlgeschlagenen Versuch. Es nutzt den skalaren Auswerter, ohne Graphfakten zu ändern oder Kontrollfelder und Kontexte hinzuzufügen; sämtliche Arbeit bleibt budgetiert und die Veröffentlichung erfordert einen neuen vollständigen Beweis.
 
+Der Architektur-Lifter verwaltet die ergänzenden Metadaten undefinierter Ausgaben transaktional: Vor jedem Versuch löscht er alte Belege und veröffentlicht Effekte nur für das exakt zugehörige erfolgreiche Lifting. `Missing` bedeutet fehlende Belege, keine leere `Complete`-Beschreibung. Gewöhnliches LowIR behält seine gewählten deterministischen Werte. `LowIRUndefinedIndependence` verantwortet den begrenzten relationalen Beweis für einen übergebenen vollständigen azyklischen LowIR-Graphen, mit gemeinsamen gewöhnlichen Eingaben und erhaltenen Korrelationen frisch erzeugter undefinierter Werte. Vollständige Instruktionsgrenzen und Operations-Digests binden den Beleg; unvollständige Beweise werden abgelehnt. Die Zertifizierung des vollständigen nativen Graphen vor Kontrollflussbeschneidung, Schleifeninvarianten und die Äquivalenz von nativem Code zu C bleiben getrennte, noch offene Arbeiten.
+
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |
 |-------------|-------|--------------------------------------------|
 | LowIR | Architekturunabhängige `NdOp`-Operationen, Basisblöcke, CFG und Sprungtabellenmetadaten | `include/neverd/ir/low`, `lib/ir/low`, erzeugt durch `lib/decode` + `lib/lift` |
