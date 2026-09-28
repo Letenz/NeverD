@@ -602,6 +602,58 @@ TEST(BitVectorSolver, RecoversProvedSplitWordArithmetic) {
   }
 }
 
+TEST(BitVectorSolver, RecoversProvedThreeInputSplitWordArithmetic) {
+  using namespace neverd::symbolic;
+  for (uint32_t Width : {8u, 16u, 32u}) {
+    SymContext Ctx;
+    SymRef AL = Ctx.mkVar("al", Width);
+    SymRef AH = Ctx.mkVar("ah", Width);
+    SymRef BL = Ctx.mkVar("bl", Width);
+    SymRef BH = Ctx.mkVar("bh", Width);
+    SymRef CL = Ctx.mkVar("cl", Width);
+    SymRef CH = Ctx.mkVar("ch", Width);
+    auto Majority = [&](SymRef A, SymRef B, SymRef C) {
+      return Ctx.mkOr(Ctx.mkAnd(A, B),
+                      Ctx.mkOr(Ctx.mkAnd(A, C), Ctx.mkAnd(B, C)));
+    };
+    SymRef LowParity = Ctx.mkXor(Ctx.mkXor(AL, BL), CL);
+    SymRef LowMajority = Majority(AL, BL, CL);
+    SymRef Low = Ctx.mkAdd(LowParity, Ctx.mkShl(LowMajority, Ctx.mkOne(Width)));
+    SymRef High =
+        Ctx.mkAdd({Ctx.mkXor(Ctx.mkXor(AH, BH), CH),
+                   Ctx.mkShl(Majority(AH, BH, CH), Ctx.mkOne(Width)),
+                   Ctx.mkLShr(LowMajority, Ctx.mkConst(Width, Width - 1)),
+                   Ctx.mkZExt(Ctx.mkUlt(Low, LowParity), Width)});
+    SymRef Original = Ctx.mkConcat(High, Low);
+    SymRef Expected = Ctx.mkAdd(
+        {Ctx.mkConcat(AH, AL), Ctx.mkConcat(BH, BL), Ctx.mkConcat(CH, CL)});
+    SymSynthVerifier Verifier;
+    auto Verify = [&](SymContext &Context, SymRef A, SymRef B) {
+      return Verifier(Context, A, B);
+    };
+    EXPECT_EQ(recoverSplitWordArithmetic(Ctx, Original, Verify), Expected);
+    EXPECT_EQ(Verifier.report().Proof, ProofStatus::Equivalent);
+
+    SymRef OffsetLow = Ctx.mkConst(Width, 0xf0);
+    SymRef OffsetHigh = Ctx.mkConst(Width, 0x56);
+    SymRef Offset = Ctx.mkConcat(OffsetHigh, OffsetLow);
+    SymRef BiasedLow = Ctx.mkAdd(Low, OffsetLow);
+    SymRef BiasedHigh = Ctx.mkAdd(
+        {High, OffsetHigh, Ctx.mkZExt(Ctx.mkUlt(BiasedLow, Low), Width)});
+    SymRef Affine = Ctx.mkConcat(BiasedHigh, BiasedLow);
+    EXPECT_EQ(recoverSplitWordArithmetic(Ctx, Affine, Verify),
+              Ctx.mkAdd(Expected, Offset));
+    EXPECT_EQ(Verifier.report().Proof, ProofStatus::Equivalent);
+
+    SymRef Rare = Ctx.mkAnd(Ctx.mkEq(AL, Ctx.mkConst(Width, 0x6d)),
+                            Ctx.mkEq(BL, Ctx.mkConst(Width, 0x29)));
+    SymRef Wrong = Ctx.mkConcat(
+        Ctx.mkIte(Rare, Ctx.mkAdd(High, Ctx.mkOne(Width)), High), Low);
+    EXPECT_EQ(recoverSplitWordArithmetic(Ctx, Wrong, Verify), Wrong);
+    EXPECT_EQ(Verifier.report().Proof, ProofStatus::Different);
+  }
+}
+
 TEST(BitVectorSolver, SynthesisVerifierReportsDeterministicBudgetUnknown) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);
