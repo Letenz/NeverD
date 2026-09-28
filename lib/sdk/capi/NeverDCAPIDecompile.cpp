@@ -16,11 +16,11 @@
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/loader/COFF/COFFException.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
 #include "neverd/ir/NdOps.h"
+#include "neverd/loader/COFF/COFFException.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
@@ -672,6 +672,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   }
   if (UseLlvmRoute)
     Opts.LiftMode = true;
+  Opts.SourceProjection = true;
   if (!R.run(Opts, Err)) {
     if (S)
       S->setError(Err);

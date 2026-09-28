@@ -31,7 +31,9 @@
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #define DEBUG_TYPE "neverd-macho-loader"
 
@@ -412,6 +414,35 @@ MachOLoader::load(const std::filesystem::path &Path) {
       Exp.Name = Sym.Name;
       Exp.Addr = SymAddr;
       Img.Exports.push_back(std::move(Exp));
+    }
+  }
+
+  // MH_OBJECT nlists have no size field. In a pure-instruction section, the
+  // next distinct function symbol or the section end bounds each function.
+  // Do not extrapolate through a mixed code/data section.
+  if (Obj.getHeader().filetype == MH_OBJECT) {
+    for (const Section &Sec : Img.Sections) {
+      if ((Sec.Type & S_ATTR_PURE_INSTRUCTIONS) == 0 || Sec.Size == 0 ||
+          Sec.Size > InvalidVA - Sec.VA)
+        continue;
+      std::vector<size_t> Functions;
+      for (size_t I = 0; I < Img.Symbols.size(); ++I)
+        if (Img.Symbols[I].IsFunc && Sec.contains(Img.Symbols[I].Addr))
+          Functions.push_back(I);
+      std::sort(Functions.begin(), Functions.end(), [&](size_t A, size_t B) {
+        return Img.Symbols[A].Addr < Img.Symbols[B].Addr;
+      });
+      const va_t SectionEnd = Sec.VA + Sec.Size;
+      for (size_t I = 0; I < Functions.size(); ++I) {
+        Symbol &Sym = Img.Symbols[Functions[I]];
+        va_t End = SectionEnd;
+        for (size_t J = I + 1; J < Functions.size(); ++J)
+          if (Img.Symbols[Functions[J]].Addr > Sym.Addr) {
+            End = Img.Symbols[Functions[J]].Addr;
+            break;
+          }
+        Sym.Size = End - Sym.Addr;
+      }
     }
   }
 

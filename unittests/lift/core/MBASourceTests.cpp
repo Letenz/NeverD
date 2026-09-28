@@ -995,6 +995,129 @@ INSTANTIATE_TEST_SUITE_P(
              (Info.param.LLVM ? "LLVMC" : "HighC");
     });
 
+struct MachOARMFiveCase {
+  const char *Name;
+  const char *Triple;
+  bool Thumb;
+  bool LLVM;
+};
+
+class MBAMachOARMFiveSourceTest
+    : public NeverDLiftTest,
+      public ::testing::WithParamInterface<MachOARMFiveCase> {};
+
+TEST_P(MBAMachOARMFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + " " + (Case.LLVM ? "LLVMC" : "HighC"));
+
+  const auto Object = tmpFile("macho-five.o");
+  std::vector<std::string> CompileArgs{"-target",    Case.Triple,
+                                       "-O0",        "-ffreestanding",
+                                       "-nostdinc",  "-fno-stack-protector",
+                                       "-fno-inline"};
+  if (Case.Thumb)
+    CompileArgs.push_back("-mthumb");
+  CompileArgs.insert(
+      CompileArgs.end(),
+      {"-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_five_input.c").string(),
+       "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArgs);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-five.c");
+  std::vector<std::string> DecompileArgs{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    DecompileArgs.push_back("--llvm");
+  DecompileArgs.insert(DecompileArgs.end(),
+                       {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), DecompileArgs);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  const std::string Body = functionBody(Source, "mba_five_sum");
+  EXPECT_FALSE(Body.empty());
+  EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
+  EXPECT_FALSE(functionBody(Source, "mba_five_fold").empty());
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(const uint32_t *words) {
+  uint64_t a = ((uint64_t)words[1] << 32) | words[0];
+  uint64_t b = ((uint64_t)words[3] << 32) | words[2];
+  uint64_t c = ((uint64_t)words[5] << 32) | words[4];
+  uint64_t d = ((uint64_t)words[7] << 32) | words[6];
+  uint64_t e = ((uint64_t)words[9] << 32) | words[8];
+  uint64_t expected = a + b + c + d + e;
+  uint64_t actual = (uint64_t)mba_five_sum(
+      words[0], words[1], words[2], words[3], words[4], words[5],
+      words[6], words[7], words[8], words[9]);
+  uint32_t folded = (uint32_t)mba_five_fold(
+      words[0], words[1], words[2], words[3], words[4], words[5],
+      words[6], words[7], words[8], words[9]);
+  if (actual != expected ||
+      folded != ((uint32_t)expected ^ (uint32_t)(expected >> 32))) {
+    fprintf(stderr, "five-input mismatch\n");
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {0, 1, 0x7fffffffU, 0x80000000U,
+                                   0xfffffffeU, 0xffffffffU};
+  uint32_t words[10];
+  for (unsigned i = 0; i < 6; ++i) {
+    for (unsigned j = 0; j < 10; ++j)
+      words[j] = edges[(i + j) % 6];
+    if (check(words))
+      return 1;
+  }
+  uint64_t state = UINT64_C(0x93b60c791df245ae);
+  for (unsigned i = 0; i < 1024; ++i) {
+    for (unsigned j = 0; j < 10; ++j) {
+      state = state * UINT64_C(6364136223846793005) + 1;
+      words[j] = (uint32_t)(state >> 32);
+    }
+    if (check(words))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-five-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-five-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ARMAndThumb, MBAMachOARMFiveSourceTest,
+    ::testing::Values(
+        MachOARMFiveCase{"ARM", "armv7-apple-darwin", false, false},
+        MachOARMFiveCase{"ARM", "armv7-apple-darwin", false, true},
+        MachOARMFiveCase{"Thumb1", "armv6m-apple-darwin", true, false},
+        MachOARMFiveCase{"Thumb1", "armv6m-apple-darwin", true, true},
+        MachOARMFiveCase{"Thumb2", "armv7-apple-darwin", true, false},
+        MachOARMFiveCase{"Thumb2", "armv7-apple-darwin", true, true}),
+    [](const ::testing::TestParamInfo<MachOARMFiveCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
 struct NativeFiveCase {
   const char *Name;
   const char *Triple;
