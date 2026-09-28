@@ -219,6 +219,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // DispatchSourceProtocol.resume/suspend receive the dynamic source type
+    // in the first ordinary argument and the source object in swiftself.
+    // Swift's optimized arm64 and x86_64 IR declare both exact overlay
+    // entries as swiftcc void (ptr, ptr swiftself).
+    {"$sSo18OS_dispatch_sourceP8DispatchE6resumeyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
+    {"$sSo18OS_dispatch_sourceP8DispatchE7suspendyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
