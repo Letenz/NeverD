@@ -147,6 +147,7 @@ jobs:
             scripts.tests.test_audit_evm_opcode_metadata \
             scripts.tests.test_eh_signature_generation \
             scripts.tests.test_msvc_signature_generation \
+            scripts.tests.test_generate_rich_comp_ids \
             scripts.tests.test_generate_objc_declarations \
             scripts.tests.test_generate_objc_framework_declarations \
             scripts.tests.test_generate_objc_receiver_declarations \

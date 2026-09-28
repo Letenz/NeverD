@@ -192,8 +192,7 @@ static int realMain(int Argc, char *Argv[]) {
       if (!neverd_session_load(Sess, InputFile.getValue().c_str())) {
         if (!JsonOutput)
           errs() << "\n";
-        WithColor::error() << "failed to load: " << takeLastError(Sess)
-                           << "\n";
+        WithColor::error() << "failed to load: " << takeLastError(Sess) << "\n";
         return 1;
       }
     }
@@ -206,7 +205,8 @@ static int realMain(int Argc, char *Argv[]) {
   // Hunt and audit name callees through the same identity view as the rest of
   // the engine, so optional signature matching has to land before they run.
   if ((AuditCmd || HuntCmd) &&
-      (SigAuto || !SigFile.getValue().empty() || !SigDir.getValue().empty())) {
+      (SigAuto || !SigBase.getValue().empty() || !SigFile.getValue().empty() ||
+       !SigDir.getValue().empty())) {
     Expected<int> MatchCount = applyRequestedSignatures(Sess, Argv[0]);
     if (!MatchCount) {
       WithColor::error() << toString(MatchCount.takeError()) << "\n";

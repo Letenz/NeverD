@@ -821,6 +821,13 @@ cl::opt<bool>
     SigAuto("auto", cl::desc("Auto-detect arch/format and load matching sigs"),
             cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
+cl::opt<std::string>
+    SigBase("sig-base",
+            cl::desc("Signature tree to select from as --auto does (default: "
+                     "signatures/ beside neverd, then ./signatures)"),
+            cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd),
+            cl::sub(HuntCmd));
+
 //===----------------------------------------------------------------------===//
 // Simplify-specific options
 //===----------------------------------------------------------------------===//

@@ -143,7 +143,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-ビルド時にシグネチャライブラリは `build/bin/signatures/` にインストールされます。`sigs --auto` は形式・アーキ・ビット幅でセットを選びます。
+ビルド時にシグネチャライブラリは `build/bin/signatures/` にインストールされます。`sigs --auto` は形式・アーキ・ビット幅でセットを選びます。PE ファイルの Rich ヘッダーがリンカーの Visual Studio リリースを示す場合は、そのリリースの `vs<year>.pat` と、どのリリースにも属さないファイルだけを読み込みます。`--sig-base <dir>` は別のシグネチャツリーから同じ方法で選びます。
 
 ## ビルド
 

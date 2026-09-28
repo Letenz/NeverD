@@ -147,7 +147,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-构建时签名库安装到 `build/bin/signatures/`。`sigs --auto` 按格式、架构、位宽选择匹配库集。
+构建时签名库安装到 `build/bin/signatures/`。`sigs --auto` 按格式、架构、位宽选择匹配库集。若 PE 文件的 Rich 头给出其链接器所属的 Visual Studio 版本，则只加载该版本的 `vs<year>.pat`，以及不属于任何版本的库。`--sig-base <dir>` 以同样方式从另一个签名目录树选择。
 
 ## 构建
 

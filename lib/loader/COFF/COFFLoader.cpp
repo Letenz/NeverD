@@ -120,8 +120,11 @@ COFFLoader::load(const std::filesystem::path &Path) {
                    : Bitness::Bits32;
   }
   Img.IsRelocatable = IsRelocatable;
-  if (!IsRelocatable)
+  if (!IsRelocatable) {
     Img.Entry = normalizeCodeAddress(Img.Entry, Img.Arch, Img.Mode);
+    Img.COFFRichHeader =
+        decodeRichHeader(llvm::arrayRefFromStringRef(Obj.getData()));
+  }
   Img.Base = ImageBase;
   Img.LoadOnlyFunctionEntries = RestrictFunctionEntries;
 

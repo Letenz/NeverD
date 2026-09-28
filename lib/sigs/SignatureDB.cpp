@@ -7,6 +7,7 @@
 #include "neverd/sigs/SignatureDB.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
@@ -97,7 +98,8 @@ llvm::Error SignatureDB::loadPatternText(llvm::StringRef Text,
   return llvm::Error::success();
 }
 
-llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
+llvm::Expected<std::vector<std::filesystem::path>>
+SignatureDB::listDirectory(const std::filesystem::path &Dir) {
   std::error_code EC;
   if (!std::filesystem::exists(Dir, EC)) {
     if (EC)
@@ -147,7 +149,52 @@ llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
           llvm::inconvertibleErrorCode());
   }
   std::sort(PatFiles.begin(), PatFiles.end());
+  return PatFiles;
+}
 
+std::vector<std::filesystem::path>
+SignatureDB::selectForImage(const BinaryImage &Img,
+                            std::vector<std::filesystem::path> Files) {
+  if (!Img.COFFRichHeader)
+    return Files;
+  const std::vector<unsigned> Years = richToolsetYears(*Img.COFFRichHeader);
+  if (Years.empty())
+    return Files;
+
+  // "vs2026.pat" belongs to Visual Studio 2026; other names to no release.
+  auto ReleaseOf = [](const std::filesystem::path &Path) {
+    const std::string Stem = Path.stem().string();
+    unsigned Year = 0;
+    if (Stem.size() != 6 || llvm::StringRef(Stem).take_front(2) != "vs" ||
+        llvm::StringRef(Stem).drop_front(2).getAsInteger(10, Year))
+      return 0u;
+    return Year;
+  };
+  std::vector<std::filesystem::path> Selected;
+  bool KeptRelease = false;
+  for (const std::filesystem::path &File : Files) {
+    const unsigned Release = ReleaseOf(File);
+    if (Release == 0) {
+      Selected.push_back(File);
+      continue;
+    }
+    if (std::find(Years.begin(), Years.end(), Release) != Years.end()) {
+      Selected.push_back(File);
+      KeptRelease = true;
+    }
+  }
+  return KeptRelease ? Selected : Files;
+}
+
+llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
+  auto PatFiles = listDirectory(Dir);
+  if (!PatFiles)
+    return PatFiles.takeError();
+  return loadFiles(*PatFiles);
+}
+
+llvm::Error
+SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   struct ParsedFile {
     std::filesystem::path Path;
     std::vector<PatternModule> Modules;
