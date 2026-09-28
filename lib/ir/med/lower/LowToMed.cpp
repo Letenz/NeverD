@@ -236,9 +236,15 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
           Count = I + 1;
       // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
       // bytes it ignores do not become an unknown incoming value.  An unread
-      // slot below the last read one is still an argument position.
+      // slot below the last read one is still an argument position; the
+      // callee cannot observe it, so it carries zero rather than whatever
+      // the caller left in the register.
       for (int8_t I = 0; I < Count; ++I) {
         const uint8_t Width = R->second[Win64Args[I] / 8];
+        if (Width == 0) {
+          MOp.addInput(MedVar::makeConst(0, 8));
+          continue;
+        }
         const uint16_t Size = Width <= 1   ? 1
                               : Width <= 2 ? 2
                               : Width <= 4 ? 4

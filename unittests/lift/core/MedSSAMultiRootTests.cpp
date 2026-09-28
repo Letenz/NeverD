@@ -861,3 +861,75 @@ TEST(Win64Forwarder, MaskedSelectOfAFrameAddressUsesItsIntegerValue) {
   }
   EXPECT_NE(Source.find("(uintptr_t)&var_"), std::string::npos) << Source;
 }
+
+namespace {
+
+// caller: sub rsp,28h; call clobber; mov edx,1; call reads_dl; add rsp,28h;
+// ret. clobber: xor ecx,ecx; ret. reads_dl: movzx eax,dl; ret.
+BinaryImage makeUnreadSlotImage() {
+  constexpr va_t Entry = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = 0x40;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const uint8_t Caller[] = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                            0xe8, 0x17, 0x00, 0x00, 0x00, // call clobber
+                            0xba, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+                            0xe8, 0x1d, 0x00, 0x00, 0x00, // call reads_dl
+                            0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                            0xc3};                        // ret
+  const uint8_t Clobber[] = {0x31, 0xc9, 0xc3};
+  const uint8_t ReadsDl[] = {0x0f, 0xb6, 0xc2, 0xc3};
+  std::copy(std::begin(Caller), std::end(Caller), Text.Data.begin());
+  std::copy(std::begin(Clobber), std::end(Clobber), Text.Data.begin() + 0x20);
+  std::copy(std::begin(ReadsDl), std::end(ReadsDl), Text.Data.begin() + 0x30);
+  Img.Segments.push_back(std::move(Text));
+  Section Section;
+  Section.Name = ".text";
+  Section.VA = Entry;
+  Section.Size = 0x40;
+  Section.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Section));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry, sizeof(Caller)));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x20, sizeof(Clobber)));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x30, sizeof(ReadsDl)));
+  return Img;
+}
+
+} // namespace
+
+TEST(Win64Forwarder, ArgumentSlotTheCalleeNeverReadsIsZero) {
+  // The callee reads only DL, so RCX is a positional slot it ignores. The
+  // caller left nothing defined there; the call passes zero, not an
+  // unknown value.
+  auto Img = makeUnreadSlotImage();
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  auto Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const HighFunc *Caller = nullptr;
+  for (const HighFunc &Func : Result.HighFuncs)
+    if (Func.Entry == Img.Entry)
+      Caller = &Func;
+  ASSERT_NE(Caller, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({*Caller}, Stream, Options));
+  Stream.flush();
+  EXPECT_NE(Source.find("sub_140001030(0, 1)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
