@@ -2499,13 +2499,13 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
           return SawAnchoredSource;
         }
         // A pointer-width reload needs all-path initialization as well as
-        // domain purity. An exact entry STORE can establish initialization
+        // domain purity. An exact all-path STORE can establish initialization
         // even when later indexed writes prevent a unique reaching-source
         // set. Still audit every possibly aliasing write below; this does not
-        // permit pointer recovery to reuse the entry value after a clobber.
+        // permit pointer recovery to reuse the initializer after a clobber.
         if (PointerSize == 0 || Def->Output.Size == 0 ||
             (Def->Output.Size >= PointerSize &&
-             !frameReloadIsEntryInitialized(*Def)))
+             !frameReloadHasAllPathInitializer(*Def)))
           return stableOffsetFailure("incomplete-frame-reload", Start, Depth);
       }
 
