@@ -6,6 +6,7 @@
 
 #include "../NeverDLiftFixture.h"
 
+#include <string_view>
 #include <tuple>
 
 namespace {
@@ -571,6 +572,149 @@ INSTANTIATE_TEST_SUITE_P(
         FrameSourceCase{"AArch64MachO", "aarch64-apple-macos11",
                         "aarch64/test_mba_frame_spills.S", 64, false, true}),
     [](const ::testing::TestParamInfo<FrameSourceCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
+struct NestedSourceCase {
+  const char *Name;
+  const char *Triple;
+  unsigned WordBits;
+  bool Thumb;
+  bool LLVM;
+};
+
+const char *nestedExecutionHarness() {
+  return R"(
+#include <inttypes.h>
+#include <stdio.h>
+
+static int check_pair(uint64_t x, uint64_t y, uint64_t z) {
+  uint32_t a = (uint32_t)x, b = (uint32_t)y, c = (uint32_t)z;
+  if ((uint32_t)mba_nested_add(a, b) != a + b ||
+      (uint32_t)mba_nested_sub(a, b) != a - b ||
+      (uint32_t)mba_nested_xor(a, b) != (a ^ b) ||
+      (uint32_t)mba_nested_or(a, b) != (a | b) ||
+      (uint32_t)mba_three_input(a, b, c) != a + b + c) {
+    fprintf(stderr, "nested MBA mismatch x=%" PRIx64 " y=%" PRIx64
+                    " z=%" PRIx64 "\n", x, y, z);
+    return 1;
+  }
+#if NESTED_WORD_BITS == 64
+  if ((uint64_t)mba_wide_add(x, y) != x + y)
+    return 1;
+#endif
+  return 0;
+}
+
+int main(void) {
+  for (uint64_t x = 0; x != 256; ++x)
+    for (uint64_t y = 0; y != 256; ++y)
+      if (check_pair(x, y, x * 73 + y * 19))
+        return 1;
+  static const uint64_t edges[] = {
+    0, 1, 0x7fffffff, 0x80000000, 0xffffffff,
+    UINT64_C(0x100000000), UINT64_C(0x7fffffffffffffff),
+    UINT64_C(0x8000000000000000), UINT64_MAX
+  };
+  for (unsigned i = 0; i != sizeof(edges) / sizeof(edges[0]); ++i)
+    for (unsigned j = 0; j != sizeof(edges) / sizeof(edges[0]); ++j)
+      if (check_pair(edges[i], edges[j], edges[(i + j) % 9]))
+        return 1;
+  uint64_t state = UINT64_C(0x6a09e667f3bcc909);
+  for (unsigned i = 0; i != 4096; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint64_t x = state;
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint64_t y = state;
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check_pair(x, y, state))
+      return 1;
+  }
+  return 0;
+}
+)";
+}
+
+class MBANestedSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<NestedSourceCase> {};
+
+TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + (Case.LLVM ? " LLVMC" : " HighC"));
+  const auto Object = tmpFile("nested-mba.o");
+  std::vector<std::string> CompileArguments{
+      "-target",        Case.Triple, "-O0",
+      "-ffreestanding", "-nostdinc", "-fno-stack-protector"};
+  if (Case.Thumb)
+    CompileArguments.push_back("-mthumb");
+  CompileArguments.insert(
+      CompileArguments.end(),
+      {"-c", (fs::path(TEST_SOURCE_DIR) / "core/test_mba_nested.c").string(),
+       "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArguments);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("nested-mba.c");
+  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    Arguments.push_back("--llvm");
+  Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Arguments);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  ASSERT_FALSE(Source.empty());
+  for (const char *Name :
+       {"mba_nested_add", "mba_nested_sub", "mba_three_input"})
+    expectNoResidualMBA(Output, Name);
+  if (Case.WordBits == 64)
+    expectNoResidualMBA(Output, "mba_wide_add");
+  for (const char *Name : {"mba_nested_xor", "mba_nested_or"}) {
+    const auto Body = functionBody(Source, Name);
+    EXPECT_EQ(std::count(Body.begin(), Body.end(),
+                         std::string_view(Name).ends_with("xor") ? '^' : '|'),
+              1)
+        << Body;
+  }
+
+  std::ofstream(tmpFile("immintrin.h")).close();
+  const auto Harness = tmpFile("nested-execute.c");
+  std::ofstream(Harness) << "#define NESTED_WORD_BITS " << Case.WordBits << "\n"
+                         << Source << nestedExecutionHarness();
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("nested-execute");
+    const auto Recompiled =
+        exec(NEVERD_TEST_CLANG,
+             {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
+              "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+              "-fsanitize-trap=undefined", "-I", tmp().string(),
+              Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CrossArchitecture, MBANestedSourceTest,
+    ::testing::Values(
+        NestedSourceCase{"X64", "x86_64-linux-gnu", 64, false, false},
+        NestedSourceCase{"X64", "x86_64-linux-gnu", 64, false, true},
+        NestedSourceCase{"X86", "i386-linux-gnu", 32, false, false},
+        NestedSourceCase{"X86", "i386-linux-gnu", 32, false, true},
+        NestedSourceCase{"ARM32", "armv7-linux-gnueabihf", 32, false, false},
+        NestedSourceCase{"ARM32", "armv7-linux-gnueabihf", 32, false, true},
+        NestedSourceCase{"Thumb2", "armv7-linux-gnueabihf", 32, true, false},
+        NestedSourceCase{"Thumb2", "armv7-linux-gnueabihf", 32, true, true},
+        NestedSourceCase{"Thumb1", "thumbv6m-none-eabi", 32, true, false},
+        NestedSourceCase{"Thumb1", "thumbv6m-none-eabi", 32, true, true},
+        NestedSourceCase{"AArch64", "aarch64-linux-gnu", 64, false, false},
+        NestedSourceCase{"AArch64", "aarch64-linux-gnu", 64, false, true}),
+    [](const ::testing::TestParamInfo<NestedSourceCase> &Info) {
       return std::string(Info.param.Name) +
              (Info.param.LLVM ? "LLVMC" : "HighC");
     });
