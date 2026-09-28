@@ -1407,6 +1407,22 @@ calls, ordered memory, malformed graphs and control-flow joins prevent this
 proof. Replayed operations must be total and explicitly typed, store/load
 truncation is retained, and budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
+HighIR's scalar-definition proof also survives an ordinary store whose address
+and value contain no hidden effects: the store changes memory, not an
+unescaped register or temporary. A derivational rewrite that ties the local
+expression's size may still replace it when expanding those definitions proves
+a smaller expression; dead scalar assignments are then removed without another
+copy-propagation round.
+On the LLVM route, temporary allocas are promoted first. Exact accesses wholly
+inside the synthetic private frame then regain their frame-pointer provenance
+before SROA and MBA simplification. Dynamic offsets, escaping pointers,
+ordered accesses and out-of-frame ranges keep their original representation.
+A 32-bit view of the entry stack pointer qualifies only for a 32-bit target;
+truncating a 64-bit target address does not prove a frame alias.
+When an explicit return reads a proven private-frame slot, the optimizer keeps
+that value-flow fact on the return terminator through SROA. LLVMC uses it to
+distinguish an intentional memory-derived result from a residual call register
+when inferring whether generated C should return a value.
 The MedIR-to-HighIR memory boundary recovers a target-width unsigned address
 view only from an explicit zero extension of that width into the LowIR VA
 carrier. Arbitrary wide expressions and sign extensions remain intact; frame

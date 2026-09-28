@@ -1031,7 +1031,14 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
     }
   }
   const std::optional<size_t> AfterCost = expressionCost(After);
-  if (!AfterCost || *BeforeCost < *AfterCost + kMinGain)
+  // An equal-size source expression can hide a much larger proved expansion
+  // through earlier scalar definitions. Accept that tie when the expanded
+  // algebra became strictly smaller; dead definitions can then be removed.
+  const bool ShorterExpandedDefinition =
+      AfterCost && *AfterCost == *BeforeCost && !Definitions.empty() &&
+      Result.Changed && Result.SizeAfter < Result.SizeBefore;
+  if (!AfterCost ||
+      (*BeforeCost < *AfterCost + kMinGain && !ShorterExpandedDefinition))
     return;
   E = After;
 }
@@ -1210,7 +1217,8 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
 
       const bool Straight =
           (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
-           S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop) &&
+           S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop ||
+           S.Kind == StmtKind::Store) &&
           S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
           S.DefaultBody.empty() && S.EHClauses.empty() &&
           S.EHClauseBodies.empty() && !S.IsPhiCopy &&
@@ -1227,6 +1235,12 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
         Definitions.clear();
         continue;
       }
+      // An ordinary store changes memory, not a scalar register, temporary,
+      // or unescaped parameter.  Its address and value have already been
+      // checked for effects; keep proven scalar definitions available to the
+      // following expressions, including a store/reload pair in the frame.
+      if (S.Kind == StmtKind::Store)
+        continue;
       if (S.Kind != StmtKind::Assign)
         continue;
       if (!isScalarLocal(S.Dst)) {
