@@ -689,6 +689,63 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftVirtualVoidMethodUsesSwiftContextOnly) {
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
+  Hint.TargetName = "swift_virtual";
+  Hint.Virtual =
+      SourceCallTypeHint::SwiftVirtualEvidence{0x1000, 0x1010, 0x2000, 280};
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.Signature.ReturnType = NdType::makeVoid();
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Hint.Signature.Parameters = {{"self", Pointer}};
+  Hint.Signature.Parameters[0].TheRole =
+      SourceParameterTypeHint::Role::SwiftContext;
+  std::string Diagnostic;
+  ASSERT_TRUE(
+      assignDarwinSwiftSourceABI(Hint.Signature, Arch::AArch64, Diagnostic))
+      << Diagnostic;
+
+  auto Param = [&](unsigned Id) {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = Id;
+    V.Size = 8;
+    V.TheArch = Arch::AArch64;
+    return HighExpr::makeVar(V, Pointer);
+  };
+  auto Call = HighExpr::makeCall("indirect_call", 0, {Param(0)});
+  Call->Type = NdType::makeVoid();
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget = Param(1);
+  Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "call_virtual_action";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"context", Pointer}, {"target", Pointer}};
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Call;
+  Statement.CallExpr = Call;
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, true, Arch::AArch64);
+  EXPECT_NE(Source.find("void __attribute__((swiftcall)) (*)(void* "
+                        "__attribute__((swift_context)))"),
+            std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+static void __attribute__((swiftcall)) action(
+    void *self __attribute__((swift_context))) {
+  ++*(int *)self;
+}
+int main(void) {
+  int value = 41;
+  call_virtual_action(&value, (void *)&action);
+  return value == 42 ? 0 : 1;
+}
+)");
+}
+
 TEST(HighCSourceCalls,
      SwiftValueWitnessInitializeWithCopyReturnsRuntimeDestination) {
   using OperationKind = SourceCallTypeHint::SwiftValueWitnessKind;

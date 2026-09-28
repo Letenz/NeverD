@@ -204,6 +204,59 @@ TEST(SwiftVirtualCalls, ExactMaskedIsaSettersBindValueAndSwiftContext) {
   EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
 }
 
+TEST(SwiftVirtualCalls, ExactVoidMethodWindowRejectsOrdinaryArguments) {
+  Fixture F;
+  auto &Method = F.Image.ObjCMethods[0];
+  Method.Selector = "stop";
+  Method.TypeEncoding = "v16@0:8";
+  SourceFunctionTypeHint Signature;
+  Signature.ReturnType = NdType::makeVoid();
+  Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())},
+                          {"_cmd", NdType::makePtr(NdType::makeVoid())}};
+  std::string Diagnostic;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(Signature, Arch::AArch64, Diagnostic))
+      << Diagnostic;
+  Method.TypeHint = Signature;
+  F.Image.Symbols[0].Name = "_$s6Lottie23CompatibleAnimationViewC4stopyyFTo";
+  F.Image.Imports.push_back({"/usr/lib/libobjc.A.dylib", "_objc_retain", 0, 0});
+  F.Image.ImportStubIndices[0x1300] = 0;
+  auto &Ops = F.Function.Blocks[0].Ops;
+  for (auto &Op : Ops)
+    if (Op.Opcode == NdOp::INT_ADD && Op.Addr == 0x1138)
+      Op.Inputs[1] = NdVar::scalar(280, 8);
+  LowOp Saved;
+  Saved.Addr = 0x1144;
+  Saved.Opcode = NdOp::COPY;
+  Saved.Output = NdVar::reg(a64reg::X19, 8);
+  Saved.addInput(NdVar::reg(a64reg::X0, 8));
+  LowOp Link;
+  Link.Addr = Fixture::CallSite;
+  Link.Opcode = NdOp::COPY;
+  Link.Output = NdVar::reg(a64reg::X30, 8);
+  Link.addInput(NdVar::scalar(Fixture::CallSite + 4, 8));
+  Ops.insert(Ops.end() - 1, Saved);
+  Ops.insert(Ops.end() - 1, Link);
+
+  const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Fixture::CallSite);
+  ASSERT_TRUE(Hint.Virtual);
+  EXPECT_EQ(Hint.Virtual->VtableByteOffset, 280U);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Hint.Signature.Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+
+  LowOp ExtraArgument;
+  ExtraArgument.Addr = 0x1148;
+  ExtraArgument.Opcode = NdOp::COPY;
+  ExtraArgument.Output = NdVar::reg(a64reg::X0, 8);
+  ExtraArgument.addInput(NdVar::scalar(0, 8));
+  Ops.insert(Ops.end() - 2, ExtraArgument);
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+}
+
 TEST(SwiftVirtualCalls, RejectsAlteredCodeImportAndReceiverEvidence) {
   Fixture F;
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000] = 0x00;

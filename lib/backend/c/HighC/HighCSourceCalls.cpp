@@ -266,7 +266,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift ||
         !Signature.ReturnType)
       return bad("invalid Swift virtual binding");
-    const bool Setter = Signature.ReturnType->Kind == NdTypeKind::Void;
+    const bool VoidCall = Signature.ReturnType->Kind == NdTypeKind::Void;
+    const bool Setter = VoidCall && Signature.Parameters.size() == 2;
     if (Signature.Parameters.size() != (Setter ? 2U : 1U) ||
         E.Operands.size() != Signature.Parameters.size() ||
         std::any_of(E.Operands.begin(), E.Operands.end(),
@@ -281,10 +282,17 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       return bad("invalid Swift virtual binding");
     const auto &ValueType =
         Setter ? Signature.Parameters[0].Type : Signature.ReturnType;
-    if (!ValueType ||
-        !((ValueType->Kind == NdTypeKind::Float && ValueType->Size == 8) ||
-          (ValueType->Kind == NdTypeKind::Int && ValueType->Size == 1 &&
-           !ValueType->IsSigned)))
+    if (!VoidCall &&
+        (!ValueType ||
+         !((ValueType->Kind == NdTypeKind::Float && ValueType->Size == 8) ||
+           (ValueType->Kind == NdTypeKind::Int && ValueType->Size == 1 &&
+            !ValueType->IsSigned))))
+      return bad("invalid Swift virtual binding");
+    if (Setter &&
+        (!ValueType ||
+         !((ValueType->Kind == NdTypeKind::Float && ValueType->Size == 8) ||
+           (ValueType->Kind == NdTypeKind::Int && ValueType->Size == 1 &&
+            !ValueType->IsSigned))))
       return bad("invalid Swift virtual binding");
     const size_t ContextIndex = Setter ? 1 : 0;
     auto Context = sourceValue(exprStr(*E.Operands[ContextIndex]),
@@ -312,7 +320,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     const std::string Call = "((" + Prototype + ")(uintptr_t)(" +
                              exprStr(*E.IndirectTarget) + "))(" +
                              (Setter ? *Value + ", " : "") + *Context + ")";
-    if (Setter)
+    if (VoidCall)
       return Call;
     auto Result = sourceValue(Call, Signature.ReturnType, E.Type);
     return Result ? *Result

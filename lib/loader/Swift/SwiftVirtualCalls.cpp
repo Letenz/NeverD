@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace neverd {
@@ -209,6 +210,27 @@ public:
   }
 };
 
+bool exactVoidMethodCallWindow(const BinaryImage &Image, const LowBlock &Block,
+                               size_t Index) {
+  if (Index < 3)
+    return false;
+  const auto &Retain = Block.Ops[Index - 3];
+  const auto &Saved = Block.Ops[Index - 2];
+  const auto &Link = Block.Ops[Index - 1];
+  if (Retain.Opcode != NdOp::CALL ||
+      Retain.Output != NdVar::reg(a64reg::X0, 8) || Retain.NumInputs != 1 ||
+      !Retain.Inputs[0].isConst() || Saved.Opcode != NdOp::COPY ||
+      Saved.Output != NdVar::reg(a64reg::X19, 8) || Saved.NumInputs != 1 ||
+      Saved.Inputs[0] != NdVar::reg(a64reg::X0, 8) ||
+      Link.Opcode != NdOp::COPY || Link.Output != NdVar::reg(a64reg::X30, 8) ||
+      Link.NumInputs != 1 || !Link.Inputs[0].isConst() ||
+      Link.Inputs[0].Offset != Block.Ops[Index].Addr + 4)
+    return false;
+  const auto *Import = Image.findImportStubAt(Retain.Inputs[0].Offset);
+  return Import && Import->Name == "_objc_retain" &&
+         darwinExportModuleMatches("/usr/lib/libobjc.A.dylib", Import->Module);
+}
+
 std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
                                                     va_t Entry, va_t CallSite,
                                                     va_t IsaMaskImport,
@@ -239,9 +261,12 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   const bool BoolGetter = Method->TypeEncoding == "B16@0:8";
   const bool DoubleSetter = Method->TypeEncoding == "v24@0:8d16";
   const bool BoolSetter = Method->TypeEncoding == "v20@0:8B16";
+  const bool VoidMethod = Method->TypeEncoding == "v16@0:8" &&
+                          Method->Selector.find(':') == std::string::npos;
   const bool Setter = DoubleSetter || BoolSetter;
   const bool Floating = DoubleGetter || DoubleSetter;
-  if (!DoubleGetter && !BoolGetter && !DoubleSetter && !BoolSetter)
+  if (!DoubleGetter && !BoolGetter && !DoubleSetter && !BoolSetter &&
+      !VoidMethod)
     return std::nullopt;
   const auto Bytes = Image.readVA(CallSite, 4);
   constexpr std::array<uint8_t, 4> BlrX21 = {0xa0, 0x02, 0x3f, 0xd6};
@@ -255,11 +280,14 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
     return std::nullopt;
   const TypeRef &ValueType =
       Setter ? EntryType->Parameters.back().Type : EntryType->ReturnType;
-  if (!ValueType ||
-      (Floating ? (ValueType->Kind != NdTypeKind::Float || ValueType->Size != 8)
-                : (ValueType->Kind != NdTypeKind::Int || ValueType->Size != 1 ||
-                   ValueType->IsSigned)) ||
-      (Setter && EntryType->ReturnType->Kind != NdTypeKind::Void))
+  if ((VoidMethod || Setter) && EntryType->ReturnType->Kind != NdTypeKind::Void)
+    return std::nullopt;
+  if (!VoidMethod &&
+      (!ValueType ||
+       (Floating
+            ? (ValueType->Kind != NdTypeKind::Float || ValueType->Size != 8)
+            : (ValueType->Kind != NdTypeKind::Int || ValueType->Size != 1 ||
+               ValueType->IsSigned))))
     return std::nullopt;
   const Symbol *Symbol = nullptr;
   for (const auto &S : Image.Symbols)
@@ -271,10 +299,16 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s"))
     return std::nullopt;
   const llvm::StringRef Name = Symbol->Name;
-  if (Floating ? (!Name.ends_with(Setter ? "12CoreGraphics7CGFloatVvsTo"
-                                         : "12CoreGraphics7CGFloatVvgTo") &&
-                  !Name.ends_with(Setter ? "SdvsTo" : "SdvgTo"))
-               : !Name.ends_with(Setter ? "SbvsTo" : "SbvgTo"))
+  const bool MatchesSymbol =
+      VoidMethod
+          ? Name.ends_with(std::to_string(Method->Selector.size()) +
+                           Method->Selector + "yyFTo")
+          : (Floating
+                 ? (Name.ends_with(Setter ? "12CoreGraphics7CGFloatVvsTo"
+                                          : "12CoreGraphics7CGFloatVvgTo") ||
+                    Name.ends_with(Setter ? "SdvsTo" : "SdvgTo"))
+                 : Name.ends_with(Setter ? "SbvsTo" : "SbvgTo"));
+  if (!MatchesSymbol)
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
@@ -283,8 +317,9 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
                                                           IsaMaskImport, Slot};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Signature.ReturnType =
-      Setter ? NdType::makeVoid()
-             : (Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false));
+      (Setter || VoidMethod)
+          ? NdType::makeVoid()
+          : (Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false));
   if (Setter)
     Hint.Signature.Parameters.push_back(
         {"value", Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false)});
@@ -358,6 +393,9 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
           Other.Addr == Op.Addr)
         ++CallsAtSite;
     if (CallsAtSite != 1)
+      continue;
+    if (Method->TypeEncoding == "v16@0:8" &&
+        !exactVoidMethodCallWindow(Image, Block, I))
       continue;
     BlockTrace Trace(Image, Function, Block);
     auto Target = Trace.resolve(Op.Inputs[0], I, Op.Addr);
