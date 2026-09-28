@@ -700,10 +700,18 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
   };
 
   auto Judge = [&](std::string_view Name, uint64_t Target) {
-    // An import thunk is named after the import, not after the decorated
-    // symbol the library called; it settles nothing either way.
-    if (Img.decodeImportThunkAt(Target))
-      return ReferenceVerdict::Unknown;
+    if (const Import *Imp = Img.findImportStubAt(Target)) {
+      // An ELF import is the very symbol the library called, named without
+      // the version a `name@VERSION` reference states, so its stub settles
+      // the call either way.  A COFF import thunk is named after the import,
+      // not after the decorated symbol the library called; it settles
+      // nothing.
+      if (!Img.isELF())
+        return ReferenceVerdict::Unknown;
+      return Imp->Name == Name.substr(0, Name.find('@'))
+                 ? ReferenceVerdict::Confirmed
+                 : ReferenceVerdict::Contradicted;
+    }
     // A library calls a routine by whichever of its names it uses, so any
     // name the routine settled with confirms the call.
     if (const auto It = SettledAt(Target); It != Settled.end())

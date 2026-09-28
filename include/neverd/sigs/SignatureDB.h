@@ -86,10 +86,12 @@ public:
   /// against the image.  A reference whose branch goes to a routine the other
   /// matches name differently contradicts the match, which is dropped.  One
   /// whose target those matches name the same, or whose target the named
-  /// routine's own pattern matches, confirms it.  Anything else -- an import
-  /// thunk, a veneer, a routine nothing names -- neither confirms nor
-  /// contradicts.  A branch to an incremental-linking thunk is followed to
-  /// the thunk's target when the thunk itself settles nothing.
+  /// routine's own pattern matches, confirms it.  In an ELF image a branch
+  /// to an import's PLT stub confirms a reference to that import and
+  /// contradicts one to anything else.  Anything else -- a COFF import thunk,
+  /// a veneer, a routine nothing names -- neither confirms nor contradicts.
+  /// A branch to an incremental-linking thunk is followed to the thunk's
+  /// target when the thunk itself settles nothing.
   void apply(const BinaryImage &Img, const std::vector<uint64_t> &FuncEntries);
 
   /// Name the personality routines \p Img installs but cannot name itself,

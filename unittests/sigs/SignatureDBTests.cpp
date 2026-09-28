@@ -21,6 +21,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace neverd::sigs;
 
@@ -370,6 +371,116 @@ TEST(SignatureDBReferences, IncrementalLinkingThunksAreFollowed) {
 
   EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
       << "the thunk leads to a routine named otherwise";
+}
+
+namespace {
+
+/// makeCallingImage(0x1200) in \p Format, whose 0x1200 is the stub of an
+/// import named \p Import: `jmp [rip+slot]`, the slot the import's own.
+neverd::BinaryImage makeImportCallingImage(neverd::BinaryFormat Format,
+                                           llvm::StringRef Import) {
+  neverd::BinaryImage Image = makeCallingImage(0x1200);
+  Image.Format = Format;
+  constexpr uint64_t Slot = 0x2000;
+  std::vector<uint8_t> &Data = Image.Segments[0].Data;
+  Data[0x200] = 0xFF;
+  Data[0x201] = 0x25;
+  const int32_t Disp = static_cast<int32_t>(Slot - 0x1206);
+  std::memcpy(Data.data() + 0x202, &Disp, sizeof(Disp));
+  neverd::Import Imp;
+  Imp.Module = "libc.so";
+  Imp.Name = Import.str();
+  Imp.IATAddr = Slot;
+  Image.Imports.push_back(std::move(Imp));
+  return Image;
+}
+
+/// ctype_byname<wchar_t>'s do_toupper and do_tolower: the same bytes, told
+/// apart only by the import each calls.
+std::string twinCallerLines(llvm::StringRef Offset) {
+  return callerLine("do_toupper", (" ^" + Offset + " towupper_l").str()) +
+         callerLine("do_tolower", (" ^" + Offset + " towlower_l").str());
+}
+
+} // namespace
+
+TEST(SignatureDBReferences, AnELFImportsStubSettlesACallToIt) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(twinCallerLines("0005"), "refs"));
+  Database.apply(
+      makeImportCallingImage(neverd::BinaryFormat::ELF, "towlower_l"),
+      {0x1000});
+
+  ASSERT_EQ(Database.matches().size(), 1u)
+      << "the call to another import contradicts do_toupper";
+  EXPECT_EQ(Database.matches()[0].Name, "do_tolower");
+  EXPECT_TRUE(Database.matches()[0].Confirmed);
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "do_tolower");
+}
+
+TEST(SignatureDBReferences, AVersionedReferenceNamesTheImportItBindsTo) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("caller", " ^0005 memcpy@GLIBC_2.2.5"), "refs"));
+  Database.apply(makeImportCallingImage(neverd::BinaryFormat::ELF, "memcpy"),
+                 {0x1000});
+
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_TRUE(Database.matches()[0].Confirmed);
+}
+
+TEST(SignatureDBReferences, ACOFFImportThunkSettlesNothing) {
+  // A COFF import is named after the export, not after the decorated symbol
+  // the library called.
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(twinCallerLines("0005"), "refs"));
+  Database.apply(
+      makeImportCallingImage(neverd::BinaryFormat::COFF, "towlower_l"),
+      {0x1000});
+
+  EXPECT_EQ(Database.matches().size(), 2u);
+  for (const SigMatch &Match : Database.matches())
+    EXPECT_FALSE(Match.Confirmed) << Match.Name;
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+}
+
+TEST(SignatureDBReferences, AStubTheLoaderPairedWithAnImportSettlesACall) {
+  // AArch64: stp x29,x30,[sp,#-16]!; bl 0x1200; ldp x29,x30,[sp],#16; ret,
+  // where 0x1200 is a PLT entry the loader paired with towlower_l.
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::AArch64;
+  Image.Bits = neverd::Bitness::Bits64;
+  Image.Format = neverd::BinaryFormat::ELF;
+  neverd::Segment Code;
+  Code.VA = 0x1000;
+  Code.Size = 0x300;
+  Code.FileSz = 0x300;
+  Code.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Code.Data.assign(0x300, 0);
+  const uint32_t Words[] = {0xA9BF7BFD, 0x94000000 | ((0x1200 - 0x1004) / 4),
+                            0xA8C17BFD, 0xD65F03C0};
+  std::memcpy(Code.Data.data(), Words, sizeof(Words));
+  Image.Segments.push_back(std::move(Code));
+  neverd::Import Imp;
+  Imp.Module = "libc.so";
+  Imp.Name = "towlower_l";
+  Imp.IATAddr = 0x2000;
+  Image.Imports.push_back(std::move(Imp));
+  ASSERT_TRUE(Image.recordImportStub(0x1200, 0));
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "FD7BBFA9........FD7BC1A8C0035FD6 00 0000 0010 :0000 do_toupper "
+      "^0004 towupper_l\n"
+      "FD7BBFA9........FD7BC1A8C0035FD6 00 0000 0010 :0000 do_tolower "
+      "^0004 towlower_l\n",
+      "refs"));
+  Database.apply(Image, {0x1000});
+
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_EQ(Database.matches()[0].Name, "do_tolower");
+  EXPECT_TRUE(Database.matches()[0].Confirmed);
 }
 
 TEST(SignatureDBAliases, OneModulesNamesForAnOffsetAreOneRoutine) {
