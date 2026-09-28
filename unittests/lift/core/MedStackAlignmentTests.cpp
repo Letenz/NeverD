@@ -167,4 +167,68 @@ TEST(MedStackAlignment, HonorsEntryResiduesOnOtherArchitectures) {
   }
 }
 
+TEST(MedStackAlignment, ZeroMasksDoNotProveStackAlignment) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (bool Reversed : {false, true}) {
+      SCOPED_TRACE(Reversed);
+      MedFunc Func = frameWithEntrySP(Architecture);
+      auto &Ops = Func.Blocks[0].Ops;
+      const uint16_t Width = getTargetRegInfo(Architecture).PointerSize;
+      const MedVar Stack = reg(0, Architecture);
+      const MedVar Zero =
+          MedVar::makeConst(0, Width, ConstantAddressProvenance::Scalar);
+      Ops.push_back(op(NdOp::INT_AND, temp(2, Architecture),
+                       Reversed ? Zero : Stack, Reversed ? Stack : Zero));
+      const MedOp Original = Ops.back();
+
+      simplifyProvenStackAlignment(Func, Architecture, BinaryFormat::MachO);
+
+      // Clearing every bit produces zero, never a stack-relative value.
+      // In particular, complement(mask) + 1 must not wrap into an accepted
+      // zero alignment for a 64-bit operand.
+      EXPECT_EQ(Ops.back().Opcode, NdOp::INT_AND);
+      ASSERT_EQ(Ops.back().NumInputs, 2);
+      EXPECT_EQ(Ops.back().Inputs[0], Original.Inputs[0]);
+      EXPECT_EQ(Ops.back().Inputs[1], Original.Inputs[1]);
+    }
+  }
+}
+
+TEST(MedStackAlignment, ZeroMaskedValuesDoNotBecomeFrameAliases) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (bool Reversed : {false, true}) {
+      SCOPED_TRACE(Reversed);
+      MedFunc Func = frameWithEntrySP(Architecture);
+      auto &Ops = Func.Blocks[0].Ops;
+      const uint16_t Width = getTargetRegInfo(Architecture).PointerSize;
+      const MedVar Stack = reg(0, Architecture);
+      const MedVar Zero =
+          MedVar::makeConst(0, Width, ConstantAddressProvenance::Scalar);
+      const MedVar Zeroed = temp(2, Architecture);
+      const uint64_t Mask =
+          Width == 8 ? UINT64_C(0xfffffffffffffff8) : UINT32_C(0xfffffff8);
+      const MedVar Alignment =
+          MedVar::makeConst(Mask, Width, ConstantAddressProvenance::Scalar);
+      Ops.push_back(op(NdOp::INT_AND, Zeroed, Reversed ? Zero : Stack,
+                       Reversed ? Stack : Zero));
+      Ops.push_back(op(NdOp::INT_AND, temp(3, Architecture),
+                       Reversed ? Alignment : Zeroed,
+                       Reversed ? Zeroed : Alignment));
+      const MedOp Original = Ops.back();
+
+      simplifyProvenStackAlignment(Func, Architecture, BinaryFormat::MachO);
+
+      // A later valid alignment mask does not authenticate its zero-valued
+      // input as an entry-stack alias. Neither recursive proof nor rewrites
+      // of an earlier definition may introduce that relationship.
+      EXPECT_EQ(Ops.back().Opcode, NdOp::INT_AND);
+      ASSERT_EQ(Ops.back().NumInputs, 2);
+      EXPECT_EQ(Ops.back().Inputs[0], Original.Inputs[0]);
+      EXPECT_EQ(Ops.back().Inputs[1], Original.Inputs[1]);
+    }
+  }
+}
+
 } // namespace

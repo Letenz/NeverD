@@ -89,7 +89,7 @@ public:
         continue;
       const uint64_t Cleared = ~Mask.ConstVal & WidthMask;
       const uint64_t Alignment = Cleared + 1;
-      if (!Cleared ||
+      if (!Cleared || !Alignment ||
           Alignment > guaranteedEntryAlignment(Architecture, Format) ||
           (Alignment & (Alignment - 1)) != 0)
         continue;
