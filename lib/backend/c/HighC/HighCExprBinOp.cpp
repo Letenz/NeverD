@@ -92,9 +92,18 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
     if (Operand && Operand->Kind == ExprKind::Const &&
         LiteralAddressOperands.insert(Operand.get()).second)
       Added.push_back(Operand.get());
+  // C has no bitwise, shift, multiplicative or remainder operator on a
+  // pointer, so a frame slot address used by one is an integer there.
+  std::vector<const HighExpr *> IntegerViews;
+  if (E.Op != NdOp::INT_ADD && E.Op != NdOp::INT_SUB)
+    for (const auto &Operand : E.Operands)
+      if (Operand && IntegerViewOperands.insert(Operand.get()).second)
+        IntegerViews.push_back(Operand.get());
   std::string Rendered = renderBinOpOperands(E, ParentPrec);
   for (const HighExpr *Operand : Added)
     LiteralAddressOperands.erase(Operand);
+  for (const HighExpr *Operand : IntegerViews)
+    IntegerViewOperands.erase(Operand);
   return Rendered;
 }
 

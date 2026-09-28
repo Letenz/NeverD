@@ -2736,7 +2736,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       if (const auto Disp = frameDisplacement(E)) {
         auto It = FrameSlots.find(*Disp);
         if (It != FrameSlots.end() && It->second.UsedAsMemory)
-          return "&" + *Slot;
+          return (IntegerViewOperands.count(&E) ? "(uintptr_t)&" : "&") + *Slot;
       }
     }
     if (pointerNeedsIntegerView(DeclaredType))
@@ -2787,7 +2787,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       if (const auto Disp = certifiedFrameStorageDisplacement(E))
         return frameStorageAddress(*Disp);
     if (auto Slot = namedFrameSlot(E))
-      return "&" + *Slot;
+      return (IntegerViewOperands.count(&E) ? "(uintptr_t)&" : "&") + *Slot;
     if (auto Member = typedMemberAddress(E))
       return "&" + *Member;
     return renderBinOp(E, ParentPrec);

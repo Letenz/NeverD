@@ -792,3 +792,72 @@ TEST(Win64Forwarder, UntouchedRegisterArgumentsPassTheParameters) {
       << Source;
   EXPECT_EQ(Source.find("(0, 0, 0, 0,"), std::string::npos) << Source;
 }
+
+namespace {
+
+// xor r11d,r11d; lea r8,[rsp+8]; test rdx,rdx; mov [rsp+8],r11w;
+// cmovne r8,rdx; mov word [r8],0x14; movzx eax,word [r8]; ret
+BinaryImage makeMaskedFrameSelectImage() {
+  constexpr va_t Entry = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = 0x30;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const uint8_t Code[] = {0x45, 0x31, 0xdb,                   // xor
+                          0x4c, 0x8d, 0x44, 0x24, 0x08,       // lea
+                          0x48, 0x85, 0xd2,                   // test
+                          0x66, 0x44, 0x89, 0x5c, 0x24, 0x08, // mov
+                          0x4c, 0x0f, 0x45, 0xc2,             // cmovne
+                          0x66, 0x41, 0xc7, 0x00, 0x14, 0x00, // mov
+                          0x41, 0x0f, 0xb7, 0x00,             // movzx
+                          0xc3};                              // ret
+  std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Section Section;
+  Section.Name = ".text";
+  Section.VA = Entry;
+  Section.Size = 0x30;
+  Section.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Section));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry, sizeof(Code)));
+  return Img;
+}
+
+} // namespace
+
+TEST(Win64Forwarder, MaskedSelectOfAFrameAddressUsesItsIntegerValue) {
+  // `cmovne` over a frame address lifts to `(p & m) | (&slot & ~m)`; C has
+  // no bitwise operator on a pointer, so the address is an integer there.
+  auto Img = makeMaskedFrameSelectImage();
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  auto Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_FALSE(Result.HighFuncs.empty());
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Result.HighFuncs.front()}, Stream, Options));
+  Stream.flush();
+  for (size_t At = Source.find("&var_"); At != std::string::npos;
+       At = Source.find("&var_", At + 1)) {
+    const size_t End = Source.find_first_of(" ),;", At);
+    if (End == std::string::npos || Source.compare(End, 3, " & ") != 0)
+      continue;
+    EXPECT_EQ(Source.compare(At - 11, 11, "(uintptr_t)"), 0) << Source;
+  }
+  EXPECT_NE(Source.find("(uintptr_t)&var_"), std::string::npos) << Source;
+}

@@ -182,6 +182,9 @@ public:
   /// Operands of the integer operator being printed. A string literal among
   /// them is an array in C and prints as its integer address instead.
   std::set<const HighExpr *> LiteralAddressOperands;
+  /// Operands of an integer-only C operator (bitwise, shift, multiply,
+  /// divide): a frame slot address among them is printed as an integer.
+  std::set<const HighExpr *> IntegerViewOperands;
   /// Address used by a load/store/atomic. Peels integer views and prints
   /// `base + imm` without sanitizer wrap. Value uses of the same add still
   /// wrap. Segmented offsets disable image backing projection to stay numeric.
