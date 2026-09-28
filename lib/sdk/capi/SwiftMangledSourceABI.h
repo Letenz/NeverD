@@ -5,10 +5,14 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
+
+#include <set>
+#include <vector>
 
 namespace neverd::sdk {
 
@@ -1825,6 +1829,128 @@ swiftMangledNibBundleClassInitializerSourceABI(const BinaryImage &Image,
                      {"bundle", NdType::makePtr(NdType::makeVoid())},
                      {"self", NdType::makePtr(NdType::makeVoid())}};
   Hint.Parameters[3].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
+// SwiftPM's static Bundle.module initializer is a context-free closure. Its
+// complete mangled type supplies the zero-argument NSBundle result, while the
+// current HighIR must independently show no incoming register reads. This is
+// only an ABI declaration; the bundle-search body still needs source proof.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledBundleModuleClosureSourceABI(const BinaryImage &Image, va_t Entry,
+                                         const HighFunc &Function) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry) || Function.Entry != Entry ||
+      Function.SourceTypeHint || !Function.Params.empty() ||
+      !Function.ReturnType || Function.ReturnType->Size != 8 ||
+      (Function.ReturnType->Kind != NdTypeKind::Ptr &&
+       Function.ReturnType->Kind != NdTypeKind::Int))
+    return std::nullopt;
+  const llvm::StringRef FunctionName(Function.Name);
+  if (!FunctionName.starts_with("_$sSo8NSBundleC") ||
+      !FunctionName.contains("6module"))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only || Only->Name != Function.Name)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
+    return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Count;
+  };
+  const auto Named = [](const Node &N, llvm::StringRef Kind,
+                        llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  const auto NSBundle = [&](const Node &N) {
+    return Shape(N, "Class", 2) && Named(N.Children[0], "Module", "__C") &&
+           Named(N.Children[1], "Identifier", "NSBundle");
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "ExplicitClosure", 3))
+    return std::nullopt;
+  const auto &Closure = Parsed.Root->Children[0];
+  const auto &Initializer = Closure.Children[0];
+  const auto &Number = Closure.Children[1];
+  const auto &Type = Closure.Children[2];
+  if (!Shape(Initializer, "Initializer", 1) ||
+      !Shape(Initializer.Children[0], "Static", 1) ||
+      !Shape(Initializer.Children[0].Children[0], "Variable", 3) ||
+      Number.Kind != "Number" || Number.Text || !Number.Index ||
+      *Number.Index != 0 || !Number.Children.empty() ||
+      !Shape(Type, "Type", 1) ||
+      !Shape(Type.Children[0], "NoEscapeFunctionType", 2) ||
+      !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0], "Type", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+             0) ||
+      !Shape(Type.Children[0].Children[1], "ReturnType", 1) ||
+      !Shape(Type.Children[0].Children[1].Children[0], "Type", 1) ||
+      !NSBundle(Type.Children[0].Children[1].Children[0].Children[0]))
+    return std::nullopt;
+  const auto &Variable = Initializer.Children[0].Children[0];
+  const auto &Extension = Variable.Children[0];
+  if (!Shape(Extension, "Extension", 2) ||
+      Extension.Children[0].Kind != "Module" || !Extension.Children[0].Text ||
+      Extension.Children[0].Text->empty() || Extension.Children[0].Index ||
+      !Extension.Children[0].Children.empty() ||
+      !NSBundle(Extension.Children[1]) ||
+      !Named(Variable.Children[1], "Identifier", "module") ||
+      !Shape(Variable.Children[2], "Type", 1) ||
+      !NSBundle(Variable.Children[2].Children[0]))
+    return std::nullopt;
+
+  const auto Flow = analyzeHighSourceFlow(Function, true);
+  if (!Flow.Complete || !Flow.Items.empty())
+    return std::nullopt;
+  bool Undefined = false;
+  size_t Budget = 100000;
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Root) {
+      std::vector<const HighExpr *> Pending{Root.get()};
+      std::set<const HighExpr *> Seen;
+      while (!Pending.empty() && !Undefined) {
+        const HighExpr *Expression = Pending.back();
+        Pending.pop_back();
+        if (!Expression || !Seen.insert(Expression).second)
+          continue;
+        if (!Budget-- || Expression->Kind == ExprKind::Undef) {
+          Undefined = true;
+          break;
+        }
+        for (const auto &Operand : Expression->Operands)
+          Pending.push_back(Operand.get());
+      }
+    });
+  });
+  if (Undefined)
+    return std::nullopt;
+
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
   std::string Error;
   return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
              ? std::optional<SourceFunctionTypeHint>(std::move(Hint))

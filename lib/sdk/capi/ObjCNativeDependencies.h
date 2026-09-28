@@ -344,6 +344,12 @@ inline size_t inferObjCNativeDependencies(
         ++Added;
         continue;
       }
+      if (auto Mangled = swiftMangledBundleModuleClosureSourceABI(Image, Target,
+                                                                  *H->second)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
       if (auto Mangled =
               swiftMangledZeroArgClassInitializerSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));

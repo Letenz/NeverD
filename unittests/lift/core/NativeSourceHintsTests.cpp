@@ -1162,6 +1162,75 @@ TEST(NativeSourceHints, NibBundleClassInitializerUsesSwiftSelf) {
       sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, BundleModuleClosureRequiresContextFreeBody) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  constexpr const char *Name = "_$sSo8NSBundleC7TestPkgE6moduleABvpZfiAByXEfU_";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = Name;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeConst(0, 8);
+  Return.RetVal->Type = Function.ReturnType;
+  Function.Body.push_back(Return);
+  const auto Hint =
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Function);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_TRUE(Hint->Parameters.empty());
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo8NSObjectC7TestPkgE6moduleABvpZfiAByXEfU_";
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo8NSBundleC7TestPkgE5otherABvpZfiAByXEfU_";
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+
+  auto Capturing = Function;
+  MedVar Context;
+  Context.Kind = MedVar::Reg;
+  Context.Id = 20;
+  Context.RegOff = a64reg::X20;
+  Context.Size = 8;
+  Capturing.Body[0].RetVal =
+      HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
+  Capturing = Function;
+  Capturing.Body.clear();
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
+  Capturing = Function;
+  Capturing.Body[0].RetVal = HighExpr::makeUndef(8);
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
+}
+
 namespace {
 struct NativeFixture {
   BinaryImage Image;
