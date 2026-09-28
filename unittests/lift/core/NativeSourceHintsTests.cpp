@@ -3776,6 +3776,56 @@ TEST(NativeSourceHints,
   EXPECT_FALSE(Forged.inferVoid(Error));
 }
 
+TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
+  NativeVoidFrameFixture Fixture(Arch::AArch64);
+  constexpr va_t ImportSlot = 0x2000;
+  constexpr llvm::StringLiteral Import = "_swift_endAccess";
+  Segment Data;
+  Data.VA = ImportSlot;
+  Data.Size = Data.FileSz = 8;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(8);
+  Fixture.Image.Segments.push_back(std::move(Data));
+  Fixture.Image.ImportPtrSlots[ImportSlot] = Import.str();
+  ASSERT_TRUE(Fixture.Image.recordDyldBindSlot(
+      ImportSlot, Import.str(), 0, "/usr/lib/swift/libswiftCore.dylib", false));
+  const auto Runtime = swiftRuntimeSourceCallHint(Fixture.Image, ImportSlot);
+  ASSERT_TRUE(Runtime);
+  ASSERT_EQ(Runtime->Signature.Parameters.size(), 1U);
+  Fixture.Med.Blocks[0].Ops[0].SourceCallHint =
+      std::make_shared<const SourceCallTypeHint>(*Runtime);
+
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto &Ops = Fixture.Low.Blocks[0].Ops;
+  const auto SP = NdVar::reg(TRI.StackPointer, 8);
+  Ops.front().Inputs[1] = NdVar::cst(96, 8);
+  Ops[Fixture.RestoreIndex + Fixture.Saved.size() * 2].Inputs[1] =
+      NdVar::cst(96, 8);
+  Fixture.FrameBytes = 96;
+  Ops.insert(Ops.begin() + Fixture.CallIndex,
+             NativeVoidFrameFixture::op(NdOp::INT_ADD,
+                                        NdVar::reg(TRI.IntParamRegs[0], 8),
+                                        {SP, NdVar::cst(32, 8)}));
+  ++Fixture.CallIndex;
+
+  std::string Error;
+  const auto Hint = Fixture.inferVoid(Error);
+  ASSERT_TRUE(Hint) << Error;
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+
+  auto Overlap = Fixture;
+  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] =
+      NdVar::cst(0, 8);
+  EXPECT_FALSE(Overlap.inferVoid(Error));
+
+  auto Forged = Fixture;
+  auto ForgedBinding = std::make_shared<SourceCallTypeHint>(
+      *Forged.Med.Blocks[0].Ops[0].SourceCallHint);
+  ForgedBinding->TargetName += "_forged";
+  Forged.Med.Blocks[0].Ops[0].SourceCallHint = std::move(ForgedBinding);
+  EXPECT_FALSE(Forged.inferVoid(Error));
+}
+
 TEST(NativeSourceHints, SwiftHasherBorrowsOnlyItsBoundedPrivateFrame) {
   for (const auto &Import :
        {"_$ss6HasherV5_seedABSi_tcfC", "_$sSS4hash4intoys6HasherVz_tF"}) {
