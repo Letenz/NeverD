@@ -64,3 +64,34 @@ TEST(SymMBAMeasure, ZeroInputsHaveOneNegatedConstantCorner) {
     }
   }
 }
+
+TEST(SymMBAMeasure, FullInputReductionsMatchEvaluatorAtEveryCorner) {
+  for (unsigned Width : {1u, 3u, 8u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    Ctx.mkVar("unused", Width);
+    llvm::SmallVector<SymRef, 8> Vars;
+    llvm::SmallVector<uint32_t, 8> Atoms;
+    for (unsigned I = 0; I < 8; ++I) {
+      SymRef V = Ctx.mkVar("v" + std::to_string(I), Width);
+      Vars.push_back(V);
+      Atoms.push_back(Ctx.varId(V));
+    }
+    std::reverse(Atoms.begin(), Atoms.end());
+    SymRef And = Ctx.mkAnd(Vars);
+    SymRef Or = Ctx.mkOr(Vars);
+    SymRef Xor = Ctx.mkXor(Vars);
+    const llvm::APInt Zero(Width, 0);
+    const llvm::APInt Ones = llvm::APInt::getAllOnes(Width);
+    std::vector<llvm::APInt> Assignment(Ctx.numVars(), Zero);
+    for (SymRef E : {And, Or, Xor, Ctx.mkAdd(And, Or), Ctx.mkAdd(Xor, Or)}) {
+      auto Weights = detail::measure(Ctx, E, Atoms);
+      ASSERT_EQ(Weights.size(), 256u);
+      for (size_t Pattern = 0; Pattern < Weights.size(); ++Pattern) {
+        for (unsigned I = 0; I < Atoms.size(); ++I)
+          Assignment[Atoms[I]] = Pattern & (size_t(1) << I) ? Ones : Zero;
+        EXPECT_EQ(Weights[Pattern], -Ctx.eval(E, Assignment)) << Pattern;
+      }
+    }
+  }
+}

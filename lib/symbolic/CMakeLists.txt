@@ -14,6 +14,7 @@ add_neverd_component_library(NeverDSymbolic
   expr/SymExprWalk.cpp
   mba/SymBitwise.cpp
   mba/SymMBA.cpp
+  mba/SymMBAMaskPartition.cpp
   mba/SymMBAAbstract.cpp
   mba/SymMBAArithmetic.cpp
   mba/SymMBAFactor.cpp
