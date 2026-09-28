@@ -6850,9 +6850,23 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
                              /*RequireMappedValue=*/false);
     return std::nullopt;
   };
+  auto asLocalConst = [&](NdVar V, int Before) -> std::optional<uint64_t> {
+    auto [P, D] = peelCopyZext(V, Before);
+    if (P.isConst())
+      return P.Offset;
+    if (D >= 0 && Ops[D].Opcode == NdOp::COPY && Ops[D].NumInputs >= 1 &&
+        Ops[D].Inputs[0].isConst())
+      return Ops[D].Inputs[0].Offset;
+    return std::nullopt;
+  };
+  auto asPatternConst = [&](NdVar V, int Before) {
+    return Img.Arch == Arch::ARM ? asLocalConst(V, Before) : asConst(V, Before);
+  };
 
   int ConstArm = -1;
   uint64_t K = 0;
+  NdVar ConstantInput;
+  const LowOp *ConstantUse = nullptr;
   NdVar ByteValue;
   int ByteFrom = -1;
   NdVar Condition;
@@ -6861,10 +6875,12 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
   if (Blend.Opcode == NdOp::SELECT) {
     for (int Arm = 1; Arm < 3; ++Arm) {
       const std::optional<uint64_t> Candidate =
-          asConst(Blend.Inputs[Arm], BlendDef - 1);
-      if (!Candidate || asConst(Blend.Inputs[3 - Arm], BlendDef - 1))
+          asPatternConst(Blend.Inputs[Arm], BlendDef - 1);
+      if (!Candidate || asPatternConst(Blend.Inputs[3 - Arm], BlendDef - 1))
         continue;
       K = *Candidate;
+      ConstantInput = Blend.Inputs[Arm];
+      ConstantUse = &Blend;
       ByteValue = Blend.Inputs[3 - Arm];
       ByteFrom = BlendDef - 1;
       Condition = Blend.Inputs[0];
@@ -6908,6 +6924,8 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
         const std::optional<uint64_t> NegK = asConst(NegData, NegAnd - 1);
         if (PosK && !NegK) {
           K = *PosK;
+          ConstantInput = PosData;
+          ConstantUse = &Ops[PosAnd];
           ByteValue = NegData;
           ByteFrom = NegAnd - 1;
           Condition = Ops[Neg2].Inputs[0];
@@ -6917,11 +6935,14 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
         }
         if (NegK && !PosK) {
           K = *NegK;
+          ConstantInput = NegData;
+          ConstantUse = &Ops[NegAnd];
           ByteValue = PosData;
           ByteFrom = PosAnd - 1;
           Condition = Ops[Neg2].Inputs[0];
           ConditionFrom = Neg2 - 1;
           ConstArm = Neg;
+          ConstantWhenPredicateTrue = false;
           break;
         }
       }
@@ -6942,6 +6963,8 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       ByteLoad.NumInputs >= 2 ? ByteLoad.Inputs[1] : ByteLoad.Inputs[0];
   const va_t FoldAt = ByteLoad.Addr;
   std::optional<uint64_t> ProgBase;
+  NdVar ProgBaseInput;
+  const LowOp *ProgBaseUse = nullptr;
   NdVar ByteIndex;
   int ByteIndexFrom = -1;
   auto tryFold = [&](NdVar V, int Before) -> std::optional<uint64_t> {
@@ -6957,6 +6980,10 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     return std::nullopt;
   };
   ProgBase = tryFold(LoadAddr, ByteDef - 1);
+  if (ProgBase) {
+    ProgBaseInput = LoadAddr;
+    ProgBaseUse = &ByteLoad;
+  }
   if (!ProgBase) {
     const int AddrDef = reachingDefIdx(Ops, ByteDef - 1, LoadAddr);
     if (AddrDef >= 0 && Ops[AddrDef].Opcode == NdOp::INT_ADD &&
@@ -6965,10 +6992,14 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       const auto Right = tryFold(Ops[AddrDef].Inputs[1], AddrDef - 1);
       if (Left && !Right) {
         ProgBase = Left;
+        ProgBaseInput = Ops[AddrDef].Inputs[0];
+        ProgBaseUse = &Ops[AddrDef];
         ByteIndex = Ops[AddrDef].Inputs[1];
         ByteIndexFrom = AddrDef - 1;
       } else if (Right && !Left) {
         ProgBase = Right;
+        ProgBaseInput = Ops[AddrDef].Inputs[1];
+        ProgBaseUse = &Ops[AddrDef];
         ByteIndex = Ops[AddrDef].Inputs[0];
         ByteIndexFrom = AddrDef - 1;
       }
@@ -7012,6 +7043,13 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
   if (And1 < 0 || Ops[And1].Opcode != NdOp::INT_AND || Ops[And1].NumInputs < 2)
     return false;
   std::optional<uint64_t> Mask;
+  NdVar MaskInput;
+  const LowOp *MaskUse = nullptr;
+  NdVar OneInput;
+  const LowOp *OneUse = nullptr;
+  NdVar IndexMaskInput;
+  const LowOp *IndexMaskUse = nullptr;
+  std::optional<uint64_t> IndexMaskValue;
   NdVar PcValue;
   int PcFrom = -1;
   uint64_t MaskBits = 0;
@@ -7026,6 +7064,10 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       if (!One || *One != 1)
         continue;
       Mask = asConst(Other, And1 - 1);
+      MaskInput = Other;
+      MaskUse = &Ops[And1];
+      OneInput = Ops[Shift].Inputs[0];
+      OneUse = &Ops[Shift];
       MaskBits = Other.Size * 8ull;
       PcValue = Ops[Shift].Inputs[1];
       PcFrom = Shift - 1;
@@ -7034,6 +7076,10 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       if (!One || *One != 1)
         continue;
       Mask = asConst(Ops[Shift].Inputs[0], Shift - 1);
+      MaskInput = Ops[Shift].Inputs[0];
+      MaskUse = &Ops[Shift];
+      OneInput = Other;
+      OneUse = &Ops[And1];
       MaskBits = Ops[Shift].Inputs[0].Size * 8ull;
       PcValue = Ops[Shift].Inputs[1];
       PcFrom = Shift - 1;
@@ -7043,7 +7089,12 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     return false;
   if (MaskBits == 0 || MaskBits > 64)
     return false;
-  if (Blend.Opcode == NdOp::SELECT) {
+  NdVar PcIndex;
+  const LowOp *PcIndexUse = nullptr;
+  NdVar LoadIndex;
+  const LowOp *LoadIndexUse = nullptr;
+  bool NeedIndexEqualityProof = false;
+  if (Blend.Opcode == NdOp::SELECT || Img.Arch == Arch::ARM) {
     // The bit test and byte load must use the same index. A mask may strip
     // bits only when it preserves every offset inside the sized data object.
     if (ByteIndexFrom < 0)
@@ -7056,22 +7107,43 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     if (PcDef >= 0 && Ops[PcDef].Opcode == NdOp::INT_AND &&
         Ops[PcDef].NumInputs >= 2) {
       for (int Side = 0; Side < 2; ++Side) {
-        const auto IndexMask = asConst(Ops[PcDef].Inputs[Side], PcDef - 1);
+        const auto IndexMask =
+            asPatternConst(Ops[PcDef].Inputs[Side], PcDef - 1);
         if (!IndexMask || ((*IndexMask & RequiredMask) != RequiredMask))
           continue;
+        IndexMaskInput = Ops[PcDef].Inputs[Side];
+        IndexMaskUse = &Ops[PcDef];
+        IndexMaskValue = *IndexMask;
         PcValue = Ops[PcDef].Inputs[1 - Side];
         PcFrom = PcDef - 1;
         break;
       }
     }
-    const NdVar PcIndex = peelCopyZext(PcValue, PcFrom).first;
-    const NdVar LoadIndex = peelCopyZext(ByteIndex, ByteIndexFrom).first;
+    PcIndex = peelCopyZext(PcValue, PcFrom).first;
+    LoadIndex = peelCopyZext(ByteIndex, ByteIndexFrom).first;
     if (!PcIndex.isReg() && !PcIndex.isTemp())
       return false;
     const int PcIndexDef = reachingDefIdx(Ops, PcFrom, PcIndex);
     const int LoadIndexDef = reachingDefIdx(Ops, ByteIndexFrom, LoadIndex);
-    if (!same(PcIndex, LoadIndex) || PcIndexDef != LoadIndexDef)
-      return false;
+    if (!same(PcIndex, LoadIndex) || PcIndexDef != LoadIndexDef) {
+      if (Img.Arch != Arch::ARM)
+        return false;
+      // A compiler may copy the byte-program index before the load, then use
+      // its original register for the bit test. Compare the exact values at
+      // both uses; lexical register identity is only a fast-path certificate.
+      if (PcFrom + 1 < 0 || PcFrom + 1 >= static_cast<int>(Ops.size()) ||
+          ByteIndexFrom + 1 < 0 ||
+          ByteIndexFrom + 1 >= static_cast<int>(Ops.size()))
+        return false;
+      // Query the actual operands, not their peeled aliases: the peel may
+      // cross a zero extension and leave a narrower value that was never
+      // itself an operand of either use.
+      PcIndex = PcValue;
+      LoadIndex = ByteIndex;
+      PcIndexUse = &Ops[PcFrom + 1];
+      LoadIndexUse = &Ops[ByteIndexFrom + 1];
+      NeedIndexEqualityProof = true;
+    }
   }
   const bool PredicateTrueWhenBitSet =
       (Compare->Opcode == NdOp::INT_NOTEQUAL) != PredicateNegated;
@@ -7087,6 +7159,67 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     if (Effective >= Info.PhysicalCapacity) {
       return false;
     }
+  }
+  if (Img.Arch == Arch::ARM) {
+    if (!ConstantUse || !ProgBaseUse || !MaskUse || !OneUse)
+      return false;
+    std::vector<JumpTableValueQuery> Queries;
+    auto requireValueAt = [&](NdVar Value, const LowOp &Use, uint64_t Expected,
+                              bool IsDataAddress) {
+      JumpTableValueQuery Query;
+      Query.Candidate = Value;
+      Query.UseAddr = Use.Addr;
+      Query.UseSeq = Use.Seq;
+      Query.Alternatives.push_back(
+          {NdVar::cst(Expected, Value.Size), InvalidVA, -1, false});
+      Query.Alternatives.push_back(
+          {NdVar::scalar(Expected, Value.Size), InvalidVA, -1, false});
+      if (IsDataAddress)
+        Query.Alternatives.push_back(
+            {NdVar::dataAddress(Expected, Value.Size, Expected), InvalidVA, -1,
+             false});
+      Query.FoldScalarConstantOps = true;
+      Queries.push_back(std::move(Query));
+    };
+    requireValueAt(ConstantInput, *ConstantUse, K, false);
+    requireValueAt(ProgBaseInput, *ProgBaseUse, *ProgBase, true);
+    requireValueAt(MaskInput, *MaskUse, *Mask, false);
+    requireValueAt(OneInput, *OneUse, 1, false);
+    if (IndexMaskValue) {
+      if (!IndexMaskUse)
+        return false;
+      requireValueAt(IndexMaskInput, *IndexMaskUse, *IndexMaskValue, false);
+    }
+    if (NeedIndexEqualityProof) {
+      JumpTableValueQuery SameIndex;
+      SameIndex.Candidate = PcIndex;
+      SameIndex.UseAddr = PcIndexUse->Addr;
+      SameIndex.UseSeq = PcIndexUse->Seq;
+      SameIndex.AllowZeroExtension = true;
+      SameIndex.Alternatives.push_back(
+          {LoadIndex, LoadIndexUse->Addr, LoadIndexUse->Seq, false});
+      Queries.push_back(std::move(SameIndex));
+    }
+    // Reading a sized byte program is safe only when the runtime index is
+    // confined to that exact object, not merely when its bit-test sibling
+    // uses the same register. A guard on the dispatch path may establish it.
+    if (ByteIndexFrom + 1 >= static_cast<int>(Ops.size()))
+      return false;
+    const LowOp &ByteIndexUse = Ops[ByteIndexFrom + 1];
+    JumpTableValueQuery IndexBound;
+    IndexBound.Candidate = ByteIndex;
+    IndexBound.UseAddr = ByteIndexUse.Addr;
+    IndexBound.UseSeq = ByteIndexUse.Seq;
+    IndexBound.Relation = JumpTableValueRelation::UnsignedLessThan;
+    IndexBound.UnsignedUpperBound = ProgSize;
+    Queries.push_back(std::move(IndexBound));
+    bool Complete = false;
+    const std::vector<bool> Matches =
+        tableValuesMatchAtUses(Queries, &Complete);
+    if (!Complete || Matches.size() != Queries.size() ||
+        !std::all_of(Matches.begin(), Matches.end(),
+                     [](bool Match) { return Match; }))
+      return false;
   }
 
   Info.MaxEntries = Info.PhysicalCapacity;

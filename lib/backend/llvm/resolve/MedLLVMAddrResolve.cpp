@@ -1522,6 +1522,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     bool Valid = false;
     bool SawCycle = false;
     std::optional<FrameRootKey> Root;
+    std::set<Key> CycleAnchors;
   };
   int RemainingFrameRootNodes = 8192;
   std::function<FrameRootProof(const MedVar &, int, std::set<Key>)>
@@ -1533,13 +1534,16 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
       return {true, false, Exact->first};
     const MedOp *Def = lookupDef(Start);
     if (!Seen.insert(keyOf(Start)).second)
-      return {true, true, std::nullopt};
+      return {true, true, std::nullopt, {keyOf(Start)}};
 
     auto mergeProofs = [](const FrameRootProof &A,
                           const FrameRootProof &B) -> FrameRootProof {
       if (!A.Valid || !B.Valid || (A.Root && B.Root && *A.Root != *B.Root))
         return {};
-      return {true, A.SawCycle || B.SawCycle, A.Root ? A.Root : B.Root};
+      std::set<Key> Anchors = A.CycleAnchors;
+      Anchors.insert(B.CycleAnchors.begin(), B.CycleAnchors.end());
+      return {true, A.SawCycle || B.SawCycle, A.Root ? A.Root : B.Root,
+              std::move(Anchors)};
     };
 
     if (const PhiNode *Phi = lookupPhi(Start)) {
@@ -1597,10 +1601,14 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
       FrameRootProof Right = frameRootProof(*B, Depth + 1, Seen);
       if (!Right.Valid) {
         // A recurrence is pointer-preserving only when its non-pointer side
-        // remains numeric in rebuilt IR.  This is the same invariant used by
-        // the general pointer recurrence proof; applying it at the operation
-        // that carries the cycle avoids blessing `p + @other_object`.
-        if (B && Left.SawCycle && !valueIsStableAddressOffset(*B, &Start))
+        // remains numeric in rebuilt IR. A cycle confined to the base PHI and
+        // copies does not make this outer address addition recurrent. Requiring
+        // its index proof here would create a mutual dependency with the frame
+        // domain audit of a scalar array indexed by another scalar array.
+        const bool AdditionInCycle =
+            std::any_of(Left.CycleAnchors.begin(), Left.CycleAnchors.end(),
+                        [&](const Key &Anchor) { return Seen.count(Anchor); });
+        if (B && AdditionInCycle && !valueIsStableAddressOffset(*B, &Start))
           return {};
         return Left;
       }
@@ -2217,6 +2225,131 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   std::function<bool(const MedVar &, int, std::set<Key>, std::set<FrameSlotKey>,
                      std::set<Key>)>
       prove;
+  // Prove a closed scalar value graph only if the full path-sensitive proof
+  // exhausts its node budget. Shared arithmetic diamonds behind loop PHIs
+  // otherwise expand once per path, even though their non-frame leaves are
+  // independently numeric. Cycles require a feasible scalar initializer; a
+  // frame reload, pointer-width load, or materializable address fails closed.
+  auto proveClosedScalarGraph = [&](const MedVar &Root) {
+    const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
+    if (!Img || !CurMedFunc || PointerSize == 0)
+      return false;
+    std::map<AddressProvenanceVarKey, size_t> CompleteDepth;
+    std::map<AddressProvenanceVarKey, size_t> Active;
+    std::vector<MedVar> Path;
+    int Budget = 8192;
+    std::function<bool(const MedVar &)> Visit = [&](const MedVar &Start) {
+      if (Forbidden && sameVar(Start, *Forbidden))
+        return false;
+      if (valueIsAuthenticatedModelZero(Start))
+        return true;
+      if (Start.isConst())
+        return constantIsStableAddressOffset(Start);
+      const AddressProvenanceVarKey Node = addressProvenanceVarKey(Start);
+      if (auto It = CompleteDepth.find(Node);
+          It != CompleteDepth.end() && Path.size() <= It->second)
+        return true;
+      if (auto It = Active.find(Node); It != Active.end()) {
+        for (size_t I = It->second; I < Path.size(); ++I)
+          if (lookupPhi(Path[I]) && scalarRecurrenceHasInitializer(Path[I]))
+            return true;
+        return isExactSelfCopy(lookupDef(Start), Start);
+      }
+      if (Path.size() >= 128 || --Budget < 0)
+        return false;
+      Active.emplace(Node, Path.size());
+      Path.push_back(Start);
+      const bool Valid = [&]() {
+        if (const PhiNode *Phi = lookupPhi(Start)) {
+          bool SawArm = false;
+          for (const auto &[Pred, Arg] : Phi->Args) {
+            const PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, Pred);
+            if (Edge == PhiEdgeFeasibility::Infeasible)
+              continue;
+            if (Edge != PhiEdgeFeasibility::ProvenFeasible || !Visit(Arg))
+              return false;
+            SawArm = true;
+          }
+          return SawArm;
+        }
+        const MedOp *Def = lookupDef(Start);
+        if (!Def || isExactSelfCopy(Def, Start))
+          return true;
+        bool SawLoad = false;
+        bool SawArithmetic = false;
+        if (auto Folded = traceTableBaseConst(Start, 0, &SawLoad, nullptr,
+                                              &SawArithmetic);
+            Folded && *Folded != 0 &&
+            (getVarMayRelocateConstant(*Folded, Start.Size) ||
+             hasObjectDataProvenance(*Folded))) {
+          const ConstantProvenanceSummary Summary =
+              summarizeConstantProvenance(Start);
+          if (SawLoad ||
+              Summary.Model != ConstantProvenanceSummary::ValueModel::Scalar)
+            return false;
+        }
+        if (auto Forwarded = pointerPreservingInput(*Def))
+          return Visit(*Forwarded);
+        if (Def->Opcode == NdOp::LOAD) {
+          if (Def->NumInputs < 1 ||
+              Def->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              Def->Output.Size == 0 || Def->Output.Size >= PointerSize ||
+              canonicalFrameSlotKey(Def->Inputs[0]) ||
+              frameRoot(Def->Inputs[0], 0, {}) ||
+              varMayBeFrameAddress(Def->Inputs[0]))
+            return false;
+          // A non-frame load smaller than a pointer is a numeric input at
+          // this boundary, exactly as in the full provenance proof below.
+          return true;
+        }
+        if (Def->Opcode == NdOp::CONCAT && !concatHasExactWidths(*Def))
+          return false;
+        switch (Def->Opcode) {
+        case NdOp::COPY:
+        case NdOp::INT_ZEXT:
+        case NdOp::INT_SEXT:
+        case NdOp::SUBBYTES:
+        case NdOp::INT_ADD:
+        case NdOp::INT_SUB:
+        case NdOp::INT_MULT:
+        case NdOp::INT_DIV:
+        case NdOp::INT_SDIV:
+        case NdOp::INT_REM:
+        case NdOp::INT_SREM:
+        case NdOp::INT_LEFT:
+        case NdOp::INT_RIGHT:
+        case NdOp::INT_ASHR:
+        case NdOp::INT_AND:
+        case NdOp::INT_OR:
+        case NdOp::INT_XOR:
+        case NdOp::INT_NEG2:
+        case NdOp::INT_NEGATE:
+        case NdOp::INT_NOT:
+        case NdOp::CONCAT:
+        case NdOp::SELECT:
+          break;
+        default:
+          return false;
+        }
+        if (Def->NumInputs == 0 ||
+            (Def->Opcode == NdOp::SELECT && Def->NumInputs < 3))
+          return false;
+        for (uint8_t I = 0; I < Def->NumInputs; ++I)
+          if (!Visit(Def->Inputs[I]))
+            return false;
+        return true;
+      }();
+      Path.pop_back();
+      Active.erase(Node);
+      if (Valid) {
+        auto [It, Inserted] = CompleteDepth.emplace(Node, Path.size());
+        if (!Inserted)
+          It->second = std::max(It->second, Path.size());
+      }
+      return Valid;
+    };
+    return Visit(Root);
+  };
   // A small low-bit mask turns an unrelocated numeric immediate into a bounded
   // index even when that immediate happens to equal an object-file data VA.
   // Keep this context local to the mask's source walk: the same unknown
@@ -2956,7 +3089,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     }
     return Result;
   };
-  const bool Result = prove(V, 0, {}, {}, {});
+  bool Result = prove(V, 0, {}, {}, {});
+  if (!Result && RemainingProofNodes <= 0)
+    Result = proveClosedScalarGraph(V);
   if (!Result)
     detail::failure_snapshot::scalarOffsetRejection(
         CurMedFunc, V, Forbidden, FirstRejectionReason, FirstRejectedValue,
