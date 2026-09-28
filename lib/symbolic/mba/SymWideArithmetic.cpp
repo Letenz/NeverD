@@ -37,7 +37,7 @@ SymRef recoverSplitWordArithmetic(SymContext &Ctx, SymRef Expr,
       if (Ctx.width(Current) != Width)
         return Expr;
       Inputs.push_back(Current);
-      if (Inputs.size() > 8)
+      if (Inputs.size() > 10)
         return Expr;
       continue;
     }

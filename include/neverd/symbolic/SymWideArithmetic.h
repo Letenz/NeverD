@@ -12,9 +12,9 @@
 
 namespace neverd::symbolic {
 
-/// Infer packed arithmetic from a two-word result with up to four reconstructed
+/// Infer packed arithmetic from a two-word result with up to five reconstructed
 /// inputs. Input responses only propose coefficients; an equivalence proof is
-/// mandatory. Expressions with more than eight distinct word inputs are left
+/// mandatory. Expressions with more than ten distinct word inputs are left
 /// unchanged.
 SymRef recoverSplitWordArithmetic(SymContext &Ctx, SymRef Expr,
                                   SynthVerifyFn Verify);

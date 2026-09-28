@@ -86,7 +86,10 @@ Boolean forms exercise wide addition and subtraction; two more add a nonzero
 carry recovery across the two words, with a matching native 64-bit check on
 x86-64 and AArch64. A four-input carry-save form checks the same matrix with
 independently randomized operands and the corresponding native 64-bit paths.
-The output must remove their residual
+An independent five-input carry-save form extends the split-word matrix;
+Thumb-2 HighC also checks a frame-pointer alias established after earlier
+spills. Native x86-64 and AArch64 repeat the five-input check through both C
+routes. The output must remove their residual
 XOR, AND, and complement operations, while retaining the shifts and OR needed
 to assemble input halves. Thumb-1 compilers may place these offsets in a
 read-only literal island inside executable code; mapping and relocation
