@@ -842,6 +842,18 @@ inline bool swiftImportedNominalDescriptor(const BinaryImage &Image, va_t Slot,
                                            llvm::StringRef Provider) {
   if (swiftSystemFrameworkNominalDescriptor(Symbol, Provider))
     return true;
+  // The bundled macOS SDK's libswiftDispatch TBD exports these descriptors for
+  // public Dispatch option sets. A strong, immutable dyld bind supplies their
+  // exact identity in the image; only that identity is used when rebuilding a
+  // concrete type reference, never the descriptor's runtime layout.
+  // macOS SDK libswiftDispatch.tbd SHA-256:
+  // edd681244014cb68898597937b822462e884fcd137933ae0c6b53c44fde79c9a.
+  if (Image.Arch == Arch::AArch64 &&
+      Provider == "/usr/lib/swift/libswiftDispatch.dylib" &&
+      isImmutableImageImportSlot(Image, Slot) &&
+      (Symbol == "_$s8Dispatch0A13WorkItemFlagsVMn" ||
+       Symbol == "_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMn"))
+    return true;
   // Actions 35683213827, consumer bfe0f17b3d7140d468f53a6f7a07375d3b7d898a:
   // retained Xcode 26.5 libswiftCore TBDs export this exact descriptor for
   // arm64e-ios and arm64-ios-simulator. Manifest SHA-256:
