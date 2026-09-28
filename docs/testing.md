@@ -117,6 +117,12 @@ Loader tests check that ARM branch, Thumb branch and halfword relocations record
 only their exact instruction modes. Homogeneous ARM-only and Thumb-only objects
 must keep a uniform mode when relocation evidence supplies the first entry;
 contradictory symbol and relocation modes must fail loading.
+Thumb-only ARMv6-M, ARMv7-M, ARMv7E-M, ARMv8-M Base/Main, and ARMv8.1-M Main
+Mach-O objects have unmarked MBA functions without instruction relocations.
+Both C routes must recover their arithmetic and execute it at `-O0`/`-O2`;
+loader tests require the subtype to prove Thumb mode, reject an ARM instruction
+relocation in a Thumb-only image, and fail loading on malformed subtype
+capability bits.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

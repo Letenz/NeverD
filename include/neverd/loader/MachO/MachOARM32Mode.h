@@ -5,9 +5,9 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Declares strict parsing of the function-level ARM/Thumb mode carried by a
-/// 32-bit ARM Mach-O symbol table.  A Mach-O CPU subtype selects a processor
-/// ABI; it does not select the instruction set state of every function.
+/// Declares strict parsing of ARM/Thumb mode evidence in 32-bit ARM Mach-O.
+/// Most CPU subtypes do not select the instruction set state of every
+/// function; M-profile subtypes are Thumb-only.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -26,13 +26,17 @@ namespace neverd::macho_arm32 {
 
 /// Positive Thumb-mode facts read directly from one validated ARM Mach-O
 /// image.  An even nlist value without N_ARM_THUMB_DEF is not ARM-mode proof.
+/// A Thumb-only CPU subtype also applies when LC_SYMTAB is absent.
 struct ModeInfo {
   uint32_t CPUSubtype = 0;
   std::map<va_t, InstructionMode> CodeSymbolModes;
+  /// Architectural mode required by a Thumb-only M-profile CPU subtype.
+  InstructionMode RequiredMode = InstructionMode::Default;
   InstructionMode UniformMode = InstructionMode::Default;
 };
 
-/// Parse the exact CPU subtype and every Thumb-defined executable nlist symbol.
+/// Parse the exact CPU subtype and every Thumb-defined executable nlist symbol
+/// when a symbol table is present.
 /// Capability bits, malformed command tables, conflicting definitions, and
 /// non-ARM/64-bit inputs are rejected.
 llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary);

@@ -242,6 +242,10 @@ struct BinaryImage {
   // -Wchanges-meaning hard error under GCC.  All consumers still read `.Arch`.
   neverd::Arch Arch = neverd::Arch::Unknown;
   InstructionMode Mode = InstructionMode::Default;
+  /// Hardware constraint for an AArch32 image whose CPU cannot execute the
+  /// other instruction state.  Unlike the file-level Mode, this applies to
+  /// every executable instruction and conflicts with contrary local evidence.
+  InstructionMode ARMRequiredMode = InstructionMode::Default;
   /// Entry, function-symbol, and validated instruction-relocation evidence
   /// identifies one exact instruction address. It does not authorize decoding
   /// the rest of a function in that mode when mapping symbols are absent.
@@ -600,6 +604,12 @@ struct BinaryImage {
     }
     if (ProvenMode && IncomingMode && *ProvenMode != *IncomingMode)
       return std::nullopt;
+    if (ARMRequiredMode != InstructionMode::Default) {
+      if ((ProvenMode && *ProvenMode != ARMRequiredMode) ||
+          (IncomingMode && *IncomingMode != ARMRequiredMode))
+        return std::nullopt;
+      return ARMRequiredMode;
+    }
     if (ProvenMode)
       return ProvenMode;
     if (IncomingMode)

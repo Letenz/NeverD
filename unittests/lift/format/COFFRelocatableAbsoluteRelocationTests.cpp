@@ -18,8 +18,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <string>
@@ -1167,6 +1169,149 @@ TEST_F(COFFRelocatableAbsoluteRelocation,
   EXPECT_EQ(Img.Mode, InstructionMode::MixedARMThumb);
   EXPECT_EQ(Img.instructionModeAt(ARMFunction->Addr + 4), InstructionMode::ARM);
   EXPECT_EQ(Img.instructionModeAt(ThumbFunction->Addr), InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32ThumbOnlySubtypesProveUnmarkedFunctions) {
+  struct Case {
+    const char *Triple;
+    const char *Fixture;
+    uint32_t Subtype;
+  };
+  for (const Case &Current : {
+           Case{"armv6m-apple-darwin", "test_mba_macho_thumb_only_v6m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V6M},
+           Case{"armv7m-apple-darwin", "test_mba_macho_thumb_only_v7m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V7M},
+           Case{"armv7em-apple-darwin", "test_mba_macho_thumb_only_v7m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V7EM},
+           Case{"armv8m.base-apple-darwin", "test_mba_macho_thumb_only_v6m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V8M_BASE},
+           Case{"armv8m.main-apple-darwin", "test_mba_macho_thumb_only_v7m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V8M_MAIN},
+           Case{"armv8.1m.main-apple-darwin", "test_mba_macho_thumb_only_v7m.s",
+                llvm::MachO::CPU_SUBTYPE_ARM_V8_1M_MAIN},
+       }) {
+    SCOPED_TRACE(Current.Triple);
+    const fs::path Object = tmpFile("macho_thumb_only.o");
+    const RunResult Compiled =
+        exec(NEVERD_TEST_CLANG,
+             {"-target", Current.Triple, "-c",
+              (fs::path(TEST_SOURCE_DIR) / "core" / Current.Fixture).string(),
+              "-o", Object.string()});
+    ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+    auto BufferOrErr = llvm::MemoryBuffer::getFile(Object.string());
+    ASSERT_TRUE(static_cast<bool>(BufferOrErr));
+    const llvm::StringRef Bytes = (*BufferOrErr)->getBuffer();
+    auto ModeInfo = macho_arm32::parseModeInfo(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()));
+    ASSERT_TRUE(static_cast<bool>(ModeInfo))
+        << llvm::toString(ModeInfo.takeError());
+    EXPECT_EQ(ModeInfo->CPUSubtype, Current.Subtype);
+    EXPECT_TRUE(ModeInfo->CodeSymbolModes.empty());
+    EXPECT_EQ(ModeInfo->RequiredMode, InstructionMode::Thumb);
+    EXPECT_EQ(ModeInfo->UniformMode, InstructionMode::Thumb);
+
+    auto ImgOrErr = loadBinary(Object);
+    ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+        << llvm::toString(ImgOrErr.takeError());
+    const BinaryImage &Img = *ImgOrErr;
+    const Symbol *Function = findSymbol(Img, "_unmarked_mba");
+    ASSERT_NE(Function, nullptr);
+    EXPECT_EQ(Img.Mode, InstructionMode::Thumb);
+    EXPECT_EQ(Img.ARMRequiredMode, InstructionMode::Thumb);
+    EXPECT_EQ(Img.instructionModeAt(Function->Addr), InstructionMode::Thumb);
+    EXPECT_EQ(Img.instructionModeAt(Function->Addr + 2),
+              InstructionMode::Thumb);
+    EXPECT_EQ(Img.instructionModeAt(Function->Addr, InstructionMode::ARM),
+              std::nullopt);
+  }
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32ThumbOnlySubtypeSurvivesMissingSymbolTable) {
+  std::string Bytes(sizeof(llvm::MachO::mach_header), '\0');
+  auto Put32 = [&](size_t Offset, uint32_t Value) {
+    writeLE<uint32_t>(reinterpret_cast<uint8_t *>(Bytes.data()) + Offset,
+                      Value);
+  };
+  Put32(offsetof(llvm::MachO::mach_header, magic), llvm::MachO::MH_MAGIC);
+  Put32(offsetof(llvm::MachO::mach_header, cputype), llvm::MachO::CPU_TYPE_ARM);
+  Put32(offsetof(llvm::MachO::mach_header, cpusubtype),
+        llvm::MachO::CPU_SUBTYPE_ARM_V7M);
+  Put32(offsetof(llvm::MachO::mach_header, filetype), llvm::MachO::MH_OBJECT);
+
+  auto ModeInfo = macho_arm32::parseModeInfo(llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()));
+  ASSERT_TRUE(static_cast<bool>(ModeInfo))
+      << llvm::toString(ModeInfo.takeError());
+  EXPECT_TRUE(ModeInfo->CodeSymbolModes.empty());
+  EXPECT_EQ(ModeInfo->RequiredMode, InstructionMode::Thumb);
+  EXPECT_EQ(ModeInfo->UniformMode, InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32ThumbOnlySubtypeRejectsARMRelocation) {
+  const fs::path Object =
+      compileCOFF("macho_thumb_only_arm_relocation", "armv7-apple-darwin",
+                  R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.arm
+.globl _only
+_only:
+  movw r3, :lower16:_target
+  bx lr
+
+.section __DATA,__data
+.p2align 2
+_target:
+  .long 0
+)");
+  ASSERT_FALSE(Object.empty());
+  std::ifstream Input(Object, std::ios::binary);
+  std::string Bytes(std::istreambuf_iterator<char>{Input}, {});
+  ASSERT_GE(Bytes.size(), sizeof(llvm::MachO::mach_header));
+  writeLE<uint32_t>(reinterpret_cast<uint8_t *>(Bytes.data()) +
+                        offsetof(llvm::MachO::mach_header, cpusubtype),
+                    llvm::MachO::CPU_SUBTYPE_ARM_V7M);
+  std::ofstream(Object, std::ios::binary | std::ios::trunc)
+      .write(Bytes.data(), static_cast<std::streamsize>(Bytes.size()));
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError())
+                .find("ARM instruction relocation conflicts with Thumb-only "
+                      "CPU subtype"),
+            std::string::npos);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32MalformedSubtypeFailsLoading) {
+  const fs::path Object = tmpFile("macho_bad_arm_subtype.o");
+  const RunResult Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "armv7m-apple-darwin", "-c",
+            (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_thumb_only_v7m.s")
+                .string(),
+            "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  std::ifstream Input(Object, std::ios::binary);
+  std::string Bytes(std::istreambuf_iterator<char>{Input}, {});
+  ASSERT_GE(Bytes.size(), sizeof(llvm::MachO::mach_header));
+  writeLE<uint32_t>(reinterpret_cast<uint8_t *>(Bytes.data()) +
+                        offsetof(llvm::MachO::mach_header, cpusubtype),
+                    llvm::MachO::CPU_SUBTYPE_ARM_V7M |
+                        static_cast<uint32_t>(llvm::MachO::CPU_SUBTYPE_MASK));
+  std::ofstream(Object, std::ios::binary | std::ios::trunc)
+      .write(Bytes.data(), static_cast<std::streamsize>(Bytes.size()));
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError())
+                .find("unsupported CPU subtype capability bits"),
+            std::string::npos);
 }
 
 TEST_F(COFFRelocatableAbsoluteRelocation,

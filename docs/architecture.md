@@ -80,6 +80,11 @@ Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an
 unmarked symbol elsewhere in the section is ARM code.
+The ARMv6-M, ARMv7-M, ARMv7E-M, ARMv8-M Base/Main, and ARMv8.1-M Main Mach-O
+CPU subtypes are Thumb-only, so their processor constraint supplies a mode even
+for unmarked functions without a relocation. An ARM instruction relocation in
+such an image is contradictory and fails loading. Other ARM CPU subtypes do not
+establish a function mode.
 
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
