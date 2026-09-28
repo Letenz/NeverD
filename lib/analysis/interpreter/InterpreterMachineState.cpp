@@ -296,9 +296,19 @@ wrapInterpreterMachineStateX64(const LowFunc &Residual,
           return std::move(Error);
         if (Op.NumInputs > 6)
           return invalid("machine source has an invalid operation arity");
-        for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
+        for (unsigned Input = 0; Input != Op.NumInputs; ++Input) {
+          // Machine-state values name the original guest mapping, not a
+          // relocated source object. Drop image provenance at this ABI
+          // boundary before either source backend can reinterpret the bits.
+          // Direct CFG destinations retain their separate label identity.
+          if (Op.Inputs[Input].isConst() &&
+              !(Input == 0 &&
+                (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR)))
+            Op.Inputs[Input] =
+                scalar(Op.Inputs[Input].Offset, Op.Inputs[Input].Size);
           if (auto Error = Remap(Op.Inputs[Input], true))
             return std::move(Error);
+        }
         switch (Op.Opcode) {
         case NdOp::CALL:
         case NdOp::INDIR_CALL:

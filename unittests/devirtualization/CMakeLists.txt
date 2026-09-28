@@ -1,6 +1,7 @@
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp
+  MemoryCallSpecializationTests.cpp
   ControlStateRecoveryTests.cpp
   MaskedControlRelationTests.cpp
   CanonicalControlFieldsTests.cpp
@@ -28,6 +29,7 @@ add_dependencies(NeverDDevirtualizationSourceTests neverd)
 add_neverd_unittest(NeverDInterpreterMachineStateTests
   InterpreterMachineStateTests.cpp
   MachineControlSourceTests.cpp
+  MachineMemoryCallSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC Support
 )
 target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE

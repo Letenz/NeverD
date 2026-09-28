@@ -507,7 +507,10 @@ static const char *devirtualizeSource(
     CEmitterOptions EmitOptions;
     EmitOptions.TheArch = S->Img.Arch;
     EmitOptions.Format = S->Img.Format;
-    EmitOptions.Image = &S->Img;
+    // The machine-state ABI preserves guest virtual addresses and accesses
+    // their original mappings. Image-backed source objects would silently
+    // change both observable register values and guest memory identity.
+    EmitOptions.Image = Result.InterpreterMachineSourceABI ? nullptr : &S->Img;
     if (PO.LiftMode) {
       if (!Result.LlvmModule)
         return Fail("recovery produced no LLVM module");
@@ -516,7 +519,8 @@ static const char *devirtualizeSource(
           !Limitation.empty())
         return Fail(Limitation);
       LLVMCEmitter Emitter;
-      if (!Emitter.emit(*Result.LlvmModule, OS, EmitOptions, nullptr, &S->Img))
+      if (!Emitter.emit(*Result.LlvmModule, OS, EmitOptions, nullptr,
+                        EmitOptions.Image))
         return Fail("recovered LLVM-to-C emission failed");
     } else {
       if (Result.HighFuncs.empty())

@@ -31,6 +31,10 @@ struct SpecializationCursor {
 /// as its stack pointer. CALL pushes its exact fallthrough address; RETURN
 /// consumes one address and has no additional stack adjustment. Generic LowIR
 /// CALL/RETURN operands alone do not establish this machine-level contract.
+/// A memory CALL retains a temporary-only effective-address prefix, one final
+/// ordinary eight-byte LOAD, and an INDIR_CALL of that loaded temporary. The
+/// entire target evaluation precedes the physical return-address push; a
+/// legacy constant-slot INDIR_CALL is not a loaded target certificate.
 enum class SpecializationNativeStackControl : uint8_t { None, Call, Return };
 
 /// A complete, strictly lifted guest instruction. The provider owns decoding,

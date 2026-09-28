@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDLiftTests
+  core/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
   aarch64/AArch64_AtomicTests.cpp
   aarch64/AArch64_BitShiftTests.cpp
