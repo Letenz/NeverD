@@ -273,25 +273,19 @@ void foldCopyChains(HighFunc &Func) {
   VarKeyMap<int> VarDefCount;
   VarKeyMap<int> VarUseCount;
   VarKeyMap<ExprPtr> VarDefValue;
-  std::unordered_set<const HighExpr *> Seen;
-  std::function<void(const std::vector<HighStmt> &)> ScanStmts;
-  ScanStmts = [&](const std::vector<HighStmt> &Stmts) {
-    for (auto &S : Stmts) {
-      if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var) {
-        auto Key = VK(S.Dst->Var);
-        VarDefCount[Key]++;
-        VarDefValue[Key] = S.Val;
-      }
-      forEachRhsExpr(
-          S, [&](const ExprPtr &E) { countExprVarUses(E, VarUseCount, Seen); });
-      ScanStmts(S.Body);
-      ScanStmts(S.ElseBody);
+  std::unordered_map<const HighExpr *, uint8_t> Visits;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var) {
+      auto Key = VK(S.Dst->Var);
+      VarDefCount[Key]++;
+      VarDefValue[Key] = S.Val;
     }
-  };
-  ScanStmts(Func.Body);
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      countExprVarUsesUpToTwo(E, VarUseCount, Visits);
+    });
+  });
 
   VarKeyMap<ExprPtr> FoldMap;
-  VarKeySet FoldSources;
   for (auto &S : Func.Body) {
     if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
       continue;
@@ -311,15 +305,8 @@ void foldCopyChains(HighFunc &Func) {
         containsNonMovableEffect(It->second))
       continue;
     FoldMap[DstKey] = It->second;
-    FoldSources.insert(SrcKey);
   }
   filterStableCopyCandidates(Func.Body, FoldMap);
-  FoldSources.clear();
-  for (const auto &S : Func.Body)
-    if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
-        S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Var &&
-        FoldMap.count(VK(S.Dst->Var)))
-      FoldSources.insert(VK(S.Val->Var));
   if (!FoldMap.empty()) {
     for (auto &S : Func.Body) {
       if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
@@ -330,16 +317,10 @@ void foldCopyChains(HighFunc &Func) {
       if (It != FoldMap.end())
         S.Val = It->second;
     }
-    Func.Body.erase(std::remove_if(Func.Body.begin(), Func.Body.end(),
-                                   [&](const HighStmt &S) {
-                                     return S.Kind == StmtKind::Assign &&
-                                            S.Dst &&
-                                            S.Dst->Kind == ExprKind::Var &&
-                                            FoldSources.count(VK(S.Dst->Var)) >
-                                                0;
-                                   }),
-                    Func.Body.end());
   }
+  // A replacement can still read a source from another folded copy. Recompute
+  // liveness after rewriting, rather than deleting the old set of sources;
+  // the shared DCE also preserves any branch entries at dead assignments.
 }
 
 //===----------------------------------------------------------------------===//
