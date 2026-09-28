@@ -443,6 +443,12 @@ public:
   static OptimizationResult optimizeModule(llvm::Module &Mod,
                                            const OptimizationOptions &Options);
 
+  /// Optimize a verified lifted module for C output. If an incomplete native
+  /// exception contract excludes value-changing optimization, retain the
+  /// module and promote only the emitter's temporary allocas. Both the full
+  /// image and single-function C routes use this fallback policy.
+  static OptimizationResult optimizeOrPromoteModule(llvm::Module &Mod);
+
   /// Typed counterpart to the compatibility overload above.  MaxRounds has the
   /// same per-semantic-invocation meaning as OptimizationOptions::MaxRounds.
   static OptimizationResult optimizeModule(llvm::Module &Mod, bool Conservative,

@@ -435,6 +435,13 @@ struct Session {
       setError("native LLVM verification failed: " + VerifyError);
       return false;
     }
+    const OptimizationResult Optimization =
+        Pipeline::optimizeOrPromoteModule(*Candidate);
+    if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
+      setError(std::string("native LLVM optimization failed: ") +
+               optimizationStopReasonName(Optimization.Stop));
+      return false;
+    }
     PipeResult.LlvmModule = std::move(Candidate);
     return true;
   }
