@@ -444,6 +444,35 @@ TEST(SignatureDBReferences, ACOFFImportThunkSettlesNothing) {
   EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
 }
 
+TEST(SignatureDBReferences, WhatReferencesNameSettlesTheirCallersInTurn) {
+  // outer (0x1000) calls inner (0x1100), which calls import_a's stub
+  // (0x1200).  Each has a twin with its bytes; inner's twins are told apart
+  // by the import they call, and outer's only by which inner they call.
+  neverd::BinaryImage Image =
+      makeImportCallingImage(neverd::BinaryFormat::ELF, "import_a");
+  std::vector<uint8_t> &Data = Image.Segments[0].Data;
+  const int32_t Outer = 0x1100 - 0x1009;
+  std::memcpy(Data.data() + 5, &Outer, sizeof(Outer));
+  // push rbx; call 0x1200; pop rbx; ret
+  const uint8_t Inner[] = {0x53, 0xE8, 0, 0, 0, 0, 0x5B, 0xC3};
+  std::copy(std::begin(Inner), std::end(Inner), Data.begin() + 0x100);
+  const int32_t ToStub = 0x1200 - 0x1106;
+  std::memcpy(Data.data() + 0x102, &ToStub, sizeof(ToStub));
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer_a", " ^0005 inner_a") +
+          callerLine("outer_b", " ^0005 inner_b") +
+          "53E8........5BC3 00 0000 0008 :0000 inner_a ^0002 import_a\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_b ^0002 import_b\n",
+      "refs"));
+  Database.apply(Image, {0x1000, 0x1100});
+
+  const auto Names = Database.buildNameMap();
+  EXPECT_EQ(Names.at(0x1100), "inner_a");
+  EXPECT_EQ(Names.at(0x1000), "outer_a");
+}
+
 TEST(SignatureDBReferences, AStubTheLoaderPairedWithAnImportSettlesACall) {
   // AArch64: stp x29,x30,[sp,#-16]!; bl 0x1200; ldp x29,x30,[sp],#16; ret,
   // where 0x1200 is a PLT entry the loader paired with towlower_l.

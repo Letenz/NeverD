@@ -12,7 +12,10 @@
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -349,6 +352,7 @@ void SignatureDB::apply(const BinaryImage &Img,
   const SignatureMatcher::HashIndex &Idx = index();
 
   // Collect executable segment data for matching.
+  std::vector<SignatureMatcher::Hit> Hits;
   for (const auto &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
@@ -356,6 +360,7 @@ void SignatureDB::apply(const BinaryImage &Img,
     for (const SignatureMatcher::Hit &Hit :
          SignatureMatcher::findAtAddresses(Seg.Data.data(), Seg.Data.size(),
                                            Seg.VA, FuncEntries, Modules, Idx)) {
+      Hits.push_back(Hit);
       const uint64_t Addr = Hit.Address;
       const size_t ModIdx = Hit.Module;
       const StoredModule &Mod = Modules[ModIdx];
@@ -381,7 +386,7 @@ void SignatureDB::apply(const BinaryImage &Img,
       }
     }
   }
-  checkReferences(Img);
+  checkReferences(Img, FuncEntries, std::move(Hits));
 }
 
 size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
@@ -470,68 +475,73 @@ const SigMatch *SignatureDB::findMatch(uint64_t Addr) const {
   return nullptr;
 }
 
-std::unordered_map<uint64_t, SignatureDB::SettledRoutine>
-SignatureDB::settleRoutines() const {
-  // Each match's names for its address: its name and its aliases.
-  struct Proposal {
-    std::set<std::string> Names;
-    bool Confirmed = false;
+std::optional<SignatureDB::SettledRoutine>
+SignatureDB::settle(llvm::ArrayRef<const SigMatch *> Proposals) {
+  // Each match's names for its address: its name and its aliases, sorted.
+  auto NamesOf = [](const SigMatch &M,
+                    llvm::SmallVectorImpl<std::string_view> &Names) {
+    Names.clear();
+    Names.push_back(M.Name);
+    for (const std::string &Alias : M.Aliases)
+      Names.push_back(Alias);
+    llvm::sort(Names);
+    Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
   };
-  std::unordered_map<uint64_t, std::vector<Proposal>> Proposed;
-  for (const SigMatch &M : Matches) {
-    Proposal P;
-    P.Names.insert(M.Name);
-    P.Names.insert(M.Aliases.begin(), M.Aliases.end());
-    P.Confirmed = M.Confirmed;
-    Proposed[M.Address].push_back(std::move(P));
-  }
-
-  // Proposals agree when a name is in every one of them; the routine then
+  // Matches agree when a name is in every one of them; the routine then
   // takes the preferred such name, and has every name any of them gives it.
-  auto Agree = [](const std::vector<const Proposal *> &Proposals)
+  auto Agree = [&](llvm::ArrayRef<const SigMatch *> Agreeing)
       -> std::optional<SettledRoutine> {
-    if (Proposals.empty())
+    if (Agreeing.empty())
       return std::nullopt;
-    std::set<std::string> Shared = Proposals.front()->Names;
     SettledRoutine Routine;
-    for (const Proposal *P : Proposals) {
-      std::set<std::string> Next;
-      std::set_intersection(Shared.begin(), Shared.end(), P->Names.begin(),
-                            P->Names.end(), std::inserter(Next, Next.end()));
-      Shared = std::move(Next);
-      Routine.Names.insert(P->Names.begin(), P->Names.end());
+    llvm::SmallVector<std::string_view, 4> Shared, Names, Merged;
+    NamesOf(*Agreeing.front(), Shared);
+    Routine.Names = Shared;
+    for (const SigMatch *M : Agreeing.drop_front()) {
+      NamesOf(*M, Names);
+      Merged.clear();
+      std::set_intersection(Shared.begin(), Shared.end(), Names.begin(),
+                            Names.end(), std::back_inserter(Merged));
+      Shared.swap(Merged);
+      Merged.clear();
+      std::set_union(Routine.Names.begin(), Routine.Names.end(), Names.begin(),
+                     Names.end(), std::back_inserter(Merged));
+      Routine.Names.swap(Merged);
     }
     if (Shared.empty())
       return std::nullopt;
-    Routine.Name = *std::min_element(Shared.begin(), Shared.end(),
-                                     [](const std::string &A,
-                                        const std::string &B) {
-                                       return preferredAliasOrder(A, B);
-                                     });
+    Routine.Name =
+        *std::min_element(Shared.begin(), Shared.end(), preferredAliasOrder);
     return Routine;
   };
 
-  std::unordered_map<uint64_t, SettledRoutine> Settled;
-  for (const auto &[Address, Proposals] : Proposed) {
-    std::vector<const Proposal *> All, Confirmed;
-    for (const Proposal &P : Proposals) {
-      All.push_back(&P);
-      if (P.Confirmed)
-        Confirmed.push_back(&P);
-    }
-    std::optional<SettledRoutine> Routine = Agree(All);
-    if (!Routine)
-      Routine = Agree(Confirmed);
-    if (Routine)
-      Settled.emplace(Address, std::move(*Routine));
+  std::optional<SettledRoutine> Routine = Agree(Proposals);
+  if (!Routine) {
+    llvm::SmallVector<const SigMatch *, 4> Confirmed;
+    for (const SigMatch *M : Proposals)
+      if (M->Confirmed)
+        Confirmed.push_back(M);
+    Routine = Agree(Confirmed);
   }
+  return Routine;
+}
+
+std::unordered_map<uint64_t, SignatureDB::SettledRoutine>
+SignatureDB::settleRoutines() const {
+  std::unordered_map<uint64_t, std::vector<const SigMatch *>> Proposed;
+  for (const SigMatch &M : Matches)
+    Proposed[M.Address].push_back(&M);
+  std::unordered_map<uint64_t, SettledRoutine> Settled;
+  for (const auto &[Address, Proposals] : Proposed)
+    if (std::optional<SettledRoutine> Routine = settle(Proposals))
+      Settled.emplace(Address, std::move(*Routine));
   return Settled;
 }
 
 std::unordered_map<uint64_t, std::string> SignatureDB::buildNameMap() const {
   std::unordered_map<uint64_t, std::string> Map;
-  for (auto &[Address, Routine] : settleRoutines())
-    Map.emplace(Address, std::move(Routine.Name));
+  for (const auto &[Address, Routine] : settleRoutines())
+    Map.emplace(Address, std::string(Routine.Name));
   return Map;
 }
 
@@ -806,47 +816,135 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
 
 } // namespace
 
-void SignatureDB::checkReferences(const BinaryImage &Img) {
+void SignatureDB::checkReferences(const BinaryImage &Img,
+                                  llvm::ArrayRef<uint64_t> Entries,
+                                  std::vector<SignatureMatcher::Hit> Hits) {
   bool AnyReferences = false;
   for (size_t Module : MatchModules)
     AnyReferences |= Module != NoModule && Modules[Module].ReferenceCount != 0;
   if (!AnyReferences)
     return;
+  auto ReferencesOf = [&](size_t I) {
+    return MatchModules[I] == NoModule ? llvm::ArrayRef<StoredName>()
+                                       : Modules[MatchModules[I]].references();
+  };
 
-  // What the bytes alone settle, which is what a reference is checked
-  // against: an address two matches name differently names nothing.
-  const std::unordered_map<uint64_t, SettledRoutine> Settled = settleRoutines();
+  // Where each reference of each match branches: the branch's target and,
+  // when that is a thunk that only jumps on, the thunk's target.  A
+  // reference whose site holds no such branch is none of them, and leaves
+  // its match unconfirmed.  Match I's are Sites[FirstSite[I]] up to
+  // Sites[FirstSite[I + 1]].
+  struct Site {
+    std::string_view Name;
+    uint64_t Target = 0;
+    std::optional<uint64_t> Onward;
+  };
+  std::vector<Site> Sites;
+  std::vector<size_t> FirstSite(Matches.size() + 1, 0);
+  for (size_t I = 0; I < Matches.size(); ++I) {
+    FirstSite[I] = Sites.size();
+    const llvm::ArrayRef<StoredName> References = ReferencesOf(I);
+    if (References.empty())
+      continue;
+    // Every public name of a module shares its references; the module's
+    // start is the match address less the name's offset.
+    uint64_t Start = Matches[I].Address;
+    for (const StoredName &Name : Modules[MatchModules[I]].publicNames())
+      if (Name.Name == Matches[I].Name) {
+        Start = Matches[I].Address - Name.Offset;
+        break;
+      }
+    if (Img.Arch == Arch::ARM)
+      Start &= ~uint64_t(1);
+    for (const StoredName &Ref : References)
+      if (const std::optional<Branch> To =
+              branchTarget(Img, Start, Ref.Offset)) {
+        Site Where{Ref.Name, To->Target, std::nullopt};
+        if (const std::optional<Branch> Next = thunkTarget(Img, *To))
+          Where.Onward = Next->Target;
+        Sites.push_back(Where);
+      }
+  }
+  FirstSite[Matches.size()] = Sites.size();
 
-  // The modules that describe each routine the matches call from its start,
-  // to confirm a reference by the named routine's own pattern.  Only a
-  // called name is ever looked up.
-  std::unordered_map<std::string_view, std::vector<size_t>> ByName;
-  for (size_t I = 0; I < Matches.size(); ++I)
-    if (MatchModules[I] != NoModule)
-      for (const StoredName &Ref : Modules[MatchModules[I]].references())
-        ByName.try_emplace(Ref.Name);
-  for (size_t I = 0; I < Modules.size(); ++I)
-    for (const StoredName &Name : Modules[I].publicNames())
-      if (Name.Offset == 0)
-        if (const auto It = ByName.find(Name.Name); It != ByName.end())
-          It->second.push_back(I);
+  // The matches whose references branch to each address, and the matches at
+  // each address, as sorted (address, match) pairs.
+  using Entry = std::pair<uint64_t, size_t>;
+  std::vector<Entry> Calling, At;
+  for (size_t I = 0; I < Matches.size(); ++I) {
+    At.emplace_back(Matches[I].Address, I);
+    for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
+      Calling.emplace_back(Sites[S].Target, I);
+      if (Sites[S].Onward)
+        Calling.emplace_back(*Sites[S].Onward, I);
+    }
+  }
+  llvm::sort(Calling);
+  Calling.erase(std::unique(Calling.begin(), Calling.end()), Calling.end());
+  llvm::sort(At);
+  auto Range = [](const std::vector<Entry> &Pairs, uint64_t Address) {
+    const auto Begin =
+        std::lower_bound(Pairs.begin(), Pairs.end(), Entry{Address, 0});
+    auto End = Begin;
+    while (End != Pairs.end() && End->first == Address)
+      ++End;
+    return llvm::make_range(Begin, End);
+  };
 
+  // The modules whose patterns match where a reference branches, to confirm
+  // a reference by the named routine's own pattern: at an entry, the ones
+  // that matched there; at any other target, the ones the index finds.
+  std::vector<uint64_t> Tried(Entries.begin(), Entries.end());
+  llvm::sort(Tried);
+  std::vector<uint64_t> Untried;
+  for (size_t C = 0; C < Calling.size(); ++C)
+    if ((C == 0 || Calling[C].first != Calling[C - 1].first) &&
+        !std::binary_search(Tried.begin(), Tried.end(), Calling[C].first))
+      Untried.push_back(Calling[C].first);
+  if (!Untried.empty())
+    for (const Segment &Seg : Img.Segments)
+      if (Seg.isExecutable() && !Seg.Data.empty())
+        for (const SignatureMatcher::Hit &Hit :
+             SignatureMatcher::findAtAddresses(Seg.Data.data(), Seg.Data.size(),
+                                               Seg.VA, Untried, Modules,
+                                               index()))
+          Hits.push_back(Hit);
+  std::vector<Entry> PatternsAt;
+  PatternsAt.reserve(Hits.size());
+  for (const SignatureMatcher::Hit &Hit : Hits)
+    PatternsAt.emplace_back(Hit.Address, Hit.Module);
+  llvm::sort(PatternsAt);
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {
-    const auto Candidates = ByName.find(Name);
-    const Segment *Seg = Img.getSegmentFor(Address);
-    if (Candidates == ByName.end() || !Seg || !Seg->isExecutable() ||
-        Address < Seg->VA || Address - Seg->VA >= Seg->Data.size())
-      return false;
-    const size_t Offset = static_cast<size_t>(Address - Seg->VA);
-    for (size_t Module : Candidates->second)
-      if (SignatureMatcher::matchPattern(Modules[Module],
-                                         Seg->Data.data() + Offset,
-                                         Seg->Data.size() - Offset))
-        return true;
+    for (const Entry &Hit : Range(PatternsAt, Address))
+      for (const StoredName &Public : Modules[Hit.second].publicNames())
+        if (Public.Offset == 0 && Public.Name == Name)
+          return true;
     return false;
   };
 
-  // A Thumb routine may be entered with the interworking bit set.
+  // What the matches settle where a reference branches, which is what a
+  // reference is checked against: an address two matches name differently
+  // names nothing.  At first that is what the bytes alone settle.  A Thumb
+  // routine may be entered with the interworking bit set.
+  std::unordered_map<uint64_t, SettledRoutine> Settled;
+  std::vector<bool> Dropped(Matches.size(), false);
+  auto SettleAt = [&](uint64_t Address) {
+    std::vector<const SigMatch *> Proposals;
+    for (const Entry &Match : Range(At, Address))
+      if (!Dropped[Match.second])
+        Proposals.push_back(&Matches[Match.second]);
+    return settle(Proposals);
+  };
+  for (size_t C = 0; C < Calling.size(); ++C) {
+    if (C != 0 && Calling[C].first == Calling[C - 1].first)
+      continue;
+    const uint64_t Target = Calling[C].first;
+    for (uint64_t Address :
+         {Target, Img.Arch == Arch::ARM ? Target | 1 : Target})
+      if (!Settled.count(Address))
+        if (std::optional<SettledRoutine> Routine = SettleAt(Address))
+          Settled.emplace(Address, std::move(*Routine));
+  }
   auto SettledAt = [&](uint64_t Target) {
     auto It = Settled.find(Target);
     if (It == Settled.end() && Img.Arch == Arch::ARM)
@@ -870,8 +968,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
     // A library calls a routine by whichever of its names it uses, so any
     // name the routine settled with confirms the call.
     if (const auto It = SettledAt(Target); It != Settled.end())
-      return It->second.Names.count(Name) ? ReferenceVerdict::Confirmed
-                                          : ReferenceVerdict::Contradicted;
+      return It->second.hasName(Name) ? ReferenceVerdict::Confirmed
+                                      : ReferenceVerdict::Contradicted;
     // A routine the image replaced (operator new, say) does not match the
     // library's pattern and is still the routine called, so a pattern that
     // does not match contradicts nothing.
@@ -879,49 +977,104 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
                                    : ReferenceVerdict::Unknown;
   };
 
+  // Whether match \p I is contradicted, and whether every one of its
+  // references is confirmed.
+  enum class Outcome : uint8_t { Unconfirmed, Confirmed, Contradicted };
+  auto Check = [&](size_t I) {
+    size_t Confirmed = 0;
+    for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
+      const Site &Where = Sites[S];
+      ReferenceVerdict Verdict = Judge(Where.Name, Where.Target);
+      if (Verdict == ReferenceVerdict::Unknown && Where.Onward)
+        Verdict = Judge(Where.Name, *Where.Onward);
+      if (Verdict == ReferenceVerdict::Contradicted)
+        return Outcome::Contradicted;
+      Confirmed += Verdict == ReferenceVerdict::Confirmed;
+    }
+    return Confirmed != 0 && Confirmed == ReferencesOf(I).size()
+               ? Outcome::Confirmed
+               : Outcome::Unconfirmed;
+  };
+
+  // A routine the references name is one its callers' references can be
+  // checked against: a leaf that calls an import tells two same-byte
+  // instantiations apart, and then so does every routine that calls one of
+  // them.  So the check repeats, each round against what the last one
+  // settled, until a round settles nothing new.  A match's verdict changes
+  // only with what its references' targets settle, so a round checks only
+  // the matches that call an address the last one settled differently.
+  // Matches are only ever dropped, and the rounds are bounded all the same.
+  // The first round checks every match with references; a round with many
+  // to check checks them in parallel, against what the last one settled.
+  std::vector<size_t> Work;
+  for (size_t I = 0; I < Matches.size(); ++I)
+    if (!ReferencesOf(I).empty())
+      Work.push_back(I);
+  constexpr unsigned MaxRounds = 16;
+  constexpr size_t ParallelWork = 4096;
+  for (unsigned Round = 0; Round < MaxRounds && !Work.empty(); ++Round) {
+    std::vector<Outcome> Outcomes(Work.size());
+    if (Work.size() >= ParallelWork) {
+      constexpr size_t BlockMatches = 256;
+      const size_t Blocks = (Work.size() + BlockMatches - 1) / BlockMatches;
+      neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {
+        for (size_t B = Claim(); B < Total; B = Claim()) {
+          const size_t End = std::min(Work.size(), (B + 1) * BlockMatches);
+          for (size_t W = B * BlockMatches; W < End; ++W)
+            Outcomes[W] = Check(Work[W]);
+        }
+      });
+    } else {
+      for (size_t W = 0; W < Work.size(); ++W)
+        Outcomes[W] = Check(Work[W]);
+    }
+
+    std::set<uint64_t> Touched;
+    for (size_t W = 0; W < Work.size(); ++W) {
+      const size_t I = Work[W];
+      if (Outcomes[W] == Outcome::Contradicted)
+        Dropped[I] = true;
+      else if ((Outcomes[W] == Outcome::Confirmed) != Matches[I].Confirmed)
+        Matches[I].Confirmed = Outcomes[W] == Outcome::Confirmed;
+      else
+        continue;
+      Touched.insert(Matches[I].Address);
+    }
+
+    std::set<size_t> Next;
+    for (uint64_t Address : Touched) {
+      // SettledAt reads a Thumb routine's settlement for the address without
+      // its interworking bit too; an address no reference reads is not kept.
+      const uint64_t Even =
+          Img.Arch == Arch::ARM ? Address & ~uint64_t(1) : Address;
+      if (Range(Calling, Address).empty() && Range(Calling, Even).empty())
+        continue;
+      std::optional<SettledRoutine> Routine = SettleAt(Address);
+      const auto Old = Settled.find(Address);
+      if (Routine ? Old != Settled.end() && Old->second == *Routine
+                  : Old == Settled.end())
+        continue;
+      if (Routine)
+        Settled.insert_or_assign(Address, std::move(*Routine));
+      else
+        Settled.erase(Old);
+      for (uint64_t Callee : {Address, Even})
+        for (const Entry &Caller : Range(Calling, Callee))
+          if (!Dropped[Caller.second])
+            Next.insert(Caller.second);
+    }
+    Work.assign(Next.begin(), Next.end());
+  }
+
   std::vector<SigMatch> Kept;
   std::vector<size_t> KeptModules;
   Kept.reserve(Matches.size());
-  for (size_t I = 0; I < Matches.size(); ++I) {
-    const size_t Module = MatchModules[I];
-    const llvm::ArrayRef<StoredName> References =
-        Module == NoModule ? llvm::ArrayRef<StoredName>()
-                           : Modules[Module].references();
-    bool Contradicted = false;
-    size_t Confirmed = 0;
-    if (!References.empty()) {
-      // Every public name of a module shares its references; the module's
-      // start is the match address less the name's offset.
-      uint64_t Start = Matches[I].Address;
-      for (const StoredName &Name : Modules[Module].publicNames())
-        if (Name.Name == Matches[I].Name) {
-          Start = Matches[I].Address - Name.Offset;
-          break;
-        }
-      if (Img.Arch == Arch::ARM)
-        Start &= ~uint64_t(1);
-      for (const StoredName &Ref : References) {
-        const std::optional<Branch> To = branchTarget(Img, Start, Ref.Offset);
-        if (!To)
-          continue;
-        ReferenceVerdict Verdict = Judge(Ref.Name, To->Target);
-        if (Verdict == ReferenceVerdict::Unknown)
-          if (const std::optional<Branch> Next = thunkTarget(Img, *To))
-            Verdict = Judge(Ref.Name, Next->Target);
-        if (Verdict == ReferenceVerdict::Contradicted) {
-          Contradicted = true;
-          break;
-        }
-        Confirmed += Verdict == ReferenceVerdict::Confirmed;
-      }
+  KeptModules.reserve(Matches.size());
+  for (size_t I = 0; I < Matches.size(); ++I)
+    if (!Dropped[I]) {
+      Kept.push_back(std::move(Matches[I]));
+      KeptModules.push_back(MatchModules[I]);
     }
-    if (Contradicted)
-      continue;
-    Kept.push_back(std::move(Matches[I]));
-    Kept.back().Confirmed =
-        !References.empty() && Confirmed == References.size();
-    KeptModules.push_back(Module);
-  }
   Matches = std::move(Kept);
   MatchModules = std::move(KeptModules);
 }
