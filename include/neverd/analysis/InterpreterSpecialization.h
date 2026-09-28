@@ -89,7 +89,9 @@ struct SpecializationOptions {
   /// control slot. Frame-derived or unknown-origin addresses are never
   /// exempted by this precondition.
   bool ExternalStoresPreserveEntryReturnSlot = false;
-  /// Preconditions supplied by the caller, not values inferred from a run.
+  /// Physical-register preconditions supplied by the caller, not values
+  /// inferred from a run. Instruction-local lifter temporaries are not ABI
+  /// inputs and cannot be bound here.
   std::vector<SpecializationConstant> EntryConstants;
   llvm::endianness ByteOrder = llvm::endianness::little;
   uint32_t MaxNodes = 4096;
@@ -157,6 +159,8 @@ struct SpecializationResult {
 /// Exhaustively covered, certified immutable reads may become pure selections.
 /// Calls, opaque semantics other than retained x64 runtime flag snapshots and
 /// restores, ordered memory, and unsupported instruction guards are refused.
+/// Every temporary read must have a complete definition in the same lifted
+/// native instruction; temporary offsets may be reused by later instructions.
 /// Flag snapshots are treated as unknown values for proof and may not certify
 /// an external pointer or finite target on their own. A PUSHFQ snapshot needs
 /// prior definitions for every modelled flag because the source ABI has no

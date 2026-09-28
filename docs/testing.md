@@ -130,6 +130,9 @@ reject malformed flag intrinsics, snapshots of unbound entry flags, flag-derived
 writes without return-slot nonalias evidence, and unbounded flag-derived targets.
 They also reject direct reads of unbound flags after algebraic cancellation or
 a control-flow join where only one predecessor defines the flag.
+Temporary-definition tests require every byte to be written earlier in the
+same lifted native instruction, even when an undefined value cancels
+algebraically or reuses the previous instruction's temporary offset.
 
 ## Driver emulation checks
 
