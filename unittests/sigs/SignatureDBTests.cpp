@@ -165,6 +165,52 @@ TEST_F(SignatureDirectoryTest, ReportsTheFirstInvalidFileBySortedPath) {
   EXPECT_EQ(Message.find("z-invalid.pat"), std::string::npos) << Message;
 }
 
+TEST_F(SignatureDirectoryTest, ReportsALineFarIntoALargeFile) {
+  // Large enough to be cut into several chunks, with the malformed line in
+  // one of the later ones.
+  std::string Large;
+  unsigned Line = 0;
+  while (Large.size() < 3 * 256 * 1024) {
+    ++Line;
+    Large += Line % 50 == 0 ? "; a comment line counts too\n"
+                            : "CCDD 00 0000 0002 :0000 routine_" +
+                                  std::to_string(Line) + "\n";
+  }
+  Large += "this record is malformed\n";
+  write("a-valid.pat", "AABB 00 0000 0002 :0000 fine\n");
+  write("b-large.pat", Large);
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "AABB 00 0000 0002 :0000 original_name\n", "original"));
+
+  llvm::Error Error = Database.loadDirectory(Directory);
+
+  ASSERT_TRUE(static_cast<bool>(Error));
+  const std::string Message = llvm::toString(std::move(Error));
+  EXPECT_NE(Message.find("b-large.pat: pattern line " +
+                         std::to_string(Line + 1) + ": invalid hex byte: th"),
+            std::string::npos)
+      << Message;
+  EXPECT_EQ(Database.moduleCount(), 1u);
+  EXPECT_EQ(Database.fileCount(), 1u);
+}
+
+TEST_F(SignatureDirectoryTest, LargeFilesKeepTheirLinesInOrder) {
+  std::string Large;
+  for (unsigned Line = 0; Line < 40000; ++Line)
+    Large += "AABB 00 0000 0002 :0000 routine_" + std::to_string(Line) + "\n";
+  write("large.pat", Large);
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadDirectory(Directory));
+  ASSERT_EQ(Database.moduleCount(), 40000u);
+
+  Database.apply(makeMatchingImage(), {0x1000});
+
+  ASSERT_EQ(Database.matches().size(), 40000u);
+  for (unsigned Line = 0; Line < 40000; ++Line)
+    ASSERT_EQ(Database.matches()[Line].Name, "routine_" + std::to_string(Line));
+}
+
 TEST_F(SignatureDirectoryTest, APartsMatchesNameItsLibrary) {
   write("ubuntu-libc6.pat", "CCDD 00 0000 0002 :0000 other_part\n");
   write("ubuntu-libc6.part2.pat", "AABB 00 0000 0002 :0000 puts\n");
