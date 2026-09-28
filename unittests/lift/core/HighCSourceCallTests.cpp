@@ -1302,6 +1302,58 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, ForwardedCallResultsKeepInterveningCallOrder) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Retain = native("objc_retain", Pointer, {Pointer});
+  Retain.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Retain.TargetAddress = 0xdeadbeef;
+  auto Release = native("objc_release", NdType::makeVoid(), {Pointer});
+  Release.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Release.TargetAddress = 0xdeadbef7;
+  MedVar First;
+  First.Kind = MedVar::Temp;
+  First.Id = 1;
+  First.Size = 8;
+  First.TheArch = Arch::X64;
+  MedVar Second = First;
+  Second.Id = 2;
+  HighFunc Function = returning("ordered_calls",
+                                HighExpr::makeVar(Second, Pointer),
+                                {Pointer, Pointer});
+  HighStmt FirstCall;
+  FirstCall.Kind = StmtKind::Assign;
+  FirstCall.Addr = 0x1000;
+  FirstCall.Dst = HighExpr::makeVar(First, Pointer);
+  FirstCall.Val = call(Retain, Pointer, {parameter(0, Pointer)});
+  HighStmt SecondCall = FirstCall;
+  SecondCall.Addr = 0x1004;
+  SecondCall.Dst = HighExpr::makeVar(Second, Pointer);
+  SecondCall.Val = call(Retain, Pointer, {parameter(1, Pointer)});
+  HighStmt FinalCall;
+  FinalCall.Kind = StmtKind::Call;
+  FinalCall.Addr = 0x1008;
+  FinalCall.CallExpr =
+      call(Release, NdType::makeVoid(), {HighExpr::makeVar(First, Pointer)});
+  Function.Body.insert(Function.Body.begin(),
+                       {FirstCall, SecondCall, FinalCall});
+  const auto Source = emit({Function});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+static unsigned sequence;
+void *objc_retain(void *value) {
+  sequence = sequence * 10 + (unsigned)(uintptr_t)value;
+  return value;
+}
+void objc_release(void *value) {
+  sequence = sequence * 10 + (value == (void *)(uintptr_t)1 ? 3 : 9);
+}
+int main(void) {
+  void *result = ordered_calls((void *)(uintptr_t)1,
+                               (void *)(uintptr_t)2);
+  return result != (void *)(uintptr_t)2 || sequence != 123;
+})");
+}
+
 TEST(HighCSourceCalls, RuntimeImportsDoNotBindToLiftedVeneersWithTheSameName) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto Runtime = native("objc_opt_self", Pointer, {Pointer});

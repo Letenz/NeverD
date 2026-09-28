@@ -42,7 +42,7 @@ namespace neverd {
 // Shared helpers
 //===----------------------------------------------------------------------===//
 
-bool containsMemoryRead(const ExprPtr &E) {
+bool containsNonMovableEffect(const ExprPtr &E) {
   std::vector<const HighExpr *> Worklist;
   if (E)
     Worklist.push_back(E.get());
@@ -52,7 +52,15 @@ bool containsMemoryRead(const ExprPtr &E) {
     Worklist.pop_back();
     if (!Seen.insert(Current).second)
       continue;
-    if (Current->Kind == ExprKind::Load)
+    if (Current->Kind == ExprKind::Load ||
+        Current->Kind == ExprKind::Store ||
+        Current->Kind == ExprKind::Call ||
+        Current->IntrinsicId != Intrinsic::None ||
+        Current->Op == NdOp::ATOMIC_ADD ||
+        Current->Op == NdOp::ATOMIC_XCHG ||
+        Current->Op == NdOp::ATOMIC_CMPXCHG ||
+        Current->MemoryOrdering != NdMemoryOrdering::None ||
+        Current->MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return true;
     Current->forEachChildExpr([&](const ExprPtr &Operand) {
       Worklist.push_back(Operand.get());
@@ -275,7 +283,8 @@ void foldCopyChains(HighFunc &Func) {
     if (It == VarDefValue.end() || !It->second)
       continue;
     if (It->second->Kind == ExprKind::Call ||
-        It->second->hasOrderedMemoryAccess() || containsMemoryRead(It->second))
+        It->second->hasOrderedMemoryAccess() ||
+        containsNonMovableEffect(It->second))
       continue;
     FoldMap[DstKey] = It->second;
     FoldSources.insert(SrcKey);
@@ -365,7 +374,8 @@ void foldMultiUseCopies(std::vector<HighStmt> &Stmts) {
     if (NumDefs != 1 || DefIsCall[Key])
       continue;
     auto Val = MultiDefValue[Key];
-    if (!Val || Val->hasOrderedMemoryAccess() || containsMemoryRead(Val))
+    if (!Val || Val->hasOrderedMemoryAccess() ||
+        containsNonMovableEffect(Val))
       continue;
     auto TotalIt = TotalUseCount.find(Key);
     auto CopyIt = CopyUseCount.find(Key);
@@ -406,7 +416,7 @@ void inlineSingleDefSingleUse(std::vector<HighStmt> &Stmts) {
           S.Val->Kind == ExprKind::BinOp || S.Val->Kind == ExprKind::UnaryOp ||
           S.Val->Kind == ExprKind::Var || S.Val->Kind == ExprKind::Const;
       if (IsInlineable && !S.Val->hasOrderedMemoryAccess() &&
-          !containsMemoryRead(S.Val))
+          !containsNonMovableEffect(S.Val))
         SingleUseDefs[Key] = S.Val;
     }
     forEachRhsExpr(S, [&](const ExprPtr &E) {
