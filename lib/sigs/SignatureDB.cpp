@@ -985,8 +985,14 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       const Site &Where = Sites[S];
       ReferenceVerdict Verdict = Judge(Where.Name, Where.Target);
-      if (Verdict == ReferenceVerdict::Unknown && Where.Onward)
-        Verdict = Judge(Where.Name, *Where.Onward);
+      // A routine that only jumps on is a thunk, or a routine that
+      // tail-calls another -- `free` that jumps to `_free_base`, `operator
+      // delete` to `free` -- and the bytes cannot tell which.  So the
+      // routine it reaches confirms the reference when it is the one named,
+      // and otherwise contradicts nothing.
+      if (Verdict == ReferenceVerdict::Unknown && Where.Onward &&
+          Judge(Where.Name, *Where.Onward) == ReferenceVerdict::Confirmed)
+        Verdict = ReferenceVerdict::Confirmed;
       if (Verdict == ReferenceVerdict::Contradicted)
         return Outcome::Contradicted;
       Confirmed += Verdict == ReferenceVerdict::Confirmed;

@@ -364,13 +364,31 @@ TEST(SignatureDBReferences, ThePatternOfADisputedCalleeConfirms) {
 }
 
 TEST(SignatureDBReferences, IncrementalLinkingThunksAreFollowed) {
+  // The call reaches `jmp 0x1100`: an incremental-linking thunk to the
+  // callee confirms a reference to it.
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(
-      CalleeLine + callerLine("caller", " ^0005 somebody_else"), "refs"));
+      CalleeLine + callerLine("caller", " ^0005 callee") +
+          callerLine("caller_twin", " ^0005 somebody_else"),
+      "refs"));
   Database.apply(makeCallingImage(0x1200), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
-      << "the thunk leads to a routine named otherwise";
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+}
+
+TEST(SignatureDBReferences, ARoutineThatOnlyJumpsOnContradictsNothing) {
+  // The same `jmp 0x1100` is also what `free` compiles to when all it does
+  // is tail-call `_free_base`: a call to it is a call to `free`, which the
+  // routine it reaches, named otherwise, does not contradict.
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      CalleeLine + callerLine("caller", " ^0005 free"), "refs"));
+  Database.apply(makeCallingImage(0x1200), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  for (const SigMatch &Match : Database.matches())
+    if (Match.Address == 0x1000)
+      EXPECT_FALSE(Match.Confirmed);
 }
 
 namespace {
@@ -579,11 +597,13 @@ TEST(SignatureDBReferences, AnOddOffsetStatesAnARMStateBranch) {
 TEST(SignatureDBReferences, AnARMStateVeneerIsFollowedInARMState) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(
-      ARMCalleeLine + armCallerLine("caller", " ^0005 somebody_else"), "refs"));
+      ARMCalleeLine + armCallerLine("caller", " ^0005 callee") +
+          armCallerLine("caller_twin", " ^0005 somebody_else"),
+      "refs"));
   Database.apply(makeARMStateCallingImage(0x1200), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
-      << "the veneer leads to a routine named otherwise";
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller")
+      << "the veneer leads to the callee";
 }
 
 TEST(SignatureDBReferences, AnEvenOffsetStatesAThumbBranch) {
@@ -668,12 +688,12 @@ TEST(SignatureDBReferences, AnARMv5LongBranchIsFollowed) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(
       "01207047 00 0000 0004 :0000 callee\n" +
-          armCallerLine("caller", " ^0005 somebody_else"),
+          armCallerLine("caller", " ^0005 callee") +
+          armCallerLine("caller_twin", " ^0005 somebody_else"),
       "refs"));
   Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
-      << "the thunk leads to a routine named otherwise";
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AArch64RangeThunksAreFollowed) {
