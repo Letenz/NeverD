@@ -134,6 +134,9 @@ Thumb to verify decoder recovery. `ARM32InterworkingPatchRT.*` links a generic
 mixed ARM/Thumb ELF and executes all four entries in Unicorn before and after
 both section and in-place rewriting. `InstructionMode.*` covers the decoder,
 code-pointer, direct-branch and code-generation boundaries.
+`COFFRelocatableAbsoluteRelocation.MachOARM32*` checks ARM32 Mach-O object
+relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
+call sites, backward calls, malformed encodings and jumps that need a veneer.
 
 ```sh
 cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4

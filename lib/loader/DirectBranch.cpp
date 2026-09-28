@@ -34,7 +34,7 @@ std::optional<va_t> decodeThumbBranch(const uint8_t *Code, size_t Available,
   const bool IsLink = (Hw2 & 0x4000u) != 0;  // second halfword `11` vs `10`
   const bool WideImm = (Hw2 & 0x1000u) != 0; // BL/B.W vs BLX
   // `10x0` is conditional B.W (T3); `11x0` is BLX, which is a call edge.
-  if (!IsLink && !WideImm)
+  if ((!IsLink && !WideImm) || (IsLink && !WideImm && (Hw2 & 1u)))
     return std::nullopt;
 
   const uint32_t S = (Hw1 >> 10) & 1u;
@@ -49,16 +49,23 @@ std::optional<va_t> decodeThumbBranch(const uint8_t *Code, size_t Available,
   // The Thumb program counter reads four bytes ahead of the instruction.  BLX
   // additionally rounds it down, because it targets ARM state where
   // instructions are word-aligned.
+  if (VA > InvalidVA - 4)
+    return std::nullopt;
   const va_t Base = WideImm ? VA + 4 : ((VA + 4) & ~va_t(3));
   // BLX encodes a halfword-pair target, so its lowest immediate bit is the
   // reserved H bit rather than part of the displacement.
   const uint32_t Imm25 = (S << 24) | (I1 << 23) | (I2 << 22) | (ImmHigh << 12) |
                          ((WideImm ? ImmLow : (ImmLow & 0x07FEu)) << 1);
-  // Bit 24 is the sign: shifting it up to bit 63 and back sign-extends it.
-  const int64_t Offset = static_cast<int64_t>(Imm25) << 39 >> 39;
-  if (Offset < 0 && static_cast<va_t>(-Offset) > Base)
+  const int64_t Offset = (Imm25 & (1u << 24))
+                             ? static_cast<int64_t>(Imm25) - (int64_t(1) << 25)
+                             : static_cast<int64_t>(Imm25);
+  if (Offset < 0)
+    return static_cast<va_t>(-Offset) > Base
+               ? std::nullopt
+               : std::optional<va_t>(Base - static_cast<va_t>(-Offset));
+  if (static_cast<va_t>(Offset) > InvalidVA - Base)
     return std::nullopt;
-  return static_cast<va_t>(static_cast<int64_t>(Base) + Offset);
+  return Base + static_cast<va_t>(Offset);
 }
 
 } // namespace
