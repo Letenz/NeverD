@@ -8089,6 +8089,115 @@ TEST(ObjCSourceBindings,
   EXPECT_FALSE(objcSourceCallBound(*Call, Image, {}, nullptr, nullptr, &Owner));
 }
 
+TEST(ObjCSourceBindings, PrivateFramePointerTailRequiresExactStoreOnEveryPath) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  HighFunc Function;
+  Function.FrameSize = 64;
+  Function.ReturnType = NdType::makeVoid();
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Integer = NdType::makeInt(8, false);
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.TheArch = Arch::AArch64;
+  SP.Size = 8;
+  SP.RegOff = a64reg::SP;
+  MedVar FrameVar;
+  FrameVar.Kind = MedVar::Temp;
+  FrameVar.Id = 1;
+  FrameVar.Size = 8;
+  MedVar InputVar;
+  InputVar.Kind = MedVar::Param;
+  InputVar.Id = 2;
+  InputVar.Size = 8;
+  MedVar ReloadVar;
+  ReloadVar.Kind = MedVar::Temp;
+  ReloadVar.Id = 2;
+  ReloadVar.Size = 8;
+  auto Frame = HighExpr::makeVar(FrameVar, Integer);
+  auto Slot = [&] {
+    return HighExpr::makeBinop(NdOp::INT_ADD, Frame,
+                               HighExpr::makeConst(16, 8));
+  };
+  auto Assign = [](ExprPtr Dst, ExprPtr Val) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Dst = std::move(Dst);
+    S.Val = std::move(Val);
+    return S;
+  };
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = Slot();
+  Store.StoreVal = HighExpr::makeVar(InputVar, Pointer);
+  auto Load = HighExpr::makeLoad(Slot(), Integer);
+  auto Reload = HighExpr::makeVar(ReloadVar, Integer);
+  auto Call =
+      HighExpr::makeCall("objc_msgSend", 0,
+                         {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+                          HighExpr::makeConst(0, 8), Reload});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Function.Body = {
+      Assign(Frame,
+             HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(SP, Integer),
+                                 HighExpr::makeConst(64, 8))),
+      Store, Assign(Reload, Load), Return};
+  const auto Check = [&] {
+    VarKeyMap<std::vector<ExprPtr>> Definitions;
+    walkStmts(Function.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+          S.Dst->Kind == ExprKind::Var)
+        Definitions[varKey(S.Dst->Var)].push_back(S.Val);
+    });
+    const auto Loads = objc_binding_detail::provenPrivateFramePointerLoads(
+        Function, Image, Definitions, *Call, 3);
+    size_t Budget = 4096;
+    std::set<VarKey> Active;
+    return objc_binding_detail::provenSourcePointerValue(
+        Reload, Definitions, Image, Budget, Active, 0, &Loads);
+  };
+  EXPECT_TRUE(Check());
+
+  HighStmt Disjoint;
+  Disjoint.Kind = StmtKind::Store;
+  Disjoint.StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, Frame, HighExpr::makeConst(32, 8));
+  Disjoint.StoreVal = HighExpr::makeConst(0, 8);
+  Function.Body.insert(Function.Body.begin() + 2, Disjoint);
+  EXPECT_TRUE(Check());
+  Function.Body.erase(Function.Body.begin() + 2);
+
+  HighStmt Clobber;
+  Clobber.Kind = StmtKind::Store;
+  Clobber.StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, Frame, HighExpr::makeConst(20, 8));
+  Clobber.StoreVal = HighExpr::makeConst(0, 4);
+  Function.Body.insert(Function.Body.begin() + 2, Clobber);
+  EXPECT_FALSE(Check());
+  Function.Body.erase(Function.Body.begin() + 2);
+
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  MedVar ConditionVar;
+  ConditionVar.Kind = MedVar::Param;
+  ConditionVar.Id = 3;
+  ConditionVar.Size = 1;
+  Branch.Cond = HighExpr::makeVar(ConditionVar, NdType::makeInt(1, false));
+  Branch.Body = {Clobber};
+  Function.Body.insert(Function.Body.begin() + 2, Branch);
+  EXPECT_FALSE(Check());
+  Function.Body.erase(Function.Body.begin() + 2);
+
+  HighStmt Escape;
+  Escape.Kind = StmtKind::Call;
+  Escape.CallExpr = HighExpr::makeCall("unknown", 0x3000, {Frame});
+  Function.Body.insert(Function.Body.begin() + 2, Escape);
+  EXPECT_FALSE(Check());
+}
+
 namespace {
 struct ObjectFixture {
   BinaryImage Image;

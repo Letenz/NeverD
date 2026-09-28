@@ -13,6 +13,7 @@
 #include "ObjCSentinelStack.h"
 #include "ObjCSourceProjection.h"
 
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -249,28 +250,31 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
 /// SSA still spells the receiving variable as an integer. Every definition of
 /// a merged value must resolve to a pointer-typed value or to an authenticated
 /// Objective-C runtime call whose catalogued result is a pointer.
-inline bool
-provenSourcePointerValue(const ExprPtr &Value,
-                         const VarKeyMap<std::vector<ExprPtr>> &Definitions,
-                         const BinaryImage &Image, size_t &Budget,
-                         std::set<VarKey> &Active, unsigned Depth = 0) {
+inline bool provenSourcePointerValue(
+    const ExprPtr &Value, const VarKeyMap<std::vector<ExprPtr>> &Definitions,
+    const BinaryImage &Image, size_t &Budget, std::set<VarKey> &Active,
+    unsigned Depth = 0,
+    const std::set<const HighExpr *> *FrameLoads = nullptr) {
   if (!Value || !Budget-- || Depth > 64)
     return false;
   if (Value->Type && Value->Type->Kind == NdTypeKind::Ptr &&
       Value->Type->Size == 8)
+    return true;
+  if (FrameLoads && Value->Kind == ExprKind::Load &&
+      FrameLoads->count(Value.get()))
     return true;
   if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
       Value->Operands.size() == 1 && Value->Type && Value->Operands.front() &&
       Value->Operands.front()->Type && Value->Type->Size == 8 &&
       Value->Operands.front()->Type->Size == 8)
     return provenSourcePointerValue(Value->Operands.front(), Definitions, Image,
-                                    Budget, Active, Depth + 1);
+                                    Budget, Active, Depth + 1, FrameLoads);
   if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SELECT &&
       Value->Operands.size() == 3)
     return provenSourcePointerValue(Value->Operands[1], Definitions, Image,
-                                    Budget, Active, Depth + 1) &&
+                                    Budget, Active, Depth + 1, FrameLoads) &&
            provenSourcePointerValue(Value->Operands[2], Definitions, Image,
-                                    Budget, Active, Depth + 1);
+                                    Budget, Active, Depth + 1, FrameLoads);
   if (Value->Kind == ExprKind::Call && Value->SourceCallHint) {
     const auto &Binding = *Value->SourceCallHint;
     const auto Expected =
@@ -299,12 +303,278 @@ provenSourcePointerValue(const ExprPtr &Value,
   if (Valid)
     for (const auto &Definition : Found->second)
       if (!provenSourcePointerValue(Definition, Definitions, Image, Budget,
-                                    Active, Depth + 1)) {
+                                    Active, Depth + 1, FrameLoads)) {
         Valid = false;
         break;
       }
   Active.erase(Key);
   return Valid;
+}
+
+/// A dynamic format argument can retain its pointer carrier through an exact
+/// private-frame store/load. Only accept a complete 8-byte slot with a proven
+/// pointer on every path to the load. An escaped frame address, unknown write,
+/// overlapping write, or incomplete source-flow graph ends the proof.
+inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
+    const HighFunc &Function, const BinaryImage &Image,
+    const VarKeyMap<std::vector<ExprPtr>> &Definitions, const HighExpr &Call,
+    size_t FixedCount) {
+  std::set<const HighExpr *> Proven;
+  if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
+      Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
+    return Proven;
+  size_t Budget = 1000000;
+  VarKeyMap<unsigned> Counts;
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      ++Counts[varKey(S.Dst->Var)];
+  });
+  VarKeyMap<ExprPtr> Aliases;
+  for (const auto &S : Function.Body) {
+    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+        S.Dst->Kind != ExprKind::Var || !S.Dst->Type ||
+        S.Dst->Type->Size != 8 || S.Dst->Var.Size != 8 ||
+        Counts[varKey(S.Dst->Var)] != 1 ||
+        !high_detail::frameAddressOffset(S.Val, Function, Image.Arch, Budget, 0,
+                                         &Aliases))
+      break;
+    Aliases.emplace(varKey(S.Dst->Var), S.Val);
+  }
+  const auto Offset = [&](const ExprPtr &Address) -> std::optional<int64_t> {
+    if (!Budget)
+      return std::nullopt;
+    return high_detail::frameAddressOffset(Address, Function, Image.Arch,
+                                           Budget, 0, &Aliases);
+  };
+  std::map<int64_t, std::set<const HighExpr *>> Candidates;
+  std::set<VarKey> Active;
+  std::set<const HighExpr *> Seen;
+  const auto Collect = [&](auto &&Self, const ExprPtr &E,
+                           unsigned Depth) -> void {
+    if (!E || !Budget || Depth > 64 || !Seen.insert(E.get()).second)
+      return;
+    --Budget;
+    if (E->Kind == ExprKind::Load && E->Type && E->Type->Size == 8 &&
+        E->MemoryOrdering == NdMemoryOrdering::None &&
+        E->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        E->Operands.size() == 1) {
+      const auto At = Offset(E->Operands[0]);
+      if (At && *At >= -Function.FrameSize && *At <= -8)
+        Candidates[*At].insert(E.get());
+      return;
+    }
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto Key = varKey(E->Var);
+      if (!Active.insert(Key).second)
+        return;
+      auto It = Definitions.find(Key);
+      if (It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Self(Self, Definition, Depth + 1);
+      Active.erase(Key);
+    }
+    for (const auto &Child : E->Operands)
+      Self(Self, Child, Depth + 1);
+  };
+  for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
+    Collect(Collect, Call.Operands[I], 0);
+  if (!Budget || Candidates.empty() || Candidates.size() > 16)
+    return Proven;
+  const auto Graph = buildHighSourceFlowGraph(Function);
+  if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
+      Graph.Nodes.size() > 100000)
+    return Proven;
+
+  // Inspect definitions as well as syntactic aliases: a PHI or renamed local
+  // may carry a frame address even if the expression is not a direct SP sum.
+  const auto FrameDerived = [&](auto &&Self, const ExprPtr &E,
+                                std::set<VarKey> &Visiting,
+                                unsigned Depth) -> bool {
+    if (!E)
+      return false;
+    if (Depth > 64 || !Budget)
+      return true;
+    --Budget;
+    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
+      return false;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (highSourceFrameBase(Function, E->Var))
+        return true;
+      const auto Key = varKey(E->Var);
+      if (!Visiting.insert(Key).second)
+        return true;
+      auto It = Definitions.find(Key);
+      bool Derived = false;
+      if (It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Derived |= Self(Self, Definition, Visiting, Depth + 1);
+      Visiting.erase(Key);
+      return Derived;
+    }
+    for (const auto &Child : E->Operands)
+      if (Self(Self, Child, Visiting, Depth + 1))
+        return true;
+    return false;
+  };
+  const auto Derived = [&](const ExprPtr &E) {
+    std::set<VarKey> Visiting;
+    return FrameDerived(FrameDerived, E, Visiting, 0);
+  };
+  struct Fact {
+    bool Pointer = false;
+    bool Escaped = false;
+    bool operator==(const Fact &Other) const {
+      return Pointer == Other.Pointer && Escaped == Other.Escaped;
+    }
+  };
+  for (const auto &[Slot, Loads] : Candidates) {
+    std::vector<std::optional<Fact>> Incoming(Graph.Nodes.size());
+    std::vector<size_t> Pending{Graph.Entry};
+    Incoming[Graph.Entry] = Fact{};
+    size_t Work = 0;
+    const auto Disjoint = [&](int64_t At, uint64_t Bytes) {
+      return At >= -Function.FrameSize && At < 0 && Bytes &&
+             Bytes <= uint64_t(-At) &&
+             (At + int64_t(Bytes) <= Slot || Slot + 8 <= At);
+    };
+    // A bound SDK NSFastEnumeration call borrows one 64-byte state record and
+    // exactly `count` object slots. Neither range may cover this pointer slot.
+    const auto SafeEnumeration = [&](const HighExpr &E) {
+      const auto *B = E.SourceCallHint.get();
+      const auto Count = [&]() -> std::optional<uint64_t> {
+        if (E.Operands.size() != 5 || !E.Operands[4])
+          return std::nullopt;
+        const auto &Value = E.Operands[4];
+        if (Value->Kind == ExprKind::Const && Value->Type &&
+            Value->Type->Kind == NdTypeKind::Int && Value->Type->Size == 8 &&
+            Value->IntrinsicId == Intrinsic::None &&
+            Value->MemoryOrdering == NdMemoryOrdering::None &&
+            Value->MemoryAddressSpace == NdMemoryAddressSpace::Default)
+          return Value->ConstVal;
+        if (Value->Kind == ExprKind::UnaryOp && Value->Type &&
+            Value->Type->Kind == NdTypeKind::Int && Value->Type->Size == 8 &&
+            Value->IntrinsicId == Intrinsic::None &&
+            Value->MemoryOrdering == NdMemoryOrdering::None &&
+            Value->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Value->Operands.size() == 1 && Value->Operands[0] &&
+            Value->Operands[0]->Kind == ExprKind::Const &&
+            Value->Operands[0]->Type &&
+            Value->Operands[0]->Type->Kind == NdTypeKind::Int &&
+            Value->Operands[0]->Type->Size > 0 &&
+            Value->Operands[0]->Type->Size <= 8 &&
+            (Value->Op == NdOp::INT_ZEXT || Value->Op == NdOp::INT_SEXT) &&
+            Value->Operands[0]->ConstVal <
+                (UINT64_C(1) << (Value->Operands[0]->Type->Size * 8 - 1)))
+          return Value->Operands[0]->ConstVal;
+        return std::nullopt;
+      }();
+      if (!B || B->CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          B->Selector != "countByEnumeratingWithState:objects:count:" ||
+          B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          E.Operands.size() != 5 || !objcSourceCallBound(E, Image, {}) ||
+          !Count || !*Count || *Count > (1u << 16))
+        return false;
+      const auto State = Offset(E.Operands[2]);
+      const auto Buffer = Offset(E.Operands[3]);
+      return State && Buffer && Disjoint(*State, 64) &&
+             Disjoint(*Buffer, *Count * 8);
+    };
+    const auto Evaluate = [&](Fact &F, const HighSourceFlowNode &Node) {
+      const auto Check = [&](auto &&Self, const ExprPtr &E) -> void {
+        if (!E || !Budget)
+          return;
+        --Budget;
+        if (E->Kind == ExprKind::Call) {
+          bool Exposes = E->IndirectTarget && Derived(E->IndirectTarget);
+          for (const auto &Arg : E->Operands)
+            Exposes |= Derived(Arg);
+          if (Exposes && !SafeEnumeration(*E))
+            F.Escaped = true;
+        } else if (E->Kind == ExprKind::Store) {
+          F.Pointer = false;
+          F.Escaped = true;
+        }
+        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+      };
+      if (Node.Test)
+        Check(Check, Node.Test);
+      if (!Node.Statement)
+        return;
+      const auto &S = *Node.Statement;
+      forEachRhsExpr(S, [&](const ExprPtr &E) { Check(Check, E); });
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind != ExprKind::Var &&
+          S.Dst->Kind != ExprKind::Phi)
+        Check(Check, S.Dst);
+      if (S.Kind == StmtKind::Return && Derived(S.RetVal))
+        F.Escaped = true;
+      ExprPtr Address, Value;
+      if (S.Kind == StmtKind::Store) {
+        Address = S.StoreAddr;
+        Value = S.StoreVal;
+      } else if (S.Kind == StmtKind::Assign && S.Dst &&
+                 S.Dst->Kind == ExprKind::Load && S.Dst->Operands.size() == 1) {
+        Address = S.Dst->Operands[0];
+        Value = S.Val;
+      }
+      if (Address) {
+        if (Derived(Value))
+          F.Escaped = true;
+        const auto At = Offset(Address);
+        if (!At) {
+          if (Derived(Address))
+            F.Pointer = false;
+        } else if (!Value || !Value->Type || !Value->Type->Size ||
+                   !Disjoint(*At, Value->Type->Size)) {
+          if (*At == Slot && Value && Value->Type && Value->Type->Size == 8 &&
+              !F.Escaped && S.MemoryOrdering == NdMemoryOrdering::None &&
+              S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+            size_t PointerBudget = 4096;
+            std::set<VarKey> PointerActive;
+            F.Pointer = provenSourcePointerValue(Value, Definitions, Image,
+                                                 PointerBudget, PointerActive);
+          } else {
+            F.Pointer = false;
+          }
+        }
+      }
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var &&
+          S.Dst->Var.Kind == MedVar::Stack) {
+        F.Pointer = false;
+        if (Derived(S.Val))
+          F.Escaped = true;
+      }
+      if (F.Escaped)
+        F.Pointer = false;
+    };
+    while (!Pending.empty() && Budget && ++Work <= 100000) {
+      const size_t Index = Pending.back();
+      Pending.pop_back();
+      Fact Out = *Incoming[Index];
+      Evaluate(Out, Graph.Nodes[Index]);
+      for (const size_t Next : Graph.Nodes[Index].Successors) {
+        auto &In = Incoming[Next];
+        const Fact Merged =
+            In ? Fact{In->Pointer && Out.Pointer, In->Escaped || Out.Escaped}
+               : Out;
+        if (!In || !(*In == Merged)) {
+          In = Merged;
+          Pending.push_back(Next);
+        }
+      }
+    }
+    if (!Budget || Work > 100000)
+      return {};
+    for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
+      if (!Incoming[I] || !Incoming[I]->Pointer || Incoming[I]->Escaped)
+        continue;
+      const auto *S = Graph.Nodes[I].Statement;
+      if (S && S->Kind == StmtKind::Assign && S->Val &&
+          Loads.count(S->Val.get()))
+        Proven.insert(S->Val.get());
+    }
+  }
+  return Proven;
 }
 
 /// An integer spelling alone is not a source declaration. Trace every
@@ -4071,12 +4341,27 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         const auto Fixed = Stub->Format->FixedCount;
         size_t PointerBudget = 4096;
         std::set<VarKey> ActivePointers;
-        const bool PointerTail = std::all_of(
+        bool PointerTail = std::all_of(
             Expression->Operands.begin() + Fixed, Expression->Operands.end(),
             [&](const ExprPtr &Operand) {
               return provenSourcePointerValue(Operand, FormatDefinitions, Image,
                                               PointerBudget, ActivePointers);
             });
+        if (!PointerTail) {
+          const auto FrameLoads = provenPrivateFramePointerLoads(
+              Function, Image, FormatDefinitions, *Expression, Fixed);
+          PointerBudget = 4096;
+          ActivePointers.clear();
+          PointerTail =
+              !FrameLoads.empty() &&
+              std::all_of(Expression->Operands.begin() + Fixed,
+                          Expression->Operands.end(),
+                          [&](const ExprPtr &Operand) {
+                            return provenSourcePointerValue(
+                                Operand, FormatDefinitions, Image,
+                                PointerBudget, ActivePointers, 0, &FrameLoads);
+                          });
+        }
         if (PointerTail) {
           Expected = objcDynamicFormatPointerArgumentsSourceCallHint(
               Image, Stub->Selector,
@@ -5695,6 +5980,7 @@ inline bool objcSourceCallBound(
             });
             size_t Budget = 4096;
             std::set<VarKey> Active;
+            std::optional<std::set<const HighExpr *>> FrameLoads;
             for (size_t I = Format.FixedCount; I < Expression.Operands.size();
                  ++I) {
               if (Format.DynamicInteger64Arguments) {
@@ -5705,7 +5991,17 @@ inline bool objcSourceCallBound(
               } else if (!provenSourcePointerValue(Expression.Operands[I],
                                                    Definitions, Image, Budget,
                                                    Active)) {
-                return false;
+                if (!FrameLoads)
+                  FrameLoads = provenPrivateFramePointerLoads(
+                      *ContainingFunction, Image, Definitions, Expression,
+                      Format.FixedCount);
+                Budget = 4096;
+                Active.clear();
+                if (FrameLoads->empty() ||
+                    !provenSourcePointerValue(Expression.Operands[I],
+                                              Definitions, Image, Budget,
+                                              Active, 0, &*FrameLoads))
+                  return false;
               }
             }
             return true;
