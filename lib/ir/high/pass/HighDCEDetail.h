@@ -36,9 +36,9 @@ void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Map);
 void countExprVarUses(const ExprPtr &E, VarKeyMap<int> &Uses,
                       std::unordered_set<const HighExpr *> &Seen);
-/// Reads are snapshots of memory at their statement. Without reaching-memory
-/// facts, expression propagation cannot move or duplicate them at a use.
-bool containsMemoryRead(const ExprPtr &E);
+/// Reads and effects belong to their original statement. Without an ordering
+/// proof, expression propagation cannot move or duplicate them at a use.
+bool containsNonMovableEffect(const ExprPtr &E);
 void inlineSingleDefs(std::vector<HighStmt> &Stmts,
                       const VarKeyMap<ExprPtr> &Defs);
 

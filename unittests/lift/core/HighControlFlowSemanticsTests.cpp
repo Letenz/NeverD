@@ -2443,6 +2443,32 @@ TEST(HighControlFlowSemantics, ImmutableSingleUseExpressionStillInlines) {
   EXPECT_EQ(F.Body.back().RetVal->Kind, ExprKind::BinOp);
 }
 
+TEST(HighControlFlowSemantics, NestedCallRetainsItsPrecedingMemorySnapshot) {
+  HighFunc F;
+  const auto Address = HighExpr::makeConst(0x4000, 8);
+  auto Store = [&](va_t Site, uint64_t Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Site;
+    S.StoreAddr = Address;
+    S.StoreVal = HighExpr::makeConst(Value, 8);
+    return S;
+  };
+  auto Observe = HighExpr::makeCall(
+      "observe", 0x5000,
+      {HighExpr::makeConst(0, 8), HighExpr::makeConst(0x4000, 8)});
+  Observe->Type = NdType::makeInt(8);
+  auto Snapshot = assign(0x1004, 2, 0);
+  Snapshot.Val = HighExpr::makeBinop(NdOp::INT_ADD, Observe,
+                                    HighExpr::makeConst(1, 8));
+  F.Body = {Store(0x1000, 5), Snapshot, Store(0x1008, 7),
+            result(0x100c, local(2))};
+  ASSERT_EQ(execute(F, 0), 6u);
+  inlineSingleDefSingleUse(F.Body);
+  EXPECT_EQ(execute(F, 0), 6u);
+  EXPECT_EQ(F.Body.back().RetVal->Kind, ExprKind::Var);
+}
+
 TEST(HighControlFlowSemantics, SameRegisterAliasesPreserveExtensionSemantics) {
   for (bool AliasPass : {false, true})
     for (auto Op : {NdOp::INT_SEXT, NdOp::INT_ZEXT}) {
