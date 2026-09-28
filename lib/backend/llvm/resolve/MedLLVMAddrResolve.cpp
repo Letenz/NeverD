@@ -2228,8 +2228,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   // Prove a closed scalar value graph only if the full path-sensitive proof
   // exhausts its node budget. Shared arithmetic diamonds behind loop PHIs
   // otherwise expand once per path, even though their non-frame leaves are
-  // independently numeric. Cycles require a feasible scalar initializer; a
-  // frame reload, pointer-width load, or materializable address fails closed.
+  // independently numeric. Cycles require a feasible scalar initializer;
+  // unproved frame reloads, pointer-width non-frame loads, and materializable
+  // addresses fail closed.
   auto proveClosedScalarGraph = [&](const MedVar &Root) {
     const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
     if (!Img || !CurMedFunc || PointerSize == 0)
@@ -2255,7 +2256,11 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
             return true;
         return isExactSelfCopy(lookupDef(Start), Start);
       }
-      if (Path.size() >= 128 || --Budget < 0)
+      // This fallback memoizes complete scalar subgraphs, so a long acyclic
+      // chain costs one visit per node. Keep its depth guard independent of
+      // the path-sensitive proof's smaller recursion limit; optimized loop
+      // bodies can exceed that limit before reaching their scalar initializer.
+      if (Path.size() >= 512 || --Budget < 0)
         return false;
       Active.emplace(Node, Path.size());
       Path.push_back(Start);
@@ -2291,6 +2296,21 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         if (auto Forwarded = pointerPreservingInput(*Def))
           return Visit(*Forwarded);
         if (Def->Opcode == NdOp::LOAD) {
+          // The exact reaching-store analysis can certify a private scalar
+          // spill even when its load is pointer-width. Audit every stored
+          // value through this same memoized graph; a missing or ambiguous
+          // definition must retain the conservative rejection below.
+          if (Def->NumInputs >= 1 && Def->Output.Size != 0 &&
+              Def->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+              canonicalFrameSlotKey(Def->Inputs[0])) {
+            std::vector<MedVar> Sources;
+            if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
+              return false;
+            for (const MedVar &Source : Sources)
+              if (!Visit(Source))
+                return false;
+            return true;
+          }
           if (Def->NumInputs < 1 ||
               Def->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
               Def->Output.Size == 0 || Def->Output.Size >= PointerSize ||

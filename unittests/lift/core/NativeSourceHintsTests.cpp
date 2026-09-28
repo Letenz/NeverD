@@ -636,6 +636,11 @@ TEST(NativeSourceHints, SwiftDoubleFloatingPropertyUsesFPLanes) {
   Wrong.Symbols[0].Name.replace(Wrong.Symbols[0].Name.find("Sdvpfi"), 6,
                                 "Sivpfi");
   EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  // A generic Outer<T>.Inner.x has the same demangled owner shape, but Swift
+  // passes a hidden metadata pointer to its property initializer.
+  Wrong = Initializer;
+  Wrong.Symbols[0].Name = "_$s10SomeModule5OuterC5InnerV1xSdvpfi";
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
   Wrong = Image;
   Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
   EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));

@@ -679,6 +679,14 @@ TEST(RewriteCodegen_CodePointerIdentity,
   Image.Arch = Arch::ARM;
   Image.Mode = InstructionMode::Thumb;
   Image.Bits = Bitness::Bits32;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 4;
+  Text.FileSz = Text.Size;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  Image.Segments.push_back(std::move(Text));
   Image.Symbols = {Symbol::makeFunc(0x1000, 4)};
 
   ASSERT_TRUE(Image.CodeRefTargets.empty());
