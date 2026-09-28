@@ -449,6 +449,12 @@ std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
     if ((Type == ELF::R_ARM_THM_CALL || Type == ELF::R_ARM_THM_JUMP24) &&
         Offset % 2 == 0)
       return Offset;
+    // An ARM-state branch is stated one byte past its instruction, at an odd
+    // offset no Thumb-2 instruction has.
+    if ((Type == ELF::R_ARM_CALL || Type == ELF::R_ARM_JUMP24 ||
+         Type == ELF::R_ARM_PLT32 || Type == ELF::R_ARM_PC24) &&
+        Offset % 4 == 0)
+      return Offset + 1;
     return std::nullopt;
   }
   return std::nullopt;

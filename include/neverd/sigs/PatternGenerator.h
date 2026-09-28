@@ -164,9 +164,11 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
 /// \p Machine (an EM_* value): the offset a `^offset name` reference names,
 /// or std::nullopt.  That is a PC32 or PLT32 field after an E8 or E9 opcode
 /// on x86 and x86-64, a CALL26 or JUMP26 instruction on AArch64, and a
-/// THM_CALL or THM_JUMP24 (Thumb-2 BL or B.W) instruction on ARM.  The
-/// function's bytes are \p Function and \p Offset is the relocation's
-/// offset in them; the branch must lie within them.
+/// THM_CALL or THM_JUMP24 (Thumb-2 BL or B.W) instruction on ARM -- or one
+/// byte past a CALL, JUMP24, PLT32 or PC24 (ARM-state B or BL) instruction,
+/// an odd offset (see PatternModule::References).  The function's bytes are
+/// \p Function and \p Offset is the relocation's offset in them; the branch
+/// must lie within them.
 std::optional<uint64_t>
 elfBranchReferenceOffset(uint16_t Machine, uint32_t Type,
                          llvm::ArrayRef<uint8_t> Function, uint64_t Offset);

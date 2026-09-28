@@ -560,10 +560,17 @@ uint64_t wrapToImage(const BinaryImage &Img, uint64_t Address) {
   return Img.is64Bit() ? Address : Address & 0xFFFFFFFFu;
 }
 
-/// The target of a Thumb-2 B.W (T4), BL (T1) or BLX (T2) at \p Address, or
-/// of only a B.W when \p JumpOnly.
-std::optional<uint64_t> thumbBranchTarget(const BinaryImage &Img,
-                                          uint64_t Address, bool JumpOnly) {
+/// Where a direct branch goes, and on 32-bit ARM whether it enters its
+/// target in Thumb state.
+struct Branch {
+  uint64_t Target = 0;
+  bool Thumb = false;
+};
+
+/// The Thumb-2 B.W (T4), BL (T1) or BLX (T2) at \p Address, or only a B.W
+/// when \p JumpOnly.
+std::optional<Branch> thumbBranch(const BinaryImage &Img, uint64_t Address,
+                                  bool JumpOnly) {
   const uint8_t *Insn = Img.readVA(Address, 4);
   if (!Insn)
     return std::nullopt;
@@ -585,12 +592,37 @@ std::optional<uint64_t> thumbBranchTarget(const BinaryImage &Img,
   uint64_t Target = Address + 4 + static_cast<uint64_t>(signExtend(Offset, 25));
   if (Exchange)
     Target &= ~uint64_t(3);
-  return wrapToImage(Img, Target);
+  return Branch{wrapToImage(Img, Target), !Exchange};
 }
 
-/// Where the direct branch a reference describes goes, when the image holds
-/// that branch at \p Site; see PatternModule::References for the offsets.
-std::optional<uint64_t> branchTarget(const BinaryImage &Img, uint64_t Site) {
+/// The ARM-state B or BL, either of them conditional, or BLX (immediate) at
+/// \p Address, or only an unconditional B when \p JumpOnly.
+std::optional<Branch> armBranch(const BinaryImage &Img, uint64_t Address,
+                                bool JumpOnly) {
+  const uint8_t *Insn = Img.readVA(Address, 4);
+  if (!Insn)
+    return std::nullopt;
+  const uint32_t Word = readLE<uint32_t>(Insn);
+  if ((Word & 0x0E000000u) != 0x0A000000u)
+    return std::nullopt;
+  const bool Exchange = Word >> 28 == 0xF;
+  // Bit 24 is BL's link bit, and BLX's halfword bit.
+  const bool Bit24 = (Word >> 24) & 1;
+  if (JumpOnly && (Exchange || Bit24 || Word >> 28 != 0xE))
+    return std::nullopt;
+  uint64_t Offset =
+      static_cast<uint64_t>(signExtend(Word & 0x00FFFFFFu, 24) * 4);
+  if (Exchange && Bit24)
+    Offset += 2;
+  return Branch{wrapToImage(Img, Address + 8 + Offset), Exchange};
+}
+
+/// Where the direct branch a reference at \p Offset of the routine at
+/// \p Start describes goes, when the image holds that branch; see
+/// PatternModule::References for the offsets.
+std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
+                                   uint32_t Offset) {
+  const uint64_t Site = Start + Offset;
   switch (Img.Arch) {
   case Arch::X86:
   case Arch::X64: {
@@ -600,7 +632,7 @@ std::optional<uint64_t> branchTarget(const BinaryImage &Img, uint64_t Site) {
     if (!Insn || (Insn[0] != 0xE8 && Insn[0] != 0xE9))
       return std::nullopt;
     const int64_t Disp = readLE<int32_t>(Insn + 1);
-    return wrapToImage(Img, Site + 4 + static_cast<uint64_t>(Disp));
+    return Branch{wrapToImage(Img, Site + 4 + static_cast<uint64_t>(Disp))};
   }
   case Arch::AArch64: {
     const uint8_t *Insn = Img.readVA(Site, 4);
@@ -610,40 +642,47 @@ std::optional<uint64_t> branchTarget(const BinaryImage &Img, uint64_t Site) {
     // B and BL; a veneer or anything else is not the branch the library had.
     if ((Word & 0x7C000000u) != 0x14000000u)
       return std::nullopt;
-    return Site + static_cast<uint64_t>(signExtend(Word & 0x03FFFFFFu, 26) * 4);
+    return Branch{
+        Site + static_cast<uint64_t>(signExtend(Word & 0x03FFFFFFu, 26) * 4)};
   }
   case Arch::ARM:
-    return thumbBranchTarget(Img, Site, /*JumpOnly=*/false);
+    // An odd offset states an ARM-state branch one byte before it.
+    if (Offset & 1)
+      return armBranch(Img, Site - 1, /*JumpOnly=*/false);
+    return thumbBranch(Img, Site, /*JumpOnly=*/false);
   default:
     return std::nullopt;
   }
 }
 
-/// The routine a thunk at \p Address jumps to, when all it is is one
-/// unconditional direct jump: an incremental-linking thunk, or a branch
-/// island.
-std::optional<uint64_t> thunkTarget(const BinaryImage &Img, uint64_t Address) {
+/// Where the thunk the branch \p To enters jumps to, when all the thunk is
+/// is one unconditional direct jump: an incremental-linking thunk, or a
+/// branch island.  On 32-bit ARM the thunk runs in the state \p To enters it
+/// in.
+std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
   switch (Img.Arch) {
   case Arch::X86:
   case Arch::X64: {
-    const uint8_t *Insn = Img.readVA(Address, 5);
+    const uint8_t *Insn = Img.readVA(To.Target, 5);
     if (!Insn || Insn[0] != 0xE9)
       return std::nullopt;
     const int64_t Disp = readLE<int32_t>(Insn + 1);
-    return wrapToImage(Img, Address + 5 + static_cast<uint64_t>(Disp));
+    return Branch{
+        wrapToImage(Img, To.Target + 5 + static_cast<uint64_t>(Disp))};
   }
   case Arch::AArch64: {
-    const uint8_t *Insn = Img.readVA(Address, 4);
+    const uint8_t *Insn = Img.readVA(To.Target, 4);
     if (!Insn)
       return std::nullopt;
     const uint32_t Word = readLE<uint32_t>(Insn);
     if ((Word & 0xFC000000u) != 0x14000000u)
       return std::nullopt;
-    return Address +
-           static_cast<uint64_t>(signExtend(Word & 0x03FFFFFFu, 26) * 4);
+    return Branch{To.Target + static_cast<uint64_t>(
+                                  signExtend(Word & 0x03FFFFFFu, 26) * 4)};
   }
   case Arch::ARM:
-    return thumbBranchTarget(Img, Address, /*JumpOnly=*/true);
+    return To.Thumb ? thumbBranch(Img, To.Target, /*JumpOnly=*/true)
+                    : armBranch(Img, To.Target, /*JumpOnly=*/true);
   default:
     return std::nullopt;
   }
@@ -746,14 +785,13 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
       if (Img.Arch == Arch::ARM)
         Start &= ~uint64_t(1);
       for (const StoredName &Ref : References) {
-        const std::optional<uint64_t> Target =
-            branchTarget(Img, Start + Ref.Offset);
-        if (!Target)
+        const std::optional<Branch> To = branchTarget(Img, Start, Ref.Offset);
+        if (!To)
           continue;
-        ReferenceVerdict Verdict = Judge(Ref.Name, *Target);
+        ReferenceVerdict Verdict = Judge(Ref.Name, To->Target);
         if (Verdict == ReferenceVerdict::Unknown)
-          if (const std::optional<uint64_t> Next = thunkTarget(Img, *Target))
-            Verdict = Judge(Ref.Name, *Next);
+          if (const std::optional<Branch> Next = thunkTarget(Img, *To))
+            Verdict = Judge(Ref.Name, Next->Target);
         if (Verdict == ReferenceVerdict::Contradicted) {
           Contradicted = true;
           break;

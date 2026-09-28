@@ -483,6 +483,100 @@ TEST(SignatureDBReferences, AStubTheLoaderPairedWithAnImportSettlesACall) {
   EXPECT_TRUE(Database.matches()[0].Confirmed);
 }
 
+namespace {
+
+void putWord(std::vector<uint8_t> &Data, size_t Offset, uint32_t Word) {
+  std::memcpy(Data.data() + Offset, &Word, sizeof(Word));
+}
+
+/// A 32-bit ARM ELF image with 0x300 bytes of code at 0x1000.
+neverd::BinaryImage makeARMImage(std::vector<uint8_t> Data) {
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::ARM;
+  Image.Bits = neverd::Bitness::Bits32;
+  Image.Format = neverd::BinaryFormat::ELF;
+  neverd::Segment Code;
+  Code.VA = 0x1000;
+  Code.Size = Data.size();
+  Code.FileSz = Data.size();
+  Code.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Code.Data = std::move(Data);
+  Image.Segments.push_back(std::move(Code));
+  return Image;
+}
+
+/// ARM state: `push {r11,lr}; bl <CallTarget>; pop {r11,pc}` at 0x1000,
+/// `mov r0,#1; bx lr` at 0x1100, and a veneer `b 0x1100` at 0x1200.
+neverd::BinaryImage makeARMStateCallingImage(uint64_t CallTarget) {
+  std::vector<uint8_t> Data(0x300, 0);
+  putWord(Data, 0x000, 0xE92D4800);
+  putWord(Data, 0x004,
+          0xEB000000 | (((CallTarget - 0x100C) >> 2) & 0x00FFFFFF));
+  putWord(Data, 0x008, 0xE8BD8800);
+  putWord(Data, 0x100, 0xE3A00001);
+  putWord(Data, 0x104, 0xE12FFF1E);
+  putWord(Data, 0x200, 0xEA000000 | (((0x1100 - 0x1208) >> 2) & 0x00FFFFFF));
+  return makeARMImage(std::move(Data));
+}
+
+constexpr const char *ARMCalleeLine =
+    "0100A0E31EFF2FE1 00 0000 0008 :0000 callee\n";
+
+std::string armCallerLine(llvm::StringRef Name, llvm::StringRef References) {
+  return ("00482DE9........0088BDE8 00 0000 000C :0000 " + Name + References +
+          "\n")
+      .str();
+}
+
+} // namespace
+
+TEST(SignatureDBReferences, AnOddOffsetStatesAnARMStateBranch) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      ARMCalleeLine + armCallerLine("caller", " ^0005 callee") +
+          armCallerLine("caller_twin", " ^0005 somebody_else"),
+      "refs"));
+  Database.apply(makeARMStateCallingImage(0x1100), {0x1000, 0x1100});
+
+  const auto Names = Database.buildNameMap();
+  EXPECT_EQ(Names.at(0x1000), "caller");
+  EXPECT_EQ(Names.at(0x1100), "callee");
+  for (const SigMatch &Match : Database.matches())
+    if (Match.Address == 0x1000)
+      EXPECT_TRUE(Match.Confirmed) << Match.Name;
+}
+
+TEST(SignatureDBReferences, AnARMStateVeneerIsFollowedInARMState) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      ARMCalleeLine + armCallerLine("caller", " ^0005 somebody_else"), "refs"));
+  Database.apply(makeARMStateCallingImage(0x1200), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
+      << "the veneer leads to a routine named otherwise";
+}
+
+TEST(SignatureDBReferences, AnEvenOffsetStatesAThumbBranch) {
+  // Thumb: `push {r7,lr}; bl 0x1100; pop {r7,pc}` at 0x1000 and
+  // `movs r0,#1; bx lr` at 0x1100.
+  std::vector<uint8_t> Data(0x300, 0);
+  const uint8_t Caller[] = {0x80, 0xB5, 0x00, 0xF0, 0x7D, 0xF8, 0x80, 0xBD};
+  std::copy(std::begin(Caller), std::end(Caller), Data.begin());
+  const uint8_t Callee[] = {0x01, 0x20, 0x70, 0x47};
+  std::copy(std::begin(Callee), std::end(Callee), Data.begin() + 0x100);
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "01207047 00 0000 0004 :0000 callee\n"
+      "80B5........80BD 00 0000 0008 :0000 caller ^0002 callee\n"
+      "80B5........80BD 00 0000 0008 :0000 caller_twin ^0002 somebody_else\n",
+      "refs"));
+  Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+}
+
 TEST(SignatureDBAliases, OneModulesNamesForAnOffsetAreOneRoutine) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(

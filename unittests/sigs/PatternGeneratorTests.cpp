@@ -1027,7 +1027,16 @@ TEST(PatternGeneratorELF, BranchReferencesUseEachMachinesOffset) {
   EXPECT_EQ(
       elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_THM_JUMP19, Words, 6),
       std::nullopt);
-  // A Thumb-2 branch is where no Thumb-2 instruction is.
+  // An ARM-state branch is stated one byte past its instruction.
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_CALL, Words, 8),
+            9u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_JUMP24, Words, 4),
+            5u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_PLT32, Words, 0),
+            1u);
+  // Neither kind of branch is where its instruction set puts none.
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_CALL, Words, 6),
+            std::nullopt);
   EXPECT_EQ(
       elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_THM_CALL, Words, 5),
       std::nullopt);
