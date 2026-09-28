@@ -627,7 +627,8 @@ static int check_pair(uint64_t x, uint64_t y, uint64_t z) {
   }
 #if NESTED_WORD_BITS == 64
   if ((uint64_t)mba_wide_add(x, y) != x + y ||
-      (uint64_t)mba_wide_three(x, y, z) != x + y + z)
+      (uint64_t)mba_wide_three(x, y, z) != x + y + z ||
+      (uint64_t)mba_wide_four(x, y, z, x ^ y) != x + y + z + (x ^ y))
     return 1;
 #endif
   return 0;
@@ -699,6 +700,7 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
   if (Case.WordBits == 64) {
     expectNoResidualMBA(Output, "mba_wide_add");
     expectNoResidualMBA(Output, "mba_wide_three");
+    expectNoResidualMBA(Output, "mba_wide_four");
   }
   for (const char *Name : {"mba_nested_xor", "mba_nested_or"}) {
     const auto Body = functionBody(Source, Name);
@@ -822,12 +824,18 @@ TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
   EXPECT_EQ(ThreeBody.find(" ^ "), std::string::npos) << ThreeBody;
   EXPECT_EQ(ThreeBody.find(" & "), std::string::npos) << ThreeBody;
   EXPECT_EQ(ThreeBody.find("~"), std::string::npos) << ThreeBody;
+  const std::string FourBody = functionBody(Source, "mba_pair_four");
+  EXPECT_FALSE(FourBody.empty());
+  EXPECT_EQ(FourBody.find(" ^ "), std::string::npos) << FourBody;
+  EXPECT_EQ(FourBody.find(" & "), std::string::npos) << FourBody;
+  EXPECT_EQ(FourBody.find("~"), std::string::npos) << FourBody;
   EXPECT_FALSE(functionBody(Source, "mba_pair_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_or_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_sub_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_affine_add_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_affine_sub_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_three_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_four_fold").empty());
 
   const char *Harness = R"(
 #include <inttypes.h>
@@ -838,6 +846,9 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
   uint32_t zl = xl ^ yh;
   uint32_t zh = xh + yl;
   uint64_t z = ((uint64_t)zh << 32) | zl;
+  uint32_t wl = yl ^ zh;
+  uint32_t wh = yh + zl;
+  uint64_t w = ((uint64_t)wh << 32) | wl;
   uint64_t expected = x + y;
   uint64_t actual = (uint64_t)mba_pair_add(xl, xh, yl, yh);
   uint64_t or_actual = (uint64_t)mba_pair_or_add(xl, xh, yl, yh);
@@ -848,6 +859,9 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
       expected_difference + UINT64_C(0x123456789abcdef0);
   uint64_t expected_three = x + y + z;
   uint64_t three = (uint64_t)mba_pair_three(xl, xh, yl, yh, zl, zh);
+  uint64_t expected_four = expected_three + w;
+  uint64_t four =
+      (uint64_t)mba_pair_four(xl, xh, yl, yh, zl, zh, wl, wh);
   uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
   uint32_t folded_difference =
       (uint32_t)expected_difference ^ (uint32_t)(expected_difference >> 32);
@@ -857,11 +871,13 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
       (uint32_t)affine_difference ^ (uint32_t)(affine_difference >> 32);
   uint32_t folded_three =
       (uint32_t)expected_three ^ (uint32_t)(expected_three >> 32);
+  uint32_t folded_four =
+      (uint32_t)expected_four ^ (uint32_t)(expected_four >> 32);
   if (actual != expected || or_actual != expected ||
       difference != expected_difference ||
       (uint64_t)mba_pair_affine_add(xl, xh, yl, yh) != affine_sum ||
       (uint64_t)mba_pair_affine_sub(xl, xh, yl, yh) != affine_difference ||
-      three != expected_three ||
+      three != expected_three || four != expected_four ||
       (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded ||
       (uint32_t)mba_pair_or_fold(xl, xh, yl, yh) != folded ||
       (uint32_t)mba_pair_sub_fold(xl, xh, yl, yh) != folded_difference ||
@@ -869,7 +885,9 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
           folded_affine_sum ||
       (uint32_t)mba_pair_affine_sub_fold(xl, xh, yl, yh) !=
           folded_affine_difference ||
-      (uint32_t)mba_pair_three_fold(xl, xh, yl, yh, zl, zh) != folded_three) {
+      (uint32_t)mba_pair_three_fold(xl, xh, yl, yh, zl, zh) != folded_three ||
+      (uint32_t)mba_pair_four_fold(xl, xh, yl, yh, zl, zh, wl, wh) !=
+          folded_four) {
     fprintf(stderr, "pair mismatch %08" PRIx32 ":%08" PRIx32
                     " %08" PRIx32 ":%08" PRIx32 "\n", xh, xl, yh, yl);
     return 1;
@@ -888,13 +906,27 @@ int main(void) {
             return 1;
   uint64_t state = UINT64_C(0x92d68ca2f53b17e9);
   for (unsigned i = 0; i < 4096; ++i) {
-    uint32_t words[4];
-    for (unsigned j = 0; j < 4; ++j) {
+    uint32_t words[8];
+    for (unsigned j = 0; j < 8; ++j) {
       state = state * UINT64_C(6364136223846793005) + 1;
       words[j] = (uint32_t)(state >> 32);
     }
     if (check_pair(words[0], words[1], words[2], words[3]))
       return 1;
+    uint64_t a = ((uint64_t)words[1] << 32) | words[0];
+    uint64_t b = ((uint64_t)words[3] << 32) | words[2];
+    uint64_t c = ((uint64_t)words[5] << 32) | words[4];
+    uint64_t d = ((uint64_t)words[7] << 32) | words[6];
+    uint64_t expected = a + b + c + d;
+    if ((uint64_t)mba_pair_four(words[0], words[1], words[2], words[3],
+                                words[4], words[5], words[6], words[7]) !=
+            expected ||
+        (uint32_t)mba_pair_four_fold(words[0], words[1], words[2], words[3],
+                                     words[4], words[5], words[6], words[7]) !=
+            ((uint32_t)expected ^ (uint32_t)(expected >> 32))) {
+      fprintf(stderr, "independent four-input mismatch at %u\n", i);
+      return 1;
+    }
   }
   return 0;
 }

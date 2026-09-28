@@ -35,6 +35,12 @@ __attribute__((noinline)) u64 mba_pair_three(u64 x, u64 y, u64 z) {
   return parity + (majority << 1);
 }
 
+__attribute__((noinline)) u64 mba_pair_four(u64 x, u64 y, u64 z, u64 w) {
+  u64 parity = x ^ y ^ z;
+  u64 majority = (x & y) | (x & z) | (y & z);
+  return (parity ^ w) + ((parity & w) << 1) + (majority << 1);
+}
+
 u32 mba_pair_fold(u32 xl, u32 xh, u32 yl, u32 yh) {
   u64 x = ((u64)xh << 32) | xl;
   u64 y = ((u64)yh << 32) | yl;
@@ -75,5 +81,15 @@ u32 mba_pair_three_fold(u32 xl, u32 xh, u32 yl, u32 yh, u32 zl, u32 zh) {
   u64 y = ((u64)yh << 32) | yl;
   u64 z = ((u64)zh << 32) | zl;
   u64 result = mba_pair_three(x, y, z);
+  return (u32)result ^ (u32)(result >> 32);
+}
+
+u32 mba_pair_four_fold(u32 xl, u32 xh, u32 yl, u32 yh, u32 zl, u32 zh, u32 wl,
+                       u32 wh) {
+  u64 x = ((u64)xh << 32) | xl;
+  u64 y = ((u64)yh << 32) | yl;
+  u64 z = ((u64)zh << 32) | zl;
+  u64 w = ((u64)wh << 32) | wl;
+  u64 result = mba_pair_four(x, y, z, w);
   return (u32)result ^ (u32)(result >> 32);
 }
