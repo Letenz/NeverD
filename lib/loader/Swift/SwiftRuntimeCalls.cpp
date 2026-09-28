@@ -175,6 +175,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
      "/System/Library/Frameworks/SwiftUI.framework/SwiftUI", "vppC"},
+    // Swift 6.1.2 arm64 and x86_64 client IR declare DispatchWorkItem.cancel
+    // as swiftcc void (ptr swiftself).
+    {"$s8Dispatch0A8WorkItemC6cancelyyFTj",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
