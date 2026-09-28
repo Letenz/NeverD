@@ -25,7 +25,11 @@ Four rules decide what a file holds:
 
   * A file is rebuilt from its assets alone.  Lines it held before, from an
     earlier run or from another tool, are replaced, so give the script every
-    asset of a directory at once.
+    asset of a directory at once.  The exception is `<file>.imported`, which
+    the signatures repository keeps for a release whose libraries it collects
+    only in part: the lines an earlier import holds for routines no collected
+    library defines, already renamed to linkage names.  They join the
+    generated lines under every rule below.
 
   * When lines state the same bytes under different names, all of them are
     dropped.  The pattern cannot tell those routines apart -- MSVC folds
@@ -34,10 +38,11 @@ Four rules decide what a file holds:
     reads every file of a directory together, so this holds across the
     directory: bytes that one file's libraries give two names are dropped
     from every file of it, and so are bytes two files name differently.
-    NeverD's matcher compares a line only as far as the line's own length,
-    so a line whose bytes open a longer routine of another name is dropped
-    as well: in a linked image it would name that routine too.  The counts
-    are reported.
+    NeverD's matcher compares a line only as far as the line's own length
+    and accepts any byte where the line has a wildcard, so a line is dropped
+    as well when a routine of another name, at least as long, states every
+    byte the line states: in a linked image it would name that routine too.
+    The counts are reported.
 
 Every file written is read back through `neverd-sigmaker --verify`, the
 loader's own parser: the loader rejects a whole directory for one bad line.
@@ -53,7 +58,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import fnmatch
+import hashlib
 import json
 import shutil
 import subprocess
@@ -76,6 +83,15 @@ ARCHITECTURES = {
 }
 
 LIBRARY_SUFFIXES = (".lib", ".obj")
+
+# Lines whose first bytes are relocated are not searched for routines that
+# state them; see settle_directory.
+MIN_PREFIX_BYTES = 4
+
+# neverd-sigmaker's leading pattern, and the size of a candidate range worth
+# indexing rather than scanning.
+LEAD_BYTES = 32
+SMALL_RANGE = 64
 
 
 class BuildError(RuntimeError):
@@ -204,25 +220,49 @@ class Shape:
         tail = tokens[4] if len(tokens) > 4 else ""
         return cls(tokens[0], int(tokens[1], 16), tokens[2], int(tokens[3], 16), tail)
 
-    def opens(self, other: "Shape") -> bool:
-        """Whether a longer routine's line states every byte this one states.
+    def stated_prefix(self) -> str:
+        """The leading bytes up to the first one a relocation rewrites."""
 
-        Only what both lines state can be compared, so a byte that one line
-        leaves to a relocation and the other states counts as a difference;
-        the check errs toward keeping a line.
+        for index in range(0, len(self.lead), 2):
+            if self.lead[index] == ".":
+                return self.lead[:index]
+        return self.lead
+
+    def covered_by(self, other: "Shape") -> bool:
+        """Whether a routine at least as long states every byte this line states.
+
+        NeverD's matcher compares a line only as far as its own length and
+        accepts anything where the line has a wildcard, so such a routine
+        matches this line wherever it is linked.  Only what the other line
+        states can be compared: a byte it leaves to a relocation, or covers by
+        a CRC of a different span, counts as a difference, so the check errs
+        toward keeping a line.
         """
 
-        if other.total <= self.total:
+        if other.total < self.total:
+            return False
+        lead_bytes = min(len(self.lead), 2 * self.total)
+        if not _states(self.lead[:lead_bytes], other.lead):
             return False
         if len(self.lead) >= 2 * self.total:
             # The whole routine fits in the leading pattern.
-            return other.lead.startswith(self.lead)
-        return (
-            other.lead == self.lead
-            and other.crc_len == self.crc_len
-            and other.crc == self.crc
-            and other.tail.startswith(self.tail)
-        )
+            return True
+        if other.crc_len != self.crc_len or (self.crc_len and other.crc != self.crc):
+            return False
+        return _states(self.tail, other.tail)
+
+
+def _states(pattern: str, other: str) -> bool:
+    """Whether `other` states every byte `pattern` states, the same way."""
+
+    if len(other) < len(pattern.rstrip(".")):
+        return False
+    for index in range(0, len(pattern), 2):
+        if pattern[index] == ".":
+            continue
+        if other[index : index + 2] != pattern[index : index + 2]:
+            return False
+    return True
 
 
 def parse_line(text: str) -> PatternLine | None:
@@ -267,7 +307,7 @@ class FoldResult:
     conflicting_groups: int = 0
     conflict_examples: list[list[str]] = field(default_factory=list)
     dropped_across_files: int = 0
-    dropped_openings: int = 0
+    dropped_covered: int = 0
 
     @property
     def texts(self) -> list[str]:
@@ -335,30 +375,76 @@ def settle_directory(results: dict[Path, FoldResult]) -> None:
         result.dropped_across_files = len(result.lines) - len(kept)
         result.lines = kept
 
-    # A line that opens another agrees with it on its first 16 bytes, which
-    # every line states or leaves to a relocation, so bucketing by them
-    # loses nothing.
-    openings: dict[str, list[tuple[Shape, tuple[str, ...]]]] = {}
+    # A routine that states every byte of a line begins with the bytes the
+    # line states before its first wildcard, so sorting every claim by its
+    # leading bytes puts the candidates in one range.
+    claimed: list[tuple[str, Shape, tuple[str, ...]]] = []
     for result in results.values():
         for line in result.evidence:
             shape = Shape.of(line.key)
-            openings.setdefault(shape.lead[:32], []).append((shape, line.names))
-    for bucket in openings.values():
-        bucket.sort(key=lambda item: -item[0].total)
+            claimed.append((shape.lead, shape, line.names))
+    claimed.sort(key=lambda item: item[0])
+    leads = [item[0] for item in claimed]
+    # Within one range, which claims state which byte at which position of
+    # the leading pattern: a covering routine is in every set a line's own
+    # stated bytes pick out.
+    stating: dict[tuple[int, int], list[dict[str, set[int]]]] = {}
+
+    def index(start: int, end: int) -> list[dict[str, set[int]]]:
+        if (start, end) not in stating:
+            positions: list[dict[str, set[int]]] = [{} for _ in range(LEAD_BYTES)]
+            for k in range(start, end):
+                lead = claimed[k][0]
+                for offset in range(0, min(len(lead), 2 * LEAD_BYTES), 2):
+                    value = lead[offset : offset + 2]
+                    if value != "..":
+                        positions[offset // 2].setdefault(value, set()).add(k)
+            stating[(start, end)] = positions
+        return stating[(start, end)]
+
+    # A routine that covers a line longer than the leading pattern has the
+    # same CRC span with the same CRC.
+    by_crc: dict[tuple[int, str], list[int]] = {}
+    for k, (_, other, _) in enumerate(claimed):
+        if other.crc_len:
+            by_crc.setdefault((other.crc_len, other.crc), []).append(k)
+
     for result in results.values():
         kept = []
         for line in result.lines:
             shape = Shape.of(line.key)
-            opened = False
-            for other, names in openings.get(shape.lead[:32], ()):
-                if other.total <= shape.total:
-                    break
-                if names != line.names and shape.opens(other):
-                    opened = True
-                    break
-            if not opened:
+            prefix = shape.stated_prefix()
+            covered = False
+            if shape.crc_len and len(shape.lead) < 2 * shape.total:
+                for k in by_crc.get((shape.crc_len, shape.crc), ()):
+                    _, other, names = claimed[k]
+                    if names != line.names and other != shape and shape.covered_by(other):
+                        covered = True
+                        break
+            # A line whose first bytes are relocated has no range to search;
+            # it is kept.
+            elif len(prefix) >= 2 * MIN_PREFIX_BYTES:
+                start = bisect.bisect_left(leads, prefix)
+                end = bisect.bisect_right(leads, prefix + "~")
+                candidates: set[int] | None = None
+                if end - start > SMALL_RANGE:
+                    positions = index(start, end)
+                    for offset in range(len(prefix), min(len(shape.lead), 2 * shape.total), 2):
+                        value = shape.lead[offset : offset + 2]
+                        if value == "..":
+                            continue
+                        found = positions[offset // 2].get(value, set())
+                        candidates = found if candidates is None else candidates & found
+                        if not candidates:
+                            break
+                for k in sorted(candidates) if candidates is not None else range(start, end):
+                    _, other, names = claimed[k]
+                    if names != line.names and other != shape and shape.covered_by(other):
+                        covered = True
+                        break
+            if not covered:
                 kept.append(line)
-        result.dropped_openings = len(result.lines) - len(kept)
+        result.dropped_covered = len(result.lines) - len(kept)
         result.lines = kept
 
 
@@ -422,6 +508,30 @@ def generate(
     return generated, sources
 
 
+def imported_lines(output: Path, relative: Path) -> tuple[list[str], dict | None]:
+    """The lines a file keeps from an earlier import, and their provenance.
+
+    A Visual Studio release whose libraries the signatures repository collects
+    only in part keeps, in `<file>.imported`, the imported lines for routines
+    no collected library defines; the loader never reads that file.  Its lines
+    join the generated ones here, and every rule above applies to them as to
+    any other claim.  Comment lines, which hold what could not be given a
+    linkage name, are skipped.
+    """
+
+    path = output / relative.with_suffix(".imported")
+    if not path.is_file():
+        return [], None
+    data = path.read_bytes()
+    lines = [line for line in data.decode("utf-8").splitlines() if parse_line(line)]
+    return lines, {
+        "asset": path.name,
+        "archive_sha256": hashlib.sha256(data).hexdigest(),
+        "kind": "imported",
+        "lines": len(lines),
+    }
+
+
 def write(
     args: argparse.Namespace, relative: Path, result: FoldResult, sources: list[dict]
 ) -> None:
@@ -454,8 +564,8 @@ def write(
         f"ambiguous groups dropped, "
         f"{result.dropped_across_files} dropped for bytes another file of "
         f"{relative.parent.as_posix()} names differently, "
-        f"{result.dropped_openings} for bytes that open a longer routine of "
-        f"another name)",
+        f"{result.dropped_covered} for bytes a routine of another name states "
+        f"as well)",
         flush=True,
     )
     for example in result.conflict_examples[:5]:
@@ -475,6 +585,10 @@ def build(args: argparse.Namespace) -> int:
             sources: dict[Path, list[dict]] = {}
             for relative, members in sorted(outputs.items()):
                 generated, sources[relative] = generate(args, members, work_root)
+                imported, provenance = imported_lines(args.output, relative)
+                if provenance:
+                    generated.extend(imported)
+                    sources[relative].append(provenance)
                 results[relative] = fold(generated)
                 del generated
             settle_directory(results)
