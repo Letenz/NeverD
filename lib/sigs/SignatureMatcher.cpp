@@ -8,8 +8,13 @@
 
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Endian.h"
+
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -31,6 +36,19 @@ constexpr std::array<uint16_t, 256> makeCRC16Table() {
 
 constexpr auto CRC16Table = makeCRC16Table();
 
+/// For eight stated bits, the mask of the bytes they state in a word read
+/// little-endian: byte K is all ones when bit K is set.
+constexpr std::array<uint64_t, 256> makeByteMasks() {
+  std::array<uint64_t, 256> Masks{};
+  for (size_t Bits = 0; Bits < Masks.size(); ++Bits)
+    for (unsigned Byte = 0; Byte < 8; ++Byte)
+      if ((Bits >> Byte) & 1)
+        Masks[Bits] |= uint64_t(0xFF) << (Byte * 8);
+  return Masks;
+}
+
+constexpr auto ByteMasks = makeByteMasks();
+
 bool checkedAdd(size_t Left, size_t Right, size_t &Result) {
   if (Right > std::numeric_limits<size_t>::max() - Left)
     return false;
@@ -38,23 +56,153 @@ bool checkedAdd(size_t Left, size_t Right, size_t &Result) {
   return true;
 }
 
-size_t effectiveLeadingCount(const PatternModule &Mod) {
-  return Mod.TotalLen == 0
-             ? Mod.LeadingBytes.size()
-             : std::min(Mod.LeadingBytes.size(), size_t{Mod.TotalLen});
+// What the rules below need of a module, for each of its two forms: the
+// sizes of its leading pattern and tail, whether data agrees with a stretch
+// of either, and how many bytes a stretch states.
+
+size_t leadingCount(const PatternModule &Mod) {
+  return Mod.LeadingBytes.size();
+}
+size_t tailCount(const PatternModule &Mod) { return Mod.TailBytes.size(); }
+size_t leadingCount(const StoredModule &Mod) { return Mod.LeadingCount; }
+size_t tailCount(const StoredModule &Mod) { return Mod.TailCount; }
+
+bool bytesMatch(const std::vector<PatternByte> &Pattern, const uint8_t *Data,
+                size_t Count) {
+  for (size_t I = 0; I < Count; ++I)
+    if (!Pattern[I].IsWildcard && Data[I] != Pattern[I].Value)
+      return false;
+  return true;
 }
 
-void matchBucket(const std::vector<size_t> &Bucket,
-                 const std::vector<PatternModule> &Modules, const uint8_t *Data,
-                 size_t Available, uint64_t Address,
-                 const SignatureMatcher::MatchCallback &Callback) {
-  for (size_t ModuleIndex : Bucket) {
-    if (ModuleIndex >= Modules.size())
-      continue;
-    const PatternModule &Module = Modules[ModuleIndex];
-    if (SignatureMatcher::matchPattern(Module, Data, Available))
-      Callback(Address, Module);
+size_t statedBytes(const std::vector<PatternByte> &Pattern, size_t Count) {
+  size_t Stated = 0;
+  for (size_t I = 0; I < Count; ++I)
+    Stated += Pattern[I].IsWildcard ? 0 : 1;
+  return Stated;
+}
+
+/// Whether \p Data agrees with the \p Count bytes of \p Mod from its byte
+/// \p First.
+bool bytesMatch(const StoredModule &Mod, size_t First, const uint8_t *Data,
+                size_t Count) {
+  const uint8_t *const Pattern = Mod.Bytes + First;
+  size_t I = 0;
+  // Eight bytes at a time, while their stated bits are one byte.
+  if (First % 8 == 0) {
+    for (; I + 8 <= Count; I += 8) {
+      const uint8_t Stated = Mod.Stated[(First + I) / 8];
+      const uint64_t Differ = llvm::support::endian::read64le(Data + I) ^
+                              llvm::support::endian::read64le(Pattern + I);
+      if (Differ & ByteMasks[Stated])
+        return false;
+    }
   }
+  for (; I < Count; ++I)
+    if (Mod.isStated(First + I) && Data[I] != Pattern[I])
+      return false;
+  return true;
+}
+
+size_t statedBytes(const StoredModule &Mod, size_t First, size_t Count) {
+  size_t Stated = 0;
+  for (size_t I = 0; I < Count; ++I)
+    Stated += Mod.isStated(First + I);
+  return Stated;
+}
+
+bool leadingMatches(const PatternModule &Mod, const uint8_t *Data,
+                    size_t Count) {
+  return bytesMatch(Mod.LeadingBytes, Data, Count);
+}
+bool tailMatches(const PatternModule &Mod, const uint8_t *Data, size_t Count) {
+  return bytesMatch(Mod.TailBytes, Data, Count);
+}
+bool leadingMatches(const StoredModule &Mod, const uint8_t *Data,
+                    size_t Count) {
+  return bytesMatch(Mod, 0, Data, Count);
+}
+bool tailMatches(const StoredModule &Mod, const uint8_t *Data, size_t Count) {
+  return bytesMatch(Mod, Mod.LeadingCount, Data, Count);
+}
+
+size_t statedLeading(const PatternModule &Mod, size_t Count) {
+  return statedBytes(Mod.LeadingBytes, Count);
+}
+size_t statedTail(const PatternModule &Mod, size_t Count) {
+  return statedBytes(Mod.TailBytes, Count);
+}
+size_t statedLeading(const StoredModule &Mod, size_t Count) {
+  return statedBytes(Mod, 0, Count);
+}
+size_t statedTail(const StoredModule &Mod, size_t Count) {
+  return statedBytes(Mod, Mod.LeadingCount, Count);
+}
+
+// The rules, one set for both forms.
+
+template <typename Module> size_t effectiveLeadingCount(const Module &Mod) {
+  return Mod.TotalLen == 0 ? leadingCount(Mod)
+                           : std::min(leadingCount(Mod), size_t{Mod.TotalLen});
+}
+
+template <typename Module>
+bool matchModule(const Module &Mod, const uint8_t *Data, size_t Available) {
+  const size_t Leading = leadingCount(Mod);
+  size_t MatchLimit = Mod.TotalLen;
+  if (MatchLimit == 0) {
+    if (!checkedAdd(Leading, Mod.CRCLen, MatchLimit) ||
+        !checkedAdd(MatchLimit, tailCount(Mod), MatchLimit))
+      return false;
+  }
+  if (MatchLimit > Available || (MatchLimit != 0 && !Data))
+    return false;
+  if (!leadingMatches(Mod, Data, std::min(Leading, MatchLimit)))
+    return false;
+
+  // The CRC covers the bytes after the leading pattern.
+  if (Mod.CRCLen != 0) {
+    size_t CRCEnd = 0;
+    if (Leading > MatchLimit || !checkedAdd(Leading, Mod.CRCLen, CRCEnd) ||
+        CRCEnd > MatchLimit)
+      return false;
+    if (SignatureMatcher::computeCRC16(Data + Leading, Mod.CRCLen) != Mod.CRC16)
+      return false;
+  }
+
+  size_t TailStart = 0;
+  if (!checkedAdd(Leading, Mod.CRCLen, TailStart))
+    return false;
+  if (TailStart >= MatchLimit)
+    return true;
+  return tailMatches(Mod, Data + TailStart,
+                     std::min(tailCount(Mod), MatchLimit - TailStart));
+}
+
+template <typename Module> size_t fixedBytes(const Module &Mod) {
+  const size_t MatchLimit =
+      Mod.TotalLen == 0 ? std::numeric_limits<size_t>::max() : Mod.TotalLen;
+  size_t Fixed = statedLeading(Mod, std::min(leadingCount(Mod), MatchLimit));
+
+  size_t TailStart = 0;
+  if (!checkedAdd(leadingCount(Mod), Mod.CRCLen, TailStart) ||
+      TailStart > MatchLimit)
+    return Fixed;
+  return Fixed +
+         statedTail(Mod, std::min(tailCount(Mod), MatchLimit - TailStart));
+}
+
+template <typename Module> bool fullyVerified(const Module &Mod) {
+  if (Mod.TotalLen == 0)
+    return false;
+  if (leadingCount(Mod) >= Mod.TotalLen)
+    return Mod.CRCLen == 0;
+  size_t Verified = leadingCount(Mod);
+  if (!checkedAdd(Verified, Mod.CRCLen, Verified) || Verified > Mod.TotalLen)
+    return false;
+  if (!checkedAdd(Verified, tailCount(Mod), Verified))
+    return false;
+  return Verified >= Mod.TotalLen;
 }
 
 /// The indexed prefix of one module: its bytes, and which of them it states.
@@ -65,111 +213,224 @@ struct IndexedPrefix {
 static_assert(SignatureMatcher::HashIndex::kIndexedBytes <= 32,
               "the stated bytes of a prefix are one 32-bit mask");
 
+IndexedPrefix prefixOf(const PatternModule &Mod) {
+  IndexedPrefix Prefix;
+  const size_t Count = std::min(effectiveLeadingCount(Mod),
+                                SignatureMatcher::HashIndex::kIndexedBytes);
+  for (size_t K = 0; K < Count; ++K) {
+    if (Mod.LeadingBytes[K].IsWildcard)
+      continue;
+    Prefix.Bytes[K] = Mod.LeadingBytes[K].Value;
+    Prefix.Stated |= uint32_t(1) << K;
+  }
+  return Prefix;
+}
+
+IndexedPrefix prefixOf(const StoredModule &Mod) {
+  IndexedPrefix Prefix;
+  const size_t Count = std::min(effectiveLeadingCount(Mod),
+                                SignatureMatcher::HashIndex::kIndexedBytes);
+  if (Count == 0)
+    return Prefix;
+  // An unstated byte is zero in both.
+  std::memcpy(Prefix.Bytes.data(), Mod.Bytes, Count);
+  uint64_t Stated = 0;
+  for (size_t Byte = 0; Byte < (Count + 7) / 8; ++Byte)
+    Stated |= uint64_t(Mod.Stated[Byte]) << (Byte * 8);
+  Prefix.Stated = static_cast<uint32_t>(Stated & ((uint64_t(1) << Count) - 1));
+  return Prefix;
+}
+
 /// Builds the decision nodes over a permutation of the modules: a node
 /// partitions its range of the permutation, stably, into the modules that
 /// leave its byte unstated and those stating each value, and its children
 /// own those ranges.
 class IndexBuilder {
+  using HashIndex = SignatureMatcher::HashIndex;
+  static constexpr uint16_t kUnstated = 256;
+  /// Per key, the modules counted; kept zero between uses.
+  using Counts = std::array<size_t, kUnstated + 1>;
+
+  struct Group {
+    uint16_t Key;
+    size_t Begin, End;
+  };
+
 public:
-  IndexBuilder(SignatureMatcher::HashIndex &Index,
-               const std::vector<PatternModule> &Modules)
+  template <typename ModuleRange>
+  IndexBuilder(HashIndex &Index, const ModuleRange &Modules)
       : Index(Index), Prefixes(Modules.size()), Order(Modules.size()),
-        Scratch(Modules.size()) {
-    // Reading every prefix once, into one array, is what keeps the passes
-    // below off the modules' own allocations.
+        Spare(Modules.size()) {
     constexpr size_t Block = 4096;
     neverd::parallelForEach(
         (Modules.size() + Block - 1) / Block, [&](auto Claim, size_t Total) {
           for (size_t B = Claim(); B < Total; B = Claim()) {
             const size_t End = std::min(Modules.size(), (B + 1) * Block);
             for (size_t I = B * Block; I < End; ++I) {
-              const PatternModule &Module = Modules[I];
-              IndexedPrefix &Prefix = Prefixes[I];
-              const size_t Count =
-                  std::min(effectiveLeadingCount(Module),
-                           SignatureMatcher::HashIndex::kIndexedBytes);
-              for (size_t K = 0; K < Count; ++K) {
-                if (Module.LeadingBytes[K].IsWildcard)
-                  continue;
-                Prefix.Bytes[K] = Module.LeadingBytes[K].Value;
-                Prefix.Stated |= uint32_t(1) << K;
-              }
+              Prefixes[I] = prefixOf(Modules[I]);
               Order[I] = I;
             }
           }
         });
   }
 
-  size_t build() { return buildRange(0, Order.size(), 0); }
+  /// Build the index.  The subtrees of the first decision are built on the
+  /// worker threads, each into nodes of its own, and then joined in the order
+  /// one thread builds them in, so the nodes are the same either way.
+  void build() {
+    Index.Nodes.clear();
+    Index.Root = HashIndex::kNoNode;
+    if (Order.empty())
+      return;
+    Counts Count{};
+    size_t Offset = 0;
+    std::vector<size_t> *From = &Order, *Other = &Spare;
+    llvm::SmallVector<Group, 16> Groups;
+    if (!split(0, Order.size(), Offset, From, Other, Count, Groups)) {
+      Index.Root = leaf(Index.Nodes, 0, Order.size(), *From);
+      return;
+    }
+
+    std::vector<std::vector<HashIndex::Node>> Subtrees(Groups.size());
+    std::vector<size_t> Heaviest(Groups.size());
+    for (size_t G = 0; G < Groups.size(); ++G)
+      Heaviest[G] = G;
+    std::sort(Heaviest.begin(), Heaviest.end(), [&](size_t A, size_t B) {
+      return Groups[A].End - Groups[A].Begin > Groups[B].End - Groups[B].Begin;
+    });
+    std::atomic<size_t> Next{0};
+    auto Work = [&] {
+      Counts LocalCount{};
+      for (size_t I = Next++; I < Heaviest.size(); I = Next++) {
+        const Group &G = Groups[Heaviest[I]];
+        buildRange(Subtrees[Heaviest[I]], LocalCount, G.Begin, G.End,
+                   Offset + 1, From, Other);
+      }
+    };
+    // A small set is not worth a thread.
+    const unsigned Threads =
+        Order.size() < 16384 ? 1
+                             : static_cast<unsigned>(std::min<size_t>(
+                                   neverd::workerThreadCount(), Groups.size()));
+    if (Threads <= 1)
+      Work();
+    else
+      neverd::runWithLargeStackThreads(Threads, Work);
+
+    Index.Root = 0;
+    Index.Nodes.emplace_back();
+    Index.Nodes[0].Offset = static_cast<uint8_t>(Offset);
+    for (size_t G = 0; G < Groups.size(); ++G) {
+      const size_t Base = Index.Nodes.size();
+      for (HashIndex::Node &Node : Subtrees[G]) {
+        if (Node.WildcardChild != HashIndex::kNoNode)
+          Node.WildcardChild += Base;
+        for (HashIndex::Edge &Edge : Node.ExactChildren)
+          Edge.Child += Base;
+        Index.Nodes.push_back(std::move(Node));
+      }
+      attach(Index.Nodes[0], Groups[G].Key, Base);
+    }
+  }
 
 private:
-  static constexpr size_t kUnstated = 256;
-
-  size_t keyAt(size_t Module, size_t Offset) const {
+  uint16_t keyAt(size_t Module, size_t Offset) const {
     const IndexedPrefix &Prefix = Prefixes[Module];
     return (Prefix.Stated >> Offset) & 1 ? Prefix.Bytes[Offset] : kUnstated;
   }
 
-  size_t buildRange(size_t Begin, size_t End, size_t Offset) {
-    using HashIndex = SignatureMatcher::HashIndex;
-    if (Begin == End)
-      return HashIndex::kNoNode;
+  static size_t leaf(std::vector<HashIndex::Node> &Nodes, size_t Begin,
+                     size_t End, const std::vector<size_t> &From) {
+    const size_t NodeIndex = Nodes.size();
+    Nodes.emplace_back();
+    Nodes[NodeIndex].Candidates.assign(From.begin() + Begin,
+                                       From.begin() + End);
+    return NodeIndex;
+  }
 
+  static void attach(HashIndex::Node &Node, uint16_t Key, size_t Child) {
+    if (Key == kUnstated)
+      Node.WildcardChild = Child;
+    else
+      Node.ExactChildren.push_back({static_cast<uint8_t>(Key), Child});
+  }
+
+  /// Decide [\p Begin, \p End) of \p From, the order its modules are in:
+  /// false for a leaf, or else the byte, from \p Offset on, that the node
+  /// reads, and \p Groups, the ranges its children own, in order.  When the
+  /// modules are sorted into place, \p From and \p Other trade places.
+  bool split(size_t Begin, size_t End, size_t &Offset,
+             std::vector<size_t> *&From, std::vector<size_t> *&Other,
+             Counts &Count, llvm::SmallVectorImpl<Group> &Groups) const {
     // A byte every module of the range leaves unstated cannot dispatch a
     // query, so the next one is tried.
-    std::array<size_t, kUnstated + 1> Count;
+    llvm::SmallVector<uint16_t, 16> Keys;
     while (true) {
       if (End - Begin <= HashIndex::kLeafCandidates ||
-          Offset >= HashIndex::kIndexedBytes) {
-        const size_t NodeIndex = Index.Nodes.size();
-        Index.Nodes.emplace_back();
-        Index.Nodes[NodeIndex].Candidates.assign(Order.begin() + Begin,
-                                                 Order.begin() + End);
-        return NodeIndex;
+          Offset >= HashIndex::kIndexedBytes)
+        return false;
+      for (size_t I = Begin; I < End; ++I) {
+        const uint16_t Key = keyAt((*From)[I], Offset);
+        if (Count[Key]++ == 0)
+          Keys.push_back(Key);
       }
-      Count.fill(0);
-      for (size_t I = Begin; I < End; ++I)
-        ++Count[keyAt(Order[I], Offset)];
-      if (Count[kUnstated] != End - Begin)
+      if (Keys.size() != 1 || Keys.front() != kUnstated)
         break;
+      Count[kUnstated] = 0;
+      Keys.clear();
       ++Offset;
     }
 
-    std::array<size_t, kUnstated + 1> Start;
-    Start[kUnstated] = Begin;
-    size_t Next = Begin + Count[kUnstated];
-    for (size_t Value = 0; Value < kUnstated; ++Value) {
-      Start[Value] = Next;
-      Next += Count[Value];
+    // The node's children in order: the modules leaving the byte unstated,
+    // then those stating each value, from the smallest.
+    std::sort(Keys.begin(), Keys.end());
+    if (Keys.back() == kUnstated)
+      std::rotate(Keys.begin(), Keys.end() - 1, Keys.end());
+    size_t Next = Begin;
+    for (uint16_t Key : Keys) {
+      Groups.push_back({Key, Next, Next + Count[Key]});
+      Next += Count[Key];
+      Count[Key] = 0;
     }
-    std::array<size_t, kUnstated + 1> Fill = Start;
-    for (size_t I = Begin; I < End; ++I)
-      Scratch[Fill[keyAt(Order[I], Offset)]++] = Order[I];
-    std::copy(Scratch.begin() + Begin, Scratch.begin() + End,
-              Order.begin() + Begin);
 
-    const size_t NodeIndex = Index.Nodes.size();
-    Index.Nodes.emplace_back();
-    Index.Nodes[NodeIndex].Offset = static_cast<uint8_t>(Offset);
-    if (Count[kUnstated] != 0) {
-      const size_t Child = buildRange(
-          Start[kUnstated], Start[kUnstated] + Count[kUnstated], Offset + 1);
-      Index.Nodes[NodeIndex].WildcardChild = Child;
+    // One group keeps the order it has; several are sorted into place.
+    if (Groups.size() > 1) {
+      for (const Group &G : Groups)
+        Count[G.Key] = G.Begin;
+      for (size_t I = Begin; I < End; ++I)
+        (*Other)[Count[keyAt((*From)[I], Offset)]++] = (*From)[I];
+      for (const Group &G : Groups)
+        Count[G.Key] = 0;
+      std::swap(From, Other);
     }
-    for (size_t Value = 0; Value < kUnstated; ++Value) {
-      if (Count[Value] == 0)
-        continue;
+    return true;
+  }
+
+  /// Build the node for [\p Begin, \p End) of \p From, the order the
+  /// range's modules are in, into \p Nodes; \p Other is free to reorder them
+  /// into.
+  size_t buildRange(std::vector<HashIndex::Node> &Nodes, Counts &Count,
+                    size_t Begin, size_t End, size_t Offset,
+                    std::vector<size_t> *From,
+                    std::vector<size_t> *Other) const {
+    llvm::SmallVector<Group, 16> Groups;
+    if (!split(Begin, End, Offset, From, Other, Count, Groups))
+      return leaf(Nodes, Begin, End, *From);
+
+    const size_t NodeIndex = Nodes.size();
+    Nodes.emplace_back();
+    Nodes[NodeIndex].Offset = static_cast<uint8_t>(Offset);
+    for (const Group &G : Groups) {
       const size_t Child =
-          buildRange(Start[Value], Start[Value] + Count[Value], Offset + 1);
-      Index.Nodes[NodeIndex].ExactChildren.push_back(
-          {static_cast<uint8_t>(Value), Child});
+          buildRange(Nodes, Count, G.Begin, G.End, Offset + 1, From, Other);
+      attach(Nodes[NodeIndex], G.Key, Child);
     }
     return NodeIndex;
   }
 
-  SignatureMatcher::HashIndex &Index;
+  HashIndex &Index;
   std::vector<IndexedPrefix> Prefixes;
-  std::vector<size_t> Order, Scratch;
+  std::vector<size_t> Order, Spare;
 };
 
 const SignatureMatcher::HashIndex::Edge *
@@ -181,26 +442,28 @@ findExactEdge(const SignatureMatcher::HashIndex::Node &Node, uint8_t Value) {
   return It != Node.ExactChildren.end() && It->Value == Value ? &*It : nullptr;
 }
 
+/// Report, by index, the modules of \p Modules that match \p Data.
+template <typename ModuleRange, typename Report>
 void matchIndexNode(const SignatureMatcher::HashIndex &Index, size_t NodeIndex,
-                    const std::vector<PatternModule> &Modules,
-                    const uint8_t *Data, size_t Available, uint64_t Address,
-                    const SignatureMatcher::MatchCallback &Callback) {
+                    const ModuleRange &Modules, const uint8_t *Data,
+                    size_t Available, Report &&Found) {
   if (NodeIndex >= Index.Nodes.size())
     return;
   const SignatureMatcher::HashIndex::Node &Node = Index.Nodes[NodeIndex];
   if (Node.isLeaf()) {
-    matchBucket(Node.Candidates, Modules, Data, Available, Address, Callback);
+    for (size_t ModuleIndex : Node.Candidates)
+      if (ModuleIndex < Modules.size() &&
+          matchModule(Modules[ModuleIndex], Data, Available))
+        Found(ModuleIndex);
     return;
   }
 
   if (Node.WildcardChild != SignatureMatcher::HashIndex::kNoNode)
-    matchIndexNode(Index, Node.WildcardChild, Modules, Data, Available, Address,
-                   Callback);
+    matchIndexNode(Index, Node.WildcardChild, Modules, Data, Available, Found);
   if (Node.Offset >= Available)
     return;
   if (const auto *Edge = findExactEdge(Node, Data[Node.Offset]))
-    matchIndexNode(Index, Edge->Child, Modules, Data, Available, Address,
-                   Callback);
+    matchIndexNode(Index, Edge->Child, Modules, Data, Available, Found);
 }
 
 size_t countIndexNode(const SignatureMatcher::HashIndex &Index,
@@ -226,10 +489,10 @@ size_t countIndexNode(const SignatureMatcher::HashIndex &Index,
 }
 
 /// Report the modules that match at \p Entry, when it lies in the image.
+template <typename ModuleRange, typename Report>
 void scanEntry(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
-               uint64_t Entry, const std::vector<PatternModule> &Modules,
-               const SignatureMatcher::HashIndex &Index,
-               const SignatureMatcher::MatchCallback &Callback) {
+               uint64_t Entry, const ModuleRange &Modules,
+               const SignatureMatcher::HashIndex &Index, Report &&Found) {
   if (Entry < BaseVA)
     return;
   const uint64_t Offset = Entry - BaseVA;
@@ -237,7 +500,7 @@ void scanEntry(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
     return;
   const size_t Available = ImageSize - static_cast<size_t>(Offset);
   matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
-                 Entry, Callback);
+                 Found);
 }
 
 } // namespace
@@ -253,98 +516,30 @@ uint16_t SignatureMatcher::computeCRC16(const uint8_t *Data, size_t Len) {
   return static_cast<uint16_t>((CRC << 8) | (CRC >> 8));
 }
 
-bool SignatureMatcher::matchLeading(const std::vector<PatternByte> &Pattern,
-                                    const uint8_t *Data, size_t Count) {
-  if (Count > Pattern.size())
-    return false;
-  for (size_t I = 0; I < Count; ++I) {
-    if (Pattern[I].IsWildcard)
-      continue;
-    if (Data[I] != Pattern[I].Value)
-      return false;
-  }
-  return true;
-}
-
-bool SignatureMatcher::verifyCRC(const PatternModule &Mod, const uint8_t *Data,
-                                 size_t MatchLimit) {
-  const size_t CRCStart = Mod.LeadingBytes.size();
-  if (Mod.CRCLen == 0)
-    return true;
-  if (CRCStart > MatchLimit)
-    return false;
-  size_t CRCEnd = 0;
-  if (!checkedAdd(CRCStart, Mod.CRCLen, CRCEnd) || CRCEnd > MatchLimit)
-    return false;
-  return computeCRC16(Data + CRCStart, Mod.CRCLen) == Mod.CRC16;
-}
-
-bool SignatureMatcher::matchTail(const PatternModule &Mod, const uint8_t *Data,
-                                 size_t MatchLimit) {
-  size_t TailStart = 0;
-  if (!checkedAdd(Mod.LeadingBytes.size(), Mod.CRCLen, TailStart))
-    return false;
-  if (TailStart >= MatchLimit)
-    return true;
-  const size_t TailCount =
-      std::min(Mod.TailBytes.size(), MatchLimit - TailStart);
-  for (size_t I = 0; I < TailCount; ++I) {
-    if (Mod.TailBytes[I].IsWildcard)
-      continue;
-    if (Data[TailStart + I] != Mod.TailBytes[I].Value)
-      return false;
-  }
-  return true;
-}
-
 bool SignatureMatcher::matchPattern(const PatternModule &Mod,
                                     const uint8_t *Data, size_t Available) {
-  size_t MatchLimit = Mod.TotalLen;
-  if (MatchLimit == 0) {
-    if (!checkedAdd(Mod.LeadingBytes.size(), Mod.CRCLen, MatchLimit) ||
-        !checkedAdd(MatchLimit, Mod.TailBytes.size(), MatchLimit))
-      return false;
-  }
-  if (MatchLimit > Available || (MatchLimit != 0 && !Data))
-    return false;
-  const size_t LeadingCount = std::min(Mod.LeadingBytes.size(), MatchLimit);
-  if (!matchLeading(Mod.LeadingBytes, Data, LeadingCount))
-    return false;
-  if (!verifyCRC(Mod, Data, MatchLimit))
-    return false;
-  return matchTail(Mod, Data, MatchLimit);
+  return matchModule(Mod, Data, Available);
+}
+
+bool SignatureMatcher::matchPattern(const StoredModule &Mod,
+                                    const uint8_t *Data, size_t Available) {
+  return matchModule(Mod, Data, Available);
 }
 
 size_t SignatureMatcher::fixedByteCount(const PatternModule &Mod) {
-  size_t Fixed = 0;
-  const size_t MatchLimit =
-      Mod.TotalLen == 0 ? std::numeric_limits<size_t>::max() : Mod.TotalLen;
-  const size_t LeadingCount = std::min(Mod.LeadingBytes.size(), MatchLimit);
-  for (size_t I = 0; I < LeadingCount; ++I)
-    Fixed += Mod.LeadingBytes[I].IsWildcard ? 0 : 1;
+  return fixedBytes(Mod);
+}
 
-  size_t TailStart = 0;
-  if (!checkedAdd(Mod.LeadingBytes.size(), Mod.CRCLen, TailStart) ||
-      TailStart > MatchLimit)
-    return Fixed;
-  const size_t TailCount =
-      std::min(Mod.TailBytes.size(), MatchLimit - TailStart);
-  for (size_t I = 0; I < TailCount; ++I)
-    Fixed += Mod.TailBytes[I].IsWildcard ? 0 : 1;
-  return Fixed;
+size_t SignatureMatcher::fixedByteCount(const StoredModule &Mod) {
+  return fixedBytes(Mod);
 }
 
 bool SignatureMatcher::isFullyVerified(const PatternModule &Mod) {
-  if (Mod.TotalLen == 0)
-    return false;
-  if (Mod.LeadingBytes.size() >= Mod.TotalLen)
-    return Mod.CRCLen == 0;
-  size_t Verified = Mod.LeadingBytes.size();
-  if (!checkedAdd(Verified, Mod.CRCLen, Verified) || Verified > Mod.TotalLen)
-    return false;
-  if (!checkedAdd(Verified, Mod.TailBytes.size(), Verified))
-    return false;
-  return Verified >= Mod.TotalLen;
+  return fullyVerified(Mod);
+}
+
+bool SignatureMatcher::isFullyVerified(const StoredModule &Mod) {
+  return fullyVerified(Mod);
 }
 
 void SignatureMatcher::scanRegion(const uint8_t *Data, size_t Size,
@@ -357,19 +552,18 @@ void SignatureMatcher::scanRegion(const uint8_t *Data, size_t Size,
 
   for (size_t Offset = 0; Offset < Size; ++Offset) {
     const size_t Available = Size - Offset;
-    matchIndexNode(Idx, Idx.Root, Modules, Data + Offset, Available, Offset,
-                   Callback);
+    matchIndexNode(Idx, Idx.Root, Modules, Data + Offset, Available,
+                   [&](size_t Module) { Callback(Offset, Modules[Module]); });
   }
 }
 
 void SignatureMatcher::HashIndex::build(
     const std::vector<PatternModule> &Modules) {
-  Nodes.clear();
-  Root = kNoNode;
-  if (Modules.empty())
-    return;
+  IndexBuilder(*this, Modules).build();
+}
 
-  Root = IndexBuilder(*this, Modules).build();
+void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
+  IndexBuilder(*this, Modules).build();
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {
@@ -412,13 +606,14 @@ void SignatureMatcher::scanAtAddresses(
     return;
 
   for (uint64_t Entry : FuncEntries)
-    scanEntry(ImageBase, ImageSize, BaseVA, Entry, Modules, Index, Callback);
+    scanEntry(ImageBase, ImageSize, BaseVA, Entry, Modules, Index,
+              [&](size_t Module) { Callback(Entry, Modules[Module]); });
 }
 
 std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
     const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
-    const std::vector<uint64_t> &FuncEntries,
-    const std::vector<PatternModule> &Modules, const HashIndex &Index) {
+    llvm::ArrayRef<uint64_t> FuncEntries, llvm::ArrayRef<StoredModule> Modules,
+    const HashIndex &Index) {
   if (ImageSize != 0 && !ImageBase)
     return {};
 
@@ -430,15 +625,11 @@ std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
   neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {
     for (size_t B = Claim(); B < Total; B = Claim()) {
       std::vector<Hit> &Hits = BlockHits[B];
-      const MatchCallback Record = [&](uint64_t Address,
-                                       const PatternModule &Module) {
-        Hits.push_back(
-            {Address, static_cast<size_t>(&Module - Modules.data())});
-      };
       const size_t End = std::min(FuncEntries.size(), (B + 1) * BlockEntries);
       for (size_t I = B * BlockEntries; I < End; ++I)
-        scanEntry(ImageBase, ImageSize, BaseVA, FuncEntries[I], Modules, Index,
-                  Record);
+        scanEntry(
+            ImageBase, ImageSize, BaseVA, FuncEntries[I], Modules, Index,
+            [&](size_t Module) { Hits.push_back({FuncEntries[I], Module}); });
     }
   });
 

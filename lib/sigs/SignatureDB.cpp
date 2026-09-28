@@ -17,6 +17,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -31,9 +32,37 @@
 using namespace neverd;
 using namespace neverd::sigs;
 
-void SignatureDB::commitSource(std::vector<PatternModule> &&Mods,
+namespace {
+
+/// One source's pattern lines, parsed, and the bytes their modules keep.
+struct ParsedSource {
+  std::vector<PatternChunk> Chunks;
+  std::unique_ptr<uint8_t[]> Bytes;
+};
+
+llvm::Expected<ParsedSource> parseSource(llvm::StringRef Text) {
+  ParsedSource Source;
+  Source.Chunks = PatternParser::splitChunks(Text);
+  Source.Bytes = PatternParser::reserveBytes(Source.Chunks);
+  PatternParser::parseChunks(Source.Chunks);
+  if (llvm::Error Error = PatternParser::firstError(Source.Chunks))
+    return std::move(Error);
+  return std::move(Source);
+}
+
+} // namespace
+
+void SignatureDB::commitSource(std::vector<PatternChunk> &&Chunks,
+                               std::unique_ptr<uint8_t[]> Bytes,
                                const std::string &LibName,
                                const std::string &FilePath) {
+  std::vector<StoredModule> Mods;
+  std::vector<PatternNames> Names;
+  for (PatternChunk &Chunk : Chunks) {
+    Mods.insert(Mods.end(), Chunk.Modules.begin(), Chunk.Modules.end());
+    Names.push_back(std::move(Chunk.Names));
+  }
+
   auto Existing = std::find_if(
       LoadedFiles.begin(), LoadedFiles.end(),
       [&](const SigSource &Source) { return Source.Path == FilePath; });
@@ -41,11 +70,11 @@ void SignatureDB::commitSource(std::vector<PatternModule> &&Mods,
     const size_t Start = Existing->ModuleStart;
     Modules.erase(Modules.begin() + Start,
                   Modules.begin() + Start + Existing->ModuleCount);
-    Modules.insert(Modules.begin() + Start,
-                   std::make_move_iterator(Mods.begin()),
-                   std::make_move_iterator(Mods.end()));
+    Modules.insert(Modules.begin() + Start, Mods.begin(), Mods.end());
     Existing->LibraryName = LibName;
     Existing->ModuleCount = Mods.size();
+    Existing->Bytes = std::move(Bytes);
+    Existing->Names = std::move(Names);
 
     size_t ModuleStart = 0;
     for (SigSource &Source : LoadedFiles) {
@@ -62,10 +91,11 @@ void SignatureDB::commitSource(std::vector<PatternModule> &&Mods,
   Src.LibraryName = LibName;
   Src.ModuleStart = Modules.size();
   Src.ModuleCount = Mods.size();
+  Src.Bytes = std::move(Bytes);
+  Src.Names = std::move(Names);
   LoadedFiles.push_back(std::move(Src));
 
-  Modules.insert(Modules.end(), std::make_move_iterator(Mods.begin()),
-                 std::make_move_iterator(Mods.end()));
+  Modules.insert(Modules.end(), Mods.begin(), Mods.end());
   Index.reset();
   clearMatches();
 }
@@ -91,11 +121,17 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   auto Ext = Path.extension().string();
 
   if (Ext == ".pat") {
-    auto ModsOrErr = PatternParser::parseFile(Path);
-    if (!ModsOrErr)
-      return ModsOrErr.takeError();
-    std::string LibName = libraryName(Path);
-    commitSource(std::move(*ModsOrErr), LibName, Path.string());
+    auto BufferOrErr = llvm::MemoryBuffer::getFile(
+        Path.string(), /*IsText=*/false, /*RequiresNullTerminator=*/false);
+    if (!BufferOrErr)
+      return llvm::make_error<llvm::StringError>(
+          "cannot open pattern file: " + Path.string(),
+          llvm::inconvertibleErrorCode());
+    auto SourceOrErr = parseSource((*BufferOrErr)->getBuffer());
+    if (!SourceOrErr)
+      return SourceOrErr.takeError();
+    commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
+                 libraryName(Path), Path.string());
     return llvm::Error::success();
   }
 
@@ -106,10 +142,11 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
 
 llvm::Error SignatureDB::loadPatternText(llvm::StringRef Text,
                                          llvm::StringRef LibraryName) {
-  auto ModulesOrErr = PatternParser::parseText(Text);
-  if (!ModulesOrErr)
-    return ModulesOrErr.takeError();
-  commitSource(std::move(*ModulesOrErr), LibraryName.str(), LibraryName.str());
+  auto SourceOrErr = parseSource(Text);
+  if (!SourceOrErr)
+    return SourceOrErr.takeError();
+  commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
+               LibraryName.str(), LibraryName.str());
   return llvm::Error::success();
 }
 
@@ -227,10 +264,12 @@ llvm::Error
 SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   // Every file is cut into chunks of whole lines, and one pool of workers
   // parses the chunks of all of them: one large file keeps every worker as
-  // busy as many small ones do.
+  // busy as many small ones do.  A parsed chunk no longer refers to its text,
+  // so a file is let go as soon as its last chunk is done.
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> Buffers(PatFiles.size());
+  std::vector<std::unique_ptr<uint8_t[]>> Bytes(PatFiles.size());
   std::vector<PatternChunk> Chunks;
-  std::vector<size_t> FirstChunk(PatFiles.size() + 1);
+  std::vector<size_t> FirstChunk(PatFiles.size() + 1), FileOf;
   for (size_t I = 0; I < PatFiles.size(); ++I) {
     FirstChunk[I] = Chunks.size();
     auto BufferOrErr =
@@ -241,11 +280,19 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     Buffers[I] = std::move(*BufferOrErr);
     std::vector<PatternChunk> FileChunks =
         PatternParser::splitChunks(Buffers[I]->getBuffer());
+    Bytes[I] = PatternParser::reserveBytes(FileChunks);
     Chunks.insert(Chunks.end(), std::make_move_iterator(FileChunks.begin()),
                   std::make_move_iterator(FileChunks.end()));
+    FileOf.resize(Chunks.size(), I);
   }
   FirstChunk[PatFiles.size()] = Chunks.size();
-  PatternParser::parseChunks(Chunks);
+  std::vector<std::atomic<size_t>> Unparsed(PatFiles.size());
+  for (size_t I = 0; I < PatFiles.size(); ++I)
+    Unparsed[I] = FirstChunk[I + 1] - FirstChunk[I];
+  PatternParser::parseChunks(Chunks, [&](size_t Chunk) {
+    if (--Unparsed[FileOf[Chunk]] == 0)
+      Buffers[FileOf[Chunk]].reset();
+  });
 
   // The first file that cannot be read or parsed, in order, fails the batch
   // and leaves the database as it was.
@@ -253,11 +300,12 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   for (size_t I = 0; I < PatFiles.size(); ++I) {
     const llvm::ArrayRef<PatternChunk> FileChunks(
         Chunks.data() + FirstChunk[I], Chunks.data() + FirstChunk[I + 1]);
+    const bool Opened = FirstChunk[I] != FirstChunk[I + 1] || Buffers[I];
     llvm::Error Error =
-        Buffers[I] ? PatternParser::firstError(FileChunks)
-                   : llvm::make_error<llvm::StringError>(
-                         "cannot open pattern file: " + PatFiles[I].string(),
-                         llvm::inconvertibleErrorCode());
+        Opened ? PatternParser::firstError(FileChunks)
+               : llvm::make_error<llvm::StringError>(
+                     "cannot open pattern file: " + PatFiles[I].string(),
+                     llvm::inconvertibleErrorCode());
     if (Error)
       return llvm::make_error<llvm::StringError>(
           "cannot parse signature file: " + PatFiles[I].string() + ": " +
@@ -267,7 +315,7 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
       Count += Chunk.Modules.size();
   }
 
-  std::vector<PatternModule> NewModules;
+  std::vector<StoredModule> NewModules;
   NewModules.reserve(Count);
   std::vector<SigSource> NewSources;
   NewSources.reserve(PatFiles.size());
@@ -276,10 +324,12 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     Source.Path = PatFiles[I].string();
     Source.LibraryName = libraryName(PatFiles[I]);
     Source.ModuleStart = NewModules.size();
-    for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C)
-      NewModules.insert(NewModules.end(),
-                        std::make_move_iterator(Chunks[C].Modules.begin()),
-                        std::make_move_iterator(Chunks[C].Modules.end()));
+    Source.Bytes = std::move(Bytes[I]);
+    for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C) {
+      NewModules.insert(NewModules.end(), Chunks[C].Modules.begin(),
+                        Chunks[C].Modules.end());
+      Source.Names.push_back(std::move(Chunks[C].Names));
+    }
     Source.ModuleCount = NewModules.size() - Source.ModuleStart;
     NewSources.push_back(std::move(Source));
   }
@@ -308,11 +358,11 @@ void SignatureDB::apply(const BinaryImage &Img,
                                            Seg.VA, FuncEntries, Modules, Idx)) {
       const uint64_t Addr = Hit.Address;
       const size_t ModIdx = Hit.Module;
-      const PatternModule &Mod = Modules[ModIdx];
+      const StoredModule &Mod = Modules[ModIdx];
       // The names a module gives one offset are one routine's aliases, so
       // each offset makes one match.
       std::map<uint32_t, std::vector<std::string_view>> ByOffset;
-      for (const auto &Ref : Mod.PublicNames)
+      for (const StoredName &Ref : Mod.publicNames())
         ByOffset[Ref.Offset].push_back(Ref.Name);
       for (auto &[Offset, Names] : ByOffset) {
         if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
@@ -350,44 +400,43 @@ size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
 
-    SignatureMatcher::scanAtAddresses(
-        Seg.Data.data(), Seg.Data.size(), Seg.VA, Candidates, Modules, Idx,
-        [&](uint64_t Addr, const PatternModule &Mod) {
-          // Whole-function agreement is the main gate, but on its own it
-          // would also be satisfied by a short pattern that is mostly
-          // wildcards.
-          if (!SignatureMatcher::isFullyVerified(Mod) ||
-              SignatureMatcher::fixedByteCount(Mod) <
-                  SignatureMatcher::MinStatedBytes)
-            return;
+    for (const SignatureMatcher::Hit &Hit :
+         SignatureMatcher::findAtAddresses(Seg.Data.data(), Seg.Data.size(),
+                                           Seg.VA, Candidates, Modules, Idx)) {
+      const StoredModule &Mod = Modules[Hit.Module];
+      // Whole-function agreement is the main gate, but on its own it would
+      // also be satisfied by a short pattern that is mostly wildcards.
+      if (!SignatureMatcher::isFullyVerified(Mod) ||
+          SignatureMatcher::fixedByteCount(Mod) <
+              SignatureMatcher::MinStatedBytes)
+        continue;
 
-          // Of the personality routines the module names at its start --
-          // aliases of one routine when there are several -- the preferred.
-          // A name at a non-zero offset belongs to some other function the
-          // module also describes, not to the routine being identified.
-          const std::string *Chosen = nullptr;
-          for (const FuncRef &Ref : Mod.PublicNames) {
-            if (Ref.Offset != 0)
-              continue;
-            const ExceptionPersonality P = classifyPersonalityName(Ref.Name);
-            if (P == ExceptionPersonality::None ||
-                P == ExceptionPersonality::Unknown)
-              continue;
-            if (!Chosen || preferredAliasOrder(Ref.Name, *Chosen))
-              Chosen = &Ref.Name;
-          }
-          if (Chosen) {
-            SigMatch M;
-            M.Address = Addr;
-            M.Name = *Chosen;
-            M.LibraryName =
-                libraryNameOf(static_cast<size_t>(&Mod - Modules.data()));
-            M.FuncLen = Mod.TotalLen;
-            auto [It, Fresh] = Proposed.emplace(Addr, std::move(M));
-            if (!Fresh && It->second.Name != *Chosen)
-              Disputed.insert(Addr);
-          }
-        });
+      // Of the personality routines the module names at its start -- aliases
+      // of one routine when there are several -- the preferred.  A name at a
+      // non-zero offset belongs to some other function the module also
+      // describes, not to the routine being identified.
+      std::optional<std::string_view> Chosen;
+      for (const StoredName &Ref : Mod.publicNames()) {
+        if (Ref.Offset != 0)
+          continue;
+        const ExceptionPersonality P = classifyPersonalityName(Ref.Name);
+        if (P == ExceptionPersonality::None ||
+            P == ExceptionPersonality::Unknown)
+          continue;
+        if (!Chosen || preferredAliasOrder(Ref.Name, *Chosen))
+          Chosen = Ref.Name;
+      }
+      if (Chosen) {
+        SigMatch M;
+        M.Address = Hit.Address;
+        M.Name = std::string(*Chosen);
+        M.LibraryName = libraryNameOf(Hit.Module);
+        M.FuncLen = Mod.TotalLen;
+        auto [It, Fresh] = Proposed.emplace(Hit.Address, std::move(M));
+        if (!Fresh && It->second.Name != *Chosen)
+          Disputed.insert(Hit.Address);
+      }
+    }
   }
 
   size_t Named = 0;
@@ -605,7 +654,7 @@ std::optional<uint64_t> thunkTarget(const BinaryImage &Img, uint64_t Address) {
 void SignatureDB::checkReferences(const BinaryImage &Img) {
   bool AnyReferences = false;
   for (size_t Module : MatchModules)
-    AnyReferences |= Module != NoModule && !Modules[Module].References.empty();
+    AnyReferences |= Module != NoModule && Modules[Module].ReferenceCount != 0;
   if (!AnyReferences)
     return;
 
@@ -619,15 +668,15 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
   std::unordered_map<std::string_view, std::vector<size_t>> ByName;
   for (size_t I = 0; I < Matches.size(); ++I)
     if (MatchModules[I] != NoModule)
-      for (const FuncRef &Ref : Modules[MatchModules[I]].References)
+      for (const StoredName &Ref : Modules[MatchModules[I]].references())
         ByName.try_emplace(Ref.Name);
   for (size_t I = 0; I < Modules.size(); ++I)
-    for (const FuncRef &Name : Modules[I].PublicNames)
+    for (const StoredName &Name : Modules[I].publicNames())
       if (Name.Offset == 0)
         if (const auto It = ByName.find(Name.Name); It != ByName.end())
           It->second.push_back(I);
 
-  auto PatternAt = [&](const std::string &Name, uint64_t Address) {
+  auto PatternAt = [&](std::string_view Name, uint64_t Address) {
     const auto Candidates = ByName.find(Name);
     const Segment *Seg = Img.getSegmentFor(Address);
     if (Candidates == ByName.end() || !Seg || !Seg->isExecutable() ||
@@ -650,7 +699,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
     return It;
   };
 
-  auto Judge = [&](const std::string &Name, uint64_t Target) {
+  auto Judge = [&](std::string_view Name, uint64_t Target) {
     // An import thunk is named after the import, not after the decorated
     // symbol the library called; it settles nothing either way.
     if (Img.decodeImportThunkAt(Target))
@@ -672,22 +721,23 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
   Kept.reserve(Matches.size());
   for (size_t I = 0; I < Matches.size(); ++I) {
     const size_t Module = MatchModules[I];
-    const std::vector<FuncRef> *References =
-        Module == NoModule ? nullptr : &Modules[Module].References;
+    const llvm::ArrayRef<StoredName> References =
+        Module == NoModule ? llvm::ArrayRef<StoredName>()
+                           : Modules[Module].references();
     bool Contradicted = false;
     size_t Confirmed = 0;
-    if (References) {
+    if (!References.empty()) {
       // Every public name of a module shares its references; the module's
       // start is the match address less the name's offset.
       uint64_t Start = Matches[I].Address;
-      for (const FuncRef &Name : Modules[Module].PublicNames)
+      for (const StoredName &Name : Modules[Module].publicNames())
         if (Name.Name == Matches[I].Name) {
           Start = Matches[I].Address - Name.Offset;
           break;
         }
       if (Img.Arch == Arch::ARM)
         Start &= ~uint64_t(1);
-      for (const FuncRef &Ref : *References) {
+      for (const StoredName &Ref : References) {
         const std::optional<uint64_t> Target =
             branchTarget(Img, Start + Ref.Offset);
         if (!Target)
@@ -707,7 +757,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
       continue;
     Kept.push_back(std::move(Matches[I]));
     Kept.back().Confirmed =
-        References && !References->empty() && Confirmed == References->size();
+        !References.empty() && Confirmed == References.size();
     KeptModules.push_back(Module);
   }
   Matches = std::move(Kept);

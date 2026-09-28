@@ -19,6 +19,8 @@
 
 #include "neverd/sigs/Signature.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -38,6 +40,8 @@ public:
   /// \p Available is the number of bytes available from that point.
   static bool matchPattern(const PatternModule &Mod, const uint8_t *Data,
                            size_t Available);
+  static bool matchPattern(const StoredModule &Mod, const uint8_t *Data,
+                           size_t Available);
 
   /// Bytes a module states exactly, across its leading pattern and its tail.
   ///
@@ -45,6 +49,7 @@ public:
   /// mostly of them agrees with far more code than it describes.  Counting
   /// what is left is how a caller sets a floor on that.
   static size_t fixedByteCount(const PatternModule &Mod);
+  static size_t fixedByteCount(const StoredModule &Mod);
 
   /// The fewest bytes a module may state exactly and still identify a
   /// routine.
@@ -67,6 +72,7 @@ public:
   /// a personality decides which schema the language data is decoded with, so
   /// a caller settling one asks for whole-function agreement first.
   static bool isFullyVerified(const PatternModule &Mod);
+  static bool isFullyVerified(const StoredModule &Mod);
 
   /// Scan a region of binary data for all matching patterns from a module set.
   /// Calls \p Callback with the region offset and matching module.
@@ -101,6 +107,7 @@ public:
     size_t Root = kNoNode;
 
     void build(const std::vector<PatternModule> &Modules);
+    void build(llvm::ArrayRef<StoredModule> Modules);
     uint16_t keyOf(const PatternModule &Mod) const;
     bool isWildcardKey(const PatternModule &Mod) const;
 
@@ -135,23 +142,14 @@ public:
     size_t Module = 0;
   };
 
-  /// What \ref scanAtAddresses reports, in the order it reports it, with the
-  /// entries checked on the worker threads.
-  static std::vector<Hit>
-  findAtAddresses(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
-                  const std::vector<uint64_t> &FuncEntries,
-                  const std::vector<PatternModule> &Modules,
-                  const HashIndex &Index);
-
-private:
-  static bool matchLeading(const std::vector<PatternByte> &Pattern,
-                           const uint8_t *Data, size_t Count);
-
-  static bool verifyCRC(const PatternModule &Mod, const uint8_t *Data,
-                        size_t MatchLimit);
-
-  static bool matchTail(const PatternModule &Mod, const uint8_t *Data,
-                        size_t MatchLimit);
+  /// The modules of \p Modules that match at each of \p FuncEntries, in the
+  /// order \ref scanAtAddresses reports them, with the entries checked on
+  /// the worker threads.
+  static std::vector<Hit> findAtAddresses(const uint8_t *ImageBase,
+                                          size_t ImageSize, uint64_t BaseVA,
+                                          llvm::ArrayRef<uint64_t> FuncEntries,
+                                          llvm::ArrayRef<StoredModule> Modules,
+                                          const HashIndex &Index);
 };
 
 } // namespace sigs

@@ -13,6 +13,7 @@
 #ifndef NEVERD_SIGS_SIGNATUREDB_H
 #define NEVERD_SIGS_SIGNATUREDB_H
 
+#include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/Signature.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
@@ -21,6 +22,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <set>
@@ -151,9 +153,12 @@ private:
     std::string LibraryName;
     size_t ModuleStart = 0;
     size_t ModuleCount = 0;
+    /// What the source's modules point into.
+    std::unique_ptr<uint8_t[]> Bytes;
+    std::vector<PatternNames> Names;
   };
 
-  std::vector<PatternModule> Modules;
+  std::vector<StoredModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
 
@@ -172,7 +177,7 @@ private:
   /// the agreeing matches give the routine.
   struct SettledRoutine {
     std::string Name;
-    std::set<std::string> Names;
+    std::set<std::string, std::less<>> Names;
   };
   /// The routines the matches settle; see \ref buildNameMap.
   std::unordered_map<uint64_t, SettledRoutine> settleRoutines() const;
@@ -181,7 +186,8 @@ private:
   /// confirm; see \ref apply.
   void checkReferences(const BinaryImage &Img);
 
-  void commitSource(std::vector<PatternModule> &&Mods,
+  void commitSource(std::vector<PatternChunk> &&Chunks,
+                    std::unique_ptr<uint8_t[]> Bytes,
                     const std::string &LibName, const std::string &FilePath);
 
   /// The library a module was loaded from, by its index in \ref Modules.

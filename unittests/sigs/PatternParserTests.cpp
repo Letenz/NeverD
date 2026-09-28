@@ -9,12 +9,14 @@
 #include "neverd/sigs/PatternParser.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <random>
 #include <string>
 #include <vector>
 
@@ -336,5 +338,60 @@ TEST(PatternParserHex, AcceptsEitherCaseAndRejectsHalfWildcards) {
     ASSERT_FALSE(Rejected);
     EXPECT_NE(llvm::toString(Rejected.takeError()).find("invalid hex byte"),
               std::string::npos);
+  }
+}
+
+TEST(PatternParserHex, NamesTheFirstInvalidPairAtAnyPosition) {
+  // Patterns of every length around the eight pairs decoded at once, with
+  // the bad pair everywhere in them.
+  for (const char *Bad : {"Z9", "9.", ".9", "\x80\x41", " A"}) {
+    for (size_t Length = 1; Length < 40; ++Length) {
+      for (size_t Position = 0; Position < Length; ++Position) {
+        std::string Tail;
+        for (size_t I = 0; I < Length; ++I)
+          Tail += I == Position ? Bad : (I % 3 ? "a5" : "..");
+        if (std::string(Bad) == " A" && Position + 1 == Length)
+          continue; // the tail would just end in a separator
+        SCOPED_TRACE(Tail);
+        auto ModuleOrErr =
+            PatternParser::parseLine("AA 00 0000 0100 :0000 name " + Tail);
+        ASSERT_FALSE(ModuleOrErr);
+        const std::string Message = llvm::toString(ModuleOrErr.takeError());
+        if (std::string(Bad) == " A")
+          continue; // the pattern splits into two fields
+        EXPECT_EQ(Message, "invalid tail pattern: invalid hex byte: " +
+                               std::string(Bad));
+      }
+    }
+  }
+}
+
+TEST(PatternParserHex, DecodesEveryPairAtAnyLength) {
+  std::mt19937 Random(3);
+  for (size_t Length = 1; Length < 100; ++Length) {
+    std::string Tail;
+    std::vector<int> Expected;
+    for (size_t I = 0; I < Length; ++I) {
+      if (Random() % 4 == 0) {
+        Tail += "..";
+        Expected.push_back(-1);
+        continue;
+      }
+      const unsigned Value = Random() % 256;
+      std::string Pair = llvm::utohexstr(Value, /*LowerCase=*/Random() % 2, 2);
+      Tail += Pair;
+      Expected.push_back(static_cast<int>(Value));
+    }
+    SCOPED_TRACE(Tail);
+    auto ModuleOrErr =
+        PatternParser::parseLine("AA 00 0000 0100 :0000 name " + Tail);
+    ASSERT_TRUE(static_cast<bool>(ModuleOrErr))
+        << llvm::toString(ModuleOrErr.takeError());
+    ASSERT_EQ(ModuleOrErr->TailBytes.size(), Length);
+    for (size_t I = 0; I < Length; ++I) {
+      EXPECT_EQ(ModuleOrErr->TailBytes[I].IsWildcard, Expected[I] < 0) << I;
+      if (Expected[I] >= 0)
+        EXPECT_EQ(ModuleOrErr->TailBytes[I].Value, Expected[I]) << I;
+    }
   }
 }
