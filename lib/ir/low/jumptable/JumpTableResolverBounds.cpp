@@ -6976,7 +6976,11 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     ProgBaseUse = &ByteLoad;
   }
   if (!ProgBase) {
-    const int AddrDef = reachingDefIdx(Ops, ByteDef - 1, LoadAddr);
+    // Address operands are commonly carried through a COPY (AArch64) or
+    // widened after the target-width address arithmetic (i386).  Inspect the
+    // actual address producer before looking for its base and index; the
+    // point-sensitive checks below still validate the value at the LOAD.
+    const int AddrDef = peelCopyZext(LoadAddr, ByteDef - 1).second;
     if (AddrDef >= 0 && Ops[AddrDef].Opcode == NdOp::INT_ADD &&
         Ops[AddrDef].NumInputs >= 2) {
       const auto Left = tryFold(Ops[AddrDef].Inputs[0], AddrDef - 1);
@@ -7085,7 +7089,8 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
   NdVar LoadIndex;
   const LowOp *LoadIndexUse = nullptr;
   bool NeedIndexEqualityProof = false;
-  if (Blend.Opcode == NdOp::SELECT || Img.Arch == Arch::ARM) {
+  if (Blend.Opcode == NdOp::SELECT || Img.Arch == Arch::ARM ||
+      Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64) {
     // The bit test and byte load must use the same index. A mask may strip
     // bits only when it preserves every offset inside the sized data object.
     if (ByteIndexFrom < 0)
@@ -7117,8 +7122,6 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     const int PcIndexDef = reachingDefIdx(Ops, PcFrom, PcIndex);
     const int LoadIndexDef = reachingDefIdx(Ops, ByteIndexFrom, LoadIndex);
     if (!same(PcIndex, LoadIndex) || PcIndexDef != LoadIndexDef) {
-      if (Img.Arch != Arch::ARM)
-        return false;
       // A compiler may copy the byte-program index before the load, then use
       // its original register for the bit test. Compare the exact values at
       // both uses; lexical register identity is only a fast-path certificate.
@@ -7151,7 +7154,8 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       return false;
     }
   }
-  if (Img.Arch == Arch::ARM) {
+  if (Img.Arch == Arch::ARM || Img.Arch == Arch::X86 ||
+      Img.Arch == Arch::AArch64) {
     if (!ConstantUse || !ProgBaseUse || !MaskUse || !OneUse)
       return false;
     std::vector<JumpTableValueQuery> Queries;
