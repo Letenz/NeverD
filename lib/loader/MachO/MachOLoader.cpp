@@ -100,11 +100,11 @@ MachOLoader::load(const std::filesystem::path &Path) {
         llvm::inconvertibleErrorCode());
   if (Img.Arch == Arch::ARM) {
     auto ModeInfo = macho_arm32::parseModeInfo(Img.Raw);
-    if (ModeInfo) {
-      Img.Mode = ModeInfo->UniformMode;
-      Img.ARMCodeModeEntries = std::move(ModeInfo->CodeSymbolModes);
-    } else
-      llvm::consumeError(ModeInfo.takeError());
+    if (!ModeInfo)
+      return ModeInfo.takeError();
+    Img.Mode = ModeInfo->UniformMode;
+    Img.ARMRequiredMode = ModeInfo->RequiredMode;
+    Img.ARMCodeModeEntries = std::move(ModeInfo->CodeSymbolModes);
   }
 
   va_t TextVMAddr = 0;

@@ -205,6 +205,11 @@ llvm::Error recordARMRelocationMode(BinaryImage &Img, va_t Place,
   // preceding bytes or an unflagged symbol elsewhere in the section.
   if (!Img.hasExecutableCodeOwnerRange(Place, 4))
     return llvm::Error::success();
+  if (Img.ARMRequiredMode != InstructionMode::Default &&
+      Img.ARMRequiredMode != Mode)
+    return relocationError("ARM instruction relocation conflicts with "
+                           "Thumb-only CPU subtype",
+                           SectionAddress, RelocationAddress);
   const uint64_t Alignment = Mode == InstructionMode::Thumb ? 2 : 4;
   if ((Place & (Alignment - 1)) != 0)
     return relocationError("misaligned ARM/Thumb instruction relocation",
