@@ -24,7 +24,7 @@ TARGETS = ("arm64-apple-macos15.0", "arm64-apple-ios18.0-macabi",
            "x86_64-apple-macos15.0", "x86_64-apple-ios18.0-macabi")
 EXPORT_TARGETS = ("arm64-macos", "arm64-maccatalyst",
                   "x86_64-macos", "x86_64-maccatalyst")
-MODULES = ("Foundation", "_Concurrency")
+MODULES = ("Foundation", "Dispatch", "_Concurrency")
 
 
 def nominal_types(document, module="Foundation"):
@@ -157,7 +157,7 @@ def main():
                                            (graphs[index][name] for name in names)))
     output = render(profiles, load_exports(
         sdk, targets=EXPORT_TARGETS,
-        extra_libraries=("libswift_Concurrency",)),
+        extra_libraries=("libswift_Concurrency", "libswiftDispatch")),
                     json.loads((sdk / "SDKSettings.json").read_text())["Version"],
                     run([str(args.swiftc), "--version"]).strip())
     count = sum(line.startswith("{") for line in output.splitlines())

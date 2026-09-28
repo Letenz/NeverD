@@ -3002,6 +3002,57 @@ TEST(ObjCCallHints, DispatchTimeNowKeepsCompilerObservedSwiftABI) {
   }
 }
 
+TEST(ObjCCallHints, DispatchMetadataAccessorsRequireExactSDKExports) {
+  constexpr const char *Names[] = {
+      "$s8Dispatch0A12DataIteratorVMa",
+      "$s8Dispatch0A12TimeIntervalOMa",
+      "$s8Dispatch0A13WorkItemFlagsVMa",
+      "$s8Dispatch0A3QoSVMa",
+      "$s8Dispatch0A4DataVMa",
+      "$s8Dispatch0A4TimeVMa",
+      "$s8Dispatch0A8WallTimeVMa",
+      "$s8Dispatch0A8WorkItemCMa",
+      "$s8Dispatch0A9PredicateOMa",
+  };
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswiftDispatch.dylib";
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Name : Names) {
+      SCOPED_TRACE(std::string(Name) + ":" +
+                   std::to_string(static_cast<int>(Architecture)));
+      const std::string Import = "_" + std::string(Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->TargetName, Name);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+      EXPECT_EQ(Signature.ReturnType->Size, 16U);
+      ASSERT_EQ(Signature.Parameters.size(), 1U);
+      EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs[0]);
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftDispatch.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+}
+
 TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image =
