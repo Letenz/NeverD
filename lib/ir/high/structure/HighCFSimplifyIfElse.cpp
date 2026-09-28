@@ -1304,15 +1304,10 @@ static bool condStructEq(const HighExpr *A, const HighExpr *B,
   }
   if (A->Kind == ExprKind::Const)
     return A->ConstVal == B->ConstVal;
-  if (A->Kind == ExprKind::Call) {
-    if (A->CallAddr != B->CallAddr && A->CallTarget != B->CallTarget)
-      return false;
-    if (A->IntrinsicId != B->IntrinsicId)
-      return false;
-    if (A->Operands.empty() || B->Operands.empty())
-      return A->Operands.empty() && B->Operands.empty();
-    return condStructEq(A->Operands[0].get(), B->Operands[0].get(), SameTempId);
-  }
+  // Two call nodes are two evaluations that may return different values; a
+  // shared node (one call composed into both tests) already matched above.
+  if (A->Kind == ExprKind::Call)
+    return false;
   if (A->Operands.size() != B->Operands.size())
     return false;
   for (size_t I = 0; I < A->Operands.size(); ++I)
@@ -1391,29 +1386,6 @@ static const HighExpr *precedingPredCall(const std::vector<HighStmt> &Body,
       return Call;
   }
   return nullptr;
-}
-
-static bool samePredCall(const HighExpr *A, const HighExpr *B) {
-  if (!A || !B || A->CallTarget.empty() || B->CallTarget.empty())
-    return false;
-  return A->CallTarget == B->CallTarget;
-}
-
-static bool isBoolCombo(const HighExpr *E) {
-  E = peelCond(E);
-  return E && E->Kind == ExprKind::BinOp &&
-         (E->Op == NdOp::BOOL_AND || E->Op == NdOp::BOOL_OR ||
-          E->Op == NdOp::INT_AND || E->Op == NdOp::INT_OR);
-}
-
-/// Predicate call of a single test, not the first call nested inside `&&`/`||`.
-/// Matching `pred()` against `!p || !pred() || !q` would flatten the skip and
-/// leave later work dead after `goto`.
-static const HighExpr *atomPredCall(const HighExpr *E) {
-  E = peelCond(E);
-  if (isBoolCombo(E))
-    return nullptr;
-  return firstCallInExpr(E);
 }
 
 static const HighExpr *peelFieldPath(const HighExpr *E,
@@ -1906,22 +1878,13 @@ static bool impliedCondMatch(const HighExpr *Conjunct, const HighExpr *Outer,
   const HighExpr *VB = nullptr;
   bool NA = false;
   bool NB = false;
-  if (condAsZeroTest(Conjunct, VA, NA) && condAsZeroTest(Outer, VB, NB) &&
-      NA == NB &&
-      (samePredCall(atomPredCall(VA), atomPredCall(VB)) ||
-       sameFieldPath(VA, VB) ||
-       sameFieldPath(asFieldLoad(VA, FieldLoads),
-                     asFieldLoad(VB, FieldLoads))))
-    return true;
-  if (!samePredCall(atomPredCall(Conjunct), atomPredCall(Outer)))
-    return false;
-  const bool TA = condAsZeroTest(Conjunct, VA, NA);
-  const bool TB = condAsZeroTest(Outer, VB, NB);
-  if (TA && TB)
-    return NA == NB;
-  if (!TA && !TB)
-    return true;
-  return (TA && !TB && NA) || (!TA && TB && NB);
+  // Tests that merely call the same function are not the same test: the
+  // calls may return different values, and one value can feed different
+  // comparisons.
+  return condAsZeroTest(Conjunct, VA, NA) && condAsZeroTest(Outer, VB, NB) &&
+         NA == NB &&
+         (sameFieldPath(VA, VB) || sameFieldPath(asFieldLoad(VA, FieldLoads),
+                                                 asFieldLoad(VB, FieldLoads)));
 }
 
 /// Drop OR disjuncts that match \p FalsePrefix. Fallthrough after

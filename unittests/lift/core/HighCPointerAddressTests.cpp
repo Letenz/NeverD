@@ -8763,6 +8763,8 @@ TEST(HighCPointerAddresses, SameTargetSkipGotoFoldsRelease) {
 }
 
 TEST(HighCPointerAddresses, NestedIfElseDropsImpliedAndConjuncts) {
+  // The repeated pointer test is implied.  The inner IsKind is a second
+  // call whose result the outer test does not decide, so it stays.
   HighFunc Func;
   Func.Name = "badge_implied";
   Func.Entry = 0x140001000;
@@ -8805,7 +8807,7 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedAndConjuncts) {
   ASSERT_EQ(Func.Body[0].Body[0].Kind, StmtKind::IfElse);
   ASSERT_TRUE(Func.Body[0].Body[0].Cond);
   EXPECT_EQ(Func.Body[0].Body[0].Cond->Kind, ExprKind::BinOp);
-  EXPECT_EQ(Func.Body[0].Body[0].Cond->Op, NdOp::INT_NOTEQUAL);
+  EXPECT_EQ(Func.Body[0].Body[0].Cond->Op, NdOp::BOOL_AND);
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("GetDisplayName("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg2"), std::string::npos) << Source;
@@ -8815,10 +8817,12 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedAndConjuncts) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 2u) << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughAfterExitingIfDropsImpliedOr) {
+TEST(HighCPointerAddresses, FallthroughAfterExitingIfKeepsRecalledPredicate) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_fallthrough";
   Func.Entry = 0x140001000;
@@ -8879,7 +8883,7 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfDropsImpliedOr) {
       N += Self(Op.get(), Name, Self);
     return N;
   };
-  EXPECT_EQ(CountCalls(Guard->Cond.get(), "IsMediaPayload", CountCalls), 0u);
+  EXPECT_EQ(CountCalls(Guard->Cond.get(), "IsMediaPayload", CountCalls), 1u);
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("Find("), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
@@ -8891,10 +8895,13 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfDropsImpliedOr) {
        (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
        Pos += 13)
     ++MediaCount;
-  EXPECT_EQ(MediaCount, 1u) << Source;
+  EXPECT_EQ(MediaCount, 2u) << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughAfterExitingIfIgnoresTrailingNop) {
+TEST(HighCPointerAddresses,
+     FallthroughAfterExitingIfWithNopKeepsRecalledPredicate) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_nop";
   Func.Entry = 0x140001000;
@@ -8945,10 +8952,13 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfIgnoresTrailingNop) {
        (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
        Pos += 13)
     ++MediaCount;
-  EXPECT_EQ(MediaCount, 1u) << Source;
+  EXPECT_EQ(MediaCount, 2u) << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughSkipsGuardedFieldAssign) {
+TEST(HighCPointerAddresses,
+     FallthroughPastGuardedFieldAssignKeepsRecalledPredicate) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_phi";
   Func.Entry = 0x140001000;
@@ -9018,11 +9028,13 @@ TEST(HighCPointerAddresses, FallthroughSkipsGuardedFieldAssign) {
        (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
        Pos += 13)
     ++MediaCount;
-  EXPECT_EQ(MediaCount, 1u) << Source;
+  EXPECT_EQ(MediaCount, 2u) << Source;
   EXPECT_NE(Source.find("Find("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughComposesReloadedPredCall) {
+TEST(HighCPointerAddresses, FallthroughKeepsRecalledPredCall) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_reload";
   Func.Entry = 0x140001000;
@@ -9080,14 +9092,14 @@ TEST(HighCPointerAddresses, FallthroughComposesReloadedPredCall) {
   Func.Body = {First, Skip, Find, Second, Inner, Ret};
   invertSkipGotos(Func);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (arg2 == 0)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("IsMediaPayload(arg0) ||"), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("!IsMediaPayload(arg0) ||"), std::string::npos)
+  EXPECT_NE(Source.find("!IsMediaPayload(arg0) || arg2 == 0"),
+            std::string::npos)
       << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughDropsNotAndAfterExitingIf) {
+TEST(HighCPointerAddresses, FallthroughNotAndKeepsRecalledPredicate) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_notand";
   Func.Entry = 0x140001000;
@@ -9134,11 +9146,13 @@ TEST(HighCPointerAddresses, FallthroughDropsNotAndAfterExitingIf) {
        (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
        Pos += 13)
     ++MediaCount;
-  EXPECT_EQ(MediaCount, 1u) << Source;
+  EXPECT_EQ(MediaCount, 2u) << Source;
   EXPECT_NE(Source.find("arg2"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, FallthroughDropsBangCallAgainstEqZeroOr) {
+TEST(HighCPointerAddresses, FallthroughBangCallKeepsRecalledEqZeroOr) {
+  // Each IsMediaPayload is a separate call.  Passing the first test says
+  // nothing about what the second call returns, so its test stays.
   HighFunc Func;
   Func.Name = "media_bang";
   Func.Entry = 0x140001000;
@@ -9184,7 +9198,7 @@ TEST(HighCPointerAddresses, FallthroughDropsBangCallAgainstEqZeroOr) {
        (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
        Pos += 13)
     ++MediaCount;
-  EXPECT_EQ(MediaCount, 1u) << Source;
+  EXPECT_EQ(MediaCount, 2u) << Source;
   EXPECT_NE(Source.find("arg2 == 0"), std::string::npos) << Source;
 }
 
@@ -10100,6 +10114,8 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedFieldPointer) {
 }
 
 TEST(HighCPointerAddresses, NestedIfElseDropsReloadedFieldPointer) {
+  // The reloaded pointer test is implied by the first load's test.  The
+  // inner IsKind is a second call, so it stays.
   HighFunc Func;
   Func.Name = "badge_reload";
   Func.Entry = 0x140001000;
@@ -10166,7 +10182,7 @@ TEST(HighCPointerAddresses, NestedIfElseDropsReloadedFieldPointer) {
       InnerIf = &S;
   ASSERT_TRUE(InnerIf);
   ASSERT_TRUE(InnerIf->Cond);
-  EXPECT_EQ(InnerIf->Cond->Op, NdOp::INT_NOTEQUAL) << "leftover p &&";
+  EXPECT_EQ(InnerIf->Cond->Op, NdOp::BOOL_AND) << "second IsKind call";
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("GetDisplayName("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg2"), std::string::npos) << Source;
@@ -28489,7 +28505,9 @@ TEST(HighCPointerAddresses, NestedIfAndComposesCallPrefix) {
   EXPECT_LE(IfCount, 2u) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfAndDropsReloadedPredicate) {
+TEST(HighCPointerAddresses, NestedIfAndKeepsReloadedPredicateCall) {
+  // The inner IsKind is a second call.  The outer test does not decide what
+  // it returns, so the inner test keeps it.
   HighFunc Func;
   Func.Name = "reload_pred";
   Func.Entry = 0x140001000;
@@ -28564,11 +28582,13 @@ TEST(HighCPointerAddresses, NestedIfAndDropsReloadedPredicate) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
-  EXPECT_NE(Source.find("if (arg2"), std::string::npos) << Source;
+  EXPECT_EQ(KindCount, 2u) << Source;
+  EXPECT_NE(Source.find("&& arg2"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
+  // The inner IsKind is a second call.  The outer test does not decide what
+  // it returns, so the inner test keeps it.
   HighFunc Func;
   Func.Name = "distinct_field";
   Func.Entry = 0x140001000;
@@ -28640,16 +28660,18 @@ TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 2u) << Source;
   const auto DisplayAt = Source.find("GetDisplayName(", BodyAt);
   ASSERT_NE(DisplayAt, std::string::npos) << Source;
   const auto IfBeforeDisplay = Source.rfind("if (", DisplayAt);
   ASSERT_NE(IfBeforeDisplay, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("IsKind(", IfBeforeDisplay), std::string::npos)
+  EXPECT_NE(Source.find("IsKind(", IfBeforeDisplay), std::string::npos)
       << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardAfterCall) {
+TEST(HighCPointerAddresses, NestedIfKeepsGuardRecalledAfterCall) {
+  // The inner IsKind is a second call.  The outer test does not decide what
+  // it returns, so the inner test keeps it.
   HighFunc Func;
   Func.Name = "implied_after_call";
   Func.Entry = 0x140001000;
@@ -28686,12 +28708,12 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardAfterCall) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 2u) << Source;
   size_t IfCount = 0;
   for (size_t Pos = BodyAt;
        (Pos = Source.find("if (", Pos)) != std::string::npos; Pos += 4)
     ++IfCount;
-  EXPECT_EQ(IfCount, 1u) << Source;
+  EXPECT_EQ(IfCount, 2u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardThroughNestedIf) {
@@ -28995,7 +29017,10 @@ TEST(HighCPointerAddresses, NestedIfKeepsWorkAfterImpliedOrSkip) {
   EXPECT_EQ(Source.find("goto L_140001457"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfAndDropsPredicateAfterIndependentWork) {
+TEST(HighCPointerAddresses,
+     NestedIfAndKeepsPredicateCallsAfterIndependentWork) {
+  // The inner IsKind is a second call.  The outer test does not decide what
+  // it returns, so the inner test keeps it.
   HighFunc Func;
   Func.Name = "kind_after_find";
   Func.Entry = 0x140001000;
@@ -29100,11 +29125,13 @@ TEST(HighCPointerAddresses, NestedIfAndDropsPredicateAfterIndependentWork) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
-  EXPECT_NE(Source.find("if (arg2"), std::string::npos) << Source;
+  EXPECT_EQ(KindCount, 3u) << Source;
+  EXPECT_NE(Source.find("arg2 == 1"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfDropsPredicateFromEmptyThenElse) {
+TEST(HighCPointerAddresses, NestedIfKeepsPredicateCallsFromEmptyThenElse) {
+  // The inner IsKind is a second call.  The outer test does not decide what
+  // it returns, so the inner test keeps it.
   HighFunc Func;
   Func.Name = "empty_then_kind";
   Func.Entry = 0x140001000;
@@ -29152,8 +29179,8 @@ TEST(HighCPointerAddresses, NestedIfDropsPredicateFromEmptyThenElse) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
-  EXPECT_NE(Source.find("if (arg2"), std::string::npos) << Source;
+  EXPECT_EQ(KindCount, 3u) << Source;
+  EXPECT_NE(Source.find("arg2 == 1"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
@@ -29801,6 +29828,73 @@ TEST(HighCPointerAddresses, TryExitPastHandlerJoinStaysPrinted) {
   EXPECT_LT(ExitAt, Source.find("__except", BodyAt)) << Source;
   EXPECT_NE(Source.find("L_140001080:", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("Recover();", BodyAt), std::string::npos) << Source;
+}
+
+bool exprUsesTemp(const HighExpr &E, int Id) {
+  if (E.Kind == ExprKind::Var && E.Var.Kind == MedVar::Temp && E.Var.Id == Id)
+    return true;
+  bool Found = false;
+  E.forEachChildExpr([&](const ExprPtr &Child) {
+    Found = Found || (Child && exprUsesTemp(*Child, Id));
+  });
+  return Found;
+}
+
+TEST(HighCPointerAddresses, SecondCallStatusTestIsNotImpliedByFirst) {
+  // Two calls to one function return two statuses.  Passing the first
+  // status test says nothing about the second, so its failure jump stays and
+  // the work after it stays reachable.
+  HighFunc Func;
+  Func.Name = "two_status_calls";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  const va_t FirstFailVA = 0x140001100;
+  const va_t SecondFailVA = 0x140001200;
+  auto Status = [](int Id) { return temporary(Id, 1, 4); };
+  auto Create = [&] {
+    return HighExpr::makeCall("CreateObject", 0x140002000, {parameter(0)});
+  };
+  auto Failed = [&](int Id, va_t Addr, va_t Target) {
+    HighStmt Test;
+    Test.Kind = StmtKind::If;
+    Test.Addr = Addr;
+    Test.Cond =
+        HighExpr::makeBinop(NdOp::INT_SLESS, HighExpr::makeVar(Status(Id)),
+                            HighExpr::makeConst(0, 4));
+    Test.Body = {gotoStmt(0, Target)};
+    return Test;
+  };
+  auto BugCheck = [&](va_t Addr, uint64_t Code) {
+    HighStmt Anchor;
+    Anchor.Kind = StmtKind::Block;
+    Anchor.Addr = Addr;
+    HighStmt Call =
+        callStmt("KeBugCheckEx", 0x140003000, {HighExpr::makeConst(Code, 4)});
+    return std::vector<HighStmt>{Anchor, Call};
+  };
+  HighStmt Done;
+  Done.Kind = StmtKind::Return;
+  Func.Body = {
+      assignTo(Status(10), Create()),    Failed(10, 0x140001010, FirstFailVA),
+      assignTo(Status(11), Create()),    Failed(11, 0x140001020, SecondFailVA),
+      callStmt("Work", 0x140002100, {}), Done};
+  for (auto [Addr, Code] : {std::pair{FirstFailVA, 1}, {SecondFailVA, 2}})
+    for (HighStmt &S : BugCheck(Addr, Code))
+      Func.Body.push_back(std::move(S));
+  structureIfElse(Func, 8);
+  invertSkipGotos(Func);
+  size_t SecondTests = 0;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) && S.Cond &&
+        exprUsesTemp(*S.Cond, 11))
+      ++SecondTests;
+  });
+  EXPECT_EQ(SecondTests, 1u);
+  const std::string Source = emitFunctions({Func});
+  const size_t BodyAt = Source.find("two_status_calls(int64_t arg0) {");
+  ASSERT_NE(BodyAt, std::string::npos) << Source;
+  EXPECT_NE(Source.find("Work();", BodyAt), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, LabelInGuardedArmKeepsImpliedLookingTest) {
@@ -30474,7 +30568,9 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosComposeOr) {
   EXPECT_NE(Source.find("IsKind("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsDuplicatePredicate) {
+TEST(HighCPointerAddresses, ConsecutiveSkipGotosKeepsRepeatedPredicateCall) {
+  // The two IsKind tests are two calls; the second can return something
+  // else, so both stay.
   HighFunc Func;
   Func.Name = "skip_dup";
   Func.Entry = 0x140001000;
@@ -30512,12 +30608,15 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsDuplicatePredicate) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++Count;
-  EXPECT_EQ(Count, 1u) << Source;
+  EXPECT_EQ(Count, 2u) << Source;
   EXPECT_NE(Source.find("taken("), std::string::npos) << Source;
   EXPECT_NE(Source.find("rest("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsLeftoverClobberArgs) {
+TEST(HighCPointerAddresses,
+     ConsecutiveSkipGotosKeepsCallWithLeftoverClobberArgs) {
+  // The two IsKind tests are two calls; the second can return something
+  // else, so both stay.
   HighFunc Func;
   Func.Name = "skip_dup_clobber";
   Func.Entry = 0x140001000;
@@ -30558,11 +30657,13 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsLeftoverClobberArgs) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++Count;
-  EXPECT_EQ(Count, 1u) << Source;
+  EXPECT_EQ(Count, 2u) << Source;
   EXPECT_NE(Source.find("taken("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsReloadedCallPredicate) {
+TEST(HighCPointerAddresses, ConsecutiveSkipGotosKeepsReloadedCallPredicate) {
+  // The two IsKind tests are two calls; the second can return something
+  // else, so both stay.
   HighFunc Func;
   Func.Name = "skip_dup_reload";
   Func.Entry = 0x140001000;
@@ -30633,7 +30734,7 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsReloadedCallPredicate) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++Count;
-  EXPECT_EQ(Count, 1u) << Source;
+  EXPECT_EQ(Count, 2u) << Source;
 }
 
 TEST(HighCPointerAddresses, InvertThenKeepsReloadedCallInsideCxxTry) {
