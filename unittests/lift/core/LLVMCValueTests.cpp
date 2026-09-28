@@ -23,7 +23,8 @@
 
 namespace {
 
-void compileAndRun(const std::string &Source) {
+void compileAndRun(const std::string &Source,
+                   llvm::StringRef Optimization = "-O2") {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -52,7 +53,7 @@ void compileAndRun(const std::string &Source) {
   const llvm::SmallVector<llvm::StringRef, 12> Arguments{
       Compiler,
       "-std=c11",
-      "-O2",
+      Optimization,
       "-Werror=uninitialized",
       "-Werror=return-type",
       SourcePath,
@@ -281,6 +282,72 @@ TEST(LLVMCValues, RuntimeIntegerCastChainsKeepTruncationAndSignedness) {
   llvm::raw_string_ostream Out(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
   compileAndRun(Source + Main);
+}
+
+TEST(LLVMCValues, SwitchCasesPreserveTheirSelectorBitPattern) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("switch-bit-patterns", Context);
+  auto *Wide = llvm::Type::getInt128Ty(Context);
+  auto *Signature =
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), {Wide}, false);
+  auto Literal = [](const llvm::APInt &Value) {
+    const auto WideValue = Value.zextOrTrunc(128);
+    return "(((__uint128_t)" +
+           std::to_string(WideValue.extractBitsAsZExtValue(64, 64)) +
+           "ULL << 64) | " +
+           std::to_string(WideValue.extractBitsAsZExtValue(64, 0)) + "ULL)";
+  };
+  std::string Main = "int main(void) {\n";
+  for (unsigned Width :
+       {1u, 2u, 7u, 8u, 9u, 16u, 31u, 32u, 63u, 64u, 65u, 96u, 127u, 128u}) {
+    const std::string Name = "switch_bits" + std::to_string(Width);
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Default = llvm::BasicBlock::Create(Context, "otherwise", Function);
+    llvm::IRBuilder<llvm::NoFolder> Builder(Entry);
+    auto *Selector = Builder.CreateZExtOrTrunc(
+        Function->getArg(0), Builder.getIntNTy(Width), "selector");
+    auto *Switch = Builder.CreateSwitch(Selector, Default);
+    const auto HighBit = llvm::APInt::getSignedMinValue(Width);
+    const auto Ones = llvm::APInt::getAllOnes(Width);
+    const auto AddCase = [&](const llvm::APInt &Value, unsigned Result) {
+      auto *Block = llvm::BasicBlock::Create(Context, "matched", Function);
+      Switch->addCase(llvm::ConstantInt::get(Context, Value), Block);
+      Builder.SetInsertPoint(Block);
+      Builder.CreateRet(Builder.getInt32(Result));
+    };
+    AddCase(llvm::APInt(Width, 0), 11);
+    AddCase(HighBit, 23);
+    if (HighBit != Ones)
+      AddCase(Ones, 37);
+    Builder.SetInsertPoint(Default);
+    Builder.CreateRet(Builder.getInt32(49));
+
+    // Exercise the sign boundary, every i2 value, the default arm, and upper
+    // input bits discarded by the selector. Expected tags use APInt equality,
+    // independently of the C case-label spelling and integer promotions.
+    for (const llvm::APInt &Input :
+         {llvm::APInt(128, 0), llvm::APInt(128, 1), llvm::APInt(128, 2),
+          llvm::APInt(128, 3), HighBit.zextOrTrunc(128),
+          (HighBit - 1).zextOrTrunc(128), (HighBit + 1).zextOrTrunc(128),
+          Ones.zextOrTrunc(128), llvm::APInt::getAllOnes(128)}) {
+      const auto Bits = Input.zextOrTrunc(Width);
+      const unsigned Expected = Bits.isZero()     ? 11
+                                : Bits == HighBit ? 23
+                                : Bits == Ones    ? 37
+                                                  : 49;
+      Main += "if (" + Name + "(" + Literal(Input) +
+              ") != " + std::to_string(Expected) + ") return 1;\n";
+    }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
 }
 
 TEST(LLVMCValues, TruncatedPredicatesTestOnlyTheirLowBits) {

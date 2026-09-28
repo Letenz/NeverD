@@ -7,15 +7,29 @@
 实验性的解释器特化阶段会从已链接的 x64 函数中消除能够静态解析的派发，同时保留运行时输入、内存效果、分支和循环。它依据指令语义工作，不依赖 handler 特征或某一种保护器的操作码表。
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
 `--vm-control` 选择用于区分解释器上下文的完整通用寄存器。该选项可重复使用，但不会提供任何具体值。例如，可以选择由入口代码初始化的字节码游标。用作计数器的运行时输入必须保持动态。如果不同游标值在汇合时缺少必要的上下文区分，恢复可能停止；引擎不得通过猜测派发目标来弥补。若游标被溢出到栈中，`--vm-control-stack=-16:8` 可选择入口 RSP 减去 16 处的八个字节。此偏移相对于函数入口，而不是调整后的当前栈指针。
 
 C API 为 `neverd/sdk/NeverDCAPIDevirtualize.h` 中的 `neverd_devirtualize_source_v1()`。它使用独立事务，不修改会话的普通反编译缓存。失败时不返回源码，但仍可返回 JSON 诊断。两个返回字符串均使用 `neverd_free_string()` 释放。
+
+## 自动发现控制状态
+
+CLI 和两个源码恢复 C API 默认启用自动发现。与二进制提供方无关的 C++ 接口默认 `SpecializationOptions::DiscoverControlState = false`，调用方可显式设为 `true`。手工 `--vm-control` 和 `--vm-control-stack` 提示仍是可选的上下文键；普通自动发现的字段只保留有界的联合有限取值关系，不增加上下文键，也不把运行时输入绑定为采样值。除非下述选择性内存细化需要其已证明常量，普通计数器仍保持动态。
+
+发现过程沿未解析控制流与地址的依赖追踪结构化寄存器输入和精确的入口相对栈帧读取，包括窄字节范围。发现缺失依赖后，会从函数入口重新分析。每个字段仍须获得完整的有限取值证明，可能形成别名的写入仍使内存事实失效。自动发现不会把任意外部内存或无界的相关值变成有限域。
+
+若已跟踪的内存依赖仍反复阻止精确地址证明，后续细化可以将其已证明的传入常量提升为上下文键。目前不会把多值元组拆成新边，也不会为选择上下文增加客户内存读取：有限取值证明本身不能证明新增读取安全。因此，动态或无界的内存相关状态仍可能在配置的限制内导致恢复停止。
+
+反向生产者需求由原生节点入口、指令模式、字段种类及字节范围标识。只有后继节点需要该字段的边才继续展开生产者依赖，包括取值有限但精度仍不足的情况。这可能触发有预算限制的入口重启，而不会把复用的物理寄存器视为始终承担同一角色。依赖发现有界且不完备，不能保证所有解释器都可在没有手动提示时恢复。
+
+默认 `MaxControlFields = 16` 同时约束手工和自动字段；`MaxControlRefinements = 16`，`MaxDiscoveryVisits = 65536`。各次重启共享全局节点（包括合成节点）、操作、求值、求解查询和发现访问预算。报告中的 `contexts` 统计原生上下文；它与 `evaluatedOperations`、`nodeEvaluations`、`solverQueries` 都跨尝试累计。每个地址的上下文数、活动原生返回槽、控制字段数及元组数仍是单次尝试的结构上限。求解查询默认上限仍为 4096。预算耗尽不发布部分结果；`residualBlocks` 只描述最终残余图。
+
+JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 和 `discoveryVisits`，分别记录启用行为、上限和分析工作量。发现字段本身不等于恢复成功。
 
 ## 执行契约
 

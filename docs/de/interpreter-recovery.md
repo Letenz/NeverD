@@ -11,9 +11,9 @@ die Instruktionssemantik, nicht die Erkennung von Handler-Signaturen oder die
 Opcode-Tabelle eines bestimmten Schutzprogramms.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
@@ -34,6 +34,20 @@ Transaktion aus, ohne den gewöhnlichen Dekompilationscache der Sitzung zu
 verändern. Bei einem Fehler wird kein Quelltext zurückgegeben; eine
 JSON-Diagnose kann dennoch vorliegen. Beide zugewiesenen Zeichenketten werden
 mit `neverd_free_string()` freigegeben.
+
+## Automatische Erkennung des Steuerzustands
+
+Die CLI und beide C-APIs zur Quelltextwiederherstellung aktivieren die automatische Erkennung standardmäßig. In der anbieterunabhängigen C++-API gilt weiterhin `SpecializationOptions::DiscoverControlState = false`; Aufrufer können `true` setzen. Manuelle Hinweise mit `--vm-control` und `--vm-control-stack` bleiben optionale Kontextschlüssel. Gewöhnliche automatisch erkannte Felder bewahren begrenzte gemeinsame endliche Werterelationen, ohne Kontextschlüssel anzulegen oder Laufzeiteingaben auf Stichprobenwerte festzulegen. Zähler bleiben dynamisch, sofern die folgende selektive Speicherverfeinerung ihre bewiesenen Konstanten nicht benötigt.
+
+Die Erkennung verfolgt ungelöste Steuer- und Adressabhängigkeiten zu strukturierten Registereingaben und exakten, zum Funktionseintritt relativen Frame-Lesezugriffen, einschließlich schmaler Bytebereiche. Fehlende Abhängigkeiten führen zu einer erneuten Analyse ab dem Funktionseintritt. Jedes Feld benötigt weiterhin einen vollständigen Nachweis seines endlichen Wertebereichs; mögliche Alias-Schreibzugriffe verwerfen weiterhin Speicherfakten. Beliebiger externer Speicher und unbegrenzte Werterelationen werden dadurch nicht endlich.
+
+Verhindern bereits verfolgte Speicherabhängigkeiten wiederholt einen exakten Adressnachweis, kann die Verfeinerung ihre bewiesenen eingehenden Konstanten zusätzlich als Kontextschlüssel verwenden. Sie teilt keine mehrwertigen Tupel in neue Kanten auf und fügt keine Gast-Speicherlesezugriffe zur Kontextauswahl hinzu: Ein endlicher Wertebereich beweist nicht, dass ein zusätzlicher Zugriff sicher ist. Dynamische oder unbegrenzte speicherabhängige Zustände können die Wiederherstellung daher weiterhin innerhalb der gesetzten Grenzen stoppen.
+
+Rückwärts gerichtete Anforderungen an Produzenten sind durch den nativen Knoteneingang, den Instruktionsmodus sowie Feldart und Bytebereich bestimmt. Nur eine Kante, deren Nachfolger das Feld benötigt, verfolgt dessen Produzentenabhängigkeiten weiter, auch bei endlichen, aber noch zu ungenauen Wertebereichen. Dies kann begrenzte Neustarts ab dem Eingang auslösen, ohne einem wiederverwendeten physischen Register eine einzige globale Rolle zuzuweisen. Die Abhängigkeitserkennung ist begrenzt und unvollständig; eine Wiederherstellung ohne manuelle Hinweise ist nicht für jeden Interpreter garantiert.
+
+Standardwerte sind `MaxControlFields = 16` für manuelle und automatische Felder zusammen, `MaxControlRefinements = 16` und `MaxDiscoveryVisits = 65536`. Neustarts teilen globale Budgets für Knoten (einschließlich synthetischer), Operationen, Auswertungen, Solver-Abfragen und Erkennungsbesuche. `contexts` zählt native Kontexte und wird wie `evaluatedOperations`, `nodeEvaluations` und `solverQueries` über alle Versuche summiert. Kontexte pro Adresse, aktive native Rückkehrslots, Felder und Tupel bleiben strukturelle Grenzen je Versuch. Das Abfragelimit bleibt 4096. Bei Erschöpfung wird kein Teilergebnis veröffentlicht; `residualBlocks` beschreibt nur den abschließenden Restgraphen.
+
+Der JSON-Bericht ergänzt `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` und `discoveryVisits` für Aktivierung, Grenzen und Analyseaufwand. Die Erkennung von Feldern allein beweist keine erfolgreiche Wiederherstellung.
 
 ## Ausführungsvertrag
 

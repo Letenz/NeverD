@@ -1347,3 +1347,55 @@ TEST(InterpreterSpecialization,
 }
 
 } // namespace
+
+namespace {
+
+TEST(InterpreterSpecialization,
+     FreeFrameReadsDoNotSpendImmutableAddressEnumerationBudget) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_EQUAL, reg(64, 1), {reg(8), constant(0)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(64, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
+                op(NdOp::LOAD, reg(0), {reg(48)}), ret()});
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  SpecializationOptions Options;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.MaxSolverQueries = 5;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(Result.SolverQueries, 4u);
+  EXPECT_TRUE(Result.Reads.empty());
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
+  std::map<uint64_t, uint8_t> Memory;
+  for (unsigned I = 0; I < 8; ++I)
+    Memory[0x1800 - 16 + I] = I ? 0 : 91;
+  EXPECT_EQ(execute(Result.Residual, {{8, 0}, {32, 0x1800}}, Memory), 91u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 1}, {32, 0x1800}}, Memory), 7u);
+}
+
+TEST(InterpreterSpecialization,
+     PathConstrainedFrameReadStillRequiresItsImmutableCertificate) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_EQUAL, reg(64, 1), {reg(32), constant(0x1800)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(64, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
+                op(NdOp::LOAD, reg(0), {reg(48)}), ret()});
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  for (unsigned I = 0; I < 8; ++I)
+    P.Image[0x1800 - 16 + I] = I ? 0 : 91;
+  SpecializationOptions Options;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.ControlRegisters = {{32, 8}};
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  ASSERT_EQ(Result.Reads.size(), 1u);
+  EXPECT_EQ(Result.Reads.front().Address, 0x1800 - 16);
+  EXPECT_EQ(execute(Result.Residual, {{32, 0x1800}}, P.Image), 91u);
+  EXPECT_EQ(execute(Result.Residual, {{32, 0x1900}}, P.Image), 7u);
+}
+
+} // namespace
