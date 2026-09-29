@@ -1182,6 +1182,58 @@ flowchart TD
   Transport --> Core
 ```
 
+RAM ownership is public in
+[`PhysicalMemory.h`](../include/neverd/emulation/PhysicalMemory.h). A physical
+owner allocates shared `MemoryRegion` handles;
+[`AddressSpace`](../include/neverd/emulation/AddressSpace.h) owns virtual
+mappings, permissions and a separate mapping budget. `mapRegion` can share one
+allocation between different spaces at different addresses. Ordinary `map`
+allocates new RAM. Unmapping a canonical address leaves other aliases and
+spaces intact. Only the last region, mapping or transport reference releases
+physical capacity; the next allocation is zeroed. CPU destruction does not
+destroy RAM that still has another owner.
+
+The additive CPU factory accepts an existing address space. The original
+memory-limit overload creates a default physical owner and space. A stopped
+CPU can bind another space over the same physical owner. A CPU snapshot records
+its space identity and can be restored only after binding that space; it does
+not keep obsolete virtual mappings alive or undo later memory writes.
+
+`MemoryProjection` is a private per-CPU view. Native page tables and exception
+entry storage stay private to each CPU. KVM and WHP register this storage and
+the shared RAM as separate physical ranges. Unicorn projects the same RAM bytes
+and coalesces contiguous pages when calling its mapping API. Every projection
+tracks its own space identity and mapping generation. Old allocations remain
+pinned until that CPU unmaps or replaces its translations, or destroys its
+transport. Resuming also invalidates translated instructions independently of
+the mapping generation, so writes through another CPU or alias remain visible.
+
+The address space validates mapping transactions before publication. A checked
+CPU additionally validates every attached or changed mapping against its ISA
+and reserved monitor ranges, including changes made directly through the space.
+Logical mapping success is separate from transport projection: if projection
+fails after execution starts, that CPU becomes terminal. The authoritative
+mappings, budgets and other CPUs remain intact.
+
+Execution holds a physical-owner-wide lease from instruction admission through
+actual execution. Mutations and a second CPU run on that owner are rejected
+until the run stops, including attempts from observers or another host thread.
+Same-thread observers may read memory and query permissions. Releasing an
+unreferenced allocation uses a separate allocator lock and cannot wait on an
+observer's execution lease. CPU objects are otherwise confined to their calling
+thread; `stop()` supports external cancellation. Multiple CPU states and spaces
+are supported with cooperative execution, not parallel hardware SMP. Physical
+and per-space mapping budgets currently have a 1 GiB ceiling; page size is
+4 KiB. Device mappings consume virtual mapping capacity but no RAM allocation.
+Direct address-space reads and writes access RAM only; device transactions
+require a supporting backend. The checked profiles reject device mappings.
+
+The Windows DMA/MDL model still owns its existing virtual-address-based physical
+identity bridge. Migrating that bridge to retained region slices is outstanding;
+the new CPU ownership API alone does not prove DMA pins survive canonical
+address reuse or a process address-space switch. Explicit machine configuration,
+capability queries and general process scheduling also remain separate work.
+
 `CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
 access cannot reinterpret one architecture's registers as another's. ARM64
 exposes X0–X30, SP, PC, NZCV, TLS registers, FPCR/FPSR and 32 128-bit vector

@@ -11,6 +11,7 @@ endif()
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_neverd_unittest(NeverDCPUEmulationTests
     CPUArchitectureTests.cpp
+    MemoryLifecycleTests.cpp
     AArch64ProjectionTests.cpp
     LINK_COMPONENTS EmulationCPU
     LINK_LIBS unicorn)

@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_KVM_VM_H
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/ExecutionLimits.h"
+#include "../../core/MemoryProjection.h"
 
 #include <cerrno>
 #include <chrono>
@@ -44,7 +45,7 @@ public:
     if (System >= 0)
       close(System);
   }
-  llvm::Error initialize(uint8_t *Backing, uint64_t Size) {
+  llvm::Error initialize(llvm::ArrayRef<MemoryRegistration> Mappings) {
 #define NEVERD_KVM_STRING(Name, Value) constexpr char Name[] = Value;
 #include "KvmProtocol.def"
 #undef NEVERD_KVM_STRING
@@ -57,11 +58,16 @@ public:
     VM = ioctl(System, KVM_CREATE_VM, 0);
     if (VM < 0)
       return diagnostic::error(diagnostic::KvmCreate);
-    kvm_userspace_memory_region Region{};
-    Region.memory_size = Size;
-    Region.userspace_addr = reinterpret_cast<uintptr_t>(Backing);
-    if (ioctl(VM, KVM_SET_USER_MEMORY_REGION, &Region) < 0)
-      return diagnostic::error(diagnostic::KvmMap);
+    uint32_t Slot = 0;
+    for (const auto &Mapping : Mappings) {
+      kvm_userspace_memory_region Region{};
+      Region.slot = Slot++;
+      Region.guest_phys_addr = Mapping.Physical;
+      Region.memory_size = Mapping.Size;
+      Region.userspace_addr = reinterpret_cast<uintptr_t>(Mapping.Backing);
+      if (ioctl(VM, KVM_SET_USER_MEMORY_REGION, &Region) < 0)
+        return diagnostic::error(diagnostic::KvmMap);
+    }
     CPU = ioctl(VM, KVM_CREATE_VCPU, 0);
     if (CPU < 0)
       return diagnostic::error(diagnostic::KvmCreate);

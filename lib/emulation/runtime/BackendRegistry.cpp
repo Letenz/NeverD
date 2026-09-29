@@ -96,17 +96,22 @@ ExecutionBackendKind nativeBackend() {
 }
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
-createCheckedBackend(ExecutionBackendKind Kind, uint64_t Limit,
+createCheckedBackend(ExecutionBackendKind Kind,
+                     std::shared_ptr<AddressSpace> Space,
                      GuestArchitecture Architecture) {
-  auto Memory = PhysicalMemory::create(Limit);
+  auto Memory = MemoryProjection::create(Space);
   if (!Memory)
     return Memory.takeError();
+  auto Lock = (*Memory)->lock();
+  if (!Lock)
+    return Lock.takeError();
+  if (auto E = (*Memory)->mutableMemory())
+    return E;
   if (Architecture == GuestArchitecture::X64) {
-    auto Machine = Kind == ExecutionBackendKind::KVM
-                       ? createKvmMachine((*Memory)->data(), (*Memory)->size())
-                   : Kind == ExecutionBackendKind::WHP
-                       ? createWhpMachine((*Memory)->data(), (*Memory)->size())
-                       : createUnicornX64Machine(**Memory);
+    auto Machine =
+        Kind == ExecutionBackendKind::KVM   ? createKvmMachine(**Memory)
+        : Kind == ExecutionBackendKind::WHP ? createWhpMachine(**Memory)
+                                            : createUnicornX64Machine(**Memory);
     if (!Machine)
       return Machine.takeError();
     return CheckedX64Backend::create(std::move(*Memory), std::move(*Machine));
@@ -123,7 +128,8 @@ createCheckedBackend(ExecutionBackendKind Kind, uint64_t Limit,
 } // namespace
 llvm::Expected<BackendSelection>
 createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
-                       uint64_t Limit, GuestArchitecture Architecture) {
+                       std::shared_ptr<AddressSpace> Space,
+                       GuestArchitecture Architecture) {
   if (Architecture != GuestArchitecture::X64 &&
       Architecture != GuestArchitecture::AArch64)
     return diagnostic::error(diagnostic::Architecture);
@@ -167,7 +173,7 @@ createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
   }
   if (!Checked) {
 #ifdef NEVERD_EMULATION_UNICORN
-    auto CPU = UnicornBackend::create(Limit, Architecture);
+    auto CPU = UnicornBackend::create(std::move(Space), Architecture);
     if (!CPU)
       return CPU.takeError();
     return BackendSelection{std::move(*CPU), Kind, std::move(Reason)};
@@ -175,9 +181,21 @@ createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
     return diagnostic::unavailable(diagnostic::UnicornDisabled);
 #endif
   }
-  auto CPU = createCheckedBackend(Kind, Limit, Architecture);
+  auto CPU = createCheckedBackend(Kind, std::move(Space), Architecture);
   if (!CPU)
     return CPU.takeError();
   return BackendSelection{std::move(*CPU), Kind, std::move(Reason)};
+}
+llvm::Expected<BackendSelection>
+createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
+                       uint64_t Limit, GuestArchitecture Architecture) {
+  auto RAM = PhysicalMemory::create(Limit);
+  if (!RAM)
+    return RAM.takeError();
+  auto Space = AddressSpace::create(std::move(*RAM), Limit);
+  if (!Space)
+    return Space.takeError();
+  return createExecutionBackend(Kind, Contract, std::move(*Space),
+                                Architecture);
 }
 } // namespace neverd::emulation

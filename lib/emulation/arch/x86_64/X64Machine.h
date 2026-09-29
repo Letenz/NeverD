@@ -20,9 +20,14 @@ namespace x64 {
 inline bool canonical(uint64_t Address) {
   return Address <= UserMax || Address >= KernelMin;
 }
+inline bool canonicalRange(uint64_t Address, uint64_t Size) {
+  return Size && Size - 1 <= UINT64_MAX - Address && canonical(Address) &&
+         canonical(Address + Size - 1) &&
+         ((Address <= UserMax) == (Address + Size - 1 <= UserMax));
+}
 } // namespace x64
-class PhysicalMemory;
-llvm::Expected<uint64_t> buildX64PageTables(PhysicalMemory &Memory,
+class MemoryProjection;
+llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                                             uint64_t PreviousRoot);
 struct X64MachineState {
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};

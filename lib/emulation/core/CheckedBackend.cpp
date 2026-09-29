@@ -27,7 +27,16 @@ llvm::Error CheckedBackend::mutableMemory() const {
     return error(diagnostic::Faulted);
   if (Running)
     return error(diagnostic::Running);
-  return llvm::Error::success();
+  return Memory->mutableMemory();
+}
+
+llvm::Error
+CheckedBackend::bindAddressSpace(std::shared_ptr<AddressSpace> Space) {
+  if (auto E = mutableMemory())
+    return E;
+  return Memory->bind(std::move(Space), [this](uint64_t A, uint64_t N) {
+    return canonicalRange(A, N);
+  });
 }
 
 llvm::Error CheckedBackend::map(uint64_t A, uint64_t N, unsigned P) {
@@ -88,6 +97,9 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
 }
 
 llvm::Error CheckedBackend::read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) {
+  auto Lock = Memory->lock();
+  if (!Lock)
+    return Lock.takeError();
   if (auto E = access(A, B.size(), Read))
     return E;
   return Memory->read(A, B);
@@ -103,6 +115,9 @@ llvm::Error CheckedBackend::write(uint64_t A, llvm::ArrayRef<uint8_t> B) {
 
 llvm::Error CheckedBackend::fetch(uint64_t A,
                                   llvm::MutableArrayRef<uint8_t> B) {
+  auto Lock = Memory->lock();
+  if (!Lock)
+    return Lock.takeError();
   if (auto E = access(A, B.size(), Execute))
     return E;
   return Memory->read(A, B, Execute);
@@ -112,7 +127,7 @@ llvm::Expected<bool> CheckedBackend::canAccess(uint64_t A, uint64_t N,
                                                unsigned P) const {
   if (FirstFault || (P & ~(Read | Write | Execute)))
     return error(diagnostic::Faulted);
-  return !Memory->check(A, N, P);
+  return Memory->addressSpace()->canAccess(A, N, P);
 }
 
 llvm::Error CheckedBackend::validateBacking(uint64_t A, uint64_t N) const {
@@ -141,7 +156,7 @@ llvm::Error CheckedBackend::snapshotBacking(uint64_t A,
                                             llvm::MutableArrayRef<uint8_t> B) {
   if (Running)
     return error(diagnostic::Running);
-  return Memory->read(A, B, 0);
+  return Memory->addressSpace()->snapshotBacking(A, B);
 }
 
 llvm::Error CheckedBackend::installHooks(BackendHooks H) {
@@ -157,6 +172,12 @@ std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
 
 llvm::Error CheckedBackend::run(uint64_t PC, uint64_t Timeout) {
   if (auto E = mutableMemory())
+    return E;
+  if (auto E = Memory->beginRun())
+    return E;
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  if (auto E = Memory->validateMappings(
+          [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); }))
     return E;
   setProgramCounter(PC);
   Running = true;

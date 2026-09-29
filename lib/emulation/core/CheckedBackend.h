@@ -5,7 +5,9 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_CHECKEDBACKEND_H
 #define NEVERD_EMULATION_CHECKEDBACKEND_H
-#include "PhysicalMemory.h"
+#include "MemoryProjection.h"
+
+#include "neverd/emulation/CPU.h"
 
 #include <atomic>
 #include <capstone/capstone.h>
@@ -16,6 +18,10 @@ namespace neverd::emulation {
 class CheckedBackend : public ExecutionBackend {
 public:
   ~CheckedBackend() override;
+  std::shared_ptr<AddressSpace> addressSpace() const override {
+    return Memory->addressSpace();
+  }
+  llvm::Error bindAddressSpace(std::shared_ptr<AddressSpace> Space) override;
   llvm::Error map(uint64_t, uint64_t, unsigned) override;
   llvm::Error mapAlias(uint64_t, uint64_t, uint64_t, unsigned) override;
   llvm::Error unmapAlias(uint64_t, uint64_t) override;
@@ -40,7 +46,12 @@ public:
   }
   bool hasDeviceError() const override { return false; }
   bool executable(uint64_t Address) const override {
-    return !Memory->check(Address, 1, Execute);
+    auto Result = Memory->addressSpace()->canAccess(Address, 1, Execute);
+    if (!Result) {
+      llvm::consumeError(Result.takeError());
+      return false;
+    }
+    return *Result;
   }
   std::optional<BackendFault> fault() const override { return FirstFault; }
   std::optional<BackendFault> takeRecoverableFault() override;
@@ -56,7 +67,7 @@ protected:
   virtual llvm::Error execute(const cs_insn &) = 0;
   llvm::Error mutableMemory() const;
   llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false);
-  std::unique_ptr<PhysicalMemory> Memory;
+  std::unique_ptr<MemoryProjection> Memory;
   BackendHooks Hooks;
   csh Decoder = 0;
   std::shared_ptr<const void> Identity = std::make_shared<unsigned char>(0);

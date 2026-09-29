@@ -16,17 +16,17 @@
 namespace neverd::emulation {
 using diagnostic::error;
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
-  return N && N - 1 <= UINT64_MAX - A && x64::canonical(A) &&
-         x64::canonical(A + N - 1) &&
-         ((A <= x64::UserMax) == (A + N - 1 <= x64::UserMax));
+  return x64::canonicalRange(A, N);
 }
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
-CheckedX64Backend::create(std::unique_ptr<PhysicalMemory> Memory,
+CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
                           std::unique_ptr<X64Machine> Machine) {
   auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend());
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
+  if (auto E = B->Memory->validateMappings(x64::canonicalRange))
+    return E;
   if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
     return E;
   B->CPU.reg(X64Register::FLAGS) = x64::InitialFlags;
@@ -74,29 +74,33 @@ CheckedX64Backend::saveContext() {
     return error(diagnostic::Faulted);
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
+  S->Space = addressSpace();
   S->CPU = CPU;
-  return std::unique_ptr<BackendContext>(new BackendContext(std::move(S)));
+  return makeContext(std::move(S));
 }
 
 llvm::Error CheckedX64Backend::saveContext(BackendContext &C) {
-  if (!C.State || C.State->Owner.expired())
+  if (!contextStorage(C) || contextStorage(C)->Owner.expired())
     return error(diagnostic::ContextExpired);
-  if (C.State->Owner.lock() != Identity)
+  if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
-  static_cast<SavedState &>(*C.State).CPU = CPU;
+  contextStorage(C)->Space = addressSpace();
+  static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
 }
 
 llvm::Error CheckedX64Backend::restoreContext(const BackendContext &C) {
-  if (!C.State || C.State->Owner.expired())
+  if (!contextStorage(C) || contextStorage(C)->Owner.expired())
     return error(diagnostic::ContextExpired);
-  if (C.State->Owner.lock() != Identity)
+  if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
   if (auto E = mutableMemory())
     return E;
-  CPU = static_cast<const SavedState &>(*C.State).CPU;
+  if (contextStorage(C)->Space.lock() != addressSpace())
+    return error(diagnostic::ContextSpace);
+  CPU = static_cast<const SavedState &>(*contextStorage(C)).CPU;
   TimedOut = false;
   return llvm::Error::success();
 }

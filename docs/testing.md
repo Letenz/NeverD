@@ -321,6 +321,19 @@ cmake --build build-cpu --target NeverDCPUEmulationTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDCPUEmulationTests$' --output-on-failure
 ```
 
+`MemoryLifecycleTests.cpp` covers independent physical, address-space and CPU
+ownership. Its real execution matrix includes software and checked Unicorn on
+x64/ARM64, plus the matching native adapter. It checks shared writes, destruction
+of one CPU, same-generation space switches, context-space identity, cross-CPU
+instruction-cache invalidation, stale projection pins and owner-wide execution
+exclusion. Separate cases check mapping transaction failure, allocation reuse,
+partial alias retirement and a terminal page-table-capacity failure that leaves
+another CPU and the published address space usable. Native ARM64 cases remain
+skips on an x64 host; software profiles do not run reserved-monitor-range checks.
+These tests establish cooperative CPU sharing, not parallel SMP or complete OS
+process compatibility. Changes here also require the Windows driver suites,
+whose MMIO, backing access, alias and context contracts use the same RAM.
+
 The same checked ARM64 cases run against the native adapter on an ARM64 host.
 They skip with a typed reason on other hosts or when the hypervisor is
 unavailable. Set `NEVERD_REQUIRE_AARCH64_HARDWARE=1` on an ARM64 validation host
