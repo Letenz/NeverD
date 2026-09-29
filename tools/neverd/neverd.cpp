@@ -93,6 +93,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runEmulateDriver();
   if (CPUCapabilitiesCmd)
     return runCPUCapabilities();
+  if (EmulateProcessCmd)
+    return runEmulateProcess();
   if (ConcolicCmd)
     return runConcolic();
   if (MobileCmd)

@@ -1,0 +1,9 @@
+//===- X64MemoryUpdates.def - Checked scalar memory update previews -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The native instruction owns flags; these deltas predict only the observable
+// written bytes. LOCK, multi-operand RMW and cross-page accesses stay rejected.
+NEVERD_X64_MEMORY_UPDATE(INC, 1)
+NEVERD_X64_MEMORY_UPDATE(DEC, -1)

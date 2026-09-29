@@ -897,6 +897,28 @@ class Session:
             raise NeverDError(self.last_error)
         return _decode_json("CPU capabilities", value)
 
+    def emulate_process(
+        self, path: str, profile: str, options: str | None = None
+    ) -> object:
+        """Run an explicit guest OS profile without changing the loaded image.
+
+        ``options`` is the native JSON request. The native parser owns profile,
+        backend and resource validation. The report distinguishes guest exit
+        from faults and limits; ``stdout_hex``/``stderr_hex`` retain all bytes.
+        No host environment is inherited. Setup failures raise NeverDError.
+        """
+        value = self._owned_string(
+            "neverd_emulate_process_json",
+            _utf8_argument("process path", path, allow_empty=False),
+            _utf8_argument("process profile", profile, allow_empty=False),
+            None if options is None else _utf8_argument(
+                "process options", options, allow_empty=False
+            ),
+        )
+        if value is None:
+            raise NeverDError(self.last_error)
+        return _decode_json("process emulation", value)
+
     @property
     def imports(self) -> object:
         return self._json("neverd_imports_json", "imports")

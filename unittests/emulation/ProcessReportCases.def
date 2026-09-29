@@ -1,0 +1,32 @@
+//===- ProcessReportCases.def - Public process request probes ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PROCESS_INVALID_JSON
+NEVERD_PROCESS_INVALID_JSON(Syntax, "{")
+NEVERD_PROCESS_INVALID_JSON(Array, "[]")
+NEVERD_PROCESS_INVALID_JSON(Unknown, "{\"host_syscalls\":true}")
+NEVERD_PROCESS_INVALID_JSON(Backend, "{\"backend\":\"unknown\"}")
+NEVERD_PROCESS_INVALID_JSON(Zero, "{\"instruction_limit\":0}")
+NEVERD_PROCESS_INVALID_JSON(Negative, "{\"memory_limit\":-1}")
+NEVERD_PROCESS_INVALID_JSON(Fraction, "{\"event_limit\":1.5}")
+NEVERD_PROCESS_INVALID_JSON(Boolean, "{\"instruction_quantum\":true}")
+NEVERD_PROCESS_INVALID_JSON(Null, "{\"output_limit\":null}")
+NEVERD_PROCESS_INVALID_JSON(Arguments, "{\"arguments\":\"argument\"}")
+NEVERD_PROCESS_INVALID_JSON(Environment, "{\"environment\":[false]}")
+NEVERD_PROCESS_INVALID_JSON(EmbeddedNUL, "{\"arguments\":[\"a\\u0000b\"]}")
+NEVERD_PROCESS_INVALID_JSON(Overflow, "{\"stack_size\":18446744073709551616}")
+#endif
+#ifdef NEVERD_PROCESS_TEST_TEXT
+NEVERD_PROCESS_TEST_TEXT(Prefix, "neverd-process-public")
+NEVERD_PROCESS_TEST_TEXT(OutputFile, "report.json")
+NEVERD_PROCESS_TEST_TEXT(MissingPath, "missing-process.elf")
+NEVERD_PROCESS_TEST_TEXT(UnknownProfile, "missing-process-profile")
+NEVERD_PROCESS_TEST_TEXT(FaultExit, "guest_fault")
+NEVERD_PROCESS_TEST_TEXT(AllBits, "ffffffffffffffff")
+NEVERD_PROCESS_TEST_TEXT(BinaryHex, "00ff7f")
+NEVERD_PROCESS_TEST_TEXT(ARMFile, "AArch64.elf")
+NEVERD_PROCESS_TEST_TEXT(X64File, "X64.elf")
+NEVERD_PROCESS_TEST_TEXT(ProbeOptions, "{\"backend\":\"unicorn\",\"architecture\":\"aarch64\",\"contract\":\"checked-user-aarch64-v1\"}")
+#endif

@@ -66,6 +66,11 @@ also make user pages non-executable at EL1. This does not expose mutable guest
 page tables or a privilege-switch instruction API. Service ABI handling,
 exception delivery, process loading and OS services remain separate runtime work.
 
+The [Linux process profile](process-emulation.md) uses these user contracts for
+real ELF startup and system-call execution through `neverd emulate` and the
+shared SDK. Its service implementations belong to the OS model, independently
+of the selected CPU transport.
+
 Unknown fields, null field values, invalid names, duplicate required features,
 invalid numeric widths and unsupported combinations fail. Input is limited to
 64 KiB. The old CPU factories and driver C options remain compatible.

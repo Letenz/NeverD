@@ -1135,7 +1135,10 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
 | `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
-| `NeverDEmulationRuntime` | Workload budgets shared across continuations and CPUs |
+| `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
+| `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
+| `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
 The four CPU components declare LLVM Support as their LLVM dependency.
@@ -1156,6 +1159,7 @@ lib/emulation/
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
+  os/linux/              Linux ELF process startup and system-call ABI/services
 ```
 
 `core` has no implementation dependency on an architecture, backend or guest
@@ -1192,14 +1196,14 @@ execute a Windows guest workload; the host never chooses its OS model.
 `DriverSession`, driver scenario parsing and reports belong to `os/windows`,
 because their lifecycle and objects are Windows-specific. The current Windows
 implementation remains one driver environment; moving it does not imply a
-generic process session or a completed Windows user-mode environment.
+completed Windows user-mode environment.
 When a process environment is added, keep its entry point, loader policy and
 user ABI separate from the kernel workload. Move shared OS primitives into a
 common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
 
-Future Linux and Darwin implementations belong beside Windows. Android-specific
+The Linux process environment lives beside Windows. Android-specific
 APIs and runtimes should build on the applicable Linux kernel contracts under
 `os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
 separates its runtime and framework from the kernel. macOS and iOS models should
@@ -1207,9 +1211,31 @@ share applicable Darwin primitives while keeping platform APIs and ABI/version
 profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
 [XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
 identifies their shared kernel foundation. These are extension locations, not
-implemented environments. Add them with real workloads rather than empty
+implemented Android or Darwin environments. Add them with real workloads rather than empty
 classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
 remain explicit OS/workload requirements, independent of the CPU transport.
+
+[`ExecutionSession`](../include/neverd/emulation/ExecutionSession.h) owns one CPU,
+its hooks and pending service/fault continuation. Sessions may share a budget,
+address space and physical bytes while scheduling cooperative quanta. A pending
+request must be consumed once before resumption. CPU failure outranks a
+simultaneous resource stop, and an unexplained engine stop is never workload
+success. This does not claim concurrent SMP execution.
+
+[`ImageMappingPlan`](../include/neverd/emulation/ImageMapping.h) consumes existing
+loader segments; it neither reparses headers nor resolves imports. ELF loaders
+also retain decoded program-header facts in `BinaryImage::ELFMetadata`, allowing
+Linux policy to validate startup without duplicating ELF parsing. Image plans
+check complete extents and overlap before materializing bytes. The Linux model
+sets up a private address space before exposing its CPU.
+
+The [process API](process-emulation.md) adds an explicit `linux-elf64-v1` profile
+through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
+and AArch64 freestanding executables with stack/auxv initialization, typed
+system-call continuations and bounded byte output. It currently rejects dynamic
+linking, TLS, signals and thread creation. Those OS semantics remain in
+`os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
+from WHP. The Windows driver lifecycle remains independently available.
 
 ```mermaid
 flowchart TD

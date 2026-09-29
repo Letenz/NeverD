@@ -1,3 +1,37 @@
+add_neverd_unittest(NeverDExecutionSessionTests
+  ExecutionSessionTests.cpp
+  ImageMappingTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationRuntime EmulationImage)
+
+add_neverd_unittest(NeverDX64MemoryUpdateTests
+  X64MemoryUpdateTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
+add_neverd_unittest(NeverDLinuxProcessTests
+  LinuxProcessTests.cpp
+  LinuxProcessLayoutTests.cpp
+  ProcessReportTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationProcess)
+target_include_directories(NeverDLinuxProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(TARGET neverd_shared AND TARGET neverd)
+  add_neverd_unittest(NeverDProcessPublicTests
+    ProcessPublicTests.cpp
+    TIMEOUT 30
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDProcessPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDProcessPublicTests PRIVATE
+    NEVERD_PROCESS_CLI="$<TARGET_FILE:neverd>")
+  if(NOT APPLE)
+    target_link_libraries(NeverDProcessPublicTests PRIVATE LLVMSupport)
+  endif()
+  add_dependencies(NeverDProcessPublicTests neverd)
+endif()
+include(ProcessFixtures.cmake)
+
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp
   LINK_COMPONENTS EmulationRuntime)

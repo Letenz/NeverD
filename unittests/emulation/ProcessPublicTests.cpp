@@ -1,0 +1,184 @@
+//===- ProcessPublicTests.cpp - Real ELF through the shared SDK and CLI --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "../TestProcess.h"
+#include "gtest/gtest.h"
+
+#include "neverd/emulation/ExecutionBackend.h"
+#include "neverd/emulation/ExecutionReportFields.h"
+#include "neverd/emulation/ProcessCLIStrings.h"
+#include "neverd/emulation/ProcessReportFields.h"
+#include "neverd/sdk/NeverDCAPI.h"
+
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <filesystem>
+
+namespace {
+using namespace neverd;
+namespace field = emulation::process_report;
+namespace cpu_field = emulation::execution_report;
+#define NEVERD_EXECUTION_AVAILABILITY(Name, Text) constexpr char Name[] = Text;
+#include "neverd/emulation/ExecutionBackend.def"
+#undef NEVERD_EXECUTION_AVAILABILITY
+#define NEVERD_PROCESS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "ProcessReportCases.def"
+#undef NEVERD_PROCESS_TEST_TEXT
+#define NEVERD_LINUX_FIXTURE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_FIXTURE_TEXT(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_LINUX_FIXTURE_MODE(Name, Character, Text)                       \
+  constexpr char Name[] = Text;
+#include "fixtures/LinuxProcessCases.def"
+#undef NEVERD_LINUX_FIXTURE_MODE
+#undef NEVERD_LINUX_FIXTURE_TEXT
+#undef NEVERD_LINUX_FIXTURE_VALUE
+#define NEVERD_PROCESS_PROFILE(Name, Text) constexpr char Name[] = Text;
+#include "neverd/emulation/ProcessProfile.def"
+#undef NEVERD_PROCESS_PROFILE
+
+std::string takeString(const char *Value) {
+  if (!Value)
+    return {};
+  std::string Copy(Value);
+  neverd_free_string(Value);
+  return Copy;
+}
+std::string jsonText(llvm::json::Object Value) {
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  OS << llvm::json::Value(std::move(Value));
+  return Text;
+}
+
+class ProcessPublic : public testing::Test {
+protected:
+  neverd_session_t Session = nullptr;
+  std::string Path;
+  void SetUp() override {
+    Session = neverd_session_create();
+    ASSERT_NE(Session, nullptr);
+#ifndef NEVERD_PROCESS_FIXTURE_DIR
+    GTEST_SKIP() << MissingTools;
+#else
+    Path =
+        (std::filesystem::path(NEVERD_PROCESS_FIXTURE_DIR) / ARMFile).string();
+    // This portable public-surface suite is separate from the process tests'
+    // six transport/ISA cells; it must not pull a second engine into the DSO.
+    auto Text =
+        takeString(neverd_cpu_capabilities_json(Session, ProbeOptions, 1));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Probe = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    const auto *Host = Probe->getAsObject()->getObject(cpu_field::Host);
+    ASSERT_NE(Host, nullptr);
+    if (Host->getString(cpu_field::Availability) != Available)
+      GTEST_SKIP() << Host->getString(cpu_field::Reason)->str();
+#endif
+  }
+  void TearDown() override { neverd_session_destroy(Session); }
+  std::string options(const char *Mode) {
+    llvm::json::Object Request;
+    Request[field::Backend] = emulation::execution::Unicorn;
+    Request[field::Arguments] = llvm::json::Array{ExecutableName, Mode};
+    Request[field::Environment] = llvm::json::Array{Environment};
+    Request[field::InstructionLimit] = 1000;
+    return jsonText(std::move(Request));
+  }
+  llvm::json::Value run(const std::string &Options) {
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), LinuxELF64, Options.c_str()));
+    EXPECT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    return llvm::cantFail(llvm::json::parse(Text));
+  }
+};
+
+TEST_F(ProcessPublic, ReturnsOutputAndGuestStatusWithoutLoadingAnalysisImage) {
+  for (const char *File : {X64File, ARMFile}) {
+    SCOPED_TRACE(File);
+    Path = (std::filesystem::path(Path).parent_path() / File).string();
+    auto Result = run(options(Normal));
+    EXPECT_EQ(Result.getAsObject()->getInteger(field::Version),
+              NEVERD_PROCESS_SCHEMA_VERSION);
+    EXPECT_EQ(Result.getAsObject()->getInteger(field::ExitStatus), ExitStatus);
+    EXPECT_EQ(Result.getAsObject()->getString(field::Stderr), BinaryHex);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Before = takeString(neverd_segments_json(Session));
+  run(options(Normal));
+  EXPECT_EQ(neverd_session_is_loaded(Session), 1);
+  EXPECT_EQ(takeString(neverd_segments_json(Session)), Before);
+}
+
+TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
+  EXPECT_EQ(
+      neverd_emulate_process_json(nullptr, Path.c_str(), LinuxELF64, nullptr),
+      nullptr);
+  EXPECT_EQ(neverd_emulate_process_json(Session, nullptr, LinuxELF64, nullptr),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::PathRequired);
+  EXPECT_EQ(
+      neverd_emulate_process_json(Session, Path.c_str(), nullptr, nullptr),
+      nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::ProfileRequired);
+  EXPECT_EQ(
+      neverd_emulate_process_json(Session, MissingPath, LinuxELF64, nullptr),
+      nullptr);
+  EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+  EXPECT_EQ(neverd_emulate_process_json(Session, Path.c_str(), UnknownProfile,
+                                        nullptr),
+            nullptr);
+#define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    EXPECT_EQ(                                                                 \
+        neverd_emulate_process_json(Session, Path.c_str(), LinuxELF64, Text),  \
+        nullptr);                                                              \
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());              \
+  }
+#include "ProcessReportCases.def"
+#undef NEVERD_PROCESS_INVALID_JSON
+  const std::string Large(NEVERD_PROCESS_OPTIONS_JSON_LIMIT + 1, ' ');
+  EXPECT_EQ(neverd_emulate_process_json(Session, Path.c_str(), LinuxELF64,
+                                        Large.c_str()),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::TooLarge);
+  run(options(Normal));
+  EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
+}
+
+TEST_F(ProcessPublic,
+       CLIHasTheSameReportAndSeparatesGuestFailureFromIncomplete) {
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Mode : {Normal, Loop, Fault, Unknown}) {
+    SCOPED_TRACE(Mode);
+    const auto Options = options(Mode);
+    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
+                         process_cli::Command + " " + test::shellQuote(Path) +
+                         " --" + process_cli::ProfileOption + "=" + LinuxELF64 +
+                         " --" + process_cli::OptionsOption + "=" +
+                         test::shellQuote(Options) +
+                         test::redirectStdout(Output) + test::silenceStderr();
+    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+              Mode == Normal ? process_cli::GuestFailure
+                             : process_cli::Incomplete);
+    auto Buffer = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(bool(Buffer));
+    auto Report = llvm::json::parse((*Buffer)->getBuffer());
+    ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+    EXPECT_EQ(*Report, run(Options));
+  }
+}
+} // namespace

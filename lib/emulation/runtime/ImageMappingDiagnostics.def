@@ -1,0 +1,10 @@
+//===- ImageMappingDiagnostics.def - Executable mapping failures ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_IMAGE_DIAGNOSTIC(Configuration, "image mapping requires a positive budget and power-of-two page size")
+NEVERD_IMAGE_DIAGNOSTIC(Extent, "image segment has an invalid or overflowing extent")
+NEVERD_IMAGE_DIAGNOSTIC(Overlap, "image load segments require an unsupported shared-page mapping policy")
+NEVERD_IMAGE_DIAGNOSTIC(Budget, "image mappings exceed the workload memory budget")
+NEVERD_IMAGE_DIAGNOSTIC(Empty, "image has no loadable memory")

@@ -993,6 +993,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_emulate_process_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "const char *", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_emulate_driver_backend_json",
     "const char *",
     [
