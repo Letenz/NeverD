@@ -296,6 +296,77 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     UnreachableTrapRetainsBytesAndMissingEffects) {
+  // xor eax,eax; jne trap; ret; trap. No bytes follow the trap, so inventing
+  // a resumption edge would fail even though the original branch is untaken.
+  for (bool InvalidOpcode : {false, true}) {
+    SCOPED_TRACE(InvalidOpcode);
+    Program P({0x31, 0xc0, 0x75, 1, 0xc3, 0xcc});
+    if (InvalidOpcode) {
+      P.Image.Segments[0].Data.back() = 0x0f;
+      P.Image.Segments[0].Data.push_back(0x0b);
+      ++P.Image.Segments[0].Size;
+      ++P.Image.Segments[0].FileSz;
+    }
+    const auto R = P.recover();
+    ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+    EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+    const auto &Insns = R.Independence.Certificate->Instructions;
+    const auto It = std::find_if(Insns.begin(), Insns.end(), [](const auto &I) {
+      return I.Origin.Control == LowInstructionControl::Terminator;
+    });
+    ASSERT_NE(It, Insns.end());
+    EXPECT_EQ(It->Origin.Address, Entry + 5);
+    EXPECT_EQ(It->NativeBytes, InvalidOpcode
+                                   ? (std::vector<uint8_t>{0x0f, 0x0b})
+                                   : (std::vector<uint8_t>{0xcc}));
+    EXPECT_EQ(It->UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
+    EXPECT_EQ(It->UndefinedEffects.OperationDigest,
+              lowUndefinedOperationDigest(It->Ops));
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DiscardedCallContinuationCanContainATrap) {
+  // call helper; int3; helper: add rsp,8; mov eax,7; ret. The real native
+  // stack determines the outer return; the call continuation stays evidence.
+  Program P(
+      {0xe8, 1, 0, 0, 0, 0xcc, 0x48, 0x83, 0xc4, 8, 0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 1U);
+  EXPECT_TRUE(
+      std::any_of(R.Independence.Certificate->Instructions.begin(),
+                  R.Independence.Certificate->Instructions.end(),
+                  [](const auto &I) { return I.Origin.Address == Entry + 5; }));
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FeasibleTrapCannotPublishAnyCompletedSibling) {
+  // jc trap; ret; int3. An ordinary input can select either path. A completed
+  // return cannot authorize the sibling exception path under this contract.
+  Program Branch({0x72, 1, 0xc3, 0xcc});
+  expectRefusal(Branch, Status::ContractViolation);
+  Program Direct({0xcc});
+  expectRefusal(Direct, Status::ContractViolation);
+  Program InvalidOpcode({0x0f, 0x0b});
+  expectRefusal(InvalidOpcode, Status::ContractViolation);
+  // call helper; int3; helper: ret. The actual continuation is reached.
+  Program Call({0xe8, 1, 0, 0, 0, 0xcc, 0xc3});
+  expectRefusal(Call, Status::ContractViolation);
+  // and eax,1; add rax,0x100b; jmp rax; ret; int3. Complete finite target
+  // enumeration must retain the trap target as well as the normal return.
+  Program Indirect(
+      {0x83, 0xe0, 1, 0x48, 5, 0x0b, 0x10, 0, 0, 0xff, 0xe0, 0xc3, 0xcc});
+  expectRefusal(Indirect, Status::ContractViolation);
+  const auto OrdinaryTrap =
+      specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
+  EXPECT_FALSE(OrdinaryTrap.complete());
+  EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StaticallyUntakenBranchStillRequiresOriginalBytes) {
   // XOR makes JNE false in ordinary recovery; its target is unmapped 0x100a.
   Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3});

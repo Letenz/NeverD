@@ -1535,8 +1535,7 @@ bool Specializer::evaluate(int Id) {
         Instruction.Fallthrough.Address == InvalidVA ||
         hasLowInstructionControlFlag(
             Instruction.Origin.ControlFlags,
-            LowInstructionControlFlag::InstructionGuard) ||
-        Instruction.Origin.Control == LowInstructionControl::Terminator)
+            LowInstructionControlFlag::InstructionGuard))
       return fail(SpecializationStatus::InvalidInput,
                   "provider returned an inconsistent or unsupported "
                   "instruction boundary");
@@ -1552,6 +1551,12 @@ bool Specializer::evaluate(int Id) {
             InputBlock, LowInstructionBoundaryRequirement::Required))
       return fail(SpecializationStatus::InvalidInput,
                   llvm::toString(std::move(Error)));
+    // A valid opaque terminator is unsupported semantics, not malformed
+    // provider input. Recovery may refine the controlling state and prove its
+    // path unreachable; InvalidInput would incorrectly disable that retry.
+    if (Instruction.Origin.Control == LowInstructionControl::Terminator)
+      return fail(SpecializationStatus::Unsupported,
+                  "opaque native terminator requires exception semantics");
     const auto UsesReservedTemporary = [&](const NdVar &V) {
       return V.isTemp() &&
              (V.Offset >= DispatchTemp || V.Size > DispatchTemp - V.Offset);

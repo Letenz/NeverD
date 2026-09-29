@@ -11,6 +11,7 @@
 #include "NativeStackControl.h"
 #include "NativeUndefinedIndependence.h"
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -31,6 +32,32 @@ using namespace symbolic;
 using Status = LowIRIndependenceStatus;
 constexpr uint64_t AddressTemporary = UINT64_MAX - 7;
 constexpr uint64_t NativeStackTemporary = AddressTemporary - 8;
+
+// A retained trap has exact semantics even though its exception-state outputs
+// have no undefined-effect audit. It may only be collected, never executed in
+// this nonfaulting proof. Do not turn its Missing sidecar into Complete.
+bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
+  if (Insn.Origin.Control != LowInstructionControl::Terminator ||
+      Insn.Origin.Immediate || Insn.IsNativeCall ||
+      Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+      Insn.Ops.size() != 1 || !Insn.UndefinedEffects.Effects.empty() ||
+      Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      Insn.UndefinedEffects.OperationDigest !=
+          lowUndefinedOperationDigest(Insn.Ops))
+    return false;
+  const auto &Op = Insn.Ops.front();
+  if (Op.Opcode != NdOp::INTRINSIC || Op.Output.Size || Op.NumInputs != 1 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  auto Flags = LowInstructionControlFlag::Terminator;
+  if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3))
+    Flags |= LowInstructionControlFlag::Resumable;
+  else if (Op.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::Ud2))
+    return false;
+  return Insn.Origin.ControlFlags == Flags;
+}
 
 bool sameBoundary(const LowInstructionBoundary &A,
                   const LowInstructionBoundary &B) {
@@ -537,7 +564,8 @@ class Checker {
           (B.Control != LowInstructionControl::None &&
            B.Control != LowInstructionControl::Branch &&
            B.Control != LowInstructionControl::Call &&
-           B.Control != LowInstructionControl::Return) ||
+           B.Control != LowInstructionControl::Return &&
+           B.Control != LowInstructionControl::Terminator) ||
           hasLowInstructionControlFlag(
               B.ControlFlags, LowInstructionControlFlag::InstructionGuard))
         fail(Status::Unsupported, "unsupported original instruction control");
@@ -561,15 +589,20 @@ class Checker {
               Raw, LowInstructionBoundaryRequirement::Required))
         fail(Status::Invalid, llvm::toString(std::move(Error)));
       validateEffects(B, Insn.Ops, Insn.UndefinedEffects);
+      const bool Trap = isRetainedNativeTrap(Insn);
+      if (B.Control == LowInstructionControl::Terminator && !Trap)
+        fail(Status::Unsupported,
+             "original trap lacks exact semantic evidence");
       if (Insn.UndefinedEffects.Effects.size() >
           Limits.MaxProducers - NativeInputEffects)
         fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
       NativeInputEffects += Insn.UndefinedEffects.Effects.size();
-      if (Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
+      if (!Trap &&
+          Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
         fail(Status::Unsupported,
              "original instruction lacks complete undefined-output evidence");
       std::vector<va_t> Successors;
-      bool Terminal = false;
+      bool Terminal = Trap;
       for (size_t I = 0; I != Insn.Ops.size(); ++I) {
         const auto &Op = Insn.Ops[I];
         const bool Transfer =
@@ -669,6 +702,13 @@ class Checker {
 
   LowBlock prepareNative(Path &P, LowInstructionUndefinedEffects &Effects) {
     const auto &Insn = NativeInstructions.at(P.NativeAddress);
+    if (Insn.Origin.Control == LowInstructionControl::Terminator) {
+      Result.BlockId = P.BlockId;
+      Result.InstructionAddress = P.NativeAddress;
+      Result.OpSeq = -1;
+      fail(Status::ContractViolation,
+           "feasible native trap violates the nonfaulting execution contract");
+    }
     LowBlock B;
     B.Id = P.BlockId;
     B.StartAddr = P.NativeAddress;
