@@ -44,9 +44,10 @@ llvm::Error
 CheckedBackend::bindAddressSpace(std::shared_ptr<AddressSpace> Space) {
   if (auto E = mutableMemory())
     return E;
-  return Memory->bind(std::move(Space), [this](uint64_t A, uint64_t N) {
-    return canonicalRange(A, N);
-  });
+  return Memory->bind(
+      std::move(Space),
+      [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+      supportsDeviceMappings());
 }
 
 llvm::Error CheckedBackend::map(uint64_t A, uint64_t N, unsigned P) {
@@ -143,9 +144,7 @@ llvm::Expected<bool> CheckedBackend::canAccess(uint64_t A, uint64_t N,
 llvm::Error CheckedBackend::validateBacking(uint64_t A, uint64_t N) const {
   if (auto E = mutableMemory())
     return E;
-  if (Memory->check(A, N, 0))
-    return error(diagnostic::MemoryAccess);
-  return llvm::Error::success();
+  return Memory->addressSpace()->validateBacking(A, N);
 }
 
 llvm::Error CheckedBackend::readBacking(uint64_t A,
@@ -204,6 +203,7 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
       std::move(E), {.Fault = FirstFault,
                      .Recoverable = RecoverableFault,
                      .Service = PendingService,
+                     .DeviceFailed = hasDeviceError(),
                      .BackendFailed = BackendFailed,
                      .InstructionRejected =
                          FirstFault && FirstFault->Kind ==
@@ -223,7 +223,8 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
   if (auto E = Memory->validateMappings(
-          [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); }))
+          [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+          supportsDeviceMappings()))
     return E;
   setProgramCounter(PC);
   Running = true;

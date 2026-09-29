@@ -148,6 +148,13 @@ public:
     if (auto E =
             check(uc_reg_write(CPU.Engine, UC_X86_REG_GS_BASE, &State.GSBase)))
       return E;
+    for (unsigned I = 0; I < State.Xmm.size(); ++I)
+      if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_XMM0 + I,
+                                      State.Xmm[I].data())))
+        return E;
+    if (auto E =
+            check(uc_reg_write(CPU.Engine, UC_X86_REG_MXCSR, &State.MXCSR)))
+      return E;
     if (auto E = CPU.run(State.reg(X64Register::PC)))
       return E;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
@@ -156,6 +163,12 @@ public:
     return E;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+    for (unsigned I = 0; I < State.Xmm.size(); ++I)
+      if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_XMM0 + I,
+                                     State.Xmm[I].data())))
+        return E;
+    if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_MXCSR, &State.MXCSR)))
+      return E;
     return llvm::Error::success();
   }
 

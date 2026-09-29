@@ -474,8 +474,11 @@ faults and resource stops across configured transports. `NeverDProcessPublicTest
 checks the shared C API/CLI without mutating a loaded analysis image.
 `NeverDExecutionSessionTests` covers two CPUs sharing memory and budgets,
 exactly-once service/fault consumption and image mapping plans.
-`NeverDX64MemoryUpdateTests` checks memory INC/DEC widths, flags, read/write
-permissions and observer stops. The public Python wrapper also participates in
+`NeverDX64MemoryUpdateTests` checks scalar arithmetic widths/flags, SETcc truth
+tables, register BT, XMM/MXCSR transport and restoration, vector-store observers,
+REP restart boundaries and device-read preparation/commit failures. It exercises
+Unicorn, KVM and WHP separately at supported privileges, with explicit unavailable
+backend skips. The public Python wrapper also participates in
 the ordinary Python SDK tests and declaration audit.
 
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
@@ -487,6 +490,16 @@ available. Linux x64 runs exercise KVM; Windows x64 runs exercise WHP. On ARM64 
 the x64 checked cases use Unicorn and do not constitute native x64 evidence.
 `HardwareBackendPublicTests.cpp` protects backend selection and the unchanged
 v1 C ABI. Focus hardware checks with `--gtest_filter='HardwareBackend.*:BackendSelection.*'`.
+
+`DriverBackendParityTests.cpp` reuses the original built-in and optional WDK
+images and example scenarios. Each checked transport runs original and relocated
+images and compares the complete observable report against legacy Unicorn,
+including negative outcomes, request bytes, API results, write events, object
+and device state. It excludes backend metadata, diagnostic wording and engine
+instruction-count conventions. Fixed-address fixtures without relocation
+records must produce the same loader rejection on a rebase; those cases do not
+claim guest execution. Missing external images and unavailable native
+backends are explicit skips. Select it with `--gtest_filter='*DriverBackendParity*'`.
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`
 to build the focused execution suite and the shared C API/CLI checks:

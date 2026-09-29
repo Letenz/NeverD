@@ -1,0 +1,9 @@
+//===- X64StringInstructions.def - One bounded MOVS element -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_STRING_INSTRUCTION(MOVSB, 1)
+NEVERD_X64_STRING_INSTRUCTION(MOVSW, 2)
+NEVERD_X64_STRING_INSTRUCTION(MOVSD, 4)
+NEVERD_X64_STRING_INSTRUCTION(MOVSQ, 8)

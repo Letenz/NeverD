@@ -68,6 +68,7 @@ protected:
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
+  virtual bool supportsDeviceMappings() const { return false; }
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;

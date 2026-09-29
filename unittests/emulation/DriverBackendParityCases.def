@@ -1,0 +1,312 @@
+//===- DriverBackendParityCases.def - Original driver corpus/scenarios --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(BuiltinApifault, NEVERD_DRIVER_FIXTURES "/apifault.sys")
+NEVERD_PARITY_IMAGE(BuiltinDevices, NEVERD_DRIVER_FIXTURES "/devices.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverAsync,
+                    NEVERD_DRIVER_FIXTURES "/driver_async.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverContextLimits,
+                    NEVERD_DRIVER_FIXTURES "/driver_context_limits.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverDirect,
+                    NEVERD_DRIVER_FIXTURES "/driver_direct.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverDispatcher,
+                    NEVERD_DRIVER_FIXTURES "/driver_dispatcher.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuard,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInactive,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_inactive.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInvalidCheck,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_invalid_check.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInvalidDispatch,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_invalid_dispatch.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverIo, NEVERD_DRIVER_FIXTURES "/driver_io.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverMdl, NEVERD_DRIVER_FIXTURES "/driver_mdl.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverRegistry,
+                    NEVERD_DRIVER_FIXTURES "/driver_registry.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverRuntime,
+                    NEVERD_DRIVER_FIXTURES "/driver_runtime.sys")
+NEVERD_PARITY_IMAGE(BuiltinFailure, NEVERD_DRIVER_FIXTURES "/failure.sys")
+NEVERD_PARITY_IMAGE(BuiltinFault, NEVERD_DRIVER_FIXTURES "/fault.sys")
+NEVERD_PARITY_IMAGE(BuiltinGs, NEVERD_DRIVER_FIXTURES "/gs.sys")
+NEVERD_PARITY_IMAGE(BuiltinLoader, NEVERD_DRIVER_FIXTURES "/loader.sys")
+NEVERD_PARITY_IMAGE(BuiltinLoop, NEVERD_DRIVER_FIXTURES "/loop.sys")
+NEVERD_PARITY_IMAGE(BuiltinOpaque, NEVERD_DRIVER_FIXTURES "/opaque.sys")
+NEVERD_PARITY_IMAGE(BuiltinOpaqueargument,
+                    NEVERD_DRIVER_FIXTURES "/opaqueargument.sys")
+NEVERD_PARITY_IMAGE(BuiltinPendingentry,
+                    NEVERD_DRIVER_FIXTURES "/pendingentry.sys")
+NEVERD_PARITY_IMAGE(BuiltinPrivileged, NEVERD_DRIVER_FIXTURES "/privileged.sys")
+NEVERD_PARITY_IMAGE(BuiltinReadonly, NEVERD_DRIVER_FIXTURES "/readonly.sys")
+NEVERD_PARITY_IMAGE(BuiltinSuccess, NEVERD_DRIVER_FIXTURES "/success.sys")
+NEVERD_PARITY_IMAGE(BuiltinUnknown, NEVERD_DRIVER_FIXTURES "/unknown.sys")
+#endif
+#ifndef NEVERD_KMDF_CFG_FIXTURE
+#define NEVERD_KMDF_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfCfgFixtureEntry, NEVERD_KMDF_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_CONTROL_CFG_FIXTURE
+#define NEVERD_KMDF_CONTROL_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfControlCfgFixtureEntry,
+                    NEVERD_KMDF_CONTROL_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_CONTROL_FIXTURE
+#define NEVERD_KMDF_CONTROL_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfControlFixtureEntry, NEVERD_KMDF_CONTROL_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_FIXTURE
+#define NEVERD_KMDF_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfFixtureEntry, NEVERD_KMDF_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_PNP_CFG_FIXTURE
+#define NEVERD_KMDF_PNP_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfPnpCfgFixtureEntry, NEVERD_KMDF_PNP_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_PNP_FIXTURE
+#define NEVERD_KMDF_PNP_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfPnpFixtureEntry, NEVERD_KMDF_PNP_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_DMA_CFG_FIXTURE
+#define NEVERD_WDM_DMA_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmDmaCfgFixtureEntry, NEVERD_WDM_DMA_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE
+#define NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmDmaChannelCfgFixtureEntry,
+                    NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_DMA_CHANNEL_FIXTURE
+#define NEVERD_WDM_DMA_CHANNEL_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmDmaChannelFixtureEntry,
+                    NEVERD_WDM_DMA_CHANNEL_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_DMA_FIXTURE
+#define NEVERD_WDM_DMA_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmDmaFixtureEntry, NEVERD_WDM_DMA_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_INTERRUPT_CFG_FIXTURE
+#define NEVERD_WDM_INTERRUPT_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmInterruptCfgFixtureEntry,
+                    NEVERD_WDM_INTERRUPT_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_INTERRUPT_FIXTURE
+#define NEVERD_WDM_INTERRUPT_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmInterruptFixtureEntry,
+                    NEVERD_WDM_INTERRUPT_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_NEITHER_CFG_FIXTURE
+#define NEVERD_WDM_NEITHER_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmNeitherCfgFixtureEntry,
+                    NEVERD_WDM_NEITHER_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_NEITHER_FIXTURE
+#define NEVERD_WDM_NEITHER_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmNeitherFixtureEntry, NEVERD_WDM_NEITHER_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_PNP_CFG_FIXTURE
+#define NEVERD_WDM_PNP_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPnpCfgFixtureEntry, NEVERD_WDM_PNP_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_PNP_FIXTURE
+#define NEVERD_WDM_PNP_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPnpFixtureEntry, NEVERD_WDM_PNP_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_POWER_CFG_FIXTURE
+#define NEVERD_WDM_POWER_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPowerCfgFixtureEntry, NEVERD_WDM_POWER_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_POWER_FIXTURE
+#define NEVERD_WDM_POWER_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPowerFixtureEntry, NEVERD_WDM_POWER_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_REMOVE_LOCK_CFG_FIXTURE
+#define NEVERD_WDM_REMOVE_LOCK_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmRemoveLockCfgFixtureEntry,
+                    NEVERD_WDM_REMOVE_LOCK_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_REMOVE_LOCK_DBG_CFG_FIXTURE
+#define NEVERD_WDM_REMOVE_LOCK_DBG_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmRemoveLockDbgCfgFixtureEntry,
+                    NEVERD_WDM_REMOVE_LOCK_DBG_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_REMOVE_LOCK_DBG_FIXTURE
+#define NEVERD_WDM_REMOVE_LOCK_DBG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmRemoveLockDbgFixtureEntry,
+                    NEVERD_WDM_REMOVE_LOCK_DBG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_REMOVE_LOCK_FIXTURE
+#define NEVERD_WDM_REMOVE_LOCK_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmRemoveLockFixtureEntry,
+                    NEVERD_WDM_REMOVE_LOCK_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_RESOURCE_CFG_FIXTURE
+#define NEVERD_WDM_RESOURCE_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmResourceCfgFixtureEntry,
+                    NEVERD_WDM_RESOURCE_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_RESOURCE_FIXTURE
+#define NEVERD_WDM_RESOURCE_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmResourceFixtureEntry, NEVERD_WDM_RESOURCE_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_SEH_CFG_FIXTURE
+#define NEVERD_WDM_SEH_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmSehCfgFixtureEntry, NEVERD_WDM_SEH_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_SEH_FIXTURE
+#define NEVERD_WDM_SEH_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmSehFixtureEntry, NEVERD_WDM_SEH_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_STACK_CFG_FIXTURE
+#define NEVERD_WDM_STACK_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmStackCfgFixtureEntry, NEVERD_WDM_STACK_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_STACK_FIXTURE
+#define NEVERD_WDM_STACK_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmStackFixtureEntry, NEVERD_WDM_STACK_FIXTURE)
+#endif
+#ifdef NEVERD_PARITY_SCENARIO
+NEVERD_PARITY_SCENARIO(DriverDmaScenario, NeverdWdmDmaFixtureEntry,
+                       "driver-dma-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverDmaScenarioCfg, NeverdWdmDmaCfgFixtureEntry,
+                       "driver-dma-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverDmaChannelScenario,
+                       NeverdWdmDmaChannelFixtureEntry,
+                       "driver-dma-channel-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverDmaChannelScenarioCfg,
+                       NeverdWdmDmaChannelCfgFixtureEntry,
+                       "driver-dma-channel-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverPowerScenario, NeverdWdmPowerFixtureEntry,
+                       "driver-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverPowerScenarioCfg, NeverdWdmPowerCfgFixtureEntry,
+                       "driver-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmElevatedPowerScenario,
+                       NeverdWdmPowerFixtureEntry,
+                       "driver-wdm-elevated-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmElevatedPowerScenarioCfg,
+                       NeverdWdmPowerCfgFixtureEntry,
+                       "driver-wdm-elevated-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverRegisterBankScenario,
+                       NeverdWdmResourceFixtureEntry,
+                       "driver-register-bank-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverRegisterBankScenarioCfg,
+                       NeverdWdmResourceCfgFixtureEntry,
+                       "driver-register-bank-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverInterruptScenario, NeverdWdmInterruptFixtureEntry,
+                       "driver-interrupt-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverInterruptScenarioCfg,
+                       NeverdWdmInterruptCfgFixtureEntry,
+                       "driver-interrupt-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverNeitherScenario, NeverdWdmNeitherFixtureEntry,
+                       "driver-neither-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverNeitherScenarioCfg,
+                       NeverdWdmNeitherCfgFixtureEntry,
+                       "driver-neither-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverNestedUserScenario, NeverdWdmNeitherFixtureEntry,
+                       "driver-nested-user-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverNestedUserScenarioCfg,
+                       NeverdWdmNeitherCfgFixtureEntry,
+                       "driver-nested-user-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverSehScenario, NeverdWdmSehFixtureEntry,
+                       "driver-seh-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverSehScenarioCfg, NeverdWdmSehCfgFixtureEntry,
+                       "driver-seh-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfPowerPolicyScenario, NeverdKmdfPnpFixtureEntry,
+                       "driver-kmdf-power-policy-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfPowerPolicyScenarioCfg,
+                       NeverdKmdfPnpCfgFixtureEntry,
+                       "driver-kmdf-power-policy-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverD2PowerScenario, NeverdKmdfPnpFixtureEntry,
+                       "driver-d2-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverD2PowerScenarioCfg, NeverdKmdfPnpCfgFixtureEntry,
+                       "driver-d2-power-scenario.json")
+#endif
+#ifdef NEVERD_PARITY_VALUE
+NEVERD_PARITY_VALUE(MemoryLimit, 16 * 4096)
+NEVERD_PARITY_VALUE(InstructionLimit, 10000)
+NEVERD_PARITY_VALUE(LoopLimit, 256)
+NEVERD_PARITY_VALUE(TimeoutMilliseconds, 30000)
+NEVERD_PARITY_VALUE(RebasedAddress, 0x1a0000000ULL)
+#endif
+#ifdef NEVERD_PARITY_TEXT
+NEVERD_PARITY_TEXT(UnavailableFixture, "original driver fixture is unavailable")
+NEVERD_PARITY_TEXT(LoopImage, "loop.sys")
+NEVERD_PARITY_TEXT(Calls, "calls")
+NEVERD_PARITY_TEXT(ResultKey, "result")
+NEVERD_PARITY_TEXT(RebaseSuffix, "_Rebased")
+NEVERD_PARITY_TEXT(OriginalSuffix, "_Original")
+NEVERD_PARITY_TEXT(Separator, "_")
+NEVERD_PARITY_TEXT(Detail, "detail")
+#endif
+#ifdef NEVERD_PARITY_REPORT_METADATA
+NEVERD_PARITY_REPORT_METADATA("profile")
+NEVERD_PARITY_REPORT_METADATA("requested_backend")
+NEVERD_PARITY_REPORT_METADATA("selected_backend")
+NEVERD_PARITY_REPORT_METADATA("execution_contract")
+NEVERD_PARITY_REPORT_METADATA("backend_selection_reason")
+NEVERD_PARITY_REPORT_METADATA("diagnostic")
+NEVERD_PARITY_REPORT_METADATA("instructions")
+#endif
+
+#ifdef NEVERD_PARITY_TEXT
+NEVERD_PARITY_TEXT(
+    MissingRelocations,
+    "driver image: requested rebase requires unstripped DIR64 relocations")
+#endif
