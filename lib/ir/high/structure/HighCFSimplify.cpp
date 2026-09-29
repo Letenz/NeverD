@@ -2134,11 +2134,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     // Every (list, index) enclosing the site, outermost first.
     std::vector<std::pair<const std::vector<HighStmt> *, size_t>> Chain;
   };
-  auto prevNonNop = [](const std::vector<HighStmt> &L,
-                       size_t K) -> const HighStmt * {
+  // A no-op that a jump still enters falls through like any statement.
+  auto prevNonNop = [&](const std::vector<HighStmt> &L,
+                        size_t K) -> const HighStmt * {
     while (K > 0) {
       --K;
-      if (L[K].Kind != StmtKind::Nop)
+      if (L[K].Kind != StmtKind::Nop || labelStart(L, K))
         return &L[K];
     }
     return nullptr;
