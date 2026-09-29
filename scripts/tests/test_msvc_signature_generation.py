@@ -378,13 +378,35 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(asset.output, Path("elf/x86/64/ubuntu-libstdc++-12.pat"))
         self.assertEqual(asset.machine, "x64")
         for manifest in (
-            {"asset": "x", "kind": "library", "arch": "x64", "format": "macho",
+            {"asset": "x", "kind": "library", "arch": "x64", "format": "wasm",
              "library": "libz"},
             {"asset": "x", "kind": "toolset", "arch": "x64", "format": "elf",
              "visual_studio": {"year": 2026}},
         ):
             with self.subTest(manifest=manifest), self.assertRaises(BuildError):
                 _ = self._asset(manifest).output
+
+    def test_macho_libraries_are_filed_in_the_macho_tree(self) -> None:
+        asset = self._asset(
+            {"asset": "homebrew-zlib-arm64", "kind": "library", "arch": "arm64",
+             "format": "macho", "library": "homebrew-zlib", "library_version": "1.3.2",
+             "formula": "zlib", "archive": {"sha256": "ab"},
+             "bottles": [{"tag": "arm64_sequoia", "sha256": "cd", "libraries": 1,
+                          "stored": 1}]}
+        )
+        self.assertEqual(asset.output, Path("macho/arm/64/homebrew-zlib.pat"))
+        self.assertEqual(asset.machine, "arm64")
+        # The bottles the libraries came from, by the SHA-256 the registry
+        # serves each by.
+        provenance = asset.provenance()
+        self.assertEqual(provenance["formula"], "zlib")
+        self.assertEqual([bottle["sha256"] for bottle in provenance["bottles"]], ["cd"])
+        toolset = self._asset(
+            {"asset": "x", "kind": "toolset", "arch": "arm64", "format": "macho",
+             "visual_studio": {"year": 2026}}
+        )
+        with self.assertRaises(BuildError):
+            _ = toolset.output
 
 
 FAKE_SIGMAKER = textwrap.dedent(

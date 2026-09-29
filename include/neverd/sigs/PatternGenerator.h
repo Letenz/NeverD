@@ -81,23 +81,37 @@ struct PatternGeneratorStats {
   std::set<std::pair<uint16_t, uint16_t>> UnsupportedCOFFRelocations;
   /// (ELF machine, relocation type) pairs behind UnsupportedRelocation.
   std::set<std::pair<uint16_t, uint32_t>> UnsupportedELFRelocations;
+  /// (Mach-O CPU type, relocation type) pairs behind UnsupportedRelocation.
+  std::set<std::pair<uint32_t, uint32_t>> UnsupportedMachORelocations;
+  /// Functions left out because a Mach-O linker optimization hint names an
+  /// instruction in them that the linker may rewrite in ways unknown: the
+  /// hint's kind or CPU type is one machOOptimizationHintWidth does not know,
+  /// or the object's hints cannot be read.
+  unsigned UnsupportedHint = 0;
+  /// (Mach-O CPU type, hint kind) pairs behind UnsupportedHint.
+  std::set<std::pair<uint32_t, uint32_t>> UnsupportedMachOHints;
+  /// Mach-O objects whose linker optimization hints cannot be read; each of
+  /// their functions counts in UnsupportedHint.
+  unsigned UnreadableHints = 0;
 
   PatternGeneratorStats &operator+=(const PatternGeneratorStats &Other);
 };
 
-/// The bytes an ELF relocation may leave different in a linked image: its
-/// field, and the instruction bytes around it a linker may rewrite.
+/// The bytes a relocation may leave different in a linked image: its field,
+/// and the instruction bytes around it a linker may rewrite.
 ///
-/// A linker does more to ELF code than fill in fields. It relaxes GOT loads
-/// (`mov foo@GOTPCREL(%rip)` becomes `lea`, `call *foo@GOTPCREL(%rip)` a
-/// direct call), and in a static or executable link it replaces whole TLS
-/// access sequences. Such a relocation's footprint starts \p Before bytes
-/// ahead of the field and spans \p Before + \p Width bytes, the most any
-/// form of the instruction or sequence it marks takes.
-struct ELFRelocationFootprint {
+/// A linker does more to ELF and Mach-O code than fill in fields. It relaxes
+/// GOT loads (`mov foo@GOTPCREL(%rip)` becomes `lea`, `call
+/// *foo@GOTPCREL(%rip)` a direct call), and in a static or executable link an
+/// ELF linker replaces whole TLS access sequences. Such a relocation's
+/// footprint starts \p Before bytes ahead of the field and spans \p Before +
+/// \p Width bytes, the most any form of the instruction or sequence it marks
+/// takes.
+struct RelocationFootprint {
   unsigned Before = 0;
   unsigned Width = 0;
 };
+using ELFRelocationFootprint = RelocationFootprint;
 
 /// The footprint of an ELF relocation of \p Type in a relocatable object for
 /// \p Machine (an EM_* value): x86 and x86-64, ARM and AArch64. Markers that
@@ -107,10 +121,25 @@ struct ELFRelocationFootprint {
 std::optional<ELFRelocationFootprint> elfRelocationFootprint(uint16_t Machine,
                                                              uint32_t Type);
 
+/// The footprint of a Mach-O relocation of \p Type, whose r_length is
+/// \p Length, in an object for \p CPUType (a CPU_TYPE_* value): arm64 and
+/// x86-64. Returns std::nullopt for a CPU type or relocation type this table
+/// does not know.
+std::optional<RelocationFootprint>
+machORelocationFootprint(uint32_t CPUType, uint32_t Type, unsigned Length);
+
+/// The bytes of each instruction a Mach-O linker optimization hint of
+/// \p Kind names, all of which the linker may rewrite, in an object for
+/// \p CPUType (a CPU_TYPE_* value): the whole instruction on arm64, for the
+/// kinds llvm::MCLOHType lists. Returns std::nullopt for a CPU type or kind
+/// this table does not know.
+std::optional<unsigned> machOOptimizationHintWidth(uint32_t CPUType,
+                                                   uint32_t Kind);
+
 /// An architecture a signature file is made for; see TargetMachine.def.
 enum class TargetMachine {
 #define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
-                                   AddressBytes)                               \
+                                   AddressBytes, MachOCPUType)                 \
   Name,
 #include "neverd/sigs/TargetMachine.def"
 };
@@ -124,8 +153,9 @@ std::optional<TargetMachine> parseTargetMachine(llvm::StringRef Name);
 llvm::ArrayRef<llvm::StringLiteral> targetMachineNames();
 
 /// Whether \p Obj holds code for \p Machine: a COFF object of that machine,
-/// or an ELF object of its class and e_machine. An x32 object (ELFCLASS32
-/// with EM_X86_64) is not x64 code, and no other format matches.
+/// an ELF object of its class and e_machine, or a Mach-O object of its CPU
+/// type. An x32 object (ELFCLASS32 with EM_X86_64) is not x64 code, an
+/// arm64_32 object not arm64 code, and no other format matches.
 bool isObjectForMachine(const llvm::object::ObjectFile &Obj,
                         TargetMachine Machine);
 
@@ -147,7 +177,7 @@ size_t statedByteCount(llvm::ArrayRef<bool> Wildcard,
 /// Writes one .pat line for \p Data, the complete bytes of the function
 /// called \p Names -- one name, or every linkage name of a routine several
 /// symbols label, each at offset 0 -- where \p Wildcard marks the bytes
-/// relocations rewrite and \p References, sorted by offset, the routines it
+/// the linker may rewrite and \p References, sorted by offset, the routines it
 /// branches to. Returns false, writing nothing, when the function is shorter
 /// than Opts.MinFuncSize or its line would state fewer than
 /// SignatureMatcher::MinStatedBytes bytes exactly.
@@ -190,6 +220,16 @@ std::optional<uint64_t>
 elfBranchReferenceOffset(uint16_t Machine, uint32_t Type,
                          llvm::ArrayRef<uint8_t> Function, uint64_t Offset);
 
+/// Where a Mach-O relocation of \p Type states a direct branch, for objects
+/// of \p CPUType (a CPU_TYPE_* value): the offset a `^offset name` reference
+/// names, or std::nullopt.  That is an arm64 BRANCH26 instruction (B or BL),
+/// and on x86-64 a BRANCH field after an E8 or E9 opcode.  The function's
+/// bytes are \p Function and \p Offset is the relocation's offset in them;
+/// the branch must lie within them.
+std::optional<uint64_t>
+machOBranchReferenceOffset(uint32_t CPUType, uint32_t Type,
+                           llvm::ArrayRef<uint8_t> Function, uint64_t Offset);
+
 /// Adds the `/alternatename:symbol=alternate` directives of \p Obj's
 /// `.drectve` sections to \p Names, if it is a COFF object.
 void collectAlternateNames(
@@ -204,13 +244,18 @@ void collectAlternateNames(
 /// symbols such as MSVC's `$LN` jump targets do not end it. Relocation widths
 /// come from coffRelocationWidth. In ELF and Mach-O objects every function
 /// symbol is a function, ending at the next symbol of any kind in its
-/// section. An ELF object keeps its relocations in sections of their own,
-/// each naming the section it applies to; their footprints come from
-/// elfRelocationFootprint. An ELF function ends earlier where its symbol's
-/// size says so, before the padding that aligns the next one. The ELF
-/// function symbols that label one address are one routine's aliases and
-/// share one line, their names in preferredAliasOrder. Mach-O relocations
-/// cover four bytes.
+/// section; the function symbols that label one address are one routine's
+/// aliases and share one line, their names in preferredAliasOrder. An ELF
+/// object keeps its relocations in sections of their own, each naming the
+/// section it applies to; their footprints come from elfRelocationFootprint.
+/// An ELF function ends earlier where its symbol's size says so, before the
+/// padding that aligns the next one. A Mach-O object's relocations have the
+/// footprints machORelocationFootprint gives, and a function holding one it
+/// does not know -- any of a CPU type other than arm64 and x86-64 -- is left
+/// out. Each instruction a Mach-O linker optimization hint names is left
+/// unstated too, as machOOptimizationHintWidth says, and a function holding
+/// one it does not know is left out. In an object of any other format every
+/// relocation covers four bytes.
 PatternGeneratorStats generatePatterns(const llvm::object::ObjectFile &Obj,
                                        const PatternGeneratorOptions &Opts,
                                        llvm::raw_ostream &OS);

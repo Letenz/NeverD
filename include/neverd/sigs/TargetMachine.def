@@ -7,10 +7,10 @@
 /// \file
 /// The architectures a signature file is made for: the name neverd-sigmaker's
 /// `--machine` gives each, and the objects that hold its code -- COFF objects
-/// of the COFF machine, and ELF objects of the ELF machine whose addresses
-/// are AddressBytes long.  A consumer defines
-/// NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,
-/// AddressBytes) before including this file.
+/// of the COFF machine, ELF objects of the ELF machine whose addresses are
+/// AddressBytes long, and Mach-O objects of the Mach-O CPU type.  A consumer
+/// defines NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,
+/// AddressBytes, MachOCPUType) before including this file.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -18,11 +18,15 @@
 #error "Define NEVERD_SIGS_TARGET_MACHINE before including this file"
 #endif
 
-NEVERD_SIGS_TARGET_MACHINE(X86, "x86", IMAGE_FILE_MACHINE_I386, EM_386, 4)
+NEVERD_SIGS_TARGET_MACHINE(X86, "x86", IMAGE_FILE_MACHINE_I386, EM_386, 4,
+                           CPU_TYPE_I386)
 // An x32 object (ELFCLASS32 with EM_X86_64) is not x64 code.
-NEVERD_SIGS_TARGET_MACHINE(X64, "x64", IMAGE_FILE_MACHINE_AMD64, EM_X86_64, 8)
-NEVERD_SIGS_TARGET_MACHINE(ARM, "arm", IMAGE_FILE_MACHINE_ARMNT, EM_ARM, 4)
+NEVERD_SIGS_TARGET_MACHINE(X64, "x64", IMAGE_FILE_MACHINE_AMD64, EM_X86_64, 8,
+                           CPU_TYPE_X86_64)
+NEVERD_SIGS_TARGET_MACHINE(ARM, "arm", IMAGE_FILE_MACHINE_ARMNT, EM_ARM, 4,
+                           CPU_TYPE_ARM)
+// An arm64_32 object (CPU_TYPE_ARM64_32) is not arm64 code.
 NEVERD_SIGS_TARGET_MACHINE(ARM64, "arm64", IMAGE_FILE_MACHINE_ARM64, EM_AARCH64,
-                           8)
+                           8, CPU_TYPE_ARM64)
 
 #undef NEVERD_SIGS_TARGET_MACHINE

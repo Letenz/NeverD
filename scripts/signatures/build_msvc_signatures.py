@@ -96,7 +96,7 @@ ARCHITECTURES = {
 }
 
 # The object formats an asset's libraries hold, each a tree of its own.
-FORMATS = ("pe", "elf")
+FORMATS = ("pe", "elf", "macho")
 
 # MSVC's archives and objects, and the GNU ar archives and objects MinGW
 # builds: both hold COFF objects, which --machine sorts by architecture.
@@ -183,8 +183,11 @@ class Asset:
             "kind": self.manifest["kind"],
             "arch": self.arch,
         }
+        # A Homebrew asset also names its formula and bottles: the registry
+        # serves each bottle by the SHA-256 recorded here, so the file traces
+        # back to them without the release.
         for key in ("toolset_version", "compiler_version", "windows_sdk_version",
-                    "library_version"):
+                    "library_version", "formula", "bottles"):
             if self.manifest.get(key):
                 entry[key] = self.manifest[key]
         return entry
