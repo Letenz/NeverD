@@ -1486,6 +1486,7 @@ add_custom_target(NeverDWindowsEHSyntheticCorpus
 add_neverd_unittest(NeverDLanguageEHTests
   language/LanguageEHTests.cpp
   language/LanguageEHDirectBranchTests.cpp
+  language/DirectBranchDecodeTests.cpp
   language/LanguageEHItaniumSJLJTests.cpp
   language/LanguageEHItaniumTests.cpp
   language/LanguageEHRuntimeTests.cpp
