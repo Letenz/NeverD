@@ -242,7 +242,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       for (int8_t I = 0; I < Count; ++I) {
         const uint8_t Width = R->second[Win64Args[I] / 8];
         if (Width == 0) {
-          MOp.addInput(MedVar::makeConst(0, 8));
+          MOp.addInput(
+              MedVar::makeConst(0, getTargetRegInfo(TargetArch).PointerSize));
           continue;
         }
         const uint16_t Size = Width <= 1   ? 1
