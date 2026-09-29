@@ -6,7 +6,9 @@
 #ifndef NEVERD_EMULATION_AARCH64_MACHINE_H
 #define NEVERD_EMULATION_AARCH64_MACHINE_H
 #include "../../core/MemoryLayout.h"
-#include "../../core/PhysicalMemory.h"
+#include "../../core/MemoryProjection.h"
+
+#include "neverd/emulation/Registers.h"
 
 #include <chrono>
 namespace neverd::emulation {
@@ -21,6 +23,12 @@ inline constexpr uint32_t Maintenance[] = {
 #undef NEVERD_AARCH64_MAINTENANCE
 };
 inline bool canonical(uint64_t A) { return A <= UserMax || A >= KernelMin; }
+inline bool canonicalRange(uint64_t Address, uint64_t Size) {
+  return Size && Size - 1 <= UINT64_MAX - Address && canonical(Address) &&
+         canonical(Address + Size - 1) &&
+         ((Address <= UserMax) == (Address + Size - 1 <= UserMax)) &&
+         (Address >= InternalEnd || Address + Size - 1 < InternalBegin);
+}
 } // namespace aarch64
 struct AArch64MachineState {
   std::array<uint64_t, unsigned(AArch64Register::FPSR) + 1> Registers{};
@@ -35,8 +43,8 @@ public:
   virtual llvm::Error step(AArch64MachineState &State,
                            std::chrono::steady_clock::time_point Deadline) = 0;
 };
-llvm::Error buildAArch64PageTables(PhysicalMemory &Memory);
+llvm::Error buildAArch64PageTables(MemoryProjection &Memory);
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
-                                 PhysicalMemory &Memory);
+                                 MemoryProjection &Memory);
 } // namespace neverd::emulation
 #endif

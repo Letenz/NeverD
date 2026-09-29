@@ -22,21 +22,22 @@ namespace {
 class AArch64Projection : public testing::Test {
 protected:
   uc_engine *CPU = nullptr;
-  std::unique_ptr<PhysicalMemory> Memory;
+  std::unique_ptr<MemoryProjection> Memory;
   void TearDown() override {
     if (CPU)
       uc_close(CPU);
   }
   void SetUp() override {
-    auto M = PhysicalMemory::create(Limit);
+    auto M = MemoryProjection::create(Limit);
     ASSERT_TRUE(bool(M));
     Memory = std::move(*M);
     ASSERT_EQ(uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &CPU), UC_ERR_OK);
     // Exercise architectural stage-one translation, not Unicorn's virtual TLB.
     ASSERT_EQ(uc_ctl_tlb_mode(CPU, UC_TLB_CPU), UC_ERR_OK);
-    ASSERT_EQ(
-        uc_mem_map_ptr(CPU, 0, Memory->size(), UC_PROT_ALL, Memory->data()),
-        UC_ERR_OK);
+    for (const auto &Mapping : Memory->registrations())
+      ASSERT_EQ(uc_mem_map_ptr(CPU, Mapping.Physical, Mapping.Size, UC_PROT_ALL,
+                               Mapping.Backing),
+                UC_ERR_OK);
     ASSERT_EQ(
         llvm::toString(Memory->map(Code, PageSize, Read | Write | Execute)),
         "");

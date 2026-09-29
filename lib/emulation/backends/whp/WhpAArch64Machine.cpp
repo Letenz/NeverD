@@ -150,7 +150,7 @@ public:
 };
 } // namespace
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createWhpAArch64Machine(PhysicalMemory &Memory) {
+createWhpAArch64Machine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpAArch64Machine>();
   if (auto E = M->API.load())
     return E;
@@ -192,11 +192,12 @@ createWhpAArch64Machine(PhysicalMemory &Memory) {
           sizeof(P))) ||
       FAILED(M->API.WHvSetupPartition(M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
-  if (FAILED(M->API.WHvMapGpaRange(
-          M->Partition, Memory.data(), 0, Memory.size(),
-          WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
-              WHvMapGpaRangeFlagExecute)))
-    return diagnostic::error(diagnostic::WhpMap);
+  for (const auto &Mapping : Memory.registrations())
+    if (FAILED(M->API.WHvMapGpaRange(
+            M->Partition, Mapping.Backing, Mapping.Physical, Mapping.Size,
+            WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
+                WHvMapGpaRangeFlagExecute)))
+      return diagnostic::error(diagnostic::WhpMap);
   if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_REGISTER_NAME Name = WHvArm64RegisterGicrBaseGpa;
@@ -214,7 +215,7 @@ createWhpAArch64Machine(PhysicalMemory &Memory) {
 #else
 namespace neverd::emulation {
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createWhpAArch64Machine(PhysicalMemory &) {
+createWhpAArch64Machine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::Unavailable);
 }
 } // namespace neverd::emulation

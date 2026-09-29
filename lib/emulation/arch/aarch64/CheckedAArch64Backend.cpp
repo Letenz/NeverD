@@ -34,17 +34,16 @@ bool scalarRegister(unsigned Register) {
 }
 } // namespace
 bool CheckedAArch64Backend::canonicalRange(uint64_t A, uint64_t N) const {
-  return N && N - 1 <= UINT64_MAX - A && aarch64::canonical(A) &&
-         aarch64::canonical(A + N - 1) &&
-         ((A <= aarch64::UserMax) == (A + N - 1 <= aarch64::UserMax)) &&
-         (A >= aarch64::InternalEnd || A + N <= aarch64::InternalBegin);
+  return aarch64::canonicalRange(A, N);
 }
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
-CheckedAArch64Backend::create(std::unique_ptr<PhysicalMemory> Memory,
+CheckedAArch64Backend::create(std::unique_ptr<MemoryProjection> Memory,
                               std::unique_ptr<AArch64Machine> Machine) {
   auto B = std::unique_ptr<CheckedAArch64Backend>(new CheckedAArch64Backend());
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
+  if (auto E = B->Memory->validateMappings(aarch64::canonicalRange))
+    return E;
   if (auto E = B->initializeDecoder(CS_ARCH_AARCH64, CS_MODE_ARM))
     return E;
   return std::unique_ptr<ExecutionBackend>(std::move(B));
@@ -82,27 +81,31 @@ CheckedAArch64Backend::saveContext() {
     return error(diagnostic::Faulted);
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
+  S->Space = addressSpace();
   S->CPU = CPU;
-  return std::unique_ptr<BackendContext>(new BackendContext(std::move(S)));
+  return makeContext(std::move(S));
 }
 llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
-  if (!C.State || C.State->Owner.expired())
+  if (!contextStorage(C) || contextStorage(C)->Owner.expired())
     return error(diagnostic::ContextExpired);
-  if (C.State->Owner.lock() != Identity)
+  if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
-  static_cast<SavedState &>(*C.State).CPU = CPU;
+  contextStorage(C)->Space = addressSpace();
+  static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
 }
 llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
-  if (!C.State || C.State->Owner.expired())
+  if (!contextStorage(C) || contextStorage(C)->Owner.expired())
     return error(diagnostic::ContextExpired);
-  if (C.State->Owner.lock() != Identity)
+  if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
   if (auto E = mutableMemory())
     return E;
-  CPU = static_cast<const SavedState &>(*C.State).CPU;
+  if (contextStorage(C)->Space.lock() != addressSpace())
+    return error(diagnostic::ContextSpace);
+  CPU = static_cast<const SavedState &>(*contextStorage(C)).CPU;
   TimedOut = false;
   return llvm::Error::success();
 }

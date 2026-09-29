@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
@@ -77,8 +78,8 @@ public:
   }
 };
 } // namespace
-llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
-                                                             uint64_t Size) {
+llvm::Expected<std::unique_ptr<X64Machine>>
+createWhpMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpMachine>();
   if (auto E = M->API.load())
     return E;
@@ -111,11 +112,12 @@ llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
           sizeof(P))) ||
       FAILED(M->API.WHvSetupPartition(M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
-  if (FAILED(M->API.WHvMapGpaRange(M->Partition, Backing, 0, Size,
-                                   WHvMapGpaRangeFlagRead |
-                                       WHvMapGpaRangeFlagWrite |
-                                       WHvMapGpaRangeFlagExecute)))
-    return diagnostic::error(diagnostic::WhpMap);
+  for (const auto &Mapping : Memory.registrations())
+    if (FAILED(M->API.WHvMapGpaRange(
+            M->Partition, Mapping.Backing, Mapping.Physical, Mapping.Size,
+            WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
+                WHvMapGpaRangeFlagExecute)))
+      return diagnostic::error(diagnostic::WhpMap);
   if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
     return diagnostic::error(diagnostic::WhpCreate);
   return std::unique_ptr<X64Machine>(std::move(M));
@@ -124,8 +126,8 @@ llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
 #else
 
 namespace neverd::emulation {
-llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *,
-                                                             uint64_t) {
+llvm::Expected<std::unique_ptr<X64Machine>>
+createWhpMachine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::Unavailable);
 }
 } // namespace neverd::emulation
