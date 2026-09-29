@@ -89,6 +89,8 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body);
 /// A loop whose body never reaches its end and has no break or continue
 /// runs its body once: the body replaces the loop.
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);
+/// Run the join-default sink of structureIfElse again on the late tree.
+bool sinkJoinDefaultsLate(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

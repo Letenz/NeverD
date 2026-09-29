@@ -35,6 +35,7 @@
 #include "neverd/sigs/PatternParser.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/Magic.h"
@@ -60,20 +61,24 @@ static cl::opt<std::string> OutputFile("o", cl::desc("Output .pat file"));
 static cl::opt<std::string> LibName("name", cl::desc("Library name tag"),
                                     cl::init(""));
 static cl::opt<unsigned>
-    LeadingLen("leading", cl::desc("Leading pattern bytes"), cl::init(32));
+    LeadingLen("leading", cl::desc("Leading pattern bytes"),
+               cl::init(PatternGeneratorOptions().LeadingLen));
 static cl::opt<unsigned>
-    MinFuncSize("min-size", cl::desc("Minimum function size"), cl::init(4));
+    MinFuncSize("min-size", cl::desc("Minimum function size"),
+                cl::init(PatternGeneratorOptions().MinFuncSize));
 static cl::opt<unsigned>
     TailLen("tail",
             cl::desc("Trailing pattern bytes to emit after the CRC span; "
                      "0 emits none, a value at least as large as the function "
                      "covers it to its end"),
-            cl::init(0));
-static cl::opt<std::string>
-    Machine("machine",
-            cl::desc("Keep only COFF and ELF objects for this architecture "
-                     "(x86, x64, arm, arm64); others are skipped and counted"),
-            cl::init(""));
+            cl::init(PatternGeneratorOptions().TailLen));
+/// The names --machine takes, as its help and its diagnostic list them.
+static const std::string MachineNames = join(targetMachineNames(), ", ");
+static const std::string MachineHelp =
+    "Keep only COFF and ELF objects for this architecture (" + MachineNames +
+    "); others are skipped and counted";
+static cl::opt<std::string> Machine("machine", cl::desc(MachineHelp),
+                                    cl::init(""));
 static cl::opt<bool> References(
     "references",
     cl::desc("State the routines each COFF or ELF function branches to "
@@ -186,7 +191,7 @@ int main(int Argc, char *Argv[]) {
     Required = parseTargetMachine(Machine);
     if (!Required) {
       WithColor::error() << "unknown --machine '" << Machine
-                         << "'; expected x86, x64, arm, or arm64\n";
+                         << "'; expected one of " << MachineNames << "\n";
       return 1;
     }
   }

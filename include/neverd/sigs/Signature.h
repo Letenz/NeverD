@@ -25,6 +25,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -33,6 +34,18 @@
 
 namespace neverd {
 namespace sigs {
+
+/// The sizes and bounds signature parsing and matching work with.
+struct SignatureLimits {
+#define NEVERD_SIGS_LIMIT(Name, Value) static constexpr size_t Name = Value;
+#include "neverd/sigs/SignatureLimits.def"
+};
+
+/// The characters of linkage names and linker inputs.
+struct LinkerSyntax {
+#define NEVERD_SIGS_SYNTAX_CHAR(Name, Value) static constexpr char Name = Value;
+#include "neverd/sigs/LinkerSyntax.def"
+};
 
 struct PatternByte {
   uint8_t Value = 0;
@@ -104,7 +117,7 @@ struct StoredModule {
   uint8_t CRCLen = 0;
 
   bool isStated(size_t Byte) const {
-    return (Stated[Byte / 8] >> (Byte % 8)) & 1;
+    return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;
   }
   llvm::ArrayRef<StoredName> publicNames() const {
     return {Names, PublicNameCount};
@@ -131,7 +144,8 @@ struct PatternNames {
 inline bool preferredAliasOrder(std::string_view A, std::string_view B) {
   auto Underscores = [](std::string_view Name) {
     size_t Count = 0;
-    while (Count < Name.size() && Name[Count] == '_')
+    while (Count < Name.size() &&
+           Name[Count] == LinkerSyntax::ReservedNamePrefix)
       ++Count;
     return Count;
   };

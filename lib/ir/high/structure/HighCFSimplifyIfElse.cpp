@@ -3189,12 +3189,11 @@ static JoinWriteFlow joinWriteFlow(const std::vector<HighStmt> &Body,
     }
     if (!stmtFallsThrough(S))
       return {};
-    // A constant is join clutter that coverVarFallthrough steps over.
     walkStatementTree(S, [&](const HighStmt &T) {
       MedVar Dest;
       ExprPtr Val;
       if (isValueAssign(T, Dest, Val) && Val && sameJoinDest(Dest, V) &&
-          Val->Kind != ExprKind::Undef && Val->Kind != ExprKind::Const)
+          Val->Kind != ExprKind::Undef)
         Flow.Written = true;
     });
   }
@@ -3240,17 +3239,36 @@ static bool armIsJoinClobber(const std::vector<HighStmt> &Arm) {
   return std::all_of(Arm.begin(), Arm.end(), stmtIsJoinClobber);
 }
 
-static void coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
-                                const ExprPtr &Def, va_t Join = 0) {
+static bool coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
+                                const ExprPtr &Def, va_t Join) {
+  // True when every path that runs past the end has assigned V: no
+  // default is needed there. False when some did and some did not.
+  auto EndCovered = [&] {
+    return !joinWriteFlow(Body, V, {true, false}).Clean;
+  };
+  // Any value the path leaves in V, a constant too, is its join value.
+  auto AssignsV = [&](const HighStmt &S) {
+    MedVar Dest;
+    ExprPtr Val;
+    return isValueAssign(S, Dest, Val) && Val && sameJoinDest(Dest, V) &&
+           Val->Kind != ExprKind::Undef;
+  };
+  auto TreeAssignsV = [&](const std::vector<HighStmt> &Stmts) {
+    bool Assigns = false;
+    for (const HighStmt &S : Stmts)
+      walkStatementTree(S, [&](const HighStmt &T) { Assigns |= AssignsV(T); });
+    return Assigns;
+  };
   size_t End = Body.size();
   while (End > 0 &&
-         (isSkippablePad(Body[End - 1]) || isJoinClutter(Body[End - 1], V) ||
+         (isSkippablePad(Body[End - 1]) ||
+          (isJoinClutter(Body[End - 1], V) && !AssignsV(Body[End - 1])) ||
           (Join && Body[End - 1].Kind == StmtKind::Goto &&
            Body[End - 1].GotoTarget == Join)))
     --End;
   if (End == 0) {
     Body.push_back(makeVarAssign(V, Def));
-    return;
+    return true;
   }
   HighStmt &Last = Body[End - 1];
   bool PrefixWrites = false;
@@ -3265,31 +3283,39 @@ static void coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
         Last.ElseBody.clear();
         Last.Kind = StmtKind::If;
       }
-      return;
+      return EndCovered();
     }
-    if (Last.Body.empty() || armIsJoinClobber(Last.Body) ||
-        bodyIsSkipGoto(Last.Body))
-      return;
-    coverVarFallthrough(Last.Body, V, Def, Join);
+    // An arm that jumps away or leaves V alone: every path falling out of
+    // the if still needs the default, which then runs after it.
+    if (Last.Body.empty() || bodyIsSkipGoto(Last.Body) ||
+        (armIsJoinClobber(Last.Body) && !TreeAssignsV(Last.Body))) {
+      Body.push_back(makeVarAssign(V, Def));
+      return true;
+    }
+    if (!coverVarFallthrough(Last.Body, V, Def, Join))
+      return false;
     Last.Kind = StmtKind::IfElse;
     Last.ElseBody = {makeVarAssign(V, Def)};
-    return;
+    return true;
   }
   if (Last.Kind == StmtKind::IfElse) {
     if (PrefixWrites)
-      return;
-    coverVarFallthrough(Last.Body, V, Def, Join);
-    coverVarFallthrough(Last.ElseBody, V, Def, Join);
-    return;
+      return EndCovered();
+    return coverVarFallthrough(Last.Body, V, Def, Join) &&
+           coverVarFallthrough(Last.ElseBody, V, Def, Join);
   }
   MedVar Dest;
   ExprPtr Val;
   if (isValueAssign(Last, Dest, Val) && sameJoinDest(Dest, V))
-    return;
-  for (size_t K = 0; K < End; ++K)
-    if (treeWritesJoinDest(Body[K], V))
-      return;
+    return true;
+  // A write elsewhere in the arm covers only the paths it lies on.
+  const JoinWriteFlow AtEnd = joinWriteFlow(Body, V, {true, false});
+  if (!AtEnd.Clean)
+    return true;
+  if (AtEnd.Written)
+    return false;
   Body.push_back(makeVarAssign(V, Def));
+  return true;
 }
 
 static bool stmtHasCallOrStore(const HighStmt &S) {
@@ -3572,9 +3598,11 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     while (I < Body.size()) {
       MedVar Cur;
       ExprPtr Val;
+      // A constant is a default only for a join jumps name (`v = 0;` after
+      // `if (..) { v = x; goto J; }`); otherwise it is register clutter.
       if (isValueAssign(Body[I], Cur, Val) && Val &&
           Val->Kind != ExprKind::Undef && Val->Kind != ExprKind::Load &&
-          Val->Kind != ExprKind::Const) {
+          (Val->Kind != ExprKind::Const || Join)) {
         size_t J = I + 1;
         while (J < Body.size() && isJoinClutter(Body[J], Cur) &&
                (!Join || Body[J].Addr != Join))
@@ -3648,28 +3676,60 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
       continue;
     if (treeHasSameAssign(Prev, Dest, Def))
       continue;
+    // Rewrite a copy: the default can only move when every path that falls
+    // out of the arms without a value can take it.
+    HighStmt Next = Prev;
     if (HasJoinIncoming) {
-      retargetIncomingBeforeJoinGotos(Prev.Body, Join, Dest);
-      retargetIncomingBeforeJoinGotos(Prev.ElseBody, Join, Dest);
-      retargetJoinAssigns(Prev.Body, Dest);
-      retargetJoinAssigns(Prev.ElseBody, Dest);
-      stripAssignGotoJoin(Prev.Body, Dest, Join);
-      stripAssignGotoJoin(Prev.ElseBody, Dest, Join);
+      retargetIncomingBeforeJoinGotos(Next.Body, Join, Dest);
+      retargetIncomingBeforeJoinGotos(Next.ElseBody, Join, Dest);
+      retargetJoinAssigns(Next.Body, Dest);
+      retargetJoinAssigns(Next.ElseBody, Dest);
+      stripAssignGotoJoin(Next.Body, Dest, Join);
+      stripAssignGotoJoin(Next.ElseBody, Dest, Join);
     }
-    if (Prev.Kind == StmtKind::If) {
-      coverVarFallthrough(Prev.Body, Dest, Def, Join);
-      Prev.Kind = StmtKind::IfElse;
+    if (!coverVarFallthrough(Next.Body, Dest, Def, Join))
+      continue;
+    if (Next.Kind == StmtKind::If) {
+      Next.Kind = StmtKind::IfElse;
       HighStmt Else = makeVarAssign(Dest, Def);
       Else.Addr = Body[DefI].Addr;
-      Prev.ElseBody = {std::move(Else)};
-    } else {
-      coverVarFallthrough(Prev.Body, Dest, Def, Join);
-      coverVarFallthrough(Prev.ElseBody, Dest, Def, Join);
+      Next.ElseBody = {std::move(Else)};
+    } else if (!coverVarFallthrough(Next.ElseBody, Dest, Def, Join)) {
+      continue;
     }
+    Prev = std::move(Next);
     Body.erase(Body.begin() + static_cast<long>(DefI));
     Changed = true;
     break;
   }
+  return Changed;
+}
+
+bool sinkJoinDefaultsLate(HighFunc &Func) {
+  // Late rewrites leave new `if (..) { v = x; goto J; } v = d; J:` shapes
+  // after structureIfElse has run; give the same sink another look.
+  const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  IfElseFunctionBody = &Func.Body;
+  struct RestoreBody {
+    const std::vector<HighStmt> *Saved;
+    ~RestoreBody() { IfElseFunctionBody = Saved; }
+  } Restore{SavedBody};
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (int Sinks = 0; Sinks < 32 && sinkJoinDefaultAssign(L); ++Sinks)
+          Changed = true;
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Func.Body);
   return Changed;
 }
 

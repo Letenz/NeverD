@@ -49,9 +49,9 @@ namespace sigs {
 
 struct PatternGeneratorOptions {
   /// Bytes stated one by one before the CRC span.
-  unsigned LeadingLen = 32;
+  unsigned LeadingLen = SignatureLimits::DefaultLeadingBytes;
   /// Functions shorter than this are not written.
-  unsigned MinFuncSize = 4;
+  unsigned MinFuncSize = SignatureLimits::DefaultMinFunctionBytes;
   /// Bytes stated one by one after the CRC span. A value at least as large
   /// as a function covers it to its end.
   unsigned TailLen = 0;
@@ -107,12 +107,21 @@ struct ELFRelocationFootprint {
 std::optional<ELFRelocationFootprint> elfRelocationFootprint(uint16_t Machine,
                                                              uint32_t Type);
 
-/// An architecture a signature file is made for, as neverd-sigmaker's
-/// `--machine` names it.
-enum class TargetMachine { X86, X64, ARM, ARM64 };
+/// An architecture a signature file is made for; see TargetMachine.def.
+enum class TargetMachine {
+#define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
+                                   AddressBytes)                               \
+  Name,
+#include "neverd/sigs/TargetMachine.def"
+};
 
-/// The architecture `x86`, `x64`, `arm` or `arm64` names, or std::nullopt.
+/// The architecture neverd-sigmaker's `--machine` gives \p Name, or
+/// std::nullopt.
 std::optional<TargetMachine> parseTargetMachine(llvm::StringRef Name);
+
+/// The names `--machine` gives the architectures, in the order of
+/// TargetMachine.
+llvm::ArrayRef<llvm::StringLiteral> targetMachineNames();
 
 /// Whether \p Obj holds code for \p Machine: a COFF object of that machine,
 /// or an ELF object of its class and e_machine. An x32 object (ELFCLASS32

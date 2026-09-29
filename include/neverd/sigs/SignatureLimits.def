@@ -1,0 +1,47 @@
+//===- SignatureLimits.def - Sizes of signature matching --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The sizes and bounds signature parsing and matching work with.  A
+/// consumer defines NEVERD_SIGS_LIMIT(Name, Value) before including this
+/// file; neverd/sigs/Signature.h makes each a member of SignatureLimits.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SIGS_LIMIT
+#error "Define NEVERD_SIGS_LIMIT before including this file"
+#endif
+
+// The fewest bytes a module may state exactly and still identify a routine:
+// several instructions of one specific routine, which no unrelated function
+// reaches by coincidence.  Below that a pattern is mostly wildcards and
+// agrees with a great deal of code.
+NEVERD_SIGS_LIMIT(MinStatedBytes, 16)
+
+// A generated line states this many leading bytes one by one, as FLIRT's
+// lines do, and no function shorter than this has a line.
+NEVERD_SIGS_LIMIT(DefaultLeadingBytes, 32)
+NEVERD_SIGS_LIMIT(DefaultMinFunctionBytes, 4)
+
+// The matching index decides on the first bytes of the leading pattern, and
+// stops dividing a set of modules once it is small enough to verify each.
+NEVERD_SIGS_LIMIT(IndexedBytes, 32)
+NEVERD_SIGS_LIMIT(LeafCandidates, 64)
+
+// Pattern text is parsed in chunks small enough that one large file keeps
+// every worker busy, and large enough that a chunk is hundreds of lines.
+NEVERD_SIGS_LIMIT(ParseChunkBytes, 256 * 1024)
+
+// The index reads the modules' prefixes on the worker threads in blocks of
+// this many, and builds its subtrees on them from this many modules.
+NEVERD_SIGS_LIMIT(IndexBuildBlock, 4096)
+NEVERD_SIGS_LIMIT(ParallelIndexModules, 16384)
+
+// Matching checks the entries of an image on the worker threads in blocks of
+// this many.
+NEVERD_SIGS_LIMIT(MatchBlockEntries, 16)
+
+#undef NEVERD_SIGS_LIMIT

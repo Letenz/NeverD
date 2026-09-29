@@ -600,6 +600,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // protected range, not the value the function was entered with.
   std::map<int, std::vector<int>> SEHProtected;
   std::set<int> SEHTrackedIds;
+  std::set<int> SEHHandlerRoots;
   // The calling convention's callee-saved registers, which the unwinder
   // restores as well. The stack pointer has its own frame proof.
   auto IsNonvolatile = [&](const MedVar &V) {
@@ -754,6 +755,15 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         }
       }
       std::vector<MedOp> InitOps;
+      const bool IsSEHHandlerRoot =
+          Root != 0 &&
+          std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
+                      Func.Blocks[Root].ExceptionalPreds.end(),
+                      [](const ExceptionalEdge &E) {
+                        return E.Kind == ExceptionalEdgeKind::SEHHandler;
+                      });
+      if (IsSEHHandlerRoot)
+        SEHHandlerRoots.insert(Root);
       const bool IsItaniumEHRoot =
           !Func.Blocks[Root].ExceptionalPreds.empty() &&
           Func.ExceptionMetadata && Func.ExceptionMetadata->Itanium &&
@@ -790,6 +800,14 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
             Func.Blocks[Root].ExceptionalPreds.empty() && Root == 0)
           Input = MedVar::makeConst(0, Input.Size,
                                     ConstantAddressProvenance::Scalar);
+        // The unwinder enters an SEH handler with its own values in the
+        // flags and in the registers the calling convention does not
+        // preserve; EAX, the exception code, is defined separately.
+        if (IsSEHHandlerRoot &&
+            ((Input.Kind == MedVar::Reg && !TRI.isStackPointer(Input.RegOff) &&
+              !TRI.isFrameOrLinkReg(Input.RegOff) && !IsNonvolatile(Input)) ||
+             Input.Kind == MedVar::Flag))
+          Input = MedVar::makeUnspecified(Input.Size, TargetArch);
         Init.addInput(Input);
         if (Input.Kind == MedVar::Reg && Input.RegOff == TRI.StackPointer) {
           auto Offset = SEHFrameOffsets.find(Root);
@@ -1060,9 +1078,13 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
         continue;
       MedVar &In = Seed.Inputs[0];
-      if (!IsNonvolatile(In) || In.Id != Seed.Output.Id || In.SSAVer != 0 ||
-          WrittenInRange(In))
+      if (!IsNonvolatile(In) || In.Id != Seed.Output.Id || In.SSAVer != 0)
         continue;
+      // Written in the range, the value at the fault is not known.
+      if (WrittenInRange(In)) {
+        In = MedVar::makeUnspecified(In.Size, TargetArch);
+        continue;
+      }
       std::optional<int> Live;
       bool Same = true;
       for (int B : Blocks) {
@@ -1073,8 +1095,25 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         }
         Live = It->second;
       }
-      if (Same && Live && *Live > 0)
+      if (!Same || !Live)
+        In = MedVar::makeUnspecified(In.Size, TargetArch);
+      else if (*Live > 0)
         In.SSAVer = *Live;
+    }
+  }
+  // Without a proven protected range, a callee-saved register's value at
+  // the fault is not known either.
+  for (int Root : SEHHandlerRoots) {
+    if (SEHProtected.count(Root))
+      continue;
+    for (MedOp &Seed : Func.Blocks[Root].Ops) {
+      if (Seed.Addr != Func.Blocks[Root].StartAddr)
+        break;
+      if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
+        continue;
+      MedVar &In = Seed.Inputs[0];
+      if (IsNonvolatile(In) && In.Id == Seed.Output.Id && In.SSAVer == 0)
+        In = MedVar::makeUnspecified(In.Size, TargetArch);
     }
   }
 }

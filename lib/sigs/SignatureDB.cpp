@@ -39,6 +39,11 @@ using namespace neverd::sigs;
 
 namespace {
 
+#define NEVERD_SIGS_FILE_STRING(Name, Value)                                   \
+  constexpr llvm::StringLiteral Name(Value);
+#define NEVERD_SIGS_FILE_VALUE(Name, Value) constexpr unsigned Name = Value;
+#include "SignatureFiles.def"
+
 /// One source's pattern lines, parsed, and the bytes their modules keep.
 struct ParsedSource {
   std::vector<PatternChunk> Chunks;
@@ -118,7 +123,7 @@ const std::string &SignatureDB::libraryNameOf(size_t ModuleIndex) const {
 llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   auto Ext = Path.extension().string();
 
-  if (Ext == ".pat") {
+  if (Ext == PatternExtension) {
     SigSource Src;
     Src.Path = Path.string();
     Src.LibraryName = libraryName(Path);
@@ -211,7 +216,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
           "cannot inspect signature entry: " + It->path().string() + ": " +
               TypeError.message(),
           llvm::inconvertibleErrorCode());
-    if (IsRegular && It->path().extension() == ".pat")
+    if (IsRegular && It->path().extension() == PatternExtension.data())
       PatFiles.push_back(It->path());
     It.increment(EC);
     if (EC)
@@ -226,15 +231,17 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
 
 std::string SignatureDB::libraryName(const std::filesystem::path &File) {
   const std::string Stem = File.stem().string();
-  const size_t Dot = Stem.rfind(".part");
+  const size_t Dot = llvm::StringRef(Stem).rfind(PartMarker);
   if (Dot == std::string::npos || Dot == 0)
     return Stem;
-  const llvm::StringRef Number = llvm::StringRef(Stem).drop_front(Dot + 5);
-  unsigned Part = 0;
+  const llvm::StringRef Number =
+      llvm::StringRef(Stem).drop_front(Dot + PartMarker.size());
+  unsigned Part = 0, FirstDigit = 0;
   // Part 1 is the file under the library's own name; a part number is
   // written without leading zeros.
-  if (Number.empty() || Number.front() == '0' ||
-      Number.getAsInteger(10, Part) || Part < 2)
+  if (Number.getAsInteger(NameNumberRadix, Part) || Part < FirstNumberedPart ||
+      Number.take_front().getAsInteger(NameNumberRadix, FirstDigit) ||
+      FirstDigit == 0)
     return Stem;
   return Stem.substr(0, Dot);
 }
@@ -251,9 +258,11 @@ SignatureDB::selectForImage(const BinaryImage &Img,
   // "vs2026.pat" belongs to Visual Studio 2026; other names to no release.
   auto ReleaseOf = [](const std::filesystem::path &Path) {
     const std::string Stem = libraryName(Path);
+    llvm::StringRef Digits = Stem;
     unsigned Year = 0;
-    if (Stem.size() != 6 || llvm::StringRef(Stem).take_front(2) != "vs" ||
-        llvm::StringRef(Stem).drop_front(2).getAsInteger(10, Year))
+    if (!Digits.consume_front(ReleasePrefix) ||
+        Digits.size() != ReleaseYearDigits ||
+        Digits.getAsInteger(NameNumberRadix, Year))
       return 0u;
     return Year;
   };

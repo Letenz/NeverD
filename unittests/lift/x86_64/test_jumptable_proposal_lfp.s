@@ -748,4 +748,92 @@ jt_lfp_relative_direct_call_reentry_table:
         .long   jt_lfp_relative_direct_call_reentry_t3-jt_lfp_relative_direct_call_reentry_table
         .size   jt_lfp_relative_direct_call_reentry_table, .-jt_lfp_relative_direct_call_reentry_table
 
+// The same single masked dispatch, but case zero leaves through an indirect
+// call. A call returns to the next instruction; it cannot reach the indexed
+// LOAD, so the table stays proven.
+        .text
+        .globl  jt_lfp_relative_single_indirect_call
+        .type   jt_lfp_relative_single_indirect_call,@function
+jt_lfp_relative_single_indirect_call:
+        movl    %edi, %esi
+        andl    $3, %esi
+        leaq    jt_lfp_relative_single_indirect_call_table(%rip), %r10
+        movslq  (%r10,%rsi,4), %r8
+        addq    %r10, %r8
+        .globl  jt_lfp_relative_single_indirect_call_branch
+jt_lfp_relative_single_indirect_call_branch:
+        jmpq    *%r8
+jt_lfp_relative_single_indirect_call_t0:
+        testq   %rdx, %rdx
+        je      jt_lfp_relative_single_indirect_call_end
+        movl    $4, %esi
+        callq   *%rdx
+        retq
+jt_lfp_relative_single_indirect_call_t1:
+        movl    $1, %eax
+        retq
+jt_lfp_relative_single_indirect_call_t2:
+        movl    $2, %eax
+        retq
+jt_lfp_relative_single_indirect_call_t3:
+        movl    $3, %eax
+jt_lfp_relative_single_indirect_call_end:
+        retq
+        .size   jt_lfp_relative_single_indirect_call, .-jt_lfp_relative_single_indirect_call
+
+        .section .rodata.jt_lfp_relative_single_indirect_call,"a",@progbits
+        .p2align 2
+        .globl  jt_lfp_relative_single_indirect_call_table
+        .type   jt_lfp_relative_single_indirect_call_table,@object
+jt_lfp_relative_single_indirect_call_table:
+        .long   jt_lfp_relative_single_indirect_call_t0-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t1-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t2-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t3-jt_lfp_relative_single_indirect_call_table
+        .size   jt_lfp_relative_single_indirect_call_table, .-jt_lfp_relative_single_indirect_call_table
+
+// The same single masked dispatch, but case zero executes `__debugbreak()`.
+// The `int3` resumes at the decoded instruction behind it, so it is an
+// ordinary known successor and cannot reach the indexed LOAD.
+        .text
+        .globl  jt_lfp_relative_single_debugbreak
+        .type   jt_lfp_relative_single_debugbreak,@function
+jt_lfp_relative_single_debugbreak:
+        movl    %edi, %esi
+        andl    $3, %esi
+        leaq    jt_lfp_relative_single_debugbreak_table(%rip), %r10
+        movslq  (%r10,%rsi,4), %r8
+        addq    %r10, %r8
+        .globl  jt_lfp_relative_single_debugbreak_branch
+jt_lfp_relative_single_debugbreak_branch:
+        jmpq    *%r8
+jt_lfp_relative_single_debugbreak_t0:
+        movl    $4, %esi
+        .globl  jt_lfp_relative_single_debugbreak_trap
+jt_lfp_relative_single_debugbreak_trap:
+        int3
+        xorl    %eax, %eax
+        retq
+jt_lfp_relative_single_debugbreak_t1:
+        movl    $1, %eax
+        retq
+jt_lfp_relative_single_debugbreak_t2:
+        movl    $2, %eax
+        retq
+jt_lfp_relative_single_debugbreak_t3:
+        movl    $3, %eax
+        retq
+        .size   jt_lfp_relative_single_debugbreak, .-jt_lfp_relative_single_debugbreak
+
+        .section .rodata.jt_lfp_relative_single_debugbreak,"a",@progbits
+        .p2align 2
+        .globl  jt_lfp_relative_single_debugbreak_table
+        .type   jt_lfp_relative_single_debugbreak_table,@object
+jt_lfp_relative_single_debugbreak_table:
+        .long   jt_lfp_relative_single_debugbreak_t0-jt_lfp_relative_single_debugbreak_table
+        .long   jt_lfp_relative_single_debugbreak_t1-jt_lfp_relative_single_debugbreak_table
+        .long   jt_lfp_relative_single_debugbreak_t2-jt_lfp_relative_single_debugbreak_table
+        .long   jt_lfp_relative_single_debugbreak_t3-jt_lfp_relative_single_debugbreak_table
+        .size   jt_lfp_relative_single_debugbreak_table, .-jt_lfp_relative_single_debugbreak_table
+
         .section .note.GNU-stack,"",@progbits
