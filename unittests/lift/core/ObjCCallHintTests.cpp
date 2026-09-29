@@ -5605,6 +5605,164 @@ TEST(ObjCCallHints, DynamicFormatStubBindsEmptyAndProvenPointerTails) {
   EXPECT_FALSE(objcSelectorStubDynamicFormatSourceCallHint(Image, 0x1104));
 }
 
+TEST(ObjCCallHints, FastEnumerationObjectTailRequiresFreshPrivateState) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "WMFFeedContentSource";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.Selector = "saveGroupForNews:pageViews:date:inManagedObjectContext:";
+  Method.TypeEncoding = "v48@0:8@16@24@32@40";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+  const auto Receiver = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Receiver);
+  ASSERT_EQ(objcReceiverInstanceClassName(Image, *Receiver), "NSArray");
+  const auto Declaration = objcReceiverSourceTypeHint(
+      Image, "countByEnumeratingWithState:objects:count:", *Receiver);
+  ASSERT_TRUE(Declaration.Signature);
+
+  const auto Int = NdType::makeInt(8, false);
+  MedVar Stack;
+  Stack.Kind = MedVar::Reg;
+  Stack.Id = 100;
+  Stack.Size = 8;
+  Stack.RegOff = getTargetRegInfo(Arch::AArch64).StackPointer;
+  Stack.TheArch = Arch::AArch64;
+  MedVar Input;
+  Input.Kind = MedVar::Param;
+  Input.Id = 0;
+  Input.Size = 8;
+  Input.TheArch = Arch::AArch64;
+  MedVar Index = Input;
+  Index.Id = 1;
+  MedVar Count = Input;
+  Count.Kind = MedVar::Temp;
+  Count.Id = 2;
+  MedVar Pointer = Count;
+  Pointer.Id = 3;
+  MedVar Item = Count;
+  Item.Id = 4;
+  const auto FrameAt = [&](uint64_t Bytes) {
+    return HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(Stack, Int),
+                               HighExpr::makeConst(Bytes, 8));
+  };
+  const auto State = FrameAt(240);
+  const auto Buffer = FrameAt(128);
+  const auto PointerField = FrameAt(232);
+  auto Enumeration = HighExpr::makeCall(
+      "objc_msgSend", 0,
+      {HighExpr::makeVar(Input, NdType::makePtr(NdType::makeVoid())),
+       HighExpr::makeConst(0, 8), State, Buffer, HighExpr::makeConst(16, 8)});
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.Selector = "countByEnumeratingWithState:objects:count:";
+  Hint.Receiver = *Receiver;
+  Hint.Signature = *Declaration.Signature;
+  Enumeration->Type = Hint.Signature.ReturnType;
+  Enumeration->SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Enumeration, Image, {}));
+
+  HighFunc Function;
+  Function.Entry = 0x1200;
+  Function.FrameSize = 256;
+  Function.ReturnType = Int;
+  Function.Params = {{"input", NdType::makePtr(NdType::makeVoid())},
+                     {"index", Int}};
+  HighStmt Enumerate;
+  Enumerate.Kind = StmtKind::Assign;
+  Enumerate.Dst = HighExpr::makeVar(Count, Int);
+  Enumerate.Val = Enumeration;
+  HighStmt LoadPointer;
+  LoadPointer.Kind = StmtKind::Assign;
+  LoadPointer.Dst = HighExpr::makeVar(Pointer, Int);
+  LoadPointer.Val = HighExpr::makeLoad(PointerField, Int);
+  HighStmt LoadItem;
+  LoadItem.Kind = StmtKind::Assign;
+  LoadItem.Dst = HighExpr::makeVar(Item, Int);
+  LoadItem.Val = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Pointer, Int),
+                          HighExpr::makeBinop(NdOp::INT_LEFT,
+                                              HighExpr::makeVar(Index, Int),
+                                              HighExpr::makeConst(3, 8))),
+      Int);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Item, Int);
+  HighStmt NoItems;
+  NoItems.Kind = StmtKind::Return;
+  NoItems.RetVal = HighExpr::makeConst(0, 8);
+  HighStmt Nonempty;
+  Nonempty.Kind = StmtKind::IfElse;
+  Nonempty.Cond = HighExpr::makeVar(Count, Int);
+  Nonempty.Body = {LoadItem, Return};
+  Nonempty.ElseBody = {NoItems};
+  Function.Body = {Enumerate, LoadPointer, Nonempty};
+  auto Format = HighExpr::makeCall(
+      "format", 0,
+      {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+       HighExpr::makeConst(0, 8), HighExpr::makeVar(Item, Int)});
+  const auto Proved = [&](const HighFunc &Body, const BinaryImage &Source) {
+    VarKeyMap<std::vector<ExprPtr>> Definitions;
+    walkStmts(Body.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+        Definitions[varKey(S.Dst->Var)].push_back(S.Val);
+    });
+    return sdk::objc_binding_detail::provenFastEnumerationObjectLoads(
+        Body, Source, Definitions, *Format, 3);
+  };
+  EXPECT_TRUE(Proved(Function, Image).count(LoadItem.Val.get()));
+
+  auto Changed = Function;
+  Changed.Body = {Enumerate, LoadPointer, LoadItem, Return};
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  std::swap(Changed.Body[2].Body, Changed.Body[2].ElseBody);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body.erase(Changed.Body.begin());
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body.insert(Changed.Body.begin() + 2, LoadPointer);
+  Changed.Body[2].Dst = HighExpr::makeLoad(PointerField, Int);
+  Changed.Body[2].Val = HighExpr::makeConst(0, 8);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body.insert(Changed.Body.begin() + 2, LoadPointer);
+  Changed.Body[2].Dst = HighExpr::makeLoad(Buffer, Int);
+  Changed.Body[2].Val = HighExpr::makeConst(0, 8);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  std::swap(Changed.Body[0], Changed.Body[1]);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  HighStmt Escape;
+  Escape.Kind = StmtKind::Call;
+  Escape.CallExpr = HighExpr::makeCall("unknown", 0, {State});
+  Changed.Body[2].Body.insert(Changed.Body[2].Body.begin(), Escape);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  auto Unbound = std::make_shared<HighExpr>(*Enumeration);
+  Unbound->SourceCallHint.reset();
+  Changed.Body[0].Val = Unbound;
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  auto NoFoundation = Image;
+  NoFoundation.DynInfo.NeededLibs.clear();
+  EXPECT_TRUE(Proved(Function, NoFoundation).empty());
+}
+
 TEST(ObjCCallHints, SelectorStubCommandProofRejectsUnverifiedCodeAndSlots) {
   for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
     SCOPED_TRACE(Mutation);
