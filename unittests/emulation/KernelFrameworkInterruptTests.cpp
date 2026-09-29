@@ -6,8 +6,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "KernelFrameworkTestSupport.h"
-#include "windows/KernelResources.h"
-#include "windows/KernelScheduler.h"
+#include "os/windows/KernelResources.h"
+#include "os/windows/KernelScheduler.h"
 
 namespace neverd::emulation {
 namespace {

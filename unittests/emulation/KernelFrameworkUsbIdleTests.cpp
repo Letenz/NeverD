@@ -3,8 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "DriverScenario.h"
 #include "KernelFrameworkTestSupport.h"
+#include "os/windows/DriverScenario.h"
 
 #include "neverd/emulation/DriverProfile.h"
 

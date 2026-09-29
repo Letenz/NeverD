@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/aarch64/AArch64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../MachineFactories.h"
 #if defined(__linux__) && defined(__aarch64__) && defined(NEVERD_EMULATION_KVM)
 #include "KvmVM.h"
 

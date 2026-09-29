@@ -38,11 +38,5 @@ public:
 llvm::Error buildAArch64PageTables(PhysicalMemory &Memory);
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
                                  PhysicalMemory &Memory);
-llvm::Expected<std::unique_ptr<AArch64Machine>>
-createKvmAArch64Machine(PhysicalMemory &Memory);
-llvm::Expected<std::unique_ptr<AArch64Machine>>
-createWhpAArch64Machine(PhysicalMemory &Memory);
-llvm::Expected<std::unique_ptr<AArch64Machine>>
-createUnicornAArch64Machine(PhysicalMemory &Memory);
 } // namespace neverd::emulation
 #endif

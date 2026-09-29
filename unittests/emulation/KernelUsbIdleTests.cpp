@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelUsbIdle.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/KernelUsbIdle.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include <limits>
 #include <utility>

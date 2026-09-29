@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_CORE_PHYSICALMEMORY_H
 #define NEVERD_EMULATION_CORE_PHYSICALMEMORY_H
-#include "ExecutionBackend.h"
+#include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/Memory.h"
 

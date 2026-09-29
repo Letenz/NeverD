@@ -512,7 +512,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 تستخدم `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` خيارات v1 وقواعد الملكية نفسها، مع إضافة إدخال سيناريو صارم. تُطلب سلسلة JSON غير NULL ومنتهية بـNUL. يبقى ABI الأصلي لـ`neverd_emulate_driver_json` دون تغيير، ومقتصرًا على التهيئة. يوفّر محلّل C++ المسمى `driverOptionsFromScenarioJSON` التحقق نفسه من السيناريو لمستدعي `emulateDriver`.
 
-نقطة الدخول الداخلية في C++ هي `neverd::emulation::emulateDriver` في `include/neverd/emulation/DriverSession.h`. تحليل الصيغ مسؤولية المحمّل الموجود؛ وسلوك كائنات/واجهات Windows مسؤولية `lib/emulation/windows`؛ وحالة المعالج وتنفيذه مسؤولية مهايئ Unicorn. يستخدم المهايئ والنموذج واجهة ذاكرة الضيف نفسها. لا ينتمي سلوك Windows API إلى تفريع Unicorn.
+نقطة الدخول الداخلية في C++ هي `neverd::emulation::emulateDriver` في `include/neverd/emulation/DriverSession.h`. تحليل الصيغ مسؤولية المحمّل الموجود؛ وسلوك كائنات/واجهات Windows مسؤولية `lib/emulation/os/windows`؛ وحالة المعالج وتنفيذه مسؤولية مهايئ Unicorn. يستخدم المهايئ والنموذج واجهة ذاكرة الضيف نفسها. لا ينتمي سلوك Windows API إلى تفريع Unicorn.
 
 في مسار WDM `METHOD_NEITHER`، يشير `Type3InputBuffer` و`IRP.UserBuffer` إلى تخصيصين منفصلين للمستخدم. يفحص `ProbeForRead` النطاق والمحاذاة دون لمس الصفحات، بينما يلمس `ProbeForWrite` كل صفحة. يكشف `ExGetPreviousMode` نمط الطلب. يثبّت `MmProbeAndLockPages` صفحات تخصيص مستخدم واحد، ويتيح `MmGetSystemAddressForMdlSafe` تعيينًا مشتركًا، ثم يزيل `MmUnlockPages` القفل والتعيين. لا تزال سياقات العمليات العامة غير ممثلة.
 

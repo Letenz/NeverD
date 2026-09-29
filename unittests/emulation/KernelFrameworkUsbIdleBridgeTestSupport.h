@@ -7,11 +7,11 @@
 #ifndef NEVERD_TESTS_KERNELFRAMEWORKUSBIDLEBRIDGETESTSUPPORT_H
 #define NEVERD_TESTS_KERNELFRAMEWORKUSBIDLEBRIDGETESTSUPPORT_H
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include <algorithm>
 

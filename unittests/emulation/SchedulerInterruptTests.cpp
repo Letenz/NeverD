@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelScheduler.h"
+#include "os/windows/KernelScheduler.h"
 
 #include <string>
 #include <utility>
@@ -124,10 +124,8 @@ TEST(DriverKernelScheduler, InterruptIdentityDoesNotAliasOtherCallbackKinds) {
 TEST(DriverKernelScheduler, InterruptBatchFailureDoesNotConsumeIdentities) {
   Scheduler S;
   const auto Original = take(S.enqueueInterrupt(interrupt(1)));
-  fails(S.canEnqueueInterrupts({interrupt(2), interrupt(2)}),
-        "already queued");
-  fails(S.canEnqueueInterrupts({interrupt(2), interrupt(1)}),
-        "already queued");
+  fails(S.canEnqueueInterrupts({interrupt(2), interrupt(2)}), "already queued");
+  fails(S.canEnqueueInterrupts({interrupt(2), interrupt(1)}), "already queued");
   EXPECT_EQ(S.queuedCallbackCount(), 1u);
   EXPECT_EQ(take(S.enqueueInterrupt(interrupt(2))), Original + 1);
   EXPECT_EQ(S.dispatchCount(), 0u);
@@ -185,8 +183,7 @@ TEST(DriverKernelScheduler, SharedBoundaryAdmitsISRBeforeSelectingTimerDPC) {
   }
 }
 
-TEST(DriverKernelScheduler,
-     WholeBoundaryCapacityFailurePreservesTimerAndTime) {
+TEST(DriverKernelScheduler, WholeBoundaryCapacityFailurePreservesTimerAndTime) {
   Scheduler::Limits Limits;
   Limits.MaxPendingCallbacks = 2;
   Scheduler S(Limits);

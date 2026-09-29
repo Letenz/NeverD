@@ -745,7 +745,7 @@ scénario aux appelants de `emulateDriver`.
 Le point d’entrée C++ interne est `neverd::emulation::emulateDriver` dans
 `include/neverd/emulation/DriverSession.h`. L’analyse du format appartient au
 chargeur existant ; le comportement des objets/API Windows appartient à
-`lib/emulation/windows` ; l’état CPU et l’exécution appartiennent à l’adaptateur
+`lib/emulation/os/windows` ; l’état CPU et l’exécution appartiennent à l’adaptateur
 Unicorn. L’adaptateur et le modèle utilisent la même interface de mémoire
 invitée. Aucun comportement d’API Windows n’a sa place dans le fork Unicorn.
 

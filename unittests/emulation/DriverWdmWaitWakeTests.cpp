@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_wdm_wait_wake_test.h"
 #include "gtest/gtest.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 
@@ -624,9 +624,9 @@ TEST(DriverWdmWaitWake, WakeEventsCannotBindToAFutureRearm) {
 #ifdef NEVERD_WDM_WAIT_WAKE_FIXTURE
   for (const auto *Image : images()) {
     auto Input = options();
-    Input.Requests.insert(Input.Requests.end(),
-                          {command(WdmWakeCancel), snapshot(true),
-                           command(WdmWakeRearm)});
+    Input.Requests.insert(
+        Input.Requests.end(),
+        {command(WdmWakeCancel), snapshot(true), command(WdmWakeRearm)});
     auto Result = emulateDriver(Image, Input);
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
     EXPECT_EQ(Result->Stop, DriverStopReason::ModelError);

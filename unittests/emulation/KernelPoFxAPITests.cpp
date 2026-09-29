@@ -10,11 +10,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include <array>
 
@@ -310,7 +310,7 @@ TEST_F(KernelPoFxAPI,
        CentralDispatchDeclaresTheCompleteSupportedArgumentCounts) {
 #define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL)                              \
   EXPECT_EQ(KernelModel::argumentCount(#Name), Arity);
-#include "windows/KernelPoFxAPIs.def"
+#include "os/windows/KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
 }
 

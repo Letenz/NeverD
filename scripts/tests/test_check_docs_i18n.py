@@ -131,7 +131,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 self.assertTrue(any(symbol in error for error in errors), errors)
 
     def test_driver_guide_tracks_new_dispatcher_exports_from_source(self) -> None:
-        path = Path("lib/emulation/windows/KernelDispatcherAPIs.def")
+        path = Path("lib/emulation/os/windows/KernelDispatcherAPIs.def")
         original = i18n.RepositoryView(use_index=False).read_text(path)
         changed = original + "\nNEVERD_KERNEL_DISPATCHER_API(KeFutureDispatcherAPI, 1)\n"
         errors: list[str] = []
@@ -156,13 +156,13 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
             ("KernelFrameworkLoaderAPIs.def", "NEVERD_FRAMEWORK_LOADER_API"),
         ):
             with self.subTest(inventory=inventory):
-                path = Path("lib/emulation/windows") / inventory
+                path = Path("lib/emulation/os/windows") / inventory
                 changed = view.read_text(path) + f"\n{macro}(WdfFutureModel, 1)\n"
                 errors: list[str] = []
                 i18n.validate_driver_documents(errors, _OverlayView({path: changed}))
                 self.assertTrue(any("WdfFutureModel" in error for error in errors), errors)
 
-        path = Path("lib/emulation/windows/KernelFrameworkFunctions.def")
+        path = Path("lib/emulation/os/windows/KernelFrameworkFunctions.def")
         changed = view.read_text(path) + "\nNEVERD_FRAMEWORK_FUNCTION(WdfUnmodeledIdentity, 459)\n"
         errors = []
         i18n.validate_driver_documents(errors, _OverlayView({path: changed}))

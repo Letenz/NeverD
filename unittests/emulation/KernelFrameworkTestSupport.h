@@ -13,13 +13,13 @@
 #ifndef NEVERD_UNITTESTS_EMULATION_KERNELFRAMEWORKTESTSUPPORT_H
 #define NEVERD_UNITTESTS_EMULATION_KERNELFRAMEWORKTESTSUPPORT_H
 
-#include "GuestMemory.h"
 #include "gtest/gtest.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelFramework.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelFramework.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
+#include "neverd/emulation/GuestMemory.h"
 
 #include <algorithm>
 #include <initializer_list>

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpPartition.h"

@@ -6,6 +6,7 @@
 #include "../../arch/aarch64/AArch64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/ExecutionLimits.h"
+#include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpPartition.h"

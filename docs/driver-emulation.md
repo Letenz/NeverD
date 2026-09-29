@@ -1078,7 +1078,7 @@ validation to callers of `emulateDriver`.
 
 The internal C++ entry point is `neverd::emulation::emulateDriver` in
 `include/neverd/emulation/DriverSession.h`. Format parsing belongs to the
-existing loader; Windows object/API behavior belongs to `lib/emulation/windows`;
+existing loader; Windows object/API behavior belongs to `lib/emulation/os/windows`;
 CPU state and execution belong to the Unicorn adapter. The adapter and model
 use the same guest-memory interface. No Windows API behavior belongs in the
 Unicorn fork.

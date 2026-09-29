@@ -1,6 +1,0 @@
-//===- X64Registers.def - Compatibility inventory -----------------------===//
-//
-// NeverD Decompiler
-//
-//===----------------------------------------------------------------------===//
-#include "neverd/emulation/X64Registers.def"

@@ -5,8 +5,9 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_ARCH_X64MACHINE_H
 #define NEVERD_EMULATION_ARCH_X64MACHINE_H
-#include "../../core/ExecutionBackend.h"
 #include "../../core/MemoryLayout.h"
+
+#include "neverd/emulation/CPU.h"
 
 #include <chrono>
 
@@ -40,11 +41,5 @@ public:
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            std::chrono::steady_clock::time_point Deadline) = 0;
 };
-llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
-                                                             uint64_t Size);
-llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
-                                                             uint64_t Size);
-llvm::Expected<std::unique_ptr<X64Machine>>
-createUnicornX64Machine(PhysicalMemory &Memory);
 } // namespace neverd::emulation
 #endif

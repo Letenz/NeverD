@@ -40,20 +40,11 @@ bool CheckedAArch64Backend::canonicalRange(uint64_t A, uint64_t N) const {
          (A >= aarch64::InternalEnd || A + N <= aarch64::InternalBegin);
 }
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
-CheckedAArch64Backend::create(ExecutionBackendKind Kind, uint64_t Limit) {
+CheckedAArch64Backend::create(std::unique_ptr<PhysicalMemory> Memory,
+                              std::unique_ptr<AArch64Machine> Machine) {
   auto B = std::unique_ptr<CheckedAArch64Backend>(new CheckedAArch64Backend());
-  auto Memory = PhysicalMemory::create(Limit);
-  if (!Memory)
-    return Memory.takeError();
-  B->Memory = std::move(*Memory);
-  auto Machine = Kind == ExecutionBackendKind::KVM
-                     ? createKvmAArch64Machine(*B->Memory)
-                 : Kind == ExecutionBackendKind::WHP
-                     ? createWhpAArch64Machine(*B->Memory)
-                     : createUnicornAArch64Machine(*B->Memory);
-  if (!Machine)
-    return Machine.takeError();
-  B->Machine = std::move(*Machine);
+  B->Memory = std::move(Memory);
+  B->Machine = std::move(Machine);
   if (auto E = B->initializeDecoder(CS_ARCH_AARCH64, CS_MODE_ARM))
     return E;
   return std::unique_ptr<ExecutionBackend>(std::move(B));

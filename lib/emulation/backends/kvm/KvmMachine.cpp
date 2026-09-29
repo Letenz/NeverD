@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../MachineFactories.h"
 
 #include "llvm/Support/FormatVariadic.h"
 #if defined(__linux__) && defined(__x86_64__) && defined(NEVERD_EMULATION_KVM)

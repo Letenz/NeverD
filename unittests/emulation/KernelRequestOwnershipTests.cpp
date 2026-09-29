@@ -10,12 +10,12 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelException.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelException.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include <algorithm>
 #include <array>
@@ -590,8 +590,7 @@ TEST_F(KernelRequestOwnership,
   success(Memory->protect(UserOutput, profile::PageSize, Read));
   EXPECT_EQ(raised(Model->call("ProbeForWrite", {UserOutput, 1, 1})),
             exceptions::StatusAccessViolation);
-  const uint64_t ReadOnlyMdl =
-      call("IoAllocateMdl", {UserOutput, 1, 0, 0, 0});
+  const uint64_t ReadOnlyMdl = call("IoAllocateMdl", {UserOutput, 1, 0, 0, 0});
   ASSERT_NE(ReadOnlyMdl, 0u);
   EXPECT_EQ(raised(Model->call("MmProbeAndLockPages",
                                {ReadOnlyMdl, UserMode, IoWriteAccess})),
@@ -603,8 +602,7 @@ TEST_F(KernelRequestOwnership,
   const uint64_t InMdl = call("IoAllocateMdl", {UserInput, 2, 0, 0, 0});
   ASSERT_NE(InMdl, 0u);
   call("MmProbeAndLockPages", {InMdl, UserMode, IoReadAccess});
-  rejected(Model->call("MmProbeAndLockPages",
-                       {InMdl, UserMode, IoReadAccess}));
+  rejected(Model->call("MmProbeAndLockPages", {InMdl, UserMode, IoReadAccess}));
   const uint64_t InAlias =
       call("MmGetSystemAddressForMdlSafe", {InMdl, NormalPagePriority});
   ASSERT_NE(InAlias, 0u);
@@ -612,8 +610,7 @@ TEST_F(KernelRequestOwnership,
   EXPECT_EQ(integer(InAlias, 2), 0x2211u);
   EXPECT_EQ(call("MmGetSystemAddressForMdlSafe", {InMdl, NormalPagePriority}),
             InAlias);
-  const uint64_t SecondInMdl =
-      call("IoAllocateMdl", {UserInput, 2, 0, 0, 0});
+  const uint64_t SecondInMdl = call("IoAllocateMdl", {UserInput, 2, 0, 0, 0});
   ASSERT_NE(SecondInMdl, 0u);
   call("MmProbeAndLockPages", {SecondInMdl, UserMode, IoReadAccess});
 

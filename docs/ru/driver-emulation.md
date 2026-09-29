@@ -527,7 +527,7 @@ JSON-отчёт различает `stop_reason`, допускающие null п
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` использует те же параметры v1 и правила владения, добавляя строгий ввод сценария. Требуется не-NULL строка JSON с завершающим NUL. Исходный ABI `neverd_emulate_driver_json` остаётся неизменным и выполняет только инициализацию. C++-парсер `driverOptionsFromScenarioJSON` предоставляет ту же проверку сценария вызывающим `emulateDriver`.
 
-Внутренняя точка входа C++ — `neverd::emulation::emulateDriver` в `include/neverd/emulation/DriverSession.h`. Разбор формата относится к существующему загрузчику; поведение объектов/API Windows — к `lib/emulation/windows`; состояние CPU и выполнение — к адаптеру Unicorn. Адаптер и модель используют один интерфейс гостевой памяти. Поведение Windows API не должно находиться в форке Unicorn.
+Внутренняя точка входа C++ — `neverd::emulation::emulateDriver` в `include/neverd/emulation/DriverSession.h`. Разбор формата относится к существующему загрузчику; поведение объектов/API Windows — к `lib/emulation/os/windows`; состояние CPU и выполнение — к адаптеру Unicorn. Адаптер и модель используют один интерфейс гостевой памяти. Поведение Windows API не должно находиться в форке Unicorn.
 
 В WDM `METHOD_NEITHER` поля `Type3InputBuffer` и `IRP.UserBuffer` указывают на разные пользовательские выделения. `ProbeForRead` проверяет диапазон и выравнивание без обращения к страницам; `ProbeForWrite` обращается к каждой странице. `ExGetPreviousMode` возвращает режим запроса. `MmProbeAndLockPages` закрепляет одно пользовательское выделение, `MmGetSystemAddressForMdlSafe` даёт общий алиас, а `MmUnlockPages` удаляет алиас и освобождает страницы. Произвольные процессы не моделируются.
 

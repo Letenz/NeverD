@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelMMIO.h"
+#include "os/windows/KernelMMIO.h"
 
 #include <map>
 
@@ -112,7 +112,8 @@ protected:
   static constexpr uint64_t PDO = 0x1230;
   static constexpr uint64_t Physical = 0xf0000004;
   FailingMMIOMemory Memory;
-  KernelResources Resources{[this](uint64_t PDO) { return Model.canRemove(PDO); }};
+  KernelResources Resources{
+      [this](uint64_t PDO) { return Model.canRemove(PDO); }};
   KernelMMIO Model{Memory, Resources};
 
   template <typename T> T take(llvm::Expected<T> Value) {
@@ -136,8 +137,9 @@ protected:
     ASSERT_EQ(llvm::toString(Model.configure(PDO)), "");
     ASSERT_EQ(llvm::toString(Resources.beginStart(PDO)), "");
     ASSERT_EQ(llvm::toString(Resources.completeLowerStart(PDO, 0)), "");
-    ASSERT_EQ(llvm::toString(Resources.finishPnp(PDO, DevicePnpRequest::Start, 0)),
-              "");
+    ASSERT_EQ(
+        llvm::toString(Resources.finishPnp(PDO, DevicePnpRequest::Start, 0)),
+        "");
   }
   llvm::Expected<uint64_t> map() {
     return Model.map(Physical, 4, mmio::NonCached, false);

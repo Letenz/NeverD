@@ -1119,18 +1119,67 @@ backend and selection reason. It does not infer a guest OS from the host.
 | `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
 | `NeverDEmulation` | Windows image/ABI, API model, policy and driver lifecycle |
 
+The four CPU components declare LLVM Support as their LLVM dependency.
+Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
+transports. Compiler pipelines and guest image loaders belong to their owning
+components and are not required by a CPU-only client.
+
+The implementation directories reflect those boundaries:
+
+```text
+lib/emulation/
+  core/                  Memory, faults, registers and shared execution rules
+  arch/x86_64/           x64 state, instruction admission and page tables
+  arch/aarch64/          ARM64 state, instruction admission and page tables
+  backends/unicorn/      Portable machine execution
+  backends/kvm/          Linux host virtualization
+  backends/whp/          Windows host virtualization
+  runtime/               Backend selection and CPU/machine composition
+  os/windows/            Windows driver workload, ABI policy and kernel model
+```
+
+`core` has no implementation dependency on an architecture, backend or guest
+OS. Architecture code accepts an already-created machine and authoritative
+memory; it neither chooses nor constructs a concrete backend. Backend code
+implements the architecture's machine boundary. `runtime` owns that
+composition and the host/guest selection rules. Windows code uses the public
+CPU and memory interfaces, and its CMake source inventory stays in
+`os/windows/CMakeLists.txt`. The existing public headers remain compatible.
+
+The `os` directory describes the **guest** environment. Linux-host KVM can
+execute a Windows guest workload; the host never chooses its OS model.
+`DriverSession`, driver scenario parsing and reports belong to `os/windows`,
+because their lifecycle and objects are Windows-specific. The current Windows
+implementation remains one driver environment; moving it does not imply a
+generic process session or a completed Windows user-mode environment.
+When a process environment is added, keep its entry point, loader policy and
+user ABI separate from the kernel workload. Move shared OS primitives into a
+common layer only when both environments use the same documented semantics;
+driver objects, IRQL and callbacks must not become requirements of a generic
+CPU or process session.
+
+Future Linux and Darwin implementations belong beside Windows. Android-specific
+APIs and runtimes should build on the applicable Linux kernel contracts under
+`os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
+separates its runtime and framework from the kernel. macOS and iOS models should
+share applicable Darwin primitives while keeping platform APIs and ABI/version
+profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
+[XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
+identifies their shared kernel foundation. These are extension locations, not
+implemented environments. Add them with real workloads rather than empty
+classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
+remain explicit OS/workload requirements, independent of the CPU transport.
+
 ```mermaid
 flowchart TD
-  Windows[Windows x64 driver environment] --> CPU[CPU factory and checked contracts]
-  Client[Other C++ CPU clients] --> CPU
-  CPU --> ISA[x64 or ARM64 instruction admission]
-  ISA --> KVM[KVM transport]
-  ISA --> WHP[WHP transport]
-  ISA --> UC[Unicorn transport]
-  KVM --> RAM[Shared physical backing and mappings]
-  WHP --> RAM
-  UC --> RAM
-  CPU --> Software[Unrestricted Unicorn CPU adapter]
+  Windows[Windows guest environment] --> Runtime[Runtime CPU factory]
+  Client[Other C++ CPU clients] --> Runtime
+  Runtime --> ISA[x64 and ARM64 checked execution]
+  Runtime --> Transport[Unicorn / KVM / WHP]
+  ISA --> Machine[ISA machine interfaces]
+  Transport -->|implements| Machine
+  ISA --> Core[Core execution contracts and memory]
+  Transport --> Core
 ```
 
 `CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
@@ -1207,7 +1256,7 @@ workloads.
 
 ## Windows driver emulation
 
-Windows CR8/GS admission belongs to `windows/WindowsX64ExecutionPolicy`, not
+Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not
 the CPU transports. The experimental `checked-x64-v1` integer contract is
 explicitly narrower than the existing `driver-strict` contract; unsupported
 accesses stop before native execution. See the backend section in

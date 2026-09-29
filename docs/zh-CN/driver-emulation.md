@@ -473,7 +473,7 @@ JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、�
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` 使用相同的 v1 选项与所有权规则，另外接受严格验证的场景输入。必须传入非 NULL、以 NUL 结尾的 JSON 字符串。原有 `neverd_emulate_driver_json` ABI 保持不变，仍仅执行初始化。C++ 解析器 `driverOptionsFromScenarioJSON` 为 `emulateDriver` 的调用方提供相同的场景验证。
 
-内部 C++ 入口为 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由现有加载器负责；Windows 对象／API 行为由 `lib/emulation/windows` 负责；CPU 状态及执行由 Unicorn 适配器负责。适配器与模型使用相同的来宾内存接口。Windows API 行为不应放入 Unicorn fork。
+内部 C++ 入口为 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由现有加载器负责；Windows 对象／API 行为由 `lib/emulation/os/windows` 负责；CPU 状态及执行由 Unicorn 适配器负责。适配器与模型使用相同的来宾内存接口。Windows API 行为不应放入 Unicorn fork。
 
 `IoBuildPartialMdl` 支持已构建 MDL 的非空子范围；长度为零表示剩余范围。目标必须具有足够 PFN 容量。部分 MDL 共享物理页，不重复锁页；可继承现有系统映射或建立自己的系统别名。释放或通过真实 WDK 内联 `MmPrepareMdlForReuse` 准备重用时，只撤销自身拥有的映射。非分页源描述符可独立释放；仍有部分 MDL 依赖的根锁页或系统别名不能提前释放。IRP 完成先检查整条链，清理不依赖链中顺序；活动 DMA 阻止重建或提前释放。
 

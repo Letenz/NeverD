@@ -11,9 +11,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/KernelMMIO.h"
+#include "os/windows/KernelMMIO.h"
 
 namespace neverd::emulation {
 namespace {
@@ -23,7 +23,8 @@ protected:
   static constexpr uint32_t Failure = 0xc0000001;
   std::unique_ptr<UnicornBackend> Memory;
   std::unique_ptr<KernelMMIO> Model;
-  KernelResources Resources{[this](uint64_t PDO) { return Model->canRemove(PDO); }};
+  KernelResources Resources{
+      [this](uint64_t PDO) { return Model->canRemove(PDO); }};
   DriverPnpDevice Device;
 
   void ok(llvm::Error E) {
@@ -110,7 +111,8 @@ TEST_F(KernelMMIOTest, LowerStartControlsAssignmentBeforeTopCompletion) {
   reject(Model->map(Physical, 4, 0, false), "not assigned");
   ok(Resources.beginStart(PDO));
   reject(Model->map(Physical, 4, 0, false), "not assigned");
-  reject(Resources.validateCompletion(PDO, DevicePnpRequest::Start, 0), "epoch");
+  reject(Resources.validateCompletion(PDO, DevicePnpRequest::Start, 0),
+         "epoch");
   ok(Resources.completeLowerStart(PDO, 0));
   const uint64_t Alias = map();
   EXPECT_EQ(get(Alias), 17u);
@@ -305,7 +307,8 @@ TEST_F(KernelMMIOTest, BackendMappingCapacityReturnsNullAndCanRecover) {
   auto Limited = take(UnicornBackend::create(3 * 4096));
   ASSERT_TRUE(Limited);
   std::unique_ptr<KernelMMIO> Bank;
-  KernelResources Assignment{[&](uint64_t Owner) { return Bank->canRemove(Owner); }};
+  KernelResources Assignment{
+      [&](uint64_t Owner) { return Bank->canRemove(Owner); }};
   Bank = std::make_unique<KernelMMIO>(*Limited, Assignment);
   ok(Assignment.configure(PDO, Device));
   ok(Bank->configure(PDO));

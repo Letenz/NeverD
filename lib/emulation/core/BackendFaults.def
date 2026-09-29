@@ -1,6 +1,0 @@
-//===- BackendFaults.def - Compatibility inventory -===//
-//
-// NeverD Decompiler
-//
-//===----------------------------------------------------------------------===//
-#include "neverd/emulation/BackendFaults.def"

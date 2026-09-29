@@ -749,7 +749,7 @@ misma validación de escenarios a quienes llaman a `emulateDriver`.
 El punto de entrada interno de C++ es `neverd::emulation::emulateDriver` en
 `include/neverd/emulation/DriverSession.h`. El análisis del formato pertenece al
 cargador existente; el comportamiento de objetos y API de Windows pertenece a
-`lib/emulation/windows`; el estado y la ejecución de CPU pertenecen al adaptador
+`lib/emulation/os/windows`; el estado y la ejecución de CPU pertenecen al adaptador
 Unicorn. El adaptador y el modelo utilizan la misma interfaz de memoria del
 invitado. Ningún comportamiento de API de Windows pertenece al fork de Unicorn.
 

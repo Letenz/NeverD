@@ -7,12 +7,12 @@
 /// Exercise public WDM chain links, completion cleanup and failed mutations.
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelException.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelException.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverProfile.h"
 
@@ -26,7 +26,7 @@ namespace {
 using namespace windows;
 namespace pool {
 #define NEVERD_KERNEL_POOL_FLAG(Name, Value) constexpr uint64_t Name = Value;
-#include "windows/KernelPoolFlags.def"
+#include "os/windows/KernelPoolFlags.def"
 #undef NEVERD_KERNEL_POOL_FLAG
 } // namespace pool
 

@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "KernelFrameworkQueueTestSupport.h"
-#include "windows/KernelScheduler.h"
+#include "os/windows/KernelScheduler.h"
 
 #include <tuple>
 
