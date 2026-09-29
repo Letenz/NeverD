@@ -20,6 +20,8 @@
 #include "llvm/Support/Format.h"
 
 #include <algorithm>
+#include <cassert>
+#include <iterator>
 #include <map>
 #include <tuple>
 #include <vector>
@@ -42,6 +44,41 @@ namespace {
   [[maybe_unused]] constexpr StringLiteral Name(Value);
 #include "neverd/sigs/LinkerSyntax.def"
 
+constexpr StringLiteral LocalLabelPrefixes[] = {
+#define NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value) Value,
+#include "neverd/sigs/LinkerSyntax.def"
+};
+
+#define NEVERD_PATTERN_STRING(Name, Value)                                     \
+  [[maybe_unused]] constexpr StringLiteral Name(Value);
+#define NEVERD_PATTERN_CHAR(Name, Value)                                       \
+  [[maybe_unused]] constexpr char Name = Value;
+#define NEVERD_PATTERN_VALUE(Name, Value)                                      \
+  [[maybe_unused]] constexpr unsigned Name = Value;
+#define NEVERD_PATTERN_FORMAT(Name, Value)                                     \
+  [[maybe_unused]] constexpr const char *Name = Value;
+#include "neverd/sigs/PatternSyntax.def"
+
+#define NEVERD_OTHER_RELOCATION(Width)                                         \
+  constexpr unsigned OtherRelocationWidth = Width;
+#include "RelocationFootprints.def"
+
+/// What TargetMachine.def says of an architecture.
+struct TargetMachineInfo {
+  StringLiteral Spelling;
+  uint16_t COFFMachine;
+  uint16_t ELFMachine;
+  unsigned AddressBytes;
+};
+
+/// The architectures, in the order of TargetMachine.
+constexpr TargetMachineInfo TargetMachines[] = {
+#define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
+                                   AddressBytes)                               \
+  {Spelling, COFF::COFFMachine, ELF::ELFMachine, AddressBytes},
+#include "neverd/sigs/TargetMachine.def"
+};
+
 } // anonymous namespace
 
 PatternGeneratorStats &
@@ -58,234 +95,86 @@ PatternGeneratorStats::operator+=(const PatternGeneratorStats &Other) {
 }
 
 std::optional<TargetMachine> parseTargetMachine(StringRef Name) {
-  if (Name == "x86")
-    return TargetMachine::X86;
-  if (Name == "x64")
-    return TargetMachine::X64;
-  if (Name == "arm")
-    return TargetMachine::ARM;
-  if (Name == "arm64")
-    return TargetMachine::ARM64;
+  for (size_t I = 0; I < std::size(TargetMachines); ++I)
+    if (TargetMachines[I].Spelling == Name)
+      return static_cast<TargetMachine>(I);
   return std::nullopt;
 }
 
+ArrayRef<StringLiteral> targetMachineNames() {
+  static constexpr StringLiteral Names[] = {
+#define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
+                                   AddressBytes)                               \
+  Spelling,
+#include "neverd/sigs/TargetMachine.def"
+  };
+  return Names;
+}
+
 bool isObjectForMachine(const ObjectFile &Obj, TargetMachine Machine) {
-  if (const auto *COFF = dyn_cast<COFFObjectFile>(&Obj)) {
-    switch (Machine) {
-    case TargetMachine::X86:
-      return COFF->getMachine() == COFF::IMAGE_FILE_MACHINE_I386;
-    case TargetMachine::X64:
-      return COFF->getMachine() == COFF::IMAGE_FILE_MACHINE_AMD64;
-    case TargetMachine::ARM:
-      return COFF->getMachine() == COFF::IMAGE_FILE_MACHINE_ARMNT;
-    case TargetMachine::ARM64:
-      return COFF->getMachine() == COFF::IMAGE_FILE_MACHINE_ARM64;
-    }
-    return false;
-  }
-  if (const auto *ELFObj = dyn_cast<ELFObjectFileBase>(&Obj)) {
-    const bool Is64 = Obj.getBytesInAddress() == 8;
-    switch (Machine) {
-    case TargetMachine::X86:
-      return !Is64 && ELFObj->getEMachine() == ELF::EM_386;
-    case TargetMachine::X64:
-      return Is64 && ELFObj->getEMachine() == ELF::EM_X86_64;
-    case TargetMachine::ARM:
-      return !Is64 && ELFObj->getEMachine() == ELF::EM_ARM;
-    case TargetMachine::ARM64:
-      return Is64 && ELFObj->getEMachine() == ELF::EM_AARCH64;
-    }
-  }
+  assert(static_cast<size_t>(Machine) < std::size(TargetMachines) &&
+         "not an architecture of TargetMachine.def");
+  const TargetMachineInfo &Info = TargetMachines[static_cast<size_t>(Machine)];
+  if (const auto *COFF = dyn_cast<COFFObjectFile>(&Obj))
+    return COFF->getMachine() == Info.COFFMachine;
+  if (const auto *ELFObj = dyn_cast<ELFObjectFileBase>(&Obj))
+    return Obj.getBytesInAddress() == Info.AddressBytes &&
+           ELFObj->getEMachine() == Info.ELFMachine;
   return false;
 }
 
 std::optional<ELFRelocationFootprint> elfRelocationFootprint(uint16_t Machine,
                                                              uint32_t Type) {
-  auto Field = [](unsigned Width) { return ELFRelocationFootprint{0, Width}; };
+  // A range is First to Last; below First, the difference wraps around.
+  auto InRange = [Type](uint32_t First, uint32_t Last) {
+    return Type - First <= Last - First;
+  };
   switch (Machine) {
   case ELF::EM_X86_64:
     switch (Type) {
-    case ELF::R_X86_64_NONE:
-      return Field(0);
-    case ELF::R_X86_64_8:
-    case ELF::R_X86_64_PC8:
-      return Field(1);
-    case ELF::R_X86_64_16:
-    case ELF::R_X86_64_PC16:
-      return Field(2);
-    case ELF::R_X86_64_PC32:
-    case ELF::R_X86_64_GOT32:
-    case ELF::R_X86_64_PLT32:
-    case ELF::R_X86_64_GOTPCREL:
-    case ELF::R_X86_64_32:
-    case ELF::R_X86_64_32S:
-    case ELF::R_X86_64_DTPOFF32:
-    case ELF::R_X86_64_TPOFF32:
-    case ELF::R_X86_64_GOTPC32:
-    case ELF::R_X86_64_SIZE32:
-      return Field(4);
-    case ELF::R_X86_64_64:
-    case ELF::R_X86_64_DTPMOD64:
-    case ELF::R_X86_64_DTPOFF64:
-    case ELF::R_X86_64_TPOFF64:
-    case ELF::R_X86_64_PC64:
-    case ELF::R_X86_64_GOTOFF64:
-    case ELF::R_X86_64_GOT64:
-    case ELF::R_X86_64_GOTPCREL64:
-    case ELF::R_X86_64_GOTPC64:
-    case ELF::R_X86_64_GOTPLT64:
-    case ELF::R_X86_64_PLTOFF64:
-    case ELF::R_X86_64_SIZE64:
-      return Field(8);
-    // A relaxable GOT load: the opcode and ModRM ahead of the field become
-    // those of `lea`, a direct `call`/`jmp` (with a prefix or a trailing
-    // `nop`) or an immediate form. The REX variants reach one byte further
-    // back to the REX prefix, the CODE_4 ones to a two-byte REX2 prefix.
-    case ELF::R_X86_64_GOTPCRELX:
-      return ELFRelocationFootprint{2, 4};
-    case ELF::R_X86_64_REX_GOTPCRELX:
-    // Initial-exec and descriptor loads become immediate moves when the
-    // variable is the executable's own.
-    case ELF::R_X86_64_GOTTPOFF:
-    case ELF::R_X86_64_GOTPC32_TLSDESC:
-      return ELFRelocationFootprint{3, 4};
-    case ELF::R_X86_64_CODE_4_GOTPCRELX:
-    case ELF::R_X86_64_CODE_4_GOTTPOFF:
-    case ELF::R_X86_64_CODE_4_GOTPC32_TLSDESC:
-      return ELFRelocationFootprint{4, 4};
-    case ELF::R_X86_64_CODE_6_GOTTPOFF:
-      return ELFRelocationFootprint{6, 4};
-    // The descriptor call `call *(%rax)` becomes a two-byte no-op.
-    case ELF::R_X86_64_TLSDESC_CALL:
-      return Field(2);
-    // General dynamic: `.byte 0x66; lea x@tlsgd(%rip),%rdi` and a call to
-    // __tls_get_addr, 16 bytes with the field at 4, all rewritten.
-    case ELF::R_X86_64_TLSGD:
-      return ELFRelocationFootprint{4, 12};
-    // Local dynamic: `lea x@tlsld(%rip),%rdi` and the call, 12 bytes (13
-    // with `call *__tls_get_addr@GOTPCREL(%rip)`) with the field at 3.
-    case ELF::R_X86_64_TLSLD:
-      return ELFRelocationFootprint{3, 10};
+#define NEVERD_ELF_X86_64_RELOCATION(Name, Before, Width)                      \
+  case ELF::Name:                                                              \
+    return ELFRelocationFootprint{Before, Width};
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
 
   case ELF::EM_386:
     switch (Type) {
-    case ELF::R_386_NONE:
-      return Field(0);
-    case ELF::R_386_8:
-    case ELF::R_386_PC8:
-      return Field(1);
-    case ELF::R_386_16:
-    case ELF::R_386_PC16:
-      return Field(2);
-    case ELF::R_386_32:
-    case ELF::R_386_PC32:
-    case ELF::R_386_GOT32:
-    case ELF::R_386_PLT32:
-    case ELF::R_386_GOTOFF:
-    case ELF::R_386_GOTPC:
-    case ELF::R_386_32PLT:
-    case ELF::R_386_TLS_TPOFF:
-    case ELF::R_386_TLS_LE:
-    case ELF::R_386_TLS_LDO_32:
-    case ELF::R_386_TLS_LE_32:
-    case ELF::R_386_TLS_DTPMOD32:
-    case ELF::R_386_TLS_DTPOFF32:
-    case ELF::R_386_TLS_TPOFF32:
-      return Field(4);
-    // Relaxable GOT loads and initial-exec or descriptor loads: the opcode
-    // and ModRM ahead of the field change with the instruction.
-    case ELF::R_386_GOT32X:
-    case ELF::R_386_TLS_IE:
-    case ELF::R_386_TLS_GOTIE:
-    case ELF::R_386_TLS_IE_32:
-    case ELF::R_386_TLS_GOTDESC:
-      return ELFRelocationFootprint{2, 4};
-    case ELF::R_386_TLS_DESC_CALL:
-      return Field(2);
-    // General dynamic: `lea x@tlsgd(,%ebx,1),%eax` (the field at 3) and a
-    // call to ___tls_get_addr, direct or through the GOT.
-    case ELF::R_386_TLS_GD:
-      return ELFRelocationFootprint{3, 10};
-    // Local dynamic: `lea x@tlsldm(%ebx),%eax` (the field at 2) and the call.
-    case ELF::R_386_TLS_LDM:
-      return ELFRelocationFootprint{2, 10};
+#define NEVERD_ELF_386_RELOCATION(Name, Before, Width)                         \
+  case ELF::Name:                                                              \
+    return ELFRelocationFootprint{Before, Width};
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
 
   case ELF::EM_AARCH64:
     switch (Type) {
-    case ELF::R_AARCH64_NONE:
-      return Field(0);
-    case ELF::R_AARCH64_ABS16:
-    case ELF::R_AARCH64_PREL16:
-      return Field(2);
-    case ELF::R_AARCH64_ABS32:
-    case ELF::R_AARCH64_PREL32:
-    case ELF::R_AARCH64_GOTREL32:
-    case ELF::R_AARCH64_PLT32:
-    case ELF::R_AARCH64_GOTPCREL32:
-      return Field(4);
-    case ELF::R_AARCH64_ABS64:
-    case ELF::R_AARCH64_PREL64:
-    case ELF::R_AARCH64_GOTREL64:
-    case ELF::R_AARCH64_AUTH_ABS64:
-      return Field(8);
+#define NEVERD_ELF_AARCH64_RELOCATION(Name, Before, Width)                     \
+  case ELF::Name:                                                              \
+    return ELFRelocationFootprint{Before, Width};
+#include "RelocationFootprints.def"
     }
-    // Every other static relocation patches one instruction, and TLS
-    // relaxation rewrites only instructions that carry one of their own
-    // (TLSDESC_CALL marks the `blr` that becomes a `nop`).
-    if ((Type >= ELF::R_AARCH64_MOVW_UABS_G0 &&
-         Type <= ELF::R_AARCH64_LD64_GOTPAGE_LO15) ||
-        Type == ELF::R_AARCH64_PATCHINST ||
-        (Type >= ELF::R_AARCH64_TLSGD_ADR_PREL21 &&
-         Type <= ELF::R_AARCH64_TLSLD_LDST128_DTPREL_LO12_NC) ||
-        (Type >= ELF::R_AARCH64_AUTH_MOVW_GOTOFF_G0 &&
-         Type <= ELF::R_AARCH64_AUTH_TLSDESC_ADD_LO12))
-      return Field(4);
+#define NEVERD_ELF_AARCH64_RELOCATIONS(First, Last, Before, Width)             \
+  if (InRange(ELF::First, ELF::Last))                                          \
+    return ELFRelocationFootprint{Before, Width};
+#include "RelocationFootprints.def"
     return std::nullopt;
 
   case ELF::EM_ARM:
     switch (Type) {
-    case ELF::R_ARM_NONE:
-    case ELF::R_ARM_GNU_VTENTRY:
-    case ELF::R_ARM_GNU_VTINHERIT:
-      return Field(0);
-    case ELF::R_ARM_ABS8:
-      return Field(1);
-    // Data halfwords, and the 16-bit Thumb instructions.
-    case ELF::R_ARM_ABS16:
-    case ELF::R_ARM_THM_ABS5:
-    case ELF::R_ARM_THM_PC8:
-    case ELF::R_ARM_THM_SWI8:
-    case ELF::R_ARM_THM_JUMP6:
-    case ELF::R_ARM_THM_JUMP11:
-    case ELF::R_ARM_THM_JUMP8:
-    case ELF::R_ARM_THM_TLS_DESCSEQ16:
-    case ELF::R_ARM_THM_ALU_ABS_G0_NC:
-    case ELF::R_ARM_THM_ALU_ABS_G1_NC:
-    case ELF::R_ARM_THM_ALU_ABS_G2_NC:
-    case ELF::R_ARM_THM_ALU_ABS_G3:
-      return Field(2);
-    // The dynamic types and the platform-private ones.
-    case ELF::R_ARM_TLS_DESC:
-    case ELF::R_ARM_TLS_DTPMOD32:
-    case ELF::R_ARM_TLS_DTPOFF32:
-    case ELF::R_ARM_TLS_TPOFF32:
-    case ELF::R_ARM_COPY:
-    case ELF::R_ARM_GLOB_DAT:
-    case ELF::R_ARM_JUMP_SLOT:
-    case ELF::R_ARM_RELATIVE:
-    case ELF::R_ARM_IRELATIVE:
-      return std::nullopt;
+#define NEVERD_ELF_ARM_RELOCATION(Name, Before, Width)                         \
+  case ELF::Name:                                                              \
+    return ELFRelocationFootprint{Before, Width};
+#define NEVERD_ELF_ARM_UNSUPPORTED_RELOCATION(Name)                            \
+  case ELF::Name:                                                              \
+    return std::nullopt;
+#include "RelocationFootprints.def"
     }
-    // Every other static relocation patches a data word, an ARM instruction
-    // or a 32-bit Thumb instruction -- including V4BX, whose `bx` a linker
-    // for ARMv4 rewrites, and BL, which interworking turns into BLX.
-    if (Type <= ELF::R_ARM_TLS_IE12GP || Type == ELF::R_ARM_THM_TLS_DESCSEQ32 ||
-        (Type >= ELF::R_ARM_THM_BF16 && Type <= ELF::R_ARM_THM_BF18))
-      return Field(4);
+#define NEVERD_ELF_ARM_RELOCATIONS(First, Last, Before, Width)                 \
+  if (InRange(ELF::First, ELF::Last))                                          \
+    return ELFRelocationFootprint{Before, Width};
+#include "RelocationFootprints.def"
     return std::nullopt;
   }
   return std::nullopt;
@@ -295,76 +184,28 @@ std::optional<unsigned> coffRelocationWidth(uint16_t Machine, uint16_t Type) {
   switch (Machine) {
   case COFF::IMAGE_FILE_MACHINE_I386:
     switch (Type) {
-    case COFF::IMAGE_REL_I386_ABSOLUTE:
-      return 0;
-    case COFF::IMAGE_REL_I386_DIR16:
-    case COFF::IMAGE_REL_I386_REL16:
-    case COFF::IMAGE_REL_I386_SEG12:
-    case COFF::IMAGE_REL_I386_SECTION:
-      return 2;
-    case COFF::IMAGE_REL_I386_SECREL7:
-      return 1;
-    case COFF::IMAGE_REL_I386_DIR32:
-    case COFF::IMAGE_REL_I386_DIR32NB:
-    case COFF::IMAGE_REL_I386_SECREL:
-    case COFF::IMAGE_REL_I386_TOKEN:
-    case COFF::IMAGE_REL_I386_REL32:
-      return 4;
+#define NEVERD_COFF_I386_RELOCATION(Name, Width)                               \
+  case COFF::Name:                                                             \
+    return Width;
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
 
   case COFF::IMAGE_FILE_MACHINE_AMD64:
     switch (Type) {
-    case COFF::IMAGE_REL_AMD64_ABSOLUTE:
-    case COFF::IMAGE_REL_AMD64_PAIR:
-      return 0;
-    case COFF::IMAGE_REL_AMD64_SECREL7:
-      return 1;
-    case COFF::IMAGE_REL_AMD64_SECTION:
-      return 2;
-    case COFF::IMAGE_REL_AMD64_ADDR32:
-    case COFF::IMAGE_REL_AMD64_ADDR32NB:
-    case COFF::IMAGE_REL_AMD64_REL32:
-    case COFF::IMAGE_REL_AMD64_REL32_1:
-    case COFF::IMAGE_REL_AMD64_REL32_2:
-    case COFF::IMAGE_REL_AMD64_REL32_3:
-    case COFF::IMAGE_REL_AMD64_REL32_4:
-    case COFF::IMAGE_REL_AMD64_REL32_5:
-    case COFF::IMAGE_REL_AMD64_SECREL:
-    case COFF::IMAGE_REL_AMD64_TOKEN:
-    case COFF::IMAGE_REL_AMD64_SREL32:
-    case COFF::IMAGE_REL_AMD64_SSPAN32:
-      return 4;
-    case COFF::IMAGE_REL_AMD64_ADDR64:
-      return 8;
+#define NEVERD_COFF_AMD64_RELOCATION(Name, Width)                              \
+  case COFF::Name:                                                             \
+    return Width;
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
 
   case COFF::IMAGE_FILE_MACHINE_ARMNT:
     switch (Type) {
-    case COFF::IMAGE_REL_ARM_ABSOLUTE:
-    case COFF::IMAGE_REL_ARM_PAIR:
-      return 0;
-    case COFF::IMAGE_REL_ARM_SECTION:
-      return 2;
-    case COFF::IMAGE_REL_ARM_ADDR32:
-    case COFF::IMAGE_REL_ARM_ADDR32NB:
-    case COFF::IMAGE_REL_ARM_BRANCH24:
-    case COFF::IMAGE_REL_ARM_BRANCH11:
-    case COFF::IMAGE_REL_ARM_TOKEN:
-    case COFF::IMAGE_REL_ARM_BLX24:
-    case COFF::IMAGE_REL_ARM_BLX11:
-    case COFF::IMAGE_REL_ARM_REL32:
-    case COFF::IMAGE_REL_ARM_SECREL:
-    case COFF::IMAGE_REL_ARM_BRANCH20T:
-    case COFF::IMAGE_REL_ARM_BRANCH24T:
-    case COFF::IMAGE_REL_ARM_BLX23T:
-      return 4;
-    // A MOVW/MOVT pair: the low half of the address in the first
-    // instruction and the high half in the second.
-    case COFF::IMAGE_REL_ARM_MOV32A:
-    case COFF::IMAGE_REL_ARM_MOV32T:
-      return 8;
+#define NEVERD_COFF_ARM_RELOCATION(Name, Width)                                \
+  case COFF::Name:                                                             \
+    return Width;
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
 
@@ -372,28 +213,10 @@ std::optional<unsigned> coffRelocationWidth(uint16_t Machine, uint16_t Type) {
   case COFF::IMAGE_FILE_MACHINE_ARM64EC:
   case COFF::IMAGE_FILE_MACHINE_ARM64X:
     switch (Type) {
-    case COFF::IMAGE_REL_ARM64_ABSOLUTE:
-      return 0;
-    case COFF::IMAGE_REL_ARM64_SECTION:
-      return 2;
-    case COFF::IMAGE_REL_ARM64_ADDR32:
-    case COFF::IMAGE_REL_ARM64_ADDR32NB:
-    case COFF::IMAGE_REL_ARM64_BRANCH26:
-    case COFF::IMAGE_REL_ARM64_PAGEBASE_REL21:
-    case COFF::IMAGE_REL_ARM64_REL21:
-    case COFF::IMAGE_REL_ARM64_PAGEOFFSET_12A:
-    case COFF::IMAGE_REL_ARM64_PAGEOFFSET_12L:
-    case COFF::IMAGE_REL_ARM64_SECREL:
-    case COFF::IMAGE_REL_ARM64_SECREL_LOW12A:
-    case COFF::IMAGE_REL_ARM64_SECREL_HIGH12A:
-    case COFF::IMAGE_REL_ARM64_SECREL_LOW12L:
-    case COFF::IMAGE_REL_ARM64_TOKEN:
-    case COFF::IMAGE_REL_ARM64_BRANCH19:
-    case COFF::IMAGE_REL_ARM64_BRANCH14:
-    case COFF::IMAGE_REL_ARM64_REL32:
-      return 4;
-    case COFF::IMAGE_REL_ARM64_ADDR64:
-      return 8;
+#define NEVERD_COFF_ARM64_RELOCATION(Name, Width)                              \
+  case COFF::Name:                                                             \
+    return Width;
+#include "RelocationFootprints.def"
     }
     return std::nullopt;
   }
@@ -485,9 +308,9 @@ void emitPatternBytes(raw_ostream &OS, ArrayRef<uint8_t> Data,
                       ArrayRef<bool> Wildcard, size_t Begin, size_t End) {
   for (size_t I = Begin; I < End; ++I) {
     if (Wildcard[I])
-      OS << "..";
+      OS << UnstatedByte;
     else
-      OS << format("%02X", Data[I]);
+      OS << format(ByteFormat, Data[I]);
   }
 }
 
@@ -499,7 +322,7 @@ void emitPatternBytes(raw_ostream &OS, ArrayRef<uint8_t> Data,
 /// The pattern bytes state a wildcard there instead; the CRC has no way to
 /// express one, so it stops.
 size_t crcSpan(ArrayRef<bool> Wildcard, size_t Start) {
-  size_t End = std::min(Wildcard.size(), Start + 255);
+  size_t End = std::min(Wildcard.size(), Start + MaxCRCLength);
   for (size_t I = Start; I < End; ++I)
     if (Wildcard[I])
       return I - Start;
@@ -617,8 +440,9 @@ void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
       continue;
     }
     StringRef Name = *NameOrErr;
-    if (Name.empty() || Name.starts_with("ltmp") || Name.starts_with("L_") ||
-        Name.starts_with(".L"))
+    if (Name.empty() || llvm::any_of(LocalLabelPrefixes, [&](StringRef Prefix) {
+          return Name.starts_with(Prefix);
+        }))
       continue;
 
     Expected<uint64_t> AddrOrErr = Sym.getAddress();
@@ -662,7 +486,8 @@ void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
   }
 }
 
-/// The reading Mach-O objects keep: every relocation covers four bytes.
+/// The reading Mach-O objects keep: every relocation covers
+/// OtherRelocationWidth bytes.
 PatternGeneratorStats generateGeneric(const ObjectFile &Obj,
                                       const PatternGeneratorOptions &Opts,
                                       raw_ostream &OS) {
@@ -672,7 +497,7 @@ PatternGeneratorStats generateGeneric(const ObjectFile &Obj,
     for (const RelocationRef &Rel : Fn.Section.relocations()) {
       uint64_t RelOffset = Rel.getOffset() - Fn.Offset;
       if (RelOffset < Fn.Data.size())
-        markWildcard(Wildcard, RelOffset, 4);
+        markWildcard(Wildcard, RelOffset, OtherRelocationWidth);
     }
     countOrEmit(OS, Fn.Name, Fn.Data, Wildcard, Opts, Stats);
   });
@@ -790,7 +615,7 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
     const bool OpcodeBeforeField =
         Machine == ELF::EM_386 || Machine == ELF::EM_X86_64;
     llvm::erase_if(References, [&](const FuncRef &Ref) {
-      return OpcodeBeforeField && Wildcard[Ref.Offset - 1];
+      return OpcodeBeforeField && Wildcard[Ref.Offset - x86::kRel32DispOffset];
     });
     llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
       return A.Offset < B.Offset;
@@ -1060,12 +885,16 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   if (CRCLen > 0)
     CRC = SignatureMatcher::computeCRC16(Data.data() + CRCStart, CRCLen);
 
-  OS << format(" %02X %04X %04X", static_cast<unsigned>(CRCLen), CRC,
+  OS << format(CRCFieldsFormat, static_cast<unsigned>(CRCLen), CRC,
                static_cast<unsigned>(Size));
+  // Every name labels the function's start.
   for (StringRef Name : Names)
-    OS << " :0000 " << Name;
+    OS << FieldSeparator << PublicNamePrefix << format(OffsetFormat, 0u)
+       << FieldSeparator << Name;
   for (const FuncRef &Ref : References)
-    OS << format(" ^%04X ", static_cast<unsigned>(Ref.Offset)) << Ref.Name;
+    OS << FieldSeparator << ReferencePrefix
+       << format(OffsetFormat, static_cast<unsigned>(Ref.Offset))
+       << FieldSeparator << Ref.Name;
 
   // Everything the CRC had to stop short of, stated byte by byte so that a
   // wildcard can stand where a relocation does.  This is what lets a match
@@ -1075,11 +904,11 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   const size_t TailEnd =
       std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
   if (TailEnd > TailStart) {
-    OS << " ";
+    OS << FieldSeparator;
     emitPatternBytes(OS, Data, Wildcard, TailStart, TailEnd);
   }
 
-  OS << "\n";
+  OS << LineEnd;
   return true;
 }
 

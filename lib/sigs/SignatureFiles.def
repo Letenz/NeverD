@@ -1,0 +1,40 @@
+//===- SignatureFiles.def - How signature files are named -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How SignatureDB reads the names of the files in a signature directory.
+/// Define the macros a consumer reads before including this file; the others
+/// expand to nothing.
+///
+///   NEVERD_SIGS_FILE_STRING(Name, Value)  a string of a file name
+///   NEVERD_SIGS_FILE_VALUE(Name, Value)   a number
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SIGS_FILE_STRING
+#define NEVERD_SIGS_FILE_STRING(Name, Value)
+#endif
+#ifndef NEVERD_SIGS_FILE_VALUE
+#define NEVERD_SIGS_FILE_VALUE(Name, Value)
+#endif
+
+// A directory holds pattern files; the numbers in their names are decimal.
+NEVERD_SIGS_FILE_STRING(PatternExtension, ".pat")
+NEVERD_SIGS_FILE_VALUE(NameNumberRadix, 10)
+
+// A library too large for one file is split into parts: part 1 under the
+// library's own name, and each later one as `<library>.part<N>.pat`, its
+// number written without leading zeros.
+NEVERD_SIGS_FILE_STRING(PartMarker, ".part")
+NEVERD_SIGS_FILE_VALUE(FirstNumberedPart, 2)
+
+// The libraries of a Visual Studio release are `vs<year>.pat`: `vs2026.pat`
+// belongs to Visual Studio 2026.
+NEVERD_SIGS_FILE_STRING(ReleasePrefix, "vs")
+NEVERD_SIGS_FILE_VALUE(ReleaseYearDigits, 4)
+
+#undef NEVERD_SIGS_FILE_STRING
+#undef NEVERD_SIGS_FILE_VALUE

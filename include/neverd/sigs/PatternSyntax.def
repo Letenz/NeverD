@@ -1,0 +1,107 @@
+//===- PatternSyntax.def - The syntax of pattern lines ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The syntax of the FLIRT .pat lines NeverD reads and writes, which the
+/// parser, the generator and the matcher share.  Define the macros a consumer
+/// reads before including this file; the others expand to nothing.
+///
+///   NEVERD_PATTERN_FIELD(Name)          a field every line opens with
+///   NEVERD_PATTERN_STRING(Name, Value)  a string of a line
+///   NEVERD_PATTERN_CHAR(Name, Value)    a character of a line
+///   NEVERD_PATTERN_SEPARATOR(Value)     a character that separates fields
+///   NEVERD_PATTERN_HEX_DIGITS(First, Last, FirstValue)
+///                                       the hex digits First to Last, whose
+///                                       values run from FirstValue on
+///   NEVERD_PATTERN_VALUE(Name, Value)   a number of the format
+///   NEVERD_PATTERN_FORMAT(Name, Value)  how the generator writes a field
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_PATTERN_FIELD
+#define NEVERD_PATTERN_FIELD(Name)
+#endif
+#ifndef NEVERD_PATTERN_STRING
+#define NEVERD_PATTERN_STRING(Name, Value)
+#endif
+#ifndef NEVERD_PATTERN_CHAR
+#define NEVERD_PATTERN_CHAR(Name, Value)
+#endif
+#ifndef NEVERD_PATTERN_SEPARATOR
+#define NEVERD_PATTERN_SEPARATOR(Value)
+#endif
+#ifndef NEVERD_PATTERN_HEX_DIGITS
+#define NEVERD_PATTERN_HEX_DIGITS(First, Last, FirstValue)
+#endif
+#ifndef NEVERD_PATTERN_VALUE
+#define NEVERD_PATTERN_VALUE(Name, Value)
+#endif
+#ifndef NEVERD_PATTERN_FORMAT
+#define NEVERD_PATTERN_FORMAT(Name, Value)
+#endif
+
+// A line states the leading bytes, the CRC length, the CRC16 and the length
+// of the function, then its public names as `:offset name`, then the
+// routines it references as `^offset name`, then at most one run of tail
+// bytes.  A byte is two hex digits, or the unstated byte, which any byte
+// agrees with.
+NEVERD_PATTERN_FIELD(LeadingBytes)
+NEVERD_PATTERN_FIELD(CRCLength)
+NEVERD_PATTERN_FIELD(CRC16)
+NEVERD_PATTERN_FIELD(Length)
+NEVERD_PATTERN_STRING(UnstatedByte, "..")
+NEVERD_PATTERN_STRING(PublicNamePrefix, ":")
+NEVERD_PATTERN_STRING(ReferencePrefix, "^")
+
+// Lines that state no module: blank lines, comments, and the marker a file
+// may end with.
+NEVERD_PATTERN_STRING(CommentPrefix, ";")
+NEVERD_PATTERN_STRING(AlternateCommentPrefix, "#")
+NEVERD_PATTERN_STRING(EndMarker, "---")
+
+// Lines end with a line feed, and their fields are separated by the
+// whitespace llvm::SplitString and StringRef::trim know.
+NEVERD_PATTERN_CHAR(LineEnd, '\n')
+NEVERD_PATTERN_SEPARATOR(' ')
+NEVERD_PATTERN_SEPARATOR('\t')
+NEVERD_PATTERN_SEPARATOR('\n')
+NEVERD_PATTERN_SEPARATOR('\v')
+NEVERD_PATTERN_SEPARATOR('\f')
+NEVERD_PATTERN_SEPARATOR('\r')
+
+// Bytes, lengths and offsets are hexadecimal, in either case.  The decimal
+// digits come first and the lower case letters before the upper case ones,
+// which is the order the parser's vector decoder reads the runs in.
+NEVERD_PATTERN_VALUE(Radix, 16)
+NEVERD_PATTERN_HEX_DIGITS('0', '9', 0)
+NEVERD_PATTERN_HEX_DIGITS('a', 'f', 10)
+NEVERD_PATTERN_HEX_DIGITS('A', 'F', 10)
+
+// The CRC length is a byte and the CRC16 a halfword.  The CRC span follows
+// the leading bytes, and is at most as long as its length can say.
+NEVERD_PATTERN_VALUE(MaxCRCLength, 0xFF)
+NEVERD_PATTERN_VALUE(MaxCRC16, 0xFFFF)
+
+// FLIRT's CRC16 runs the reflected CCITT polynomial from an all-ones
+// register; a line states the complemented remainder in byte-stream order.
+NEVERD_PATTERN_VALUE(CRC16Polynomial, 0x8408)
+NEVERD_PATTERN_VALUE(CRC16Initial, 0xFFFF)
+
+// How the generator writes a line: its fields separated by one space, its
+// bytes, the CRC length, the CRC16 and the length in upper case, and every
+// offset of a name in four digits.
+NEVERD_PATTERN_CHAR(FieldSeparator, ' ')
+NEVERD_PATTERN_FORMAT(ByteFormat, "%02X")
+NEVERD_PATTERN_FORMAT(CRCFieldsFormat, " %02X %04X %04X")
+NEVERD_PATTERN_FORMAT(OffsetFormat, "%04X")
+
+#undef NEVERD_PATTERN_FIELD
+#undef NEVERD_PATTERN_STRING
+#undef NEVERD_PATTERN_CHAR
+#undef NEVERD_PATTERN_SEPARATOR
+#undef NEVERD_PATTERN_HEX_DIGITS
+#undef NEVERD_PATTERN_VALUE
+#undef NEVERD_PATTERN_FORMAT
