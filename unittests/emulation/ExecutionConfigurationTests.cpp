@@ -61,6 +61,7 @@ TEST(ExecutionConfiguration,
     auto Capabilities =
         llvm::cantFail(executionCapabilities(Config.Contract, ISA));
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::VectorRegisterState));
+    EXPECT_TRUE(Capabilities.supports(ExecutionFeature::ThreadPointer));
     EXPECT_EQ(Capabilities.supports(ExecutionFeature::FloatingPoint),
               ISA == GuestArchitecture::X64);
     EXPECT_EQ(Capabilities.supports(ExecutionFeature::SIMD),

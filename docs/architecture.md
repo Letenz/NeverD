@@ -1380,7 +1380,8 @@ preparation reject memory-to-memory reads rather than consuming them early.
 
 The ARM64 checked profile runs little-endian baseline integer instructions at
 EL1. It admits scalar loads/stores, register-offset addressing, literal loads
-and checked pair/writeback forms. It rejects FP/SIMD, atomics/exclusives, system
+and checked pair/writeback forms. It admits exact TPIDR_EL0 reads/writes for
+thread-pointer state and rejects FP/SIMD, atomics/exclusives, other system
 instructions, MMIO, constrained-unpredictable writeback and individual data
 transactions crossing a page. All accesses in a pair are validated before
 native execution. Unrestricted software execution has a separate contract and

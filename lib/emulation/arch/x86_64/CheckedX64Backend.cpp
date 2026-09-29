@@ -125,6 +125,8 @@ llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
     return error(diagnostic::Register);
   if (R == CPURegister::X64GSBase)
     return RegisterValue{CPU.GSBase, 0};
+  if (R == CPURegister::X64FSBase)
+    return RegisterValue{CPU.FSBase, 0};
   if (R == CPURegister::X64MXCSR)
     return RegisterValue{CPU.MXCSR, 0};
   if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15)
@@ -158,10 +160,13 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
        V[0] != (UserMode ? x64::UserDataSelector : x64::DataSelector)) ||
       (R == CPURegister::X64FLAGS &&
        ((V[0] & ~x64::AllowedFlags) || !(V[0] & x64::ReservedFlag))) ||
-      (R == CPURegister::X64GSBase && !x64::canonical(V[0])))
+      ((R == CPURegister::X64GSBase || R == CPURegister::X64FSBase) &&
+       !x64::canonical(V[0])))
     return error(diagnostic::Register);
   if (R == CPURegister::X64GSBase)
     CPU.GSBase = V[0];
+  else if (R == CPURegister::X64FSBase)
+    CPU.FSBase = V[0];
   else
     CPU.Registers[unsigned(R)] = V[0];
   return llvm::Error::success();
@@ -314,7 +319,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size ||
         (O.mem.segment != X86_REG_INVALID && O.mem.segment != X86_REG_DS &&
          O.mem.segment != X86_REG_SS && O.mem.segment != X86_REG_ES &&
-         O.mem.segment != X86_REG_GS))
+         O.mem.segment != X86_REG_GS && O.mem.segment != X86_REG_FS))
       return llvm::make_error<UnsupportedExecutionError>();
     auto B = operandRegister(O.mem.base), Index = operandRegister(O.mem.index);
     if (!B) {
@@ -331,6 +336,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       A = uint32_t(A);
     if (O.mem.segment == X86_REG_GS)
       A += CPU.GSBase;
+    if (O.mem.segment == X86_REG_FS)
+      A += CPU.FSBase;
     if (Locked && A % O.size)
       return llvm::make_error<UnsupportedExecutionError>();
     // Misaligned aligned-vector forms would raise #GP. No native instruction

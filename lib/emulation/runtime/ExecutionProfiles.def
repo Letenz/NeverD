@@ -13,7 +13,7 @@ NEVERD_EXECUTION_FEATURE_GROUP(
     Feature::ScalarInteger | Feature::VectorRegisterState |
         Feature::InstructionObservation | Feature::SharedPhysicalMemory |
         Feature::MultipleAddressSpaces | Feature::RetainedMemoryViews |
-        Feature::TypedExits | Feature::CooperativeCPUs)
+        Feature::TypedExits | Feature::CooperativeCPUs | Feature::ThreadPointer)
 NEVERD_EXECUTION_FEATURE_GROUP(SoftwareFeatures,
                                CommonFeatures | Feature::FloatingPoint |
                                    Feature::SIMD | Feature::MMIO)

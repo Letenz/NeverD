@@ -3551,7 +3551,8 @@
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
         "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles remain integer-only. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and cross-page data instructions remain unsupported.",
         "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion; general runtime and additional OS workloads remain unfinished.",
-        "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence."
+        "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
+        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; other checked ARM64 system-register encodings remain unsupported."
       ],
       "tests": [
         {
@@ -3696,6 +3697,28 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDThreadPointerTests",
+          "source": "unittests/emulation/ThreadPointerTests.cpp",
+          "filter": "*/ThreadPointer.NativeReadsAndContextRestoreUseTheRetainedBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDThreadPointerTests",
+          "source": "unittests/emulation/ThreadPointerTests.cpp",
+          "filter": "*/ThreadPointer.AThreadPointerCannotExposeSupervisorMemory/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -3730,11 +3753,12 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, PT_DYNAMIC, PT_TLS, page-overlapping loads and unsupported CPU instructions fail clearly.",
-        "Only write, exit, exit_group, getpid and gettid are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
+        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, PT_DYNAMIC, page-overlapping loads and unsupported CPU instructions fail clearly.",
+        "write, exit, exit_group, getpid, gettid and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
         "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
-        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work."
+        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, dynamic TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work.",
+        "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta."
       ],
       "tests": [
         {
@@ -3775,6 +3799,28 @@
           "target": "NeverDProcessPublicTests",
           "source": "unittests/emulation/ProcessPublicTests.cpp",
           "filter": "ProcessPublic.CLIHasTheSameReportAndSeparatesGuestFailureFromIncomplete",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.CompilerTLSBlocksRemainIndependentAcrossProcessQuanta/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessLayoutTests.cpp",
+          "filter": "LinuxProcessLayout.ValidatesTLSFileTemplateWithoutInventingThreadBlocks",
           "platforms": [
             "darwin",
             "linux",

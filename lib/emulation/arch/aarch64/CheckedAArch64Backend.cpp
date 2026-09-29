@@ -129,7 +129,7 @@ CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
 
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   using namespace encoding;
-  enum InstructionKind { Integer, Memory } Kind;
+  enum InstructionKind { Integer, Memory, ThreadPointer } Kind;
   switch (I.id) {
 #define NEVERD_AARCH64_INSTRUCTION(Name, Type)                                 \
   case AARCH64_INS_##Name:                                                     \
@@ -141,6 +141,10 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   }
   const uint32_t Word = llvm::support::endian::read32le(I.bytes);
+  if (Kind == ThreadPointer &&
+      !((I.id == AARCH64_INS_MRS && isReadThreadPointer(Word)) ||
+        (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word))))
+    return llvm::make_error<UnsupportedExecutionError>();
   if (I.id == AARCH64_INS_HINT && !isNOP(Word))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto &A = I.detail->aarch64;

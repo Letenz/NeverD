@@ -354,7 +354,12 @@ or register changes, and remain usable with a valid budget afterward.
 of the Windows model. It runs ARM64 scalar arithmetic and control flow, signed
 and indexed loads, pair/writeback operations, pre-effect observer stops,
 CPU-only snapshots, live aliases, code-cache invalidation and bounded loops.
-The software profile additionally executes FP/SIMD and TLS instructions.
+The software profile additionally executes FP/SIMD instructions.
+`NeverDThreadPointerTests` checks FS-base address formation on x64 and exact
+TPIDR_EL0 reads/writes on ARM64 across checked user transports. It verifies
+context restoration, pre-effect read stops, user memory permissions and x64
+address-size truncation before adding FS. Other ARM64 system registers remain
+outside this contract; native ARM64 and WHP coverage requires those hosts.
 `ExecutionExitTests.cpp` exercises real x64/ARM64 software and checked runs:
 pre-effect stops, deadlines followed by clean resumption, faults overriding stop
 requests, retained recoverable faults, guest traps versus unsupported operations,
@@ -470,7 +475,11 @@ native guest execution remains covered by the architecture suites above.
 The independent [process emulation suites](process-emulation.md#verification)
 compile real x64/AArch64 ELF process fixtures. `NeverDLinuxProcessTests` verifies
 startup, program-header policy, service continuation, binary output, guest
-faults and resource stops across configured transports. `NeverDProcessPublicTests`
+faults and resource stops across configured transports. The compiler-emitted
+local-exec TLS fixtures initialize two independent blocks from `PT_TLS`, zero
+TLS BSS and install their own thread pointers. They check x64 `arch_prctl`
+error returns without poisoning execution; malformed templates fail before
+CPU entry. `NeverDProcessPublicTests`
 checks the shared C API/CLI without mutating a loaded analysis image.
 `NeverDExecutionSessionTests` covers two CPUs sharing memory and budgets,
 exactly-once service/fault consumption and image mapping plans.

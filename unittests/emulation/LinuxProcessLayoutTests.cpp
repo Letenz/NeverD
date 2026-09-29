@@ -19,6 +19,11 @@ namespace {
 #define NEVERD_LINUX_FIXTURE_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "fixtures/LinuxProcessCases.def"
 #undef NEVERD_LINUX_FIXTURE_TEXT
+namespace tls_fixture {
+#define NEVERD_TLS_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxTLSCases.def"
+#undef NEVERD_TLS_TEXT
+} // namespace tls_fixture
 
 class LinuxProcessLayout : public testing::Test {
 protected:
@@ -56,10 +61,8 @@ TEST_F(LinuxProcessLayout, KeepsLoaderProgramHeadersAndRequiresMappedTable) {
   rejects(Image);
 }
 
-TEST_F(LinuxProcessLayout,
-       RejectsUnimplementedLoaderAndTLSContractsExplicitly) {
-  for (uint32_t Type :
-       {llvm::ELF::PT_INTERP, llvm::ELF::PT_DYNAMIC, llvm::ELF::PT_TLS}) {
+TEST_F(LinuxProcessLayout, RejectsUnimplementedDynamicLinkContractsExplicitly) {
+  for (uint32_t Type : {llvm::ELF::PT_INTERP, llvm::ELF::PT_DYNAMIC}) {
     auto Invalid = Image;
     Invalid.ELFMetadata->ProgramHeaders.front().Type = Type;
     auto Layout = linux_model::processLayout(Invalid);
@@ -68,6 +71,56 @@ TEST_F(LinuxProcessLayout,
   }
   Image.ELFMetadata->Type = llvm::ELF::ET_DYN;
   rejects(Image);
+}
+
+TEST_F(LinuxProcessLayout,
+       ValidatesTLSFileTemplateWithoutInventingThreadBlocks) {
+#ifndef NEVERD_PROCESS_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  ELFLoader Loader;
+  auto Loaded = Loader.load(std::filesystem::path(NEVERD_PROCESS_FIXTURE_DIR) /
+                            tls_fixture::ARMFile);
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  Image = std::move(*Loaded);
+  auto Layout = linux_model::processLayout(Image);
+  ASSERT_TRUE(bool(Layout)) << llvm::toString(Layout.takeError());
+  auto Template =
+      llvm::find_if(Image.ELFMetadata->ProgramHeaders,
+                    [](const auto &H) { return H.Type == llvm::ELF::PT_TLS; });
+  ASSERT_NE(Template, Image.ELFMetadata->ProgramHeaders.end());
+  EXPECT_GT(Template->FileSize, 0u);
+  EXPECT_GT(Template->MemorySize, Template->FileSize);
+  const size_t Index = Template - Image.ELFMetadata->ProgramHeaders.begin();
+  for (auto Mutate :
+       {+[](ELFProgramHeader &H) { H.Alignment = 3; },
+        +[](ELFProgramHeader &H) { H.MemorySize = 0; },
+        +[](ELFProgramHeader &H) { H.FileSize = H.MemorySize + 1; },
+        +[](ELFProgramHeader &H) { H.FileOffset = UINT64_MAX; },
+        +[](ELFProgramHeader &H) { H.VirtualAddress = 0; },
+        +[](ELFProgramHeader &H) { ++H.FileOffset; }}) {
+    auto Invalid = Image;
+    Mutate(Invalid.ELFMetadata->ProgramHeaders[Index]);
+    rejects(Invalid);
+  }
+  auto ZeroOnly = Image;
+  ZeroOnly.ELFMetadata->ProgramHeaders[Index].FileSize = 0;
+  auto ZeroLayout = linux_model::processLayout(ZeroOnly);
+  EXPECT_TRUE(bool(ZeroLayout)) << llvm::toString(ZeroLayout.takeError());
+  auto Unreadable = Image;
+  for (auto &H : Unreadable.ELFMetadata->ProgramHeaders)
+    if (H.Type == llvm::ELF::PT_LOAD)
+      H.Flags &= ~llvm::ELF::PF_R;
+  rejects(Unreadable);
+  auto Invalid = Image;
+  auto Stack =
+      llvm::find_if(Invalid.ELFMetadata->ProgramHeaders, [](const auto &H) {
+        return H.Type == llvm::ELF::PT_GNU_STACK;
+      });
+  ASSERT_NE(Stack, Invalid.ELFMetadata->ProgramHeaders.end());
+  *Stack = *Template;
+  rejects(Invalid);
+#endif
 }
 
 TEST_F(LinuxProcessLayout, RejectsContradictoryABIAndSegmentLayoutFacts) {
