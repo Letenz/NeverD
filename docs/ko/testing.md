@@ -54,6 +54,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests`는 실제 복원 그래프, 구조가 다른 유한 루프, 0회 반복, 동적 생성자, 조건부 선택, 겹치는 입력 뷰, 복사 및 스필 상관관계, 양쪽 불변 읽기 증거, 시스템 플래그와 반환 슬롯 보존을 검사합니다. 잘못된 후보, 추가 쓰기, 불완전하거나 무한한 경로, 오래된 증거, 임시 영역 충돌과 공유 예산 소진은 인증서를 거부해야 합니다. 기존 독립성 테스트도 관찰 가능한 임의 값을 계속 거부합니다.
 
+같은 대상의 `LowIRLoopRefinement.*`와 `BinaryLowIRLoopRefinement.*`는 임의 64비트 반복 횟수, 중첩 사전식 순위, 실제 네이티브 잔여 코드, 진입 접두 템플릿, 겹치는 뷰와 상관된 스필을 검사합니다. 부정 사례는 잘못된 본문, 진입 영역 축소, 감소하지 않는 순위, 부호 없는 순환, 이전 쓰기 누락, 절단점 누락, 잘못된 템플릿과 공유 예산 소진을 거부합니다. 유한한 형제 경로의 성공은 불완전한 귀납 증명을 승인하지 않습니다.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

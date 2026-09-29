@@ -10,6 +10,8 @@
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <set>
+
 using namespace neverd;
 using namespace neverd::analysis;
 
@@ -146,6 +148,120 @@ TEST(BinaryLowIRRefinement, FiniteLoopsCheckEveryInputPath) {
   Limits.Execution.MaxBlockVisits = Good.Proof.BlockVisits - 1;
   refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
           Status::BudgetExceeded);
+}
+
+TEST(BinaryLowIRLoopRefinement, UnboundedInputCountAndOriginalBytes) {
+  // top: jrcxz done; add rax,rcx;
+  // lea rcx,[rcx-1]; jmp top; done: ret. No finite unrolling can cover all
+  // uint64 input counts. The rank excludes wraparound using the JRCXZ guard.
+  Program P(
+      {0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRLoopCutpoint Cut;
+  Cut.OriginalAddress = Entry;
+  Cut.UseEntryPrefix = true;
+  unsigned Mappings = 0;
+  for (const auto &Origin : Recovery.Origins)
+    if (Origin.NativeInstruction.Address == Cut.OriginalAddress) {
+      Cut.CandidateAddress = Origin.ResidualAddress;
+      ++Mappings;
+    }
+  ASSERT_EQ(Mappings, 1U);
+  const auto Parameter = [&](uint64_t Offset, uint16_t Bytes) {
+    const auto T = NdVar::tmp(Cut.Inputs.size() * 8, Bytes);
+    const LowIRLoopLocation L{LowIRLoopSpace::Register, Offset, Bytes};
+    Cut.Inputs.push_back({LowIRLoopSide::Original, L, T});
+    Cut.OriginalState.push_back({L, T});
+    Cut.CandidateState.push_back({L, T});
+    return T;
+  };
+  Parameter(x86reg::RAX, 8);
+  Cut.Rank = {Parameter(x86reg::RCX, 8)};
+  for (auto Flag :
+       {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
+    Parameter(Flag, 1);
+  LowIRLoopRefinementPlan Plan{{Cut}};
+  const auto Check = [&] {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Certificate->Relation.Scope,
+            LowIRRefinementScope::InductiveNativeToLowIRLoops);
+  EXPECT_EQ(Good.Proof.LoopInitiations, 1U);
+  EXPECT_EQ(Good.Proof.RankingChecks, 1U);
+  EXPECT_LT(Good.Proof.Instructions, 30U);
+  // A changed native decrement must be re-executed, not matched only by PC.
+  P.Image.Segments[0].Data[8] = 0xfe;
+  refused(Check(), Status::Different);
+}
+
+TEST(BinaryLowIRLoopRefinement, PhysicalCallsAndEarlierStackWrites) {
+  // top: jrcxz done; call body; lea rcx,[rcx-1]; jmp top;
+  // done: ret; body: add rax,rcx; ret.
+  Program P({0xe3, 11, 0xe8, 7, 0, 0, 0, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf3,
+             0xc3, 0x48, 0x01, 0xc8, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRLoopCutpoint Cut;
+  // The callee entry has one recovery context: the physical call has already
+  // written its continuation. The outer header has separate first/loop
+  // contexts and cannot serve as a single paired cutpoint.
+  Cut.OriginalAddress = Entry + 14;
+  unsigned Mappings = 0;
+  for (const auto &Origin : Recovery.Origins)
+    if (Origin.NativeInstruction.Address == Cut.OriginalAddress) {
+      Cut.CandidateAddress = Origin.ResidualAddress;
+      ++Mappings;
+    }
+  ASSERT_EQ(Mappings, 1U);
+  Cut.UseEntryPrefix = true;
+  const auto Parameter = [&](LowIRLoopLocation L) {
+    const auto T = NdVar::tmp(Cut.Inputs.size() * 8, L.Bytes);
+    Cut.Inputs.push_back({LowIRLoopSide::Original, L, T});
+    Cut.OriginalState.push_back({L, T});
+    Cut.CandidateState.push_back({L, T});
+    return T;
+  };
+  Parameter({LowIRLoopSpace::Register, x86reg::RAX, 8});
+  Cut.Rank = {Parameter({LowIRLoopSpace::Register, x86reg::RCX, 8})};
+  for (auto Flag :
+       {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
+    Parameter({LowIRLoopSpace::Register, Flag, 1});
+  LowOp Nonzero;
+  Nonzero.Opcode = NdOp::INT_NOTEQUAL;
+  Nonzero.Output = NdVar::tmp(64, 1);
+  Nonzero.addInput(Cut.Rank.front());
+  Nonzero.addInput(NdVar::scalar(0, 8));
+  Cut.Expressions = {Nonzero};
+  Cut.Predicate = Nonzero.Output;
+  LowIRLoopRefinementPlan Plan{{Cut}};
+  const auto Check = [&] {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.RankingChecks, 1U);
+  std::set<va_t> Addresses;
+  for (const auto &I : Good.Certificate->Instructions)
+    EXPECT_TRUE(Addresses.insert(I.Origin.Address).second);
+  EXPECT_EQ(Addresses.size(), 7U);
+  // The contract includes the return slot written before an earlier cut.
+  // A candidate that writes a different continuation cannot hide the effect.
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if (O.Opcode == NdOp::STORE) {
+        auto Memory = lowMemoryOperands(O);
+        ASSERT_TRUE(Memory.Complete);
+        O.Inputs[Memory.StoredValue - O.Inputs] = NdVar::scalar(0, 8);
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(Check(), Status::Different);
 }
 
 TEST(BinaryLowIRRefinement, MandatorySystemFlagsRejectCandidateMutation) {
