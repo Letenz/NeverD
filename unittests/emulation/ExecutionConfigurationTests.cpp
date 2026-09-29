@@ -132,7 +132,7 @@ TEST(ExecutionConfiguration,
     ASSERT_TRUE(bool(Probe));
 #ifndef NEVERD_TEST_UNICORN
     EXPECT_EQ(Probe->Availability, BackendAvailability::BuildDisabled);
-    continue;
+    GTEST_SKIP() << Probe->Reason;
 #else
     ASSERT_EQ(Probe->Availability, BackendAvailability::Available)
         << Probe->Reason;
