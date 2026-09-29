@@ -35,6 +35,7 @@ struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
   uint64_t GSBase = 0;
+  uint64_t FSBase = 0;
   uint32_t MXCSR = x64::InitialMXCSR;
   std::array<ExecutionBackend::XmmValue, x64::XmmCount> Xmm{};
   uint64_t &reg(X64Register R) { return Registers[unsigned(R)]; }

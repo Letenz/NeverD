@@ -1,0 +1,48 @@
+//===- LinuxTLSCases.def - Static TLS startup and syscall test facts ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_TLS_BLOCK_SIZE
+#define NEVERD_TLS_BLOCK_SIZE 4096
+#define NEVERD_TLS_ALIGNMENT 64
+#define NEVERD_TLS_INITIAL 0x12345678
+#define NEVERD_TLS_ARCH_PRCTL 158
+#define NEVERD_TLS_SET_FS 0x1002
+#endif
+#ifdef NEVERD_TLS_VALUE
+NEVERD_TLS_VALUE(BlockSize, NEVERD_TLS_BLOCK_SIZE)
+NEVERD_TLS_VALUE(BlockAlignment, NEVERD_TLS_ALIGNMENT)
+NEVERD_TLS_VALUE(Initial, NEVERD_TLS_INITIAL)
+NEVERD_TLS_VALUE(First, 41)
+NEVERD_TLS_VALUE(Second, 73)
+NEVERD_TLS_VALUE(TlsHeader, 7)
+NEVERD_TLS_VALUE(PhdrTag, 3)
+NEVERD_TLS_VALUE(PhnumTag, 5)
+NEVERD_TLS_VALUE(TcbWords, 2)
+NEVERD_TLS_VALUE(WordSize, 8)
+NEVERD_TLS_VALUE(MaxAuxEntries, 64)
+NEVERD_TLS_VALUE(ArchPrctl, NEVERD_TLS_ARCH_PRCTL)
+NEVERD_TLS_VALUE(SetGS, 0x1001)
+NEVERD_TLS_VALUE(GetFS, 0x1003)
+NEVERD_TLS_VALUE(GetGS, 0x1004)
+NEVERD_TLS_VALUE(InvalidBase, 0xffff800000000000ULL)
+NEVERD_TLS_VALUE(BadPointer, 1)
+NEVERD_TLS_VALUE(BadAddress, 14)
+NEVERD_TLS_VALUE(PermissionDenied, 1)
+NEVERD_TLS_VALUE(UnsupportedOperation, 0x1012)
+NEVERD_TLS_VALUE(FailureStatus, 92)
+NEVERD_TLS_VALUE(ExitStatus, 0)
+NEVERD_TLS_VALUE(StandardOutput, 1)
+NEVERD_TLS_VALUE(InstructionLimit, 20000)
+#endif
+#ifdef NEVERD_TLS_TEXT
+NEVERD_TLS_TEXT(Message, "static tls ok\n")
+NEVERD_TLS_TEXT(ExecutableName, "tls-fixture")
+NEVERD_TLS_TEXT(Normal, "normal")
+NEVERD_TLS_TEXT(Unknown, "unknown")
+NEVERD_TLS_TEXT(Suffix, "-tls.elf")
+NEVERD_TLS_TEXT(X64File, "X64-tls.elf")
+NEVERD_TLS_TEXT(ARMFile, "AArch64-tls.elf")
+NEVERD_TLS_TEXT(RequiresX64, "arch_prctl is an x64 Linux interface")
+#endif

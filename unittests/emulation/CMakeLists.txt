@@ -10,6 +10,11 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
+add_neverd_unittest(NeverDThreadPointerTests
+  ThreadPointerTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp

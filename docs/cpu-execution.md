@@ -112,6 +112,12 @@ Availability can change after the query. Reasons distinguish disabled builds,
 host platform/ISA mismatches, device access, host API errors, missing capability
 and other initialization failures. No unavailable backend silently falls back.
 
+`thread_pointer` covers x64 FS/GS base state and admitted scalar memory operands,
+and ARM64 `TPIDR_EL0` state with its exact `MRS`/`MSR` encodings. Each native
+transport synchronizes that state, and CPU snapshots preserve it independently
+of memory. Other ARM64 system-register accesses remain outside the checked
+inventory. This capability does not create OS threads or allocate TLS blocks.
+
 Whole-instruction memory preflight is specific to the checked contracts.
 Software engine callbacks can describe split accesses and partial instruction
 effects. Stop/deadline control is cooperative: between checked instructions or

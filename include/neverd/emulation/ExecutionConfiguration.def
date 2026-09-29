@@ -40,7 +40,8 @@ NEVERD_EXECUTION_FEATURE(UserSupervisorIsolation, 12,
 NEVERD_EXECUTION_FEATURE(ServiceTraps, 13, "service_traps")
 NEVERD_EXECUTION_FEATURE(ParallelCPUs, 14, "parallel_cpus")
 NEVERD_EXECUTION_FEATURE(TypedExits, 15, "typed_exits")
+NEVERD_EXECUTION_FEATURE(ThreadPointer, 16, "thread_pointer")
 #endif
 #ifdef NEVERD_EXECUTION_FEATURE_LIMIT
-NEVERD_EXECUTION_FEATURE_LIMIT(TypedExits)
+NEVERD_EXECUTION_FEATURE_LIMIT(ThreadPointer)
 #endif

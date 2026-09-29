@@ -57,6 +57,7 @@ public:
     S.cs = Code;
     S.ds = S.es = S.ss = S.fs = S.gs = Data;
     S.gs.base = State.GSBase;
+    S.fs.base = State.FSBase;
     // x87 is unobservable in this profile and has a fixed reset value. Every
     // admitted XMM and MXCSR bit belongs to the architecture-owned State.
     // SET_FPU does not establish XSTATE_BV or transfer MXCSR on x86. Use the

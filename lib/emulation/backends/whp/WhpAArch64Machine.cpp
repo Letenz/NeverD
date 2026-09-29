@@ -31,6 +31,7 @@ public:
       Add(WHV_REGISTER_NAME(WHvArm64RegisterX0 + N), State.Registers[N]);
     Add(State.UserMode ? WHvArm64RegisterSpEl0 : WHvArm64RegisterSpEl1,
         State.reg(AArch64Register::SP));
+    Add(WHvArm64RegisterTpidrEl0, State.reg(AArch64Register::TPIDR_EL0));
     const uint64_t Mode = State.UserMode ? PStateEL0t : PStateEL1h;
     const unsigned GeneralCount = Names.size();
     Add(WHvArm64RegisterPc, EntryGPA);
@@ -75,6 +76,7 @@ public:
     for (unsigned N = 0; N < GPRCount; ++N)
       State.Registers[N] = Values[N].Reg64;
     State.reg(AArch64Register::SP) = Values[GPRCount].Reg64;
+    State.reg(AArch64Register::TPIDR_EL0) = Values[GPRCount + 1].Reg64;
     State.reg(AArch64Register::PC) = Values[GeneralCount + 1].Reg64;
     State.reg(AArch64Register::NZCV) =
         Values[GeneralCount + 2].Reg64 & NZCVMask;

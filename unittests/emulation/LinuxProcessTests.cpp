@@ -22,6 +22,13 @@ namespace {
 #undef NEVERD_LINUX_FIXTURE_BYTES
 #undef NEVERD_LINUX_FIXTURE_TEXT
 #undef NEVERD_LINUX_FIXTURE_VALUE
+namespace tls_fixture {
+#define NEVERD_TLS_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_TLS_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxTLSCases.def"
+#undef NEVERD_TLS_VALUE
+#undef NEVERD_TLS_TEXT
+} // namespace tls_fixture
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
@@ -93,6 +100,34 @@ TEST_P(LinuxProcess, InstructionCreditsSurviveQuantumResumptions) {
       << Result.Diagnostic;
   EXPECT_EQ(Result.Instructions, Options.Limits.Instructions);
   EXPECT_FALSE(Result.ExitStatus);
+}
+TEST_P(LinuxProcess, CompilerTLSBlocksRemainIndependentAcrossProcessQuanta) {
+  Path.replace_filename(Path.stem().string() + tls_fixture::Suffix);
+  Options.Arguments = {tls_fixture::ExecutableName, tls_fixture::Normal};
+  Options.InstructionQuantum = 3;
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::Exited) << Result.Diagnostic;
+  EXPECT_EQ(Result.ExitStatus, tls_fixture::ExitStatus);
+  EXPECT_EQ(Result.StandardOutput, tls_fixture::Message);
+  EXPECT_EQ(Result.SelectedBackend, GetParam().Backend);
+  EXPECT_TRUE(Result.StandardError.empty());
+  EXPECT_GT(Result.Instructions, Options.InstructionQuantum);
+}
+TEST_P(LinuxProcess, UnimplementedArchPrctlDoesNotInventAServiceReturn) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << tls_fixture::RequiresX64;
+  Path.replace_filename(Path.stem().string() + tls_fixture::Suffix);
+  Options.Arguments = {tls_fixture::ExecutableName, tls_fixture::Unknown};
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService)
+      << Result.Diagnostic;
+  EXPECT_FALSE(Result.ExitStatus);
+  ASSERT_FALSE(Result.Services.empty());
+  EXPECT_EQ(Result.Services.back().Number, tls_fixture::ArchPrctl);
+  EXPECT_EQ(Result.Services.back().Arguments[0],
+            tls_fixture::UnsupportedOperation);
+  EXPECT_FALSE(Result.Services.back().Result);
+  EXPECT_TRUE(Result.StandardOutput.empty());
 }
 TEST_P(LinuxProcess, ServiceEventLimitStopsBeforeAnotherGuestReturn) {
   Options.Limits.Events = 1;

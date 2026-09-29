@@ -148,6 +148,9 @@ public:
     if (auto E =
             check(uc_reg_write(CPU.Engine, UC_X86_REG_GS_BASE, &State.GSBase)))
       return E;
+    if (auto E =
+            check(uc_reg_write(CPU.Engine, UC_X86_REG_FS_BASE, &State.FSBase)))
+      return E;
     for (unsigned I = 0; I < State.Xmm.size(); ++I)
       if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_XMM0 + I,
                                       State.Xmm[I].data())))

@@ -69,6 +69,8 @@ public:
       V.Segment.Default = !Code;
       if (Name == WHvX64RegisterGs)
         V.Segment.Base = State.GSBase;
+      if (Name == WHvX64RegisterFs)
+        V.Segment.Base = State.FSBase;
       Names.push_back(Name);
       Values.push_back(V);
     }
