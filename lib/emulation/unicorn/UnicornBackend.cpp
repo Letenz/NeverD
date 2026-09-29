@@ -11,7 +11,9 @@
 
 #include "UnicornBackend.h"
 
-#include "neverd/emulation/DriverProfile.h"
+#include "../core/ExecutionDiagnostics.h"
+#include "../core/MemoryLayout.h"
+#include "UnicornArchitecture.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -22,53 +24,45 @@
 #include <iterator>
 #include <map>
 #include <new>
+#include <unicorn/arm64.h>
 #include <unicorn/unicorn.h>
 #include <unicorn/x86.h>
 #include <utility>
 
 namespace neverd::emulation {
 namespace {
+namespace unicornDiagnostic {
+#define NEVERD_UNICORN_DIAGNOSTIC(Name, Text)                                  \
+  inline constexpr char Name[] = Text;
+#include "UnicornDiagnostics.def"
+#undef NEVERD_UNICORN_DIAGNOSTIC
+} // namespace unicornDiagnostic
 llvm::Error failure(const std::string &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }
 llvm::Error check(uc_err Error, const char *Operation) {
   if (Error == UC_ERR_OK)
     return llvm::Error::success();
-  return failure(std::string(Operation) + ": " + uc_strerror(Error));
+  return failure(std::string(Operation) +
+                 unicornDiagnostic::OperationSeparator + uc_strerror(Error));
 }
-int registerID(X64Register Register) {
+int registerID(CPURegister Register) {
   switch (Register) {
-#define NEVERD_UNICORN_REGISTER(Name, Register)                                \
-  case X64Register::Name:                                                      \
-    return Register;
-#include "UnicornRegisters.def"
-#undef NEVERD_UNICORN_REGISTER
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  case CPURegister::Arch##Name:                                                \
+    return Backend;
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
+  case CPURegister::Arch##V##Index:                                            \
+    return Backend;
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_SCALAR_REGISTER
+#undef NEVERD_VECTOR_REGISTER
+  case CPURegister::Invalid:
+    break;
   }
-  return UC_X86_REG_INVALID;
+  return 0;
 }
 } // namespace
-
-const char *backendFaultKindName(BackendFaultKind Kind) {
-  switch (Kind) {
-#define NEVERD_UNICORN_FAULT_KIND(Name, Spelling)                              \
-  case BackendFaultKind::Name:                                                 \
-    return Spelling;
-#include "UnicornFaults.def"
-#undef NEVERD_UNICORN_FAULT_KIND
-  }
-  llvm_unreachable("unknown backend fault kind");
-}
-
-const char *backendAccessKindName(BackendAccessKind Kind) {
-  switch (Kind) {
-#define NEVERD_UNICORN_ACCESS_KIND(Name, Spelling)                             \
-  case BackendAccessKind::Name:                                                \
-    return Spelling;
-#include "UnicornFaults.def"
-#undef NEVERD_UNICORN_ACCESS_KIND
-  }
-  llvm_unreachable("unknown backend access kind");
-}
 
 struct UnicornBackend::Impl {
   struct MMIORegion {
@@ -77,6 +71,8 @@ struct UnicornBackend::Impl {
     GuestMMIOCallbacks Callbacks;
   };
   uc_engine *Engine = nullptr;
+  GuestArchitecture Architecture = GuestArchitecture::X64;
+  int PCRegister = UC_X86_REG_RIP;
   // A separate identity survives address reuse without extending engine life.
   std::shared_ptr<const void> Identity = std::make_shared<unsigned char>(0);
   uint64_t Limit = 0;
@@ -112,8 +108,8 @@ struct UnicornBackend::Impl {
       return std::nullopt;
     if (Size - 1 > UINT64_MAX - Address)
       return BackendFaultKind::InvalidMemoryRange;
-    uint64_t LastPage = (Address + Size - 1) & ~uint64_t(profile::PageSize - 1);
-    for (uint64_t Page = Address & ~uint64_t(profile::PageSize - 1);;) {
+    uint64_t LastPage = (Address + Size - 1) & ~uint64_t(memory::PageSize - 1);
+    for (uint64_t Page = Address & ~uint64_t(memory::PageSize - 1);;) {
       auto I = Pages.find(Page);
       if (I == Pages.end())
         return BackendFaultKind::UnmappedMemory;
@@ -121,7 +117,7 @@ struct UnicornBackend::Impl {
         return BackendFaultKind::Protection;
       if (Page == LastPage)
         return std::nullopt;
-      Page += profile::PageSize;
+      Page += memory::PageSize;
     }
   }
 
@@ -141,9 +137,9 @@ struct UnicornBackend::Impl {
 
   llvm::Error validateRAMBacking(uint64_t Address, uint64_t Size) const {
     if (accessFault(Address, Size, 0))
-      return failure("RAM backing range is unmapped or overflowing");
+      return failure(unicornDiagnostic::RAMBackingRangeIsUnmappedOrOverflowing);
     if (overlappingMMIO(Address, Size))
-      return failure("RAM backing access cannot include MMIO");
+      return failure(unicornDiagnostic::RAMBackingAccessCannotIncludeMMIO);
     return llvm::Error::success();
   }
 
@@ -154,10 +150,10 @@ struct UnicornBackend::Impl {
 
   llvm::Error deviceError() const {
     if (MMIOFailed)
-      return failure(MMIOFailure.empty() ? "MMIO callback failed"
+      return failure(MMIOFailure.empty() ? unicornDiagnostic::MMIOCallbackFailed
                                          : MMIOFailure);
     if (CallbackFailed)
-      return failure("exception in emulator hook");
+      return failure(unicornDiagnostic::ExceptionInEmulatorHook);
     return llvm::Error::success();
   }
 
@@ -178,11 +174,12 @@ struct UnicornBackend::Impl {
     if (Address < Region->Address ||
         Address - Region->Address >= Region->Size ||
         Size > Region->Size - (Address - Region->Address))
-      return failure("MMIO access crosses a mapping boundary");
+      return failure(unicornDiagnostic::MMIOAccessCrossesAMappingBoundary);
     if ((Size != 1 && Size != 2 && Size != 4) || Address % Size)
-      return failure("MMIO requires an aligned 1, 2 or 4 byte transaction");
+      return failure(unicornDiagnostic::MMIORequiresAnAligned12Or4);
     if (DeviceCallbackActive)
-      return failure("recursive MMIO callback access is unsupported");
+      return failure(
+          unicornDiagnostic::RecursiveMMIOCallbackAccessIsUnsupported);
     DeviceCallbackActive = true;
     auto Reset = llvm::scope_exit([&] { DeviceCallbackActive = false; });
     return Region->Callbacks.Validate(Address - Region->Address, Size, IsWrite);
@@ -237,7 +234,7 @@ struct UnicornBackend::Impl {
   uint64_t currentPC() const noexcept {
     uint64_t PC = InstructionPC;
     // Capture inside the fault boundary, before a hook can change the CPU.
-    if (uc_reg_read(Engine, UC_X86_REG_RIP, &PC) != UC_ERR_OK)
+    if (uc_reg_read(Engine, PCRegister, &PC) != UC_ERR_OK)
       return InstructionPC;
     return PC;
   }
@@ -360,50 +357,55 @@ struct UnicornBackend::Impl {
   }
 };
 
-struct BackendContext::Impl {
+struct UnicornContext final : BackendContext::Storage {
   uc_context *Context = nullptr;
-  std::weak_ptr<const void> Owner;
 
-  ~Impl() {
+  ~UnicornContext() override {
     if (Context)
       uc_context_free(Context);
   }
 };
-
-BackendContext::BackendContext(std::unique_ptr<Impl> State)
-    : State(std::move(State)) {}
-BackendContext::~BackendContext() = default;
-BackendContext::BackendContext(BackendContext &&) noexcept = default;
-BackendContext &BackendContext::operator=(BackendContext &&) noexcept = default;
 
 UnicornBackend::UnicornBackend(std::unique_ptr<Impl> State)
     : State(std::move(State)) {}
 UnicornBackend::~UnicornBackend() = default;
 
 llvm::Expected<std::unique_ptr<UnicornBackend>>
-UnicornBackend::create(uint64_t MemoryLimit) {
+UnicornBackend::create(uint64_t MemoryLimit, GuestArchitecture Architecture) {
   auto S = std::make_unique<Impl>();
   S->Limit = MemoryLimit;
+  S->Architecture = Architecture;
+  uc_arch Arch;
+  uc_mode Mode;
+  switch (Architecture) {
+  case GuestArchitecture::X64:
+    Arch = UC_ARCH_X86;
+    Mode = UC_MODE_64;
+    break;
+  case GuestArchitecture::AArch64:
+    Arch = UC_ARCH_ARM64;
+    Mode = UC_MODE_ARM;
+    S->PCRegister = UC_ARM64_REG_PC;
+    break;
+  default:
+    return diagnostic::error(diagnostic::Architecture);
+  }
   if (auto E =
-          check(uc_open(UC_ARCH_X86, UC_MODE_64, &S->Engine), "create x64 CPU"))
+          check(uc_open(Arch, Mode, &S->Engine), diagnostic::UnicornCreate))
     return std::move(E);
   // GuestMemory maps virtual addresses directly without Windows page tables.
   // The CPU TLB applies its physical address width even with paging disabled,
   // which truncates canonical kernel addresses. Unicorn's virtual TLB keeps
   // these addresses intact while retaining the mapped page permissions.
   if (auto E = check(uc_ctl_tlb_mode(S->Engine, UC_TLB_VIRTUAL),
-                     "configure guest virtual address space"))
+                     unicornDiagnostic::ConfigureGuestVirtualAddressSpace))
     return std::move(E);
   // Scheduling exchanges CPU state while every thread observes the same live
   // address space. Never enable Unicorn's optional memory snapshot mode.
   if (auto E = check(uc_ctl_context_mode(S->Engine, UC_CTL_CONTEXT_CPU),
-                     "configure CPU context contents"))
+                     unicornDiagnostic::ConfigureCPUContextContents))
     return std::move(E);
-  // No Windows privilege environment is implied by this CPU configuration.
-  // DriverSession explicitly rejects environment-dependent instructions.
-  uint64_t Flags = profile::InitialRFLAGS;
-  if (auto E = check(uc_reg_write(S->Engine, UC_X86_REG_RFLAGS, &Flags),
-                     "initialize flags"))
+  if (auto E = initializeUnicornArchitecture(S->Engine, Architecture))
     return std::move(E);
   auto Backend =
       std::unique_ptr<UnicornBackend>(new UnicornBackend(std::move(S)));
@@ -415,26 +417,26 @@ UnicornBackend::create(uint64_t MemoryLimit) {
 
 llvm::Error UnicornBackend::map(uint64_t Address, uint64_t Size,
                                 unsigned Permissions) {
-  if (!Size || (Address & (profile::PageSize - 1)) ||
-      (Size & (profile::PageSize - 1)) || Size - 1 > UINT64_MAX - Address ||
+  if (!Size || (Address & (memory::PageSize - 1)) ||
+      (Size & (memory::PageSize - 1)) || Size - 1 > UINT64_MAX - Address ||
       (Permissions & ~(Read | Write | Execute)) ||
       Size > State->Limit - State->Mapped)
-    return failure("invalid guest mapping or memory limit exceeded");
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize)
+    return failure(unicornDiagnostic::InvalidGuestMappingOrMemoryLimitExceeded);
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     if (State->Pages.count(Address + Offset))
-      return failure("overlapping guest mapping");
+      return failure(unicornDiagnostic::OverlappingGuestMapping);
   auto Allocation = std::unique_ptr<uint8_t[]>(
-      new (std::nothrow) uint8_t[Size + profile::PageSize - 1]());
+      new (std::nothrow) uint8_t[Size + memory::PageSize - 1]());
   if (!Allocation)
     return llvm::make_error<GuestMemoryLimitError>();
   auto *Raw = reinterpret_cast<uint8_t *>(
-      (reinterpret_cast<uintptr_t>(Allocation.get()) + profile::PageSize - 1) &
-      ~(uintptr_t(profile::PageSize) - 1));
+      (reinterpret_cast<uintptr_t>(Allocation.get()) + memory::PageSize - 1) &
+      ~(uintptr_t(memory::PageSize) - 1));
   if (auto E =
           check(uc_mem_map_ptr(State->Engine, Address, Size, Permissions, Raw),
-                "map guest memory"))
+                unicornDiagnostic::MapGuestMemory))
     return E;
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize) {
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize) {
     State->Pages.emplace(Address + Offset, Permissions);
     State->PageBacking.emplace(Address + Offset, Raw + Offset);
   }
@@ -456,16 +458,16 @@ llvm::Error
 UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
                                llvm::ArrayRef<GuestAliasMapping> Add) {
   if (State->Running || State->DeviceCallbackActive || State->effectsStopped())
-    return failure("cannot replace RAM aliases during execution, a callback or "
-                   "after a fault");
+    return failure(
+        unicornDiagnostic::CannotReplaceRAMAliasesDuringExecutionACallback);
   std::map<uint64_t, uint64_t> Retiring;
   uint64_t FinalMapped = State->Mapped;
   for (const auto &Range : Remove) {
     auto Alias = State->RAMAliases.find(Range.Address);
     if (Alias == State->RAMAliases.end() || Alias->second != Range.Size ||
         !Retiring.emplace(Range.Address, Range.Size).second)
-      return failure(
-          "RAM alias removal requires unique exact complete mappings");
+      return failure(unicornDiagnostic::
+                         RAMAliasRemovalRequiresUniqueExactCompleteMappings);
     FinalMapped -= Range.Size;
   }
   auto RetiresPage = [&](uint64_t Page) {
@@ -483,12 +485,11 @@ UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
   std::map<uint64_t, uint64_t> Destinations;
   for (const auto &Mapping : Add) {
     const auto [Address, Source, Size, Permissions] = Mapping;
-    if (!Size || (Address & (profile::PageSize - 1)) ||
-        (Source & (profile::PageSize - 1)) ||
-        (Size & (profile::PageSize - 1)) || Size - 1 > UINT64_MAX - Address ||
-        Size - 1 > UINT64_MAX - Source ||
+    if (!Size || (Address & (memory::PageSize - 1)) ||
+        (Source & (memory::PageSize - 1)) || (Size & (memory::PageSize - 1)) ||
+        Size - 1 > UINT64_MAX - Address || Size - 1 > UINT64_MAX - Source ||
         (Permissions & ~(Read | Write | Execute)))
-      return failure("invalid shared RAM alias");
+      return failure(unicornDiagnostic::InvalidSharedRAMAlias);
     if (Size > State->Limit - FinalMapped)
       return llvm::make_error<GuestMemoryLimitError>();
     FinalMapped += Size;
@@ -496,21 +497,23 @@ UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
     if ((Next != Destinations.end() && Next->first - Address < Size) ||
         (Next != Destinations.begin() &&
          Address - std::prev(Next)->first < std::prev(Next)->second))
-      return failure("replacement RAM aliases overlap each other");
+      return failure(unicornDiagnostic::ReplacementRAMAliasesOverlapEachOther);
     Destinations.emplace_hint(Next, Address, Size);
     auto First = State->PageBacking.find(Source);
     if (First == State->PageBacking.end())
-      return failure("shared RAM alias has no source backing");
-    for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize) {
+      return failure(unicornDiagnostic::SharedRAMAliasHasNoSourceBacking);
+    for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize) {
       auto Page = State->PageBacking.find(Source + Offset);
       if (RetiresPage(Source + Offset))
-        return failure("replacement RAM alias source is being retired");
+        return failure(
+            unicornDiagnostic::ReplacementRAMAliasSourceIsBeingRetired);
       if ((State->Pages.count(Address + Offset) &&
            !RetiresPage(Address + Offset)) ||
           Page == State->PageBacking.end() ||
           reinterpret_cast<uintptr_t>(Page->second) !=
               reinterpret_cast<uintptr_t>(First->second) + Offset)
-        return failure("shared RAM alias overlaps or crosses source backing");
+        return failure(
+            unicornDiagnostic::SharedRAMAliasOverlapsOrCrossesSourceBacking);
     }
     Prepared.push_back({Mapping, First->second});
   }
@@ -528,10 +531,10 @@ UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
   for (const auto &Range : Remove) {
     if (auto E = CheckMutation(
             uc_mem_unmap(State->Engine, Range.Address, Range.Size),
-            "unmap shared guest memory", Range.Address, Range.Size))
+            unicornDiagnostic::UnmapSharedGuestMemory, Range.Address,
+            Range.Size))
       return E;
-    for (uint64_t Offset = 0; Offset < Range.Size;
-         Offset += profile::PageSize) {
+    for (uint64_t Offset = 0; Offset < Range.Size; Offset += memory::PageSize) {
       State->Pages.erase(Range.Address + Offset);
       State->PageBacking.erase(Range.Address + Offset);
     }
@@ -542,9 +545,10 @@ UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
     const auto [Address, Source, Size, Permissions] = Alias.Mapping;
     if (auto E = CheckMutation(uc_mem_map_ptr(State->Engine, Address, Size,
                                               Permissions, Alias.Backing),
-                               "map shared guest memory", Address, Size))
+                               unicornDiagnostic::MapSharedGuestMemory, Address,
+                               Size))
       return E;
-    for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize) {
+    for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize) {
       State->Pages.emplace(Address + Offset, Permissions);
       State->PageBacking.emplace(Address + Offset, Alias.Backing + Offset);
     }
@@ -556,17 +560,17 @@ UnicornBackend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
 
 llvm::Error UnicornBackend::protect(uint64_t Address, uint64_t Size,
                                     unsigned Permissions) {
-  if (!Size || (Address & (profile::PageSize - 1)) ||
-      (Size & (profile::PageSize - 1)) ||
+  if (!Size || (Address & (memory::PageSize - 1)) ||
+      (Size & (memory::PageSize - 1)) ||
       (Permissions & ~(Read | Write | Execute)) ||
       !State->accessible(Address, Size, 0))
-    return failure("invalid guest protection range");
+    return failure(unicornDiagnostic::InvalidGuestProtectionRange);
   if (State->overlappingMMIO(Address, Size))
-    return failure("changing MMIO page permissions is unsupported");
+    return failure(unicornDiagnostic::ChangingMMIOPagePermissionsIsUnsupported);
   if (auto E = check(uc_mem_protect(State->Engine, Address, Size, Permissions),
-                     "protect guest memory"))
+                     unicornDiagnostic::ProtectGuestMemory))
     return E;
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize)
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     State->Pages[Address + Offset] = Permissions;
   return llvm::Error::success();
 }
@@ -574,28 +578,29 @@ llvm::Error UnicornBackend::protect(uint64_t Address, uint64_t Size,
 llvm::Error UnicornBackend::mapMMIO(uint64_t Address, uint64_t Size,
                                     GuestMMIOCallbacks Callbacks) {
   if (State->Running || State->DeviceCallbackActive)
-    return failure("cannot map MMIO during guest execution or a callback");
-  if (!Size || (Address & (profile::PageSize - 1)) ||
-      (Size & (profile::PageSize - 1)) || Size - 1 > UINT64_MAX - Address)
-    return failure("invalid MMIO mapping");
+    return failure(unicornDiagnostic::CannotMapMMIODuringGuestExecutionOrA);
+  if (!Size || (Address & (memory::PageSize - 1)) ||
+      (Size & (memory::PageSize - 1)) || Size - 1 > UINT64_MAX - Address)
+    return failure(unicornDiagnostic::InvalidMMIOMapping);
   if (Size > State->Limit - State->Mapped)
     return llvm::make_error<GuestMemoryLimitError>();
   if (!Callbacks.Validate || !Callbacks.Read || !Callbacks.Write)
-    return failure("MMIO mapping requires validate, read and write callbacks");
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize)
+    return failure(
+        unicornDiagnostic::MMIOMappingRequiresValidateReadAndWriteCallbacks);
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     if (State->Pages.count(Address + Offset))
-      return failure("overlapping guest mapping");
+      return failure(unicornDiagnostic::OverlappingGuestMapping);
   auto Region = std::make_unique<Impl::MMIORegion>(
       Impl::MMIORegion{State.get(), Address, Size, std::move(Callbacks)});
   auto *Identity = Region.get();
   State->MMIO.emplace(Address, std::move(Region));
   if (auto E = check(uc_mmio_map(State->Engine, Address, Size, Impl::mmioRead,
                                  Identity, Impl::mmioWrite, Identity),
-                     "map guest MMIO")) {
+                     unicornDiagnostic::MapGuestMMIO)) {
     State->MMIO.erase(Address);
     return E;
   }
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize)
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     State->Pages.emplace(Address + Offset, Read | Write);
   State->Mapped += Size;
   return llvm::Error::success();
@@ -603,14 +608,14 @@ llvm::Error UnicornBackend::mapMMIO(uint64_t Address, uint64_t Size,
 
 llvm::Error UnicornBackend::unmapMMIO(uint64_t Address, uint64_t Size) {
   if (State->Running || State->DeviceCallbackActive)
-    return failure("cannot unmap MMIO during guest execution or a callback");
+    return failure(unicornDiagnostic::CannotUnmapMMIODuringGuestExecutionOrA);
   auto I = State->MMIO.find(Address);
   if (I == State->MMIO.end() || I->second->Size != Size)
-    return failure("MMIO unmap requires one exact complete mapping");
-  if (auto E =
-          check(uc_mem_unmap(State->Engine, Address, Size), "unmap guest MMIO"))
+    return failure(unicornDiagnostic::MMIOUnmapRequiresOneExactCompleteMapping);
+  if (auto E = check(uc_mem_unmap(State->Engine, Address, Size),
+                     unicornDiagnostic::UnmapGuestMMIO))
     return E;
-  for (uint64_t Offset = 0; Offset < Size; Offset += profile::PageSize)
+  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     State->Pages.erase(Address + Offset);
   State->Mapped -= Size;
   State->MMIO.erase(I);
@@ -623,10 +628,11 @@ llvm::Error UnicornBackend::read(uint64_t Address,
     return E;
   if (auto Kind = State->accessFault(Address, Bytes.size(), Read)) {
     State->memoryFault(*Kind, BackendAccessKind::Read, Address, Bytes.size());
-    return failure("guest read fault at 0x" + llvm::utohexstr(Address));
+    return failure(std::string(unicornDiagnostic::GuestReadFaultAt0x) +
+                   llvm::utohexstr(Address));
   }
   if (State->overlappingMMIO(Address, Bytes.size()) && State->effectsStopped())
-    return failure("cannot access MMIO on a stopped or faulted CPU");
+    return failure(unicornDiagnostic::CannotAccessMMIOOnAStoppedOrFaulted);
   State->invoke([&] { State->preflightMMIO(Address, Bytes.size(), false); });
   if (auto E = State->deviceError())
     return E;
@@ -635,7 +641,7 @@ llvm::Error UnicornBackend::read(uint64_t Address,
                                             Bytes.data(), Bytes.size());
   if (auto E = State->deviceError())
     return E;
-  return check(Status, "read guest memory");
+  return check(Status, unicornDiagnostic::ReadGuestMemory);
 }
 llvm::Error UnicornBackend::write(uint64_t Address,
                                   llvm::ArrayRef<uint8_t> Bytes) {
@@ -643,10 +649,11 @@ llvm::Error UnicornBackend::write(uint64_t Address,
     return E;
   if (auto Kind = State->accessFault(Address, Bytes.size(), Write)) {
     State->memoryFault(*Kind, BackendAccessKind::Write, Address, Bytes.size());
-    return failure("guest write fault at 0x" + llvm::utohexstr(Address));
+    return failure(std::string(unicornDiagnostic::GuestWriteFaultAt0x) +
+                   llvm::utohexstr(Address));
   }
   if (State->overlappingMMIO(Address, Bytes.size()) && State->effectsStopped())
-    return failure("cannot access MMIO on a stopped or faulted CPU");
+    return failure(unicornDiagnostic::CannotAccessMMIOOnAStoppedOrFaulted);
   State->invoke([&] { State->preflightMMIO(Address, Bytes.size(), true); });
   if (auto E = State->deviceError())
     return E;
@@ -655,27 +662,27 @@ llvm::Error UnicornBackend::write(uint64_t Address,
                                              Bytes.data(), Bytes.size());
   if (auto E = State->deviceError())
     return E;
-  return check(Status, "write guest memory");
+  return check(Status, unicornDiagnostic::WriteGuestMemory);
 }
 llvm::Error UnicornBackend::fetch(uint64_t Address,
                                   llvm::MutableArrayRef<uint8_t> Bytes) {
   if (auto Kind = State->accessFault(Address, Bytes.size(), Execute)) {
     State->memoryFault(*Kind, BackendAccessKind::Execute, Address,
                        Bytes.size());
-    return failure("guest fetch fault at 0x" + llvm::utohexstr(Address));
+    return failure(std::string(unicornDiagnostic::GuestFetchFaultAt0x) +
+                   llvm::utohexstr(Address));
   }
   return check(uc_mem_read(State->Engine, Address, Bytes.data(), Bytes.size()),
-               "fetch guest instruction");
+               unicornDiagnostic::FetchGuestInstruction);
 }
 
 llvm::Error UnicornBackend::validateBacking(uint64_t Address,
                                             uint64_t Size) const {
   if (State->Running || State->DeviceCallbackActive)
     return failure(
-        "RAM backing access requires a stopped CPU without an active "
-        "device callback");
+        unicornDiagnostic::RAMBackingAccessRequiresAStoppedCPUWithout);
   if (State->effectsStopped())
-    return failure("cannot access RAM backing on a faulted CPU");
+    return failure(unicornDiagnostic::CannotAccessRAMBackingOnAFaultedCPU);
   return State->validateRAMBacking(Address, Size);
 }
 
@@ -683,17 +690,16 @@ llvm::Error
 UnicornBackend::snapshotBacking(uint64_t Address,
                                 llvm::MutableArrayRef<uint8_t> Bytes) {
   if (State->Running || State->DeviceCallbackActive)
-    return failure("RAM snapshot requires a stopped CPU without an active "
-                   "device callback");
+    return failure(unicornDiagnostic::RAMSnapshotRequiresAStoppedCPUWithoutAn);
   if (auto E = State->validateRAMBacking(Address, Bytes.size()))
     return E;
   // Read adapter-owned RAM directly, without reentering a faulted engine.
   // Each page may belong to a separate allocation or shared virtual alias.
   while (!Bytes.empty()) {
-    const uint64_t Offset = Address & (profile::PageSize - 1);
+    const uint64_t Offset = Address & (memory::PageSize - 1);
     const auto *Backing = State->PageBacking.at(Address - Offset);
     const size_t Count =
-        std::min<uint64_t>(Bytes.size(), profile::PageSize - Offset);
+        std::min<uint64_t>(Bytes.size(), memory::PageSize - Offset);
     std::copy_n(Backing + Offset, Count, Bytes.begin());
     Bytes = Bytes.drop_front(Count);
     Address += Count;
@@ -705,8 +711,8 @@ llvm::Expected<bool> UnicornBackend::canAccess(uint64_t Address, uint64_t Size,
                                                unsigned Permissions) const {
   if ((Permissions & ~(Read | Write | Execute)) ||
       State->DeviceCallbackActive || State->effectsStopped())
-    return failure("CPU access preflight requires valid permissions and a "
-                   "healthy CPU outside device callbacks");
+    return failure(
+        unicornDiagnostic::CPUAccessPreflightRequiresValidPermissionsAndA);
   return !State->accessFault(Address, Size, Permissions) &&
          !State->overlappingMMIO(Address, Size);
 }
@@ -721,7 +727,7 @@ llvm::Error UnicornBackend::readBacking(uint64_t Address,
   if (Status != UC_ERR_OK)
     State->memoryFault(BackendFaultKind::UnhandledException,
                        BackendAccessKind::Read, Address, Bytes.size());
-  return check(Status, "read RAM backing");
+  return check(Status, unicornDiagnostic::ReadRAMBacking);
 }
 
 llvm::Error UnicornBackend::writeBacking(uint64_t Address,
@@ -738,51 +744,36 @@ llvm::Error UnicornBackend::writeBacking(uint64_t Address,
   if (Status != UC_ERR_OK)
     State->memoryFault(BackendFaultKind::UnhandledException,
                        BackendAccessKind::Write, Address, Bytes.size());
-  return check(Status, "write RAM backing");
+  return check(Status, unicornDiagnostic::WriteRAMBacking);
 }
-llvm::Expected<uint64_t> UnicornBackend::reg(X64Register Register) {
-  uint64_t Value = 0;
-  if (auto E = check(uc_reg_read(State->Engine, registerID(Register), &Value),
-                     "read guest register"))
+GuestArchitecture UnicornBackend::architecture() const {
+  return State->Architecture;
+}
+llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
+  if (!registerMatches(R, architecture()))
+    return diagnostic::error(diagnostic::Register);
+  RegisterValue V{};
+  if (auto E = check(uc_reg_read(State->Engine, registerID(R), V.data()),
+                     diagnostic::UnicornReadRegister))
     return std::move(E);
-  return Value;
+  return V;
 }
-llvm::Error UnicornBackend::setReg(X64Register Register, uint64_t Value) {
-  return check(uc_reg_write(State->Engine, registerID(Register), &Value),
-               "write guest register");
-}
-
-llvm::Error UnicornBackend::setGSBase(uint64_t Address) {
-  return check(uc_reg_write(State->Engine, UC_X86_REG_GS_BASE, &Address),
-               "write guest GS base");
-}
-
-llvm::Expected<UnicornBackend::XmmValue>
-UnicornBackend::xmm(unsigned Register) {
-  if (Register > UC_X86_REG_XMM15 - UC_X86_REG_XMM0)
-    return failure("invalid x64 XMM register");
-  XmmValue Value{};
-  if (auto E = check(
-          uc_reg_read(State->Engine, UC_X86_REG_XMM0 + Register, Value.data()),
-          "read guest XMM register"))
-    return std::move(E);
-  return Value;
-}
-llvm::Error UnicornBackend::setXmm(unsigned Register, const XmmValue &Value) {
-  if (Register > UC_X86_REG_XMM15 - UC_X86_REG_XMM0)
-    return failure("invalid x64 XMM register");
-  return check(
-      uc_reg_write(State->Engine, UC_X86_REG_XMM0 + Register, Value.data()),
-      "write guest XMM register");
+llvm::Error UnicornBackend::writeRegister(CPURegister R,
+                                          const RegisterValue &V) {
+  if (!registerMatches(R, architecture()) || (registerWidth(R) <= 64 && V[1]) ||
+      (registerWidth(R) == 32 && V[0] > UINT32_MAX))
+    return diagnostic::error(diagnostic::Register);
+  return check(uc_reg_write(State->Engine, registerID(R), V.data()),
+               diagnostic::UnicornWriteRegister);
 }
 
 llvm::Expected<std::unique_ptr<BackendContext>> UnicornBackend::saveContext() {
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
-    return failure("cannot save a faulted CPU instance");
-  auto Saved = std::make_unique<BackendContext::Impl>();
+    return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
+  auto Saved = std::make_unique<UnicornContext>();
   Saved->Owner = State->Identity;
   if (auto E = check(uc_context_alloc(State->Engine, &Saved->Context),
-                     "allocate CPU context"))
+                     unicornDiagnostic::AllocateCPUContext))
     return std::move(E);
   auto Context =
       std::unique_ptr<BackendContext>(new BackendContext(std::move(Saved)));
@@ -793,26 +784,33 @@ llvm::Expected<std::unique_ptr<BackendContext>> UnicornBackend::saveContext() {
 
 llvm::Error UnicornBackend::saveContext(BackendContext &Context) {
   if (!Context.State || Context.State->Owner.expired())
-    return failure("cannot save to an expired CPU context");
+    return failure(unicornDiagnostic::CannotSaveToAnExpiredCPUContext);
   if (Context.State->Owner.lock() != State->Identity)
-    return failure("CPU context belongs to another backend instance");
+    return failure(
+        unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
-    return failure("cannot save a faulted CPU instance");
-  return check(uc_context_save(State->Engine, Context.State->Context),
-               "save CPU context");
+    return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
+  return check(
+      uc_context_save(State->Engine,
+                      static_cast<UnicornContext &>(*Context.State).Context),
+      unicornDiagnostic::SaveCPUContext);
 }
 
 llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
   if (!Context.State || Context.State->Owner.expired())
-    return failure("cannot restore an expired CPU context");
+    return failure(unicornDiagnostic::CannotRestoreAnExpiredCPUContext);
   if (Context.State->Owner.lock() != State->Identity)
-    return failure("CPU context belongs to another backend instance");
+    return failure(
+        unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
-    return failure("cannot restore a faulted CPU instance");
+    return failure(unicornDiagnostic::CannotRestoreAFaultedCPUInstance);
   if (State->Running)
-    return failure("cannot restore CPU context during guest execution");
-  if (auto E = check(uc_context_restore(State->Engine, Context.State->Context),
-                     "restore CPU context"))
+    return failure(
+        unicornDiagnostic::CannotRestoreCPUContextDuringGuestExecution);
+  if (auto E = check(uc_context_restore(
+                         State->Engine,
+                         static_cast<UnicornContext &>(*Context.State).Context),
+                     unicornDiagnostic::RestoreCPUContext))
     return E;
   State->InstructionPC = State->currentPC();
   State->Timeout = false;
@@ -836,7 +834,7 @@ llvm::Error UnicornBackend::installHooks(BackendHooks Hooks) {
     uc_hook Hook = 0;
     if (auto E = check(uc_hook_add(State->Engine, &Hook, Entry.first,
                                    Entry.second, State.get(), 1, 0),
-                       "install CPU hook"))
+                       unicornDiagnostic::InstallCPUHook))
       return E;
     State->HookHandles.push_back(Hook);
   }
@@ -846,9 +844,14 @@ llvm::Error UnicornBackend::run(uint64_t PC, uint64_t TimeoutMicroseconds) {
   if (auto E = State->deviceError())
     return E;
   if (State->FirstFault || State->CallbackFailed || State->RecoverableFault)
-    return failure("cannot resume a faulted CPU instance");
+    return failure(unicornDiagnostic::CannotResumeAFaultedCPUInstance);
   if (State->Running)
-    return failure("cannot recursively execute a CPU instance");
+    return failure(unicornDiagnostic::CannotRecursivelyExecuteACPUInstance);
+  // Host writes through another virtual alias can change executable backing.
+  // Flush cached translations at this stopped-CPU boundary before resuming.
+  if (auto E = check(uc_ctl_flush_tb(State->Engine),
+                     unicornDiagnostic::InvalidateCPUTranslations))
+    return E;
   State->InstructionPC = PC;
   State->Timeout = false;
   State->StopRequested = false;
@@ -868,7 +871,7 @@ llvm::Error UnicornBackend::run(uint64_t PC, uint64_t TimeoutMicroseconds) {
          Status != UC_ERR_WRITE_PROT)) {
       State->retain(*State->RecoverableFault);
       State->RecoverableFault.reset();
-      return check(Status, "execute guest after memory exception");
+      return check(Status, unicornDiagnostic::ExecuteGuestAfterMemoryException);
     }
     return llvm::Error::success();
   }
@@ -880,12 +883,12 @@ llvm::Error UnicornBackend::run(uint64_t PC, uint64_t TimeoutMicroseconds) {
                    std::nullopt});
   size_t TimedOut = 0;
   if (auto E = check(uc_query(State->Engine, UC_QUERY_TIMEOUT, &TimedOut),
-                     "query CPU timeout"))
+                     unicornDiagnostic::QueryCPUTimeout))
     return E;
   State->Timeout = TimedOut != 0;
   if (State->CallbackFailed)
-    return failure("exception in emulator hook");
-  return check(Status, "execute guest");
+    return failure(unicornDiagnostic::ExceptionInEmulatorHook);
+  return check(Status, unicornDiagnostic::ExecuteGuest);
 }
 bool UnicornBackend::timedOut() const { return State->Timeout; }
 void UnicornBackend::stop() {

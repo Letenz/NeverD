@@ -3674,7 +3674,8 @@
         "METHOD_NEITHER IOCTL and neither READ/WRITE accept explicit request-local user_buffers and user_pointers. Declarations contain bounded ID, nonzero size, zero-padded initial bytes and read_write/read_only/no_access rights. References select input/output/memory plus offset, with an ID only for memory. Eight-byte x64 source slots may be unaligned but cannot overlap or exceed their buffer; targets may be interior or one-past. Aliased and cyclic pointer graphs share actual RAM without inferring private driver layouts. Shared strict JSON/native preflight enforces 64 additional buffers, 256 pointer slots, 64-byte IDs, 64 KiB per buffer and the existing 512 KiB total buffer budget. Runtime rejects declarations on buffered/direct READ/WRITE before dispatch.",
         "Declared user regions use the existing process-owned allocation and physical backing authority. Completion does not revoke the original VA; explicit request unmap revokes all of that request\u2019s original and declared regions, while process exit includes completed allocations from the same PID. Independent MDL or WDFMEMORY aliases retain pinned bytes until unlock/completion. WDF probing accepts the current request\u2019s declared regions only in caller context. configuration.user_memory preserves declarations and source_request_index; requests[].user_buffers reports ID, address, size, access, revoked and backing_hex. The backing snapshot is diagnostic RAM at stop, including after terminal faults, and does not imply caller-visible output or restored access. GuestMemory.snapshotBacking validates the whole span, reads adapter-owned RAM without engine reentry, rejects running/device-callback/MMIO access and preserves the first fault. Arbitrary mappings, cross-request IDs and remapping the original declared scenario allocations remain unsupported.",
         "Original WDK WDM/KMDF nested-user fixtures exercise two-level structures, duplicate aliases and interior offsets, caught read-only failures, WDM locked workers after unmap/process exit, and WDF caller-context locking before queue delivery. Native cases run normal/CFG and preferred/rebased images; C API/CLI/Python share docs/examples/driver-nested-user-scenario.json and assert diagnostic bytes after revocation. Missing external fixtures skip explicitly; execution evidence remains Linux-only.",
-        "IoBuildPartialMdl supports subranges, zero-length remainder, PFN capacity checks, source-independent nonpaged descriptors and separate root-lock/system-alias ownership. Target reuse uses the genuine MmPrepareMdlForReuse inline path. Completion preflights all dependencies before releasing chains in either order; live DMA prevents rebuild or retirement. MmMapLockedPagesSpecifyCache(UserMode) creates independent process-owned NX/read-only-capable views of existing private physical pages at IRQL <= APC_LEVEL without changing MappedSystemVa. Exact pair/process unmapping, canonical alias re-locking, typed resource shortage, process exit and lifetime guards are modeled. Requested addresses preserve page offsets in a bounded reusable arena. Exact unmapping releases address/budget; surviving pins/system aliases retain old backing after VA reuse. Different live processes can own the same VA with independent backing/rights; whole-set process switching preflights alias replacement before publishing context, and another process exit/unmap cannot retire the active view. Live opaque dispatcher objects in outgoing views reject switching. MmNonCached/MmCached/MmWriteCombined requests retain each physical page's existing cache attribute; ordinary model RAM is cached, and conflicting registrations or reserved types fail. Arbitrary virtual-memory allocation, page tables and a general process manager remain unsupported."
+        "IoBuildPartialMdl supports subranges, zero-length remainder, PFN capacity checks, source-independent nonpaged descriptors and separate root-lock/system-alias ownership. Target reuse uses the genuine MmPrepareMdlForReuse inline path. Completion preflights all dependencies before releasing chains in either order; live DMA prevents rebuild or retirement. MmMapLockedPagesSpecifyCache(UserMode) creates independent process-owned NX/read-only-capable views of existing private physical pages at IRQL <= APC_LEVEL without changing MappedSystemVa. Exact pair/process unmapping, canonical alias re-locking, typed resource shortage, process exit and lifetime guards are modeled. Requested addresses preserve page offsets in a bounded reusable arena. Exact unmapping releases address/budget; surviving pins/system aliases retain old backing after VA reuse. Different live processes can own the same VA with independent backing/rights; whole-set process switching preflights alias replacement before publishing context, and another process exit/unmap cannot retire the active view. Live opaque dispatcher objects in outgoing views reject switching. MmNonCached/MmCached/MmWriteCombined requests retain each physical page's existing cache attribute; ordinary model RAM is cached, and conflicting registrations or reserved types fail. Arbitrary virtual-memory allocation, page tables and a general process manager remain unsupported.",
+        "The backend-selecting C API and CLI preserve driver-strict on Unicorn. checked-x64-v1 is an explicit bounded integer contract over Unicorn, matching Linux KVM or matching Windows WHP; cross-ISA auto selection uses Unicorn under that same contract. Hardware unavailability and unsupported instructions fail explicitly. CPU transport availability does not implement the Windows ARM64 driver ABI."
       ],
       "tests": [
         {
@@ -9368,22 +9369,37 @@
           "platforms": [
             "linux"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDriverEmulationPublicTests",
+          "source": "unittests/emulation/HardwareBackendPublicTests.cpp",
+          "filter": "HardwareBackendPublic.ValidatesSelectionAndPreservesV1Contract",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
         "c": [
           "neverd_emulate_driver_json",
-          "neverd_emulate_driver_scenario_json"
+          "neverd_emulate_driver_scenario_json",
+          "neverd_emulate_driver_backend_json"
         ],
         "python": [],
         "cli": [
           "neverd emulate-driver",
           "neverd emulate-driver --instruction-limit",
-          "neverd emulate-driver --scenario"
+          "neverd emulate-driver --scenario",
+          "neverd emulate-driver --backend",
+          "neverd emulate-driver --execution-contract"
         ],
         "json": [
           "neverd_emulate_driver_json",
-          "neverd_emulate_driver_scenario_json"
+          "neverd_emulate_driver_scenario_json",
+          "neverd_emulate_driver_backend_json"
         ]
       }
     },

@@ -1,0 +1,109 @@
+//===- UnicornDiagnostics.def - Software CPU diagnostics -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_UNICORN_DIAGNOSTIC(OperationSeparator, ": ")
+NEVERD_UNICORN_DIAGNOSTIC(RAMBackingRangeIsUnmappedOrOverflowing,
+                          "RAM backing range is unmapped or overflowing")
+NEVERD_UNICORN_DIAGNOSTIC(RAMBackingAccessCannotIncludeMMIO,
+                          "RAM backing access cannot include MMIO")
+NEVERD_UNICORN_DIAGNOSTIC(MMIOCallbackFailed, "MMIO callback failed")
+NEVERD_UNICORN_DIAGNOSTIC(ExceptionInEmulatorHook, "exception in emulator hook")
+NEVERD_UNICORN_DIAGNOSTIC(MMIOAccessCrossesAMappingBoundary,
+                          "MMIO access crosses a mapping boundary")
+NEVERD_UNICORN_DIAGNOSTIC(MMIORequiresAnAligned12Or4,
+                          "MMIO requires an aligned 1, 2 or 4 byte transaction")
+NEVERD_UNICORN_DIAGNOSTIC(RecursiveMMIOCallbackAccessIsUnsupported,
+                          "recursive MMIO callback access is unsupported")
+NEVERD_UNICORN_DIAGNOSTIC(ConfigureGuestVirtualAddressSpace,
+                          "configure guest virtual address space")
+NEVERD_UNICORN_DIAGNOSTIC(ConfigureCPUContextContents,
+                          "configure CPU context contents")
+NEVERD_UNICORN_DIAGNOSTIC(InvalidGuestMappingOrMemoryLimitExceeded,
+                          "invalid guest mapping or memory limit exceeded")
+NEVERD_UNICORN_DIAGNOSTIC(OverlappingGuestMapping, "overlapping guest mapping")
+NEVERD_UNICORN_DIAGNOSTIC(MapGuestMemory, "map guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(
+    CannotReplaceRAMAliasesDuringExecutionACallback,
+    "cannot replace RAM aliases during execution, a callback or after a fault")
+NEVERD_UNICORN_DIAGNOSTIC(
+    RAMAliasRemovalRequiresUniqueExactCompleteMappings,
+    "RAM alias removal requires unique exact complete mappings")
+NEVERD_UNICORN_DIAGNOSTIC(InvalidSharedRAMAlias, "invalid shared RAM alias")
+NEVERD_UNICORN_DIAGNOSTIC(ReplacementRAMAliasesOverlapEachOther,
+                          "replacement RAM aliases overlap each other")
+NEVERD_UNICORN_DIAGNOSTIC(SharedRAMAliasHasNoSourceBacking,
+                          "shared RAM alias has no source backing")
+NEVERD_UNICORN_DIAGNOSTIC(ReplacementRAMAliasSourceIsBeingRetired,
+                          "replacement RAM alias source is being retired")
+NEVERD_UNICORN_DIAGNOSTIC(SharedRAMAliasOverlapsOrCrossesSourceBacking,
+                          "shared RAM alias overlaps or crosses source backing")
+NEVERD_UNICORN_DIAGNOSTIC(UnmapSharedGuestMemory, "unmap shared guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(MapSharedGuestMemory, "map shared guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(InvalidGuestProtectionRange,
+                          "invalid guest protection range")
+NEVERD_UNICORN_DIAGNOSTIC(ChangingMMIOPagePermissionsIsUnsupported,
+                          "changing MMIO page permissions is unsupported")
+NEVERD_UNICORN_DIAGNOSTIC(ProtectGuestMemory, "protect guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(
+    CannotMapMMIODuringGuestExecutionOrA,
+    "cannot map MMIO during guest execution or a callback")
+NEVERD_UNICORN_DIAGNOSTIC(InvalidMMIOMapping, "invalid MMIO mapping")
+NEVERD_UNICORN_DIAGNOSTIC(
+    MMIOMappingRequiresValidateReadAndWriteCallbacks,
+    "MMIO mapping requires validate, read and write callbacks")
+NEVERD_UNICORN_DIAGNOSTIC(MapGuestMMIO, "map guest MMIO")
+NEVERD_UNICORN_DIAGNOSTIC(
+    CannotUnmapMMIODuringGuestExecutionOrA,
+    "cannot unmap MMIO during guest execution or a callback")
+NEVERD_UNICORN_DIAGNOSTIC(MMIOUnmapRequiresOneExactCompleteMapping,
+                          "MMIO unmap requires one exact complete mapping")
+NEVERD_UNICORN_DIAGNOSTIC(UnmapGuestMMIO, "unmap guest MMIO")
+NEVERD_UNICORN_DIAGNOSTIC(GuestReadFaultAt0x, "guest read fault at 0x")
+NEVERD_UNICORN_DIAGNOSTIC(CannotAccessMMIOOnAStoppedOrFaulted,
+                          "cannot access MMIO on a stopped or faulted CPU")
+NEVERD_UNICORN_DIAGNOSTIC(ReadGuestMemory, "read guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(GuestWriteFaultAt0x, "guest write fault at 0x")
+NEVERD_UNICORN_DIAGNOSTIC(WriteGuestMemory, "write guest memory")
+NEVERD_UNICORN_DIAGNOSTIC(GuestFetchFaultAt0x, "guest fetch fault at 0x")
+NEVERD_UNICORN_DIAGNOSTIC(FetchGuestInstruction, "fetch guest instruction")
+NEVERD_UNICORN_DIAGNOSTIC(RAMBackingAccessRequiresAStoppedCPUWithout,
+                          "RAM backing access requires a stopped CPU without "
+                          "an active device callback")
+NEVERD_UNICORN_DIAGNOSTIC(CannotAccessRAMBackingOnAFaultedCPU,
+                          "cannot access RAM backing on a faulted CPU")
+NEVERD_UNICORN_DIAGNOSTIC(
+    RAMSnapshotRequiresAStoppedCPUWithoutAn,
+    "RAM snapshot requires a stopped CPU without an active device callback")
+NEVERD_UNICORN_DIAGNOSTIC(CPUAccessPreflightRequiresValidPermissionsAndA,
+                          "CPU access preflight requires valid permissions and "
+                          "a healthy CPU outside device callbacks")
+NEVERD_UNICORN_DIAGNOSTIC(ReadRAMBacking, "read RAM backing")
+NEVERD_UNICORN_DIAGNOSTIC(WriteRAMBacking, "write RAM backing")
+NEVERD_UNICORN_DIAGNOSTIC(CannotSaveAFaultedCPUInstance,
+                          "cannot save a faulted CPU instance")
+NEVERD_UNICORN_DIAGNOSTIC(AllocateCPUContext, "allocate CPU context")
+NEVERD_UNICORN_DIAGNOSTIC(CannotSaveToAnExpiredCPUContext,
+                          "cannot save to an expired CPU context")
+NEVERD_UNICORN_DIAGNOSTIC(CPUContextBelongsToAnotherBackendInstance,
+                          "CPU context belongs to another backend instance")
+NEVERD_UNICORN_DIAGNOSTIC(SaveCPUContext, "save CPU context")
+NEVERD_UNICORN_DIAGNOSTIC(CannotRestoreAnExpiredCPUContext,
+                          "cannot restore an expired CPU context")
+NEVERD_UNICORN_DIAGNOSTIC(CannotRestoreAFaultedCPUInstance,
+                          "cannot restore a faulted CPU instance")
+NEVERD_UNICORN_DIAGNOSTIC(CannotRestoreCPUContextDuringGuestExecution,
+                          "cannot restore CPU context during guest execution")
+NEVERD_UNICORN_DIAGNOSTIC(RestoreCPUContext, "restore CPU context")
+NEVERD_UNICORN_DIAGNOSTIC(InstallCPUHook, "install CPU hook")
+NEVERD_UNICORN_DIAGNOSTIC(CannotResumeAFaultedCPUInstance,
+                          "cannot resume a faulted CPU instance")
+NEVERD_UNICORN_DIAGNOSTIC(CannotRecursivelyExecuteACPUInstance,
+                          "cannot recursively execute a CPU instance")
+NEVERD_UNICORN_DIAGNOSTIC(ExecuteGuestAfterMemoryException,
+                          "execute guest after memory exception")
+NEVERD_UNICORN_DIAGNOSTIC(QueryCPUTimeout, "query CPU timeout")
+NEVERD_UNICORN_DIAGNOSTIC(ExecuteGuest, "execute guest")
+NEVERD_UNICORN_DIAGNOSTIC(InvalidateCPUTranslations,
+                          "invalidate CPU translations")

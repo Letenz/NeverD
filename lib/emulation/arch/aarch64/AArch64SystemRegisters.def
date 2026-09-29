@@ -1,0 +1,11 @@
+//===- AArch64SystemRegisters.def - Host register transport ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_AARCH64_SYSTEM_REGISTER(SctlrEl1, 3, 0, 1, 0, 0)
+NEVERD_AARCH64_SYSTEM_REGISTER(TcrEl1, 3, 0, 2, 0, 2)
+NEVERD_AARCH64_SYSTEM_REGISTER(MairEl1, 3, 0, 10, 2, 0)
+NEVERD_AARCH64_SYSTEM_REGISTER(Ttbr0El1, 3, 0, 2, 0, 0)
+NEVERD_AARCH64_SYSTEM_REGISTER(Ttbr1El1, 3, 0, 2, 0, 1)
+NEVERD_AARCH64_SYSTEM_REGISTER(VbarEl1, 3, 0, 12, 0, 0)

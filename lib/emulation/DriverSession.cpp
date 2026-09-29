@@ -12,8 +12,8 @@
 #include "neverd/emulation/DriverSession.h"
 
 #include "DriverScenario.h"
-#include "X64ExecutionPolicy.h"
-#include "unicorn/UnicornBackend.h"
+#include "core/BackendRegistry.h"
+#include "core/ExecutionDiagnostics.h"
 #include "windows/DriverImage.h"
 #include "windows/GuardControlFlow.h"
 #include "windows/KernelException.h"
@@ -21,6 +21,7 @@
 #include "windows/KernelModel.h"
 #include "windows/KernelSEH.h"
 #include "windows/WindowsKernelLayout.h"
+#include "windows/WindowsX64ExecutionPolicy.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
@@ -70,6 +71,9 @@ std::string guestCallPhase(const GuestCallToken &Token) {
 
 llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                            const DriverOptions &Options) {
+  if (Options.Contract != ExecutionContract::Legacy &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return diagnostic::error(diagnostic::Contract);
   if (!Options.InstructionLimit || !Options.MemoryLimit ||
       !Options.EventLimit || !Options.TimeoutMilliseconds ||
       Options.TimeoutMilliseconds > MaxTimeoutMilliseconds ||
@@ -98,10 +102,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   Result.PC = Image->Entry;
   if (Image->Imports.size() > (ThunkSize / ThunkStride) - 1)
     return failure("too many driver imports for the bounded x64 profile");
-  auto Backend = UnicornBackend::create(Options.MemoryLimit);
+  auto Backend = createExecutionBackend(Options.Backend, Options.Contract,
+                                        Options.MemoryLimit);
   if (!Backend)
     return Backend.takeError();
-  auto &CPU = **Backend;
+  Result.SelectedBackend = Backend->Kind;
+  Result.BackendSelectionReason = Backend->Reason;
+  auto &CPU = *Backend->CPU;
   GuardControlFlow Guard(*Image);
   // Temporary writable image pages are private setup state. Final permissions
   // are applied before any guest instruction can run.
@@ -169,7 +176,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   uint64_t ExpectedReturnSP = 0;
   uint64_t ActiveStackBase = 0;
   uint64_t ActiveStackSize = 0;
-  X64ExecutionPolicy Policy;
+  WindowsX64ExecutionPolicy Policy;
   if (auto E = Policy.initialize())
     return std::move(E);
   bool Stopped = false;
@@ -177,7 +184,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   const KernelExportRegistry::Export *Pending = nullptr;
   uint64_t PendingGuard = 0;
   struct EnvironmentRead {
-    X64ExecutionPolicy::Action Request;
+    WindowsX64ExecutionPolicy::Action Request;
     uint64_t NextPC;
   };
   std::optional<EnvironmentRead> PendingEnvironmentRead;
@@ -297,7 +304,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     if (*Inspection &&
         (**Inspection).Source ==
-            X64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
+            WindowsX64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
       if (!ProcessorViewMapped) {
         // Materialize the processor field outside the running backend, then
         // retry this instruction once. It has not consumed its budget yet.
@@ -761,7 +768,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (PendingEnvironmentRead) {
         const auto &Action = PendingEnvironmentRead->Request;
         if (Action.Source ==
-            X64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
+            WindowsX64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
           if (auto E = PrepareProcessorView())
             return E;
           NextPC = PendingEnvironmentRead->NextPC;

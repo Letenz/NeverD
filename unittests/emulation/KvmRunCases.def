@@ -1,0 +1,8 @@
+//===- KvmRunCases.def - Interrupted native-entry test budgets ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_KVM_TEST_VALUE(TransientInterruptions, 3)
+NEVERD_KVM_TEST_VALUE(TimeoutMicroseconds, 1000000)
+NEVERD_KVM_TEST_VALUE(InterruptedTimeoutMicroseconds, 1000)

@@ -301,7 +301,58 @@ and malformed operands must fail explicitly.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
+## CPU execution checks
+
+`NeverDCPUEmulationTests` exercises the public C++ CPU interface independently
+of the Windows model. It runs ARM64 scalar arithmetic and control flow, signed
+and indexed loads, pair/writeback operations, pre-effect observer stops,
+CPU-only snapshots, live aliases, code-cache invalidation and bounded loops.
+The software profile additionally executes FP/SIMD and TLS instructions.
+`AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
+native page-table projection, checking translations, remapping and write
+protection. These tests deliberately use Unicorn's architectural CPU TLB, not
+its virtual TLB.
+
+```bash
+cmake -S . -B build-cpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DNEVERD_ENABLE_CPU_EMULATION=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=OFF
+cmake --build build-cpu --target NeverDCPUEmulationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDCPUEmulationTests$' --output-on-failure
+```
+
+The same checked ARM64 cases run against the native adapter on an ARM64 host.
+They skip with a typed reason on other hosts or when the hypervisor is
+unavailable. Set `NEVERD_REQUIRE_AARCH64_HARDWARE=1` on an ARM64 validation host
+to turn that missing coverage into a failure. Run on both Linux ARM64 and
+Windows ARM64 before claiming native runtime coverage. Genuine platform
+headers permit compile checking on another host, but do not validate vCPU
+initialization, debug delivery or cancellation at runtime.
+
+`BUILD_TESTING=OFF`, `NEVERD_ENABLE_CPU_EMULATION=ON`,
+`NEVERD_ENABLE_DRIVER_EMULATION=OFF` and
+`NEVERD_EMULATION_BACKEND_UNICORN=OFF` build `NeverDEmulationCPU` without
+Unicorn or the Windows driver environment. This configuration must still link
+and execute a matching native CPU through the public factory. The current
+Unicorn dependency requires LLVM-MinGW rather than MSVC on Windows ARM64;
+see [CPU execution](architecture.md#cpu-execution) for build requirements.
+
+On Linux, `NeverDKvmRunTests` injects host-entry interruptions without requiring
+`/dev/kvm`. It checks transient retries, fatal errors, expired deadlines and
+sustained interruption. The x64 and ARM64 transports share this retry boundary;
+native guest execution remains covered by the architecture suites above.
+
 ## Driver emulation checks
+
+`HardwareBackendTests.cpp` exercises the native checked backend on supported
+hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
+restore against current mappings, fault lifetime, bounded loops, unsupported
+instructions and driver fixture comparisons. It runs in
+`NeverDDriverEmulationTests` and skips explicitly when no native backend is
+available. Linux x64 runs exercise KVM; Windows x64 runs exercise WHP. On ARM64 hosts
+the x64 checked cases use Unicorn and do not constitute native x64 evidence.
+`HardwareBackendPublicTests.cpp` protects backend selection and the unchanged
+v1 C ABI. Focus hardware checks with `--gtest_filter='HardwareBackend.*:BackendSelection.*'`.
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`
 to build the focused execution suite and the shared C API/CLI checks:

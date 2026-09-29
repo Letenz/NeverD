@@ -141,10 +141,16 @@ add_custom_target(check-neverd-capabilities
 )
 
 # --- NeverD component libraries ---
+option(NEVERD_ENABLE_CPU_EMULATION
+       "Enable OS-independent x64 and ARM64 CPU execution" OFF)
 option(NEVERD_ENABLE_DRIVER_EMULATION
-       "Enable bounded x64 Windows driver initialization with Unicorn" OFF)
+       "Enable bounded x64 Windows driver execution" OFF)
+option(NEVERD_EMULATION_BACKEND_UNICORN "Build the portable Unicorn adapter" ON)
+option(NEVERD_EMULATION_BACKEND_KVM "Build the Linux x64 and ARM64 KVM adapters" ON)
+option(NEVERD_EMULATION_BACKEND_WHP "Build the Windows x64 and ARM64 WHP adapters" ON)
 include(${CMAKE_SOURCE_DIR}/cmake/NeverDUnicorn.cmake)
-if(NEVERD_ENABLE_DRIVER_EMULATION)
+if((NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
+   AND NEVERD_EMULATION_BACKEND_UNICORN)
     neverd_require_unicorn()
 endif()
 add_subdirectory(lib)

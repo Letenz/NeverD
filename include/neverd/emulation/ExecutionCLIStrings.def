@@ -1,0 +1,10 @@
+//===- ExecutionCLIStrings.def - Execution command-line vocabulary -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_EXECUTION_CLI_STRING(BackendOption, "backend")
+NEVERD_EXECUTION_CLI_STRING(BackendHelp, "CPU backend: auto, unicorn, kvm, whp")
+NEVERD_EXECUTION_CLI_STRING(ContractOption, "execution-contract")
+NEVERD_EXECUTION_CLI_STRING(
+    ContractHelp, "Execution contract: driver-strict or checked-x64-v1")
