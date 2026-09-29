@@ -57,6 +57,28 @@ struct Program {
     return specializeBinaryInterpreterWithIndependence(Image, Entry, Options,
                                                        Contract, Limits);
   }
+
+  void flagsProfile() {
+    Options.X64FlagsProfile = Contract.X64FlagsProfile =
+        InterpreterMachineStateProfile::UserX64NoFaultV1;
+  }
+
+  void append(std::initializer_list<uint8_t> Bytes) {
+    auto &Code = Image.Segments.front();
+    Code.Data.insert(Code.Data.end(), Bytes);
+    Code.Size = Code.FileSz = Code.Data.size();
+  }
+
+  void immediate(uint64_t Value, unsigned Bytes = 4) {
+    for (unsigned I = 0; I != Bytes; ++I)
+      append({static_cast<uint8_t>(Value >> (I * 8))});
+  }
+
+  void requireEAX(uint32_t Value) {
+    append({0x3d}); // cmp eax, value; jne trap; mov eax, 0; ret; trap: int3.
+    immediate(Value);
+    append({0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xcc});
+  }
 };
 
 void expectRefusal(const Program &P, Status Expected,
@@ -427,7 +449,7 @@ TEST(OriginalBinaryUndefinedIndependence,
   Program IndirectBranch({0xff, 0xe0});
   expectRefusal(IndirectBranch, Status::BudgetExceeded);
   Program Loop({0xeb, 0xfe});
-  expectRefusal(Loop, Status::Unsupported);
+  expectRefusal(Loop, Status::BudgetExceeded);
   // The branch target 0x1005 decodes as NOP inside the MOV immediate.
   Program Overlap({0x85, 0xff, 0x75, 1, 0xb8, 0x90, 0x90, 0x90, 0x90, 0xc3});
   expectRefusal(Overlap, Status::Unsupported);
@@ -575,6 +597,346 @@ TEST(OriginalBinaryUndefinedIndependence,
             (std::vector<uint8_t>{0x2e, 0x90}));
   EXPECT_EQ(After.Certificate->Instructions[0].NativeBytes,
             (std::vector<uint8_t>{0x3e, 0x90}));
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsRequireMatchingOptIn) {
+  Program P({0x9c, 0x58, 0xc3}); // pushfq; pop rax; ret.
+  expectRefusal(P, Status::Unsupported);
+  P.Options.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  expectRefusal(P, Status::Invalid);
+  P.flagsProfile();
+  const auto Valid = P.check();
+  ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+  ASSERT_EQ(Valid.Certificate->LowIR.NativeFlagTransitions.size(), 1U);
+  const auto &Receipt = Valid.Certificate->LowIR.NativeFlagTransitions[0];
+  EXPECT_EQ(Receipt.InstructionAddress, Entry);
+  EXPECT_EQ(Receipt.SemanticsVersion, 1U);
+  EXPECT_FALSE(Receipt.OperationDigest.empty());
+  P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile =
+      static_cast<InterpreterMachineStateProfile>(255);
+  expectRefusal(P, Status::Invalid);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsKeepSnapshotCorrelation) {
+  // Two unchanged snapshots must agree, including symbolic IF/NT/ID at entry.
+  // pushfq; pop rax; pushfq; pop rcx; cmp rax,rcx; jne trap; ret; int3.
+  Program P({0x9c, 0x58, 0x9c, 0x59, 0x48, 0x39, 0xc8, 0x75, 1, 0xc3, 0xcc});
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Certificate->LowIR.NativeFlagTransitions.size(), 2U);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsEntryBitsAreCanonical) {
+  const uint64_t Offsets[] = {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                              x86reg::SF, x86reg::DF, x86reg::OF};
+  const unsigned Bits[] = {0, 2, 4, 6, 7, 10, 11};
+  for (unsigned Combination = 0; Combination != 128; ++Combination) {
+    SCOPED_TRACE(Combination);
+    Program P({0x9c, 0x58, 0x25, 0xd5, 0x0c, 0, 0});
+    P.flagsProfile();
+    unsigned Expected = 0;
+    for (unsigned I = 0; I != 7; ++I) {
+      const uint64_t Value = (Combination >> I) & 1;
+      Expected |= Value << Bits[I];
+      P.Options.EntryConstants.push_back({NdVar::reg(Offsets[I], 1), Value});
+      P.Contract.EntryConstants.push_back({NdVar::reg(Offsets[I], 1), Value});
+    }
+    P.requireEAX(Expected);
+    const auto Result = P.check();
+    ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  }
+  for (auto Location : {NdVar::reg(x86reg::AF, 1), NdVar::reg(x86reg::AF, 2),
+                        NdVar::reg(x86reg::AF - 1, 2)}) {
+    Program P({0x9c, 0x58, 0xc3});
+    P.flagsProfile();
+    P.Options.EntryConstants.push_back({Location, 2});
+    P.Contract.EntryConstants.push_back({Location, 2});
+    expectRefusal(P, Status::Invalid);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsApplyUserPrivilegeMasks) {
+  for (uint64_t Image : {uint64_t{0}, uint64_t{0x204002}, uint64_t{0x1a3002},
+                         ~uint64_t{0x40100}}) {
+    SCOPED_TRACE(Image);
+    // Save entry IF. POPFQ changes NT/ID, preserves IF, ignores protected and
+    // reserved image bits, and keeps architectural bit 1 set.
+    Program P({0x9c, 0x59, 0x81, 0xe1, 0, 2, 0, 0, 0x48, 0xb8});
+    P.immediate(Image, 8);
+    P.append({0x50, 0x9d, 0x9c, 0x58, 0x25, 2, 0x42, 0x20, 0, 0x31, 0xc8});
+    P.requireEAX(2 | (Image & 0x204000));
+    P.flagsProfile();
+    const auto Result = P.check();
+    ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsRejectFeasibleProfileExit) {
+  // Unconstrained RDI can request TF or AC. It is not a safe entry assumption.
+  Program Bad({0x57, 0x9d, 0xb8, 0, 0, 0, 0, 0xc3});
+  Bad.flagsProfile();
+  expectRefusal(Bad, Status::ContractViolation);
+  // A real mask makes every image safe while still allowing dynamic NT/ID.
+  Program Good({0x48, 0x81, 0xe7, 0xff, 0xfe, 0xfb, 0xff, 0x57, 0x9d, 0xb8, 0,
+                0, 0, 0, 0xc3});
+  Good.flagsProfile();
+  const auto Result = Good.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+Program arbitraryFlagToSystem(unsigned Bit, bool Clear, bool Restore) {
+  Program P({});
+  if (Restore)
+    P.append({0x9c, 0x5b}); // Keep original packed flags in RBX.
+  // XOR makes AF arbitrary. Copy it through an actual flags stack snapshot.
+  P.append({0x31, 0xc0, 0x9c, 0x58, 0x25});
+  P.immediate(Clear ? 0 : 0x10);
+  for (unsigned I = 4; I != Bit; ++I)
+    P.append({0x01, 0xc0}); // add eax,eax: no shift metadata assumption.
+  P.append({0x83, 0xc8, 2, 0x50, 0x9d});
+  if (Restore)
+    P.append({0x53, 0x9d});
+  P.append({0xb8, 0, 0, 0, 0, 0xc3});
+  P.flagsProfile();
+  P.Contract.ObserveWrittenFrameBytes = false;
+  return P;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsAlwaysObserveFinalSystem) {
+  for (unsigned Bit : {14u, 21u}) {
+    SCOPED_TRACE(Bit);
+    auto Clear = arbitraryFlagToSystem(Bit, true, false);
+    const auto Valid = Clear.check();
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+    auto Bad = arbitraryFlagToSystem(Bit, false, false);
+    const auto Result = Bad.check();
+    EXPECT_EQ(Result.Proof.Status, Status::Dependent)
+        << Result.Proof.Diagnostic;
+    EXPECT_NE(Result.Proof.Diagnostic.find("final system flags"),
+              std::string::npos);
+    EXPECT_FALSE(Result.Certificate.has_value());
+    expectRefusal(Bad, Status::Dependent);
+    // No ordinary register or frame observation can turn off this obligation.
+    Bad.Contract.ReturnRegisters.clear();
+    expectRefusal(Bad, Status::Dependent);
+    auto Restore = arbitraryFlagToSystem(Bit, false, true);
+    const auto Restored = Restore.check();
+    ASSERT_TRUE(Restored.proved()) << Restored.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsCheckBothUndefinedTwins) {
+  for (unsigned Bit : {8u, 18u}) {
+    SCOPED_TRACE(Bit);
+    auto Good = arbitraryFlagToSystem(Bit, true, false);
+    const auto Valid = Good.check();
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+    auto Bad = arbitraryFlagToSystem(Bit, false, false);
+    expectRefusal(Bad, Status::ContractViolation);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsPreserveArbitraryCopies) {
+  // xor eax,eax; pushfq; pop rax; and eax,0x10; ret exposes the same AF choice.
+  Program Bad({0x31, 0xc0, 0x9c, 0x58, 0x25, 0x10, 0, 0, 0, 0xc3});
+  Bad.flagsProfile();
+  Bad.Contract.ObserveWrittenFrameBytes = false;
+  expectRefusal(Bad, Status::Dependent);
+  // Copying one saved image and XORing its copies cancels that one choice.
+  Program Good(
+      {0x31, 0xc0, 0x9c, 0x59, 0x48, 0x89, 0xc8, 0x48, 0x31, 0xc8, 0xc3});
+  Good.flagsProfile();
+  Good.Contract.ObserveWrittenFrameBytes = false;
+  const auto Result = Good.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsPersistAcrossNativeCall) {
+  // Set ID, call a helper RET, then prove the subsequent snapshot has ID set.
+  Program P({0xb8, 2, 0, 0x20, 0, 0x50, 0x9d, 0xe8});
+  const size_t Displacement = P.Image.Segments.front().Data.size();
+  P.immediate(0);
+  P.append({0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0x200000);
+  const size_t Helper = P.Image.Segments.front().Data.size();
+  P.append({0xc3});
+  const uint32_t Relative = Helper - (Displacement + 4);
+  for (unsigned I = 0; I != 4; ++I)
+    P.Image.Segments.front().Data[Displacement + I] = Relative >> (I * 8);
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsBindProfileAndChargeWork) {
+  Program Plain({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Before = Plain.check();
+  ASSERT_TRUE(Before.proved()) << Before.Proof.Diagnostic;
+  Plain.flagsProfile();
+  const auto After = Plain.check();
+  ASSERT_TRUE(After.proved()) << After.Proof.Diagnostic;
+  EXPECT_NE(Before.Certificate->InputDigest, After.Certificate->InputDigest);
+  EXPECT_NE(Before.Certificate->LowIR.InputDigest,
+            After.Certificate->LowIR.InputDigest);
+  auto P = arbitraryFlagToSystem(21, true, false);
+  const auto Valid = P.check();
+  ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxOperations = Valid.Proof.Operations - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxSolverQueries = Valid.Proof.SolverQueries - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxObservations = Valid.Proof.Observations - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsKeepSiblingStatesSeparate) {
+  // Set ID before the fork. The fallthrough path clears it and finishes first;
+  // the taken sibling must retain its own copy of the pre-fork ID state.
+  Program P({0xb8, 2, 0, 0x20, 0, 0x50, 0x9d, 0x85, 0xff, 0x75, 0});
+  P.append({0xb8, 2, 0, 0, 0, 0x50, 0x9d, 0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0);
+  const size_t Sibling = P.Image.Segments.front().Data.size();
+  P.Image.Segments.front().Data[10] = Sibling - 11;
+  P.append({0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0x200000);
+  P.flagsProfile();
+  // TEST's arbitrary AF can remain in a stack snapshot on the taken path;
+  // this case isolates the system-state fork and its trap-based oracle.
+  P.Contract.ObserveWrittenFrameBytes = false;
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 2U);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsCannotCertifyASafeSibling) {
+  // test edi,edi; jne bad; mov eax,0; ret; bad: push 0x102; popfq; mov eax,0;
+  // ret.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0,    0, 0, 0, 0xc3, 0x68,
+             2,    1,    0,    0, 0x9d, 0xb8, 0, 0, 0, 0,    0xc3});
+  P.flagsProfile();
+  const auto Result = P.check();
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  expectRefusal(P, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsKeepDistinctProducers) {
+  // Save AF from two distinct XORs, then compare only those saved bits.
+  Program P({0x31, 0xc0, 0x9c, 0x59, 0x31, 0xd2, 0x9c, 0x58, 0x48, 0x31, 0xc8,
+             0x25, 0x10, 0, 0, 0, 0xc3});
+  P.flagsProfile();
+  P.Contract.ObserveWrittenFrameBytes = false;
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsDoNotAdmitOtherModes) {
+  const std::initializer_list<uint8_t> Programs[] = {
+      {0x66, 0x9c, 0xc3}, {0x66, 0x9d, 0xc3}, {0xfa, 0xc3}, {0xfb, 0xc3}};
+  for (auto Bytes : Programs) {
+    Program P(Bytes);
+    P.flagsProfile();
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteLoopKeepsPersistentPackedFlags) {
+  // Set NT, repeat a snapshot oracle three times, and leave with RSP restored.
+  Program P({0xb8, 2, 0x40, 0, 0, 0x50, 0x9d, 0xb9, 3, 0, 0, 0});
+  const size_t Loop = P.Image.Segments.front().Data.size();
+  P.append({0x9c, 0x58, 0x25, 0, 0x40, 0x20, 0, 0x3d, 0, 0x40, 0, 0, 0x75, 0});
+  const size_t BadEdge = P.Image.Segments.front().Data.size() - 1;
+  P.append({0x83, 0xe9, 1, 0x75, 0});
+  auto &Bytes = P.Image.Segments.front().Data;
+  Bytes.back() = static_cast<uint8_t>(Loop - Bytes.size());
+  P.append({0xb8, 0, 0, 0, 0, 0xc3});
+  const size_t Trap = P.Image.Segments.front().Data.size();
+  P.append({0xcc});
+  P.Image.Segments.front().Data[BadEdge] = Trap - (BadEdge + 1);
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  EXPECT_EQ(Result.Certificate->LowIR.NativeFlagTransitions.size(), 4U);
+  EXPECT_GT(Result.Certificate->LowIR.Instructions.size(),
+            Result.Certificate->Instructions.size());
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = Result.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteLoopCoversAllBoundedInputCounts) {
+  // ecx = edi & 3; eax = 0; while (ecx) { eax += 7; --ecx; } return eax.
+  Program P({0x89, 0xf9, 0x83, 0xe1, 3, 0xb8, 0,    0, 0,    0,    0x85, 0xc9,
+             0x74, 8,    0x83, 0xc0, 7, 0x83, 0xe9, 1, 0x75, 0xf8, 0xc3});
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 4U);
+  // A partial unrolling cannot claim that these are the only input cases.
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = Result.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     InfiniteLoopCannotPublishSafeSibling) {
+  // The fallthrough returns first; another shared ordinary input spins forever.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xeb, 0xfe});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = 12;
+  const auto Result = P.check(Limits);
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  EXPECT_EQ(Result.Proof.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Result.Certificate.has_value());
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     LoopControlChecksChoicesBeforePruning) {
+  // xor eax,eax; lahf; test ah,0x10; jne start; ret.
+  Program P({0x31, 0xc0, 0x9f, 0xf6, 0xc4, 0x10, 0x75, 0xf8, 0xc3});
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackKeepsWholeRegisters) {
+  for (unsigned Width : {4u, 8u})
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Index);
+      Program P({0xf3});
+      if (Width == 8 || Index >= 8)
+        P.append(
+            {static_cast<uint8_t>(0x40 | (Width == 8 ? 8 : 0) | (Index >> 3))});
+      P.append({0x0f, 0x1e, static_cast<uint8_t>(0xc8 | (Index & 7)), 0xc3});
+      P.flagsProfile();
+      // In the disabled profile RDSSPD also preserves the upper 32 bits.
+      const uint64_t Value =
+          Index == 4 ? (uint64_t{1} << 40) | 0x10000 : 0x1234567887654321;
+      const NdVar Register = NdVar::reg(Index * 8, 8);
+      P.Options.EntryConstants.push_back({Register, Value});
+      P.Contract.EntryConstants.push_back({Register, Value});
+      P.Contract.PreservedRegisters.push_back({Register.Offset, 8});
+      const auto Result = P.check();
+      ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+      ASSERT_EQ(Result.Certificate->LowIR.NativeProfileProjections.size(), 1U);
+      EXPECT_EQ(Result.Certificate->Instructions[0].ProfileProjection,
+                InterpreterProfileProjection::CetDisabledReadShadowStackV1);
+      EXPECT_EQ(Result.Certificate->Instructions[0].UndefinedEffects.Coverage,
+                LowUndefinedCoverage::Missing);
+      EXPECT_EQ(Result.Certificate->LowIR.Instructions[0].Effects.Coverage,
+                LowUndefinedCoverage::Missing);
+    }
+  Program OtherCET({0xf3, 0x48, 0x0f, 0xae, 0xe8, 0xc3}); // incsspq rax.
+  OtherCET.flagsProfile();
+  expectRefusal(OtherCET, Status::Unsupported);
 }
 
 } // namespace
