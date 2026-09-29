@@ -40,7 +40,8 @@ struct NativeLowIRRefinementResult {
 NativeLowIRRefinementResult checkNativeLowIRRefinement(
     SpecializationProvider &Provider, SpecializationCursor Entry,
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
-    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits);
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
+    const LowIRLoopRefinementPlan *LoopPlan = nullptr);
 
 } // namespace neverd::analysis::detail
 

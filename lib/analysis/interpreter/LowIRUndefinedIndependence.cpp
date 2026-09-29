@@ -315,6 +315,12 @@ struct TerminalState {
   SymState State;
   SymRef Predicate, SystemFlags, ReturnOperand;
   std::set<uint64_t> Written;
+  int Cutpoint = -1;
+};
+
+struct LoopPrefix {
+  TerminalState Original, Candidate;
+  SymRef Predicate;
 };
 
 // Both relations use the same instruction, memory, profile and physical-stack
@@ -338,6 +344,23 @@ struct RefinementSession {
   std::vector<LowIRNativeProfileProjection> Projections;
   std::map<va_t, uint8_t> ImmutableBytes;
   uint64_t ReadEvidenceBytes = 0;
+  const LowIRLoopRefinementPlan *LoopPlan = nullptr;
+  std::optional<TerminalState> OriginalStart, CandidateStart;
+  int StartingCutpoint = -1;
+  std::set<uint64_t> RegisterBytes;
+  std::vector<SymRef> StartingRank;
+  SymRef SegmentPredicate;
+  int NextNativeBlock = 0;
+  uint32_t OriginalPathCount = 0, CandidatePathCount = 0;
+  uint64_t OriginalCutpoints = 0, CandidateCutpoints = 0;
+  uint64_t LoopInitiations = 0, LoopTransitions = 0, RankingChecks = 0;
+  std::vector<std::string> OriginalSegmentDigests, CandidateSegmentDigests;
+  std::vector<std::optional<LoopPrefix>> LoopPrefixes;
+  // One immutable native inventory across every segment. Re-fetching a cut
+  // must not forget prior byte ownership, overlap checks or input budgets.
+  std::map<va_t, SpecializationInstruction> NativeInstructions;
+  std::map<va_t, va_t> NativeRanges;
+  uint64_t NativeInputOperations = 0, NativeInputEffects = 0;
 };
 
 class Checker {
@@ -346,8 +369,11 @@ class Checker {
   SpecializationProvider *Provider = nullptr;
   SpecializationCursor NativeEntry;
   detail::NativeUndefinedIndependenceResult *NativeResult = nullptr;
-  std::map<va_t, SpecializationInstruction> NativeInstructions;
-  std::map<va_t, va_t> NativeRanges;
+  std::map<va_t, SpecializationInstruction> OwnedNativeInstructions;
+  std::map<va_t, SpecializationInstruction> &NativeInstructions =
+      OwnedNativeInstructions;
+  std::map<va_t, va_t> OwnedNativeRanges;
+  std::map<va_t, va_t> &NativeRanges = OwnedNativeRanges;
   std::map<va_t, uint8_t> OwnedImmutableBytes;
   std::map<va_t, uint8_t> &ImmutableBytes = OwnedImmutableBytes;
   LowFunc NativeTrace;
@@ -355,8 +381,9 @@ class Checker {
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
   std::map<int, std::vector<int>> NativeTraceEdges;
-  uint64_t NativeInputOperations = 0;
-  uint64_t NativeInputEffects = 0;
+  uint64_t OwnedNativeInputOperations = 0, OwnedNativeInputEffects = 0;
+  uint64_t &NativeInputOperations = OwnedNativeInputOperations;
+  uint64_t &NativeInputEffects = OwnedNativeInputEffects;
   uint64_t OwnedReadEvidenceBytes = 0;
   uint64_t &NativeReadEvidenceBytes = OwnedReadEvidenceBytes;
   int NextNativeBlock = 0;
@@ -390,8 +417,50 @@ class Checker {
     std::set<uint64_t> Written;
     va_t NativeAddress = 0;
     SymRef LeftSystemFlags, RightSystemFlags;
+    bool SkipCutpoint = false;
   };
   std::vector<Path> Pending;
+
+  bool inductive() const { return Refinement && Refinement->LoopPlan; }
+
+  void trackRegister(const NdVar &V) {
+    if (!inductive() || !V.isReg())
+      return;
+    if (!scalar(V))
+      fail(Status::Invalid, "invalid loop register range");
+    for (uint16_t I = 0; I != V.Size; ++I)
+      Refinement->RegisterBytes.insert(V.Offset + I);
+    if (Refinement->RegisterBytes.size() > Limits.MaxObservations)
+      fail(Status::BudgetExceeded, "loop register metadata budget exhausted");
+  }
+
+  bool stopAtCutpoint(Path &P) {
+    if (!inductive() || P.SkipCutpoint) {
+      P.SkipCutpoint = false;
+      return false;
+    }
+    const va_t Address =
+        Provider ? P.NativeAddress : Blocks.at(P.BlockId)->StartAddr;
+    const auto &Cuts = Refinement->LoopPlan->Cutpoints;
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      const auto Expected = CandidateExecution ? Cuts[I].CandidateAddress
+                                               : Cuts[I].OriginalAddress;
+      if (Address != Expected)
+        continue;
+      auto &Endpoints = CandidateExecution ? Refinement->CandidateReturns
+                                           : Refinement->OriginalReturns;
+      Endpoints.push_back({std::move(P.Left),
+                           P.Predicate,
+                           P.LeftSystemFlags,
+                           {},
+                           std::move(P.Written),
+                           static_cast<int>(I)});
+      ++(CandidateExecution ? Refinement->CandidateCutpoints
+                            : Refinement->OriginalCutpoints);
+      return true;
+    }
+    return false;
+  }
 
   [[noreturn]] void fail(Status S, std::string Message) {
     Result.Status = S;
@@ -428,8 +497,14 @@ class Checker {
       fail(Status::Invalid, "invalid observation: " + Observation.str());
     if (Left == Right)
       return;
-    if (query(Ctx.mkAnd(Predicate, Ctx.mkNe(Left, Right))) !=
-        solver::SatResult::Unsat)
+    solver::SatResult Answer;
+    try {
+      Answer = query(Ctx.mkAnd(Predicate, Ctx.mkNe(Left, Right)));
+    } catch (const Stop &) {
+      Result.Diagnostic += " while checking " + Observation.str();
+      throw;
+    }
+    if (Answer != solver::SatResult::Unsat)
       fail(Failure,
            Failure == Status::ContractViolation
                ? "return contract does not preserve " + Observation.str()
@@ -567,6 +642,7 @@ class Checker {
 
   void arbitrary(Path &P, const LowUndefinedEffect &Effect,
                  uint64_t EffectIndex, std::set<uint64_t> &Defined) {
+    trackRegister(Effect.Output);
     if (++Result.Producers > Limits.MaxProducers)
       fail(Status::BudgetExceeded, "arbitrary-producer budget exhausted");
     const unsigned Width = Effect.Output.Size * 8;
@@ -1075,6 +1151,8 @@ class Checker {
   }
 
   void runPath(Path P) {
+    if (stopAtCutpoint(P))
+      return;
     if (++Result.BlockVisits > Limits.MaxBlockVisits)
       fail(Status::BudgetExceeded, "block-visit budget exhausted");
     LowInstructionUndefinedEffects NativeEffects;
@@ -1136,6 +1214,9 @@ class Checker {
       Apply(0);
       for (uint64_t I = 0; I != Boundary.OpCount; ++I) {
         const auto &Original = B.Ops[Boundary.FirstOp + I];
+        trackRegister(Original.Output);
+        for (unsigned J = 0; J != Original.NumInputs; ++J)
+          trackRegister(Original.Inputs[J]);
         Result.OpSeq = Original.Seq;
         if (++Result.Operations > Limits.MaxOperations)
           fail(Status::BudgetExceeded, "LowIR operation budget exhausted");
@@ -1271,6 +1352,8 @@ class Checker {
                 {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
                  std::move(P.Written)});
+            ++(CandidateExecution ? Refinement->CandidatePathCount
+                                  : Refinement->OriginalPathCount);
           }
           return;
         }
@@ -1429,6 +1512,11 @@ class Checker {
                "additional function entry roots are unsupported");
       if (!Addresses.count(Function->Entry))
         fail(Status::Invalid, "missing function entry block");
+      if (inductive())
+        for (const auto &Cut : Refinement->LoopPlan->Cutpoints)
+          if (!Addresses.count(CandidateExecution ? Cut.CandidateAddress
+                                                  : Cut.OriginalAddress))
+            fail(Status::Invalid, "loop cutpoint is not a LowIR block entry");
       uint64_t InputEffects = 0;
       for (const auto &R : Records) {
         Result.BlockId = R.BlockId;
@@ -1532,6 +1620,275 @@ class Checker {
   }
 
 public:
+  bool validateLoopPlan() {
+    try {
+      const auto &Cuts = Refinement->LoopPlan->Cutpoints;
+      if (Cuts.empty())
+        fail(Status::Invalid, "loop proof requires a nonempty cutpoint plan");
+      if (Cuts.size() > Limits.MaxBlockVisits || Cuts.size() > INT_MAX)
+        fail(Status::BudgetExceeded, "loop cutpoint metadata budget exhausted");
+      std::set<va_t> OriginalAddresses, CandidateAddresses;
+      uint64_t Metadata = 0, Operations = 0;
+      const auto Charge = [&](uint64_t Count) {
+        if (Count > Limits.MaxInstructions - Metadata)
+          fail(Status::BudgetExceeded,
+               "loop template metadata budget exhausted");
+        Metadata += Count;
+      };
+      const auto Location = [&](const LowIRLoopLocation &L) {
+        if (!L.Bytes || L.Bytes > 8)
+          fail(Status::Invalid, "invalid loop location width");
+        switch (L.Space) {
+        case LowIRLoopSpace::Register:
+          if (!scalar(NdVar::reg(L.Offset, L.Bytes)))
+            fail(Status::Invalid, "invalid loop register location");
+          trackRegister(NdVar::reg(L.Offset, L.Bytes));
+          break;
+        case LowIRLoopSpace::Frame:
+          if (!Contract.Frame ||
+              std::bit_cast<int64_t>(L.Offset) < Contract.Frame->Begin ||
+              std::bit_cast<int64_t>(L.Offset) >= Contract.Frame->End ||
+              static_cast<uint64_t>(Contract.Frame->End) - L.Offset < L.Bytes)
+            fail(Status::Invalid, "loop location exceeds the certified frame");
+          break;
+        case LowIRLoopSpace::SystemFlags:
+          if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
+            fail(Status::Invalid, "invalid loop system-flags location");
+          break;
+        default:
+          fail(Status::Invalid, "unknown loop location space");
+        }
+      };
+      for (const auto &C : Cuts) {
+        if (!OriginalAddresses.insert(C.OriginalAddress).second ||
+            !CandidateAddresses.insert(C.CandidateAddress).second)
+          fail(Status::Invalid, "duplicate loop cutpoint address");
+        Charge(C.Inputs.size());
+        Charge(C.OriginalState.size());
+        Charge(C.CandidateState.size());
+        Charge(C.Rank.size());
+        if (C.Expressions.size() > Limits.MaxOperations - Operations)
+          fail(Status::BudgetExceeded,
+               "loop expression metadata budget exhausted");
+        Operations += C.Expressions.size();
+        std::set<uint64_t> Defined;
+        for (const auto &I : C.Inputs) {
+          if (I.Side != LowIRLoopSide::Entry &&
+              I.Side != LowIRLoopSide::Original &&
+              I.Side != LowIRLoopSide::Candidate)
+            fail(Status::Invalid, "unknown loop input side");
+          Location(I.Location);
+          if (!I.Temporary.isTemp() || !scalar(I.Temporary) ||
+              I.Temporary.Size != I.Location.Bytes)
+            fail(Status::Invalid, "invalid loop input binding");
+          for (uint16_t J = 0; J != I.Temporary.Size; ++J)
+            if (!Defined.insert(I.Temporary.Offset + J).second)
+              fail(Status::Invalid, "overlapping loop input bindings");
+        }
+        const auto Operand = [&](const NdVar &V) {
+          if (!scalar(V) || (!V.isTemp() && !V.isConst()))
+            fail(Status::Invalid, "loop expression uses a nonlocal operand");
+          checkTemporary(V, Defined);
+        };
+        for (const auto &Op : C.Expressions) {
+          if (Op.NumInputs > 6 || !Op.Output.isTemp() || !scalar(Op.Output) ||
+              Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+              Op.MemoryOrdering != NdMemoryOrdering::None ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              !supportedShape(Op))
+            fail(Status::Invalid, "loop expressions must be pure scalar LowIR");
+          for (unsigned I = 0; I != Op.NumInputs; ++I)
+            Operand(Op.Inputs[I]);
+          define(Op.Output, Defined);
+        }
+        for (const auto *Assignments : {&C.OriginalState, &C.CandidateState}) {
+          std::set<std::pair<LowIRLoopSpace, uint64_t>> Bound;
+          for (const auto &A : *Assignments) {
+            Location(A.Location);
+            Operand(A.Value);
+            if (A.Value.Size != A.Location.Bytes)
+              fail(Status::Invalid, "loop assignment width mismatch");
+            for (uint16_t I = 0; I != A.Location.Bytes; ++I)
+              if (!Bound.emplace(A.Location.Space, A.Location.Offset + I)
+                       .second)
+                fail(Status::Invalid, "overlapping loop state assignments");
+          }
+        }
+        Operand(C.Predicate);
+        if (C.Predicate.Size != 1 || C.Rank.empty() ||
+            C.Rank.size() != Cuts.front().Rank.size())
+          fail(Status::Invalid, "invalid loop predicate or ranking tuple");
+        for (size_t I = 0; I != C.Rank.size(); ++I) {
+          Operand(C.Rank[I]);
+          if (C.Rank[I].Size != Cuts.front().Rank[I].Size)
+            fail(Status::Invalid, "loop ranking component widths differ");
+        }
+      }
+      return true;
+    } catch (const Stop &) {
+      return false;
+    }
+  }
+
+private:
+  SymRef loopRead(TerminalState &State, const LowIRLoopLocation &L) {
+    switch (L.Space) {
+    case LowIRLoopSpace::Register:
+      return State.State.read(SymSpace::Register, L.Offset, L.Bytes);
+    case LowIRLoopSpace::Frame:
+      return State.State.load(
+          Ctx.mkAdd(Refinement->MemoryRoot,
+                    Ctx.mkConst(64, L.Offset - static_cast<uint64_t>(
+                                                   Contract.Frame->Begin))),
+          L.Bytes);
+    case LowIRLoopSpace::SystemFlags:
+      return State.SystemFlags;
+    }
+    fail(Status::Invalid, "unknown loop location space");
+  }
+
+  struct LoopTemplate {
+    TerminalState Original, Candidate;
+    SymRef Predicate;
+    std::vector<SymRef> Rank;
+  };
+
+  LoopTemplate loopTemplate(size_t Index, TerminalState *Original,
+                            TerminalState *Candidate, SymRef Domain) {
+    const auto &Cut = Refinement->LoopPlan->Cutpoints[Index];
+    TerminalState Entry{*Refinement->Initial,
+                        Refinement->Predicate,
+                        Refinement->EntrySystem,
+                        {},
+                        {}};
+    SymState Expressions(Ctx, Contract.ByteOrder);
+    std::vector<SymRef> Inputs;
+    for (const auto &I : Cut.Inputs) {
+      auto *State = I.Side == LowIRLoopSide::Entry      ? &Entry
+                    : I.Side == LowIRLoopSide::Original ? Original
+                                                        : Candidate;
+      const auto Value =
+          State ? loopRead(*State, I.Location)
+                : Ctx.mkFreshVar(I.Location.Bytes * 8, "loop_input");
+      Expressions.write(SymSpace::Temporary, I.Temporary.Offset, Value);
+      Inputs.push_back(Value);
+      nodes();
+    }
+    SymExec Exec(Ctx, Expressions);
+    for (const auto &Op : Cut.Expressions) {
+      if (++Result.Operations > Limits.MaxOperations)
+        fail(Status::BudgetExceeded,
+             "loop expression execution budget exhausted");
+      if (Exec.step(Op) != StepResult::Continue || Exec.unmodelledCount() ||
+          Exec.opaqueOperationCount() || Exec.memoryHavocCount() ||
+          Exec.callHavocCount())
+        fail(Status::Unsupported,
+             "loop expression lost exact scalar semantics");
+      nodes();
+    }
+    const auto Boolean = Exec.operandValue(Cut.Predicate);
+    if (query(Ctx.mkAnd(Domain, Ctx.mkUlt(Ctx.mkConst(8, 1), Boolean))) !=
+        solver::SatResult::Unsat)
+      fail(Status::Invalid, "loop predicate is not a canonical Boolean");
+    LoopTemplate T{Entry, Entry, Ctx.mkEq(Boolean, Ctx.mkConst(8, 1)), {}};
+    if (Cut.UseEntryPrefix) {
+      auto &Prefix = Refinement->LoopPrefixes[Index];
+      if (!Prefix && Original && Refinement->StartingCutpoint < 0)
+        Prefix = LoopPrefix{*Original, *Candidate, Domain};
+      if (!Prefix)
+        fail(Status::Unsupported,
+             "loop template has no reachable entry prefix");
+      T.Original = Prefix->Original;
+      T.Candidate = Prefix->Candidate;
+      T.Predicate = Ctx.mkAnd(T.Predicate, Prefix->Predicate);
+    }
+    for (const auto &R : Cut.Rank)
+      T.Rank.push_back(Exec.operandValue(R));
+    const auto Apply =
+        [&](TerminalState &State,
+            const std::vector<LowIRLoopAssignment> &Assignments) {
+          for (const auto &A : Assignments) {
+            const auto Value = Exec.operandValue(A.Value);
+            switch (A.Location.Space) {
+            case LowIRLoopSpace::Register:
+              State.State.write(SymSpace::Register, A.Location.Offset, Value);
+              break;
+            case LowIRLoopSpace::Frame:
+              State.State.store(
+                  Ctx.mkAdd(Refinement->MemoryRoot,
+                            Ctx.mkConst(64, A.Location.Offset -
+                                                static_cast<uint64_t>(
+                                                    Contract.Frame->Begin))),
+                  Value);
+              break;
+            case LowIRLoopSpace::SystemFlags:
+              State.SystemFlags = Value;
+              break;
+            }
+            nodes();
+          }
+        };
+    Apply(T.Original, Cut.OriginalState);
+    Apply(T.Candidate, Cut.CandidateState);
+    if (!Original) {
+      // Parameters must be recoverable from actual state. Otherwise an
+      // ambiguous representation could reset a rank without machine progress.
+      const auto Assumption = Ctx.mkAnd(Domain, T.Predicate);
+      for (size_t I = 0; I != Cut.Inputs.size(); ++I) {
+        const auto &Input = Cut.Inputs[I];
+        auto &State = Input.Side == LowIRLoopSide::Entry      ? Entry
+                      : Input.Side == LowIRLoopSide::Original ? T.Original
+                                                              : T.Candidate;
+        equal(Assumption, loopRead(State, Input.Location), Inputs[I],
+              "loop parameter projection");
+      }
+    }
+    return T;
+  }
+
+  void loopStateEqual(SymRef Predicate, TerminalState &Actual,
+                      TerminalState &Expected, llvm::StringRef Side) {
+    // Unassigned state starts at the same entry snapshot. Every program
+    // register write and every template assignment enters RegisterBytes, so
+    // later-discovered untouched registers are still identical by construction.
+    for (uint64_t Byte : Refinement->RegisterBytes)
+      equal(Predicate, Actual.State.read(SymSpace::Register, Byte, 1),
+            Expected.State.read(SymSpace::Register, Byte, 1),
+            (Side + " loop register byte " + llvm::Twine(Byte)).str());
+    for (uint64_t Byte = 0; Byte != FrameBytes; ++Byte) {
+      const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Byte));
+      equal(Predicate, Actual.State.load(Address, 1),
+            Expected.State.load(Address, 1),
+            (Side + " loop frame byte " + llvm::Twine(Byte)).str());
+    }
+    if (Contract.X64FlagsProfile)
+      equal(Predicate, Actual.SystemFlags, Expected.SystemFlags,
+            "loop system flags");
+  }
+
+public:
+  bool startLoopSegment(size_t Index) {
+    try {
+      EntryRoot = Refinement->EntryRoot;
+      MemoryRoot = Refinement->MemoryRoot;
+      auto T = loopTemplate(Index, nullptr, nullptr, Refinement->Predicate);
+      const auto Predicate = Ctx.mkAnd(Refinement->Predicate, T.Predicate);
+      if (query(Predicate) == solver::SatResult::Unsat)
+        fail(Status::Invalid, "loop invariant has an empty induction domain");
+      T.Original.Predicate = T.Candidate.Predicate = Predicate;
+      Refinement->OriginalStart = std::move(T.Original);
+      Refinement->CandidateStart = std::move(T.Candidate);
+      Refinement->StartingRank = std::move(T.Rank);
+      Refinement->SegmentPredicate = Predicate;
+      Refinement->StartingCutpoint = static_cast<int>(Index);
+      Refinement->OriginalReturns.clear();
+      Refinement->CandidateReturns.clear();
+      return true;
+    } catch (const Stop &) {
+      return false;
+    }
+  }
+
   bool validateInput() {
     try {
       if (!Validated) {
@@ -1552,7 +1909,9 @@ public:
           Covered = Ctx.mkOr(Covered, T.Predicate);
           nodes();
         }
-        if (query(Ctx.mkAnd(Refinement->Predicate, Ctx.mkNot(Covered))) !=
+        const auto Domain =
+            inductive() ? Refinement->SegmentPredicate : Refinement->Predicate;
+        if (query(Ctx.mkAnd(Domain, Ctx.mkNot(Covered))) !=
             solver::SatResult::Unsat)
           fail(Status::Unsupported,
                "terminal paths do not cover the entry domain");
@@ -1568,6 +1927,36 @@ public:
               Ctx.mkAnd(Original.Predicate, Candidate.Predicate);
           if (query(Predicate) == solver::SatResult::Unsat)
             continue;
+          if (inductive() &&
+              (Original.Cutpoint >= 0 || Candidate.Cutpoint >= 0)) {
+            if (Original.Cutpoint != Candidate.Cutpoint)
+              fail(Status::Dependent,
+                   "loop segment successors do not correspond");
+            auto Template = loopTemplate(Original.Cutpoint, &Original,
+                                         &Candidate, Predicate);
+            equal(Predicate, Template.Predicate, Ctx.mkTrue(),
+                  "loop invariant predicate");
+            loopStateEqual(Predicate, Original, Template.Original, "original");
+            loopStateEqual(Predicate, Candidate, Template.Candidate,
+                           "candidate");
+            if (Refinement->StartingCutpoint < 0) {
+              ++Refinement->LoopInitiations;
+            } else {
+              auto Less = Ctx.mkFalse(), PrefixEqual = Ctx.mkTrue();
+              for (size_t I = 0; I != Template.Rank.size(); ++I) {
+                const auto Before = Refinement->StartingRank[I];
+                const auto After = Template.Rank[I];
+                Less = Ctx.mkOr(
+                    Less, Ctx.mkAnd(PrefixEqual, Ctx.mkUlt(After, Before)));
+                PrefixEqual = Ctx.mkAnd(PrefixEqual, Ctx.mkEq(After, Before));
+                nodes();
+              }
+              equal(Predicate, Less, Ctx.mkTrue(), "strict loop rank decrease");
+              ++Refinement->RankingChecks;
+              ++Refinement->LoopTransitions;
+            }
+            continue;
+          }
           if (bool(Original.ReturnOperand) != bool(Candidate.ReturnOperand))
             fail(Status::Dependent,
                  "original and candidate RETURN arities differ");
@@ -1585,6 +1974,9 @@ public:
           if (Contract.ObserveWrittenFrameBytes) {
             auto Written = Original.Written;
             Written.insert(Candidate.Written.begin(), Candidate.Written.end());
+            if (inductive())
+              for (uint64_t I = 0; I != FrameBytes; ++I)
+                Written.insert(I);
             for (uint64_t Byte : Written) {
               const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Byte));
               equal(Predicate, Original.State.load(Address, 1),
@@ -1604,7 +1996,14 @@ public:
           SpecializationProvider *Reader = nullptr,
           detail::NativeUndefinedIndependenceResult *NativeOutput = nullptr)
       : Function(&F), Records(R), NativeResult(NativeOutput),
+        NativeInstructions(Session ? Session->NativeInstructions
+                                   : OwnedNativeInstructions),
+        NativeRanges(Session ? Session->NativeRanges : OwnedNativeRanges),
         ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
+        NativeInputOperations(Session ? Session->NativeInputOperations
+                                      : OwnedNativeInputOperations),
+        NativeInputEffects(Session ? Session->NativeInputEffects
+                                   : OwnedNativeInputEffects),
         NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
@@ -1619,7 +2018,14 @@ public:
           detail::NativeUndefinedIndependenceResult &Output,
           RefinementSession *Session = nullptr)
       : Provider(&P), NativeEntry(Entry), NativeResult(&Output),
+        NativeInstructions(Session ? Session->NativeInstructions
+                                   : OwnedNativeInstructions),
+        NativeRanges(Session ? Session->NativeRanges : OwnedNativeRanges),
         ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
+        NativeInputOperations(Session ? Session->NativeInputOperations
+                                      : OwnedNativeInputOperations),
+        NativeInputEffects(Session ? Session->NativeInputEffects
+                                   : OwnedNativeInputEffects),
         NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
@@ -1637,6 +2043,11 @@ public:
       if (Provider)
         collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
+      // Shared lazy byte identities also cover registers first discovered by
+      // a later native segment. Different first-read widths cannot introduce
+      // independent entry values into an induction template.
+      if (inductive())
+        Initial.clobberRegistersExcept({});
       SymRef EntrySystem;
       auto Predicate = Ctx.mkTrue();
       if (Refinement && Refinement->Initial) {
@@ -1656,6 +2067,11 @@ public:
           for (const auto &[Offset, Bit] : FlagProfile::Flags)
             Initial.write(SymSpace::Register, Offset,
                           Ctx.mkZExtOrTrunc(Ctx.mkExtract(Packed, Bit, 1), 8));
+          if (inductive())
+            for (const auto &[Offset, Bit] : FlagProfile::Flags) {
+              (void)Bit;
+              trackRegister(NdVar::reg(Offset, 1));
+            }
           nodes();
         }
         for (const auto &C : Contract.EntryConstants) {
@@ -1734,6 +2150,7 @@ public:
           Refinement->MemoryRoot = MemoryRoot;
           Refinement->EntrySystem = EntrySystem;
           Refinement->Predicate = Predicate;
+          Refinement->SegmentPredicate = Predicate;
         }
       }
       if (query(Predicate) == solver::SatResult::Unsat)
@@ -1763,10 +2180,28 @@ public:
                  {},
                  {}};
       Entry.LeftSystemFlags = Entry.RightSystemFlags = EntrySystem;
-      if (Provider)
-        scheduleNative(std::move(Entry), NativeEntry.Address, Predicate);
-      else
-        schedule(std::move(Entry), Addresses.at(Function->Entry), Predicate);
+      va_t StartAddress = Provider ? NativeEntry.Address : Function->Entry;
+      if (inductive()) {
+        NextNativeBlock = Refinement->NextNativeBlock;
+        const auto &Start = CandidateExecution ? Refinement->CandidateStart
+                                               : Refinement->OriginalStart;
+        if (Start) {
+          Entry.Left = Entry.Right = Start->State;
+          Entry.LeftSystemFlags = Entry.RightSystemFlags = Start->SystemFlags;
+          Entry.Predicate = Predicate = Start->Predicate;
+          Entry.SkipCutpoint = true;
+          const auto &Cut =
+              Refinement->LoopPlan->Cutpoints[Refinement->StartingCutpoint];
+          StartAddress =
+              CandidateExecution ? Cut.CandidateAddress : Cut.OriginalAddress;
+        }
+      }
+      if (Provider) {
+        NativeTrace.Entry = StartAddress;
+        scheduleNative(std::move(Entry), StartAddress, Predicate);
+      } else {
+        schedule(std::move(Entry), Addresses.at(StartAddress), Predicate);
+      }
       while (!Pending.empty()) {
         auto P = std::move(Pending.back());
         Pending.pop_back();
@@ -1781,17 +2216,32 @@ public:
         if (Provider) {
           for (auto &B : NativeTrace.Blocks)
             B.Succs = NativeTraceEdges[B.Id];
-          Refinement->OriginalDigest =
+          const auto Digest =
               inputDigest(NativeTrace, NativeRecords, Contract, Limits,
                           NativeFlagTransitions, NativeProfileProjections);
-          Refinement->OriginalInstructions = std::move(NativeRecords);
-          Refinement->Flags = std::move(NativeFlagTransitions);
-          Refinement->Projections = std::move(NativeProfileProjections);
-          for (auto &[Address, Insn] : NativeInstructions)
-            NativeResult->Instructions.push_back(std::move(Insn));
+          Refinement->OriginalDigest = Digest;
+          if (inductive()) {
+            Refinement->OriginalSegmentDigests.push_back(Digest);
+            Refinement->NextNativeBlock = NextNativeBlock;
+          }
+          Refinement->OriginalInstructions.insert(
+              Refinement->OriginalInstructions.end(), NativeRecords.begin(),
+              NativeRecords.end());
+          Refinement->Flags.insert(Refinement->Flags.end(),
+                                   NativeFlagTransitions.begin(),
+                                   NativeFlagTransitions.end());
+          Refinement->Projections.insert(Refinement->Projections.end(),
+                                         NativeProfileProjections.begin(),
+                                         NativeProfileProjections.end());
+          NativeResult->Instructions.clear();
+          for (const auto &[Address, Insn] : NativeInstructions)
+            NativeResult->Instructions.push_back(Insn);
         } else if (CandidateExecution) {
           Refinement->CandidateDigest = inputDigest(
               *Function, Records, Contract, Limits, NativeFlagTransitions);
+          if (inductive())
+            Refinement->CandidateSegmentDigests.push_back(
+                Refinement->CandidateDigest);
         } else {
           Refinement->OriginalDigest =
               inputDigest(*Function, Records, Contract, Limits);
@@ -1864,19 +2314,48 @@ refinementResult(RefinementSession &Session,
   Result.OpSeq = Stats.OpSeq;
   Result.Operations = Stats.Operations;
   Result.Instructions = Stats.Instructions;
-  Result.OriginalPaths = Session.OriginalReturns.size();
-  Result.CandidatePaths = Session.CandidateReturns.size();
+  Result.OriginalPaths = Session.OriginalPathCount;
+  Result.CandidatePaths = Session.CandidatePathCount;
   Result.BlockVisits = Stats.BlockVisits;
   Result.Producers = Stats.Producers;
   Result.SolverQueries = Stats.SolverQueries;
   Result.Observations = Stats.Observations;
   Result.TerminalPairs = Session.TerminalPairs;
+  Result.OriginalCutpoints = Session.OriginalCutpoints;
+  Result.CandidateCutpoints = Session.CandidateCutpoints;
+  Result.LoopInitiations = Session.LoopInitiations;
+  Result.LoopTransitions = Session.LoopTransitions;
+  Result.RankingChecks = Session.RankingChecks;
   if (!Success)
     return Result;
   LowIRRefinementCertificate Certificate;
   Certificate.Scope =
       Native ? LowIRRefinementScope::CompleteFiniteNativeToLowIRPaths
              : LowIRRefinementScope::CompleteFiniteLowIRPaths;
+  if (Session.LoopPlan) {
+    Certificate.Scope = Native
+                            ? LowIRRefinementScope::InductiveNativeToLowIRLoops
+                            : LowIRRefinementScope::InductiveLowIRLoops;
+    Certificate.LoopPlan = *Session.LoopPlan;
+    const auto SegmentDigest = [](llvm::StringRef Domain,
+                                  const std::vector<std::string> &Digests) {
+      llvm::SHA256 Segments;
+      Segments.update(Domain);
+      // Each digest is exactly 64 hexadecimal bytes; segment boundaries are
+      // unambiguous, and order follows the entry plus the bound cutpoint plan.
+      for (const auto &Digest : Digests)
+        Segments.update(Digest);
+      return llvm::toHex(Segments.final());
+    };
+    Session.CandidateDigest =
+        SegmentDigest("neverd-candidate-inductive-segments-v1",
+                      Session.CandidateSegmentDigests);
+    if (Native) {
+      Session.OriginalDigest =
+          SegmentDigest("neverd-native-inductive-segments-v1",
+                        Session.OriginalSegmentDigests);
+    }
+  }
   Certificate.OriginalDigest = Session.OriginalDigest;
   Certificate.CandidateDigest = Session.CandidateDigest;
   Certificate.Witness = Session.Witness;
@@ -1887,7 +2366,8 @@ refinementResult(RefinementSession &Session,
   Certificate.NativeFlagTransitions = std::move(Session.Flags);
   Certificate.NativeProfileProjections = std::move(Session.Projections);
   llvm::SHA256 Hash;
-  Hash.update("neverd-selected-value-refinement-v1");
+  Hash.update(Session.LoopPlan ? "neverd-inductive-refinement-v1"
+                               : "neverd-selected-value-refinement-v1");
   const auto Number = [&](uint64_t N) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -1899,6 +2379,45 @@ refinementResult(RefinementSession &Session,
   Number(Session.Limits.MaxTerminalPairs);
   Hash.update(Certificate.OriginalDigest);
   Hash.update(Certificate.CandidateDigest);
+  if (Session.LoopPlan) {
+    const auto Variable = [&](const NdVar &V) {
+      Number(static_cast<unsigned>(V.Space));
+      Number(V.Offset);
+      Number(V.Size);
+      Number(static_cast<unsigned>(V.Provenance));
+      Number(V.AddressOwnerVA);
+    };
+    const auto Location = [&](const LowIRLoopLocation &L) {
+      Number(static_cast<unsigned>(L.Space));
+      Number(L.Offset);
+      Number(L.Bytes);
+    };
+    Number(Session.LoopPlan->Cutpoints.size());
+    for (const auto &Cut : Session.LoopPlan->Cutpoints) {
+      Number(Cut.OriginalAddress);
+      Number(Cut.CandidateAddress);
+      Number(Cut.UseEntryPrefix);
+      Number(Cut.Inputs.size());
+      for (const auto &Input : Cut.Inputs) {
+        Number(static_cast<unsigned>(Input.Side));
+        Location(Input.Location);
+        Variable(Input.Temporary);
+      }
+      Hash.update(lowUndefinedOperationDigest(Cut.Expressions));
+      for (const auto *Assignments :
+           {&Cut.OriginalState, &Cut.CandidateState}) {
+        Number(Assignments->size());
+        for (const auto &Assignment : *Assignments) {
+          Location(Assignment.Location);
+          Variable(Assignment.Value);
+        }
+      }
+      Variable(Cut.Predicate);
+      Number(Cut.Rank.size());
+      for (const auto &Rank : Cut.Rank)
+        Variable(Rank);
+    }
+  }
   Number(Certificate.Producers.size());
   for (const auto &Producer : Certificate.Producers) {
     Number(Producer.InstructionVisit);
@@ -1917,8 +2436,10 @@ LowIRRefinementResult runRefinement(
     SpecializationProvider *Provider, SpecializationCursor Entry,
     detail::NativeUndefinedIndependenceResult *NativeResult,
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
-    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
+    const LowIRLoopRefinementPlan *LoopPlan = nullptr) {
   RefinementSession Session{{}, {}, Candidate, Witness, Limits};
+  Session.LoopPlan = LoopPlan;
   const auto Finish = [&](bool Success) {
     return refinementResult(Session, Contract, Provider != nullptr, Success);
   };
@@ -1927,6 +2448,14 @@ LowIRRefinementResult runRefinement(
     Session.Statistics.Diagnostic = "unknown refinement witness policy";
     return Finish(false);
   }
+  if (LoopPlan &&
+      LoopPlan->Cutpoints.size() > Limits.Execution.MaxBlockVisits) {
+    Session.Statistics.Status = Status::BudgetExceeded;
+    Session.Statistics.Diagnostic = "loop cutpoint metadata budget exhausted";
+    return Finish(false);
+  }
+  if (LoopPlan)
+    Session.LoopPrefixes.resize(LoopPlan->Cutpoints.size());
   // This is candidate semantic IR, not a claim of architecture coverage. Bound
   // its input before copying records or seeding the common entry snapshot.
   std::vector<LowIRUndefinedInstruction> CandidateRecords;
@@ -1966,23 +2495,33 @@ LowIRRefinementResult runRefinement(
       CandidateRecords.push_back({B.Id, Boundary, std::move(Effects)});
     }
   }
-  Checker CandidateChecker(Candidate, CandidateRecords, Contract,
-                           Limits.Execution, &Session, true, Provider,
-                           NativeResult);
-  if (!CandidateChecker.validateInput())
+  Checker Preflight(Candidate, CandidateRecords, Contract, Limits.Execution,
+                    &Session, true, Provider, NativeResult);
+  if (!Preflight.validateInput() || (LoopPlan && !Preflight.validateLoopPlan()))
     return Finish(false);
-  const auto First = Provider
-                         ? Checker(*Provider, Entry, Contract, Limits.Execution,
-                                   *NativeResult, &Session)
-                               .run()
-                         : Checker(*Original, OriginalInstructions, Contract,
-                                   Limits.Execution, &Session)
-                               .run();
-  if (!First.proved())
+  const auto Segment = [&] {
+    const auto First = Provider
+                           ? Checker(*Provider, Entry, Contract,
+                                     Limits.Execution, *NativeResult, &Session)
+                                 .run()
+                           : Checker(*Original, OriginalInstructions, Contract,
+                                     Limits.Execution, &Session)
+                                 .run();
+    if (!First.proved())
+      return false;
+    Checker CandidateChecker(Candidate, CandidateRecords, Contract,
+                             Limits.Execution, &Session, true, Provider,
+                             NativeResult);
+    return CandidateChecker.run().proved() &&
+           CandidateChecker.compareSelectedReturns();
+  };
+  if (!Segment())
     return Finish(false);
-  if (!CandidateChecker.run().proved())
-    return Finish(false);
-  return Finish(CandidateChecker.compareSelectedReturns());
+  if (LoopPlan)
+    for (size_t I = 0; I != LoopPlan->Cutpoints.size(); ++I)
+      if (!Preflight.startLoopSegment(I) || !Segment())
+        return Finish(false);
+  return Finish(true);
 }
 } // namespace
 
@@ -2017,14 +2556,25 @@ LowIRRefinementResult checkLowIRRefinement(
                        Candidate, Contract, Witness, Limits);
 }
 
+LowIRRefinementResult checkLowIRLoopRefinement(
+    const LowFunc &Original,
+    llvm::ArrayRef<LowIRUndefinedInstruction> OriginalInstructions,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopRefinementPlan &Plan, LowIRRefinementWitness Witness,
+    const LowIRRefinementLimits &Limits) {
+  return runRefinement(&Original, OriginalInstructions, nullptr, {}, nullptr,
+                       Candidate, Contract, Witness, Limits, &Plan);
+}
+
 detail::NativeLowIRRefinementResult detail::checkNativeLowIRRefinement(
     SpecializationProvider &Provider, SpecializationCursor Entry,
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
-    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
+    const LowIRLoopRefinementPlan *LoopPlan) {
   NativeLowIRRefinementResult Result;
   NativeUndefinedIndependenceResult Evidence;
   Result.Proof = runRefinement(nullptr, {}, &Provider, Entry, &Evidence,
-                               Candidate, Contract, Witness, Limits);
+                               Candidate, Contract, Witness, Limits, LoopPlan);
   if (Result.Proof.proved()) {
     Result.Instructions = std::move(Evidence.Instructions);
     Result.Reads = std::move(Evidence.Reads);

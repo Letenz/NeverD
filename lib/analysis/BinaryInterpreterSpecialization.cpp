@@ -566,10 +566,11 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
   return Result;
 }
 
-BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
+static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
     const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
-    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
+    const LowIRLoopRefinementPlan *LoopPlan) {
   BinaryLowIRRefinementResult Result;
   if (!Options.X64FlagsProfile) {
     Result.Proof.Status = LowIRRefinementStatus::Unsupported;
@@ -596,7 +597,8 @@ BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
   }
   ImageProvider Provider(Image, Options);
   auto Checked = detail::checkNativeLowIRRefinement(
-      Provider, {Entry, Image.Mode}, Candidate, Effective, Witness, Limits);
+      Provider, {Entry, Image.Mode}, Candidate, Effective, Witness, Limits,
+      LoopPlan);
   Result.Proof = std::move(Checked.Proof);
   if (Result.Proof.proved()) {
     BinaryLowIRRefinementCertificate Certificate;
@@ -611,6 +613,23 @@ BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
     Result.Certificate = std::move(Certificate);
   }
   return Result;
+}
+
+BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+  return checkBinaryLowIRRefinementImpl(Image, Entry, Options, Candidate,
+                                        Contract, Witness, Limits, nullptr);
+}
+
+BinaryLowIRRefinementResult checkBinaryLowIRLoopRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopRefinementPlan &Plan, LowIRRefinementWitness Witness,
+    const LowIRRefinementLimits &Limits) {
+  return checkBinaryLowIRRefinementImpl(Image, Entry, Options, Candidate,
+                                        Contract, Witness, Limits, &Plan);
 }
 
 SpecializationWithIndependenceResult

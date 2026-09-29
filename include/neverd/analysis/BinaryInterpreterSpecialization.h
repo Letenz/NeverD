@@ -119,6 +119,20 @@ BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
     LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
     const LowIRRefinementLimits &Limits = {});
 
+/// The native form of checkLowIRLoopRefinement. Retains the finite API's
+/// complete byte audits, execution profile and mandatory preservation checks.
+/// Original cutpoints are physical instruction entries; candidate cutpoints
+/// are LowIR block entries. The exact plan and every checked segment are bound
+/// into an InductiveNativeToLowIRLoops certificate. Proof hints must establish
+/// initiation and closure from the full admitted entry domain, never supply
+/// additional entry assumptions. This does not certify a source backend.
+BinaryLowIRRefinementResult checkBinaryLowIRLoopRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopRefinementPlan &Plan,
+    LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
+    const LowIRRefinementLimits &Limits = {});
+
 struct SpecializationWithIndependenceResult {
   SpecializationResult Recovery;
   BinaryUndefinedIndependenceResult Independence;
