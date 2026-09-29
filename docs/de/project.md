@@ -48,6 +48,8 @@ Budgets führen zum Fehler. Das Ergebnis dient der Analyse und ist kein
 Sicherheitsnachweis für Patches oder Ausnahmebehandlung. Kontrollgrößen,
 Berichte und Grenzen stehen im [Rekonstruktionsleitfaden](interpreter-recovery.md).
 
+Wiederherstellungsbudgets sind explizit: `--vm-max-fields`, `--vm-max-refinements` und `--vm-max-queries` behalten die Standardwerte 16, 16 und 4096. Der Leitfaden beschreibt die kompatible C-API v3 und Fehlerregeln.
+
 Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
 
 ## Warum NeverD?

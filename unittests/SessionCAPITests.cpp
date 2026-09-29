@@ -685,9 +685,13 @@ TEST_F(SessionCAPITest,
   EXPECT_EQ(offsetof(neverd_devirtualize_options_v2, base), 0u);
   EXPECT_EQ(offsetof(neverd_devirtualize_options_v2, max_control_refinements),
             sizeof(neverd_devirtualize_options_v1));
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v3, base), 0u);
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v3, max_control_fields),
+            sizeof(neverd_devirtualize_options_v2));
   if (sizeof(void *) == 8) {
     EXPECT_EQ(sizeof(neverd_devirtualize_options_v1), 72u);
     EXPECT_EQ(sizeof(neverd_devirtualize_options_v2), 80u);
+    EXPECT_EQ(sizeof(neverd_devirtualize_options_v3), 96u);
   }
   for (bool Machine : {false, true}) {
     SCOPED_TRACE(Machine);
@@ -695,8 +699,11 @@ TEST_F(SessionCAPITest,
                             : neverd_devirtualize_source_v1;
     const auto V2 = Machine ? neverd_devirtualize_machine_source_v2
                             : neverd_devirtualize_source_v2;
+    const auto V3 = Machine ? neverd_devirtualize_machine_source_v3
+                            : neverd_devirtualize_source_v3;
     const auto Check = [&](auto Recover, const auto *Options,
-                           uint32_t ExpectedBudget) {
+                           uint32_t ExpectedBudget, uint32_t Fields = 16,
+                           uint32_t Queries = 4096) {
       const char *Report = nullptr;
       const std::string Source =
           takeString(Recover(Session, Entry, Options, &Report));
@@ -708,11 +715,14 @@ TEST_F(SessionCAPITest,
       ASSERT_NE(Object, nullptr);
       EXPECT_EQ(Object->getBoolean("complete"), true);
       EXPECT_EQ(Object->getInteger("maxControlRefinements"), ExpectedBudget);
+      EXPECT_EQ(Object->getInteger("maxControlFields"), Fields);
+      EXPECT_EQ(Object->getInteger("maxSolverQueries"), Queries);
       EXPECT_EQ(Object->getString("sourceABI"),
                 Machine ? "x64-machine-state-v1" : "ordinary-source");
     };
     Check(V1, static_cast<const neverd_devirtualize_options_v1 *>(nullptr), 16);
     Check(V2, static_cast<const neverd_devirtualize_options_v2 *>(nullptr), 16);
+    Check(V3, static_cast<const neverd_devirtualize_options_v3 *>(nullptr), 16);
     neverd_devirtualize_options_v2 Options{};
     Options.base.struct_size = sizeof(Options);
     Check(V2, &Options, 16);
@@ -732,6 +742,71 @@ TEST_F(SessionCAPITest,
     Future.Known.max_control_refinements = 23;
     Future.Opaque = ~uint64_t{0};
     Check(V2, &Future.Known, 23);
+
+    neverd_devirtualize_options_v3 Budgets{};
+    Budgets.base.base.struct_size = sizeof(Budgets);
+    Check(V3, &Budgets, 16);
+    Budgets.base.max_control_refinements = 29;
+    Budgets.max_control_fields = 53;
+    Budgets.max_solver_queries = 17000;
+    Check(V3, &Budgets, 29, 53, 17000);
+    Budgets.reserved = ~uint32_t{0};
+    Check(V2, &Budgets.base, 29);
+    Check(V1, &Budgets.base.base, 16);
+    struct FutureBudgets {
+      neverd_devirtualize_options_v3 Known;
+      uint64_t Opaque;
+    } FutureBudget{};
+    FutureBudget.Known.base.base.struct_size = sizeof(FutureBudget);
+    FutureBudget.Known.max_control_fields = 31;
+    FutureBudget.Known.max_solver_queries = 5000;
+    FutureBudget.Opaque = ~uint64_t{0};
+    Check(V3, &FutureBudget.Known, 16, 31, 5000);
+  }
+}
+
+TEST_F(SessionCAPITest,
+       InterpreterRecoveryV3RejectsTruncationAndReservedFields) {
+  for (auto Recover :
+       {neverd_devirtualize_source_v3, neverd_devirtualize_machine_source_v3}) {
+    size_t SizeOnly = sizeof(size_t);
+    neverd_devirtualize_options_v2 V2Only{};
+    V2Only.base.struct_size = sizeof(V2Only);
+    neverd_devirtualize_options_v3 Partial{};
+    Partial.base.base.struct_size = sizeof(Partial) - 1;
+    for (const auto *Options :
+         {reinterpret_cast<const neverd_devirtualize_options_v3 *>(&SizeOnly),
+          reinterpret_cast<const neverd_devirtualize_options_v3 *>(&V2Only),
+          static_cast<const neverd_devirtualize_options_v3 *>(&Partial)}) {
+      const char *Report = nullptr;
+      EXPECT_EQ(Recover(Session, 0, Options, &Report), nullptr);
+      EXPECT_NE(takeString(Report).find("complete v3 structure"),
+                std::string::npos);
+    }
+    for (unsigned Version = 1; Version <= 3; ++Version) {
+      neverd_devirtualize_options_v3 Options{};
+      Options.base.base.struct_size = sizeof(Options);
+      if (Version == 1)
+        Options.base.base.reserved = 1;
+      else if (Version == 2)
+        Options.base.reserved = 1;
+      else
+        Options.reserved = 1;
+      const char *Report = nullptr;
+      EXPECT_EQ(Recover(Session, 0, &Options, &Report), nullptr);
+      auto Parsed = llvm::json::parse(takeString(Report));
+      ASSERT_TRUE(static_cast<bool>(Parsed));
+      const auto *Object = Parsed->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getBoolean("complete"), false);
+      EXPECT_EQ(Object->getString("error"),
+                Version == 1   ? "invalid devirtualize flags"
+                : Version == 2 ? "invalid devirtualize v2 flags"
+                               : "invalid devirtualize v3 flags");
+    }
+    const char *Report = "previous";
+    EXPECT_EQ(Recover(nullptr, 0, nullptr, &Report), nullptr);
+    EXPECT_EQ(Report, nullptr);
   }
 }
 

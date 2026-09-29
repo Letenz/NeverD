@@ -48,6 +48,8 @@ resultado sirve para análisis y no demuestra seguridad para aplicar parches
 ni manejar excepciones. La [guía de recuperación](interpreter-recovery.md)
 describe los controles, informes y límites.
 
+Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-refinements` y `--vm-max-queries` mantienen los valores predeterminados 16, 16 y 4096. La guía describe la API C v3 compatible y las reglas de fallo.
+
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
 
 ## ¿Por qué NeverD?

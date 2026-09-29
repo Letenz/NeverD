@@ -48,6 +48,8 @@ Le résultat sert à l’analyse et ne constitue pas une preuve de sûreté pour
 patch ou les exceptions. Voir le [guide de récupération](interpreter-recovery.md)
 pour les contrôles, rapports et limites.
 
+Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
+
 L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
 
 ## Pourquoi NeverD ?

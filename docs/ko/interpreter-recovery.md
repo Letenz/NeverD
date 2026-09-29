@@ -53,6 +53,10 @@ CLI와 모든 버전의 소스 복원 C API는 기본적으로 자동 탐색을 
 
 CLI 옵션 `--vm-max-refinements=N`은 양의 정수를 요구하며 기본값은 16입니다. C 호출자는 `neverd_devirtualize_source_v2()` 또는 `neverd_devirtualize_machine_source_v2()`로 같은 한도를 설정할 수 있습니다. `neverd_devirtualize_options_v2`를 0으로 초기화하고 `base.struct_size = sizeof(neverd_devirtualize_options_v2)`와 `max_control_refinements`를 설정합니다(0이면 기본값 16 유지). 내장된 `base`에는 v1 옵션이 들어가며 두 reserved 멤버는 모두 0이어야 합니다. 기존 v1 레이아웃과 진입점은 바뀌지 않고 확장된 뒷부분을 무시합니다. 다른 작업 및 증명 예산도 계속 적용됩니다.
 
+`--vm-max-fields=N`과 `--vm-max-queries=N`은 제어 필드 및 솔버 질의 한도를 설정하며 기본값은 16과 4096으로 유지됩니다. 이 두 옵션과 `--vm-max-refinements`는 양의 32비트 십진 정수와 `--devirtualize`를 요구합니다. 0, 부호, 십육진수, 뒤따르는 문자, 오버플로는 거부합니다. 두 소스 ABI와 두 백엔드에 동일한 한도가 적용됩니다. 예산 증가는 분석 작업량만 늘리며 제어 힌트, 런타임 입력 또는 새로운 증명 보장을 제공하지 않습니다. 예산이 소진되면 C를 게시하지 않습니다.
+
+C 호출자는 `neverd_devirtualize_source_v3()` 또는 `neverd_devirtualize_machine_source_v3()`를 사용합니다. `neverd_devirtualize_options_v3`를 0으로 초기화하고 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`를 설정합니다. `max_control_fields`, `max_solver_queries`, 선택적으로 `base.max_control_refinements`를 설정하며 0은 기존 기본값을 선택합니다. 세 reserved 필드는 모두 0이어야 합니다. v1/v2 진입점은 reserved를 포함한 v3 꼬리를 무시하고 v3는 미래 확장 꼬리를 무시합니다. 보고서는 실제 작업량과 유효한 `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`를 기록합니다.
+
 JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements`, `discoveryVisits`가 추가되어 활성화 상태, 제한 및 분석 작업량을 기록합니다. 필드를 찾았다는 사실만으로 복원 성공이 입증되지는 않습니다.
 
 ## 실행 계약

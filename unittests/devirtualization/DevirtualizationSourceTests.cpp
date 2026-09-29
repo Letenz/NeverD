@@ -621,29 +621,91 @@ TEST_F(DevirtualizationSourceTest, CLIRefinementBudgetControlsBothSourceABIs) {
       }
 }
 
-TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidRefinementBudgets) {
+TEST_F(DevirtualizationSourceTest, CLIFieldAndQueryBudgetsAreEnforced) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery budget checks require clang";
+  const auto Binary = tmpFile("generic-field-query-budgets.elf");
+  const auto Compiled = buildFixture(Binary, "generic_control_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Machine : {false, true})
+    for (bool LLVM : {false, true})
+      for (unsigned Limited = 0; Limited < 3; ++Limited) {
+        SCOPED_TRACE(Machine);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(Limited);
+        const unsigned Fields = Limited == 1 ? 1 : 2;
+        const unsigned Queries = Limited == 2 ? 1 : 4096;
+        const auto Stem = std::to_string(Machine) + "-" + std::to_string(LLVM) +
+                          "-" + std::to_string(Limited);
+        const auto Source = tmpFile(Stem + ".c");
+        const auto Report = tmpFile(Stem + ".json");
+        std::vector<std::string> Args{
+            "decompile",
+            Binary.string(),
+            "--func",
+            "generic_control_state",
+            "--devirtualize",
+            "--vm-max-fields=" + std::to_string(Fields),
+            "--vm-max-queries=" + std::to_string(Queries),
+            "--recovery-report=" + Report.string(),
+            "-o",
+            Source.string()};
+        if (Machine)
+          Args.push_back("--vm-machine-state");
+        if (LLVM)
+          Args.push_back("--llvm");
+        const auto Recovered = exec(ndBin(), Args);
+        const bool Complete = Limited == 0;
+        EXPECT_EQ(Recovered.ok(), Complete) << Recovered.err;
+        EXPECT_EQ(fs::exists(Source), Complete);
+        auto JSON = llvm::json::parse(readSource(Report));
+        ASSERT_TRUE(static_cast<bool>(JSON))
+            << llvm::toString(JSON.takeError());
+        const auto *Object = JSON->getAsObject();
+        ASSERT_NE(Object, nullptr);
+        EXPECT_EQ(Object->getBoolean("complete"), Complete);
+        EXPECT_EQ(Object->getBoolean("controlComplete"), Complete);
+        EXPECT_EQ(Object->getInteger("maxControlFields"), Fields);
+        EXPECT_EQ(Object->getInteger("maxSolverQueries"), Queries);
+        EXPECT_EQ(Object->getInteger("maxControlRefinements"), 16);
+        for (const char *Key : {"controlRegisters", "controlFrameSlots"}) {
+          const auto *Controls = Object->getArray(Key);
+          ASSERT_NE(Controls, nullptr);
+          EXPECT_TRUE(Controls->empty());
+        }
+        if (!Complete) {
+          EXPECT_EQ(Object->getString("status"), "budget-exceeded");
+          EXPECT_EQ(Object->getInteger("residualBlocks"), 0);
+        }
+      }
+}
+
+TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public recovery budget checks require clang";
   const auto Binary = tmpFile("generic-refinement-options.elf");
   const auto Compiled = buildFixture(Binary);
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
   const auto Source = tmpFile("invalid-refinement-options.c");
-  for (const char *Value : {"0", "-1", "4294967296", "1junk"}) {
-    SCOPED_TRACE(Value);
-    const auto Refused =
+  for (const char *Option :
+       {"--vm-max-refinements", "--vm-max-fields", "--vm-max-queries"}) {
+    SCOPED_TRACE(Option);
+    for (const char *Value : {"0", "-1", "4294967296", "1junk", "+1", "0x10"}) {
+      SCOPED_TRACE(Value);
+      const auto Refused = exec(
+          ndBin(), {"decompile", Binary.string(), "--func",
+                    "generic_vm_register_arithmetic", "--devirtualize",
+                    std::string(Option) + "=" + Value, "-o", Source.string()});
+      EXPECT_FALSE(Refused.ok());
+      EXPECT_FALSE(fs::exists(Source));
+    }
+    const auto WithoutRecovery =
         exec(ndBin(), {"decompile", Binary.string(), "--func",
-                       "generic_vm_register_arithmetic", "--devirtualize",
-                       std::string("--vm-max-refinements=") + Value, "-o",
-                       Source.string()});
-    EXPECT_FALSE(Refused.ok());
+                       "generic_vm_register_arithmetic",
+                       std::string(Option) + "=2", "-o", Source.string()});
+    EXPECT_FALSE(WithoutRecovery.ok());
     EXPECT_FALSE(fs::exists(Source));
   }
-  const auto WithoutRecovery =
-      exec(ndBin(), {"decompile", Binary.string(), "--func",
-                     "generic_vm_register_arithmetic", "--vm-max-refinements=2",
-                     "-o", Source.string()});
-  EXPECT_FALSE(WithoutRecovery.ok());
-  EXPECT_FALSE(fs::exists(Source));
 }
 
 TEST_F(DevirtualizationSourceTest,

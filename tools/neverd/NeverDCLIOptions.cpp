@@ -384,6 +384,15 @@ cl::opt<std::string> VMMaxRefinements(
     "vm-max-refinements",
     cl::desc("Control-state refinement rounds (positive; default: 16)"),
     cl::value_desc("count"), cl::init("16"), cl::sub(DecompileCmd));
+cl::opt<std::string> VMMaxFields(
+    "vm-max-fields",
+    cl::desc(
+        "Total manual and discovered control fields (positive; default: 16)"),
+    cl::value_desc("count"), cl::init("16"), cl::sub(DecompileCmd));
+cl::opt<std::string> VMMaxQueries(
+    "vm-max-queries",
+    cl::desc("Cumulative recovery solver queries (positive; default: 4096)"),
+    cl::value_desc("count"), cl::init("4096"), cl::sub(DecompileCmd));
 cl::opt<uint64_t> VMMaxOperations("vm-max-operations",
                                   cl::desc("Recovery operation budget"),
                                   cl::init(262144), cl::sub(DecompileCmd));
