@@ -101,6 +101,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_X87FPUTests.cpp
   x86_64/X86_64_EVEXCompareTests.cpp
   x86_64/X86_64_WideISAStateTests.cpp
+  x86_64/X86_64_TerminatorTests.cpp
   x86_64/X86_64_SwitchTests.cpp
   x86_64/X86_64_RoundTripTests.cpp
   aarch64/AArch64_SwitchTests.cpp

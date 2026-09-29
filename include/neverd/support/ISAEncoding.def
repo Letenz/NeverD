@@ -54,6 +54,7 @@ NEVERD_X86_ENCODING(uint8_t, kTwoByteEscape, 0x0F)
 NEVERD_X86_ENCODING(uint8_t, kJccNearBase, 0x80)
 NEVERD_X86_ENCODING(uint8_t, kJccNearEnd, 0x8F)
 NEVERD_X86_ENCODING(uint8_t, kInt3, 0xCC)
+NEVERD_X86_ENCODING(uint8_t, kIntImm8, 0xCD)
 NEVERD_X86_ENCODING(uint8_t, kNop, 0x90)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
@@ -69,6 +70,7 @@ NEVERD_X86_ENCODING(size_t, kJccNearLen, 6)
 NEVERD_X86_ENCODING(size_t, kJccNearDispOffset, 2)
 NEVERD_X86_ENCODING(size_t, kJmpIndirectLen, 6)
 NEVERD_X86_ENCODING(size_t, kJmpIndirectDispOffset, 2)
+NEVERD_X86_ENCODING(size_t, kIntImm8Len, 2)
 
 // ===--------------------------------------------------------------------===//
 // AArch64 instruction encoding

@@ -16,6 +16,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1253,9 +1254,11 @@ bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
     return true;
   case X86_INS_INT:
     // Windows `int 29h` is __fastfail: it never returns (MedNoReturn agrees).
-    return I->detail && I->detail->x86.op_count >= 1 &&
-           I->detail->x86.operands[0].type == X86_OP_IMM &&
-           isX86NoReturnInterrupt(I->detail->x86.operands[0].imm);
+    // `int imm8` is CD ib, so the vector is the instruction's last byte, which
+    // a decode without operand detail still reads: an entry check decodes so.
+    return I->size >= x86::kIntImm8Len &&
+           I->bytes[I->size - x86::kIntImm8Len] == x86::kIntImm8 &&
+           isX86NoReturnInterrupt(I->bytes[I->size - 1]);
   default:
     return false;
   }
