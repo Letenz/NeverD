@@ -63,6 +63,16 @@ NEVERD_BRANCH_FIELD(ArmMoveImm12, 0, 12)
 NEVERD_BRANCH_FORM(ArmAddIPIPPC, 0xFFFFFFFF, 0xE08CC00F)
 NEVERD_BRANCH_FORM(ArmBranchExchangeIP, 0xFFFFFFFF, 0xE12FFF1C)
 
+// The A32 PLT entry an ELF linker writes: `add ip, pc, #imm`, an optional
+// `add ip, ip, #imm`, and `ldr pc, [ip, #imm12]!`.  An ADD's immediate is a
+// modified immediate: imm8 rotated right by twice the rotation field.
+NEVERD_BRANCH_FORM(ArmAddIPPCImmediate, 0xFFFFF000, 0xE28FC000)
+NEVERD_BRANCH_FORM(ArmAddIPIPImmediate, 0xFFFFF000, 0xE28CC000)
+NEVERD_BRANCH_FORM(ArmLoadPCFromIPPreIndexed, 0xFFFFF000, 0xE5BCF000)
+NEVERD_BRANCH_FIELD(ArmModifiedImm8, 0, 8)
+NEVERD_BRANCH_FIELD(ArmModifiedRotation, 8, 4)
+NEVERD_BRANCH_FIELD(ArmLoadImm12, 0, 12)
+
 // T32 B.W (T4), BL and BLX (immediate): a first halfword 11110:S:imm10, and a
 // second 1:J1:x:J2:imm11 whose bits 14 and 12 tell the three apart.  The
 // offset S:I1:I2:imm10:imm11 is in halfwords, with I1 = NOT(J1 XOR S) and

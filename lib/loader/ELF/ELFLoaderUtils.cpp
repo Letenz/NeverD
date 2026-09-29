@@ -11,6 +11,7 @@
 #include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Debug.h"
@@ -53,10 +54,8 @@ bool isIRelativeRelocation(uint32_t Type, Arch TargetArch) {
 /// Value of an ARM data-processing instruction's modified immediate: an
 /// eight-bit constant rotated right by twice its four-bit rotation field.
 uint32_t armModifiedImmediate(uint32_t Insn) {
-  const uint32_t Value = Insn & 0xFF;
-  const uint32_t Rotation = ((Insn >> 8) & 0xF) * 2;
-  return Rotation == 0 ? Value
-                       : ((Value >> Rotation) | (Value << (32 - Rotation)));
+  return llvm::rotr(branch::ArmModifiedImm8.extract(Insn),
+                    2 * branch::ArmModifiedRotation.extract(Insn));
 }
 
 /// The GOT cell a standard ARM PLT veneer at \p VA loads its target from, or
@@ -72,32 +71,28 @@ uint32_t armModifiedImmediate(uint32_t Insn) {
 ///     ldr pc, [ip, #lo]!     e5bcfXYZ
 std::optional<va_t> armPLTVeneerTarget(const uint8_t *Bytes, size_t Available,
                                        va_t VA) {
-  constexpr uint32_t kInsnMask = 0xFFFFF000u;
-  constexpr uint32_t kAddIPFromPC = 0xE28FC000u;
-  constexpr uint32_t kAddIPFromIP = 0xE28CC000u;
-  constexpr uint32_t kLdrPCFromIP = 0xE5BCF000u;
-
-  if (Available < 8)
+  constexpr size_t Word = branch::ArmInstructionBytes;
+  if (Available < 2 * Word)
     return std::nullopt;
   const uint32_t First = readLE<uint32_t>(Bytes);
-  if ((First & kInsnMask) != kAddIPFromPC)
+  if (!branch::ArmAddIPPCImmediate.matches(First))
     return std::nullopt;
 
   uint64_t Offset = armModifiedImmediate(First);
-  size_t Consumed = 4;
-  const uint32_t Second = readLE<uint32_t>(Bytes + 4);
-  if ((Second & kInsnMask) == kAddIPFromIP) {
-    if (Available < 12)
+  size_t Consumed = Word;
+  const uint32_t Second = readLE<uint32_t>(Bytes + Word);
+  if (branch::ArmAddIPIPImmediate.matches(Second)) {
+    if (Available < 3 * Word)
       return std::nullopt;
     Offset += armModifiedImmediate(Second);
-    Consumed = 8;
+    Consumed = 2 * Word;
   }
   const uint32_t Last = readLE<uint32_t>(Bytes + Consumed);
-  if ((Last & kInsnMask) != kLdrPCFromIP)
+  if (!branch::ArmLoadPCFromIPPreIndexed.matches(Last))
     return std::nullopt;
   // The load's own displacement is a plain twelve-bit immediate rather than a
   // modified one, and the pre-indexed form adds it before the load.
-  Offset += Last & 0xFFF;
+  Offset += branch::ArmLoadImm12.extract(Last);
   // `pc` reads as the address of the instruction plus two instructions.
   return static_cast<va_t>((VA + arm::kPCBias + Offset) & 0xFFFFFFFFull);
 }
