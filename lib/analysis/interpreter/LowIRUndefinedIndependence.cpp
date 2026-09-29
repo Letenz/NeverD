@@ -10,6 +10,7 @@
 #include "FiniteValues.h"
 #include "NativeStackControl.h"
 #include "NativeUndefinedIndependence.h"
+#include "X64UserFlags.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymExec.h"
@@ -30,6 +31,7 @@ namespace neverd::analysis {
 namespace {
 using namespace symbolic;
 using Status = LowIRIndependenceStatus;
+using FlagProfile = detail::X64UserFlags;
 constexpr uint64_t AddressTemporary = UINT64_MAX - 7;
 constexpr uint64_t NativeStackTemporary = AddressTemporary - 8;
 
@@ -40,6 +42,7 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
   if (Insn.Origin.Control != LowInstructionControl::Terminator ||
       Insn.Origin.Immediate || Insn.IsNativeCall ||
       Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+      Insn.ProfileProjection != InterpreterProfileProjection::None ||
       Insn.Ops.size() != 1 || !Insn.UndefinedEffects.Effects.empty() ||
       Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
       Insn.UndefinedEffects.OperationDigest !=
@@ -59,6 +62,56 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
   return Insn.Origin.ControlFlags == Flags;
 }
 
+// Intel SDM: disabled shadow stacks make RDSSPD/RDSSPQ a NOP, including no
+// 32-bit destination zero-extension; INCSSPD/INCSSPQ instead raise #UD. Check
+// the provider's classification against canonical bytes and exact operations.
+// Missing coverage stays Missing. No other CET instruction is authorized.
+bool isCetDisabledProjection(const SpecializationInstruction &Insn) {
+  const bool Read = Insn.ProfileProjection ==
+                    InterpreterProfileProjection::CetDisabledReadShadowStackV1;
+  const bool Trap =
+      Insn.ProfileProjection ==
+      InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1;
+  if ((!Read && !Trap) || Insn.IsNativeCall ||
+      Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+      Insn.Origin.Control != (Trap ? LowInstructionControl::Terminator
+                                   : LowInstructionControl::None) ||
+      Insn.Origin.ControlFlags != (Trap ? LowInstructionControlFlag::Terminator
+                                        : LowInstructionControlFlag::None) ||
+      Insn.Origin.Immediate || Insn.Ops.size() != 1 ||
+      Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      !Insn.UndefinedEffects.Effects.empty() ||
+      Insn.UndefinedEffects.OperationDigest !=
+          lowUndefinedOperationDigest(Insn.Ops))
+    return false;
+  const auto &Op = Insn.Ops.front();
+  if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  // Preserve the strict lifter's opaque intrinsic result. It is never
+  // executed: this profile faults before any architectural state update.
+  if (Read ? (Op.Opcode != NdOp::NOP || Op.Output.Size || Op.NumInputs)
+           : (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 1 ||
+              Op.Output != NdVar::reg(x86reg::RAX, 8) ||
+              !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+              Op.Inputs[0].Offset !=
+                  static_cast<uint64_t>(Intrinsic::CetIncSsp)))
+    return false;
+  const auto &Bytes = Insn.NativeBytes;
+  if ((Bytes.size() != 4 && Bytes.size() != 5) || Bytes[0] != 0xf3)
+    return false;
+  size_t I = 1;
+  if (Bytes.size() == 5) {
+    // REX.W and REX.B select width/bank. Extra prefix forms are not certified.
+    if (Bytes[I] != 0x40 && Bytes[I] != 0x41 && Bytes[I] != 0x48 &&
+        Bytes[I] != 0x49)
+      return false;
+    ++I;
+  }
+  return Bytes[I] == 0x0f && Bytes[I + 1] == (Read ? 0x1e : 0xae) &&
+         (Bytes[I + 2] & 0xf8) == (Read ? 0xc8 : 0xe8);
+}
+
 bool sameBoundary(const LowInstructionBoundary &A,
                   const LowInstructionBoundary &B) {
   return std::tie(A.Address, A.Size, A.FirstOp, A.OpCount, A.Mode, A.Control,
@@ -76,10 +129,12 @@ bool scalar(const NdVar &V) {
 
 /// Hash semantic input fields explicitly; neither padding nor pointer identity
 /// may participate. Presentation names and stale predecessor lists are unused.
-std::string inputDigest(const LowFunc &F,
-                        llvm::ArrayRef<LowIRUndefinedInstruction> Records,
-                        const LowIRIndependenceContract &Contract,
-                        const LowIRIndependenceLimits &Limits) {
+std::string
+inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
+            const LowIRIndependenceContract &Contract,
+            const LowIRIndependenceLimits &Limits,
+            llvm::ArrayRef<LowIRNativeFlagTransition> Flags = {},
+            llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {}) {
   llvm::SHA256 Hash;
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
@@ -116,7 +171,28 @@ std::string inputDigest(const LowFunc &F,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(5); // Certificate semantic schema, independent of report formatting.
+  Number(6); // Certificate semantic schema, independent of report formatting.
+  Number(Contract.X64FlagsProfile.has_value());
+  if (Contract.X64FlagsProfile) {
+    Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
+    // Includes canonical entry and mandatory final system-state observation.
+    Number(FlagProfile::SemanticsVersion);
+  }
+  Number(Flags.size());
+  for (const auto &Transition : Flags) {
+    Number(static_cast<uint64_t>(Transition.BlockId));
+    Number(Transition.InstructionAddress);
+    Number(static_cast<uint64_t>(Transition.OpSeq));
+    Number(Transition.SemanticsVersion);
+    Number(Transition.OperationDigest.size());
+    Hash.update(Transition.OperationDigest);
+  }
+  Number(Projections.size());
+  for (const auto &Projection : Projections) {
+    Number(static_cast<uint64_t>(Projection.BlockId));
+    Number(Projection.InstructionAddress);
+    Number(static_cast<unsigned>(Projection.Kind));
+  }
   Number(F.Entry);
   Number(F.ModuleAnalysisRoots.size());
   for (va_t Root : F.ModuleAnalysisRoots)
@@ -240,11 +316,12 @@ class Checker {
   SpecializationCursor NativeEntry;
   detail::NativeUndefinedIndependenceResult *NativeResult = nullptr;
   std::map<va_t, SpecializationInstruction> NativeInstructions;
-  std::map<va_t, std::vector<va_t>> NativeDirectEdges;
   std::map<va_t, va_t> NativeRanges;
   std::map<va_t, uint8_t> ImmutableBytes;
   LowFunc NativeTrace;
   std::vector<LowIRUndefinedInstruction> NativeRecords;
+  std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
+  std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
   std::map<int, std::vector<int>> NativeTraceEdges;
   uint64_t NativeInputOperations = 0;
   uint64_t NativeInputEffects = 0;
@@ -272,6 +349,7 @@ class Checker {
     std::set<int> Ancestors;
     std::set<uint64_t> Written;
     va_t NativeAddress = 0;
+    SymRef LeftSystemFlags, RightSystemFlags;
   };
   std::vector<Path> Pending;
 
@@ -355,6 +433,88 @@ class Checker {
     if (V.isTemp())
       for (uint16_t I = 0; I != V.Size; ++I)
         Defined.insert(V.Offset + I);
+  }
+
+  bool flagIntrinsic(Path &P, const LowOp &Original,
+                     const LowInstructionUndefinedEffects &Effects,
+                     const std::set<uint64_t> &Defined) {
+    if (!Provider || !Contract.X64FlagsProfile ||
+        Original.Opcode != NdOp::INTRINSIC)
+      return false;
+    // A separate state namespace prevents either original operands or public
+    // register contracts from aliasing the implicit system-state identity.
+    constexpr auto SystemOffset = uint64_t{0}, ImageOffset = uint64_t{8};
+    LowOp Canonical = Original;
+    if (Canonical.Output.Size)
+      Canonical.Output.Offset = 0;
+    if (Canonical.NumInputs == 2)
+      Canonical.Inputs[1] = NdVar::reg(ImageOffset, Original.Inputs[1].Size);
+    uint64_t NextTemporary = 8;
+    auto Transition = detail::lowerX64UserFlags(
+        Canonical, NdVar::reg(SystemOffset, 8), [&](uint16_t Size) {
+          const auto Value = NdVar::tmp(NextTemporary, Size);
+          NextTemporary += 8;
+          return Value;
+        });
+    if (!Transition)
+      fail(Status::Unsupported, "unsupported native flags intrinsic shape");
+    if (!Effects.Effects.empty())
+      fail(Status::Unsupported,
+           "native flags transition requires an empty audited sidecar");
+    if (Original.Output.Size && !scalar(Original.Output))
+      fail(Status::Invalid, "invalid native flags output");
+    for (unsigned I = 0; I != Original.NumInputs; ++I) {
+      if (!scalar(Original.Inputs[I]))
+        fail(Status::Invalid, "invalid native flags operand");
+      checkTemporary(Original.Inputs[I], Defined);
+    }
+    if (Transition->Ops.size() > Limits.MaxOperations - Result.Operations)
+      fail(Status::BudgetExceeded, "native flags transition budget exhausted");
+    Result.Operations += Transition->Ops.size();
+    const auto Execute = [&](SymState &State, SymRef System) {
+      SymState Isolated(Ctx, Contract.ByteOrder);
+      Isolated.write(SymSpace::Register, SystemOffset, System);
+      if (Original.NumInputs == 2) {
+        SymExec Reader(Ctx, State);
+        Isolated.write(SymSpace::Register, ImageOffset,
+                       Reader.operandValue(Original.Inputs[1]));
+      }
+      SymExec Exec(Ctx, Isolated);
+      for (const auto &Op : Transition->Ops) {
+        if (Exec.step(Op) != StepResult::Continue || Exec.unmodelledCount() ||
+            Exec.opaqueOperationCount() || Exec.memoryHavocCount() ||
+            Exec.callHavocCount())
+          fail(Status::Unsupported, "native flags transition lost semantics");
+        nodes();
+      }
+      return Isolated;
+    };
+    auto Left = Execute(P.Left, P.LeftSystemFlags);
+    auto Right = Execute(P.Right, P.RightSystemFlags);
+    if (Transition->Rejected) {
+      const auto Bad = *Transition->Rejected;
+      const auto L = Left.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
+      const auto R = Right.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
+      if (query(Ctx.mkAnd(P.Predicate, Ctx.mkOr(Ctx.mkNe(L, Ctx.mkZero(8)),
+                                                Ctx.mkNe(R, Ctx.mkZero(8))))) !=
+          solver::SatResult::Unsat)
+        fail(Status::ContractViolation,
+             "reachable POPFQ image violates the native flags profile");
+    }
+    // Never restrict Predicate by the profile guard: all feasible twins must
+    // satisfy it. CALL/RET and branch scheduling copy these persistent fields.
+    P.LeftSystemFlags = Left.read(SymSpace::Register, SystemOffset, 8);
+    P.RightSystemFlags = Right.read(SymSpace::Register, SystemOffset, 8);
+    if (Original.Output.Size) {
+      P.Left.write(SymSpace::Temporary, Original.Output.Offset,
+                   Left.read(SymSpace::Temporary, 0, 8));
+      P.Right.write(SymSpace::Temporary, Original.Output.Offset,
+                    Right.read(SymSpace::Temporary, 0, 8));
+    }
+    NativeFlagTransitions.push_back(
+        {P.BlockId, Original.Addr, Original.Seq, FlagProfile::SemanticsVersion,
+         lowUndefinedOperationDigest(Transition->Ops)});
+    return true;
   }
 
   void arbitrary(Path &P, const LowUndefinedEffect &Effect,
@@ -589,7 +749,17 @@ class Checker {
               Raw, LowInstructionBoundaryRequirement::Required))
         fail(Status::Invalid, llvm::toString(std::move(Error)));
       validateEffects(B, Insn.Ops, Insn.UndefinedEffects);
-      const bool Trap = isRetainedNativeTrap(Insn);
+      const bool Projection =
+          Contract.X64FlagsProfile && isCetDisabledProjection(Insn);
+      const bool ProjectedTrap =
+          Projection && Insn.ProfileProjection ==
+                            InterpreterProfileProjection::
+                                CetDisabledIncrementShadowStackTrapV1;
+      const bool Trap = isRetainedNativeTrap(Insn) || ProjectedTrap;
+      if (Insn.ProfileProjection != InterpreterProfileProjection::None &&
+          !Projection)
+        fail(Status::Unsupported,
+             "native projection lacks matching profile or exact evidence");
       if (B.Control == LowInstructionControl::Terminator && !Trap)
         fail(Status::Unsupported,
              "original trap lacks exact semantic evidence");
@@ -597,7 +767,7 @@ class Checker {
           Limits.MaxProducers - NativeInputEffects)
         fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
       NativeInputEffects += Insn.UndefinedEffects.Effects.size();
-      if (!Trap &&
+      if (!Trap && !Projection &&
           Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
         fail(Status::Unsupported,
              "original instruction lacks complete undefined-output evidence");
@@ -636,30 +806,18 @@ class Checker {
       }
       if (!Terminal)
         Successors.push_back(Insn.Fallthrough.Address);
-      NativeDirectEdges.emplace(Address, Successors);
+      if (ProjectedTrap)
+        NativeProfileProjections.push_back(
+            {-1, Address, Insn.ProfileProjection});
       NativeInstructions.emplace(Address, std::move(Insn));
       for (va_t Target : Successors)
         Enqueue(Target);
     }
-    // No feasibility pruning may hide a structural loop. Indirect edges are
-    // explored only after complete target enumeration; a partial execution
-    // prefix never reaches publication even if its final budget is exhausted.
-    std::map<va_t, size_t> Incoming;
-    for (const auto &[Address, Insn] : NativeInstructions)
-      Incoming.emplace(Address, 0);
-    for (const auto &[Address, Targets] : NativeDirectEdges)
-      for (va_t Target : Targets)
-        ++Incoming.at(Target);
-    std::vector<va_t> Ready;
-    for (const auto &[Address, Count] : Incoming)
-      if (!Count)
-        Ready.push_back(Address);
-    for (size_t I = 0; I != Ready.size(); ++I)
-      for (va_t Target : NativeDirectEdges.at(Ready[I]))
-        if (!--Incoming.at(Target))
-          Ready.push_back(Target);
-    if (Ready.size() != Incoming.size())
-      fail(Status::Unsupported, "original graph requires a loop invariant");
+    // Collection visits each original instruction once, including cyclic
+    // arms. Execution creates a fresh trace block on every visit, preserving
+    // state and fresh undefined choices. Direct and indirect cycles obey the
+    // same path/visit/operation budgets; only exhaustion of all feasible paths
+    // at ordinary returns can certify a finite unrolling, never a prefix.
   }
 
   void scheduleNative(Path P, va_t Address, SymRef Predicate) {
@@ -716,6 +874,9 @@ class Checker {
     B.Ops = Insn.Ops;
     B.InstructionBoundaries.push_back(Insn.Origin);
     Effects = Insn.UndefinedEffects;
+    if (Insn.ProfileProjection != InterpreterProfileProjection::None)
+      NativeProfileProjections.push_back(
+          {B.Id, B.StartAddr, Insn.ProfileProjection});
     if (Insn.NativeStackControl != SpecializationNativeStackControl::None ||
         Insn.IsNativeCall) {
       NativeReturnExpansion Mode = NativeReturnExpansion::OuterFunctionBoundary;
@@ -793,12 +954,17 @@ class Checker {
                                        : Record == Effects.end()
                                            ? nullptr
                                            : &Record->second->Effects;
+      const bool ProfileProjection =
+          Provider && Contract.X64FlagsProfile &&
+          isCetDisabledProjection(NativeInstructions.at(B.StartAddr));
       if (!DescriptionPointer ||
-          DescriptionPointer->Coverage == LowUndefinedCoverage::Missing)
+          (DescriptionPointer->Coverage == LowUndefinedCoverage::Missing &&
+           !ProfileProjection))
         fail(Status::Unsupported,
              "missing architectural undefined-effect coverage");
       const auto &Description = *DescriptionPointer;
-      if (Description.Coverage != LowUndefinedCoverage::Complete)
+      if (Description.Coverage != LowUndefinedCoverage::Complete &&
+          !ProfileProjection)
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
@@ -821,6 +987,12 @@ class Checker {
             Original.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
+        if (flagIntrinsic(P, Original, Description, Defined)) {
+          define(Original.Output, Defined);
+          Apply(I + 1);
+          nodes();
+          continue;
+        }
         if (!supportedShape(Original))
           fail(Status::Invalid, "malformed LowIR operation");
         for (unsigned J = 0; J != Original.NumInputs; ++J) {
@@ -953,6 +1125,9 @@ class Checker {
           if (!B.Succs.empty())
             fail(Status::Invalid, "return block has successors");
           preservedReturn(P);
+          if (Contract.X64FlagsProfile)
+            equal(P.Predicate, P.LeftSystemFlags, P.RightSystemFlags,
+                  "final system flags");
           if (Original.NumInputs)
             equal(P.Predicate, Left.branchTarget(), Right.branchTarget(),
                   "RETURN operand");
@@ -1033,6 +1208,15 @@ class Checker {
   }
 
   void validate() {
+    if (Contract.X64FlagsProfile) {
+      if (!Provider)
+        fail(Status::Unsupported, "flags profiles require the native API");
+      if (*Contract.X64FlagsProfile !=
+          InterpreterMachineStateProfile::UserX64NoFaultV1)
+        fail(Status::Invalid, "unknown native flags profile");
+      if (Contract.ByteOrder != llvm::endianness::little)
+        fail(Status::Invalid, "native flags profile requires little endian");
+    }
     if (!Limits.Solver.Blast.MaxGates || !Limits.Solver.Sat.MaxConflicts ||
         !Limits.Solver.Sat.MaxPropagations || !Limits.Solver.Sat.MaxWatchVisits)
       fail(Status::Invalid, "relational solver limits must be bounded");
@@ -1143,6 +1327,16 @@ class Checker {
       if (!C.Location.isReg() || !scalar(C.Location))
         fail(Status::Invalid,
              "entry constants must bind valid physical registers");
+      if (Contract.X64FlagsProfile)
+        for (const auto &[Offset, Bit] : FlagProfile::Flags) {
+          (void)Bit;
+          if (Offset >= C.Location.Offset &&
+              Offset - C.Location.Offset < C.Location.Size &&
+              (C.Location.Offset != Offset || C.Location.Size != 1 ||
+               C.Value > 1))
+            fail(Status::Invalid,
+                 "native entry flag constants must be canonical one-byte bits");
+        }
       for (uint16_t I = 0; I != C.Location.Size; ++I)
         if (!Bound.insert(C.Location.Offset + I).second)
           fail(Status::Invalid, "overlapping entry constants");
@@ -1223,6 +1417,19 @@ public:
       if (Provider)
         collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
+      SymRef EntrySystem;
+      if (Contract.X64FlagsProfile) {
+        const auto Raw = Ctx.mkFreshVar(64, "entry_flags");
+        const auto Packed =
+            Ctx.mkOr(Ctx.mkAnd(Raw, Ctx.mkConst(64, FlagProfile::EntryMask)),
+                     Ctx.mkConst(64, 2));
+        EntrySystem =
+            Ctx.mkAnd(Packed, Ctx.mkConst(64, ~FlagProfile::SplitMask));
+        for (const auto &[Offset, Bit] : FlagProfile::Flags)
+          Initial.write(SymSpace::Register, Offset,
+                        Ctx.mkZExtOrTrunc(Ctx.mkExtract(Packed, Bit, 1), 8));
+        nodes();
+      }
       for (const auto &C : Contract.EntryConstants) {
         Initial.write(SymSpace::Register, C.Location.Offset,
                       Ctx.mkConst(C.Location.Size * 8, C.Value));
@@ -1292,6 +1499,7 @@ public:
                  Predicate,
                  {},
                  {}};
+      Entry.LeftSystemFlags = Entry.RightSystemFlags = EntrySystem;
       if (Provider)
         scheduleNative(std::move(Entry), NativeEntry.Address, Predicate);
       else
@@ -1308,8 +1516,13 @@ public:
           B.Succs = NativeTraceEdges[B.Id];
         Result.Certificate = LowIRIndependenceCertificate{
             LowIRIndependenceScope::CompleteFiniteNativePaths,
-            inputDigest(NativeTrace, NativeRecords, Contract, Limits),
-            std::move(NativeRecords), Contract, Limits};
+            inputDigest(NativeTrace, NativeRecords, Contract, Limits,
+                        NativeFlagTransitions, NativeProfileProjections),
+            std::move(NativeRecords),
+            Contract,
+            Limits,
+            std::move(NativeFlagTransitions),
+            std::move(NativeProfileProjections)};
         for (auto &[Address, Insn] : NativeInstructions)
           NativeResult->Instructions.push_back(std::move(Insn));
       } else {

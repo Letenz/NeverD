@@ -8,6 +8,7 @@
 #ifndef NEVERD_ANALYSIS_LOWIRUNDEFINEDINDEPENDENCE_H
 #define NEVERD_ANALYSIS_LOWIRUNDEFINEDINDEPENDENCE_H
 
+#include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymState.h"
@@ -57,6 +58,10 @@ struct LowIRIndependenceFrameRange {
 };
 
 struct LowIRIndependenceContract {
+  /// Native-only opt-in. Initializes canonical shared entry flags and always
+  /// observes final system flags, independently of ReturnRegisters and frame
+  /// observations. The static LowIR API refuses a nonempty profile.
+  std::optional<InterpreterMachineStateProfile> X64FlagsProfile;
   std::vector<LowIRIndependenceConstant> EntryConstants;
   std::optional<LowIRIndependenceFrame> Frame;
   std::vector<symbolic::SymRegisterRange> ReturnRegisters;
@@ -114,8 +119,27 @@ enum class LowIRIndependenceStatus : uint8_t {
 enum class LowIRIndependenceScope : uint8_t {
   CompleteAcyclicLowIR,
   /// Original native instructions with physical near-call/return expansion.
+  /// Loops require complete finite unrolling, not an invariant assumption.
   /// Every feasible path must finish; an exhausted prefix proves nothing.
   CompleteFiniteNativePaths,
+};
+
+struct LowIRNativeFlagTransition {
+  int BlockId = -1;
+  va_t InstructionAddress = 0;
+  int OpSeq = -1;
+  uint32_t SemanticsVersion = 0;
+  /// Digest of the exact shared scalar transition in its isolated input/output
+  /// namespace. Original intrinsics remain bound by the instruction evidence.
+  std::string OperationDigest;
+};
+
+struct LowIRNativeProfileProjection {
+  /// -1 records an original profile-dependent trap that must stay unreachable;
+  /// otherwise this identifies a visited block in the finite native trace.
+  int BlockId = -1;
+  va_t InstructionAddress = 0;
+  InterpreterProfileProjection Kind = InterpreterProfileProjection::None;
 };
 
 struct LowIRIndependenceCertificate {
@@ -129,6 +153,8 @@ struct LowIRIndependenceCertificate {
   std::vector<LowIRUndefinedInstruction> Instructions;
   LowIRIndependenceContract Contract;
   LowIRIndependenceLimits Limits;
+  std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
+  std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
 };
 
 struct LowIRIndependenceResult {
