@@ -8,11 +8,13 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/RichHeader.h"
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
+#include "neverd/support/InstructionFields.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -645,28 +647,17 @@ namespace {
 
 enum class ReferenceVerdict { Unknown, Confirmed, Contradicted };
 
-/// An instruction form: the words, or Thumb halfwords, whose bits under
-/// \c Mask are \c Match.
-struct InstructionForm {
-  uint32_t Mask;
-  uint32_t Match;
-  bool matches(uint32_t Word) const { return (Word & Mask) == Match; }
-};
+#define NEVERD_BRANCH_FORM(Name, Mask, Match)                                  \
+  [[maybe_unused]] constexpr InstructionForm Name{Mask, Match};
+#define NEVERD_BRANCH_FIELD(Name, Low, Width)                                  \
+  [[maybe_unused]] constexpr BitField Name{Low, Width};
+#define NEVERD_BRANCH_VALUE(Name, Value)                                       \
+  [[maybe_unused]] constexpr uint32_t Name = Value;
+#include "neverd/support/BranchEncoding.def"
 
-/// A field of an instruction word or halfword.
-struct BitField {
-  unsigned Low;
-  unsigned Width;
-  uint32_t extract(uint32_t Word) const {
-    return (Word >> Low) & llvm::maskTrailingOnes<uint32_t>(Width);
-  }
-};
-
-#define NEVERD_SIGS_FORM(Name, Mask, Match)                                    \
-  constexpr InstructionForm Name{Mask, Match};
-#define NEVERD_SIGS_FIELD(Name, Low, Width) constexpr BitField Name{Low, Width};
-#define NEVERD_SIGS_VALUE(Name, Value) constexpr uint32_t Name = Value;
-#include "neverd/sigs/BranchEncoding.def"
+#define NEVERD_PATTERN_VALUE(Name, Value)                                      \
+  [[maybe_unused]] constexpr uint32_t Name = Value;
+#include "neverd/sigs/PatternSyntax.def"
 
 #define NEVERD_SIGS_SYNTAX_CHAR(Name, Value)                                   \
   [[maybe_unused]] constexpr char Name = Value;
@@ -674,31 +665,6 @@ struct BitField {
 
 #define NEVERD_SIGS_REFERENCE_LIMIT(Name, Value) constexpr size_t Name = Value;
 #include "ReferenceCheckLimits.def"
-
-static_assert(x86::kCallRel32Len == x86::kJmpRel32Len,
-              "a rel32 call and jump are read alike");
-
-/// Bits concatenated from instruction fields, the first most significant.
-class BitString {
-public:
-  BitString &append(uint64_t Bits, unsigned Width) {
-    Value = Value << Width | Bits;
-    Size += Width;
-    return *this;
-  }
-  BitString &append(BitField Field, uint32_t Word) {
-    return append(Field.extract(Word), Field.Width);
-  }
-  BitString &append(const BitString &Other) {
-    return append(Other.Value, Other.Size);
-  }
-  uint64_t zeroExtended() const { return Value; }
-  int64_t signExtended() const { return llvm::SignExtend64(Value, Size); }
-
-private:
-  uint64_t Value = 0;
-  unsigned Size = 0;
-};
 
 uint64_t wrapToImage(const BinaryImage &Img, uint64_t Address) {
   return Img.is64Bit() ? Address : static_cast<uint32_t>(Address);
@@ -727,69 +693,42 @@ struct Branch {
   bool Thumb = false;
 };
 
-/// The Thumb-2 B.W (T4), BL (T1) or BLX (T2) at \p Address, or only a B.W
-/// when \p JumpOnly.
-std::optional<Branch> thumbBranch(const BinaryImage &Img, uint64_t Address,
-                                  bool JumpOnly) {
-  const uint8_t *Insn = Img.readVA(Address, ThumbWideInstructionBytes);
+/// The direct branch of one of \p Forms at \p Address, in \p Mode, when the
+/// image holds one.  A 32-bit image's addresses wrap at 32 bits; an A64
+/// program counter is 64 bits wide whatever the image's pointers are.
+std::optional<Branch> directBranch(const BinaryImage &Img, uint64_t Address,
+                                   InstructionMode Mode,
+                                   DirectBranchForms Forms) {
+  const size_t Length = getDirectBranchLength(Img.Arch);
+  const uint8_t *Insn = Img.readVA(Address, Length);
   if (!Insn)
     return std::nullopt;
-  const uint16_t First = readLE<uint16_t>(Insn);
-  const uint16_t Second = readLE<uint16_t>(Insn + ThumbHalfwordBytes);
-  if (!ThumbWideBranchHigh.matches(First))
+  const std::optional<DirectBranch> Decoded =
+      decodeDirectBranch(Img.Arch, Mode, Insn, Length, Address, Forms);
+  if (!Decoded)
     return std::nullopt;
-  const bool Jump = ThumbJumpLow.matches(Second),
-             Link = ThumbLinkLow.matches(Second),
-             Exchange = ThumbLinkExchangeLow.matches(Second);
-  if (!(Jump || (!JumpOnly && (Link || Exchange))))
-    return std::nullopt;
-  // The offset's I1 and I2 are J1 and J2 against its sign.
-  const uint32_t Sign = ThumbBranchSign.extract(First);
-  const int64_t Offset =
-      BitString()
-          .append(ThumbBranchSign, First)
-          .append(!(ThumbBranchJ1.extract(Second) ^ Sign), ThumbBranchJ1.Width)
-          .append(!(ThumbBranchJ2.extract(Second) ^ Sign), ThumbBranchJ2.Width)
-          .append(ThumbBranchHigh, First)
-          .append(ThumbBranchLow, Second)
-          .signExtended() *
-      ThumbHalfwordBytes;
-  uint64_t Target = Address + ThumbPCOffset + static_cast<uint64_t>(Offset);
-  // BLX enters ARM state, at a word.
-  if (Exchange)
-    Target = llvm::alignDown(Target, ArmInstructionBytes);
-  return Branch{wrapToImage(Img, Target), !Exchange};
+  const uint64_t Target = Decoded->wrappingTarget();
+  return Branch{Img.Arch == Arch::AArch64 ? Target : wrapToImage(Img, Target),
+                Decoded->TargetIsThumb};
 }
 
-/// The ARM-state B or BL, either of them conditional, or BLX (immediate) at
-/// \p Address, or only an unconditional B when \p JumpOnly.
-std::optional<Branch> armBranch(const BinaryImage &Img, uint64_t Address,
-                                bool JumpOnly) {
-  const std::optional<uint32_t> Word = wordAt(Img, Address);
-  if (!Word || !ArmBranch.matches(*Word))
-    return std::nullopt;
-  const uint32_t Condition = ArmCondition.extract(*Word);
-  const bool Exchange = Condition == ArmConditionUnconditional;
-  // BL's link bit, and BLX's halfword bit.
-  const bool LinkOrHalfword = ArmLinkOrHalfword.extract(*Word);
-  if (JumpOnly &&
-      (Exchange || LinkOrHalfword || Condition != ArmConditionAlways))
-    return std::nullopt;
-  int64_t Offset = BitString().append(ArmBranchOffset, *Word).signExtended() *
-                   ArmInstructionBytes;
-  if (Exchange && LinkOrHalfword)
-    Offset += ThumbHalfwordBytes;
-  return Branch{
-      wrapToImage(Img, Address + ArmPCOffset + static_cast<uint64_t>(Offset)),
-      Exchange};
+/// The branches a reference names: direct jumps and calls, and on 32-bit ARM
+/// the calls that switch state too.  An A32 reference also names a branch
+/// under a condition.
+DirectBranchForms referenceForms(Arch A, InstructionMode Mode) {
+  DirectBranchForms Forms;
+  Forms.Jumps = true;
+  Forms.Calls = true;
+  Forms.ExchangingCalls = A == Arch::ARM;
+  Forms.Conditional = A == Arch::ARM && Mode == InstructionMode::ARM;
+  return Forms;
 }
 
-/// Where the A64 B or BL \p Word at \p Address goes.
-Branch a64Branch(uint64_t Address, uint32_t Word) {
-  return Branch{Address +
-                static_cast<uint64_t>(
-                    BitString().append(A64BranchOffset, Word).signExtended() *
-                    A64InstructionBytes)};
+/// The branch a thunk that only jumps on starts with: an unconditional jump.
+DirectBranchForms thunkForms() {
+  DirectBranchForms Forms;
+  Forms.Jumps = true;
+  return Forms;
 }
 
 /// Where the direct branch a reference at \p Offset of the routine at
@@ -800,29 +739,24 @@ std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
   const uint64_t Site = Start + Offset;
   switch (Img.Arch) {
   case Arch::X86:
-  case Arch::X64: {
+  case Arch::X64:
     // The reference states the rel32 field, which follows the opcode.
     if (Site < x86::kRel32DispOffset)
       return std::nullopt;
-    const uint64_t Address = Site - x86::kRel32DispOffset;
-    const uint8_t *Insn = Img.readVA(Address, x86::kCallRel32Len);
-    if (!Insn || (Insn[0] != x86::kCallRel32 && Insn[0] != x86::kJmpRel32))
-      return std::nullopt;
-    const int64_t Disp = readLE<int32_t>(Insn + x86::kRel32DispOffset);
-    return Branch{wrapToImage(Img, Address + x86::kCallRel32Len +
-                                       static_cast<uint64_t>(Disp))};
-  }
-  case Arch::AArch64: {
-    const std::optional<uint32_t> Word = wordAt(Img, Site);
+    return directBranch(Img, Site - x86::kRel32DispOffset,
+                        InstructionMode::Default,
+                        referenceForms(Img.Arch, InstructionMode::Default));
+  case Arch::AArch64:
     // B and BL; a veneer or anything else is not the branch the library had.
-    if (!Word || !A64BranchOrLink.matches(*Word))
-      return std::nullopt;
-    return a64Branch(Site, *Word);
-  }
+    return directBranch(Img, Site, InstructionMode::Default,
+                        referenceForms(Img.Arch, InstructionMode::Default));
   case Arch::ARM:
     if (Offset & ArmStateReferenceMark)
-      return armBranch(Img, Site - ArmStateReferenceMark, /*JumpOnly=*/false);
-    return thumbBranch(Img, Site, /*JumpOnly=*/false);
+      return directBranch(Img, Site - ArmStateReferenceMark,
+                          InstructionMode::ARM,
+                          referenceForms(Img.Arch, InstructionMode::ARM));
+    return directBranch(Img, Site, InstructionMode::Thumb,
+                        referenceForms(Img.Arch, InstructionMode::Thumb));
   default:
     return std::nullopt;
   }
@@ -864,7 +798,8 @@ std::optional<BitString> thumbMoveToIP(const BinaryImage &Img, uint64_t Address,
 /// unconditional B, `ldr pc, [pc, #-4]` and the address after it (ARMv5 and
 /// GNU long branches), or lld's `movw ip; movt ip; [add ip, ip, pc;] bx ip`.
 std::optional<Branch> armThunkTarget(const BinaryImage &Img, uint64_t Address) {
-  if (std::optional<Branch> Jump = armBranch(Img, Address, /*JumpOnly=*/true))
+  if (std::optional<Branch> Jump =
+          directBranch(Img, Address, InstructionMode::ARM, thunkForms()))
     return Jump;
   const uint64_t SecondAddress = Address + ArmInstructionBytes;
   const std::optional<uint32_t> First = wordAt(Img, Address),
@@ -898,7 +833,8 @@ std::optional<Branch> armThunkTarget(const BinaryImage &Img, uint64_t Address) {
 /// lld's `movw ip; movt ip; [add ip, pc;] bx ip`.
 std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
                                        uint64_t Address) {
-  if (std::optional<Branch> Jump = thumbBranch(Img, Address, /*JumpOnly=*/true))
+  if (std::optional<Branch> Jump =
+          directBranch(Img, Address, InstructionMode::Thumb, thunkForms()))
     return Jump;
   const uint64_t SecondAddress = Address + ThumbWideInstructionBytes;
   const std::optional<BitString> Low =
@@ -929,11 +865,12 @@ std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
 /// address after them.
 std::optional<Branch> aarch64ThunkTarget(const BinaryImage &Img,
                                          uint64_t Address) {
+  if (std::optional<Branch> Jump =
+          directBranch(Img, Address, InstructionMode::Default, thunkForms()))
+    return Jump;
   const std::optional<uint32_t> First = wordAt(Img, Address);
   if (!First)
     return std::nullopt;
-  if (A64Branch.matches(*First))
-    return a64Branch(Address, *First);
   const uint64_t SecondAddress = Address + A64InstructionBytes;
   const uint64_t ThirdAddress = SecondAddress + A64InstructionBytes;
   const std::optional<uint32_t> Second = wordAt(Img, SecondAddress),
@@ -967,14 +904,8 @@ std::optional<Branch> aarch64ThunkTarget(const BinaryImage &Img,
 std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
   switch (Img.Arch) {
   case Arch::X86:
-  case Arch::X64: {
-    const uint8_t *Insn = Img.readVA(To.Target, x86::kJmpRel32Len);
-    if (!Insn || Insn[0] != x86::kJmpRel32)
-      return std::nullopt;
-    const int64_t Disp = readLE<int32_t>(Insn + x86::kRel32DispOffset);
-    return Branch{wrapToImage(Img, To.Target + x86::kJmpRel32Len +
-                                       static_cast<uint64_t>(Disp))};
-  }
+  case Arch::X64:
+    return directBranch(Img, To.Target, InstructionMode::Default, thunkForms());
   case Arch::AArch64:
     return aarch64ThunkTarget(Img, To.Target);
   case Arch::ARM:

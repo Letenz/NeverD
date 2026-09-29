@@ -56,6 +56,11 @@ NEVERD_PATTERN_STRING(UnstatedByte, "..")
 NEVERD_PATTERN_STRING(PublicNamePrefix, ":")
 NEVERD_PATTERN_STRING(ReferencePrefix, "^")
 
+// A reference's offset is where its branch starts, except that an ARM-state
+// branch is stated one byte past its instruction: at an odd offset, which no
+// Thumb instruction has.
+NEVERD_PATTERN_VALUE(ArmStateReferenceMark, 1)
+
 // Lines that state no module: blank lines, comments, and the marker a file
 // may end with.
 NEVERD_PATTERN_STRING(CommentPrefix, ";")
