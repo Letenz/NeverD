@@ -284,6 +284,33 @@ SignatureDB::selectForImage(const BinaryImage &Img,
   return KeptRelease ? Selected : Files;
 }
 
+std::optional<std::filesystem::path>
+SignatureDB::treeDirectory(const BinaryImage &Img) {
+  std::optional<llvm::StringRef> Format, Family;
+  switch (Img.Format) {
+#define NEVERD_SIGS_TREE_FORMAT(Name, Directory)                               \
+  case BinaryFormat::Name:                                                     \
+    Format = Directory;                                                        \
+    break;
+#include "SignatureFiles.def"
+  default:
+    break;
+  }
+  switch (Img.Arch) {
+#define NEVERD_SIGS_TREE_ARCH(Name, Directory)                                 \
+  case Arch::Name:                                                             \
+    Family = Directory;                                                        \
+    break;
+#include "SignatureFiles.def"
+  default:
+    break;
+  }
+  if (!Format || !Family)
+    return std::nullopt;
+  return std::filesystem::path(Format->str()) / Family->str() /
+         (Img.is64Bit() ? TreeDirectory64Bit : TreeDirectory32Bit).str();
+}
+
 llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
   auto PatFiles = listDirectory(Dir);
   if (!PatFiles)

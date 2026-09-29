@@ -5,6 +5,7 @@ add_neverd_unittest(NeverDSignatureTests
   SignatureCacheTests.cpp
   SignatureDBTests.cpp
   SignatureMatcherTests.cpp
+  SignatureTreeTests.cpp
 
   LINK_COMPONENTS Sigs
 )
