@@ -837,7 +837,8 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_UndefinedEffectsTests.cpp
-  LINK_COMPONENTS Decode Lift Loader
+  x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
+  LINK_COMPONENTS Decode Lift Loader Symbolic
 )
 
 add_neverd_unittest(NeverDX86LogicIdentityTests
@@ -1486,6 +1487,7 @@ add_custom_target(NeverDWindowsEHSyntheticCorpus
 add_neverd_unittest(NeverDLanguageEHTests
   language/LanguageEHTests.cpp
   language/LanguageEHDirectBranchTests.cpp
+  language/DirectBranchDecodeTests.cpp
   language/LanguageEHItaniumSJLJTests.cpp
   language/LanguageEHItaniumTests.cpp
   language/LanguageEHRuntimeTests.cpp

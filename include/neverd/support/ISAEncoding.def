@@ -75,12 +75,8 @@ NEVERD_X86_ENCODING(size_t, kJmpIndirectDispOffset, 2)
 NEVERD_AARCH64_ENCODING(size_t, kInsnSize, 4)
 
 // --- Branch encoding (B / BL) ---
-NEVERD_AARCH64_ENCODING(uint32_t, kB_Mask, 0xFC000000)
 NEVERD_AARCH64_ENCODING(uint32_t, kB_Op, 0x14000000)
-NEVERD_AARCH64_ENCODING(uint32_t, kBL_Op, 0x94000000)
 NEVERD_AARCH64_ENCODING(uint32_t, kImm26Mask, 0x03FFFFFF)
-NEVERD_AARCH64_ENCODING(uint32_t, kImm26Sign, 0x02000000)
-NEVERD_AARCH64_ENCODING(uint32_t, kImm26SignExt, 0xFC000000)
 
 // --- Conditional branch (B.cond) ---
 NEVERD_AARCH64_ENCODING(uint32_t, kBCond_Mask, 0xFF000010)
@@ -171,10 +167,6 @@ NEVERD_MACHO_ENCODING(uint32_t, kDefaultStubSize, 6)
 // ===--------------------------------------------------------------------===//
 
 NEVERD_ARM_ENCODING(uint32_t, kLdrPC, 0xE51FF004u)
-NEVERD_ARM_ENCODING(uint32_t, kBL_Op, 0xEB000000u)
-NEVERD_ARM_ENCODING(uint32_t, kImm24Mask, 0x00FFFFFFu)
-NEVERD_ARM_ENCODING(uint32_t, kImm24Sign, 0x00800000u)
-NEVERD_ARM_ENCODING(uint32_t, kImm24SignExt, 0xFF000000u)
 NEVERD_ARM_ENCODING(uint32_t, kArmNop, 0xE1A00000u) // MOV r0, r0
 NEVERD_ARM_ENCODING(uint16_t, kThumbNop, 0xBF00)
 NEVERD_ARM_ENCODING(uint32_t, kPCBias, 8)
@@ -192,13 +184,6 @@ NEVERD_ARM_ENCODING(uint32_t, kThumbLdrPCFromIP, 0xF000F8DC)
 NEVERD_ARM_ENCODING(uint64_t, kThumbBWLen, 4)
 NEVERD_ARM_ENCODING(int64_t, kThumbBWMinDisp, -(int64_t(1) << 24))
 NEVERD_ARM_ENCODING(int64_t, kThumbBWMaxDisp, (int64_t(1) << 24) - 2)
-
-NEVERD_ARM_ENCODING(uint32_t, kBranchClassMask, 0x0E000000u)
-NEVERD_ARM_ENCODING(uint32_t, kBranchClassVal, 0x0A000000u)
-NEVERD_ARM_ENCODING(uint32_t, kBranchLinkBit, 0x01000000u)
-NEVERD_ARM_ENCODING(uint32_t, kCondShift, 28)
-NEVERD_ARM_ENCODING(uint32_t, kCondMask, 0xF)
-NEVERD_ARM_ENCODING(uint32_t, kCondNV, 0xF)
 
 // ===--------------------------------------------------------------------===//
 // PE x64 unwind info layout (cf. llvm/Support/Win64EH.h)

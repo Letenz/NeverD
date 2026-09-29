@@ -70,22 +70,6 @@ inline uint32_t getStubSize(Arch A) {
 namespace arm {
 #define NEVERD_ARM_ENCODING(Type, Name, Value) constexpr Type Name = Value;
 #include "neverd/support/ISAEncoding.def"
-
-inline bool isBranch(uint32_t Insn) {
-  uint32_t Cond = (Insn >> kCondShift) & kCondMask;
-  return (Insn & kBranchClassMask) == kBranchClassVal && Cond != kCondNV;
-}
-
-inline bool isBranchLink(uint32_t Insn) {
-  return isBranch(Insn) && (Insn & kBranchLinkBit);
-}
-
-inline int32_t decodeBranchImm24(uint32_t Insn) {
-  int32_t Imm = Insn & kImm24Mask;
-  if (Imm & kImm24Sign)
-    Imm |= static_cast<int32_t>(kImm24SignExt);
-  return Imm;
-}
 } // namespace arm
 
 // PE x64 unwind info layout (cf. llvm/Support/Win64EH.h).

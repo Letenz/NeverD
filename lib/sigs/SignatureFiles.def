@@ -5,12 +5,19 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// How SignatureDB reads the names of the files in a signature directory.
+/// How SignatureDB reads the names of the files in a signature directory,
+/// and which directory of a signature tree holds an image's signatures.
 /// Define the macros a consumer reads before including this file; the others
 /// expand to nothing.
 ///
 ///   NEVERD_SIGS_FILE_STRING(Name, Value)  a string of a file name
 ///   NEVERD_SIGS_FILE_VALUE(Name, Value)   a number
+///   NEVERD_SIGS_TREE_FORMAT(Format, Directory)
+///                                         the directory of a tree for the
+///                                         images of a BinaryFormat
+///   NEVERD_SIGS_TREE_ARCH(Arch, Directory)
+///                                         the directory of a format for the
+///                                         images of an Arch
 ///
 //===----------------------------------------------------------------------===//
 
@@ -19,6 +26,12 @@
 #endif
 #ifndef NEVERD_SIGS_FILE_VALUE
 #define NEVERD_SIGS_FILE_VALUE(Name, Value)
+#endif
+#ifndef NEVERD_SIGS_TREE_FORMAT
+#define NEVERD_SIGS_TREE_FORMAT(Format, Directory)
+#endif
+#ifndef NEVERD_SIGS_TREE_ARCH
+#define NEVERD_SIGS_TREE_ARCH(Arch, Directory)
 #endif
 
 // A directory holds pattern files; the numbers in their names are decimal.
@@ -36,5 +49,20 @@ NEVERD_SIGS_FILE_VALUE(FirstNumberedPart, 2)
 NEVERD_SIGS_FILE_STRING(ReleasePrefix, "vs")
 NEVERD_SIGS_FILE_VALUE(ReleaseYearDigits, 4)
 
+// A signature tree holds a directory for each object format, architecture
+// family and address size: `pe/x86/64` holds the signatures of 64-bit x86 PE
+// images.
+NEVERD_SIGS_TREE_FORMAT(COFF, "pe")
+NEVERD_SIGS_TREE_FORMAT(ELF, "elf")
+NEVERD_SIGS_TREE_FORMAT(MachO, "macho")
+NEVERD_SIGS_TREE_ARCH(X86, "x86")
+NEVERD_SIGS_TREE_ARCH(X64, "x86")
+NEVERD_SIGS_TREE_ARCH(ARM, "arm")
+NEVERD_SIGS_TREE_ARCH(AArch64, "arm")
+NEVERD_SIGS_FILE_STRING(TreeDirectory32Bit, "32")
+NEVERD_SIGS_FILE_STRING(TreeDirectory64Bit, "64")
+
 #undef NEVERD_SIGS_FILE_STRING
 #undef NEVERD_SIGS_FILE_VALUE
+#undef NEVERD_SIGS_TREE_FORMAT
+#undef NEVERD_SIGS_TREE_ARCH

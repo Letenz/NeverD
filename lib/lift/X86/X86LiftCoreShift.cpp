@@ -12,6 +12,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
+#include "X86ShiftUndefined.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
@@ -409,6 +410,8 @@ bool liftCoreShift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     }
     if (MemDst)
       S.storeToMem(X86.operands[SourceIndex], Result);
+    if (!ApxShift.Present)
+      shiftundefined::record(S, InsnId, MaskedCnt);
     break;
   }
 

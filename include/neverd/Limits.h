@@ -491,6 +491,14 @@ constexpr int64_t kVariadicOverflowSlop = 64;
 /// core count.
 constexpr size_t kMinFuncScanChunk = 64 * 1024;
 
+/// Minimum piece size (bytes) of an x86 call sweep split across workers.
+/// Joining the pieces costs a few instructions a seam, so they can be small.
+constexpr size_t kMinFuncScanPiece = 16 * 1024;
+
+/// Pieces an x86 call sweep gives each worker.  Workers claim pieces as they
+/// finish, so with several each a slow core holds up only its last piece.
+constexpr size_t kFuncScanPiecesPerWorker = 8;
+
 /// Minimum number of detected candidates before the entry-verification trial
 /// decode is spread across worker threads.  Below this the per-thread decoder
 /// setup outweighs the work, so the check stays single-threaded.

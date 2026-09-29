@@ -356,7 +356,7 @@ binaryIndependenceDigest(const BinaryImage &Image,
                          llvm::ArrayRef<SpecializationInstruction> Instructions,
                          llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-original-native-control-independence-v4");
+  Hash.update("neverd-original-native-control-independence-v5");
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)

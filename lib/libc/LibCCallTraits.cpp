@@ -261,7 +261,10 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   return false;
 }
 
-NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img) : Image(&Img) {
+NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
+                                         NameResolver ResolveName)
+    : Image(&Img), SymbolsIndexed(Img.LoadOnlyFunctionEntries.empty()),
+      ResolveName(std::move(ResolveName)) {
   // Preserve first-IAT precedence even when its name is empty or returning.
   // Only an address absent from the IAT map can use an exact stub spelling.
   std::set<va_t> ImportAddresses;
@@ -278,7 +281,7 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img) : Image(&Img) {
   // no-return. Later symbol aliases do not override that first symbol.
   // `--func` already has the IAT map; walking every image symbol is the
   // whole-PE cost that single-function export is trying to skip.
-  if (Img.LoadOnlyFunctionEntries.empty()) {
+  if (SymbolsIndexed) {
     std::set<va_t> SymbolAddresses;
     for (const Symbol &Sym : Img.Symbols)
       if (SymbolAddresses.insert(Sym.Addr).second &&
@@ -289,8 +292,29 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img) : Image(&Img) {
 }
 
 bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
-  return Image == &Img ? Targets.count(Target) != 0
-                       : isNoReturnTarget(Img, Target);
+  if (Image != &Img)
+    return isNoReturnTarget(Img, Target);
+  if (Targets.count(Target))
+    return true;
+  if (SymbolsIndexed || Target == InvalidVA)
+    return false;
+  // The first symbol at Target decides, as in the whole-image walk; a name
+  // the restricted load has not ingested comes from the resolver.
+  std::lock_guard<std::mutex> Lock(LazyMutex);
+  auto [It, Inserted] = LazyAnswers.try_emplace(Target, false);
+  if (!Inserted)
+    return It->second;
+  if (const Symbol *Sym = Img.findSymbolAt(Target))
+    It->second = isNoReturnFunction(Sym->Name);
+  else if (ResolveName)
+    if (std::optional<std::string> Name = ResolveName(Target))
+      It->second = isNoReturnFunction(*Name);
+  return It->second;
+}
+
+bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
+                      const NoReturnTargetIndex *Index) {
+  return Index ? Index->contains(Img, Target) : isNoReturnTarget(Img, Target);
 }
 
 bool isReturnsTwiceFunction(std::string_view Name) {
