@@ -8,6 +8,8 @@
 #include "../../core/ExecutionBackend.h"
 #include "../../core/MemoryLayout.h"
 
+#include <chrono>
+
 namespace neverd::emulation {
 namespace x64 {
 #define NEVERD_X64_MACHINE_VALUE(Name, Value)                                  \
@@ -35,7 +37,8 @@ struct X64MachineState {
 class X64Machine {
 public:
   virtual ~X64Machine() = default;
-  virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot) = 0;
+  virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
+                           std::chrono::steady_clock::time_point Deadline) = 0;
 };
 llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
                                                              uint64_t Size);

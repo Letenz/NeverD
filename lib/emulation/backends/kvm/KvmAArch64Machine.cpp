@@ -43,18 +43,10 @@ public:
     Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities);
-    int Status;
-    do {
-      // The admitted instruction and maintenance sequence are bounded.
-      // Only repeated host interruption can exhaust this transport allowance.
-      if (std::chrono::steady_clock::now() >=
-          Deadline +
-              std::chrono::microseconds(aarch64::NativeStepGraceMicroseconds))
-        return diagnostic::error(diagnostic::KvmRun);
-      Status = ioctl(CPU, KVM_RUN, 0);
-    } while (Status < 0 && errno == EINTR);
-    if (Status < 0)
-      return diagnostic::error(diagnostic::KvmRun);
+    if (auto E = runUntilExit(
+            Deadline + std::chrono::microseconds(
+                           execution_limits::NativeStepGraceMicroseconds)))
+      return E;
     if (Run->exit_reason != KVM_EXIT_DEBUG ||
         ((Run->debug.arch.hsr >> aarch64::ExceptionClassShift) &
          aarch64::ExceptionClassMask) != aarch64::StepFromLowerEL)

@@ -335,6 +335,11 @@ and execute a matching native CPU through the public factory. The current
 Unicorn dependency requires LLVM-MinGW rather than MSVC on Windows ARM64;
 see [CPU execution](architecture.md#cpu-execution) for build requirements.
 
+On Linux, `NeverDKvmRunTests` injects host-entry interruptions without requiring
+`/dev/kvm`. It checks transient retries, fatal errors, expired deadlines and
+sustained interruption. The x64 and ARM64 transports share this retry boundary;
+native guest execution remains covered by the architecture suites above.
+
 ## Driver emulation checks
 
 `HardwareBackendTests.cpp` exercises the native checked backend on supported

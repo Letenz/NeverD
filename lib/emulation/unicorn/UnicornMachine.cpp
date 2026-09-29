@@ -74,7 +74,8 @@ class UnicornX64Machine final : public X64Machine {
 public:
   UnicornStepper CPU;
   explicit UnicornX64Machine(PhysicalMemory &Memory) : CPU(Memory) {}
-  llvm::Error step(X64MachineState &State, uint64_t) override {
+  llvm::Error step(X64MachineState &State, uint64_t,
+                   std::chrono::steady_clock::time_point) override {
     if (auto E = CPU.synchronize())
       return E;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \

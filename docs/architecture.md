@@ -1174,9 +1174,10 @@ an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
 x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
 before accepting guest work. The WHP gateway has a cancellation watchdog;
 failed or interrupted transport is terminal. Normal deadlines are checked
-between instructions. The WHP watchdog permits a 100 ms transport allowance
-for an instruction already entering the native machine. KVM bounds interrupted
-entry retries; it relies on host single stepping for an uninterrupted entry.
+between instructions. The ARM64 WHP watchdog and both KVM transports permit a
+100 ms transport allowance for an instruction already entering the native
+machine. KVM bounds interrupted entry retries with a shared absolute deadline;
+it relies on host single stepping for an uninterrupted entry.
 
 These mechanisms follow the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and the WHP [partition configuration](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvpartitionpropertydatatypes)

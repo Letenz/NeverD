@@ -21,7 +21,8 @@ namespace neverd::emulation {
 namespace {
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
-  llvm::Error step(X64MachineState &State, uint64_t Root) override {
+  llvm::Error step(X64MachineState &State, uint64_t Root,
+                   std::chrono::steady_clock::time_point Deadline) override {
     kvm_regs R{};
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   R.Field = State.reg(X64Register::Name);
@@ -56,12 +57,10 @@ public:
         KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities);
-    int Status;
-    do {
-      Status = ioctl(CPU, KVM_RUN, 0);
-    } while (Status < 0 && errno == EINTR);
-    if (Status < 0)
-      return diagnostic::error(diagnostic::KvmRun);
+    if (auto E = runUntilExit(
+            Deadline + std::chrono::microseconds(
+                           execution_limits::NativeStepGraceMicroseconds)))
+      return E;
     // There is no generic KVM userspace exception bitmap. An unexpected exit
     // is terminal; this integer profile admits no instruction that should
     // require exception delivery or an unfinished IO/MMIO completion.

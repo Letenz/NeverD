@@ -16,7 +16,8 @@ namespace neverd::emulation {
 namespace {
 class WhpMachine final : public X64Machine, public WhpPartition {
 public:
-  llvm::Error step(X64MachineState &State, uint64_t Root) override {
+  llvm::Error step(X64MachineState &State, uint64_t Root,
+                   std::chrono::steady_clock::time_point) override {
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {

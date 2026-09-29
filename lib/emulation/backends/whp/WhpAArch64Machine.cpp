@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/aarch64/AArch64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/ExecutionLimits.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpPartition.h"
@@ -63,8 +64,9 @@ private:
       // A host deschedule can expire the deadline before WHvRun begins.
       // Cancellation targets an active call; keep requesting it until the
       // owning thread acknowledges completion by disarming this generation.
-      Deadline = std::chrono::steady_clock::now() +
-                 std::chrono::microseconds(aarch64::CancelRetryMicroseconds);
+      Deadline =
+          std::chrono::steady_clock::now() +
+          std::chrono::microseconds(execution_limits::CancelRetryMicroseconds);
     }
   }
   WhpPartition &Partition;
@@ -115,7 +117,8 @@ public:
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
     Watchdog->arm(std::max(
         Deadline, std::chrono::steady_clock::now() +
-                      std::chrono::microseconds(NativeStepGraceMicroseconds)));
+                      std::chrono::microseconds(
+                          execution_limits::NativeStepGraceMicroseconds)));
     const HRESULT Result =
         API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
     if (Watchdog->disarm() || FAILED(Result))

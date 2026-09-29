@@ -6,7 +6,10 @@
 #ifndef NEVERD_EMULATION_KVM_VM_H
 #define NEVERD_EMULATION_KVM_VM_H
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/ExecutionLimits.h"
 
+#include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
@@ -18,6 +21,19 @@ public:
   int System = -1, VM = -1, CPU = -1;
   kvm_run *Run = nullptr;
   size_t RunSize = 0;
+  llvm::Error runUntilExit(std::chrono::steady_clock::time_point Deadline) {
+    int Status;
+    do {
+      // A bounded guest instruction does not bound repeated host signals.
+      // Check the same absolute deadline before every interrupted entry.
+      if (std::chrono::steady_clock::now() >= Deadline)
+        return diagnostic::error(diagnostic::KvmRun);
+      Status = ioctl(CPU, KVM_RUN, 0);
+    } while (Status < 0 && errno == EINTR);
+    if (Status < 0)
+      return diagnostic::error(diagnostic::KvmRun);
+    return llvm::Error::success();
+  }
   virtual ~KvmVM() {
     if (Run)
       munmap(Run, RunSize);
