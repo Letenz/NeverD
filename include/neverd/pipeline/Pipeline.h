@@ -443,11 +443,17 @@ public:
   static OptimizationResult optimizeModule(llvm::Module &Mod,
                                            const OptimizationOptions &Options);
 
-  /// Optimize a verified lifted module for C output. If an incomplete native
-  /// exception contract excludes value-changing optimization, retain the
-  /// module and promote only the emitter's temporary allocas. Both the full
-  /// image and single-function C routes use this fallback policy.
+  /// Optimize a lifted module for C output. If a verified module has an
+  /// incomplete native exception contract, promote only the emitter's
+  /// temporary allocas. Invalid LLVM IR and a failed fallback remain
+  /// unchanged. Both C routes use this policy.
   static OptimizationResult optimizeOrPromoteModule(llvm::Module &Mod);
+
+  /// Promote the emitter's temporary allocas to SSA registers. This
+  /// canonicalization runs under NoOpt without value-changing passes. Native
+  /// address-taken frame allocas stay in memory. Requires verified input IR;
+  /// callers verify the result before publication.
+  static void promoteScaffoldingAllocas(llvm::Module &Mod);
 
   /// Typed counterpart to the compatibility overload above.  MaxRounds has the
   /// same per-semantic-invocation meaning as OptimizationOptions::MaxRounds.
@@ -548,16 +554,6 @@ private:
   static void dumpLowIR(const std::vector<LowFunc> &Funcs);
   static void dumpMedIR(const std::vector<MedFunc> &Funcs);
   static void dumpHighIR(const std::vector<HighFunc> &Funcs);
-  /// Promote the emitter's SSA-via-memory scaffolding (per-temp allocas getVar
-  /// materializes) to registers WITHOUT any value-changing optimization.  Run
-  /// even when the NeverD optimizer is disabled (NoOpt): it is
-  /// canonicalization, not optimization — it preserves the decompiled program's
-  /// semantics and per-instruction debug attribution while stripping the ~4x
-  /// load/store bloat that makes a heavily-unrolled SSE kernel lift to an
-  /// 80K-instruction single block (pathological for LLVM codegen).  The
-  /// address-taken frame alloca is left in memory; only the temporaries are
-  /// promoted.
-  static void promoteScaffoldingAllocas(llvm::Module &Mod);
 };
 
 } // namespace neverd

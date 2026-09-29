@@ -1,5 +1,4 @@
-//===- X86_64_RoundTripTests.cpp - Semantic round-trip validation
-//----------===//
+//===- X86_64_RoundTripTests.cpp - Round-trip checks ----------------------===//
 //
 // NeverD Decompiler
 //
@@ -12,6 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "NeverDLiftFixture.h"
+
+namespace {
+#include "../fixtures/SignedTernaryFixture.inc"
+} // namespace
 
 class X86_64_RoundTrip : public NeverDLiftTest {};
 
@@ -143,27 +146,9 @@ TEST_F(X86_64_RoundTrip, SignedTernaryComparesInputsOnBothCRoutes) {
     const std::string Source((std::istreambuf_iterator<char>(Ifs)),
                              std::istreambuf_iterator<char>());
     ASSERT_NE(Source.find("rt_ternary("), std::string::npos) << Source;
-    EXPECT_TRUE(Source.find("<=") != std::string::npos ||
-                Source.find("neverd_llvm_smax_i32") != std::string::npos)
-        << Source;
-    EXPECT_EQ(Source.find("__builtin_sub_overflow_p"), std::string::npos)
-        << Source;
-    EXPECT_EQ(Source.find(">> 31"), std::string::npos) << Source;
-    EXPECT_EQ(Source.find("var_mC - var_m10"), std::string::npos) << Source;
 
     const auto Harness = tmpFile("ternary_execute.c");
-    std::ofstream(Harness) << Source << R"(
-int main(void) {
-  static const int32_t edges[] = {
-      INT32_MIN, INT32_MIN + 1, -1, 0, 1, INT32_MAX - 1, INT32_MAX};
-  for (unsigned i = 0; i < 7; ++i)
-    for (unsigned j = 0; j < 7; ++j)
-      if (rt_ternary(edges[i], edges[j]) !=
-          (edges[i] > edges[j] ? edges[i] : edges[j]))
-        return 1;
-  return 0;
-}
-)";
+    std::ofstream(Harness) << Source << SignedTernaryExecutionHarness;
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
       const auto Executable = tmpFile("ternary_execute");

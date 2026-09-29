@@ -24,6 +24,8 @@ namespace {
 
 using namespace neverd;
 
+#include "../fixtures/ARMUnmarkedModeFixtures.inc"
+
 class ELFARM32ModeTest : public NeverDLiftTest {
 protected:
   llvm::Expected<BinaryImage> loadAssembly(const std::string &Source,
@@ -304,19 +306,10 @@ TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
 
-  for (bool Thumb : {false, true}) {
-    SCOPED_TRACE(Thumb ? "Thumb" : "ARM");
+  for (const UnmarkedModeCase &Case : UnmarkedModeCases) {
+    SCOPED_TRACE(Case.Name);
     const auto Assembly = tmpFile("unmarked-mode.s");
-    std::ofstream(Assembly)
-        << ".syntax unified\n.text\n"
-        << (Thumb ? ".thumb\n" : ".arm\n")
-        << ".globl generic_add\n.type generic_add,%function\n"
-        << (Thumb ? ".thumb_func\n" : "") << "generic_add:\n"
-        << (Thumb ? "  eors r2, r0, r1\n  ands r0, r0, r1\n"
-                    "  lsls r0, r0, #1\n  adds r0, r0, r2\n"
-                  : "  eor r2, r0, r1\n  and r0, r0, r1\n"
-                    "  add r0, r2, r0, lsl #1\n")
-        << "  bx lr\n.size generic_add, .-generic_add\n";
+    std::ofstream(Assembly) << Case.Assembly;
     const auto Object = tmpFile("unmarked-mode.o");
     const auto Compiled =
         exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
@@ -352,8 +345,7 @@ TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
     ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
     EXPECT_FALSE(Image->instructionModeAt(0));
     BinaryLoadOptions Options;
-    Options.ARMFunctionModes[0] =
-        Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+    Options.ARMFunctionModes[0] = Case.Mode;
     auto Asserted = loadBinary(Object, Options);
     ASSERT_TRUE(static_cast<bool>(Asserted))
         << llvm::toString(Asserted.takeError());
@@ -371,8 +363,7 @@ TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
       EXPECT_NE(Unknown.err.find("--arm-function-mode"), std::string::npos)
           << Unknown.err;
 
-      Args.insert(Args.begin() + 2, Thumb ? "--arm-function-mode=0x0:thumb"
-                                          : "--arm-function-mode=0x0:arm");
+      Args.insert(Args.begin() + 2, Case.Hint);
       const auto Decompiled = exec(ndBin(), Args);
       ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
       std::ifstream SourceInput(CFile);
@@ -381,28 +372,7 @@ TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
       EXPECT_EQ(Source.find(" ^ "), std::string::npos) << Source;
       EXPECT_EQ(Source.find(" & "), std::string::npos) << Source;
       const auto Harness = tmpFile("unmarked-mode-execute.c");
-      std::ofstream(Harness) << Source << R"(
-static int check(uint32_t x, uint32_t y) {
-  return (uint32_t)sub_0(x, y) == x + y;
-}
-int main(void) {
-  static const uint32_t edges[] = {
-      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
-  for (unsigned i = 0; i < 6; ++i)
-    for (unsigned j = 0; j < 6; ++j)
-      if (!check(edges[i], edges[j]))
-        return 1;
-  uint64_t state = UINT64_C(0xa0f6e732d41c895b);
-  for (unsigned i = 0; i < 1024; ++i) {
-    state = state * UINT64_C(6364136223846793005) + 1;
-    uint32_t x = (uint32_t)(state >> 32);
-    state = state * UINT64_C(6364136223846793005) + 1;
-    if (!check(x, (uint32_t)(state >> 32)))
-      return 1;
-  }
-  return 0;
-}
-)";
+      std::ofstream(Harness) << Source << UnmarkedModeExecutionHarness;
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
         const auto Executable = tmpFile("unmarked-mode-execute");
