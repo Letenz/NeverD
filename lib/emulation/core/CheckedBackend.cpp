@@ -24,11 +24,17 @@ CheckedBackend::~CheckedBackend() {
     cs_close(&Decoder);
 }
 
-llvm::Error CheckedBackend::mutableMemory() const {
+llvm::Error CheckedBackend::checkExecutionState() const {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
   if (PendingService)
     return error(diagnostic::PendingService);
+  return llvm::Error::success();
+}
+
+llvm::Error CheckedBackend::mutableMemory() const {
+  if (auto E = checkExecutionState())
+    return E;
   if (Running)
     return error(diagnostic::Running);
   return Memory->mutableMemory();

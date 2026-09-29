@@ -73,6 +73,9 @@ protected:
   virtual llvm::Error execute(const cs_insn &) = 0;
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
+  /// Context capture may occur in an instruction observer, but no mutation or
+  /// snapshot may discard a terminal or unconsumed execution outcome.
+  llvm::Error checkExecutionState() const;
   llvm::Error mutableMemory() const;
   llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false,
                      bool Guest = false);

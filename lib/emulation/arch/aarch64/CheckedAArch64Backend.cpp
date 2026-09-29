@@ -80,10 +80,8 @@ llvm::Error CheckedAArch64Backend::writeRegister(CPURegister R,
 }
 llvm::Expected<std::unique_ptr<BackendContext>>
 CheckedAArch64Backend::saveContext() {
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
-  if (PendingService)
-    return error(diagnostic::PendingService);
+  if (auto E = checkExecutionState())
+    return E;
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
   S->Space = addressSpace();
@@ -95,10 +93,8 @@ llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
     return error(diagnostic::ContextExpired);
   if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
-  if (PendingService)
-    return error(diagnostic::PendingService);
+  if (auto E = checkExecutionState())
+    return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
