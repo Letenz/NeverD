@@ -1,0 +1,84 @@
+//===- KernelPhysicalMemoryDiagnostics.def - Retained RAM diagnostics ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+NEVERD_PHYSICAL_DIAGNOSTIC(AddressSpaceRequired,
+                           "physical RAM requires an independent address space")
+NEVERD_PHYSICAL_DIAGNOSTIC(PageOutsideOwner,
+                           "physical page lies outside its retained owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(InvalidCache,
+                           "physical RAM has an unsupported cache attribute")
+NEVERD_PHYSICAL_DIAGNOSTIC(InvalidOwner,
+                           "physical RAM owner is zero, duplicate or retired")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    InvalidRegion,
+    "physical RAM region requires a nonempty, nonoverflowing range")
+NEVERD_PHYSICAL_DIAGNOSTIC(OwnerLimit,
+                           "physical RAM owner registration limit exceeded")
+NEVERD_PHYSICAL_DIAGNOSTIC(OwnerOverlap,
+                           "physical RAM region overlaps a live owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    CacheConflict,
+    "physical RAM cache attribute conflicts with its existing page")
+NEVERD_PHYSICAL_DIAGNOSTIC(PageLimit,
+                           "physical RAM page identity limit exceeded")
+NEVERD_PHYSICAL_DIAGNOSTIC(AllocationBounds,
+                           "invalid physical page allocation bounds")
+NEVERD_PHYSICAL_DIAGNOSTIC(InvalidAllocation,
+                           "invalid independent physical page allocation")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    PrivateBackingRequired,
+    "allocated physical pages require private new backing")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    UnavailablePage,
+    "physical page allocation contains an unavailable or duplicate page")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    InvalidMappingCache,
+    "physical RAM mapping has an unsupported cache attribute")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    InconsistentCache,
+    "physical RAM owner has inconsistent page cache attributes")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    CacheCommitMismatch, "mapping cache commit differs from its page attribute")
+NEVERD_PHYSICAL_DIAGNOSTIC(RetirementOwner,
+                           "physical RAM retirement requires a live owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(IgnoredOwnerPin,
+                           "ignored physical RAM pin must belong to this owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(PinnedOwner,
+                           "physical RAM owner still has a pinned view")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    InvalidRelease,
+    "physical RAM release requires a nonempty, nonoverflowing range")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    IgnoredRangePin,
+    "ignored physical RAM pin must belong to the released range")
+NEVERD_PHYSICAL_DIAGNOSTIC(RepeatedRetiringPin,
+                           "physical RAM release repeats a retiring pin")
+NEVERD_PHYSICAL_DIAGNOSTIC(PinnedRelease,
+                           "physical RAM release intersects a pinned owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(ViewOwner, "physical RAM view requires a live owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(ViewRange,
+                           "physical RAM view exceeds its exact owner range")
+NEVERD_PHYSICAL_DIAGNOSTIC(PinLimit, "physical RAM pin identity limit exceeded")
+NEVERD_PHYSICAL_DIAGNOSTIC(UnpinRequiresPin,
+                           "physical RAM unpin requires a live pin")
+NEVERD_PHYSICAL_DIAGNOSTIC(ExtensionRequiresPin,
+                           "physical RAM extension requires a live pin")
+NEVERD_PHYSICAL_DIAGNOSTIC(ShrinkingPin,
+                           "physical RAM pin extension cannot shrink its view")
+NEVERD_PHYSICAL_DIAGNOSTIC(AccessRequiresPin,
+                           "physical RAM access requires a live pin")
+NEVERD_PHYSICAL_DIAGNOSTIC(AccessRange,
+                           "physical RAM access exceeds its pinned view")
+NEVERD_PHYSICAL_DIAGNOSTIC(LostOwner,
+                           "physical RAM pin lost its allocation owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    InvalidLookup,
+    "physical RAM lookup requires a nonempty, nonoverflowing range")
+NEVERD_PHYSICAL_DIAGNOSTIC(MissingOwner,
+                           "physical RAM range has no live allocation owner")
+NEVERD_PHYSICAL_DIAGNOSTIC(
+    MissingSingleOwner,
+    "physical RAM range has no single live allocation owner")

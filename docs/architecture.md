@@ -1182,6 +1182,83 @@ flowchart TD
   Transport --> Core
 ```
 
+RAM ownership is public in
+[`PhysicalMemory.h`](../include/neverd/emulation/PhysicalMemory.h). A physical
+owner allocates shared `MemoryRegion` handles;
+[`AddressSpace`](../include/neverd/emulation/AddressSpace.h) owns virtual
+mappings, permissions and a separate mapping budget. `mapRegion` can share one
+allocation between different spaces at different addresses. Ordinary `map`
+allocates new RAM. Unmapping a canonical address leaves other aliases and
+spaces intact. Only the last region, mapping or transport reference releases
+physical capacity; the next allocation is zeroed. CPU destruction does not
+destroy RAM that still has another owner.
+
+The additive CPU factory accepts an existing address space. The original
+memory-limit overload creates a default physical owner and space. A stopped
+CPU can bind another space over the same physical owner. A CPU snapshot records
+its space identity and can be restored only after binding that space; it does
+not keep obsolete virtual mappings alive or undo later memory writes.
+
+`MemoryProjection` is a private per-CPU view. Native page tables and exception
+entry storage stay private to each CPU. KVM and WHP register this storage and
+the shared RAM as separate physical ranges. Unicorn projects the same RAM bytes
+and coalesces contiguous pages when calling its mapping API. Every projection
+tracks its own space identity and mapping generation. Old allocations remain
+pinned until that CPU unmaps or replaces its translations, or destroys its
+transport. Resuming also invalidates translated instructions independently of
+the mapping generation, so writes through another CPU or alias remain visible.
+
+The address space validates mapping transactions before publication. A checked
+CPU additionally validates every attached or changed mapping against its ISA
+and reserved monitor ranges, including changes made directly through the space.
+Logical mapping success is separate from transport projection: if projection
+fails after execution starts, that CPU becomes terminal. The authoritative
+mappings, budgets and other CPUs remain intact.
+
+Execution holds a physical-owner-wide lease from instruction admission through
+actual execution. Mutations and a second CPU run on that owner are rejected
+until the run stops, including attempts from observers or another host thread.
+Same-thread observers may read memory and query permissions. Releasing an
+unreferenced allocation uses a separate allocator lock and cannot wait on an
+observer's execution lease. CPU objects are otherwise confined to their calling
+thread; `stop()` supports external cancellation. Multiple CPU states and spaces
+are supported with cooperative execution, not parallel hardware SMP. Physical
+and per-space mapping budgets currently have a 1 GiB ceiling; page size is
+4 KiB. Device mappings consume virtual mapping capacity but no RAM allocation.
+Direct address-space reads and writes access RAM only; device transactions
+require a supporting backend. The checked profiles reject device mappings.
+
+[`MemoryView`](../include/neverd/emulation/MemoryView.h) captures exact allocation
+slices and an independent address-space identity token. It retains RAM without
+keeping the source CPU, address space or virtual mapping alive. Subviews and
+identity comparisons never resolve the original address again. Metadata capture
+is available to same-thread observers; backing access requires a stopped physical
+owner. CPU `validatePinned`, `readPinned` and `writePinned` additionally preserve
+that CPU's fault and reentry restrictions. Providers without retained RAM reject
+these operations explicitly.
+
+The Windows physical-memory bridge stores these views for its byte owners and
+keys PFNs and cache attributes by allocation identity and page offset. Aliases
+and shared regions across spaces share a PFN; reused virtual addresses backed
+by a new allocation do not. Residency and release preflight compare physical
+slices. DMA pins therefore continue accessing their captured storage after
+canonical unmapping or a CPU address-space switch. Retiring an allocated-page
+owner releases its reusable PFNs only after the last registered owner of those
+pages retires. Ordinary PFN identities remain non-recycled within the bounded
+Windows profile. Historical PFN records hold weak allocation references and
+do not retain RAM capacity.
+
+This is the RAM authority beneath the existing Windows driver MDL model. Its
+process attachment and MDL mapping policy remain Windows-specific; a generic
+process runtime, explicit machine configuration and capability queries remain
+separate work.
+
+Windows retirement distinguishes backing release from virtual alias revocation.
+Freeing a partial MDL or completing its IRP can revoke its system alias while an
+independent root MDL retains its physical pin. Both operations still preflight
+virtual-address users, including outstanding waits and held locks; only ranges
+whose backing is being released participate in physical-owner pin checks.
+
 `CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
 access cannot reinterpret one architecture's registers as another's. ARM64
 exposes X0–X30, SP, PC, NZCV, TLS registers, FPCR/FPSR and 32 128-bit vector

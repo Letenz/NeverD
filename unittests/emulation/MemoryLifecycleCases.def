@@ -1,0 +1,49 @@
+//===- MemoryLifecycleCases.def - Shared execution fixtures --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_MEMORY_TEST_VALUE
+NEVERD_MEMORY_TEST_VALUE(PageSize, 4096)
+NEVERD_MEMORY_TEST_VALUE(Limit, 32 * PageSize)
+NEVERD_MEMORY_TEST_VALUE(Code, 0x10000)
+NEVERD_MEMORY_TEST_VALUE(Data, 0x20000)
+NEVERD_MEMORY_TEST_VALUE(Alias, 0x30000)
+NEVERD_MEMORY_TEST_VALUE(Other, 0x40000)
+NEVERD_MEMORY_TEST_VALUE(NonCanonical, 0x0001800000000000ull)
+NEVERD_MEMORY_TEST_VALUE(ArmGateway, 0x1000)
+NEVERD_MEMORY_TEST_VALUE(Value, 11)
+NEVERD_MEMORY_TEST_VALUE(Updated, 22)
+NEVERD_MEMORY_TEST_VALUE(Timeout, 2000000)
+NEVERD_MEMORY_TEST_VALUE(SparsePages, 2048)
+NEVERD_MEMORY_TEST_VALUE(SparseStride, 1ull << 30)
+#endif
+#ifdef NEVERD_MEMORY_TEST_X64
+// mov rax, [rcx]; add rax, 1; mov [rcx], rax; nop
+NEVERD_MEMORY_TEST_X64(IncrementX64, 0x48, 0x8b, 0x01, 0x48, 0x83, 0xc0, 0x01,
+                       0x48, 0x89, 0x01, 0x90)
+// mov eax, 11; nop
+NEVERD_MEMORY_TEST_X64(FirstX64, 0xb8, 0x0b, 0x00, 0x00, 0x00, 0x90)
+// mov eax, 22; nop
+NEVERD_MEMORY_TEST_X64(SecondX64, 0xb8, 0x16, 0x00, 0x00, 0x00, 0x90)
+#endif
+#ifdef NEVERD_MEMORY_TEST_ARM
+// ldr x0, [x1]; add x0, x0, #1; str x0, [x1]; nop
+NEVERD_MEMORY_TEST_ARM(IncrementARM, 0xf9400020, 0x91000400, 0xf9000020,
+                       0xd503201f)
+// mov x0, #11; nop
+NEVERD_MEMORY_TEST_ARM(FirstARM, 0xd2800160, 0xd503201f)
+// mov x0, #22; nop
+NEVERD_MEMORY_TEST_ARM(SecondARM, 0xd28002c0, 0xd503201f)
+#endif
+#ifdef NEVERD_MEMORY_TEST_PROFILE
+NEVERD_MEMORY_TEST_PROFILE(SoftwareX64, Portable, Software, X64)
+NEVERD_MEMORY_TEST_PROFILE(SoftwareARM64, Portable, Software, AArch64)
+NEVERD_MEMORY_TEST_PROFILE(CheckedX64, Portable, CheckedX64, X64)
+NEVERD_MEMORY_TEST_PROFILE(CheckedARM64, Portable, CheckedAArch64, AArch64)
+NEVERD_MEMORY_TEST_PROFILE(NativeX64, Native, CheckedX64, X64)
+NEVERD_MEMORY_TEST_PROFILE(NativeARM64, Native, CheckedAArch64, AArch64)
+#endif
+#ifdef NEVERD_MEMORY_TEST_TEXT
+NEVERD_MEMORY_TEST_TEXT(RequireNative, "NEVERD_REQUIRE_AARCH64_HARDWARE")
+#endif

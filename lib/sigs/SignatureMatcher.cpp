@@ -9,11 +9,14 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <climits>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -22,13 +25,25 @@ using namespace neverd::sigs;
 
 namespace {
 
-constexpr std::array<uint16_t, 256> makeCRC16Table() {
-  std::array<uint16_t, 256> Table{};
+#define NEVERD_PATTERN_VALUE(Name, Value)                                      \
+  [[maybe_unused]] constexpr unsigned Name = Value;
+#include "neverd/sigs/PatternSyntax.def"
+
+/// One entry for each value of a byte.
+constexpr size_t ByteValues = size_t{1} << CHAR_BIT;
+
+/// Bytes are compared a word at a time: as many as one byte of a module's
+/// stated bits covers.
+constexpr size_t WordBytes = sizeof(uint64_t);
+static_assert(WordBytes == CHAR_BIT, "a word's stated bits are one byte");
+
+constexpr std::array<uint16_t, ByteValues> makeCRC16Table() {
+  std::array<uint16_t, ByteValues> Table{};
   for (size_t I = 0; I < Table.size(); ++I) {
     uint16_t Value = static_cast<uint16_t>(I);
-    for (unsigned Bit = 0; Bit < 8; ++Bit)
-      Value =
-          static_cast<uint16_t>((Value >> 1) ^ ((Value & 1) ? 0x8408u : 0u));
+    for (unsigned Bit = 0; Bit < CHAR_BIT; ++Bit)
+      Value = static_cast<uint16_t>((Value >> 1) ^
+                                    ((Value & 1) ? CRC16Polynomial : 0u));
     Table[I] = Value;
   }
   return Table;
@@ -36,14 +51,15 @@ constexpr std::array<uint16_t, 256> makeCRC16Table() {
 
 constexpr auto CRC16Table = makeCRC16Table();
 
-/// For eight stated bits, the mask of the bytes they state in a word read
-/// little-endian: byte K is all ones when bit K is set.
-constexpr std::array<uint64_t, 256> makeByteMasks() {
-  std::array<uint64_t, 256> Masks{};
+/// For a byte of stated bits, the mask of the bytes they state in a word
+/// read little-endian: byte K is all ones when bit K is set.
+constexpr std::array<uint64_t, ByteValues> makeByteMasks() {
+  std::array<uint64_t, ByteValues> Masks{};
   for (size_t Bits = 0; Bits < Masks.size(); ++Bits)
-    for (unsigned Byte = 0; Byte < 8; ++Byte)
+    for (unsigned Byte = 0; Byte < WordBytes; ++Byte)
       if ((Bits >> Byte) & 1)
-        Masks[Bits] |= uint64_t(0xFF) << (Byte * 8);
+        Masks[Bits] |= uint64_t(std::numeric_limits<uint8_t>::max())
+                       << (Byte * CHAR_BIT);
   return Masks;
 }
 
@@ -88,10 +104,10 @@ bool bytesMatch(const StoredModule &Mod, size_t First, const uint8_t *Data,
                 size_t Count) {
   const uint8_t *const Pattern = Mod.Bytes + First;
   size_t I = 0;
-  // Eight bytes at a time, while their stated bits are one byte.
-  if (First % 8 == 0) {
-    for (; I + 8 <= Count; I += 8) {
-      const uint8_t Stated = Mod.Stated[(First + I) / 8];
+  // A word at a time, while their stated bits are one byte.
+  if (First % WordBytes == 0) {
+    for (; I + WordBytes <= Count; I += WordBytes) {
+      const uint8_t Stated = Mod.Stated[(First + I) / CHAR_BIT];
       const uint64_t Differ = llvm::support::endian::read64le(Data + I) ^
                               llvm::support::endian::read64le(Pattern + I);
       if (Differ & ByteMasks[Stated])
@@ -210,7 +226,8 @@ struct IndexedPrefix {
   std::array<uint8_t, SignatureMatcher::HashIndex::kIndexedBytes> Bytes{};
   uint32_t Stated = 0;
 };
-static_assert(SignatureMatcher::HashIndex::kIndexedBytes <= 32,
+static_assert(SignatureMatcher::HashIndex::kIndexedBytes <=
+                  std::numeric_limits<uint32_t>::digits,
               "the stated bytes of a prefix are one 32-bit mask");
 
 IndexedPrefix prefixOf(const PatternModule &Mod) {
@@ -235,8 +252,8 @@ IndexedPrefix prefixOf(const StoredModule &Mod) {
   // An unstated byte is zero in both.
   std::memcpy(Prefix.Bytes.data(), Mod.Bytes, Count);
   uint64_t Stated = 0;
-  for (size_t Byte = 0; Byte < (Count + 7) / 8; ++Byte)
-    Stated |= uint64_t(Mod.Stated[Byte]) << (Byte * 8);
+  for (size_t Byte = 0; Byte < llvm::divideCeil(Count, CHAR_BIT); ++Byte)
+    Stated |= uint64_t(Mod.Stated[Byte]) << (Byte * CHAR_BIT);
   Prefix.Stated = static_cast<uint32_t>(Stated & ((uint64_t(1) << Count) - 1));
   return Prefix;
 }
@@ -247,7 +264,8 @@ IndexedPrefix prefixOf(const StoredModule &Mod) {
 /// own those ranges.
 class IndexBuilder {
   using HashIndex = SignatureMatcher::HashIndex;
-  static constexpr uint16_t kUnstated = 256;
+  /// The key of a module that leaves the byte unstated: past every byte.
+  static constexpr uint16_t kUnstated = ByteValues;
   /// Per key, the modules counted; kept zero between uses.
   using Counts = std::array<size_t, kUnstated + 1>;
 
@@ -261,7 +279,7 @@ public:
   IndexBuilder(HashIndex &Index, const ModuleRange &Modules)
       : Index(Index), Prefixes(Modules.size()), Order(Modules.size()),
         Spare(Modules.size()) {
-    constexpr size_t Block = 4096;
+    constexpr size_t Block = SignatureLimits::IndexBuildBlock;
     neverd::parallelForEach(
         (Modules.size() + Block - 1) / Block, [&](auto Claim, size_t Total) {
           for (size_t B = Claim(); B < Total; B = Claim()) {
@@ -309,9 +327,10 @@ public:
     };
     // A small set is not worth a thread.
     const unsigned Threads =
-        Order.size() < 16384 ? 1
-                             : static_cast<unsigned>(std::min<size_t>(
-                                   neverd::workerThreadCount(), Groups.size()));
+        Order.size() < SignatureLimits::ParallelIndexModules
+            ? 1
+            : static_cast<unsigned>(
+                  std::min<size_t>(neverd::workerThreadCount(), Groups.size()));
     if (Threads <= 1)
       Work();
     else
@@ -506,14 +525,13 @@ void scanEntry(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
 } // namespace
 
 uint16_t SignatureMatcher::computeCRC16(const uint8_t *Data, size_t Len) {
-  uint16_t CRC = 0xFFFF;
+  uint16_t CRC = CRC16Initial;
   for (size_t I = 0; I < Len; ++I) {
     uint8_t Idx = static_cast<uint8_t>(CRC ^ Data[I]);
-    CRC = (CRC >> 8) ^ CRC16Table[Idx];
+    CRC = (CRC >> CHAR_BIT) ^ CRC16Table[Idx];
   }
   // Pattern files print the complemented remainder in byte-stream order.
-  CRC = static_cast<uint16_t>(~CRC);
-  return static_cast<uint16_t>((CRC << 8) | (CRC >> 8));
+  return llvm::byteswap(static_cast<uint16_t>(~CRC));
 }
 
 bool SignatureMatcher::matchPattern(const PatternModule &Mod,
@@ -567,16 +585,17 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {
-  if (effectiveLeadingCount(Mod) < 2)
+  // The first two bytes, the first high.
+  if (effectiveLeadingCount(Mod) < sizeof(uint16_t))
     return 0;
-  return (static_cast<uint16_t>(Mod.LeadingBytes[0].Value) << 8) |
+  return (static_cast<uint16_t>(Mod.LeadingBytes[0].Value) << CHAR_BIT) |
          Mod.LeadingBytes[1].Value;
 }
 
 bool SignatureMatcher::HashIndex::isWildcardKey(
     const PatternModule &Mod) const {
   const size_t LeadingCount = effectiveLeadingCount(Mod);
-  return LeadingCount < 2 || Mod.LeadingBytes[0].IsWildcard ||
+  return LeadingCount < sizeof(uint16_t) || Mod.LeadingBytes[0].IsWildcard ||
          Mod.LeadingBytes[1].IsWildcard;
 }
 
@@ -619,7 +638,7 @@ std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
 
   // Each block of entries keeps its hits apart, so that joining the blocks
   // in order reports them in the order a sequential scan does.
-  constexpr size_t BlockEntries = 16;
+  constexpr size_t BlockEntries = SignatureLimits::MatchBlockEntries;
   const size_t Blocks = (FuncEntries.size() + BlockEntries - 1) / BlockEntries;
   std::vector<std::vector<Hit>> BlockHits(Blocks);
   neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {

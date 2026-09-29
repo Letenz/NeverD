@@ -8,6 +8,7 @@
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #include "UnicornArchitecture.h"
+#include "UnicornMemory.h"
 
 #include <unicorn/arm64.h>
 #include <unicorn/unicorn.h>
@@ -26,8 +27,8 @@ llvm::Error check(uc_err Status) {
 class UnicornStepper {
 public:
   uc_engine *Engine = nullptr;
-  PhysicalMemory &Memory;
-  explicit UnicornStepper(PhysicalMemory &Memory) : Memory(Memory) {}
+  MemoryProjection &Memory;
+  explicit UnicornStepper(MemoryProjection &Memory) : Memory(Memory) {}
   ~UnicornStepper() {
     if (Engine)
       uc_close(Engine);
@@ -42,20 +43,24 @@ public:
                                     : GuestArchitecture::AArch64);
   }
   llvm::Error synchronize() {
-    if (Generation == Memory.mappingGeneration())
+    if (MappedSpace.lock() == Memory.addressSpace() &&
+        Generation == Memory.mappingGeneration())
       return llvm::Error::success();
-    for (const auto &[Address, P] : Mapped)
-      if (auto E = check(uc_mem_unmap(Engine, Address, memory::PageSize)))
-        return E;
-    Mapped.clear();
-    for (const auto &[Address, P] : Memory.mappings()) {
-      if (auto E =
-              check(uc_mem_map_ptr(Engine, Address, memory::PageSize,
-                                   P.Permissions, Memory.data() + P.Physical)))
-        return E;
-      Mapped.emplace(Address, P);
-    }
+    if (auto E = forEachUnicornRAMRange(
+            Mapped, [&](uint64_t Address, uint64_t Size, const auto &) {
+              return check(uc_mem_unmap(Engine, Address, Size));
+            }))
+      return E;
+    Mapped = Memory.mappings();
+    if (auto E = forEachUnicornRAMRange(
+            Mapped, [&](uint64_t Address, uint64_t Size, const auto &Page) {
+              return check(
+                  uc_mem_map_ptr(Engine, Address, Size, Page.Permissions,
+                                 Memory.physicalPointer(Page.Physical)));
+            }))
+      return E;
     Generation = Memory.mappingGeneration();
+    MappedSpace = Memory.addressSpace();
     return llvm::Error::success();
   }
   llvm::Error run(uint64_t PC) {
@@ -69,12 +74,13 @@ public:
 
 private:
   uint64_t Generation = 0;
-  std::map<uint64_t, PhysicalMemory::Page> Mapped;
+  std::weak_ptr<AddressSpace> MappedSpace;
+  std::map<uint64_t, MemoryProjection::Page> Mapped;
 };
 class UnicornX64Machine final : public X64Machine {
 public:
   UnicornStepper CPU;
-  explicit UnicornX64Machine(PhysicalMemory &Memory) : CPU(Memory) {}
+  explicit UnicornX64Machine(MemoryProjection &Memory) : CPU(Memory) {}
   llvm::Error step(X64MachineState &State, uint64_t,
                    std::chrono::steady_clock::time_point) override {
     if (auto E = CPU.synchronize())
@@ -115,7 +121,7 @@ private:
 class UnicornAArch64Machine final : public AArch64Machine {
 public:
   UnicornStepper CPU;
-  explicit UnicornAArch64Machine(PhysicalMemory &Memory) : CPU(Memory) {}
+  explicit UnicornAArch64Machine(MemoryProjection &Memory) : CPU(Memory) {}
   llvm::Error step(AArch64MachineState &State,
                    std::chrono::steady_clock::time_point) override {
     if (auto E = CPU.synchronize())
@@ -146,14 +152,14 @@ public:
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>
-createUnicornX64Machine(PhysicalMemory &Memory) {
+createUnicornX64Machine(MemoryProjection &Memory) {
   auto M = std::make_unique<UnicornX64Machine>(Memory);
   if (auto E = M->CPU.initialize(UC_ARCH_X86, UC_MODE_64))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createUnicornAArch64Machine(PhysicalMemory &Memory) {
+createUnicornAArch64Machine(MemoryProjection &Memory) {
   auto M = std::make_unique<UnicornAArch64Machine>(Memory);
   if (auto E = M->CPU.initialize(UC_ARCH_ARM64, UC_MODE_ARM))
     return E;

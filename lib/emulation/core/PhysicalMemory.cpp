@@ -1,163 +1,83 @@
-//===- PhysicalMemory.cpp - Shared RAM and virtual mappings--------------===//
+//===- PhysicalMemory.cpp - Shared RAM allocation lifetimes ---------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "PhysicalMemory.h"
+#include "neverd/emulation/PhysicalMemory.h"
 
 #include "ExecutionDiagnostics.h"
 #include "MemoryLayout.h"
+#include "MemoryStorage.h"
 
 #include <algorithm>
 #include <cstring>
 
 namespace neverd::emulation {
-namespace {
-bool valid(uint64_t Address, uint64_t Size, unsigned Permissions) {
-  return Size && !(Address % memory::PageSize) && !(Size % memory::PageSize) &&
-         Size - 1 <= UINT64_MAX - Address &&
-         !(Permissions & ~(Read | Write | Execute));
-}
-} // namespace
-PhysicalMemory::PhysicalMemory(llvm::sys::MemoryBlock Backing, uint64_t Limit)
-    : Backing(Backing), Limit(Limit), NextPhysical(memory::ProjectionReserve) {}
+PhysicalMemory::PhysicalMemory(std::unique_ptr<Impl> State)
+    : State(std::move(State)) {}
 PhysicalMemory::~PhysicalMemory() {
-  (void)llvm::sys::Memory::releaseMappedMemory(Backing);
+  (void)llvm::sys::Memory::releaseMappedMemory(State->Backing);
 }
-
-llvm::Expected<std::unique_ptr<PhysicalMemory>>
+llvm::Expected<std::shared_ptr<PhysicalMemory>>
 PhysicalMemory::create(uint64_t Limit) {
   if (!Limit || Limit > memory::MaxRAM)
     return diagnostic::error(diagnostic::MemoryLimit);
+  auto State = std::make_unique<Impl>();
   std::error_code EC;
-  auto Block = llvm::sys::Memory::allocateMappedMemory(
-      Limit + memory::ProjectionReserve, nullptr,
-      llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE, EC);
+  State->Backing = llvm::sys::Memory::allocateMappedMemory(
+      Limit, nullptr, llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE,
+      EC);
   if (EC)
     return llvm::errorCodeToError(EC);
-  return std::unique_ptr<PhysicalMemory>(new PhysicalMemory(Block, Limit));
+  State->Limit = Limit;
+  State->Free.emplace(0, Limit);
+  return std::shared_ptr<PhysicalMemory>(new PhysicalMemory(std::move(State)));
 }
-
-llvm::Error PhysicalMemory::map(uint64_t Address, uint64_t Size,
-                                unsigned Permissions) {
-  if (!valid(Address, Size, Permissions))
+uint64_t PhysicalMemory::limit() const { return State->Limit; }
+uint64_t PhysicalMemory::allocatedBytes() const { return State->Used.load(); }
+llvm::Expected<std::shared_ptr<MemoryRegion>>
+PhysicalMemory::allocate(uint64_t Size) {
+  std::unique_lock Lock(State->Mutex, std::try_to_lock);
+  if (!Lock.owns_lock() || State->Running)
+    return diagnostic::error(diagnostic::Running);
+  if (!Size || Size % memory::PageSize)
     return diagnostic::error(diagnostic::InvalidMapping);
-  if (Size > Limit - Used || Size > size() - NextPhysical)
+  std::lock_guard AllocationLock(State->AllocatorMutex);
+  auto I =
+      std::find_if(State->Free.begin(), State->Free.end(),
+                   [&](const auto &Range) { return Range.second >= Size; });
+  if (I == State->Free.end())
     return llvm::make_error<GuestMemoryLimitError>();
-  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
-    if (Pages.count(Address + Offset))
-      return diagnostic::error(diagnostic::InvalidMapping);
-  std::memset(data() + NextPhysical, 0, Size);
-  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
-    Pages.emplace(Address + Offset, Page{NextPhysical + Offset, Permissions});
-  NextPhysical += Size;
-  Used += Size;
-  Dirty = true;
-  ++Generation;
-  return llvm::Error::success();
+  const auto [Offset, Available] = *I;
+  State->Free.erase(I);
+  if (Available > Size)
+    State->Free.emplace(Offset + Size, Available - Size);
+  std::memset(static_cast<uint8_t *>(State->Backing.base()) + Offset, 0, Size);
+  State->Used += Size;
+  return std::shared_ptr<MemoryRegion>(
+      new MemoryRegion(shared_from_this(), Offset, Size));
 }
-
-llvm::Error PhysicalMemory::aliases(llvm::ArrayRef<GuestAliasRange> Remove,
-                                    llvm::ArrayRef<GuestAliasMapping> Add) {
-  auto Next = Pages;
-  auto NextAliases = Aliases;
-  uint64_t NextUsed = Used;
-  for (const auto &R : Remove) {
-    auto I = NextAliases.find(R.Address);
-    if (I == NextAliases.end() || I->second != R.Size)
-      return diagnostic::error(diagnostic::InvalidMapping);
-    for (uint64_t Offset = 0; Offset < R.Size; Offset += memory::PageSize)
-      Next.erase(R.Address + Offset);
-    NextAliases.erase(I);
-    NextUsed -= R.Size;
-  }
-  // Validate against the surviving original mappings, never newly added
-  // aliases.
-  const auto Sources = Next;
-  for (const auto &R : Add) {
-    if (!valid(R.Address, R.Size, R.Permissions) ||
-        !valid(R.Source, R.Size, R.Permissions))
-      return diagnostic::error(diagnostic::InvalidMapping);
-    if (R.Size > Limit - NextUsed)
-      return llvm::make_error<GuestMemoryLimitError>();
-    for (uint64_t Offset = 0; Offset < R.Size; Offset += memory::PageSize) {
-      auto I = Sources.find(R.Source + Offset);
-      if (I == Sources.end() || Next.count(R.Address + Offset))
-        return diagnostic::error(diagnostic::InvalidMapping);
-      Next.emplace(R.Address + Offset, Page{I->second.Physical, R.Permissions});
+MemoryRegion::MemoryRegion(std::shared_ptr<PhysicalMemory> Owner,
+                           uint64_t Offset, uint64_t Size)
+    : Owner(std::move(Owner)), Offset(Offset), Size(Size) {}
+MemoryRegion::~MemoryRegion() {
+  auto &S = *Owner->State;
+  std::lock_guard Lock(S.AllocatorMutex);
+  uint64_t Begin = Offset, Length = Size;
+  auto Next = S.Free.lower_bound(Begin);
+  if (Next != S.Free.begin()) {
+    auto Previous = std::prev(Next);
+    if (Previous->first + Previous->second == Begin) {
+      Begin = Previous->first;
+      Length += Previous->second;
+      S.Free.erase(Previous);
     }
-    NextAliases.emplace(R.Address, R.Size);
-    NextUsed += R.Size;
   }
-  Pages.swap(Next);
-  Aliases.swap(NextAliases);
-  Used = NextUsed;
-  Dirty = true;
-  ++Generation;
-  return llvm::Error::success();
-}
-
-llvm::Error PhysicalMemory::protect(uint64_t Address, uint64_t Size,
-                                    unsigned Permissions) {
-  if (!valid(Address, Size, Permissions) || check(Address, Size, 0))
-    return diagnostic::error(diagnostic::InvalidMapping);
-  for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
-    Pages.at(Address + Offset).Permissions = Permissions;
-  Dirty = true;
-  ++Generation;
-  return llvm::Error::success();
-}
-
-std::optional<BackendFaultKind>
-PhysicalMemory::check(uint64_t Address, uint64_t Size,
-                      unsigned Permissions) const {
-  if (!Size)
-    return std::nullopt;
-  if (Size - 1 > UINT64_MAX - Address)
-    return BackendFaultKind::InvalidMemoryRange;
-  uint64_t Last = (Address + Size - 1) & ~(memory::PageSize - 1);
-  for (uint64_t VA = Address & ~(memory::PageSize - 1);;
-       VA += memory::PageSize) {
-    auto I = Pages.find(VA);
-    if (I == Pages.end())
-      return BackendFaultKind::UnmappedMemory;
-    if ((I->second.Permissions & Permissions) != Permissions)
-      return BackendFaultKind::Protection;
-    if (VA == Last)
-      return std::nullopt;
+  if (Next != S.Free.end() && Begin + Length == Next->first) {
+    Length += Next->second;
+    S.Free.erase(Next);
   }
+  S.Free.emplace(Begin, Length);
+  S.Used -= Size;
 }
-
-llvm::Error PhysicalMemory::read(uint64_t Address,
-                                 llvm::MutableArrayRef<uint8_t> Bytes,
-                                 unsigned Permissions) const {
-  if (check(Address, Bytes.size(), Permissions))
-    return diagnostic::error(diagnostic::MemoryAccess);
-  while (!Bytes.empty()) {
-    uint64_t Offset = Address % memory::PageSize;
-    size_t Count = std::min<uint64_t>(Bytes.size(), memory::PageSize - Offset);
-    std::copy_n(data() + Pages.at(Address - Offset).Physical + Offset, Count,
-                Bytes.data());
-    Bytes = Bytes.drop_front(Count);
-    Address += Count;
-  }
-  return llvm::Error::success();
-}
-
-llvm::Error PhysicalMemory::write(uint64_t Address,
-                                  llvm::ArrayRef<uint8_t> Bytes,
-                                  unsigned Permissions) {
-  if (check(Address, Bytes.size(), Permissions))
-    return diagnostic::error(diagnostic::MemoryAccess);
-  while (!Bytes.empty()) {
-    uint64_t Offset = Address % memory::PageSize;
-    size_t Count = std::min<uint64_t>(Bytes.size(), memory::PageSize - Offset);
-    std::copy_n(Bytes.data(), Count,
-                data() + Pages.at(Address - Offset).Physical + Offset);
-    Bytes = Bytes.drop_front(Count);
-    Address += Count;
-  }
-  return llvm::Error::success();
-}
-
 } // namespace neverd::emulation

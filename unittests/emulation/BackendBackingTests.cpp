@@ -316,6 +316,9 @@ TEST_F(DriverBackendBacking, RejectsMMIOAndMixedSpansWithoutDeviceCallbacks) {
   ASSERT_EQ(llvm::toString(CPU->mapMMIO(Data + Page, Page, Callbacks)), "");
   std::array<uint8_t, 4> Bytes{1, 2, 3, 4};
   for (uint64_t Address : {Data + Page - 2, Data + Page}) {
+    auto View = CPU->pinBacking(Address, Bytes.size());
+    ASSERT_FALSE(bool(View));
+    llvm::consumeError(View.takeError());
     EXPECT_NE(llvm::toString(CPU->validateBacking(Address, Bytes.size())), "");
     EXPECT_NE(llvm::toString(CPU->readBacking(Address, Bytes)), "");
     EXPECT_NE(llvm::toString(CPU->writeBacking(Address, Bytes)), "");
@@ -351,6 +354,8 @@ TEST_F(DriverBackendBacking, RejectsDeviceCallbackReentryWithoutRAMEffects) {
   unsigned Attempts = 0;
   const std::array<uint8_t, 1> Original{0x35};
   ASSERT_EQ(llvm::toString(CPU->writeBacking(Data, Original)), "");
+  auto View = CPU->pinBacking(Data, Original.size());
+  ASSERT_TRUE(bool(View));
   auto Attempt = [&] {
     ++Attempts;
     std::array<uint8_t, 1> Byte{0xff};
@@ -358,6 +363,9 @@ TEST_F(DriverBackendBacking, RejectsDeviceCallbackReentryWithoutRAMEffects) {
     EXPECT_NE(llvm::toString(CPU->readBacking(Data, Byte)), "");
     EXPECT_NE(llvm::toString(CPU->writeBacking(Data, Byte)), "");
     EXPECT_NE(llvm::toString(CPU->snapshotBacking(Data, Byte)), "");
+    EXPECT_NE(llvm::toString(CPU->validatePinned(*View, 0, Byte.size())), "");
+    EXPECT_NE(llvm::toString(CPU->readPinned(*View, 0, Byte)), "");
+    EXPECT_NE(llvm::toString(CPU->writePinned(*View, 0, Byte)), "");
     EXPECT_EQ(Byte[0], 0xff);
   };
   GuestMMIOCallbacks Callbacks{
@@ -481,6 +489,13 @@ TEST(DriverBackendBackingOptional, OrdinaryImplementationsRejectDeviceAccess) {
   EXPECT_NE(llvm::toString(Memory.snapshotBacking(0, Byte)), "");
   EXPECT_NE(llvm::toString(Memory.unmapAlias(0, 1)), "");
   EXPECT_NE(llvm::toString(Memory.replaceAliases({}, {})), "");
+  auto View = Memory.pinBacking(0, 1);
+  ASSERT_FALSE(bool(View));
+  llvm::consumeError(View.takeError());
+  EXPECT_EQ(Memory.addressSpace(), nullptr);
+  EXPECT_NE(llvm::toString(Memory.validatePinned({}, 0, Byte.size())), "");
+  EXPECT_NE(llvm::toString(Memory.readPinned({}, 0, Byte)), "");
+  EXPECT_NE(llvm::toString(Memory.writePinned({}, 0, Byte)), "");
 }
 } // namespace
 } // namespace neverd::emulation

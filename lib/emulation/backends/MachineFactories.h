@@ -11,21 +11,21 @@
 #include <memory>
 
 namespace neverd::emulation {
-class PhysicalMemory;
+class MemoryProjection;
 class X64Machine;
 class AArch64Machine;
 
-llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
-                                                             uint64_t Size);
-llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
-                                                             uint64_t Size);
 llvm::Expected<std::unique_ptr<X64Machine>>
-createUnicornX64Machine(PhysicalMemory &Memory);
+createKvmMachine(MemoryProjection &Memory);
+llvm::Expected<std::unique_ptr<X64Machine>>
+createWhpMachine(MemoryProjection &Memory);
+llvm::Expected<std::unique_ptr<X64Machine>>
+createUnicornX64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createKvmAArch64Machine(PhysicalMemory &Memory);
+createKvmAArch64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createWhpAArch64Machine(PhysicalMemory &Memory);
+createWhpAArch64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createUnicornAArch64Machine(PhysicalMemory &Memory);
+createUnicornAArch64Machine(MemoryProjection &Memory);
 } // namespace neverd::emulation
 #endif

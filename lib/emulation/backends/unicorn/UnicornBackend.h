@@ -26,7 +26,12 @@ public:
   static llvm::Expected<std::unique_ptr<UnicornBackend>>
   create(uint64_t MemoryLimit,
          GuestArchitecture Architecture = GuestArchitecture::X64);
+  static llvm::Expected<std::unique_ptr<UnicornBackend>>
+  create(std::shared_ptr<AddressSpace> Space,
+         GuestArchitecture Architecture = GuestArchitecture::X64);
   ~UnicornBackend() override;
+  std::shared_ptr<AddressSpace> addressSpace() const override;
+  llvm::Error bindAddressSpace(std::shared_ptr<AddressSpace> Space) override;
   llvm::Error map(uint64_t Address, uint64_t Size,
                   unsigned Permissions) override;
   llvm::Error mapAlias(uint64_t Address, uint64_t Source, uint64_t Size,

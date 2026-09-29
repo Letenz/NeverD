@@ -9,11 +9,11 @@
 #include "../MachineFactories.h"
 namespace neverd::emulation {
 llvm::Expected<std::unique_ptr<X64Machine>>
-createUnicornX64Machine(PhysicalMemory &) {
+createUnicornX64Machine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::UnicornDisabled);
 }
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createUnicornAArch64Machine(PhysicalMemory &) {
+createUnicornAArch64Machine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::UnicornDisabled);
 }
 } // namespace neverd::emulation

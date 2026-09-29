@@ -6,11 +6,13 @@
 ///
 /// \file
 /// The syntax of the linker inputs signature generation and matching read:
-/// ELF symbol versions and COFF linker directives.  Define the macros a
-/// consumer reads before including this file; the others expand to nothing.
+/// ELF symbol versions, local labels and COFF linker directives.  Define the
+/// macros a consumer reads before including this file; the others expand to
+/// nothing.
 ///
 ///   NEVERD_SIGS_SYNTAX_CHAR(Name, Value)    a character
 ///   NEVERD_SIGS_SYNTAX_STRING(Name, Value)  a string
+///   NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value)   how a local label's name starts
 ///
 //===----------------------------------------------------------------------===//
 
@@ -19,6 +21,9 @@
 #endif
 #ifndef NEVERD_SIGS_SYNTAX_STRING
 #define NEVERD_SIGS_SYNTAX_STRING(Name, Value)
+#endif
+#ifndef NEVERD_SIGS_LOCAL_LABEL_PREFIX
+#define NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value)
 #endif
 
 // An ELF symbol's name is followed by its version, as `name@VERSION` or, for
@@ -29,6 +34,17 @@ NEVERD_SIGS_SYNTAX_CHAR(ELFVersionSeparator, '@')
 // a label (`$LN5`, ARM's `$x` and `$d`) rather than a routine.
 NEVERD_SIGS_SYNTAX_STRING(SectionSymbolPrefix, ".")
 NEVERD_SIGS_SYNTAX_STRING(LabelSymbolPrefix, "$")
+
+// Of the linkage names one routine has, the one with the fewest leading
+// underscores is the public spelling: glibc's `puts` rather than `_IO_puts`.
+NEVERD_SIGS_SYNTAX_CHAR(ReservedNamePrefix, '_')
+
+// An assembler's local labels, which an ELF or Mach-O object may still list
+// as function symbols: the section-start labels of Mach-O (`ltmp0`), its
+// private labels (`L_.str`), and ELF's (`.Lfunc_end0`).  None is a routine.
+NEVERD_SIGS_LOCAL_LABEL_PREFIX("ltmp")
+NEVERD_SIGS_LOCAL_LABEL_PREFIX("L_")
+NEVERD_SIGS_LOCAL_LABEL_PREFIX(".L")
 
 // A COFF object's linker directives (its `.drectve` section) are options
 // separated by whitespace, one that holds whitespace in double quotes; MSVC
@@ -46,3 +62,4 @@ NEVERD_SIGS_SYNTAX_CHAR(AlternateNameSeparator, '=')
 
 #undef NEVERD_SIGS_SYNTAX_CHAR
 #undef NEVERD_SIGS_SYNTAX_STRING
+#undef NEVERD_SIGS_LOCAL_LABEL_PREFIX

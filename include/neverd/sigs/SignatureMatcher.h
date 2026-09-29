@@ -54,13 +54,13 @@ public:
   /// The fewest bytes a module may state exactly and still identify a
   /// routine.
   ///
-  /// Sixteen exact bytes is several instructions of one specific routine,
+  /// So many exact bytes are several instructions of one specific routine,
   /// which no unrelated function reaches by coincidence.  Below that a
   /// pattern is mostly wildcards and agrees with a great deal of code -- a
   /// function whose every instruction is relocated states nothing at all --
   /// so PatternGenerator does not write such a line, and naming a
   /// personality routine demands the same floor.
-  static constexpr size_t MinStatedBytes = 16;
+  static constexpr size_t MinStatedBytes = SignatureLimits::MinStatedBytes;
 
   /// True when the leading pattern, the CRC span, and the tail together reach
   /// the end of the function the module claims to describe.
@@ -85,8 +85,8 @@ public:
   /// byte and the wildcard edge.  Modules are partitioned rather than copied,
   /// so each reaches exactly one leaf and is fully verified at most once.
   struct HashIndex {
-    static constexpr size_t kIndexedBytes = 32;
-    static constexpr size_t kLeafCandidates = 64;
+    static constexpr size_t kIndexedBytes = SignatureLimits::IndexedBytes;
+    static constexpr size_t kLeafCandidates = SignatureLimits::LeafCandidates;
     static constexpr size_t kNoNode = std::numeric_limits<size_t>::max();
 
     struct Edge {

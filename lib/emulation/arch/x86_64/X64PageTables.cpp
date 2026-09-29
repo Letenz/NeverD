@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../core/ExecutionDiagnostics.h"
-#include "../../core/PhysicalMemory.h"
+#include "../../core/MemoryProjection.h"
 #include "X64Machine.h"
 
 #include "llvm/Support/Endian.h"
@@ -12,10 +12,12 @@
 #include <cstring>
 
 namespace neverd::emulation {
-llvm::Expected<uint64_t> buildX64PageTables(PhysicalMemory &Memory,
+llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                                             uint64_t PreviousRoot) {
-  if (!Memory.Dirty)
+  if (!Memory.needsProjection())
     return PreviousRoot;
+  if (auto E = Memory.validateMappings(x64::canonicalRange))
+    return E;
   // Updating backing bytes alone does not invalidate cached translations.
   // Alternate roots after each mapping transaction, forcing a CR3 transition
   // on the next entry (PCID and global pages are disabled in this profile).
@@ -24,7 +26,7 @@ llvm::Expected<uint64_t> buildX64PageTables(PhysicalMemory &Memory,
                             : x64::FirstTableRoot;
   std::memset(Memory.data(), 0, x64::TableReserve);
   uint64_t Next = x64::FirstChildTable;
-  for (const auto &[VA, P] : Memory.Pages) {
+  for (const auto &[VA, P] : Memory.mappings()) {
     uint64_t Table = Root;
     for (unsigned Level = x64::TableLevels; Level > 1; --Level) {
       auto Index = (VA >> (x64::PageBits + (Level - 1) * x64::TableBits)) &
@@ -51,7 +53,7 @@ llvm::Expected<uint64_t> buildX64PageTables(PhysicalMemory &Memory,
     llvm::support::endian::write64le(
         Memory.data() + Table + Index * x64::WordBytes, Entry);
   }
-  Memory.Dirty = false;
+  Memory.commitProjection();
   return Root;
 }
 } // namespace neverd::emulation

@@ -1,0 +1,14 @@
+//===- KernelPhysicalMemoryCases.def - Retained Windows RAM fixtures -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_PHYSICAL_TEST_VALUE(Base, 0x100000)
+NEVERD_PHYSICAL_TEST_VALUE(Page, physical::PageSize)
+NEVERD_PHYSICAL_TEST_VALUE(Alias, Base + 4 * Page)
+NEVERD_PHYSICAL_TEST_VALUE(MemoryLimit, 300 * Page)
+NEVERD_PHYSICAL_TEST_VALUE(FirstOwner, 1)
+NEVERD_PHYSICAL_TEST_VALUE(SecondOwner, 2)
+NEVERD_PHYSICAL_TEST_VALUE(ByteOffset, 16)
+NEVERD_PHYSICAL_TEST_BYTES(OriginalBytes, 1, 2, 3, 4)
+NEVERD_PHYSICAL_TEST_BYTES(ReplacementBytes, 9, 8, 7, 6)

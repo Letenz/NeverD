@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
 
 #include "llvm/Support/FormatVariadic.h"
@@ -91,10 +92,10 @@ public:
   }
 };
 } // namespace
-llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
-                                                             uint64_t Size) {
+llvm::Expected<std::unique_ptr<X64Machine>>
+createKvmMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<KvmMachine>();
-  if (auto E = M->initialize(Backing, Size))
+  if (auto E = M->initialize(Memory.registrations()))
     return E;
   kvm_guest_debug Debug{};
   Debug.control =
@@ -107,8 +108,8 @@ llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
 #else
 
 namespace neverd::emulation {
-llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *,
-                                                             uint64_t) {
+llvm::Expected<std::unique_ptr<X64Machine>>
+createKvmMachine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::Unavailable);
 }
 } // namespace neverd::emulation

@@ -65,3 +65,23 @@ NEVERD_EXECUTION_DIAGNOSTIC(UnicornReadRegister, "read guest register")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornWriteRegister, "write guest register")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornDisabled,
                             "Unicorn execution is disabled in this build")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    MemoryOwner, "memory region belongs to a different physical owner")
+NEVERD_EXECUTION_DIAGNOSTIC(MemoryRegion,
+                            "invalid physical region or region offset")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    AddressSpace, "an address space and a positive mapping budget are required")
+
+NEVERD_EXECUTION_DIAGNOSTIC(
+    DeviceMapping,
+    "The selected execution contract does not support device mappings")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ContextSpace, "The CPU context belongs to a different address space")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    DeviceCallbacks, "MMIO mapping requires validate, read and write callbacks")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceRetirement,
+                            "MMIO unmap requires one exact complete mapping")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceProtection,
+                            "changing MMIO page permissions is unsupported")
+NEVERD_EXECUTION_DIAGNOSTIC(PinnedMemoryUnsupported,
+                            "guest memory does not support retained RAM views")

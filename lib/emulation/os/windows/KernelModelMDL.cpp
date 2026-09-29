@@ -395,10 +395,17 @@ llvm::Error KernelModel::freeMDL(uint64_t MDL) {
   if (It->second.Owner == LockedMdl::Ownership::Partial &&
       It->second.OwnsSystemMapping) {
     const auto &State = It->second;
-    const std::array<std::pair<uint64_t, uint64_t>, 2> Ranges{
-        {{State.Address, State.Size},
-         {pageBase(State.Buffer), State.AllocationSize}}};
-    if (auto E = prepareReleaseRanges(Ranges))
+    // The descriptor is released, but its alias only loses a virtual mapping.
+    // The root MDL's retained bytes and pin survive this partial descriptor.
+    if (auto E = canReleaseRange(State.Address, State.Size))
+      return E;
+    if (auto E =
+            canRevokeVirtualRange(pageBase(State.Buffer), State.AllocationSize))
+      return E;
+    if (auto E = prepareReleaseRange(State.Address, State.Size))
+      return E;
+    if (auto E = prepareRevokeVirtualRange(pageBase(State.Buffer),
+                                           State.AllocationSize))
       return E;
     if (auto E =
             Memory.unmapAlias(pageBase(State.Buffer), State.AllocationSize))
@@ -940,7 +947,8 @@ KernelModel::requestMDLChain(uint64_t IRP) const {
 
 llvm::Error KernelModel::appendRequestMDLReleaseResources(
     uint64_t IRP, std::vector<std::pair<uint64_t, uint64_t>> &Ranges,
-    std::vector<uint64_t> &Pins) const {
+    std::vector<uint64_t> &Pins,
+    std::vector<std::pair<uint64_t, uint64_t>> &RevokingAliases) const {
   auto Chain = requestMDLChain(IRP);
   if (!Chain)
     return Chain.takeError();
@@ -965,10 +973,12 @@ llvm::Error KernelModel::appendRequestMDLReleaseResources(
         return E;
       Pins.push_back(State.Pin);
       if (State.Mapped)
-        Ranges.emplace_back(pageBase(State.Buffer), State.AllocationSize);
+        RevokingAliases.emplace_back(pageBase(State.Buffer),
+                                     State.AllocationSize);
     } else if (State.Owner == LockedMdl::Ownership::Partial &&
                State.OwnsSystemMapping) {
-      Ranges.emplace_back(pageBase(State.Buffer), State.AllocationSize);
+      RevokingAliases.emplace_back(pageBase(State.Buffer),
+                                   State.AllocationSize);
     }
   }
   const auto *Owner = requestForIRP(IRP);

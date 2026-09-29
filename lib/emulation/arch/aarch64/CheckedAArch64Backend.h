@@ -11,7 +11,7 @@ namespace neverd::emulation {
 class CheckedAArch64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
-  create(std::unique_ptr<PhysicalMemory> Memory,
+  create(std::unique_ptr<MemoryProjection> Memory,
          std::unique_ptr<AArch64Machine> Machine);
   GuestArchitecture architecture() const override {
     return GuestArchitecture::AArch64;

@@ -11,9 +11,11 @@
 #include <cstring>
 
 namespace neverd::emulation {
-llvm::Error buildAArch64PageTables(PhysicalMemory &Memory) {
-  if (!Memory.Dirty)
+llvm::Error buildAArch64PageTables(MemoryProjection &Memory) {
+  if (!Memory.needsProjection())
     return llvm::Error::success();
+  if (auto E = Memory.validateMappings(aarch64::canonicalRange))
+    return E;
   using namespace aarch64;
   std::memset(Memory.data(), 0, memory::ProjectionReserve);
   // This immutable, backend-owned exception gateway never overlaps guest RAM.
@@ -68,14 +70,14 @@ llvm::Error buildAArch64PageTables(PhysicalMemory &Memory) {
     return E;
   if (auto E = Map(EntryGPA, EntryGPA, Read | Execute))
     return E;
-  for (const auto &[VA, Page] : Memory.Pages)
+  for (const auto &[VA, Page] : Memory.mappings())
     if (auto E = Map(VA, Page.Physical, Page.Permissions))
       return E;
-  Memory.Dirty = false;
+  Memory.commitProjection();
   return llvm::Error::success();
 }
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
-                                 PhysicalMemory &Memory) {
+                                 MemoryProjection &Memory) {
   if (auto E = buildAArch64PageTables(Memory))
     return E;
   AArch64MachineState State;

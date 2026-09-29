@@ -120,9 +120,9 @@ public:
 };
 } // namespace
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createKvmAArch64Machine(PhysicalMemory &Memory) {
+createKvmAArch64Machine(MemoryProjection &Memory) {
   auto M = std::make_unique<KvmAArch64Machine>();
-  if (auto E = M->initialize(Memory.data(), Memory.size()))
+  if (auto E = M->initialize(Memory.registrations()))
     return E;
   kvm_vcpu_init Init{};
   if (ioctl(M->VM, KVM_ARM_PREFERRED_TARGET, &Init) < 0 ||
@@ -140,7 +140,7 @@ createKvmAArch64Machine(PhysicalMemory &Memory) {
 #else
 namespace neverd::emulation {
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createKvmAArch64Machine(PhysicalMemory &) {
+createKvmAArch64Machine(MemoryProjection &) {
   return diagnostic::unavailable(diagnostic::Unavailable);
 }
 } // namespace neverd::emulation
