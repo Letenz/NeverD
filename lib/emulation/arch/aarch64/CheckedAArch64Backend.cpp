@@ -238,6 +238,6 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   }
   if (auto E = buildAArch64PageTables(*this->Memory))
     return E;
-  return Machine->step(CPU, Deadline);
+  return Machine->step(CPU, {Deadline, &StopRequested});
 }
 } // namespace neverd::emulation

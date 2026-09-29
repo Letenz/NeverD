@@ -24,7 +24,7 @@ namespace {
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   llvm::Error step(X64MachineState &State, uint64_t Root,
-                   std::chrono::steady_clock::time_point Deadline) override {
+                   MachineRunControl Control) override {
     kvm_regs R{};
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   R.Field = State.reg(X64Register::Name);
@@ -60,9 +60,7 @@ public:
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                      BackendAvailability::MissingCapability);
-    if (auto E = runUntilExit(
-            Deadline + std::chrono::microseconds(
-                           execution_limits::NativeStepGraceMicroseconds)))
+    if (auto E = runUntilExit(Control.forNativeStep()))
       return E;
     // There is no generic KVM userspace exception bitmap. An unexpected exit
     // is terminal; this integer profile admits no instruction that should

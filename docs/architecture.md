@@ -1318,12 +1318,20 @@ replacement or CPU-context restoration. KVM uses `KVM_SET_ONE_REG`,
 `KVM_ARM_VCPU_INIT` and host single stepping. ARM64 WHP configures GICv3 and uses
 an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
 x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
-before accepting guest work. The WHP gateway has a cancellation watchdog;
-failed or interrupted transport is terminal. Normal deadlines are checked
-between instructions. The ARM64 WHP watchdog and both KVM transports permit a
-100 ms transport allowance for an instruction already entering the native
-machine. KVM bounds interrupted entry retries with a shared absolute deadline;
-it relies on host single stepping for an uninterrupted entry.
+before accepting guest work.
+
+Both x64 and ARM64 WHP use one cancellation worker per partition. It observes
+the CPU's borrowed stop token and native deadline, retries cancellation until
+the host entry returns, and acknowledges any in-flight cancellation before
+the token, next entry or partition can be retired. A cancellation with uncertain
+guest progress is a terminal backend failure; stop and elapsed-deadline facts
+remain visible in the typed exit. It never implies a completed instruction.
+Normal deadlines are checked between instructions. Both native transports
+permit a 100 ms transport allowance for an instruction already entering the
+machine. KVM checks stop and deadline before entry and after host interruptions;
+it relies on host single stepping for an uninterrupted entry. It does not
+install a process-wide signal handler or claim an independently interruptible
+`KVM_RUN`. These mechanisms do not provide a hard wall-clock guarantee.
 
 These mechanisms follow the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and the WHP [partition configuration](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvpartitionpropertydatatypes)

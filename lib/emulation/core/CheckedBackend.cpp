@@ -180,6 +180,10 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
       return std::move(E);
     return error(diagnostic::MissingExecutionStart);
   }
+  // A transport can fail while enforcing the deadline. Its terminal failure
+  // takes precedence, but the elapsed budget must not disappear from the exit.
+  if (BackendFailed && std::chrono::steady_clock::now() >= Deadline)
+    TimedOut = true;
   return makeExecutionExit(
       std::move(E), {.Fault = FirstFault,
                      .Recoverable = RecoverableFault,
