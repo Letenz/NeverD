@@ -1,3 +1,11 @@
+add_neverd_unittest(NeverDUserExecutionTests
+  UserExecutionTests.cpp
+  UserProjectionTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDUserExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmRunTests
     KvmRunTests.cpp

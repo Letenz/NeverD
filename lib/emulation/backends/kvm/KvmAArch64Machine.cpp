@@ -61,6 +61,9 @@ public:
     Control = Control.forNativeStep();
     const auto PC = coreRegister(offsetof(kvm_regs, regs.pc));
     const auto PState = coreRegister(offsetof(kvm_regs, regs.pstate));
+    const auto SP = coreRegister(State.UserMode ? offsetof(kvm_regs, regs.sp)
+                                                : offsetof(kvm_regs, sp_el1));
+    const uint64_t Mode = State.UserMode ? PStateEL0t : PStateEL1h;
     // Rebuilds change page-table bytes, not the translation cache. Execute the
     // immutable maintenance gate under host single-step before every entry.
     if (auto E = set(Ttbr0El1, LowRoot))
@@ -93,11 +96,10 @@ public:
               set(coreRegister(offsetof(kvm_regs, regs.regs) + N * WordBytes),
                   State.Registers[N]))
         return E;
-    if (auto E = set(coreRegister(offsetof(kvm_regs, sp_el1)),
-                     State.reg(AArch64Register::SP)))
+    if (auto E = set(SP, State.reg(AArch64Register::SP)))
       return E;
-    if (auto E = set(PState, PStateEL1h | PStateDAIF |
-                                 State.reg(AArch64Register::NZCV)))
+    if (auto E =
+            set(PState, Mode | PStateDAIF | State.reg(AArch64Register::NZCV)))
       return E;
     if (auto E = set(PC, State.reg(AArch64Register::PC)))
       return E;
@@ -108,8 +110,7 @@ public:
               get(coreRegister(offsetof(kvm_regs, regs.regs) + N * WordBytes),
                   State.Registers[N]))
         return E;
-    if (auto E = get(coreRegister(offsetof(kvm_regs, sp_el1)),
-                     State.reg(AArch64Register::SP)))
+    if (auto E = get(SP, State.reg(AArch64Register::SP)))
       return E;
     if (auto E = get(PC, State.reg(AArch64Register::PC)))
       return E;

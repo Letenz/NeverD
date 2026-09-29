@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_AARCH64_VALUE
 NEVERD_AARCH64_VALUE(InstructionBytes, 4)
+NEVERD_AARCH64_VALUE(GateReturnInstructions, 1)
 NEVERD_AARCH64_VALUE(WordBytes, 8)
 NEVERD_AARCH64_VALUE(WordBits, 64)
 NEVERD_AARCH64_VALUE(GPRCount, 31)
@@ -60,6 +61,9 @@ NEVERD_AARCH64_VALUE(GicITS, 0x80040000ull)
 NEVERD_AARCH64_VALUE(GicVirtualTimerPPI, 27)
 NEVERD_AARCH64_VALUE(GicPerformancePPI, 23)
 NEVERD_AARCH64_VALUE(GatewayHypercall, 0xd4000002)
+NEVERD_AARCH64_VALUE(UserPage, 1ull << 6)
+NEVERD_AARCH64_VALUE(PStateEL0t, 0)
+NEVERD_AARCH64_VALUE(LowerELVector, 0x400)
 #endif
 // No general register or flags are modified by the maintenance sequence.
 // The KVM adapter steps these internally; WHP appends ERET to arm guest SS.

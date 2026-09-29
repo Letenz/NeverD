@@ -44,7 +44,12 @@ public:
                       WHvX64RegisterEs, WHvX64RegisterFs, WHvX64RegisterGs}) {
       WHV_REGISTER_VALUE V{};
       const bool Code = Name == WHvX64RegisterCs;
-      V.Segment.Selector = Code ? x64::CodeSelector : x64::DataSelector;
+      V.Segment.Selector =
+          State.UserMode
+              ? (Code ? x64::UserCodeSelector : x64::UserDataSelector)
+              : (Code ? x64::CodeSelector : x64::DataSelector);
+      V.Segment.DescriptorPrivilegeLevel =
+          State.UserMode ? x64::UserPrivilege : 0;
       V.Segment.Limit = x64::SegmentLimit;
       V.Segment.Present = V.Segment.NonSystemSegment = V.Segment.Granularity =
           1;

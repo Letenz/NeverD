@@ -35,6 +35,25 @@ TEST(ExecutionReport, RejectsMalformedAndUnsupportedConfigurationBeforeProbe) {
   EXPECT_EQ(llvm::toString(Large.takeError()), field::ConfigurationTooLarge);
 }
 
+TEST(ExecutionReport, UserProfilesReportIsolationWithoutClaimingServices) {
+  for (const auto *Input : {UserX64Configuration, UserARMConfiguration}) {
+    const auto Config = llvm::cantFail(executionConfigurationFromJSON(Input));
+    const auto Resolved = llvm::cantFail(resolveExecutionConfiguration(Config));
+    EXPECT_EQ(Resolved.Capabilities.Privilege, ExecutionPrivilege::User);
+    EXPECT_TRUE(Resolved.Capabilities.supports(
+        ExecutionFeature::UserSupervisorIsolation));
+    EXPECT_FALSE(
+        Resolved.Capabilities.supports(ExecutionFeature::ServiceTraps));
+    auto Report = llvm::cantFail(
+        llvm::json::parse(llvm::cantFail(executionCapabilitiesJSON(Config))));
+    const auto *Caps = Report.getAsObject()->getObject(field::Capabilities);
+    ASSERT_NE(Caps, nullptr);
+    EXPECT_EQ(Caps->getString(field::Privilege),
+              executionPrivilegeName(ExecutionPrivilege::User));
+    EXPECT_TRUE(Report.getAsObject()->get(field::Host)->getAsNull());
+  }
+}
+
 TEST(ExecutionReport, DefaultQueryDoesNotClaimLiveAvailability) {
   auto Config =
       llvm::cantFail(executionConfigurationFromJSON(field::EmptyConfiguration));

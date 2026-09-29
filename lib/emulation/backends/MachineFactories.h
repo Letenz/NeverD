@@ -20,12 +20,12 @@ createKvmMachine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<X64Machine>>
 createWhpMachine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<X64Machine>>
-createUnicornX64Machine(MemoryProjection &Memory);
+createUnicornX64Machine(MemoryProjection &Memory, bool UserMode = false);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
 createKvmAArch64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
 createWhpAArch64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
-createUnicornAArch64Machine(MemoryProjection &Memory);
+createUnicornAArch64Machine(MemoryProjection &Memory, bool UserMode = false);
 } // namespace neverd::emulation
 #endif

@@ -220,7 +220,7 @@ TEST_F(DriverBackendBacking, ReplacementPreflightPreservesEveryAliasOnFailure) {
         {Other, Data, Page, Read},
         {Other + Page, Data, Page, Read}}},
       {{{Alias, Page}}, {{Alias, UINT64_MAX, Page, Read}}},
-      {{{Alias, Page}}, {{Alias, Replacement, Page, Execute << 1}}}};
+      {{{Alias, Page}}, {{Alias, Replacement, Page, ~GuestPermissionMask}}}};
   for (const auto &Case : Invalid) {
     EXPECT_NE(llvm::toString(CPU->replaceAliases(Case.Remove, Case.Add)), "");
     auto Writable = CPU->canAccess(Alias, Page, Write);

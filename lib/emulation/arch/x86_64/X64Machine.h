@@ -29,8 +29,10 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 } // namespace x64
 class MemoryProjection;
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            uint64_t PreviousRoot);
+                                            uint64_t PreviousRoot,
+                                            bool UserMode = false);
 struct X64MachineState {
+  bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
   uint64_t GSBase = 0;
   std::array<ExecutionBackend::XmmValue, x64::XmmCount> Xmm{};
