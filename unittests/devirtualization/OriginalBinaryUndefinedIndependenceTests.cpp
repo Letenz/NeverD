@@ -400,8 +400,8 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      StaticallyUntakenBranchStillRequiresArchitectureCoverage) {
   // XOR makes JNE false, but the original arm at 0x100a contains an unaudited
-  // SHL. Collecting its bytes alone does not establish complete evidence.
-  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xe0, 0xc3});
+  // ROL. Collecting its bytes alone does not establish complete evidence.
+  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xc0, 0xc3});
   const auto Ordinary = specializeBinaryInterpreter(P.Image, Entry, P.Options);
   ASSERT_TRUE(Ordinary.complete()) << Ordinary.Diagnostic;
   expectRefusal(P, Status::Unsupported);
@@ -457,8 +457,8 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 TEST(OriginalBinaryUndefinedIndependence,
      MissingArchitectureEffectsAndProfileProjectionRefuse) {
-  Program Shift({0xd1, 0xe0, 0xc3}); // shl eax,1; ret
-  expectRefusal(Shift, Status::Unsupported);
+  Program Rotate({0xd1, 0xc0, 0xc3}); // rol eax,1; ret
+  expectRefusal(Rotate, Status::Unsupported);
   // RDSSPQ is projected to NOP only by the explicit CET-disabled profile.
   // That projection must retain Missing architecture metadata.
   Program ShadowStack({0xf3, 0x48, 0x0f, 0x1e, 0xc8, 0xb8, 7, 0, 0, 0, 0xc3});
@@ -989,6 +989,290 @@ TEST(OriginalBinaryUndefinedIndependence,
   Program Zero({0x31, 0xc0, 0xf3, 0x48, 0x0f, 0xae, 0xe8});
   Zero.flagsProfile();
   expectRefusal(Zero, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftFlagsAreArbitraryOnlyForTheirMaskedCounts) {
+  for (unsigned Width : {1u, 2u, 4u, 8u})
+    for (unsigned Group : {4u, 5u, 7u})
+      for (unsigned Count : {0u, 1u, 2u, Width * 8 - 1, Width * 8,
+                             Width * 8 + 1, 32u, 64u, 255u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << '/' << Group << '/' << Count);
+        Program P({});
+        if (Width == 2)
+          P.append({0x66});
+        if (Width == 8)
+          P.append({0x48});
+        P.append({uint8_t(Width == 1 ? 0xc0 : 0xc1), uint8_t(0xc0 | Group << 3),
+                  uint8_t(Count), 0xc3});
+        const unsigned Masked = Count & (Width == 8 ? 63 : 31);
+        for (unsigned Flag : {x86reg::AF, x86reg::OF, x86reg::CF}) {
+          SCOPED_TRACE(Flag);
+          P.Contract.ReturnRegisters = {{Flag, 1}};
+          const bool Undefined = Flag == x86reg::AF ? Masked != 0
+                                 : Flag == x86reg::OF
+                                     ? Masked > 1
+                                     : Group != 7 && Masked >= Width * 8;
+          const auto R = P.check();
+          EXPECT_EQ(R.Proof.Status,
+                    Undefined ? Status::Dependent : Status::Proved)
+              << R.Proof.Diagnostic;
+          EXPECT_EQ(R.Certificate.has_value(), !Undefined);
+        }
+      }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftVariableCountRemainsSharedUntilItDependsOnAnArbitraryValue) {
+  // shl rax,cl; ret. The destination is independent of fresh flags.
+  Program Ordinary({0x48, 0xd3, 0xe0, 0xc3});
+  EXPECT_TRUE(Ordinary.check().proved());
+  Ordinary.Contract.ReturnRegisters = {{x86reg::OF, 1}};
+  expectRefusal(Ordinary, Status::Dependent);
+
+  // and ecx,1; shl eax,cl; ret. OF is defined or preserved for both counts.
+  Program Bounded({0x83, 0xe1, 1, 0xd3, 0xe0, 0xc3});
+  Bounded.Contract.ReturnRegisters = {{x86reg::OF, 1}};
+  EXPECT_TRUE(Bounded.check().proved());
+
+  // xor eax,eax; lahf; mov cl,ah; and ecx,16; shr ecx,4;
+  // mov edx,1; add eax,0; shl edx,cl; mov eax,0; ret.
+  // The saved arbitrary AF selects 0 or 1. ADD redefines the old OF to 0,
+  // and both possible shifts also leave OF 0. EDX still depends on the count.
+  Program Arbitrary({0x31, 0xc0, 0x9f, 0x88, 0xe1, 0x83, 0xe1, 16,   0xc1,
+                     0xe9, 4,    0xba, 1,    0,    0,    0,    0x83, 0xc0,
+                     0,    0xd3, 0xe2, 0xb8, 0,    0,    0,    0,    0xc3});
+  Arbitrary.Contract.ReturnRegisters = {{x86reg::OF, 1}};
+  const auto Safe = Arbitrary.check();
+  ASSERT_TRUE(Safe.proved()) << Safe.Proof.Diagnostic;
+  Arbitrary.Contract.ReturnRegisters = {{x86reg::RDX, 4}};
+  expectRefusal(Arbitrary, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftCountSnapshotPrecedesOverlappingDestinationWrites) {
+  // mov ecx,1; shl ecx,cl; ret. Re-reading CL would incorrectly make OF
+  // arbitrary because the destination changes CL to 2.
+  Program One({0xb9, 1, 0, 0, 0, 0xd3, 0xe1, 0xc3});
+  One.Contract.ReturnRegisters = {{x86reg::OF, 1}};
+  EXPECT_TRUE(One.check().proved());
+  // shl cl,cl maps 8 to 0. A late guard must not hide its arbitrary CF/OF.
+  Program Eight({0xb9, 8, 0, 0, 0, 0xd2, 0xe1, 0xc3});
+  for (unsigned Flag : {x86reg::AF, x86reg::OF, x86reg::CF}) {
+    Eight.Contract.ReturnRegisters = {{Flag, 1}};
+    expectRefusal(Eight, Status::Dependent);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftUndefinedCopiesAndSpillsRetainTheirActualProducer) {
+  // shl eax,2; seto dl; seto al; xor al,dl; movzx eax,al; ret.
+  Program Shared({0xc1, 0xe0, 2, 0x0f, 0x90, 0xc2, 0x0f, 0x90, 0xc0, 0x30, 0xd0,
+                  0x0f, 0xb6, 0xc0, 0xc3});
+  const auto Result = Shared.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  // An intervening shift creates a distinct OF production.
+  Program Fresh({0xc1, 0xe0, 2, 0x0f, 0x90, 0xc2, 0xc1, 0xe0, 2, 0x0f, 0x90,
+                 0xc0, 0x30, 0xd0, 0x0f, 0xb6, 0xc0, 0xc3});
+  expectRefusal(Fresh, Status::Dependent);
+
+  // Spill and reload the same OF, cancel it, and clear the observable spill.
+  Program Spill({0xc1, 0xe0, 2,    0x0f, 0x90, 0xc2, 0x88, 0x54, 0x24,
+                 0xf8, 0x8a, 0x44, 0x24, 0xf8, 0x30, 0xd0, 0xc6, 0x44,
+                 0x24, 0xf8, 0,    0x0f, 0xb6, 0xc0, 0xc3});
+  const auto Cleared = Spill.check();
+  ASSERT_TRUE(Cleared.proved()) << Cleared.Proof.Diagnostic;
+  // Replace only the clearing store with NOPs: the frame reveals the value.
+  std::fill_n(Spill.Image.Segments[0].Data.begin() + 16, 5, 0x90);
+  expectRefusal(Spill, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RepeatedShiftVisitsProduceFreshUndefinedFlags) {
+  // mov ecx,2; xor ebx,ebx; mov eax,0;
+  // loop: shl eax,2; seto al; xor bl,al; dec ecx; jnz loop;
+  // movzx eax,bl; ret. Reusing one OF producer for both visits falsely
+  // proves that the two arbitrary bits cancel.
+  Program P({0xb9, 2,    0,    0,    0,    0x31, 0xdb, 0xb8, 0,    0,
+             0,    0,    0xc1, 0xe0, 2,    0x0f, 0x90, 0xc0, 0x30, 0xc3,
+             0xff, 0xc9, 0x75, 0xf4, 0x0f, 0xb6, 0xc3, 0xc3});
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftUndefinedBranchCannotHideBehindEqualReturnValues) {
+  // shl eax,2; jo second; mov eax,0; ret; second: mov eax,0; ret.
+  Program P(
+      {0xc1, 0xe0, 2, 0x70, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xb8, 0, 0, 0, 0, 0xc3});
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ShiftGuardedProducersRemainSubjectToProofBudgets) {
+  Program P({0xd2, 0xe0, 0xc3}); // shl al,cl; ret.
+  const auto Complete = P.check();
+  ASSERT_TRUE(Complete.proved()) << Complete.Proof.Diagnostic;
+  EXPECT_EQ(Complete.Proof.Producers, 3u);
+  LowIRIndependenceLimits Limit;
+  Limit.MaxProducers = 2;
+  expectRefusal(P, Status::BudgetExceeded, Limit);
+  Limit = {};
+  Limit.MaxOperations = 2;
+  expectRefusal(P, Status::BudgetExceeded, Limit);
+}
+
+Program indexedImmutableLoad(uint64_t Base = 0x4000, unsigned Bytes = 4) {
+  // and ecx,1; movabs rdx,base; mov eax,[rdx+rcx*4]; ret.
+  Program P({0x83, 0xe1, 1, 0x48, 0xba});
+  P.immediate(Base, 8);
+  if (Bytes == 8)
+    P.append({0x48});
+  if (Bytes == 2)
+    P.append({0x66});
+  P.append({uint8_t(Bytes == 1 ? 0x8a : 0x8b), 0x04,
+            uint8_t(Bytes == 8   ? 0xca
+                    : Bytes == 4 ? 0x8a
+                    : Bytes == 2 ? 0x4a
+                                 : 0x0a)});
+  if (Bytes < 4)
+    P.append({0x0f, uint8_t(Bytes == 1 ? 0xb6 : 0xb7), 0xc0});
+  P.append({0xc3});
+  Segment Data;
+  Data.Name = ".rodata";
+  Data.VA = Base;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Size = Data.FileSz = Bytes * 2;
+  for (unsigned I = 0; I < Bytes * 2; ++I)
+    Data.Data.push_back(uint8_t(13 + I * 17));
+  P.Image.Segments.push_back(std::move(Data));
+  return P;
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteImmutableLoadsRetainEveryAddressWidthAndSelectedValue) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u}) {
+    SCOPED_TRACE(Bytes);
+    auto P = indexedImmutableLoad(0x4000, Bytes);
+    auto &Code = P.Image.Segments[0];
+    Code.Data.pop_back(); // Replace RET with an independent arithmetic check.
+    // Select by an ordinary direct branch and compare each loaded value to
+    // the independently computed table word. A constant-folded choice traps.
+    uint64_t A = 0, B = 0;
+    for (unsigned I = 0; I < Bytes; ++I) {
+      A |= uint64_t(P.Image.Segments[1].Data[I]) << (I * 8);
+      B |= uint64_t(P.Image.Segments[1].Data[Bytes + I]) << (I * 8);
+    }
+    P.append({0x85, 0xc9, 0x75, 18}); // test ecx,ecx; jnz second.
+    P.append({0x48, 0xba});
+    P.immediate(A, 8);
+    P.append({0x48, 0x39, 0xd0, 0x75, 23, 0xc3, 0x90, 0x90});
+    P.append({0x48, 0xba});
+    P.immediate(B, 8);
+    P.append({0x48, 0x39, 0xd0, 0x75, 5, 0xc3, 0x90, 0x90, 0x90, 0x90, 0xcc});
+    const auto R = P.check();
+    ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+    ASSERT_EQ(R.Certificate->Reads.size(), 2u);
+    EXPECT_EQ(R.Proof.Paths, 2u);
+    std::vector<va_t> Addresses;
+    for (const auto &Read : R.Certificate->Reads) {
+      Addresses.push_back(Read.Address);
+      EXPECT_EQ(Read.Bytes.size(), Bytes);
+      EXPECT_FALSE(Read.Evidence.empty());
+    }
+    std::sort(Addresses.begin(), Addresses.end());
+    EXPECT_EQ(Addresses, (std::vector<va_t>{0x4000, 0x4000 + Bytes}));
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteImmutableLoadEvidenceAndLimitsBindCertificates) {
+  auto P = indexedImmutableLoad();
+  const auto A = P.check();
+  ASSERT_TRUE(A.proved()) << A.Proof.Diagnostic;
+  P.Image.Segments[1].Data[7] ^= 0x80;
+  const auto B = P.check();
+  ASSERT_TRUE(B.proved()) << B.Proof.Diagnostic;
+  EXPECT_NE(A.Certificate->InputDigest, B.Certificate->InputDigest);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxImmutableLoadAddresses = 2;
+  const auto C = P.check(Limits);
+  ASSERT_TRUE(C.proved()) << C.Proof.Diagnostic;
+  EXPECT_NE(B.Certificate->InputDigest, C.Certificate->InputDigest);
+  EXPECT_NE(B.Certificate->LowIR.InputDigest, C.Certificate->LowIR.InputDigest);
+  Limits.MaxImmutableLoadAddresses = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits.MaxImmutableLoadAddresses = 0;
+  expectRefusal(P, Status::Invalid, Limits);
+}
+
+TEST(
+    OriginalBinaryUndefinedIndependence,
+    FiniteImmutableLoadRejectsAnyUnmappedWritableUnbackedOrRelocatedCandidate) {
+  for (unsigned Change = 0; Change != 4; ++Change) {
+    SCOPED_TRACE(Change);
+    auto P = indexedImmutableLoad();
+    auto &Data = P.Image.Segments[1];
+    if (Change == 0) {
+      Data.Size = Data.FileSz = 4;
+      Data.Data.resize(4);
+    } else if (Change == 1) {
+      Data.Flags = Data.Flags | SegmentFlags::Writable;
+    } else if (Change == 3) {
+      P.Image.Relocations.push_back(
+          {.Address = 0x4004, .Type = llvm::ELF::R_X86_64_64});
+    } else {
+      // The second range is mapped, but not backed by immutable file bytes.
+      Data.FileSz = 4;
+      Data.Data.resize(4);
+    }
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ArbitraryLoadAddressIsRejectedBeforeEqualDataCanHideIt) {
+  // Produce OF with SHL, use SETO as a one-bit table selector, and return
+  // identical data from both addresses. Memory-address observation still fails.
+  auto P = indexedImmutableLoad();
+  const std::vector<uint8_t> Prefix{0xc1, 0xe0, 2,    0x0f, 0x90,
+                                    0xc1, 0x0f, 0xb6, 0xc9};
+  auto &Code = P.Image.Segments[0];
+  Code.Data.erase(Code.Data.begin(), Code.Data.begin() + 3);
+  Code.Data.insert(Code.Data.begin(), Prefix.begin(), Prefix.end());
+  Code.Size = Code.FileSz = Code.Data.size();
+  std::fill(P.Image.Segments[1].Data.begin(), P.Image.Segments[1].Data.end(),
+            0);
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     UnboundedImmutableLoadCannotUseAFinitePrefix) {
+  auto P = indexedImmutableLoad();
+  auto &Code = P.Image.Segments[0];
+  std::fill_n(Code.Data.begin(), 3,
+              0x90); // Remove the selector's one-bit mask.
+  expectRefusal(P, Status::BudgetExceeded);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteImmutableLoadEnumerationUsesTheCurrentPathPredicate) {
+  auto P = indexedImmutableLoad();
+  auto &Code = P.Image.Segments[0];
+  std::vector<uint8_t> Body(Code.Data.begin() + 3, Code.Data.end());
+  Code.Data.resize(3); // Keep the ordinary one-bit selector.
+  P.append({0x85, 0xc9, 0x75, static_cast<uint8_t>(Body.size())});
+  Code.Data.insert(Code.Data.end(), Body.begin(), Body.end());
+  Code.Data.insert(Code.Data.end(), Body.begin(), Body.end());
+  Code.Size = Code.FileSz = Code.Data.size();
+  LowIRIndependenceLimits Limits;
+  Limits.MaxImmutableLoadAddresses = 1;
+  const auto R = P.check(Limits);
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  ASSERT_EQ(R.Certificate->Reads.size(), 2u);
+  EXPECT_EQ(R.Proof.Paths, 2u);
+  Limits.MaxSolverQueries = R.Proof.SolverQueries - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
 }
 
 } // namespace

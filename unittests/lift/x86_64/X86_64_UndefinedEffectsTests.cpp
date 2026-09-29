@@ -173,7 +173,7 @@ TEST_F(X86UndefinedEffects,
 
 TEST_F(X86UndefinedEffects, UnauditedInstructionsDoNotClaimCompleteCoverage) {
   const InstructionCase Cases[] = {
-      {"shl eax, cl", {0xd3, 0xe0}},
+      {"rol eax, cl", {0xd3, 0xc0}},
       {"bsf eax, ecx", {0x0f, 0xbc, 0xc1}},
       {"apx inc ndd nf", {0x62, 0xec, 0xf5, 0x14, 0xff, 0xc3}},
   };
@@ -187,6 +187,108 @@ TEST_F(X86UndefinedEffects, UnauditedInstructionsDoNotClaimCompleteCoverage) {
     EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
     expectCleared(Effects);
   }
+}
+
+TEST_F(X86UndefinedEffects, LegacyShiftCountsPublishCompleteEvidence) {
+  const InstructionCase Cases[] = {
+      {"shl al, cl", {0xd2, 0xe0}},
+      {"shr ax, cl", {0x66, 0xd3, 0xe8}},
+      {"sar eax, cl", {0xd3, 0xf8}},
+      {"shl rcx, cl", {0x48, 0xd3, 0xe1}},
+      {"shr ah, cl", {0xd2, 0xec}},
+      {"sar byte [rbx], cl", {0xd2, 0x3b}},
+      {"shl eax, 0", {0xc1, 0xe0, 0}},
+      {"shr ax, 16", {0x66, 0xc1, 0xe8, 16}},
+      {"sar rax, 1", {0x48, 0xd1, 0xf8}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    DecodedInsn Insn{};
+    ASSERT_TRUE(decode(Case.Bytes, Insn));
+    std::vector<LowOp> PlainOps, CertifiedOps;
+    Dec.liftToLow(Insn, PlainOps);
+    auto Effects = staleEffects();
+    Dec.liftToLow(Insn, CertifiedOps, {}, {}, &Effects);
+    expectSameOps(PlainOps, CertifiedOps);
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+        << Effects.Diagnostic;
+    EXPECT_EQ(Effects.OpCount, CertifiedOps.size());
+    EXPECT_EQ(Effects.OperationDigest,
+              lowUndefinedOperationDigest(CertifiedOps));
+  }
+}
+
+TEST_F(X86UndefinedEffects, ShiftUnauditedPrefixesClearAllPartialEvidence) {
+  const InstructionCase Cases[] = {
+      {"duplicate operand prefix", {0x66, 0x66, 0xd3, 0xe0}},
+      {"REP shift", {0xf3, 0xd3, 0xe0}},
+      {"REPNZ shift", {0xf2, 0xd3, 0xe0}},
+      {"unused REX.R opcode extension", {0x44, 0xd3, 0xe0}},
+      {"undocumented /6 alias", {0xd3, 0xf0}},
+      {"BMI2 SHLX", {0xc4, 0xe2, 0x71, 0xf7, 0xc0}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    DecodedInsn Insn{};
+    if (!decode(Case.Bytes, Insn))
+      continue; // Decoder refusal is also an explicit boundary.
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+    EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
+  }
+}
+
+TEST_F(X86UndefinedEffects, ShiftMutatedCountWidthAndOpcodeRemainUnaudited) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    DecodedInsn Insn{};
+    ASSERT_TRUE(decode({0xd3, 0xe0}, Insn)); // shl eax,cl.
+    auto &X = Insn.Raw->detail->x86;
+    switch (Mutation) {
+    case 0:
+      X.operands[1].reg = X86_REG_DL;
+      break;
+    case 1:
+      X.operands[1].reg = X86_REG_ECX;
+      X.operands[1].size = 4;
+      break;
+    case 2:
+      X.operands[0].reg = X86_REG_AX;
+      X.operands[0].size = 2;
+      break;
+    case 3:
+      X.operands[0].reg = X86_REG_ECX;
+      break;
+    case 4:
+      Insn.Raw->bytes[1] = 0xe8;
+      break; // Actual group is SHR.
+    case 5:
+      X.encoding.modrm_offset = 0;
+      break;
+    case 6:
+      X.op_count = 1;
+      break;
+    case 7:
+      X.operands[1].type = X86_OP_IMM;
+      X.operands[1].imm = 1;
+      break;
+    }
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+  }
+  DecodedInsn Immediate{};
+  ASSERT_TRUE(decode({0xc1, 0xe0, 2}, Immediate));
+  Immediate.Raw->detail->x86.operands[1].imm = 1;
+  std::vector<LowOp> Ops;
+  auto Effects = staleEffects();
+  Dec.liftToLow(Immediate, Ops, {}, {}, &Effects);
+  expectCleared(Effects);
 }
 
 TEST_F(X86UndefinedEffects, PermissiveUnsupportedFallbackClearsOldCertificate) {
@@ -449,6 +551,32 @@ TEST(X86UndefinedEffectsOtherArch, AArch64DoesNotReuseAnX86Certificate) {
   Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
   EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
   expectCleared(Effects);
+}
+
+TEST(X86UndefinedEffectsForms, ShiftAddressOverridesKeepCountEvidence) {
+  for (const auto &[Target, Bytes] :
+       std::vector<std::pair<Arch, std::vector<uint8_t>>>{
+           {Arch::X86, {0x67, 0x66, 0xd3, 0x20}},
+           {Arch::X86, {0x67, 0xd3, 0x20}},
+           {Arch::X64, {0x67, 0xd3, 0x64, 0x8b, 4}},
+           {Arch::X64, {0x64, 0x48, 0xd3, 0x20}}}) {
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Target));
+    DecodedInsn Insn{};
+    ASSERT_EQ(Decode.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
+              static_cast<int>(Bytes.size()));
+    std::vector<LowOp> Plain, Certified;
+    LowInstructionUndefinedEffects Effects;
+    Decode.liftToLow(Insn, Plain);
+    Decode.liftToLow(Insn, Certified, {}, {}, &Effects);
+    ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+        << Effects.Diagnostic;
+    expectSameOps(Plain, Certified);
+    EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Certified));
+    ASSERT_GE(Effects.Effects.size(), 2u);
+    for (const auto &Effect : Effects.Effects)
+      EXPECT_TRUE(Effect.When.has_value());
+  }
 }
 
 } // namespace

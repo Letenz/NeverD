@@ -92,6 +92,9 @@ struct LowIRIndependenceLimits {
   /// Complete native target sets; solver enumeration requires a final
   /// no-more-values query. Partial target sets never authorize a proof.
   uint32_t MaxIndirectTargets = 16;
+  /// Complete native immutable-load address sets. Every candidate needs
+  /// immutable bytes and frame nonalias evidence; partial sets prove nothing.
+  uint32_t MaxImmutableLoadAddresses = 16;
   /// Bounds checked equalities and the total bytes snapshotted for return
   /// preservation contracts. Each preserved item is checked in both executions.
   uint64_t MaxObservations = 65536;
