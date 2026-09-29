@@ -25,7 +25,7 @@ inline llvm::Error failure(const char *Text) {
 struct ProcessLayout {
   GuestArchitecture Architecture;
   IntegerABI Calls;
-  uint64_t UserLimit, ProgramHeaderAddress, PageSize;
+  uint64_t UserLimit, ProgramHeaderAddress, PageSize, LoadBias;
   bool ExecutableStack;
 };
 struct ServiceABI {

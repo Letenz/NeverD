@@ -5,7 +5,8 @@ transport, image parsing, process entry and OS services have separate owners.
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`; driver emulation also includes it.
 
 The first profile, `linux-elf64-v1`, runs bounded little-endian x64 and AArch64
-ELF `ET_EXEC` programs at CPL3 or EL0. It loads real ELF segments, constructs
+ELF `ET_EXEC` and self-relocating static `ET_DYN` programs at CPL3 or EL0.
+It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
@@ -89,6 +90,21 @@ private address space. Linux mappings preserve file-page prefix/tail bytes,
 zero BSS, honor segment permissions and reserve stack guard gaps. Page-overlap
 layouts and contradictory headers are rejected rather than guessed.
 
+Static PIE uses a deterministic load bias of at least `0x40000000`, increased
+to honor larger `PT_LOAD` alignment. Every mapped segment, entry PC and
+`AT_PHDR`/`AT_ENTRY` uses that same bias; the file's program-header values stay
+unmodified. `AT_BASE` remains zero because no interpreter is loaded. This is a
+reproducible placement policy, not Linux ASLR. Startup follows the direct-entry
+path of the [Linux ELF loader](https://github.com/torvalds/linux/blob/v6.8/fs/binfmt_elf.c).
+
+The mapping source is explicitly the original file, so analysis-time pointer
+fixups cannot leak into guest execution. Guest startup must perform its own
+relocations and initialization. The loader decodes `PT_DYNAMIC` from bounded
+original file records, independently of optional sections; the process model
+requires a readable, terminated table of at most 4096 entries when present. `PT_INTERP`
+and external dependency/filter/audit tags are rejected. The model does not
+silently provide a dynamic linker, symbol resolver or constructor runner.
+
 The initial stack contains aligned argc/argv/envp/auxv, mapped PHDR/PHENT/PHNUM,
 entry/page-size values and identity entries. Model PID/TID/UID/GID are 1000.
 `AT_RANDOM` contains the first 16 bytes of the input's SHA-256 for reproducible
@@ -149,4 +165,8 @@ zero TLS BSS, install thread pointers and check preserved values across switches
 On x64 they also verify `arch_prctl` errors without losing the previous base.
 Backend cells report unavailable transports as skips. The public
 suite traverses the shared C ABI and CLI and checks report/exit-code agreement.
+The static PIE fixtures check relocated auxiliary values and raw zero RELA
+slots before performing their own data/function-pointer relocations. Mapping
+tests separately retain analysis fixups when that byte source is selected;
+dynamic-table tests cover sections being absent and malformed/dependent input.
 Cross-compilation and Unicorn ARM64 results are not native ARM64 KVM/WHP evidence.

@@ -29,6 +29,13 @@ namespace tls_fixture {
 #undef NEVERD_TLS_VALUE
 #undef NEVERD_TLS_TEXT
 } // namespace tls_fixture
+namespace pie_fixture {
+#define NEVERD_PIE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_PIE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxPIECases.def"
+#undef NEVERD_PIE_VALUE
+#undef NEVERD_PIE_TEXT
+} // namespace pie_fixture
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
@@ -128,6 +135,18 @@ TEST_P(LinuxProcess, UnimplementedArchPrctlDoesNotInventAServiceReturn) {
             tls_fixture::UnsupportedOperation);
   EXPECT_FALSE(Result.Services.back().Result);
   EXPECT_TRUE(Result.StandardOutput.empty());
+}
+TEST_P(LinuxProcess, StaticPIEReceivesRawSlotsAndRelocatesAtItsActualBias) {
+  Path.replace_filename(Path.stem().string() + pie_fixture::Suffix);
+  Options.Arguments = {pie_fixture::ExecutableName};
+  Options.InstructionQuantum = 3;
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::Exited) << Result.Diagnostic;
+  EXPECT_EQ(Result.ExitStatus, pie_fixture::ExitStatus);
+  EXPECT_EQ(Result.StandardOutput, pie_fixture::Message);
+  EXPECT_EQ(Result.SelectedBackend, GetParam().Backend);
+  EXPECT_TRUE(Result.StandardError.empty());
+  EXPECT_GT(Result.Instructions, Options.InstructionQuantum);
 }
 TEST_P(LinuxProcess, ServiceEventLimitStopsBeforeAnotherGuestReturn) {
   Options.Limits.Events = 1;

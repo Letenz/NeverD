@@ -479,7 +479,10 @@ faults and resource stops across configured transports. The compiler-emitted
 local-exec TLS fixtures initialize two independent blocks from `PT_TLS`, zero
 TLS BSS and install their own thread pointers. They check x64 `arch_prctl`
 error returns without poisoning execution; malformed templates fail before
-CPU entry. `NeverDProcessPublicTests`
+CPU entry. Static PIE fixtures require original zero RELA slots before guest
+relocation, then call relocated functions and access relocated data at the
+actual load bias. Tests reject malformed dynamic tables and external
+dependencies independently of section metadata. `NeverDProcessPublicTests`
 checks the shared C API/CLI without mutating a loaded analysis image.
 `NeverDExecutionSessionTests` covers two CPUs sharing memory and budgets,
 exactly-once service/fault consumption and image mapping plans.

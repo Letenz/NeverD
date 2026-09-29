@@ -6,6 +6,8 @@
 #ifdef NEVERD_LINUX_VALUE
 NEVERD_LINUX_VALUE(StackTop, 0x00007fffffff0000ULL)
 NEVERD_LINUX_VALUE(MinimumAddress, 0x10000)
+NEVERD_LINUX_VALUE(StaticPIEBias, 0x40000000)
+NEVERD_LINUX_VALUE(DynamicEntryLimit, 4096)
 NEVERD_LINUX_VALUE(UserLimitX64, 0x0000800000000000ULL)
 NEVERD_LINUX_VALUE(UserLimitARM64, 0x0001000000000000ULL)
 NEVERD_LINUX_VALUE(ProcessID, 1000)
@@ -38,7 +40,7 @@ NEVERD_LINUX_AUX(PHNUM, 5, Image.ELFMetadata->ProgramHeaders.size())
 NEVERD_LINUX_AUX(PAGESZ, 6, Layout.PageSize)
 NEVERD_LINUX_AUX(BASE, 7, 0)
 NEVERD_LINUX_AUX(FLAGS, 8, 0)
-NEVERD_LINUX_AUX(ENTRY, 9, Image.Entry)
+NEVERD_LINUX_AUX(ENTRY, 9, Image.Entry + Layout.LoadBias)
 NEVERD_LINUX_AUX(UID, 11, UserID)
 NEVERD_LINUX_AUX(EUID, 12, UserID)
 NEVERD_LINUX_AUX(GID, 13, GroupID)
@@ -66,6 +68,14 @@ NEVERD_LINUX_ABI(AArch64, AArch64SVC, AArch64X8, AArch64X0, AArch64SP,
                  AArch64PC, AArch64X0, AArch64X1, AArch64X2, AArch64X3,
                  AArch64X4, AArch64X5)
 #endif
+#ifdef NEVERD_LINUX_DYNAMIC_DEPENDENCY
+NEVERD_LINUX_DYNAMIC_DEPENDENCY(Needed, llvm::ELF::DT_NEEDED)
+NEVERD_LINUX_DYNAMIC_DEPENDENCY(Auxiliary, llvm::ELF::DT_AUXILIARY)
+NEVERD_LINUX_DYNAMIC_DEPENDENCY(Filter, llvm::ELF::DT_FILTER)
+// GNU audit tags from glibc elf/elf.h; LLVM does not expose these constants.
+NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
+NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
+#endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(
     Limits,
@@ -77,6 +87,9 @@ NEVERD_LINUX_DIAGNOSTIC(ABI, "ELF OS ABI, ABI version or processor flags are "
 NEVERD_LINUX_DIAGNOSTIC(
     Dynamic,
     "Linux process image requires an unimplemented dynamic-link contract")
+NEVERD_LINUX_DIAGNOSTIC(
+    DynamicLayout,
+    "ELF dynamic table has an invalid, excessive or unreadable layout")
 NEVERD_LINUX_DIAGNOSTIC(
     TLS, "ELF TLS template has an invalid, duplicate or unreadable layout")
 NEVERD_LINUX_DIAGNOSTIC(ThreadOperation,

@@ -42,6 +42,19 @@ foreach(_process_arch X64 AArch64)
       fixtures/LinuxTLSCases.def fixtures/LinuxProcessCases.def
     VERBATIM)
   list(APPEND _process_outputs "${_process_base}-tls.elf")
+  add_custom_command(OUTPUT "${_process_base}-pie.elf" "${_process_base}-pie.o"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_process_target}"
+      -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables -fPIE -O1 -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/linux_pie.c" -o "${_process_base}-pie.o"
+    COMMAND "${NEVERD_PROCESS_LLD}" -static -pie --no-dynamic-linker -e _start
+      -z max-page-size=4096 --build-id=none "${_process_base}-pie.o"
+      "${_process_base}-entry.o" -o "${_process_base}-pie.elf"
+    DEPENDS "${_process_base}.elf" fixtures/linux_pie.c
+      fixtures/LinuxPIECases.def fixtures/LinuxProcessCases.def
+    VERBATIM)
+  list(APPEND _process_outputs "${_process_base}-pie.elf")
 endforeach()
 add_custom_target(NeverDProcessFixtures DEPENDS ${_process_outputs})
 add_dependencies(NeverDLinuxProcessTests NeverDProcessFixtures)
