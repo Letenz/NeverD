@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "core/ExecutionDiagnostics.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/CPU.h"
@@ -34,6 +35,12 @@ constexpr Profile Profiles[] = {
     {GuestArchitecture::AArch64, ExecutionContract::Software},
     {GuestArchitecture::X64, ExecutionContract::CheckedX64},
     {GuestArchitecture::AArch64, ExecutionContract::CheckedAArch64}};
+
+constexpr uint64_t InvalidTimeouts[] = {
+#define NEVERD_CONFIGURATION_INVALID_TIMEOUT(Name, Value) Value,
+#include "ExecutionConfigurationCases.def"
+#undef NEVERD_CONFIGURATION_INVALID_TIMEOUT
+};
 
 std::unique_ptr<ExecutionBackend> cpu(Profile Profile) {
   auto CPU = llvm::cantFail(createExecutionBackend(
@@ -74,6 +81,40 @@ TEST(ExecutionExit, InstructionObserverStopsBeforeGuestEffects) {
     EXPECT_FALSE(Exit.Fault);
     EXPECT_FALSE(Exit.DeadlineReached);
     EXPECT_TRUE(Exit.Diagnostic.empty());
+  }
+}
+
+TEST(ExecutionExit, InvalidBudgetsFailBeforeEffectsAndLeaveCPUUsable) {
+  for (const auto Profile : Profiles) {
+    SCOPED_TRACE(executionContractName(Profile.Contract));
+    for (const uint64_t Budget : InvalidTimeouts) {
+      SCOPED_TRACE(Budget);
+      auto CPU = cpu(Profile);
+      code(*CPU, LoadDeviceX64, LoadDeviceARM);
+      const auto PC = Profile.ISA == GuestArchitecture::X64
+                          ? CPURegister::X64PC
+                          : CPURegister::AArch64PC;
+      const auto Before = llvm::cantFail(CPU->readRegister(PC));
+      unsigned Observations = 0;
+      BackendHooks Hooks;
+      Hooks.Instruction = [&](uint64_t, uint32_t) {
+        ++Observations;
+        CPU->stop();
+      };
+      llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+      auto Exit = CPU->runUntilExit(Code, Budget);
+      ASSERT_FALSE(bool(Exit));
+      EXPECT_EQ(llvm::toString(Exit.takeError()), diagnostic::ExecutionTimeout);
+      EXPECT_EQ(llvm::toString(CPU->run(Code, Budget)),
+                diagnostic::ExecutionTimeout);
+      EXPECT_EQ(llvm::cantFail(CPU->readRegister(PC)), Before);
+      EXPECT_EQ(Observations, 0u);
+      EXPECT_FALSE(CPU->fault());
+      EXPECT_FALSE(CPU->timedOut());
+      const auto Next = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+      EXPECT_EQ(Next.Kind, ExecutionExitKind::Stopped);
+      EXPECT_EQ(Observations, 1u);
+    }
   }
 }
 
