@@ -125,6 +125,7 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
   TargetArch = TheArch;
   CurrentMode = Mode;
   Detail = true;
+  Text = true;
   X86 = std::move(NewX86);
   ARM = std::move(NewARM);
   AArch64 = std::move(NewAArch64);
@@ -160,9 +161,11 @@ bool Decoder::selectMode(const BinaryImage &Img, va_t Addr,
   if (Handle && TargetArch == Img.Arch && CurrentMode == *Mode)
     return true;
   const bool WasDetail = Detail;
+  const bool WasText = Text;
   if (!init(Img.Arch, *Mode))
     return false;
   setDetail(WasDetail);
+  setText(WasText);
   return true;
 }
 
@@ -318,6 +321,13 @@ void Decoder::setDetail(bool On) {
     return;
   cs_option(Handle, CS_OPT_DETAIL, On ? CS_OPT_ON : CS_OPT_OFF);
   Detail = On;
+}
+
+void Decoder::setText(bool On) {
+  if (On == Text || Handle == 0)
+    return;
+  cs_option(Handle, CS_OPT_TEXT, On ? CS_OPT_ON : CS_OPT_OFF);
+  Text = On;
 }
 
 void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
