@@ -60,6 +60,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*`와 `BinaryLowIRLoopInference.*`는 독립적으로 작성한 카운터, 스택 저장, 조기 반환, 네이티브 호출 및 패킹된 플래그를 사용합니다. 좁은 비트 폭의 산술 확장과 표현식이 달라도 의미가 같은 플래그를 검사합니다. 잘못된 그래프, 누락되거나 위조된 원본, 종료하지 않거나 래핑하는 루프, 추론 또는 증명 예산 소진에서는 인증서를 생성하면 안 됩니다.
 
+독립적으로 작성한 분기 루프 회귀 테스트는 두 분기 방향, 잘못된 루프 본문, 종료하지 않는 형제 분기와 공유 탐색／증명 예산 소진을 검사합니다. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
+
 중첩 추론 회귀는 2중·3중 루프, 증가·감소 카운터, 자동 단계 상수 및 실제 네이티브 본문 절단점을 다룹니다. 도달 불가능하거나 서로 배타적인 접두 영역, 잘못된 본문, 무한 또는 래핑 전이, 공유 탐색/증명 예산 소진은 거부해야 합니다. 접두 증거가 전체 구간 검증을 대체하지 않습니다.
 
 ```sh
