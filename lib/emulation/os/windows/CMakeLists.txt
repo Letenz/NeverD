@@ -78,7 +78,7 @@ add_neverd_component_library(NeverDEmulation
   KernelAPIIRQL.cpp
   DeviceLifecycle.cpp
   KernelRegistry.cpp
-  LINK_COMPONENTS Loader EmulationCPU)
+  LINK_COMPONENTS Loader EmulationCPU EmulationABI EmulationRuntime)
 if(WIN32)
   target_compile_definitions(NeverDEmulation PRIVATE NOMINMAX)
 endif()

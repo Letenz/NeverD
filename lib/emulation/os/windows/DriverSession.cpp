@@ -12,6 +12,7 @@
 #include "neverd/emulation/DriverSession.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../runtime/RuntimeValues.h"
 #include "DriverImage.h"
 #include "DriverScenario.h"
 #include "GuardControlFlow.h"
@@ -23,6 +24,8 @@
 #include "WindowsX64ExecutionPolicy.h"
 
 #include "neverd/emulation/CPU.h"
+#include "neverd/emulation/ExecutionBudget.h"
+#include "neverd/emulation/IntegerABI.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
@@ -30,7 +33,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <map>
 #include <memory>
 
@@ -110,6 +112,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   Result.SelectedBackend = Backend->Kind;
   Result.BackendSelectionReason = Backend->Reason;
   auto &CPU = *Backend->CPU;
+  const auto ABI =
+      llvm::cantFail(IntegerABI::get(IntegerCallingConvention::Win64));
   GuardControlFlow Guard(*Image);
   // Temporary writable image pages are private setup state. Final permissions
   // are applied before any guest instruction can run.
@@ -208,6 +212,12 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     ProcessorViewMapped = true;
     return RefreshProcessorView();
   };
+  auto Budget = ExecutionBudget::create(
+      {Options.InstructionLimit, Options.EventLimit,
+       Options.TimeoutMilliseconds * runtime::MicrosecondsPerMillisecond});
+  if (!Budget)
+    return Budget.takeError();
+  auto &Resources = **Budget;
   auto Stop = [&](DriverStopReason Reason, const std::string &Diagnostic) {
     if (Stopped)
       return;
@@ -217,10 +227,25 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     CPU.stop();
   };
   auto EventAvailable = [&]() {
-    if (Result.Calls.size() + Result.Writes.size() >= Options.EventLimit) {
-      Stop(DriverStopReason::EventLimit, "behavior event limit reached");
+    if (!Resources.hasEvents()) {
+      Stop(DriverStopReason::EventLimit, runtime::EventLimit);
       return false;
     }
+    return true;
+  };
+  auto RecordEvent = [&]() {
+    if (!Resources.consumeEvents()) {
+      Stop(DriverStopReason::EventLimit, runtime::EventLimit);
+      return false;
+    }
+    return true;
+  };
+  auto RecordInstruction = [&]() {
+    if (!Resources.consumeInstructions()) {
+      Stop(DriverStopReason::InstructionLimit, runtime::InstructionLimit);
+      return false;
+    }
+    Result.Instructions = Resources.instructions();
     return true;
   };
   BackendHooks Hooks;
@@ -276,9 +301,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       CPU.stop();
       return;
     }
-    if (Result.Instructions >= Options.InstructionLimit) {
-      Stop(DriverStopReason::InstructionLimit,
-           "guest instruction limit reached");
+    if (!Resources.hasInstructions()) {
+      Stop(DriverStopReason::InstructionLimit, runtime::InstructionLimit);
       return;
     }
     if (!Size || Size > MaxInstructionSize) {
@@ -314,10 +338,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         return;
       }
       ProcessorReadAdmitted = true;
-      ++Result.Instructions;
+      RecordInstruction();
       return;
     }
-    ++Result.Instructions;
+    if (!RecordInstruction())
+      return;
     if (*Inspection) {
       if (Size > UINT64_MAX - Address) {
         Stop(DriverStopReason::MemoryFault,
@@ -367,7 +392,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       Event.Value = Size == PointerSize
                         ? Value
                         : Value & ((uint64_t(1) << (Size * 8)) - 1);
-    Result.Writes.push_back(std::move(Event));
+    if (RecordEvent())
+      Result.Writes.push_back(std::move(Event));
   };
   Hooks.Fault = [&](uint64_t Address, uint32_t Size, const char *Access) {
     Stop(DriverStopReason::MemoryFault, std::string("guest ") + Access +
@@ -397,13 +423,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   if (auto E = CPU.installHooks(std::move(Hooks)))
     return std::move(E);
 
-  auto Deadline = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(Options.TimeoutMilliseconds);
   auto DeadlineExceeded = [&]() {
-    if (std::chrono::steady_clock::now() < Deadline)
+    if (Resources.remainingMicroseconds())
       return false;
     Stopped = false;
-    Stop(DriverStopReason::Timeout, "execution time limit reached");
+    Stop(DriverStopReason::Timeout, runtime::Timeout);
     return true;
   };
   auto ModelFailure = [&](llvm::Error E) {
@@ -489,36 +513,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     if (auto E = Kernel.activateStack(Frame->Base, Frame->Size))
       return std::move(E);
-    // Reserve the return address, Win64 shadow space and all stack parameters.
-    // Callee entry RSP is always 8 mod 16, including odd stack-argument counts.
-    const uint64_t Extra =
-        Arguments.size() > RegisterArgumentCount
-            ? (Arguments.size() - RegisterArgumentCount) * PointerSize
-            : 0;
-    const uint64_t Reservation =
-        EntryStackReservation + PayloadSize +
-        ((Extra + StackAlignment - 1) & ~(StackAlignment - 1));
-    Frame->InitialSP = Frame->Base + Frame->Size - Reservation;
-    if (auto E =
-            CPU.writeInteger(Frame->InitialSP, ReturnSentinel, PointerSize))
-      return std::move(E);
-    if (auto E = CPU.setReg(X64Register::SP, Frame->InitialSP))
-      return std::move(E);
-    constexpr X64Register Registers[] = {X64Register::CX, X64Register::DX,
-                                         X64Register::R8, X64Register::R9};
-    for (size_t I = 0;
-         I < std::max(Arguments.size(), size_t(RegisterArgumentCount)); ++I) {
-      const auto Value = I < Arguments.size() ? Arguments[I] : 0;
-      if (I < RegisterArgumentCount) {
-        if (auto E = CPU.setReg(Registers[I], Value))
-          return std::move(E);
-      } else if (auto E = CPU.writeInteger(
-                     Frame->InitialSP + StackArgumentOffset +
-                         (I - RegisterArgumentCount) * PointerSize,
-                     Value, PointerSize)) {
-        return std::move(E);
-      }
-    }
+    auto Layout = ABI.prepareCall(CPU, Frame->Base, Frame->Size, ReturnSentinel,
+                                  Arguments, PayloadSize);
+    if (!Layout)
+      return Layout.takeError();
+    Frame->InitialSP = Layout->StackPointer;
     if (auto E = CPU.setReg(X64Register::CR8, Kernel.currentIRQL()))
       return std::move(E);
     return Frame;
@@ -721,11 +720,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     InvocationReturn.reset();
     uint64_t NextPC = Frame.PC;
     while (!Stopped) {
-      auto Remaining = std::chrono::duration_cast<std::chrono::microseconds>(
-                           Deadline - std::chrono::steady_clock::now())
-                           .count();
-      if (Remaining <= 0) {
-        Stop(DriverStopReason::Timeout, "execution time limit reached");
+      const uint64_t Remaining = Resources.remainingMicroseconds();
+      if (!Remaining) {
+        Stop(DriverStopReason::Timeout, runtime::Timeout);
         break;
       }
       Pending = nullptr;
@@ -763,7 +760,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         continue;
       }
       if (CPU.timedOut()) {
-        Stop(DriverStopReason::Timeout, "execution time limit reached");
+        Stop(DriverStopReason::Timeout, runtime::Timeout);
         break;
       }
       if (PendingEnvironmentRead) {
@@ -833,15 +830,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       auto SP = CPU.reg(X64Register::SP);
       if (!SP)
         return SP.takeError();
-      if ((*SP & (StackAlignment - 1)) != PointerSize ||
-          *SP > UINT64_MAX - (StackArgumentOffset +
-                              MaxVariableAPIArguments * PointerSize)) {
+      auto LastArgument =
+          ABI.argumentLocation(*SP, MaxVariableAPIArguments - 1);
+      if (!LastArgument) {
         Stop(DriverStopReason::ModelError,
-             "kernel call violates x64 stack alignment");
+             llvm::toString(LastArgument.takeError()));
         break;
       }
-      constexpr X64Register ArgumentRegisters[] = {
-          X64Register::CX, X64Register::DX, X64Register::R8, X64Register::R9};
       unsigned Count = *KernelModel::argumentCount(*Pending);
       if (Count > MaxAPIArguments) {
         Stop(DriverStopReason::EngineError,
@@ -855,20 +850,14 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       auto ReadArgument = [&](unsigned I) -> llvm::Expected<uint64_t> {
         if (I >= MaxVariableAPIArguments)
           return failure("kernel call exceeds the variable argument limit");
-        if (I >= RegisterArgumentCount) {
-          if (auto E = Kernel.validateGuestAccess(
-                  *SP + StackArgumentOffset +
-                      (I - RegisterArgumentCount) * PointerSize,
-                  8, false)) {
+        auto Location = ABI.argumentLocation(*SP, I);
+        if (!Location)
+          return Location.takeError();
+        if (Location->Register == CPURegister::Invalid)
+          if (auto E = Kernel.validateGuestAccess(Location->Address,
+                                                  ABI.info().WordSize, false))
             return std::move(E);
-          }
-        }
-        return I < RegisterArgumentCount
-                   ? CPU.reg(ArgumentRegisters[I])
-                   : CPU.readInteger(*SP + StackArgumentOffset +
-                                         (I - RegisterArgumentCount) *
-                                             PointerSize,
-                                     PointerSize);
+        return ABI.readArgument(CPU, *SP, I);
       };
       for (unsigned I = 0; I < Count; ++I) {
         auto Argument = ReadArgument(I);
@@ -880,10 +869,12 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         }
         Event.Arguments.push_back(*Argument);
       }
+      if (!RecordEvent())
+        break;
       Result.Calls.push_back(std::move(Event));
       if (Stopped)
         break;
-      auto ReturnPC = CPU.readInteger(*SP, PointerSize);
+      auto ReturnPC = ABI.readReturnAddress(CPU, *SP);
       if (!ReturnPC) {
         Stop(DriverStopReason::MemoryFault,
              llvm::toString(ReturnPC.takeError()));

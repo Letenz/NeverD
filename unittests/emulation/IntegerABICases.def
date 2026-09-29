@@ -1,0 +1,57 @@
+//===- IntegerABICases.def - Independent call-boundary fixtures -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ABI_TEST_VALUE
+NEVERD_ABI_TEST_VALUE(Code, 0x10000)
+NEVERD_ABI_TEST_VALUE(Stack, 0x20000)
+NEVERD_ABI_TEST_VALUE(PageSize, 4096)
+NEVERD_ABI_TEST_VALUE(Limit, 0x100000)
+NEVERD_ABI_TEST_VALUE(Timeout, 1000000)
+NEVERD_ABI_TEST_VALUE(ReturnPC, Code + PageSize - 16)
+NEVERD_ABI_TEST_VALUE(PayloadSize, 64)
+NEVERD_ABI_TEST_VALUE(Canary, 0xfeedc0ffee123456ULL)
+NEVERD_ABI_TEST_VALUE(ArgumentCount, 10)
+NEVERD_ABI_TEST_VALUE(MaxInstructions, 1000)
+#endif
+#ifdef NEVERD_ABI_TEST_TEXT
+NEVERD_ABI_TEST_TEXT(MissingCompiler,
+                     "Clang is unavailable for the compiled ABI fixture")
+NEVERD_ABI_TEST_TEXT(FixtureSymbol, "integer_call")
+#endif
+#ifdef NEVERD_ABI_TEST_ARGUMENTS
+NEVERD_ABI_TEST_ARGUMENTS(11, 23, 37, 41, 53, 61, 71, 83, 97, 101)
+#endif
+#ifdef NEVERD_ABI_TEST_LAYOUT
+// Convention, argument count, byte reservation above entry SP (no payload).
+NEVERD_ABI_TEST_LAYOUT(Win64, 0, 40)
+NEVERD_ABI_TEST_LAYOUT(Win64, 4, 40)
+NEVERD_ABI_TEST_LAYOUT(Win64, 5, 56)
+NEVERD_ABI_TEST_LAYOUT(Win64, 6, 56)
+NEVERD_ABI_TEST_LAYOUT(Win64, 7, 72)
+NEVERD_ABI_TEST_LAYOUT(Win64, 10, 88)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 0, 8)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 6, 8)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 7, 24)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 8, 24)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 9, 40)
+NEVERD_ABI_TEST_LAYOUT(SysVAMD64, 10, 40)
+NEVERD_ABI_TEST_LAYOUT(AAPCS64, 0, 0)
+NEVERD_ABI_TEST_LAYOUT(AAPCS64, 8, 0)
+NEVERD_ABI_TEST_LAYOUT(AAPCS64, 9, 16)
+NEVERD_ABI_TEST_LAYOUT(AAPCS64, 10, 16)
+NEVERD_ABI_TEST_LAYOUT(AAPCS64, 11, 32)
+#endif
+#ifdef NEVERD_ABI_TEST_PROFILE
+#define NEVERD_ABI_TEST_BACKEND(Backend)                                       \
+  NEVERD_ABI_TEST_PROFILE(Backend##Win64, Backend, Win64, X64, CheckedUserX64) \
+  NEVERD_ABI_TEST_PROFILE(Backend##SysV, Backend, SysVAMD64, X64,              \
+                          CheckedUserX64)                                      \
+  NEVERD_ABI_TEST_PROFILE(Backend##AAPCS64, Backend, AAPCS64, AArch64,         \
+                          CheckedUserAArch64)
+NEVERD_ABI_TEST_BACKEND(Unicorn)
+NEVERD_ABI_TEST_BACKEND(KVM)
+NEVERD_ABI_TEST_BACKEND(WHP)
+#undef NEVERD_ABI_TEST_BACKEND
+#endif

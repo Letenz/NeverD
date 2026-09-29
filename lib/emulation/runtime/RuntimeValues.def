@@ -1,0 +1,15 @@
+//===- RuntimeValues.def - Runtime units and diagnostics -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RUNTIME_VALUE
+NEVERD_RUNTIME_VALUE(MicrosecondsPerMillisecond, 1000)
+#endif
+#ifdef NEVERD_RUNTIME_DIAGNOSTIC
+NEVERD_RUNTIME_DIAGNOSTIC(
+    Limits, "workload instruction and event limits must be positive")
+NEVERD_RUNTIME_DIAGNOSTIC(InstructionLimit, "guest instruction limit reached")
+NEVERD_RUNTIME_DIAGNOSTIC(EventLimit, "behavior event limit reached")
+NEVERD_RUNTIME_DIAGNOSTIC(Timeout, "execution time limit reached")
+#endif
