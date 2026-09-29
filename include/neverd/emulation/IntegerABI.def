@@ -1,0 +1,22 @@
+//===- IntegerABI.def - Scalar call conventions -------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// These profiles describe only non-variadic 64-bit integer/pointer arguments
+// and one 64-bit integer/pointer result. They are not type classifiers.
+#ifdef NEVERD_INTEGER_ABI
+// Name, ISA, argument bank, SP, result, link, word, alignment, shadow, red
+// zone.
+NEVERD_INTEGER_ABI(Win64, X64, Win64, X64SP, X64AX, Invalid, 8, 16, 32, 0)
+NEVERD_INTEGER_ABI(SysVAMD64, X64, SysVAMD64, X64SP, X64AX, Invalid, 8, 16, 0,
+                   128)
+NEVERD_INTEGER_ABI(AAPCS64, AArch64, AAPCS64, AArch64SP, AArch64X0, AArch64X30,
+                   8, 16, 0, 0)
+#endif
+#ifdef NEVERD_INTEGER_ARGUMENTS
+NEVERD_INTEGER_ARGUMENTS(Win64, X64CX, X64DX, X64R8, X64R9)
+NEVERD_INTEGER_ARGUMENTS(SysVAMD64, X64DI, X64SI, X64DX, X64CX, X64R8, X64R9)
+NEVERD_INTEGER_ARGUMENTS(AAPCS64, AArch64X0, AArch64X1, AArch64X2, AArch64X3,
+                         AArch64X4, AArch64X5, AArch64X6, AArch64X7)
+#endif

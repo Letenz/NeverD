@@ -3007,6 +3007,32 @@ TEST(HighControlFlowSemantics, SiblingSkipsKeepTheirOwnEdgeCopies) {
   }
 }
 
+TEST(HighControlFlowSemantics, EnteredNopStillFallsIntoTheNextBlock) {
+  // `if (x == 1) goto Y; goto X; return 7; Y: ; X: v = 1; return v + 10;`
+  // The jump to Y runs into X, so X is not reached by jumps alone.
+  HighStmt Entry;
+  Entry.Kind = StmtKind::Nop;
+  Entry.Addr = 0x1100;
+  auto Test = conditional(0x1000, 0x1100);
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  HighFunc F;
+  F.Body = {Test,
+            jump(0x1004, 0x1108),
+            result(0x1008, HighExpr::makeConst(7, 8)),
+            Entry,
+            assign(0x1108, 1, 1),
+            result(0x110c, HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                               HighExpr::makeConst(10, 8)))};
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(11));
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/false);
+  for (uint64_t X : {0, 1}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(11));
+  }
+}
+
 TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
   for (StmtKind Exit : {StmtKind::Break, StmtKind::Goto, StmtKind::Return}) {
     for (bool HasDefault : {false, true}) {

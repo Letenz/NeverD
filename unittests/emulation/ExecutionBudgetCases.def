@@ -1,0 +1,10 @@
+//===- ExecutionBudgetCases.def - Finite workload budget cases -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_BUDGET_VALUE
+NEVERD_BUDGET_VALUE(InstructionLimit, 3)
+NEVERD_BUDGET_VALUE(EventLimit, 2)
+NEVERD_BUDGET_VALUE(Timeout, 1000)
+#endif

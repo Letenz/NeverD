@@ -19,6 +19,7 @@
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -118,34 +119,99 @@ bool hasExactSymbol(const BinaryImage &Img, llvm::StringRef Name) {
   return false;
 }
 
+// The evidence detectLanguageRuntime reads; see LanguageRuntime.def.
+enum class EvidenceOrder { Chain, Otherwise, Fallback };
+enum class ProbeKind { Section, Symbol, SymbolPrefix, Bytes };
+
+enum class EvidenceId {
+#define NEVERD_LANGUAGE_EVIDENCE(Id, Runtime, Order, Description) Id,
+#include "LanguageRuntime.def"
+};
+
+struct Evidence {
+  EvidenceId Id;
+  SourceLanguageRuntime Runtime;
+  EvidenceOrder Order;
+  llvm::StringLiteral Description;
+};
+
+constexpr Evidence Evidences[] = {
+#define NEVERD_LANGUAGE_EVIDENCE(Id, Runtime, Order, Description)              \
+  {EvidenceId::Id, SourceLanguageRuntime::Runtime, EvidenceOrder::Order,       \
+   Description},
+#include "LanguageRuntime.def"
+};
+
+struct Probe {
+  EvidenceId Group;
+  ProbeKind Kind;
+  llvm::StringLiteral Value;
+};
+
+constexpr Probe Probes[] = {
+#define NEVERD_LANGUAGE_PROBE(Id, Kind, Value)                                 \
+  {EvidenceId::Id, ProbeKind::Kind, Value},
+#include "LanguageRuntime.def"
+};
+
+#define NEVERD_LANGUAGE_STRING(Name, Value)                                    \
+  constexpr llvm::StringLiteral Name(Value);
+#define NEVERD_LANGUAGE_CHAR(Name, Value) constexpr char Name = Value;
+#define NEVERD_LANGUAGE_VALUE(Name, Value) constexpr size_t Name = Value;
+#include "LanguageRuntime.def"
+
+bool probeHolds(const BinaryImage &Img, const Probe &P) {
+  switch (P.Kind) {
+  case ProbeKind::Section:
+    return sectionExists(Img, P.Value);
+  case ProbeKind::Symbol:
+    return hasExactSymbol(Img, P.Value);
+  case ProbeKind::SymbolPrefix:
+    return hasSymbolPrefix(Img, P.Value);
+  case ProbeKind::Bytes:
+    return imageContains(Img, P.Value);
+  }
+  return false;
+}
+
+/// Whether any probe of \p Group holds, trying them in the order listed: the
+/// byte searches, which scan every data segment, come last in their groups.
+bool evidenceHolds(const BinaryImage &Img, EvidenceId Group) {
+  return llvm::any_of(Probes, [&](const Probe &P) {
+    return P.Group == Group && probeHolds(Img, P);
+  });
+}
+
+/// The Go release \p Img names first, `go1.` and the digits and dots after
+/// it, or an empty string.
+std::string findGoVersion(const BinaryImage &Img) {
+  va_t VersionVA = 0;
+  if (!imageContains(Img, GoVersionPrefix, &VersionVA))
+    return {};
+  const uint8_t *Bytes = Img.readVA(VersionVA, GoVersionWindow);
+  if (!Bytes)
+    return {};
+  llvm::StringRef Candidate(reinterpret_cast<const char *>(Bytes),
+                            GoVersionWindow);
+  size_t Length = GoVersionPrefix.size();
+  while (Length < Candidate.size() && (llvm::isDigit(Candidate[Length]) ||
+                                       Candidate[Length] == GoVersionSeparator))
+    ++Length;
+  if (Length == GoVersionPrefix.size())
+    return {};
+  return Candidate.take_front(Length).str();
+}
+
 } // namespace
 
 const char *getSourceLanguageRuntimeName(SourceLanguageRuntime Runtime) {
   switch (Runtime) {
-  case SourceLanguageRuntime::Unknown:
-    return "unknown";
-  case SourceLanguageRuntime::C:
-    return "c";
-  case SourceLanguageRuntime::CxxItanium:
-    return "c++-itanium";
-  case SourceLanguageRuntime::CxxMSVC:
-    return "c++-msvc";
-  case SourceLanguageRuntime::Rust:
-    return "rust";
-  case SourceLanguageRuntime::Go:
-    return "go";
-  case SourceLanguageRuntime::Delphi:
-    return "delphi";
-  case SourceLanguageRuntime::ObjectiveC:
-    return "objective-c";
-  case SourceLanguageRuntime::Swift:
-    return "swift";
-  case SourceLanguageRuntime::Ada:
-    return "ada";
-  case SourceLanguageRuntime::D:
-    return "d";
+#define NEVERD_LANGUAGE_RUNTIME_NAME(Name, Spelling)                           \
+  case SourceLanguageRuntime::Name:                                            \
+    return Spelling;
+#include "LanguageRuntime.def"
   }
-  return "unknown";
+  return getSourceLanguageRuntimeName(SourceLanguageRuntime::Unknown);
 }
 
 LanguageRuntimeInfo detectLanguageRuntime(const BinaryImage &Img) {
@@ -159,135 +225,29 @@ LanguageRuntimeInfo detectLanguageRuntime(const BinaryImage &Img) {
     Found.push_back(Runtime);
   };
 
-  // --- Go -----------------------------------------------------------------
-  // The Go linker always emits the function table; its section name differs by
-  // format and the symbol is present even when the section is merged away.
-  if (sectionExists(Img, ".gopclntab") || sectionExists(Img, "__gopclntab") ||
-      sectionExists(Img, ".gosymtab"))
-    record(SourceLanguageRuntime::Go, "go function table section");
-  else if (hasExactSymbol(Img, "runtime.pclntab") ||
-           hasExactSymbol(Img, "runtime.firstmoduledata"))
-    record(SourceLanguageRuntime::Go, "go runtime module symbol");
-  else if (hasSymbolPrefix(Img, "runtime.gopanic") ||
-           hasSymbolPrefix(Img, "runtime.deferreturn"))
-    record(SourceLanguageRuntime::Go, "go panic/defer runtime symbol");
-
-  // `\xff Go buildinf:` is the fixed 14-byte header of the build-info blob the
-  // Go linker writes into every binary from 1.13 onward.
-  {
-    va_t BuildInfoVA = 0;
-    if (imageContains(Img, llvm::StringRef("\xff Go buildinf:", 14),
-                      &BuildInfoVA))
-      record(SourceLanguageRuntime::Go, "go build-info blob");
-    va_t VersionVA = 0;
-    if (imageContains(Img, "go1.", &VersionVA)) {
-      const uint8_t *Bytes = Img.readVA(VersionVA, 16);
-      if (Bytes) {
-        llvm::StringRef Candidate(reinterpret_cast<const char *>(Bytes), 16);
-        size_t Length = 4;
-        while (Length < Candidate.size() &&
-               (llvm::isDigit(Candidate[Length]) || Candidate[Length] == '.'))
-          ++Length;
-        if (Length > 4 && Info.Version.empty())
-          Info.Version = Candidate.take_front(Length).str();
-      }
+  // A group marked Otherwise is tried only while no group of its chain has
+  // held; a Fallback group only while nothing has been found.
+  bool ChainHeld = false;
+  for (const Evidence &E : Evidences) {
+    if (E.Order == EvidenceOrder::Fallback)
+      continue;
+    if (E.Order == EvidenceOrder::Chain)
+      ChainHeld = false;
+    else if (ChainHeld)
+      continue;
+    if (evidenceHolds(Img, E.Id)) {
+      record(E.Runtime, E.Description.str());
+      ChainHeld = true;
     }
   }
+  for (const Evidence &E : Evidences)
+    if (E.Order == EvidenceOrder::Fallback && Found.empty() &&
+        evidenceHolds(Img, E.Id))
+      record(E.Runtime, E.Description.str());
+  Info.Version = findGoVersion(Img);
 
-  // --- Rust ---------------------------------------------------------------
-  {
-    std::string Match;
-    if (hasExactSymbol(Img, "rust_eh_personality") ||
-        hasSymbolPrefix(Img, "_ZN4core", &Match) ||
-        hasSymbolPrefix(Img, "_ZN3std", &Match) ||
-        hasSymbolPrefix(Img, "__ZN4core", &Match) ||
-        hasSymbolPrefix(Img, "_RN", &Match))
-      record(SourceLanguageRuntime::Rust, "rust core/std symbol");
-    else if (imageContains(Img, "/rustc/") ||
-             imageContains(Img, "library/std/src/panicking.rs"))
-      record(SourceLanguageRuntime::Rust, "rust standard library path");
-  }
-
-  // --- Delphi -------------------------------------------------------------
-  if (hasSymbolPrefix(Img, "@System@") || hasSymbolPrefix(Img, "@Sysutils@") ||
-      hasExactSymbol(Img, "@HandleAnyException") ||
-      hasExactSymbol(Img, "__DelphiExceptionHandler"))
-    record(SourceLanguageRuntime::Delphi, "delphi runtime symbol");
-  else if (imageContains(Img, "Portions Copyright (c) 1983,99 Borland") ||
-           imageContains(Img, "Embarcadero Delphi") ||
-           imageContains(Img, "SOFTWARE\\Borland\\Delphi"))
-    record(SourceLanguageRuntime::Delphi, "delphi runtime banner");
-
-  // --- Ada -----------------------------------------------------------------
-  // GNAT mangles an Ada name as `package__subprogram`, so the runtime's own
-  // units are the most reliable evidence an image is Ada: a program can be
-  // built without ever raising an exception, but not without `system__`.
-  // `__gnat_rcheck_` is the family of routines a compiler-inserted language
-  // check calls, which is how an Ada image raises `Constraint_Error`.
-  if (hasExactSymbol(Img, "__gnat_personality_v0") ||
-      hasExactSymbol(Img, "__gnat_personality_sj0") ||
-      hasExactSymbol(Img, "__gnat_personality_seh0") ||
-      hasSymbolPrefix(Img, "__gnat_rcheck_") ||
-      hasSymbolPrefix(Img, "ada__exceptions__") ||
-      hasSymbolPrefix(Img, "system__standard_library"))
-    record(SourceLanguageRuntime::Ada, "gnat runtime symbol");
-
-  // --- D -------------------------------------------------------------------
-  // A D symbol is `_D` followed by a length-prefixed path, which is too weak
-  // a prefix to test on its own: it matches an ordinary C identifier that
-  // starts with a digit-free `D`.  The runtime's own package roots are not
-  // ambiguous, and neither are druntime's C-linkage entry points.
-  if (hasExactSymbol(Img, "__dmd_personality_v0") ||
-      hasExactSymbol(Img, "_d_eh_personality") ||
-      hasExactSymbol(Img, "__gdc_personality_v0") ||
-      hasExactSymbol(Img, "_d_throw_exception") ||
-      hasExactSymbol(Img, "_d_throwdwarf") || hasSymbolPrefix(Img, "_D3std") ||
-      hasSymbolPrefix(Img, "__D3std") || hasSymbolPrefix(Img, "_D4core") ||
-      hasSymbolPrefix(Img, "__D4core") || hasSymbolPrefix(Img, "_D6object") ||
-      hasSymbolPrefix(Img, "__D6object"))
-    record(SourceLanguageRuntime::D, "d runtime symbol");
-
-  // --- C++ ----------------------------------------------------------------
-  if (hasExactSymbol(Img, "__gxx_personality_v0") ||
-      hasExactSymbol(Img, "__gxx_personality_seh0") ||
-      hasSymbolPrefix(Img, "_ZSt") || hasSymbolPrefix(Img, "_ZNSt") ||
-      hasSymbolPrefix(Img, "__ZNSt"))
-    record(SourceLanguageRuntime::CxxItanium, "itanium c++ runtime symbol");
-  if (hasExactSymbol(Img, "__CxxFrameHandler3") ||
-      hasExactSymbol(Img, "__CxxFrameHandler4") ||
-      hasExactSymbol(Img, "__CxxFrameHandler") ||
-      hasSymbolPrefix(Img, "??_7type_info"))
-    record(SourceLanguageRuntime::CxxMSVC, "microsoft c++ runtime symbol");
-
-  // --- Objective-C and Swift ----------------------------------------------
-  // Apple's section names and Apple's personality are only half the language.
-  // The GNU runtimes put their classes in `.objc_class_refs`/`__objc_data` and
-  // never emit `__objc_personality_v0`, so an image built against libobjc,
-  // GNUstep, or ObjFW is recognized by its own personalities and by
-  // `objc_msg_lookup`, the message send that replaces `objc_msgSend` there.
-  if (sectionExists(Img, "__objc_classlist") ||
-      hasExactSymbol(Img, "__objc_personality_v0"))
-    record(SourceLanguageRuntime::ObjectiveC, "objective-c runtime section");
-  else if (hasExactSymbol(Img, "__gnu_objc_personality_v0") ||
-           hasExactSymbol(Img, "__gnu_objc_personality_seh0") ||
-           hasExactSymbol(Img, "__gnu_objc_personality_sj0") ||
-           hasExactSymbol(Img, "__gnustep_objc_personality_v0") ||
-           hasExactSymbol(Img, "__gnustep_objcxx_personality_v0"))
-    record(SourceLanguageRuntime::ObjectiveC, "gnu objective-c personality");
-  else if (sectionExists(Img, ".objc_class_refs") ||
-           hasExactSymbol(Img, "objc_msg_lookup") ||
-           hasExactSymbol(Img, "objc_msgSend"))
-    record(SourceLanguageRuntime::ObjectiveC, "objective-c message send");
-  if (hasSymbolPrefix(Img, "$s") || sectionExists(Img, "__swift5_types"))
-    record(SourceLanguageRuntime::Swift, "swift metadata");
-
-  if (Found.empty()) {
-    if (hasExactSymbol(Img, "__gcc_personality_v0")) {
-      Info.Runtime = SourceLanguageRuntime::C;
-      Info.Evidence.emplace_back("c cleanup-only personality");
-    }
+  if (Found.empty())
     return Info;
-  }
 
   Info.Runtime = Found.front();
   Info.IsMixed = Found.size() > 1;

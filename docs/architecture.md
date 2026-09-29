@@ -1134,7 +1134,9 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
 | `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
-| `NeverDEmulation` | Windows image/ABI, API model, policy and driver lifecycle |
+| `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
+| `NeverDEmulationRuntime` | Workload budgets shared across continuations and CPUs |
+| `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
 The four CPU components declare LLVM Support as their LLVM dependency.
 Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
@@ -1151,7 +1153,8 @@ lib/emulation/
   backends/unicorn/      Portable machine execution
   backends/kvm/          Linux host virtualization
   backends/whp/          Windows host virtualization
-  runtime/               Backend selection and CPU/machine composition
+  abi/                   Guest calling conventions independent of OS and CPU transport
+  runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
 ```
 
@@ -1162,6 +1165,27 @@ implements the architecture's machine boundary. `runtime` owns that
 composition and the host/guest selection rules. Windows code uses the public
 CPU and memory interfaces, and its CMake source inventory stays in
 `os/windows/CMakeLists.txt`. The existing public headers remain compatible.
+
+[`IntegerABI`](../include/neverd/emulation/IntegerABI.h) owns Win64, SysV
+AMD64 and AAPCS64 call-frame operations for non-variadic 64-bit integer/pointer
+arguments and a single 64-bit result. The Windows driver executor uses the same
+boundary as other CPU clients. Stack arguments, shadow space, return-address
+placement, alignment and the SysV red zone come from one `.def` inventory.
+Caller payloads stay above all parameters; invalid layouts and inaccessible
+frames fail before mutation. Floating-point, aggregates, variadic type
+classification and platform-specific ARM64 ABI extensions are separate work.
+The rules follow the [Microsoft x64 convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention),
+[System V AMD64 ABI](https://gitlab.com/x86-psABIs/x86-64-ABI/-/blob/master/low-level-sys-info.tex)
+and [AAPCS64](https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst).
+
+[`ExecutionBudget`](../include/neverd/emulation/ExecutionBudget.h) owns one
+non-copyable instruction/event account and absolute monotonic deadline per
+workload. OS models share it across invocations and continuations; resuming a
+CPU does not replenish credit or restart the timeout. Instructions count
+admitted attempts, including modeled instructions, rather than hardware
+retirement. The Windows model retains its existing thunk/event admission and
+exception/scheduling policies. This accounting boundary does not introduce a
+generic scheduler or a hard native cancellation deadline.
 
 The `os` directory describes the **guest** environment. Linux-host KVM can
 execute a Windows guest workload; the host never chooses its OS model.

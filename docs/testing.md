@@ -316,6 +316,25 @@ and malformed operands must fail explicitly.
 
 ## CPU execution checks
 
+`NeverDIntegerABITests` builds three original Clang fixtures for Windows x64,
+Linux x64 and Linux ARM64. The compiled ten-argument functions exercise real
+register/stack parameters, local stack storage, return addresses and balanced
+returns under checked user execution. The matrix uses Unicorn, KVM and WHP;
+unavailable host/ISA pairs are explicit skips. Layout overflow, ABI mismatch,
+frame permissions, payload separation, unused registers and the SysV red zone
+have independent boundary checks. These are scalar call tests, not evidence of
+a complete OS process environment.
+
+`NeverDExecutionBudgetTests` checks shared continuation credit, failed
+reservations, `UINT64_MAX`, one absolute deadline and unrepresentable durations
+without timing-dependent sleeps. Driver lifecycle regression tests exercise the
+same ABI and budget components in real callback, API and SEH flows.
+
+```bash
+cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget)Tests$' --output-on-failure
+```
+
 `NeverDRunControlTests` runs with or without Unicorn and without a hypervisor.
 It checks cancellation before host entry, repeated requests until acknowledgement,
 stop tokens with distant deadlines, cancellation versus a new entry, and worker

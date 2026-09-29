@@ -44,12 +44,22 @@ add_neverd_component_library(NeverDEmulationCPU
   LINK_COMPONENTS EmulationCore EmulationNative EmulationUnicorn
   LLVM_COMPONENTS Support)
 
+add_neverd_component_library(NeverDEmulationABI
+  abi/IntegerABI.cpp
+  LINK_COMPONENTS EmulationCore
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationRuntime
+  runtime/ExecutionBudget.cpp
+  LINK_COMPONENTS EmulationCore
+  LLVM_COMPONENTS Support)
+
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_UNICORN=1)
 endif()
 
 if(WIN32)
-  foreach(_component Core Native Unicorn CPU)
+  foreach(_component Core Native Unicorn CPU ABI Runtime)
     target_compile_definitions(NeverDEmulation${_component} PRIVATE NOMINMAX)
   endforeach()
 endif()

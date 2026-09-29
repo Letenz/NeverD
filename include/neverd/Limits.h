@@ -538,7 +538,8 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
 
 /// Compact unused HighC parameters only when at least this many are unused.
-/// A lower threshold drops trailing ABI arguments such as `identity(values, 0)`.
+/// A lower threshold drops trailing ABI arguments such as
+/// `identity(values, 0)`.
 constexpr unsigned kMinUnusedParamsToCompact = 4;
 
 /// Nesting at which HighC expression printing is truncated.  Separate from
