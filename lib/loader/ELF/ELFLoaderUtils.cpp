@@ -8,6 +8,7 @@
 
 #include "neverd/object/ELFLayout.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -75,8 +76,6 @@ std::optional<va_t> armPLTVeneerTarget(const uint8_t *Bytes, size_t Available,
   constexpr uint32_t kAddIPFromPC = 0xE28FC000u;
   constexpr uint32_t kAddIPFromIP = 0xE28CC000u;
   constexpr uint32_t kLdrPCFromIP = 0xE5BCF000u;
-  // `pc` reads as the address of the instruction plus two instructions.
-  constexpr uint64_t kPCBias = 8;
 
   if (Available < 8)
     return std::nullopt;
@@ -99,7 +98,8 @@ std::optional<va_t> armPLTVeneerTarget(const uint8_t *Bytes, size_t Available,
   // The load's own displacement is a plain twelve-bit immediate rather than a
   // modified one, and the pre-indexed form adds it before the load.
   Offset += Last & 0xFFF;
-  return static_cast<va_t>((VA + kPCBias + Offset) & 0xFFFFFFFFull);
+  // `pc` reads as the address of the instruction plus two instructions.
+  return static_cast<va_t>((VA + arm::kPCBias + Offset) & 0xFFFFFFFFull);
 }
 
 } // anonymous namespace

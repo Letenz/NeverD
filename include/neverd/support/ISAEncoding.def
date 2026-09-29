@@ -16,7 +16,9 @@
 ///   NEVERD_ARM_ENCODING(Type, Name, Value)      namespace arm
 ///   NEVERD_UNWIND_ENCODING(Type, Name, Value)   namespace unwind
 ///
-/// A value may name a constant listed before it in the same namespace.
+/// A value may name a constant listed before it in the same namespace, or a
+/// row of BranchEncoding.def (neverd/support/BranchEncoding.h), which states
+/// the encodings of direct branches and linker thunks once for both tables.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -72,11 +74,13 @@ NEVERD_X86_ENCODING(size_t, kJmpIndirectDispOffset, 2)
 // AArch64 instruction encoding
 // ===--------------------------------------------------------------------===//
 
-NEVERD_AARCH64_ENCODING(size_t, kInsnSize, 4)
+NEVERD_AARCH64_ENCODING(size_t, kInsnSize, branch::A64InstructionBytes)
 
 // --- Branch encoding (B / BL) ---
-NEVERD_AARCH64_ENCODING(uint32_t, kB_Op, 0x14000000)
-NEVERD_AARCH64_ENCODING(uint32_t, kImm26Mask, 0x03FFFFFF)
+NEVERD_AARCH64_ENCODING(uint32_t, kB_Op, branch::A64Branch.Match)
+NEVERD_AARCH64_ENCODING(
+    uint32_t, kImm26Mask,
+    llvm::maskTrailingOnes<uint32_t>(branch::A64BranchOffset.Width))
 
 // --- Conditional branch (B.cond) ---
 NEVERD_AARCH64_ENCODING(uint32_t, kBCond_Mask, 0xFF000010)
@@ -102,47 +106,59 @@ NEVERD_AARCH64_ENCODING(uint32_t, kTBZ_Imm14SignExt, 0xFFFFC000)
 NEVERD_AARCH64_ENCODING(uint32_t, kADRP_Mask, 0x9F000000)
 NEVERD_AARCH64_ENCODING(uint32_t, kADRP_Op, 0x90000000)
 NEVERD_AARCH64_ENCODING(uint32_t, kADR_Op, 0x10000000)
-NEVERD_AARCH64_ENCODING(uint32_t, kImmHiShift, 5)
-NEVERD_AARCH64_ENCODING(uint32_t, kImmHiMask, 0x7FFFF)
-NEVERD_AARCH64_ENCODING(uint32_t, kImmLoShift, 29)
-NEVERD_AARCH64_ENCODING(uint32_t, kImmLoMask, 0x3)
+// ADR and ADRP share their immhi and immlo fields.
+NEVERD_AARCH64_ENCODING(uint32_t, kImmHiShift, branch::A64PageImmHi.Low)
+NEVERD_AARCH64_ENCODING(
+    uint32_t, kImmHiMask,
+    llvm::maskTrailingOnes<uint32_t>(branch::A64PageImmHi.Width))
+NEVERD_AARCH64_ENCODING(uint32_t, kImmLoShift, branch::A64PageImmLo.Low)
+NEVERD_AARCH64_ENCODING(
+    uint32_t, kImmLoMask,
+    llvm::maskTrailingOnes<uint32_t>(branch::A64PageImmLo.Width))
 NEVERD_AARCH64_ENCODING(uint32_t, kImm21Sign, 0x100000)
 NEVERD_AARCH64_ENCODING(uint32_t, kImm21SignExt, 0xFFE00000)
 NEVERD_AARCH64_ENCODING(uint32_t, kRdMask, 0x1F)
 NEVERD_AARCH64_ENCODING(uint32_t, kADRP_FixedBits, kADRP_Mask | kRdMask)
 
 // --- ADRP page arithmetic ---
-NEVERD_AARCH64_ENCODING(uint32_t, kPageShift, 12)
-NEVERD_AARCH64_ENCODING(uint32_t, kImmLoWidth, 2)
+NEVERD_AARCH64_ENCODING(uint32_t, kPageShift,
+                        llvm::ConstantLog2<branch::A64PageBytes>())
+NEVERD_AARCH64_ENCODING(uint32_t, kImmLoWidth, branch::A64PageImmLo.Width)
 NEVERD_AARCH64_ENCODING(uint32_t, kADRP_ImmBits, 32)
 
 // --- Load/store immediate ---
 NEVERD_AARCH64_ENCODING(uint32_t, kLDR_Imm12Shift, 10)
 NEVERD_AARCH64_ENCODING(uint32_t, kLDR_Imm12Mask, 0xFFF)
-NEVERD_AARCH64_ENCODING(uint64_t, kPageMask, ~uint64_t(0xFFF))
+NEVERD_AARCH64_ENCODING(uint64_t, kPageMask,
+                        ~uint64_t(branch::A64PageBytes - 1))
 
 // --- Import veneer patterns ---
-NEVERD_AARCH64_ENCODING(uint32_t, kADRP_X16_Mask, 0x9F00001F)
-NEVERD_AARCH64_ENCODING(uint32_t, kADRP_X16_Match, 0x90000010)
+NEVERD_AARCH64_ENCODING(uint32_t, kADRP_X16_Mask,
+                        branch::A64PageAddressX16.Mask)
+NEVERD_AARCH64_ENCODING(uint32_t, kADRP_X16_Match,
+                        branch::A64PageAddressX16.Match)
 NEVERD_AARCH64_ENCODING(uint32_t, kLDR_X16_X16_Mask, 0xFFC003FF)
 NEVERD_AARCH64_ENCODING(uint32_t, kLDR_X16_X16_Match, 0xF9400210)
 NEVERD_AARCH64_ENCODING(uint32_t, kLDR_X17_X16_Match, 0xF9400211)
-NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Mask, 0xFFC003FF)
-NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Match, 0x91000210)
+NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Mask, branch::A64AddX16X16.Mask)
+NEVERD_AARCH64_ENCODING(uint32_t, kADD_X16_X16_Match,
+                        branch::A64AddX16X16.Match)
 NEVERD_AARCH64_ENCODING(size_t, kThunkLen, 12)
 NEVERD_AARCH64_ENCODING(size_t, kELFPLTThunkLen, 16)
 
 // --- Miscellaneous ---
 NEVERD_AARCH64_ENCODING(uint32_t, kNop, 0xD503201F)
-NEVERD_AARCH64_ENCODING(uint32_t, kBR_X16, 0xD61F0200)
+NEVERD_AARCH64_ENCODING(uint32_t, kBR_X16, branch::A64BranchRegisterX16.Match)
 NEVERD_AARCH64_ENCODING(uint32_t, kBR_X17, 0xD61F0220)
 
 // --- Branch target identification: the landing pads of indirect calls ---
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_C, 0xD503245F)
 NEVERD_AARCH64_ENCODING(uint32_t, kBTI_JC, 0xD50324DF)
 
-// +/- 128 MB reach of B/BL (26-bit signed imm << 2).
-NEVERD_AARCH64_ENCODING(int64_t, kBranchRange, 1LL << 27)
+// +/- 128 MB reach of B/BL: a signed 26-bit offset in instructions.
+NEVERD_AARCH64_ENCODING(int64_t, kBranchRange,
+                        int64_t(branch::A64InstructionBytes)
+                            << (branch::A64BranchOffset.Width - 1))
 
 // ===--------------------------------------------------------------------===//
 // ELF PLT layout
@@ -166,22 +182,26 @@ NEVERD_MACHO_ENCODING(uint32_t, kDefaultStubSize, 6)
 // ARM 32-bit instruction encoding
 // ===--------------------------------------------------------------------===//
 
-NEVERD_ARM_ENCODING(uint32_t, kLdrPC, 0xE51FF004u)
+NEVERD_ARM_ENCODING(uint32_t, kLdrPC, branch::ArmLoadPCFromNextWord.Match)
 NEVERD_ARM_ENCODING(uint32_t, kArmNop, 0xE1A00000u) // MOV r0, r0
 NEVERD_ARM_ENCODING(uint16_t, kThumbNop, 0xBF00)
-NEVERD_ARM_ENCODING(uint32_t, kPCBias, 8)
-NEVERD_ARM_ENCODING(size_t, kInsnSize, 4)
-NEVERD_ARM_ENCODING(size_t, kThumbInsnSize, 2)
+NEVERD_ARM_ENCODING(uint32_t, kPCBias, branch::ArmPCOffset)
+NEVERD_ARM_ENCODING(size_t, kInsnSize, branch::ArmInstructionBytes)
+NEVERD_ARM_ENCODING(size_t, kThumbInsnSize, branch::ThumbHalfwordBytes)
 NEVERD_ARM_ENCODING(size_t, kLdrPCTrampLen, 8)
-NEVERD_ARM_ENCODING(size_t, kThumbMovImmInsnSize, 4)
+NEVERD_ARM_ENCODING(size_t, kThumbMovImmInsnSize,
+                    branch::ThumbWideInstructionBytes)
 NEVERD_ARM_ENCODING(size_t, kThumbImportThunkLen, 12)
-NEVERD_ARM_ENCODING(uint16_t, kThumbMovImmOp1Mask, 0xFBF0)
-NEVERD_ARM_ENCODING(uint16_t, kThumbMovWIPOp1, 0xF240)
-NEVERD_ARM_ENCODING(uint16_t, kThumbMovTIPOp1, 0xF2C0)
-NEVERD_ARM_ENCODING(uint16_t, kThumbMovIPOp2Mask, 0x8F00)
-NEVERD_ARM_ENCODING(uint16_t, kThumbMovIPOp2, 0x0C00)
+NEVERD_ARM_ENCODING(uint16_t, kThumbMovImmOp1Mask,
+                    branch::ThumbMoveWideToIPHigh.Mask)
+NEVERD_ARM_ENCODING(uint16_t, kThumbMovWIPOp1,
+                    branch::ThumbMoveWideToIPHigh.Match)
+NEVERD_ARM_ENCODING(uint16_t, kThumbMovTIPOp1,
+                    branch::ThumbMoveTopToIPHigh.Match)
+NEVERD_ARM_ENCODING(uint16_t, kThumbMovIPOp2Mask, branch::ThumbMoveToIPLow.Mask)
+NEVERD_ARM_ENCODING(uint16_t, kThumbMovIPOp2, branch::ThumbMoveToIPLow.Match)
 NEVERD_ARM_ENCODING(uint32_t, kThumbLdrPCFromIP, 0xF000F8DC)
-NEVERD_ARM_ENCODING(uint64_t, kThumbBWLen, 4)
+NEVERD_ARM_ENCODING(uint64_t, kThumbBWLen, branch::ThumbWideInstructionBytes)
 NEVERD_ARM_ENCODING(int64_t, kThumbBWMinDisp, -(int64_t(1) << 24))
 NEVERD_ARM_ENCODING(int64_t, kThumbBWMaxDisp, (int64_t(1) << 24) - 2)
 

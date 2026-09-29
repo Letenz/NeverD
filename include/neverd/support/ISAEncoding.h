@@ -15,7 +15,9 @@
 #define NEVERD_SUPPORT_ISAENCODING_H
 
 #include "neverd/Common.h"
+#include "neverd/support/BranchEncoding.h"
 
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Win64EH.h"
 
 #include <cstddef>
