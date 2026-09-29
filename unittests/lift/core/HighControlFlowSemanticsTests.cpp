@@ -2754,6 +2754,71 @@ TEST(HighControlFlowSemantics, RecoveredSwitchPreservesUnmatchedReturn) {
   }
 }
 
+TEST(HighControlFlowSemantics, RecoveredSwitchKeepsJumpsToASharedTail) {
+  // `if (x == 0) goto C0; ... return 99; C0: v = 10; goto T; ... T: return
+  // v + 1;` Each case jumps to a tail that is not what follows the switch;
+  // breaking out instead would skip it (as in an Authz attribute copy loop).
+  HighFunc F;
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    auto Branch = conditional(0x1000 + 4 * Case, 0x1100 + 0x100 * Case);
+    Branch.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                      HighExpr::makeConst(Case, 8));
+    F.Body.push_back(std::move(Branch));
+  }
+  F.Body.push_back(result(0x1010, HighExpr::makeConst(99, 8)));
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    F.Body.push_back(assign(0x1100 + 0x100 * Case, 5, 10 * (Case + 1)));
+    F.Body.push_back(jump(0x1104 + 0x100 * Case, 0x1400));
+  }
+  F.Body.push_back(
+      result(0x1400, HighExpr::makeBinop(NdOp::INT_ADD, local(5),
+                                         HighExpr::makeConst(1, 8))));
+  auto Expected = [](uint64_t Input) -> uint64_t {
+    return Input < 3 ? 10 * (Input + 1) + 1 : 99;
+  };
+  for (uint64_t Input : {0, 1, 2, 3, 255})
+    ASSERT_EQ(execute(F, Input), Expected(Input));
+  recoverSwitchStatements(F);
+  for (uint64_t Input : {0, 1, 2, 3, 255}) {
+    SCOPED_TRACE(Input);
+    EXPECT_EQ(execute(F, Input), Expected(Input));
+  }
+}
+
+TEST(HighControlFlowSemantics, RecoveredSwitchKeepsFallthroughIntoACase) {
+  // Case zero's block falls into case one's; moving case one into the switch
+  // would cut that path.
+  HighFunc F;
+  F.Body.push_back(assign(0x0ff0, 5, 100));
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    auto Branch = conditional(0x1000 + 4 * Case, 0x1100 + 0x100 * Case);
+    Branch.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                      HighExpr::makeConst(Case, 8));
+    F.Body.push_back(std::move(Branch));
+  }
+  F.Body.push_back(jump(0x100c, 0x1400));
+  F.Body.push_back(assign(0x1100, 5, 10));
+  auto AddFive = assign(0x1200, 5, 0);
+  AddFive.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(5), HighExpr::makeConst(5, 8));
+  F.Body.push_back(std::move(AddFive));
+  F.Body.push_back(jump(0x1204, 0x1500));
+  F.Body.push_back(assign(0x1300, 5, 30));
+  F.Body.push_back(jump(0x1304, 0x1500));
+  F.Body.push_back(assign(0x1400, 5, 0));
+  F.Body.push_back(result(0x1500, local(5)));
+  auto Expected = [](uint64_t Input) -> uint64_t {
+    return Input == 0 ? 15 : Input == 1 ? 105 : Input == 2 ? 30 : 0;
+  };
+  for (uint64_t Input : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, Input), Expected(Input));
+  recoverSwitchStatements(F);
+  for (uint64_t Input : {0, 1, 2, 3}) {
+    SCOPED_TRACE(Input);
+    EXPECT_EQ(execute(F, Input), Expected(Input));
+  }
+}
+
 TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
   for (StmtKind Exit : {StmtKind::Break, StmtKind::Goto, StmtKind::Return}) {
     for (bool HasDefault : {false, true}) {
