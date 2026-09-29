@@ -3753,7 +3753,7 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, PT_DYNAMIC, page-overlapping loads and unsupported CPU instructions fail clearly.",
+        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC and self-relocating static ET_DYN images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, external dynamic dependencies, page-overlapping loads and unsupported CPU instructions fail clearly. Static PIE uses one aligned deterministic load bias and original file bytes; guest startup owns relocation and initialization.",
         "write, exit, exit_group, getpid, gettid and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
         "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
@@ -3826,6 +3826,20 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.StaticPIEReceivesRawSlotsAndRelocatesAtItsActualBias/*",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionSessionTests",
+          "source": "unittests/emulation/ImageMappingTests.cpp",
+          "filter": "ImageMapping.OriginalFileMappingsNeverImportAnalysisRelocations",
+          "platforms": ["darwin", "linux", "windows"]
         }
       ],
       "public_surfaces": {

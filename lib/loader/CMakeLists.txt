@@ -38,6 +38,7 @@ add_neverd_component_library(NeverDLoader
   ELF/ELFLoaderSections.cpp
   ELF/ELFLoaderSegments.cpp
   ELF/ELFLoaderUtils.cpp
+  ELF/ELFProgramMetadata.cpp
   ELF/SBFELFLoader.cpp
   EVM/EVMLoader.cpp
   ExecutableCodeOwnerIndex.cpp

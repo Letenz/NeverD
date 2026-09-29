@@ -50,6 +50,13 @@ namespace tls_fixture {
 #undef NEVERD_TLS_VALUE
 #undef NEVERD_TLS_TEXT
 } // namespace tls_fixture
+namespace pie_fixture {
+#define NEVERD_PIE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_PIE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxPIECases.def"
+#undef NEVERD_PIE_VALUE
+#undef NEVERD_PIE_TEXT
+} // namespace pie_fixture
 
 std::string takeString(const char *Value) {
   if (!Value)
@@ -163,25 +170,36 @@ TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
 }
 
-TEST_F(ProcessPublic, CompilerTLSRunsThroughTheSharedSDKAndCLI) {
+TEST_F(ProcessPublic, CompilerStartupRunsThroughTheSharedSDKAndCLI) {
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  auto Request =
-      llvm::cantFail(llvm::json::parse(options(tls_fixture::Normal)));
-  (*Request.getAsObject())[field::InstructionLimit] =
-      tls_fixture::InstructionLimit;
-  const auto Options = jsonText(std::move(*Request.getAsObject()));
-  for (const char *File : {tls_fixture::X64File, tls_fixture::ARMFile}) {
-    SCOPED_TRACE(File);
-    Path = (std::filesystem::path(Path).parent_path() / File).string();
+  struct Fixture {
+    const char *File, *Message;
+    uint64_t Limit, Status;
+  };
+  const Fixture Fixtures[] = {
+      {tls_fixture::X64File, tls_fixture::Message,
+       tls_fixture::InstructionLimit, tls_fixture::ExitStatus},
+      {tls_fixture::ARMFile, tls_fixture::Message,
+       tls_fixture::InstructionLimit, tls_fixture::ExitStatus},
+      {pie_fixture::X64File, pie_fixture::Message,
+       pie_fixture::InstructionLimit, pie_fixture::ExitStatus},
+      {pie_fixture::ARMFile, pie_fixture::Message,
+       pie_fixture::InstructionLimit, pie_fixture::ExitStatus}};
+  for (const auto &Fixture : Fixtures) {
+    SCOPED_TRACE(Fixture.File);
+    Path = (std::filesystem::path(Path).parent_path() / Fixture.File).string();
+    auto Request = llvm::cantFail(llvm::json::parse(options(Normal)));
+    (*Request.getAsObject())[field::InstructionLimit] = Fixture.Limit;
+    const auto Options = jsonText(std::move(*Request.getAsObject()));
     const auto Result = run(Options);
     EXPECT_EQ(Result.getAsObject()->getInteger(field::ExitStatus),
-              tls_fixture::ExitStatus);
+              Fixture.Status);
     EXPECT_EQ(Result.getAsObject()->getString(field::Stdout),
-              llvm::toHex(tls_fixture::Message, true));
+              llvm::toHex(Fixture.Message, true));
     const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
                          process_cli::Command + " " + test::shellQuote(Path) +
                          " --" + process_cli::ProfileOption + "=" + LinuxELF64 +

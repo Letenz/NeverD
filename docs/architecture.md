@@ -1225,15 +1225,21 @@ success. This does not claim concurrent SMP execution.
 [`ImageMappingPlan`](../include/neverd/emulation/ImageMapping.h) consumes existing
 loader segments; it neither reparses headers nor resolves imports. ELF loaders
 also retain decoded program-header facts in `BinaryImage::ELFMetadata`, allowing
-Linux policy to validate startup without duplicating ELF parsing. Image plans
-check complete extents and overlap before materializing bytes. The Linux model
+Linux policy to validate startup without duplicating ELF parsing. The ELF loader
+also decodes original program dynamic tables without depending on section
+headers. Image plans check complete extents and overlap before materializing
+bytes, with an explicit choice between analysis-patched segments and original
+file bytes. Linux process startup consumes the original bytes, selects one
+load bias for static PIE and supplies relocated entry/PHDR auxiliary values.
+Guest startup owns self-relocation and TLS initialization. The Linux model
 sets up a private address space before exposing its CPU.
 
 The [process API](process-emulation.md) adds an explicit `linux-elf64-v1` profile
 through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
-system-call continuations and bounded byte output. It currently rejects dynamic
-linking, TLS, signals and thread creation. Those OS semantics remain in
+system-call continuations and bounded byte output. It supports static TLS and
+self-relocating static PIE, while rejecting an interpreter, external dynamic
+dependencies, signals and thread creation. Those OS semantics remain in
 `os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 

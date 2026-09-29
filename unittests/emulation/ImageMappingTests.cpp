@@ -60,6 +60,34 @@ TEST(ImageMapping, ZeroPaddingAndBiasDoNotGuessRelocationSemantics) {
   EXPECT_EQ(Plan.Regions[0].Bytes.front(), 0u);
   EXPECT_EQ(Plan.Regions[0].Bytes[ImageOffset], PatchedByte);
 }
+TEST(ImageMapping, OriginalFileMappingsNeverImportAnalysisRelocations) {
+  for (auto Padding : {ImagePagePadding::Zero, ImagePagePadding::FilePages}) {
+    auto Image = makeImage(true);
+    // Raw file facts remain sufficient even when the analysis byte view is
+    // unavailable. The caller explicitly chooses which authority to map.
+    Image.Segments[0].Data.clear();
+    auto Plan = llvm::cantFail(
+        ImageMappingPlan::create(Image, PageSize, PageSize, Limit, true,
+                                 Padding, ImageByteSource::OriginalFile));
+    ASSERT_EQ(Plan.Regions.size(), 1u);
+    EXPECT_EQ(Plan.Entry, Image.Entry + PageSize);
+    const auto &R = Plan.Regions[0];
+    for (size_t I = 0; I < R.Bytes.size(); ++I) {
+      const uint8_t Expected =
+          I < ImageOffset
+              ? (Padding == ImagePagePadding::FilePages ? FileByte : 0)
+          : I < ImageOffset + ImageFileSize ? FileByte
+                                            : 0;
+      ASSERT_EQ(R.Bytes[I], Expected) << I;
+    }
+    Image.Segments[0].FileOff = Image.Raw.size();
+    auto Invalid =
+        ImageMappingPlan::create(Image, 0, PageSize, Limit, true, Padding,
+                                 ImageByteSource::OriginalFile);
+    EXPECT_FALSE(bool(Invalid));
+    llvm::consumeError(Invalid.takeError());
+  }
+}
 TEST(ImageMapping,
      RejectsOverlappingPermissionsOverflowAndUnboundedAllocation) {
   auto Image = makeImage(false);

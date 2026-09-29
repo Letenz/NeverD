@@ -116,9 +116,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Space = AddressSpace::create(*Physical, Options.MemoryLimit);
   if (!Space)
     return Space.takeError();
-  auto Plan = ImageMappingPlan::create(*Image, 0, Layout->PageSize,
-                                       Options.MemoryLimit - Options.StackSize,
-                                       true, ImagePagePadding::FilePages);
+  auto Plan = ImageMappingPlan::create(
+      *Image, Layout->LoadBias, Layout->PageSize,
+      Options.MemoryLimit - Options.StackSize, true,
+      ImagePagePadding::FilePages, ImageByteSource::OriginalFile);
   if (!Plan)
     return Plan.takeError();
   const uint64_t StackBase = StackTop - Options.StackSize;

@@ -8,8 +8,10 @@
 
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/ELF/ELFLoader.h"
+#include "neverd/loader/ELF/ELFProgramMetadata.h"
 
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/Support/Endian.h"
 
 namespace neverd::emulation {
 namespace {
@@ -24,6 +26,13 @@ namespace tls_fixture {
 #include "fixtures/LinuxTLSCases.def"
 #undef NEVERD_TLS_TEXT
 } // namespace tls_fixture
+namespace pie_fixture {
+#define NEVERD_PIE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_PIE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxPIECases.def"
+#undef NEVERD_PIE_VALUE
+#undef NEVERD_PIE_TEXT
+} // namespace pie_fixture
 
 class LinuxProcessLayout : public testing::Test {
 protected:
@@ -62,15 +71,118 @@ TEST_F(LinuxProcessLayout, KeepsLoaderProgramHeadersAndRequiresMappedTable) {
 }
 
 TEST_F(LinuxProcessLayout, RejectsUnimplementedDynamicLinkContractsExplicitly) {
-  for (uint32_t Type : {llvm::ELF::PT_INTERP, llvm::ELF::PT_DYNAMIC}) {
+  Image.ELFMetadata->ProgramHeaders.front().Type = llvm::ELF::PT_INTERP;
+  auto Layout = linux_model::processLayout(Image);
+  EXPECT_FALSE(bool(Layout));
+  EXPECT_EQ(llvm::toString(Layout.takeError()), linux_model::Dynamic);
+}
+
+TEST_F(LinuxProcessLayout, StaticPIEUsesLoaderFactsWithoutDependingOnSections) {
+#ifndef NEVERD_PROCESS_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  ELFLoader Loader;
+  auto Loaded = Loader.load(std::filesystem::path(NEVERD_PROCESS_FIXTURE_DIR) /
+                            pie_fixture::ARMFile);
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  Image = std::move(*Loaded);
+  ASSERT_EQ(Image.ELFMetadata->Type, llvm::ELF::ET_DYN);
+  Image.Sections.clear();
+  Image.DynInfo = {};
+  auto Layout = linux_model::processLayout(Image);
+  ASSERT_TRUE(bool(Layout)) << llvm::toString(Layout.takeError());
+  EXPECT_EQ(Layout->LoadBias, linux_model::StaticPIEBias);
+  EXPECT_GE(Layout->ProgramHeaderAddress, Layout->LoadBias);
+  auto Aligned = Image;
+  auto FirstLoad =
+      llvm::find_if(Aligned.ELFMetadata->ProgramHeaders,
+                    [](const auto &H) { return H.Type == llvm::ELF::PT_LOAD; });
+  ASSERT_NE(FirstLoad, Aligned.ELFMetadata->ProgramHeaders.end());
+  ASSERT_EQ(FirstLoad->VirtualAddress, 0u);
+  ASSERT_EQ(FirstLoad->FileOffset, 0u);
+  FirstLoad->Alignment = 2 * linux_model::StaticPIEBias;
+  auto AlignedLayout = linux_model::processLayout(Aligned);
+  ASSERT_TRUE(bool(AlignedLayout)) << llvm::toString(AlignedLayout.takeError());
+  EXPECT_EQ(AlignedLayout->LoadBias, FirstLoad->Alignment);
+  FirstLoad->Alignment = linux_model::UserLimitARM64;
+  rejects(Aligned);
+  auto Entries = readELFProgramDynamicTable(Image);
+  ASSERT_TRUE(bool(Entries)) << llvm::toString(Entries.takeError());
+  EXPECT_FALSE(Entries->empty());
+  auto Table =
+      llvm::find_if(Image.ELFMetadata->ProgramHeaders, [](const auto &H) {
+        return H.Type == llvm::ELF::PT_DYNAMIC;
+      });
+  ASSERT_NE(Table, Image.ELFMetadata->ProgramHeaders.end());
+  const size_t Index = Table - Image.ELFMetadata->ProgramHeaders.begin();
+  auto Dependency = Image;
+  llvm::support::endian::write64le(Dependency.Raw.data() + Table->FileOffset,
+                                   llvm::ELF::DT_NEEDED);
+  auto Unsupported = linux_model::processLayout(Dependency);
+  EXPECT_FALSE(bool(Unsupported));
+  EXPECT_EQ(llvm::toString(Unsupported.takeError()), linux_model::Dynamic);
+  for (auto Mutate :
+       {+[](ELFProgramHeader &H) { H.FileSize = 0; },
+        +[](ELFProgramHeader &H) { --H.FileSize; },
+        +[](ELFProgramHeader &H) { H.FileOffset = UINT64_MAX; },
+        +[](ELFProgramHeader &H) { H.VirtualAddress = UINT64_MAX; }}) {
     auto Invalid = Image;
-    Invalid.ELFMetadata->ProgramHeaders.front().Type = Type;
-    auto Layout = linux_model::processLayout(Invalid);
-    EXPECT_FALSE(bool(Layout));
-    EXPECT_EQ(llvm::toString(Layout.takeError()), linux_model::Dynamic);
+    Mutate(Invalid.ELFMetadata->ProgramHeaders[Index]);
+    rejects(Invalid);
   }
-  Image.ELFMetadata->Type = llvm::ELF::ET_DYN;
-  rejects(Image);
+  auto Unterminated = Image;
+  for (uint64_t Offset = 0; Offset < Table->FileSize;
+       Offset += sizeof(llvm::ELF::Elf64_Dyn))
+    llvm::support::endian::write64le(Unterminated.Raw.data() +
+                                         Table->FileOffset + Offset,
+                                     llvm::ELF::DT_DEBUG);
+  rejects(Unterminated);
+  auto Duplicate = Image;
+  auto Stack =
+      llvm::find_if(Duplicate.ELFMetadata->ProgramHeaders, [](const auto &H) {
+        return H.Type == llvm::ELF::PT_GNU_STACK;
+      });
+  ASSERT_NE(Stack, Duplicate.ELFMetadata->ProgramHeaders.end());
+  *Stack = *Table;
+  rejects(Duplicate);
+  auto Overflow = Image;
+  Overflow.Entry = UINT64_MAX;
+  rejects(Overflow);
+#endif
+}
+
+TEST_F(LinuxProcessLayout, DynamicTableDecoderPreservesBothELFWordWidths) {
+  for (bool Wide : {false, true}) {
+    auto Input = Image;
+    Input.Bits = Wide ? Bitness::Bits64 : Bitness::Bits32;
+    Input.Raw[llvm::ELF::EI_CLASS] =
+        Wide ? llvm::ELF::ELFCLASS64 : llvm::ELF::ELFCLASS32;
+    const uint64_t Width =
+        Wide ? sizeof(llvm::ELF::Elf64_Dyn) : sizeof(llvm::ELF::Elf32_Dyn);
+    auto &Header = Input.ELFMetadata->ProgramHeaders.front();
+    Header.Type = llvm::ELF::PT_DYNAMIC;
+    Header.FileSize = Header.MemorySize = 2 * Width;
+    ASSERT_LE(Header.FileOffset + Header.FileSize, Input.Raw.size());
+    auto *Bytes = Input.Raw.data() + Header.FileOffset;
+    std::fill_n(Bytes, Header.FileSize, 0);
+    if (Wide) {
+      llvm::support::endian::write64le(Bytes, llvm::ELF::DT_SONAME);
+      llvm::support::endian::write64le(Bytes + Width / 2,
+                                       pie_fixture::DynamicProbeValue);
+    } else {
+      llvm::support::endian::write32le(Bytes, llvm::ELF::DT_SONAME);
+      llvm::support::endian::write32le(Bytes + Width / 2,
+                                       pie_fixture::DynamicProbeValue);
+    }
+    const auto Entries = llvm::cantFail(readELFProgramDynamicTable(Input));
+    ASSERT_EQ(Entries.size(), 1u);
+    EXPECT_EQ(Entries[0].Tag, llvm::ELF::DT_SONAME);
+    EXPECT_EQ(Entries[0].Value, pie_fixture::DynamicProbeValue);
+    Header.FileSize -= Width;
+    auto Unterminated = readELFProgramDynamicTable(Input);
+    EXPECT_FALSE(bool(Unterminated));
+    llvm::consumeError(Unterminated.takeError());
+  }
 }
 
 TEST_F(LinuxProcessLayout,
