@@ -48,6 +48,8 @@ resultado sirve para análisis y no demuestra seguridad para aplicar parches
 ni manejar excepciones. La [guía de recuperación](interpreter-recovery.md)
 describe los controles, informes y límites.
 
+La API C++ separada de pruebas de bucles infiere pistas acotadas de un punto de corte y vuelve a comprobar el refinamiento nativo a LowIR. Véase la [guía](interpreter-recovery.md); no certifica el C emitido.
+
 ## ¿Por qué NeverD?
 
 - **Semántica 1:1** — lifters a mano; opcodes no soportados lanzan excepción en modo strict por defecto

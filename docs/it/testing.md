@@ -59,6 +59,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` coprono conteggi arbitrari a 64 bit, ranghi lessicografici annidati, residui nativi reali, prefissi d’ingresso, viste sovrapposte e salvataggi correlati. I controlli negativi rifiutano corpi errati, domini d’ingresso ristretti, ranghi non decrescenti, ritorno modulare senza segno, scritture precedenti dimenticate, tagli mancanti, modelli malformati e budget condivisi esauriti. Il successo di un ramo finito non autorizza un’induzione incompleta.
 
+`LowIRLoopInference.*` e `BinaryLowIRLoopInference.*` usano contatori, salvataggi sullo stack, ritorni anticipati, chiamate native e flag impacchettati scritti indipendentemente. Coprono ampliamento aritmetico a larghezza ridotta e flag semanticamente uguali con espressioni diverse. Grafi malformati, origini mancanti o falsificate, cicli infiniti o con riavvolgimento e budget esauriti non devono produrre certificati.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

@@ -264,6 +264,77 @@ TEST(BinaryLowIRLoopRefinement, PhysicalCallsAndEarlierStackWrites) {
   refused(Check(), Status::Different);
 }
 
+TEST(BinaryLowIRLoopInference, CounterAndCallsUseInferredCheckedPlans) {
+  for (bool Calls : {false, true}) {
+    Program P(Calls ? std::initializer_list<uint8_t>{0xe3, 11, 0xe8, 7, 0, 0, 0,
+                                                     0x48, 0x8d, 0x49, 0xff,
+                                                     0xeb, 0xf3, 0xc3, 0x48,
+                                                     0x01, 0xc8, 0xc3}
+                    : std::initializer_list<uint8_t>{0xe3, 9, 0x48, 0x01, 0xc8,
+                                                     0x48, 0x8d, 0x49, 0xff,
+                                                     0xeb, 0xf5, 0xc3});
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract);
+    ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+    ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+    EXPECT_EQ(R.Refinement.Certificate->Relation.Scope,
+              LowIRRefinementScope::InductiveNativeToLowIRLoops);
+    // Origin metadata cannot excuse a different original instruction.
+    P.Image.Segments[0].Data[Calls ? 10 : 8] = 0xfe;
+    const auto Changed = inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract);
+    EXPECT_TRUE(Changed.Inference.inferred()) << Changed.Inference.Diagnostic;
+    EXPECT_FALSE(Changed.proved());
+    EXPECT_FALSE(Changed.Refinement.Certificate);
+  }
+}
+
+TEST(BinaryLowIRLoopInference, PackedFlagsStayConstrainedAcrossWidening) {
+  // xor eax,eax; pushfq; pop r11; loop: jrcxz done; push r11; popfq;
+  // inc rax; pushfq; pop r11; lea rcx,[rcx-1]; jmp loop; done: ret.
+  // The loop carries both a packed flags image and the physical flags bank.
+  // Equal bits can have different expressions after abstracting the counter.
+  Program P({0x31, 0xc0, 0x9c, 0x41, 0x5b, 0xe3, 0x0f, 0x41,
+             0x53, 0x9d, 0x48, 0xff, 0xc0, 0x9c, 0x41, 0x5b,
+             0x48, 0x8d, 0x49, 0xff, 0xeb, 0xef, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+  ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+  EXPECT_GT(R.Inference.WideningRounds, 1U);
+  EXPECT_GT(R.Refinement.Proof.RankingChecks, 0U);
+}
+
+TEST(BinaryLowIRLoopInference, OriginHintsAndRecoveryStatusAreUntrusted) {
+  Program P(
+      {0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  const auto Good = P.recover();
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    auto Recovery = Good;
+    if (Kind == 0)
+      Recovery.Status = SpecializationStatus::Unsupported;
+    if (Kind == 1)
+      Recovery.Origins.clear();
+    if (Kind == 2)
+      Recovery.Origins.insert(Recovery.Origins.end(), Good.Origins.begin(),
+                              Good.Origins.end());
+    if (Kind == 3)
+      for (auto &Origin : Recovery.Origins)
+        Origin.NativeInstruction.Address += 0x1000;
+    const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract);
+    EXPECT_FALSE(R.proved()) << "kind=" << Kind;
+    EXPECT_FALSE(R.Refinement.Certificate);
+    EXPECT_FALSE(R.Refinement.Proof.Certificate);
+    EXPECT_EQ(R.Inference.inferred(), Kind == 3) << R.Inference.Diagnostic;
+  }
+}
+
 TEST(BinaryLowIRRefinement, MandatorySystemFlagsRejectCandidateMutation) {
   // pushfq; pop rax; push rax; popfq; ret.
   Program P({0x9c, 0x58, 0x50, 0x9d, 0xc3});

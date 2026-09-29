@@ -49,7 +49,15 @@ enum class LowIRRefinementScope : uint8_t {
 };
 
 enum class LowIRLoopSpace : uint8_t { Register, Frame, SystemFlags };
-enum class LowIRLoopSide : uint8_t { Entry, Original, Candidate };
+enum class LowIRLoopSide : uint8_t {
+  Entry,
+  Original,
+  Candidate,
+  /// The checked, captured prefix of this cutpoint. Requires UseEntryPrefix;
+  /// these are fixed prefix values, never fresh induction parameters.
+  OriginalPrefix,
+  CandidatePrefix,
+};
 
 struct LowIRLoopLocation {
   LowIRLoopSpace Space = LowIRLoopSpace::Register;
@@ -100,6 +108,61 @@ struct LowIRLoopRefinementPlan {
   /// segment exploration and cannot be treated as an inductive edge.
   std::vector<LowIRLoopCutpoint> Cutpoints;
 };
+
+enum class LowIRLoopInferenceStatus : uint8_t {
+  Inferred,
+  Unsupported,
+  Invalid,
+  BudgetExceeded,
+};
+
+struct LowIRLoopInferenceLimits {
+  /// Shared across prefix exploration, widening and rank queries. Inference
+  /// has its own explicit budget; it never increases the subsequent proof's.
+  LowIRIndependenceLimits Execution;
+  uint32_t MaxCutpointAttempts = 16;
+  uint32_t MaxWideningRounds = 8;
+  uint32_t MaxRankCandidates = 128;
+};
+
+struct LowIRLoopInferenceResult {
+  LowIRLoopInferenceStatus Status = LowIRLoopInferenceStatus::Unsupported;
+  /// An untrusted proposal, not a refinement certificate. Original addresses
+  /// initially equal candidate addresses; a native caller must map them and
+  /// check the complete original/candidate relation.
+  std::optional<LowIRLoopRefinementPlan> Plan;
+  std::string Diagnostic;
+  int BlockId = -1;
+  va_t InstructionAddress = 0;
+  int OpSeq = -1;
+  uint64_t Operations = 0;
+  uint32_t SolverQueries = 0;
+  uint64_t ScheduledPaths = 0;
+  /// Cumulative traversal work, also bounded by Execution.MaxSymbolicNodes.
+  uint64_t PredicateNodes = 0;
+  uint32_t CutpointAttempts = 0;
+  uint32_t WideningRounds = 0;
+  uint32_t RankCandidates = 0;
+
+  bool inferred() const {
+    return Status == LowIRLoopInferenceStatus::Inferred && Plan.has_value();
+  }
+};
+
+/// Propose a loop template by symbolic prefix exploration and bounded
+/// widening in the same executor used by refinement. Searches guarded loop
+/// bodies and CFG backedge targets, retaining fixed prefix bits and trying
+/// observed unsigned bounds and scalar ranks. Every cycle must cross the
+/// selected cut; a nested
+/// or irreducible cycle that evades it exhausts exploration or is unsupported.
+/// A nonempty EligibleCutpoints restricts only the search, not execution or
+/// the admitted input domain. No native/source equivalence follows from an
+/// inferred plan; pass it to the original/candidate checker before use.
+LowIRLoopInferenceResult
+inferLowIRLoopRefinementPlan(const LowFunc &Candidate,
+                             const LowIRIndependenceContract &Contract,
+                             const LowIRLoopInferenceLimits &Limits = {},
+                             llvm::ArrayRef<va_t> EligibleCutpoints = {});
 
 struct LowIRRefinementProducer {
   /// Unique instruction visit and sidecar index, including revisited loops.

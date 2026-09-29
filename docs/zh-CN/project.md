@@ -88,6 +88,8 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
 
 映像内容与权限必须固定，且所有外部来源存储的目标范围均不得与入口返回地址槽重叠。这是调用方／环境前提；该功能不证明二进制 patch 或异常展开安全。输入相关的字节码寻址和解码器状态关联尚未普遍支持。完整契约、`--llvm` 路径和限制见[解释器源码恢复指南](interpreter-recovery.md)。
 
+独立的 C++ 循环证明 API 可在预算内自动推导单切点提示，并重新检查原生代码到 LowIR 的精化关系，详见[恢复指南](interpreter-recovery.md)；它不证明输出 C 的等价性。
+
 ## 工作原理
 
 ```text
