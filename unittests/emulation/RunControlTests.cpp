@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "backends/RunDeadline.h"
+#include "core/ExecutionDeadline.h"
 #include "gtest/gtest.h"
 
 #include <future>
@@ -157,6 +158,41 @@ TEST(RunControl, NativeAllowancePreservesDeadlineAndStopIdentity) {
   EXPECT_GE(MachineRunControl{Before}.forNativeStep().Deadline,
             Before + std::chrono::microseconds(
                          execution_limits::NativeStepGraceMicroseconds));
+}
+
+TEST(ExecutionDeadline, RejectsUnboundedAndOverflowingDurations) {
+  constexpr uint64_t Invalid[] = {
+#define NEVERD_CONFIGURATION_INVALID_TIMEOUT(Name, Value) Value,
+#include "ExecutionConfigurationCases.def"
+#undef NEVERD_CONFIGURATION_INVALID_TIMEOUT
+  };
+  for (uint64_t Budget : Invalid) {
+    auto Deadline = makeExecutionDeadline(Budget, Clock::time_point{});
+    ASSERT_FALSE(bool(Deadline));
+    EXPECT_EQ(llvm::toString(Deadline.takeError()),
+              diagnostic::ExecutionTimeout);
+  }
+}
+
+TEST(ExecutionDeadline, ChecksAdditionBeforeTheLastRepresentableTick) {
+  const auto Duration = std::chrono::duration_cast<Clock::duration>(
+      std::chrono::microseconds(MinimumBudgetMicroseconds));
+  const auto LastStart = Clock::time_point::max() - Duration;
+  EXPECT_EQ(llvm::cantFail(
+                makeExecutionDeadline(MinimumBudgetMicroseconds, LastStart)),
+            Clock::time_point::max());
+  auto Overflow = makeExecutionDeadline(MinimumBudgetMicroseconds,
+                                        LastStart + Clock::duration(1));
+  ASSERT_FALSE(bool(Overflow));
+  EXPECT_EQ(llvm::toString(Overflow.takeError()), diagnostic::ExecutionTimeout);
+}
+
+TEST(ExecutionDeadline, NegativeClockEpochDoesNotOverflowRangeValidation) {
+  const auto Duration = std::chrono::duration_cast<Clock::duration>(
+      std::chrono::microseconds(MinimumBudgetMicroseconds));
+  EXPECT_EQ(llvm::cantFail(makeExecutionDeadline(MinimumBudgetMicroseconds,
+                                                 Clock::time_point::min())),
+            Clock::time_point::min() + Duration);
 }
 } // namespace
 } // namespace neverd::emulation

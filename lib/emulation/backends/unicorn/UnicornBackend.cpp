@@ -11,6 +11,7 @@
 
 #include "UnicornBackend.h"
 
+#include "../../core/ExecutionDeadline.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/ExecutionExitBuilder.h"
 #include "../../core/MemoryLayout.h"
@@ -797,6 +798,12 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
     return failure(unicornDiagnostic::CannotResumeAFaultedCPUInstance);
   if (State->Running)
     return failure(unicornDiagnostic::CannotRecursivelyExecuteACPUInstance);
+  // Unicorn treats zero as unbounded and converts microseconds to nanoseconds.
+  // Apply the same finite budget admission as checked/native execution before
+  // changing projections, registers or observations.
+  auto Limit = makeExecutionDeadline(TimeoutMicroseconds);
+  if (!Limit)
+    return Limit.takeError();
   if (auto E = State->Memory->beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { State->Memory->endRun(); });
