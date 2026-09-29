@@ -84,6 +84,12 @@ public:
   selectForImage(const BinaryImage &Img,
                  std::vector<std::filesystem::path> Files);
 
+  /// The directory of a signature tree that holds \p Img's signatures, such
+  /// as `pe/x86/64`, or std::nullopt for an image of a format or architecture
+  /// no tree holds signatures for.
+  static std::optional<std::filesystem::path>
+  treeDirectory(const BinaryImage &Img);
+
   /// Load a single text pattern file.
   llvm::Error loadFile(const std::filesystem::path &Path);
 

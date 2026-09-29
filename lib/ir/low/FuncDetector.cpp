@@ -23,6 +23,7 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Debug.h"
@@ -30,6 +31,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <queue>
@@ -759,9 +761,9 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64) {
       // A long range is swept in pieces on the worker threads and the pieces
       // joined afterwards exactly as one sweep would have gone; see below.
-      // Joining costs a few instructions a seam, so the pieces can be small.
-      constexpr size_t MinPiece = 16 * 1024;
-      const size_t Pieces = std::min<size_t>(ThreadsN, ScanLen / MinPiece);
+      const size_t Pieces =
+          std::min<size_t>(ThreadsN * limits::kFuncScanPiecesPerWorker,
+                           ScanLen / limits::kMinFuncScanPiece);
       if (Pieces < 2) {
         Chunks.push_back({Seg, Start, Start + ScanLen});
         return;
@@ -901,12 +903,19 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   for (auto &T : Ts)
     T.join();
 
+  // The targets the joined sweeps find, added to \p Out in order at the end.
+  std::vector<va_t> Found;
   std::vector<std::vector<func_detect_detail::CallScanStep>> RangeSteps(
       SplitRanges.size());
   for (size_t RangeIndex = 0; RangeIndex < SplitRanges.size(); ++RangeIndex) {
     const SplitRange &Range = SplitRanges[RangeIndex];
     std::vector<func_detect_detail::CallScanStep> &Taken =
         RangeSteps[RangeIndex];
+    size_t PieceStepCount = 0;
+    for (size_t Piece = Range.FirstPiece;
+         Piece < Range.FirstPiece + Range.Pieces; ++Piece)
+      PieceStepCount += PieceSteps[Piece].size();
+    Taken.reserve(PieceStepCount);
     va_t Pos = Range.Start;
     func_detect_detail::CodeInterval Known =
         func_detect_detail::codeIntervalAround(Img, Pos);
@@ -927,7 +936,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
           break;
         }
         if (Step->Target != InvalidVA)
-          Out.insert(Step->Target);
+          Found.push_back(Step->Target);
         Taken.push_back(*Step);
         Pos = Step->Next;
         while (It != Steps.end() && It->Addr < Pos)
@@ -935,12 +944,16 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
       }
       for (; It != Steps.end() && It->Addr == Pos; ++It) {
         if (It->Target != InvalidVA)
-          Out.insert(It->Target);
+          Found.push_back(It->Target);
         Taken.push_back(*It);
         Pos = It->Next;
       }
     }
   }
+  llvm::sort(Found);
+  auto Hint = Out.begin();
+  for (va_t Target : Found)
+    Hint = std::next(Out.insert(Hint, Target));
 
   const auto ByAddress = [](const func_detect_detail::CallScanStep &Step,
                             va_t Address) { return Step.Addr < Address; };

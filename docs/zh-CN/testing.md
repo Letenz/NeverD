@@ -58,6 +58,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 
+移位回归覆盖全部八位原始次数、零次移位的标志组合、两种 x86 模式、全部标量位宽、CL 与目标重叠、AH/CH/DH/BH、扩展寄存器和内存。按字节建模的符号执行与逐位算术模型对照，检查已定义结果及守卫触发条件。关系测试检查复制与新生标志、溢出保存、循环重访、未定义值派生次数、分支拒绝、畸形编码及摘要和预算失败。有限不可变读取测试覆盖 1/2/4/8 字节、输入相关选择、路径内单地址集合、完整读取见证和地址上限绑定，并拒绝依赖未定义值、缺失、可写、无文件字节、重定位或无界候选。
+
 核心测试检查上下文拆分、固定点汇合、动态循环、重叠寄存器、别名失效、有限目标派发，以及拒绝时不提供部分替代代码。源码测试汇编原创的寄存器式、栈式和有限地址 x64 机器，恢复两条 C 输出路径，在 O0/O2 下开启未定义行为陷阱编译，并与独立的无符号算术和内存参考实现对照执行。有限地址 fixture 覆盖输入选择的记录和相关游标／key 控制字段；原生检查涵盖 SysV 和 Win64 调用约定。测试还覆盖公开 CLI、恢复预算及不支持输入的报告。需要支持跨目标编译的 Clang 和 LLD；原始 ELF 的执行另需 x64 Linux 主机。工具缺失或主机不匹配属于跳过的覆盖，不代表通过。
 
 `ControlStateRecovery.LongTransparentLoop*` 覆盖独立编写的 20 阶段循环、动态算术参考实现、未知 selector 拒绝和预算耗尽。`LongTransparentPhasesKeepExactBitDemands` 检查 selector 同字节内的无关位仍是可观察的运行时数据，不会成为控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 检查反向发现和重放在新图启动前消耗共享预算，且不发布部分结果。
