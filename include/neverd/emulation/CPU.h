@@ -93,6 +93,8 @@ public:
   /// Execute until stopped, timed out, or faulted. A successful Error result
   /// alone does not imply successful guest completion: inspect fault() and
   /// timedOut() as well, including after an interrupt callback stops execution.
+  /// The timeout must be positive and representable by the execution clock;
+  /// zero never requests unbounded execution. Invalid budgets have no effects.
   virtual llvm::Error run(uint64_t PC, uint64_t TimeoutMicroseconds);
   /// Typed execution result. Preconditions/setup failures return Error;
   /// outcomes after execution begins return an exit. Recoverable faults remain

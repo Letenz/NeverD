@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "CheckedBackend.h"
 
+#include "ExecutionDeadline.h"
 #include "ExecutionDiagnostics.h"
 #include "ExecutionExitBuilder.h"
 
@@ -199,6 +200,9 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
                                     bool &Started, bool &BackendFailed) {
   if (auto E = mutableMemory())
     return E;
+  auto Limit = makeExecutionDeadline(Timeout);
+  if (!Limit)
+    return Limit.takeError();
   if (auto E = Memory->beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
@@ -211,8 +215,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
   TimedOut = false;
   StopRequested = false;
   auto Reset = llvm::scope_exit([&] { Running = false; });
-  Deadline =
-      std::chrono::steady_clock::now() + std::chrono::microseconds(Timeout);
+  Deadline = *Limit;
   try {
     while (!StopRequested) {
       if (std::chrono::steady_clock::now() >= Deadline) {

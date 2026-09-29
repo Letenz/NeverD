@@ -112,6 +112,60 @@ TEST(ExecutionConfiguration,
     EXPECT_EQ(E.reason(), Probe->Reason);
   });
 }
+
+TEST(ExecutionConfiguration, InvalidBudgetsDoNotStartNativeCPU) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  auto Config = checked(GuestArchitecture::AArch64);
+#else
+  auto Config = checked(GuestArchitecture::X64);
+#endif
+#if defined(__linux__)
+  Config.Backend = ExecutionBackendKind::KVM;
+#else
+  Config.Backend = ExecutionBackendKind::WHP;
+#endif
+  const auto Probe = llvm::cantFail(probeExecutionBackend(Config));
+  if (Probe.Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe.Reason;
+  auto Created = llvm::cantFail(createExecutionBackend(Config, MemoryLimit));
+  auto &CPU = *Created.CPU;
+  llvm::cantFail(CPU.map(Code, PageSize, Read | Write | Execute));
+  const auto PC = Config.Architecture == GuestArchitecture::X64
+                      ? CPURegister::X64PC
+                      : CPURegister::AArch64PC;
+  if (Config.Architecture == GuestArchitecture::X64) {
+    llvm::cantFail(CPU.write(Code, LoopX64));
+  } else {
+    std::vector<uint8_t> Bytes(sizeof(LoopARM));
+    llvm::support::endian::write32le(Bytes.data(), LoopARM[0]);
+    llvm::cantFail(CPU.write(Code, Bytes));
+  }
+  const auto Before = llvm::cantFail(CPU.readRegister(PC));
+  unsigned Observations = 0;
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t, uint32_t) {
+    if (Observations++)
+      CPU.stop();
+  };
+  llvm::cantFail(CPU.installHooks(std::move(Hooks)));
+  constexpr uint64_t Invalid[] = {
+#define NEVERD_CONFIGURATION_INVALID_TIMEOUT(Name, Value) Value,
+#include "ExecutionConfigurationCases.def"
+#undef NEVERD_CONFIGURATION_INVALID_TIMEOUT
+  };
+  for (const uint64_t Budget : Invalid) {
+    auto Exit = CPU.runUntilExit(Code, Budget);
+    ASSERT_FALSE(bool(Exit));
+    llvm::consumeError(Exit.takeError());
+    EXPECT_EQ(llvm::cantFail(CPU.readRegister(PC)), Before);
+    EXPECT_FALSE(CPU.fault());
+    EXPECT_FALSE(CPU.timedOut());
+  }
+  EXPECT_EQ(Observations, 0u);
+  const auto Exit = llvm::cantFail(CPU.runUntilExit(Code, Timeout));
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
+  EXPECT_EQ(Observations, 2u);
+}
 TEST(ExecutionConfiguration,
      ReportedSoftwareMMIOExecutesThroughGuestInstructions) {
   for (auto ISA : {GuestArchitecture::X64, GuestArchitecture::AArch64}) {

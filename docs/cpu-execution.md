@@ -119,10 +119,18 @@ operation, device failure, backend failure or otherwise unexplained engine
 stop. Fault/device/backend outcomes outrank a simultaneous stop or deadline;
 the independent stop/deadline facts and fault details are retained.
 
+`TimeoutMicroseconds` must be positive and fit both the clock duration and its
+absolute deadline. Zero and overflowing values return an error before changing
+CPU state, projections or observations. This also applies to `run`: zero no
+longer inherits Unicorn's unbounded behavior or the checked profile's immediate
+timeout. Use an explicit finite budget for every invocation. An invalid budget
+does not fault the CPU or prevent a subsequent valid run.
+
 The result does not consume a pending recoverable fault. Its OS owner must use
 `takeRecoverableFault` and install a validated exception transfer before
-resumption. The existing `run`, `fault` and `timedOut` APIs preserve their
-compatibility behavior. Older external CPU implementations that only override
+resumption. The existing `run`, `fault` and `timedOut` APIs remain available;
+`run` adapts the typed outcome to the existing error and fault accessors.
+Older external CPU implementations that only override
 `run` reject the new typed boundary until they implement it.
 
 A stopped CPU, software HLT, deadline or guest trap never establishes successful
