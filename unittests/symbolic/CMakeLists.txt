@@ -48,3 +48,12 @@ target_compile_definitions(NeverDSymbolicTests PRIVATE
   SYMBOLIC_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 add_dependencies(NeverDSymbolicTests neverd)
+
+add_neverd_unittest(NeverDSymbolicSparseContextTests
+  SymMBASparseContextTests.cpp
+  LINK_COMPONENTS Symbolic
+)
+
+target_include_directories(NeverDSymbolicSparseContextTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+)

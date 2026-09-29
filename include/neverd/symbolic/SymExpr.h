@@ -37,6 +37,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -551,8 +552,18 @@ public:
   /// \c fitsU64 — every node at most 64 bits wide.
   uint64_t evalU64(llvm::ArrayRef<uint64_t> VarVals);
 
+  /// Evaluate with a synchronous lookup by variable id. Only variables used
+  /// by this plan are requested; missing inputs have value zero.
+  uint64_t evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup);
+
   /// Evaluate at arbitrary width.
   llvm::APInt eval(llvm::ArrayRef<llvm::APInt> VarVals);
+
+  /// The arbitrary-width evaluator with a synchronous variable-id lookup.
+  /// A null result means zero; supplied values are adjusted to the variable
+  /// width in the same way as the dense evaluator.
+  llvm::APInt
+  evalWith(llvm::function_ref<const llvm::APInt *(uint32_t)> Lookup);
 
   /// Variable ids referenced by the expression, ascending.
   llvm::ArrayRef<uint32_t> vars() const { return Vars; }

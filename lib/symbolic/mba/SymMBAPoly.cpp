@@ -123,38 +123,15 @@ bool collectTerms(const SymContext &Ctx, SymRef Node, const llvm::APInt &Scale,
 /// already; this rules out the rest without having to trust it.
 std::optional<TruthTable> bitwiseTable(const SymContext &Ctx, SymRef F,
                                        llvm::ArrayRef<uint32_t> AtomIds) {
-  const uint32_t Width = Ctx.width(F);
   const auto NumAtoms = static_cast<unsigned>(AtomIds.size());
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   if (!Corners)
     return std::nullopt;
-  SymEvalPlan Plan(Ctx, F);
+  CornerEvaluator Evaluator(Ctx, F, AtomIds);
   TruthTable Table = TruthTable::zero(NumAtoms);
-
-  if (Plan.fitsU64()) {
-    const uint64_t Ones =
-        Width == 64 ? ~uint64_t(0) : (uint64_t(1) << Width) - 1;
-    std::vector<uint64_t> Assignment(Ctx.numVars(), 0);
-    for (size_t K = 0; K < *Corners; ++K) {
-      for (unsigned J = 0; J < NumAtoms; ++J)
-        Assignment[AtomIds[J]] = (K >> J) & 1 ? Ones : 0;
-      uint64_t Value = Plan.evalU64(Assignment);
-      if (Value == Ones)
-        Table.set(K);
-      else if (Value != 0)
-        return std::nullopt;
-    }
-    return Table;
-  }
-
-  const llvm::APInt Zero(Width, 0);
-  const llvm::APInt Ones = llvm::APInt::getAllOnes(Width);
-  std::vector<llvm::APInt> Assignment(Ctx.numVars(), Zero);
   for (size_t K = 0; K < *Corners; ++K) {
-    for (unsigned J = 0; J < NumAtoms; ++J)
-      Assignment[AtomIds[J]] = (K >> J) & 1 ? Ones : Zero;
-    llvm::APInt Value = Plan.eval(Assignment);
-    if (Value == Ones)
+    llvm::APInt Value = Evaluator.eval(K);
+    if (Value.isAllOnes())
       Table.set(K);
     else if (!Value.isZero())
       return std::nullopt;
