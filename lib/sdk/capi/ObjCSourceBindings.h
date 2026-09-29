@@ -17,6 +17,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSentinelCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
@@ -1487,6 +1488,138 @@ provenSourceInteger64Value(const ExprPtr &Value,
     }
   Active.erase(Key);
   return Result;
+}
+
+/// A localized NSString format has a dynamic result, but its immutable source
+/// key still declares the argument carrier used by the caller. Require the
+/// exact bound NSBundle lookup, an empty fallback, and one signed 64-bit
+/// conversion. Merged format values must agree on the complete key type.
+inline TypeRef provenLocalizedFormatInteger64Type(
+    const ExprPtr &Value, const VarKeyMap<std::vector<ExprPtr>> &Definitions,
+    const BinaryImage &Image) {
+  if (Image.Arch != Arch::AArch64)
+    return {};
+  size_t Budget = 4096;
+  std::set<VarKey> ActiveValues, ActiveAddresses;
+  const auto LiteralAddress = [&](auto &&Self, const ExprPtr &E,
+                                  unsigned Depth) -> std::optional<va_t> {
+    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+        (E->Type->Kind != NdTypeKind::Int &&
+         E->Type->Kind != NdTypeKind::Ptr) ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    if (E->Kind == ExprKind::Const) {
+      if (!E->ConstVal || (isExactAddressProvenance(E->ConstProvenance) &&
+                           !isCodeAddressProvenance(E->ConstProvenance) &&
+                           (E->AddressOwnerVA == InvalidVA ||
+                            E->AddressOwnerVA == E->ConstVal) &&
+                           readObjCConstantString(Image, E->ConstVal)))
+        return E->ConstVal;
+      return std::nullopt;
+    }
+    if (E->Kind == ExprKind::Call && E->SourceCallHint &&
+        E->SourceCallHint->CallKind ==
+            SourceCallTypeHint::Kind::RuntimeConstantString &&
+        E->Operands.empty() && objcSourceCallBound(*E, Image, {}) &&
+        readObjCConstantString(Image, E->SourceCallHint->TargetAddress))
+      return E->SourceCallHint->TargetAddress;
+    if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Operands.size() == 1 &&
+        (E->Kind != ExprKind::Cast ||
+         (E->CastTo && equalSourceTypes(E->Type, E->CastTo))))
+      return Self(Self, E->Operands[0], Depth + 1);
+    if (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)
+      return std::nullopt;
+    const auto Key = varKey(E->Var);
+    if (!ActiveAddresses.insert(Key).second)
+      return std::nullopt;
+    const auto Found = Definitions.find(Key);
+    std::optional<va_t> Address;
+    bool Valid = Found != Definitions.end() && !Found->second.empty();
+    if (Valid)
+      for (const auto &Definition : Found->second) {
+        const auto Candidate = Self(Self, Definition, Depth + 1);
+        if (!Candidate || (Address && *Candidate != *Address)) {
+          Valid = false;
+          break;
+        }
+        Address = *Candidate;
+      }
+    ActiveAddresses.erase(Key);
+    return Valid ? Address : std::nullopt;
+  };
+  const auto Resolve = [&](auto &&Self, const ExprPtr &E,
+                           unsigned Depth) -> TypeRef {
+    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+        (E->Type->Kind != NdTypeKind::Int &&
+         E->Type->Kind != NdTypeKind::Ptr) ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return {};
+    if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Operands.size() == 1 &&
+        (E->Kind != ExprKind::Cast ||
+         (E->CastTo && equalSourceTypes(E->Type, E->CastTo))))
+      return Self(Self, E->Operands[0], Depth + 1);
+    if (E->Kind == ExprKind::Call && E->SourceCallHint) {
+      const auto &Binding = *E->SourceCallHint;
+      if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+          Binding.TargetName == "objc_retainAutoreleasedReturnValue" &&
+          E->Operands.size() == 1 && objcSourceCallBound(*E, Image, {}))
+        return Self(Self, E->Operands[0], Depth + 1);
+      if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          Binding.Selector != "localizedStringForKey:value:table:" ||
+          Binding.Signature.Origin !=
+              SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          !Binding.Receiver || Binding.Receiver->ClassName != "NSBundle" ||
+          E->Operands.size() != 5 ||
+          !objcSelectorStubMatches(Image, Binding.TargetAddress,
+                                   Binding.SelectorReferenceAddress,
+                                   Binding.Selector) ||
+          !objcSourceCallBound(*E, Image, {}))
+        return {};
+      const auto Key = LiteralAddress(LiteralAddress, E->Operands[2], 0);
+      const auto Fallback = LiteralAddress(LiteralAddress, E->Operands[3], 0);
+      const auto Table = LiteralAddress(LiteralAddress, E->Operands[4], 0);
+      if (!Key || !*Key || !Fallback || !Table || *Table)
+        return {};
+      const auto KeyString = readObjCConstantString(Image, *Key);
+      const auto FallbackString =
+          *Fallback ? readObjCConstantString(Image, *Fallback) : std::nullopt;
+      if (!KeyString ||
+          (*Fallback && (!FallbackString || !FallbackString->Units.empty())))
+        return {};
+      const auto Types = objcFormatArgumentTypes(
+          KeyString->Units, SourceCallTypeHint::FormatSyntax::NSString);
+      return Types && Types->size() == 1 && (*Types)[0] &&
+                     (*Types)[0]->Kind == NdTypeKind::Int &&
+                     (*Types)[0]->Size == 8 && (*Types)[0]->IsSigned
+                 ? (*Types)[0]
+                 : TypeRef{};
+    }
+    if (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)
+      return {};
+    const auto Key = varKey(E->Var);
+    if (!ActiveValues.insert(Key).second)
+      return {};
+    const auto Found = Definitions.find(Key);
+    TypeRef Type;
+    if (Found != Definitions.end())
+      for (const auto &Definition : Found->second) {
+        const auto Candidate = Self(Self, Definition, Depth + 1);
+        if (!Candidate || (Type && !equalSourceTypes(Type, Candidate))) {
+          Type.reset();
+          break;
+        }
+        Type = Candidate;
+      }
+    ActiveValues.erase(Key);
+    return Type;
+  };
+  return Resolve(Resolve, Value, 0);
 }
 
 inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
@@ -5501,6 +5634,14 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             auto Type = provenSourceInteger64Value(
                 Expression->Operands[I], FormatDefinitions, Image,
                 IntegerBudget, ActiveIntegers);
+            if (!Type && I == Fixed &&
+                Expression->Operands.size() == Fixed + 1 &&
+                Expression->Operands[I] && Expression->Operands[I]->Type &&
+                Expression->Operands[I]->Type->Kind == NdTypeKind::Int &&
+                Expression->Operands[I]->Type->Size == 8)
+              Type = provenLocalizedFormatInteger64Type(
+                  Expression->Operands[Stub->Format->FormatParameter],
+                  FormatDefinitions, Image);
             if (!Type) {
               Types.clear();
               break;
@@ -7142,8 +7283,15 @@ inline bool objcSourceCallBound(
             for (size_t I = Format.FixedCount; I < Expression.Operands.size();
                  ++I) {
               if (Format.DynamicInteger64Arguments) {
-                const auto Type = provenSourceInteger64Value(
+                auto Type = provenSourceInteger64Value(
                     Expression.Operands[I], Definitions, Image, Budget, Active);
+                if (!Type && I == Format.FixedCount && TailArguments == 1 &&
+                    Expression.Operands[I] && Expression.Operands[I]->Type &&
+                    Expression.Operands[I]->Type->Kind == NdTypeKind::Int &&
+                    Expression.Operands[I]->Type->Size == 8)
+                  Type = provenLocalizedFormatInteger64Type(
+                      Expression.Operands[Format.FormatParameter], Definitions,
+                      Image);
                 if (!Type || !equalSourceTypes(Type, Hint.Parameters[I].Type))
                   return false;
               } else if (!provenSourcePointerValue(Expression.Operands[I],

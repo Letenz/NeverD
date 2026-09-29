@@ -13023,3 +13023,145 @@ TEST(ObjCCallHints, DynamicFormatInteger64TailRequiresDeclaredCompleteValues) {
   EXPECT_FALSE(objcDynamicFormatInteger64ArgumentsSourceCallHint(
       Image, "localizedStringWithFormat:", {Integer}));
 }
+
+TEST(ObjCCallHints, LocalizedFormatIntegerTailRequiresBoundImmutableKey) {
+  auto Image = selectorStubImage();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name =
+      "localizedStringForKey:value:table:";
+  Image.ObjCSourceReferences[0x2200] = {ObjCSourceReference::Kind::Class,
+                                        0x2200, 8, "NSBundle"};
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  Image.ImportPtrSlots[0x2188] = "_objc_retainAutoreleasedReturnValue";
+
+  Segment Records;
+  Records.Name = "__DATA_CONST";
+  Records.VA = 0x4000;
+  Records.Size = Records.FileSz = 64;
+  Records.Flags = SegmentFlags::Readable;
+  Records.Data.resize(64);
+  Image.Segments.push_back(Records);
+  Section Objects;
+  Objects.Name = "__cfstring";
+  Objects.SegmentName = Records.Name;
+  Objects.VA = Records.VA;
+  Objects.Size = Objects.FileSz = Records.Size;
+  Objects.Flags = Records.Flags;
+  Image.Sections.push_back(Objects);
+  Segment Characters;
+  Characters.Name = "__TEXT";
+  Characters.VA = 0x5000;
+  Characters.Size = Characters.FileSz = 64;
+  Characters.Flags = SegmentFlags::Readable;
+  Characters.Data.resize(64);
+  const std::string KeyText = "index %ld";
+  std::copy(KeyText.begin(), KeyText.end(), Characters.Data.begin());
+  Image.Segments.push_back(Characters);
+  Section Literal;
+  Literal.Name = "__cstring";
+  Literal.SegmentName = Characters.Name;
+  Literal.VA = Characters.VA;
+  Literal.Size = Literal.FileSz = Characters.Size;
+  Literal.Flags = Characters.Flags;
+  Literal.Type = llvm::MachO::S_CSTRING_LITERALS;
+  Image.Sections.push_back(Literal);
+  for (unsigned I = 0; I != 2; ++I) {
+    const va_t Address = 0x4000 + I * 32;
+    Image.recordDyldBindSlot(
+        Address, "___CFConstantStringClassReference", 0,
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+        false);
+    auto *Record = Image.Segments[1].Data.data() + I * 32;
+    llvm::support::endian::write64le(Record + 8, 0x7c8);
+    llvm::support::endian::write64le(Record + 16, 0x5000 + I * 32);
+    llvm::support::endian::write64le(Record + 24, I ? 0 : KeyText.size());
+  }
+  ASSERT_TRUE(readObjCConstantString(Image, 0x4000));
+  ASSERT_TRUE(readObjCConstantString(Image, 0x4020));
+
+  const ObjCReceiverTypeHint Root{
+      ObjCReceiverTypeHint::OriginKind::ClassReference, 0x2200, "NSBundle",
+      true};
+  const auto Receiver =
+      objcReceiverCallResultTypeHint(Image, Root, "mainBundle");
+  ASSERT_TRUE(Receiver);
+  const auto Declaration = objcReceiverSourceTypeHint(
+      Image, "localizedStringForKey:value:table:", *Receiver);
+  ASSERT_TRUE(Declaration.Signature);
+  SourceCallTypeHint Binding;
+  Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Binding.TargetAddress = 0x1100;
+  Binding.TargetName = "objc_msgSend";
+  Binding.Selector = "localizedStringForKey:value:table:";
+  Binding.SelectorReferenceAddress = 0x2100;
+  Binding.Receiver = *Receiver;
+  Binding.Signature = *Declaration.Signature;
+  auto Localized = receiverCallExpression(Binding);
+  Localized->Operands[2] =
+      HighExpr::makeConst(0x4000, 8, ConstantAddressProvenance::DataAddress);
+  Localized->Operands[3] =
+      HighExpr::makeConst(0x4020, 8, ConstantAddressProvenance::DataAddress);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Localized, Image, {}));
+
+  const auto RetainHint = objcRuntimeSourceCallHint(Image, 0x2188);
+  ASSERT_TRUE(RetainHint);
+  auto Retained = HighExpr::makeCall("_objc_retainAutoreleasedReturnValue",
+                                     0x2188, {Localized});
+  Retained->Type = RetainHint->Signature.ReturnType;
+  Retained->SourceCallHint = std::make_shared<SourceCallTypeHint>(*RetainHint);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Retained, Image, {}));
+  VarKeyMap<std::vector<ExprPtr>> Definitions;
+  const auto Type =
+      sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+          Retained, Definitions, Image);
+  ASSERT_TRUE(Type);
+  EXPECT_EQ(Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Type->Size, 8U);
+  EXPECT_TRUE(Type->IsSigned);
+
+  auto BadKey = std::make_shared<HighExpr>(*Localized);
+  BadKey->Operands[2] = BadKey->Operands[3];
+  Retained->Operands[0] = BadKey;
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, Image));
+  Retained->Operands[0] = Localized;
+  auto WrongConversion = Image;
+  WrongConversion.Segments[2].Data[8] = 'u';
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, WrongConversion));
+  auto NonemptyFallback = Image;
+  NonemptyFallback.Segments[2].Data[32] = 'x';
+  llvm::support::endian::write64le(
+      NonemptyFallback.Segments[1].Data.data() + 32 + 24, 1);
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, NonemptyFallback));
+  auto OtherTable = std::make_shared<HighExpr>(*Localized);
+  OtherTable->Operands[4] = OtherTable->Operands[3];
+  Retained->Operands[0] = OtherTable;
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, Image));
+  Retained->Operands[0] = Localized;
+  MedVar FormatVariable;
+  FormatVariable.Kind = MedVar::Temp;
+  FormatVariable.Id = 51;
+  FormatVariable.Size = 8;
+  FormatVariable.TheArch = Arch::AArch64;
+  auto FormatValue =
+      HighExpr::makeVar(FormatVariable, NdType::makePtr(NdType::makeVoid()));
+  Definitions[varKey(FormatVariable)] = {Localized, BadKey};
+  Retained->Operands[0] = FormatValue;
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, Image));
+  Retained->Operands[0] = Localized;
+  auto BadBinding = std::make_shared<SourceCallTypeHint>(Binding);
+  BadBinding->Selector = "objectForKey:";
+  Localized->SourceCallHint = BadBinding;
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, Image));
+  Localized->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+  auto Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
+      Retained, Definitions, Changed));
+}
