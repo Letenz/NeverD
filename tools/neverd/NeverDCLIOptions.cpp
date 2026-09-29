@@ -16,6 +16,7 @@
 #include "NeverDCLI.h"
 
 #include "neverd/emulation/DriverProfile.h"
+#include "neverd/loader/ARMModeCLIStrings.h"
 
 using namespace llvm;
 
@@ -282,19 +283,17 @@ cl::opt<bool> NoDebug(
     cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::list<std::string> ARMFunctionModeHints(
-    "arm-function-mode",
-    cl::desc("Assert an AArch32 function entry's mode as 0xADDRESS:arm or "
-             "0xADDRESS:thumb; repeat for multiple entries"),
-    cl::value_desc("entry:mode"), cl::sub(LiftCmd), cl::sub(DecompileCmd),
-    cl::sub(PatchCmd), cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
-    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
-    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
-    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
-    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
-    cl::sub(HuntCmd));
+    arm_mode_cli::Option, cl::desc(arm_mode_cli::Description),
+    cl::value_desc(arm_mode_cli::ValueDescription), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::opt<std::string> PdbFile(
     "pdb",

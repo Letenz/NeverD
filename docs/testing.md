@@ -73,7 +73,10 @@ observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
 The x64 ELF, COFF, and Mach-O cases also exercise single-function LLVMC
-decompilation and execute its simplified result at `-O0` and `-O2`.
+decompilation. They distinguish default optimization from `--no-opt` and
+execute both results at `-O0` and `-O2`. `SessionLLVMTests` verifies that
+switching this policy rebuilds the cached module and retains the old module
+when a replacement fails verification.
 Nested source expressions additionally compile at `-O0` for x86-32/64,
 ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and

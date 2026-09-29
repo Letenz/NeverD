@@ -25,6 +25,7 @@
           "neverd_decompile_all",
           "neverd_decompile_all_ex",
           "neverd_decompile_llvm",
+          "neverd_decompile_llvm_ex",
           "neverd_diff_decompile",
           "neverd_diff_functions",
           "neverd_disasm_json",

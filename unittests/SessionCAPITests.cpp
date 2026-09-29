@@ -1333,6 +1333,8 @@ TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
     EXPECT_EQ(neverd_session_analyze(Session), 0);
     EXPECT_EQ(takeString(neverd_last_error(Session)), Diagnostic);
   }
+  EXPECT_TRUE(takeString(neverd_decompile_llvm_ex(Session, 0, 1)).empty());
+  EXPECT_EQ(takeString(neverd_last_error(Session)), Diagnostic);
 
   ASSERT_EQ(neverd_evm_set_hardfork(Session, "shanghai"), 1);
   EXPECT_EQ(neverd_session_analyze(Session), 1)
