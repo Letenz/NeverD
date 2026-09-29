@@ -363,6 +363,7 @@ TEST(OriginalBinaryUndefinedIndependence,
   const auto OrdinaryTrap =
       specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
   EXPECT_FALSE(OrdinaryTrap.complete());
+  EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
