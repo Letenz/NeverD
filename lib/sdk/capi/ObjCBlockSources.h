@@ -588,6 +588,14 @@ noEscape(const ObjCBlockSourceContext &Source,
       throw Invalid("block consumer has no recovered parameter binding");
     const auto &F = *Found->second;
     Values State(Source, F, Parameter);
+    const auto CallBound = [&](const HighExpr &E) {
+      return objcSourceCallBound(
+          E, Source.Image, Functions, nullptr, nullptr, &F,
+          ValidatedNestedBlocks ? &ValidatedNestedBlocks->ParameterReceivers
+                                : nullptr,
+          ValidatedNestedBlocks ? &ValidatedNestedBlocks->CaptureReceivers
+                                : nullptr);
+    };
     if (WritableStrongFields && Parameter == 0 && F.Params.size() > 1) {
       MedVar SourceBlock;
       SourceBlock.Kind = MedVar::Param;
@@ -624,7 +632,7 @@ noEscape(const ObjCBlockSourceContext &Source,
           Arguments[2].K == Value::Number &&
           (Arguments[2].Bits == StrongObjectFieldFlag ||
            Arguments[2].Bits == StrongBlockFieldFlag) &&
-          objcSourceCallBound(E, Source.Image, Functions)) {
+          CallBound(E)) {
         if (AssignmentFlags) {
           const bool ExactSource = Arguments[1].K == Value::CapturedWord &&
                                    Arguments[1].Offset == Arguments[0].Offset;
@@ -649,12 +657,10 @@ noEscape(const ObjCBlockSourceContext &Source,
         if ((Parameter != 2 && Parameter != 3) || !B ||
             B->CallKind != CallKind::ObjCMessage ||
             B->Selector != "countByEnumeratingWithState:objects:count:" ||
-            !B->Receiver || Arguments.size() != 5 ||
-            !objcSourceCallBound(E, Source.Image, Functions) ||
+            !B->Receiver || Arguments.size() != 5 || !CallBound(E) ||
             objcReceiverInstanceClassName(Source.Image, *B->Receiver) !=
                 std::optional<std::string>{"NSArray"} ||
-            Arguments[2].K != Value::Frame ||
-            Arguments[3].K != Value::Frame ||
+            Arguments[2].K != Value::Frame || Arguments[3].K != Value::Frame ||
             Arguments[4].K != Value::Number || !Arguments[4].Bits ||
             Arguments[4].Bits > (1u << 16))
           return false;
@@ -684,8 +690,7 @@ noEscape(const ObjCBlockSourceContext &Source,
       };
       for (size_t I = 0; I < Arguments.size(); ++I) {
         const auto &A = Arguments[I];
-        if (A.K == Value::Frame && ValidatedNestedBlocks &&
-            objcSourceCallBound(E, Source.Image, Functions)) {
+        if (A.K == Value::Frame && ValidatedNestedBlocks && CallBound(E)) {
           // The construction proof validated this exact call and frame base,
           // including every capture byte. It rejects context/frame identities
           // in captures, while the consumer owns only the nested literal.
@@ -1747,9 +1752,14 @@ discoverObjCBlockSources(const BinaryImage &Image,
 inline size_t applyObjCBlockInvokeHints(const ObjCBlockSourcePlan &Plan,
                                         PipelineOptions &Options) {
   size_t Changed = 0;
-  auto Apply = [&](const auto &Hints) {
+  auto Apply = [&](const auto &Hints, bool Invokes) {
     for (const auto &[Entry, Hint] : Hints) {
-      if (Plan.Rejections.count(Entry))
+      // A valid descriptor proves its invoke ABI independently of the invoke
+      // body. That body may need the ABI before its capture/call proof can
+      // complete on the next pipeline run. Conflicting descriptors still
+      // invalidate the hint, and a rejected body remains unpublished.
+      if (Invokes ? Plan.InvalidInvokeDescriptors.count(Entry)
+                  : Plan.Rejections.count(Entry))
         continue;
       auto Existing = Options.SourceTypeHints.find(Entry);
       if (Existing != Options.SourceTypeHints.end()) {
@@ -1764,8 +1774,8 @@ inline size_t applyObjCBlockInvokeHints(const ObjCBlockSourcePlan &Plan,
       ++Changed;
     }
   };
-  Apply(Plan.InvokeHints);
-  Apply(Plan.HelperHints);
+  Apply(Plan.InvokeHints, true);
+  Apply(Plan.HelperHints, false);
   return Changed;
 }
 

@@ -562,6 +562,24 @@ TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
         << (Bound.Rejections.count(F.Invoke) ? Bound.Rejections.at(F.Invoke)
                                             : "");
     EXPECT_TRUE(HasNestedRoot(Bound));
+    const auto Proven = discoverObjCBlockSources(Source, F.Result);
+    const auto &Initialized =
+        Proven.StackBlocks.at(F.Caller).front().InitializedCaptures;
+    std::set<std::pair<va_t, size_t>> Active;
+    std::string Reason;
+    EXPECT_FALSE(objc_block_source_detail::noEscape(
+        Source, F.functions(), F.Invoke, 0, &Initialized, Active, Reason));
+    Reason.clear();
+    EXPECT_TRUE(objc_block_source_detail::noEscape(
+        Source, F.functions(), F.Invoke, 0, &Initialized, Active, Reason,
+        nullptr, nullptr, &Proven))
+        << Reason;
+    auto ForgedPlan = Proven;
+    ForgedPlan.CaptureReceivers.at(F.Invoke).at(32).ClassName = "OtherOwner";
+    Reason.clear();
+    EXPECT_FALSE(objc_block_source_detail::noEscape(
+        Source, F.functions(), F.Invoke, 0, &Initialized, Active, Reason,
+        nullptr, nullptr, &ForgedPlan));
     CaptureProof.at(F.Invoke).at(32).ClassName = "OtherOwner";
     EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, F.functions(), nullptr,
                                      nullptr, &OuterInvoke, nullptr,
@@ -2546,6 +2564,25 @@ TEST(ObjCBlockSources, SourceHintsRerunOnlyForNewOrNativeAnalysisBindings) {
   O.SourceTypeHints[F.Invoke].Origin =
       SourceFunctionTypeHint::OriginKind::ObjCRuntime;
   EXPECT_EQ(applyObjCBlockInvokeHints(Plan, O), 0U);
+}
+
+TEST(ObjCBlockSources, DescriptorABIHintDoesNotPublishRejectedInvokeBody) {
+  SourceFixture F(false);
+  auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.InvokeHints.count(F.Invoke), 1U);
+  Plan.Rejections[F.Invoke] = "nested block consumer needs capture proof";
+  F.Result.HighFuncs[0].SourceTypeHint.reset();
+  PipelineOptions Options;
+  EXPECT_EQ(applyObjCBlockInvokeHints(Plan, Options), 1U);
+  ASSERT_EQ(Options.SourceTypeHints.count(F.Invoke), 1U);
+  F.Result.HighFuncs[0].SourceTypeHint = Options.SourceTypeHints.at(F.Invoke);
+  EXPECT_FALSE(
+      bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions())
+          .Limitation.empty());
+  Plan.InvalidInvokeDescriptors.insert(F.Invoke);
+  PipelineOptions InvalidOptions;
+  EXPECT_EQ(applyObjCBlockInvokeHints(Plan, InvalidOptions), 0U);
+  EXPECT_EQ(InvalidOptions.SourceTypeHints.count(F.Invoke), 0U);
 }
 
 TEST(ObjCBlockSources,
