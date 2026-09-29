@@ -748,4 +748,48 @@ jt_lfp_relative_direct_call_reentry_table:
         .long   jt_lfp_relative_direct_call_reentry_t3-jt_lfp_relative_direct_call_reentry_table
         .size   jt_lfp_relative_direct_call_reentry_table, .-jt_lfp_relative_direct_call_reentry_table
 
+// The same single masked dispatch, but case zero leaves through an indirect
+// call. A call returns to the next instruction; it cannot reach the indexed
+// LOAD, so the table stays proven.
+        .text
+        .globl  jt_lfp_relative_single_indirect_call
+        .type   jt_lfp_relative_single_indirect_call,@function
+jt_lfp_relative_single_indirect_call:
+        movl    %edi, %esi
+        andl    $3, %esi
+        leaq    jt_lfp_relative_single_indirect_call_table(%rip), %r10
+        movslq  (%r10,%rsi,4), %r8
+        addq    %r10, %r8
+        .globl  jt_lfp_relative_single_indirect_call_branch
+jt_lfp_relative_single_indirect_call_branch:
+        jmpq    *%r8
+jt_lfp_relative_single_indirect_call_t0:
+        testq   %rdx, %rdx
+        je      jt_lfp_relative_single_indirect_call_end
+        movl    $4, %esi
+        callq   *%rdx
+        retq
+jt_lfp_relative_single_indirect_call_t1:
+        movl    $1, %eax
+        retq
+jt_lfp_relative_single_indirect_call_t2:
+        movl    $2, %eax
+        retq
+jt_lfp_relative_single_indirect_call_t3:
+        movl    $3, %eax
+jt_lfp_relative_single_indirect_call_end:
+        retq
+        .size   jt_lfp_relative_single_indirect_call, .-jt_lfp_relative_single_indirect_call
+
+        .section .rodata.jt_lfp_relative_single_indirect_call,"a",@progbits
+        .p2align 2
+        .globl  jt_lfp_relative_single_indirect_call_table
+        .type   jt_lfp_relative_single_indirect_call_table,@object
+jt_lfp_relative_single_indirect_call_table:
+        .long   jt_lfp_relative_single_indirect_call_t0-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t1-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t2-jt_lfp_relative_single_indirect_call_table
+        .long   jt_lfp_relative_single_indirect_call_t3-jt_lfp_relative_single_indirect_call_table
+        .size   jt_lfp_relative_single_indirect_call_table, .-jt_lfp_relative_single_indirect_call_table
+
         .section .note.GNU-stack,"",@progbits

@@ -1736,3 +1736,32 @@ TEST_F(JumpTableProposalLFP,
 }
 
 } // namespace
+
+TEST_F(JumpTableProposalLFP, SingleRelativeMaskKeepsTableAcrossIndirectCall) {
+  auto ImageOrErr = neverd::loadBinary(proposalLFPObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("jt_lfp_relative_single_indirect_call");
+  const neverd::Symbol *Table =
+      Image.findSymbol("jt_lfp_relative_single_indirect_call_table");
+  const neverd::Symbol *Branch =
+      Image.findSymbol("jt_lfp_relative_single_indirect_call_branch");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(Table, nullptr);
+  ASSERT_NE(Branch, nullptr);
+  ASSERT_EQ(Table->Size, 4u * sizeof(uint32_t));
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  EXPECT_EQ(Low.JumpTables.size(), 1u)
+      << "an indirect call returns to its fall-through and cannot reach the "
+         "indexed LOAD after its local mask";
+  EXPECT_EQ(Low.UnsafeIndirectBranchAddresses.count(Branch->Addr), 0u);
+  EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+  EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
+}
