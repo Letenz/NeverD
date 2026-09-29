@@ -36,6 +36,10 @@
 
 namespace neverd {
 
+namespace libc {
+class NoReturnTargetIndex;
+} // namespace libc
+
 struct BinaryImage;
 
 /// Bit I names the x86-64 GPR whose 8-byte slot starts at register offset
@@ -101,8 +105,12 @@ struct LocalRegisterEffect {
   std::vector<RegisterBlock> Blocks;
 };
 
-LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
-                                        const LowFunc &F);
+/// Summarize \p F.  A call into a function \p NoReturnTargets names as
+/// never returning (a flagged call, or a tail call the LowIR contract keeps
+/// unflagged) ends its path: nothing it writes reaches a caller.
+LocalRegisterEffect
+localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
+                    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is

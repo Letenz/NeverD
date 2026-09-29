@@ -39938,6 +39938,55 @@ TEST(HighCPointerAddresses, CalleeThatWritesRdxOrCallsIndirectlyClobbersIt) {
   }
 }
 
+TEST(HighCPointerAddresses, CookieCheckKeepsTheCallerReturnValue) {
+  // `__security_check_cookie` leaves RAX alone: its only exit that returns is
+  // `ret`, and its failure path tail-jumps to `__report_gsfailure`, which
+  // never returns.  The caller's result set before the check is returned.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Check = Entry + 0x20;
+  constexpr va_t Report = Entry + 0x40;
+  auto Build = [&](llvm::StringRef ReportName) {
+    std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                                 0xb8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7
+                                 0xe8, 0x12, 0x00, 0x00, 0x00, // call check
+                                 0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                                 0xc3};                        // ret
+    const size_t CallerSize = Code.size();
+    Code.resize(Check - Entry, 0xcc);
+    const std::vector<uint8_t> CheckCode = {0x48, 0x85, 0xc9, // test rcx, rcx
+                                            0x75, 0x01,       // jne fail
+                                            0xc3,             // ret
+                                            0xe9, 0x15, 0x00,
+                                            0x00, 0x00}; // fail: jmp report
+    Code.insert(Code.end(), CheckCode.begin(), CheckCode.end());
+    Code.resize(Report - Entry, 0xcc);
+    const std::vector<uint8_t> ReportCode = {0xb9, 0x02, 0x00, 0x00,
+                                             0x00, 0xcd, 0x29}; // int 29h
+    Code.insert(Code.end(), ReportCode.begin(), ReportCode.end());
+    BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
+    Img.Symbols.push_back(Symbol::makeFunc(Entry, CallerSize));
+    Img.Symbols.push_back(Symbol::makeFunc(Check, CheckCode.size()));
+    Symbol ReportSym = Symbol::makeFunc(Report, ReportCode.size());
+    if (!ReportName.empty())
+      ReportSym.Name = ReportName.str();
+    Img.Symbols.push_back(std::move(ReportSym));
+    return Img;
+  };
+  const std::string CheckName = "sub_" + llvm::utohexstr(Check);
+  const std::string Kept =
+      highcOnlyFunction(Build("__report_gsfailure"), Entry);
+  EXPECT_EQ(Kept.find("= " + CheckName + "("), std::string::npos) << Kept;
+  EXPECT_EQ(Kept.find("return " + CheckName + "("), std::string::npos) << Kept;
+  EXPECT_TRUE(std::regex_search(Kept, std::regex(R"(return (\(\w+\))?7;)")))
+      << Kept;
+
+  // An ordinary tail callee may return, so its RAX is the call's result.
+  const std::string Clobbered = highcOnlyFunction(Build(""), Entry);
+  EXPECT_FALSE(
+      std::regex_search(Clobbered, std::regex(R"(return (\(\w+\))?7;)")))
+      << Clobbered;
+}
+
 TEST(HighCPointerAddresses, RequiredTrailingUnknownCallArgumentKeepsItsSlot) {
   // The first callee writes every Win64 argument register. Its non-return
   // register results remain unknown to the caller's call summary. The next

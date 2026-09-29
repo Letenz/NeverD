@@ -15,8 +15,12 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <string>
 #include <string_view>
 
 namespace neverd {
@@ -159,13 +163,31 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target);
 /// Exact no-return name lookup for one operation on an unchanged image.
 /// The owner must outlive its readers; a different image uses the live lookup.
 class NoReturnTargetIndex {
+public:
+  /// Names a function address that a restricted (`--func`) load has not
+  /// ingested, such as a PDB public loaded on demand.
+  using NameResolver = std::function<std::optional<std::string>(va_t)>;
+
+  explicit NoReturnTargetIndex(const BinaryImage &Img,
+                               NameResolver ResolveName = {});
+  bool contains(const BinaryImage &Img, va_t Target) const;
+
+private:
   const BinaryImage *Image;
   std::set<va_t> Targets;
-
-public:
-  explicit NoReturnTargetIndex(const BinaryImage &Img);
-  bool contains(const BinaryImage &Img, va_t Target) const;
+  /// A restricted load skips the whole-image symbol walk.  Its targets are
+  /// answered one at a time, the same way, and remembered: CFG workers
+  /// share one index.
+  bool SymbolsIndexed = true;
+  NameResolver ResolveName;
+  mutable std::mutex LazyMutex;
+  mutable std::map<va_t, bool> LazyAnswers;
 };
+
+/// isNoReturnTarget() answered through \p Index when one is available, so
+/// every layer that asks about one image gets the same answer.
+bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
+                      const NoReturnTargetIndex *Index);
 
 /// True if Name requires returns-twice register semantics
 /// (setjmp / _setjmp / sigsetjmp / vfork). For setjmp, control re-enters when a

@@ -504,6 +504,45 @@ TEST(IsNoReturnTarget, NewIndexObservesChangedImageAndMismatchUsesLiveLookup) {
   EXPECT_FALSE(Changed.contains(Other, InvalidVA));
 }
 
+TEST(IsNoReturnTarget, RestrictedLoadAnswersEachTargetOnDemand) {
+  // `--func` skips the whole-image symbol walk and loads PDB names on demand.
+  BinaryImage Img;
+  Img.LoadOnlyFunctionEntries.insert(0x1000);
+  Img.Symbols.push_back(Symbol::makeFunc(0x2000));
+  Img.Symbols.back().Name = "abort";
+  unsigned Lookups = 0;
+  auto Resolve = [&](va_t Addr) -> std::optional<std::string> {
+    ++Lookups;
+    if (Addr == 0x3000)
+      return std::string("__report_gsfailure");
+    if (Addr == 0x4000)
+      return std::string("helper");
+    return std::nullopt;
+  };
+  const NoReturnTargetIndex Index(Img, Resolve);
+  EXPECT_TRUE(Index.contains(Img, 0x2000));
+  EXPECT_TRUE(Index.contains(Img, 0x3000));
+  EXPECT_FALSE(Index.contains(Img, 0x4000));
+  EXPECT_FALSE(Index.contains(Img, 0x5000));
+  EXPECT_FALSE(Index.contains(Img, InvalidVA));
+  const unsigned FirstLookups = Lookups;
+  EXPECT_TRUE(Index.contains(Img, 0x3000));
+  EXPECT_EQ(Lookups, FirstLookups) << "a target is resolved once";
+
+  // Without a resolver only names already in the image count.
+  const NoReturnTargetIndex Unnamed(Img);
+  EXPECT_TRUE(Unnamed.contains(Img, 0x2000));
+  EXPECT_FALSE(Unnamed.contains(Img, 0x3000));
+
+  // A whole-image load has walked every symbol; the resolver is not asked.
+  Img.LoadOnlyFunctionEntries.clear();
+  Lookups = 0;
+  const NoReturnTargetIndex Eager(Img, Resolve);
+  EXPECT_TRUE(Eager.contains(Img, 0x2000));
+  EXPECT_FALSE(Eager.contains(Img, 0x3000));
+  EXPECT_EQ(Lookups, 0u);
+}
+
 TEST(IsReturnsTwiceFunction, SetjmpFamily) {
   EXPECT_TRUE(isReturnsTwiceFunction("vfork"));
   EXPECT_TRUE(isReturnsTwiceFunction("_vfork"));

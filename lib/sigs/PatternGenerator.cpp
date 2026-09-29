@@ -34,9 +34,9 @@ namespace sigs {
 
 namespace {
 
-#define NEVERD_SIGS_VALUE(Name, Value)                                         \
+#define NEVERD_BRANCH_VALUE(Name, Value)                                       \
   [[maybe_unused]] constexpr uint32_t Name = Value;
-#include "neverd/sigs/BranchEncoding.def"
+#include "neverd/support/BranchEncoding.def"
 
 #define NEVERD_SIGS_SYNTAX_CHAR(Name, Value)                                   \
   [[maybe_unused]] constexpr char Name = Value;

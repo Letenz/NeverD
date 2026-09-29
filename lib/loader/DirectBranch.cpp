@@ -1,4 +1,4 @@
-//===- DirectBranch.cpp - Direct branch scanning for runtime edges --------===//
+//===- DirectBranch.cpp - Direct branch decoding and scanning -------------===//
 //
 // NeverD Decompiler
 //
@@ -7,119 +7,239 @@
 #include "neverd/loader/DirectBranch.h"
 
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
+#include "neverd/support/InstructionFields.h"
+
+#include "llvm/Support/MathExtras.h"
 
 namespace neverd {
 namespace {
 
-/// Decode the 32-bit Thumb-2 branch pair at \p Code.
+#define NEVERD_BRANCH_FORM(Name, Mask, Match)                                  \
+  [[maybe_unused]] constexpr InstructionForm Name{Mask, Match};
+#define NEVERD_BRANCH_FIELD(Name, Low, Width)                                  \
+  [[maybe_unused]] constexpr BitField Name{Low, Width};
+#define NEVERD_BRANCH_VALUE(Name, Value)                                       \
+  [[maybe_unused]] constexpr uint32_t Name = Value;
+#include "neverd/support/BranchEncoding.def"
+
+static_assert(x86::kCallRel32Len == x86::kJmpRel32Len,
+              "a rel32 call and jump are read alike");
+static_assert(ArmInstructionBytes == ThumbWideInstructionBytes,
+              "every ARM direct branch is a word long");
+
+using Kind = DirectBranchKind;
+
+/// Whether \p Forms takes a branch of kind \p K.
+bool accepts(DirectBranchForms Forms, Kind K, bool Conditional) {
+  if (Conditional && !Forms.Conditional)
+    return false;
+  switch (K) {
+  case Kind::Jump:
+    return Forms.Jumps;
+  case Kind::Call:
+    return Forms.Calls;
+  case Kind::ExchangingCall:
+    return Forms.ExchangingCalls;
+  }
+  return false;
+}
+
+/// An x86 `call rel32` or `jmp rel32`, whose displacement counts from the
+/// next instruction.
+std::optional<DirectBranch> decodeX86(const uint8_t *Code, size_t Available,
+                                      va_t VA, DirectBranchForms Forms) {
+  if (Available < x86::kCallRel32Len)
+    return std::nullopt;
+  DirectBranch Branch;
+  if (Code[0] == x86::kCallRel32)
+    Branch.Kind = Kind::Call;
+  else if (Code[0] == x86::kJmpRel32)
+    Branch.Kind = Kind::Jump;
+  else
+    return std::nullopt;
+  if (!accepts(Forms, Branch.Kind, /*Conditional=*/false))
+    return std::nullopt;
+  Branch.Address = VA;
+  Branch.Length = x86::kCallRel32Len;
+  Branch.Base = VA + x86::kCallRel32Len;
+  Branch.Displacement = readLE<int32_t>(Code + x86::kRel32DispOffset);
+  return Branch;
+}
+
+/// An A64 `b` or `bl`, whose offset in instructions counts from itself.
+std::optional<DirectBranch> decodeA64(const uint8_t *Code, size_t Available,
+                                      va_t VA, DirectBranchForms Forms) {
+  if (Available < A64InstructionBytes)
+    return std::nullopt;
+  const uint32_t Word = readLE<uint32_t>(Code);
+  if (!A64BranchOrLink.matches(Word))
+    return std::nullopt;
+  DirectBranch Branch;
+  Branch.Kind = A64Branch.matches(Word) ? Kind::Jump : Kind::Call;
+  if (!accepts(Forms, Branch.Kind, /*Conditional=*/false))
+    return std::nullopt;
+  Branch.Address = VA;
+  Branch.Length = A64InstructionBytes;
+  Branch.Base = VA;
+  Branch.Displacement =
+      BitString().append(A64BranchOffset, Word).signExtended() *
+      A64InstructionBytes;
+  return Branch;
+}
+
+/// An A32 `b` or `bl` under any condition, or `blx` (immediate), whose offset
+/// in words counts from the program counter eight bytes ahead; `blx` adds
+/// its halfword bit.
+std::optional<DirectBranch> decodeA32(const uint8_t *Code, size_t Available,
+                                      va_t VA, DirectBranchForms Forms) {
+  if (Available < ArmInstructionBytes)
+    return std::nullopt;
+  const uint32_t Word = readLE<uint32_t>(Code);
+  if (!ArmBranch.matches(Word))
+    return std::nullopt;
+  const uint32_t Condition = ArmCondition.extract(Word);
+  // BL's link bit, and BLX's halfword bit.
+  const bool LinkOrHalfword = ArmLinkOrHalfword.extract(Word);
+  const bool Exchange = Condition == ArmConditionUnconditional;
+  DirectBranch Branch;
+  Branch.Kind = Exchange         ? Kind::ExchangingCall
+                : LinkOrHalfword ? Kind::Call
+                                 : Kind::Jump;
+  Branch.Conditional = !Exchange && Condition != ArmConditionAlways;
+  if (!accepts(Forms, Branch.Kind, Branch.Conditional))
+    return std::nullopt;
+  Branch.Address = VA;
+  Branch.Length = ArmInstructionBytes;
+  Branch.Base = VA + ArmPCOffset;
+  Branch.Displacement =
+      BitString().append(ArmBranchOffset, Word).signExtended() *
+      ArmInstructionBytes;
+  if (Exchange && LinkOrHalfword)
+    Branch.Displacement += ThumbHalfwordBytes;
+  Branch.TargetIsThumb = Exchange;
+  return Branch;
+}
+
+/// A T32 `b.w` (T4), `bl` or `blx` (immediate), whose offset in halfwords
+/// counts from the program counter four bytes ahead -- rounded down to a word
+/// for `blx`, which targets ARM state, where instructions are words.
 ///
-/// `BL`, `B.W`, and `BLX` share one encoding split across two halfwords: the
-/// first carries the sign and the high immediate bits, the second the J1/J2
-/// pair that — exclusive-ored back against the sign — restores the two
-/// immediate bits above them.  Nothing else distinguishes the three but two
-/// bits of the second halfword, so they are decoded together.
-///
-/// Conditional `B.W` (T3) is deliberately not decoded.  It shares the leading
-/// halfword pattern but names a branch within the function rather than a call
-/// edge, exactly as the ARM-state decoder excludes a predicated `B`.
-std::optional<va_t> decodeThumbBranch(const uint8_t *Code, size_t Available,
-                                      va_t VA, size_t &Length) {
-  if (Available < 4)
+/// The three share one encoding split across two halfwords: the first carries
+/// the sign and the high immediate bits, the second the J1/J2 pair that --
+/// exclusive-ored back against the sign -- restores the two immediate bits
+/// above them.  Conditional `b.w` (T3) shares the leading halfword but names a
+/// branch within the function; it is not decoded.
+std::optional<DirectBranch> decodeT32(const uint8_t *Code, size_t Available,
+                                      va_t VA, DirectBranchForms Forms) {
+  if (Available < ThumbWideInstructionBytes)
     return std::nullopt;
-  const uint16_t Hw1 = readLE<uint16_t>(Code);
-  const uint16_t Hw2 = readLE<uint16_t>(Code + 2);
-  if ((Hw1 & 0xF800u) != 0xF000u || (Hw2 & 0x8000u) == 0)
+  const uint16_t First = readLE<uint16_t>(Code);
+  const uint16_t Second = readLE<uint16_t>(Code + ThumbHalfwordBytes);
+  if (!ThumbWideBranchHigh.matches(First))
     return std::nullopt;
-
-  const bool IsLink = (Hw2 & 0x4000u) != 0;  // second halfword `11` vs `10`
-  const bool WideImm = (Hw2 & 0x1000u) != 0; // BL/B.W vs BLX
-  // `10x0` is conditional B.W (T3); `11x0` is BLX, which is a call edge.
-  if ((!IsLink && !WideImm) || (IsLink && !WideImm && (Hw2 & 1u)))
+  DirectBranch Branch;
+  if (ThumbJumpLow.matches(Second))
+    Branch.Kind = Kind::Jump;
+  else if (ThumbLinkLow.matches(Second))
+    Branch.Kind = Kind::Call;
+  else if (ThumbLinkExchangeLow.matches(Second))
+    Branch.Kind = Kind::ExchangingCall;
+  else
     return std::nullopt;
-
-  const uint32_t S = (Hw1 >> 10) & 1u;
-  const uint32_t J1 = (Hw2 >> 13) & 1u;
-  const uint32_t J2 = (Hw2 >> 11) & 1u;
-  const uint32_t I1 = (~(J1 ^ S)) & 1u;
-  const uint32_t I2 = (~(J2 ^ S)) & 1u;
-  const uint32_t ImmHigh = Hw1 & 0x03FFu;
-  const uint32_t ImmLow = Hw2 & 0x07FFu;
-
-  Length = 4;
-  // The Thumb program counter reads four bytes ahead of the instruction.  BLX
-  // additionally rounds it down, because it targets ARM state where
-  // instructions are word-aligned.
-  if (VA > InvalidVA - 4)
+  if (!accepts(Forms, Branch.Kind, /*Conditional=*/false))
     return std::nullopt;
-  const va_t Base = WideImm ? VA + 4 : ((VA + 4) & ~va_t(3));
-  // BLX encodes a halfword-pair target, so its lowest immediate bit is the
-  // reserved H bit rather than part of the displacement.
-  const uint32_t Imm25 = (S << 24) | (I1 << 23) | (I2 << 22) | (ImmHigh << 12) |
-                         ((WideImm ? ImmLow : (ImmLow & 0x07FEu)) << 1);
-  const int64_t Offset = (Imm25 & (1u << 24))
-                             ? static_cast<int64_t>(Imm25) - (int64_t(1) << 25)
-                             : static_cast<int64_t>(Imm25);
-  if (Offset < 0)
-    return static_cast<va_t>(-Offset) > Base
-               ? std::nullopt
-               : std::optional<va_t>(Base - static_cast<va_t>(-Offset));
-  if (static_cast<va_t>(Offset) > InvalidVA - Base)
-    return std::nullopt;
-  return Base + static_cast<va_t>(Offset);
+  const bool Exchange = Branch.Kind == Kind::ExchangingCall;
+  // The offset's I1 and I2 are J1 and J2 against its sign.
+  const uint32_t Sign = ThumbBranchSign.extract(First);
+  Branch.Address = VA;
+  Branch.Length = ThumbWideInstructionBytes;
+  Branch.Base = VA + ThumbPCOffset;
+  if (Exchange)
+    Branch.Base = llvm::alignDown(Branch.Base, ArmInstructionBytes);
+  Branch.Displacement =
+      BitString()
+          .append(ThumbBranchSign, First)
+          .append(!(ThumbBranchJ1.extract(Second) ^ Sign), ThumbBranchJ1.Width)
+          .append(!(ThumbBranchJ2.extract(Second) ^ Sign), ThumbBranchJ2.Width)
+          .append(ThumbBranchHigh, First)
+          .append(ThumbBranchLow, Second)
+          .signExtended() *
+      ThumbHalfwordBytes;
+  Branch.TargetIsThumb = !Exchange;
+  return Branch;
 }
 
 } // namespace
+
+std::optional<va_t> DirectBranch::target() const {
+  // The program counter the displacement counts from already wrapped.
+  if (Base < Address)
+    return std::nullopt;
+  const va_t Magnitude = Displacement < 0 ? 0 - static_cast<va_t>(Displacement)
+                                          : static_cast<va_t>(Displacement);
+  if (Displacement < 0 ? Magnitude > Base : Magnitude > InvalidVA - Base)
+    return std::nullopt;
+  return wrappingTarget();
+}
+
+std::optional<DirectBranch> decodeDirectBranch(Arch A, InstructionMode Mode,
+                                               const uint8_t *Code,
+                                               size_t Available, va_t VA,
+                                               DirectBranchForms Forms) {
+  if (!isSingleInstructionMode(Mode))
+    return std::nullopt;
+  switch (A) {
+  case Arch::X64:
+  case Arch::X86:
+    return decodeX86(Code, Available, VA, Forms);
+  case Arch::AArch64:
+    return decodeA64(Code, Available, VA, Forms);
+  case Arch::ARM:
+    return Mode == InstructionMode::Thumb
+               ? decodeT32(Code, Available, VA, Forms)
+               : decodeA32(Code, Available, VA, Forms);
+  default:
+    return std::nullopt;
+  }
+}
+
+size_t getDirectBranchLength(Arch A) {
+  switch (A) {
+  case Arch::X64:
+  case Arch::X86:
+    return x86::kCallRel32Len;
+  case Arch::AArch64:
+    return A64InstructionBytes;
+  case Arch::ARM:
+    return ArmInstructionBytes;
+  default:
+    return 0;
+  }
+}
 
 std::optional<va_t> decodeDirectBranchTarget(Arch A, InstructionMode Mode,
                                              const uint8_t *Code,
                                              size_t Available, va_t VA,
                                              size_t &Length) {
-  if (!isSingleInstructionMode(Mode))
+  DirectBranchForms Forms;
+  Forms.Jumps = true;
+  Forms.Calls = true;
+  Forms.ExchangingCalls = A == Arch::ARM && Mode == InstructionMode::Thumb;
+  const std::optional<DirectBranch> Branch =
+      decodeDirectBranch(A, Mode, Code, Available, VA, Forms);
+  if (!Branch)
     return std::nullopt;
-  switch (A) {
-  case Arch::X64:
-  case Arch::X86: {
-    if (Available < 5 || (Code[0] != 0xE8 && Code[0] != 0xE9))
-      return std::nullopt;
-    Length = 5;
-    const int32_t Displacement = readLE<int32_t>(Code + 1);
-    const va_t Next = VA + 5;
-    if (Displacement < 0 && static_cast<va_t>(-int64_t(Displacement)) > Next)
-      return std::nullopt;
-    return static_cast<va_t>(static_cast<int64_t>(Next) + Displacement);
-  }
-  case Arch::AArch64: {
-    if (Available < 4)
-      return std::nullopt;
-    Length = 4;
-    const uint32_t Word = readLE<uint32_t>(Code);
-    if ((Word & 0x7C000000u) != 0x14000000u)
-      return std::nullopt; // neither B nor BL
-    int64_t Offset = static_cast<int64_t>(Word & 0x03FFFFFFu) << 38 >> 36;
-    if (Offset < 0 && static_cast<va_t>(-Offset) > VA)
-      return std::nullopt;
-    return static_cast<va_t>(static_cast<int64_t>(VA) + Offset);
-  }
-  case Arch::ARM: {
-    if (Mode == InstructionMode::Thumb)
-      return decodeThumbBranch(Code, Available, VA, Length);
-    if (Available < 4)
-      return std::nullopt;
-    Length = 4;
-    const uint32_t Word = readLE<uint32_t>(Code);
-    // The A1 encodings of B and BL.  A condition other than 0b1110 is a
-    // conditional branch, which does not name a call edge on its own.
-    if ((Word >> 28) != 0xE || (Word & 0x0E000000u) != 0x0A000000u)
-      return std::nullopt;
-    int64_t Offset = static_cast<int64_t>(Word & 0x00FFFFFFu) << 40 >> 38;
-    const va_t Next = VA + 8; // ARM pipeline offset
-    if (Offset < 0 && static_cast<va_t>(-Offset) > Next)
-      return std::nullopt;
-    return static_cast<va_t>(static_cast<int64_t>(Next) + Offset);
-  }
-  default:
-    return std::nullopt;
-  }
+  Length = Branch->Length;
+  return Branch->target();
+}
+
+unsigned getBranchScanStride(Arch A, InstructionMode Mode) {
+  if (A == Arch::X64 || A == Arch::X86)
+    return X86InstructionAlignment;
+  if (A == Arch::ARM && Mode == InstructionMode::Thumb)
+    return ThumbHalfwordBytes;
+  return A == Arch::AArch64 ? A64InstructionBytes : ArmInstructionBytes;
 }
 
 } // namespace neverd
