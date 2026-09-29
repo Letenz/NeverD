@@ -21,6 +21,7 @@
 
 namespace neverd {
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
+bool sinkJoinDefaultsLate(HighFunc &Func);
 void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
@@ -4250,4 +4251,43 @@ TEST(HighControlFlowSemantics, ConstantIncomingBesideARealOneKeepsItsValue) {
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(16));
   EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
   EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(5));
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultKeepsValuesOfAnArmWithTwoJumps) {
+  // `if (c) { if (d) { v = a; goto J; } x = 1; v = b; goto J; }
+  //  v = def; J: return v;` Either the sink leaves this alone or every
+  // path keeps its value.
+  auto Plus = [](uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                               HighExpr::makeConst(N, 8));
+  };
+  auto A = assign(0x1010, 5, 0);
+  A.Val = Plus(1);
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {A, jump(0x1014, 0x1040)};
+  auto B = assign(0x101c, 5, 0);
+  B.Val = Plus(2);
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = local(0);
+  Outer.Body = {Inner, assign(0x1018, 3, 1), B, jump(0x1020, 0x1040)};
+  auto Default = assign(0x1030, 5, 0);
+  Default.Val = Plus(3);
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Outer, Default, result(0x1040, local(5))};
+  HighFunc Late = F;
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(12));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+  EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(10));
+  // The late entry point runs the same sink on the same shape.
+  sinkJoinDefaultsLate(Late);
+  EXPECT_EQ(execute(Late, 0), std::optional<uint64_t>(12));
+  EXPECT_EQ(execute(Late, 1), std::optional<uint64_t>(11));
+  EXPECT_EQ(execute(Late, 2), std::optional<uint64_t>(10));
 }
