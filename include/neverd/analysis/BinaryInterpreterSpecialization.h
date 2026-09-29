@@ -58,7 +58,10 @@ struct BinaryUndefinedIndependenceResult {
 /// paired target independence and a complete bounded target set. Every feasible
 /// path must finish; budgets never certify a prefix. Missing bytes, overlapping
 /// instructions, incomplete architecture evidence and direct structural cycles
-/// refuse proof. Requires an explicit normal, nonfaulting,
+/// refuse proof. Exact INT3/UD2 evidence may be retained with its Missing
+/// undefined-effect coverage only when no feasible execution reaches the trap.
+/// A feasible trap violates the nonfaulting contract; no resumption is modeled.
+/// Requires an explicit normal, nonfaulting,
 /// CET-disabled x64 profile and a readable/writable frame disjoint from the
 /// immutable image. Frame must be rooted at entry RSP and contain [0, 8).
 /// The checker additionally proves entry RSP and the entry return slot are

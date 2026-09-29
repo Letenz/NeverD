@@ -7,6 +7,8 @@
 #include "../../lib/analysis/interpreter/NativeUndefinedIndependence.h"
 #include "gtest/gtest.h"
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
+
 #include "llvm/Support/Errc.h"
 
 #include <map>
@@ -59,6 +61,35 @@ public:
     Insn.NativeStackControl = SpecializationNativeStackControl::Return;
     Insn.NativeBytes = {0xc3};
     certify(Insn);
+  }
+
+  void untakenTrap() {
+    indirect(0x100, 0x200);
+    auto &Branch = Instructions.at(0x100);
+    Branch.Ops[0].Opcode = NdOp::COND_BR;
+    Branch.Ops[0].addInput(NdVar::scalar(0, 1));
+    Branch.Origin.ControlFlags = LowInstructionControlFlag::Branch |
+                                 LowInstructionControlFlag::Conditional;
+    Branch.Origin.Immediate = 0x200;
+    certify(Branch);
+    ret(0x102);
+    auto &Trap = Instructions[0x200];
+    Trap = {};
+    LowOp Op;
+    Op.Opcode = NdOp::INTRINSIC;
+    Op.Addr = 0x200;
+    Op.addInput(NdVar::scalar(static_cast<uint64_t>(Intrinsic::Int3), 2));
+    Trap.Ops = {Op};
+    Trap.Origin.Address = 0x200;
+    Trap.Origin.Size = 1;
+    Trap.Origin.OpCount = 1;
+    Trap.Origin.Control = LowInstructionControl::Terminator;
+    Trap.Origin.ControlFlags = LowInstructionControlFlag::Terminator |
+                               LowInstructionControlFlag::Resumable;
+    Trap.Fallthrough.Address = 0x201;
+    Trap.NativeBytes = {0xcc};
+    certify(Trap);
+    Trap.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
   }
 
   llvm::Expected<SpecializationInstruction>
@@ -144,6 +175,65 @@ TEST(NativeUndefinedIndependence, IndirectCycleCannotPublishABoundedPrefix) {
   EXPECT_FALSE(Incomplete.Proof.Certificate.has_value());
   EXPECT_TRUE(Incomplete.Instructions.empty());
   EXPECT_TRUE(Incomplete.Reads.empty());
+}
+
+TEST(NativeUndefinedIndependence, UntakenTrapStillRequiresExactEvidence) {
+  NativeProvider Provider;
+  Provider.untakenTrap();
+  const auto Check = [&] {
+    return neverd::analysis::detail::checkNativeUndefinedIndependence(
+        Provider, {0x100}, contract(), {});
+  };
+  const auto Valid = Check();
+  ASSERT_TRUE(Valid.Proof.proved()) << Valid.Proof.Diagnostic;
+  ASSERT_EQ(Valid.Instructions.size(), 3U);
+  EXPECT_EQ(Provider.Fetches.count(0x201), 0U);
+  EXPECT_EQ(Valid.Instructions.back().UndefinedEffects.Coverage,
+            LowUndefinedCoverage::Missing);
+  const auto Original = Provider.Instructions.at(0x200);
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto &Trap = Provider.Instructions.at(0x200);
+    Trap = Original;
+    switch (Mutation) {
+    case 0:
+      Trap.UndefinedEffects.OperationDigest.clear();
+      break;
+    case 1:
+      Trap.Ops[0].Output = NdVar::reg(0, 8);
+      break;
+    case 2:
+      Trap.Ops[0].Inputs[0] =
+          NdVar::scalar(static_cast<uint64_t>(Intrinsic::Rdtsc), 2);
+      break;
+    case 3:
+      Trap.Ops[0].addInput(NdVar::scalar(0, 1));
+      break;
+    case 4:
+      Trap.Origin.ControlFlags = LowInstructionControlFlag::Terminator;
+      break;
+    case 5:
+      Trap.NativeStackControl = SpecializationNativeStackControl::Return;
+      break;
+    case 6:
+      Trap.Ops[0].Opcode = NdOp::NOP;
+      Trap.Ops[0].NumInputs = 0;
+      break;
+    case 7:
+      Trap.UndefinedEffects.OpCount = 0;
+      break;
+    }
+    if (Mutation != 0)
+      Trap.UndefinedEffects.OperationDigest =
+          lowUndefinedOperationDigest(Trap.Ops);
+    const auto Rejected = Check();
+    EXPECT_TRUE(Rejected.Proof.Status == LowIRIndependenceStatus::Invalid ||
+                Rejected.Proof.Status == LowIRIndependenceStatus::Unsupported)
+        << Rejected.Proof.Diagnostic;
+    EXPECT_FALSE(Rejected.Proof.Certificate.has_value());
+    EXPECT_TRUE(Rejected.Instructions.empty());
+    EXPECT_TRUE(Rejected.Reads.empty());
+  }
 }
 
 } // namespace

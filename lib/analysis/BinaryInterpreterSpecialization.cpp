@@ -228,9 +228,17 @@ public:
       }
     }
     if (Decode.isFunctionTerminator(Insn) &&
-        B.Control == LowInstructionControl::None)
-      return llvm::createStringError(llvm::errc::not_supported,
-                                     "unsupported machine terminator");
+        B.Control == LowInstructionControl::None) {
+      if (Insn.Id != X86_INS_INT3 && Insn.Id != X86_INS_UD2)
+        return llvm::createStringError(llvm::errc::not_supported,
+                                       "unsupported machine terminator");
+      // Preserve strictly lifted traps for whole-original-graph inspection.
+      // This does not authorize execution or model exception resumption.
+      B.Control = LowInstructionControl::Terminator;
+      B.ControlFlags = LowInstructionControlFlag::Terminator;
+      if (Decode.isResumableTrap(Insn))
+        B.ControlFlags |= LowInstructionControlFlag::Resumable;
+    }
     Result.Fallthrough = {Cursor.Address + Insn.Size, Cursor.Mode};
     return Result;
   }
@@ -333,7 +341,7 @@ binaryIndependenceDigest(const BinaryImage &Image,
                          llvm::ArrayRef<SpecializationInstruction> Instructions,
                          llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-original-native-control-independence-v2");
+  Hash.update("neverd-original-native-control-independence-v3");
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
