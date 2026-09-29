@@ -24,9 +24,17 @@ CheckedBackend::~CheckedBackend() {
     cs_close(&Decoder);
 }
 
-llvm::Error CheckedBackend::mutableMemory() const {
+llvm::Error CheckedBackend::checkExecutionState() const {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
+  if (PendingService)
+    return error(diagnostic::PendingService);
+  return llvm::Error::success();
+}
+
+llvm::Error CheckedBackend::mutableMemory() const {
+  if (auto E = checkExecutionState())
+    return E;
   if (Running)
     return error(diagnostic::Running);
   return Memory->mutableMemory();
@@ -76,10 +84,10 @@ llvm::Error CheckedBackend::protect(uint64_t A, uint64_t N, unsigned P) {
 }
 
 llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
-                                   bool Recoverable) {
+                                   bool Recoverable, bool Guest) {
   if (FirstFault)
     return error(diagnostic::Faulted);
-  if (auto Kind = Memory->check(A, N, P)) {
+  if (auto Kind = Memory->check(A, N, Guest ? executionPermissions(P) : P)) {
     auto Access = P == Execute ? BackendAccessKind::Execute
                   : P == Write ? BackendAccessKind::Write
                                : BackendAccessKind::Read;
@@ -127,7 +135,7 @@ llvm::Error CheckedBackend::fetch(uint64_t A,
 
 llvm::Expected<bool> CheckedBackend::canAccess(uint64_t A, uint64_t N,
                                                unsigned P) const {
-  if (FirstFault || (P & ~(Read | Write | Execute)))
+  if (FirstFault || (P & ~GuestPermissionMask))
     return error(diagnostic::Faulted);
   return Memory->addressSpace()->canAccess(A, N, P);
 }
@@ -172,6 +180,12 @@ std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
   return std::exchange(RecoverableFault, std::nullopt);
 }
 
+std::optional<ServiceRequest> CheckedBackend::takeServiceRequest() {
+  if (Running)
+    return std::nullopt;
+  return std::exchange(PendingService, std::nullopt);
+}
+
 llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                                                            uint64_t Timeout) {
   bool Started = false, BackendFailed = false;
@@ -181,13 +195,15 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
       return std::move(E);
     return error(diagnostic::MissingExecutionStart);
   }
-  // A transport can fail while enforcing the deadline. Its terminal failure
-  // takes precedence, but the elapsed budget must not disappear from the exit.
-  if (BackendFailed && std::chrono::steady_clock::now() >= Deadline)
+  // A transport failure or service interception can coincide with the deadline.
+  // Retain elapsed budget independently of the higher-priority exit reason.
+  if ((BackendFailed || PendingService) &&
+      std::chrono::steady_clock::now() >= Deadline)
     TimedOut = true;
   return makeExecutionExit(
       std::move(E), {.Fault = FirstFault,
                      .Recoverable = RecoverableFault,
+                     .Service = PendingService,
                      .BackendFailed = BackendFailed,
                      .InstructionRejected =
                          FirstFault && FirstFault->Kind ==
@@ -232,7 +248,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       std::vector<uint8_t> Bytes(MaxInstructionBytes);
       size_t Count = 0;
       for (; Count < Bytes.size() && Count <= UINT64_MAX - PC; ++Count) {
-        if (Memory->check(PC + Count, 1, Execute))
+        if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
           break;
         if (auto E = Memory->read(
                 PC + Count, llvm::MutableArrayRef<uint8_t>(&Bytes[Count], 1),
@@ -241,7 +257,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       }
       cs_insn *Decoded = nullptr;
       if (!Count)
-        return access(PC, 1, Execute);
+        return access(PC, 1, Execute, false, true);
       if (!cs_disasm(Decoder, Bytes.data(), Count, PC, 1, &Decoded)) {
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
@@ -255,6 +271,11 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
         return error(diagnostic::Faulted);
       if (StopRequested)
         break;
+      if (UserMode) {
+        PendingService = decodeServiceRequest(*Decoded);
+        if (PendingService)
+          break;
+      }
       if (auto E = execute(*Decoded)) {
         if (!FirstFault) {
           const bool Unsupported = E.isA<UnsupportedExecutionError>();

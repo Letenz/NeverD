@@ -17,7 +17,7 @@ namespace {
 bool valid(uint64_t Address, uint64_t Size, unsigned Permissions) {
   return Size && !(Address % memory::PageSize) && !(Size % memory::PageSize) &&
          Size - 1 <= UINT64_MAX - Address &&
-         !(Permissions & ~(Read | Write | Execute));
+         !(Permissions & ~GuestPermissionMask);
 }
 } // namespace
 AddressSpace::AddressSpace(std::unique_ptr<Impl> State)
@@ -311,7 +311,7 @@ llvm::Expected<bool> AddressSpace::canAccess(uint64_t Address, uint64_t Size,
   std::unique_lock Lock(State->Memory->State->Mutex, std::try_to_lock);
   if (!Lock.owns_lock())
     return diagnostic::error(diagnostic::Running);
-  if (Permissions & ~(Read | Write | Execute))
+  if (Permissions & ~GuestPermissionMask)
     return diagnostic::error(diagnostic::InvalidMapping);
   return !State->check(Address, Size, Permissions) &&
          !State->overlapsDevice(Address, Size);

@@ -58,6 +58,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` couvre les graphes réellement reconstruits, les boucles finies de structures différentes et leurs cas sans itération, les producteurs dynamiques, les choix conditionnels, les vues d’entrée superposées, les copies et sauvegardes corrélées, les preuves de lecture immuable des deux côtés, les drapeaux système et la préservation du retour. Candidats erronés, écritures supplémentaires, chemins incomplets ou infinis, preuves périmées, collisions temporaires et budgets partagés épuisés doivent refuser le certificat. Les tests d’indépendance existants refusent toujours les valeurs arbitraires observables.
 
+Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` couvrent les compteurs arbitraires sur 64 bits, les rangs lexicographiques imbriqués, les résidus natifs réels, les préfixes d’entrée, les vues superposées et les sauvegardes corrélées. Les contrôles négatifs rejettent corps incorrects, domaines d’entrée réduits, rangs non décroissants, rebouclages non signés, écritures antérieures oubliées, coupures absentes, modèles malformés et budgets partagés épuisés. Un chemin frère fini réussi ne valide jamais une induction incomplète.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

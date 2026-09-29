@@ -52,6 +52,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` 覆盖实际恢复的残余图、不同结构的有限循环、零次迭代、独立动态生产者、条件见证、重叠输入视图、复制与溢出关联、两边不可变读取证据、强制系统标志和返回槽保留。错误候选、额外写入、不完整或无限路径、过期证据、临时区冲突及共享预算耗尽必须拒绝证书；已有独立性测试仍拒绝可观察的任意值。
 
+同一目标中的 `LowIRLoopRefinement.*` 和 `BinaryLowIRLoopRefinement.*` 覆盖任意 64 位计数、嵌套字典序排名、真实原生残余代码、入口前缀模板、重叠视图及相关溢出。负例拒绝错误循环体、缩小入口域、不下降的排名、无符号回绕、遗忘之前的写入、遗漏切点、畸形模板和共享预算耗尽。成功的有限分支不能授权不完整的归纳证明。
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

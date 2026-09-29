@@ -1,0 +1,16 @@
+//===- GuestPermissions.def - Address-space access rights ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_GUEST_PERMISSION
+NEVERD_GUEST_PERMISSION(Read, 1)
+NEVERD_GUEST_PERMISSION(Write, 2)
+NEVERD_GUEST_PERMISSION(Execute, 4)
+NEVERD_GUEST_PERMISSION(UserAccessible, 8)
+#endif
+#ifdef NEVERD_GUEST_PERMISSION_MASK
+NEVERD_GUEST_PERMISSION_MASK(GuestAccessPermissions, Read | Write | Execute)
+NEVERD_GUEST_PERMISSION_MASK(GuestPermissionMask,
+                             GuestAccessPermissions | UserAccessible)
+#endif

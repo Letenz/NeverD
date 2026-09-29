@@ -339,7 +339,17 @@ void eliminateUnusedValues(std::vector<HighStmt> &Stmts) {
 // Phase 7: Eliminate gotos that jump to the next while-loop header
 //===----------------------------------------------------------------------===//
 
-static void eliminateGotoToLoop(std::vector<HighStmt> &Stmts) {
+/// Whether falling into \p Loop is what a jump to \p Target does. At the
+/// header, both evaluate the test; a jump to the body's first statement
+/// skips it, which only an always-true loop does anyway.
+static bool entersLoopAsFallthrough(const HighStmt &Loop, va_t Target) {
+  if (Loop.LoopHeaderAddr == Target)
+    return true;
+  return !Loop.Body.empty() && Loop.Body[0].Addr == Target && Loop.Cond &&
+         Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0;
+}
+
+void eliminateGotoToLoop(std::vector<HighStmt> &Stmts) {
   auto TryRemoveTrailingGoto = [](std::vector<HighStmt> &Body) {
     for (size_t I = 0; I + 1 < Body.size(); ++I) {
       if (Body[I].Kind != StmtKind::Goto)
@@ -349,9 +359,7 @@ static void eliminateGotoToLoop(std::vector<HighStmt> &Stmts) {
       va_t Target = Body[I].GotoTarget;
       if (Target == 0 || Target == InvalidVA)
         continue;
-      auto &Loop = Body[I + 1];
-      if (Loop.LoopHeaderAddr == Target ||
-          (!Loop.Body.empty() && Loop.Body[0].Addr == Target)) {
+      if (entersLoopAsFallthrough(Body[I + 1], Target)) {
         Body.erase(Body.begin() + static_cast<long>(I));
         --I;
       }
@@ -368,8 +376,7 @@ static void eliminateGotoToLoop(std::vector<HighStmt> &Stmts) {
       va_t GotoDest = Body.back().GotoTarget;
       if (GotoDest == 0 || GotoDest == InvalidVA)
         return;
-      if (Loop.LoopHeaderAddr == GotoDest ||
-          (!Loop.Body.empty() && Loop.Body[0].Addr == GotoDest))
+      if (entersLoopAsFallthrough(Loop, GotoDest))
         Body.pop_back();
     };
     if (Stmts[I].Kind == StmtKind::If || Stmts[I].Kind == StmtKind::IfElse) {

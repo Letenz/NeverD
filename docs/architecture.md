@@ -823,6 +823,8 @@ Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1`
 
 `checkLowIRRefinement` and `checkBinaryLowIRRefinement` provide a separate constructive relation against a deterministic LowIR candidate. `LiftedBits` chooses the original lifter’s computed bits at each undefined producer; `ZeroBits` chooses zero only where its audited guard activates. Each dynamic occurrence is recorded, and copies and spills retain that choice. Both programs share the existing scalar, physical-stack, memory and flags executor and one entry snapshot. They must terminate on every feasible path, cover the entire admitted entry domain, and agree on RETURN operands, requested registers, mandatory native system flags and the union of written frame bytes. Both preserve the declared entry locations. Execution and relation checks share budgets, with an additional `MaxTerminalPairs` limit. Certificates separately bind the candidate, original evidence, witness policy and limits. A failed witness does not exclude other witnesses. Finite unrolling does not prove a loop invariant; this relation establishes neither CPU-specific equality nor C-backend equivalence and never replaces undefined-state independence. Input temporaries overlapping the proof-memory scratch range are rejected by both relation APIs. The binary refinement API requires matching `UserX64NoFaultV1` profiles in its options and observation contract.
 
+`checkLowIRLoopRefinement` and `checkBinaryLowIRLoopRefinement` add separately typed inductive certificates. Explicit paired cutpoints and pure scalar LowIR state templates are proof candidates: the shared executor checks real-entry initiation, complete segment coverage, every feasible successor, invariant preservation and terminal observations. All cut-to-cut edges must strictly decrease a finite unsigned lexicographic rank; parameter projections prevent a template from resetting that rank without machine progress. Templates start from the common entry state or, with `UseEntryPrefix`, an actually reached paired prefix whose predicate must also be preserved. They check every modified register and the entire frame at cuts, and retain earlier-iteration memory effects in final observations. Each side currently requires a unique address per cutpoint; automatic invariant/rank discovery and arbitrary control alignment are outside this API. Missing cuts, false invariants, wraparound, unproved termination, unsupported semantics or any exhausted shared budget refuse a certificate. The plan, every native segment and original evidence are digest-bound. Finite refinement and strict independence keep their existing meanings; inductive refinement still does not certify a C backend or a physical CPU's undefined-bit choices.
+
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
 | LowIR | Architecture-neutral `NdOp` operations, basic blocks, CFG, and jump-table metadata | `include/neverd/ir/low`, `lib/ir/low`, produced by `lib/decode` + `lib/lift` |
@@ -1285,6 +1287,8 @@ constants and transport parameters.
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
 | `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-user-x64-v1` | x64 | The checked integer inventory at CPL3 with explicit user page permissions |
+| `checked-user-aarch64-v1` | ARM64 | The checked integer inventory at EL0 with explicit user page permissions |
 
 For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
 matching Windows host, and Unicorn for cross-ISA execution or other host OSes.
@@ -1321,6 +1325,44 @@ replacement or CPU-context restoration. KVM uses `KVM_SET_ONE_REG`,
 an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
 x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
 before accepting guest work.
+
+The checked user profiles additionally require `UserAccessible` on each guest
+instruction/data page. Privilege is immutable CPU state, independent of the
+address-space owner or host OS. Supervisor and flat contracts preserve their
+existing behavior; their RWX mapping projection ignores the user marker.
+User page-table projections encode x64 U/S at every paging level and ARM64 AP,
+UXN/PXN at the leaf. A user marker without RWX leaves the leaf inaccessible.
+Private monitor pages remain supervisor-only. Each projection records its
+privilege mode as well as address-space identity and mapping generation.
+
+Checked Unicorn user execution maps physical RAM and walks the same page-table
+images as the native adapters. Its x64 bootstrap executes a private SYSRET once
+to establish CPL3 segment caches; writing selectors alone is insufficient in
+the pinned engine. ARM64 executes the maintenance gate and ERET to EL0 before
+each guest step, maintaining the architectural exception-level state and stack
+bank. Native x64 adapters set both selector RPL and descriptor DPL; ARM64
+adapters use SP_EL0 and EL0 saved state. WHP accepts the matching lower-EL debug
+vector and syndrome. The monitor transitions do not implement an OS syscall ABI.
+
+User profiles recognize exact unprefixed x64 SYSCALL and ARM64 SVC encodings
+from architecture-owned `.def` inventories. The shared checked lifecycle
+intercepts these after instruction observation and before transport entry,
+retaining an OS-independent service request with PC, next PC and immediate.
+This does not perform architectural privilege entry or mutate registers.
+Pending requests block execution, state mutation, rebinding and CPU snapshots
+until the owner explicitly consumes them. Consumption itself does not advance
+the PC; runtime/OS code owns service-number interpretation, result/clobber
+registers and return or exception transfer. Capability instruction lists derive
+from the same admission inventories. Supervisor profiles still reject these
+instructions, and no OS service or workload completion is inferred from an exit.
+
+These page and privilege encodings follow Intel's
+[system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+and Arm's [address translation guide](https://documentation-service.arm.com/static/5efa1d23dbdee951c1ccdec5).
+Tests bypass checked instruction admission and memory preflight to validate
+user access and denial directly at the machine boundary. Current runtime
+coverage includes Unicorn x64/ARM64 and native x64 KVM; native WHP and ARM64 KVM
+still require corresponding hardware.
 
 Both x64 and ARM64 WHP use one cancellation worker per partition. It observes
 the CPU's borrowed stop token and native deadline, retries cancellation until

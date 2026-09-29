@@ -46,7 +46,8 @@ public:
   }
   bool hasDeviceError() const override { return false; }
   bool executable(uint64_t Address) const override {
-    auto Result = Memory->addressSpace()->canAccess(Address, 1, Execute);
+    auto Result = Memory->addressSpace()->canAccess(
+        Address, 1, executionPermissions(Execute));
     if (!Result) {
       llvm::consumeError(Result.takeError());
       return false;
@@ -55,23 +56,39 @@ public:
   }
   std::optional<BackendFault> fault() const override { return FirstFault; }
   std::optional<BackendFault> takeRecoverableFault() override;
+  std::optional<ServiceRequest> pendingServiceRequest() const override {
+    return PendingService;
+  }
+  std::optional<ServiceRequest> takeServiceRequest() override;
 
 protected:
-  CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment)
-      : MaxInstructionBytes(MaxInstructionBytes),
+  CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
+                 bool UserMode)
+      : UserMode(UserMode), MaxInstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual std::optional<ServiceRequest>
+  decodeServiceRequest(const cs_insn &) const = 0;
+  /// Context capture may occur in an instruction observer, but no mutation or
+  /// snapshot may discard a terminal or unconsumed execution outcome.
+  llvm::Error checkExecutionState() const;
   llvm::Error mutableMemory() const;
-  llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false);
+  llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false,
+                     bool Guest = false);
+  unsigned executionPermissions(unsigned P) const {
+    return P | (UserMode ? UserAccessible : 0);
+  }
+  const bool UserMode;
   std::unique_ptr<MemoryProjection> Memory;
   BackendHooks Hooks;
   csh Decoder = 0;
   std::shared_ptr<const void> Identity = std::make_shared<unsigned char>(0);
   std::optional<BackendFault> FirstFault, RecoverableFault;
+  std::optional<ServiceRequest> PendingService;
   bool Running = false, TimedOut = false;
   std::atomic<bool> StopRequested{false};
   std::chrono::steady_clock::time_point Deadline;

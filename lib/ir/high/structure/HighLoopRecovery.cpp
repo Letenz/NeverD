@@ -257,31 +257,19 @@ void detectAndConvertLoops(HighFunc &Func,
                  LoopBody[0].Body[0].Kind == StmtKind::Goto) {
         va_t ExitTarget = LoopBody[0].Body[0].GotoTarget;
         if (ExitTarget != 0) {
-          auto ExitIt = AM.Idx.find(ExitTarget);
-          bool ExitsAfterLoop = (ExitIt == AM.Idx.end()) ||
-                                (ExitIt->second > static_cast<size_t>(I));
+          // A header test becomes the loop condition only when its exit is
+          // what follows the loop: a failed `while` falls through there. A
+          // test that exits elsewhere (a search whose miss path differs from
+          // its hit path) stays a jump inside the loop.
+          const size_t After = static_cast<size_t>(I) + 1;
+          const bool ExitsAfterLoop =
+              After < Func.Body.size() && Func.Body[After].Addr == ExitTarget;
           if (ExitsAfterLoop && LoopBody[0].Cond) {
             WhileCond = HighExpr::makeUnary(NdOp::BOOL_NOT, LoopBody[0].Cond);
             LoopExitTarget = ExitTarget;
             LoopBody.erase(LoopBody.begin());
           }
         }
-      }
-
-      if (LoopExitTarget != 0) {
-        LoopBody.erase(std::remove_if(LoopBody.begin(), LoopBody.end(),
-                                      [LoopExitTarget](const HighStmt &S) {
-                                        return S.Addr != 0 &&
-                                               S.Addr >= LoopExitTarget &&
-                                               S.Kind != StmtKind::Goto;
-                                      }),
-                       LoopBody.end());
-        LoopBody.erase(std::remove_if(LoopBody.begin(), LoopBody.end(),
-                                      [LoopExitTarget](const HighStmt &S) {
-                                        return S.Kind == StmtKind::Goto &&
-                                               S.GotoTarget >= LoopExitTarget;
-                                      }),
-                       LoopBody.end());
       }
 
       if (!WhileCond)

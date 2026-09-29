@@ -21,17 +21,20 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
-                          std::unique_ptr<X64Machine> Machine) {
-  auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend());
+                          std::unique_ptr<X64Machine> Machine, bool UserMode) {
+  auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend(UserMode));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
+  B->CPU.UserMode = UserMode;
   if (auto E = B->Memory->validateMappings(x64::canonicalRange))
     return E;
   if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
     return E;
   B->CPU.reg(X64Register::FLAGS) = x64::InitialFlags;
-  B->CPU.reg(X64Register::CS) = x64::CodeSelector;
-  B->CPU.reg(X64Register::SS) = x64::DataSelector;
+  B->CPU.reg(X64Register::CS) =
+      UserMode ? x64::UserCodeSelector : x64::CodeSelector;
+  B->CPU.reg(X64Register::SS) =
+      UserMode ? x64::UserDataSelector : x64::DataSelector;
   return std::unique_ptr<ExecutionBackend>(std::move(B));
 }
 
@@ -55,8 +58,10 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
     return llvm::Error::success();
   }
   if (V[1] || (R == CPURegister::X64CR8 && V[0] > x64::MaxCR8) ||
-      (R == CPURegister::X64CS && V[0] != x64::CodeSelector) ||
-      (R == CPURegister::X64SS && V[0] != x64::DataSelector) ||
+      (R == CPURegister::X64CS &&
+       V[0] != (UserMode ? x64::UserCodeSelector : x64::CodeSelector)) ||
+      (R == CPURegister::X64SS &&
+       V[0] != (UserMode ? x64::UserDataSelector : x64::DataSelector)) ||
       (R == CPURegister::X64FLAGS &&
        ((V[0] & ~x64::AllowedFlags) || !(V[0] & x64::ReservedFlag))) ||
       (R == CPURegister::X64GSBase && !x64::canonical(V[0])))
@@ -70,8 +75,8 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
 
 llvm::Expected<std::unique_ptr<BackendContext>>
 CheckedX64Backend::saveContext() {
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
   S->Space = addressSpace();
@@ -84,8 +89,8 @@ llvm::Error CheckedX64Backend::saveContext(BackendContext &C) {
     return error(diagnostic::ContextExpired);
   if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
@@ -118,6 +123,20 @@ llvm::Expected<uint64_t> CheckedX64Backend::operandRegister(unsigned R) const {
   default:
     return llvm::make_error<UnsupportedExecutionError>();
   }
+}
+
+std::optional<ServiceRequest>
+CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
+#define NEVERD_X64_SERVICE(Kind, Name, ...)                                    \
+  if (I.id == X86_INS_##Name) {                                                \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    if (llvm::ArrayRef(I.bytes, I.size) == llvm::ArrayRef(Bytes))              \
+      return ServiceRequest{ServiceRequestKind::Kind, I.address,               \
+                            I.address + I.size};                               \
+  }
+#include "X64ServiceInstructions.def"
+#undef NEVERD_X64_SERVICE
+  return std::nullopt;
 }
 
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
@@ -228,12 +247,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       Hooks.Write(A.Address, A.Size, A.Value);
     if (StopRequested || FirstFault)
       return llvm::Error::success();
-    if (auto E = access(A.Address, A.Size, A.Permission, true))
+    if (auto E = access(A.Address, A.Size, A.Permission, true, true))
       return E;
     if (StopRequested)
       return llvm::Error::success();
   }
-  auto Root = buildX64PageTables(*Memory, PageTableRoot);
+  auto Root = buildX64PageTables(*Memory, PageTableRoot, UserMode);
   if (!Root)
     return Root.takeError();
   PageTableRoot = *Root;

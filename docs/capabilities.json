@@ -3548,11 +3548,44 @@
       ],
       "limitations": [
         "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
-        "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor address spaces. User privilege, service traps, port I/O and parallel CPUs are unsupported. Checked instruction families do not admit every encoding or operand form.",
+        "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
         "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion; general runtime and additional OS workloads remain unfinished.",
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDServiceRequestTests",
+          "source": "unittests/emulation/ServiceRequestTests.cpp",
+          "filter": "ServiceRequest.BothArchitecturesRetainRequestsWithoutTransportEntry",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionConfigurationTests",
+          "source": "unittests/emulation/ExecutionReportTests.cpp",
+          "filter": "ExecutionReport.UserProfilesReportIsolationAndServiceRequests",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUserExecutionTests",
+          "source": "unittests/emulation/UserExecutionTests.cpp",
+          "filter": "UserIsolation.PortableCPUsShareBytesWithoutSharingPrivilege",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDExecutionConfigurationTests",

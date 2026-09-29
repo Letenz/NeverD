@@ -1,0 +1,9 @@
+//===- ServiceRequest.def - Intercepted service instruction vocabulary ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SERVICE_REQUEST
+NEVERD_SERVICE_REQUEST(X64Syscall, "x64_syscall")
+NEVERD_SERVICE_REQUEST(AArch64SVC, "aarch64_svc")
+#endif

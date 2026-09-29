@@ -18,7 +18,7 @@ class CheckedX64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
   create(std::unique_ptr<MemoryProjection> Memory,
-         std::unique_ptr<X64Machine> Machine);
+         std::unique_ptr<X64Machine> Machine, bool UserMode = false);
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -29,7 +29,8 @@ public:
   llvm::Error restoreContext(const BackendContext &) override;
 
 private:
-  CheckedX64Backend() : CheckedBackend(x64::MaxInstructionBytes, 1) {}
+  CheckedX64Backend(bool UserMode)
+      : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode) {}
   bool canonicalRange(uint64_t, uint64_t) const override;
   uint64_t programCounter() const override { return CPU.reg(X64Register::PC); }
   void setProgramCounter(uint64_t PC) override {
@@ -39,6 +40,8 @@ private:
     X64MachineState CPU;
   };
   llvm::Error execute(const cs_insn &Instruction) override;
+  std::optional<ServiceRequest>
+  decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;

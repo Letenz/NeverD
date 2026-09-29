@@ -34,21 +34,42 @@ const char *const ARMInstructions[] = {
 #include "../arch/aarch64/CheckedAArch64Instructions.def"
 #undef NEVERD_AARCH64_INSTRUCTION
 };
+const char *const X64UserInstructions[] = {
+#define NEVERD_CHECKED_X64_INSTRUCTION(Name) #Name,
+#include "../arch/x86_64/CheckedX64Instructions.def"
+#undef NEVERD_CHECKED_X64_INSTRUCTION
+#define NEVERD_X64_SERVICE(Kind, Name, ...) #Name,
+#include "../arch/x86_64/X64ServiceInstructions.def"
+#undef NEVERD_X64_SERVICE
+};
+const char *const ARMUserInstructions[] = {
+#define NEVERD_AARCH64_INSTRUCTION(Name, Kind) #Name,
+#include "../arch/aarch64/CheckedAArch64Instructions.def"
+#undef NEVERD_AARCH64_INSTRUCTION
+#define NEVERD_AARCH64_SERVICE(Kind, Name, Mask, Value, Shift, ImmediateMask)  \
+  #Name,
+#include "../arch/aarch64/AArch64ServiceInstructions.def"
+#undef NEVERD_AARCH64_SERVICE
+};
 
 ExecutionCapabilities profile(ExecutionContract Contract, GuestArchitecture ISA,
                               ExecutionPrivilege Privilege,
                               ExecutionAddressModel Model, Feature Features,
                               bool Native, bool Allowlist) {
   const bool Checked = Model != ExecutionAddressModel::Flat;
+  const bool User = Privilege == ExecutionPrivilege::User;
   const unsigned Bits =
       !Checked ? std::numeric_limits<uint64_t>::digits
       : ISA == GuestArchitecture::X64
           ? x64::PageBits + x64::TableBits * x64::TableLevels
           : aarch64::PageBits + aarch64::TableBits * aarch64::TableLevels;
   const llvm::ArrayRef<const char *> Instructions =
-      !Allowlist                      ? llvm::ArrayRef<const char *>()
-      : ISA == GuestArchitecture::X64 ? llvm::ArrayRef(X64Instructions)
-                                      : llvm::ArrayRef(ARMInstructions);
+      !Allowlist ? llvm::ArrayRef<const char *>()
+      : ISA == GuestArchitecture::X64
+          ? (User ? llvm::ArrayRef(X64UserInstructions)
+                  : llvm::ArrayRef(X64Instructions))
+          : (User ? llvm::ArrayRef(ARMUserInstructions)
+                  : llvm::ArrayRef(ARMInstructions));
   return {Contract,
           ISA,
           Privilege,

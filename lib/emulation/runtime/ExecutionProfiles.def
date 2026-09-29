@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// The fixed checked profiles admit supervisor scalar execution only. Flat
+// The fixed checked profiles select supervisor or user scalar execution. Flat
 // software profiles inherit the pinned engine's instruction model; they do not
 // establish architectural user/supervisor isolation or full OS compatibility.
 #ifdef NEVERD_EXECUTION_FEATURE_GROUP
@@ -18,6 +18,10 @@ NEVERD_EXECUTION_FEATURE_GROUP(SoftwareFeatures,
                                    Feature::SIMD | Feature::MMIO)
 NEVERD_EXECUTION_FEATURE_GROUP(CheckedFeatures,
                                CommonFeatures | Feature::MemoryPreflight)
+NEVERD_EXECUTION_FEATURE_GROUP(UserFeatures,
+                               CheckedFeatures |
+                                   Feature::UserSupervisorIsolation |
+                                   Feature::ServiceTraps)
 #endif
 #ifdef NEVERD_EXECUTION_PROFILE
 // Name, contract, ISA, privilege, address model, features, native, allowlist.
@@ -31,4 +35,8 @@ NEVERD_EXECUTION_PROFILE(CheckedX64, CheckedX64, X64, Supervisor, Canonical,
                          CheckedFeatures, true, true)
 NEVERD_EXECUTION_PROFILE(CheckedARM64, CheckedAArch64, AArch64, Supervisor,
                          Split, CheckedFeatures, true, true)
+NEVERD_EXECUTION_PROFILE(CheckedUserX64, CheckedUserX64, X64, User, Canonical,
+                         UserFeatures, true, true)
+NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
+                         Split, UserFeatures, true, true)
 #endif
