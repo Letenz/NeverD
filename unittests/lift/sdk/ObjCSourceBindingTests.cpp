@@ -509,6 +509,111 @@ struct Fixture {
   }
 };
 
+TEST(ObjCSourceBindings, ZeroBasedDylibWideScalarRequiresExactOccurrence) {
+  using P = ConstantAddressProvenance;
+  for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Fixture F;
+    F.Image.MachOIsDylib = true;
+    Segment Code;
+    Code.VA = 0x2000;
+    Code.Size = Code.FileSz = 8;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data.resize(8);
+    const uint32_t Low = 0x52800000u | (0x1040u << 5) | 9u;
+    const uint32_t High = 0x72800000u | (1u << 21) | 9u;
+    llvm::support::endian::write32le(Code.Data.data(), Low);
+    llvm::support::endian::write32le(Code.Data.data() + 4, High);
+    F.Image.Segments.push_back(Code);
+    Section Text;
+    Text.VA = 0x2000;
+    Text.Size = Text.FileSz = 8;
+    Text.Flags = Code.Flags;
+    F.Image.Sections.push_back(Text);
+
+    F.Function.Entry = 0x2000;
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Addr = 0x2004;
+    MedVar Temp;
+    Temp.Kind = MedVar::Temp;
+    Temp.Id = 1;
+    Temp.Size = 8;
+    Assign.Dst = HighExpr::makeVar(Temp, NdType::makeInt(8));
+    Assign.Val = HighExpr::makeConst(0x1040, 8);
+    F.Function.Body = {Assign};
+
+    switch (Mutation) {
+    case 1:
+      F.Image.MachOIsDylib = false;
+      break;
+    case 2:
+      F.Image.Base = 0x1000;
+      break;
+    case 3:
+      F.Image.Segments.back().Data[4] ^= 0x80;
+      break;
+    case 4:
+      F.Image.Segments.back().Data[4] ^= 1;
+      break;
+    case 5:
+      F.Image.Segments.back().Data[6] ^= 0x20;
+      break;
+    case 6:
+      F.Function.Body[0].Val->ConstVal = 0x1041;
+      break;
+    case 7:
+      F.Function.Body[0].Val->ConstProvenance = P::DataAddress;
+      break;
+    case 8:
+      F.Function.Body[0].Val->AddressOwnerVA = 0x1000;
+      break;
+    case 9:
+      F.Image.ObjectRelocationWriteBytes.emplace();
+      F.Image.ObjectRelocationWriteBytes->insert(0x2001);
+      break;
+    case 10:
+      F.Image.Sections.back().Flags = SegmentFlags::Readable;
+      break;
+    case 11:
+      F.Function.Entry = 0x2004;
+      break;
+    case 12:
+      F.Function.Body[0].Val->Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 13:
+      F.Image.Segments.back().Data[3] |= 0x80;
+      F.Image.Segments.back().Data[7] |= 0x80;
+      break;
+    case 14:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 15:
+      F.Image.Segments.back().Flags = SegmentFlags::Readable;
+      break;
+    case 16:
+      F.Image.MachOResolvedChainedPointerSlots.insert(0x1ffc);
+      break;
+    case 17:
+      F.Function.Body[0].Dst = HighExpr::makeConst(1, 8);
+      break;
+    case 18:
+      F.Function.Body[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    default:
+      break;
+    }
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+    if (Mutation == 0) {
+      ASSERT_EQ(Bound.Function.Body[0].Val->Kind, ExprKind::Const);
+      EXPECT_EQ(Bound.Function.Body[0].Val->ConstVal, 0x1040u);
+      EXPECT_EQ(Bound.Function.Body[0].Val->ConstProvenance, P::Scalar);
+      EXPECT_EQ(F.Function.Body[0].Val->ConstProvenance, P::Unknown);
+    }
+  }
+}
+
 TEST(ObjCSourceBindings,
      AuthenticatedSwiftIntegerCallKeepsAddressShapedScalarLiteral) {
   for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {

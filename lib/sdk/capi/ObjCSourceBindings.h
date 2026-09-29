@@ -3344,6 +3344,68 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
              : std::nullopt;
 }
 
+// A W-register MOVZ/MOVK pair in a zero-based dylib constructs an absolute
+// 32-bit value. Neither instruction has a relocation, and the dylib cannot be
+// loaded at its zero link-time base. When the folded HighIR assignment still
+// names the MOVK occurrence, its value is a literal even if those bits happen
+// to fall inside the link-time image. Do not infer this from the value alone.
+inline bool linkedMachOWideScalarAssignment(const HighStmt &Statement,
+                                            const HighFunc &Function,
+                                            const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOIsDylib || Image.MachOChainedFixupsAmbiguous ||
+      Image.Base != 0 || Statement.Kind != StmtKind::Assign || !Statement.Val ||
+      !Statement.Dst ||
+      (Statement.Dst->Kind != ExprKind::Var &&
+       Statement.Dst->Kind != ExprKind::Phi) ||
+      !Statement.Dst->Operands.empty() ||
+      Statement.Val->Kind != ExprKind::Const || !Statement.Val->Type ||
+      Statement.Val->Type->Kind != NdTypeKind::Int ||
+      Statement.Val->Type->Size != 8 || !Statement.Val->Operands.empty() ||
+      Statement.Val->IntrinsicId != Intrinsic::None ||
+      !Statement.Val->IntrinsicOutputs.empty() ||
+      Statement.Val->IndirectTarget || Statement.Val->SourceCallHint ||
+      Statement.Val->MemoryOrdering != NdMemoryOrdering::None ||
+      Statement.Val->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Statement.Val->AddressOwnerVA != InvalidVA ||
+      (Statement.Val->ConstProvenance != ConstantAddressProvenance::Unknown &&
+       Statement.Val->ConstProvenance != ConstantAddressProvenance::Scalar) ||
+      !Image.getSectionFor(Statement.Val->ConstVal) ||
+      Statement.Addr < Function.Entry || Statement.Addr - Function.Entry < 4 ||
+      Statement.Addr > InvalidVA - 4)
+    return false;
+  const va_t First = Statement.Addr - 4;
+  const auto *Section = Image.getSectionFor(First);
+  const auto *Segment = Image.getSegmentFor(First);
+  if (!Section || !Section->isExecutable() ||
+      Image.getSectionFor(Statement.Addr + 3) != Section || !Segment ||
+      !Segment->isExecutable() ||
+      Image.getSegmentFor(Statement.Addr + 3) != Segment ||
+      overlapsPointerStorage(Image, First, 8))
+    return false;
+  for (va_t Byte = First; Byte < Statement.Addr + 4; ++Byte)
+    if (Image.hasRelocationProvenanceAt(Byte) ||
+        Image.DataAddressRelocOperands.count(Byte) ||
+        Image.CodeAddressRelocOperands.count(Byte) ||
+        (Image.ObjectRelocationWriteBytes &&
+         Image.ObjectRelocationWriteBytes->count(Byte)))
+      return false;
+  const auto *Code = Image.readVA(First, 8);
+  if (!Code)
+    return false;
+  const uint32_t Low = llvm::support::endian::read32le(Code);
+  const uint32_t High = llvm::support::endian::read32le(Code + 4);
+  const unsigned Register = Low & 31;
+  if ((Low & 0xff800000) != 0x52800000 || (High & 0xff800000) != 0x72800000 ||
+      ((Low >> 21) & 3) != 0 || ((High >> 21) & 3) != 1 || Register == 31 ||
+      (High & 31) != Register)
+    return false;
+  const uint64_t Literal =
+      ((Low >> 5) & 0xffff) | (uint64_t((High >> 5) & 0xffff) << 16);
+  return Statement.Val->ConstVal == Literal;
+}
+
 // An inline Swift String is two value words, not a pointer to its bytes.
 // Authenticate both the complete tag and the narrow W-register construction
 // before a full-width store whose payload happens to equal an image VA is
@@ -6362,6 +6424,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     for (size_t Index = 0; Index < Body.size(); ++Index) {
       auto &Statement = Body[Index];
       StatementAddress = Statement.Addr;
+      const bool WideScalarAssignment =
+          linkedMachOWideScalarAssignment(Statement, Function, Image);
       const bool InlineSmallStringPayload =
           Index + 1 < Body.size() &&
           swiftInlineSmallStringStorePair(Statement, Body[Index + 1], Function,
@@ -6372,6 +6436,10 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                             Statement.MemoryOrdering,
                             Statement.MemoryAddressSpace);
       forEachExpr(Statement, [&](ExprPtr &Expression) {
+        if (WideScalarAssignment && Expression == Statement.Val) {
+          Expression = std::make_shared<HighExpr>(*Expression);
+          Expression->ConstProvenance = ConstantAddressProvenance::Scalar;
+        }
         if (Statement.Kind == StmtKind::Assign && Expression == Statement.Val &&
             Statement.Dst &&
             (Statement.Dst->Kind == ExprKind::Var ||
@@ -6424,7 +6492,9 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                   ConstantAddressProvenance::Scalar &&
               Expression->AddressOwnerVA == InvalidVA;
           Expression =
-              Copy(Expression, 0, NumericStoreValue,
+              Copy(Expression, 0,
+                   NumericStoreValue ||
+                       (WideScalarAssignment && Expression == Statement.Val),
                    Expression == Statement.StoreAddr ||
                        (Expression == Statement.RetVal && Function.ReturnType &&
                         Function.ReturnType->Kind == NdTypeKind::Ptr),
