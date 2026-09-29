@@ -1,0 +1,10 @@
+//===- X64ServiceInstructions.def - Checked user service admission -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Kind, decoded instruction family, exact admitted bytes. Prefixes and other
+// entry mechanisms are outside this contract.
+#ifdef NEVERD_X64_SERVICE
+NEVERD_X64_SERVICE(X64Syscall, SYSCALL, 0x0f, 0x05)
+#endif

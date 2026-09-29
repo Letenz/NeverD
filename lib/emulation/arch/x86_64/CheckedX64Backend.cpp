@@ -75,8 +75,8 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
 
 llvm::Expected<std::unique_ptr<BackendContext>>
 CheckedX64Backend::saveContext() {
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
   S->Space = addressSpace();
@@ -89,8 +89,8 @@ llvm::Error CheckedX64Backend::saveContext(BackendContext &C) {
     return error(diagnostic::ContextExpired);
   if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
@@ -123,6 +123,20 @@ llvm::Expected<uint64_t> CheckedX64Backend::operandRegister(unsigned R) const {
   default:
     return llvm::make_error<UnsupportedExecutionError>();
   }
+}
+
+std::optional<ServiceRequest>
+CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
+#define NEVERD_X64_SERVICE(Kind, Name, ...)                                    \
+  if (I.id == X86_INS_##Name) {                                                \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    if (llvm::ArrayRef(I.bytes, I.size) == llvm::ArrayRef(Bytes))              \
+      return ServiceRequest{ServiceRequestKind::Kind, I.address,               \
+                            I.address + I.size};                               \
+  }
+#include "X64ServiceInstructions.def"
+#undef NEVERD_X64_SERVICE
+  return std::nullopt;
 }
 
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {

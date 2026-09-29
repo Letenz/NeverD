@@ -27,13 +27,16 @@ select a contract's fixed profile; explicit unsupported values fail.
 `checked-x64-v1` and `checked-aarch64-v1` require their named architecture
 and execute at supervisor privilege. `checked-user-x64-v1` and
 `checked-user-aarch64-v1` execute the same bounded scalar instruction inventory
-at CPL3 and EL0, respectively, with architectural MMU isolation. They support
-Unicorn and matching-host KVM/WHP; `auto` follows the existing host selection.
+at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
+service-request exits. They support Unicorn and matching-host KVM/WHP; `auto`
+follows the existing host selection.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
 64-bit hardware virtual-address mode. Saving vector register state does not
 establish permission to execute SIMD: all checked profiles reject FP/SIMD,
-MMIO, port I/O, service traps and parallel CPU requirements.
+MMIO, port I/O and parallel CPU requirements. Only checked user profiles
+advertise `service_traps`, meaning the interception boundary described below;
+supervisor and flat profiles do not advertise that boundary.
 
 User execution requires `UserAccessible` as well as the appropriate `Read`,
 `Write` or `Execute` bit on **every** mapped page. Existing mappings default to
@@ -60,8 +63,8 @@ Page tables are private CPU projections. A supervisor projection preserves its
 existing supervisor-only translation semantics; a user projection marks only
 explicitly user-accessible guest pages as user pages. ARM64 user projections
 also make user pages non-executable at EL1. This does not expose mutable guest
-page tables or a privilege-switch instruction API. Syscalls, exceptions,
-process loading and OS services remain separate runtime work.
+page tables or a privilege-switch instruction API. Service ABI handling,
+exception delivery, process loading and OS services remain separate runtime work.
 
 Unknown fields, null field values, invalid names, duplicate required features,
 invalid numeric widths and unsupported combinations fail. Input is limited to
@@ -145,8 +148,8 @@ on hardware single stepping. No profile promises a hard wall-clock bound.
 `CPU.runUntilExit(PC, TimeoutMicroseconds)` returns a typed
 [`ExecutionExit`](../include/neverd/emulation/ExecutionExit.h). Preconditions
 and setup failures return `llvm::Error`; runs that begin execution report an
-explicit stop, deadline, recoverable fault, guest fault/trap, unsupported
-operation, device failure, backend failure or otherwise unexplained engine
+explicit stop, deadline, service request, recoverable fault, guest fault/trap,
+unsupported operation, device failure, backend failure or unexplained engine
 stop. Fault/device/backend outcomes outrank a simultaneous stop or deadline;
 the independent stop/deadline facts and fault details are retained.
 
@@ -163,6 +166,37 @@ resumption. The existing `run`, `fault` and `timedOut` APIs remain available;
 `run` adapts the typed outcome to the existing error and fault accessors.
 Older external CPU implementations that only override
 `run` reject the new typed boundary until they implement it.
+
+## Service requests
+
+Checked user x64 intercepts the exact unprefixed `SYSCALL` encoding; checked
+user ARM64 intercepts `SVC #imm16`. Other mechanisms, including `SYSENTER`,
+`INT`, `HVC` and `BRK`, remain unsupported. Admission and the capability
+instruction inventory use the same per-ISA `.def` files.
+
+The instruction observer runs first. Unless it stops or faults the CPU, the
+CPU returns `ExecutionExitKind::ServiceRequest` **before** executing the service
+instruction or entering any backend transport. `Exit.Service` contains the
+instruction kind, original `PC`, sequential `NextPC` and SVC `Immediate` (zero
+for x64). Registers, flags, stack, PC and privilege remain unchanged. In
+particular, x64 RCX/R11 have not received architectural SYSCALL clobbers, and
+ARM64 has not entered an exception vector. This is a pre-entry handoff for a
+modeled OS, not native architectural exception delivery. The SVC immediate is
+an operand, not a universally defined service number. Architectural service
+entry is described in the [Intel instruction manual](https://www.intel.com/content/www/us/en/content-details/671110/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-2a-2b-2c-and-2d-instruction-set-reference-a-z.html)
+and [Arm system-call guide](https://developer.arm.com/-/media/Arm%20Developer%20Community/PDF/Learn%20the%20Architecture/Armv8-A%20Instruction%20Set%20Architecture.pdf).
+
+`pendingServiceRequest()` inspects the request. It remains pending across
+return from `runUntilExit` and blocks subsequent execution, CPU mutation,
+address-space binding and CPU context capture/restore. `takeServiceRequest()`
+consumes it exactly once while stopped; consumption alone changes no register
+or PC. The owner then decodes its chosen OS ABI, handles the service, applies
+result/clobber registers and explicitly chooses the next PC or exception
+transfer. Unsupported services must fail explicitly at that owner. Retrying
+the original PC produces another request; no implicit NOP or successful
+service return is synthesized. Legacy `run` reports a pending-service error.
+A service event outranks simultaneous stop/deadline facts, while guest or
+backend failures retain higher precedence.
 
 A stopped CPU, software HLT, deadline or guest trap never establishes successful
 workload completion. Instruction/event budgets, service dispatch, process/thread

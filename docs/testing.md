@@ -211,6 +211,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` checks actual recovered residuals, differently structured finite loops, zero iterations, distinct dynamic producers, guarded witnesses, shared overlapping input views, correlated copies and spills, both-sided immutable-read evidence, mandatory system flags and return-slot preservation. Wrong candidates, extra writes, incomplete or infinite paths, stale evidence, scratch collisions and exhausted shared budgets must refuse a certificate. Existing independence tests continue to reject observable arbitrary values.
 
+`LowIRLoopRefinement.*` and `BinaryLowIRLoopRefinement.*` in the same target exercise arbitrary 64-bit counts, nested lexicographic ranks, actual native residuals, entry-prefix templates, overlapping views and correlated spills. Negative controls reject incorrect bodies, narrowed entry domains, nondecreasing ranks, unsigned wraparound, forgotten prior writes, missing cuts, malformed templates and exhausted shared budgets. Successful finite siblings never authorize an incomplete induction proof.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests
@@ -359,6 +361,20 @@ transports/host ISAs are reported as skips, never native execution coverage.
 ```bash
 cmake --build build-cpu --target NeverDUserExecutionTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDUserExecutionTests$' --output-on-failure
+```
+
+`NeverDServiceRequestTests` also builds without Unicorn. Injected x64/ARM64
+machines fail if entered, proving that service interception precedes transport
+execution. Real CPU cases retain all register state and memory, distinguish
+observer stops/failures and fetch protection, reject other entry mechanisms,
+block context rollback and mutation while a request is pending, and resume a
+following store only after an explicit service return. Unsupported transports
+are skipped; injection-only cases do not claim execution of that store. These
+tests establish a handoff protocol, not working OS syscalls or exception vectors.
+
+```bash
+cmake --build build-cpu --target NeverDServiceRequestTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDServiceRequestTests$' --output-on-failure
 ```
 
 `NeverDExecutionConfigurationTests` builds even with Unicorn disabled. It checks

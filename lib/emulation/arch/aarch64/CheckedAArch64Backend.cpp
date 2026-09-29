@@ -80,8 +80,8 @@ llvm::Error CheckedAArch64Backend::writeRegister(CPURegister R,
 }
 llvm::Expected<std::unique_ptr<BackendContext>>
 CheckedAArch64Backend::saveContext() {
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   auto S = std::make_unique<SavedState>();
   S->Owner = Identity;
   S->Space = addressSpace();
@@ -93,8 +93,8 @@ llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
     return error(diagnostic::ContextExpired);
   if (contextStorage(C)->Owner.lock() != Identity)
     return error(diagnostic::ContextOwner);
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
+  if (auto E = checkExecutionState())
+    return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
   return llvm::Error::success();
@@ -112,6 +112,21 @@ llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
   TimedOut = false;
   return llvm::Error::success();
 }
+std::optional<ServiceRequest>
+CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
+  if (I.size != aarch64::InstructionBytes)
+    return std::nullopt;
+  const uint32_t Word = llvm::support::endian::read32le(I.bytes);
+#define NEVERD_AARCH64_SERVICE(Kind, Name, Mask, Value, Shift, ImmediateMask)  \
+  if (I.id == AARCH64_INS_##Name && (Word & Mask) == Value)                    \
+    return ServiceRequest{ServiceRequestKind::Kind, I.address,                 \
+                          I.address + I.size,                                  \
+                          uint16_t((Word >> Shift) & ImmediateMask)};
+#include "AArch64ServiceInstructions.def"
+#undef NEVERD_AARCH64_SERVICE
+  return std::nullopt;
+}
+
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   using namespace encoding;
   enum InstructionKind { Integer, Memory } Kind;
