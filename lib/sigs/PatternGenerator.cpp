@@ -6,7 +6,9 @@
 
 #include "neverd/sigs/PatternGenerator.h"
 
+#include "neverd/object/SectionNames.h"
 #include "neverd/sigs/SignatureMatcher.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -27,6 +29,20 @@ using namespace llvm::object;
 
 namespace neverd {
 namespace sigs {
+
+namespace {
+
+#define NEVERD_SIGS_VALUE(Name, Value)                                         \
+  [[maybe_unused]] constexpr uint32_t Name = Value;
+#include "neverd/sigs/BranchEncoding.def"
+
+#define NEVERD_SIGS_SYNTAX_CHAR(Name, Value)                                   \
+  [[maybe_unused]] constexpr char Name = Value;
+#define NEVERD_SIGS_SYNTAX_STRING(Name, Value)                                 \
+  [[maybe_unused]] constexpr StringLiteral Name(Value);
+#include "neverd/sigs/LinkerSyntax.def"
+
+} // anonymous namespace
 
 PatternGeneratorStats &
 PatternGeneratorStats::operator+=(const PatternGeneratorStats &Other) {
@@ -402,8 +418,8 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
     // a REL32 after anything else is a data reference.
     if (!Rel32 || Offset == 0)
       return std::nullopt;
-    const uint8_t Opcode = Code[RelocationOffset - 1];
-    if (Opcode != 0xE8 && Opcode != 0xE9)
+    const uint8_t Opcode = Code[RelocationOffset - x86::kRel32DispOffset];
+    if (Opcode != x86::kCallRel32 && Opcode != x86::kJmpRel32)
       return std::nullopt;
     return Offset;
   }
@@ -426,7 +442,8 @@ std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
                                                  uint32_t Type,
                                                  ArrayRef<uint8_t> Function,
                                                  uint64_t Offset) {
-  if (Offset >= Function.size() || Function.size() - Offset < 4)
+  // Every branch relocation changes a word: a rel32 field or an instruction.
+  if (Offset >= Function.size() || Function.size() - Offset < sizeof(uint32_t))
     return std::nullopt;
   switch (Machine) {
   case ELF::EM_386:
@@ -438,7 +455,8 @@ std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
     // As in COFF, the opcode before the field is what makes it a branch.
     if (!Rel32 || Offset == 0)
       return std::nullopt;
-    if (Function[Offset - 1] != 0xE8 && Function[Offset - 1] != 0xE9)
+    const uint8_t Opcode = Function[Offset - x86::kRel32DispOffset];
+    if (Opcode != x86::kCallRel32 && Opcode != x86::kJmpRel32)
       return std::nullopt;
     return Offset;
   }
@@ -448,14 +466,14 @@ std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
     return std::nullopt;
   case ELF::EM_ARM:
     if ((Type == ELF::R_ARM_THM_CALL || Type == ELF::R_ARM_THM_JUMP24) &&
-        Offset % 2 == 0)
+        Offset % ThumbHalfwordBytes == 0)
       return Offset;
     // An ARM-state branch is stated one byte past its instruction, at an odd
     // offset no Thumb-2 instruction has.
     if ((Type == ELF::R_ARM_CALL || Type == ELF::R_ARM_JUMP24 ||
          Type == ELF::R_ARM_PLT32 || Type == ELF::R_ARM_PC24) &&
-        Offset % 4 == 0)
-      return Offset + 1;
+        Offset % ArmInstructionBytes == 0)
+      return Offset + ArmStateReferenceMark;
     return std::nullopt;
   }
   return std::nullopt;
@@ -512,7 +530,8 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
 /// Whether a relocation target's name can be a reference: a routine's
 /// linkage name, not a section (".text$mn") or a label ("$LN5").
 bool isReferenceName(StringRef Name) {
-  return !Name.empty() && !Name.starts_with(".") && !Name.starts_with("$");
+  return !Name.empty() && !Name.starts_with(SectionSymbolPrefix) &&
+         !Name.starts_with(LabelSymbolPrefix);
 }
 
 /// The routine an ELF relocation names, when a reference can name it: an
@@ -964,41 +983,40 @@ void collectAlternateNames(
       consumeError(SecName.takeError());
       continue;
     }
-    if (*SecName != ".drectve")
+    if (*SecName != section_names::coff::Drectve)
       continue;
     Expected<StringRef> Contents = Sec.getContents();
     if (!Contents) {
       consumeError(Contents.takeError());
       continue;
     }
-    // Directives are separated by spaces, and one that holds a space is
-    // quoted; MSVC may open the section with a UTF-8 byte order mark.
+    // See LinkerSyntax.def for the syntax of the directives.
     StringRef Rest = *Contents;
-    Rest.consume_front("\xEF\xBB\xBF");
+    Rest.consume_front(DirectiveByteOrderMark);
     while (!Rest.empty()) {
-      Rest = Rest.ltrim(" \t\r\n");
+      Rest = Rest.ltrim(DirectiveSeparators);
       if (Rest.empty())
         break;
       StringRef Directive;
-      if (Rest.front() == '"') {
-        const size_t Close = Rest.find('"', 1);
-        Directive = Rest.slice(1, Close);
-        Rest =
-            Close == StringRef::npos ? StringRef() : Rest.drop_front(Close + 1);
+      if (Rest.front() == DirectiveQuote) {
+        const size_t Close = Rest.find(DirectiveQuote, sizeof(DirectiveQuote));
+        Directive = Rest.slice(sizeof(DirectiveQuote), Close);
+        Rest = Close == StringRef::npos
+                   ? StringRef()
+                   : Rest.drop_front(Close + sizeof(DirectiveQuote));
       } else {
-        const size_t End = Rest.find_first_of(" \t\r\n");
+        const size_t End = Rest.find_first_of(DirectiveSeparators);
         Directive = Rest.take_front(End);
         Rest = End == StringRef::npos ? StringRef() : Rest.drop_front(End);
       }
-      // `/ALTERNATENAME:` and `-alternatename:` alike.
-      constexpr StringRef Option = "alternatename:";
-      Directive = Directive.trim('\0');
+      Directive = Directive.trim(DirectivePadding);
       if (Directive.empty() ||
-          (Directive.front() != '/' && Directive.front() != '-') ||
-          !Directive.drop_front().starts_with_insensitive(Option))
+          !DirectiveOptionPrefixes.contains(Directive.front()))
         continue;
-      const auto [Symbol, Alternate] =
-          Directive.drop_front(1 + Option.size()).split('=');
+      Directive = Directive.drop_front();
+      if (!Directive.consume_front_insensitive(AlternateNameOption))
+        continue;
+      const auto [Symbol, Alternate] = Directive.split(AlternateNameSeparator);
       if (Symbol.empty() || Alternate.empty())
         continue;
       std::vector<std::string> &List = Names[Symbol.str()];
