@@ -1,0 +1,10 @@
+//===- DMATestMemory.def - DMA test memory configuration ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+NEVERD_DMA_TEST_VALUE(Base, 0x100000)
+NEVERD_DMA_TEST_VALUE(Capacity, 32 * DriverDmaPageSize)
+NEVERD_DMA_TEST_MESSAGE(AlreadyMapped, "test RAM is already mapped")
+NEVERD_DMA_TEST_MESSAGE(BackingHole, "test backing hole")

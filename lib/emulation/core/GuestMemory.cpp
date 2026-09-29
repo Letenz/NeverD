@@ -11,6 +11,8 @@
 
 #include "neverd/emulation/GuestMemory.h"
 
+#include "ExecutionDiagnostics.h"
+
 #include <array>
 namespace neverd::emulation {
 char GuestMemoryLimitError::ID;
@@ -19,6 +21,21 @@ void GuestMemoryLimitError::log(llvm::raw_ostream &OS) const {
 }
 std::error_code GuestMemoryLimitError::convertToErrorCode() const {
   return llvm::inconvertibleErrorCode();
+}
+llvm::Expected<MemoryView> GuestMemory::pinBacking(uint64_t, uint64_t) const {
+  return diagnostic::error(diagnostic::PinnedMemoryUnsupported);
+}
+llvm::Error GuestMemory::validatePinned(const MemoryView &, uint64_t,
+                                        uint64_t) const {
+  return diagnostic::error(diagnostic::PinnedMemoryUnsupported);
+}
+llvm::Error GuestMemory::readPinned(const MemoryView &, uint64_t,
+                                    llvm::MutableArrayRef<uint8_t>) {
+  return diagnostic::error(diagnostic::PinnedMemoryUnsupported);
+}
+llvm::Error GuestMemory::writePinned(const MemoryView &, uint64_t,
+                                     llvm::ArrayRef<uint8_t>) {
+  return diagnostic::error(diagnostic::PinnedMemoryUnsupported);
 }
 llvm::Error GuestMemory::mapAlias(uint64_t, uint64_t, uint64_t, unsigned) {
   return llvm::createStringError(

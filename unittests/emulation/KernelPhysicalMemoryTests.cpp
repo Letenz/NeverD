@@ -14,19 +14,25 @@
 #include "gtest/gtest.h"
 #include "os/windows/KernelPhysicalMemory.h"
 
+#include "neverd/emulation/AddressSpace.h"
+
 #include <array>
 
 namespace neverd::emulation {
 namespace {
-constexpr uint64_t Base = 0x100000;
-constexpr uint64_t Page = physical::PageSize;
+#define NEVERD_PHYSICAL_TEST_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_PHYSICAL_TEST_BYTES(Name, ...)                                  \
+  constexpr uint8_t Name[] = {__VA_ARGS__};
+#include "KernelPhysicalMemoryCases.def"
+#undef NEVERD_PHYSICAL_TEST_BYTES
+#undef NEVERD_PHYSICAL_TEST_VALUE
 
 class KernelPhysicalRAM : public ::testing::Test {
 protected:
   std::unique_ptr<UnicornBackend> CPU;
   std::unique_ptr<KernelPhysicalMemory> Model;
   void SetUp() override {
-    auto Backend = UnicornBackend::create(300 * Page);
+    auto Backend = UnicornBackend::create(MemoryLimit);
     ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
     CPU = std::move(*Backend);
     ASSERT_EQ(llvm::toString(CPU->map(Base, 3 * Page, Read | Write)), "");
@@ -520,6 +526,176 @@ TEST_F(KernelPhysicalRAM, ExistingPinCanGrowWithAllPinSlotsOccupied) {
   for (const auto Pin : Pins)
     ASSERT_EQ(llvm::toString(Model->unpin(Pin)), "");
   ASSERT_EQ(llvm::toString(Model->retire(1)), "");
+}
+
+TEST_F(KernelPhysicalRAM, ReusedVirtualAddressDoesNotRedirectPinsOrRetirement) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, Page)), "");
+  const auto OldPhysical = take(Model->physicalAddress(Base));
+  const auto OldPin = take(Model->pin(FirstOwner, 0, sizeof(OriginalBytes)));
+  ASSERT_EQ(llvm::toString(Model->write(OldPin, 0, OriginalBytes)), "");
+  ASSERT_EQ(llvm::toString(CPU->addressSpace()->unmap(Base, Page)), "");
+  ASSERT_EQ(llvm::toString(CPU->map(Base, Page, Read | Write)), "");
+  EXPECT_FALSE(Model->hasPinnedPages(Base, Page));
+  EXPECT_EQ(llvm::toString(Model->canReleaseRange(Base, Page)), "");
+  rejects(Model->ownerForRange(Base, Page));
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Base, Page)), "");
+  EXPECT_NE(take(Model->physicalAddress(Base)), OldPhysical);
+  const auto NewPin =
+      take(Model->pin(SecondOwner, 0, sizeof(ReplacementBytes)));
+  ASSERT_EQ(llvm::toString(Model->write(NewPin, 0, ReplacementBytes)), "");
+  std::array<uint8_t, sizeof(OriginalBytes)> Bytes{};
+  ASSERT_EQ(llvm::toString(Model->read(OldPin, 0, Bytes)), "");
+  EXPECT_EQ(llvm::ArrayRef(Bytes), llvm::ArrayRef(OriginalBytes));
+  ASSERT_EQ(llvm::toString(CPU->read(Base, Bytes)), "");
+  EXPECT_EQ(llvm::ArrayRef(Bytes), llvm::ArrayRef(ReplacementBytes));
+  EXPECT_EQ(take(Model->describe(FirstOwner, 0, Page)).front().Physical,
+            OldPhysical);
+  EXPECT_NE(llvm::toString(Model->canReleaseRange(Base, Page, OldPin)), "");
+  EXPECT_EQ(llvm::toString(Model->canReleaseRange(Base, Page, NewPin)), "");
+  ASSERT_EQ(llvm::toString(Model->unpin(OldPin)), "");
+  ASSERT_EQ(llvm::toString(Model->retire(FirstOwner)), "");
+  EXPECT_EQ(take(Model->ownerForRange(Base, Page)), SecondOwner);
+}
+
+TEST_F(KernelPhysicalRAM, PartialAddressReuseStillRejectsOverlappingLiveBytes) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, 2 * Page)),
+            "");
+  ASSERT_EQ(llvm::toString(CPU->addressSpace()->unmap(Base, Page)), "");
+  ASSERT_EQ(llvm::toString(CPU->map(Base, Page, Read | Write)), "");
+  EXPECT_NE(llvm::toString(Model->registerRegion(SecondOwner, Base, 2 * Page)),
+            "");
+  EXPECT_EQ(Model->find(SecondOwner), nullptr);
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Base, Page)), "");
+  EXPECT_EQ(take(Model->ownerForRange(Base, Page)), SecondOwner);
+  EXPECT_EQ(take(Model->ownerForRange(Base + Page, Page)), FirstOwner);
+}
+
+TEST_F(KernelPhysicalRAM, ProcessExitDoesNotOwnTheLifetimeOfPinnedStorage) {
+  auto Original = CPU->addressSpace();
+  auto RAM = Original->physicalMemory();
+  auto Other = take(AddressSpace::create(RAM, MemoryLimit));
+  ASSERT_EQ(llvm::toString(Other->map(Base, Page, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, Page)), "");
+  const auto OldPhysical = take(Model->physicalAddress(Base));
+  const auto Pin = take(Model->pin(FirstOwner, 0, sizeof(OriginalBytes)));
+  ASSERT_EQ(llvm::toString(Model->write(Pin, 0, OriginalBytes)), "");
+  ASSERT_EQ(llvm::toString(CPU->bindAddressSpace(Other)), "");
+  std::weak_ptr<AddressSpace> DeadSpace = Original;
+  Original.reset();
+  EXPECT_TRUE(DeadSpace.expired());
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Base, Page)), "");
+  EXPECT_NE(take(Model->physicalAddress(Base)), OldPhysical);
+  EXPECT_FALSE(Model->hasPinnedPages(Base, Page));
+  EXPECT_EQ(llvm::toString(Model->canReleaseRange(Base, Page)), "");
+  ASSERT_EQ(llvm::toString(Model->extendPin(Pin, Page)), "");
+  ASSERT_EQ(llvm::toString(Model->write(Pin, ByteOffset, ReplacementBytes)),
+            "");
+  std::array<uint8_t, sizeof(OriginalBytes)> Bytes{};
+  ASSERT_EQ(llvm::toString(Model->read(Pin, 0, Bytes)), "");
+  EXPECT_EQ(llvm::ArrayRef(Bytes), llvm::ArrayRef(OriginalBytes));
+  ASSERT_EQ(llvm::toString(CPU->read(Base, Bytes)), "");
+  EXPECT_EQ(Bytes, decltype(Bytes){});
+  ASSERT_EQ(llvm::toString(Model->unpin(Pin)), "");
+  ASSERT_EQ(llvm::toString(Model->retire(FirstOwner)), "");
+  EXPECT_EQ(RAM->allocatedBytes(), Page);
+}
+
+TEST_F(KernelPhysicalRAM, AliasesSharePageIdentityCacheAndReleaseProtection) {
+  using Cache = KernelPhysicalMemory::CacheType;
+  ASSERT_EQ(llvm::toString(CPU->mapAlias(Alias, Base, Page, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base + ByteOffset,
+                                                 ByteOffset, Cache::NonCached)),
+            "");
+  EXPECT_NE(llvm::toString(Model->registerRegion(
+                SecondOwner, Alias + ByteOffset, ByteOffset)),
+            "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(
+                SecondOwner, Alias + ByteOffset, ByteOffset, Cache::NonCached)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base + ByteOffset)),
+            take(Model->physicalAddress(Alias + ByteOffset)));
+  const auto Pin = take(Model->pin(FirstOwner, 0, 1));
+  EXPECT_TRUE(Model->hasPinnedPages(Alias, Page));
+  EXPECT_EQ(llvm::toString(Model->canReleaseRange(Alias, ByteOffset)), "");
+  EXPECT_NE(
+      llvm::toString(Model->canReleaseRange(Alias + ByteOffset, ByteOffset)),
+      "");
+  EXPECT_EQ(llvm::toString(
+                Model->canReleaseRange(Alias + ByteOffset, ByteOffset, Pin)),
+            "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges({{Alias, Page}}, {})), "");
+  EXPECT_EQ(llvm::toString(Model->canReleaseRanges({{Alias, Page}}, {Pin})),
+            "");
+}
+
+TEST_F(KernelPhysicalRAM, SharedRegionAcrossProcessesUsesTheSamePhysicalPages) {
+  auto Original = CPU->addressSpace();
+  auto View = take(Original->pinBacking(Base, Page));
+  auto Other =
+      take(AddressSpace::create(Original->physicalMemory(), MemoryLimit));
+  ASSERT_EQ(llvm::toString(Other->mapRegion(Alias, View.slices().front().Region,
+                                            View.slices().front().Offset, Page,
+                                            Read | Write)),
+            "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, Page)), "");
+  const auto FirstPhysical = take(Model->physicalAddress(Base));
+  const auto Pin = take(Model->pin(FirstOwner, 0, sizeof(OriginalBytes)));
+  ASSERT_EQ(llvm::toString(CPU->bindAddressSpace(Other)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Alias, Page)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Alias)), FirstPhysical);
+  EXPECT_TRUE(Model->hasPinnedPages(Alias, Page));
+  EXPECT_NE(llvm::toString(Model->canReleaseRange(Alias, Page)), "");
+  ASSERT_EQ(llvm::toString(Model->write(Pin, 0, OriginalBytes)), "");
+  std::array<uint8_t, sizeof(OriginalBytes)> Bytes{};
+  ASSERT_EQ(llvm::toString(CPU->read(Alias, Bytes)), "");
+  EXPECT_EQ(llvm::ArrayRef(Bytes), llvm::ArrayRef(OriginalBytes));
+}
+
+TEST_F(KernelPhysicalRAM, ReusablePagesRemainReservedUntilTheLastOwnerRetires) {
+  const auto Pages = take(Model->planAllocatedPages(0, UINT64_MAX, 0, 1));
+  ASSERT_EQ(Pages.size(), 1u);
+  ASSERT_EQ(
+      llvm::toString(Model->registerAllocatedPages(
+          FirstOwner, Base, Pages, KernelPhysicalMemory::CacheType::Cached)),
+      "");
+  ASSERT_EQ(llvm::toString(CPU->mapAlias(Alias, Base, Page, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Alias, Page)),
+            "");
+  ASSERT_EQ(llvm::toString(Model->retire(FirstOwner)), "");
+  EXPECT_EQ(take(Model->physicalAddress(Alias)), Pages.front());
+  EXPECT_TRUE(take(Model->planAllocatedPages(Pages.front(),
+                                             Pages.front() + Page - 1, 0, 1))
+                  .empty());
+  ASSERT_EQ(llvm::toString(Model->retire(SecondOwner)), "");
+  EXPECT_EQ(take(Model->planAllocatedPages(Pages.front(),
+                                           Pages.front() + Page - 1, 0, 1)),
+            Pages);
+}
+
+TEST_F(KernelPhysicalRAM, RepeatedPhysicalPagesConsumeOneIdentity) {
+  ASSERT_EQ(llvm::toString(CPU->addressSpace()->unmap(Base + Page, Page)), "");
+  ASSERT_EQ(
+      llvm::toString(CPU->mapAlias(Base + Page, Base, Page, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, 2 * Page)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base)),
+            take(Model->physicalAddress(Base + Page)));
+  const auto Segments = take(Model->describe(FirstOwner, 0, 2 * Page));
+  ASSERT_EQ(Segments.size(), 2u);
+  EXPECT_EQ(Segments.front().Physical, Segments.back().Physical);
+}
+
+TEST_F(KernelPhysicalRAM, IndependentPageAllocationRejectsRepeatedBacking) {
+  ASSERT_EQ(llvm::toString(CPU->addressSpace()->unmap(Base + Page, Page)), "");
+  ASSERT_EQ(
+      llvm::toString(CPU->mapAlias(Base + Page, Base, Page, Read | Write)), "");
+  const auto Pages = take(Model->planAllocatedPages(0, UINT64_MAX, 0, 2));
+  EXPECT_NE(llvm::toString(Model->registerAllocatedPages(FirstOwner, Base,
+                                                         Pages, std::nullopt)),
+            "");
+  EXPECT_EQ(Model->find(FirstOwner), nullptr);
+  EXPECT_EQ(take(Model->planAllocatedPages(0, UINT64_MAX, 0, 2)), Pages);
 }
 
 } // namespace

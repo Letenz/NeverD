@@ -329,12 +329,25 @@ x64/ARM64, plus the matching native adapter. It checks shared writes, destructio
 of one CPU, same-generation space switches, context-space identity, cross-CPU
 instruction-cache invalidation, stale projection pins and owner-wide execution
 exclusion. Separate cases check mapping transaction failure, allocation reuse,
-partial alias retirement and a terminal page-table-capacity failure that leaves
-another CPU and the published address space usable. Native ARM64 cases remain
+retained byte views after address reuse and space destruction, whole-span pinned
+access validation, partial alias retirement and a terminal page-table-capacity
+failure that leaves another CPU and the published address space usable. Native
+ARM64 cases remain
 skips on an x64 host; software profiles do not run reserved-monitor-range checks.
 These tests establish cooperative CPU sharing, not parallel SMP or complete OS
 process compatibility. Changes here also require the Windows driver suites,
 whose MMIO, backing access, alias and context contracts use the same RAM.
+
+`KernelPhysicalMemoryTests.cpp` also checks pins surviving canonical address reuse
+and source-space destruction, different processes using the same VA, shared-region
+PFN/cache identity, alias-aware release protection, partial address replacement,
+repeated backing pages and reusable PFN lifetime. The DMA test provider uses real
+`AddressSpace` storage while retaining validation-hole injection and device-access
+counters; a failed cross-page transaction must have no write prefix. These tests
+exercise the Windows physical-memory authority, not a complete Windows process
+loader or scheduler. `KernelMDLChainTests.cpp` checks that partial-descriptor
+retirement and IRP completion revoke only their own aliases while an independent
+root MDL remains locked and readable.
 
 The same checked ARM64 cases run against the native adapter on an ARM64 host.
 They skip with a typed reason on other hosts or when the hypervisor is

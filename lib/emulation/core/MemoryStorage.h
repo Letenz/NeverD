@@ -38,6 +38,7 @@ struct AddressSpace::Impl {
     std::shared_ptr<Device> IO;
   };
   std::shared_ptr<PhysicalMemory> Memory;
+  std::shared_ptr<const void> Identity = std::make_shared<unsigned char>(0);
   uint64_t Limit = 0;
   std::atomic<uint64_t> Used{0}, Generation{1};
   std::map<uint64_t, Page> Pages;

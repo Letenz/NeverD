@@ -1,0 +1,13 @@
+//===- PinnedMDLCases.def - MDL alias retirement fixtures -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_PINNED_MDL_API(Allocate, "IoAllocateMdl")
+NEVERD_PINNED_MDL_API(Lock, "MmProbeAndLockPages")
+NEVERD_PINNED_MDL_API(Partial, "IoBuildPartialMdl")
+NEVERD_PINNED_MDL_API(Map, "MmGetSystemAddressForMdlSafe")
+NEVERD_PINNED_MDL_API(Unlock, "MmUnlockPages")
+NEVERD_PINNED_MDL_API(Free, "IoFreeMdl")
+NEVERD_PINNED_MDL_VALUE(Payload, 0x72)
+NEVERD_PINNED_MDL_VALUE(BufferSize, 32)

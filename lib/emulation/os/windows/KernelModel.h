@@ -1066,7 +1066,8 @@ private:
   requestReleaseRanges(uint64_t IRP) const;
   llvm::Error appendRequestMDLReleaseResources(
       uint64_t IRP, std::vector<std::pair<uint64_t, uint64_t>> &Ranges,
-      std::vector<uint64_t> &Pins) const;
+      std::vector<uint64_t> &Pins,
+      std::vector<std::pair<uint64_t, uint64_t>> &RevokingAliases) const;
   llvm::Error expireRequestMDL(uint64_t IRP);
   llvm::Expected<std::vector<uint8_t>> readMDLBytes(uint64_t MDL,
                                                     uint32_t Count);

@@ -29,6 +29,13 @@ namespace pool {
 #include "os/windows/KernelPoolFlags.def"
 #undef NEVERD_KERNEL_POOL_FLAG
 } // namespace pool
+namespace pinned {
+#define NEVERD_PINNED_MDL_API(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_PINNED_MDL_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "PinnedMDLCases.def"
+#undef NEVERD_PINNED_MDL_VALUE
+#undef NEVERD_PINNED_MDL_API
+} // namespace pinned
 
 class KernelMDLChain : public ::testing::Test {
 protected:
@@ -793,6 +800,35 @@ TEST_F(KernelMDLChain, CompletionRetiresPartialDependenciesInEitherChainOrder) {
     success(Model->recordDispatchReturn(IRP, StatusSuccess));
     success(Model->finalizeRequest(IRP));
   }
+}
+
+TEST_F(KernelMDLChain,
+       CompletionRevokesAliasWithoutRetiringIndependentRootPin) {
+  DriverRequest IO;
+  IO.Kind = DriverRequestKind::DeviceControl;
+  IO.ControlCode = NeitherIOCTL;
+  IO.OutputSize = pinned::BufferSize;
+  const auto IRP = begin(IO);
+  Model->enterExecution(profile::StackBase);
+  success(Model->setUserRequestContext(true));
+  const auto User = get(IRP + IRPUserBufferOffset);
+  const auto Size = IO.OutputSize;
+  const auto Root = call(pinned::Allocate, {User, Size, 0, 0, 0});
+  const auto Child = call(pinned::Allocate, {User, Size, 0, 0, IRP});
+  call(pinned::Lock, {Root, UserMode, IoWriteAccess});
+  call(pinned::Partial, {Root, Child, User, Size});
+  const auto Alias = call(pinned::Map, {Child, NormalPagePriority});
+  put(Alias, pinned::Payload, sizeof(uint8_t));
+  complete(IRP);
+  EXPECT_TRUE(Result.Requests.back().Completed);
+  EXPECT_FALSE(take(Memory->canAccess(Alias, sizeof(uint8_t), Read)));
+  EXPECT_EQ(get(Root + MDLFlagsOffset, sizeof(uint16_t)), MDLPagesLocked);
+  const auto RootAlias = call(pinned::Map, {Root, NormalPagePriority});
+  EXPECT_EQ(get(RootAlias, sizeof(uint8_t)), pinned::Payload);
+  call(pinned::Unlock, {Root});
+  call(pinned::Free, {Root});
+  success(Model->recordDispatchReturn(IRP, StatusSuccess));
+  success(Model->finalizeRequest(IRP));
 }
 
 TEST_F(KernelMDLChain, CompletionRejectsPartialOutsideTheRetiringChain) {

@@ -22,6 +22,25 @@ class AliasBudgetMemory : public GuestMemory {
 public:
   explicit AliasBudgetMemory(GuestMemory &Storage) : Storage(Storage) {}
   bool Exhausted = false;
+  std::shared_ptr<AddressSpace> addressSpace() const override {
+    return Storage.addressSpace();
+  }
+  llvm::Expected<MemoryView> pinBacking(uint64_t Address,
+                                        uint64_t Size) const override {
+    return Storage.pinBacking(Address, Size);
+  }
+  llvm::Error validatePinned(const MemoryView &View, uint64_t Offset,
+                             uint64_t Size) const override {
+    return Storage.validatePinned(View, Offset, Size);
+  }
+  llvm::Error readPinned(const MemoryView &View, uint64_t Offset,
+                         llvm::MutableArrayRef<uint8_t> Bytes) override {
+    return Storage.readPinned(View, Offset, Bytes);
+  }
+  llvm::Error writePinned(const MemoryView &View, uint64_t Offset,
+                          llvm::ArrayRef<uint8_t> Bytes) override {
+    return Storage.writePinned(View, Offset, Bytes);
+  }
   llvm::Error map(uint64_t Address, uint64_t Size,
                   unsigned Permissions) override {
     return Storage.map(Address, Size, Permissions);
