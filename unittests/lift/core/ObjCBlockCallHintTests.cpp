@@ -215,6 +215,98 @@ TEST(ObjCBlockCallHints, CapturedVoidBlockTailBranchUsesItsEntryABI) {
           .empty());
 }
 
+TEST(ObjCBlockCallHints, ForwardsAuthenticatedEntryArgumentToCapturedBlock) {
+  Fixture F(Arch::AArch64);
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  F.Entry.ReturnType = NdType::makeVoid();
+  F.Entry.Parameters = {{"block", Pointer},
+                        {"group", Pointer},
+                        {"index", NdType::makeInt(8, false)},
+                        {"stop", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  const auto Return = getTargetRegInfo(F.Image.Arch).IntReturnReg;
+  F.Low.Blocks[0].Ops = {
+      op(NdOp::COPY, NdVar::reg(F.R2, 8), {NdVar::reg(F.R3, 8)}, 0x1000),
+      op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+         {NdVar::reg(F.R0, 8), NdVar::cst(32, 8)}, 0x1004),
+      op(NdOp::LOAD, NdVar::reg(F.R0, 8), {NdVar::tmp(0, 8)}, 0x1004),
+      op(NdOp::INT_ADD, NdVar::tmp(1, 8),
+         {NdVar::reg(F.R0, 8), NdVar::cst(16, 8)}, 0x1008),
+      op(NdOp::LOAD, NdVar::reg(F.R3, 8), {NdVar::tmp(1, 8)}, 0x1008),
+      op(NdOp::INDIR_CALL, NdVar::reg(Return, 8), {NdVar::reg(F.R3, 8)},
+         0x100c),
+      op(NdOp::RETURN, {}, {NdVar::reg(Return, 8)}, 0x100c)};
+  LowInstructionBoundary Boundary;
+  Boundary.Address = 0x100c;
+  Boundary.FirstOp = 5;
+  Boundary.OpCount = 2;
+  Boundary.Control = LowInstructionControl::TailCall;
+  Boundary.ControlFlags = LowInstructionControlFlag::Call |
+                          LowInstructionControlFlag::Return |
+                          LowInstructionControlFlag::Indirect;
+  F.Low.Blocks[0].InstructionBoundaries.push_back(Boundary);
+  ObjCBlockCaptureCallFields Captures;
+  Captures.ScalarWords = {32};
+  Captures.BlockWords = {32};
+
+  const auto Hints =
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Signature = Hints.at(0x100c).Signature;
+  EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Signature.Parameters.size(), 3U);
+  EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+
+  F.Entry.Parameters.resize(1);
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures)
+          .empty());
+}
+
+TEST(ObjCBlockCallHints, X64ForwardsAuthenticatedEntryArgumentToCapturedBlock) {
+  Fixture F(Arch::X64);
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  F.Entry.ReturnType = NdType::makeInt(8, false);
+  F.Entry.Parameters = {{"block", Pointer},
+                        {"group", Pointer},
+                        {"index", NdType::makeInt(8, false)},
+                        {"stop", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  const auto Return = getTargetRegInfo(F.Image.Arch).IntReturnReg;
+  F.Low.Blocks[0].Ops = {
+      op(NdOp::COPY, NdVar::reg(F.R2, 8), {NdVar::reg(F.R3, 8)}, 0x1000),
+      op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+         {NdVar::reg(F.R0, 8), NdVar::cst(32, 8)}, 0x1004),
+      op(NdOp::LOAD, NdVar::reg(F.R0, 8), {NdVar::tmp(0, 8)}, 0x1004),
+      op(NdOp::INT_ADD, NdVar::tmp(1, 8),
+         {NdVar::reg(F.R0, 8), NdVar::cst(16, 8)}, 0x1008),
+      op(NdOp::LOAD, NdVar::reg(F.R3, 8), {NdVar::tmp(1, 8)}, 0x1008),
+      op(NdOp::INDIR_CALL, NdVar::reg(Return, 8), {NdVar::reg(F.R3, 8)},
+         0x100c),
+      op(NdOp::RETURN, {}, {NdVar::reg(Return, 8)}, 0x1010)};
+  ObjCBlockCaptureCallFields Captures;
+  Captures.ScalarWords = {32};
+  Captures.BlockWords = {32};
+
+  const auto Hints =
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Signature = Hints.at(0x100c).Signature;
+  EXPECT_EQ(Signature.ReturnType->Size, 8U);
+  ASSERT_EQ(Signature.Parameters.size(), 3U);
+  EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+}
+
 TEST(ObjCBlockCallHints, RetainBlockResultKeepsBlockIdentity) {
   Fixture F(Arch::AArch64);
   constexpr va_t ImportSlot = 0x2180;

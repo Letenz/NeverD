@@ -610,6 +610,25 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
     }
     return std::nullopt;
   };
+  auto AuthenticatedEntryArgument = [&](uint64_t Register,
+                                        const Value &Argument) {
+    // Only a single-block invoke proves an unchanged entry carrier along the
+    // whole path to this call. Multi-block path replay does not yet preserve
+    // that extra argument provenance across its control-flow alternatives.
+    if (!WholeFunction || WholeFunction->Blocks.size() != 1 ||
+        !EntrySignature ||
+        EntrySignature->Origin !=
+            SourceFunctionTypeHint::OriginKind::BlockRuntime ||
+        Argument.K != Value::Kind::Scalar || Argument.Base != Register + 1 ||
+        Argument.Offset != 0)
+      return false;
+    for (const auto &Parameter : EntrySignature->Parameters)
+      if (Parameter.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+          Parameter.Location.RegisterOffset == Register &&
+          sameScalarType(Parameter.Type, Argument.Type))
+        return true;
+    return false;
+  };
   va_t PreviousAddress = InvalidVA;
   uint64_t NextCallResultBase = 1ULL << 32;
   for (size_t Index = 0; Index < Block.Ops.size(); ++Index) {
@@ -698,11 +717,12 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
             bool Gap = false, Valid = true;
             for (size_t I = 0; I < TRI.IntParamRegs.size(); ++I) {
               const auto Reg = TRI.IntParamRegs[I];
-              if (!WrittenArguments.count(Reg)) {
+              auto Argument = Read(NdVar::reg(Reg, 8));
+              if (!WrittenArguments.count(Reg) &&
+                  (!Argument || !AuthenticatedEntryArgument(Reg, *Argument))) {
                 Gap = true;
                 continue;
               }
-              auto Argument = Read(NdVar::reg(Reg, 8));
               // The register holding the indirect branch target is not also
               // evidence for an explicit callback argument. A real later
               // argument would leave a carrier gap and remain unbound.
@@ -735,12 +755,17 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         if (Signature && !Signature->Parameters.empty()) {
           bool Valid = true;
           for (const auto &P : Signature->Parameters) {
-            if (P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
-                !WrittenArguments.count(P.Location.RegisterOffset)) {
+            if (P.Location.Kind != SourceABICarrierKind::IntegerRegister) {
               Valid = false;
               break;
             }
             auto Argument = Read(NdVar::reg(P.Location.RegisterOffset, 8));
+            if (!WrittenArguments.count(P.Location.RegisterOffset) &&
+                (!Argument || !AuthenticatedEntryArgument(
+                                  P.Location.RegisterOffset, *Argument))) {
+              Valid = false;
+              break;
+            }
             if (!Argument || !scalar(P.Type) || !Argument->Type ||
                 Argument->Type->Size < P.Type->Size) {
               Valid = false;
