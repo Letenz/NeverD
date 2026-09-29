@@ -612,6 +612,7 @@ void parseBaseRelocations(const COFFObjectFile &Obj, BinaryImage &Img,
   size_t AvailBytes = FileEnd - RelocPtr;
   const uint8_t *P = reinterpret_cast<const uint8_t *>(RelocPtr);
   const uint8_t *End = P + std::min<size_t>(RelocDir->Size, AvailBytes);
+  std::vector<AbsolutePointerRelocation> Pointers;
   while (static_cast<size_t>(End - P) >= BlockHeaderSize) {
     BaseRelocBlock Block;
     std::memcpy(&Block, P, sizeof(Block));
@@ -643,11 +644,12 @@ void parseBaseRelocations(const COFFObjectFile &Obj, BinaryImage &Img,
       if (!IsFullPointer)
         continue;
       if (const uint8_t *Bytes = Img.readVA(BR.Address, PtrSize))
-        recordAbsolutePointerRelocation(
-            Img, BR.Address, static_cast<va_t>(readPtr(Bytes, PtrSize == 8)));
+        Pointers.push_back(
+            {BR.Address, static_cast<va_t>(readPtr(Bytes, PtrSize == 8))});
     }
     P += BlockSize;
   }
+  recordAbsolutePointerRelocations(Img, Pointers);
   LLVM_DEBUG(llvm::dbgs() << "coff: parsed " << Img.BaseRelocations.size()
                           << " base relocations\n");
 }
