@@ -29,6 +29,37 @@ bool scalar(const TypeRef &T) {
          (T->Kind == NdTypeKind::Int ||
           (T->Kind == NdTypeKind::Ptr && T->Size == 8));
 }
+bool writablePointerSlot(const BinaryImage &Image, va_t Address) {
+  // A zero-filled writable symbol supplies storage identity, not a constant
+  // pointer value. The invoke proof below must still use this exact load.
+  if (!Address || Address % 8 || Address > InvalidVA - 8 ||
+      Image.MachOChainedFixupsAmbiguous || Image.DyldBindSlots.count(Address) ||
+      Image.MachOResolvedChainedPointerSlots.count(Address))
+    return false;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  const auto *Bytes = Image.readVA(Address, 8);
+  if (!Section || !Segment || !Bytes ||
+      Image.getSectionFor(Address + 7) != Section ||
+      Image.getSegmentFor(Address + 7) != Segment || !Section->isReadable() ||
+      !Section->isWritable() || Section->isExecutable() ||
+      !Segment->isReadable() || !Segment->isWritable() ||
+      Segment->isExecutable() ||
+      !std::all_of(Bytes, Bytes + 8, [](uint8_t Byte) { return Byte == 0; }))
+    return false;
+  const Symbol *Slot = nullptr;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Addr > Address && Symbol.Addr < Address + 8)
+      return false;
+    if (Symbol.Addr != Address)
+      continue;
+    if (Slot || Symbol.IsFunc || Symbol.Name.empty() ||
+        (Symbol.Size && Symbol.Size < 8))
+      return false;
+    Slot = &Symbol;
+  }
+  return Slot != nullptr;
+}
 struct Value {
   enum class Kind { Scalar, CallInteger, Frame, Number, ImageBits, Invoke };
   Kind K = Kind::Scalar;
@@ -873,6 +904,7 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
       PreviousAddress = Op.Addr;
     }
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+      bool ProvenBlockCall = false;
       auto Target = Op.NumInputs == 1 ? Read(Op.Inputs[0]) : std::nullopt;
       auto Receiver = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
       if (Op.Opcode == NdOp::INDIR_CALL && Target &&
@@ -994,7 +1026,13 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
             SourceCallTypeHint Hint;
             Hint.CallKind = SourceCallTypeHint::Kind::BlockInvoke;
             Hint.Signature = std::move(*Signature);
-            Result.emplace(Op.Addr, std::move(Hint));
+            auto [It, Inserted] = Result.emplace(Op.Addr, std::move(Hint));
+            if (Inserted) {
+              std::string Error;
+              ProvenBlockCall =
+                  It->second.Signature.Architecture == Image.Arch &&
+                  validateSourceABI(It->second.Signature, Error);
+            }
             if (NullArguments)
               NullArguments->emplace(Op.Addr, std::move(NullIndices));
           }
@@ -1006,7 +1044,9 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
       // the later invoke-slot proof must still show the same block receiver.
       std::map<Key, Value> Preserved;
       const auto *Bound = validatedDarwinCall(BoundCalls, Op.Addr, Image.Arch);
-      if (Bound)
+      // A locally proven block invoke also uses the Darwin C calling
+      // convention, so its callee-saved registers retain their identities.
+      if (Bound || ProvenBlockCall)
         for (const auto &[K, V] : Values)
           if (std::get<0>(K) == VnodeSpace::REG && V.K != Value::Kind::Invoke &&
               (TRI.isCallPreserved(std::get<1>(K), std::get<2>(K)) ||
@@ -1184,6 +1224,12 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         // Immutable scalar bytes carry no pointer identity.
         Out = Value{Value::Kind::ImageBits,
                     uint64_t(Address->Base + Address->Offset), 0,
+                    NdType::makeInt(8, false)};
+      if (Address && Address->K == Value::Kind::Number && Op.Output.Size == 8 &&
+          writablePointerSlot(Image, uint64_t(Address->Base + Address->Offset)))
+        // Each load is a distinct value: a second read of mutable storage
+        // cannot be equated with the receiver used to load its invoke slot.
+        Out = Value{Value::Kind::Scalar, NextCallResultBase++, 0,
                     NdType::makeInt(8, false)};
       if (Address && Address->K == Value::Kind::Number && Op.Output.Size == 8) {
         const auto Effective = Address->Base + uint64_t(Address->Offset);

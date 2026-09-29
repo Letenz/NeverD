@@ -93,6 +93,91 @@ TEST(ObjCBlockCallHints, ProvesSameReceiverAndKeepsOnlyWrittenScalarArguments) {
   }
 }
 
+TEST(ObjCBlockCallHints, MutableGlobalBlockUsesOneLoadedReceiver) {
+  Fixture F(Arch::AArch64);
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.Size = 0x100;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(0x100);
+  F.Image.Segments.push_back(std::move(Data));
+  Section Slot;
+  Slot.VA = 0x2000;
+  Slot.Size = 0x100;
+  Slot.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  F.Image.Sections.push_back(Slot);
+  F.Image.Symbols.push_back({"logBlock", 0x2000, 8, false});
+  ASSERT_NE(F.Image.getSectionFor(0x2000), nullptr);
+  ASSERT_NE(F.Image.getSegmentFor(0x2000), nullptr);
+  ASSERT_NE(F.Image.readVA(0x2000, 8), nullptr);
+  ASSERT_TRUE(F.Image.getSectionFor(0x2000)->isWritable());
+  ASSERT_TRUE(F.Image.getSegmentFor(0x2000)->isWritable());
+  auto &Ops = F.Low.Blocks[0].Ops;
+  Ops = {
+      op(NdOp::LOAD, NdVar::reg(a64reg::X20, 8), {NdVar::cst(0x2000, 8)},
+         0x1000),
+      op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+         {NdVar::reg(a64reg::X20, 8), NdVar::cst(16, 8)}, 0x1008),
+      op(NdOp::LOAD, NdVar::reg(F.Target, 8), {NdVar::tmp(0, 8)}, 0x1008),
+      op(NdOp::COPY, NdVar::reg(F.R0, 8), {NdVar::reg(a64reg::X20, 8)}, 0x100c),
+      op(NdOp::INDIR_CALL, NdVar::reg(F.R0, 8), {NdVar::reg(F.Target, 8)},
+         0x1010),
+      op(NdOp::RETURN, {}, {NdVar::reg(F.R0, 8)}, 0x1014)};
+  const auto Bound = F.hints();
+  ASSERT_EQ(Bound.size(), 1U);
+  EXPECT_EQ(Bound.at(0x1010).CallKind, SourceCallTypeHint::Kind::BlockInvoke);
+  EXPECT_EQ(Bound.at(0x1010).Signature.ReturnType->Size, 8U);
+  ASSERT_EQ(Bound.at(0x1010).Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Bound.at(0x1010).Signature.Parameters[0].Type->Kind,
+            NdTypeKind::Ptr);
+
+  Ops.insert(Ops.begin() + 3, op(NdOp::LOAD, NdVar::reg(a64reg::X20, 8),
+                                 {NdVar::cst(0x2000, 8)}, 0x100c));
+  EXPECT_TRUE(F.hints().empty());
+  Ops.erase(Ops.begin() + 3);
+  Ops.insert(
+      Ops.begin() + 3,
+      op(NdOp::STORE, {}, {NdVar::cst(0x2000, 8), NdVar::cst(0, 8)}, 0x100c));
+  EXPECT_TRUE(F.hints().empty());
+  Ops.erase(Ops.begin() + 3);
+  F.Image.Symbols.push_back({"ambiguousBlock", 0x2000, 8, false});
+  EXPECT_TRUE(F.hints().empty());
+  F.Image.Symbols.pop_back();
+  F.Image.Segments[0].Data[0] = 1;
+  EXPECT_TRUE(F.hints().empty());
+}
+
+TEST(ObjCBlockCallHints, ProvenBlockCallPreservesCalleeSavedReceiver) {
+  Fixture F(Arch::AArch64);
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  F.Entry.ReturnType = NdType::makeInt(8);
+  F.Entry.Parameters[3].Type = Pointer;
+  std::string Error;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(F.Entry, F.Image.Arch, Error)) << Error;
+  F.Low.Blocks[0].EndAddr = 0x1030;
+  F.Low.Blocks[0].Ops = {
+      op(NdOp::COPY, NdVar::reg(a64reg::X20, 8), {NdVar::reg(F.R3, 8)}, 0x1000),
+      op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+         {NdVar::reg(F.R2, 8), NdVar::cst(16, 8)}, 0x1004),
+      op(NdOp::LOAD, NdVar::reg(F.Target, 8), {NdVar::tmp(0, 8)}, 0x1004),
+      op(NdOp::COPY, NdVar::reg(F.R0, 8), {NdVar::reg(F.R2, 8)}, 0x1008),
+      op(NdOp::INDIR_CALL, NdVar::reg(F.R0, 8), {NdVar::reg(F.Target, 8)},
+         0x100c),
+      op(NdOp::COPY, NdVar::reg(a64reg::X19, 8), {NdVar::reg(F.R0, 8)}, 0x1010),
+      op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+         {NdVar::reg(a64reg::X20, 8), NdVar::cst(16, 8)}, 0x1014),
+      op(NdOp::LOAD, NdVar::reg(F.Target, 8), {NdVar::tmp(0, 8)}, 0x1014),
+      op(NdOp::COPY, NdVar::reg(F.R0, 8), {NdVar::reg(a64reg::X20, 8)}, 0x1018),
+      op(NdOp::INDIR_CALL, NdVar::reg(F.R0, 8), {NdVar::reg(F.Target, 8)},
+         0x1020),
+      op(NdOp::RETURN, {}, {NdVar::reg(F.R0, 8)}, 0x1024)};
+  const auto Hints = F.hints();
+  ASSERT_EQ(Hints.count(0x100c), 1U);
+  EXPECT_EQ(Hints.count(0x1020), 1U);
+  F.Low.Blocks[0].Ops[4].Inputs[0] = NdVar::reg(F.R3, 8);
+  EXPECT_TRUE(F.hints().empty());
+}
+
 TEST(ObjCBlockCallHints, CapturedBlockRequiresDescriptorAndCopyHelperEvidence) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     Fixture F(Architecture);
