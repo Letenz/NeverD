@@ -14,6 +14,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Interrupts.h"
 
 namespace neverd {
 
@@ -215,9 +216,9 @@ bool isNonReturningSourceCall(const ExprPtr &Expression) {
          Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default;
 }
 
-/// `int 29h`, the Windows fail-fast (`__fastfail`), which MedIR's
-/// isArchitecturalNoReturn also treats as never returning.
-static bool isX86FailFastInterrupt(const HighExpr &Expression) {
+/// An `int N` whose vector never returns (X86Interrupts.def), as MedIR's
+/// isArchitecturalNoReturn also decides.
+static bool isX86NoReturnInterruptCall(const HighExpr &Expression) {
   if (Expression.IntrinsicId != Intrinsic::IntN ||
       Expression.Operands.empty() || !Expression.Operands[0])
     return false;
@@ -228,7 +229,7 @@ static bool isX86FailFastInterrupt(const HighExpr &Expression) {
            (Vector->Op == NdOp::INT_ZEXT || Vector->Op == NdOp::INT_SEXT))))
     Vector = Vector->Operands[0].get();
   return Vector && Vector->Kind == ExprKind::Const &&
-         (Vector->ConstVal & 0xFF) == 0x29;
+         isX86NoReturnInterrupt(Vector->ConstVal);
 }
 
 bool isTerminatingHighCall(const ExprPtr &Expression) {
@@ -236,7 +237,7 @@ bool isTerminatingHighCall(const ExprPtr &Expression) {
     return true;
   if (Expression && Expression->Kind == ExprKind::Call &&
       !Expression->IsIndirectCall && !Expression->SourceCallHint &&
-      isX86FailFastInterrupt(*Expression))
+      isX86NoReturnInterruptCall(*Expression))
     return true;
   return Expression && Expression->Kind == ExprKind::Call &&
          !Expression->IsIndirectCall && !Expression->SourceCallHint &&

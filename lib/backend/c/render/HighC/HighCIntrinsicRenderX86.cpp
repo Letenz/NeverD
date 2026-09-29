@@ -15,6 +15,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/ir/intrinsics/X86Interrupts.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -966,7 +967,8 @@ bool isX86FastFailCall(const HighExpr &E) {
       E.Operands.empty() || !E.Operands[0])
     return false;
   const HighExpr *Vec = unwrapX86IntegerView(E.Operands[0].get());
-  return Vec && Vec->Kind == ExprKind::Const && (Vec->ConstVal & 0xFF) == 0x29;
+  return Vec && Vec->Kind == ExprKind::Const &&
+         isX86Interrupt(Vec->ConstVal, X86Interrupt::FastFail);
 }
 
 std::string renderX86InterruptStatement(

@@ -1,0 +1,22 @@
+//===- X86Interrupts.def - Architectural x86 interrupt vectors --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// X86_INTERRUPT(ID, VECTOR, NO_RETURN)
+//
+//   ID         X86Interrupt enumerator.
+//   VECTOR     `int N` immediate; only its low byte selects the vector.
+//   NO_RETURN  1 when control never reaches the next instruction.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef X86_INTERRUPT
+#define X86_INTERRUPT(ID, VECTOR, NO_RETURN)
+#endif
+
+// Windows `__fastfail`: the kernel terminates the process or bugchecks.
+X86_INTERRUPT(FastFail, 0x29, 1)
+
+#undef X86_INTERRUPT

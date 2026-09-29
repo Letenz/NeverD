@@ -18,6 +18,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Interrupts.h"
 
 #include <map>
 #include <queue>
@@ -36,7 +37,7 @@ bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch) {
     return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
   if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
       Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
-      (Op.Inputs[1].ConstVal & 0xFF) == 0x29)
+      isX86NoReturnInterrupt(Op.Inputs[1].ConstVal))
     return true;
   return false;
 }
@@ -51,7 +52,7 @@ bool isArchitecturalNoReturn(const LowOp &Op, Arch TheArch) {
     return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
   if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
       Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
-      (Op.Inputs[1].Offset & 0xFF) == 0x29)
+      isX86NoReturnInterrupt(Op.Inputs[1].Offset))
     return true;
   return false;
 }
