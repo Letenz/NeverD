@@ -51,7 +51,20 @@ add_neverd_component_library(NeverDEmulationABI
 
 add_neverd_component_library(NeverDEmulationRuntime
   runtime/ExecutionBudget.cpp
-  LINK_COMPONENTS EmulationCore
+  runtime/ExecutionSession.cpp
+  LINK_COMPONENTS EmulationCPU
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationImage
+  runtime/ImageMapping.cpp
+  LINK_COMPONENTS Loader EmulationCore
+  LLVM_COMPONENTS Support)
+
+add_subdirectory(os/linux)
+add_neverd_component_library(NeverDEmulationProcess
+  runtime/ProcessSession.cpp
+  runtime/ProcessReport.cpp
+  LINK_COMPONENTS EmulationLinux
   LLVM_COMPONENTS Support)
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
@@ -59,7 +72,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
 endif()
 
 if(WIN32)
-  foreach(_component Core Native Unicorn CPU ABI Runtime)
+  foreach(_component Core Native Unicorn CPU ABI Runtime Image Process)
     target_compile_definitions(NeverDEmulation${_component} PRIVATE NOMINMAX)
   endforeach()
 endif()

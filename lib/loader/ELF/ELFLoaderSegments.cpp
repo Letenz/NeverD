@@ -49,6 +49,21 @@ llvm::Error buildSegments(const llvm::object::ELFFile<ELFT> &ELF,
   if (!PhdrsOr)
     return PhdrsOr.takeError();
 
+  const auto &Header = ELF.getHeader();
+  Img.ELFMetadata = ELFImageMetadata{Header.e_type,
+                                     Header.e_ident[EI_OSABI],
+                                     Header.e_ident[EI_ABIVERSION],
+                                     Header.e_flags,
+                                     Header.e_phoff,
+                                     Header.e_phentsize,
+                                     {}};
+  auto &Metadata = *Img.ELFMetadata;
+  Metadata.ProgramHeaders.reserve(PhdrsOr->size());
+  for (const Elf_Phdr &PH : *PhdrsOr)
+    Metadata.ProgramHeaders.push_back({PH.p_type, PH.p_flags, PH.p_offset,
+                                       PH.p_vaddr, PH.p_filesz, PH.p_memsz,
+                                       PH.p_align});
+
   for (const Elf_Phdr &PH : *PhdrsOr) {
     if (PH.p_type != PT_LOAD)
       continue;

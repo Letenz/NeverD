@@ -465,6 +465,17 @@ native guest execution remains covered by the architecture suites above.
 
 ## Driver emulation checks
 
+The independent [process emulation suites](process-emulation.md#verification)
+compile real x64/AArch64 ELF process fixtures. `NeverDLinuxProcessTests` verifies
+startup, program-header policy, service continuation, binary output, guest
+faults and resource stops across configured transports. `NeverDProcessPublicTests`
+checks the shared C API/CLI without mutating a loaded analysis image.
+`NeverDExecutionSessionTests` covers two CPUs sharing memory and budgets,
+exactly-once service/fault consumption and image mapping plans.
+`NeverDX64MemoryUpdateTests` checks memory INC/DEC widths, flags, read/write
+permissions and observer stops. The public Python wrapper also participates in
+the ordinary Python SDK tests and declaration audit.
+
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
 restore against current mappings, fault lifetime, bounded loops, unsupported

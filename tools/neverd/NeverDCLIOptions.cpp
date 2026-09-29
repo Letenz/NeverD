@@ -19,6 +19,8 @@
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionCLIStrings.h"
 #include "neverd/emulation/ExecutionReportFields.h"
+#include "neverd/emulation/ProcessCLIStrings.h"
+#include "neverd/emulation/ProcessReportFields.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 
 using namespace llvm;
@@ -125,6 +127,7 @@ cl::SubCommand
                      "Run bounded x64 WDM driver initialization and emit JSON");
 cl::SubCommand CPUCapabilitiesCmd(execution_cli::CapabilitiesCommand,
                                   execution_cli::CapabilitiesHelp);
+cl::SubCommand EmulateProcessCmd(process_cli::Command, process_cli::Help);
 cl::SubCommand TranslateObjectCmd(
     "translate-object",
     "Compile canonical legacy-prefix-free x86-64 v1 REX.W full-width GPR MOV, "
@@ -1128,6 +1131,19 @@ cl::opt<std::string>
 cl::opt<bool> CPUProbeHost(execution_cli::ProbeHostOption,
                            cl::desc(execution_cli::ProbeHostHelp),
                            cl::init(false), cl::sub(CPUCapabilitiesCmd));
+
+cl::opt<std::string> ProcessInput(cl::Positional, cl::desc(process_cli::Input),
+                                  cl::Required, cl::sub(EmulateProcessCmd));
+cl::opt<std::string> ProcessProfile(process_cli::ProfileOption,
+                                    cl::desc(process_cli::ProfileHelp),
+                                    cl::value_desc(process_cli::ProfileValue),
+                                    cl::Required, cl::sub(EmulateProcessCmd));
+cl::opt<std::string>
+    ProcessOptions(process_cli::OptionsOption,
+                   cl::desc(process_cli::OptionsHelp),
+                   cl::value_desc(process_cli::OptionsValue),
+                   cl::init(emulation::process_report::EmptyOptions),
+                   cl::sub(EmulateProcessCmd));
 
 //===----------------------------------------------------------------------===//
 // Translate-object-specific options

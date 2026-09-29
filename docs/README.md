@@ -23,6 +23,7 @@ and `roadmap.md`. Shared images remain in `assets/`.
 | [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; bounded automatic loop proof proposals |
 | [Windows exception reconstruction](windows-exception-reconstruction.md) | SEH/C++ unwind support matrix, IR contract, native patch rules, and PE validation |
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
+| [Guest process emulation](process-emulation.md) | Explicit Linux ELF64 process profile, startup stack, system calls, bounded output, CLI/C/Python and current limits |
 | [Windows driver emulation](driver-emulation.md) | Bounded x64 WDM initialization, serial buffered/direct requests, work items, timers, DPCs, events and waits, with behavior reports and limits; KMDF 1.33 non-PnP driver/object lifetimes and validated x64 CFG |
 | [Memory-safety audit & hunt](memory-safety.md) | Heap-lifetime and copy-overflow analysis: identity contract per format, sink/source catalog, verdicts, budgets, and JSON schema |
 | [Native plugins](plugins.md) | Pure-C descriptor ABI, callbacks and events, build/link workflow, discovery, and compatibility rules |

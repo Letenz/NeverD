@@ -22,6 +22,7 @@
 #include "neverd/loader/BinaryImageRelocation.h"
 #include "neverd/loader/BinaryImageSection.h"
 #include "neverd/loader/COFF/RichHeader.h"
+#include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/ExceptionTable.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
@@ -303,6 +304,8 @@ struct BinaryImage {
   std::vector<ExactDataObjectExtent> ExactDataObjects;
   std::vector<RelocationEntry> Relocations;
   std::vector<BaseRelocation> BaseRelocations;
+  /// Program-header and ABI facts retained by the ordinary ELF loader.
+  std::optional<ELFImageMetadata> ELFMetadata;
   /// Present only for Solana SBF ELF inputs.  The dedicated loader owns ELF
   /// parsing; the frontend consumes this typed record and never reparses Raw.
   std::optional<sbf::Metadata> SBF;

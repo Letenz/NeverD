@@ -1,0 +1,72 @@
+//===- LinuxValues.def - Bounded ELF64 Linux process profile -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_LINUX_VALUE
+NEVERD_LINUX_VALUE(StackTop, 0x00007fffffff0000ULL)
+NEVERD_LINUX_VALUE(MinimumAddress, 0x10000)
+NEVERD_LINUX_VALUE(UserLimitX64, 0x0000800000000000ULL)
+NEVERD_LINUX_VALUE(UserLimitARM64, 0x0001000000000000ULL)
+NEVERD_LINUX_VALUE(ProcessID, 1000)
+NEVERD_LINUX_VALUE(ThreadID, 1000)
+NEVERD_LINUX_VALUE(UserID, 1000)
+NEVERD_LINUX_VALUE(GroupID, 1000)
+NEVERD_LINUX_VALUE(ClockTicks, 100)
+NEVERD_LINUX_VALUE(RandomSize, 16)
+NEVERD_LINUX_VALUE(StandardOutput, 1)
+NEVERD_LINUX_VALUE(StandardError, 2)
+NEVERD_LINUX_VALUE(BadDescriptor, 9)
+NEVERD_LINUX_VALUE(BadAddress, 14)
+NEVERD_LINUX_VALUE(ExitMask, 0xff)
+#endif
+#ifdef NEVERD_LINUX_AUX
+// Linux UAPI tag and the process-owned value supplied at exec.
+NEVERD_LINUX_AUX(PHDR, 3, Layout.ProgramHeaderAddress)
+NEVERD_LINUX_AUX(PHENT, 4, Image.ELFMetadata->ProgramHeaderEntrySize)
+NEVERD_LINUX_AUX(PHNUM, 5, Image.ELFMetadata->ProgramHeaders.size())
+NEVERD_LINUX_AUX(PAGESZ, 6, Layout.PageSize)
+NEVERD_LINUX_AUX(BASE, 7, 0)
+NEVERD_LINUX_AUX(FLAGS, 8, 0)
+NEVERD_LINUX_AUX(ENTRY, 9, Image.Entry)
+NEVERD_LINUX_AUX(UID, 11, UserID)
+NEVERD_LINUX_AUX(EUID, 12, UserID)
+NEVERD_LINUX_AUX(GID, 13, GroupID)
+NEVERD_LINUX_AUX(EGID, 14, GroupID)
+NEVERD_LINUX_AUX(HWCAP, 16, 0)
+NEVERD_LINUX_AUX(CLKTCK, 17, ClockTicks)
+NEVERD_LINUX_AUX(SECURE, 23, 0)
+NEVERD_LINUX_AUX(RANDOM, 25, RandomAddress)
+NEVERD_LINUX_AUX(HWCAP2, 26, 0)
+NEVERD_LINUX_AUX(EXECFN, 31, *ExecutableAddress)
+NEVERD_LINUX_AUX(NULL, 0, 0)
+#endif
+#ifdef NEVERD_LINUX_SERVICE
+// Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
+NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
+NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
+NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
+NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
+NEVERD_LINUX_SERVICE(GetTID, 186, 178, 0)
+#endif
+#ifdef NEVERD_LINUX_ABI
+NEVERD_LINUX_ABI(X64, X64Syscall, X64AX, X64AX, X64SP, X64PC,
+                 X64DI, X64SI, X64DX, X64R10, X64R8, X64R9)
+NEVERD_LINUX_ABI(AArch64, AArch64SVC, AArch64X8, AArch64X0, AArch64SP, AArch64PC,
+                 AArch64X0, AArch64X1, AArch64X2, AArch64X3, AArch64X4, AArch64X5)
+#endif
+#ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(Limits, "process limits must be positive and fit the checked execution profile")
+NEVERD_LINUX_DIAGNOSTIC(Image, "Linux ELF64 process profile requires a little-endian x64 or AArch64 ELF executable")
+NEVERD_LINUX_DIAGNOSTIC(ABI, "ELF OS ABI, ABI version or processor flags are unsupported by this Linux profile")
+NEVERD_LINUX_DIAGNOSTIC(Dynamic, "Linux process image requires an unimplemented dynamic-link or TLS contract")
+NEVERD_LINUX_DIAGNOSTIC(ProgramHeaders, "ELF program headers have an invalid or unmapped process layout")
+NEVERD_LINUX_DIAGNOSTIC(AddressRange, "process image or stack exceeds the Linux user address range")
+NEVERD_LINUX_DIAGNOSTIC(Entry, "process entry does not name executable user memory")
+NEVERD_LINUX_DIAGNOSTIC(Stack, "process arguments, environment and auxiliary vector exceed the stack")
+NEVERD_LINUX_DIAGNOSTIC(String, "process argument or environment string contains a NUL byte")
+NEVERD_LINUX_DIAGNOSTIC(Service, "unsupported Linux system call {0}")
+NEVERD_LINUX_DIAGNOSTIC(Trap, "service request does not match the process system-call ABI")
+NEVERD_LINUX_DIAGNOSTIC(Output, "captured process output exceeds the workload limit")
+NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit, "CPU stopped without a modeled process continuation")
+#endif

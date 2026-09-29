@@ -1,0 +1,82 @@
+//===- ProcessReport.def - Process request and report vocabulary ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PROCESS_OPTION_NUMBER
+NEVERD_PROCESS_OPTION_NUMBER(InstructionLimit, "instruction_limit", Limits.Instructions)
+NEVERD_PROCESS_OPTION_NUMBER(EventLimit, "event_limit", Limits.Events)
+NEVERD_PROCESS_OPTION_NUMBER(Timeout, "timeout_microseconds", Limits.TimeoutMicroseconds)
+NEVERD_PROCESS_OPTION_NUMBER(MemoryLimit, "memory_limit", MemoryLimit)
+NEVERD_PROCESS_OPTION_NUMBER(StackSize, "stack_size", StackSize)
+NEVERD_PROCESS_OPTION_NUMBER(OutputLimit, "output_limit", OutputLimit)
+NEVERD_PROCESS_OPTION_NUMBER(Quantum, "instruction_quantum", InstructionQuantum)
+#endif
+#ifdef NEVERD_PROCESS_OPTION_STRINGS
+NEVERD_PROCESS_OPTION_STRINGS(Arguments, "arguments", Arguments)
+NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
+#endif
+#ifdef NEVERD_PROCESS_REPORT_FIELD
+NEVERD_PROCESS_REPORT_FIELD(Backend, "backend")
+NEVERD_PROCESS_REPORT_FIELD(Version, "schema_version")
+NEVERD_PROCESS_REPORT_FIELD(Profile, "profile")
+NEVERD_PROCESS_REPORT_FIELD(Architecture, "architecture")
+NEVERD_PROCESS_REPORT_FIELD(SelectionReason, "backend_selection_reason")
+NEVERD_PROCESS_REPORT_FIELD(Stop, "stop_reason")
+NEVERD_PROCESS_REPORT_FIELD(ExitStatus, "exit_status")
+NEVERD_PROCESS_REPORT_FIELD(Diagnostic, "diagnostic")
+NEVERD_PROCESS_REPORT_FIELD(Entry, "entry_pc")
+NEVERD_PROCESS_REPORT_FIELD(PC, "pc")
+NEVERD_PROCESS_REPORT_FIELD(Instructions, "instructions")
+NEVERD_PROCESS_REPORT_FIELD(Events, "events")
+NEVERD_PROCESS_REPORT_FIELD(Stdout, "stdout_hex")
+NEVERD_PROCESS_REPORT_FIELD(Stderr, "stderr_hex")
+NEVERD_PROCESS_REPORT_FIELD(Services, "services")
+NEVERD_PROCESS_REPORT_FIELD(Number, "number")
+NEVERD_PROCESS_REPORT_FIELD(Result, "result")
+NEVERD_PROCESS_REPORT_FIELD(CPUExit, "cpu_exit")
+NEVERD_PROCESS_REPORT_FIELD(Kind, "kind")
+NEVERD_PROCESS_REPORT_FIELD(StopRequested, "stop_requested")
+NEVERD_PROCESS_REPORT_FIELD(DeadlineReached, "deadline_reached")
+NEVERD_PROCESS_REPORT_FIELD(Fault, "fault")
+NEVERD_PROCESS_REPORT_FIELD(Address, "address")
+NEVERD_PROCESS_REPORT_FIELD(Size, "size")
+NEVERD_PROCESS_REPORT_FIELD(Access, "access")
+NEVERD_PROCESS_REPORT_FIELD(Interrupt, "interrupt")
+#endif
+#ifdef NEVERD_PROCESS_REPORT_LIMIT
+NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
+NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
+#endif
+#ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(EmptyOptions, "{}")
+NEVERD_PROCESS_REPORT_TEXT(TooLarge, "process options JSON exceeds 64 KiB")
+NEVERD_PROCESS_REPORT_TEXT(ObjectRequired, "process options must be a JSON object")
+NEVERD_PROCESS_REPORT_TEXT(UnknownField, "unknown process option: ")
+NEVERD_PROCESS_REPORT_TEXT(FieldType, "invalid process option type or value: ")
+NEVERD_PROCESS_REPORT_TEXT(PathRequired, "process emulation requires a nonempty input path")
+NEVERD_PROCESS_REPORT_TEXT(ProfileRequired, "process emulation requires an explicit guest profile")
+NEVERD_PROCESS_REPORT_TEXT(Disabled, "process emulation is disabled; rebuild with -DNEVERD_ENABLE_CPU_EMULATION=ON")
+NEVERD_PROCESS_REPORT_TEXT(AllocationFailed, "could not allocate process report")
+NEVERD_PROCESS_REPORT_TEXT(RunFailed, "process emulation failed: ")
+NEVERD_PROCESS_REPORT_TEXT(UnexpectedException, "process emulation failed with an unexpected exception")
+NEVERD_PROCESS_REPORT_TEXT(SessionFailed, "could not create process emulation session")
+NEVERD_PROCESS_REPORT_TEXT(InvalidReport, "invalid process emulation report")
+#endif
+#ifdef NEVERD_PROCESS_CLI_STRING
+NEVERD_PROCESS_CLI_STRING(Command, "emulate")
+NEVERD_PROCESS_CLI_STRING(Help, "Run a bounded guest process under an explicit OS profile and emit JSON")
+NEVERD_PROCESS_CLI_STRING(Input, "input executable")
+NEVERD_PROCESS_CLI_STRING(ProfileOption, "profile")
+NEVERD_PROCESS_CLI_STRING(ProfileHelp, "Guest process profile (required): linux-elf64-v1")
+NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
+NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp, "Process options JSON: backend, arguments, environment and resource limits")
+NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
+#endif
+#ifdef NEVERD_PROCESS_CLI_STATUS
+NEVERD_PROCESS_CLI_STATUS(Success, 0)
+NEVERD_PROCESS_CLI_STATUS(Error, 1)
+NEVERD_PROCESS_CLI_STATUS(GuestFailure, 2)
+NEVERD_PROCESS_CLI_STATUS(Incomplete, 3)
+#endif

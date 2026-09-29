@@ -1,0 +1,28 @@
+//===- ProcessProfile.def - Process profiles, limits and outcomes --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PROCESS_PROFILE
+NEVERD_PROCESS_PROFILE(LinuxELF64, "linux-elf64-v1")
+#endif
+#ifdef NEVERD_PROCESS_LIMIT
+NEVERD_PROCESS_LIMIT(Instructions, 100000)
+NEVERD_PROCESS_LIMIT(Events, 10000)
+NEVERD_PROCESS_LIMIT(TimeoutMicroseconds, 5000000)
+NEVERD_PROCESS_LIMIT(Memory, 64 * 1024 * 1024)
+NEVERD_PROCESS_LIMIT(Stack, 1024 * 1024)
+NEVERD_PROCESS_LIMIT(Output, 1024 * 1024)
+NEVERD_PROCESS_LIMIT(Quantum, 1024)
+NEVERD_PROCESS_LIMIT(ServiceArguments, 6)
+#endif
+#ifdef NEVERD_PROCESS_STOP
+NEVERD_PROCESS_STOP(Exited, "exited")
+NEVERD_PROCESS_STOP(InstructionLimit, "instruction_limit")
+NEVERD_PROCESS_STOP(EventLimit, "event_limit")
+NEVERD_PROCESS_STOP(Timeout, "timeout")
+NEVERD_PROCESS_STOP(OutputLimit, "output_limit")
+NEVERD_PROCESS_STOP(UnsupportedService, "unsupported_service")
+NEVERD_PROCESS_STOP(CPUFailure, "cpu_failure")
+NEVERD_PROCESS_STOP(RuntimeFailure, "runtime_failure")
+#endif
