@@ -30,6 +30,7 @@
 #include "neverd/object/ELFLayout.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/object/PELayout.h"
+#include "neverd/support/BranchEncoding.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -124,7 +125,7 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
       const uint32_t Insn = readLE<uint32_t>(Compiled.Bytes.data() + Offset);
       std::optional<va_t> ThumbPackedTarget;
       if (CallerMode == InstructionMode::ARM) {
-        if ((Insn & 0x0e000000u) != 0x0a000000u)
+        if (!branch::ArmBranch.matches(Insn))
           continue;
       } else {
         size_t Length = 0;
@@ -168,10 +169,10 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         return false;
       }
       if (CallerMode == InstructionMode::Thumb) {
-        const uint16_t Low =
-            readLE<uint16_t>(Compiled.Bytes.data() + Offset + 2);
-        const bool IsBL = (Low & 0xD000u) == 0xD000u;
-        const bool IsBLX = (Low & 0xD000u) == 0xC000u;
+        const uint16_t Low = readLE<uint16_t>(Compiled.Bytes.data() + Offset +
+                                              branch::ThumbHalfwordBytes);
+        const bool IsBL = branch::ThumbLinkLow.matches(Low);
+        const bool IsBLX = branch::ThumbLinkExchangeLow.matches(Low);
         if (*TargetMode == InstructionMode::Thumb) {
           if (IsBLX || *ThumbPackedTarget != Target) {
             Detail = "generated Thumb branch does not encode its Thumb target";
@@ -181,33 +182,39 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         }
         if (IsBLX && *ThumbPackedTarget == Target)
           continue;
-        const int64_t Base = (static_cast<int64_t>(Site) + 4) & ~int64_t{3};
+        // A T32 `blx` counts from its program counter rounded down to a word.
+        const int64_t Base =
+            (static_cast<int64_t>(Site) + branch::ThumbPCOffset) &
+            ~int64_t{branch::ArmInstructionBytes - 1};
         const int64_t Displacement = ExactDestination - Base;
-        if (!IsBL || *ThumbPackedTarget != Target || (Target & 3u) != 0 ||
-            Displacement < -(int64_t{1} << 24) ||
-            Displacement > (int64_t{1} << 24) - 4 || (Displacement & 3u) != 0) {
+        if (!IsBL || *ThumbPackedTarget != Target ||
+            Target % branch::ArmInstructionBytes != 0 ||
+            !branch::isT32BranchLinkExchangeDisplacement(Displacement)) {
           Detail = "generated Thumb-to-ARM branch needs an interworking veneer";
           return false;
         }
-        const uint32_t Imm = static_cast<uint32_t>(Displacement);
-        const uint32_t S = (Imm >> 24) & 1u;
-        const uint32_t I1 = (Imm >> 23) & 1u;
-        const uint32_t I2 = (Imm >> 22) & 1u;
-        const uint32_t J1 = (~(I1 ^ S)) & 1u;
-        const uint32_t J2 = (~(I2 ^ S)) & 1u;
-        const uint16_t BLXHigh = 0xf000u | (S << 10) | ((Imm >> 12) & 0x03ffu);
-        const uint16_t BLXLow =
-            0xc000u | (J1 << 13) | (J2 << 11) | ((Imm >> 1) & 0x07feu);
+        const auto [BLXHigh, BLXLow] =
+            branch::t32BranchLinkExchange(Displacement);
         writeLE<uint16_t>(Compiled.Bytes.data() + Offset, BLXHigh);
-        writeLE<uint16_t>(Compiled.Bytes.data() + Offset + 2, BLXLow);
+        writeLE<uint16_t>(Compiled.Bytes.data() + Offset +
+                              branch::ThumbHalfwordBytes,
+                          BLXLow);
         continue;
       }
       const int64_t PackedDisplacement =
-          static_cast<int32_t>((Insn & 0x00ffffffu) << 8) >> 6;
-      const bool IsBLX = (Insn & 0xfe000000u) == 0xfa000000u;
+          llvm::SignExtend64(branch::ArmBranchOffset.extract(Insn),
+                             branch::ArmBranchOffset.Width) *
+          branch::ArmInstructionBytes;
+      // A32 `blx` is the unconditional form; its halfword bit adds half a
+      // word.
+      const bool IsBLX = branch::ArmCondition.extract(Insn) ==
+                         branch::ArmConditionUnconditional;
       const int64_t PackedDestination =
-          static_cast<int64_t>(Site) + 8 + PackedDisplacement +
-          (IsBLX ? static_cast<int64_t>((Insn >> 23) & 2u) : 0);
+          static_cast<int64_t>(Site) + branch::ArmPCOffset +
+          PackedDisplacement +
+          (IsBLX ? int64_t{branch::ArmLinkOrHalfword.extract(Insn)} *
+                       branch::ThumbHalfwordBytes
+                 : 0);
       if (PackedDestination < 0 || PackedDestination > UINT32_MAX) {
         Detail = "generated ARM branch target is outside AArch32";
         return false;
@@ -223,16 +230,19 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         continue;
       const int64_t Displacement =
           ExactDestination - (static_cast<int64_t>(Site) + 8);
-      if ((Insn & 0xff000000u) != 0xeb000000u || (Target & 1u) != 0 ||
-          (Displacement & 1u) != 0 ||
-          PackedDestination != (ExactDestination & ~int64_t{3})) {
+      // Only an unconditional `bl` can become a `blx`.
+      const bool IsBL =
+          branch::ArmCondition.extract(Insn) == branch::ArmConditionAlways &&
+          branch::ArmLinkOrHalfword.extract(Insn);
+      if (!IsBL || (Target & branch::ThumbStateBit) != 0 ||
+          Displacement % branch::ThumbHalfwordBytes != 0 ||
+          PackedDestination !=
+              (ExactDestination & ~int64_t{branch::ArmInstructionBytes - 1})) {
         Detail = "generated ARM-to-Thumb branch needs an interworking veneer";
         return false;
       }
-      const uint32_t BLX =
-          0xfa000000u | ((static_cast<uint32_t>(Displacement) & 2u) << 23) |
-          ((static_cast<uint32_t>(Displacement) >> 2) & 0x00ffffffu);
-      writeLE<uint32_t>(Compiled.Bytes.data() + Offset, BLX);
+      writeLE<uint32_t>(Compiled.Bytes.data() + Offset,
+                        branch::a32BranchLinkExchange(Displacement));
     }
   }
   return true;
