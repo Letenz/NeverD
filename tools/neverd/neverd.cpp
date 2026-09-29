@@ -16,6 +16,7 @@
 #include "NeverDCLI.h"
 
 #include "neverd/Common.h"
+#include "neverd/loader/ARMModeCLIStrings.h"
 #include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -130,22 +131,24 @@ static int realMain(int Argc, char *Argv[]) {
     const auto Parts = StringRef(Hint).split(':');
     StringRef Address = Parts.first;
     if (!Address.consume_front("0x") && !Address.consume_front("0X")) {
-      WithColor::error() << "invalid --arm-function-mode address: " << Hint
-                         << "\n";
+      WithColor::error() << "invalid --" << arm_mode_cli::Option
+                         << " address: " << Hint << "\n";
       return 1;
     }
     neverd_va_t Entry = 0;
     if (Address.empty() || Address.getAsInteger(16, Entry) ||
-        (Parts.second != "arm" && Parts.second != "thumb") ||
+        (Parts.second != arm_mode_cli::ARM &&
+         Parts.second != arm_mode_cli::Thumb) ||
         !SeenARMEntries.insert(Entry).second) {
-      WithColor::error() << "invalid or duplicate --arm-function-mode: " << Hint
-                         << "\n";
+      WithColor::error() << "invalid or duplicate --" << arm_mode_cli::Option
+                         << ": " << Hint << "\n";
       return 1;
     }
-    const int Mode = Parts.second == "arm" ? NEVERD_ARM_FUNCTION_MODE_ARM
-                                           : NEVERD_ARM_FUNCTION_MODE_THUMB;
+    const int Mode = Parts.second == arm_mode_cli::ARM
+                         ? NEVERD_ARM_FUNCTION_MODE_ARM
+                         : NEVERD_ARM_FUNCTION_MODE_THUMB;
     if (!neverd_session_set_arm_function_mode(Sess, Entry, Mode)) {
-      WithColor::error() << "invalid --arm-function-mode: "
+      WithColor::error() << "invalid --" << arm_mode_cli::Option << ": "
                          << takeLastError(Sess) << "\n";
       return 1;
     }

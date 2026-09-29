@@ -72,7 +72,10 @@ file-level default is not proof that all of its executable bytes use one mode.
 An ELF function entry without exact mode evidence requires a caller assertion
 before either C route can decode it, even when the file-level decoder starts in
 ARM mode. A single-function LLVMC request runs the same semantic LLVM
-optimization as the full-image route before emitting C.
+optimization as the full-image route before emitting C. With `--no-opt`, both
+routes promote the emitter's temporary allocas without running value-changing
+optimization. The SDK rebuilds a cached native LLVM module when this policy
+changes and publishes the replacement only after verification succeeds.
 Both LLVM C routes retain verified output with only temporary-alloca
 promotion when an incomplete native exception contract excludes optimization.
 

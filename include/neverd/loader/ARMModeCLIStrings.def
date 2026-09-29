@@ -1,0 +1,14 @@
+//===- ARMModeCLIStrings.def - AArch32 mode CLI spelling ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+NEVERD_ARM_MODE_CLI_STRING(Option, "arm-function-mode")
+NEVERD_ARM_MODE_CLI_STRING(ARM, "arm")
+NEVERD_ARM_MODE_CLI_STRING(Thumb, "thumb")
+NEVERD_ARM_MODE_CLI_STRING(
+    Description, "Assert an AArch32 function entry's mode as 0xADDRESS:arm or "
+                 "0xADDRESS:thumb; repeat for multiple entries")
+NEVERD_ARM_MODE_CLI_STRING(ValueDescription, "entry:mode")
+NEVERD_ARM_MODE_CLI_STRING(HintEntryPrefix, "=0xADDRESS:")

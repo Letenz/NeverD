@@ -262,9 +262,9 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
           ShardPhase = "optimization";
           OptimizationResult Optimization = optimizeOrPromoteModule(*M);
           if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
-            // Input failed module verification or EH-rewrite contracts.
-            // Keep the unoptimized shard so `decompile --llvm` still emits C;
-            // the shared helper already promoted its temporary allocas.
+            // The shard was verified above. A blocking native EH contract
+            // keeps value-changing passes off this module; the shared helper
+            // already promoted its temporary allocas.
           } else if (isFatalOptimizationStop(Optimization.Stop)) {
             Shard.LLVMVerifierFailed = true;
             fail(optimizationStopReasonName(Optimization.Stop));
@@ -273,6 +273,14 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         } else {
           ShardPhase = "canonicalization";
           promoteScaffoldingAllocas(*M);
+        }
+        ShardPhase = "post-optimization verification";
+        std::string FinalVerifyError;
+        llvm::raw_string_ostream FinalVerifyStream(FinalVerifyError);
+        if (llvm::verifyModule(*M, &FinalVerifyStream)) {
+          Shard.LLVMVerifierFailed = true;
+          fail(FinalVerifyError);
+          return;
         }
         ShardPhase = "serialization";
         llvm::raw_string_ostream Stream(Shard.Bitcode);

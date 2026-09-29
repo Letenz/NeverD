@@ -168,6 +168,45 @@ TEST_F(SessionLLVMTest, InvalidCandidateIsNeverCachedAndAnalysisRemainsUsable) {
   EXPECT_EQ(State.PipeResult.LlvmModule.get(), Module);
 }
 
+TEST_F(SessionLLVMTest, SwitchingOptimizationPolicyRebuildsTheNativeModule) {
+  State.PipeResult.MedFuncs.push_back(sourceFunction());
+
+  ASSERT_TRUE(State.ensureLlvmModule(true)) << State.LastError;
+  ASSERT_TRUE(State.LlvmModuleNoOpt);
+  EXPECT_TRUE(*State.LlvmModuleNoOpt);
+  State.PipeResult.LlvmModule->setModuleIdentifier("modified-no-opt-cache");
+  ASSERT_TRUE(State.ensureLlvmModule(true)) << State.LastError;
+  EXPECT_EQ(State.PipeResult.LlvmModule->getModuleIdentifier(),
+            "modified-no-opt-cache");
+
+  MedBlock Duplicate = State.PipeResult.MedFuncs.front().Blocks.front();
+  Duplicate.StartAddr += 1;
+  State.PipeResult.MedFuncs.front().Blocks.push_back(std::move(Duplicate));
+  EXPECT_FALSE(State.ensureLlvmModule(false));
+  ASSERT_NE(State.PipeResult.LlvmModule, nullptr);
+  EXPECT_EQ(State.PipeResult.LlvmModule->getModuleIdentifier(),
+            "modified-no-opt-cache");
+  ASSERT_TRUE(State.LlvmModuleNoOpt);
+  EXPECT_TRUE(*State.LlvmModuleNoOpt);
+  State.clearError();
+  EXPECT_TRUE(State.ensureLlvmModule(true));
+  State.PipeResult.MedFuncs.front().Blocks.pop_back();
+
+  ASSERT_TRUE(State.ensureLlvmModule(false)) << State.LastError;
+  ASSERT_TRUE(State.LlvmModuleNoOpt);
+  EXPECT_FALSE(*State.LlvmModuleNoOpt);
+  EXPECT_NE(State.PipeResult.LlvmModule->getModuleIdentifier(),
+            "modified-no-opt-cache");
+  State.PipeResult.LlvmModule->setModuleIdentifier("modified-opt-cache");
+
+  ASSERT_TRUE(State.ensureLlvmModule(true)) << State.LastError;
+  ASSERT_TRUE(State.LlvmModuleNoOpt);
+  EXPECT_TRUE(*State.LlvmModuleNoOpt);
+  EXPECT_NE(State.PipeResult.LlvmModule->getModuleIdentifier(),
+            "modified-opt-cache");
+  EXPECT_FALSE(llvm::verifyModule(*State.PipeResult.LlvmModule));
+}
+
 TEST_F(SessionLLVMTest, RejectedEmissionDoesNotPublishAModule) {
   Segment Text;
   Text.Name = ".text";

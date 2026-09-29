@@ -11,6 +11,8 @@
 
 namespace {
 
+#include "../fixtures/MBASingleFunctionFixtures.inc"
+
 using SourceCase = std::tuple<const char *, const char *, bool>;
 
 std::string readSource(const fs::path &Path) {
@@ -387,31 +389,32 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
                                     "-o", Single.string(), Object.string()});
     ASSERT_TRUE(One.ok()) << One.err;
     expectNoResidualMBA(Single, "mba_sub32");
-    const auto SingleSource = readSource(Single);
-    const auto SingleHarness = tmpFile("single-execute.c");
-    std::ofstream(SingleHarness) << SingleSource << R"(
-int main(void) {
-  static const uint32_t edges[] = {
-      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
-  for (unsigned i = 0; i < 6; ++i)
-    for (unsigned j = 0; j < 6; ++j)
-      if ((uint32_t)mba_sub32(edges[i], edges[j]) != edges[i] - edges[j])
-        return 1;
-  return 0;
-}
-)";
-    for (const char *Optimization : {"-O0", "-O2"}) {
-      SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("single-execute");
-      const auto Recompiled =
-          exec(NEVERD_TEST_CLANG,
-               {"-std=c11", Optimization, "-Werror=return-type",
-                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
-                "-fsanitize-trap=undefined", SingleHarness.string(), "-o",
-                Executable.string()});
-      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << SingleSource;
-      const auto Ran = exec(Executable.string(), {});
-      EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << SingleSource;
+    const auto Unoptimized = tmpFile("single-llvm-no-opt.c");
+    const auto WithoutOpt =
+        exec(ndBin(), {"decompile", "--llvm", "--no-opt", "--func=" + Function,
+                       "-o", Unoptimized.string(), Object.string()});
+    ASSERT_TRUE(WithoutOpt.ok()) << WithoutOpt.err;
+    EXPECT_TRUE(containsResidualMBA(functionAST(Unoptimized, "mba_sub32")))
+        << readSource(Unoptimized);
+    for (const fs::path &CFile : {Single, Unoptimized}) {
+      SCOPED_TRACE(CFile.string());
+      const auto SingleSource = readSource(CFile);
+      const auto SingleHarness = tmpFile("single-execute.c");
+      std::ofstream(SingleHarness)
+          << SingleSource << SubtractionExecutionHarness;
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile("single-execute");
+        const auto Recompiled =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Optimization, "-Werror=return-type",
+                  "-Werror=implicit-function-declaration",
+                  "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                  SingleHarness.string(), "-o", Executable.string()});
+        ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << SingleSource;
+        const auto Ran = exec(Executable.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << SingleSource;
+      }
     }
   }
 }
@@ -775,26 +778,8 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
     expectNoResidualMBA(Single, "mba_nested_add");
     const auto SingleSource = readSource(Single);
     const auto SingleHarness = tmpFile("nested-single-execute.c");
-    std::ofstream(SingleHarness) << SingleSource << R"(
-int main(void) {
-  static const uint32_t edges[] = {
-      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
-  for (unsigned i = 0; i < 6; ++i)
-    for (unsigned j = 0; j < 6; ++j)
-      if ((uint32_t)mba_nested_add(edges[i], edges[j]) != edges[i] + edges[j])
-        return 1;
-  uint64_t state = UINT64_C(0xf346ab70d21985ce);
-  for (unsigned i = 0; i < 1024; ++i) {
-    state = state * UINT64_C(6364136223846793005) + 1;
-    uint32_t x = (uint32_t)(state >> 32);
-    state = state * UINT64_C(6364136223846793005) + 1;
-    uint32_t y = (uint32_t)(state >> 32);
-    if ((uint32_t)mba_nested_add(x, y) != x + y)
-      return 1;
-  }
-  return 0;
-}
-)";
+    std::ofstream(SingleHarness)
+        << SingleSource << NestedAdditionExecutionHarness;
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
       const auto Executable = tmpFile("nested-single-execute");

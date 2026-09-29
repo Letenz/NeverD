@@ -796,6 +796,44 @@ TEST(ExceptionRewriteContract,
   }
 }
 
+TEST(ExceptionRewriteContract,
+     PromotionFallbackPreservesMalformedIRAndReportsActualChanges) {
+  llvm::LLVMContext Context;
+  auto Malformed = makeVoidModule(Context);
+  llvm::Function *Function = Malformed->getFunction("f");
+  ASSERT_NE(Function, nullptr);
+  Function->getEntryBlock().getTerminator()->eraseFromParent();
+  ASSERT_TRUE(llvm::verifyModule(*Malformed));
+  const std::string MalformedBefore = moduleIR(*Malformed);
+  const OptimizationResult Invalid =
+      Pipeline::optimizeOrPromoteModule(*Malformed);
+  EXPECT_EQ(Invalid.Stop, OptimizationStopReason::InputInvalid);
+  EXPECT_FALSE(Invalid.Changed);
+  EXPECT_EQ(moduleIR(*Malformed), MalformedBefore);
+
+  auto Blocked = makeVoidModule(Context);
+  Function = Blocked->getFunction("f");
+  ASSERT_NE(Function, nullptr);
+  llvm::IRBuilder<> Builder(Function->getEntryBlock().getTerminator());
+  auto *Slot = Builder.CreateAlloca(Builder.getInt32Ty());
+  Builder.CreateStore(Builder.getInt32(7), Slot);
+  Builder.CreateLoad(Builder.getInt32Ty(), Slot);
+  exception_rewrite::setContract(
+      *Function, exception_rewrite::SourceState::Complete,
+      exception_rewrite::LoweringState::Missing,
+      /*RequiredProtectedCalls=*/1, /*LoweredProtectedCalls=*/0,
+      /*SkippedLandingPads=*/0);
+  ASSERT_FALSE(llvm::verifyModule(*Blocked));
+  const std::string BlockedBefore = moduleIR(*Blocked);
+  const OptimizationResult Promoted =
+      Pipeline::optimizeOrPromoteModule(*Blocked);
+  EXPECT_EQ(Promoted.Stop, OptimizationStopReason::InputInvalid);
+  EXPECT_TRUE(Promoted.Changed);
+  EXPECT_NE(moduleIR(*Blocked), BlockedBefore);
+  EXPECT_EQ(moduleIR(*Blocked).find("alloca"), std::string::npos);
+  EXPECT_FALSE(llvm::verifyModule(*Blocked));
+}
+
 TEST(MachOExceptionRewriteContract,
      RejectsPartialSourceWhenNativeLoweringIsMissing) {
   llvm::LLVMContext Context;

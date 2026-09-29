@@ -617,8 +617,23 @@ Pipeline::optimizeModule(llvm::Module &Mod,
 OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod) {
   OptimizationOptions Options;
   OptimizationResult Result = optimizeModule(Mod, Options);
-  if (Result.Stop == OptimizationStopReason::InputInvalid)
-    promoteScaffoldingAllocas(Mod);
+  if (Result.Stop != OptimizationStopReason::InputInvalid ||
+      llvm::verifyModule(Mod))
+    return Result;
+
+  const auto InputHash = llvm::StructuralHash(Mod, /*DetailedHash=*/true);
+  std::unique_ptr<llvm::Module> Candidate = llvm::CloneModule(Mod);
+  promoteScaffoldingAllocas(*Candidate);
+  if (llvm::verifyModule(*Candidate)) {
+    Result.Stop = OptimizationStopReason::VerificationFailed;
+    return Result;
+  }
+  if (llvm::StructuralHash(*Candidate, /*DetailedHash=*/true) == InputHash &&
+      snapshotModule(*Candidate) == snapshotModule(Mod))
+    return Result;
+
+  Mod = std::move(*Candidate);
+  Result.Changed = true;
   return Result;
 }
 

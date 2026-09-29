@@ -20,6 +20,7 @@
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
 #include "neverd/ir/NdOps.h"
+#include "neverd/loader/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
@@ -199,8 +200,9 @@ std::optional<std::string> missingARMModeReason(const BinaryImage &Img,
       Img.instructionModeAt(Entry))
     return std::nullopt;
   return "ARM/Thumb mode cannot be established for function at 0x" +
-         llvm::utohexstr(Entry) +
-         "; supply --arm-function-mode=0xADDRESS:arm|thumb";
+         llvm::utohexstr(Entry) + "; supply --" + arm_mode_cli::Option +
+         arm_mode_cli::HintEntryPrefix + arm_mode_cli::ARM + "|" +
+         arm_mode_cli::Thumb;
 }
 
 /// Why \p Entry has no HighIR, naming the pipeline's audit disposition when
@@ -304,6 +306,11 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
 
 const char *neverd_decompile_llvm(neverd_session_t Sess,
                                   neverd_va_t FuncEntry) {
+  return neverd_decompile_llvm_ex(Sess, FuncEntry, 0);
+}
+
+const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
+                                     neverd_va_t FuncEntry, int NoOpt) {
   auto *S = toSession(Sess);
   S->clearError();
 
@@ -323,7 +330,7 @@ const char *neverd_decompile_llvm(neverd_session_t Sess,
     S->OnlyFunctionEntries = {FuncEntry};
   }
 
-  if (!S->ensureLlvmModule())
+  if (!S->ensureLlvmModule(NoOpt != 0))
     return dupStr(std::string());
 
   if (S->PipeResult.EVM) {

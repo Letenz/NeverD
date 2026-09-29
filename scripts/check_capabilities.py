@@ -1182,6 +1182,32 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
             )
 
     cli_declarations: set[str] = set()
+    cli_string_constants: dict[str, str] = {}
+    for header in (root / "include" / "neverd").rglob("*CLIStrings.h"):
+        header_text = _read_text(header)
+        if header_text is None:
+            continue
+        header_text = _cxx_without_comments(header_text)
+        namespace = re.search(
+            r"\bnamespace\s+neverd::([A-Za-z_]\w*)\s*\{", header_text
+        )
+        included_def = re.search(
+            r'#include\s+"neverd/([^"\n]+\.def)"', header_text
+        )
+        if namespace is None or included_def is None:
+            continue
+        include_root = (root / "include" / "neverd").resolve()
+        table_path = (include_root / included_def.group(1)).resolve()
+        if not table_path.is_relative_to(include_root):
+            continue
+        table_text = _read_text(table_path)
+        if table_text is None:
+            continue
+        for name, value in re.findall(
+            r'\bNEVERD_[A-Z_]*CLI_STRING\(\s*([A-Za-z_]\w*)\s*,\s*"([^"\\]+)"',
+            _cxx_without_comments(table_text),
+        ):
+            cli_string_constants[f"{namespace.group(1)}::{name}"] = value
     cli_sources = _source_files(
         root,
         ("tools/neverd",),
@@ -1259,7 +1285,14 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
             for match in option_declaration.finditer(code):
                 variable = match.group(1)
                 body = match.group(2)
-                option = re.match(r'\s*"([^"]+)"', body)
+                literal = re.match(r'\s*"([^"]+)"', body)
+                constant = re.match(r"\s*([A-Za-z_]\w*::[A-Za-z_]\w*)", body)
+                if literal is not None:
+                    option = literal.group(1)
+                elif constant is not None:
+                    option = cli_string_constants.get(constant.group(1))
+                else:
+                    option = None
                 if option is None:
                     continue
                 for subcommand_variable in CLI_SUBCOMMAND_REFERENCE.findall(body):
@@ -1273,7 +1306,7 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
                         global_commands.get(subcommand_variable, set()),
                     )
                     for command in commands:
-                        spelling = f"neverd {command} --{option.group(1)}"
+                        spelling = f"neverd {command} --{option}"
                         values = required_values.get(variable)
                         if values:
                             cli_declarations.update(
