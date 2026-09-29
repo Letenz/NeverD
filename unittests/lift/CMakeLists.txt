@@ -171,6 +171,7 @@ add_neverd_unittest(NeverDLiftTests
   format/ELFFunctionListingTests.cpp
   format/ELFARM32ModeTests.cpp
   format/COFFFunctionListingTests.cpp
+  format/InputDigestTests.cpp
   format/MachOLLVMNameBoundaryTests.cpp
   format/COFFImportStorageBoundaryTests.cpp
   format/LLVMImportVeneerBoundaryTests.cpp

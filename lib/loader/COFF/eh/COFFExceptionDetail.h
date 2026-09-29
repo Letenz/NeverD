@@ -98,6 +98,20 @@ std::optional<va_t> sehGSCookieAddress(const ExceptionFunction &F,
 bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
                               const uint8_t *Code, size_t CodeSize,
                               std::vector<std::string> &Names);
+/// The base personality a stripped GS wrapper at \p PersonalityVA delegates
+/// to -- C_specific_handler, CxxFrameHandler3 or CxxFrameHandler4 -- as the
+/// wrapper's own calls name it, or std::nullopt when the routine there is no
+/// such wrapper.  It depends on the routine alone, so a caller may keep it per
+/// address.
+std::optional<ExceptionPersonality> gsWrapperBasePersonality(
+    const BinaryImage &Img, va_t PersonalityVA,
+    const PrimaryFunctionByBegin *PrimaryByBegin = nullptr);
+/// \p F's GS personality when its handler data is valid for a wrapper whose
+/// base personality is \p BasePersonality.
+std::optional<ExceptionPersonality>
+inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
+                   ExceptionPersonality BasePersonality);
+/// Both: the wrapper at \p F's handler, and \p F's handler data for it.
 std::optional<ExceptionPersonality>
 inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
                    const PrimaryFunctionByBegin *PrimaryByBegin = nullptr);
