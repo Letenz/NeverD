@@ -1093,6 +1093,37 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         Values.emplace(key(Op.Output),
                        Value{Value::Kind::CallInteger, NextCallResultBase++, 0,
                              Bound->Signature.ReturnType});
+      } else if (Op.Opcode == NdOp::CALL && Bound &&
+                 Image.Arch == Arch::AArch64 &&
+                 Bound->CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+                 Bound->Signature.HasExplicitABI &&
+                 Bound->Signature.Convention ==
+                     SourceFunctionTypeHint::ConventionKind::C &&
+                 Bound->Signature.ReturnType &&
+                 Bound->Signature.ReturnType->Kind == NdTypeKind::Struct &&
+                 Bound->Signature.ReturnType->Size == 16 &&
+                 Bound->Signature.ReturnComponents.size() == 2 &&
+                 TRI.IntReturnRegs.size() >= 2 && Op.Output.isReg() &&
+                 Op.Output.Offset == TRI.IntReturnReg && Op.Output.Size == 8) {
+        const auto Members =
+            sourceAggregateMembers(Bound->Signature.ReturnType);
+        bool IntegerPair = Members.size() == 2;
+        for (size_t I = 0; IntegerPair && I < 2; ++I)
+          IntegerPair =
+              Members[I].Type && Members[I].Type->Kind == NdTypeKind::Int &&
+              Members[I].Type->Size == 8 && Members[I].ByteOffset == I * 8 &&
+              Bound->Signature.ReturnComponents[I].Kind ==
+                  SourceABICarrierKind::IntegerRegister &&
+              Bound->Signature.ReturnComponents[I].RegisterOffset ==
+                  TRI.IntReturnRegs[I] &&
+              Bound->Signature.ReturnComponents[I].ValueBytes == 8;
+        if (IntegerPair)
+          for (size_t I = 0; I < 2; ++I)
+            // Each declared member is a distinct integer value, never a
+            // recovered block receiver or an invented aggregate pointer.
+            Values.emplace(key(NdVar::reg(TRI.IntReturnRegs[I], 8)),
+                           Value{Value::Kind::CallInteger, NextCallResultBase++,
+                                 0, Members[I].Type});
       }
       continue;
     }
