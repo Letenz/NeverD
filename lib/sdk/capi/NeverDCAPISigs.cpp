@@ -139,39 +139,12 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return -1;
   S->clearError();
 
-  std::string Fmt;
-  switch (S->Img.Format) {
-  case BinaryFormat::COFF:
-    Fmt = "pe";
-    break;
-  case BinaryFormat::ELF:
-    Fmt = "elf";
-    break;
-  case BinaryFormat::MachO:
-    Fmt = "macho";
-    break;
-  default:
+  const std::optional<std::filesystem::path> Directory =
+      sigs::SignatureDB::treeDirectory(S->Img);
+  if (!Directory)
     return 0;
-  }
-
-  std::string ArchDir;
-  switch (S->Img.Arch) {
-  case Arch::X64:
-  case Arch::X86:
-    ArchDir = "x86";
-    break;
-  case Arch::AArch64:
-  case Arch::ARM:
-    ArchDir = "arm";
-    break;
-  default:
-    return 0;
-  }
-
-  std::string Bits = S->Img.is64Bit() ? "64" : "32";
-
-  std::filesystem::path SigPath =
-      std::filesystem::path(SigBaseDir) / Fmt / ArchDir / Bits;
+  const std::filesystem::path SigPath =
+      std::filesystem::path(SigBaseDir) / *Directory;
 
   if (!std::filesystem::exists(SigPath))
     return 0;
