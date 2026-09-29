@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "DMATestMemory.h"
 #include "gtest/gtest.h"
 #include "os/windows/KernelDMA.h"
 
@@ -18,62 +19,15 @@
 
 namespace neverd::emulation {
 namespace {
-constexpr uint64_t Base = 0x100000;
+constexpr uint64_t Base = dma_test::Base;
 constexpr uint64_t Page = DriverDmaPageSize;
 constexpr uint64_t Logical = 0x80000000;
 constexpr uint64_t PDO = 0x1000;
 constexpr uint64_t AdapterID = 0x2000;
 
-llvm::Error testError(llvm::StringRef Message) {
-  return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
-}
-
-class DMARAM final : public GuestMemory {
-public:
-  std::vector<uint8_t> Bytes = std::vector<uint8_t>(32 * Page);
-  std::optional<uint64_t> Hole;
-  unsigned DeviceReads = 0, DeviceWrites = 0;
-  llvm::Error map(uint64_t, uint64_t, unsigned) override {
-    return testError("test RAM is already mapped");
-  }
-  llvm::Error protect(uint64_t, uint64_t, unsigned) override {
-    return llvm::Error::success();
-  }
-  llvm::Error validateBacking(uint64_t Address, uint64_t Size) const override {
-    if (Address < Base || Address - Base > Bytes.size() ||
-        Size > Bytes.size() - (Address - Base) ||
-        (Hole && Address <= *Hole && Size > *Hole - Address))
-      return testError("test backing hole");
-    return llvm::Error::success();
-  }
-  llvm::Error read(uint64_t Address,
-                   llvm::MutableArrayRef<uint8_t> Out) override {
-    if (auto E = validateBacking(Address, Out.size()))
-      return E;
-    std::copy_n(Bytes.begin() + (Address - Base), Out.size(), Out.begin());
-    return llvm::Error::success();
-  }
-  llvm::Error write(uint64_t Address, llvm::ArrayRef<uint8_t> In) override {
-    if (auto E = validateBacking(Address, In.size()))
-      return E;
-    std::copy(In.begin(), In.end(), Bytes.begin() + (Address - Base));
-    return llvm::Error::success();
-  }
-  llvm::Error readBacking(uint64_t Address,
-                          llvm::MutableArrayRef<uint8_t> Out) override {
-    ++DeviceReads;
-    return read(Address, Out);
-  }
-  llvm::Error writeBacking(uint64_t Address,
-                           llvm::ArrayRef<uint8_t> In) override {
-    ++DeviceWrites;
-    return write(Address, In);
-  }
-};
-
 class DriverKernelDMAChannel : public ::testing::Test {
 protected:
-  DMARAM Memory;
+  dma_test::Memory Memory;
   KernelPhysicalMemory Physical{Memory};
   KernelResources Resources{[](uint64_t) { return llvm::Error::success(); }};
   DriverResult Result;
@@ -410,8 +364,8 @@ TEST_F(DriverKernelDMAChannel, AggregateBusTransactionCrossesMapFragments) {
   good(Model.processEvents(0));
   ASSERT_EQ(Result.DmaTransfers.size(), 1u);
   EXPECT_EQ(Result.DmaTransfers[0].CompletedAt100ns, 0u);
-  EXPECT_TRUE(
-      std::equal(Bytes.begin(), Bytes.end(), Memory.Bytes.begin() + Page - 8));
+  EXPECT_TRUE(std::equal(Bytes.begin(), Bytes.end(),
+                         Memory.bytes().begin() + Page - 8));
   EXPECT_EQ(Memory.DeviceWrites, 1u);
 }
 
@@ -428,11 +382,11 @@ TEST_F(DriverKernelDMAChannel,
   R.Length -= First.Length;
   map(R);
   Memory.Hole = Base + Page;
-  const auto Before = Memory.Bytes;
+  const auto Before = Memory.bytes();
   good(Model.arm({event(First.Logical, 32, 0, std::vector<uint8_t>(32, 0xAB))},
                  0, 0));
   bad(Model.processEvents(0), "hole");
-  EXPECT_EQ(Memory.Bytes, Before);
+  EXPECT_EQ(Memory.bytes(), Before);
   EXPECT_EQ(Memory.DeviceWrites, 0u);
 }
 

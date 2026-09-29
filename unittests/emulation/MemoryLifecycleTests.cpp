@@ -116,6 +116,90 @@ TEST(MemoryLifecycle, FailedTransactionsPreserveMappingGenerationAndBudgets) {
   EXPECT_NE(llvm::toString(A->unmap(Data, 3 * PageSize)), "");
   EXPECT_EQ(A->mappingGeneration(), Generation);
 }
+TEST(MemoryLifecycle,
+     RetainedViewsSurviveAddressReuseAndAddressSpaceDestruction) {
+  auto RAM = ram();
+  auto A = space(RAM);
+  std::weak_ptr<AddressSpace> Original = A;
+  ASSERT_EQ(llvm::toString(A->map(Data, PageSize, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(A->mapAlias(Alias, Data, PageSize, Read)), "");
+  ASSERT_EQ(llvm::toString(A->writeInteger(Data, Value, sizeof(uint64_t))), "");
+  auto View = llvm::cantFail(A->pinBacking(Data, sizeof(uint64_t)));
+  auto AliasView = llvm::cantFail(A->pinBacking(Alias, sizeof(uint64_t)));
+  EXPECT_TRUE(View.describesSameBytes(AliasView));
+  EXPECT_TRUE(AliasView.overlaps(View));
+  EXPECT_EQ(View.slices().front().Region, AliasView.slices().front().Region);
+  EXPECT_EQ(View.slices().front().Offset, AliasView.slices().front().Offset);
+  ASSERT_EQ(llvm::toString(A->unmap(Data, PageSize)), "");
+  ASSERT_EQ(llvm::toString(A->unmapAlias(Alias, PageSize)), "");
+  ASSERT_EQ(llvm::toString(A->map(Data, PageSize, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(A->writeInteger(Data, Updated, sizeof(uint64_t))),
+            "");
+  auto Reused = llvm::cantFail(A->pinBacking(Data, sizeof(uint64_t)));
+  EXPECT_FALSE(View.describesSameBytes(Reused));
+  EXPECT_FALSE(View.overlaps(Reused));
+  Reused = {};
+  std::array<uint8_t, sizeof(uint64_t)> Bytes{};
+  ASSERT_EQ(llvm::toString(View.read(0, Bytes)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Value);
+  llvm::support::endian::write64le(Bytes.data(), Value + 1);
+  ASSERT_EQ(llvm::toString(View.write(0, Bytes)), "");
+  EXPECT_EQ(*A->readInteger(Data, sizeof(uint64_t)), Updated);
+  A.reset();
+  EXPECT_TRUE(Original.expired());
+  ASSERT_EQ(llvm::toString(AliasView.read(0, Bytes)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Value + 1);
+  EXPECT_EQ(RAM->allocatedBytes(), PageSize);
+  View = {};
+  AliasView = {};
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+}
+TEST(MemoryLifecycle, ViewSubrangesPreflightEveryAllocationBeforeEffects) {
+  auto A = space(ram());
+  ASSERT_EQ(llvm::toString(A->map(Data, PageSize, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(A->map(Data + PageSize, PageSize, Read | Write)),
+            "");
+  const uint64_t Start = Data + PageSize - sizeof(uint32_t);
+  auto View = llvm::cantFail(A->pinBacking(Start, sizeof(uint64_t)));
+  ASSERT_EQ(View.slices().size(), 2u);
+  ASSERT_EQ(llvm::toString(A->protect(Data, 2 * PageSize, 0)), "");
+  std::array<uint8_t, sizeof(uint64_t)> Bytes{};
+  llvm::support::endian::write64le(Bytes.data(), Updated);
+  ASSERT_EQ(llvm::toString(View.write(0, Bytes)), "");
+  auto Before = Bytes;
+  EXPECT_NE(llvm::toString(View.read(1, Bytes)), "");
+  EXPECT_EQ(Bytes, Before);
+  EXPECT_NE(llvm::toString(View.write(UINT64_MAX, Bytes)), "");
+  auto Invalid = View.subview(1, sizeof(uint64_t));
+  ASSERT_FALSE(bool(Invalid));
+  llvm::consumeError(Invalid.takeError());
+  auto Part = llvm::cantFail(View.subview(1, sizeof(uint32_t)));
+  EXPECT_TRUE(View.overlaps(Part));
+  EXPECT_FALSE(View.describesSameBytes(Part));
+  EXPECT_TRUE(Part.describesSameBytes(
+      llvm::cantFail(A->pinBacking(Start + 1, sizeof(uint32_t)))));
+  auto Left = llvm::cantFail(View.subview(0, sizeof(uint32_t)));
+  auto Right = llvm::cantFail(View.subview(sizeof(uint32_t), sizeof(uint32_t)));
+  EXPECT_FALSE(Left.overlaps(Right));
+  EXPECT_FALSE(Left.describesSameBytes(Right));
+  auto Empty = llvm::cantFail(View.subview(View.size(), 0));
+  EXPECT_FALSE(Empty.overlaps(View));
+  EXPECT_FALSE(MemoryView().describesSameBytes(Empty));
+  EXPECT_NE(llvm::toString(View.validateAccess(View.size(), 1)), "");
+  EXPECT_EQ(llvm::toString(A->validatePinned(View, View.size(), 0)), "");
+  ASSERT_EQ(llvm::toString(
+                Part.read(0, llvm::MutableArrayRef<uint8_t>(Bytes).take_front(
+                                 sizeof(uint32_t)))),
+            "");
+  EXPECT_EQ(Bytes[0], Before[1]);
+  auto Foreign = space(ram());
+  EXPECT_NE(llvm::toString(Foreign->validatePinned(View, 0, Before.size())),
+            "");
+  EXPECT_NE(llvm::toString(Foreign->writePinned(View, 0, Before)), "");
+  EXPECT_FALSE(*A->canAccess(Start, sizeof(uint64_t), Read));
+  ASSERT_EQ(llvm::toString(View.read(0, Bytes)), "");
+  EXPECT_EQ(Bytes, Before);
+}
 TEST(MemoryLifecycle, PartialAliasRemovalLeavesExactRetirableFragments) {
   auto RAM = ram();
   auto A = space(RAM);
@@ -217,6 +301,9 @@ struct CPUProfile {
   ExecutionContract Contract;
   GuestArchitecture ISA;
 };
+void PrintTo(const CPUProfile &Profile, std::ostream *OS) {
+  *OS << Profile.Name;
+}
 #if defined(_WIN32)
 constexpr auto Native = ExecutionBackendKind::WHP;
 #else
@@ -350,8 +437,18 @@ TEST_P(SharedCPU, RebindingUsesSpaceIdentityEvenWithMatchingGenerations) {
 TEST_P(SharedCPU, OwnerLeaseRejectsMutationAndRecursiveExecutionAcrossSpaces) {
   ASSERT_EQ(llvm::toString(program(FirstX64, FirstARM)), "");
   auto UnmappedRegion = llvm::cantFail(RAM->allocate(PageSize));
+  auto View = llvm::cantFail(First->pinBacking(Data, sizeof(uint64_t)));
   BackendHooks H;
   H.Instruction = [&](uint64_t, uint32_t) {
+    std::array<uint8_t, sizeof(uint64_t)> Bytes{};
+    EXPECT_NE(llvm::toString(View.write(0, Bytes)), "");
+    EXPECT_NE(llvm::toString(View.validateAccess(0, Bytes.size())), "");
+    EXPECT_NE(llvm::toString(A->validatePinned(View, 0, Bytes.size())), "");
+    EXPECT_NE(llvm::toString(First->validatePinned(View, 0, Bytes.size())), "");
+    EXPECT_NE(llvm::toString(First->readPinned(View, 0, Bytes)), "");
+    auto Observation = A->pinBacking(Data, sizeof(uint64_t));
+    ASSERT_TRUE(bool(Observation));
+    EXPECT_TRUE(Observation->describesSameBytes(View));
     EXPECT_TRUE(*A->canAccess(Code, PageSize, Execute));
     EXPECT_TRUE(*First->canAccess(Code, PageSize, Execute));
     EXPECT_NE(llvm::toString(B->writeInteger(Alias, Updated, sizeof(uint64_t))),
@@ -370,6 +467,9 @@ TEST_P(SharedCPU, OwnerLeaseRejectsMutationAndRecursiveExecutionAcrossSpaces) {
       auto Query = B->canAccess(Alias, PageSize, Read);
       ASSERT_FALSE(bool(Query));
       llvm::consumeError(Query.takeError());
+      auto Pin = B->pinBacking(Alias, sizeof(uint64_t));
+      ASSERT_FALSE(bool(Pin));
+      llvm::consumeError(Pin.takeError());
     });
     Concurrent.join();
     First->stop();
@@ -379,6 +479,27 @@ TEST_P(SharedCPU, OwnerLeaseRejectsMutationAndRecursiveExecutionAcrossSpaces) {
   EXPECT_EQ(*A->readInteger(Data, sizeof(uint64_t)), 0u);
   EXPECT_FALSE(First->fault());
   EXPECT_FALSE(Second->fault());
+}
+TEST_P(SharedCPU,
+       CPUViewAccessKeepsAllocationIdentityAndRespectsTerminalFaults) {
+  ASSERT_EQ(llvm::toString(program(IncrementX64, IncrementARM)), "");
+  auto View = llvm::cantFail(First->pinBacking(Data, sizeof(uint64_t)));
+  ASSERT_EQ(llvm::toString(First->bindAddressSpace(B)), "");
+  std::array<uint8_t, sizeof(uint64_t)> Bytes{};
+  llvm::support::endian::write64le(Bytes.data(), Updated);
+  ASSERT_EQ(llvm::toString(First->writePinned(View, 0, Bytes)), "");
+  EXPECT_EQ(*B->readInteger(Alias, sizeof(uint64_t)), Updated);
+  ASSERT_EQ(llvm::toString(dataRegister(*First, Alias)), "");
+  ASSERT_EQ(llvm::toString(steps(*First, 3)), "");
+  EXPECT_EQ(*B->readInteger(Alias, sizeof(uint64_t)), Updated + 1);
+  EXPECT_NE(llvm::toString(First->read(Data, Bytes)), "");
+  ASSERT_TRUE(First->fault());
+  EXPECT_NE(llvm::toString(First->writePinned(View, 0, Bytes)), "");
+  EXPECT_NE(llvm::toString(First->validatePinned(View, 0, Bytes.size())), "");
+  EXPECT_NE(llvm::toString(First->readPinned(View, 0, Bytes)), "");
+  // Fault state belongs to that CPU; it cannot poison shared RAM or its peer.
+  ASSERT_EQ(llvm::toString(Second->readPinned(View, 0, Bytes)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Updated + 1);
 }
 TEST_P(SharedCPU, StaleProjectionsPinRAMUntilTheyAreRetired) {
   ASSERT_EQ(llvm::toString(program(FirstX64, FirstARM)), "");

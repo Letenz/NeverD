@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "DMATestMemory.h"
 #include "gtest/gtest.h"
 #include "os/windows/KernelDMA.h"
 
@@ -18,62 +19,15 @@
 
 namespace neverd::emulation {
 namespace {
-constexpr uint64_t Base = 0x100000;
+constexpr uint64_t Base = dma_test::Base;
 constexpr uint64_t Page = DriverDmaPageSize;
 constexpr uint64_t Logical = 0x80000000;
 constexpr uint64_t PDO = 0x1000;
 constexpr uint64_t AdapterID = 0x2000;
 
-llvm::Error testError(llvm::StringRef Message) {
-  return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
-}
-
-class DMARAM final : public GuestMemory {
-public:
-  std::vector<uint8_t> Bytes = std::vector<uint8_t>(32 * Page);
-  std::optional<uint64_t> Hole;
-  unsigned DeviceReads = 0, DeviceWrites = 0;
-  llvm::Error map(uint64_t, uint64_t, unsigned) override {
-    return testError("test RAM is already mapped");
-  }
-  llvm::Error protect(uint64_t, uint64_t, unsigned) override {
-    return llvm::Error::success();
-  }
-  llvm::Error validateBacking(uint64_t Address, uint64_t Size) const override {
-    if (Address < Base || Address - Base > Bytes.size() ||
-        Size > Bytes.size() - (Address - Base) ||
-        (Hole && Address <= *Hole && Size > *Hole - Address))
-      return testError("test backing hole");
-    return llvm::Error::success();
-  }
-  llvm::Error read(uint64_t Address,
-                   llvm::MutableArrayRef<uint8_t> Out) override {
-    if (auto E = validateBacking(Address, Out.size()))
-      return E;
-    std::copy_n(Bytes.begin() + (Address - Base), Out.size(), Out.begin());
-    return llvm::Error::success();
-  }
-  llvm::Error write(uint64_t Address, llvm::ArrayRef<uint8_t> In) override {
-    if (auto E = validateBacking(Address, In.size()))
-      return E;
-    std::copy(In.begin(), In.end(), Bytes.begin() + (Address - Base));
-    return llvm::Error::success();
-  }
-  llvm::Error readBacking(uint64_t Address,
-                          llvm::MutableArrayRef<uint8_t> Out) override {
-    ++DeviceReads;
-    return read(Address, Out);
-  }
-  llvm::Error writeBacking(uint64_t Address,
-                           llvm::ArrayRef<uint8_t> In) override {
-    ++DeviceWrites;
-    return write(Address, In);
-  }
-};
-
 class DriverKernelDMA : public ::testing::Test {
 protected:
-  DMARAM Memory;
+  dma_test::Memory Memory;
   KernelPhysicalMemory Physical{Memory};
   KernelResources Resources{[](uint64_t) { return llvm::Error::success(); }};
   DriverResult Result;
@@ -450,8 +404,8 @@ TEST_F(DriverKernelDMA, DeadlineThenSubmissionOrderControlsSharedRAMEffects) {
   EXPECT_EQ(Result.DmaTransfers[0].Data, (std::vector<uint8_t>{7, 8}));
   EXPECT_EQ(Result.DmaTransfers[1].Data, (std::vector<uint8_t>{7, 8}));
   EXPECT_EQ(Result.DmaTransfers[2].Data, (std::vector<uint8_t>{9, 10}));
-  EXPECT_EQ(Memory.Bytes[0], 9);
-  EXPECT_EQ(Memory.Bytes[1], 10);
+  EXPECT_EQ(Memory.bytes()[0], 9);
+  EXPECT_EQ(Memory.bytes()[1], 10);
   EXPECT_EQ(Memory.DeviceReads, 1u);
   EXPECT_EQ(Memory.DeviceWrites, 2u);
 }
@@ -465,7 +419,7 @@ TEST_F(DriverKernelDMA,
   bad(Model.processEvents(0), "direction");
   EXPECT_EQ(Memory.DeviceReads, 0u);
   EXPECT_EQ(Memory.DeviceWrites, 0u);
-  EXPECT_EQ(Memory.Bytes[0], 0u);
+  EXPECT_EQ(Memory.bytes()[0], 0u);
   ASSERT_TRUE(Result.DmaTransfers[0].FailureReason);
   EXPECT_EQ(Result.DmaTransfers[0].OccurredAt100ns, 0u);
   EXPECT_FALSE(Result.DmaTransfers[0].CompletedAt100ns);
@@ -480,11 +434,11 @@ TEST_F(DriverKernelDMA, PacketWriteUsesPinnedBackingAcrossPageFragments) {
   good(Model.beginCallback(Map.Object));
   good(Model.arm({event(Map.Logical + 1, 3, 5, {4, 5, 6})}, 0, 0));
   good(Model.processEvents(5));
-  EXPECT_EQ(Memory.Bytes[Page - 2], 0);
-  EXPECT_EQ(Memory.Bytes[Page - 1], 4);
-  EXPECT_EQ(Memory.Bytes[Page], 5);
-  EXPECT_EQ(Memory.Bytes[Page + 1], 6);
-  EXPECT_EQ(Memory.Bytes[Page + 2], 0);
+  EXPECT_EQ(Memory.bytes()[Page - 2], 0);
+  EXPECT_EQ(Memory.bytes()[Page - 1], 4);
+  EXPECT_EQ(Memory.bytes()[Page], 5);
+  EXPECT_EQ(Memory.bytes()[Page + 1], 6);
+  EXPECT_EQ(Memory.bytes()[Page + 2], 0);
   EXPECT_EQ(Memory.DeviceWrites, 1u);
   bad(Model.validateGuestAccess(Map.Backing, Map.Length, false),
       "PutScatterGatherList");
@@ -512,8 +466,8 @@ TEST_F(DriverKernelDMA, CrossMapWriteNeverTouchesEitherValidPrefix) {
   good(Model.arm({event(Logical + Page - 1, 2, 0, {0xAA, 0xBB})}, 0, 0));
   bad(Model.processEvents(0), "one complete live logical mapping");
   EXPECT_EQ(Memory.DeviceWrites, 0u);
-  EXPECT_EQ(Memory.Bytes[Page - 1], 0);
-  EXPECT_EQ(Memory.Bytes[4 * Page], 0);
+  EXPECT_EQ(Memory.bytes()[Page - 1], 0);
+  EXPECT_EQ(Memory.bytes()[4 * Page], 0);
 }
 
 TEST_F(DriverKernelDMA, WaitingMappingCannotReceiveExternalTransactions) {
@@ -574,7 +528,7 @@ TEST_F(DriverKernelDMA, PhysicalD3FailureCannotPerformAPrefixWrite) {
   Resources.setPhysicalPower(PDO, DevicePowerState::D3);
   bad(Model.processEvents(5), "physical device power D0");
   EXPECT_EQ(Memory.DeviceWrites, 0u);
-  EXPECT_EQ(Memory.Bytes[0], 0u);
+  EXPECT_EQ(Memory.bytes()[0], 0u);
   EXPECT_EQ(Result.DmaTransfers[0].OccurredAt100ns, 5u);
 }
 
@@ -585,7 +539,7 @@ TEST_F(DriverKernelDMA, PhysicalD2BlocksWritesWithoutReleasingCommonBuffer) {
   Resources.setPhysicalPower(PDO, DevicePowerState::D2);
   bad(Model.processEvents(5), "physical device power D0");
   EXPECT_EQ(Memory.DeviceWrites, 0u);
-  EXPECT_EQ(Memory.Bytes[0], 0u);
+  EXPECT_EQ(Memory.bytes()[0], 0u);
   ASSERT_NE(Model.mapping(Map.Object), nullptr);
   EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
 }
@@ -599,8 +553,8 @@ TEST_F(DriverKernelDMA, D2CommonBufferRemainsUsableAfterCompletedD0) {
   EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
   Resources.setPhysicalPower(PDO, DevicePowerState::D0);
   good(Model.processEvents(5));
-  EXPECT_EQ(Memory.Bytes[0], 3u);
-  EXPECT_EQ(Memory.Bytes[1], 4u);
+  EXPECT_EQ(Memory.bytes()[0], 3u);
+  EXPECT_EQ(Memory.bytes()[1], 4u);
   EXPECT_EQ(Memory.DeviceWrites, 1u);
   EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
   release(Map.Object);
@@ -613,8 +567,8 @@ TEST_F(DriverKernelDMA, DeliveryUsesActualD0StateRatherThanArmTimePower) {
   good(Model.arm({event(Logical, 2, 5, {1, 2})}, 0, 0));
   Resources.setPhysicalPower(PDO, DevicePowerState::D0);
   good(Model.processEvents(5));
-  EXPECT_EQ(Memory.Bytes[0], 1u);
-  EXPECT_EQ(Memory.Bytes[1], 2u);
+  EXPECT_EQ(Memory.bytes()[0], 1u);
+  EXPECT_EQ(Memory.bytes()[1], 2u);
 }
 
 TEST_F(DriverKernelDMA, SurpriseRemovalRejectsAlreadyArmedTransaction) {
@@ -647,8 +601,8 @@ TEST_F(DriverKernelDMA, WholeBackingValidationPrecedesAnyDeviceWrite) {
   Memory.Hole = Base + Page;
   bad(Model.processEvents(0), "backing hole");
   EXPECT_EQ(Memory.DeviceWrites, 0u);
-  EXPECT_EQ(Memory.Bytes[Page - 1], 0u);
-  EXPECT_EQ(Memory.Bytes[Page], 0u);
+  EXPECT_EQ(Memory.bytes()[Page - 1], 0u);
+  EXPECT_EQ(Memory.bytes()[Page], 0u);
   EXPECT_TRUE(Result.DmaTransfers[0].Data.empty());
 }
 
@@ -686,7 +640,7 @@ TEST_F(DriverKernelDMA, EarlierCompletedEventSurvivesLaterDeliveryFailure) {
                   event(Logical, 1, 2, {9})},
                  0, 0));
   bad(Model.processEvents(2), "live logical mapping");
-  EXPECT_EQ(Memory.Bytes[0], 4u);
+  EXPECT_EQ(Memory.bytes()[0], 4u);
   EXPECT_EQ(Result.DmaTransfers[0].CompletedAt100ns, 2u);
   EXPECT_EQ(Result.DmaTransfers[1].OccurredAt100ns, 2u);
   EXPECT_TRUE(Result.DmaTransfers[1].FailureReason);

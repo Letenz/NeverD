@@ -1228,11 +1228,36 @@ and per-space mapping budgets currently have a 1 GiB ceiling; page size is
 Direct address-space reads and writes access RAM only; device transactions
 require a supporting backend. The checked profiles reject device mappings.
 
-The Windows DMA/MDL model still owns its existing virtual-address-based physical
-identity bridge. Migrating that bridge to retained region slices is outstanding;
-the new CPU ownership API alone does not prove DMA pins survive canonical
-address reuse or a process address-space switch. Explicit machine configuration,
-capability queries and general process scheduling also remain separate work.
+[`MemoryView`](../include/neverd/emulation/MemoryView.h) captures exact allocation
+slices and an independent address-space identity token. It retains RAM without
+keeping the source CPU, address space or virtual mapping alive. Subviews and
+identity comparisons never resolve the original address again. Metadata capture
+is available to same-thread observers; backing access requires a stopped physical
+owner. CPU `validatePinned`, `readPinned` and `writePinned` additionally preserve
+that CPU's fault and reentry restrictions. Providers without retained RAM reject
+these operations explicitly.
+
+The Windows physical-memory bridge stores these views for its byte owners and
+keys PFNs and cache attributes by allocation identity and page offset. Aliases
+and shared regions across spaces share a PFN; reused virtual addresses backed
+by a new allocation do not. Residency and release preflight compare physical
+slices. DMA pins therefore continue accessing their captured storage after
+canonical unmapping or a CPU address-space switch. Retiring an allocated-page
+owner releases its reusable PFNs only after the last registered owner of those
+pages retires. Ordinary PFN identities remain non-recycled within the bounded
+Windows profile. Historical PFN records hold weak allocation references and
+do not retain RAM capacity.
+
+This is the RAM authority beneath the existing Windows driver MDL model. Its
+process attachment and MDL mapping policy remain Windows-specific; a generic
+process runtime, explicit machine configuration and capability queries remain
+separate work.
+
+Windows retirement distinguishes backing release from virtual alias revocation.
+Freeing a partial MDL or completing its IRP can revoke its system alias while an
+independent root MDL retains its physical pin. Both operations still preflight
+virtual-address users, including outstanding waits and held locks; only ranges
+whose backing is being released participate in physical-owner pin checks.
 
 `CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
 access cannot reinterpret one architecture's registers as another's. ARM64

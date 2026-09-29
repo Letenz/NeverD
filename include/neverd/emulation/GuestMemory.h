@@ -12,6 +12,8 @@
 #ifndef NEVERD_EMULATION_PUBLIC_GUESTMEMORY_H
 #define NEVERD_EMULATION_PUBLIC_GUESTMEMORY_H
 
+#include "neverd/emulation/MemoryView.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
@@ -20,6 +22,7 @@
 #include <vector>
 
 namespace neverd::emulation {
+class AddressSpace;
 enum GuestPermission : unsigned { Read = 1, Write = 2, Execute = 4 };
 /// A mapping cannot fit in the configured guest memory budget. Callers may
 /// translate this specific shortage into their documented allocation result.
@@ -47,6 +50,18 @@ struct GuestAliasMapping {
 class GuestMemory {
 public:
   virtual ~GuestMemory() = default;
+  /// Mapping authority when this provider supports independently owned RAM.
+  virtual std::shared_ptr<AddressSpace> addressSpace() const { return {}; }
+  /// Capture allocation slices without preserving the source VA mapping.
+  virtual llvm::Expected<MemoryView> pinBacking(uint64_t Address,
+                                                uint64_t Size) const;
+  /// Preflight the complete retained span without looking up its original VA.
+  virtual llvm::Error validatePinned(const MemoryView &View, uint64_t Offset,
+                                     uint64_t Size) const;
+  virtual llvm::Error readPinned(const MemoryView &View, uint64_t Offset,
+                                 llvm::MutableArrayRef<uint8_t> Bytes);
+  virtual llvm::Error writePinned(const MemoryView &View, uint64_t Offset,
+                                  llvm::ArrayRef<uint8_t> Bytes);
   virtual llvm::Error map(uint64_t Address, uint64_t Size,
                           unsigned Permissions) = 0;
   /// Map a second virtual range onto the same RAM pages. The source and alias

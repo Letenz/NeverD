@@ -33,6 +33,56 @@ AddressSpace::create(std::shared_ptr<PhysicalMemory> Memory,
   State->Limit = MappingLimit;
   return std::shared_ptr<AddressSpace>(new AddressSpace(std::move(State)));
 }
+std::shared_ptr<AddressSpace> AddressSpace::addressSpace() const {
+  return std::const_pointer_cast<AddressSpace>(shared_from_this());
+}
+std::shared_ptr<const void> AddressSpace::identity() const {
+  return State->Identity;
+}
+llvm::Expected<MemoryView> AddressSpace::pinBacking(uint64_t Address,
+                                                    uint64_t Size) const {
+  auto &RAM = *State->Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  if (!Lock.owns_lock())
+    return diagnostic::error(diagnostic::Running);
+  if (State->check(Address, Size, 0) || State->overlapsDevice(Address, Size))
+    return diagnostic::error(diagnostic::MemoryAccess);
+  std::vector<MemorySlice> Slices;
+  const uint64_t Total = Size;
+  while (Size) {
+    const uint64_t InPage = Address % memory::PageSize;
+    const auto &Page = State->Pages.at(Address - InPage);
+    const uint64_t Offset = Page.Physical - memory::ProjectionReserve -
+                            Page.Region->Offset + InPage;
+    const uint64_t Count = std::min(Size, memory::PageSize - InPage);
+    if (!Slices.empty() && Slices.back().Region == Page.Region &&
+        Slices.back().Offset + Slices.back().Size == Offset)
+      Slices.back().Size += Count;
+    else
+      Slices.push_back({Page.Region, Offset, Count});
+    Address += Count;
+    Size -= Count;
+  }
+  return MemoryView(State->Memory, State->Identity, Total, std::move(Slices));
+}
+llvm::Error AddressSpace::validatePinned(const MemoryView &View,
+                                         uint64_t Offset, uint64_t Size) const {
+  if (View.physicalMemory() != State->Memory)
+    return diagnostic::error(diagnostic::MemoryOwner);
+  return View.validateAccess(Offset, Size);
+}
+llvm::Error AddressSpace::readPinned(const MemoryView &View, uint64_t Offset,
+                                     llvm::MutableArrayRef<uint8_t> Bytes) {
+  if (View.physicalMemory() != State->Memory)
+    return diagnostic::error(diagnostic::MemoryOwner);
+  return View.read(Offset, Bytes);
+}
+llvm::Error AddressSpace::writePinned(const MemoryView &View, uint64_t Offset,
+                                      llvm::ArrayRef<uint8_t> Bytes) {
+  if (View.physicalMemory() != State->Memory)
+    return diagnostic::error(diagnostic::MemoryOwner);
+  return View.write(Offset, Bytes);
+}
 std::shared_ptr<PhysicalMemory> AddressSpace::physicalMemory() const {
   return State->Memory;
 }

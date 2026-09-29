@@ -836,14 +836,20 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
   if (Request->SecurityContext)
     Retiring.emplace_back(Request->SecurityContext, SecurityContextSize);
   std::vector<uint64_t> RetiringPins;
-  if (auto E = appendRequestMDLReleaseResources(IRP, Retiring, RetiringPins))
+  std::vector<std::pair<uint64_t, uint64_t>> RevokingAliases;
+  if (auto E = appendRequestMDLReleaseResources(IRP, Retiring, RetiringPins,
+                                                RevokingAliases))
     return E;
   // This check is shared with terminal completion planning. No stack cursor,
   // continuation, dispatcher registration or output observation changes until
   // the entire retirement set has passed its ownership checks.
-  for (const auto &[Address, Size] : Retiring) {
+  for (const auto &[Address, Size] : Retiring)
     if (auto E = canReleaseUserViewsForBacking(Address, Size))
       return E;
+  const size_t ReleasedCount = Retiring.size();
+  Retiring.insert(Retiring.end(), RevokingAliases.begin(),
+                  RevokingAliases.end());
+  for (const auto &[Address, Size] : Retiring) {
     const std::optional<UsbIdleKey> RetiringUsb =
         NativeUsb != FrameworkUsbIdleRequests.end() &&
                 Address == NativeUsb->second.Info &&
@@ -853,7 +859,8 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     if (auto E = canRevokeVirtualRange(Address, Size, RetiringUsb))
       return E;
   }
-  if (auto E = Physical.canReleaseRanges(Retiring, RetiringPins))
+  if (auto E = Physical.canReleaseRanges(
+          llvm::ArrayRef(Retiring).take_front(ReleasedCount), RetiringPins))
     return E;
   return Retiring;
 }
