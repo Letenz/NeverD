@@ -161,7 +161,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Les bibliothèques de signatures sont installées dans `build/bin/signatures/` à la compilation. `sigs --auto` choisit l’ensemble selon format, architecture et bitness. Pour un fichier PE dont l’en-tête Rich indique la version de Visual Studio de son éditeur de liens, il ne charge que le `vs<year>.pat` de cette version, en plus des fichiers qui n’appartiennent à aucune version. `--sig-base <dir>` choisit de la même façon dans une autre arborescence de signatures.
+Les bibliothèques de signatures sont installées dans `build/bin/signatures/` à la compilation. `sigs --auto` choisit l’ensemble selon format, architecture et bitness. Pour un fichier PE dont l’en-tête Rich indique la version de Visual Studio de son éditeur de liens, il ne charge que le `vs<year>.pat` de cette version, en plus des fichiers qui n’appartiennent à aucune version. `--sig-base <dir>` choisit de la même façon dans une autre arborescence de signatures. Un fichier de motifs de 1 Mio ou plus n'est analysé qu'une fois : ses modules sont conservés dans `neverd/signatures`, sous le répertoire de cache de l'utilisateur, et projetés en mémoire lors des chargements suivants. `NEVERD_SIGNATURE_CACHE` désigne un autre répertoire, et `off` désactive le cache.
 
 ## Construction
 

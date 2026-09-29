@@ -6,9 +6,45 @@
 
 NeverD's optional driver emulator executes the PE entry point of a supported
 x64 WDM driver and optionally exercises an explicit request
-scenario before unloading it. It uses Unicorn for CPU execution and NeverD's
+scenario before unloading it. By default it uses Unicorn for CPU execution and NeverD's
 own bounded Windows environment model. It does not load
 the driver into the host kernel or forward guest API calls to host OS services.
+
+## Execution backends
+
+The default `driver-strict` contract still uses Unicorn. The optional
+`checked-x64-v1` contract selects KVM on Linux x86_64 or WHP on Windows x64
+with `--backend auto`; on an ARM64 host the x64 guest uses the same checked
+contract over Unicorn. Explicit `kvm` and `whp` selections never fall back.
+This is an experimental integer-only execution profile, not full compatibility
+with the driver coverage below. Unavailable hardware or a contract mismatch
+fails before execution.
+
+The checked profile validates each instruction and its memory accesses before
+single stepping. It preserves Windows object access checks and write observers,
+shared RAM aliases, and CPU-only contexts. It rejects SIMD/x87, REP, locked
+operations, memory read-modify-write, cross-page data accesses, MMIO, and
+unmodeled CPU effects. It does not run user processes or another guest OS.
+Timeout and cancellation are checked between admitted, bounded instructions;
+this path does not provide a general asynchronously preemptible VM runner.
+No session is restarted on another backend after guest execution begins.
+
+`NEVERD_EMULATION_BACKEND_UNICORN`, `NEVERD_EMULATION_BACKEND_KVM` and
+`NEVERD_EMULATION_BACKEND_WHP` control the adapters. Windows APIs are loaded
+dynamically from the system DLL. KVM requires access to `/dev/kvm`; the emulator
+does not change host permissions.
+WHP still requires runtime validation on a Windows host; cross-compilation is
+not runtime evidence. The C API adds `neverd_emulate_driver_backend_json`;
+the existing v1 structure and entry points remain unchanged. New selection
+reports identify the requested/selected backend, execution contract and reason.
+
+```bash
+build-release/bin/neverd emulate-driver path/to/driver.sys \
+  --backend auto --execution-contract checked-x64-v1
+```
+
+ARM64 CPU execution is available through the independent [C++ CPU interface](architecture.md#cpu-execution).
+This driver CLI still requires the x64 Windows ABI and rejects ARM64 driver images.
 
 ## Build and run
 
@@ -1042,7 +1078,7 @@ validation to callers of `emulateDriver`.
 
 The internal C++ entry point is `neverd::emulation::emulateDriver` in
 `include/neverd/emulation/DriverSession.h`. Format parsing belongs to the
-existing loader; Windows object/API behavior belongs to `lib/emulation/windows`;
+existing loader; Windows object/API behavior belongs to `lib/emulation/os/windows`;
 CPU state and execution belong to the Unicorn adapter. The adapter and model
 use the same guest-memory interface. No Windows API behavior belongs in the
 Unicorn fork.

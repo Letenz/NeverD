@@ -12,10 +12,12 @@
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -53,31 +55,31 @@ llvm::Expected<ParsedSource> parseSource(llvm::StringRef Text) {
   return std::move(Source);
 }
 
-} // namespace
-
-void SignatureDB::commitSource(std::vector<PatternChunk> &&Chunks,
-                               std::unique_ptr<uint8_t[]> Bytes,
-                               const std::string &LibName,
-                               const std::string &FilePath) {
+/// The modules \p Chunks hold, in order; the names they point into move to
+/// \p Names.
+std::vector<StoredModule> takeModules(std::vector<PatternChunk> &Chunks,
+                                      std::vector<PatternNames> &Names) {
   std::vector<StoredModule> Mods;
-  std::vector<PatternNames> Names;
   for (PatternChunk &Chunk : Chunks) {
     Mods.insert(Mods.end(), Chunk.Modules.begin(), Chunk.Modules.end());
     Names.push_back(std::move(Chunk.Names));
   }
+  return Mods;
+}
 
+} // namespace
+
+void SignatureDB::commitSource(SigSource Src, std::vector<StoredModule> Mods) {
+  Src.ModuleCount = Mods.size();
   auto Existing = std::find_if(
       LoadedFiles.begin(), LoadedFiles.end(),
-      [&](const SigSource &Source) { return Source.Path == FilePath; });
+      [&](const SigSource &Source) { return Source.Path == Src.Path; });
   if (Existing != LoadedFiles.end()) {
     const size_t Start = Existing->ModuleStart;
     Modules.erase(Modules.begin() + Start,
                   Modules.begin() + Start + Existing->ModuleCount);
     Modules.insert(Modules.begin() + Start, Mods.begin(), Mods.end());
-    Existing->LibraryName = LibName;
-    Existing->ModuleCount = Mods.size();
-    Existing->Bytes = std::move(Bytes);
-    Existing->Names = std::move(Names);
+    *Existing = std::move(Src);
 
     size_t ModuleStart = 0;
     for (SigSource &Source : LoadedFiles) {
@@ -89,15 +91,8 @@ void SignatureDB::commitSource(std::vector<PatternChunk> &&Chunks,
     return;
   }
 
-  SigSource Src;
-  Src.Path = FilePath;
-  Src.LibraryName = LibName;
   Src.ModuleStart = Modules.size();
-  Src.ModuleCount = Mods.size();
-  Src.Bytes = std::move(Bytes);
-  Src.Names = std::move(Names);
   LoadedFiles.push_back(std::move(Src));
-
   Modules.insert(Modules.end(), Mods.begin(), Mods.end());
   Index.reset();
   clearMatches();
@@ -124,6 +119,20 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   auto Ext = Path.extension().string();
 
   if (Ext == ".pat") {
+    SigSource Src;
+    Src.Path = Path.string();
+    Src.LibraryName = libraryName(Path);
+    const std::optional<SignatureCache::SourceIdentity> Identity =
+        Cache ? SignatureCache::identify(Path) : std::nullopt;
+    if (Identity) {
+      if (std::optional<SignatureCache::Entry> Hit =
+              Cache->load(Path, *Identity)) {
+        Src.Mapping = std::move(Hit->Mapping);
+        Src.Names.push_back(std::move(Hit->Names));
+        commitSource(std::move(Src), std::move(Hit->Modules));
+        return llvm::Error::success();
+      }
+    }
     auto BufferOrErr = llvm::MemoryBuffer::getFile(
         Path.string(), /*IsText=*/false, /*RequiresNullTerminator=*/false);
     if (!BufferOrErr)
@@ -133,8 +142,12 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
     auto SourceOrErr = parseSource((*BufferOrErr)->getBuffer());
     if (!SourceOrErr)
       return SourceOrErr.takeError();
-    commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
-                 libraryName(Path), Path.string());
+    std::vector<StoredModule> Mods =
+        takeModules(SourceOrErr->Chunks, Src.Names);
+    Src.Bytes = std::move(SourceOrErr->Bytes);
+    if (Identity)
+      Cache->store(Path, *Identity, Mods);
+    commitSource(std::move(Src), std::move(Mods));
     return llvm::Error::success();
   }
 
@@ -148,8 +161,12 @@ llvm::Error SignatureDB::loadPatternText(llvm::StringRef Text,
   auto SourceOrErr = parseSource(Text);
   if (!SourceOrErr)
     return SourceOrErr.takeError();
-  commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
-               LibraryName.str(), LibraryName.str());
+  SigSource Src;
+  Src.Path = LibraryName.str();
+  Src.LibraryName = LibraryName.str();
+  std::vector<StoredModule> Mods = takeModules(SourceOrErr->Chunks, Src.Names);
+  Src.Bytes = std::move(SourceOrErr->Bytes);
+  commitSource(std::move(Src), std::move(Mods));
   return llvm::Error::success();
 }
 
@@ -265,16 +282,51 @@ llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
 
 llvm::Error
 SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
-  // Every file is cut into chunks of whole lines, and one pool of workers
-  // parses the chunks of all of them: one large file keeps every worker as
-  // busy as many small ones do.  A parsed chunk no longer refers to its text,
-  // so a file is let go as soon as its last chunk is done.
+  // A file the cache holds as it is now is mapped rather than parsed.  Every
+  // entry is opened, and the pieces of all of them -- checking their blocks,
+  // making their modules -- are shared out among the workers, as the chunks
+  // of the files that are parsed are below.
+  std::vector<std::optional<SignatureCache::SourceIdentity>> Identities(
+      PatFiles.size());
+  std::vector<std::optional<SignatureCache::PendingEntry>> Pending(
+      PatFiles.size());
+  if (Cache)
+    neverd::parallelForEach(PatFiles.size(), [&](auto Claim, size_t Total) {
+      for (size_t I = Claim(); I < Total; I = Claim()) {
+        Identities[I] = SignatureCache::identify(PatFiles[I]);
+        if (Identities[I])
+          Pending[I] = Cache->open(PatFiles[I], *Identities[I]);
+      }
+    });
+  std::vector<std::pair<size_t, size_t>> Pieces;
+  for (size_t I = 0; I < PatFiles.size(); ++I)
+    if (Pending[I])
+      for (size_t Piece = 0; Piece < Pending[I]->pieces(); ++Piece)
+        Pieces.emplace_back(I, Piece);
+  std::vector<std::atomic<bool>> Damaged(PatFiles.size());
+  neverd::parallelForEach(Pieces.size(), [&](auto Claim, size_t Total) {
+    for (size_t W = Claim(); W < Total; W = Claim())
+      if (!Pending[Pieces[W].first]->run(Pieces[W].second))
+        Damaged[Pieces[W].first] = true;
+  });
+  std::vector<std::optional<SignatureCache::Entry>> Cached(PatFiles.size());
+  for (size_t I = 0; I < PatFiles.size(); ++I)
+    if (Pending[I] && !Damaged[I])
+      Cached[I] = std::move(*Pending[I]).take();
+  Pending.clear();
+
+  // Every other file is cut into chunks of whole lines, and one pool of
+  // workers parses the chunks of all of them: one large file keeps every
+  // worker as busy as many small ones do.  A parsed chunk no longer refers to
+  // its text, so a file is let go as soon as its last chunk is done.
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> Buffers(PatFiles.size());
   std::vector<std::unique_ptr<uint8_t[]>> Bytes(PatFiles.size());
   std::vector<PatternChunk> Chunks;
   std::vector<size_t> FirstChunk(PatFiles.size() + 1), FileOf;
   for (size_t I = 0; I < PatFiles.size(); ++I) {
     FirstChunk[I] = Chunks.size();
+    if (Cached[I])
+      continue;
     auto BufferOrErr =
         llvm::MemoryBuffer::getFile(PatFiles[I].string(), /*IsText=*/false,
                                     /*RequiresNullTerminator=*/false);
@@ -301,6 +353,10 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   // and leaves the database as it was.
   size_t Count = 0;
   for (size_t I = 0; I < PatFiles.size(); ++I) {
+    if (Cached[I]) {
+      Count += Cached[I]->Modules.size();
+      continue;
+    }
     const llvm::ArrayRef<PatternChunk> FileChunks(
         Chunks.data() + FirstChunk[I], Chunks.data() + FirstChunk[I + 1]);
     const bool Opened = FirstChunk[I] != FirstChunk[I + 1] || Buffers[I];
@@ -327,11 +383,18 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     Source.Path = PatFiles[I].string();
     Source.LibraryName = libraryName(PatFiles[I]);
     Source.ModuleStart = NewModules.size();
-    Source.Bytes = std::move(Bytes[I]);
-    for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C) {
-      NewModules.insert(NewModules.end(), Chunks[C].Modules.begin(),
-                        Chunks[C].Modules.end());
-      Source.Names.push_back(std::move(Chunks[C].Names));
+    if (Cached[I]) {
+      NewModules.insert(NewModules.end(), Cached[I]->Modules.begin(),
+                        Cached[I]->Modules.end());
+      Source.Mapping = std::move(Cached[I]->Mapping);
+      Source.Names.push_back(std::move(Cached[I]->Names));
+    } else {
+      Source.Bytes = std::move(Bytes[I]);
+      for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C) {
+        NewModules.insert(NewModules.end(), Chunks[C].Modules.begin(),
+                          Chunks[C].Modules.end());
+        Source.Names.push_back(std::move(Chunks[C].Names));
+      }
     }
     Source.ModuleCount = NewModules.size() - Source.ModuleStart;
     NewSources.push_back(std::move(Source));
@@ -340,6 +403,18 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   LoadedFiles.swap(NewSources);
   Index.reset();
   clearMatches();
+
+  // What was parsed is kept for the next load, once the whole batch has
+  // loaded.
+  if (Cache)
+    neverd::parallelForEach(LoadedFiles.size(), [&](auto Claim, size_t Total) {
+      for (size_t I = Claim(); I < Total; I = Claim())
+        if (Identities[I] && !LoadedFiles[I].Mapping)
+          Cache->store(
+              PatFiles[I], *Identities[I],
+              llvm::ArrayRef(Modules).slice(LoadedFiles[I].ModuleStart,
+                                            LoadedFiles[I].ModuleCount));
+    });
   return llvm::Error::success();
 }
 
@@ -561,13 +636,79 @@ namespace {
 
 enum class ReferenceVerdict { Unknown, Confirmed, Contradicted };
 
-int64_t signExtend(uint64_t Value, unsigned Bits) {
-  const uint64_t Sign = uint64_t(1) << (Bits - 1);
-  return static_cast<int64_t>((Value ^ Sign) - Sign);
-}
+/// An instruction form: the words, or Thumb halfwords, whose bits under
+/// \c Mask are \c Match.
+struct InstructionForm {
+  uint32_t Mask;
+  uint32_t Match;
+  bool matches(uint32_t Word) const { return (Word & Mask) == Match; }
+};
+
+/// A field of an instruction word or halfword.
+struct BitField {
+  unsigned Low;
+  unsigned Width;
+  uint32_t extract(uint32_t Word) const {
+    return (Word >> Low) & llvm::maskTrailingOnes<uint32_t>(Width);
+  }
+};
+
+#define NEVERD_SIGS_FORM(Name, Mask, Match)                                    \
+  constexpr InstructionForm Name{Mask, Match};
+#define NEVERD_SIGS_FIELD(Name, Low, Width) constexpr BitField Name{Low, Width};
+#define NEVERD_SIGS_VALUE(Name, Value) constexpr uint32_t Name = Value;
+#include "neverd/sigs/BranchEncoding.def"
+
+#define NEVERD_SIGS_SYNTAX_CHAR(Name, Value)                                   \
+  [[maybe_unused]] constexpr char Name = Value;
+#include "neverd/sigs/LinkerSyntax.def"
+
+#define NEVERD_SIGS_REFERENCE_LIMIT(Name, Value) constexpr size_t Name = Value;
+#include "ReferenceCheckLimits.def"
+
+static_assert(x86::kCallRel32Len == x86::kJmpRel32Len,
+              "a rel32 call and jump are read alike");
+
+/// Bits concatenated from instruction fields, the first most significant.
+class BitString {
+public:
+  BitString &append(uint64_t Bits, unsigned Width) {
+    Value = Value << Width | Bits;
+    Size += Width;
+    return *this;
+  }
+  BitString &append(BitField Field, uint32_t Word) {
+    return append(Field.extract(Word), Field.Width);
+  }
+  BitString &append(const BitString &Other) {
+    return append(Other.Value, Other.Size);
+  }
+  uint64_t zeroExtended() const { return Value; }
+  int64_t signExtended() const { return llvm::SignExtend64(Value, Size); }
+
+private:
+  uint64_t Value = 0;
+  unsigned Size = 0;
+};
 
 uint64_t wrapToImage(const BinaryImage &Img, uint64_t Address) {
-  return Img.is64Bit() ? Address : Address & 0xFFFFFFFFu;
+  return Img.is64Bit() ? Address : static_cast<uint32_t>(Address);
+}
+
+/// The word at \p Address, when the image holds it.
+std::optional<uint32_t> wordAt(const BinaryImage &Img, uint64_t Address) {
+  const uint8_t *Bytes = Img.readVA(Address, sizeof(uint32_t));
+  if (!Bytes)
+    return std::nullopt;
+  return readLE<uint32_t>(Bytes);
+}
+
+/// The halfword at \p Address, when the image holds it.
+std::optional<uint16_t> halfwordAt(const BinaryImage &Img, uint64_t Address) {
+  const uint8_t *Bytes = Img.readVA(Address, sizeof(uint16_t));
+  if (!Bytes)
+    return std::nullopt;
+  return readLE<uint16_t>(Bytes);
 }
 
 /// Where a direct branch goes, and on 32-bit ARM whether it enters its
@@ -581,27 +722,33 @@ struct Branch {
 /// when \p JumpOnly.
 std::optional<Branch> thumbBranch(const BinaryImage &Img, uint64_t Address,
                                   bool JumpOnly) {
-  const uint8_t *Insn = Img.readVA(Address, 4);
+  const uint8_t *Insn = Img.readVA(Address, ThumbWideInstructionBytes);
   if (!Insn)
     return std::nullopt;
   const uint16_t First = readLE<uint16_t>(Insn);
-  const uint16_t Second = readLE<uint16_t>(Insn + 2);
-  if ((First & 0xF800) != 0xF000)
+  const uint16_t Second = readLE<uint16_t>(Insn + ThumbHalfwordBytes);
+  if (!ThumbWideBranchHigh.matches(First))
     return std::nullopt;
-  const unsigned Kind = Second & 0xD000;
-  const bool Jump = Kind == 0x9000, Link = Kind == 0xD000,
-             Exchange = Kind == 0xC000;
+  const bool Jump = ThumbJumpLow.matches(Second),
+             Link = ThumbLinkLow.matches(Second),
+             Exchange = ThumbLinkExchangeLow.matches(Second);
   if (!(Jump || (!JumpOnly && (Link || Exchange))))
     return std::nullopt;
-  const uint64_t S = (First >> 10) & 1;
-  const uint64_t I1 = ~(((Second >> 13) & 1) ^ S) & 1;
-  const uint64_t I2 = ~(((Second >> 11) & 1) ^ S) & 1;
-  const uint64_t Offset = (S << 24) | (I1 << 23) | (I2 << 22) |
-                          (uint64_t(First & 0x3FF) << 12) |
-                          (uint64_t(Second & 0x7FF) << 1);
-  uint64_t Target = Address + 4 + static_cast<uint64_t>(signExtend(Offset, 25));
+  // The offset's I1 and I2 are J1 and J2 against its sign.
+  const uint32_t Sign = ThumbBranchSign.extract(First);
+  const int64_t Offset =
+      BitString()
+          .append(ThumbBranchSign, First)
+          .append(!(ThumbBranchJ1.extract(Second) ^ Sign), ThumbBranchJ1.Width)
+          .append(!(ThumbBranchJ2.extract(Second) ^ Sign), ThumbBranchJ2.Width)
+          .append(ThumbBranchHigh, First)
+          .append(ThumbBranchLow, Second)
+          .signExtended() *
+      ThumbHalfwordBytes;
+  uint64_t Target = Address + ThumbPCOffset + static_cast<uint64_t>(Offset);
+  // BLX enters ARM state, at a word.
   if (Exchange)
-    Target &= ~uint64_t(3);
+    Target = llvm::alignDown(Target, ArmInstructionBytes);
   return Branch{wrapToImage(Img, Target), !Exchange};
 }
 
@@ -609,22 +756,31 @@ std::optional<Branch> thumbBranch(const BinaryImage &Img, uint64_t Address,
 /// \p Address, or only an unconditional B when \p JumpOnly.
 std::optional<Branch> armBranch(const BinaryImage &Img, uint64_t Address,
                                 bool JumpOnly) {
-  const uint8_t *Insn = Img.readVA(Address, 4);
-  if (!Insn)
+  const std::optional<uint32_t> Word = wordAt(Img, Address);
+  if (!Word || !ArmBranch.matches(*Word))
     return std::nullopt;
-  const uint32_t Word = readLE<uint32_t>(Insn);
-  if ((Word & 0x0E000000u) != 0x0A000000u)
+  const uint32_t Condition = ArmCondition.extract(*Word);
+  const bool Exchange = Condition == ArmConditionUnconditional;
+  // BL's link bit, and BLX's halfword bit.
+  const bool LinkOrHalfword = ArmLinkOrHalfword.extract(*Word);
+  if (JumpOnly &&
+      (Exchange || LinkOrHalfword || Condition != ArmConditionAlways))
     return std::nullopt;
-  const bool Exchange = Word >> 28 == 0xF;
-  // Bit 24 is BL's link bit, and BLX's halfword bit.
-  const bool Bit24 = (Word >> 24) & 1;
-  if (JumpOnly && (Exchange || Bit24 || Word >> 28 != 0xE))
-    return std::nullopt;
-  uint64_t Offset =
-      static_cast<uint64_t>(signExtend(Word & 0x00FFFFFFu, 24) * 4);
-  if (Exchange && Bit24)
-    Offset += 2;
-  return Branch{wrapToImage(Img, Address + 8 + Offset), Exchange};
+  int64_t Offset = BitString().append(ArmBranchOffset, *Word).signExtended() *
+                   ArmInstructionBytes;
+  if (Exchange && LinkOrHalfword)
+    Offset += ThumbHalfwordBytes;
+  return Branch{
+      wrapToImage(Img, Address + ArmPCOffset + static_cast<uint64_t>(Offset)),
+      Exchange};
+}
+
+/// Where the A64 B or BL \p Word at \p Address goes.
+Branch a64Branch(uint64_t Address, uint32_t Word) {
+  return Branch{Address +
+                static_cast<uint64_t>(
+                    BitString().append(A64BranchOffset, Word).signExtended() *
+                    A64InstructionBytes)};
 }
 
 /// Where the direct branch a reference at \p Offset of the routine at
@@ -636,58 +792,63 @@ std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
   switch (Img.Arch) {
   case Arch::X86:
   case Arch::X64: {
-    if (Site == 0)
+    // The reference states the rel32 field, which follows the opcode.
+    if (Site < x86::kRel32DispOffset)
       return std::nullopt;
-    const uint8_t *Insn = Img.readVA(Site - 1, 5);
-    if (!Insn || (Insn[0] != 0xE8 && Insn[0] != 0xE9))
+    const uint64_t Address = Site - x86::kRel32DispOffset;
+    const uint8_t *Insn = Img.readVA(Address, x86::kCallRel32Len);
+    if (!Insn || (Insn[0] != x86::kCallRel32 && Insn[0] != x86::kJmpRel32))
       return std::nullopt;
-    const int64_t Disp = readLE<int32_t>(Insn + 1);
-    return Branch{wrapToImage(Img, Site + 4 + static_cast<uint64_t>(Disp))};
+    const int64_t Disp = readLE<int32_t>(Insn + x86::kRel32DispOffset);
+    return Branch{wrapToImage(Img, Address + x86::kCallRel32Len +
+                                       static_cast<uint64_t>(Disp))};
   }
   case Arch::AArch64: {
-    const uint8_t *Insn = Img.readVA(Site, 4);
-    if (!Insn)
-      return std::nullopt;
-    const uint32_t Word = readLE<uint32_t>(Insn);
+    const std::optional<uint32_t> Word = wordAt(Img, Site);
     // B and BL; a veneer or anything else is not the branch the library had.
-    if ((Word & 0x7C000000u) != 0x14000000u)
+    if (!Word || !A64BranchOrLink.matches(*Word))
       return std::nullopt;
-    return Branch{
-        Site + static_cast<uint64_t>(signExtend(Word & 0x03FFFFFFu, 26) * 4)};
+    return a64Branch(Site, *Word);
   }
   case Arch::ARM:
-    // An odd offset states an ARM-state branch one byte before it.
-    if (Offset & 1)
-      return armBranch(Img, Site - 1, /*JumpOnly=*/false);
+    if (Offset & ArmStateReferenceMark)
+      return armBranch(Img, Site - ArmStateReferenceMark, /*JumpOnly=*/false);
     return thumbBranch(Img, Site, /*JumpOnly=*/false);
   default:
     return std::nullopt;
   }
 }
 
-/// Where a 32-bit ARM code address \p Address goes in the state its low bit
-/// says: set for Thumb.
+/// Where a 32-bit ARM code address \p Address goes, in the state its low bit
+/// says.
 Branch interworkingTarget(const BinaryImage &Img, uint64_t Address) {
-  return Branch{wrapToImage(Img, Address & ~uint64_t(1)), (Address & 1) != 0};
+  return Branch{wrapToImage(Img, Address & ~uint64_t(ThumbStateBit)),
+                (Address & ThumbStateBit) != 0};
 }
 
 /// The immediate an ARM-state MOVW (or, when \p Top, MOVT) writes to ip.
-std::optional<uint32_t> armMoveToIP(uint32_t Word, bool Top) {
-  if ((Word & 0xFFF0F000u) != (Top ? 0xE340C000u : 0xE300C000u))
+std::optional<BitString> armMoveToIP(uint32_t Word, bool Top) {
+  if (!(Top ? ArmMoveTopToIP : ArmMoveWideToIP).matches(Word))
     return std::nullopt;
-  return ((Word >> 4) & 0xF000u) | (Word & 0xFFFu);
+  return BitString().append(ArmMoveImm4, Word).append(ArmMoveImm12, Word);
 }
 
-/// The immediate a Thumb-2 MOVW (or, when \p Top, MOVT) at \p Insn writes to
-/// ip.
-std::optional<uint32_t> thumbMoveToIP(const uint8_t *Insn, bool Top) {
-  const uint16_t First = readLE<uint16_t>(Insn);
-  const uint16_t Second = readLE<uint16_t>(Insn + 2);
-  if ((First & 0xFBF0) != (Top ? 0xF2C0 : 0xF240) ||
-      (Second & 0x8F00) != 0x0C00)
+/// The immediate a Thumb-2 MOVW (or, when \p Top, MOVT) at \p Address
+/// writes to ip.
+std::optional<BitString> thumbMoveToIP(const BinaryImage &Img, uint64_t Address,
+                                       bool Top) {
+  const std::optional<uint16_t> First = halfwordAt(Img, Address);
+  const std::optional<uint16_t> Second =
+      halfwordAt(Img, Address + ThumbHalfwordBytes);
+  if (!First || !Second ||
+      !(Top ? ThumbMoveTopToIPHigh : ThumbMoveWideToIPHigh).matches(*First) ||
+      !ThumbMoveToIPLow.matches(*Second))
     return std::nullopt;
-  return (uint32_t(First & 0xF) << 12) | (uint32_t(First & 0x400) << 1) |
-         (uint32_t(Second & 0x7000) >> 4) | (Second & 0xFFu);
+  return BitString()
+      .append(ThumbMoveImm4, *First)
+      .append(ThumbMoveI, *First)
+      .append(ThumbMoveImm3, *Second)
+      .append(ThumbMoveImm8, *Second);
 }
 
 /// The routine an ARM-state linker thunk at \p Address forwards to: an
@@ -696,30 +857,31 @@ std::optional<uint32_t> thumbMoveToIP(const uint8_t *Insn, bool Top) {
 std::optional<Branch> armThunkTarget(const BinaryImage &Img, uint64_t Address) {
   if (std::optional<Branch> Jump = armBranch(Img, Address, /*JumpOnly=*/true))
     return Jump;
-  auto Word = [&](unsigned Index) -> std::optional<uint32_t> {
-    const uint8_t *Insn = Img.readVA(Address + 4 * Index, 4);
-    if (!Insn)
-      return std::nullopt;
-    return readLE<uint32_t>(Insn);
-  };
-  const std::optional<uint32_t> First = Word(0), Second = Word(1);
+  const uint64_t SecondAddress = Address + ArmInstructionBytes;
+  const std::optional<uint32_t> First = wordAt(Img, Address),
+                                Second = wordAt(Img, SecondAddress);
   if (!First || !Second)
     return std::nullopt;
-  if (*First == 0xE51FF004u)
+  if (ArmLoadPCFromNextWord.matches(*First))
     return interworkingTarget(Img, *Second);
-  constexpr uint32_t BxIP = 0xE12FFF1Cu;
-  const std::optional<uint32_t> Low = armMoveToIP(*First, /*Top=*/false);
-  const std::optional<uint32_t> High =
+  const std::optional<BitString> Low = armMoveToIP(*First, /*Top=*/false);
+  const std::optional<BitString> High =
       Low ? armMoveToIP(*Second, /*Top=*/true) : std::nullopt;
-  const std::optional<uint32_t> Third = High ? Word(2) : std::nullopt;
+  const uint64_t ThirdAddress = SecondAddress + ArmInstructionBytes;
+  const std::optional<uint32_t> Third =
+      High ? wordAt(Img, ThirdAddress) : std::nullopt;
   if (!Third)
     return std::nullopt;
-  const uint64_t Value = (uint64_t(*High) << 16) | *Low;
-  if (*Third == BxIP)
+  const uint64_t Value = BitString(*High).append(*Low).zeroExtended();
+  if (ArmBranchExchangeIP.matches(*Third))
     return interworkingTarget(Img, Value);
   // `add ip, ip, pc` reads pc eight bytes past itself.
-  if (*Third == 0xE08CC00Fu && Word(3) == BxIP)
-    return interworkingTarget(Img, Value + Address + 16);
+  if (ArmAddIPIPPC.matches(*Third)) {
+    const std::optional<uint32_t> Fourth =
+        wordAt(Img, ThirdAddress + ArmInstructionBytes);
+    if (Fourth && ArmBranchExchangeIP.matches(*Fourth))
+      return interworkingTarget(Img, Value + ThirdAddress + ArmPCOffset);
+  }
   return std::nullopt;
 }
 
@@ -729,28 +891,27 @@ std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
                                        uint64_t Address) {
   if (std::optional<Branch> Jump = thumbBranch(Img, Address, /*JumpOnly=*/true))
     return Jump;
-  const uint8_t *Moves = Img.readVA(Address, 8);
-  if (!Moves)
-    return std::nullopt;
-  const std::optional<uint32_t> Low = thumbMoveToIP(Moves, /*Top=*/false);
-  const std::optional<uint32_t> High =
-      Low ? thumbMoveToIP(Moves + 4, /*Top=*/true) : std::nullopt;
+  const uint64_t SecondAddress = Address + ThumbWideInstructionBytes;
+  const std::optional<BitString> Low =
+      thumbMoveToIP(Img, Address, /*Top=*/false);
+  const std::optional<BitString> High =
+      Low ? thumbMoveToIP(Img, SecondAddress, /*Top=*/true) : std::nullopt;
   if (!High)
     return std::nullopt;
-  auto Halfword = [&](unsigned Index) -> std::optional<uint16_t> {
-    const uint8_t *Insn = Img.readVA(Address + 8 + 2 * Index, 2);
-    if (!Insn)
-      return std::nullopt;
-    return readLE<uint16_t>(Insn);
-  };
-  constexpr uint16_t BxIP = 0x4760;
-  const uint64_t Value = (uint64_t(*High) << 16) | *Low;
-  const std::optional<uint16_t> Third = Halfword(0);
-  if (Third == BxIP)
+  const uint64_t Value = BitString(*High).append(*Low).zeroExtended();
+  const uint64_t ThirdAddress = SecondAddress + ThumbWideInstructionBytes;
+  const std::optional<uint16_t> Third = halfwordAt(Img, ThirdAddress);
+  if (!Third)
+    return std::nullopt;
+  if (ThumbBranchExchangeIP.matches(*Third))
     return interworkingTarget(Img, Value);
   // `add ip, pc` reads pc four bytes past itself.
-  if (Third == 0x44FC && Halfword(1) == BxIP)
-    return interworkingTarget(Img, Value + Address + 12);
+  if (ThumbAddIPPC.matches(*Third)) {
+    const std::optional<uint16_t> Fourth =
+        halfwordAt(Img, ThirdAddress + ThumbHalfwordBytes);
+    if (Fourth && ThumbBranchExchangeIP.matches(*Fourth))
+      return interworkingTarget(Img, Value + ThirdAddress + ThumbPCOffset);
+  }
   return std::nullopt;
 }
 
@@ -759,32 +920,33 @@ std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
 /// address after them.
 std::optional<Branch> aarch64ThunkTarget(const BinaryImage &Img,
                                          uint64_t Address) {
-  const uint8_t *Insn = Img.readVA(Address, 4);
-  if (!Insn)
+  const std::optional<uint32_t> First = wordAt(Img, Address);
+  if (!First)
     return std::nullopt;
-  const uint32_t First = readLE<uint32_t>(Insn);
-  if ((First & 0xFC000000u) == 0x14000000u)
-    return Branch{Address + static_cast<uint64_t>(
-                                signExtend(First & 0x03FFFFFFu, 26) * 4)};
-  const uint8_t *Rest = Img.readVA(Address, 12);
-  if (!Rest)
+  if (A64Branch.matches(*First))
+    return a64Branch(Address, *First);
+  const uint64_t SecondAddress = Address + A64InstructionBytes;
+  const uint64_t ThirdAddress = SecondAddress + A64InstructionBytes;
+  const std::optional<uint32_t> Second = wordAt(Img, SecondAddress),
+                                Third = wordAt(Img, ThirdAddress);
+  if (!Second || !Third)
     return std::nullopt;
-  const uint32_t Second = readLE<uint32_t>(Rest + 4);
-  const uint32_t Third = readLE<uint32_t>(Rest + 8);
-  constexpr uint32_t BrX16 = 0xD61F0200u;
-  if ((First & 0x9F00001Fu) == 0x90000010u &&
-      (Second & 0xFFC003FFu) == 0x91000210u && Third == BrX16) {
-    const uint64_t Immediate =
-        (uint64_t((First >> 5) & 0x7FFFFu) << 2) | ((First >> 29) & 3u);
-    const uint64_t Page =
-        (Address & ~uint64_t(0xFFF)) +
-        static_cast<uint64_t>(signExtend(Immediate, 21) * 4096);
-    return Branch{Page + ((Second >> 10) & 0xFFFu)};
+  if (A64PageAddressX16.matches(*First) && A64AddX16X16.matches(*Second) &&
+      A64BranchRegisterX16.matches(*Third)) {
+    const int64_t Pages = BitString()
+                              .append(A64PageImmHi, *First)
+                              .append(A64PageImmLo, *First)
+                              .signExtended();
+    const uint64_t Page = llvm::alignDown(Address, A64PageBytes) +
+                          static_cast<uint64_t>(Pages * A64PageBytes);
+    return Branch{Page + A64AddImm12.extract(*Second)};
   }
-  if (First == 0x58000050u && Second == BrX16) {
-    const uint8_t *Literal = Img.readVA(Address + 8, 8);
-    if (Literal)
-      return Branch{readLE<uint64_t>(Literal)};
+  if (A64LoadX16FromThunkEnd.matches(*First) &&
+      A64BranchRegisterX16.matches(*Second)) {
+    const uint64_t Literal =
+        Address + A64LoadLiteralOffset.extract(*First) * A64InstructionBytes;
+    if (const uint8_t *Bytes = Img.readVA(Literal, sizeof(uint64_t)))
+      return Branch{readLE<uint64_t>(Bytes)};
   }
   return std::nullopt;
 }
@@ -797,12 +959,12 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
   switch (Img.Arch) {
   case Arch::X86:
   case Arch::X64: {
-    const uint8_t *Insn = Img.readVA(To.Target, 5);
-    if (!Insn || Insn[0] != 0xE9)
+    const uint8_t *Insn = Img.readVA(To.Target, x86::kJmpRel32Len);
+    if (!Insn || Insn[0] != x86::kJmpRel32)
       return std::nullopt;
-    const int64_t Disp = readLE<int32_t>(Insn + 1);
-    return Branch{
-        wrapToImage(Img, To.Target + 5 + static_cast<uint64_t>(Disp))};
+    const int64_t Disp = readLE<int32_t>(Insn + x86::kRel32DispOffset);
+    return Branch{wrapToImage(Img, To.Target + x86::kJmpRel32Len +
+                                       static_cast<uint64_t>(Disp))};
   }
   case Arch::AArch64:
     return aarch64ThunkTarget(Img, To.Target);
@@ -862,7 +1024,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         break;
       }
     if (Img.Arch == Arch::ARM)
-      Start &= ~uint64_t(1);
+      Start &= ~uint64_t(ThumbStateBit);
     for (size_t R = 0; R < References.size();) {
       size_t End = R + 1;
       while (End < References.size() &&
@@ -957,7 +1119,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       continue;
     const uint64_t Target = Calling[C].first;
     for (uint64_t Address :
-         {Target, Img.Arch == Arch::ARM ? Target | 1 : Target})
+         {Target, Img.Arch == Arch::ARM ? Target | ThumbStateBit : Target})
       if (!Settled.count(Address))
         if (std::optional<SettledRoutine> Routine = SettleAt(Address))
           Settled.emplace(Address, std::move(*Routine));
@@ -965,7 +1127,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   auto SettledAt = [&](uint64_t Target) {
     auto It = Settled.find(Target);
     if (It == Settled.end() && Img.Arch == Arch::ARM)
-      It = Settled.find(Target | 1);
+      It = Settled.find(Target | ThumbStateBit);
     return It;
   };
 
@@ -978,7 +1140,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       // nothing.
       if (!Img.isELF())
         return ReferenceVerdict::Unknown;
-      return Imp->Name == Name.substr(0, Name.find('@'))
+      return Imp->Name == Name.substr(0, Name.find(ELFVersionSeparator))
                  ? ReferenceVerdict::Confirmed
                  : ReferenceVerdict::Contradicted;
     }
@@ -1045,17 +1207,16 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   for (size_t I = 0; I < Matches.size(); ++I)
     if (!ReferencesOf(I).empty())
       Work.push_back(I);
-  constexpr unsigned MaxRounds = 16;
-  constexpr size_t ParallelWork = 4096;
-  for (unsigned Round = 0; Round < MaxRounds && !Work.empty(); ++Round) {
+  for (size_t Round = 0; Round < MaxReferenceRounds && !Work.empty(); ++Round) {
     std::vector<Outcome> Outcomes(Work.size());
-    if (Work.size() >= ParallelWork) {
-      constexpr size_t BlockMatches = 256;
-      const size_t Blocks = (Work.size() + BlockMatches - 1) / BlockMatches;
+    if (Work.size() >= ParallelReferenceMatches) {
+      const size_t Blocks =
+          llvm::divideCeil(Work.size(), ReferenceMatchesPerBlock);
       neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {
         for (size_t B = Claim(); B < Total; B = Claim()) {
-          const size_t End = std::min(Work.size(), (B + 1) * BlockMatches);
-          for (size_t W = B * BlockMatches; W < End; ++W)
+          const size_t End =
+              std::min(Work.size(), (B + 1) * ReferenceMatchesPerBlock);
+          for (size_t W = B * ReferenceMatchesPerBlock; W < End; ++W)
             Outcomes[W] = Check(Work[W]);
         }
       });
@@ -1081,7 +1242,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       // SettledAt reads a Thumb routine's settlement for the address without
       // its interworking bit too; an address no reference reads is not kept.
       const uint64_t Even =
-          Img.Arch == Arch::ARM ? Address & ~uint64_t(1) : Address;
+          Img.Arch == Arch::ARM ? Address & ~uint64_t(ThumbStateBit) : Address;
       if (Range(Calling, Address).empty() && Range(Calling, Even).empty())
         continue;
       std::optional<SettledRoutine> Routine = SettleAt(Address);

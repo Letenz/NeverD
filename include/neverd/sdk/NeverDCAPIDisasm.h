@@ -79,6 +79,13 @@ NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
 NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
                                              neverd_va_t FuncEntry);
 
+/// Single-function LLVM-to-C with the same NoOpt policy as
+/// neverd_decompile_all(). Pass nonzero to keep value-changing LLVM passes
+/// disabled while still promoting the emitter's temporary allocas.
+NEVERD_API const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
+                                                neverd_va_t FuncEntry,
+                                                int NoOpt);
+
 /// Reconstruct Mach-O native C and supported Objective-C method bodies as a
 /// schema_version=1 JSON report. MaxFunctions=0 analyzes all discovered native
 /// functions. Runtime signatures are source projection hints, not a semantic

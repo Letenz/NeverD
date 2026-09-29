@@ -660,6 +660,37 @@ class CapabilitySchemaTests(unittest.TestCase):
             self.assertIn("neverd patch --sanitize=strict", surfaces["cli"])
             self.assertNotIn("neverd patch --sanitize=unsafe", surfaces["cli"])
 
+    def test_cli_inventory_resolves_option_names_from_def_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            include = root / "include" / "neverd" / "loader"
+            include.mkdir(parents=True)
+            (include / "ARMModeCLIStrings.h").write_text(
+                "namespace neverd::arm_mode_cli {\n"
+                '#include "neverd/loader/ARMModeCLIStrings.def"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            (include / "ARMModeCLIStrings.def").write_text(
+                'NEVERD_ARM_MODE_CLI_STRING(Option, "arm-function-mode")\n'
+                '// NEVERD_ARM_MODE_CLI_STRING(Fake, "unpublished")\n',
+                encoding="utf-8",
+            )
+            cli = root / "tools" / "neverd"
+            cli.mkdir(parents=True)
+            (cli / "NeverDCLIOptions.cpp").write_text(
+                'cl::SubCommand LiftCmd("lift", "lift");\n'
+                "cl::list<std::string> ARMFunctionModeHints(\n"
+                "    arm_mode_cli::Option, cl::sub(LiftCmd));\n"
+                "cl::opt<bool> Fake(arm_mode_cli::Fake, cl::sub(LiftCmd));\n",
+                encoding="utf-8",
+            )
+
+            surfaces = capabilities.collect_public_surfaces(root)
+
+            self.assertIn("neverd lift --arm-function-mode", surfaces["cli"])
+            self.assertNotIn("neverd lift --unpublished", surfaces["cli"])
+
     def test_cli_inventory_scans_namespaced_declarations_in_every_tool_tu(
         self,
     ) -> None:
@@ -3212,16 +3243,20 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "c": [
                     "neverd_emulate_driver_json",
                     "neverd_emulate_driver_scenario_json",
+                    "neverd_emulate_driver_backend_json",
                 ],
                 "python": [],
                 "cli": [
                     "neverd emulate-driver",
                     "neverd emulate-driver --instruction-limit",
                     "neverd emulate-driver --scenario",
+                    "neverd emulate-driver --backend",
+                    "neverd emulate-driver --execution-contract",
                 ],
                 "json": [
                     "neverd_emulate_driver_json",
                     "neverd_emulate_driver_scenario_json",
+                    "neverd_emulate_driver_backend_json",
                 ],
             },
             "exception.itanium.ada-d": no_surfaces,

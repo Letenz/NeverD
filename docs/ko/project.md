@@ -154,7 +154,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-빌드 시 시그니처 라이브러리는 `build/bin/signatures/`에 설치됩니다. `sigs --auto`는 포맷·아키텍처·비트 너비로 세트를 고릅니다. PE 파일의 Rich 헤더가 링커의 Visual Studio 릴리스를 알려 주면 그 릴리스의 `vs<year>.pat`와 어느 릴리스에도 속하지 않는 파일만 불러옵니다. `--sig-base <dir>`는 다른 시그니처 트리에서 같은 방식으로 고릅니다.
+빌드 시 시그니처 라이브러리는 `build/bin/signatures/`에 설치됩니다. `sigs --auto`는 포맷·아키텍처·비트 너비로 세트를 고릅니다. PE 파일의 Rich 헤더가 링커의 Visual Studio 릴리스를 알려 주면 그 릴리스의 `vs<year>.pat`와 어느 릴리스에도 속하지 않는 파일만 불러옵니다. `--sig-base <dir>`는 다른 시그니처 트리에서 같은 방식으로 고릅니다. 1 MiB 이상인 패턴 파일은 한 번만 파싱됩니다. 그 모듈은 사용자 캐시 디렉터리의 `neverd/signatures`에 보관되고 이후 로드에서는 매핑됩니다. `NEVERD_SIGNATURE_CACHE`로 다른 디렉터리를 지정하거나 `off`로 캐시를 끌 수 있습니다.
 
 ## 빌드
 

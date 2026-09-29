@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelSEH.h"
+#include "os/windows/KernelSEH.h"
 
 #include <algorithm>
 #include <map>

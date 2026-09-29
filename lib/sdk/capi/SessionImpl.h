@@ -88,6 +88,7 @@ struct Session {
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
   bool PipeRan = false;
+  std::optional<bool> LlvmModuleNoOpt;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   std::set<va_t> OnlyFunctionEntries;
@@ -294,6 +295,7 @@ struct Session {
     PipeResult = {};
     LLVMCtx.reset();
     PipeRan = false;
+    LlvmModuleNoOpt.reset();
     SBFFunctionsSynchronized = false;
     NativeFunctionsSynchronized = false;
   }
@@ -378,8 +380,9 @@ struct Session {
     return Match;
   }
 
-  bool ensureLlvmModule() {
-    if (PipeResult.LlvmModule)
+  bool ensureLlvmModule(bool NoOpt = false) {
+    if (PipeResult.LlvmModule &&
+        (!LlvmModuleNoOpt || *LlvmModuleNoOpt == NoOpt))
       return true;
     if (!ensurePipeline())
       return false;
@@ -435,14 +438,26 @@ struct Session {
       setError("native LLVM verification failed: " + VerifyError);
       return false;
     }
-    const OptimizationResult Optimization =
-        Pipeline::optimizeOrPromoteModule(*Candidate);
-    if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
-      setError(std::string("native LLVM optimization failed: ") +
-               optimizationStopReasonName(Optimization.Stop));
+    if (NoOpt) {
+      Pipeline::promoteScaffoldingAllocas(*Candidate);
+    } else {
+      const OptimizationResult Optimization =
+          Pipeline::optimizeOrPromoteModule(*Candidate);
+      if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
+        setError(std::string("native LLVM optimization failed: ") +
+                 optimizationStopReasonName(Optimization.Stop));
+        return false;
+      }
+    }
+    std::string FinalVerifyError;
+    llvm::raw_string_ostream FinalVerifyStream(FinalVerifyError);
+    if (llvm::verifyModule(*Candidate, &FinalVerifyStream)) {
+      setError("native LLVM post-optimization verification failed: " +
+               FinalVerifyError);
       return false;
     }
     PipeResult.LlvmModule = std::move(Candidate);
+    LlvmModuleNoOpt = NoOpt;
     return true;
   }
 };

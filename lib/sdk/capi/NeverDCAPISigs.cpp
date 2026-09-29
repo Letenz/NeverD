@@ -14,6 +14,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/FuncDetector.h"
+#include "neverd/sigs/SignatureCache.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
 #include "llvm/Support/JSON.h"
@@ -91,6 +92,12 @@ static int matchLoadedSignatures(Session &S,
   return static_cast<int>(S.SigDB.matches().size());
 }
 
+/// Load signature files through the user's signature cache, which the
+/// environment may move or turn off; see neverd::sigs::SignatureCache.
+static void useSignatureCache(Session &S) {
+  S.SigDB.setCache(sigs::SignatureCache::fromEnvironment());
+}
+
 int neverd_apply_signatures(neverd_session_t Sess, const char *SigDir) {
   auto *S = static_cast<Session *>(Sess);
   if (!S || !S->Loaded || !SigDir)
@@ -98,6 +105,7 @@ int neverd_apply_signatures(neverd_session_t Sess, const char *SigDir) {
   S->clearError();
 
   auto Entries = findSignatureEntries(*S);
+  useSignatureCache(*S);
   auto Err = S->SigDB.loadDirectory(SigDir);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
@@ -114,6 +122,7 @@ int neverd_apply_signature_file(neverd_session_t Sess, const char *SigPath) {
   S->clearError();
 
   auto Entries = findSignatureEntries(*S);
+  useSignatureCache(*S);
   auto Err = S->SigDB.loadFile(SigPath);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
@@ -173,6 +182,7 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return -1;
   }
   auto Entries = findSignatureEntries(*S);
+  useSignatureCache(*S);
   auto Err = S->SigDB.loadFiles(
       sigs::SignatureDB::selectForImage(S->Img, std::move(*Files)));
   if (Err) {

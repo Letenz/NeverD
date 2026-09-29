@@ -1,0 +1,14 @@
+//===- UnicornArchitecture.def - Explicit software CPU reset state -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The virtual CPU executes little-endian AArch64 at EL1. Configure the upper
+// exception levels that a native hypervisor supplies when creating its vCPU.
+#ifdef NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER
+NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(SCREL3, 3, 6, 1, 1, 0, (1ull << 10) | 1)
+NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(HCREL2, 3, 4, 1, 1, 0, 1ull << 31)
+NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(SCTLREL1, 3, 0, 1, 0, 0,
+                                       aarch64::SCTLR & ~1ull)
+NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(CPACREL1, 3, 0, 1, 0, 2, aarch64::CPACR)
+#endif

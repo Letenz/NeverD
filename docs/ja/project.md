@@ -154,7 +154,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-ビルド時にシグネチャライブラリは `build/bin/signatures/` にインストールされます。`sigs --auto` は形式・アーキ・ビット幅でセットを選びます。PE ファイルの Rich ヘッダーがリンカーの Visual Studio リリースを示す場合は、そのリリースの `vs<year>.pat` と、どのリリースにも属さないファイルだけを読み込みます。`--sig-base <dir>` は別のシグネチャツリーから同じ方法で選びます。
+ビルド時にシグネチャライブラリは `build/bin/signatures/` にインストールされます。`sigs --auto` は形式・アーキ・ビット幅でセットを選びます。PE ファイルの Rich ヘッダーがリンカーの Visual Studio リリースを示す場合は、そのリリースの `vs<year>.pat` と、どのリリースにも属さないファイルだけを読み込みます。`--sig-base <dir>` は別のシグネチャツリーから同じ方法で選びます。 1 MiB 以上のパターンファイルは一度だけ解析されます。そのモジュールはユーザーのキャッシュディレクトリ内の `neverd/signatures` に保存され、以降の読み込みではマップされます。`NEVERD_SIGNATURE_CACHE` で別のディレクトリを指定でき、`off` でキャッシュを無効にします。
 
 ## ビルド
 

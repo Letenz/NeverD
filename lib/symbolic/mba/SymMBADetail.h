@@ -31,10 +31,12 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -144,6 +146,41 @@ abstractToMBA(SymContext &Ctx, SymRef Root, bool AllowProducts,
 /// raise, so the one place that turns an arity into a size is the one place
 /// that has to be right.
 std::optional<size_t> cornerCount(size_t NumAtoms);
+
+/// Read a corner without constructing an assignment for every variable in the
+/// surrounding context. Values not selected by this region remain zero, just
+/// as they do in the dense corner assignment.
+class CornerEvaluator {
+public:
+  CornerEvaluator(const SymContext &Ctx, SymRef Body,
+                  llvm::ArrayRef<uint32_t> Atoms)
+      : Plan(Ctx, Body), Zero(Ctx.width(Body), 0),
+        Ones(llvm::APInt::getAllOnes(Ctx.width(Body))) {
+    assert(cornerCount(Atoms.size()) && "unrepresentable corner domain");
+    for (unsigned J = 0; J < Atoms.size(); ++J)
+      Positions[Atoms[J]] = J;
+  }
+
+  llvm::APInt eval(size_t Pattern) {
+    auto IsSet = [&](uint32_t Id) {
+      auto It = Positions.find(Id);
+      return It != Positions.end() && ((Pattern >> It->second) & 1) != 0;
+    };
+    if (Plan.fitsU64()) {
+      const uint64_t AllOnes = Ones.getZExtValue();
+      return llvm::APInt(Zero.getBitWidth(), Plan.evalU64With([&](uint32_t Id) {
+        return IsSet(Id) ? AllOnes : uint64_t(0);
+      }));
+    }
+    return Plan.evalWith(
+        [&](uint32_t Id) { return IsSet(Id) ? &Ones : &Zero; });
+  }
+
+private:
+  SymEvalPlan Plan;
+  llvm::APInt Zero, Ones;
+  llvm::SmallDenseMap<uint32_t, unsigned, 8> Positions;
+};
 
 /// Evaluate \p Body at every assignment of its inputs to all-zeros or
 /// all-ones, and return the weights of its minterm decomposition.

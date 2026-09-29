@@ -6,6 +6,19 @@
 
 NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 進入點，並可在卸載前執行明確指定的循序請求情境。它使用 Unicorn 執行 CPU 指令，使用 NeverD 自有的有界 Windows 環境模型。它不會將驅動程式載入主機核心，也不會把客體 API 呼叫轉送給主機作業系統服務。
 
+## 執行後端
+
+預設 `driver-strict` 契約繼續使用 Unicorn。實驗性 `checked-x64-v1` 整數設定以 `--backend auto` 在 Linux x86_64 選擇 KVM，在 Windows x64 選擇 WHP；明確選擇不會降級。硬體不可用或契約不符會在執行前失敗。
+
+每條指令與記憶體存取先經檢查，再單步執行；保留 Windows 物件檢查、寫入觀察及共享別名。目前不支援 SIMD/x87、REP、鎖定操作、記憶體讀改寫、跨頁資料存取、MMIO、其他 OS 或使用者程序。逾時與取消在有界指令之間檢查，執行後不切换後端重跑。這不代表下文的完整驅動相容性。
+
+開關：`NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。KVM 需要 `/dev/kvm` 權限；WHP 動態載入系統 DLL，仍需 Windows 實機驗證。新 C 入口為 `neverd_emulate_driver_backend_json`，v1 ABI 不變。報告記錄後端、契約與選擇原因。
+
+```bash
+build-release/bin/neverd emulate-driver path/to/driver.sys \
+  --backend auto --execution-contract checked-x64-v1
+```
+
 ## 建置與執行
 
 此功能須明確啟用，且不依賴 `BUILD_TESTING`：
@@ -466,7 +479,7 @@ JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`�
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` 使用相同的 v1 選項及所有權規則，另外接受嚴格驗證的情境輸入。必須傳入非 NULL、以 NUL 結尾的 JSON 字串。原有 `neverd_emulate_driver_json` ABI 維持不變，仍僅執行初始化。C++ 解析器 `driverOptionsFromScenarioJSON` 為 `emulateDriver` 呼叫端提供相同的情境驗證。
 
-內部 C++ 進入點為 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由現有載入器負責；Windows 物件／API 行為由 `lib/emulation/windows` 負責；CPU 狀態及執行由 Unicorn 配接器負責。配接器與模型使用相同的客體記憶體介面。Windows API 行為不應放入 Unicorn fork。
+內部 C++ 進入點為 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由現有載入器負責；Windows 物件／API 行為由 `lib/emulation/os/windows` 負責；CPU 狀態及執行由 Unicorn 配接器負責。配接器與模型使用相同的客體記憶體介面。Windows API 行為不應放入 Unicorn fork。
 
 WDM `METHOD_NEITHER` 的 `Type3InputBuffer` 與 `IRP.UserBuffer` 分別指向獨立的使用者記憶體。`ProbeForRead` 只檢查範圍與對齊，不觸碰頁面；`ProbeForWrite` 會觸碰每一頁。`ExGetPreviousMode` 傳回請求模式。`MmProbeAndLockPages` 鎖定單一使用者配置的頁面，`MmGetSystemAddressForMdlSafe` 建立共用核心別名，`MmUnlockPages` 撤銷別名並解除鎖定。不支援任意程序位址空間。
 

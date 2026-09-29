@@ -9,9 +9,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "GuestMemory.h"
 #include "gtest/gtest.h"
-#include "windows/KernelDispatcher.h"
+#include "os/windows/KernelDispatcher.h"
+
+#include "neverd/emulation/GuestMemory.h"
 
 #include <algorithm>
 #include <initializer_list>

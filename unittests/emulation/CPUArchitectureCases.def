@@ -1,0 +1,66 @@
+//===- CPUArchitectureCases.def - Independent ARM64 instruction fixtures --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_CPU_TEST_CODE
+// mov x0, #42; add x0, x0, #1; str x0, [x1]; ldr w2, [x1]; subs w3, w2, #43;
+// b.eq 1f; mov x4, #99; 1: mov x4, #7; nop
+NEVERD_CPU_TEST_CODE(Arithmetic, 0xd2800540, 0x91000400, 0xf9000020, 0xb9400022,
+                     0x7100ac43, 0x54000040, 0xd2800c64, 0xd28000e4, 0xd503201f)
+// ldr x0, [x1]; nop
+NEVERD_CPU_TEST_CODE(Load, 0xf9400020, 0xd503201f)
+// str x0, [x1]; nop
+NEVERD_CPU_TEST_CODE(Store, 0xf9000020, 0xd503201f)
+// stp x0, x2, [x1]; nop
+NEVERD_CPU_TEST_CODE(PairStore, 0xa9000820, 0xd503201f)
+// stp x0, x2, [sp, #-16]!; ldp x3, x4, [sp], #16; nop
+NEVERD_CPU_TEST_CODE(PairStack, 0xa9bf0be0, 0xa8c113e3, 0xd503201f)
+// str w0, [x1, x2, lsl #2]; ldr w3, [x1, w2, uxtw #2]; nop
+NEVERD_CPU_TEST_CODE(Indexed, 0xb8227820, 0xb8625823, 0xd503201f)
+// ldrsb x0, [x1]; ldrsh w2, [x1, #2]; ldrsw x3, [x1, #4]; nop
+NEVERD_CPU_TEST_CODE(SignedLoads, 0x39800020, 0x79c00422, 0xb9800423,
+                     0xd503201f)
+// movi v0.16b, #0x5a; eor v1.16b, v0.16b, v0.16b; fmov d2, x3; mrs x4,
+// tpidr_el0; nop
+NEVERD_CPU_TEST_CODE(SIMD, 0x4f02e740, 0x6e201c01, 0x9e670062, 0xd53bd044,
+                     0xd503201f)
+// b .
+NEVERD_CPU_TEST_CODE(Loop, 0x14000000)
+// mrs x0, cntvct_el0; nop
+// mrs x0, CurrentEL; nop
+NEVERD_CPU_TEST_CODE(CurrentEL, 0xd5384240, 0xd503201f)
+NEVERD_CPU_TEST_CODE(System, 0xd53be040, 0xd503201f)
+// mov x0, #123; nop
+NEVERD_CPU_TEST_CODE(Modified, 0xd2800f60, 0xd503201f)
+// mov x0, #5; bl 1f; b 2f; 1: add x0, x0, #7; ret; 2: nop
+NEVERD_CPU_TEST_CODE(Call, 0xd28000a0, 0x94000002, 0x14000003, 0x91001c00,
+                     0xd65f03c0, 0xd503201f)
+// nop
+NEVERD_CPU_TEST_CODE(NOP, 0xd503201f)
+#endif
+#ifdef NEVERD_CPU_TEST_VALUE
+NEVERD_CPU_TEST_VALUE(PageSize, 4096)
+NEVERD_CPU_TEST_VALUE(Code, 0xffff800000100000ull)
+NEVERD_CPU_TEST_VALUE(Data, 0xffff800000200000ull)
+NEVERD_CPU_TEST_VALUE(Stack, 0xffff800000300000ull)
+NEVERD_CPU_TEST_VALUE(Alias, 0xffff800000400000ull)
+NEVERD_CPU_TEST_VALUE(Limit, 32 * PageSize)
+NEVERD_CPU_TEST_VALUE(Timeout, 2000000)
+NEVERD_CPU_TEST_VALUE(ShortTimeout, 2000)
+NEVERD_CPU_TEST_VALUE(Value, 0x1122334455667788ull)
+NEVERD_CPU_TEST_VALUE(Updated, 0xaabbccdd12345678ull)
+NEVERD_CPU_TEST_VALUE(ArithmeticValue, 43)
+NEVERD_CPU_TEST_VALUE(ArithmeticFlags, 0x60000000)
+NEVERD_CPU_TEST_VALUE(SIMDPattern, 0x5a5a5a5a5a5a5a5aull)
+NEVERD_CPU_TEST_VALUE(Remaps, 16)
+#endif
+#ifdef NEVERD_CPU_TEST_TEXT
+NEVERD_CPU_TEST_TEXT(RequireNative, "NEVERD_REQUIRE_AARCH64_HARDWARE")
+#endif
+#ifdef NEVERD_CPU_TEST_CP_REGISTER
+// A standalone Unicorn machine starts at EL3; model the upper-level state
+// that KVM/WHP configure when creating an AArch64 EL1 virtual processor.
+NEVERD_CPU_TEST_CP_REGISTER(SCREL3, 3, 6, 1, 1, 0, (1ull << 10) | 1)
+NEVERD_CPU_TEST_CP_REGISTER(HCREL2, 3, 4, 1, 1, 0, 1ull << 31)
+#endif

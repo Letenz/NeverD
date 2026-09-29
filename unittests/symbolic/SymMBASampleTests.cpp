@@ -7,6 +7,7 @@
 #include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <random>
 #include <utility>
 #include <vector>
@@ -18,24 +19,32 @@ namespace {
 using Assignment = std::vector<llvm::APInt>;
 
 std::vector<Assignment> referenceAssignments(const SymContext &Ctx,
+                                             llvm::ArrayRef<uint32_t> Active,
                                              unsigned Samples) {
+  llvm::SmallVector<uint32_t, 16> Vars(Active);
+  llvm::sort(Vars);
+  Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
   std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
   std::vector<Assignment> Out;
   for (unsigned S = 0; S < Samples; ++S) {
     Assignment Values;
     for (size_t I = 0; I < Ctx.numVars(); ++I) {
       const unsigned W = Ctx.varInfo(uint32_t(I)).Width;
+      Values.emplace_back(W, 0);
+    }
+    for (uint32_t Id : Vars) {
+      const unsigned W = Ctx.varInfo(Id).Width;
       if (S == 0)
-        Values.emplace_back(W, 0);
+        Values[Id] = llvm::APInt(W, 0);
       else if (S == 1)
-        Values.push_back(llvm::APInt::getAllOnes(W));
+        Values[Id] = llvm::APInt::getAllOnes(W);
       else if (S == 2)
-        Values.emplace_back(W, 1);
+        Values[Id] = llvm::APInt(W, 1);
       else {
         std::vector<uint64_t> Words((W + 63) / 64);
         for (uint64_t &Word : Words)
           Word = Rng();
-        Values.emplace_back(W, Words);
+        Values[Id] = llvm::APInt(W, Words);
       }
     }
     Out.push_back(std::move(Values));
@@ -46,9 +55,11 @@ std::vector<Assignment> referenceAssignments(const SymContext &Ctx,
 bool referenceAgree(const SymContext &Ctx, SymRef A, SymRef B,
                     unsigned Samples) {
   SymEvalPlan PlanA(Ctx, A), PlanB(Ctx, B);
+  llvm::SmallVector<uint32_t, 16> Vars(PlanA.vars());
+  Vars.append(PlanB.vars().begin(), PlanB.vars().end());
   // The reference retains APInt throughout. Plan::eval delegates each
   // operation to evalNodeAP, so no operator semantics are duplicated here.
-  for (const Assignment &Values : referenceAssignments(Ctx, Samples))
+  for (const Assignment &Values : referenceAssignments(Ctx, Vars, Samples))
     if (PlanA.eval(Values) != PlanB.eval(Values))
       return false;
   return true;
@@ -59,8 +70,10 @@ bool referenceAgree(const SymContext &Ctx, SymRef A, SymRef B,
 // ensures that evaluating neither branch cannot accidentally pass the test.
 void expectAtSample(SymContext &Ctx, SymRef E, SymRef Selector,
                     unsigned Sample) {
-  const auto Values = referenceAssignments(Ctx, Sample + 1);
   SymEvalPlan Plan(Ctx, E);
+  llvm::SmallVector<uint32_t, 16> Vars(Plan.vars());
+  Vars.push_back(Ctx.varId(Selector));
+  const auto Values = referenceAssignments(Ctx, Vars, Sample + 1);
   llvm::APInt Expected = Plan.eval(Values.back());
   SymRef Gate =
       Ctx.mkEq(Selector, Ctx.mkConst(Values.back()[Ctx.varId(Selector)]));
@@ -92,7 +105,8 @@ TEST(SymMBASample, ZeroSamplesDoNotRejectDifferentValues) {
 TEST(SymMBASample, VisitsZeroOnesOneThenTheFirstRandomPoint) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 64);
-  const auto Values = referenceAssignments(Ctx, 4);
+  const uint32_t Active[] = {Ctx.varId(X)};
+  const auto Values = referenceAssignments(Ctx, Active, 4);
   for (unsigned Sample = 0; Sample < Values.size(); ++Sample) {
     SCOPED_TRACE(Sample);
     for (unsigned Earlier = 0; Earlier < Sample; ++Earlier)
@@ -119,16 +133,17 @@ TEST(SymMBASample, MatchesAPAcrossNarrowAndWideWidths) {
   }
 }
 
-TEST(SymMBASample, UnusedWideVariablesStillConsumeTheirRandomWords) {
+TEST(SymMBASample, UnusedWideVariablesDoNotConsumeRandomWords) {
   SymContext Ctx;
   SymRef UnusedBefore = Ctx.mkVar("unused_before", 257);
   SymRef X = Ctx.mkVar("x", 64);
   SymRef UnusedBetween = Ctx.mkVar("unused_between", 65);
   SymRef Y = Ctx.mkVar("y", 32);
   SymRef UnusedAfter = Ctx.mkVar("unused_after", 128);
-  const auto Values = referenceAssignments(Ctx, 4);
+  const uint32_t Active[] = {Ctx.varId(X), Ctx.varId(Y)};
+  const auto Values = referenceAssignments(Ctx, Active, 4);
   for (SymRef Unused : {UnusedBefore, UnusedAfter})
-    ASSERT_GT(Values.back()[Ctx.varId(Unused)].getActiveBits(), 64u);
+    ASSERT_TRUE(Values.back()[Ctx.varId(Unused)].isZero());
   ASSERT_EQ(Ctx.width(UnusedBetween), 65u);
   SymRef Hit = Ctx.mkAnd(Ctx.mkEq(X, Ctx.mkConst(Values.back()[Ctx.varId(X)])),
                          Ctx.mkEq(Y, Ctx.mkConst(Values.back()[Ctx.varId(Y)])));

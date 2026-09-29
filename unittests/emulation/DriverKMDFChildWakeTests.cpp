@@ -11,8 +11,8 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_kmdf_child_wake_test.h"
 #include "gtest/gtest.h"
-#include "windows/KernelFramework.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/KernelFramework.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

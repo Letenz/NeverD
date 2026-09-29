@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_wdm_usb_idle_test.h"
 #include "gtest/gtest.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

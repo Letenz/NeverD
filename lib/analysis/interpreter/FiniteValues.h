@@ -9,6 +9,7 @@
 #define NEVERD_ANALYSIS_INTERPRETER_FINITEVALUES_H
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/solver/BitVectorSolver.h"
 
 namespace neverd::analysis::detail {
 
@@ -46,6 +47,12 @@ FiniteValues
 enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
                       llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit,
                       const SpecializationOptions &Options, uint64_t &Queries);
+
+FiniteValues
+enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
+                      llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit,
+                      solver::SolverOptions Settings, uint64_t MaxQueries,
+                      uint64_t MaxSymbolicNodes, uint64_t &Queries);
 
 } // namespace neverd::analysis::detail
 

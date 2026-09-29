@@ -4,7 +4,20 @@
 
 # Windows 驱动模拟
 
-NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动的 PE 入口点，并可在卸载前执行显式指定的请求场景（默认串行）。它使用 Unicorn 执行 CPU 指令，使用 NeverD 自有的有界 Windows 环境模型。它不会将驱动加载到宿主内核，也不会把来宾 API 调用转发给宿主操作系统服务。
+NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动的 PE 入口点，并可在卸载前执行显式指定的请求场景（默认串行）。它默认使用 Unicorn 执行 CPU 指令，使用 NeverD 自有的有界 Windows 环境模型。它不会将驱动加载到宿主内核，也不会把来宾 API 调用转发给宿主操作系统服务。
+
+## 执行后端
+
+默认 `driver-strict` 契约继续使用 Unicorn。新增实验性 `checked-x64-v1` 整数执行配置：`--backend auto` 在 Linux x86_64 选择 KVM，在 Windows x64 选择 WHP。显式选择 `kvm` 或 `whp` 不会回退；硬件不可用或契约不匹配在执行前报错。
+
+硬件路径逐条预检指令和访存，再单步执行，保留 Windows 对象检查、写入观察、RAM 别名和仅保存 CPU 的上下文。目前拒绝 SIMD/x87、REP、加锁操作、内存读改写、跨页数据访问、MMIO 和未建模的 CPU 行为，不代表下文所有驱动场景均已兼容，也尚不支持其他系统或用户进程。超时与取消在有界指令之间检查；这不是通用的异步抢占 VM 执行器。guest 开始执行后不会换后端重跑。
+
+构建选项为 `NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。Windows API 从系统 DLL 动态加载；KVM 要求当前用户能访问 `/dev/kvm`，模拟器不修改宿主权限。WHP 仍需 Windows 实机运行验证，交叉编译不能代替。新增 C 入口 `neverd_emulate_driver_backend_json`，现有 v1 结构和入口不变；新报告包含请求/实际后端、执行契约及选择原因。
+
+```bash
+build-release/bin/neverd emulate-driver path/to/driver.sys \
+  --backend auto --execution-contract checked-x64-v1
+```
 
 ## 构建与运行
 
@@ -460,7 +473,7 @@ JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、�
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` 使用相同的 v1 选项与所有权规则，另外接受严格验证的场景输入。必须传入非 NULL、以 NUL 结尾的 JSON 字符串。原有 `neverd_emulate_driver_json` ABI 保持不变，仍仅执行初始化。C++ 解析器 `driverOptionsFromScenarioJSON` 为 `emulateDriver` 的调用方提供相同的场景验证。
 
-内部 C++ 入口为 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由现有加载器负责；Windows 对象／API 行为由 `lib/emulation/windows` 负责；CPU 状态及执行由 Unicorn 适配器负责。适配器与模型使用相同的来宾内存接口。Windows API 行为不应放入 Unicorn fork。
+内部 C++ 入口为 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由现有加载器负责；Windows 对象／API 行为由 `lib/emulation/os/windows` 负责；CPU 状态及执行由 Unicorn 适配器负责。适配器与模型使用相同的来宾内存接口。Windows API 行为不应放入 Unicorn fork。
 
 `IoBuildPartialMdl` 支持已构建 MDL 的非空子范围；长度为零表示剩余范围。目标必须具有足够 PFN 容量。部分 MDL 共享物理页，不重复锁页；可继承现有系统映射或建立自己的系统别名。释放或通过真实 WDK 内联 `MmPrepareMdlForReuse` 准备重用时，只撤销自身拥有的映射。非分页源描述符可独立释放；仍有部分 MDL 依赖的根锁页或系统别名不能提前释放。IRP 完成先检查整条链，清理不依赖链中顺序；活动 DMA 阻止重建或提前释放。
 

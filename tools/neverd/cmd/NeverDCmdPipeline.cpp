@@ -530,7 +530,7 @@ int runDecompile(neverd_session_t Sess) {
       }
       neverd_free_string(Report);
     } else {
-      Source = LlvmRoute ? neverd_decompile_llvm(Sess, Entry)
+      Source = LlvmRoute ? neverd_decompile_llvm_ex(Sess, Entry, NoOpt)
                          : neverd_decompile(Sess, Entry);
     }
   } else {

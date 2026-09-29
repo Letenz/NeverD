@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/DriverImage.h"
+#include "os/windows/DriverImage.h"
 
 #include "neverd/emulation/DriverSession.h"
 

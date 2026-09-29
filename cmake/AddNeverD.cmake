@@ -2,6 +2,7 @@
 #
 # add_neverd_component_library(<name> source1 [source2 ...]
 #     [LINK_COMPONENTS comp1 ...]
+#     [LLVM_COMPONENTS comp1 ...]
 #     [LINK_LIBS lib1 ...])
 #
 # add_neverd_tool(<name> source1 [source2 ...]
@@ -13,8 +14,9 @@ define_property(GLOBAL PROPERTY NEVERD_COMPONENT_LIBS
   BRIEF_DOCS "List of all NeverD component library targets"
   FULL_DOCS  "Populated by add_neverd_component_library()")
 
-# Common third-party libraries that all NeverD components need.
-# Linked PUBLIC so transitive consumers inherit them automatically.
+# Default third-party dependencies for NeverD components. Libraries with a
+# narrower LLVM boundary can specify LLVM_COMPONENTS. Dependencies are PUBLIC
+# so transitive consumers inherit them automatically.
 set(NEVERD_COMMON_LIBS
   ${LLVM_LIBS}
   capstone_static)
@@ -40,7 +42,7 @@ function(add_neverd_component_library name)
   cmake_parse_arguments(ARG
     ""
     ""
-    "LINK_COMPONENTS;LINK_LIBS"
+    "LINK_COMPONENTS;LLVM_COMPONENTS;LINK_LIBS"
     ${ARGN})
 
   add_library(${name} STATIC ${ARG_UNPARSED_ARGUMENTS})
@@ -57,8 +59,14 @@ function(add_neverd_component_library name)
     list(APPEND _resolved_components "NeverD${_comp}")
   endforeach()
 
+  set(_common_libs ${NEVERD_COMMON_LIBS})
+  if(ARG_LLVM_COMPONENTS)
+    llvm_map_components_to_libnames(_llvm_libs ${ARG_LLVM_COMPONENTS})
+    set(_common_libs ${_llvm_libs} capstone_static)
+  endif()
+
   target_link_libraries(${name}
-    PUBLIC  ${_resolved_components} ${NEVERD_COMMON_LIBS}
+    PUBLIC  ${_resolved_components} ${_common_libs}
     PRIVATE ${ARG_LINK_LIBS})
 
   # Component archives are also linked into libneverd.  Their objects must be
@@ -170,9 +178,12 @@ function(add_neverd_unittest name)
   # LABELS ${name} lets `ctest -L <binary>` run just this binary's cases.
   # PRE_TEST avoids concurrent POST_BUILD discovery races across test targets.
   # Discovery gets its own finite timeout; PROPERTIES TIMEOUT remains the
-  # independent per-test execution timeout.
+  # independent per-test execution timeout.  A test keeps no signature files
+  # in the user's cache (see include/neverd/sigs/SignatureCache.def); one that
+  # tests the cache gives it a directory of its own.
   gtest_discover_tests(${name}
     PROPERTIES TIMEOUT ${ARG_TIMEOUT} LABELS ${name}
+               ENVIRONMENT "NEVERD_SIGNATURE_CACHE=off"
     DISCOVERY_MODE PRE_TEST
     DISCOVERY_TIMEOUT ${ARG_DISCOVERY_TIMEOUT})
 endfunction()

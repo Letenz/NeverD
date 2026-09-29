@@ -359,34 +359,12 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
     }
   }
 
-  SymEvalPlan Plan(Ctx, Body);
-
-  if (Plan.fitsU64()) {
-    const uint64_t Ones =
-        Width == 64 ? ~uint64_t(0) : (uint64_t(1) << Width) - 1;
-    std::vector<uint64_t> Assignment(Ctx.numVars(), 0);
-    for (size_t K = 0; K < *Corners; ++K) {
-      // Consecutive Gray corners change one input. Store each reading at its
-      // ordinary binary index so coefficient and selector consumers keep the
-      // same table convention without rewriting every atom at every corner.
-      if (K != 0)
-        Assignment[Atoms[std::countr_zero(K)]] ^= Ones;
-      const size_t Pattern = K ^ (K >> 1);
-      // The corner value is the negated weight, so negating is what turns a
-      // reading into a weight.
-      Weights[Pattern] =
-          -llvm::APInt(Width, Plan.evalU64(Assignment),
-                       /*isSigned=*/false, /*implicitTrunc=*/true);
-    }
-    return Weights;
-  }
-
-  const llvm::APInt Zero(Width, 0);
-  std::vector<llvm::APInt> Assignment(Ctx.numVars(), Zero);
+  CornerEvaluator Evaluator(Ctx, Body, Atoms);
   for (size_t K = 0; K < *Corners; ++K) {
-    if (K != 0)
-      Assignment[Atoms[std::countr_zero(K)]].flipAllBits();
-    Weights[K ^ (K >> 1)] = -Plan.eval(Assignment);
+    // Retain the Gray traversal and ordinary binary table indices used by
+    // coefficient and selector consumers.
+    const size_t Pattern = K ^ (K >> 1);
+    Weights[Pattern] = -Evaluator.eval(Pattern);
   }
   return Weights;
 }
@@ -413,43 +391,55 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
   SymEvalPlan PlanA(Ctx, A);
   SymEvalPlan PlanB(Ctx, B);
 
+  llvm::SmallVector<uint32_t, 16> Vars(PlanA.vars());
+  Vars.append(PlanB.vars().begin(), PlanB.vars().end());
+  llvm::sort(Vars);
+  Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
+  llvm::SmallDenseMap<uint32_t, unsigned, 16> Positions;
+  for (unsigned I = 0; I < Vars.size(); ++I)
+    Positions[Vars[I]] = I;
+  auto Position = [&](uint32_t Id) {
+    auto It = Positions.find(Id);
+    assert(It != Positions.end() && "plan requested an unlisted variable");
+    return It->second;
+  };
+
   if (PlanA.fitsU64() && PlanB.fitsU64()) {
     llvm::SmallVector<uint64_t, 8> Masks;
-    for (size_t I = 0; I < Ctx.numVars(); ++I) {
-      const uint32_t Width = Ctx.varInfo(uint32_t(I)).Width;
-      if (Width > 64)
-        break;
+    for (uint32_t Id : Vars) {
+      const uint32_t Width = Ctx.varInfo(Id).Width;
+      assert(Width <= 64 && "word plan contains a wide variable");
       Masks.push_back(~uint64_t(0) >> (64 - Width));
     }
-    // Unused variables also consume the deterministic random stream. Keep the
-    // arbitrary-width path whenever any such input needs more than one word.
-    if (Masks.size() == Ctx.numVars()) {
-      llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
-      std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
-      for (unsigned S = 0; S < Samples; ++S) {
-        // These widths use exactly one generator word per random assignment,
-        // with the same truncation and three corners as the general path.
-        for (size_t I = 0; I < Assignment.size(); ++I)
-          Assignment[I] = S == 0   ? 0
-                          : S == 1 ? Masks[I]
-                          : S == 2 ? 1
-                                   : Rng() & Masks[I];
-        if (PlanA.evalU64(Assignment) != PlanB.evalU64(Assignment))
-          return false;
-      }
-      return true;
+    llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
+    auto Lookup = [&](uint32_t Id) { return Assignment[Position(Id)]; };
+    std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
+    for (unsigned S = 0; S < Samples; ++S) {
+      // The first three points and one generator word per narrow input match
+      // the arbitrary-width path. Only referenced inputs advance the stream.
+      for (size_t I = 0; I < Assignment.size(); ++I)
+        Assignment[I] = S == 0   ? 0
+                        : S == 1 ? Masks[I]
+                        : S == 2 ? 1
+                                 : Rng() & Masks[I];
+      if (PlanA.evalU64With(Lookup) != PlanB.evalU64With(Lookup))
+        return false;
     }
+    return true;
   }
 
-  std::vector<llvm::APInt> Assignment;
-  Assignment.reserve(Ctx.numVars());
-  for (size_t I = 0; I < Ctx.numVars(); ++I)
-    Assignment.emplace_back(Ctx.varInfo(uint32_t(I)).Width, 0);
+  llvm::SmallVector<llvm::APInt, 8> Assignment;
+  Assignment.reserve(Vars.size());
+  for (uint32_t Id : Vars)
+    Assignment.emplace_back(Ctx.varInfo(Id).Width, 0);
+  auto Lookup = [&](uint32_t Id) -> const llvm::APInt * {
+    return &Assignment[Position(Id)];
+  };
 
   std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
   for (unsigned S = 0; S < Samples; ++S) {
     for (size_t I = 0; I < Assignment.size(); ++I) {
-      uint32_t W = Ctx.varInfo(uint32_t(I)).Width;
+      uint32_t W = Assignment[I].getBitWidth();
       // The first few rounds pin every input to a corner of the space, where a
       // mistake in the corner arithmetic itself would show; the rest are
       // ordinary values, where a mistake in the algebra would.
@@ -468,7 +458,7 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
         break;
       }
     }
-    if (PlanA.eval(Assignment) != PlanB.eval(Assignment))
+    if (PlanA.evalWith(Lookup) != PlanB.evalWith(Lookup))
       return false;
   }
   return true;

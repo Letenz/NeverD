@@ -6,7 +6,7 @@
 
 #include "fixtures/driver_user_mapping.h"
 #include "gtest/gtest.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

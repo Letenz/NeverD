@@ -241,6 +241,22 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                    uint32_t Limit,
                                    const SpecializationOptions &Options,
                                    uint64_t &Queries) {
+  SolverOptions Settings;
+  Settings.Blast.MaxGates = Options.MaxSolverGates;
+  Settings.Sat.MaxConflicts = Options.MaxSolverConflicts;
+  Settings.Sat.MaxPropagations = Options.MaxSolverPropagations;
+  Settings.Sat.MaxWatchVisits = Options.MaxSolverWatchVisits;
+  return enumerateFiniteValues(Ctx, Predicate, Values, Limit, Settings,
+                               Options.MaxSolverQueries,
+                               Options.MaxSymbolicNodes, Queries);
+}
+
+FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
+                                   llvm::ArrayRef<SymRef> Values,
+                                   uint32_t Limit, SolverOptions Settings,
+                                   uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes,
+                                   uint64_t &Queries) {
   if (!Predicate || Ctx.width(Predicate) != 1 || !Limit)
     return {FiniteValueStatus::Invalid, {}};
   for (SymRef Value : Values)
@@ -265,14 +281,12 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
     if (Tuple.size() == Values.size())
       return {FiniteValueStatus::Complete, {std::move(Tuple)}};
   }
-  if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+  if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FiniteValueStatus::Unknown, {}};
 
-  SolverOptions Settings;
-  Settings.Blast.MaxGates = Options.MaxSolverGates;
-  Settings.Sat.MaxConflicts = Options.MaxSolverConflicts;
-  Settings.Sat.MaxPropagations = Options.MaxSolverPropagations;
-  Settings.Sat.MaxWatchVisits = Options.MaxSolverWatchVisits;
+  // Enumeration needs actual models even if other callers use decision-only
+  // queries. Never fill an absent projected value with an arbitrary default.
+  Settings.BuildModel = true;
   BitVectorSolver Solver(Ctx, Settings);
   const auto EncodingFailure = [&] {
     return FiniteValues{Solver.encodeError() == BlastError::Malformed
@@ -295,9 +309,9 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
   }
   FiniteValues Result;
   while (true) {
-    if (Queries >= Options.MaxSolverQueries)
+    if (Queries >= MaxQueries)
       return {FiniteValueStatus::QueryBudgetExceeded, {}};
-    if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+    if (Ctx.numNodes() > MaxSymbolicNodes)
       return {FiniteValueStatus::Unknown, {}};
     ++Queries;
     switch (Solver.check()) {

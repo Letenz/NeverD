@@ -10,8 +10,8 @@
 
 #include "DriverNestedUserTestSupport.h"
 #include "gtest/gtest.h"
-#include "windows/KernelException.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/KernelException.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

@@ -162,7 +162,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Signaturbibliotheken werden zur Build-Zeit nach `build/bin/signatures/` installiert. `sigs --auto` wählt das Set nach Format, Architektur und Bitness. Nennt der Rich-Header einer PE-Datei die Visual-Studio-Version ihres Linkers, lädt es nur deren `vs<year>.pat` neben den Dateien, die zu keiner Version gehören. `--sig-base <dir>` wählt auf dieselbe Weise aus einem anderen Signaturbaum.
+Signaturbibliotheken werden zur Build-Zeit nach `build/bin/signatures/` installiert. `sigs --auto` wählt das Set nach Format, Architektur und Bitness. Nennt der Rich-Header einer PE-Datei die Visual-Studio-Version ihres Linkers, lädt es nur deren `vs<year>.pat` neben den Dateien, die zu keiner Version gehören. `--sig-base <dir>` wählt auf dieselbe Weise aus einem anderen Signaturbaum. Eine Musterdatei ab 1 MiB wird nur einmal geparst: Ihre Module werden in `neverd/signatures` im Cache-Verzeichnis des Benutzers abgelegt und bei späteren Ladevorgängen eingeblendet. `NEVERD_SIGNATURE_CACHE` nennt ein anderes Verzeichnis, `off` schaltet den Cache ab.
 
 ## Bauen
 

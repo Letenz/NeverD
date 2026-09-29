@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDInterpreterSpecialization
   InterpreterSpecialization.cpp
+  NativeStackControl.cpp
   InterpreterMachineState.cpp
   FiniteValues.cpp
   FiniteQueryCache.cpp

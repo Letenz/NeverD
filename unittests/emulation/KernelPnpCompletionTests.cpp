@@ -10,11 +10,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 namespace neverd::emulation {
 namespace {
@@ -74,7 +74,8 @@ protected:
     Device.InitialSystemPower = SystemPowerState::Working;
     Options.PnpDevices.push_back(Device);
     success(Model->initialize(Image, Options));
-    const uint64_t Extension = get(Model->driverObject() + DriverExtensionOffset);
+    const uint64_t Extension =
+        get(Model->driverObject() + DriverExtensionOffset);
     put(Extension + DriverAddDeviceOffset, DispatchPC);
     put(Model->driverObject() + DriverDispatchOffset + 0x1b * 8, DispatchPC);
     success(Model->finishEntry());
@@ -83,7 +84,8 @@ protected:
     PDO = Add.Argument1;
     ASSERT_NE(PDO, 0u);
     EXPECT_EQ(call("IoCreateDevice", {Model->driverObject(), 16, 0,
-                                      UnknownDeviceType, 0, 0, Scratch}), 0u);
+                                      UnknownDeviceType, 0, 0, Scratch}),
+              0u);
     FDO = get(Scratch);
     put(FDO + DeviceFlagsOffset, DeviceBufferedIO, 4);
     EXPECT_EQ(call("IoAttachDeviceToDeviceStack", {FDO, PDO}), PDO);
@@ -143,7 +145,7 @@ protected:
     success(Model->finalizeRequest(IRP));
   }
   void rejectedUpperStatus(DevicePnpRequest Minor, uint32_t Status,
-                            llvm::StringRef Message) {
+                           llvm::StringRef Message) {
     completePnp(DevicePnpRequest::Start);
     if (Minor == DevicePnpRequest::Stop ||
         Minor == DevicePnpRequest::CancelStop)
@@ -214,7 +216,8 @@ TEST_F(KernelPnpCompletion, SynchronousBusStatusSurvivesChangedGuestIoStatus) {
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelPnpCompletion, DeadlineBeginsAtProviderReceiptAndPreservesPending) {
+TEST_F(KernelPnpCompletion,
+       DeadlineBeginsAtProviderReceiptAndPreservesPending) {
   EXPECT_FALSE(take(Model->nextScheduled(true, 37)));
   const uint64_t IRP = begin(11);
   send(IRP, Pending);
@@ -236,7 +239,8 @@ TEST_F(KernelPnpCompletion, DeadlineBeginsAtProviderReceiptAndPreservesPending) 
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelPnpCompletion, DeadlineWithoutGuestCallbackCompletesWithoutDispatch) {
+TEST_F(KernelPnpCompletion,
+       DeadlineWithoutGuestCallbackCompletesWithoutDispatch) {
   const uint64_t IRP = begin(5, 0, false);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
@@ -264,7 +268,8 @@ TEST_F(KernelPnpCompletion, ScheduledMPRKeepsThePacketUntilLaterCompletion) {
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelPnpCompletion, ScheduledNestedCompletionThenMPRDoesNotReadRetiredIRP) {
+TEST_F(KernelPnpCompletion,
+       ScheduledNestedCompletionThenMPRDoesNotReadRetiredIRP) {
   const uint64_t IRP = begin(10);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
@@ -272,18 +277,21 @@ TEST_F(KernelPnpCompletion, ScheduledNestedCompletionThenMPRDoesNotReadRetiredIR
   call("IoMarkIrpPending", {IRP});
   call("IofCompleteRequest", {IRP, 0});
   EXPECT_TRUE(observation().Completed);
-  success(Memory->write(IRP, std::vector<uint8_t>(IRPSize + 2 * StackSize, 0xee)));
+  success(
+      Memory->write(IRP, std::vector<uint8_t>(IRPSize + 2 * StackSize, 0xee)));
   finish(Call.ID, StatusMoreProcessingRequired);
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelPnpCompletion, WaitingCompletionResumesAfterWorkerWithTheSameIdentity) {
+TEST_F(KernelPnpCompletion,
+       WaitingCompletionResumesAfterWorkerWithTheSameIdentity) {
   const uint64_t IRP = begin(10);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
   auto Completion = delivery();
   const uint64_t Item = call("IoAllocateWorkItem", {FDO});
-  call("IoQueueWorkItem", {Item, DispatchPC, profile::DelayedWorkQueue, Scratch});
+  call("IoQueueWorkItem",
+       {Item, DispatchPC, profile::DelayedWorkQueue, Scratch});
   put(Scratch + 0x100, uint64_t(-5));
   call("KeDelayExecutionThread", {0, 0, Scratch + 0x100});
   auto Wait = Model->takeWait();
@@ -303,13 +311,15 @@ TEST_F(KernelPnpCompletion, WaitingCompletionResumesAfterWorkerWithTheSameIdenti
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelPnpCompletion, FullCallbackCapacityCannotPublishBusCompletionEffects) {
+TEST_F(KernelPnpCompletion,
+       FullCallbackCapacityCannotPublishBusCompletionEffects) {
   const uint64_t IRP = begin(10);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
   for (unsigned I = 0; I < scheduler::DefaultMaxPendingCallbacks; ++I) {
     const uint64_t Item = call("IoAllocateWorkItem", {FDO});
-    call("IoQueueWorkItem", {Item, DispatchPC, profile::DelayedWorkQueue, Scratch});
+    call("IoQueueWorkItem",
+         {Item, DispatchPC, profile::DelayedWorkQueue, Scratch});
     auto Worker = take(Model->nextScheduled(false));
     ASSERT_TRUE(Worker);
     success(Model->suspendScheduled(Worker->ID));
@@ -350,7 +360,8 @@ TEST_F(KernelPnpCompletion, DelayedQueryStopFailureRollsBackAtUpperCompletion) {
 TEST_F(KernelPnpCompletion, DelayedQueryStopUpperFailureOverridesBusSuccess) {
   completePnp(DevicePnpRequest::Start);
   constexpr uint32_t Failure = 0xc0000001;
-  const uint64_t IRP = begin(11, StatusSuccess, true, DevicePnpRequest::QueryStop);
+  const uint64_t IRP =
+      begin(11, StatusSuccess, true, DevicePnpRequest::QueryStop);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
   const auto Call = delivery();
@@ -367,11 +378,13 @@ TEST_F(KernelPnpCompletion, DelayedStopRejectsNonzeroUpperSuccessBeforePop) {
   rejectedUpperStatus(DevicePnpRequest::Stop, 1, "STATUS_SUCCESS");
 }
 
-TEST_F(KernelPnpCompletion, DelayedCancelStopRejectsNonzeroUpperSuccessBeforePop) {
+TEST_F(KernelPnpCompletion,
+       DelayedCancelStopRejectsNonzeroUpperSuccessBeforePop) {
   rejectedUpperStatus(DevicePnpRequest::CancelStop, 1, "STATUS_SUCCESS");
 }
 
-TEST_F(KernelPnpCompletion, DelayedSurpriseRejectsNonzeroUpperSuccessBeforePop) {
+TEST_F(KernelPnpCompletion,
+       DelayedSurpriseRejectsNonzeroUpperSuccessBeforePop) {
   rejectedUpperStatus(DevicePnpRequest::SurpriseRemoval, 1, "STATUS_SUCCESS");
 }
 
@@ -381,10 +394,12 @@ TEST_F(KernelPnpCompletion, UpperQueryStopResourceRequeryCannotCommitOrPop) {
                       "unsupported resource requery");
 }
 
-TEST_F(KernelPnpCompletion, DelayedCancelStopMPRRetainsStopPendingUntilRecomplete) {
+TEST_F(KernelPnpCompletion,
+       DelayedCancelStopMPRRetainsStopPendingUntilRecomplete) {
   completePnp(DevicePnpRequest::Start);
   completePnp(DevicePnpRequest::QueryStop);
-  const uint64_t IRP = begin(19, StatusSuccess, true, DevicePnpRequest::CancelStop);
+  const uint64_t IRP =
+      begin(19, StatusSuccess, true, DevicePnpRequest::CancelStop);
   send(IRP, Pending);
   success(Model->recordDispatchReturn(IRP, Pending));
   const auto Call = delivery();
@@ -412,11 +427,13 @@ TEST_F(KernelPnpCompletion, DelayedSurprisePreservesDevicesUntilLaterRemove) {
   call("IoMarkIrpPending", {IRP});
   finish(Call.ID);
   success(Model->finalizeRequest(IRP));
-  EXPECT_EQ(Result.PnpDevices.front().PnpState, DevicePnpState::SurpriseRemoved);
+  EXPECT_EQ(Result.PnpDevices.front().PnpState,
+            DevicePnpState::SurpriseRemoved);
   EXPECT_TRUE(Result.PnpDevices.front().Attached);
   EXPECT_TRUE(Result.PnpDevices.front().ProviderPresent);
   success(Model->validateGuestAccess(FDO + DeviceExtensionOffset, 8, false));
-  const uint64_t Remove = begin(7, StatusSuccess, false, DevicePnpRequest::Remove);
+  const uint64_t Remove =
+      begin(7, StatusSuccess, false, DevicePnpRequest::Remove);
   send(Remove, Pending);
   call("IoDetachDevice", {PDO});
   call("IoDeleteDevice", {FDO});

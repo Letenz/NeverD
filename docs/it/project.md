@@ -160,7 +160,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Le librerie di firme vengono installate in `build/bin/signatures/` a build time. `sigs --auto` sceglie il set da formato, architettura e bitness. Se l’intestazione Rich di un file PE indica la versione di Visual Studio del suo linker, carica solo il `vs<year>.pat` di quella versione, oltre ai file che non appartengono a nessuna versione. `--sig-base <dir>` sceglie allo stesso modo da un altro albero di firme.
+Le librerie di firme vengono installate in `build/bin/signatures/` a build time. `sigs --auto` sceglie il set da formato, architettura e bitness. Se l’intestazione Rich di un file PE indica la versione di Visual Studio del suo linker, carica solo il `vs<year>.pat` di quella versione, oltre ai file che non appartengono a nessuna versione. `--sig-base <dir>` sceglie allo stesso modo da un altro albero di firme. Un file di pattern da 1 MiB in su viene analizzato una sola volta: i suoi moduli sono conservati in `neverd/signatures`, nella directory di cache dell'utente, e mappati nei caricamenti successivi. `NEVERD_SIGNATURE_CACHE` indica un'altra directory, e `off` disattiva la cache.
 
 ## Compilazione
 

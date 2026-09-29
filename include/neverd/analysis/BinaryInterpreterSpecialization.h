@@ -31,7 +31,7 @@ SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});
 
-/// Evidence for the original, unpruned, direct-control acyclic leaf graph.
+/// Evidence for complete original native execution paths, before recovery.
 /// This is an undefined-state independence certificate, not a proof of the
 /// lifter, a processor's undefined-bit choice, or native-to-source equivalence.
 struct BinaryUndefinedIndependenceCertificate {
@@ -41,6 +41,8 @@ struct BinaryUndefinedIndependenceCertificate {
   std::string InputDigest;
   LowIRIndependenceCertificate LowIR;
   std::vector<SpecializationInstruction> Instructions;
+  /// Exact provider-certified immutable reads, also bound to their mappings.
+  std::vector<SpecializationReadWitness> Reads;
 };
 
 struct BinaryUndefinedIndependenceResult {
@@ -50,15 +52,31 @@ struct BinaryUndefinedIndependenceResult {
   bool proved() const { return Proof.proved() && Certificate.has_value(); }
 };
 
-/// Collect both arms of every original direct branch before partial evaluation.
-/// Missing bytes, overlapping instructions, calls, indirect transfers and
-/// structural cycles refuse proof. Requires an explicit normal, nonfaulting,
+/// Collect both arms of original direct branches before feasibility pruning.
+/// Physical near calls capture their target before pushing the continuation;
+/// internal returns load their actual stack target. Indirect control requires
+/// paired target independence and a complete bounded target set. Every feasible
+/// path must finish; direct and indirect loops require a complete finite
+/// unrolling within the budgets, never a prefix or an assumed invariant.
+/// Missing bytes, overlapping instructions and incomplete architecture evidence
+/// refuse proof. Exact INT3/UD2 evidence may be retained with its Missing
+/// undefined-effect coverage only when no feasible execution reaches the trap.
+/// A feasible trap violates the nonfaulting contract; no resumption is modeled.
+/// Requires an explicit normal, nonfaulting,
 /// CET-disabled x64 profile and a readable/writable frame disjoint from the
 /// immutable image. Frame must be rooted at entry RSP and contain [0, 8).
 /// The checker additionally proves entry RSP and the entry return slot are
-/// restored on every return, before the final native return-address pop.
-/// Entry constants and byte order must match Options; only Contract's stated
-/// observations are certified. Limits bound collection as well as proof.
+/// restored on every outer return, before the final native return-address pop.
+/// Entry constants, byte order and X64FlagsProfile must match Options.
+/// Selecting UserX64NoFaultV1 explicitly enables shared, persistent
+/// PUSHFQ/POPFQ system state, canonical entry flag bits and mandatory final
+/// system-state equality. Every POPFQ must satisfy the TF/AC restriction in
+/// both executions. Exact provider-marked CET-disabled RDSSP projections and
+/// unreachable INCSSP #UD boundaries retain Missing sidecars and require
+/// separate profile receipts; feasible INCSSP always violates the nonfaulting
+/// contract. No other CET operation is authorized. Otherwise only Contract's
+/// stated observations are certified. Limits bound collection, scalar profile
+/// transitions and all executed paths.
 BinaryUndefinedIndependenceResult
 checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
                                  const SpecializationOptions &Options,

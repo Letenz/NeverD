@@ -7,6 +7,12 @@
 
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
+#include "FiniteValues.h"
+#include "NativeStackControl.h"
+#include "NativeUndefinedIndependence.h"
+#include "X64UserFlags.h"
+
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -14,6 +20,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <climits>
 #include <limits>
 #include <map>
 #include <set>
@@ -24,7 +31,86 @@ namespace neverd::analysis {
 namespace {
 using namespace symbolic;
 using Status = LowIRIndependenceStatus;
+using FlagProfile = detail::X64UserFlags;
 constexpr uint64_t AddressTemporary = UINT64_MAX - 7;
+constexpr uint64_t NativeStackTemporary = AddressTemporary - 8;
+
+// A retained trap has exact semantics even though its exception-state outputs
+// have no undefined-effect audit. It may only be collected, never executed in
+// this nonfaulting proof. Do not turn its Missing sidecar into Complete.
+bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
+  if (Insn.Origin.Control != LowInstructionControl::Terminator ||
+      Insn.Origin.Immediate || Insn.IsNativeCall ||
+      Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+      Insn.ProfileProjection != InterpreterProfileProjection::None ||
+      Insn.Ops.size() != 1 || !Insn.UndefinedEffects.Effects.empty() ||
+      Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      Insn.UndefinedEffects.OperationDigest !=
+          lowUndefinedOperationDigest(Insn.Ops))
+    return false;
+  const auto &Op = Insn.Ops.front();
+  if (Op.Opcode != NdOp::INTRINSIC || Op.Output.Size || Op.NumInputs != 1 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  auto Flags = LowInstructionControlFlag::Terminator;
+  if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3))
+    Flags |= LowInstructionControlFlag::Resumable;
+  else if (Op.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::Ud2))
+    return false;
+  return Insn.Origin.ControlFlags == Flags;
+}
+
+// Intel SDM: disabled shadow stacks make RDSSPD/RDSSPQ a NOP, including no
+// 32-bit destination zero-extension; INCSSPD/INCSSPQ instead raise #UD. Check
+// the provider's classification against canonical bytes and exact operations.
+// Missing coverage stays Missing. No other CET instruction is authorized.
+bool isCetDisabledProjection(const SpecializationInstruction &Insn) {
+  const bool Read = Insn.ProfileProjection ==
+                    InterpreterProfileProjection::CetDisabledReadShadowStackV1;
+  const bool Trap =
+      Insn.ProfileProjection ==
+      InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1;
+  if ((!Read && !Trap) || Insn.IsNativeCall ||
+      Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+      Insn.Origin.Control != (Trap ? LowInstructionControl::Terminator
+                                   : LowInstructionControl::None) ||
+      Insn.Origin.ControlFlags != (Trap ? LowInstructionControlFlag::Terminator
+                                        : LowInstructionControlFlag::None) ||
+      Insn.Origin.Immediate || Insn.Ops.size() != 1 ||
+      Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      !Insn.UndefinedEffects.Effects.empty() ||
+      Insn.UndefinedEffects.OperationDigest !=
+          lowUndefinedOperationDigest(Insn.Ops))
+    return false;
+  const auto &Op = Insn.Ops.front();
+  if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  // Preserve the strict lifter's opaque intrinsic result. It is never
+  // executed: this profile faults before any architectural state update.
+  if (Read ? (Op.Opcode != NdOp::NOP || Op.Output.Size || Op.NumInputs)
+           : (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 1 ||
+              Op.Output != NdVar::reg(x86reg::RAX, 8) ||
+              !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+              Op.Inputs[0].Offset !=
+                  static_cast<uint64_t>(Intrinsic::CetIncSsp)))
+    return false;
+  const auto &Bytes = Insn.NativeBytes;
+  if ((Bytes.size() != 4 && Bytes.size() != 5) || Bytes[0] != 0xf3)
+    return false;
+  size_t I = 1;
+  if (Bytes.size() == 5) {
+    // REX.W and REX.B select width/bank. Extra prefix forms are not certified.
+    if (Bytes[I] != 0x40 && Bytes[I] != 0x41 && Bytes[I] != 0x48 &&
+        Bytes[I] != 0x49)
+      return false;
+    ++I;
+  }
+  return Bytes[I] == 0x0f && Bytes[I + 1] == (Read ? 0x1e : 0xae) &&
+         (Bytes[I + 2] & 0xf8) == (Read ? 0xc8 : 0xe8);
+}
 
 bool sameBoundary(const LowInstructionBoundary &A,
                   const LowInstructionBoundary &B) {
@@ -43,10 +129,12 @@ bool scalar(const NdVar &V) {
 
 /// Hash semantic input fields explicitly; neither padding nor pointer identity
 /// may participate. Presentation names and stale predecessor lists are unused.
-std::string inputDigest(const LowFunc &F,
-                        llvm::ArrayRef<LowIRUndefinedInstruction> Records,
-                        const LowIRIndependenceContract &Contract,
-                        const LowIRIndependenceLimits &Limits) {
+std::string
+inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
+            const LowIRIndependenceContract &Contract,
+            const LowIRIndependenceLimits &Limits,
+            llvm::ArrayRef<LowIRNativeFlagTransition> Flags = {},
+            llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {}) {
   llvm::SHA256 Hash;
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
@@ -83,7 +171,28 @@ std::string inputDigest(const LowFunc &F,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(4); // Certificate semantic schema, independent of report formatting.
+  Number(6); // Certificate semantic schema, independent of report formatting.
+  Number(Contract.X64FlagsProfile.has_value());
+  if (Contract.X64FlagsProfile) {
+    Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
+    // Includes canonical entry and mandatory final system-state observation.
+    Number(FlagProfile::SemanticsVersion);
+  }
+  Number(Flags.size());
+  for (const auto &Transition : Flags) {
+    Number(static_cast<uint64_t>(Transition.BlockId));
+    Number(Transition.InstructionAddress);
+    Number(static_cast<uint64_t>(Transition.OpSeq));
+    Number(Transition.SemanticsVersion);
+    Number(Transition.OperationDigest.size());
+    Hash.update(Transition.OperationDigest);
+  }
+  Number(Projections.size());
+  for (const auto &Projection : Projections) {
+    Number(static_cast<uint64_t>(Projection.BlockId));
+    Number(Projection.InstructionAddress);
+    Number(static_cast<unsigned>(Projection.Kind));
+  }
   Number(F.Entry);
   Number(F.ModuleAnalysisRoots.size());
   for (va_t Root : F.ModuleAnalysisRoots)
@@ -177,6 +286,7 @@ std::string inputDigest(const LowFunc &F,
   Number(Limits.MaxProducers);
   Number(Limits.MaxFrameBytes);
   Number(Limits.MaxSolverQueries);
+  Number(Limits.MaxIndirectTargets);
   Number(Limits.MaxObservations);
   Number(Limits.MaxSymbolicNodes);
   Number(Limits.Solver.Blast.MaxWidth);
@@ -200,8 +310,23 @@ std::string inputDigest(const LowFunc &F,
 struct Stop {};
 
 class Checker {
-  const LowFunc &Function;
+  const LowFunc *Function = nullptr;
   llvm::ArrayRef<LowIRUndefinedInstruction> Records;
+  SpecializationProvider *Provider = nullptr;
+  SpecializationCursor NativeEntry;
+  detail::NativeUndefinedIndependenceResult *NativeResult = nullptr;
+  std::map<va_t, SpecializationInstruction> NativeInstructions;
+  std::map<va_t, va_t> NativeRanges;
+  std::map<va_t, uint8_t> ImmutableBytes;
+  LowFunc NativeTrace;
+  std::vector<LowIRUndefinedInstruction> NativeRecords;
+  std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
+  std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
+  std::map<int, std::vector<int>> NativeTraceEdges;
+  uint64_t NativeInputOperations = 0;
+  uint64_t NativeInputEffects = 0;
+  uint64_t NativeReadEvidenceBytes = 0;
+  int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
   LowIRIndependenceResult Result;
@@ -223,6 +348,8 @@ class Checker {
     SymRef Predicate;
     std::set<int> Ancestors;
     std::set<uint64_t> Written;
+    va_t NativeAddress = 0;
+    SymRef LeftSystemFlags, RightSystemFlags;
   };
   std::vector<Path> Pending;
 
@@ -306,6 +433,88 @@ class Checker {
     if (V.isTemp())
       for (uint16_t I = 0; I != V.Size; ++I)
         Defined.insert(V.Offset + I);
+  }
+
+  bool flagIntrinsic(Path &P, const LowOp &Original,
+                     const LowInstructionUndefinedEffects &Effects,
+                     const std::set<uint64_t> &Defined) {
+    if (!Provider || !Contract.X64FlagsProfile ||
+        Original.Opcode != NdOp::INTRINSIC)
+      return false;
+    // A separate state namespace prevents either original operands or public
+    // register contracts from aliasing the implicit system-state identity.
+    constexpr auto SystemOffset = uint64_t{0}, ImageOffset = uint64_t{8};
+    LowOp Canonical = Original;
+    if (Canonical.Output.Size)
+      Canonical.Output.Offset = 0;
+    if (Canonical.NumInputs == 2)
+      Canonical.Inputs[1] = NdVar::reg(ImageOffset, Original.Inputs[1].Size);
+    uint64_t NextTemporary = 8;
+    auto Transition = detail::lowerX64UserFlags(
+        Canonical, NdVar::reg(SystemOffset, 8), [&](uint16_t Size) {
+          const auto Value = NdVar::tmp(NextTemporary, Size);
+          NextTemporary += 8;
+          return Value;
+        });
+    if (!Transition)
+      fail(Status::Unsupported, "unsupported native flags intrinsic shape");
+    if (!Effects.Effects.empty())
+      fail(Status::Unsupported,
+           "native flags transition requires an empty audited sidecar");
+    if (Original.Output.Size && !scalar(Original.Output))
+      fail(Status::Invalid, "invalid native flags output");
+    for (unsigned I = 0; I != Original.NumInputs; ++I) {
+      if (!scalar(Original.Inputs[I]))
+        fail(Status::Invalid, "invalid native flags operand");
+      checkTemporary(Original.Inputs[I], Defined);
+    }
+    if (Transition->Ops.size() > Limits.MaxOperations - Result.Operations)
+      fail(Status::BudgetExceeded, "native flags transition budget exhausted");
+    Result.Operations += Transition->Ops.size();
+    const auto Execute = [&](SymState &State, SymRef System) {
+      SymState Isolated(Ctx, Contract.ByteOrder);
+      Isolated.write(SymSpace::Register, SystemOffset, System);
+      if (Original.NumInputs == 2) {
+        SymExec Reader(Ctx, State);
+        Isolated.write(SymSpace::Register, ImageOffset,
+                       Reader.operandValue(Original.Inputs[1]));
+      }
+      SymExec Exec(Ctx, Isolated);
+      for (const auto &Op : Transition->Ops) {
+        if (Exec.step(Op) != StepResult::Continue || Exec.unmodelledCount() ||
+            Exec.opaqueOperationCount() || Exec.memoryHavocCount() ||
+            Exec.callHavocCount())
+          fail(Status::Unsupported, "native flags transition lost semantics");
+        nodes();
+      }
+      return Isolated;
+    };
+    auto Left = Execute(P.Left, P.LeftSystemFlags);
+    auto Right = Execute(P.Right, P.RightSystemFlags);
+    if (Transition->Rejected) {
+      const auto Bad = *Transition->Rejected;
+      const auto L = Left.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
+      const auto R = Right.read(SymSpace::Temporary, Bad.Offset, Bad.Size);
+      if (query(Ctx.mkAnd(P.Predicate, Ctx.mkOr(Ctx.mkNe(L, Ctx.mkZero(8)),
+                                                Ctx.mkNe(R, Ctx.mkZero(8))))) !=
+          solver::SatResult::Unsat)
+        fail(Status::ContractViolation,
+             "reachable POPFQ image violates the native flags profile");
+    }
+    // Never restrict Predicate by the profile guard: all feasible twins must
+    // satisfy it. CALL/RET and branch scheduling copy these persistent fields.
+    P.LeftSystemFlags = Left.read(SymSpace::Register, SystemOffset, 8);
+    P.RightSystemFlags = Right.read(SymSpace::Register, SystemOffset, 8);
+    if (Original.Output.Size) {
+      P.Left.write(SymSpace::Temporary, Original.Output.Offset,
+                   Left.read(SymSpace::Temporary, 0, 8));
+      P.Right.write(SymSpace::Temporary, Original.Output.Offset,
+                    Right.read(SymSpace::Temporary, 0, 8));
+    }
+    NativeFlagTransitions.push_back(
+        {P.BlockId, Original.Addr, Original.Seq, FlagProfile::SemanticsVersion,
+         lowUndefinedOperationDigest(Transition->Ops)});
+    return true;
   }
 
   void arbitrary(Path &P, const LowUndefinedEffect &Effect,
@@ -455,6 +664,253 @@ class Checker {
     Pending.push_back(std::move(P));
   }
 
+  void validateEffects(const LowInstructionBoundary &B,
+                       llvm::ArrayRef<LowOp> Ops,
+                       const LowInstructionUndefinedEffects &D) {
+    if (D.OpCount != B.OpCount ||
+        (D.Coverage == LowUndefinedCoverage::Complete &&
+         (D.OperationDigest.empty() ||
+          D.OperationDigest != lowUndefinedOperationDigest(Ops))))
+      fail(Status::Invalid,
+           "undefined-effect operation digest is stale or missing");
+    if (D.Effects.size() > Limits.MaxProducers)
+      fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
+    for (const auto &E : D.Effects)
+      if (E.AfterOp > B.OpCount || !scalar(E.Output) || E.Output.isConst() ||
+          !E.BitCount || E.BitOffset >= E.Output.Size * 8 ||
+          E.BitCount > E.Output.Size * 8 - E.BitOffset ||
+          (E.When &&
+           (!scalar(*E.When) || E.When->Size != 1 || E.When->isReg())))
+        fail(Status::Invalid, "malformed architecture-arbitrary effect");
+  }
+
+  void collectNative(va_t Entry) {
+    if (NativeInstructions.count(Entry))
+      return;
+    std::vector<va_t> Work{Entry};
+    std::set<va_t> Queued{Entry};
+    const auto Enqueue = [&](va_t Address) {
+      if (NativeInstructions.count(Address) || !Queued.insert(Address).second)
+        return;
+      if (NativeInstructions.size() + Work.size() >= Limits.MaxInstructions)
+        fail(Status::BudgetExceeded,
+             "original instruction graph budget exhausted");
+      Work.push_back(Address);
+    };
+    while (!Work.empty()) {
+      const va_t Address = Work.back();
+      Work.pop_back();
+      if (NativeInstructions.count(Address))
+        continue;
+      Result.InstructionAddress = Address;
+      if (NativeInstructions.size() >= Limits.MaxInstructions ||
+          NativeInstructions.size() >= Limits.MaxBlockVisits)
+        fail(Status::BudgetExceeded,
+             "original instruction graph budget exhausted");
+      auto Fetched = Provider->instruction({Address, NativeEntry.Mode});
+      if (!Fetched)
+        fail(Status::Unsupported, llvm::toString(Fetched.takeError()));
+      auto Insn = std::move(*Fetched);
+      const auto &B = Insn.Origin;
+      if (B.Address != Address || !B.Size || B.Size > InvalidVA - Address ||
+          B.FirstOp || B.OpCount != Insn.Ops.size() ||
+          Insn.NativeBytes.size() != B.Size ||
+          Insn.Fallthrough.Address != Address + B.Size ||
+          Insn.Fallthrough.Mode != NativeEntry.Mode)
+        fail(Status::Invalid,
+             "inconsistent original instruction boundary or bytes");
+      if (B.Mode != InstructionMode::Default ||
+          B.TargetMode != LowInstructionTargetMode::Preserve ||
+          (B.Control != LowInstructionControl::None &&
+           B.Control != LowInstructionControl::Branch &&
+           B.Control != LowInstructionControl::Call &&
+           B.Control != LowInstructionControl::Return &&
+           B.Control != LowInstructionControl::Terminator) ||
+          hasLowInstructionControlFlag(
+              B.ControlFlags, LowInstructionControlFlag::InstructionGuard))
+        fail(Status::Unsupported, "unsupported original instruction control");
+      auto Next = NativeRanges.lower_bound(Address);
+      if ((Next != NativeRanges.end() && Next->first < Address + B.Size) ||
+          (Next != NativeRanges.begin() && std::prev(Next)->second > Address))
+        fail(Status::Unsupported, "overlapping original instruction ranges");
+      NativeRanges.emplace(Address, Address + B.Size);
+      if (Insn.Ops.size() > Limits.MaxOperations - NativeInputOperations)
+        fail(Status::BudgetExceeded, "original operation budget exhausted");
+      NativeInputOperations += Insn.Ops.size();
+      for (const auto &Op : Insn.Ops)
+        if (Op.NumInputs > 6)
+          fail(Status::Invalid, "operand capacity exceeded");
+      LowBlock Raw;
+      Raw.StartAddr = Address;
+      Raw.EndAddr = Address + B.Size;
+      Raw.Ops = Insn.Ops;
+      Raw.InstructionBoundaries.push_back(B);
+      if (auto Error = validateLowInstructionBoundaries(
+              Raw, LowInstructionBoundaryRequirement::Required))
+        fail(Status::Invalid, llvm::toString(std::move(Error)));
+      validateEffects(B, Insn.Ops, Insn.UndefinedEffects);
+      const bool Projection =
+          Contract.X64FlagsProfile && isCetDisabledProjection(Insn);
+      const bool ProjectedTrap =
+          Projection && Insn.ProfileProjection ==
+                            InterpreterProfileProjection::
+                                CetDisabledIncrementShadowStackTrapV1;
+      const bool Trap = isRetainedNativeTrap(Insn) || ProjectedTrap;
+      if (Insn.ProfileProjection != InterpreterProfileProjection::None &&
+          !Projection)
+        fail(Status::Unsupported,
+             "native projection lacks matching profile or exact evidence");
+      if (B.Control == LowInstructionControl::Terminator && !Trap)
+        fail(Status::Unsupported,
+             "original trap lacks exact semantic evidence");
+      if (Insn.UndefinedEffects.Effects.size() >
+          Limits.MaxProducers - NativeInputEffects)
+        fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
+      NativeInputEffects += Insn.UndefinedEffects.Effects.size();
+      if (!Trap && !Projection &&
+          Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
+        fail(Status::Unsupported,
+             "original instruction lacks complete undefined-output evidence");
+      std::vector<va_t> Successors;
+      bool Terminal = Trap;
+      for (size_t I = 0; I != Insn.Ops.size(); ++I) {
+        const auto &Op = Insn.Ops[I];
+        const bool Transfer =
+            Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::BRANCH ||
+            Op.Opcode == NdOp::COND_BR || Op.Opcode == NdOp::INDIR_BR;
+        if (!Transfer)
+          continue;
+        if (Terminal || I + 1 != Insn.Ops.size())
+          fail(Status::Unsupported, "original control is not terminal");
+        Terminal = true;
+        if (Op.Opcode == NdOp::RETURN) {
+          if (Insn.NativeStackControl !=
+              SpecializationNativeStackControl::Return)
+            fail(Status::Unsupported, "missing physical near-return evidence");
+        } else {
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+            if (Insn.NativeStackControl !=
+                SpecializationNativeStackControl::Call)
+              fail(Status::Unsupported, "missing physical near-call evidence");
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::BRANCH ||
+              Op.Opcode == NdOp::COND_BR) {
+            if (!Op.NumInputs || !Op.Inputs[0].isConst())
+              fail(Status::Invalid, "direct control target is not constant");
+            Successors.push_back(Op.Inputs[0].Offset);
+          }
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+              Op.Opcode == NdOp::COND_BR)
+            Successors.push_back(Insn.Fallthrough.Address);
+        }
+      }
+      if (!Terminal)
+        Successors.push_back(Insn.Fallthrough.Address);
+      if (ProjectedTrap)
+        NativeProfileProjections.push_back(
+            {-1, Address, Insn.ProfileProjection});
+      NativeInstructions.emplace(Address, std::move(Insn));
+      for (va_t Target : Successors)
+        Enqueue(Target);
+    }
+    // Collection visits each original instruction once, including cyclic
+    // arms. Execution creates a fresh trace block on every visit, preserving
+    // state and fresh undefined choices. Direct and indirect cycles obey the
+    // same path/visit/operation budgets; only exhaustion of all feasible paths
+    // at ordinary returns can certify a finite unrolling, never a prefix.
+  }
+
+  void scheduleNative(Path P, va_t Address, SymRef Predicate) {
+    if (query(Predicate) == solver::SatResult::Unsat)
+      return;
+    collectNative(Address);
+    if (++ScheduledPaths > Limits.MaxPaths || NextNativeBlock == INT_MAX)
+      fail(Status::BudgetExceeded, "native path budget exhausted");
+    const int Parent = P.BlockId;
+    P.BlockId = NextNativeBlock++;
+    if (Parent >= 0)
+      NativeTraceEdges[Parent].push_back(P.BlockId);
+    P.NativeAddress = Address;
+    P.Predicate = Predicate;
+    Pending.push_back(std::move(P));
+  }
+
+  void nativeTargets(Path P, SymRef Value, SymRef Predicate) {
+    if (!Value || Ctx.width(Value) != 64)
+      fail(Status::Invalid, "native control target must be a 64-bit address");
+    uint64_t Queries = Result.SolverQueries;
+    const auto Values = detail::enumerateFiniteValues(
+        Ctx, Predicate, {ordinary(Value)}, Limits.MaxIndirectTargets,
+        Limits.Solver, Limits.MaxSolverQueries, Limits.MaxSymbolicNodes,
+        Queries);
+    Result.SolverQueries = static_cast<uint32_t>(Queries);
+    if (Values.Status != detail::FiniteValueStatus::Complete)
+      fail(Values.Status == detail::FiniteValueStatus::Invalid
+               ? Status::Invalid
+               : Status::BudgetExceeded,
+           "native control target enumeration is incomplete");
+    for (const auto &Tuple : Values.Tuples) {
+      if (Tuple.size() != 1)
+        fail(Status::Invalid, "invalid native target tuple");
+      scheduleNative(P, Tuple[0],
+                     Ctx.mkAnd(Predicate, Ctx.mkEq(ordinary(Value),
+                                                   Ctx.mkConst(64, Tuple[0]))));
+    }
+  }
+
+  LowBlock prepareNative(Path &P, LowInstructionUndefinedEffects &Effects) {
+    const auto &Insn = NativeInstructions.at(P.NativeAddress);
+    if (Insn.Origin.Control == LowInstructionControl::Terminator) {
+      Result.BlockId = P.BlockId;
+      Result.InstructionAddress = P.NativeAddress;
+      Result.OpSeq = -1;
+      fail(Status::ContractViolation,
+           "feasible native trap violates the nonfaulting execution contract");
+    }
+    LowBlock B;
+    B.Id = P.BlockId;
+    B.StartAddr = P.NativeAddress;
+    B.EndAddr = P.NativeAddress + Insn.Origin.Size;
+    B.Ops = Insn.Ops;
+    B.InstructionBoundaries.push_back(Insn.Origin);
+    Effects = Insn.UndefinedEffects;
+    if (Insn.ProfileProjection != InterpreterProfileProjection::None)
+      NativeProfileProjections.push_back(
+          {B.Id, B.StartAddr, Insn.ProfileProjection});
+    if (Insn.NativeStackControl != SpecializationNativeStackControl::None ||
+        Insn.IsNativeCall) {
+      NativeReturnExpansion Mode = NativeReturnExpansion::OuterFunctionBoundary;
+      if (Insn.NativeStackControl == SpecializationNativeStackControl::Return) {
+        const auto &Root = Contract.Frame->RootRegister;
+        const auto Left = P.Left.read(SymSpace::Register, Root.Offset, 8);
+        const auto Right = P.Right.read(SymSpace::Register, Root.Offset, 8);
+        equal(P.Predicate, Left, Right, "native return stack pointer");
+        const auto Offset = Ctx.asConst(Ctx.mkSub(ordinary(Left), EntryRoot));
+        if (!Offset)
+          fail(Status::Unsupported,
+               "native return has no exact entry-relative stack pointer");
+        if (!Offset->isZero())
+          Mode = NativeReturnExpansion::InternalTransfer;
+      }
+      auto Expanded = expandNativeStackControl(
+          Insn, NdVar::reg(Contract.Frame->RootRegister.Offset, 8),
+          NdVar::tmp(NativeStackTemporary, 8), Mode,
+          {NdVar::tmp(AddressTemporary, 8)});
+      if (!Expanded)
+        fail(Status::Invalid, llvm::toString(Expanded.takeError()));
+      B.Ops = std::move(Expanded->Ops);
+      B.InstructionBoundaries.front() = Expanded->Boundary;
+      Effects = std::move(Expanded->UndefinedEffects);
+    }
+    if (auto Error = validateLowInstructionBoundaries(
+            B, LowInstructionBoundaryRequirement::Required))
+      fail(Status::Invalid, llvm::toString(std::move(Error)));
+    validateEffects(B.InstructionBoundaries.front(), B.Ops, Effects);
+    NativeRecords.push_back({B.Id, B.InstructionBoundaries.front(), Effects});
+    NativeTrace.Blocks.push_back(B);
+    return B;
+  }
+
   int target(const LowBlock &B, SymRef Value) {
     const auto Number = Ctx.asConst(ordinary(Value));
     if (!Number || Number->getActiveBits() > 64)
@@ -468,7 +924,11 @@ class Checker {
   void runPath(Path P) {
     if (++Result.BlockVisits > Limits.MaxBlockVisits)
       fail(Status::BudgetExceeded, "block-visit budget exhausted");
-    const auto &B = *Blocks.at(P.BlockId);
+    LowInstructionUndefinedEffects NativeEffects;
+    std::optional<LowBlock> NativeBlock;
+    if (Provider)
+      NativeBlock = prepareNative(P, NativeEffects);
+    const auto &B = NativeBlock ? *NativeBlock : *Blocks.at(P.BlockId);
     Result.BlockId = B.Id;
     P.Ancestors.insert(B.Id);
     if (!B.ExceptionalSuccs.empty() || !B.ExceptionalPreds.empty())
@@ -490,12 +950,21 @@ class Checker {
         fail(Status::Unsupported,
              "instruction mode or local control guard is unsupported");
       const auto Record = Effects.find({B.Id, Boundary.Address});
-      if (Record == Effects.end() ||
-          Record->second->Effects.Coverage == LowUndefinedCoverage::Missing)
+      const auto *DescriptionPointer = Provider ? &NativeEffects
+                                       : Record == Effects.end()
+                                           ? nullptr
+                                           : &Record->second->Effects;
+      const bool ProfileProjection =
+          Provider && Contract.X64FlagsProfile &&
+          isCetDisabledProjection(NativeInstructions.at(B.StartAddr));
+      if (!DescriptionPointer ||
+          (DescriptionPointer->Coverage == LowUndefinedCoverage::Missing &&
+           !ProfileProjection))
         fail(Status::Unsupported,
              "missing architectural undefined-effect coverage");
-      const auto &Description = Record->second->Effects;
-      if (Description.Coverage != LowUndefinedCoverage::Complete)
+      const auto &Description = *DescriptionPointer;
+      if (Description.Coverage != LowUndefinedCoverage::Complete &&
+          !ProfileProjection)
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
@@ -518,6 +987,12 @@ class Checker {
             Original.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
+        if (flagIntrinsic(P, Original, Description, Defined)) {
+          define(Original.Output, Defined);
+          Apply(I + 1);
+          nodes();
+          continue;
+        }
         if (!supportedShape(Original))
           fail(Status::Invalid, "malformed LowIR operation");
         for (unsigned J = 0; J != Original.NumInputs; ++J) {
@@ -542,28 +1017,83 @@ class Checker {
           equal(P.Predicate, A, Other, "memory address");
           const auto Difference =
               Ctx.asConst(Ctx.mkSub(ordinary(A), EntryRoot));
-          if (!Difference || Difference->getBitWidth() != 64)
-            fail(Status::Unsupported,
-                 "memory address is not an exact entry-frame offset");
-          const int64_t Offset = Difference->getSExtValue();
           const auto &Frame = *Contract.Frame;
-          if (Offset < Frame.Begin || Offset >= Frame.End ||
-              static_cast<uint64_t>(Frame.End) - static_cast<uint64_t>(Offset) <
-                  View.AccessSize)
-            fail(Status::Unsupported,
-                 "memory access exceeds the certified frame");
-          const uint64_t Index = static_cast<uint64_t>(Offset) -
-                                 static_cast<uint64_t>(Frame.Begin);
-          // Nonnegative proof-memory coordinates also handle a guest access
-          // straddling entry-SP without overflowing SymState's offset bank.
-          const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Index));
-          P.Left.write(SymSpace::Temporary, AddressTemporary, Address);
-          P.Right.write(SymSpace::Temporary, AddressTemporary, Address);
-          Op.Inputs[View.Address - Original.Inputs] =
-              NdVar::tmp(AddressTemporary, 8);
-          if (Store)
-            for (uint16_t Byte = 0; Byte != View.AccessSize; ++Byte)
-              P.Written.insert(Index + Byte);
+          const bool InFrame =
+              Difference && Difference->getBitWidth() == 64 &&
+              Difference->getSExtValue() >= Frame.Begin &&
+              Difference->getSExtValue() < Frame.End &&
+              static_cast<uint64_t>(Frame.End) - Difference->getZExtValue() >=
+                  View.AccessSize;
+          if (!InFrame && Provider && !Store && Ctx.asConst(ordinary(A))) {
+            const auto Absolute = Ctx.asConst(ordinary(A));
+            if (!Absolute || Absolute->getActiveBits() > 64 ||
+                Absolute->getZExtValue() > UINT64_MAX - View.AccessSize)
+              fail(Status::Unsupported, "immutable load address is not exact");
+            const uint64_t Address = Absolute->getZExtValue();
+            const auto First = Ctx.mkAdd(
+                EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(Frame.Begin)));
+            const auto Last = Ctx.mkAdd(
+                EntryRoot,
+                Ctx.mkConst(64, static_cast<uint64_t>(Frame.End) - 1));
+            const auto Disjoint = Ctx.mkOr(
+                Ctx.mkUlt(Last, Ctx.mkConst(64, Address)),
+                Ctx.mkUle(Ctx.mkConst(64, Address + View.AccessSize), First));
+            if (query(Ctx.mkAnd(P.Predicate, Ctx.mkNot(Disjoint))) !=
+                solver::SatResult::Unsat)
+              fail(Status::Unsupported,
+                   "immutable read can alias the mutable frame");
+            const auto Read = Provider->immutableRead(Address, View.AccessSize);
+            if (!Read || Read->Bytes.size() != View.AccessSize ||
+                Read->Evidence.empty())
+              fail(Status::Unsupported, "missing immutable-read evidence");
+            for (uint64_t Size : {Read->Bytes.size(), Read->Evidence.size()}) {
+              if (Size > Limits.MaxOperations - NativeReadEvidenceBytes)
+                fail(Status::BudgetExceeded,
+                     "immutable-read evidence budget exhausted");
+              NativeReadEvidenceBytes += Size;
+            }
+            uint64_t Value = 0;
+            for (uint16_t I = 0; I != View.AccessSize; ++I) {
+              const auto [It, Inserted] =
+                  ImmutableBytes.emplace(Address + I, Read->Bytes[I]);
+              if (!Inserted && It->second != Read->Bytes[I])
+                fail(Status::Invalid, "immutable provider bytes changed");
+              const unsigned Shift =
+                  Contract.ByteOrder == llvm::endianness::little
+                      ? I
+                      : View.AccessSize - 1 - I;
+              Value |= uint64_t{Read->Bytes[I]} << (Shift * 8);
+            }
+            NativeResult->Reads.push_back({Boundary.Address, Original.Seq,
+                                           Address, Read->Bytes,
+                                           Read->Evidence});
+            Op.Opcode = NdOp::COPY;
+            Op.NumInputs = 1;
+            Op.Inputs[0] = NdVar::scalar(Value, View.AccessSize);
+          } else {
+            if (!Difference || Difference->getBitWidth() != 64)
+              fail(Status::Unsupported,
+                   "memory address is not an exact entry-frame offset");
+            const int64_t Offset = Difference->getSExtValue();
+            if (Offset < Frame.Begin || Offset >= Frame.End ||
+                static_cast<uint64_t>(Frame.End) -
+                        static_cast<uint64_t>(Offset) <
+                    View.AccessSize)
+              fail(Status::Unsupported,
+                   "memory access exceeds the certified frame");
+            const uint64_t Index = static_cast<uint64_t>(Offset) -
+                                   static_cast<uint64_t>(Frame.Begin);
+            // Nonnegative proof-memory coordinates also handle a guest access
+            // straddling entry-SP without overflowing SymState's offset bank.
+            const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Index));
+            P.Left.write(SymSpace::Temporary, AddressTemporary, Address);
+            P.Right.write(SymSpace::Temporary, AddressTemporary, Address);
+            Op.Inputs[View.Address - Original.Inputs] =
+                NdVar::tmp(AddressTemporary, 8);
+            if (Store)
+              for (uint16_t Byte = 0; Byte != View.AccessSize; ++Byte)
+                P.Written.insert(Index + Byte);
+          }
         }
         const auto LU = Left.unmodelledCount(), RU = Right.unmodelledCount();
         const auto LM = Left.memoryHavocCount(), RM = Right.memoryHavocCount();
@@ -595,6 +1125,9 @@ class Checker {
           if (!B.Succs.empty())
             fail(Status::Invalid, "return block has successors");
           preservedReturn(P);
+          if (Contract.X64FlagsProfile)
+            equal(P.Predicate, P.LeftSystemFlags, P.RightSystemFlags,
+                  "final system flags");
           if (Original.NumInputs)
             equal(P.Predicate, Left.branchTarget(), Right.branchTarget(),
                   "RETURN operand");
@@ -616,6 +1149,23 @@ class Checker {
         }
         equal(P.Predicate, Left.branchTarget(), Right.branchTarget(),
               "control target");
+        if (Provider) {
+          if (LF == StepResult::CondBranch) {
+            equal(P.Predicate, Left.branchCondition(), Right.branchCondition(),
+                  "branch predicate");
+            const auto Condition = ordinary(Left.branchCondition());
+            nativeTargets(P, Left.branchTarget(),
+                          Ctx.mkAnd(P.Predicate, Condition));
+            const auto Other = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Condition));
+            scheduleNative(
+                std::move(P),
+                NativeInstructions.at(B.StartAddr).Fallthrough.Address, Other);
+          } else {
+            const auto Predicate = P.Predicate;
+            nativeTargets(std::move(P), Left.branchTarget(), Predicate);
+          }
+          return;
+        }
         const int Taken = target(B, Left.branchTarget());
         if (LF == StepResult::CondBranch) {
           // Never constrain this guard until its two-world equality is proved.
@@ -644,6 +1194,13 @@ class Checker {
         return;
       }
     }
+    if (Provider) {
+      const auto Predicate = P.Predicate;
+      scheduleNative(std::move(P),
+                     NativeInstructions.at(B.StartAddr).Fallthrough.Address,
+                     Predicate);
+      return;
+    }
     if (B.Succs.size() != 1)
       fail(Status::Unsupported, "fallthrough has no unique successor");
     const auto Predicate = P.Predicate;
@@ -651,18 +1208,35 @@ class Checker {
   }
 
   void validate() {
+    if (Contract.X64FlagsProfile) {
+      if (!Provider)
+        fail(Status::Unsupported, "flags profiles require the native API");
+      if (*Contract.X64FlagsProfile !=
+          InterpreterMachineStateProfile::UserX64NoFaultV1)
+        fail(Status::Invalid, "unknown native flags profile");
+      if (Contract.ByteOrder != llvm::endianness::little)
+        fail(Status::Invalid, "native flags profile requires little endian");
+    }
     if (!Limits.Solver.Blast.MaxGates || !Limits.Solver.Sat.MaxConflicts ||
         !Limits.Solver.Sat.MaxPropagations || !Limits.Solver.Sat.MaxWatchVisits)
       fail(Status::Invalid, "relational solver limits must be bounded");
     if (Contract.ByteOrder != llvm::endianness::little &&
         Contract.ByteOrder != llvm::endianness::big)
       fail(Status::Invalid, "invalid byte order");
+    if (Provider &&
+        (NativeEntry.Mode != InstructionMode::Default || !Contract.Frame ||
+         Contract.Frame->RootRegister.Bytes != 8 || Contract.Frame->Begin > 0 ||
+         Contract.Frame->End < 8 || !Limits.MaxIndirectTargets))
+      fail(Status::Invalid,
+           "native proof requires a stack frame and bounded targets");
     uint64_t InputOperations = 0;
     uint64_t InputInstructions = 0;
     uint64_t InputEdges = 0;
-    if (Function.Blocks.size() > Limits.MaxBlockVisits ||
-        Function.ModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
-        Function.OrdinaryModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
+    if ((Function &&
+         (Function->Blocks.size() > Limits.MaxBlockVisits ||
+          Function->ModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
+          Function->OrdinaryModuleAnalysisRoots.size() >
+              Limits.MaxBlockVisits)) ||
         Records.size() > Limits.MaxInstructions ||
         Contract.EntryConstants.size() > Limits.MaxInstructions ||
         Contract.ReturnRegisters.size() > Limits.MaxInstructions ||
@@ -671,88 +1245,78 @@ class Checker {
         (Contract.Frame &&
          Contract.Frame->ExcludedAddressRanges.size() > Limits.MaxInstructions))
       fail(Status::BudgetExceeded, "input metadata budget exhausted");
-    for (const auto &B : Function.Blocks) {
-      Result.BlockId = B.Id;
-      if (!Blocks.emplace(B.Id, &B).second ||
-          !Addresses.emplace(B.StartAddr, B.Id).second)
-        fail(Status::Invalid, "duplicate LowIR block identity");
-      if (B.Ops.size() > Limits.MaxOperations -
-                             std::min(InputOperations, Limits.MaxOperations))
-        fail(Status::BudgetExceeded, "input operation budget exhausted");
-      InputOperations += B.Ops.size();
-      if (B.InstructionBoundaries.size() >
-          Limits.MaxInstructions - InputInstructions)
-        fail(Status::BudgetExceeded, "input instruction budget exhausted");
-      InputInstructions += B.InstructionBoundaries.size();
-      const uint64_t MaxEdges = uint64_t{Limits.MaxBlockVisits} * 2;
-      for (size_t Count : {B.Succs.size(), B.ExceptionalSuccs.size(),
-                           B.ExceptionalPreds.size()}) {
-        if (Count > MaxEdges - InputEdges)
-          fail(Status::BudgetExceeded, "input CFG edge budget exhausted");
-        InputEdges += Count;
+    if (Function) {
+      for (const auto &B : Function->Blocks) {
+        Result.BlockId = B.Id;
+        if (!Blocks.emplace(B.Id, &B).second ||
+            !Addresses.emplace(B.StartAddr, B.Id).second)
+          fail(Status::Invalid, "duplicate LowIR block identity");
+        if (B.Ops.size() > Limits.MaxOperations -
+                               std::min(InputOperations, Limits.MaxOperations))
+          fail(Status::BudgetExceeded, "input operation budget exhausted");
+        InputOperations += B.Ops.size();
+        if (B.InstructionBoundaries.size() >
+            Limits.MaxInstructions - InputInstructions)
+          fail(Status::BudgetExceeded, "input instruction budget exhausted");
+        InputInstructions += B.InstructionBoundaries.size();
+        const uint64_t MaxEdges = uint64_t{Limits.MaxBlockVisits} * 2;
+        for (size_t Count : {B.Succs.size(), B.ExceptionalSuccs.size(),
+                             B.ExceptionalPreds.size()}) {
+          if (Count > MaxEdges - InputEdges)
+            fail(Status::BudgetExceeded, "input CFG edge budget exhausted");
+          InputEdges += Count;
+        }
+        for (const auto &Boundary : B.InstructionBoundaries)
+          if (!Boundaries
+                   .emplace(std::make_pair(B.Id, Boundary.Address), &Boundary)
+                   .second)
+            fail(Status::Invalid, "duplicate instruction boundary identity");
+        std::set<int> Unique;
+        for (int S : B.Succs)
+          if (!Unique.insert(S).second)
+            fail(Status::Invalid, "duplicate CFG successor");
+        for (const auto &Op : B.Ops)
+          if (Op.NumInputs > 6)
+            fail(Status::Invalid, "operand capacity exceeded");
       }
-      for (const auto &Boundary : B.InstructionBoundaries)
-        if (!Boundaries
-                 .emplace(std::make_pair(B.Id, Boundary.Address), &Boundary)
-                 .second)
-          fail(Status::Invalid, "duplicate instruction boundary identity");
-      std::set<int> Unique;
-      for (int S : B.Succs)
-        if (!Unique.insert(S).second)
-          fail(Status::Invalid, "duplicate CFG successor");
-      for (const auto &Op : B.Ops)
-        if (Op.NumInputs > 6)
-          fail(Status::Invalid, "operand capacity exceeded");
-    }
-    for (const auto &B : Function.Blocks)
-      for (int Successor : B.Succs)
-        if (!Blocks.count(Successor))
-          fail(Status::Invalid, "CFG successor names a missing block");
-    if (auto Error = validateLowInstructionBoundaries(
-            Function, LowInstructionBoundaryRequirement::Required))
-      fail(Status::Invalid, llvm::toString(std::move(Error)));
-    for (va_t Root : Function.ModuleAnalysisRoots)
-      if (Root != Function.Entry)
-        fail(Status::Unsupported,
-             "additional function entry roots are unsupported");
-    for (va_t Root : Function.OrdinaryModuleAnalysisRoots)
-      if (Root != Function.Entry)
-        fail(Status::Unsupported,
-             "additional function entry roots are unsupported");
-    if (!Addresses.count(Function.Entry))
-      fail(Status::Invalid, "missing function entry block");
-    uint64_t InputEffects = 0;
-    for (const auto &R : Records) {
-      Result.BlockId = R.BlockId;
-      Result.InstructionAddress = R.Boundary.Address;
-      const auto B = Blocks.find(R.BlockId);
-      const auto IB = Boundaries.find({R.BlockId, R.Boundary.Address});
-      if (B == Blocks.end() || IB == Boundaries.end() ||
-          !sameBoundary(*IB->second, R.Boundary) ||
-          !Effects.emplace(std::make_pair(R.BlockId, R.Boundary.Address), &R)
-               .second ||
-          R.Effects.OpCount != R.Boundary.OpCount)
-        fail(Status::Invalid,
-             "undefined-effect certificate does not bind its instruction");
-      if (R.Effects.Coverage == LowUndefinedCoverage::Complete &&
-          (R.Effects.OperationDigest.empty() ||
-           R.Effects.OperationDigest !=
-               lowUndefinedOperationDigest(
-                   llvm::ArrayRef<LowOp>(B->second->Ops)
-                       .slice(R.Boundary.FirstOp, R.Boundary.OpCount))))
-        fail(Status::Invalid,
-             "undefined-effect operation digest is stale or missing");
-      if (R.Effects.Effects.size() > Limits.MaxProducers - InputEffects)
-        fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
-      InputEffects += R.Effects.Effects.size();
-      for (const auto &E : R.Effects.Effects) {
-        if (E.AfterOp > R.Boundary.OpCount || !scalar(E.Output) ||
-            E.Output.isConst() || !E.BitCount ||
-            E.BitOffset >= E.Output.Size * 8 ||
-            E.BitCount > E.Output.Size * 8 - E.BitOffset ||
-            (E.When &&
-             (!scalar(*E.When) || E.When->Size != 1 || E.When->isReg())))
-          fail(Status::Invalid, "malformed architecture-arbitrary effect");
+      for (const auto &B : Function->Blocks)
+        for (int Successor : B.Succs)
+          if (!Blocks.count(Successor))
+            fail(Status::Invalid, "CFG successor names a missing block");
+      if (auto Error = validateLowInstructionBoundaries(
+              *Function, LowInstructionBoundaryRequirement::Required))
+        fail(Status::Invalid, llvm::toString(std::move(Error)));
+      for (va_t Root : Function->ModuleAnalysisRoots)
+        if (Root != Function->Entry)
+          fail(Status::Unsupported,
+               "additional function entry roots are unsupported");
+      for (va_t Root : Function->OrdinaryModuleAnalysisRoots)
+        if (Root != Function->Entry)
+          fail(Status::Unsupported,
+               "additional function entry roots are unsupported");
+      if (!Addresses.count(Function->Entry))
+        fail(Status::Invalid, "missing function entry block");
+      uint64_t InputEffects = 0;
+      for (const auto &R : Records) {
+        Result.BlockId = R.BlockId;
+        Result.InstructionAddress = R.Boundary.Address;
+        const auto B = Blocks.find(R.BlockId);
+        const auto IB = Boundaries.find({R.BlockId, R.Boundary.Address});
+        if (B == Blocks.end() || IB == Boundaries.end() ||
+            !sameBoundary(*IB->second, R.Boundary) ||
+            !Effects.emplace(std::make_pair(R.BlockId, R.Boundary.Address), &R)
+                 .second ||
+            R.Effects.OpCount != R.Boundary.OpCount)
+          fail(Status::Invalid,
+               "undefined-effect certificate does not bind its instruction");
+        validateEffects(R.Boundary,
+                        llvm::ArrayRef<LowOp>(B->second->Ops)
+                            .slice(R.Boundary.FirstOp, R.Boundary.OpCount),
+                        R.Effects);
+        if (R.Effects.Effects.size() > Limits.MaxProducers - InputEffects)
+          fail(Status::BudgetExceeded,
+               "input arbitrary-effect budget exhausted");
+        InputEffects += R.Effects.Effects.size();
       }
     }
     for (const auto &R : Contract.ReturnRegisters)
@@ -763,6 +1327,16 @@ class Checker {
       if (!C.Location.isReg() || !scalar(C.Location))
         fail(Status::Invalid,
              "entry constants must bind valid physical registers");
+      if (Contract.X64FlagsProfile)
+        for (const auto &[Offset, Bit] : FlagProfile::Flags) {
+          (void)Bit;
+          if (Offset >= C.Location.Offset &&
+              Offset - C.Location.Offset < C.Location.Size &&
+              (C.Location.Offset != Offset || C.Location.Size != 1 ||
+               C.Value > 1))
+            fail(Status::Invalid,
+                 "native entry flag constants must be canonical one-byte bits");
+        }
       for (uint16_t I = 0; I != C.Location.Size; ++I)
         if (!Bound.insert(C.Location.Offset + I).second)
           fail(Status::Invalid, "overlapping entry constants");
@@ -813,17 +1387,49 @@ class Checker {
         if (!PreservedFrameBytes.insert(First + I).second)
           fail(Status::Invalid, "overlapping preserved frame ranges");
     }
+    if (Provider)
+      for (uint64_t I = 0; I != 8; ++I) {
+        if (!PreservedRegisters.count(Contract.Frame->RootRegister.Offset +
+                                      I) ||
+            !PreservedFrameBytes.count(
+                I - static_cast<uint64_t>(Contract.Frame->Begin)))
+          fail(Status::Invalid,
+               "native proof must preserve entry stack and return slot");
+      }
   }
 
 public:
   Checker(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> R,
           const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L)
-      : Function(F), Records(R), Contract(C), Limits(L) {}
+      : Function(&F), Records(R), Contract(C), Limits(L) {}
+
+  Checker(SpecializationProvider &P, SpecializationCursor Entry,
+          const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L,
+          detail::NativeUndefinedIndependenceResult &Output)
+      : Provider(&P), NativeEntry(Entry), NativeResult(&Output), Contract(C),
+        Limits(L) {
+    NativeTrace.Entry = Entry.Address;
+  }
 
   LowIRIndependenceResult run() {
     try {
       validate();
+      if (Provider)
+        collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
+      SymRef EntrySystem;
+      if (Contract.X64FlagsProfile) {
+        const auto Raw = Ctx.mkFreshVar(64, "entry_flags");
+        const auto Packed =
+            Ctx.mkOr(Ctx.mkAnd(Raw, Ctx.mkConst(64, FlagProfile::EntryMask)),
+                     Ctx.mkConst(64, 2));
+        EntrySystem =
+            Ctx.mkAnd(Packed, Ctx.mkConst(64, ~FlagProfile::SplitMask));
+        for (const auto &[Offset, Bit] : FlagProfile::Flags)
+          Initial.write(SymSpace::Register, Offset,
+                        Ctx.mkZExtOrTrunc(Ctx.mkExtract(Packed, Bit, 1), 8));
+        nodes();
+      }
       for (const auto &C : Contract.EntryConstants) {
         Initial.write(SymSpace::Register, C.Location.Offset,
                       Ctx.mkConst(C.Location.Size * 8, C.Value));
@@ -887,9 +1493,17 @@ public:
           nodes();
         }
       }
-      Path Entry{
-          Addresses.at(Function.Entry), Initial, Initial, Predicate, {}, {}};
-      schedule(std::move(Entry), Addresses.at(Function.Entry), Predicate);
+      Path Entry{Provider ? -1 : Addresses.at(Function->Entry),
+                 Initial,
+                 Initial,
+                 Predicate,
+                 {},
+                 {}};
+      Entry.LeftSystemFlags = Entry.RightSystemFlags = EntrySystem;
+      if (Provider)
+        scheduleNative(std::move(Entry), NativeEntry.Address, Predicate);
+      else
+        schedule(std::move(Entry), Addresses.at(Function->Entry), Predicate);
       while (!Pending.empty()) {
         auto P = std::move(Pending.back());
         Pending.pop_back();
@@ -897,12 +1511,28 @@ public:
       }
       if (!Result.Paths)
         fail(Status::Unsupported, "no reachable return was certified");
-      Result.Certificate = LowIRIndependenceCertificate{
-          LowIRIndependenceScope::CompleteAcyclicLowIR,
-          inputDigest(Function, Records, Contract, Limits),
-          std::vector<LowIRUndefinedInstruction>(Records.begin(),
-                                                 Records.end()),
-          Contract, Limits};
+      if (Provider) {
+        for (auto &B : NativeTrace.Blocks)
+          B.Succs = NativeTraceEdges[B.Id];
+        Result.Certificate = LowIRIndependenceCertificate{
+            LowIRIndependenceScope::CompleteFiniteNativePaths,
+            inputDigest(NativeTrace, NativeRecords, Contract, Limits,
+                        NativeFlagTransitions, NativeProfileProjections),
+            std::move(NativeRecords),
+            Contract,
+            Limits,
+            std::move(NativeFlagTransitions),
+            std::move(NativeProfileProjections)};
+        for (auto &[Address, Insn] : NativeInstructions)
+          NativeResult->Instructions.push_back(std::move(Insn));
+      } else {
+        Result.Certificate = LowIRIndependenceCertificate{
+            LowIRIndependenceScope::CompleteAcyclicLowIR,
+            inputDigest(*Function, Records, Contract, Limits),
+            std::vector<LowIRUndefinedInstruction>(Records.begin(),
+                                                   Records.end()),
+            Contract, Limits};
+      }
       Result.Status = Status::Proved;
       Result.Diagnostic.clear();
     } catch (const Stop &) {
@@ -919,5 +1549,19 @@ LowIRIndependenceResult checkLowIRUndefinedIndependence(
     const LowIRIndependenceContract &Contract,
     const LowIRIndependenceLimits &Limits) {
   return Checker(Function, Instructions, Contract, Limits).run();
+}
+
+detail::NativeUndefinedIndependenceResult
+detail::checkNativeUndefinedIndependence(
+    SpecializationProvider &Provider, SpecializationCursor Entry,
+    const LowIRIndependenceContract &Contract,
+    const LowIRIndependenceLimits &Limits) {
+  NativeUndefinedIndependenceResult Result;
+  Result.Proof = Checker(Provider, Entry, Contract, Limits, Result).run();
+  if (!Result.Proof.proved()) {
+    Result.Instructions.clear();
+    Result.Reads.clear();
+  }
+  return Result;
 }
 } // namespace neverd::analysis

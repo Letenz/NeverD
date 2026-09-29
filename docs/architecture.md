@@ -72,7 +72,10 @@ file-level default is not proof that all of its executable bytes use one mode.
 An ELF function entry without exact mode evidence requires a caller assertion
 before either C route can decode it, even when the file-level decoder starts in
 ARM mode. A single-function LLVMC request runs the same semantic LLVM
-optimization as the full-image route before emitting C.
+optimization as the full-image route before emitting C. With `--no-opt`, both
+routes promote the emitter's temporary allocas without running value-changing
+optimization. The SDK rebuilds a cached native LLVM module when this policy
+changes and publishes the replacement only after verification succeeds.
 Both LLVM C routes retain verified output with only temporary-alloca
 promotion when an incomplete native exception contract excludes optimization.
 
@@ -808,9 +811,11 @@ demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
-The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the restricted leaf scope below.
+The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the finite native-path scope below.
 
-`checkBinaryUndefinedIndependence` collects both arms of every original direct branch before recovery for a call-free, acyclic x64 leaf. Every collected instruction requires immutable original bytes and complete architecture metadata, including statically untaken arms. The explicit normal, nonfaulting, CET-disabled profile requires an image-disjoint frame; the entry predicate excludes every image mapping. Every return must preserve entry RSP and the original return-address slot before the native pop. `specializeBinaryInterpreterWithIndependence` applies this proof before recovery and returns no residual on proof failure. Ordinary recovery does not enable this gate by default. Calls, indirect transfers, structural cycles and unaudited effects are refused; exception dispatch, CET-enabled execution and native-to-C equivalence are outside this certificate.
+`checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`UD2` may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
+
+Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1` in the options and contract; the existing execution booleans do not enable it. Canonical shared entry flags and persistent system flags use the same scalar PUSHFQ/POPFQ transition as the machine-state source wrapper, including CPL3/IOPL0 masks. Both executions must prove every POPFQ image keeps TF/AC clear; the checker never assumes this guard. Final system flags are always compared, even without register or written-frame observations. Certificates bind the profile version and exact transition digests. Under this explicit CET-disabled profile, independently checked canonical RDSSPD/RDSSPQ bytes may project to an exact NOP with a typed receipt; the original `Missing` sidecar remains unchanged and even a 32-bit destination preserves its whole register. Canonical INCSSPD/INCSSPQ is retained as a profile-dependent #UD boundary, with a receipt for the original unreachable instruction; any feasible visit violates the nonfaulting contract, even with a zero operand. Other CET instructions, CET-enabled execution and profile use through the static LowIR API remain unsupported. Finite loop unrolling preserves state and fresh undefined choices on every visit; it does not prove an invariant.
 
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
@@ -1097,15 +1102,174 @@ run NeverD's proof-gated semantic simplification to a joint fixed point with
 LLVM optimization; the policy does not supply an executable translation
 backend.
 
+## CPU execution
+
+CPU execution is independent of the guest OS and binary format. Enable
+`NEVERD_ENABLE_CPU_EMULATION` to build it without the Windows driver model;
+`NEVERD_ENABLE_DRIVER_EMULATION` also includes it. The public C++ boundary is
+[`neverd/emulation/CPU.h`](../include/neverd/emulation/CPU.h). It accepts a guest
+ISA, backend and execution contract independently, and returns the selected
+backend and selection reason. It does not infer a guest OS from the host.
+
+| Component | Ownership |
+|-----------|-----------|
+| `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
+| `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
+| `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
+| `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
+| `NeverDEmulation` | Windows image/ABI, API model, policy and driver lifecycle |
+
+The four CPU components declare LLVM Support as their LLVM dependency.
+Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
+transports. Compiler pipelines and guest image loaders belong to their owning
+components and are not required by a CPU-only client.
+
+The implementation directories reflect those boundaries:
+
+```text
+lib/emulation/
+  core/                  Memory, faults, registers and shared execution rules
+  arch/x86_64/           x64 state, instruction admission and page tables
+  arch/aarch64/          ARM64 state, instruction admission and page tables
+  backends/unicorn/      Portable machine execution
+  backends/kvm/          Linux host virtualization
+  backends/whp/          Windows host virtualization
+  runtime/               Backend selection and CPU/machine composition
+  os/windows/            Windows driver workload, ABI policy and kernel model
+```
+
+`core` has no implementation dependency on an architecture, backend or guest
+OS. Architecture code accepts an already-created machine and authoritative
+memory; it neither chooses nor constructs a concrete backend. Backend code
+implements the architecture's machine boundary. `runtime` owns that
+composition and the host/guest selection rules. Windows code uses the public
+CPU and memory interfaces, and its CMake source inventory stays in
+`os/windows/CMakeLists.txt`. The existing public headers remain compatible.
+
+The `os` directory describes the **guest** environment. Linux-host KVM can
+execute a Windows guest workload; the host never chooses its OS model.
+`DriverSession`, driver scenario parsing and reports belong to `os/windows`,
+because their lifecycle and objects are Windows-specific. The current Windows
+implementation remains one driver environment; moving it does not imply a
+generic process session or a completed Windows user-mode environment.
+When a process environment is added, keep its entry point, loader policy and
+user ABI separate from the kernel workload. Move shared OS primitives into a
+common layer only when both environments use the same documented semantics;
+driver objects, IRQL and callbacks must not become requirements of a generic
+CPU or process session.
+
+Future Linux and Darwin implementations belong beside Windows. Android-specific
+APIs and runtimes should build on the applicable Linux kernel contracts under
+`os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
+separates its runtime and framework from the kernel. macOS and iOS models should
+share applicable Darwin primitives while keeping platform APIs and ABI/version
+profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
+[XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
+identifies their shared kernel foundation. These are extension locations, not
+implemented environments. Add them with real workloads rather than empty
+classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
+remain explicit OS/workload requirements, independent of the CPU transport.
+
+```mermaid
+flowchart TD
+  Windows[Windows guest environment] --> Runtime[Runtime CPU factory]
+  Client[Other C++ CPU clients] --> Runtime
+  Runtime --> ISA[x64 and ARM64 checked execution]
+  Runtime --> Transport[Unicorn / KVM / WHP]
+  ISA --> Machine[ISA machine interfaces]
+  Transport -->|implements| Machine
+  ISA --> Core[Core execution contracts and memory]
+  Transport --> Core
+```
+
+`CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
+access cannot reinterpret one architecture's registers as another's. ARM64
+exposes X0–X30, SP, PC, NZCV, TLS registers, FPCR/FPSR and 32 128-bit vector
+registers. Snapshots belong to one backend instance and preserve CPU state;
+restoring one never restores memory, permissions or aliases. Architecture-owned
+`.def` inventories supply register identities, instruction admission, page-table
+constants and transport parameters.
+
+| Contract | Guest ISA | Available execution |
+|----------|-----------|---------------------|
+| `driver-strict` | x64 | Existing Unicorn driver execution |
+| `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
+| `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+
+For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
+matching Windows host, and Unicorn for cross-ISA execution or other host OSes.
+Thus a native Ubuntu ARM64 build selects ARM64 KVM and a native Windows ARM64
+build selects ARM64 WHP. An explicit hardware request for a different ISA is
+rejected. Hardware unavailability is a typed error; execution never restarts
+on a different backend after an effect. Software contracts always select
+Unicorn. A disabled Unicorn adapter also fails explicitly, including a
+cross-ISA `auto` selection.
+
+The ARM64 checked profile runs little-endian baseline integer instructions at
+EL1. It admits scalar loads/stores, register-offset addressing, literal loads
+and checked pair/writeback forms. It rejects FP/SIMD, atomics/exclusives, system
+instructions, MMIO, constrained-unpredictable writeback and individual data
+transactions crossing a page. All accesses in a pair are validated before
+native execution. Unrestricted software execution has a separate contract and
+explicit EL1 reset state; it is not a claim of an implemented guest OS.
+
+ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
+TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
+maintenance pages at `[0x1000, 0x3000)`. The backing arena stays below the
+configured physical-address width. Each entry performs architectural TLB and
+instruction-cache maintenance; stale translations cannot survive alias
+replacement or CPU-context restoration. KVM uses `KVM_SET_ONE_REG`,
+`KVM_ARM_VCPU_INIT` and host single stepping. ARM64 WHP configures GICv3 and uses
+an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
+x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
+before accepting guest work. The WHP gateway has a cancellation watchdog;
+failed or interrupted transport is terminal. Normal deadlines are checked
+between instructions. The ARM64 WHP watchdog and both KVM transports permit a
+100 ms transport allowance for an instruction already entering the native
+machine. KVM bounds interrupted entry retries with a shared absolute deadline;
+it relies on host single stepping for an uninterrupted entry.
+
+These mechanisms follow the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
+and the WHP [partition configuration](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvpartitionpropertydatatypes)
+and [ARM64 register requirements](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvsetvirtualprocessorregisters).
+ARM64 WHP requires a Windows SDK exposing its ARM64 API and a supported
+Windows 11 ARM64 runtime; SDK 10.0.26100.6584 headers are used for local compile
+validation. Native ARM64 execution still requires validation on corresponding
+hardware. Cross-compilation and Unicorn MMU tests do not replace that evidence.
+
+The backend build switches are `NEVERD_EMULATION_BACKEND_UNICORN`,
+`NEVERD_EMULATION_BACKEND_KVM` and `NEVERD_EMULATION_BACKEND_WHP`. They default
+to ON. For a native-only Windows ARM64/MSVC build, disable Unicorn and
+`BUILD_TESTING`; the pinned Unicorn MSVC build assumes an x86 host JIT.
+Enabling Unicorn on Windows ARM64 requires an ARM64 GNU-compatible toolchain,
+such as LLVM-MinGW, together with ARM64-capable WHP SDK headers. This combined
+Windows ARM64 build still requires native validation. Configuring the
+incompatible MSVC/Unicorn combination fails explicitly rather than selecting
+an incorrect JIT architecture.
+
+The Windows ARM64 driver loader, ABI/unwinding and OS environment are not yet
+implemented. Windows ring3, Linux/Android user or kernel environments, and
+Darwin user or kernel environments also need their own loaders, ABI and OS
+models. CPU transport availability does not imply compatibility with these
+workloads.
+
 ## Windows driver emulation
+
+Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not
+the CPU transports. The experimental `checked-x64-v1` integer contract is
+explicitly narrower than the existing `driver-strict` contract; unsupported
+accesses stop before native execution. See the backend section in
+[driver emulation](driver-emulation.md).
 
 `lib/emulation` is an optional execution component, enabled by
 `NEVERD_ENABLE_DRIVER_EMULATION`. The `emulate-driver` CLI reaches it through
 the public C API. `DriverSession` owns bounded x64 WDM initialization and
 optional serial create/IOCTL/read/write/cleanup/close/unload invocations;
 Windows image mapping consumes the existing loader's complete `BinaryImage`,
-and the Windows model owns guest objects and API semantics. The Unicorn adapter
-owns CPU execution and the authoritative guest memory. This path does not use
+and the Windows model owns guest objects and API semantics. Under `driver-strict`,
+the Unicorn adapter owns CPU execution and authoritative guest memory; checked
+hardware execution uses the shared backing described above. This path does not use
 the experimental native translation pipeline or alter its supported profile.
 
 Unicorn is configured once through `cmake/NeverDUnicorn.cmake`, shared with

@@ -10,10 +10,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
 
 #include <initializer_list>
 #include <string_view>

@@ -15,12 +15,14 @@
 
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/Signature.h"
+#include "neverd/sigs/SignatureCache.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -43,6 +45,14 @@ namespace sigs {
 
 class SignatureDB {
 public:
+  /// Load pattern files through \p NewCache from now on, or, when it is
+  /// none, parse every one.  A file the cache holds as it is now is mapped
+  /// rather than parsed, and one it does not is kept there once it is
+  /// parsed; what a load returns is the same either way.
+  void setCache(std::optional<SignatureCache> NewCache) {
+    Cache = std::move(NewCache);
+  }
+
   /// Replace the current database with all pattern files from a directory.
   llvm::Error loadDirectory(const std::filesystem::path &Dir);
 
@@ -63,13 +73,13 @@ public:
   /// The pattern files among \p Files that fit \p Img.
   ///
   /// A file of library `vs<year>` (see \ref libraryName) holds one Visual
-  /// Studio release's runtime libraries.  A PE file links the static runtime libraries of its
-  /// linker's release, and other releases state some of the same bytes under
-  /// other names, so when the image's Rich header names the release of its
-  /// linker, only that release's file is kept.  Every file that belongs to no
-  /// release, such as `winsdk.pat`, is kept.  When the image has no Rich
-  /// header, when the header was altered after linking, or when \p Files
-  /// hold no file for a release it names, every file is kept.
+  /// Studio release's runtime libraries.  A PE file links the static runtime
+  /// libraries of its linker's release, and other releases state some of the
+  /// same bytes under other names, so when the image's Rich header names the
+  /// release of its linker, only that release's file is kept.  Every file that
+  /// belongs to no release, such as `winsdk.pat`, is kept.  When the image has
+  /// no Rich header, when the header was altered after linking, or when
+  /// \p Files hold no file for a release it names, every file is kept.
   static std::vector<std::filesystem::path>
   selectForImage(const BinaryImage &Img,
                  std::vector<std::filesystem::path> Files);
@@ -168,14 +178,17 @@ private:
     std::string LibraryName;
     size_t ModuleStart = 0;
     size_t ModuleCount = 0;
-    /// What the source's modules point into.
+    /// What the source's modules point into: the bytes and names it parsed
+    /// to, or the cache entry it was mapped from.
     std::unique_ptr<uint8_t[]> Bytes;
     std::vector<PatternNames> Names;
+    std::unique_ptr<llvm::MemoryBuffer> Mapping;
   };
 
   std::vector<StoredModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
+  std::optional<SignatureCache> Cache;
 
   /// The index of \ref Modules, built by \ref index when first needed and
   /// dropped whenever the modules change.
@@ -211,9 +224,9 @@ private:
   void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
                        std::vector<SignatureMatcher::Hit> Hits);
 
-  void commitSource(std::vector<PatternChunk> &&Chunks,
-                    std::unique_ptr<uint8_t[]> Bytes,
-                    const std::string &LibName, const std::string &FilePath);
+  /// Add \p Mods, the modules of \p Src, in place of those of a source with
+  /// the same path or after every other source.
+  void commitSource(SigSource Src, std::vector<StoredModule> Mods);
 
   /// The library a module was loaded from, by its index in \ref Modules.
   const std::string &libraryNameOf(size_t ModuleIndex) const;

@@ -1,0 +1,75 @@
+//===- AArch64Machine.def - ARM64 checked machine constants --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_AARCH64_VALUE
+NEVERD_AARCH64_VALUE(InstructionBytes, 4)
+NEVERD_AARCH64_VALUE(WordBytes, 8)
+NEVERD_AARCH64_VALUE(WordBits, 64)
+NEVERD_AARCH64_VALUE(GPRCount, 31)
+NEVERD_AARCH64_VALUE(VectorCount, 32)
+NEVERD_AARCH64_VALUE(PageBits, 12)
+NEVERD_AARCH64_VALUE(TableBits, 9)
+NEVERD_AARCH64_VALUE(TableLevels, 4)
+NEVERD_AARCH64_VALUE(TableEntries, 512)
+NEVERD_AARCH64_VALUE(AddressMask, 0x0000fffffffff000ull)
+NEVERD_AARCH64_VALUE(UserMax, 0x0000ffffffffffffull)
+NEVERD_AARCH64_VALUE(KernelMin, 0xffff000000000000ull)
+NEVERD_AARCH64_VALUE(TableDescriptor, 3)
+NEVERD_AARCH64_VALUE(AccessFlag, 1ull << 10)
+NEVERD_AARCH64_VALUE(InnerShareable, 3ull << 8)
+NEVERD_AARCH64_VALUE(ReadOnly, 1ull << 7)
+NEVERD_AARCH64_VALUE(PrivilegedNX, 1ull << 53)
+NEVERD_AARCH64_VALUE(UserNX, 1ull << 54)
+NEVERD_AARCH64_VALUE(VectorGPA, memory::PageSize)
+NEVERD_AARCH64_VALUE(EntryGPA, 2 * memory::PageSize)
+NEVERD_AARCH64_VALUE(ProbePC, EntryGPA + 0x100)
+NEVERD_AARCH64_VALUE(ProbeInstruction, 0xd503201f)
+NEVERD_AARCH64_VALUE(ProbeTimeoutMicroseconds, 1000000)
+NEVERD_AARCH64_VALUE(InternalBegin, VectorGPA)
+NEVERD_AARCH64_VALUE(InternalEnd, EntryGPA + memory::PageSize)
+NEVERD_AARCH64_VALUE(LowRoot, 3 * memory::PageSize)
+NEVERD_AARCH64_VALUE(HighRoot, 4 * memory::PageSize)
+NEVERD_AARCH64_VALUE(FirstChildTable, 5 * memory::PageSize)
+NEVERD_AARCH64_VALUE(VectorStride, 0x80)
+NEVERD_AARCH64_VALUE(VectorTableSize, 0x800)
+NEVERD_AARCH64_VALUE(CurrentELVector, 0x200)
+NEVERD_AARCH64_VALUE(ExceptionClassShift, 26)
+NEVERD_AARCH64_VALUE(ExceptionClassMask, 0x3f)
+NEVERD_AARCH64_VALUE(StepFromEL1, 0x33)
+NEVERD_AARCH64_VALUE(StepFromLowerEL, 0x32)
+NEVERD_AARCH64_VALUE(NZCVMask, 0xf0000000)
+NEVERD_AARCH64_VALUE(PStateEL1h, 5)
+NEVERD_AARCH64_VALUE(PStateDAIF, 0x3c0)
+NEVERD_AARCH64_VALUE(PStateDebugMask, 0x200)
+NEVERD_AARCH64_VALUE(PStateSingleStep, 1ull << 21)
+NEVERD_AARCH64_VALUE(MDSCRSingleStep, 1)
+NEVERD_AARCH64_VALUE(MDSCRKernelDebug, 1ull << 13)
+NEVERD_AARCH64_VALUE(MDSCRMonitorDebug, 1ull << 15)
+// 4 KiB, 48-bit TTBR0/1 VA, 40-bit output PA, inner-shareable WBWA.
+NEVERD_AARCH64_VALUE(TCR, 0x2b5103510ull)
+// Normal noncacheable RAM. Explicit I-cache maintenance precedes every step.
+NEVERD_AARCH64_VALUE(MAIR, 0x44)
+// Baseline RES1 bits, MMU enabled, little endian, no stack alignment trap.
+NEVERD_AARCH64_VALUE(SCTLR, 0x30d00801)
+NEVERD_AARCH64_VALUE(CPACR, 3ull << 20)
+NEVERD_AARCH64_VALUE(GicDistributor, 0x80000000ull)
+NEVERD_AARCH64_VALUE(GicRedistributor, 0x80020000ull)
+NEVERD_AARCH64_VALUE(GicITS, 0x80040000ull)
+NEVERD_AARCH64_VALUE(GicVirtualTimerPPI, 27)
+NEVERD_AARCH64_VALUE(GicPerformancePPI, 23)
+NEVERD_AARCH64_VALUE(GatewayHypercall, 0xd4000002)
+#endif
+// No general register or flags are modified by the maintenance sequence.
+// The KVM adapter steps these internally; WHP appends ERET to arm guest SS.
+#ifdef NEVERD_AARCH64_MAINTENANCE
+NEVERD_AARCH64_MAINTENANCE(TLBI_VMALLE1IS, 0xd508831f)
+NEVERD_AARCH64_MAINTENANCE(DSB_ISH, 0xd5033b9f)
+NEVERD_AARCH64_MAINTENANCE(IC_IALLUIS, 0xd508711f)
+NEVERD_AARCH64_MAINTENANCE(DSB_ISH, 0xd5033b9f)
+NEVERD_AARCH64_MAINTENANCE(ISB, 0xd5033fdf)
+#endif
+#ifdef NEVERD_AARCH64_GATE_RETURN
+NEVERD_AARCH64_GATE_RETURN(ERET, 0xd69f03e0)
+#endif

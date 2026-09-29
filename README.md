@@ -152,7 +152,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Signature libraries are installed to `build/bin/signatures/` at build time. `sigs --auto` selects the matching set from format, architecture, and bitness. For a PE file whose Rich header names its linker's Visual Studio release, it loads only that release's `vs<year>.pat` beside the files that belong to no release. `--sig-base <dir>` selects the same way from another signature tree.
+Signature libraries are installed to `build/bin/signatures/` at build time. `sigs --auto` selects the matching set from format, architecture, and bitness. For a PE file whose Rich header names its linker's Visual Studio release, it loads only that release's `vs<year>.pat` beside the files that belong to no release. `--sig-base <dir>` selects the same way from another signature tree. A pattern file of 1 MiB or more is parsed once: its modules are kept in `neverd/signatures` under the user's cache directory and mapped on later loads. `NEVERD_SIGNATURE_CACHE` names another directory, or `off` turns the cache off.
 
 ## Building
 

@@ -6,6 +6,8 @@
 
 #include "neverd/analysis/InterpreterMachineState.h"
 
+#include "X64UserFlags.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -28,16 +30,8 @@ constexpr uint64_t SystemFlags = GuestBase + 264;
 constexpr uint64_t ProfileStatus = GuestBase + 272;
 constexpr uint64_t ScratchBase = uint64_t{1} << 61;
 constexpr uint64_t ScratchEnd = uint64_t{1} << 62;
-constexpr uint64_t SplitMask = 0xcd5;
-constexpr uint64_t UserSystemWriteMask =
-    (uint64_t{1} << 14) | (uint64_t{1} << 21);
-constexpr uint64_t TrapOrAlignmentMask =
-    (uint64_t{1} << 8) | (uint64_t{1} << 18);
-constexpr uint64_t EntryMask =
-    SplitMask | UserSystemWriteMask | (uint64_t{1} << 9) | 2;
-constexpr std::pair<uint64_t, unsigned> Flags[] = {
-    {x86reg::CF, 0}, {x86reg::PF, 2},  {x86reg::AF, 4}, {x86reg::ZF, 6},
-    {x86reg::SF, 7}, {x86reg::DF, 10}, {x86reg::OF, 11}};
+using FlagProfile = detail::X64UserFlags;
+constexpr auto &Flags = FlagProfile::Flags;
 
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::invalid_argument, "%s",
@@ -119,7 +113,8 @@ struct InstructionWriter {
     const NdVar Packed = temporary();
     load(Packed, offsetof(InterpreterMachineStateX64V1, RFlags));
     const NdVar UnsupportedBits = temporary();
-    emit(NdOp::INT_AND, UnsupportedBits, {Packed, scalar(~EntryMask)});
+    emit(NdOp::INT_AND, UnsupportedBits,
+         {Packed, scalar(~FlagProfile::EntryMask)});
     const NdVar Unsupported = temporary(1);
     emit(NdOp::INT_NOTEQUAL, Unsupported, {UnsupportedBits, scalar(0)});
     const NdVar FixedBit = temporary();
@@ -130,7 +125,7 @@ struct InstructionWriter {
     emit(NdOp::BOOL_OR, Invalid, {Unsupported, MissingFixed});
     emit(NdOp::INT_ZEXT, NdVar::reg(ProfileStatus, 8), {Invalid});
     emit(NdOp::INT_AND, NdVar::reg(SystemFlags, 8),
-         {Packed, scalar(~SplitMask)});
+         {Packed, scalar(~FlagProfile::SplitMask)});
     for (const auto &[Offset, Bit] : Flags) {
       const NdVar Shifted = temporary();
       emit(NdOp::INT_RIGHT, Shifted, {Packed, scalar(Bit)});
@@ -198,7 +193,7 @@ struct InstructionWriter {
 
 llvm::Error validateInterpreterMachineStateX64V1(
     const InterpreterMachineStateX64V1 &State) {
-  if ((State.RFlags & ~EntryMask) != 0 || (State.RFlags & 2) == 0)
+  if (!FlagProfile::validEntry(State.RFlags))
     return invalid("machine source requires canonical nonfaulting x64 "
                    "user-mode entry flags");
   return llvm::Error::success();
@@ -323,45 +318,25 @@ wrapInterpreterMachineStateX64(const LowFunc &Residual,
           HasReturn = true;
           break;
         case NdOp::INTRINSIC: {
-          if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() ||
-              Op.Inputs[0].Size != 2)
-            return invalid("machine source has a malformed intrinsic");
-          const auto Kind = static_cast<Intrinsic>(Op.Inputs[0].Offset);
-          if (Kind == Intrinsic::Pushf && Op.NumInputs == 1 &&
-              Op.Output.isTemp() && Op.Output.Size == 8) {
-            // The lifter adds the seven modeled bits itself. The system image
-            // is explicit guest state, never the host compiler's flags.
-            Writer.emit(NdOp::INT_AND, Op.Output,
-                        {NdVar::reg(SystemFlags, 8),
-                         scalar(~((uint64_t{1} << 16) | (uint64_t{1} << 17)))});
-          } else if (Kind == Intrinsic::Popf && Op.NumInputs == 2 &&
-                     Op.Output.Size == 0 && Op.Inputs[1].Size == 8) {
-            if (Op.Inputs[1].isConst() &&
-                (Op.Inputs[1].Offset & TrapOrAlignmentMask) != 0)
-              return invalid(
-                  "POPFQ image violates the nonfaulting source profile");
-            const NdVar UnsupportedBits = Writer.temporary();
-            Writer.emit(NdOp::INT_AND, UnsupportedBits,
-                        {Op.Inputs[1], scalar(TrapOrAlignmentMask)});
-            const NdVar Unsupported = Writer.temporary(1);
-            Writer.emit(NdOp::INT_NOTEQUAL, Unsupported,
-                        {UnsupportedBits, scalar(0)});
-            const NdVar Extended = Writer.temporary();
-            Writer.emit(NdOp::INT_ZEXT, Extended, {Unsupported});
-            Writer.emit(NdOp::INT_OR, NdVar::reg(ProfileStatus, 8),
-                        {NdVar::reg(ProfileStatus, 8), Extended});
-            const NdVar Kept = Writer.temporary();
-            Writer.emit(
-                NdOp::INT_AND, Kept,
-                {NdVar::reg(SystemFlags, 8), scalar(~UserSystemWriteMask)});
-            const NdVar Changed = Writer.temporary();
-            Writer.emit(NdOp::INT_AND, Changed,
-                        {Op.Inputs[1], scalar(UserSystemWriteMask)});
-            Writer.emit(NdOp::INT_OR, NdVar::reg(SystemFlags, 8),
-                        {Kept, Changed});
-          } else {
+          auto Transition = detail::lowerX64UserFlags(
+              Op, NdVar::reg(SystemFlags, 8),
+              [&](uint16_t Size) { return Writer.temporary(Size); });
+          if (!Transition)
             return invalid(
                 "machine source supports only canonical x64 flag intrinsics");
+          if (Transition->Rejected) {
+            if (Op.Inputs[1].isConst() &&
+                (Op.Inputs[1].Offset & FlagProfile::RejectedWriteMask) != 0)
+              return invalid(
+                  "POPFQ image violates the nonfaulting source profile");
+          }
+          Block.Ops.insert(Block.Ops.end(), Transition->Ops.begin(),
+                           Transition->Ops.end());
+          if (Transition->Rejected) {
+            const NdVar Extended = Writer.temporary();
+            Writer.emit(NdOp::INT_ZEXT, Extended, {*Transition->Rejected});
+            Writer.emit(NdOp::INT_OR, NdVar::reg(ProfileStatus, 8),
+                        {NdVar::reg(ProfileStatus, 8), Extended});
           }
           break;
         }

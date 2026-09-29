@@ -1,0 +1,20 @@
+//===- UnicornFaults.def - CPU fault vocabulary --------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Stable fault names and the Unicorn memory-event classifications. A fault
+/// describes an observed stop; it does not imply Windows exception dispatch.
+///
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_UNICORN_MEMORY_FAULT
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_READ_UNMAPPED, UnmappedMemory, Read)
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_WRITE_UNMAPPED, UnmappedMemory, Write)
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_FETCH_UNMAPPED, UnmappedMemory, Execute)
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_READ_PROT, Protection, Read)
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_WRITE_PROT, Protection, Write)
+NEVERD_UNICORN_MEMORY_FAULT(UC_MEM_FETCH_PROT, Protection, Execute)
+#endif

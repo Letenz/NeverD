@@ -1,3 +1,27 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
+  add_neverd_unittest(NeverDKvmRunTests
+    KvmRunTests.cpp
+    TIMEOUT 10
+    LINK_COMPONENTS EmulationCore)
+  target_include_directories(NeverDKvmRunTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
+  target_link_options(NeverDKvmRunTests PRIVATE "-Wl,--wrap=ioctl")
+endif()
+
+if(NEVERD_EMULATION_BACKEND_UNICORN)
+  add_neverd_unittest(NeverDCPUEmulationTests
+    CPUArchitectureTests.cpp
+    AArch64ProjectionTests.cpp
+    LINK_COMPONENTS EmulationCPU
+    LINK_LIBS unicorn)
+  target_include_directories(NeverDCPUEmulationTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
+endif()
+
+if(NOT NEVERD_ENABLE_DRIVER_EMULATION OR NOT NEVERD_EMULATION_BACKEND_UNICORN)
+  return()
+endif()
+
 find_program(NEVERD_DRIVER_LLD_LINK NAMES lld-link
   HINTS "${LLVM_TOOLS_BINARY_DIR}")
 set(NEVERD_KMDF_FIXTURE "" CACHE FILEPATH
@@ -146,22 +170,22 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
   if(_driver_name STREQUAL "driver_async")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverAsyncCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/WindowsKernelLayout.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def")
   endif()
   if(_driver_name STREQUAL "driver_dispatcher")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverDispatcherCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelDispatcherValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def")
   endif()
   if(_driver_name STREQUAL "driver_context_limits")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverContextLimitCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelPoolFlags.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/WindowsKernelLayout.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelDispatcherValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelPoolFlags.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def")
   endif()
   add_custom_command(OUTPUT "${_driver_image}" "${_driver_object}"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
@@ -713,6 +737,7 @@ foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
 endforeach()
 
 add_neverd_unittest(NeverDDriverEmulationTests
+  HardwareBackendTests.cpp
   DriverWDMUserMappingTests.cpp
   DriverWDMNeitherTests.cpp
   DriverWDMSEHTests.cpp
@@ -867,6 +892,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   # Keep public tests on the shared engine, without a second static copy of
   # the emulation component or LLVM's process-global registries.
   add_neverd_unittest(NeverDDriverEmulationPublicTests
+    HardwareBackendPublicTests.cpp
     DriverEmulationPublicTests.cpp
     DriverScenarioPublicTests.cpp
     DriverWdmWaitWakePublicTests.cpp

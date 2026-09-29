@@ -6,6 +6,19 @@
 
 ينفّذ محاكي برامج التشغيل الاختياري في NeverD نقطة دخول PE لبرنامج تشغيل x64 WDM مدعوم، ويمكنه تنفيذ سيناريو صريح من الطلبات المتسلسلة قبل إلغاء تحميله. يستخدم Unicorn لتنفيذ تعليمات المعالج، ونموذج NeverD المحدود الخاص لبيئة Windows. لا يحمّل برنامج التشغيل في نواة المضيف، ولا يمرّر استدعاءات واجهات الضيف إلى خدمات نظام تشغيل المضيف.
 
+## محركات التنفيذ
+
+يبقى Unicorn هو المحرك الافتراضي لعقد `driver-strict`. يختار العقد التجريبي للأعداد الصحيحة `checked-x64-v1` مع `--backend auto` محرك KVM على Linux x86_64 أو WHP على Windows x64. لا يتحول الاختيار الصريح إلى محرك آخر؛ ويؤدي غياب الدعم أو عدم توافق العقد إلى فشل قبل التنفيذ.
+
+تُفحص التعليمات ووصول الذاكرة قبل كل خطوة مع الحفاظ على فحص كائنات Windows ومراقبة الكتابة والأسماء المستعارة المشتركة. لا يشمل هذا العقد SIMD/x87 أو REP أو العمليات المقفلة أو قراءة الذاكرة وتعديلها وكتابتها أو وصول البيانات عبر حدود الصفحات أو MMIO أو أنظمة أخرى أو عمليات المستخدم. تُفحص المهلة والإلغاء بين التعليمات المحدودة، ولا يُعاد التنفيذ على محرك آخر بعد البدء. لا يعني ذلك دعم كل حالات برامج التشغيل المذكورة أدناه.
+
+خيارات البناء هي `NEVERD_EMULATION_BACKEND_KVM` و`NEVERD_EMULATION_BACKEND_WHP`. يتطلب KVM صلاحية الوصول إلى `/dev/kvm`. يحمّل WHP مكتبة النظام ديناميكياً ولا يزال يحتاج إلى اختبار فعلي على Windows. تضيف الواجهة `neverd_emulate_driver_backend_json` مع الحفاظ على ABI v1. يسجل التقرير المحرك والعقد وسبب الاختيار.
+
+```bash
+build-release/bin/neverd emulate-driver path/to/driver.sys \
+  --backend auto --execution-contract checked-x64-v1
+```
+
 ## البناء والتشغيل
 
 يجب تفعيل هذه الميزة صراحةً، وهي مستقلة عن `BUILD_TESTING`:
@@ -499,7 +512,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 تستخدم `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` خيارات v1 وقواعد الملكية نفسها، مع إضافة إدخال سيناريو صارم. تُطلب سلسلة JSON غير NULL ومنتهية بـNUL. يبقى ABI الأصلي لـ`neverd_emulate_driver_json` دون تغيير، ومقتصرًا على التهيئة. يوفّر محلّل C++ المسمى `driverOptionsFromScenarioJSON` التحقق نفسه من السيناريو لمستدعي `emulateDriver`.
 
-نقطة الدخول الداخلية في C++ هي `neverd::emulation::emulateDriver` في `include/neverd/emulation/DriverSession.h`. تحليل الصيغ مسؤولية المحمّل الموجود؛ وسلوك كائنات/واجهات Windows مسؤولية `lib/emulation/windows`؛ وحالة المعالج وتنفيذه مسؤولية مهايئ Unicorn. يستخدم المهايئ والنموذج واجهة ذاكرة الضيف نفسها. لا ينتمي سلوك Windows API إلى تفريع Unicorn.
+نقطة الدخول الداخلية في C++ هي `neverd::emulation::emulateDriver` في `include/neverd/emulation/DriverSession.h`. تحليل الصيغ مسؤولية المحمّل الموجود؛ وسلوك كائنات/واجهات Windows مسؤولية `lib/emulation/os/windows`؛ وحالة المعالج وتنفيذه مسؤولية مهايئ Unicorn. يستخدم المهايئ والنموذج واجهة ذاكرة الضيف نفسها. لا ينتمي سلوك Windows API إلى تفريع Unicorn.
 
 في مسار WDM `METHOD_NEITHER`، يشير `Type3InputBuffer` و`IRP.UserBuffer` إلى تخصيصين منفصلين للمستخدم. يفحص `ProbeForRead` النطاق والمحاذاة دون لمس الصفحات، بينما يلمس `ProbeForWrite` كل صفحة. يكشف `ExGetPreviousMode` نمط الطلب. يثبّت `MmProbeAndLockPages` صفحات تخصيص مستخدم واحد، ويتيح `MmGetSystemAddressForMdlSafe` تعيينًا مشتركًا، ثم يزيل `MmUnlockPages` القفل والتعيين. لا تزال سياقات العمليات العامة غير ممثلة.
 

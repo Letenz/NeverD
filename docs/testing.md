@@ -73,7 +73,10 @@ observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
 The x64 ELF, COFF, and Mach-O cases also exercise single-function LLVMC
-decompilation and execute its simplified result at `-O0` and `-O2`.
+decompilation. They distinguish default optimization from `--no-opt` and
+execute both results at `-O0` and `-O2`. `SessionLLVMTests` verifies that
+switching this policy rebuilds the cached module and retains the old module
+when a replacement fails verification.
 Nested source expressions additionally compile at `-O0` for x86-32/64,
 ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and
@@ -199,7 +202,8 @@ cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
-build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
+  --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
@@ -207,7 +211,9 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRUndefinedIndependenceTests` checks two-execution independence on complete acyclic LowIR graphs. Ordinary entry inputs are shared; fresh architecture-undefined producers retain their correlations through copies, overlapping writes, spills and reloads. Control predicates are checked before path assumptions. Certificates require `Complete` effect metadata bound to each full instruction boundary and exact operation digest. Missing evidence, reachable loops, calls, unknown aliases and exhausted budgets refuse a certificate. The explicit observation and nonfaulting frame contracts limit the result; this is not full native-to-C equivalence.
 
-`NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to check complete original branch collection, exact byte binding, mandatory entry RSP/return-slot preservation, image-disjoint frame feasibility and refusal without residual code. It covers missing or overlapping instructions, unaudited untaken arms, calls, indirect transfers, cycles, profile/contract mismatches and metadata/collection budgets. This optional gate does not certify exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate.
+`NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
+
+Packed-flags tests cover all scalar entry-flag combinations, privilege masks, both-execution TF/AC guards, distinct undefined producers, correlated copies, native calls, sibling state, mandatory final system-state observation, malformed evidence and charged resource limits. Finite loops must exhaust every feasible input path; a safe sibling cannot hide an infinite or truncated path. RDSSPD/RDSSPQ checks cover all 16 general-purpose registers and both widths, unchanged high bits, retained `Missing` evidence and rejection of forged projections. Machine-state tests compare both C routes at O0/O2 with undefined-behavior traps against an independent user-mode flags oracle and check sticky profile failure. INCSSPD/INCSSPQ tests cover both widths and every general-purpose register, unreachable-boundary retention, feasible traps after a completed sibling, zero operands and forged trap evidence.
 
 `NeverDX86UndefinedEffectsTests` checks undefined-bit metadata, defined/preserved flags and stale-certificate refusal. `NeverDX86CarryArithmeticFlagTests` checks ADC/SBB auxiliary carry for register and memory forms against an arithmetic oracle. `NeverDX86LogicIdentityTests` checks that AND with identical operands still clears bits 63:32 of the enclosing 64-bit register for a 32-bit destination in 64-bit mode while preserving unwritten bits for narrower writes.
 
@@ -295,7 +301,58 @@ and malformed operands must fail explicitly.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
+## CPU execution checks
+
+`NeverDCPUEmulationTests` exercises the public C++ CPU interface independently
+of the Windows model. It runs ARM64 scalar arithmetic and control flow, signed
+and indexed loads, pair/writeback operations, pre-effect observer stops,
+CPU-only snapshots, live aliases, code-cache invalidation and bounded loops.
+The software profile additionally executes FP/SIMD and TLS instructions.
+`AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
+native page-table projection, checking translations, remapping and write
+protection. These tests deliberately use Unicorn's architectural CPU TLB, not
+its virtual TLB.
+
+```bash
+cmake -S . -B build-cpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DNEVERD_ENABLE_CPU_EMULATION=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=OFF
+cmake --build build-cpu --target NeverDCPUEmulationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDCPUEmulationTests$' --output-on-failure
+```
+
+The same checked ARM64 cases run against the native adapter on an ARM64 host.
+They skip with a typed reason on other hosts or when the hypervisor is
+unavailable. Set `NEVERD_REQUIRE_AARCH64_HARDWARE=1` on an ARM64 validation host
+to turn that missing coverage into a failure. Run on both Linux ARM64 and
+Windows ARM64 before claiming native runtime coverage. Genuine platform
+headers permit compile checking on another host, but do not validate vCPU
+initialization, debug delivery or cancellation at runtime.
+
+`BUILD_TESTING=OFF`, `NEVERD_ENABLE_CPU_EMULATION=ON`,
+`NEVERD_ENABLE_DRIVER_EMULATION=OFF` and
+`NEVERD_EMULATION_BACKEND_UNICORN=OFF` build `NeverDEmulationCPU` without
+Unicorn or the Windows driver environment. This configuration must still link
+and execute a matching native CPU through the public factory. The current
+Unicorn dependency requires LLVM-MinGW rather than MSVC on Windows ARM64;
+see [CPU execution](architecture.md#cpu-execution) for build requirements.
+
+On Linux, `NeverDKvmRunTests` injects host-entry interruptions without requiring
+`/dev/kvm`. It checks transient retries, fatal errors, expired deadlines and
+sustained interruption. The x64 and ARM64 transports share this retry boundary;
+native guest execution remains covered by the architecture suites above.
+
 ## Driver emulation checks
+
+`HardwareBackendTests.cpp` exercises the native checked backend on supported
+hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
+restore against current mappings, fault lifetime, bounded loops, unsupported
+instructions and driver fixture comparisons. It runs in
+`NeverDDriverEmulationTests` and skips explicitly when no native backend is
+available. Linux x64 runs exercise KVM; Windows x64 runs exercise WHP. On ARM64 hosts
+the x64 checked cases use Unicorn and do not constitute native x64 evidence.
+`HardwareBackendPublicTests.cpp` protects backend selection and the unchanged
+v1 C ABI. Focus hardware checks with `--gtest_filter='HardwareBackend.*:BackendSelection.*'`.
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`
 to build the focused execution suite and the shared C API/CLI checks:

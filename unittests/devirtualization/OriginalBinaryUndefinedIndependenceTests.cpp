@@ -57,6 +57,28 @@ struct Program {
     return specializeBinaryInterpreterWithIndependence(Image, Entry, Options,
                                                        Contract, Limits);
   }
+
+  void flagsProfile() {
+    Options.X64FlagsProfile = Contract.X64FlagsProfile =
+        InterpreterMachineStateProfile::UserX64NoFaultV1;
+  }
+
+  void append(std::initializer_list<uint8_t> Bytes) {
+    auto &Code = Image.Segments.front();
+    Code.Data.insert(Code.Data.end(), Bytes);
+    Code.Size = Code.FileSz = Code.Data.size();
+  }
+
+  void immediate(uint64_t Value, unsigned Bytes = 4) {
+    for (unsigned I = 0; I != Bytes; ++I)
+      append({static_cast<uint8_t>(Value >> (I * 8))});
+  }
+
+  void requireEAX(uint32_t Value) {
+    append({0x3d}); // cmp eax, value; jne trap; mov eax, 0; ret; trap: int3.
+    immediate(Value);
+    append({0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xcc});
+  }
 };
 
 void expectRefusal(const Program &P, Status Expected,
@@ -132,6 +154,241 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     PhysicalCallAndReturnPreserveMachineState) {
+  // mov eax,7; call helper; ret; helper: add eax,1; ret.
+  Program P({0xb8, 7, 0, 0, 0, 0xe8, 1, 0, 0, 0, 0xc3, 0x83, 0xc0, 1, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_EQ(R.Independence.Certificate->LowIR.Scope,
+            LowIRIndependenceScope::CompleteFiniteNativePaths);
+  const auto &Instructions = R.Independence.Certificate->Instructions;
+  EXPECT_EQ(std::count_if(Instructions.begin(), Instructions.end(),
+                          [](const auto &I) { return I.IsNativeCall; }),
+            1);
+  EXPECT_EQ(R.Independence.Proof.Paths, 1u);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RepeatedHelperUsesActualContinuationSlots) {
+  // Two calls to the same helper must not share their different return slots.
+  Program P({0xb8, 7, 0, 0, 0, 0xe8, 6,    0,    0, 0,
+             0xe8, 1, 0, 0, 0, 0xc3, 0x83, 0xc0, 1, 0xc3});
+  const auto R = P.check();
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  const auto &Trace = R.Certificate->LowIR.Instructions;
+  EXPECT_EQ(
+      std::count_if(Trace.begin(), Trace.end(),
+                    [](const auto &I) { return I.Boundary.Address == 0x1013; }),
+      2);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     MemoryCallReadsBeforePushOverwritesTarget) {
+  // mov rax,helper; mov [rsp-8],rax; call [rsp-8]; ret; helper: mov eax,7; ret.
+  Program P({0x48, 0xb8, 0x14, 0x10, 0,    0,    0,    0,    0,
+             0,    0x48, 0x89, 0x44, 0x24, 0xf8, 0xff, 0x54, 0x24,
+             0xf8, 0xc3, 0xb8, 7,    0,    0,    0,    0xc3});
+  const auto R = P.check();
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  EXPECT_EQ(R.Proof.Paths, 1u);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PartialReturnSlotWriteSelectsRealTarget) {
+  // call helper; ret; helper: mov word [rsp],0x1010; ret; padding; destination.
+  // The original fallthrough is 0x1005, not the modified return target 0x1010.
+  Program P({0xe8, 1,    0,    0,    0,    0xc3, 0x66, 0xc7, 0x04, 0x24, 0x10,
+             0x10, 0xc3, 0x90, 0x90, 0x90, 0xb8, 9,    0,    0,    0,    0xc3});
+  const auto R = P.check();
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  const auto &Trace = R.Certificate->LowIR.Instructions;
+  EXPECT_TRUE(std::any_of(Trace.begin(), Trace.end(), [](const auto &I) {
+    return I.Boundary.Address == 0x1010;
+  }));
+  EXPECT_FALSE(std::any_of(Trace.begin(), Trace.end(), [](const auto &I) {
+    return I.Boundary.Address == 0x1005;
+  }));
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DiscardedCallFrameReachesOuterReturn) {
+  // call helper; ret; helper: add rsp,8; ret.
+  Program P({0xe8, 1, 0, 0, 0, 0xc3, 0x48, 0x83, 0xc4, 8, 0xc3});
+  const auto R = P.check();
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  EXPECT_EQ(R.Proof.Paths, 1u);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, CalleeCannotCorruptEntryReturnSlot) {
+  // The internal return slot is [rsp]; [rsp+8] is the outer entry slot.
+  Program P(
+      {0xe8, 1, 0, 0, 0, 0xc3, 0x48, 0xc7, 0x44, 0x24, 8, 0, 0, 0, 0, 0xc3});
+  expectRefusal(P, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteIndirectTargetsRequireFullCoverage) {
+  // and edi,1; add edi,0x1010; jmp rdi; padding; ret; ret.
+  Program P({0x83, 0xe7, 1, 0x81, 0xc7, 0x10, 0x10, 0, 0, 0xff, 0xe7, 0x90,
+             0x90, 0x90, 0x90, 0x90, 0xc3, 0xc3});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxIndirectTargets = 2;
+  const auto R = P.check(Limits);
+  ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+  EXPECT_EQ(R.Proof.Paths, 2u);
+  Limits.MaxIndirectTargets = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits.MaxIndirectTargets = 2;
+  Limits.MaxPaths = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     UndefinedIndirectTargetIsCheckedBeforePartition) {
+  // XOR's arbitrary AF is copied into AH, isolated, then used as a target bit.
+  Program P({0x31, 0xc0, 0x9f, 0x25, 0, 0x10, 0, 0, 0x48, 0x0d, 0, 0x20, 0, 0,
+             0xff, 0xe0});
+  const auto R = P.check();
+  EXPECT_EQ(R.Proof.Status, Status::Dependent) << R.Proof.Diagnostic;
+  EXPECT_NE(R.Proof.Diagnostic.find("control target"), std::string::npos);
+  EXPECT_FALSE(R.Certificate);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     UndefinedChoicesSurvivePhysicalCallAndReturn) {
+  // xor eax,eax; call helper; lahf; isolate AF; form target; jmp rax;
+  // helper: ret. The caller's arbitrary AF crosses both CALL and RET.
+  Program P({0x31, 0xc0, 0xe8, 0x0e, 0, 0,    0, 0x9f, 0x25, 0,    0x10,
+             0,    0,    0x48, 0x0d, 0, 0x20, 0, 0,    0xff, 0xe0, 0xc3});
+  const auto R = P.check();
+  EXPECT_EQ(R.Proof.Status, Status::Dependent) << R.Proof.Diagnostic;
+  EXPECT_NE(R.Proof.Diagnostic.find("control target"), std::string::npos);
+  EXPECT_FALSE(R.Certificate);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ImmutableReadsBindBytesAndDataMapping) {
+  // mov rax,[rip+1]; ret; immutable eight-byte scalar.
+  for (bool FixedStack : {false, true}) {
+    SCOPED_TRACE(FixedStack);
+    Program P({0x48, 0x8b, 5, 1, 0, 0, 0, 0xc3, 7, 0, 0, 0, 0, 0, 0, 0});
+    if (FixedStack) {
+      P.Contract.EntryConstants.push_back({NdVar::reg(x86reg::RSP, 8), 0x8000});
+      P.Options.EntryConstants.push_back({NdVar::reg(x86reg::RSP, 8), 0x8000});
+    }
+    const auto First = P.check();
+    ASSERT_TRUE(First.proved()) << First.Proof.Diagnostic;
+    ASSERT_EQ(First.Certificate->Reads.size(), 1u);
+    EXPECT_EQ(First.Certificate->Reads[0].Bytes[0], 7u);
+    P.Image.Segments[0].Data[8] = 9;
+    const auto Second = P.check();
+    ASSERT_TRUE(Second.proved()) << Second.Proof.Diagnostic;
+    EXPECT_NE(First.Certificate->InputDigest, Second.Certificate->InputDigest);
+    P.Image.Segments[0].FileOff += 32;
+    const auto Third = P.check();
+    ASSERT_TRUE(Third.proved()) << Third.Proof.Diagnostic;
+    EXPECT_NE(Second.Certificate->InputDigest, Third.Certificate->InputDigest);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     SeparateImmutableDataMappingIsBoundWithoutNativeInstructions) {
+  // mov rax,[rip+0xff9]; ret. The data owner contains no fetched instructions,
+  // so a code-mapping digest cannot accidentally cover its mapping metadata.
+  Program P({0x48, 0x8b, 5, 0xf9, 0x0f, 0, 0, 0xc3});
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data = {7, 0, 0, 0, 0, 0, 0, 0};
+  Data.Size = Data.FileSz = Data.Data.size();
+  P.Image.Segments.push_back(Data);
+  const auto First = P.check();
+  ASSERT_TRUE(First.proved()) << First.Proof.Diagnostic;
+  ASSERT_EQ(First.Certificate->Reads.size(), 1U);
+  EXPECT_EQ(First.Certificate->Reads[0].Address, Data.VA);
+  for (const auto &Insn : First.Certificate->Instructions)
+    EXPECT_LT(Insn.Origin.Address, Data.VA);
+  P.Image.Segments[1].FileOff += 32;
+  const auto Second = P.check();
+  ASSERT_TRUE(Second.proved()) << Second.Proof.Diagnostic;
+  EXPECT_EQ(First.Certificate->Reads[0].Bytes,
+            Second.Certificate->Reads[0].Bytes);
+  EXPECT_NE(First.Certificate->InputDigest, Second.Certificate->InputDigest);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     UnreachableTrapRetainsBytesAndMissingEffects) {
+  // xor eax,eax; jne trap; ret; trap. No bytes follow the trap, so inventing
+  // a resumption edge would fail even though the original branch is untaken.
+  for (bool InvalidOpcode : {false, true}) {
+    SCOPED_TRACE(InvalidOpcode);
+    Program P({0x31, 0xc0, 0x75, 1, 0xc3, 0xcc});
+    if (InvalidOpcode) {
+      P.Image.Segments[0].Data.back() = 0x0f;
+      P.Image.Segments[0].Data.push_back(0x0b);
+      ++P.Image.Segments[0].Size;
+      ++P.Image.Segments[0].FileSz;
+    }
+    const auto R = P.recover();
+    ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+    EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+    const auto &Insns = R.Independence.Certificate->Instructions;
+    const auto It = std::find_if(Insns.begin(), Insns.end(), [](const auto &I) {
+      return I.Origin.Control == LowInstructionControl::Terminator;
+    });
+    ASSERT_NE(It, Insns.end());
+    EXPECT_EQ(It->Origin.Address, Entry + 5);
+    EXPECT_EQ(It->NativeBytes, InvalidOpcode
+                                   ? (std::vector<uint8_t>{0x0f, 0x0b})
+                                   : (std::vector<uint8_t>{0xcc}));
+    EXPECT_EQ(It->UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
+    EXPECT_EQ(It->UndefinedEffects.OperationDigest,
+              lowUndefinedOperationDigest(It->Ops));
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DiscardedCallContinuationCanContainATrap) {
+  // call helper; int3; helper: add rsp,8; mov eax,7; ret. The real native
+  // stack determines the outer return; the call continuation stays evidence.
+  Program P(
+      {0xe8, 1, 0, 0, 0, 0xcc, 0x48, 0x83, 0xc4, 8, 0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 1U);
+  EXPECT_TRUE(
+      std::any_of(R.Independence.Certificate->Instructions.begin(),
+                  R.Independence.Certificate->Instructions.end(),
+                  [](const auto &I) { return I.Origin.Address == Entry + 5; }));
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FeasibleTrapCannotPublishAnyCompletedSibling) {
+  // jc trap; ret; int3. An ordinary input can select either path. A completed
+  // return cannot authorize the sibling exception path under this contract.
+  Program Branch({0x72, 1, 0xc3, 0xcc});
+  expectRefusal(Branch, Status::ContractViolation);
+  Program Direct({0xcc});
+  expectRefusal(Direct, Status::ContractViolation);
+  Program InvalidOpcode({0x0f, 0x0b});
+  expectRefusal(InvalidOpcode, Status::ContractViolation);
+  // call helper; int3; helper: ret. The actual continuation is reached.
+  Program Call({0xe8, 1, 0, 0, 0, 0xcc, 0xc3});
+  expectRefusal(Call, Status::ContractViolation);
+  // and eax,1; add rax,0x100b; jmp rax; ret; int3. Complete finite target
+  // enumeration must retain the trap target as well as the normal return.
+  Program Indirect(
+      {0x83, 0xe0, 1, 0x48, 5, 0x0b, 0x10, 0, 0, 0xff, 0xe0, 0xc3, 0xcc});
+  expectRefusal(Indirect, Status::ContractViolation);
+  const auto OrdinaryTrap =
+      specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
+  EXPECT_FALSE(OrdinaryTrap.complete());
+  EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StaticallyUntakenBranchStillRequiresOriginalBytes) {
   // XOR makes JNE false in ordinary recovery; its target is unmapped 0x100a.
   Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3});
@@ -152,9 +409,10 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 TEST(OriginalBinaryUndefinedIndependence,
      NativeReturnRequiresEntryStackPointerAndReturnAddress) {
-  // add rsp,8; mov eax,7; ret: an equal business result does not restore RSP.
+  // add rsp,8; mov eax,7; ret: this is now a physical internal transfer, not
+  // an outer exit. Its target load exceeds the accessible frame contract.
   Program Pivot({0x48, 0x83, 0xc4, 8, 0xb8, 7, 0, 0, 0, 0xc3});
-  expectRefusal(Pivot, Status::ContractViolation);
+  expectRefusal(Pivot, Status::Unsupported);
   // mov qword ptr [rsp],0; mov eax,7; ret: the return slot is observable even
   // when the caller opts out of ordinary final frame-byte observations.
   Program Slot({0x48, 0xc7, 0x04, 0x24, 0, 0, 0, 0, 0xb8, 7, 0, 0, 0, 0xc3});
@@ -176,20 +434,22 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
-     CallsIndirectTransfersCyclesAndOverlappingInstructionsRefuse) {
+     CallNextPreservesOnePushWhileUnboundedTargetsAndCyclesRefuse) {
   Program DirectCall({0xe8, 0, 0, 0, 0, 0xc3});
-  expectRefusal(DirectCall, Status::Unsupported);
+  const auto Direct = DirectCall.check();
+  ASSERT_TRUE(Direct.proved()) << Direct.Proof.Diagnostic;
   // CALL-next can lower to a physical push without a remaining CALL LowOp.
   // POP restores RSP, so native classification must still reject this graph
   // even when its LowIR satisfies the leaf return-preservation obligations.
   Program CallNextPop({0xe8, 0, 0, 0, 0, 0x58, 0xc3});
-  expectRefusal(CallNextPop, Status::Unsupported);
+  const auto Pop = CallNextPop.check();
+  ASSERT_TRUE(Pop.proved()) << Pop.Proof.Diagnostic;
   Program IndirectCall({0xff, 0xd0, 0xc3});
-  expectRefusal(IndirectCall, Status::Unsupported);
+  expectRefusal(IndirectCall, Status::BudgetExceeded);
   Program IndirectBranch({0xff, 0xe0});
-  expectRefusal(IndirectBranch, Status::Unsupported);
+  expectRefusal(IndirectBranch, Status::BudgetExceeded);
   Program Loop({0xeb, 0xfe});
-  expectRefusal(Loop, Status::Unsupported);
+  expectRefusal(Loop, Status::BudgetExceeded);
   // The branch target 0x1005 decodes as NOP inside the MOV immediate.
   Program Overlap({0x85, 0xff, 0x75, 1, 0xb8, 0x90, 0x90, 0x90, 0x90, 0xc3});
   expectRefusal(Overlap, Status::Unsupported);
@@ -337,6 +597,398 @@ TEST(OriginalBinaryUndefinedIndependence,
             (std::vector<uint8_t>{0x2e, 0x90}));
   EXPECT_EQ(After.Certificate->Instructions[0].NativeBytes,
             (std::vector<uint8_t>{0x3e, 0x90}));
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsRequireMatchingOptIn) {
+  Program P({0x9c, 0x58, 0xc3}); // pushfq; pop rax; ret.
+  expectRefusal(P, Status::Unsupported);
+  P.Options.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  expectRefusal(P, Status::Invalid);
+  P.flagsProfile();
+  const auto Valid = P.check();
+  ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+  ASSERT_EQ(Valid.Certificate->LowIR.NativeFlagTransitions.size(), 1U);
+  const auto &Receipt = Valid.Certificate->LowIR.NativeFlagTransitions[0];
+  EXPECT_EQ(Receipt.InstructionAddress, Entry);
+  EXPECT_EQ(Receipt.SemanticsVersion, 1U);
+  EXPECT_FALSE(Receipt.OperationDigest.empty());
+  P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile =
+      static_cast<InterpreterMachineStateProfile>(255);
+  expectRefusal(P, Status::Invalid);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsKeepSnapshotCorrelation) {
+  // Two unchanged snapshots must agree, including symbolic IF/NT/ID at entry.
+  // pushfq; pop rax; pushfq; pop rcx; cmp rax,rcx; jne trap; ret; int3.
+  Program P({0x9c, 0x58, 0x9c, 0x59, 0x48, 0x39, 0xc8, 0x75, 1, 0xc3, 0xcc});
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Certificate->LowIR.NativeFlagTransitions.size(), 2U);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsEntryBitsAreCanonical) {
+  const uint64_t Offsets[] = {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                              x86reg::SF, x86reg::DF, x86reg::OF};
+  const unsigned Bits[] = {0, 2, 4, 6, 7, 10, 11};
+  for (unsigned Combination = 0; Combination != 128; ++Combination) {
+    SCOPED_TRACE(Combination);
+    Program P({0x9c, 0x58, 0x25, 0xd5, 0x0c, 0, 0});
+    P.flagsProfile();
+    unsigned Expected = 0;
+    for (unsigned I = 0; I != 7; ++I) {
+      const uint64_t Value = (Combination >> I) & 1;
+      Expected |= Value << Bits[I];
+      P.Options.EntryConstants.push_back({NdVar::reg(Offsets[I], 1), Value});
+      P.Contract.EntryConstants.push_back({NdVar::reg(Offsets[I], 1), Value});
+    }
+    P.requireEAX(Expected);
+    const auto Result = P.check();
+    ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  }
+  for (auto Location : {NdVar::reg(x86reg::AF, 1), NdVar::reg(x86reg::AF, 2),
+                        NdVar::reg(x86reg::AF - 1, 2)}) {
+    Program P({0x9c, 0x58, 0xc3});
+    P.flagsProfile();
+    P.Options.EntryConstants.push_back({Location, 2});
+    P.Contract.EntryConstants.push_back({Location, 2});
+    expectRefusal(P, Status::Invalid);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsApplyUserPrivilegeMasks) {
+  for (uint64_t Image : {uint64_t{0}, uint64_t{0x204002}, uint64_t{0x1a3002},
+                         ~uint64_t{0x40100}}) {
+    SCOPED_TRACE(Image);
+    // Save entry IF. POPFQ changes NT/ID, preserves IF, ignores protected and
+    // reserved image bits, and keeps architectural bit 1 set.
+    Program P({0x9c, 0x59, 0x81, 0xe1, 0, 2, 0, 0, 0x48, 0xb8});
+    P.immediate(Image, 8);
+    P.append({0x50, 0x9d, 0x9c, 0x58, 0x25, 2, 0x42, 0x20, 0, 0x31, 0xc8});
+    P.requireEAX(2 | (Image & 0x204000));
+    P.flagsProfile();
+    const auto Result = P.check();
+    ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsRejectFeasibleProfileExit) {
+  // Unconstrained RDI can request TF or AC. It is not a safe entry assumption.
+  Program Bad({0x57, 0x9d, 0xb8, 0, 0, 0, 0, 0xc3});
+  Bad.flagsProfile();
+  expectRefusal(Bad, Status::ContractViolation);
+  // A real mask makes every image safe while still allowing dynamic NT/ID.
+  Program Good({0x48, 0x81, 0xe7, 0xff, 0xfe, 0xfb, 0xff, 0x57, 0x9d, 0xb8, 0,
+                0, 0, 0, 0xc3});
+  Good.flagsProfile();
+  const auto Result = Good.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+Program arbitraryFlagToSystem(unsigned Bit, bool Clear, bool Restore) {
+  Program P({});
+  if (Restore)
+    P.append({0x9c, 0x5b}); // Keep original packed flags in RBX.
+  // XOR makes AF arbitrary. Copy it through an actual flags stack snapshot.
+  P.append({0x31, 0xc0, 0x9c, 0x58, 0x25});
+  P.immediate(Clear ? 0 : 0x10);
+  for (unsigned I = 4; I != Bit; ++I)
+    P.append({0x01, 0xc0}); // add eax,eax: no shift metadata assumption.
+  P.append({0x83, 0xc8, 2, 0x50, 0x9d});
+  if (Restore)
+    P.append({0x53, 0x9d});
+  P.append({0xb8, 0, 0, 0, 0, 0xc3});
+  P.flagsProfile();
+  P.Contract.ObserveWrittenFrameBytes = false;
+  return P;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsAlwaysObserveFinalSystem) {
+  for (unsigned Bit : {14u, 21u}) {
+    SCOPED_TRACE(Bit);
+    auto Clear = arbitraryFlagToSystem(Bit, true, false);
+    const auto Valid = Clear.check();
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+    auto Bad = arbitraryFlagToSystem(Bit, false, false);
+    const auto Result = Bad.check();
+    EXPECT_EQ(Result.Proof.Status, Status::Dependent)
+        << Result.Proof.Diagnostic;
+    EXPECT_NE(Result.Proof.Diagnostic.find("final system flags"),
+              std::string::npos);
+    EXPECT_FALSE(Result.Certificate.has_value());
+    expectRefusal(Bad, Status::Dependent);
+    // No ordinary register or frame observation can turn off this obligation.
+    Bad.Contract.ReturnRegisters.clear();
+    expectRefusal(Bad, Status::Dependent);
+    auto Restore = arbitraryFlagToSystem(Bit, false, true);
+    const auto Restored = Restore.check();
+    ASSERT_TRUE(Restored.proved()) << Restored.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsCheckBothUndefinedTwins) {
+  for (unsigned Bit : {8u, 18u}) {
+    SCOPED_TRACE(Bit);
+    auto Good = arbitraryFlagToSystem(Bit, true, false);
+    const auto Valid = Good.check();
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+    auto Bad = arbitraryFlagToSystem(Bit, false, false);
+    expectRefusal(Bad, Status::ContractViolation);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsPreserveArbitraryCopies) {
+  // xor eax,eax; pushfq; pop rax; and eax,0x10; ret exposes the same AF choice.
+  Program Bad({0x31, 0xc0, 0x9c, 0x58, 0x25, 0x10, 0, 0, 0, 0xc3});
+  Bad.flagsProfile();
+  Bad.Contract.ObserveWrittenFrameBytes = false;
+  expectRefusal(Bad, Status::Dependent);
+  // Copying one saved image and XORing its copies cancels that one choice.
+  Program Good(
+      {0x31, 0xc0, 0x9c, 0x59, 0x48, 0x89, 0xc8, 0x48, 0x31, 0xc8, 0xc3});
+  Good.flagsProfile();
+  Good.Contract.ObserveWrittenFrameBytes = false;
+  const auto Result = Good.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsPersistAcrossNativeCall) {
+  // Set ID, call a helper RET, then prove the subsequent snapshot has ID set.
+  Program P({0xb8, 2, 0, 0x20, 0, 0x50, 0x9d, 0xe8});
+  const size_t Displacement = P.Image.Segments.front().Data.size();
+  P.immediate(0);
+  P.append({0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0x200000);
+  const size_t Helper = P.Image.Segments.front().Data.size();
+  P.append({0xc3});
+  const uint32_t Relative = Helper - (Displacement + 4);
+  for (unsigned I = 0; I != 4; ++I)
+    P.Image.Segments.front().Data[Displacement + I] = Relative >> (I * 8);
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsBindProfileAndChargeWork) {
+  Program Plain({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Before = Plain.check();
+  ASSERT_TRUE(Before.proved()) << Before.Proof.Diagnostic;
+  Plain.flagsProfile();
+  const auto After = Plain.check();
+  ASSERT_TRUE(After.proved()) << After.Proof.Diagnostic;
+  EXPECT_NE(Before.Certificate->InputDigest, After.Certificate->InputDigest);
+  EXPECT_NE(Before.Certificate->LowIR.InputDigest,
+            After.Certificate->LowIR.InputDigest);
+  auto P = arbitraryFlagToSystem(21, true, false);
+  const auto Valid = P.check();
+  ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxOperations = Valid.Proof.Operations - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxSolverQueries = Valid.Proof.SolverQueries - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxObservations = Valid.Proof.Observations - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsKeepSiblingStatesSeparate) {
+  // Set ID before the fork. The fallthrough path clears it and finishes first;
+  // the taken sibling must retain its own copy of the pre-fork ID state.
+  Program P({0xb8, 2, 0, 0x20, 0, 0x50, 0x9d, 0x85, 0xff, 0x75, 0});
+  P.append({0xb8, 2, 0, 0, 0, 0x50, 0x9d, 0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0);
+  const size_t Sibling = P.Image.Segments.front().Data.size();
+  P.Image.Segments.front().Data[10] = Sibling - 11;
+  P.append({0x9c, 0x58, 0x25, 0, 0, 0x20, 0});
+  P.requireEAX(0x200000);
+  P.flagsProfile();
+  // TEST's arbitrary AF can remain in a stack snapshot on the taken path;
+  // this case isolates the system-state fork and its trap-based oracle.
+  P.Contract.ObserveWrittenFrameBytes = false;
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 2U);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PackedFlagsCannotCertifyASafeSibling) {
+  // test edi,edi; jne bad; mov eax,0; ret; bad: push 0x102; popfq; mov eax,0;
+  // ret.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0,    0, 0, 0, 0xc3, 0x68,
+             2,    1,    0,    0, 0x9d, 0xb8, 0, 0, 0, 0,    0xc3});
+  P.flagsProfile();
+  const auto Result = P.check();
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  expectRefusal(P, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsKeepDistinctProducers) {
+  // Save AF from two distinct XORs, then compare only those saved bits.
+  Program P({0x31, 0xc0, 0x9c, 0x59, 0x31, 0xd2, 0x9c, 0x58, 0x48, 0x31, 0xc8,
+             0x25, 0x10, 0, 0, 0, 0xc3});
+  P.flagsProfile();
+  P.Contract.ObserveWrittenFrameBytes = false;
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PackedFlagsDoNotAdmitOtherModes) {
+  const std::initializer_list<uint8_t> Programs[] = {
+      {0x66, 0x9c, 0xc3}, {0x66, 0x9d, 0xc3}, {0xfa, 0xc3}, {0xfb, 0xc3}};
+  for (auto Bytes : Programs) {
+    Program P(Bytes);
+    P.flagsProfile();
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteLoopKeepsPersistentPackedFlags) {
+  // Set NT, repeat a snapshot oracle three times, and leave with RSP restored.
+  Program P({0xb8, 2, 0x40, 0, 0, 0x50, 0x9d, 0xb9, 3, 0, 0, 0});
+  const size_t Loop = P.Image.Segments.front().Data.size();
+  P.append({0x9c, 0x58, 0x25, 0, 0x40, 0x20, 0, 0x3d, 0, 0x40, 0, 0, 0x75, 0});
+  const size_t BadEdge = P.Image.Segments.front().Data.size() - 1;
+  P.append({0x83, 0xe9, 1, 0x75, 0});
+  auto &Bytes = P.Image.Segments.front().Data;
+  Bytes.back() = static_cast<uint8_t>(Loop - Bytes.size());
+  P.append({0xb8, 0, 0, 0, 0, 0xc3});
+  const size_t Trap = P.Image.Segments.front().Data.size();
+  P.append({0xcc});
+  P.Image.Segments.front().Data[BadEdge] = Trap - (BadEdge + 1);
+  P.flagsProfile();
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  EXPECT_EQ(Result.Certificate->LowIR.NativeFlagTransitions.size(), 4U);
+  EXPECT_GT(Result.Certificate->LowIR.Instructions.size(),
+            Result.Certificate->Instructions.size());
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = Result.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FiniteLoopCoversAllBoundedInputCounts) {
+  // ecx = edi & 3; eax = 0; while (ecx) { eax += 7; --ecx; } return eax.
+  Program P({0x89, 0xf9, 0x83, 0xe1, 3, 0xb8, 0,    0, 0,    0,    0x85, 0xc9,
+             0x74, 8,    0x83, 0xc0, 7, 0x83, 0xe9, 1, 0x75, 0xf8, 0xc3});
+  const auto Result = P.check();
+  ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+  EXPECT_EQ(Result.Proof.Paths, 4U);
+  // A partial unrolling cannot claim that these are the only input cases.
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = Result.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     InfiniteLoopCannotPublishSafeSibling) {
+  // The fallthrough returns first; another shared ordinary input spins forever.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xeb, 0xfe});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = 12;
+  const auto Result = P.check(Limits);
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  EXPECT_EQ(Result.Proof.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Result.Certificate.has_value());
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     LoopControlChecksChoicesBeforePruning) {
+  // xor eax,eax; lahf; test ah,0x10; jne start; ret.
+  Program P({0x31, 0xc0, 0x9f, 0xf6, 0xc4, 0x10, 0x75, 0xf8, 0xc3});
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackKeepsWholeRegisters) {
+  for (unsigned Width : {4u, 8u})
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Index);
+      Program P({0xf3});
+      if (Width == 8 || Index >= 8)
+        P.append(
+            {static_cast<uint8_t>(0x40 | (Width == 8 ? 8 : 0) | (Index >> 3))});
+      P.append({0x0f, 0x1e, static_cast<uint8_t>(0xc8 | (Index & 7)), 0xc3});
+      P.flagsProfile();
+      // In the disabled profile RDSSPD also preserves the upper 32 bits.
+      const uint64_t Value =
+          Index == 4 ? (uint64_t{1} << 40) | 0x10000 : 0x1234567887654321;
+      const NdVar Register = NdVar::reg(Index * 8, 8);
+      P.Options.EntryConstants.push_back({Register, Value});
+      P.Contract.EntryConstants.push_back({Register, Value});
+      P.Contract.PreservedRegisters.push_back({Register.Offset, 8});
+      const auto Result = P.check();
+      ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+      ASSERT_EQ(Result.Certificate->LowIR.NativeProfileProjections.size(), 1U);
+      EXPECT_EQ(Result.Certificate->Instructions[0].ProfileProjection,
+                InterpreterProfileProjection::CetDisabledReadShadowStackV1);
+      EXPECT_EQ(Result.Certificate->Instructions[0].UndefinedEffects.Coverage,
+                LowUndefinedCoverage::Missing);
+      EXPECT_EQ(Result.Certificate->LowIR.Instructions[0].Effects.Coverage,
+                LowUndefinedCoverage::Missing);
+    }
+  Program OtherCET({0xf3, 0x48, 0x0f, 0xae, 0xe8, 0xc3}); // incsspq rax.
+  OtherCET.flagsProfile();
+  expectRefusal(OtherCET, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackIncrementMustStayUnreachable) {
+  for (unsigned Width : {4u, 8u})
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Index);
+      // cmp eax,eax; jne trap; ret; trap: incssp rN. There are deliberately
+      // no bytes after the faulting instruction: it has no normal successor.
+      Program P({0x39, 0xc0, 0x75, 1, 0xc3, 0xf3});
+      if (Width == 8 || Index >= 8)
+        P.append(
+            {static_cast<uint8_t>(0x40 | (Width == 8 ? 8 : 0) | (Index >> 3))});
+      P.append({0x0f, 0xae, static_cast<uint8_t>(0xe8 | (Index & 7))});
+      expectRefusal(P, Status::Unsupported);
+      P.flagsProfile();
+      const auto Result = P.check();
+      ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+      ASSERT_EQ(Result.Certificate->Instructions.size(), 4U);
+      const auto &Trap = Result.Certificate->Instructions.back();
+      EXPECT_EQ(Trap.Origin.Control, LowInstructionControl::Terminator);
+      EXPECT_EQ(Trap.UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
+      ASSERT_EQ(Trap.Ops.size(), 1U);
+      EXPECT_EQ(Trap.Ops[0].Opcode, NdOp::INTRINSIC);
+      ASSERT_EQ(Result.Certificate->LowIR.NativeProfileProjections.size(), 1U);
+      const auto &Receipt =
+          Result.Certificate->LowIR.NativeProfileProjections.front();
+      EXPECT_EQ(Receipt.BlockId, -1);
+      EXPECT_EQ(Receipt.InstructionAddress, Trap.Origin.Address);
+      EXPECT_EQ(
+          Receipt.Kind,
+          InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1);
+      // Shared ordinary inputs may now reach #UD. The profile cannot assume
+      // this arm away, even if the increment register is zero.
+      P.Image.Segments[0].Data[1] = 0xc8; // cmp eax,ecx.
+      expectRefusal(P, Status::ContractViolation);
+    }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackTrapCannotHideBehindASafeSibling) {
+  // test edi,edi; jne trap; mov eax,0; ret; trap: incsspq rax.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xf3, 0x48, 0x0f,
+             0xae, 0xe8});
+  P.flagsProfile();
+  const auto Result = P.check();
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  expectRefusal(P, Status::ContractViolation);
+  Program Zero({0x31, 0xc0, 0xf3, 0x48, 0x0f, 0xae, 0xe8});
+  Zero.flagsProfile();
+  expectRefusal(Zero, Status::ContractViolation);
 }
 
 } // namespace

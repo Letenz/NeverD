@@ -16,6 +16,9 @@
 #include "NeverDCLI.h"
 
 #include "neverd/emulation/DriverProfile.h"
+#include "neverd/emulation/ExecutionBackend.h"
+#include "neverd/emulation/ExecutionCLIStrings.h"
+#include "neverd/loader/ARMModeCLIStrings.h"
 
 using namespace llvm;
 
@@ -282,19 +285,17 @@ cl::opt<bool> NoDebug(
     cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::list<std::string> ARMFunctionModeHints(
-    "arm-function-mode",
-    cl::desc("Assert an AArch32 function entry's mode as 0xADDRESS:arm or "
-             "0xADDRESS:thumb; repeat for multiple entries"),
-    cl::value_desc("entry:mode"), cl::sub(LiftCmd), cl::sub(DecompileCmd),
-    cl::sub(PatchCmd), cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
-    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
-    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
-    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
-    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(SearchCmd),
-    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
-    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
-    cl::sub(HuntCmd));
+    arm_mode_cli::Option, cl::desc(arm_mode_cli::Description),
+    cl::value_desc(arm_mode_cli::ValueDescription), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::opt<std::string> PdbFile(
     "pdb",
@@ -1104,6 +1105,13 @@ cl::opt<unsigned long long> DriverInstructionLimit(
     cl::desc("Maximum guest instructions (must be positive)"),
     cl::init(emulation::profile::DefaultInstructionLimit),
     cl::sub(EmulateDriverCmd));
+cl::opt<std::string> DriverBackend(execution_cli::BackendOption,
+                                   cl::desc(execution_cli::BackendHelp),
+                                   cl::init(emulation::execution::Auto),
+                                   cl::sub(EmulateDriverCmd));
+cl::opt<std::string> DriverExecutionContract(
+    execution_cli::ContractOption, cl::desc(execution_cli::ContractHelp),
+    cl::init(emulation::execution::Legacy), cl::sub(EmulateDriverCmd));
 cl::opt<std::string> DriverScenarioFile(
     "scenario", cl::desc("Strict driver lifecycle scenario JSON file"),
     cl::value_desc("path"), cl::init(""), cl::sub(EmulateDriverCmd));

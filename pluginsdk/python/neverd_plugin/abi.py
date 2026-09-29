@@ -874,6 +874,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_decompile_llvm_ex",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_objc_methods_json",
     "const char *",
     ["neverd_session_t", "size_t"],
@@ -984,6 +990,15 @@ _declare(
     "neverd_emulate_driver_json",
     "const char *",
     ["neverd_session_t", "const char *", "const neverd_driver_options_v1 *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_emulate_driver_backend_json",
+    "const char *",
+    [
+        "neverd_session_t", "const char *", "const char *",
+        "const neverd_driver_options_v1 *", "const char *", "const char *",
+    ],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(

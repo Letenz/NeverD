@@ -371,6 +371,78 @@ int main(void) {
 )");
 }
 
+TEST_F(InterpreterMachineSourceTest,
+       PackedFlagsMatchIndependentUserModeOracle) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine source execution requires clang";
+  const auto Function = function(
+      {{operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Popf), 2),
+                   NdVar::reg(x86reg::RCX, 8)})},
+       {operation(NdOp::INTRINSIC, NdVar::tmp(0, 8),
+                  {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+        operation(NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {NdVar::tmp(0, 8)})},
+       {operation(NdOp::RETURN, {}, {})}});
+  roundTrip(Function, R"(
+#include <stdint.h>
+int main(void) {
+  const unsigned scalar_bits[] = {0, 2, 4, 6, 7, 10, 11};
+  const uint64_t images[] = {0, 2, 0x4000, 0x200000, 0x204002,
+                            0x1b3002, 0xfffffffffffbfeffULL, 0x102, 0x40002};
+  for (unsigned system = 0; system != 8; ++system)
+    for (unsigned scalar = 0; scalar != 128; ++scalar)
+      for (unsigned i = 0; i != sizeof(images) / sizeof(images[0]); ++i) {
+        uint64_t entry = 2 | ((system & 1) ? 0x200 : 0)
+                           | ((system & 2) ? 0x4000 : 0)
+                           | ((system & 4) ? 0x200000 : 0);
+        for (unsigned bit = 0; bit != 7; ++bit)
+          entry |= (uint64_t)((scalar >> bit) & 1) << scalar_bits[bit];
+        uint64_t state[17] = {0};
+        state[16] = entry;
+        state[1] = images[i];
+        const uint64_t status = generic_machine_source(MACHINE_ARG(state));
+        if ((status != 0) != ((images[i] & 0x40100) != 0)) return 1;
+        if (status != 0) continue;
+        /* Independent CPL3/IOPL0 oracle: NT and ID writable, IF retained,
+           fixed bit 1; this synthetic intrinsic leaves the seven scalar
+           registers alone, as their pack/scatter belongs to the lifter. */
+        const uint64_t expected_system = 2 | (entry & 0x200)
+                                          | (images[i] & 0x204000);
+        if (state[0] != expected_system) return 2;
+        if (state[16] != (expected_system | (entry & 0xcd5))) return 3;
+      }
+  return 0;
+}
+)");
+}
+
+TEST_F(InterpreterMachineSourceTest, PackedFlagsProfileFailureStaysSticky) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine source execution requires clang";
+  const auto Function = function(
+      {{operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Popf), 2),
+                   NdVar::reg(x86reg::RCX, 8)})},
+       {operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Popf), 2),
+                   NdVar::scalar(2, 8)})},
+       {operation(NdOp::RETURN, {}, {})}});
+  roundTrip(Function, R"(
+#include <stdint.h>
+int main(void) {
+  const uint64_t inputs[] = {0, 2, 0x204002, 0x102, 0x40002, 0x40102};
+  for (unsigned i = 0; i != sizeof(inputs) / sizeof(inputs[0]); ++i) {
+    uint64_t state[17] = {0};
+    state[16] = 0x202;
+    state[1] = inputs[i];
+    const uint64_t status = generic_machine_source(MACHINE_ARG(state));
+    if ((status != 0) != ((inputs[i] & 0x40100) != 0)) return 1;
+  }
+  return 0;
+}
+)");
+}
+
 TEST_F(InterpreterMachineSourceTest, EveryGPRLaneSurvivesSyntheticRemapping) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "machine source execution requires clang";

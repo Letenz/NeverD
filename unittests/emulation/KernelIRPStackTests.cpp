@@ -1,4 +1,5 @@
-//===- KernelIRPStackTests.cpp - WDM stack ABI and completion ownership ----===//
+//===- KernelIRPStackTests.cpp - WDM stack ABI and completion ownership
+//----===//
 //
 // NeverD Decompiler
 //
@@ -10,11 +11,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include <algorithm>
 #include <initializer_list>
@@ -195,7 +196,8 @@ protected:
 
   void skip(uint64_t IRP) {
     write(IRP + IRPLocationOffset, get(IRP + IRPLocationOffset, 1) + 1, 1);
-    write(IRP + IRPStackPointerOffset, get(IRP + IRPStackPointerOffset) + StackSize);
+    write(IRP + IRPStackPointerOffset,
+          get(IRP + IRPStackPointerOffset) + StackSize);
   }
 
   void completion(uint64_t Stack, uint8_t Flags = AllCompletion,
@@ -227,7 +229,7 @@ protected:
   KernelGuestCall forward(uint64_t IRP) { return forwardTo(IRP, Lower); }
 
   void finished(const KernelGuestCall &Call, uint64_t Return,
-                 uint64_t APIResult = 0) {
+                uint64_t APIResult = 0) {
     const auto Result = take(Model->finishGuestCall(Call.Token, Return));
     ASSERT_TRUE(Result.has_value());
     EXPECT_EQ(*Result, APIResult);
@@ -319,7 +321,8 @@ TEST_F(KernelIRPStack, SkipAllowsOnePastCursorWithoutAllocatingAnotherSlot) {
   archive(IRP);
 }
 
-TEST_F(KernelIRPStack, CompletionPopsBeforeCallbackAndKeepsThreeResultsIndependent) {
+TEST_F(KernelIRPStack,
+       CompletionPopsBeforeCallbackAndKeepsThreeResultsIndependent) {
   const uint64_t IRP = io();
   const uint64_t Top = current(IRP);
   completion(copyNext(IRP));
@@ -345,7 +348,8 @@ TEST_F(KernelIRPStack, CompletionPopsBeforeCallbackAndKeepsThreeResultsIndepende
   EXPECT_EQ(observation(IRP).DispatchStatus, 0x87654321u);
 }
 
-TEST_F(KernelIRPStack, CompletionMasksUseNTSuccessAndCancellationIsAnOrCondition) {
+TEST_F(KernelIRPStack,
+       CompletionMasksUseNTSuccessAndCancellationIsAnOrCondition) {
   struct Case {
     uint32_t Status;
     uint8_t Flags;
@@ -416,7 +420,8 @@ TEST_F(KernelIRPStack, InvokedCompletionOwnsPendingPropagation) {
   archive(IRP, Pending);
 }
 
-TEST_F(KernelIRPStack, MoreProcessingRequiredRetainsPacketAndResumesAtUpperSlot) {
+TEST_F(KernelIRPStack,
+       MoreProcessingRequiredRetainsPacketAndResumesAtUpperSlot) {
   const uint64_t IRP = io();
   const uint64_t Buffer = get(IRP + IRPSystemBufferOffset);
   const uint64_t Top = current(IRP);
@@ -455,7 +460,8 @@ TEST_F(KernelIRPStack, NestedCompletionMayRetirePacketBeforeOuterMPRReturn) {
   rejected(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, false));
   // Destroy every retired packet byte to catch accidental read-after-retire
   // in outer completion and lower dispatch continuations.
-  success(Memory->write(IRP, std::vector<uint8_t>(IRPSize + 2 * StackSize, 0xee)));
+  success(
+      Memory->write(IRP, std::vector<uint8_t>(IRPSize + 2 * StackSize, 0xee)));
   finished(Outer, StatusMoreProcessingRequired);
   finished(Dispatch, 0);
   archive(IRP);
@@ -515,11 +521,13 @@ TEST_F(KernelIRPStack, MalformedFlagsAndNullCompletionDoNotConsumeTheNextSlot) {
   archive(IRP);
 }
 
-TEST_F(KernelIRPStack, PendingDescriptorCannotBeReplacedAndTokenOwnerIsChecked) {
+TEST_F(KernelIRPStack,
+       PendingDescriptorCannotBeReplacedAndTokenOwnerIsChecked) {
   const uint64_t IRP = io();
   copyNext(IRP);
   call("IofCallDriver", {Lower, IRP});
-  rejected(Model->call("IofCallDriver", {Lower, IRP}), "pending guest callback");
+  rejected(Model->call("IofCallDriver", {Lower, IRP}),
+           "pending guest callback");
   auto Dispatch = callback(DispatchPC);
   const GuestCallToken Foreign{GuestCallOwner::Framework, Dispatch.Token.ID};
   rejected(Model->finishGuestCall(Foreign, 0), "owning model");
@@ -548,13 +556,14 @@ TEST_F(KernelIRPStack, ExtraReservedSlotsAreOwnedAndAllRetireTogether) {
   call("IofCompleteRequest", {IRP, 0});
   finished(callback(CompletionPC), 0);
   for (unsigned Slot = 0; Slot < 4; ++Slot)
-    rejected(Model->validateGuestAccess(IRP + IRPSize + Slot * StackSize, 1,
-                                       false));
+    rejected(
+        Model->validateGuestAccess(IRP + IRPSize + Slot * StackSize, 1, false));
   finished(Dispatch, 0);
   archive(IRP);
 }
 
-TEST_F(KernelIRPStack, RetainedRouteSurvivesDetachAndDeleteUntilDispatchFinalizes) {
+TEST_F(KernelIRPStack,
+       RetainedRouteSurvivesDetachAndDeleteUntilDispatchFinalizes) {
   const uint64_t IRP = io();
   completion(copyNext(IRP));
   auto Dispatch = forward(IRP);
@@ -578,7 +587,8 @@ TEST_F(KernelIRPStack, ForwardingOutsideCapturedRouteCannotStealTheRequest) {
   const uint64_t IRP = io();
   const uint64_t Top = current(IRP);
   copyNext(IRP);
-  rejected(Model->call("IofCallDriver", {Outsider, IRP}), "retained device route");
+  rejected(Model->call("IofCallDriver", {Outsider, IRP}),
+           "retained device route");
   EXPECT_EQ(current(IRP), Top);
   EXPECT_FALSE(Model->takeGuestCall());
 }
@@ -647,7 +657,8 @@ TEST_F(KernelIRPStack, ThreeLayerPendingReturnsPrecedeCompletionPropagation) {
   success(Model->finalizeRequest(IRP));
 }
 
-TEST_F(KernelIRPStack, EachCompletionMaskUsesTheStatusLeftByThePreviousCallback) {
+TEST_F(KernelIRPStack,
+       EachCompletionMaskUsesTheStatusLeftByThePreviousCallback) {
   const uint64_t Middle = Upper;
   Upper = createDevice("\\Device\\StackThird");
   ASSERT_EQ(call("IoAttachDeviceToDeviceStack", {Upper, Middle}), Middle);

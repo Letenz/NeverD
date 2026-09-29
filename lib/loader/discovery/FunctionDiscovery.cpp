@@ -11,10 +11,12 @@
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cstring>
 #include <set>
 
@@ -99,16 +101,21 @@ void scanImportThunks(BinaryImage &Img) {
                           << " functions\n");
 }
 
+/// The alignment of an address a prologue can begin at on \p A.  ARM probing
+/// accepts both ARM and Thumb, so Thumb's halfword alignment is kept.
+static size_t prologueAlignment(Arch A) {
+  return A == Arch::AArch64 ? aarch64::kInsnSize
+         : A == Arch::ARM   ? arm::kThumbInsnSize
+                            : 1;
+}
+
 bool checkPrologueAtOffset(const Segment &Seg, size_t Off, Arch A) {
   if (Off >= Seg.Data.size() || Off > InvalidVA - Seg.VA)
     return false;
   const va_t Address = Seg.VA + Off;
   // Byte-wise padding scans can stop inside an instruction. Check the guest
-  // address, not the buffer offset. ARM probing accepts both ARM and Thumb,
-  // so retain halfword-aligned Thumb entries without clearing candidate bits.
-  const size_t Alignment = A == Arch::AArch64 ? aarch64::kInsnSize
-                           : A == Arch::ARM   ? arm::kThumbInsnSize
-                                              : 1;
+  // address, not the buffer offset.
+  const size_t Alignment = prologueAlignment(A);
   if (Address == InvalidVA || Address % Alignment != 0)
     return false;
   return isPrologueAt(Seg.Data.data() + Off, Seg.Data.size() - Off, A);
@@ -126,16 +133,51 @@ static bool checkCodePrologueAtOffset(const BinaryImage &Img,
   return Img.hasExecutableCodeOwnerRange(Seg.VA + Off, ProbeSize);
 }
 
+/// Whether no two segments, and no two readable sections, of \p Img overlap:
+/// an address then lies in at most one of each.
+static bool hasDisjointOwners(const BinaryImage &Img) {
+  auto Disjoint = [](std::vector<std::pair<va_t, va_t>> Ranges) {
+    llvm::sort(Ranges);
+    for (size_t I = 1; I < Ranges.size(); ++I)
+      if (Ranges[I].first < Ranges[I - 1].second)
+        return false;
+    return true;
+  };
+  std::vector<std::pair<va_t, va_t>> Segments, Sections;
+  for (const Segment &Seg : Img.Segments) {
+    if (Seg.Size > InvalidVA - Seg.VA)
+      return false;
+    Segments.emplace_back(Seg.VA, Seg.VA + Seg.Size);
+  }
+  for (const Section &Sec : Img.Sections) {
+    if (!Sec.isReadable())
+      continue;
+    if (Sec.Size > InvalidVA - Sec.VA)
+      return false;
+    Sections.emplace_back(Sec.VA, Sec.VA + Sec.Size);
+  }
+  return Disjoint(std::move(Segments)) && Disjoint(std::move(Sections));
+}
+
 static std::vector<std::pair<va_t, va_t>>
 collectClaimedCodeRanges(const BinaryImage &Img) {
-  std::vector<std::pair<va_t, va_t>> Ranges = Img.KnownCodeRanges;
+  std::vector<std::pair<va_t, va_t>> Known = Img.KnownCodeRanges, Sized;
   for (const Symbol &Sym : Img.Symbols) {
     if (!Sym.IsFunc || Sym.Size == 0 || Sym.Size > InvalidVA - Sym.Addr)
       continue;
-    Ranges.emplace_back(Sym.Addr, Sym.Addr + Sym.Size);
+    Sized.emplace_back(Sym.Addr, Sym.Addr + Sym.Size);
   }
+  // Each part usually comes sorted -- the code ranges once an unwind table
+  // is committed, the sized symbols in that table's order -- and merging
+  // them is linear, where sorting the two runs together is not.
+  if (!std::is_sorted(Known.begin(), Known.end()))
+    llvm::sort(Known);
+  if (!std::is_sorted(Sized.begin(), Sized.end()))
+    llvm::sort(Sized);
+  std::vector<std::pair<va_t, va_t>> Ranges(Known.size() + Sized.size());
+  std::merge(Known.begin(), Known.end(), Sized.begin(), Sized.end(),
+             Ranges.begin());
 
-  std::sort(Ranges.begin(), Ranges.end());
   std::vector<std::pair<va_t, va_t>> Merged;
   Merged.reserve(Ranges.size());
   for (const auto &Range : Ranges) {
@@ -153,27 +195,16 @@ void scanPaddingBoundaries(BinaryImage &Img) {
   auto Existing = Img.getSymbolAddresses();
 
   const uint8_t PadByte = codePaddingByte(Img.Arch);
-  auto IsPadByte = [&](uint8_t B) -> bool { return B == PadByte; };
+  const size_t Alignment = prologueAlignment(Img.Arch);
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.size() < 4)
       continue;
     const uint8_t *D = Seg.Data.data();
-    size_t N = Seg.Data.size();
-    size_t I = 0;
-    while (I < N && IsPadByte(D[I]))
-      ++I;
-    while (I + 1 < N) {
-      if (!IsPadByte(D[I])) {
-        ++I;
-        continue;
-      }
-      while (I < N && IsPadByte(D[I]))
-        ++I;
-      if (I >= N)
-        break;
-      va_t Addr = Seg.VA + I;
+    const size_t N = Seg.Data.size();
+    auto Consider = [&](size_t I) {
+      const va_t Addr = Seg.VA + I;
       if (checkCodePrologueAtOffset(Img, Seg, I, Img.Arch) &&
           !insideInterval(Known, Addr) && Existing.insert(Addr).second) {
         Symbol Guess = Symbol::makeFunc(Addr);
@@ -181,7 +212,33 @@ void scanPaddingBoundaries(BinaryImage &Img) {
         Img.Symbols.push_back(std::move(Guess));
         ++Added;
       }
+    };
+    // A boundary is a byte that is no padding right after one that is, past
+    // the padding the segment may open with.
+    size_t First = 0;
+    while (First < N && D[First] == PadByte)
+      ++First;
+    if (Alignment == 1) {
+      for (size_t From = First; From < N;) {
+        const void *Pad = std::memchr(D + From, PadByte, N - From);
+        if (!Pad)
+          break;
+        size_t I = static_cast<size_t>(static_cast<const uint8_t *>(Pad) - D);
+        while (I < N && D[I] == PadByte)
+          ++I;
+        if (I >= N)
+          break;
+        Consider(I);
+        From = I + 1;
+      }
+      continue;
     }
+    // Only a boundary a prologue can begin at is looked at.
+    const size_t Skew = static_cast<size_t>((Seg.VA + First + 1) % Alignment);
+    for (size_t I = First + 1 + (Skew ? Alignment - Skew : 0); I < N;
+         I += Alignment)
+      if (D[I - 1] == PadByte && D[I] != PadByte)
+        Consider(I);
   }
   LLVM_DEBUG(llvm::dbgs() << "func-discovery: padding scan added " << Added
                           << " functions\n");
@@ -259,6 +316,22 @@ void scanDataFuncPointers(BinaryImage &Img) {
     return Img.hasExecutableCodeOwnerAt(Addr) ? S : nullptr;
   };
 
+  // A value is a code pointer only if it lies in an executable segment; most
+  // read-only data does not, and is rejected before any lookup.
+  std::vector<const Segment *> ExecutableSegments;
+  for (const Segment &Seg : Img.Segments)
+    if (Seg.isExecutable())
+      ExecutableSegments.push_back(&Seg);
+  auto InExecutableSegment = [&](va_t Addr) {
+    return llvm::any_of(ExecutableSegments, [&](const Segment *Seg) {
+      return Seg->contains(Addr);
+    });
+  };
+  // Every slot of one section, or of a segment no section describes, has the
+  // same owner end, unless an ARM mapping symbol makes a slot data or
+  // segments or sections overlap; otherwise it is looked up once per range.
+  const bool OwnerPerRange = Img.Arch != Arch::ARM && hasDisjointOwners(Img);
+
   [[maybe_unused]] size_t Added = 0;
   auto ScanRange = [&](const Segment *Seg, va_t Start, uint64_t RequestedLen) {
     if (!Seg || !Seg->isReadable() || Seg->isWritable() ||
@@ -277,14 +350,17 @@ void scanDataFuncPointers(BinaryImage &Img) {
     const uint64_t Misalignment = Cur % PtrSize;
     if (Misalignment != 0)
       Cur += PtrSize - Misalignment;
+    std::optional<va_t> OwnerEnd;
     for (; Cur <= End && End - Cur >= PtrSize; Cur += PtrSize) {
-      const std::optional<va_t> OwnerEnd = Img.mappedObjectOwnerEnd(Cur);
+      if (!OwnerEnd || !OwnerPerRange)
+        OwnerEnd = Img.mappedObjectOwnerEnd(Cur);
       if (!OwnerEnd || *OwnerEnd < Cur || PtrSize > *OwnerEnd - Cur)
         break;
       const size_t I = static_cast<size_t>(Cur - Seg->VA);
       uint64_t Val = normalizeCodeAddress(
           readPtr(Seg->Data.data() + I, Img.is64Bit()), Img.Arch, Img.Mode);
-      if (insideInterval(Known, Val) || Existing.count(Val))
+      if (!InExecutableSegment(Val) || insideInterval(Known, Val) ||
+          Existing.count(Val))
         continue;
       const auto *ESeg = InExecSeg(Val);
       if (!ESeg)
