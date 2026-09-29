@@ -574,7 +574,8 @@ noEscape(const ObjCBlockSourceContext &Source,
          std::set<std::pair<va_t, size_t>> &Active, std::string &Reason,
          const std::set<uint64_t> *WritableStrongFields = nullptr,
          std::map<uint64_t, std::set<uint64_t>> *AssignmentFlags = nullptr,
-         const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr) {
+         const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr,
+         bool AllowIndependentOutParameterStores = false) {
   try {
     if (Active.size() >= 16 || !Active.insert({Entry, Parameter}).second)
       throw Invalid("block consumer recursion is not established");
@@ -770,6 +771,34 @@ noEscape(const ObjCBlockSourceContext &Source,
           State.storeFrame(Address, Bytes, V);
           break;
         }
+        // A descriptor-bound invoke may write an explicit out parameter. Its
+        // original formal pointer is independent of the private block context;
+        // the value still must not contain any context or frame identity.
+        // Copy/dispose helpers and recursively proved native consumers do not
+        // receive this permission.
+        const auto IndependentOutParameter = [&] {
+          if (!AllowIndependentOutParameterStores || !S.StoreAddr ||
+              S.StoreAddr->Kind != ExprKind::Var || !S.StoreAddr->Type ||
+              S.StoreAddr->Type->Kind != NdTypeKind::Ptr ||
+              !F.SourceTypeHint)
+            return false;
+          const auto &Formal = S.StoreAddr->Var;
+          if (Formal.Kind != MedVar::Param || Formal.Id < 0 ||
+              static_cast<size_t>(Formal.Id) == Parameter ||
+              Formal.SSAVer != 0 || Formal.RenameTag >= 0 ||
+              static_cast<size_t>(Formal.Id) >= F.Params.size() ||
+              static_cast<size_t>(Formal.Id) >=
+                  F.SourceTypeHint->Parameters.size())
+            return false;
+          const auto &Recovered = F.Params[Formal.Id].Type;
+          const auto &Declared =
+              F.SourceTypeHint->Parameters[Formal.Id].Type;
+          return Recovered && Declared &&
+                 equalSourceTypes(Recovered, Declared) &&
+                 equalSourceTypes(S.StoreAddr->Type, Declared);
+        }();
+        if (IndependentOutParameter && !pointerIdentity(V))
+          break;
         // A complete image range is disjoint from the private frame/context.
         // It can receive ordinary values, but never a private pointer. The
         // source-data owner still has to validate and relocate the actual
@@ -1861,7 +1890,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       std::string Reason;
       std::set<std::pair<va_t, size_t>> Active;
       if (!noEscape(Source, Functions, Entry, 0, &Initialized, Active, Reason,
-                    nullptr, nullptr, &Plan))
+                    nullptr, nullptr, &Plan, true))
         throw Invalid("block invoke capture proof failed: " + Reason);
       Result.Dependencies.insert(Entry);
     };

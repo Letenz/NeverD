@@ -2852,6 +2852,41 @@ TEST(ObjCBlockSources, PartialContextPointerInFrameRemainsPrivate) {
   EXPECT_NE(Reason.find("exposes private context storage"), std::string::npos);
 }
 
+TEST(ObjCBlockSources,
+     DescriptorBoundInvokeMayWriteOnlyIndependentFormalOutParameter) {
+  SourceFixture F(true);
+  auto &Function = F.Result.HighFuncs[1];
+  const auto Output = NdType::makePtr(NdType::makePtr(NdType::makeVoid()));
+  Function.Params[1].Type = Output;
+  Function.SourceTypeHint->Parameters[1].Type = Output;
+  Function.Body = {store(parameter(1, Output), HighExpr::makeConst(0, 8)),
+                   ret(HighExpr::makeConst(0, 4))};
+  const ObjCBlockSourceContext Source(F.Image);
+  const ObjCBlockSourcePlan Plan;
+  std::set<std::pair<va_t, size_t>> Active;
+  std::string Reason;
+  auto Prove = [&](bool Invoke) {
+    Reason.clear();
+    return objc_block_source_detail::noEscape(
+        Source, F.functions(), Function.Entry, 0, nullptr, Active, Reason,
+        nullptr, nullptr, &Plan, Invoke);
+  };
+  EXPECT_FALSE(Prove(false)); // copy helpers and native consumers stay strict
+  EXPECT_TRUE(Prove(true)) << Reason;
+
+  Function.Body[0].StoreVal = parameter(0, Function.Params[0].Type);
+  EXPECT_FALSE(Prove(true)); // an out parameter cannot receive the context
+  Function.Body[0].StoreVal = HighExpr::makeConst(0, 8);
+  Function.Body[0].StoreAddr = parameter(0, Function.Params[0].Type);
+  EXPECT_FALSE(Prove(true)); // the context itself is not an out parameter
+  Function.Body[0].StoreAddr = HighExpr::makeBinop(
+      NdOp::INT_ADD, parameter(1, Output), HighExpr::makeConst(8, 8));
+  EXPECT_FALSE(Prove(true)); // only the exact formal address is proved
+  Function.Body[0].StoreAddr = parameter(1, Output);
+  Function.Body[0].StoreAddr->Var.RenameTag = 0;
+  EXPECT_FALSE(Prove(true)); // a renamed value lacks formal provenance
+}
+
 TEST(ObjCBlockSources, CompleteWideCaptureSpillRetainsConstructionEvidence) {
   SourceFixture F(true);
   F.put64(F.Descriptor + 8, 48);
