@@ -1,0 +1,9 @@
+//===- RunControlCases.def - Cancellation synchronization test limits ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_RUN_CONTROL_TEST_VALUE(WaitMilliseconds, 3000)
+NEVERD_RUN_CONTROL_TEST_VALUE(QuietMilliseconds, 50)
+NEVERD_RUN_CONTROL_TEST_VALUE(RepeatedRequests, 3)
+NEVERD_RUN_CONTROL_TEST_VALUE(MinimumBudgetMicroseconds, 1)

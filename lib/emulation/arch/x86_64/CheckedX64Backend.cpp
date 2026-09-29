@@ -237,7 +237,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (!Root)
     return Root.takeError();
   PageTableRoot = *Root;
-  return Machine->step(CPU, PageTableRoot, Deadline);
+  return Machine->step(CPU, PageTableRoot, {Deadline, &StopRequested});
 }
 
 } // namespace neverd::emulation

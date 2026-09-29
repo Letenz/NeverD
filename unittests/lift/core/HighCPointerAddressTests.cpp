@@ -39987,6 +39987,24 @@ TEST(HighCPointerAddresses, CookieCheckKeepsTheCallerReturnValue) {
       << Clobbered;
 }
 
+TEST(HighCPointerAddresses, ByteResultReturnsOnlyTheDefinedByte) {
+  // A `bool` result left in AL: RAX's other bytes are the caller's, not part
+  // of the result, so the return neither reads them nor fails on them.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x85, 0xc9, // test ecx, ecx
+                                     0x74, 0x03, // je   zero
+                                     0xb0, 0x01, // mov  al, 1
+                                     0xc3,       // ret
+                                     0x32, 0xc0, // zero: xor al, al
+                                     0xc3};      // ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("int8_t sub_"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("return 1;"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("return 0;"), std::string::npos) << HighC;
+}
+
 TEST(HighCPointerAddresses, RequiredTrailingUnknownCallArgumentKeepsItsSlot) {
   // The first callee writes every Win64 argument register. Its non-return
   // register results remain unknown to the caller's call summary. The next

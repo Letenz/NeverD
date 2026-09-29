@@ -2347,6 +2347,194 @@ TEST(MedTypePass, X86InfersFloatReturnFromX87CarrierExtension) {
   EXPECT_TRUE(Func.FPReturnViaX87);
 }
 
+namespace {
+
+/// The calling convention's view of a register argument \p LiveIn.
+MedVar registerParam(const MedVar &LiveIn) {
+  MedVar P = LiveIn;
+  P.Kind = MedVar::Param;
+  return P;
+}
+
+/// `RETURN CONCAT(SUBBYTES(Upper, 1), Low)`: the byte-register merge a
+/// `mov al, ...; ret` leaves in front of the return.
+MedVar pushByteMerge(MedBlock &Block, const MedVar &Upper, const MedVar &Low,
+                     int FirstTemp, Arch TheArch) {
+  const MedVar High = temp(FirstTemp, 0, Upper.Size - 1, TheArch);
+  Block.Ops.push_back(
+      binary(NdOp::SUBBYTES, High, Upper, MedVar::makeConst(1, Upper.Size)));
+  const MedVar Merged = temp(FirstTemp + 1, 0, Upper.Size, TheArch);
+  Block.Ops.push_back(binary(NdOp::CONCAT, Merged, High, Low));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Merged);
+  Block.Ops.push_back(Return);
+  return Merged;
+}
+
+} // namespace
+
+TEST(MedTypePass, ByteResultOverUndefinedEntryRegisterIsOneByte) {
+  // `mov al, 1; ret`: RAX is not a parameter, so only AL is defined.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  const MedVar EntryRAX = reg(1, 0, 8, TRI.IntReturnReg, TheArch);
+  addLiveIn(Block, EntryRAX);
+  const MedVar AL = reg(2, 1, 1, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, AL, MedVar::makeConst(1, 1)));
+  pushByteMerge(Block, EntryRAX, AL, 10, TheArch);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, 1u);
+}
+
+TEST(MedTypePass, ByteResultOverDefinedRegisterKeepsItsWidth) {
+  // `mov rax, [rcx]; mov al, 1; ret` defines every byte of RAX.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  const MedVar EntryRCX = reg(3, 0, 8, x86reg::RCX, TheArch);
+  addLiveIn(Block, EntryRCX);
+  Func.Params.push_back(registerParam(EntryRCX));
+  const MedVar Loaded = temp(4, 0, 8, TheArch);
+  MedOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = Loaded;
+  Load.addInput(EntryRCX);
+  Block.Ops.push_back(Load);
+  const MedVar RAX = reg(1, 1, 8, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, RAX, Loaded));
+  const MedVar AL = reg(2, 1, 1, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, AL, MedVar::makeConst(1, 1)));
+  pushByteMerge(Block, RAX, AL, 10, TheArch);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
+TEST(MedTypePass, ByteResultOnOnePathBoundsEveryPath) {
+  // `xor eax, eax; ret` on one path and `mov al, 1; ret` on the other: the
+  // result is the one byte both paths define.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Func.Blocks[I].Id = I;
+  Func.Blocks[0].Succs = {1, 2};
+  Func.Blocks[1].Preds = {0};
+  Func.Blocks[2].Preds = {0};
+  const MedVar EntryRAX = reg(1, 0, 8, TRI.IntReturnReg, TheArch);
+  addLiveIn(Func.Blocks[0], EntryRAX);
+  const MedVar Zero = reg(1, 1, 8, TRI.IntReturnReg, TheArch);
+  Func.Blocks[1].Ops.push_back(
+      unary(NdOp::INT_ZEXT, Zero, MedVar::makeConst(0, 4)));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Zero);
+  Func.Blocks[1].Ops.push_back(Return);
+  const MedVar AL = reg(2, 1, 1, TRI.IntReturnReg, TheArch);
+  Func.Blocks[2].Ops.push_back(unary(NdOp::COPY, AL, MedVar::makeConst(1, 1)));
+  pushByteMerge(Func.Blocks[2], EntryRAX, AL, 10, TheArch);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Size, 1u);
+}
+
+TEST(MedTypePass, ByteResultOverParameterRegisterKeepsItsWidth) {
+  // AArch64 passes and returns in X0: its entry value is an argument.
+  constexpr Arch TheArch = Arch::AArch64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  const MedVar EntryX0 = reg(1, 0, 8, TRI.IntReturnReg, TheArch);
+  addLiveIn(Block, EntryX0);
+  Func.Params.push_back(registerParam(EntryX0));
+  const MedVar Low = temp(2, 0, 1, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, Low, MedVar::makeConst(1, 1)));
+  pushByteMerge(Block, EntryX0, Low, 10, TheArch);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
+/// Two paths into a return block whose XMM0 PHI takes \p EntryArm from the
+/// entry path and an 8-byte load from the other.
+MedFunc xmm0JoinReturn(bool EntryIsParameter) {
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Func.Blocks[I].Id = I;
+  Func.Blocks[0].Succs = {1, 2};
+  Func.Blocks[1].Preds = {0};
+  Func.Blocks[1].Succs = {2};
+  Func.Blocks[2].Preds = {0, 1};
+  const MedVar EntryXMM0 = reg(1, 0, 16, TRI.FPReturnReg, TheArch);
+  const MedVar EntryRCX = reg(2, 0, 8, x86reg::RCX, TheArch);
+  addLiveIn(Func.Blocks[0], EntryXMM0);
+  addLiveIn(Func.Blocks[0], EntryRCX);
+  Func.Params.push_back(registerParam(EntryRCX));
+  if (EntryIsParameter)
+    Func.Params.push_back(registerParam(EntryXMM0));
+  const MedVar Loaded = temp(3, 0, 8, TheArch);
+  MedOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = Loaded;
+  Load.addInput(EntryRCX);
+  Func.Blocks[1].Ops.push_back(Load);
+  const MedVar Widened = reg(1, 1, 16, TRI.FPReturnReg, TheArch);
+  Func.Blocks[1].Ops.push_back(unary(NdOp::INT_ZEXT, Widened, Loaded));
+  PhiNode Phi;
+  Phi.Output = reg(1, 2, 16, TRI.FPReturnReg, TheArch);
+  Phi.Args = {{0, EntryXMM0}, {1, Widened}};
+  Func.Blocks[2].Phis.push_back(Phi);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(reg(4, 0, 8, TRI.IntReturnReg, TheArch));
+  Func.Blocks[2].Ops.push_back(Return);
+  return Func;
+}
+
+TEST(MedTypePass, VectorCopyThroughXMM0IsNotAFloatResult) {
+  // `movq xmm0, [rcx]; movq [rdx], xmm0` on one path only: the other path
+  // leaves XMM0's undefined entry value, so XMM0 carries no result.
+  MedFunc Func = xmm0JoinReturn(/*EntryIsParameter=*/false);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_NE(Func.ReturnType->Kind, NdTypeKind::Float);
+}
+
+TEST(MedTypePass, FloatArgumentPassedThroughOnOnePathIsAFloatResult) {
+  // `n <= 0 ? x : load`: the entry path returns the FP argument itself.
+  MedFunc Func = xmm0JoinReturn(/*EntryIsParameter=*/true);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
 TEST(MedTypePass, X86X87CleanupDoesNotOverrideExplicitIntegerReturn) {
   constexpr Arch TheArch = Arch::X86;
   const TargetRegInfo &TRI = getTargetRegInfo(TheArch);

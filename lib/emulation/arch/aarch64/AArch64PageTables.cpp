@@ -84,7 +84,7 @@ llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
   State.reg(AArch64Register::PC) = aarch64::ProbePC;
   auto Deadline = std::chrono::steady_clock::now() +
                   std::chrono::microseconds(aarch64::ProbeTimeoutMicroseconds);
-  if (auto E = Machine.step(State, Deadline))
+  if (auto E = Machine.step(State, {Deadline}))
     return E;
   if (State.reg(AArch64Register::PC) !=
           aarch64::ProbePC + aarch64::InstructionBytes ||

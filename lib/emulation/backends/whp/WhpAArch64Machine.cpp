@@ -5,84 +5,19 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/aarch64/AArch64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
-#include "../../core/ExecutionLimits.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpPartition.h"
 
-#include <algorithm>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 #include <vector>
 
 namespace neverd::emulation {
 namespace {
-/// One worker per partition, rather than a thread per guest instruction.
-/// Cancellation makes a failed guest-debug gateway bounded and terminal.
-class WhpWatchdog {
-public:
-  explicit WhpWatchdog(WhpPartition &Partition)
-      : Partition(Partition), Worker([this] { wait(); }) {}
-  ~WhpWatchdog() {
-    {
-      std::lock_guard Lock(Mutex);
-      Shutdown = true;
-      Changed.notify_one();
-    }
-    Worker.join();
-  }
-  void arm(std::chrono::steady_clock::time_point Limit) {
-    std::lock_guard Lock(Mutex);
-    Deadline = Limit;
-    Armed = true;
-    CancelIssued = false;
-    ++Generation;
-    Changed.notify_one();
-  }
-  bool disarm() {
-    std::lock_guard Lock(Mutex);
-    Armed = false;
-    Changed.notify_one();
-    return CancelIssued;
-  }
-
-private:
-  void wait() {
-    std::unique_lock Lock(Mutex);
-    while (!Shutdown) {
-      Changed.wait(Lock, [&] { return Shutdown || Armed; });
-      if (Shutdown)
-        break;
-      const auto CurrentGeneration = Generation;
-      if (Changed.wait_until(Lock, Deadline, [&] {
-            return Shutdown || !Armed || Generation != CurrentGeneration;
-          }))
-        continue;
-      CancelIssued = true;
-      Partition.API.WHvCancelRunVirtualProcessor(Partition.Partition, 0, 0);
-      // A host deschedule can expire the deadline before WHvRun begins.
-      // Cancellation targets an active call; keep requesting it until the
-      // owning thread acknowledges completion by disarming this generation.
-      Deadline =
-          std::chrono::steady_clock::now() +
-          std::chrono::microseconds(execution_limits::CancelRetryMicroseconds);
-    }
-  }
-  WhpPartition &Partition;
-  std::mutex Mutex;
-  std::condition_variable Changed;
-  std::chrono::steady_clock::time_point Deadline;
-  uint64_t Generation = 0;
-  bool Armed = false, Shutdown = false, CancelIssued = false;
-  std::thread Worker;
-};
 class WhpAArch64Machine final : public AArch64Machine, public WhpPartition {
 public:
-  std::unique_ptr<WhpWatchdog> Watchdog;
   llvm::Error step(AArch64MachineState &State,
-                   std::chrono::steady_clock::time_point Deadline) override {
+                   MachineRunControl Control) override {
     using namespace aarch64;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
@@ -116,14 +51,8 @@ public:
     // ARM64 WHP does not expose x64's exception-exit bitmap. The immutable EL1
     // vector gateway returns through an intercepted HVC after one debug step.
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    Watchdog->arm(std::max(
-        Deadline, std::chrono::steady_clock::now() +
-                      std::chrono::microseconds(
-                          execution_limits::NativeStepGraceMicroseconds)));
-    const HRESULT Result =
-        API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
-    if (Watchdog->disarm() || FAILED(Result))
-      return diagnostic::error(diagnostic::WhpRun);
+    if (auto E = run(Exit, Control))
+      return E;
     if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
         Exit.Hypercall.Header.Pc != VectorGPA + CurrentELVector ||
         Exit.Hypercall.Immediate)
@@ -209,7 +138,8 @@ createWhpAArch64Machine(MemoryProjection &Memory) {
   if (FAILED(M->API.WHvSetVirtualProcessorRegisters(M->Partition, 0, &Name, 1,
                                                     &Value)))
     return diagnostic::error(diagnostic::WhpState);
-  M->Watchdog = std::make_unique<WhpWatchdog>(*M);
+  if (auto E = M->initializeRunControl())
+    return E;
   if (auto E = verifyAArch64Machine(*M, Memory))
     return E;
   return std::unique_ptr<AArch64Machine>(std::move(M));

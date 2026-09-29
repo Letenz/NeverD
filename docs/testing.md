@@ -312,6 +312,19 @@ and malformed operands must fail explicitly.
 
 ## CPU execution checks
 
+`NeverDRunControlTests` runs with or without Unicorn and without a hypervisor.
+It checks cancellation before host entry, repeated requests until acknowledgement,
+stop tokens with distant deadlines, cancellation versus a new entry, and worker
+teardown before resource retirement. Injected x64/ARM64 machine entries also
+check CPU-to-transport stop propagation and terminal failures retaining elapsed
+deadline facts. `NeverDKvmRunTests` intercepts only its own `ioctl` calls to check
+entry/retry admission; it does not establish interruption of a running vCPU.
+These transport-control tests do not replace native Windows or ARM64 execution.
+`ExecutionDeadline.*` also checks unsigned duration overflow, the last
+representable clock tick and negative clock epochs. Real software and checked
+x64/ARM64 runs reject zero/overflowing budgets before instruction observations
+or register changes, and remain usable with a valid budget afterward.
+
 `NeverDCPUEmulationTests` exercises the public C++ CPU interface independently
 of the Windows model. It runs ARM64 scalar arithmetic and control flow, signed
 and indexed loads, pair/writeback operations, pre-effect observer stops,

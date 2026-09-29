@@ -262,6 +262,16 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
                                      Func.ReturnType);
   }
 
+  // A result the type pass bounded by the bytes every path defines (a `bool`
+  // left in AL over an undefined RAX) is the low bytes of the register value;
+  // the bytes above belong to no result.
+  if (!UsesFPReturnReg && Med.DefinedReturnBytes && Func.ReturnType &&
+      Func.ReturnType->Kind == NdTypeKind::Int && Func.ReturnType->Size &&
+      Func.ReturnType->Size <= Med.DefinedReturnBytes && RetVal->Type &&
+      RetVal->Type->Kind == NdTypeKind::Int &&
+      Func.ReturnType->Size < RetVal->Type->Size)
+    RetVal = sourceBitSlice(RetVal, 0, Func.ReturnType->Size);
+
   S.RetVal = RetVal;
   Func.Body.push_back(std::move(S));
 }

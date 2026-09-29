@@ -3669,6 +3669,16 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     const bool WritesDest = treeWritesJoinDest(Prev, Dest);
     if (!HasJoinIncoming && !WritesDest)
       continue;
+    // A join jump skips everything between the if and its label.  Once it
+    // falls through, all of that but the moved default would run on its path
+    // too: a call, or a copy another join value relies on.
+    if (HasJoinIncoming) {
+      bool SkipsWork = false;
+      for (size_t K = P + 1; K < Body.size() && Body[K].Addr != Join; ++K)
+        SkipsWork |= K != DefI && !isSkippablePad(Body[K]);
+      if (SkipsWork)
+        continue;
+    }
     // The arms keep what they wrote as the join value. That holds for a write
     // that jumps to the join, not for one that runs on into the default.
     if (joinWriteFallsThrough(Prev.Body, Dest) ||

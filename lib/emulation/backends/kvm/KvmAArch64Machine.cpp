@@ -39,15 +39,13 @@ public:
       return diagnostic::error(diagnostic::KvmState);
     return llvm::Error::success();
   }
-  llvm::Error enter(std::chrono::steady_clock::time_point Deadline) {
+  llvm::Error enter(MachineRunControl Control) {
     kvm_guest_debug Debug{};
     Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                      BackendAvailability::MissingCapability);
-    if (auto E = runUntilExit(
-            Deadline + std::chrono::microseconds(
-                           execution_limits::NativeStepGraceMicroseconds)))
+    if (auto E = runUntilExit(Control))
       return E;
     if (Run->exit_reason != KVM_EXIT_DEBUG ||
         ((Run->debug.arch.hsr >> aarch64::ExceptionClassShift) &
@@ -56,8 +54,11 @@ public:
     return llvm::Error::success();
   }
   llvm::Error step(AArch64MachineState &State,
-                   std::chrono::steady_clock::time_point Deadline) override {
+                   MachineRunControl Control) override {
     using namespace aarch64;
+    // Maintenance and the admitted instruction share one allowance; retries
+    // or additional maintenance entries must not extend it.
+    Control = Control.forNativeStep();
     const auto PC = coreRegister(offsetof(kvm_regs, regs.pc));
     const auto PState = coreRegister(offsetof(kvm_regs, regs.pstate));
     // Rebuilds change page-table bytes, not the translation cache. Execute the
@@ -79,7 +80,7 @@ public:
     if (auto E = set(PC, EntryGPA))
       return E;
     for (unsigned N = 0; N < std::size(Maintenance); ++N) {
-      if (auto E = enter(Deadline))
+      if (auto E = enter(Control))
         return E;
       uint64_t ActualPC = 0;
       if (auto E = get(PC, ActualPC))
@@ -100,7 +101,7 @@ public:
       return E;
     if (auto E = set(PC, State.reg(AArch64Register::PC)))
       return E;
-    if (auto E = enter(Deadline))
+    if (auto E = enter(Control))
       return E;
     for (unsigned N = 0; N < GPRCount; ++N)
       if (auto E =

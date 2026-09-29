@@ -6,7 +6,10 @@
 #ifndef NEVERD_EMULATION_WHP_PARTITION_H
 #define NEVERD_EMULATION_WHP_PARTITION_H
 #include "../../core/ExecutionDiagnostics.h"
+#include "../RunDeadline.h"
 
+#include <memory>
+#include <system_error>
 #include <windows.h>
 #if __has_include(<WinHvPlatform.h>)
 #include <WinHvPlatform.h>
@@ -41,14 +44,46 @@ struct WhpAPI {
     return llvm::Error::success();
   }
 };
+struct WhpInterrupt {
+  WhpAPI &API;
+  WHV_PARTITION_HANDLE Partition;
+
+  void operator()() const noexcept {
+    API.WHvCancelRunVirtualProcessor(Partition, 0, 0);
+  }
+};
 class WhpPartition {
 public:
   WhpAPI API;
   WHV_PARTITION_HANDLE Partition = nullptr;
   virtual ~WhpPartition() {
+    // The interrupt worker must stop before its partition and API are retired.
+    Watchdog.reset();
     if (Partition)
       API.WHvDeletePartition(Partition);
   }
+  llvm::Error initializeRunControl() {
+    try {
+      Watchdog = std::make_unique<RunDeadline<WhpInterrupt>>(
+          WhpInterrupt{API, Partition});
+    } catch (const std::system_error &) {
+      return diagnostic::error(diagnostic::WhpRunControl);
+    }
+    return llvm::Error::success();
+  }
+  llvm::Error run(WHV_RUN_VP_EXIT_CONTEXT &Exit, MachineRunControl Control) {
+    Watchdog->arm(Control.forNativeStep());
+    const HRESULT Result =
+        API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
+    // Cancellation may race with a completed instruction. Never publish a
+    // successful register transfer when native progress is uncertain.
+    if (Watchdog->disarm() || FAILED(Result))
+      return diagnostic::error(diagnostic::WhpRun);
+    return llvm::Error::success();
+  }
+
+private:
+  std::unique_ptr<RunDeadline<WhpInterrupt>> Watchdog;
 };
 } // namespace neverd::emulation
 #endif

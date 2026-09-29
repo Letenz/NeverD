@@ -24,6 +24,9 @@ NEVERD_EXECUTION_DIAGNOSTIC(
     Instruction, "instruction is outside the checked execution contract")
 NEVERD_EXECUTION_DIAGNOSTIC(Callback, "exception in execution observer")
 NEVERD_EXECUTION_DIAGNOSTIC(
+    ExecutionTimeout,
+    "CPU timeout must be positive and fit the execution clock")
+NEVERD_EXECUTION_DIAGNOSTIC(
     Unavailable, "requested execution backend is unavailable on this host")
 NEVERD_EXECUTION_DIAGNOSTIC(
     Contract,
@@ -48,6 +51,8 @@ NEVERD_EXECUTION_DIAGNOSTIC(WhpCreate,
 NEVERD_EXECUTION_DIAGNOSTIC(WhpMap, "cannot map WHP guest physical memory")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpState, "WHP CPU state transfer failed")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpRun, "WHP single-step execution failed")
+NEVERD_EXECUTION_DIAGNOSTIC(WhpRunControl,
+                            "cannot initialize WHP execution cancellation")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpExit,
                             "unexpected WHP exit; CPU state is terminal")
 NEVERD_EXECUTION_DIAGNOSTIC(UnknownFault, "unknown backend fault kind")
