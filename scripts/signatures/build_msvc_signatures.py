@@ -31,11 +31,7 @@ Four rules decide what a file holds:
 
   * A file is rebuilt from its assets alone.  Lines it held before, from an
     earlier run or from another tool, are replaced, so give the script every
-    asset of a directory at once.  The exception is `<file>.imported`, which
-    the signatures repository keeps for a release whose libraries it collects
-    only in part: the lines an earlier import holds for routines no collected
-    library defines, already renamed to linkage names.  They join the
-    generated lines under every rule below.
+    asset of a directory at once.
 
   * When lines state the same bytes under different names, all of them are
     dropped.  The pattern cannot tell those routines apart -- MSVC folds
@@ -77,7 +73,6 @@ from __future__ import annotations
 import argparse
 import bisect
 import fnmatch
-import hashlib
 import json
 import re
 import shutil
@@ -726,30 +721,6 @@ def generate(
     return list(generated), repeated, sources
 
 
-def imported_lines(output: Path, relative: Path) -> tuple[list[str], dict | None]:
-    """The lines a file keeps from an earlier import, and their provenance.
-
-    A Visual Studio release whose libraries the signatures repository collects
-    only in part keeps, in `<file>.imported`, the imported lines for routines
-    no collected library defines; the loader never reads that file.  Its lines
-    join the generated ones here, and every rule above applies to them as to
-    any other claim.  Comment lines, which hold what could not be given a
-    linkage name, are skipped.
-    """
-
-    path = output / relative.with_suffix(".imported")
-    if not path.is_file():
-        return [], None
-    data = path.read_bytes()
-    lines = [line for line in data.decode("utf-8").splitlines() if parse_line(line)]
-    return lines, {
-        "asset": path.name,
-        "archive_sha256": hashlib.sha256(data).hexdigest(),
-        "kind": "imported",
-        "lines": len(lines),
-    }
-
-
 def split_parts(texts: list[str], limit: int) -> list[list[str]]:
     """The lines in as few parts of at most `limit` bytes as hold them, of
     even size, in order."""
@@ -848,10 +819,6 @@ def build(args: argparse.Namespace) -> int:
             sources: dict[Path, list[dict]] = {}
             for relative, members in sorted(outputs.items()):
                 generated, repeated, sources[relative] = generate(args, members, work_root)
-                imported, provenance = imported_lines(args.output, relative)
-                if provenance:
-                    generated.extend(imported)
-                    sources[relative].append(provenance)
                 results[relative] = fold(generated)
                 results[relative].duplicates += repeated
                 del generated

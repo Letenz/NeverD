@@ -202,13 +202,7 @@ so do lines from every SDK version.
 
 A file is rebuilt from its assets alone, so the lines it held before are
 replaced; download every release before running the script, as the
-signatures repository's `msvc-signatures.yml` does. The one other input is a
-`<name>.imported` file next to the output, which the signatures repository
-keeps for a release whose libraries it collects only in part: the lines an
-earlier import holds for routines no collected library defines, renamed to
-the linkage names the libraries spell. Its lines join the generated ones and
-every rule below applies to them alike; its comment lines, which hold what
-could not be renamed, are not read, and neither does the loader read the file.
+signatures repository's `msvc-signatures.yml` does.
 
 ELF libraries give one routine several symbols -- glibc's `puts` is also
 `_IO_puts` -- and the signature maker writes them as one line with each name
