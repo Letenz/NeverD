@@ -25,6 +25,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -167,7 +168,72 @@ static void simplifyNestedGotos(std::vector<HighStmt> &Stmts) {
 // Guard-before-switch cleanup
 //===----------------------------------------------------------------------===//
 
-static void cleanupGuardBeforeSwitch(HighFunc &Func) {
+/// Whether the guard \p Cond holds when the switch key is \p Value, for a
+/// guard that compares the key with a constant (possibly negated); nullopt
+/// for any other guard.
+static std::optional<bool>
+guardHoldsForKey(const HighExpr *Cond, const HighExpr &Key, uint64_t Value) {
+  bool Negated = false;
+  while (Cond && Cond->Kind == ExprKind::UnaryOp &&
+         Cond->Op == NdOp::BOOL_NOT && Cond->Operands.size() == 1) {
+    Negated = !Negated;
+    Cond = Cond->Operands[0].get();
+  }
+  if (!Cond || Cond->Kind != ExprKind::BinOp || Cond->Operands.size() != 2 ||
+      !Cond->Operands[0] || !Cond->Operands[1])
+    return std::nullopt;
+  auto Peel = [](const HighExpr *E) {
+    while (E && !E->Operands.empty() &&
+           (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+            (E->Kind == ExprKind::UnaryOp &&
+             (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT))))
+      E = E->Operands[0].get();
+    return E;
+  };
+  const HighExpr *Left = Cond->Operands[0].get();
+  const HighExpr *Right = Cond->Operands[1].get();
+  const std::string KeyText = Peel(&Key)->str();
+  const bool KeyLeft =
+      Right->Kind == ExprKind::Const && Peel(Left)->str() == KeyText;
+  const bool KeyRight =
+      Left->Kind == ExprKind::Const && Peel(Right)->str() == KeyText;
+  if (KeyLeft == KeyRight)
+    return std::nullopt;
+  const HighExpr *KeySide = KeyLeft ? Left : Right;
+  if (!KeySide->Type || !KeySide->Type->Size || KeySide->Type->Size > 8)
+    return std::nullopt;
+  const unsigned Bits = 8u * KeySide->Type->Size;
+  const llvm::APInt KeyValue(Bits, Value);
+  const llvm::APInt Constant(Bits, (KeyLeft ? Right : Left)->ConstVal);
+  const llvm::APInt &A = KeyLeft ? KeyValue : Constant;
+  const llvm::APInt &B = KeyLeft ? Constant : KeyValue;
+  bool Holds;
+  switch (Cond->Op) {
+  case NdOp::INT_EQUAL:
+    Holds = A == B;
+    break;
+  case NdOp::INT_NOTEQUAL:
+    Holds = A != B;
+    break;
+  case NdOp::INT_LESS:
+    Holds = A.ult(B);
+    break;
+  case NdOp::INT_LESSEQUAL:
+    Holds = A.ule(B);
+    break;
+  case NdOp::INT_SLESS:
+    Holds = A.slt(B);
+    break;
+  case NdOp::INT_SLESSEQUAL:
+    Holds = A.sle(B);
+    break;
+  default:
+    return std::nullopt;
+  }
+  return Holds != Negated;
+}
+
+void cleanupGuardBeforeSwitch(HighFunc &Func) {
   for (size_t I = 0; I < Func.Body.size(); ++I) {
     if (Func.Body[I].Kind != StmtKind::If)
       continue;
@@ -203,19 +269,43 @@ static void cleanupGuardBeforeSwitch(HighFunc &Func) {
       return std::nullopt;
     };
 
-    if (IfBody.Kind == StmtKind::Return && !DefBody.empty() &&
-        DefBody.back().Kind == StmtKind::Return) {
+    // The guard's path takes the default instead, so the default must be
+    // exactly the guard's one statement.
+    if (IfBody.Kind == StmtKind::Return && DefBody.size() == 1 &&
+        DefBody[0].Kind == StmtKind::Return) {
       auto LV = GetConstVal(IfBody.RetVal);
-      auto RV = GetConstVal(DefBody.back().RetVal);
+      auto RV = GetConstVal(DefBody[0].RetVal);
       if (LV && RV) {
-        uint64_t Mask = 0xFFFFFFFF;
-        BodiesMatch = ((*LV & Mask) == (*RV & Mask));
-      } else if (!IfBody.RetVal && !DefBody.back().RetVal)
+        const unsigned Bytes = Func.ReturnType && Func.ReturnType->Size &&
+                                       Func.ReturnType->Size < 8
+                                   ? Func.ReturnType->Size
+                                   : 8;
+        const uint64_t Mask =
+            Bytes >= 8 ? ~uint64_t(0) : (uint64_t(1) << (8 * Bytes)) - 1;
+        BodiesMatch = (*LV & Mask) == (*RV & Mask);
+      } else if (!IfBody.RetVal && !DefBody[0].RetVal)
         BodiesMatch = true;
     }
+    // A jump's target may read the assignments between the guard and the
+    // switch, which the guard's path now runs.
     if (IfBody.Kind == StmtKind::Goto && DefBody.size() == 1 &&
-        DefBody[0].Kind == StmtKind::Goto)
+        DefBody[0].Kind == StmtKind::Goto &&
+        std::all_of(Func.Body.begin() + static_cast<long>(I) + 1,
+                    Func.Body.begin() + static_cast<long>(SwIdx),
+                    [](const HighStmt &S) { return S.Kind == StmtKind::Nop; }))
       BodiesMatch = (IfBody.GotoTarget == DefBody[0].GotoTarget);
+    // Every value the guard catches must reach that default: no case value
+    // may satisfy it.
+    const HighStmt &Switch = Func.Body[SwIdx];
+    BodiesMatch =
+        BodiesMatch && Switch.SwitchExpr &&
+        std::all_of(Switch.Cases.begin(), Switch.Cases.end(),
+                    [&](const SwitchCase &Case) {
+                      const std::optional<bool> Holds =
+                          guardHoldsForKey(Func.Body[I].Cond.get(),
+                                           *Switch.SwitchExpr, Case.Value);
+                      return Holds && !*Holds;
+                    });
 
     if (BodiesMatch) {
       Func.Body.erase(Func.Body.begin() + static_cast<long>(I));

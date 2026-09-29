@@ -82,6 +82,7 @@ void detectAndConvertLoops(HighFunc &Func,
 /// Recover switch statements from if-chains comparing the same variable.
 /// Defined in HighIfChainToSwitch.cpp.
 void recoverSwitchStatements(HighFunc &Func);
+void cleanupGuardBeforeSwitch(HighFunc &Func);
 
 /// Fold if(cond){goto} patterns into if/else trees, up to \p MaxPasses
 /// iterations.  Defined in HighCFSimplifyIfElse.cpp.

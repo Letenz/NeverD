@@ -2624,6 +2624,9 @@ struct PredChain {
   ExprPtr Cond;
   std::vector<HighStmt> Work;
   std::vector<HighStmt> SkipPrefix;
+  /// Values the kept prefix sets. The fold moves that prefix under the
+  /// combined test, so a path that fails the inner test no longer sets them.
+  std::vector<MedVar> KeptDests;
 };
 
 static std::optional<PredChain> collectPredChain(const HighStmt &S, va_t Join,
@@ -2688,6 +2691,19 @@ collectPredChainFromList(const std::vector<HighStmt> &Body, va_t Join,
     KeptPrefix.push_back(Body[I]);
   }
 
+  // A kept statement ends up under the combined test, so it runs only when
+  // the inner test holds too. It may do no work; whether the value it sets
+  // may go unset on the other path is for the fold to judge.
+  std::vector<MedVar> KeptDests;
+  for (const HighStmt &S : KeptPrefix) {
+    MedVar Dest;
+    ExprPtr Val;
+    if (!isValueAssign(S, Dest, Val) || !Val ||
+        exprHasObservableEffect(Val.get()))
+      return std::nullopt;
+    KeptDests.push_back(Dest);
+  }
+
   auto Inner = collectPredChain(Last, Join, LastCond);
   if (!Inner)
     return std::nullopt;
@@ -2718,6 +2734,8 @@ collectPredChainFromList(const std::vector<HighStmt> &Body, va_t Join,
   for (HighStmt &S : Inner->Work)
     Work.push_back(std::move(S));
   Inner->Work = std::move(Work);
+  Inner->KeptDests.insert(Inner->KeptDests.end(), KeptDests.begin(),
+                          KeptDests.end());
   if (ExtraCond)
     Inner->Cond =
         HighExpr::makeBinop(NdOp::BOOL_AND, std::move(ExtraCond), Inner->Cond);
@@ -3994,13 +4012,19 @@ static void flattenElseGotoNextLabelNested(std::vector<HighStmt> &Body,
           ChildFall = FallthroughTarget;
       }
     }
-    flattenElseGotoNextLabelNested(S.Body, ChildFall);
-    flattenElseGotoNextLabelNested(S.ElseBody, FallthroughTarget);
-    flattenElseGotoNextLabelNested(S.DefaultBody, FallthroughTarget);
+    // Both arms of an if (and a block or try body) run into what follows S.
+    // A loop body runs into its next iteration, and a case or handler body
+    // into a continuation that is no address here; a jump there only drops
+    // when its target is the next statement of that body itself.
+    const bool Loop = S.Kind == StmtKind::While ||
+                      S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For;
+    flattenElseGotoNextLabelNested(S.Body, Loop ? 0 : ChildFall);
+    flattenElseGotoNextLabelNested(S.ElseBody, ChildFall);
+    flattenElseGotoNextLabelNested(S.DefaultBody, 0);
     for (auto &C : S.Cases)
-      flattenElseGotoNextLabelNested(C.Body, FallthroughTarget);
+      flattenElseGotoNextLabelNested(C.Body, 0);
     for (auto &Clause : S.EHClauseBodies)
-      flattenElseGotoNextLabelNested(Clause, FallthroughTarget);
+      flattenElseGotoNextLabelNested(Clause, 0);
   }
   flattenElseGotoNextLabel(Body, FallthroughTarget);
 }
@@ -4022,7 +4046,12 @@ static bool foldThenSkipOver(std::vector<HighStmt> &Body) {
              Stmt.Body.back().Kind == StmtKind::If && Stmt.Body.back().Cond &&
              !Stmt.Body.back().Body.empty() &&
              !ifBodyIsOnlyGoto(Stmt.Body.back().Body) &&
-             Stmt.Body.back().Body.back().Kind == StmtKind::Goto)
+             Stmt.Body.back().Body.back().Kind == StmtKind::Goto &&
+             // The else work moves under the inner test, so no other path may
+             // reach it: the outer else must leave instead of running into it.
+             !Stmt.ElseBody.empty() &&
+             (Stmt.ElseBody.back().Kind == StmtKind::Goto ||
+              Stmt.ElseBody.back().Kind == StmtKind::Return))
       Inner = &Stmt.Body.back();
     if (!Inner)
       continue;
@@ -4826,9 +4855,43 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                     LiveTargets.count(Address))
                   SharedLabel = true;
               }
-              if (!SharedLabel ||
-                  ownsRunHighIR(Body, AM, {NextI, JoinIdx},
-                                static_cast<size_t>(I))) {
+              // A value the kept prefix sets goes unset where the inner test
+              // fails. Nothing outside the chain may read it, unless the else
+              // work sets it again before any read.
+              std::set<const HighStmt *> Own;
+              walkStatementTree(Stmt,
+                                [&](const HighStmt &N) { Own.insert(&N); });
+              auto SetAgainBeforeRead = [&](const MedVar &Dest) {
+                for (size_t K = NextI; K < JoinIdx; ++K) {
+                  if (isSkippablePad(Body[K]))
+                    continue;
+                  bool Reads = false;
+                  walkStatementTree(Body[K], [&](const HighStmt &N) {
+                    Reads = Reads || stmtReadsVar(N, Dest);
+                  });
+                  if (Reads)
+                    return false;
+                  MedVar Written;
+                  ExprPtr Value;
+                  if (isValueAssign(Body[K], Written, Value) &&
+                      sameMedVar(Written, Dest))
+                    return true;
+                  if (Body[K].Kind != StmtKind::Assign &&
+                      Body[K].Kind != StmtKind::Store &&
+                      Body[K].Kind != StmtKind::Call)
+                    return false;
+                }
+                return false;
+              };
+              const bool KeptValuesSafe =
+                  std::all_of(Chain->KeptDests.begin(), Chain->KeptDests.end(),
+                              [&](const MedVar &Dest) {
+                                return !functionReadsVar(Body, Dest, Own) ||
+                                       SetAgainBeforeRead(Dest);
+                              });
+              if (KeptValuesSafe &&
+                  (!SharedLabel || ownsRunHighIR(Body, AM, {NextI, JoinIdx},
+                                                 static_cast<size_t>(I)))) {
                 Stmt.Kind = StmtKind::IfElse;
                 Stmt.Cond = std::move(Chain->Cond);
                 Stmt.Body = std::move(Chain->Work);

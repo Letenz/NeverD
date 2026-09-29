@@ -33,6 +33,8 @@ inline VarKey VK(const MedVar &V) { return varKey(V); }
 void filterStableCopyCandidates(const std::vector<HighStmt> &Stmts,
                                 VarKeyMap<ExprPtr> &Candidates);
 void resolveCopyChains(VarKeyMap<ExprPtr> &Map);
+/// Drop a jump to the loop right after it when falling in does the same.
+void eliminateGotoToLoop(std::vector<HighStmt> &Stmts);
 void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Map);
 void countExprVarUses(const ExprPtr &E, VarKeyMap<int> &Uses,
