@@ -16,8 +16,10 @@ namespace diagnostic {
 inline llvm::Error error(const char *Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }
-inline llvm::Error unavailable(const char *Text) {
-  return llvm::make_error<BackendUnavailableError>(Text);
+inline llvm::Error unavailable(const char *Text,
+                               BackendAvailability Availability =
+                                   BackendAvailability::InitializationFailed) {
+  return llvm::make_error<BackendUnavailableError>(Text, Availability);
 }
 } // namespace diagnostic
 } // namespace neverd::emulation

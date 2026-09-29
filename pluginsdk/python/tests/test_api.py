@@ -629,6 +629,33 @@ class _SanitizeHost:
 
 
 class SessionTests(unittest.TestCase):
+    def test_cpu_query_preserves_native_validation_and_unloaded_session(self) -> None:
+        from neverd_plugin import NeverDError, Session
+
+        host = mock.Mock()
+        host.owned_string.return_value = '{"host": null, "schema_version": 1}'
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        self.assertEqual(
+            session.cpu_capabilities(), {"host": None, "schema_version": 1}
+        )
+        self.assertEqual(
+            host.owned_string.call_args.args[0], "neverd_cpu_capabilities_json"
+        )
+        self.assertEqual(host.owned_string.call_args.args[2:], (None, 0))
+        configuration = '{"architecture":"aarch64"}'
+        session.cpu_capabilities(configuration, probe_host=True)
+        self.assertEqual(
+            host.owned_string.call_args.args[2:], (configuration.encode(), 1)
+        )
+        for invalid in ("", "bad\0json", "bad\ud800json"):
+            with self.assertRaises(ValueError):
+                session.cpu_capabilities(invalid)
+        with self.assertRaises(TypeError):
+            session.cpu_capabilities(probe_host=1)
+        host.owned_string.side_effect = [None, "unsupported execution profile"]
+        with self.assertRaisesRegex(NeverDError, "unsupported execution profile"):
+            session.cpu_capabilities()
+
     def test_decompile_and_ir_surface_empty_native_failures(self) -> None:
         from neverd_plugin import NeverDError, Session
 

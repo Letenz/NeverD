@@ -18,6 +18,7 @@
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionCLIStrings.h"
+#include "neverd/emulation/ExecutionReportFields.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 
 using namespace llvm;
@@ -122,6 +123,8 @@ cl::SubCommand OptimizeIRCmd("optimize-ir",
 cl::SubCommand
     EmulateDriverCmd("emulate-driver",
                      "Run bounded x64 WDM driver initialization and emit JSON");
+cl::SubCommand CPUCapabilitiesCmd(execution_cli::CapabilitiesCommand,
+                                  execution_cli::CapabilitiesHelp);
 cl::SubCommand TranslateObjectCmd(
     "translate-object",
     "Compile canonical legacy-prefix-free x86-64 v1 REX.W full-width GPR MOV, "
@@ -1115,6 +1118,16 @@ cl::opt<std::string> DriverExecutionContract(
 cl::opt<std::string> DriverScenarioFile(
     "scenario", cl::desc("Strict driver lifecycle scenario JSON file"),
     cl::value_desc("path"), cl::init(""), cl::sub(EmulateDriverCmd));
+
+cl::opt<std::string>
+    CPUConfiguration(execution_cli::ConfigurationOption,
+                     cl::desc(execution_cli::ConfigurationHelp),
+                     cl::value_desc(execution_cli::ConfigurationValue),
+                     cl::init(emulation::execution_report::EmptyConfiguration),
+                     cl::sub(CPUCapabilitiesCmd));
+cl::opt<bool> CPUProbeHost(execution_cli::ProbeHostOption,
+                           cl::desc(execution_cli::ProbeHostHelp),
+                           cl::init(false), cl::sub(CPUCapabilitiesCmd));
 
 //===----------------------------------------------------------------------===//
 // Translate-object-specific options

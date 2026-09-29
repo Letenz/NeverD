@@ -6,6 +6,8 @@
 #ifndef NEVERD_EMULATION_CPU_H
 #define NEVERD_EMULATION_CPU_H
 #include "neverd/emulation/BackendFault.h"
+#include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/GuestMemory.h"
 #include "neverd/emulation/Registers.h"
 
@@ -91,7 +93,14 @@ public:
   /// Execute until stopped, timed out, or faulted. A successful Error result
   /// alone does not imply successful guest completion: inspect fault() and
   /// timedOut() as well, including after an interrupt callback stops execution.
-  virtual llvm::Error run(uint64_t PC, uint64_t TimeoutMicroseconds) = 0;
+  virtual llvm::Error run(uint64_t PC, uint64_t TimeoutMicroseconds);
+  /// Typed execution result. Preconditions/setup failures return Error;
+  /// outcomes after execution begins return an exit. Recoverable faults remain
+  /// pending until takeRecoverableFault(), preserving explicit OS transfer.
+  /// Built-in CPUs implement this boundary; older external subclasses that
+  /// only implement run() reject it explicitly.
+  virtual llvm::Expected<ExecutionExit>
+  runUntilExit(uint64_t PC, uint64_t TimeoutMicroseconds);
   virtual bool timedOut() const = 0;
   virtual void stop() = 0;
   virtual bool hasMemoryFault() const = 0;
@@ -119,6 +128,12 @@ struct BackendSelection {
   ExecutionBackendKind Kind;
   std::string Reason;
 };
+llvm::Expected<BackendSelection>
+createExecutionBackend(const ExecutionConfiguration &Configuration,
+                       std::shared_ptr<AddressSpace> Space);
+llvm::Expected<BackendSelection>
+createExecutionBackend(const ExecutionConfiguration &Configuration,
+                       uint64_t MemoryLimit);
 /// Auto chooses a native adapter only for a matching host/guest ISA and a
 /// checked contract. Unavailable native execution is an error, not a silent
 /// semantic downgrade. The legacy Windows contract remains software-only.

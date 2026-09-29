@@ -1,0 +1,69 @@
+//===- ExecutionReport.def - CPU query schema and diagnostics ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_EXECUTION_CONFIG_FIELD
+NEVERD_EXECUTION_CONFIG_FIELD(Backend, "backend")
+NEVERD_EXECUTION_CONFIG_FIELD(Contract, "contract")
+NEVERD_EXECUTION_CONFIG_FIELD(Architecture, "architecture")
+NEVERD_EXECUTION_CONFIG_FIELD(Privilege, "privilege")
+NEVERD_EXECUTION_CONFIG_FIELD(VirtualAddressBits, "virtual_address_bits")
+NEVERD_EXECUTION_CONFIG_FIELD(PageSize, "page_size")
+NEVERD_EXECUTION_CONFIG_FIELD(RequiredFeatures, "required_features")
+#endif
+#ifdef NEVERD_EXECUTION_REPORT_FIELD
+NEVERD_EXECUTION_REPORT_FIELD(SchemaVersion, "schema_version")
+NEVERD_EXECUTION_REPORT_FIELD(RequestedConfiguration, "requested_configuration")
+NEVERD_EXECUTION_REPORT_FIELD(Configuration, "configuration")
+NEVERD_EXECUTION_REPORT_FIELD(Capabilities, "capabilities")
+NEVERD_EXECUTION_REPORT_FIELD(SelectionReason, "selection_reason")
+NEVERD_EXECUTION_REPORT_FIELD(Build, "build")
+NEVERD_EXECUTION_REPORT_FIELD(Host, "host")
+NEVERD_EXECUTION_REPORT_FIELD(Availability, "availability")
+NEVERD_EXECUTION_REPORT_FIELD(Reason, "reason")
+NEVERD_EXECUTION_REPORT_FIELD(Scope, "scope")
+NEVERD_EXECUTION_REPORT_FIELD(AddressModel, "address_model")
+NEVERD_EXECUTION_REPORT_FIELD(MaxPhysicalBytes, "max_physical_bytes")
+NEVERD_EXECUTION_REPORT_FIELD(MaxMappedBytes, "max_mapped_bytes")
+NEVERD_EXECUTION_REPORT_FIELD(Features, "features")
+NEVERD_EXECUTION_REPORT_FIELD(NativeExecution, "native_execution")
+NEVERD_EXECUTION_REPORT_FIELD(InstructionAllowlist, "instruction_allowlist")
+NEVERD_EXECUTION_REPORT_FIELD(InstructionFamilies, "instruction_families")
+NEVERD_EXECUTION_REPORT_FIELD(MemoryObservation, "memory_observation")
+NEVERD_EXECUTION_REPORT_FIELD(ControlPrecision, "control_precision")
+NEVERD_EXECUTION_REPORT_FIELD(HardWallClockBound, "hard_wall_clock_bound")
+#endif
+#ifdef NEVERD_EXECUTION_REPORT_TEXT
+NEVERD_EXECUTION_REPORT_TEXT(InitializationScope, "initialization_only")
+NEVERD_EXECUTION_REPORT_TEXT(EmptyConfiguration, "{}")
+NEVERD_EXECUTION_REPORT_TEXT(ConfigurationTooLarge,
+                             "CPU configuration JSON exceeds 64 KiB")
+NEVERD_EXECUTION_REPORT_TEXT(ConfigurationObject,
+                             "CPU configuration must be a JSON object")
+NEVERD_EXECUTION_REPORT_TEXT(UnknownField, "unknown CPU configuration field: ")
+NEVERD_EXECUTION_REPORT_TEXT(FieldType,
+                             "invalid CPU configuration field type or value: ")
+NEVERD_EXECUTION_REPORT_TEXT(UnknownPrivilege, "unknown CPU privilege: ")
+NEVERD_EXECUTION_REPORT_TEXT(UnknownFeature, "unknown CPU feature: ")
+NEVERD_EXECUTION_REPORT_TEXT(DuplicateFeature,
+                             "duplicate required CPU feature: ")
+NEVERD_EXECUTION_REPORT_TEXT(ProbeBoolean, "CPU host probe must be 0 or 1")
+NEVERD_EXECUTION_REPORT_TEXT(
+    Disabled,
+    "CPU emulation is disabled; rebuild with -DNEVERD_ENABLE_CPU_EMULATION=ON")
+NEVERD_EXECUTION_REPORT_TEXT(AllocationFailed,
+                             "could not allocate CPU capability report")
+NEVERD_EXECUTION_REPORT_TEXT(QueryFailed, "CPU capability query failed: ")
+NEVERD_EXECUTION_REPORT_TEXT(
+    UnexpectedException,
+    "CPU capability query failed with an unexpected exception")
+NEVERD_EXECUTION_REPORT_TEXT(SessionFailed,
+                             "could not create CPU query session")
+#endif
+#ifdef NEVERD_EXECUTION_REPORT_LIMIT
+NEVERD_EXECUTION_REPORT_LIMIT(Version, NEVERD_CPU_CAPABILITIES_SCHEMA_VERSION,
+                              1)
+NEVERD_EXECUTION_REPORT_LIMIT(JSONLimit, NEVERD_CPU_CONFIGURATION_JSON_LIMIT,
+                              65536)
+#endif

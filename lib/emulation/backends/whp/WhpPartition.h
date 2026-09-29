@@ -29,11 +29,13 @@ struct WhpAPI {
   llvm::Error load() {
     Module = LoadLibraryExW(Library, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!Module)
-      return diagnostic::unavailable(diagnostic::WhpCapability);
+      return diagnostic::unavailable(diagnostic::WhpCapability,
+                                     BackendAvailability::HostAPI);
 #define NEVERD_WHP_FUNCTION(Name)                                              \
   Name = reinterpret_cast<decltype(Name)>(GetProcAddress(Module, #Name));      \
   if (!Name)                                                                   \
-    return diagnostic::unavailable(diagnostic::WhpCapability);
+    return diagnostic::unavailable(diagnostic::WhpCapability,                  \
+                                   BackendAvailability::HostAPI);
 #include "WhpProtocol.def"
 #undef NEVERD_WHP_FUNCTION
     return llvm::Error::success();

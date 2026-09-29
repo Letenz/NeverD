@@ -133,7 +133,8 @@ PUBLIC_C_DECLARATION = re.compile(
     re.DOTALL,
 )
 CLI_SUBCOMMAND_DECLARATION = re.compile(
-    r'\b(?:llvm::)?cl::SubCommand\s+([A-Za-z_]\w*)\s*\(\s*"([^"]+)"'
+    r'\b(?:llvm::)?cl::SubCommand\s+([A-Za-z_]\w*)\s*\(\s*'
+    r'(?:"([^"]+)"|([A-Za-z_]\w*::[A-Za-z_]\w*))'
 )
 CLI_OPTION_TYPE = r"(?:llvm::)?cl::(?:opt|list|alias)\s*(?:<[^;]*?>)?"
 CLI_SUBCOMMAND_REFERENCE = re.compile(r"\b(?:llvm::)?cl::sub\(\s*([A-Za-z_]\w*)\s*\)")
@@ -1262,9 +1263,17 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
             for variable, value in CLI_LITERAL_CONTRACT.findall(values_text):
                 required_values.setdefault(variable, set()).add(value)
 
+        def command_declarations(code: str) -> list[tuple[str, str]]:
+            result: list[tuple[str, str]] = []
+            for variable, literal, constant in CLI_SUBCOMMAND_DECLARATION.findall(code):
+                command = literal or cli_string_constants.get(constant)
+                if command is not None:
+                    result.append((variable, command))
+            return result
+
         global_commands: dict[str, set[str]] = {}
         for _path, code in cli_units:
-            for variable, command in CLI_SUBCOMMAND_DECLARATION.findall(code):
+            for variable, command in command_declarations(code):
                 global_commands.setdefault(variable, set()).add(command)
 
         for path, code in cli_units:
@@ -1279,7 +1288,7 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
                 re.DOTALL,
             )
             local_commands: dict[str, set[str]] = {}
-            for variable, command in CLI_SUBCOMMAND_DECLARATION.findall(code):
+            for variable, command in command_declarations(code):
                 local_commands.setdefault(variable, set()).add(command)
                 cli_declarations.add(f"neverd {command}")
             for match in option_declaration.finditer(code):

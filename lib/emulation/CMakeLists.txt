@@ -37,6 +37,8 @@ endif()
 
 add_neverd_component_library(NeverDEmulationCPU
   runtime/BackendRegistry.cpp
+  runtime/ExecutionConfiguration.cpp
+  runtime/ExecutionConfigurationJSON.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
   LINK_COMPONENTS EmulationCore EmulationNative EmulationUnicorn
@@ -53,9 +55,11 @@ if(WIN32)
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_KVM=1)
+  target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_KVM=1)
 endif()
 if(WIN32 AND NEVERD_EMULATION_BACKEND_WHP)
   target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_WHP=1)
+  target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_WHP=1)
 endif()
 if(NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(os/windows)

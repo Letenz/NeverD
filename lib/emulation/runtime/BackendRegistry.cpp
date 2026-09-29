@@ -6,6 +6,7 @@
 #include "../arch/aarch64/CheckedAArch64Backend.h"
 #include "../arch/x86_64/CheckedX64Backend.h"
 #include "../backends/MachineFactories.h"
+#include "HostEnvironment.h"
 
 #include "neverd/emulation/CPU.h"
 #ifdef NEVERD_EMULATION_UNICORN
@@ -75,24 +76,56 @@ const char *guestArchitectureName(GuestArchitecture Architecture) {
   }
   llvm_unreachable(diagnostic::Architecture);
 }
-namespace {
-bool matchesHost(GuestArchitecture Architecture) {
-#if defined(__aarch64__) || defined(_M_ARM64)
-  return Architecture == GuestArchitecture::AArch64;
-#elif defined(__x86_64__) || defined(_M_X64)
-  return Architecture == GuestArchitecture::X64;
+llvm::Expected<ExecutionBackendBuild>
+queryExecutionBackendBuild(ExecutionBackendKind Kind, GuestArchitecture ISA) {
+  using Availability = BackendAvailability;
+  if (ISA != GuestArchitecture::X64 && ISA != GuestArchitecture::AArch64)
+    return diagnostic::error(diagnostic::Architecture);
+  switch (Kind) {
+  case ExecutionBackendKind::Unicorn:
+#ifndef NEVERD_EMULATION_UNICORN
+    return ExecutionBackendBuild{Availability::BuildDisabled,
+                                 diagnostic::UnicornDisabled};
 #else
-  return false;
+    return ExecutionBackendBuild{Availability::Available,
+                                 diagnostic::BuildReady};
 #endif
+  case ExecutionBackendKind::KVM:
+#if !defined(__linux__)
+    return ExecutionBackendBuild{Availability::HostPlatformMismatch,
+                                 diagnostic::HostPlatform};
+#elif !defined(NEVERD_EMULATION_KVM)
+    return ExecutionBackendBuild{Availability::BuildDisabled,
+                                 diagnostic::NativeDisabled};
+#endif
+    break;
+  case ExecutionBackendKind::WHP:
+#if !defined(_WIN32)
+    return ExecutionBackendBuild{Availability::HostPlatformMismatch,
+                                 diagnostic::HostPlatform};
+#elif !defined(NEVERD_EMULATION_WHP)
+    return ExecutionBackendBuild{Availability::BuildDisabled,
+                                 diagnostic::NativeDisabled};
+#endif
+    break;
+  default:
+    return diagnostic::error(diagnostic::BackendName);
+  }
+  if (!runtime::matchesHost(ISA))
+    return ExecutionBackendBuild{Availability::HostISAMismatch,
+                                 diagnostic::HostISA};
+  return ExecutionBackendBuild{Availability::Available, diagnostic::BuildReady};
 }
-ExecutionBackendKind nativeBackend() {
-#if defined(__linux__)
-  return ExecutionBackendKind::KVM;
-#elif defined(_WIN32)
-  return ExecutionBackendKind::WHP;
-#else
-  return ExecutionBackendKind::Unicorn;
-#endif
+namespace {
+llvm::Error checkBackendBuild(ExecutionBackendKind Kind,
+                              GuestArchitecture ISA) {
+  auto Build = queryExecutionBackendBuild(Kind, ISA);
+  if (!Build)
+    return Build.takeError();
+  if (Build->Availability != BackendAvailability::Available)
+    return llvm::make_error<BackendUnavailableError>(Build->Reason,
+                                                     Build->Availability);
+  return llvm::Error::success();
 }
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
@@ -127,75 +160,67 @@ createCheckedBackend(ExecutionBackendKind Kind,
 }
 } // namespace
 llvm::Expected<BackendSelection>
-createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
-                       std::shared_ptr<AddressSpace> Space,
-                       GuestArchitecture Architecture) {
-  if (Architecture != GuestArchitecture::X64 &&
-      Architecture != GuestArchitecture::AArch64)
-    return diagnostic::error(diagnostic::Architecture);
-  if ((Contract == ExecutionContract::Legacy &&
-       Architecture != GuestArchitecture::X64) ||
-      (Contract == ExecutionContract::CheckedX64 &&
-       Architecture != GuestArchitecture::X64) ||
-      (Contract == ExecutionContract::CheckedAArch64 &&
-       Architecture != GuestArchitecture::AArch64))
-    return diagnostic::error(diagnostic::Contract);
-  const bool Checked = Contract == ExecutionContract::CheckedX64 ||
-                       Contract == ExecutionContract::CheckedAArch64;
-  if (!Checked && Contract != ExecutionContract::Legacy &&
-      Contract != ExecutionContract::Software)
-    return diagnostic::error(diagnostic::Contract);
-  std::string Reason = execution::ExplicitSelection;
-  if (Kind == ExecutionBackendKind::Auto) {
-    if (!Checked) {
-      Kind = ExecutionBackendKind::Unicorn;
-      Reason = Contract == ExecutionContract::Legacy
-                   ? execution::LegacySelection
-                   : execution::PortableSelection;
-    } else if (!matchesHost(Architecture)) {
-      Kind = ExecutionBackendKind::Unicorn;
-      Reason = execution::CrossISASelection;
-    } else {
-      Kind = nativeBackend();
-      Reason = Kind == ExecutionBackendKind::Unicorn
-                   ? execution::PortableSelection
-                   : execution::HostSelection;
-    }
-  }
-  if (Kind != ExecutionBackendKind::Unicorn &&
-      Kind != ExecutionBackendKind::KVM && Kind != ExecutionBackendKind::WHP)
-    return diagnostic::error(diagnostic::BackendName);
-  if (Kind != ExecutionBackendKind::Unicorn) {
-    if (!Checked)
-      return diagnostic::error(diagnostic::Contract);
-    if (!matchesHost(Architecture))
-      return diagnostic::unavailable(diagnostic::HostISA);
-  }
-  if (!Checked) {
+createExecutionBackend(const ExecutionConfiguration &Configuration,
+                       std::shared_ptr<AddressSpace> Space) {
+  auto Resolved = resolveExecutionConfiguration(Configuration);
+  if (!Resolved)
+    return Resolved.takeError();
+  const auto &Config = Resolved->Configuration;
+  const auto Kind = Config.Backend;
+  if (auto E = checkBackendBuild(Kind, Config.Architecture))
+    return E;
+  if (!Resolved->Capabilities.SupportsNativeExecution) {
 #ifdef NEVERD_EMULATION_UNICORN
-    auto CPU = UnicornBackend::create(std::move(Space), Architecture);
+    auto CPU = UnicornBackend::create(std::move(Space), Config.Architecture);
     if (!CPU)
       return CPU.takeError();
-    return BackendSelection{std::move(*CPU), Kind, std::move(Reason)};
+    return BackendSelection{std::move(*CPU), Kind,
+                            std::move(Resolved->SelectionReason)};
 #else
-    return diagnostic::unavailable(diagnostic::UnicornDisabled);
+    return diagnostic::unavailable(diagnostic::UnicornDisabled,
+                                   BackendAvailability::BuildDisabled);
 #endif
   }
-  auto CPU = createCheckedBackend(Kind, std::move(Space), Architecture);
+  auto CPU = createCheckedBackend(Kind, std::move(Space), Config.Architecture);
   if (!CPU)
     return CPU.takeError();
-  return BackendSelection{std::move(*CPU), Kind, std::move(Reason)};
+  return BackendSelection{std::move(*CPU), Kind,
+                          std::move(Resolved->SelectionReason)};
 }
 llvm::Expected<BackendSelection>
-createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
-                       uint64_t Limit, GuestArchitecture Architecture) {
+createExecutionBackend(const ExecutionConfiguration &Configuration,
+                       uint64_t Limit) {
+  auto Resolved = resolveExecutionConfiguration(Configuration);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto E = checkBackendBuild(Resolved->Configuration.Backend,
+                                 Resolved->Configuration.Architecture))
+    return E;
   auto RAM = PhysicalMemory::create(Limit);
   if (!RAM)
     return RAM.takeError();
   auto Space = AddressSpace::create(std::move(*RAM), Limit);
   if (!Space)
     return Space.takeError();
-  return createExecutionBackend(Kind, Contract, std::move(*Space),
-                                Architecture);
+  return createExecutionBackend(Configuration, std::move(*Space));
+}
+llvm::Expected<BackendSelection>
+createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
+                       std::shared_ptr<AddressSpace> Space,
+                       GuestArchitecture Architecture) {
+  ExecutionConfiguration Config;
+  Config.Backend = Kind;
+  Config.Contract = Contract;
+  Config.Architecture = Architecture;
+  return createExecutionBackend(Config, std::move(Space));
+}
+llvm::Expected<BackendSelection>
+createExecutionBackend(ExecutionBackendKind Kind, ExecutionContract Contract,
+                       uint64_t Limit, GuestArchitecture Architecture) {
+  ExecutionConfiguration Config;
+  Config.Backend = Kind;
+  Config.Contract = Contract;
+  Config.Architecture = Architecture;
+  return createExecutionBackend(Config, Limit);
 }
 } // namespace neverd::emulation

@@ -38,7 +38,7 @@ public:
   llvm::Error snapshotBacking(uint64_t,
                               llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error installHooks(BackendHooks) override;
-  llvm::Error run(uint64_t, uint64_t) override;
+  llvm::Expected<ExecutionExit> runUntilExit(uint64_t, uint64_t) override;
   void stop() override { StopRequested.store(true); }
   bool timedOut() const override { return TimedOut; }
   bool hasMemoryFault() const override {
@@ -77,6 +77,8 @@ protected:
   std::chrono::steady_clock::time_point Deadline;
 
 private:
+  llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
+                      bool &BackendFailed);
   unsigned MaxInstructionBytes, InstructionAlignment;
 };
 } // namespace neverd::emulation
