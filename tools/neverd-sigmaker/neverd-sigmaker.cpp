@@ -37,6 +37,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/ObjectFile.h"
@@ -108,8 +109,7 @@ bool forEachObject(StringRef Path, InputStats &Stats,
   }
   MemoryBufferRef MemRef = (*BufOrErr)->getMemBufferRef();
 
-  StringRef Magic = MemRef.getBuffer().substr(0, 8);
-  if (!Magic.starts_with("!<arch>") && !Magic.starts_with("!<thin>")) {
+  if (identify_magic(MemRef.getBuffer()) != file_magic::archive) {
     auto ObjOrErr = ObjectFile::createObjectFile(MemRef);
     if (!ObjOrErr) {
       WithColor::error() << "not a valid object/archive: " << Path << ": "

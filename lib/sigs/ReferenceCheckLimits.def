@@ -1,0 +1,28 @@
+//===- ReferenceCheckLimits.def - Bounds of reference checking --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The bounds SignatureDB checks references within.  A consumer defines
+/// NEVERD_SIGS_REFERENCE_LIMIT(Name, Value) before including this file.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SIGS_REFERENCE_LIMIT
+#error "Define NEVERD_SIGS_REFERENCE_LIMIT before including this file"
+#endif
+
+// What a round of reference checking settles is what the next round checks
+// the callers against; each round names routines the one before could not,
+// and the chains of calls it follows are short, so this many rounds are
+// enough.
+NEVERD_SIGS_REFERENCE_LIMIT(MaxReferenceRounds, 16)
+
+// A round checks its matches in parallel from this many, in blocks of this
+// many matches.
+NEVERD_SIGS_REFERENCE_LIMIT(ParallelReferenceMatches, 4096)
+NEVERD_SIGS_REFERENCE_LIMIT(ReferenceMatchesPerBlock, 256)
+
+#undef NEVERD_SIGS_REFERENCE_LIMIT
