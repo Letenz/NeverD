@@ -4561,9 +4561,11 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
   // tables instead.  A direct call into this function can also enter after
   // the mask; an external direct call and a non-resumable trap cannot.  An
   // indirect call enters a function entry and resumes at its fall-through,
-  // as the call model assumes for every other indirect call.
+  // as the call model assumes for every other indirect call.  A resumable
+  // trap (`__debugbreak()`) also resumes at its fall-through; only one whose
+  // continuation was not decoded leaves the graph incomplete.
   auto CanReenterAtUnknownAddress = [](const InsnRecord &Rec) {
-    return Rec.IsResumableTerminator ||
+    return (Rec.IsResumableTerminator && Rec.IsRet) ||
            (Rec.IsIndirect && !Rec.IsRet && !Rec.IsCall &&
             Rec.JumpTableTargets.empty()) ||
            (Rec.IsBranch && !Rec.IsIndirect && !Rec.IsCall &&

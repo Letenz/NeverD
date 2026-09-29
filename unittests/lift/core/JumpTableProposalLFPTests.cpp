@@ -1765,3 +1765,40 @@ TEST_F(JumpTableProposalLFP, SingleRelativeMaskKeepsTableAcrossIndirectCall) {
   EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
   EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
 }
+
+TEST_F(JumpTableProposalLFP, SingleRelativeMaskKeepsTableAcrossDebugBreak) {
+  auto ImageOrErr = neverd::loadBinary(proposalLFPObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("jt_lfp_relative_single_debugbreak");
+  const neverd::Symbol *Table =
+      Image.findSymbol("jt_lfp_relative_single_debugbreak_table");
+  const neverd::Symbol *Branch =
+      Image.findSymbol("jt_lfp_relative_single_debugbreak_branch");
+  const neverd::Symbol *Trap =
+      Image.findSymbol("jt_lfp_relative_single_debugbreak_trap");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(Table, nullptr);
+  ASSERT_NE(Branch, nullptr);
+  ASSERT_NE(Trap, nullptr);
+  ASSERT_EQ(Table->Size, 4u * sizeof(uint32_t));
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  EXPECT_EQ(Low.JumpTables.size(), 1u)
+      << "a resumable trap continues at its decoded fall-through and cannot "
+         "reach the indexed LOAD after its local mask";
+  EXPECT_EQ(Low.UnsafeIndirectBranchAddresses.count(Branch->Addr), 0u);
+  // `int3` is one byte; the instruction behind it must be decoded.
+  const neverd::va_t Resume = Trap->Addr + 1;
+  EXPECT_TRUE(std::any_of(
+      Low.Blocks.begin(), Low.Blocks.end(), [&](const neverd::LowBlock &B) {
+        return B.StartAddr <= Resume && Resume < B.EndAddr;
+      }));
+  EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
+}
