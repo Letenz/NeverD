@@ -8,3 +8,16 @@ NEVERD_EXECUTION_CLI_STRING(BackendHelp, "CPU backend: auto, unicorn, kvm, whp")
 NEVERD_EXECUTION_CLI_STRING(ContractOption, "execution-contract")
 NEVERD_EXECUTION_CLI_STRING(
     ContractHelp, "Execution contract: driver-strict or checked-x64-v1")
+NEVERD_EXECUTION_CLI_STRING(CapabilitiesCommand, "cpu-capabilities")
+NEVERD_EXECUTION_CLI_STRING(CapabilitiesHelp,
+                            "Query CPU configuration, semantic capabilities "
+                            "and backend availability as JSON")
+NEVERD_EXECUTION_CLI_STRING(ConfigurationOption, "configuration")
+NEVERD_EXECUTION_CLI_STRING(ConfigurationHelp,
+                            "CPU configuration JSON object; omitted fields use "
+                            "auto/software-cpu-v1/x86_64")
+NEVERD_EXECUTION_CLI_STRING(ConfigurationValue, "json")
+NEVERD_EXECUTION_CLI_STRING(ProbeHostOption, "probe-host")
+NEVERD_EXECUTION_CLI_STRING(
+    ProbeHostHelp, "Initialize a temporary CPU to check host availability "
+                   "(does not verify workload compatibility)")

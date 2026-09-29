@@ -1425,6 +1425,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_cpu_capabilities_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_translate_error_code_name",
     "const char *",
     ["neverd_translate_error_code_t"],

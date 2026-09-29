@@ -1111,6 +1111,13 @@ CPU execution is independent of the guest OS and binary format. Enable
 ISA, backend and execution contract independently, and returns the selected
 backend and selection reason. It does not infer a guest OS from the host.
 
+[`ExecutionConfiguration`](../include/neverd/emulation/ExecutionConfiguration.h)
+validates privilege, address width, page size and required features before
+allocation or attachment. Static semantic capabilities, compiled backend support
+and live initialization probes are separate queries. The factory and
+`cpu-capabilities` CLI/C/Python reports consume the same profile inventory.
+See [CPU configuration](cpu-execution.md) for the schema and current limits.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1250,8 +1257,7 @@ do not retain RAM capacity.
 
 This is the RAM authority beneath the existing Windows driver MDL model. Its
 process attachment and MDL mapping policy remain Windows-specific; a generic
-process runtime, explicit machine configuration and capability queries remain
-separate work.
+process runtime remains separate work.
 
 Windows retirement distinguishes backing release from virtual alias revocation.
 Freeing a partial MDL or completing its IRP can revoke its system alias while an
@@ -1282,6 +1288,14 @@ rejected. Hardware unavailability is a typed error; execution never restarts
 on a different backend after an effect. Software contracts always select
 Unicorn. A disabled Unicorn adapter also fails explicitly, including a
 cross-ISA `auto` selection.
+
+`runUntilExit` returns a typed CPU outcome with fault details and independent
+stop/deadline facts. The compatibility `run` API derives its error from this
+result while retaining fault and timeout accessors. Recoverable faults remain
+pending for their OS owner. Stopping, a deadline, or an engine halt never means
+successful workload completion. Observation precision distinguishes complete
+checked-instruction preflight from software engine memory callbacks. Current
+execution-control capabilities explicitly provide no hard wall-clock bound.
 
 The ARM64 checked profile runs little-endian baseline integer instructions at
 EL1. It admits scalar loads/stores, register-offset addressing, literal loads
@@ -1345,8 +1359,9 @@ the public C API. `DriverSession` owns bounded x64 WDM initialization and
 optional serial create/IOCTL/read/write/cleanup/close/unload invocations;
 Windows image mapping consumes the existing loader's complete `BinaryImage`,
 and the Windows model owns guest objects and API semantics. Under `driver-strict`,
-the Unicorn adapter owns CPU execution and authoritative guest memory; checked
-hardware execution uses the shared backing described above. This path does not use
+the Unicorn adapter owns CPU execution over the shared physical-memory and
+address-space authority described above; checked hardware execution projects
+the same backing. This path does not use
 the experimental native translation pipeline or alter its supported profile.
 
 Unicorn is configured once through `cmake/NeverDUnicorn.cmake`, shared with

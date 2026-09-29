@@ -12,6 +12,7 @@
 #include "UnicornBackend.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/ExecutionExitBuilder.h"
 #include "../../core/MemoryLayout.h"
 #include "../../core/MemoryProjection.h"
 #include "UnicornArchitecture.h"
@@ -766,7 +767,30 @@ llvm::Error UnicornBackend::installHooks(BackendHooks Hooks) {
   }
   return llvm::Error::success();
 }
-llvm::Error UnicornBackend::run(uint64_t PC, uint64_t TimeoutMicroseconds) {
+llvm::Expected<ExecutionExit> UnicornBackend::runUntilExit(uint64_t PC,
+                                                           uint64_t Timeout) {
+  bool Started = false;
+  auto E = runImpl(PC, Timeout, Started);
+  if (!Started) {
+    if (E)
+      return std::move(E);
+    return diagnostic::error(diagnostic::MissingExecutionStart);
+  }
+  const bool CallbackFailed =
+      State->CallbackFailed &&
+      (!State->FirstFault ||
+       State->FirstFault->Kind == BackendFaultKind::UnhandledException);
+  return makeExecutionExit(std::move(E),
+                           {.Fault = State->FirstFault,
+                            .Recoverable = State->RecoverableFault,
+                            .DeviceFailed = State->MMIOFailed,
+                            .BackendFailed = CallbackFailed,
+                            .StopRequested = State->StopRequested,
+                            .DeadlineReached = State->Timeout});
+}
+
+llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
+                                    bool &Started) {
   if (auto E = State->deviceError())
     return E;
   if (State->FirstFault || State->CallbackFailed || State->RecoverableFault)
@@ -787,6 +811,7 @@ llvm::Error UnicornBackend::run(uint64_t PC, uint64_t TimeoutMicroseconds) {
   State->Timeout = false;
   State->StopRequested = false;
   State->Running = true;
+  Started = true;
   uc_err Status =
       uc_emu_start(State->Engine, PC, UINT64_MAX, TimeoutMicroseconds, 0);
   State->Running = false;

@@ -1,0 +1,16 @@
+//===- ExecutionExit.def - CPU exit vocabulary --------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_EXECUTION_EXIT
+NEVERD_EXECUTION_EXIT(Stopped, "stopped")
+NEVERD_EXECUTION_EXIT(Deadline, "deadline")
+NEVERD_EXECUTION_EXIT(RecoverableFault, "recoverable_fault")
+NEVERD_EXECUTION_EXIT(GuestFault, "guest_fault")
+NEVERD_EXECUTION_EXIT(GuestTrap, "guest_trap")
+NEVERD_EXECUTION_EXIT(UnsupportedOperation, "unsupported_operation")
+NEVERD_EXECUTION_EXIT(DeviceFailure, "device_failure")
+NEVERD_EXECUTION_EXIT(BackendFailure, "backend_failure")
+NEVERD_EXECUTION_EXIT(EngineStop, "engine_stop")
+#endif

@@ -38,3 +38,14 @@ NEVERD_EXECUTION_TEXT(CrossISASelection,
                       "guest ISA differs from host; selected Unicorn")
 NEVERD_EXECUTION_TEXT(PortableSelection, "selected portable software execution")
 #endif
+
+#ifdef NEVERD_EXECUTION_AVAILABILITY
+NEVERD_EXECUTION_AVAILABILITY(Available, "available")
+NEVERD_EXECUTION_AVAILABILITY(BuildDisabled, "build_disabled")
+NEVERD_EXECUTION_AVAILABILITY(HostPlatformMismatch, "host_platform_mismatch")
+NEVERD_EXECUTION_AVAILABILITY(HostISAMismatch, "host_isa_mismatch")
+NEVERD_EXECUTION_AVAILABILITY(DeviceAccess, "device_access")
+NEVERD_EXECUTION_AVAILABILITY(HostAPI, "host_api")
+NEVERD_EXECUTION_AVAILABILITY(MissingCapability, "missing_capability")
+NEVERD_EXECUTION_AVAILABILITY(InitializationFailed, "initialization_failed")
+#endif

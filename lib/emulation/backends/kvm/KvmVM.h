@@ -51,10 +51,14 @@ public:
 #undef NEVERD_KVM_STRING
     System = open(Device, O_RDWR | O_CLOEXEC);
     if (System < 0)
-      return diagnostic::unavailable(diagnostic::KvmOpen);
-    if (ioctl(System, KVM_GET_API_VERSION, 0) != KVM_API_VERSION ||
-        ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SET_GUEST_DEBUG) <= 0)
-      return diagnostic::unavailable(diagnostic::KvmCapabilities);
+      return diagnostic::unavailable(diagnostic::KvmOpen,
+                                     BackendAvailability::DeviceAccess);
+    if (ioctl(System, KVM_GET_API_VERSION, 0) != KVM_API_VERSION)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::HostAPI);
+    if (ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SET_GUEST_DEBUG) <= 0)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
     VM = ioctl(System, KVM_CREATE_VM, 0);
     if (VM < 0)
       return diagnostic::error(diagnostic::KvmCreate);

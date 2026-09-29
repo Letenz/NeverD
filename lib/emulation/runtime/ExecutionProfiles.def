@@ -1,0 +1,34 @@
+//===- ExecutionProfiles.def - Authoritative CPU semantic profiles -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The fixed checked profiles admit supervisor scalar execution only. Flat
+// software profiles inherit the pinned engine's instruction model; they do not
+// establish architectural user/supervisor isolation or full OS compatibility.
+#ifdef NEVERD_EXECUTION_FEATURE_GROUP
+NEVERD_EXECUTION_FEATURE_GROUP(
+    CommonFeatures,
+    Feature::ScalarInteger | Feature::VectorRegisterState |
+        Feature::InstructionObservation | Feature::SharedPhysicalMemory |
+        Feature::MultipleAddressSpaces | Feature::RetainedMemoryViews |
+        Feature::TypedExits | Feature::CooperativeCPUs)
+NEVERD_EXECUTION_FEATURE_GROUP(SoftwareFeatures,
+                               CommonFeatures | Feature::FloatingPoint |
+                                   Feature::SIMD | Feature::MMIO)
+NEVERD_EXECUTION_FEATURE_GROUP(CheckedFeatures,
+                               CommonFeatures | Feature::MemoryPreflight)
+#endif
+#ifdef NEVERD_EXECUTION_PROFILE
+// Name, contract, ISA, privilege, address model, features, native, allowlist.
+NEVERD_EXECUTION_PROFILE(LegacyX64, Legacy, X64, Flat, Flat, SoftwareFeatures,
+                         false, false)
+NEVERD_EXECUTION_PROFILE(SoftwareX64, Software, X64, Flat, Flat,
+                         SoftwareFeatures, false, false)
+NEVERD_EXECUTION_PROFILE(SoftwareARM64, Software, AArch64, Flat, Flat,
+                         SoftwareFeatures, false, false)
+NEVERD_EXECUTION_PROFILE(CheckedX64, CheckedX64, X64, Supervisor, Canonical,
+                         CheckedFeatures, true, true)
+NEVERD_EXECUTION_PROFILE(CheckedARM64, CheckedAArch64, AArch64, Supervisor,
+                         Split, CheckedFeatures, true, true)
+#endif

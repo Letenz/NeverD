@@ -158,11 +158,13 @@ createWhpAArch64Machine(MemoryProjection &Memory) {
   if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &C,
                                      sizeof(C), nullptr)) ||
       !C.HypervisorPresent)
-    return diagnostic::unavailable(diagnostic::WhpArmCapability);
+    return diagnostic::unavailable(diagnostic::WhpArmCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &C,
                                      sizeof(C), nullptr)) ||
       !C.ExtendedVmExits.HypercallExit)
-    return diagnostic::unavailable(diagnostic::WhpArmCapability);
+    return diagnostic::unavailable(diagnostic::WhpArmCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvCreatePartition(&M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_PARTITION_PROPERTY P{};
@@ -183,7 +185,8 @@ createWhpAArch64Machine(MemoryProjection &Memory) {
   GIC.GitsTranslaterBaseAddress = aarch64::GicITS;
   if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeGicLpiIntIdBits, &C,
                                      sizeof(C), nullptr)))
-    return diagnostic::unavailable(diagnostic::WhpArmCapability);
+    return diagnostic::unavailable(diagnostic::WhpArmCapability,
+                                   BackendAvailability::MissingCapability);
   GIC.GicLpiIntIdBits = C.GicLpiIntIdBits;
   GIC.GicPpiOverflowInterruptFromCntv = aarch64::GicVirtualTimerPPI;
   GIC.GicPpiPerformanceMonitorsInterrupt = aarch64::GicPerformancePPI;

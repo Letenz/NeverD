@@ -87,11 +87,13 @@ createWhpMachine(MemoryProjection &Memory) {
   if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &C,
                                      sizeof(C), nullptr)) ||
       !C.HypervisorPresent)
-    return diagnostic::unavailable(diagnostic::WhpCapability);
+    return diagnostic::unavailable(diagnostic::WhpCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &C,
                                      sizeof(C), nullptr)) ||
       !C.ExtendedVmExits.ExceptionExit)
-    return diagnostic::unavailable(diagnostic::WhpCapability);
+    return diagnostic::unavailable(diagnostic::WhpCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvCreatePartition(&M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_PARTITION_PROPERTY P{};

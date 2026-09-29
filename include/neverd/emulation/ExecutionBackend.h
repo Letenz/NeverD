@@ -12,12 +12,21 @@
 #include <string>
 
 namespace neverd::emulation {
+enum class BackendAvailability {
+#define NEVERD_EXECUTION_AVAILABILITY(Name, Text) Name,
+#include "neverd/emulation/ExecutionBackend.def"
+#undef NEVERD_EXECUTION_AVAILABILITY
+};
 class BackendUnavailableError
     : public llvm::ErrorInfo<BackendUnavailableError> {
 public:
   static char ID;
-  explicit BackendUnavailableError(llvm::StringRef Reason)
-      : Reason(Reason.str()) {}
+  explicit BackendUnavailableError(
+      llvm::StringRef Reason, BackendAvailability Availability =
+                                  BackendAvailability::InitializationFailed)
+      : Reason(Reason.str()), Availability(Availability) {}
+  BackendAvailability availability() const { return Availability; }
+  llvm::StringRef reason() const { return Reason; }
   void log(llvm::raw_ostream &OS) const override;
   std::error_code convertToErrorCode() const override {
     return llvm::inconvertibleErrorCode();
@@ -25,6 +34,7 @@ public:
 
 private:
   std::string Reason;
+  BackendAvailability Availability;
 };
 
 class UnsupportedExecutionError

@@ -11,6 +11,34 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace neverd::emulation {
+llvm::Error ExecutionBackend::run(uint64_t PC, uint64_t Timeout) {
+  auto Exit = runUntilExit(PC, Timeout);
+  if (!Exit)
+    return Exit.takeError();
+  if (Exit->Kind == ExecutionExitKind::UnsupportedOperation)
+    return llvm::make_error<UnsupportedExecutionError>();
+  if (!Exit->Diagnostic.empty())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   Exit->Diagnostic);
+  return llvm::Error::success();
+}
+
+llvm::Expected<ExecutionExit> ExecutionBackend::runUntilExit(uint64_t,
+                                                             uint64_t) {
+  return diagnostic::error(diagnostic::TypedExecutionUnsupported);
+}
+
+const char *executionExitKindName(ExecutionExitKind Kind) {
+  switch (Kind) {
+#define NEVERD_EXECUTION_EXIT(Name, Text)                                      \
+  case ExecutionExitKind::Name:                                                \
+    return Text;
+#include "neverd/emulation/ExecutionExit.def"
+#undef NEVERD_EXECUTION_EXIT
+  }
+  llvm_unreachable(diagnostic::UnknownExit);
+}
+
 llvm::Expected<MemoryView> ExecutionBackend::pinBacking(uint64_t Address,
                                                         uint64_t Size) const {
   if (auto E = validateBacking(Address, Size))

@@ -1,0 +1,46 @@
+//===- ExecutionConfiguration.def - CPU configuration vocabulary ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_EXECUTION_PRIVILEGE
+NEVERD_EXECUTION_PRIVILEGE(Flat, "flat")
+NEVERD_EXECUTION_PRIVILEGE(Supervisor, "supervisor")
+NEVERD_EXECUTION_PRIVILEGE(User, "user")
+#endif
+#ifdef NEVERD_EXECUTION_MEMORY_OBSERVATION
+NEVERD_EXECUTION_MEMORY_OBSERVATION(EngineCallbacks, "engine_memory_callbacks")
+NEVERD_EXECUTION_MEMORY_OBSERVATION(InstructionPreflight,
+                                    "whole_instruction_preflight")
+#endif
+#ifdef NEVERD_EXECUTION_CONTROL_PRECISION
+NEVERD_EXECUTION_CONTROL_PRECISION(EngineRequest, "engine_request")
+NEVERD_EXECUTION_CONTROL_PRECISION(InstructionBoundary, "between_instructions")
+#endif
+#ifdef NEVERD_EXECUTION_ADDRESS_MODEL
+NEVERD_EXECUTION_ADDRESS_MODEL(Flat, "flat")
+NEVERD_EXECUTION_ADDRESS_MODEL(Canonical, "canonical")
+NEVERD_EXECUTION_ADDRESS_MODEL(Split, "split")
+#endif
+#ifdef NEVERD_EXECUTION_FEATURE
+NEVERD_EXECUTION_FEATURE(ScalarInteger, 0, "scalar_integer")
+NEVERD_EXECUTION_FEATURE(VectorRegisterState, 1, "vector_register_state")
+NEVERD_EXECUTION_FEATURE(FloatingPoint, 2, "floating_point_execution")
+NEVERD_EXECUTION_FEATURE(SIMD, 3, "simd_execution")
+NEVERD_EXECUTION_FEATURE(MMIO, 4, "mmio")
+NEVERD_EXECUTION_FEATURE(PortIO, 5, "port_io")
+NEVERD_EXECUTION_FEATURE(InstructionObservation, 6, "instruction_observation")
+NEVERD_EXECUTION_FEATURE(MemoryPreflight, 7, "complete_memory_preflight")
+NEVERD_EXECUTION_FEATURE(SharedPhysicalMemory, 8, "shared_physical_memory")
+NEVERD_EXECUTION_FEATURE(MultipleAddressSpaces, 9, "multiple_address_spaces")
+NEVERD_EXECUTION_FEATURE(RetainedMemoryViews, 10, "retained_memory_views")
+NEVERD_EXECUTION_FEATURE(CooperativeCPUs, 11, "cooperative_cpus")
+NEVERD_EXECUTION_FEATURE(UserSupervisorIsolation, 12,
+                         "user_supervisor_isolation")
+NEVERD_EXECUTION_FEATURE(ServiceTraps, 13, "service_traps")
+NEVERD_EXECUTION_FEATURE(ParallelCPUs, 14, "parallel_cpus")
+NEVERD_EXECUTION_FEATURE(TypedExits, 15, "typed_exits")
+#endif
+#ifdef NEVERD_EXECUTION_FEATURE_LIMIT
+NEVERD_EXECUTION_FEATURE_LIMIT(TypedExits)
+#endif

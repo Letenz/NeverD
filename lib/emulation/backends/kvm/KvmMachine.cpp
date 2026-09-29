@@ -58,7 +58,8 @@ public:
     Debug.control =
         KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
-      return diagnostic::unavailable(diagnostic::KvmCapabilities);
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
     if (auto E = runUntilExit(
             Deadline + std::chrono::microseconds(
                            execution_limits::NativeStepGraceMicroseconds)))
@@ -101,7 +102,8 @@ createKvmMachine(MemoryProjection &Memory) {
   Debug.control =
       KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
   if (ioctl(M->CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
-    return diagnostic::unavailable(diagnostic::KvmCapabilities);
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
   return std::unique_ptr<X64Machine>(std::move(M));
 }
 } // namespace neverd::emulation

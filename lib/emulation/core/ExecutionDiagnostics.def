@@ -54,6 +54,31 @@ NEVERD_EXECUTION_DIAGNOSTIC(UnknownFault, "unknown backend fault kind")
 NEVERD_EXECUTION_DIAGNOSTIC(UnknownAccess, "unknown backend access kind")
 NEVERD_EXECUTION_DIAGNOSTIC(Architecture, "unknown guest architecture")
 NEVERD_EXECUTION_DIAGNOSTIC(
+    ConfigurationPrivilege,
+    "execution profile does not support the requested privilege model")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ConfigurationAddressWidth,
+    "execution profile does not support the requested virtual address width")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ConfigurationPageSize,
+    "execution profile does not support the requested page size")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ConfigurationFeatures,
+    "execution profile lacks one or more required CPU features")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownPrivilege,
+                            "unknown execution privilege model")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownAddressModel,
+                            "unknown virtual address model")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownFeature, "unknown execution feature")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownAvailability,
+                            "unknown backend availability category")
+NEVERD_EXECUTION_DIAGNOSTIC(NativeDisabled,
+                            "native backend is disabled in this build")
+NEVERD_EXECUTION_DIAGNOSTIC(HostPlatform,
+                            "backend requires a different host platform")
+NEVERD_EXECUTION_DIAGNOSTIC(ProbeReady,
+                            "backend transport initialized successfully")
+NEVERD_EXECUTION_DIAGNOSTIC(
     HostISA, "hardware execution requires matching host and guest ISA")
 NEVERD_EXECUTION_DIAGNOSTIC(
     ArmState, "invalid ARM64 machine state or exception gateway result")
@@ -85,3 +110,15 @@ NEVERD_EXECUTION_DIAGNOSTIC(DeviceProtection,
                             "changing MMIO page permissions is unsupported")
 NEVERD_EXECUTION_DIAGNOSTIC(PinnedMemoryUnsupported,
                             "guest memory does not support retained RAM views")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    BuildReady, "backend is compiled for the requested host and guest ISA")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownObservation,
+                            "unknown memory observation precision")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownControlPrecision,
+                            "unknown execution control precision")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownExit, "unknown CPU exit kind")
+NEVERD_EXECUTION_DIAGNOSTIC(TypedExecutionUnsupported,
+                            "CPU does not implement typed execution results")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    MissingExecutionStart,
+    "CPU returned without starting execution or reporting a setup failure")

@@ -308,6 +308,10 @@ of the Windows model. It runs ARM64 scalar arithmetic and control flow, signed
 and indexed loads, pair/writeback operations, pre-effect observer stops,
 CPU-only snapshots, live aliases, code-cache invalidation and bounded loops.
 The software profile additionally executes FP/SIMD and TLS instructions.
+`ExecutionExitTests.cpp` exercises real x64/ARM64 software and checked runs:
+pre-effect stops, deadlines followed by clean resumption, faults overriding stop
+requests, retained recoverable faults, guest traps versus unsupported operations,
+observer failures and software HLT without a workload-completion claim.
 `AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
 native page-table projection, checking translations, remapping and write
 protection. These tests deliberately use Unicorn's architectural CPU TLB, not
@@ -319,6 +323,24 @@ cmake -S . -B build-cpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DNEVERD_ENABLE_DRIVER_EMULATION=OFF
 cmake --build build-cpu --target NeverDCPUEmulationTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDCPUEmulationTests$' --output-on-failure
+```
+
+`NeverDExecutionConfigurationTests` builds even with Unicorn disabled. It checks
+static capabilities against the same resolver used by the factory, rejects
+unsupported requirements without changing an attached address space, separates
+build support from live probes, and validates configuration JSON and report
+round trips. When Unicorn is enabled, real x64 and ARM64 loads validate its
+reported MMIO support. `NeverDExecutionCapabilitiesPublicTests` requires the
+shared SDK and CLI, but no Windows model or driver fixture; it queries unloaded
+sessions, validates bounded input and compares C and CLI reports.
+
+```bash
+cmake --build build-cpu --target NeverDExecutionConfigurationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDExecutionConfigurationTests$' --output-on-failure
+# In a shared-SDK/CLI build with CPU or driver emulation enabled:
+cmake --build build-release --target NeverDExecutionCapabilitiesPublicTests --parallel 4
+ctest --test-dir build-release -L '^NeverDExecutionCapabilitiesPublicTests$' --output-on-failure
+python3 scripts/check_python_plugin_sdk.py
 ```
 
 `MemoryLifecycleTests.cpp` covers independent physical, address-space and CPU

@@ -738,6 +738,38 @@ class CapabilitySchemaTests(unittest.TestCase):
                 diagnostics,
             )
 
+    def test_cli_inventory_resolves_command_and_option_def_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            include = root / "include" / "neverd" / "emulation"
+            include.mkdir(parents=True)
+            (include / "ExecutionCLIStrings.h").write_text(
+                'namespace neverd::execution_cli {\n'
+                '#include "neverd/emulation/ExecutionCLIStrings.def"\n}\n',
+                encoding="utf-8",
+            )
+            (include / "ExecutionCLIStrings.def").write_text(
+                'NEVERD_EXECUTION_CLI_STRING(Command, "cpu-capabilities")\n'
+                'NEVERD_EXECUTION_CLI_STRING(Option, "configuration")\n'
+                '// NEVERD_EXECUTION_CLI_STRING(Fake, "hidden")\n',
+                encoding="utf-8",
+            )
+            cli = root / "tools" / "neverd"
+            cli.mkdir(parents=True)
+            (cli / "Commands.cpp").write_text(
+                'cl::SubCommand CPU(execution_cli::Command, "query");\n'
+                'cl::SubCommand Hidden(execution_cli::Fake, "hidden");\n',
+                encoding="utf-8",
+            )
+            (cli / "Options.cpp").write_text(
+                'cl::opt<std::string> Config(execution_cli::Option, cl::sub(CPU));\n',
+                encoding="utf-8",
+            )
+            surfaces = capabilities.collect_public_surfaces(root)
+            self.assertEqual(surfaces["cli"], frozenset({
+                "neverd cpu-capabilities", "neverd cpu-capabilities --configuration"
+            }))
+
     def test_cli_inventory_keeps_translation_unit_local_names_separate(
         self,
     ) -> None:
@@ -3165,6 +3197,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "debug.hardware": "unsupported",
                 "debug.local": "unsupported",
                 "debug.remote": "unsupported",
+                "emulation.cpu-configuration": "experimental",
                 "emulation.windows-driver-initialization": "experimental",
                 "exception.itanium.ada-d": "experimental",
                 "exception.rewrite.end-to-end": "unsupported",
@@ -3182,6 +3215,16 @@ class RepositoryCapabilityTests(unittest.TestCase):
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "emulation.cpu-configuration": {
+                "c": ["neverd_cpu_capabilities_json"],
+                "python": ["Session.cpu_capabilities"],
+                "cli": [
+                    "neverd cpu-capabilities",
+                    "neverd cpu-capabilities --configuration",
+                    "neverd cpu-capabilities --probe-host",
+                ],
+                "json": ["neverd_cpu_capabilities_json"],
+            },
             "analysis.interpreter-source-recovery": {
                 "c": ["neverd_devirtualize_source_v1",
                       "neverd_devirtualize_machine_source_v1",

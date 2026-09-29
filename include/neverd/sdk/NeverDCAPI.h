@@ -28,12 +28,14 @@
 ///   - NeverDCAPIOptimize.h -- transactional textual LLVM IR optimization
 ///   - NeverDCAPITranslate.h -- x86-64 to AArch64 relocatable objects
 ///   - NeverDCAPIEmulation.h -- bounded Windows driver initialization
+///   - NeverDCAPICPU.h     -- CPU configuration and capability queries
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_SDK_CAPI_H
 #define NEVERD_SDK_CAPI_H
 
+#include "neverd/sdk/NeverDCAPICPU.h"
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
