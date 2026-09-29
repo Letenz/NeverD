@@ -48,6 +48,8 @@ NEVERD_EXECUTION_DIAGNOSTIC(WhpCreate,
 NEVERD_EXECUTION_DIAGNOSTIC(WhpMap, "cannot map WHP guest physical memory")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpState, "WHP CPU state transfer failed")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpRun, "WHP single-step execution failed")
+NEVERD_EXECUTION_DIAGNOSTIC(WhpRunControl,
+                            "cannot initialize WHP execution cancellation")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpExit,
                             "unexpected WHP exit; CPU state is terminal")
 NEVERD_EXECUTION_DIAGNOSTIC(UnknownFault, "unknown backend fault kind")

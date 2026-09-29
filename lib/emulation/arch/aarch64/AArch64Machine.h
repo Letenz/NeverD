@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_AARCH64_MACHINE_H
 #define NEVERD_EMULATION_AARCH64_MACHINE_H
+#include "../../core/MachineRunControl.h"
 #include "../../core/MemoryLayout.h"
 #include "../../core/MemoryProjection.h"
 
@@ -41,7 +42,7 @@ class AArch64Machine {
 public:
   virtual ~AArch64Machine() = default;
   virtual llvm::Error step(AArch64MachineState &State,
-                           std::chrono::steady_clock::time_point Deadline) = 0;
+                           MachineRunControl Control) = 0;
 };
 llvm::Error buildAArch64PageTables(MemoryProjection &Memory);
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,

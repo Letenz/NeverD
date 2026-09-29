@@ -13,6 +13,8 @@ namespace {
 enum class RunResult { Interrupted, Transient, Fatal };
 RunResult Result;
 unsigned Calls;
+std::atomic<bool> Stop;
+bool StopOnEntry;
 } // namespace
 
 // Only this test executable wraps ioctl. KvmVM has no live descriptors here,
@@ -20,6 +22,8 @@ unsigned Calls;
 extern "C" int __wrap_ioctl(int, unsigned long Request, ...) {
   EXPECT_EQ(Request, KVM_RUN);
   ++Calls;
+  if (StopOnEntry)
+    Stop = true;
   if (Result == RunResult::Fatal) {
     errno = EIO;
     return -1;
@@ -38,11 +42,14 @@ protected:
   KvmVM VM;
   void SetUp() override {
     Calls = 0;
+    Stop = false;
+    StopOnEntry = false;
     Result = RunResult::Transient;
   }
   llvm::Error run(unsigned Microseconds) {
-    return VM.runUntilExit(std::chrono::steady_clock::now() +
-                           std::chrono::microseconds(Microseconds));
+    return VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(Microseconds),
+                            &Stop});
   }
 };
 
@@ -66,6 +73,18 @@ TEST_F(KvmRun, FatalHostErrorDoesNotRetry) {
 TEST_F(KvmRun, ExpiredDeadlineDoesNotEnterCPU) {
   EXPECT_EQ(llvm::toString(run(0)), diagnostic::KvmRun);
   EXPECT_EQ(Calls, 0u);
+}
+
+TEST_F(KvmRun, StopBeforeEntryDoesNotEnterCPU) {
+  Stop = true;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), diagnostic::KvmRun);
+  EXPECT_EQ(Calls, 0u);
+}
+
+TEST_F(KvmRun, StopDuringHostInterruptionDoesNotRetry) {
+  StopOnEntry = true;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), diagnostic::KvmRun);
+  EXPECT_EQ(Calls, 1u);
 }
 } // namespace
 } // namespace neverd::emulation

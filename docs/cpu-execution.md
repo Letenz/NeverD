@@ -104,6 +104,13 @@ private RAM and a default space. JSON parsing/serialization lives in
 
 ## CPU outcomes
 
+Native execution checks normal budgets between instructions. WHP also requests
+cancellation of an active native entry after its transport allowance or a stop
+request. An interrupted entry with uncertain guest progress is terminal, even
+when `StopRequested` or `DeadlineReached` is set. KVM checks those requests
+before entry and after host interruptions; an uninterrupted entry still relies
+on hardware single stepping. No profile promises a hard wall-clock bound.
+
 `CPU.runUntilExit(PC, TimeoutMicroseconds)` returns a typed
 [`ExecutionExit`](../include/neverd/emulation/ExecutionExit.h). Preconditions
 and setup failures return `llvm::Error`; runs that begin execution report an
@@ -121,6 +128,6 @@ compatibility behavior. Older external CPU implementations that only override
 A stopped CPU, software HLT, deadline or guest trap never establishes successful
 workload completion. Instruction/event budgets, service dispatch, process/thread
 exit, exception delivery and workload success remain runtime/OS decisions.
-General runtime extraction, real user privilege, bounded native cancellation
+General runtime extraction, real user privilege, independently interruptible KVM
 and the additional OS workloads remain unfinished; these queries do not claim
 those capabilities.

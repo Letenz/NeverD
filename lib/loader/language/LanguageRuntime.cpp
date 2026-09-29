@@ -23,6 +23,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstring>
+
 #define DEBUG_TYPE "neverd-language-runtime"
 
 namespace neverd {
@@ -30,6 +32,24 @@ namespace {
 
 bool sectionExists(const BinaryImage &Img, llvm::StringRef Name) {
   return Img.getSectionByName(Name) != nullptr;
+}
+
+/// Where \p Needle, which is not empty and not longer than \p Haystack, first
+/// occurs in \p Haystack, or llvm::StringRef::npos.  A data segment is mostly
+/// zeros and strings, and memchr passes over it for the needle's first byte
+/// several times faster than StringRef::find's skip table does.
+size_t findBytes(llvm::StringRef Haystack, llvm::StringRef Needle) {
+  const char *const Begin = Haystack.begin();
+  const char *const LastStart = Haystack.end() - Needle.size();
+  for (const char *Start = Begin; Start <= LastStart; ++Start) {
+    Start = static_cast<const char *>(std::memchr(
+        Start, Needle.front(), static_cast<size_t>(LastStart - Start) + 1));
+    if (!Start)
+      break;
+    if (std::memcmp(Start + 1, Needle.data() + 1, Needle.size() - 1) == 0)
+      return static_cast<size_t>(Start - Begin);
+  }
+  return llvm::StringRef::npos;
 }
 
 /// Search every readable segment for a byte pattern.  Used only for the small
@@ -53,7 +73,7 @@ bool imageContains(const BinaryImage &Img, llvm::StringRef Needle,
       continue;
     llvm::StringRef Haystack(reinterpret_cast<const char *>(Seg.Data.data()),
                              Seg.Data.size());
-    size_t Pos = Haystack.find(Needle);
+    size_t Pos = findBytes(Haystack, Needle);
     if (Pos == llvm::StringRef::npos)
       continue;
     if (FoundVA)
