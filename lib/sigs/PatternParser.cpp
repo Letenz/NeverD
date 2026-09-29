@@ -8,13 +8,19 @@
 
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/bit.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <string>
 
 #if defined(__SSE2__)
@@ -25,44 +31,126 @@ using namespace neverd::sigs;
 
 namespace {
 
-/// Each character's value as a hex digit, or 0xFF when it is not one.
-constexpr std::array<uint8_t, 256> makeHexDigits() {
-  std::array<uint8_t, 256> Digits{};
+/// The fields every line opens with, by their place in it.
+enum OpeningField : size_t {
+#define NEVERD_PATTERN_FIELD(Name) Name##Field,
+#include "neverd/sigs/PatternSyntax.def"
+  OpeningFields
+};
+
+#define NEVERD_PATTERN_STRING(Name, Value)                                     \
+  [[maybe_unused]] constexpr llvm::StringLiteral Name(Value);
+#define NEVERD_PATTERN_CHAR(Name, Value)                                       \
+  [[maybe_unused]] constexpr char Name = Value;
+#define NEVERD_PATTERN_VALUE(Name, Value)                                      \
+  [[maybe_unused]] constexpr unsigned Name = Value;
+#include "neverd/sigs/PatternSyntax.def"
+
+/// A byte is stated in as many characters as the unstated byte has: two hex
+/// digits, the high one first.
+constexpr size_t ByteChars = UnstatedByte.size();
+constexpr unsigned DigitBits = llvm::ConstantLog2<Radix>();
+static_assert(llvm::has_single_bit(Radix) && ByteChars * DigitBits == CHAR_BIT,
+              "the digits of a byte state all its bits");
+
+/// The stated bits of a module are gathered in words of this many.
+constexpr size_t WordBits = std::numeric_limits<uint64_t>::digits;
+
+/// One entry for each value of a character.
+constexpr size_t CharValues = size_t{1} << CHAR_BIT;
+
+/// A run of hex digits, and the value of its first.
+struct HexDigitRun {
+  uint8_t First;
+  uint8_t Last;
+  uint8_t FirstValue;
+};
+
+constexpr HexDigitRun HexDigitRuns[] = {
+#define NEVERD_PATTERN_HEX_DIGITS(First, Last, FirstValue)                     \
+  {First, Last, FirstValue},
+#include "neverd/sigs/PatternSyntax.def"
+};
+
+/// What HexDigits holds for a character that is no hex digit.
+constexpr uint8_t NotHexDigit = std::numeric_limits<uint8_t>::max();
+
+/// Each character's value as a hex digit, or NotHexDigit.
+constexpr std::array<uint8_t, CharValues> makeHexDigits() {
+  std::array<uint8_t, CharValues> Digits{};
   for (uint8_t &Digit : Digits)
-    Digit = 0xFF;
-  for (unsigned C = '0'; C <= '9'; ++C)
-    Digits[C] = static_cast<uint8_t>(C - '0');
-  for (unsigned C = 'a'; C <= 'f'; ++C)
-    Digits[C] = static_cast<uint8_t>(C - 'a' + 10);
-  for (unsigned C = 'A'; C <= 'F'; ++C)
-    Digits[C] = static_cast<uint8_t>(C - 'A' + 10);
+    Digit = NotHexDigit;
+  for (const HexDigitRun &Run : HexDigitRuns)
+    for (unsigned C = Run.First; C <= Run.Last; ++C)
+      Digits[C] = static_cast<uint8_t>(C - Run.First + Run.FirstValue);
   return Digits;
 }
 
 constexpr auto HexDigits = makeHexDigits();
 
-/// The characters that separate fields: the whitespace llvm::SplitString and
-/// StringRef::trim know.
-constexpr std::array<bool, 256> makeSeparators() {
-  std::array<bool, 256> Separators{};
-  for (char C : {' ', '\t', '\n', '\v', '\f', '\r'})
-    Separators[static_cast<uint8_t>(C)] = true;
+// The decoders below find a digit's value by arithmetic: its distance from
+// the first decimal digit, or, once the case bit is set, from the first
+// lower case letter.
+constexpr HexDigitRun DecimalDigits = HexDigitRuns[0];
+constexpr HexDigitRun LowerCaseDigits = HexDigitRuns[1];
+constexpr HexDigitRun UpperCaseDigits = HexDigitRuns[2];
+constexpr uint8_t DecimalSpan = DecimalDigits.Last - DecimalDigits.First;
+constexpr uint8_t LetterSpan = LowerCaseDigits.Last - LowerCaseDigits.First;
+constexpr uint8_t LetterValue = LowerCaseDigits.FirstValue;
+constexpr uint8_t CaseBit = LowerCaseDigits.First ^ UpperCaseDigits.First;
+
+/// Whether that arithmetic gives every character the value HexDigits does.
+constexpr bool decodersReadHexDigits() {
+  for (unsigned C = 0; C < CharValues; ++C) {
+    const uint8_t Digit = static_cast<uint8_t>(C - DecimalDigits.First);
+    const uint8_t Letter =
+        static_cast<uint8_t>((C | CaseBit) - LowerCaseDigits.First);
+    const uint8_t Value = Digit <= DecimalSpan   ? Digit
+                          : Letter <= LetterSpan ? Letter + LetterValue
+                                                 : NotHexDigit;
+    if (Value != HexDigits[C])
+      return false;
+  }
+  return true;
+}
+static_assert(decodersReadHexDigits(),
+              "the decoders read the hex digits PatternSyntax.def lists");
+
+/// The characters that separate fields.
+constexpr std::array<bool, CharValues> makeSeparators() {
+  std::array<bool, CharValues> Separators{};
+#define NEVERD_PATTERN_SEPARATOR(Value)                                        \
+  Separators[static_cast<uint8_t>(Value)] = true;
+#include "neverd/sigs/PatternSyntax.def"
   return Separators;
 }
 
 constexpr auto Separators = makeSeparators();
 
+/// One more than the greatest separator.
+constexpr unsigned separatorBound() {
+  unsigned Bound = 0;
+  for (unsigned C = 0; C < CharValues; ++C)
+    if (Separators[C])
+      Bound = C + 1;
+  return Bound;
+}
+
+constexpr unsigned SeparatorBound = separatorBound();
+
 /// The first separator in [\p Position, \p End), or \p End.
 const char *findSeparator(const char *Position, const char *End) {
-  // A separator is below 0x21 and nothing in a hex field is, so a field is
-  // passed over eight bytes at a time until a word holds such a byte.
+  // Every separator is below SeparatorBound and nothing in a hex field is, so
+  // a field is passed over a word at a time until a word holds such a byte.
+  // The test finds any byte below the bound, and perhaps bytes after it.
   constexpr uint64_t Ones = 0x0101010101010101ULL;
-  while (End - Position >= 8) {
+  static_assert(SeparatorBound <= 0x80, "the test sees only the low bits");
+  while (End - Position >= static_cast<ptrdiff_t>(sizeof(uint64_t))) {
     uint64_t Word;
     std::memcpy(&Word, Position, sizeof(Word));
-    if ((Word - Ones * 0x21) & ~Word & (Ones * 0x80))
+    if ((Word - Ones * SeparatorBound) & ~Word & (Ones * 0x80))
       break;
-    Position += 8;
+    Position += sizeof(Word);
   }
   while (Position != End && !Separators[static_cast<uint8_t>(*Position)])
     ++Position;
@@ -88,8 +176,8 @@ void splitFields(llvm::StringRef Line,
 
 bool isIgnorablePatternLine(llvm::StringRef Line) {
   Line = Line.trim();
-  return Line.empty() || Line.starts_with(";") || Line.starts_with("#") ||
-         Line == "---";
+  return Line.empty() || Line.starts_with(CommentPrefix) ||
+         Line.starts_with(AlternateCommentPrefix) || Line == EndMarker;
 }
 
 llvm::Error patternError(const llvm::Twine &Message) {
@@ -117,7 +205,8 @@ struct ChunkWriter {
   uint8_t *Bytes = nullptr;
   size_t Capacity = 0;
   size_t Used = 0;
-  /// The stated bits of the module being parsed, bit I % 64 of word I / 64.
+  /// The stated bits of the module being parsed, bit I % WordBits of word
+  /// I / WordBits.
   std::vector<uint64_t> Bits;
   PatternNames &Names;
 };
@@ -132,54 +221,69 @@ llvm::Error noRoom() {
 
 /// Set \p Width bits of \p Mask in \p Bits from bit \p First on.
 void orBits(uint64_t *Bits, size_t First, uint64_t Mask, unsigned Width) {
-  Bits[First / 64] |= Mask << (First % 64);
-  if (First % 64 + Width > 64)
-    Bits[First / 64 + 1] |= Mask >> (64 - First % 64);
+  Bits[First / WordBits] |= Mask << (First % WordBits);
+  if (First % WordBits + Width > WordBits)
+    Bits[First / WordBits + 1] |= Mask >> (WordBits - First % WordBits);
 }
 
 /// Decode \p Pairs character pairs of \p Text into \p Bytes, setting bit
 /// \p FirstBit + I of \p Bits for each pair I that states a byte.  A pair of
-/// hex digits states a byte and ".." leaves it unstated (zero); anything else
-/// makes the whole call fail.
+/// hex digits states a byte and the unstated byte leaves it zero; anything
+/// else makes the whole call fail.
 bool decodePairs(const char *Text, size_t Pairs, uint8_t *Bytes, uint64_t *Bits,
                  size_t FirstBit) {
+  // A byte's characters are read as a pair: two digits, or the unstated
+  // byte, which is one character twice.
+  constexpr char UnstatedChar = UnstatedByte.data()[0];
+  static_assert(ByteChars == 2 && UnstatedByte.data()[1] == UnstatedChar,
+                "the decoders read a byte's characters as a pair");
   size_t I = 0;
 #if defined(__SSE2__)
   // Eight pairs at a time: classify all sixteen characters, then fold each
   // pair's high and low characters within its 16-bit lane.
-  const __m128i Zero = _mm_set1_epi8('0'), Nine = _mm_set1_epi8(9);
-  const __m128i Case = _mm_set1_epi8(0x20), LowerA = _mm_set1_epi8('a');
-  const __m128i Five = _mm_set1_epi8(5), Ten = _mm_set1_epi8(10);
-  const __m128i Dot = _mm_set1_epi8('.'), LowByte = _mm_set1_epi16(0x00FF);
+  constexpr size_t VectorPairs = sizeof(__m128i) / ByteChars;
+  const __m128i FirstDigit = _mm_set1_epi8(DecimalDigits.First);
+  const __m128i FirstLetter = _mm_set1_epi8(LowerCaseDigits.First);
+  const __m128i Decimals = _mm_set1_epi8(DecimalSpan);
+  const __m128i Letters = _mm_set1_epi8(LetterSpan);
+  const __m128i Case = _mm_set1_epi8(CaseBit);
+  const __m128i FirstLetterValue = _mm_set1_epi8(LetterValue);
+  const __m128i UnstatedChars = _mm_set1_epi8(UnstatedChar);
+  const __m128i LowByte = _mm_set1_epi16(std::numeric_limits<uint8_t>::max());
   __m128i Invalid = _mm_setzero_si128();
-  for (; I + 8 <= Pairs; I += 8) {
-    const __m128i Chars =
-        _mm_loadu_si128(reinterpret_cast<const __m128i *>(Text + 2 * I));
-    const __m128i Digit = _mm_sub_epi8(Chars, Zero);
-    const __m128i IsDigit = _mm_cmpeq_epi8(_mm_min_epu8(Digit, Nine), Digit);
-    const __m128i Letter = _mm_sub_epi8(_mm_or_si128(Chars, Case), LowerA);
-    const __m128i IsLetter = _mm_cmpeq_epi8(_mm_min_epu8(Letter, Five), Letter);
+  for (; I + VectorPairs <= Pairs; I += VectorPairs) {
+    const __m128i Chars = _mm_loadu_si128(
+        reinterpret_cast<const __m128i *>(Text + ByteChars * I));
+    const __m128i Digit = _mm_sub_epi8(Chars, FirstDigit);
+    const __m128i IsDigit =
+        _mm_cmpeq_epi8(_mm_min_epu8(Digit, Decimals), Digit);
+    const __m128i Letter = _mm_sub_epi8(_mm_or_si128(Chars, Case), FirstLetter);
+    const __m128i IsLetter =
+        _mm_cmpeq_epi8(_mm_min_epu8(Letter, Letters), Letter);
     const __m128i IsHex = _mm_or_si128(IsDigit, IsLetter);
-    const __m128i Nibble =
-        _mm_or_si128(_mm_and_si128(IsDigit, Digit),
-                     _mm_andnot_si128(IsDigit, _mm_add_epi8(Letter, Ten)));
-    const __m128i IsDot = _mm_cmpeq_epi8(Chars, Dot);
-    const __m128i Stated =
-        _mm_and_si128(_mm_and_si128(IsHex, _mm_srli_epi16(IsHex, 8)), LowByte);
-    const __m128i Unstated =
-        _mm_and_si128(_mm_and_si128(IsDot, _mm_srli_epi16(IsDot, 8)), LowByte);
+    const __m128i Nibble = _mm_or_si128(
+        _mm_and_si128(IsDigit, Digit),
+        _mm_andnot_si128(IsDigit, _mm_add_epi8(Letter, FirstLetterValue)));
+    const __m128i IsUnstatedChar = _mm_cmpeq_epi8(Chars, UnstatedChars);
+    const __m128i Stated = _mm_and_si128(
+        _mm_and_si128(IsHex, _mm_srli_epi16(IsHex, CHAR_BIT)), LowByte);
+    const __m128i Unstated = _mm_and_si128(
+        _mm_and_si128(IsUnstatedChar, _mm_srli_epi16(IsUnstatedChar, CHAR_BIT)),
+        LowByte);
     Invalid = _mm_or_si128(
         Invalid, _mm_andnot_si128(_mm_or_si128(Stated, Unstated), LowByte));
-    const __m128i Value = _mm_and_si128(
-        _mm_or_si128(_mm_slli_epi16(Nibble, 4), _mm_srli_epi16(Nibble, 8)),
-        Stated);
+    const __m128i Value =
+        _mm_and_si128(_mm_or_si128(_mm_slli_epi16(Nibble, DigitBits),
+                                   _mm_srli_epi16(Nibble, CHAR_BIT)),
+                      Stated);
     _mm_storel_epi64(reinterpret_cast<__m128i *>(Bytes + I),
                      _mm_packus_epi16(Value, Value));
+    // The bits of the lanes' low bytes, gathered into one bit per pair.
     unsigned Mask = static_cast<unsigned>(_mm_movemask_epi8(Stated)) & 0x5555;
     Mask = (Mask | (Mask >> 1)) & 0x3333;
     Mask = (Mask | (Mask >> 2)) & 0x0F0F;
     Mask = (Mask | (Mask >> 4)) & 0x00FF;
-    orBits(Bits, FirstBit + I, Mask, 8);
+    orBits(Bits, FirstBit + I, Mask, VectorPairs);
   }
   if (_mm_movemask_epi8(Invalid))
     return false;
@@ -189,21 +293,23 @@ bool decodePairs(const char *Text, size_t Pairs, uint8_t *Bytes, uint64_t *Bits,
   bool Bad = false;
   while (I < Pairs) {
     const unsigned Width =
-        static_cast<unsigned>(std::min<size_t>(8, Pairs - I));
+        static_cast<unsigned>(std::min<size_t>(WordBits, Pairs - I));
     uint64_t Mask = 0;
     for (unsigned K = 0; K < Width; ++K) {
-      const uint8_t High = static_cast<uint8_t>(Text[2 * (I + K)]);
-      const uint8_t Low = static_cast<uint8_t>(Text[2 * (I + K) + 1]);
-      const uint8_t HighDigit = High - '0', LowDigit = Low - '0';
-      const uint8_t HighLetter = (High | 0x20) - 'a';
-      const uint8_t LowLetter = (Low | 0x20) - 'a';
-      const bool HighIsDigit = HighDigit < 10, LowIsDigit = LowDigit < 10;
-      const bool Stated =
-          (HighIsDigit || HighLetter < 6) && (LowIsDigit || LowLetter < 6);
+      const uint8_t High = static_cast<uint8_t>(Text[ByteChars * (I + K)]);
+      const uint8_t Low = static_cast<uint8_t>(Text[ByteChars * (I + K) + 1]);
+      const uint8_t HighDigit = High - DecimalDigits.First;
+      const uint8_t LowDigit = Low - DecimalDigits.First;
+      const uint8_t HighLetter = (High | CaseBit) - LowerCaseDigits.First;
+      const uint8_t LowLetter = (Low | CaseBit) - LowerCaseDigits.First;
+      const bool HighIsDigit = HighDigit <= DecimalSpan;
+      const bool LowIsDigit = LowDigit <= DecimalSpan;
+      const bool Stated = (HighIsDigit || HighLetter <= LetterSpan) &&
+                          (LowIsDigit || LowLetter <= LetterSpan);
       const uint8_t Value = static_cast<uint8_t>(
-          ((HighIsDigit ? HighDigit : HighLetter + 10) << 4) |
-          (LowIsDigit ? LowDigit : LowLetter + 10));
-      Bad |= !Stated && !(High == '.' && Low == '.');
+          ((HighIsDigit ? HighDigit : HighLetter + LetterValue) << DigitBits) |
+          (LowIsDigit ? LowDigit : LowLetter + LetterValue));
+      Bad |= !Stated && !(High == UnstatedChar && Low == UnstatedChar);
       Bytes[I + K] = Stated ? Value : 0;
       Mask |= uint64_t(Stated) << K;
     }
@@ -217,22 +323,24 @@ bool decodePairs(const char *Text, size_t Pairs, uint8_t *Bytes, uint64_t *Bits,
 /// bytes start at \p First in \p Writer's room.
 llvm::Error appendPattern(llvm::StringRef Pat, ChunkWriter &Writer,
                           size_t First, uint32_t &Count) {
-  if (Pat.size() % 2 != 0)
+  if (Pat.size() % ByteChars != 0)
     return patternError("hex pattern has odd length");
 
-  const size_t Length = Pat.size() / 2;
+  const size_t Length = Pat.size() / ByteChars;
   if (Length > Writer.Capacity - First - Count)
     return noRoom();
-  Writer.Bits.resize((Count + Length + 63) / 64);
+  Writer.Bits.resize(llvm::divideCeil(Count + Length, WordBits));
   if (!decodePairs(Pat.data(), Length, Writer.Bytes + First + Count,
                    Writer.Bits.data(), Count)) {
-    // Name the first pair that is neither two hex digits nor "..".
+    // Name the first pair that is neither two hex digits nor the unstated
+    // byte.
     for (size_t I = 0; I < Length; ++I) {
-      const char High = Pat[2 * I], Low = Pat[2 * I + 1];
-      const bool Stated = HexDigits[static_cast<uint8_t>(High)] <= 0xF &&
-                          HexDigits[static_cast<uint8_t>(Low)] <= 0xF;
-      if (!Stated && !(High == '.' && Low == '.'))
-        return patternError("invalid hex byte: " + Pat.substr(2 * I, 2));
+      const llvm::StringRef Pair = Pat.substr(ByteChars * I, ByteChars);
+      const bool Stated = llvm::all_of(Pair, [](char C) {
+        return HexDigits[static_cast<uint8_t>(C)] != NotHexDigit;
+      });
+      if (!Stated && Pair != UnstatedByte)
+        return patternError("invalid hex byte: " + Pair);
     }
   }
   Count += static_cast<uint32_t>(Length);
@@ -254,30 +362,31 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   llvm::SmallVector<llvm::StringRef, 16> Tokens;
   splitFields(Line, Tokens);
 
-  if (Tokens.size() < 4)
+  if (Tokens.size() < OpeningFields)
     return patternError("too few fields in pattern line");
 
-  // Token 0: hex pattern (leading bytes with .. wildcards).
-  if (llvm::Error Error =
-          appendPattern(Tokens[0], Writer, Mod.Bytes, Mod.LeadingCount))
+  // The leading bytes, some perhaps unstated.
+  if (llvm::Error Error = appendPattern(Tokens[LeadingBytesField], Writer,
+                                        Mod.Bytes, Mod.LeadingCount))
     return std::move(Error);
 
-  // Token 1: CRC length (hex byte).
+  // The CRC length (a hex byte).
   unsigned CRCLen;
-  if (Tokens[1].getAsInteger(16, CRCLen) || CRCLen > 0xFFu)
-    return patternError("invalid CRC length: " + Tokens[1]);
+  if (Tokens[CRCLengthField].getAsInteger(Radix, CRCLen) ||
+      CRCLen > MaxCRCLength)
+    return patternError("invalid CRC length: " + Tokens[CRCLengthField]);
   Mod.CRCLen = static_cast<uint8_t>(CRCLen);
 
-  // Token 2: CRC16 value (hex).
+  // The CRC16 value (hex).
   unsigned CRC16Val;
-  if (Tokens[2].getAsInteger(16, CRC16Val) || CRC16Val > 0xFFFFu)
-    return patternError("invalid CRC16: " + Tokens[2]);
+  if (Tokens[CRC16Field].getAsInteger(Radix, CRC16Val) || CRC16Val > MaxCRC16)
+    return patternError("invalid CRC16: " + Tokens[CRC16Field]);
   Mod.CRC16 = static_cast<uint16_t>(CRC16Val);
 
-  // Token 3: total length (hex).
+  // The total length (hex).
   unsigned TotalLen;
-  if (Tokens[3].getAsInteger(16, TotalLen))
-    return patternError("invalid total length: " + Tokens[3]);
+  if (Tokens[LengthField].getAsInteger(Radix, TotalLen))
+    return patternError("invalid total length: " + Tokens[LengthField]);
   Mod.TotalLen = TotalLen;
   if (Mod.TotalLen == 0)
     return patternError("total length must be non-zero");
@@ -285,21 +394,28 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
                           Mod.CRCLen > Mod.TotalLen - Mod.LeadingCount))
     return patternError("CRC range is outside total length");
 
+  // A field that starts an offset, or the unstated byte a tail may start
+  // with, is no name.
+  auto CannotBeName = [](llvm::StringRef Field) {
+    return Field.starts_with(PublicNamePrefix) ||
+           Field.starts_with(ReferencePrefix) ||
+           Field.starts_with(UnstatedByte);
+  };
+
   // Remaining tokens form :offset/name pairs, then ^offset/name references,
   // followed by at most one tail.
   bool SawTail = false;
-  for (size_t I = 4; I < Tokens.size(); ++I) {
-    if (Tokens[I].starts_with("^")) {
+  for (size_t I = OpeningFields; I < Tokens.size(); ++I) {
+    if (Tokens[I].starts_with(ReferencePrefix)) {
       if (SawTail)
         return patternError("reference follows the tail pattern");
-      auto OffStr = Tokens[I].drop_front(1);
+      auto OffStr = Tokens[I].drop_front(ReferencePrefix.size());
       unsigned Off;
-      if (OffStr.empty() || OffStr.getAsInteger(16, Off))
+      if (OffStr.empty() || OffStr.getAsInteger(Radix, Off))
         return patternError("invalid reference offset: " + Tokens[I]);
       if (Off >= Mod.TotalLen)
         return patternError("reference offset is outside total length");
-      if (I + 1 >= Tokens.size() || Tokens[I + 1].starts_with(":") ||
-          Tokens[I + 1].starts_with("^") || Tokens[I + 1].starts_with(".."))
+      if (I + 1 >= Tokens.size() || CannotBeName(Tokens[I + 1]))
         return patternError("reference name is missing after offset: " +
                             Tokens[I]);
 
@@ -307,19 +423,18 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       ++Mod.ReferenceCount;
       continue;
     }
-    if (Tokens[I].starts_with(":")) {
+    if (Tokens[I].starts_with(PublicNamePrefix)) {
       if (SawTail)
         return patternError("public name follows the tail pattern");
       if (Mod.ReferenceCount != 0)
         return patternError("public name follows a reference");
-      auto OffStr = Tokens[I].drop_front(1);
+      auto OffStr = Tokens[I].drop_front(PublicNamePrefix.size());
       unsigned Off;
-      if (OffStr.empty() || OffStr.getAsInteger(16, Off))
+      if (OffStr.empty() || OffStr.getAsInteger(Radix, Off))
         return patternError("invalid public name offset: " + Tokens[I]);
       if (Off >= Mod.TotalLen)
         return patternError("public name offset is outside total length");
-      if (I + 1 >= Tokens.size() || Tokens[I + 1].starts_with(":") ||
-          Tokens[I + 1].starts_with("^") || Tokens[I + 1].starts_with(".."))
+      if (I + 1 >= Tokens.size() || CannotBeName(Tokens[I + 1]))
         return patternError("public name is missing after offset: " +
                             Tokens[I]);
 
@@ -344,13 +459,15 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
 
   // The stated bits follow the bytes.
   const size_t Count = size_t{Mod.LeadingCount} + Mod.TailCount;
-  const size_t StatedBytes = (Count + 7) / 8;
+  const size_t StatedBytes = llvm::divideCeil(Count, CHAR_BIT);
   if (StatedBytes > Writer.Capacity - Mod.Bytes - Count)
     return noRoom();
   uint8_t *const Stated = Writer.Bytes + Mod.Bytes + Count;
-  Writer.Bits.resize((Count + 63) / 64);
+  Writer.Bits.resize(llvm::divideCeil(Count, WordBits));
+  constexpr size_t WordBytes = sizeof(uint64_t);
   for (size_t I = 0; I < StatedBytes; ++I)
-    Stated[I] = static_cast<uint8_t>(Writer.Bits[I / 8] >> (I % 8 * 8));
+    Stated[I] = static_cast<uint8_t>(Writer.Bits[I / WordBytes] >>
+                                     (I % WordBytes * CHAR_BIT));
   Writer.Used = Mod.Bytes + Count + StatedBytes;
   return Mod;
 }
@@ -433,9 +550,9 @@ std::vector<PatternChunk> PatternParser::splitChunks(llvm::StringRef Text,
     // The chunk runs to the end of the line that holds its last byte.
     size_t End = Text.size();
     if (Text.size() - Start > ChunkBytes) {
-      const size_t LineFeed = Text.find('\n', Start + ChunkBytes - 1);
+      const size_t LineFeed = Text.find(LineEnd, Start + ChunkBytes - 1);
       if (LineFeed != llvm::StringRef::npos)
-        End = LineFeed + 1;
+        End = LineFeed + sizeof(LineEnd);
     }
     Chunks.emplace_back();
     Chunks.back().Text = Text.slice(Start, End);
@@ -467,10 +584,11 @@ void PatternParser::parseChunk(PatternChunk &Chunk) {
   llvm::StringRef Rest = Chunk.Text;
   size_t Line = 0;
   while (!Rest.empty()) {
-    const size_t LineFeed = Rest.find('\n');
+    const size_t LineFeed = Rest.find(LineEnd);
     const llvm::StringRef Text = Rest.take_front(LineFeed);
-    Rest = LineFeed == llvm::StringRef::npos ? llvm::StringRef()
-                                             : Rest.drop_front(LineFeed + 1);
+    Rest = LineFeed == llvm::StringRef::npos
+               ? llvm::StringRef()
+               : Rest.drop_front(LineFeed + sizeof(LineEnd));
     if (!isIgnorablePatternLine(Text)) {
       llvm::Expected<DraftModule> Draft = parsePatternLine(Text, Writer);
       if (!Draft) {

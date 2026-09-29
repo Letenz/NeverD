@@ -73,7 +73,7 @@ public:
   /// The size of the chunks a text is cut into: small enough that one large
   /// file keeps every worker busy, large enough that a chunk is hundreds of
   /// lines.
-  static constexpr size_t DefaultChunkBytes = 256 * 1024;
+  static constexpr size_t DefaultChunkBytes = SignatureLimits::ParseChunkBytes;
 
   /// Parse pattern text as one transaction. Comments, blank lines, and
   /// separators are ignored; every other line must be a valid module.
