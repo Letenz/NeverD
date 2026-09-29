@@ -1452,12 +1452,24 @@ the host entry returns, and acknowledges any in-flight cancellation before
 the token, next entry or partition can be retired. A cancellation with uncertain
 guest progress is a terminal backend failure; stop and elapsed-deadline facts
 remain visible in the typed exit. It never implies a completed instruction.
+KVM gives each vCPU a private execution thread. Only this thread enters
+`KVM_RUN`; it blocks signals in host userspace and uses `KVM_SET_SIGNAL_MASK`
+to temporarily unblock one non-ignored realtime signal during guest entry.
+The caller requests cancellation by sending that thread a single signal.
+After interruption, the private thread exits and is joined before returning,
+discarding any late thread-directed signal without reading application signal
+queues. Ordinary entries reuse the thread. Initialization and cancellation do
+not change caller masks or process signal dispositions; the application must
+keep the selected signal non-ignored while an entry is active. Both ISAs share
+this implementation; a non-exiting native x64 guest validates interruption and
+resumption, while native ARM64 validation remains outstanding.
+
 Normal deadlines are checked between instructions. Both native transports
 permit a 100 ms transport allowance for an instruction already entering the
-machine. KVM checks stop and deadline before entry and after host interruptions;
-it relies on host single stepping for an uninterrupted entry. It does not
-install a process-wide signal handler or claim an independently interruptible
-`KVM_RUN`. These mechanisms do not provide a hard wall-clock guarantee.
+machine. KVM checks stop and deadline before each entry/retry and can interrupt
+an active entry without depending on hardware single stepping. These mechanisms
+do not provide a hard wall-clock guarantee under host scheduling or kernel
+failure.
 
 These mechanisms follow the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and the WHP [partition configuration](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvpartitionpropertydatatypes)

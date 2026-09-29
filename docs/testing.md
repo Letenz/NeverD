@@ -347,8 +347,12 @@ stop tokens with distant deadlines, cancellation versus a new entry, and worker
 teardown before resource retirement. Injected x64/ARM64 machine entries also
 check CPU-to-transport stop propagation and terminal failures retaining elapsed
 deadline facts. `NeverDKvmRunTests` intercepts only its own `ioctl` calls to check
-entry/retry admission; it does not establish interruption of a running vCPU.
-These transport-control tests do not replace native Windows or ARM64 execution.
+entry/retry admission, active-entry cancellation, initialization failure,
+resumption and concurrent-entry rejection. `NeverDKvmCancellationTests` uses
+a real, non-exiting x64 KVM guest to verify deadline/stop interruption, repeated
+resumption, unchanged caller signal state and preservation of application
+signals. It skips explicitly without a usable x64 KVM host. Neither suite
+replaces native Windows or ARM64 execution.
 `ExecutionDeadline.*` also checks unsigned duration overflow, the last
 representable clock tick and negative clock epochs. Real software and checked
 x64/ARM64 runs reject zero/overflowing budgets before instruction observations
@@ -470,9 +474,14 @@ Unicorn dependency requires LLVM-MinGW rather than MSVC on Windows ARM64;
 see [CPU execution](architecture.md#cpu-execution) for build requirements.
 
 On Linux, `NeverDKvmRunTests` injects host-entry interruptions without requiring
-`/dev/kvm`. It checks transient retries, fatal errors, expired deadlines and
-sustained interruption. The x64 and ARM64 transports share this retry boundary;
-native guest execution remains covered by the architecture suites above.
+`/dev/kvm`. The x64 and ARM64 transports share this cancellation boundary;
+`NeverDKvmCancellationTests` additionally validates real x64 host interruption
+without enabling guest debug or relying on a guest instruction to exit.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
 
 ## Driver emulation checks
 

@@ -3550,11 +3550,39 @@
         "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
         "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles remain integer-only. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and cross-page data instructions remain unsupported.",
-        "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion; general runtime and additional OS workloads remain unfinished.",
+        "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion. The shared runtime owns cooperative quanta and explicit continuations; general dynamic linking, OS threads/signals and additional OS workloads remain unfinished.",
+        "KVM can interrupt an active entry using a private execution thread and a realtime signal temporarily unblocked by KVM_SET_SIGNAL_MASK. It joins the cancelled worker before returning and neither changes caller masks/process handlers nor consumes application signals. The selected signal must remain non-ignored during entry. Native interruption is tested on x64; ARM64 runtime validation remains outstanding.",
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
         "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; other checked ARM64 system-register encodings remain unsupported."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmRunTests",
+          "source": "unittests/emulation/KvmRunTests.cpp",
+          "filter": "KvmRun.ConcurrentEntriesCannotReplaceTheBorrowedControl",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmCancellationTests",
+          "source": "unittests/emulation/KvmCancellationTests.cpp",
+          "filter": "KvmCancellation.DeadlineInterruptsANonExitingNativeVCPU",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmCancellationTests",
+          "source": "unittests/emulation/KvmCancellationTests.cpp",
+          "filter": "KvmCancellation.PrivateCancellationLeavesApplicationSignalsPending",
+          "platforms": [
+            "linux"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDServiceRequestTests",

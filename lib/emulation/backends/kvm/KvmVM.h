@@ -8,9 +8,8 @@
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MachineRunControl.h"
 #include "../../core/MemoryProjection.h"
+#include "KvmRunControl.h"
 
-#include <cerrno>
-#include <chrono>
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
@@ -22,21 +21,21 @@ public:
   int System = -1, VM = -1, CPU = -1;
   kvm_run *Run = nullptr;
   size_t RunSize = 0;
-  llvm::Error runUntilExit(MachineRunControl Control) {
-    int Status;
-    do {
-      // A bounded guest instruction does not bound repeated host signals.
-      // Check the same absolute deadline before every interrupted entry.
-      if (Control.stopRequested() ||
-          std::chrono::steady_clock::now() >= Control.Deadline)
-        return diagnostic::error(diagnostic::KvmRun);
-      Status = ioctl(CPU, KVM_RUN, 0);
-    } while (Status < 0 && errno == EINTR);
-    if (Status < 0)
-      return diagnostic::error(diagnostic::KvmRun);
+  llvm::Error initializeRunControl() {
+    auto Created = KvmRunControl::create(CPU);
+    if (!Created)
+      return Created.takeError();
+    Control = std::move(*Created);
     return llvm::Error::success();
   }
+  llvm::Error runUntilExit(MachineRunControl Control) {
+    if (!this->Control)
+      return diagnostic::error(diagnostic::KvmRunControl);
+    return this->Control->run(Control);
+  }
   virtual ~KvmVM() {
+    // Stop the entry worker before unmapping its run state or closing the vCPU.
+    Control.reset();
     if (Run)
       munmap(Run, RunSize);
     if (CPU >= 0)
@@ -85,8 +84,11 @@ public:
     if (Mapping == MAP_FAILED)
       return diagnostic::error(diagnostic::KvmMap);
     Run = static_cast<kvm_run *>(Mapping);
-    return llvm::Error::success();
+    return initializeRunControl();
   }
+
+private:
+  std::unique_ptr<KvmRunControl> Control;
 };
 } // namespace neverd::emulation
 #endif
