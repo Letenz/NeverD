@@ -215,6 +215,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
 
+Nested inference regressions include two and three levels, ascending and descending counters, inferred phase constants and actual native body cutpoints. Unreachable or disjoint prefix domains, incorrect bodies, infinite or wrapping transitions, and exhausted shared search/proof budgets must refuse. Prefix witnesses never replace complete segment coverage.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

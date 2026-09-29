@@ -62,6 +62,8 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 `LowIRLoopInference.*` et `BinaryLowIRLoopInference.*` utilisent des compteurs, sauvegardes sur pile, retours anticipés, appels natifs et drapeaux compactés écrits indépendamment. Ils couvrent l’élargissement arithmétique étroit et les drapeaux égaux malgré des expressions différentes. Graphes malformés, origines absentes ou falsifiées, boucles infinies ou avec rebouclage et budgets épuisés ne doivent produire aucun certificat.
 
+Les régressions couvrent deux et trois niveaux imbriqués, les compteurs croissants et décroissants, les phases inférées et les coupures dans des corps natifs réels. Les domaines de préfixe inaccessibles ou disjoints, les corps incorrects, les transitions infinies ou avec rebouclage arithmétique et les budgets partagés épuisés doivent être refusés. Un témoin de préfixe ne remplace jamais la couverture complète des segments.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

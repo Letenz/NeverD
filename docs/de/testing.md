@@ -62,6 +62,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` und `BinaryLowIRLoopInference.*` verwenden unabhängig geschriebene Zähler, Stack-Ablagen, frühe Rückgaben, native Aufrufe und gepackte Flags. Sie prüfen schmale arithmetische Erweiterung und semantisch gleiche Flags mit unterschiedlichen Ausdrücken. Fehlerhafte Graphen, fehlende oder gefälschte Ursprünge, endlose oder umlaufende Schleifen und erschöpfte Budgets dürfen kein Zertifikat erzeugen.
 
+Die Regressionen prüfen zwei und drei verschachtelte Ebenen, auf- und absteigende Zähler, abgeleitete Phasen und Schnittpunkte in echten nativen Schleifenrümpfen. Unerreichbare oder disjunkte Präfixbereiche, falsche Rümpfe, endlose oder überlaufende Übergänge und erschöpfte gemeinsame Such-/Beweisbudgets müssen abgelehnt werden. Präfixzeugen ersetzen keine vollständige Segmentabdeckung.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

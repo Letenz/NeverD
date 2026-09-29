@@ -737,7 +737,7 @@ TEST(LowIRLoopRefinement, EntryPrefixIsCheckedRatherThanAssumed) {
   loopRefused(loopCheck(A, A, Plan), Status::Different);
 }
 
-TEST(LowIRLoopRefinement, NestedLoopsRequireLexicographicPhaseAndCount) {
+Program nestedWordLoops() {
   Program A;
   A.Function.Blocks[0].Succs = {1};
   A.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)}),
@@ -761,6 +761,11 @@ TEST(LowIRLoopRefinement, NestedLoopsRequireLexicographicPhaseAndCount) {
                  op(NdOp::BRANCH, {}, {n(0x200)})});
   A.block(6, 0x700);
   A.finish();
+  return A;
+}
+
+TEST(LowIRLoopRefinement, NestedLoopsRequireLexicographicPhaseAndCount) {
+  const auto A = nestedWordLoops();
   auto Plan = wordLoopPlan();
   auto &Outer = Plan.Cutpoints[0];
   Outer.Rank = {NdVar::tmp(8, 8), n(1, 1), n(0)};
@@ -790,8 +795,168 @@ TEST(LowIRLoopRefinement, NestedLoopsRequireLexicographicPhaseAndCount) {
   loopRefused(loopCheck(A, A, Plan), Status::Invalid);
   Plan.Cutpoints[1].Rank = Inner.Rank;
   Plan.Cutpoints[1].UseEntryPrefix = true;
-  // Entry exploration stops at the outer cut; this snapshot does not exist.
-  loopRefused(loopCheck(A, A, Plan), Status::Unsupported);
+  // An independently reached inner prefix requires a positive entry count.
+  // Unconstrained outer parameters must not invent reachability when the
+  // original entry count is zero.
+  loopRefused(loopCheck(A, A, Plan), Status::Different);
+  for (auto &Cut : Plan.Cutpoints) {
+    Cut.Inputs.push_back(
+        {LowIRLoopSide::Entry, regLocation(16), NdVar::tmp(32, 8)});
+    Cut.Expressions.push_back(op(NdOp::INT_LESSEQUAL, NdVar::tmp(40, 1),
+                                 {Cut.Rank[0], NdVar::tmp(32, 8)}));
+    Cut.Expressions.push_back(op(NdOp::BOOL_AND, NdVar::tmp(48, 1),
+                                 {Cut.Predicate, NdVar::tmp(40, 1)}));
+    Cut.Predicate = NdVar::tmp(48, 1);
+  }
+  const auto Prefix = loopCheck(A, A, Plan);
+  ASSERT_TRUE(Prefix.proved()) << Prefix.Diagnostic;
+  EXPECT_GT(Prefix.LoopInitiations, Good.LoopInitiations);
+  EXPECT_EQ(Prefix.RankingChecks, Good.RankingChecks);
+  EXPECT_NE(Prefix.Certificate->InputDigest, Good.Certificate->InputDigest);
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxOperations = Prefix.Operations - 1;
+  loopRefused(loopCheck(A, A, Plan, Limits), Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopInference, NestedCountersNeedNoHandwrittenPhases) {
+  const auto A = nestedWordLoops();
+  for (const auto &Eligible :
+       {std::vector<va_t>{}, std::vector<va_t>{0x300, 0x500}}) {
+    const auto Inferred =
+        inferLowIRLoopRefinementPlan(A.Function, A.Contract, {}, Eligible);
+    ASSERT_TRUE(Inferred.inferred())
+        << Inferred.Diagnostic << " cuts=" << Inferred.CutpointAttempts
+        << " rounds=" << Inferred.WideningRounds;
+    if (!Eligible.empty())
+      ASSERT_GT(Inferred.Plan->Cutpoints.size(), 1U);
+    EXPECT_GT(Inferred.Plan->Cutpoints[0].Rank.size(), 1U);
+    const auto Proof = loopCheck(A, A, *Inferred.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    auto Wrong = A;
+    Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
+    loopRefused(loopCheck(A, Wrong, *Inferred.Plan), Status::Different);
+    LowIRLoopInferenceLimits Limits;
+    Limits.MaxCutpointAttempts = Inferred.Plan->Cutpoints.size() - 1;
+    const auto TooFew =
+        inferLowIRLoopRefinementPlan(A.Function, A.Contract, Limits, Eligible);
+    EXPECT_EQ(TooFew.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(TooFew.Plan);
+  }
+}
+
+Program deeperWordLoops(unsigned Depth, bool Ascending, unsigned Step = 1) {
+  Program P;
+  const auto Address = [](unsigned Id) { return n(0x100 + 0x100 * Id); };
+  const auto Counter = [](unsigned Level) { return r(8 + 8 * Level); };
+  const auto Bound = [](unsigned Level) { return r(64 + 8 * Level); };
+  const unsigned Exit = 1 + 3 * Depth;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}),
+                 op(NdOp::COPY, Counter(0), {Ascending ? n(0) : Bound(0)}),
+                 op(NdOp::BRANCH, {}, {Address(1)})});
+  for (unsigned Level = 0; Level != Depth; ++Level) {
+    const unsigned Header = 1 + 3 * Level, Body = Header + 1, Tail = Header + 2;
+    const unsigned Done = Level ? 3 * Level : Exit;
+    P.block(Header, Address(Header).Offset,
+            {static_cast<int>(Body), static_cast<int>(Done)});
+    P.instruction(
+        {op(Ascending ? NdOp::INT_LESSEQUAL : NdOp::INT_EQUAL, NdVar::tmp(0, 1),
+            {Ascending ? Bound(Level) : Counter(Level),
+             Ascending ? Counter(Level) : n(0)}),
+         op(NdOp::COND_BR, {}, {Address(Done), NdVar::tmp(0, 1)})});
+    const unsigned Next = Level + 1 == Depth ? Tail : Header + 3;
+    P.block(Body, Address(Body).Offset, {static_cast<int>(Next)});
+    if (Level + 1 == Depth)
+      P.instruction({op(NdOp::INT_ADD, r(0), {r(0), Counter(Level)}),
+                     op(NdOp::BRANCH, {}, {Address(Next)})});
+    else
+      P.instruction({op(NdOp::COPY, Counter(Level + 1),
+                        {Ascending ? n(0) : Bound(Level + 1)}),
+                     op(NdOp::BRANCH, {}, {Address(Next)})});
+    P.block(Tail, Address(Tail).Offset, {static_cast<int>(Header)});
+    P.instruction({op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, Counter(Level),
+                      {Counter(Level), n(Step)}),
+                   op(NdOp::BRANCH, {}, {Address(Header)})});
+  }
+  P.block(Exit, Address(Exit).Offset);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, ThreeLevelsAndOppositeCounterDirections) {
+  for (bool Ascending : {false, true}) {
+    const auto P = deeperWordLoops(3, Ascending);
+    const auto Inferred = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(Inferred.inferred())
+        << "ascending=" << Ascending << ": " << Inferred.Diagnostic;
+    const auto Proof = loopCheck(P, P, *Inferred.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    EXPECT_GE(Inferred.Plan->Cutpoints.front().Rank.size(), 3U);
+  }
+}
+
+TEST(LowIRLoopRefinement, UnreachableNestedPrefixCannotSeedInduction) {
+  auto A = wordLoop();
+  A.Contract.EntryConstants.push_back({r(16), 0});
+  auto Plan = wordLoopPlan();
+  auto Body = Plan.Cutpoints[0];
+  Body.OriginalAddress = Body.CandidateAddress = 0x300;
+  Body.UseEntryPrefix = true;
+  Plan.Cutpoints.push_back(Body);
+  const auto Proof = loopCheck(A, A, Plan);
+  loopRefused(Proof, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"), std::string::npos);
+}
+
+TEST(LowIRLoopInference, NestedInfinitePathsAndSharedBudgetsRefuse) {
+  const auto Good = deeperWordLoops(2, false);
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(Good.Function, Good.Contract);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  for (unsigned Step : {0, 2}) {
+    const auto Bad = deeperWordLoops(2, false, Step);
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract);
+    EXPECT_FALSE(Refused.inferred());
+    EXPECT_FALSE(Refused.Plan);
+    loopRefused(loopCheck(Bad, Bad, *Inferred.Plan), Status::Different);
+  }
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    LowIRLoopInferenceLimits Limits;
+    if (Kind == 0)
+      Limits.Execution.MaxPaths = Inferred.ScheduledPaths - 1;
+    if (Kind == 1)
+      Limits.Execution.MaxSolverQueries = Inferred.SolverQueries - 1;
+    if (Kind == 2)
+      Limits.MaxWideningRounds = Inferred.WideningRounds - 1;
+    if (Kind == 3)
+      Limits.MaxRankCandidates = Inferred.RankCandidates - 1;
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(Good.Function, Good.Contract, Limits);
+    EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << Refused.Diagnostic;
+    EXPECT_FALSE(Refused.Plan);
+  }
+  const auto Proof = loopCheck(Good, Good, *Inferred.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxInstructions = Proof.Instructions - 1;
+  loopRefused(loopCheck(Good, Good, *Inferred.Plan, Limits),
+              Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopRefinement, DisjointPrefixDomainsCannotBePaired) {
+  const auto A = wordLoop();
+  auto B = A;
+  B.Function.Blocks[1].Ops[0].Opcode = NdOp::INT_NOTEQUAL;
+  auto Plan = wordLoopPlan();
+  auto Body = Plan.Cutpoints[0];
+  Body.OriginalAddress = Body.CandidateAddress = 0x300;
+  Body.UseEntryPrefix = true;
+  Plan.Cutpoints.push_back(Body);
+  const auto Proof = loopCheck(A, B, Plan);
+  loopRefused(Proof, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"), std::string::npos);
 }
 
 TEST(LowIRLoopRefinement, SelectedUndefinedBitsRemainCorrelatedAcrossSpills) {

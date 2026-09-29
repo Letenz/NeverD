@@ -20,7 +20,7 @@ and `roadmap.md`. Shared images remain in `assets/`.
 | [Contributing](../CONTRIBUTING.md) | Development setup, build profiles, workflow, style, and PR expectations |
 | [Architecture](architecture.md) | IR routes, component boundaries, strict lifting, support depth, and where to edit |
 | [Testing](testing.md) | Test suites, generated fixtures, Unicorn roundtrips, and incremental commands |
-| [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; bounded automatic loop proof proposals |
+| [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; nested loop proof proposals |
 | [Windows exception reconstruction](windows-exception-reconstruction.md) | SEH/C++ unwind support matrix, IR contract, native patch rules, and PE validation |
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
 | [Guest process emulation](process-emulation.md) | Explicit Linux ELF64 process profile, startup stack, system calls, bounded output, CLI/C/Python and current limits |

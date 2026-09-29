@@ -48,7 +48,7 @@ Le résultat sert à l’analyse et ne constitue pas une preuve de sûreté pour
 patch ou les exceptions. Voir le [guide de récupération](interpreter-recovery.md)
 pour les contrôles, rapports et limites.
 
-L’API C++ distincte de preuve de boucle infère des indications bornées à une coupure et revérifie le raffinement natif vers LowIR. Voir le [guide](interpreter-recovery.md) ; elle ne certifie pas le C émis.
+L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
 
 ## Pourquoi NeverD ?
 

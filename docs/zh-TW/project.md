@@ -84,7 +84,7 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
 
 映像內容與權限必須固定，且所有外部來源寫入的目標範圍都不得與入口返回位址槽重疊。這是呼叫端／環境前提；此功能不證明二進位 patch 或例外展開安全。輸入相關的位元碼定址與解碼器狀態關聯尚未普遍支援。完整契約、`--llvm` 路徑及限制請見[直譯器原始碼還原指南](interpreter-recovery.md)。
 
-獨立的 C++ 迴圈證明 API 可在預算內自動推導單切點提示，並重新檢查原生程式碼到 LowIR 的精化關係，詳見[還原指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
+獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
 
 ## 工作原理
 
