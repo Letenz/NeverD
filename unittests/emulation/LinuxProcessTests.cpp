@@ -36,6 +36,13 @@ namespace pie_fixture {
 #undef NEVERD_PIE_VALUE
 #undef NEVERD_PIE_TEXT
 } // namespace pie_fixture
+namespace memory_fixture {
+#define NEVERD_LINUX_MEMORY_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_MEMORY_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxMemoryCases.def"
+#undef NEVERD_LINUX_MEMORY_VALUE
+#undef NEVERD_LINUX_MEMORY_TEXT
+} // namespace memory_fixture
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
@@ -107,6 +114,44 @@ TEST_P(LinuxProcess, InstructionCreditsSurviveQuantumResumptions) {
       << Result.Diagnostic;
   EXPECT_EQ(Result.Instructions, Options.Limits.Instructions);
   EXPECT_FALSE(Result.ExitStatus);
+}
+TEST_P(LinuxProcess,
+       AnonymousMappingsHeapAndCodeSurviveRealServiceContinuations) {
+  Path.replace_filename(Path.stem().string() + memory_fixture::Suffix);
+  Options.Arguments = {memory_fixture::ExecutableName, memory_fixture::Normal};
+  Options.InstructionQuantum = 3;
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::Exited) << Result.Diagnostic;
+  EXPECT_EQ(Result.ExitStatus, memory_fixture::ExitStatus);
+  EXPECT_EQ(Result.StandardOutput, memory_fixture::Message);
+  EXPECT_TRUE(Result.StandardError.empty());
+  EXPECT_EQ(Result.Events, Result.Services.size());
+}
+TEST_P(LinuxProcess,
+       GuestStoresObserveBothExplicitAndPartialProtectionChanges) {
+  Path.replace_filename(Path.stem().string() + memory_fixture::Suffix);
+  for (const char *Mode :
+       {memory_fixture::ProtectionFault, memory_fixture::HoleFault}) {
+    SCOPED_TRACE(Mode);
+    Options.Arguments = {memory_fixture::ExecutableName, Mode};
+    const auto Result = run();
+    EXPECT_EQ(Result.Stop, ProcessStopReason::CPUFailure) << Result.Diagnostic;
+    EXPECT_FALSE(Result.ExitStatus);
+    ASSERT_TRUE(Result.LastCPUExit);
+    ASSERT_TRUE(Result.LastCPUExit->Fault);
+    EXPECT_EQ(Result.LastCPUExit->Fault->Kind, BackendFaultKind::Protection);
+    EXPECT_TRUE(Result.StandardOutput.empty());
+  }
+}
+TEST_P(LinuxProcess, FixedReplacementIsRejectedWithoutInventingAMappingResult) {
+  Path.replace_filename(Path.stem().string() + memory_fixture::Suffix);
+  Options.Arguments = {memory_fixture::ExecutableName,
+                       memory_fixture::Unsupported};
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(Result.ExitStatus);
+  ASSERT_EQ(Result.Services.size(), 1u);
+  EXPECT_FALSE(Result.Services.front().Result);
 }
 TEST_P(LinuxProcess, CompilerTLSBlocksRemainIndependentAcrossProcessQuanta) {
   Path.replace_filename(Path.stem().string() + tls_fixture::Suffix);

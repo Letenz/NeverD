@@ -57,6 +57,13 @@ namespace pie_fixture {
 #undef NEVERD_PIE_VALUE
 #undef NEVERD_PIE_TEXT
 } // namespace pie_fixture
+namespace memory_fixture {
+#define NEVERD_LINUX_MEMORY_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_MEMORY_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxMemoryCases.def"
+#undef NEVERD_LINUX_MEMORY_VALUE
+#undef NEVERD_LINUX_MEMORY_TEXT
+} // namespace memory_fixture
 
 std::string takeString(const char *Value) {
   if (!Value)
@@ -188,7 +195,11 @@ TEST_F(ProcessPublic, CompilerStartupRunsThroughTheSharedSDKAndCLI) {
       {pie_fixture::X64File, pie_fixture::Message,
        pie_fixture::InstructionLimit, pie_fixture::ExitStatus},
       {pie_fixture::ARMFile, pie_fixture::Message,
-       pie_fixture::InstructionLimit, pie_fixture::ExitStatus}};
+       pie_fixture::InstructionLimit, pie_fixture::ExitStatus},
+      {memory_fixture::X64File, memory_fixture::Message,
+       memory_fixture::InstructionLimit, memory_fixture::ExitStatus},
+      {memory_fixture::ARMFile, memory_fixture::Message,
+       memory_fixture::InstructionLimit, memory_fixture::ExitStatus}};
   for (const auto &Fixture : Fixtures) {
     SCOPED_TRACE(Fixture.File);
     Path = (std::filesystem::path(Path).parent_path() / Fixture.File).string();

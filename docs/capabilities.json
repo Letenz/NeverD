@@ -3782,13 +3782,42 @@
       ],
       "limitations": [
         "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC and self-relocating static ET_DYN images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, external dynamic dependencies, page-overlapping loads and unsupported CPU instructions fail clearly. Static PIE uses one aligned deterministic load bias and original file bytes; guest startup owns relocation and initialization.",
-        "write, exit, exit_group, getpid, gettid and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
+        "write, exit, exit_group, getpid, gettid, bounded mmap/mprotect/munmap/brk and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
         "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
         "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, dynamic TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work.",
+        "Anonymous mappings admit private anonymous pages and NONE/R/RW/RX/RWX permissions. Linux owns placement and raw brk policy; AddressSpace provides authoritative non-owning mapping snapshots. Partial unmap retires per-page owners after projection/view pins are released; mprotect preserves changed prefixes before a hole error. File/shared/fixed mappings, execute-only/write-only policy and additional flags remain unsupported. Original x64/ARM64 fixtures exercise real memory services; rewritten executable memory is additionally checked on x64.",
         "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxMemoryTests.cpp",
+          "filter": "LinuxMemory.PermissionChangeKeepsTheCommittedPrefixBeforeAHole",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxMemoryTests.cpp",
+          "filter": "LinuxMemory.AllocationFailurePublishesNothingAndFreedCapacityIsReusable",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.AnonymousMappingsHeapAndCodeSurviveRealServiceContinuations/*",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.GuestStoresObserveBothExplicitAndPartialProtectionChanges/*",
+          "platforms": ["darwin", "linux", "windows"]
+        },
         {
           "runner": "gtest",
           "target": "NeverDLinuxProcessTests",
