@@ -61,6 +61,8 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopInference.*` y `BinaryLowIRLoopInference.*` usan contadores, guardados en pila, retornos anticipados, llamadas nativas y banderas empaquetadas escritos independientemente. Cubren ampliación aritmética estrecha y banderas semánticamente iguales con expresiones distintas. Grafos malformados, orígenes ausentes o falsificados, bucles infinitos o con desbordamiento modular y presupuestos agotados no deben producir certificados.
 
+Las regresiones cubren dos y tres niveles anidados, contadores ascendentes y descendentes, fases inferidas y cortes en cuerpos nativos reales. Deben rechazarse dominios de prefijo inaccesibles o disjuntos, cuerpos incorrectos, transiciones infinitas o con desbordamiento circular y presupuestos compartidos agotados. Un testigo de prefijo nunca sustituye la cobertura completa de segmentos.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

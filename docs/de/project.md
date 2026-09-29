@@ -48,7 +48,7 @@ Budgets führen zum Fehler. Das Ergebnis dient der Analyse und ist kein
 Sicherheitsnachweis für Patches oder Ausnahmebehandlung. Kontrollgrößen,
 Berichte und Grenzen stehen im [Rekonstruktionsleitfaden](interpreter-recovery.md).
 
-Die separate C++-API für Schleifenbeweise kann begrenzte Hinweise für einen Schnittpunkt inferieren und natives LowIR-Refinement erneut prüfen. Siehe [Leitfaden](interpreter-recovery.md); ausgegebenes C wird dadurch nicht zertifiziert.
+Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
 
 ## Warum NeverD?
 

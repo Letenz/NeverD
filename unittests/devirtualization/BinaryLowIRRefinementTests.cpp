@@ -291,6 +291,98 @@ TEST(BinaryLowIRLoopInference, CounterAndCallsUseInferredCheckedPlans) {
   }
 }
 
+TEST(BinaryLowIRLoopRefinement, NestedPrefixReplaysActualNativeEntry) {
+  // xor eax,eax; outer: test rcx,rcx; jz done; mov rdx,r8;
+  // inner: test rdx,rdx; jz next; add rax,rdx; dec rdx; jmp inner;
+  // next: dec rcx; jmp outer; done: ret.
+  Program P({0x31, 0xc0, 0x48, 0x85, 0xc9, 0x74, 0x15, 0x4c, 0x89, 0xc2,
+             0x48, 0x85, 0xd2, 0x74, 0x08, 0x48, 0x01, 0xd0, 0x48, 0xff,
+             0xca, 0xeb, 0xf3, 0x48, 0xff, 0xc9, 0xeb, 0xe6, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRLoopRefinementPlan Plan;
+  for (bool Inner : {false, true}) {
+    LowIRLoopCutpoint Cut;
+    Cut.OriginalAddress = Entry + (Inner ? 15 : 7);
+    unsigned Matches = 0;
+    for (const auto &Origin : Recovery.Origins)
+      if (Origin.NativeInstruction.Address == Cut.OriginalAddress) {
+        Cut.CandidateAddress = Origin.ResidualAddress;
+        ++Matches;
+      }
+    ASSERT_EQ(Matches, 1U);
+    Cut.UseEntryPrefix = Inner;
+    uint64_t Next = 0;
+    const auto Temp = [&](uint16_t Bytes) {
+      const auto V = NdVar::tmp(Next, Bytes);
+      Next += 8;
+      return V;
+    };
+    const auto Parameter = [&](uint64_t Offset, uint16_t Bytes = 8) {
+      const LowIRLoopLocation L{LowIRLoopSpace::Register, Offset, Bytes};
+      const auto T = Temp(Bytes);
+      Cut.Inputs.push_back({LowIRLoopSide::Original, L, T});
+      Cut.OriginalState.push_back({L, T});
+      Cut.CandidateState.push_back({L, T});
+      return T;
+    };
+    Parameter(x86reg::RAX);
+    const auto OuterCount = Parameter(x86reg::RCX);
+    const auto InnerCount = Parameter(x86reg::RDX);
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::OF})
+      Parameter(Flag, 1);
+    const auto EntryCount = Temp(8);
+    Cut.Inputs.push_back({LowIRLoopSide::Entry,
+                          {LowIRLoopSpace::Register, x86reg::RCX, 8},
+                          EntryCount});
+    const auto Expr = [&](NdOp Code, NdVar A, NdVar B) {
+      LowOp Op;
+      Op.Opcode = Code;
+      Op.Output = Temp(1);
+      Op.addInput(A);
+      Op.addInput(B);
+      Cut.Expressions.push_back(Op);
+      return Op.Output;
+    };
+    Cut.Predicate = Expr(NdOp::INT_LESSEQUAL, OuterCount, EntryCount);
+    const auto OuterNonzero =
+        Expr(NdOp::INT_NOTEQUAL, OuterCount, NdVar::scalar(0, 8));
+    Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, OuterNonzero);
+    if (Inner) {
+      const auto EntryInner = Temp(8);
+      Cut.Inputs.push_back({LowIRLoopSide::Entry,
+                            {LowIRLoopSpace::Register, x86reg::R8, 8},
+                            EntryInner});
+      const auto InnerBound = Expr(NdOp::INT_LESSEQUAL, InnerCount, EntryInner);
+      const auto InnerNonzero =
+          Expr(NdOp::INT_NOTEQUAL, InnerCount, NdVar::scalar(0, 8));
+      Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, InnerBound);
+      Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, InnerNonzero);
+    }
+    Cut.Rank = {OuterCount, NdVar::scalar(Inner ? 0 : 1, 1),
+                Inner ? InnerCount : NdVar::scalar(0, 8)};
+    Plan.Cutpoints.push_back(std::move(Cut));
+  }
+  const auto Check = [&] {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.RankingChecks, 4U);
+  EXPECT_GT(Good.Proof.LoopInitiations, 1U);
+  // Removing the outer counter's entry bound must not turn a prefix seen
+  // only for positive inputs into a globally assumed reachable state.
+  Plan.Cutpoints[0].Predicate = NdVar::scalar(1, 1);
+  refused(Check(), Status::Different);
+  const auto Automatic = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Automatic.Inference.inferred()) << Automatic.Inference.Diagnostic;
+  ASSERT_TRUE(Automatic.proved()) << Automatic.Refinement.Proof.Diagnostic;
+  EXPECT_GT(Automatic.Inference.Plan->Cutpoints.size(), 1U);
+}
+
 TEST(BinaryLowIRLoopInference, PackedFlagsStayConstrainedAcrossWidening) {
   // xor eax,eax; pushfq; pop r11; loop: jrcxz done; push r11; popfq;
   // inc rax; pushfq; pop r11; lea rcx,[rcx-1]; jmp loop; done: ret.

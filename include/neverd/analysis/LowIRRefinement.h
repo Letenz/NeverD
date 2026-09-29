@@ -93,8 +93,10 @@ struct LowIRLoopCutpoint {
   va_t CandidateAddress = 0;
   /// Use the first feasible paired entry-prefix arrival as the template base
   /// instead of the function entry state. Its path predicate is also retained
-  /// and proved on every arrival. The cut must be reached by entry-prefix
-  /// exploration; no abstract state is invented for an unreached cut.
+  /// and proved on every arrival. A cut behind earlier cuts is reached by a
+  /// separate bounded replay from the real entry. That replay establishes only
+  /// a feasible paired witness; complete entry/transition coverage is still
+  /// required. No abstract state is invented for an unreached cut.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;
@@ -151,10 +153,11 @@ struct LowIRLoopInferenceResult {
 
 /// Propose a loop template by symbolic prefix exploration and bounded
 /// widening in the same executor used by refinement. Searches guarded loop
-/// bodies and CFG backedge targets, retaining fixed prefix bits and trying
-/// observed unsigned bounds and scalar ranks. Every cycle must cross the
-/// selected cut; a nested
-/// or irreducible cycle that evades it exhausts exploration or is unsupported.
+/// bodies and CFG backedge targets, retaining fixed prefix bits and unsigned
+/// bounds. Nested cycles use a feedback cutpoint set, pruned prefix bounds,
+/// observed unit counters and inferred phases in unsigned lexicographic ranks.
+/// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
+/// control and rank families outside this bounded search remain unsupported.
 /// A nonempty EligibleCutpoints restricts only the search, not execution or
 /// the admitted input domain. No native/source equivalence follows from an
 /// inferred plan; pass it to the original/candidate checker before use.

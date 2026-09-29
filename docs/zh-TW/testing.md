@@ -56,6 +56,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` 和 `BinaryLowIRLoopInference.*` 使用獨立編寫的計數器、堆疊儲存、提前返回、原生呼叫和封裝旗標案例，涵蓋窄位元算術拓寬，以及運算式不同但語意相等的旗標狀態。格式錯誤的圖、缺失或偽造的來源、不終止／回繞迴圈，以及推導或證明預算耗盡均不得產生憑證。
 
+巢狀推導回歸涵蓋兩層與三層迴圈、遞增與遞減計數器、自動階段常數及實際原生迴圈本體切點。不可達或互斥的前綴域、錯誤本體、不終止或回繞轉換，以及共用搜尋／證明預算耗盡均必須拒絕。前綴證據不能取代完整區段涵蓋。
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

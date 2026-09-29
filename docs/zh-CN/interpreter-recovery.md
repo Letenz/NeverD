@@ -129,4 +129,4 @@ LowIR 临时值只在单条已提升的原生指令内有效。读取的每个�
 
 ## 自动循环证明候选
 
-`inferLowIRLoopRefinementPlan` 复用符号执行器，从可达前缀、变化的寄存器及栈帧字、已证明的固定位、有界拓宽、观察到的无符号边界及标量排名生成单切点模板。`OriginalPrefix` 和 `CandidatePrefix` 输入要求 `UseEntryPrefix`，表示已检查的固定前缀值。`inferAndCheckBinaryLowIRLoopRefinement` 接收完整恢复结果，选择唯一原生来源，再独立重跑完整原程序／候选程序检查器。提示和来源映射均不可信，只有 `Refinement` 可以包含证书。推导与证明分别使用显式预算，失败不会自动扩大预算；谓词遍历也消耗推导的符号节点预算。此 C++ API 不会随 `--devirtualize` 自动运行。多切点自动推导、任意控制流对齐、C 后端等价性及物理 CPU 的未定义位选择仍不在其范围内。
+`inferLowIRLoopRefinementPlan` 复用符号执行器，在预算内生成模板。反馈切点覆盖 CFG 的每个环；拓宽保留已证明的固定位，并淘汰无法保持的无符号前缀边界。观察到的单位步长计数器与推导出的阶段常量组成字典序排名，支持递增或递减的嵌套循环。`OriginalPrefix` 和 `CandidatePrefix` 要求 `UseEntryPrefix`。位于其他切点之后的切点可从真实入口单独进行有界重放，取得可行的成对前缀证据。该证据不代表入口域覆盖：每次实际到达都必须蕴含其谓词，完整入口与转换路径覆盖仍是必要条件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢复及唯一原生来源，再独立重跑完整原程序／候选程序检查器。候选方案和来源映射均不可信；只有 `Refinement` 可以包含证书。推导与证明保留各自的显式预算。此 C++ API 不会随 `--devirtualize` 自动运行。不可达前缀、任意控制流对齐、搜索范围外的排名类型、C 后端等价性及物理 CPU 的未定义位选择仍不受支持。

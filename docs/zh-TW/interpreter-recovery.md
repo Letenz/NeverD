@@ -129,4 +129,4 @@ LowIR 暫存值只在單條已提升的原生指令內有效。讀取的每個�
 
 ## 自動迴圈證明候選
 
-`inferLowIRLoopRefinementPlan` 重用符號執行器，從可達前綴、變動的暫存器及堆疊框架字、已證明的固定位元、有界拓寬、觀察到的無符號邊界及純量排名產生單切點範本。`OriginalPrefix` 和 `CandidatePrefix` 輸入要求 `UseEntryPrefix`，代表已檢查的固定前綴值。`inferAndCheckBinaryLowIRLoopRefinement` 接收完整還原結果，選擇唯一原生來源，再獨立重跑完整原程式／候選程式檢查器。提示和來源映射均不可信，只有 `Refinement` 可以包含憑證。推導與證明分別使用明確預算，失敗不會自動擴大預算；述詞遍歷也消耗推導的符號節點預算。此 C++ API 不會隨 `--devirtualize` 自動執行。多切點自動推導、任意控制流程對齊、C 後端等價性及實體 CPU 的未定義位元選擇仍不在其範圍內。
+`inferLowIRLoopRefinementPlan` 共用符號執行器，在預算內產生範本。回饋切點涵蓋 CFG 的每個環；拓寬保留已證明的固定位元，並淘汰無法維持的無號前綴邊界。觀察到的單位步長計數器與推導的階段常數組成字典序排名，支援遞增或遞減的巢狀迴圈。`OriginalPrefix` 與 `CandidatePrefix` 要求 `UseEntryPrefix`。位於其他切點之後的切點可從真實入口另行有限重播，取得可行的成對前綴證據。此證據不代表入口域涵蓋：每次實際到達都必須蘊含其述詞，完整入口與轉換路徑涵蓋仍是必要條件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢復與唯一原生來源，再獨立重跑完整原程式／候選程式檢查器。候選方案與來源映射均不可信；只有 `Refinement` 可包含憑證。推導與證明保留各自的明確預算。此 C++ API 不會隨 `--devirtualize` 自動執行。不可達前綴、任意控制流程對齊、搜尋範圍外的排名類型、C 後端等價性及實體 CPU 的未定義位元選擇仍不受支援。

@@ -347,6 +347,11 @@ struct RefinementSession {
   const LowIRLoopRefinementPlan *LoopPlan = nullptr;
   std::optional<TerminalState> OriginalStart, CandidateStart;
   int StartingCutpoint = -1;
+  // An entry replay may seek one prefix behind earlier cuts. It still starts
+  // from the shared real entry and finds a reachable prefix witness only.
+  // Full entry/transition coverage is checked separately, and every arrival
+  // must imply the witness predicate. No inductive state can seed this replay.
+  int PrefixSearchCutpoint = -1;
   std::set<uint64_t> RegisterBytes;
   std::vector<SymRef> StartingRank;
   SymRef SegmentPredicate;
@@ -444,6 +449,9 @@ class Checker {
         Provider ? P.NativeAddress : Blocks.at(P.BlockId)->StartAddr;
     const auto &Cuts = Refinement->LoopPlan->Cutpoints;
     for (size_t I = 0; I != Cuts.size(); ++I) {
+      if (Refinement->PrefixSearchCutpoint >= 0 &&
+          static_cast<size_t>(Refinement->PrefixSearchCutpoint) != I)
+        continue;
       const auto Expected = CandidateExecution ? Cuts[I].CandidateAddress
                                                : Cuts[I].OriginalAddress;
       if (Address != Expected)
@@ -458,6 +466,8 @@ class Checker {
                            static_cast<int>(I)});
       ++(CandidateExecution ? Refinement->CandidateCutpoints
                             : Refinement->OriginalCutpoints);
+      if (Refinement->PrefixSearchCutpoint >= 0)
+        Pending.clear();
       return true;
     }
     return false;
@@ -1938,10 +1948,19 @@ public:
           fail(Status::Unsupported,
                "terminal paths do not cover the entry domain");
       };
-      Coverage(Refinement->OriginalReturns);
-      Coverage(Refinement->CandidateReturns);
+      const bool PrefixSearch = Refinement->PrefixSearchCutpoint >= 0;
+      if (!PrefixSearch) {
+        Coverage(Refinement->OriginalReturns);
+        Coverage(Refinement->CandidateReturns);
+      }
       for (auto &Original : Refinement->OriginalReturns)
         for (auto &Candidate : Refinement->CandidateReturns) {
+          // A prefix witness needs an actually executed, feasible pair. It
+          // cannot certify the entry domain or substitute for a loop segment.
+          if (PrefixSearch &&
+              (Original.Cutpoint != Refinement->PrefixSearchCutpoint ||
+               Candidate.Cutpoint != Refinement->PrefixSearchCutpoint))
+            continue;
           if (Refinement->TerminalPairs >= Refinement->Limits.MaxTerminalPairs)
             fail(Status::BudgetExceeded, "terminal-pair budget exhausted");
           ++Refinement->TerminalPairs;
@@ -2062,6 +2081,11 @@ public:
     try {
       if (!validateInput())
         return Result;
+      if (Refinement && Refinement->PrefixSearchCutpoint >= 0 &&
+          (Refinement->StartingCutpoint >= 0 || Refinement->OriginalStart ||
+           Refinement->CandidateStart))
+        fail(Status::Invalid,
+             "loop prefix search must start at the real entry");
       if (Provider)
         collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
@@ -2549,10 +2573,33 @@ LowIRRefinementResult runRefinement(
   };
   if (!Segment())
     return Finish(false);
-  if (LoopPlan)
+  if (LoopPlan) {
+    // The normal entry segment can stop before a nested cut. Establish any
+    // missing prefix through a separate bounded replay from the real entry,
+    // retaining the common input snapshot, budgets and segment evidence.
+    // A witness need not cover inputs that bypass this cut. Every actual
+    // arrival still has to imply its predicate in the complete entry and
+    // inductive segment checks; a witness alone proves no equivalence.
+    for (size_t I = 0; I != LoopPlan->Cutpoints.size(); ++I) {
+      if (!LoopPlan->Cutpoints[I].UseEntryPrefix || Session.LoopPrefixes[I])
+        continue;
+      Session.OriginalReturns.clear();
+      Session.CandidateReturns.clear();
+      Session.PrefixSearchCutpoint = static_cast<int>(I);
+      if (!Segment())
+        return Finish(false);
+      if (!Session.LoopPrefixes[I]) {
+        Session.Statistics.Status = Status::Unsupported;
+        Session.Statistics.Diagnostic =
+            "loop template has no reachable entry prefix";
+        return Finish(false);
+      }
+    }
+    Session.PrefixSearchCutpoint = -1;
     for (size_t I = 0; I != LoopPlan->Cutpoints.size(); ++I)
       if (!Preflight.startLoopSegment(I) || !Segment())
         return Finish(false);
+  }
   return Finish(true);
 }
 
@@ -2570,14 +2617,21 @@ class LoopPlanInference {
   LowIRLoopInferenceResult Result;
   std::map<int, const LowBlock *> Blocks;
   std::vector<va_t> Choices;
+  std::vector<int> ReachableBlocks;
+  bool MultipleCycles = false;
+  std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
 
   struct Word {
     LowIRLoopLocation Location;
     uint64_t FixedMask;
+    bool UpperBound = false, LowerBound = false;
+    bool Nonzero = false, Nonmax = false;
   };
-  std::vector<Word> Words;
+  size_t ActiveCutpoint = 0;
+  std::vector<std::vector<Word>> Models{1};
+  std::vector<Word> &words() { return Models[ActiveCutpoint]; }
 
   [[noreturn]] void stop(Status S, llvm::StringRef Diagnostic) {
     Session.Statistics.Status = S;
@@ -2707,10 +2761,10 @@ class LoopPlanInference {
   }
 
   bool addChangedWords(llvm::ArrayRef<TerminalState> States) {
-    auto &Prefix = Session.LoopPrefixes[0]->Candidate;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
     bool Added = false;
     for (const auto &Location : locations()) {
-      if (std::any_of(Words.begin(), Words.end(), [&](const auto &W) {
+      if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
             return std::tie(W.Location.Space, W.Location.Offset) ==
                    std::tie(Location.Space, Location.Offset);
           }))
@@ -2718,7 +2772,7 @@ class LoopPlanInference {
       const auto Initial = read(Prefix, Location);
       auto Mask = ones(Location.Bytes);
       for (const auto &State : States) {
-        if (State.Cutpoint != 0)
+        if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
           continue;
         auto Copy = State;
         const auto Value = read(Copy, Location);
@@ -2728,7 +2782,7 @@ class LoopPlanInference {
             commonBitsUnder(Initial, Value, Location.Bytes, State.Predicate);
       }
       if (Mask != ones(Location.Bytes)) {
-        Words.push_back({Location, Mask});
+        words().push_back({Location, Mask});
         Added = true;
       }
     }
@@ -2740,9 +2794,9 @@ class LoopPlanInference {
   // bound from the first few iterations. No widened predicate is trusted.
   bool widen() {
     auto &Ctx = Session.Context;
-    auto &Prefix = Session.LoopPrefixes[0]->Candidate;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
     bool Changed = addChangedWords(Session.CandidateReturns);
-    for (auto &W : Words) {
+    for (auto &W : words()) {
       if (!W.FixedMask)
         continue;
       const auto Initial = read(Prefix, W.Location);
@@ -2750,7 +2804,7 @@ class LoopPlanInference {
       auto Stable = W.FixedMask;
       bool Holds = true, Additive = true;
       for (auto &State : Session.CandidateReturns) {
-        if (State.Cutpoint != 0)
+        if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
           continue;
         const auto After = read(State, W.Location);
         Additive &= additiveRecurrence(Before, After, W.Location.Bytes);
@@ -2765,7 +2819,7 @@ class LoopPlanInference {
         // exactly the candidate bits proved stable under this transition.
         Stable = W.FixedMask;
         for (auto &State : Session.CandidateReturns)
-          if (State.Cutpoint == 0)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
             Stable &=
                 commonBitsUnder(Initial, read(State, W.Location),
                                 W.Location.Bytes, State.Predicate, W.FixedMask);
@@ -2783,7 +2837,7 @@ class LoopPlanInference {
     std::set<SymRef> Seen, Compared;
     std::vector<SymRef> Pending;
     for (const auto &State : Session.CandidateReturns)
-      if (State.Cutpoint == 0)
+      if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
         Pending.push_back(State.Predicate);
     while (!Pending.empty()) {
       const auto Ref = Pending.back();
@@ -2801,9 +2855,9 @@ class LoopPlanInference {
     }
     std::vector<LowIRLoopLocation> Bounds;
     std::set<SymRef> Values;
-    auto &Prefix = Session.LoopPrefixes[0]->Candidate;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
     for (const auto &Location : locations()) {
-      if (std::any_of(Words.begin(), Words.end(), [&](const auto &W) {
+      if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
             return W.Location.Space == Location.Space &&
                    W.Location.Offset == Location.Offset;
           }))
@@ -2818,7 +2872,7 @@ class LoopPlanInference {
   void makeTemplate(std::optional<size_t> Ranked = {}, bool Complement = false,
                     bool ProgressGuard = false,
                     std::optional<LowIRLoopLocation> Bound = {}) {
-    auto &Cut = Plan.Cutpoints[0];
+    auto &Cut = Plan.Cutpoints[ActiveCutpoint];
     Cut.Inputs.clear();
     Cut.Expressions.clear();
     Cut.OriginalState.clear();
@@ -2840,8 +2894,8 @@ class LoopPlanInference {
       Cut.Expressions.push_back(Op);
       return Op.Output;
     };
-    for (size_t I = 0; I != Words.size(); ++I) {
-      const auto &W = Words[I];
+    for (size_t I = 0; I != words().size(); ++I) {
+      const auto &W = words()[I];
       const auto Bytes = W.Location.Bytes;
       const auto Parameter = Temp(Bytes);
       Cut.Inputs.push_back({LowIRLoopSide::Original, W.Location, Parameter});
@@ -2856,6 +2910,27 @@ class LoopPlanInference {
         const auto B = Expr(NdOp::INT_AND, Prefix, Mask, Bytes);
         const auto Same = Expr(NdOp::INT_EQUAL, A, B, 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
+      }
+      if (W.UpperBound || W.LowerBound) {
+        const auto Prefix = Temp(Bytes);
+        Cut.Inputs.push_back(
+            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        if (W.UpperBound) {
+          const auto Bound = Expr(NdOp::INT_LESSEQUAL, Parameter, Prefix, 1);
+          Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
+        }
+        if (W.LowerBound) {
+          const auto Bound = Expr(NdOp::INT_LESSEQUAL, Prefix, Parameter, 1);
+          Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
+        }
+      }
+      for (bool Maximum : {false, true}) {
+        if (!(Maximum ? W.Nonmax : W.Nonzero))
+          continue;
+        const auto Guard =
+            Expr(NdOp::INT_NOTEQUAL, Parameter,
+                 NdVar::scalar(Maximum ? ones(Bytes) : 0, Bytes), 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       if (Ranked != I)
         continue;
@@ -2884,7 +2959,7 @@ class LoopPlanInference {
 
   void startGeneralTransition() {
     auto C = checker();
-    if (!C.startLoopSegment(0))
+    if (!C.startLoopSegment(ActiveCutpoint))
       throw Stop{};
     runCandidate();
   }
@@ -2895,7 +2970,8 @@ class LoopPlanInference {
       throw Stop{};
     C.EntryRoot = Session.EntryRoot;
     C.MemoryRoot = Session.MemoryRoot;
-    const auto T = C.loopTemplate(0, &State, &State, State.Predicate);
+    const auto T =
+        C.loopTemplate(ActiveCutpoint, &State, &State, State.Predicate);
     if (!entails(State.Predicate, T.Predicate))
       return false;
     try {
@@ -2911,16 +2987,16 @@ class LoopPlanInference {
 
   bool checkRank(llvm::ArrayRef<TerminalState> Prefixes) {
     for (const auto &State : Prefixes)
-      if (State.Cutpoint == 0 && !fits(State))
+      if (State.Cutpoint == static_cast<int>(ActiveCutpoint) && !fits(State))
         return false;
     startGeneralTransition();
     bool HasBackedge = false;
     for (auto &State : Session.CandidateReturns) {
-      if (State.Cutpoint != 0)
+      if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
         continue;
       HasBackedge = true;
       auto C = checker();
-      auto T = C.loopTemplate(0, &State, &State, State.Predicate);
+      auto T = C.loopTemplate(ActiveCutpoint, &State, &State, State.Predicate);
       if (!entails(State.Predicate,
                    Session.Context.mkUlt(T.Rank.front(),
                                          Session.StartingRank.front())))
@@ -2932,13 +3008,13 @@ class LoopPlanInference {
   }
 
   bool inferAt(va_t Address) {
-    auto &Cut = Plan.Cutpoints[0];
+    auto &Cut = Plan.Cutpoints[ActiveCutpoint];
     Cut = {};
     Cut.OriginalAddress = Cut.CandidateAddress = Address;
     Cut.UseEntryPrefix = true;
     Cut.Rank = {NdVar::scalar(0, 8)};
-    Words.clear();
-    Session.LoopPrefixes[0].reset();
+    words().clear();
+    Session.LoopPrefixes[ActiveCutpoint].reset();
     Session.OriginalStart.reset();
     Session.CandidateStart.reset();
     Session.StartingCutpoint = -1;
@@ -2948,7 +3024,7 @@ class LoopPlanInference {
                                  [](const auto &S) { return S.Cutpoint == 0; });
     if (It == Prefixes.end())
       return false;
-    Session.LoopPrefixes[0] = LoopPrefix{*It, *It, It->Predicate};
+    Session.LoopPrefixes[ActiveCutpoint] = LoopPrefix{*It, *It, It->Predicate};
     Session.CandidateStart = *It;
     Session.StartingCutpoint = 0;
     Session.SegmentPredicate = It->Predicate;
@@ -2959,7 +3035,7 @@ class LoopPlanInference {
       return false;
     addChangedWords(Prefixes);
     addChangedWords(Session.CandidateReturns);
-    if (Words.empty())
+    if (words().empty())
       return false;
     bool Stable = false;
     for (uint32_t Round = 0; Round != Limits.MaxWideningRounds; ++Round) {
@@ -2978,13 +3054,13 @@ class LoopPlanInference {
     // about accumulators before trying a plain induction variable.
     const auto Bounds = boundLocations();
     std::vector<std::pair<size_t, bool>> Ranks, OtherRanks;
-    for (size_t I = 0; I != Words.size(); ++I) {
+    for (size_t I = 0; I != words().size(); ++I) {
       for (bool Complement : {false, true}) {
-        const auto &W = Words[I];
+        const auto &W = words()[I];
         const auto Before = read(*Session.CandidateStart, W.Location);
         bool Unit = true;
         for (auto &State : Session.CandidateReturns)
-          if (State.Cutpoint == 0)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
             Unit &= unitStep(Before, read(State, W.Location), W.Location.Bytes,
                              Complement);
         (Unit ? Ranks : OtherRanks).emplace_back(I, Complement);
@@ -3002,7 +3078,7 @@ class LoopPlanInference {
       if (Try(false, {}) || Try(true, {}))
         return true;
       for (const auto &Bound : Bounds)
-        if (Bound.Bytes == Words[Index].Location.Bytes && Try(false, Bound))
+        if (Bound.Bytes == words()[Index].Location.Bytes && Try(false, Bound))
           return true;
     }
     return false;
@@ -3035,6 +3111,9 @@ class LoopPlanInference {
         Stack.emplace_back(S, 0);
       }
     }
+    ReachableBlocks = Order;
+    MultipleCycles =
+        std::set<int>(Backedges.begin(), Backedges.end()).size() > 1;
     std::map<int, std::vector<int>> Preds;
     for (int Id : Order)
       for (int S : Blocks.at(Id)->Succs)
@@ -3083,6 +3162,382 @@ class LoopPlanInference {
         Add(Id);
   }
 
+  // Select a feedback set before symbolic execution. Trying a single cut on
+  // a nested cycle first would spend the whole finite budget unrolling it.
+  std::optional<std::vector<va_t>> feedbackCuts() {
+    std::set<va_t> Selected;
+    for (;;) {
+      std::map<int, unsigned> Color;
+      std::vector<int> Cycle;
+      for (int Root : ReachableBlocks) {
+        if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
+          continue;
+        std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
+        Color[Root] = 1;
+        while (!Stack.empty() && Cycle.empty()) {
+          auto &[Id, Next] = Stack.back();
+          const auto &Succs = Blocks.at(Id)->Succs;
+          if (Next == Succs.size()) {
+            Color[Id] = 2;
+            Stack.pop_back();
+            continue;
+          }
+          const int S = Succs[Next++];
+          if (Selected.count(Blocks.at(S)->StartAddr))
+            continue;
+          if (Color[S] == 1) {
+            const auto First =
+                std::find_if(Stack.begin(), Stack.end(),
+                             [&](auto P) { return P.first == S; });
+            for (auto It = First; It != Stack.end(); ++It)
+              Cycle.push_back(It->first);
+          } else if (!Color[S]) {
+            Color[S] = 1;
+            Stack.emplace_back(S, 0);
+          }
+        }
+        if (!Cycle.empty())
+          break;
+      }
+      if (Cycle.empty()) {
+        std::vector<va_t> Cuts;
+        for (va_t Address : Choices)
+          if (Selected.count(Address))
+            Cuts.push_back(Address);
+        return Cuts;
+      }
+      const auto Choice =
+          std::find_if(Choices.begin(), Choices.end(), [&](va_t A) {
+            return std::any_of(Cycle.begin(), Cycle.end(), [&](int Id) {
+              return Blocks.at(Id)->StartAddr == A;
+            });
+          });
+      if (Choice == Choices.end())
+        return {};
+      if (Selected.size() >= Limits.MaxCutpointAttempts)
+        stop(Status::BudgetExceeded,
+             "loop inference cutpoint budget exhausted");
+      Selected.insert(*Choice);
+    }
+  }
+
+  struct Edge {
+    size_t Source;
+    TerminalState Before, After;
+  };
+
+  std::vector<Edge> transitions(bool General) {
+    std::vector<Edge> Edges;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      Stage = "candidate transition " + std::to_string(I);
+      if (General) {
+        startGeneralTransition();
+      } else {
+        Session.CandidateStart = Session.LoopPrefixes[I]->Candidate;
+        Session.StartingCutpoint = static_cast<int>(I);
+        Session.SegmentPredicate = Session.CandidateStart->Predicate;
+        runCandidate();
+      }
+      for (auto &After : Session.CandidateReturns)
+        if (After.Cutpoint >= 0)
+          Edges.push_back({I, *Session.CandidateStart, After});
+    }
+    return Edges;
+  }
+
+  // Houdini-style pruning: keep a candidate bound only while every observed
+  // and general incoming transition proves it. Fixed bits share the scalar
+  // widening rules with single-cut inference; no learned fact is assumed by
+  // the final original/candidate checker.
+  bool widenIncoming(std::vector<Edge> &Edges) {
+    auto &Ctx = Session.Context;
+    bool Changed = false;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      auto &Prefix = Session.LoopPrefixes[I]->Candidate;
+      std::vector<TerminalState> Incoming{Prefix};
+      for (const auto &E : Edges)
+        if (E.After.Cutpoint == static_cast<int>(I))
+          Incoming.push_back(E.After);
+      const auto OldSize = words().size();
+      Changed |= addChangedWords(Incoming);
+      for (size_t J = OldSize; J != words().size(); ++J) {
+        auto &W = words()[J];
+        const auto Initial = read(Prefix, W.Location);
+        W.UpperBound = W.LowerBound = true;
+        W.Nonzero =
+            entails(Prefix.Predicate,
+                    Ctx.mkNe(Initial, Ctx.mkConst(W.Location.Bytes * 8, 0)));
+        W.Nonmax =
+            entails(Prefix.Predicate,
+                    Ctx.mkNe(Initial, Ctx.mkConst(W.Location.Bytes * 8,
+                                                  ones(W.Location.Bytes))));
+      }
+      for (auto &W : words()) {
+        const auto Initial = read(Prefix, W.Location);
+        auto Stable = W.FixedMask;
+        bool Holds = true, Additive = false;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(I))
+            continue;
+          const auto After = read(E.After, W.Location);
+          Additive |= additiveRecurrence(read(E.Before, W.Location), After,
+                                         W.Location.Bytes);
+          Stable &= commonBits(Initial, After, W.Location.Bytes);
+          const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
+          if (W.FixedMask)
+            Holds &=
+                entails(E.After.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
+                                                    Ctx.mkAnd(After, Mask)));
+        }
+        if (!Holds && !Additive) {
+          Stable = W.FixedMask;
+          for (auto &State : Incoming)
+            Stable &=
+                commonBitsUnder(Initial, read(State, W.Location),
+                                W.Location.Bytes, State.Predicate, W.FixedMask);
+        }
+        if (!Holds && Stable != W.FixedMask) {
+          W.FixedMask = Stable;
+          Changed = true;
+        }
+        for (auto &State : Incoming) {
+          const auto Value = read(State, W.Location);
+          const auto Keep = [&](bool &Enabled, SymRef Fact) {
+            if (Enabled && !entails(State.Predicate, Fact)) {
+              Enabled = false;
+              Changed = true;
+            }
+          };
+          Keep(W.UpperBound, Ctx.mkUle(Value, Initial));
+          Keep(W.LowerBound, Ctx.mkUle(Initial, Value));
+          Keep(W.Nonzero,
+               Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8, 0)));
+          Keep(W.Nonmax, Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8,
+                                                     ones(W.Location.Bytes))));
+        }
+      }
+    }
+    return Changed;
+  }
+
+  struct Counter {
+    LowIRLoopLocation Location;
+    bool Complement;
+  };
+  using Phases = std::vector<std::vector<uint64_t>>;
+
+  static bool sameLocation(const LowIRLoopLocation &A,
+                           const LowIRLoopLocation &B) {
+    return std::tie(A.Space, A.Offset, A.Bytes) ==
+           std::tie(B.Space, B.Offset, B.Bytes);
+  }
+
+  SymRef counterValue(TerminalState &State, const Counter &Rank) {
+    const auto Value = read(State, Rank.Location);
+    return Rank.Complement
+               ? Session.Context.mkXor(
+                     Value, Session.Context.mkConst(Rank.Location.Bytes * 8,
+                                                    ones(Rank.Location.Bytes)))
+               : Value;
+  }
+
+  SymRef tupleLess(Edge &E, llvm::ArrayRef<Counter> Ranks, const Phases &Phase,
+                   size_t First = 0) {
+    auto &Ctx = Session.Context;
+    auto Equal = Ctx.mkTrue(), Less = Ctx.mkFalse();
+    const auto Append = [&](SymRef Before, SymRef After) {
+      Less = Ctx.mkOr(Less, Ctx.mkAnd(Equal, Ctx.mkUlt(After, Before)));
+      Equal = Ctx.mkAnd(Equal, Ctx.mkEq(After, Before));
+    };
+    for (size_t I = First; I != Ranks.size(); ++I) {
+      Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
+      if (I + 1 != Ranks.size())
+        Append(Ctx.mkConst(64, Phase[I][E.Source]),
+               Ctx.mkConst(64, Phase[I][E.After.Cutpoint]));
+    }
+    return Less;
+  }
+
+  bool inferPhases(std::vector<Edge> &Edges, llvm::ArrayRef<Counter> Ranks,
+                   Phases &Phase) {
+    auto &Ctx = Session.Context;
+    const auto Count = Plan.Cutpoints.size();
+    Phase.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    for (size_t Level = Ranks.size() - 1; Level-- > 0;) {
+      struct Constraint {
+        size_t Source, Target;
+        uint64_t Step;
+      };
+      std::vector<Constraint> Constraints;
+      for (auto &E : Edges) {
+        auto Domain = E.After.Predicate;
+        for (size_t I = 0; I <= Level; ++I)
+          Domain = Ctx.mkAnd(Domain, Ctx.mkEq(counterValue(E.Before, Ranks[I]),
+                                              counterValue(E.After, Ranks[I])));
+        if (entails(Domain, Ctx.mkFalse()))
+          continue;
+        Constraints.push_back(
+            {E.Source, static_cast<size_t>(E.After.Cutpoint),
+             entails(Domain, tupleLess(E, Ranks, Phase, Level + 1)) ? 0U : 1U});
+      }
+      // Nonnegative weighted difference constraints. A positive cycle cannot
+      // be discharged by phase constants; it requires another changing rank.
+      for (size_t Round = 0; Round != Count; ++Round) {
+        bool Changed = false;
+        for (const auto &C : Constraints)
+          if (Phase[Level][C.Source] < Phase[Level][C.Target] + C.Step) {
+            Phase[Level][C.Source] = Phase[Level][C.Target] + C.Step;
+            Changed = true;
+          }
+        if (!Changed)
+          break;
+        if (Round + 1 == Count)
+          return false;
+      }
+    }
+    for (auto &E : Edges)
+      if (!entails(E.After.Predicate, tupleLess(E, Ranks, Phase)))
+        return false;
+    return !Edges.empty();
+  }
+
+  void installRanks(llvm::ArrayRef<Counter> Ranks, const Phases &Phase) {
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      auto &Cut = Plan.Cutpoints[I];
+      uint64_t Next = 0;
+      for (const auto &Input : Cut.Inputs)
+        Next = std::max(Next, Input.Temporary.Offset + 8);
+      for (const auto &Op : Cut.Expressions)
+        Next = std::max(Next, Op.Output.Offset + 8);
+      Cut.Rank.clear();
+      for (size_t J = 0; J != Ranks.size(); ++J) {
+        const auto &R = Ranks[J];
+        auto Input = std::find_if(
+            Cut.Inputs.begin(), Cut.Inputs.end(), [&](const auto &Input) {
+              return Input.Side == LowIRLoopSide::Original &&
+                     sameLocation(Input.Location, R.Location);
+            });
+        NdVar Value;
+        if (Input != Cut.Inputs.end()) {
+          Value = Input->Temporary;
+        } else {
+          Value = NdVar::tmp(Next, R.Location.Bytes);
+          Next += 8;
+          Cut.Inputs.push_back(
+              {LowIRLoopSide::OriginalPrefix, R.Location, Value});
+        }
+        if (R.Complement) {
+          LowOp Op;
+          Op.Opcode = NdOp::INT_XOR;
+          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Next += 8;
+          Op.addInput(Value);
+          Op.addInput(NdVar::scalar(ones(R.Location.Bytes), R.Location.Bytes));
+          Cut.Expressions.push_back(Op);
+          Value = Op.Output;
+        }
+        Cut.Rank.push_back(Value);
+        if (J + 1 != Ranks.size())
+          Cut.Rank.push_back(NdVar::scalar(Phase[J][I], 8));
+      }
+    }
+    if (!checker().validateLoopPlan())
+      throw Stop{};
+  }
+
+  bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
+    Result.CutpointAttempts += Cuts.size();
+    Models.assign(Cuts.size(), {});
+    Plan.Cutpoints.assign(Cuts.size(), {});
+    Session.LoopPrefixes.assign(Cuts.size(), {});
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      auto &Cut = Plan.Cutpoints[I];
+      Cut.OriginalAddress = Cut.CandidateAddress = Cuts[I];
+      Cut.UseEntryPrefix = true;
+      Cut.Rank = {NdVar::scalar(0, 8)};
+    }
+    // These are candidate-only reachable witnesses. The final checker must
+    // recapture paired original/candidate prefixes with its own fresh state.
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      Session.PrefixSearchCutpoint = static_cast<int>(I);
+      Stage = "candidate entry prefix " + std::to_string(I);
+      runCandidate();
+      const auto It = std::find_if(
+          Session.CandidateReturns.begin(), Session.CandidateReturns.end(),
+          [&](const auto &S) { return S.Cutpoint == static_cast<int>(I); });
+      if (It == Session.CandidateReturns.end())
+        return false;
+      Session.LoopPrefixes[I] = LoopPrefix{*It, *It, It->Predicate};
+    }
+    Session.PrefixSearchCutpoint = -1;
+    auto Edges = transitions(false);
+    widenIncoming(Edges);
+    bool Stable = false;
+    for (uint32_t Round = 0; Round != Limits.MaxWideningRounds; ++Round) {
+      ++Result.WideningRounds;
+      for (size_t I = 0; I != Cuts.size(); ++I) {
+        ActiveCutpoint = I;
+        makeTemplate();
+      }
+      Edges = transitions(true);
+      if (!widenIncoming(Edges)) {
+        Stable = true;
+        break;
+      }
+    }
+    if (!Stable)
+      stop(Status::BudgetExceeded, "loop inference widening budget exhausted");
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      ActiveCutpoint = I;
+      if (!fits(Session.LoopPrefixes[I]->Candidate))
+        return false;
+    }
+    for (const auto &E : Edges) {
+      ActiveCutpoint = E.After.Cutpoint;
+      if (!fits(E.After))
+        return false;
+    }
+    std::vector<Counter> Candidates;
+    for (const auto &Location : locations())
+      for (bool Complement : {false, true}) {
+        bool Unit = false;
+        for (auto &E : Edges)
+          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+                           Location.Bytes, Complement);
+        if (Unit)
+          Candidates.push_back({Location, Complement});
+      }
+    std::vector<Counter> Ranks;
+    Phases Phase;
+    const auto Search = [&](auto &&Self, size_t Size) -> bool {
+      if (Ranks.size() == Size) {
+        if (Result.RankCandidates >= Limits.MaxRankCandidates)
+          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+        ++Result.RankCandidates;
+        return inferPhases(Edges, Ranks, Phase);
+      }
+      for (const auto &C : Candidates) {
+        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
+              return sameLocation(C.Location, R.Location);
+            }))
+          continue;
+        Ranks.push_back(C);
+        if (Self(Self, Size))
+          return true;
+        Ranks.pop_back();
+      }
+      return false;
+    };
+    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
+      if (Search(Search, Size)) {
+        installRanks(Ranks, Phase);
+        return true;
+      }
+    return false;
+  }
+
 public:
   LoopPlanInference(const LowFunc &F, const LowIRIndependenceContract &C,
                     const LowIRLoopInferenceLimits &L,
@@ -3091,9 +3546,9 @@ public:
         Session{{}, {}, F, LowIRRefinementWitness::LiftedBits, ExecutionLimits},
         ReadProvider(Reader) {
     Plan.Cutpoints.resize(1);
-    Plan.Cutpoints[0].OriginalAddress = Plan.Cutpoints[0].CandidateAddress =
-        F.Entry;
-    Plan.Cutpoints[0].Rank = {NdVar::scalar(0, 8)};
+    Plan.Cutpoints[ActiveCutpoint].OriginalAddress =
+        Plan.Cutpoints[ActiveCutpoint].CandidateAddress = F.Entry;
+    Plan.Cutpoints[ActiveCutpoint].Rank = {NdVar::scalar(0, 8)};
     Session.LoopPlan = &Plan;
     Session.LoopPrefixes.resize(1);
   }
@@ -3110,21 +3565,33 @@ public:
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
       findChoices(Eligible);
-      for (va_t Address : Choices) {
-        if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
-          stop(Status::BudgetExceeded,
-               "loop inference cutpoint budget exhausted");
-        ++Result.CutpointAttempts;
-        if (inferAt(Address)) {
+      const auto Feedback = feedbackCuts();
+      if (!Feedback)
+        stop(Status::Unsupported,
+             "eligible cutpoints do not cover every cycle");
+      if (Feedback->size() > 1 || MultipleCycles) {
+        if (inferMultiple(*Feedback)) {
           Result.Status = LowIRLoopInferenceStatus::Inferred;
           Result.Plan = Plan;
-          break;
         }
-      }
+      } else
+        for (va_t Address : Choices) {
+          if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
+            stop(Status::BudgetExceeded,
+                 "loop inference cutpoint budget exhausted");
+          ++Result.CutpointAttempts;
+          if (inferAt(Address)) {
+            Result.Status = LowIRLoopInferenceStatus::Inferred;
+            Result.Plan = Plan;
+            break;
+          }
+        }
       if (!Result.inferred())
         Result.Diagnostic = "no loop template and unsigned rank inferred";
     } catch (const Stop &) {
       Result.Diagnostic = Session.Statistics.Diagnostic;
+      if (!Stage.empty())
+        Result.Diagnostic += " while exploring " + Stage;
       Result.Status = Session.Statistics.Status == Status::BudgetExceeded
                           ? LowIRLoopInferenceStatus::BudgetExceeded
                       : Session.Statistics.Status == Status::Invalid
