@@ -1815,6 +1815,132 @@ TEST(COFFExceptionIR, EmitsVerifierCleanNativeCatchAllSEH) {
   EXPECT_TRUE(Compiled.Unresolved.empty());
 }
 
+TEST(COFFExceptionIR, NativeSEHSharedHandlerMergesTheCodeAtTheCatchPad) {
+  // The handler block is also the protected block's normal successor, so its
+  // RAX is a PHI of the normal path's value that takes the exception code on
+  // the dispatcher's entry. The pad supplies that incoming before catchret.
+  MedFunc Func;
+  Func.Entry = 0x140001000;
+  Func.Name = "native_seh_shared_handler";
+  Func.ReturnType = NdType::makeVoid();
+  constexpr va_t MayThrowVA = 0x140001100;
+  constexpr va_t HandlerVA = 0x140001020;
+  MedVar Sink;
+  Sink.Kind = MedVar::Param;
+  Sink.TheArch = Arch::X64;
+  Sink.Id = 0;
+  Sink.Size = 8;
+  Sink.RegOff = x86reg::RCX;
+  Func.Params.push_back(Sink);
+  Func.TypedParams.push_back({"sink", NdType::makePtr()});
+  MedVar Rax;
+  Rax.Kind = MedVar::Reg;
+  Rax.TheArch = Arch::X64;
+  Rax.Id = 7;
+  Rax.Size = 8;
+  Rax.RegOff = x86reg::RAX;
+  MedVar Normal = Rax, Merged = Rax;
+  Normal.SSAVer = 1;
+  Merged.SSAVer = 2;
+
+  MedBlock Protected;
+  Protected.Id = 0;
+  Protected.StartAddr = Func.Entry;
+  Protected.EndAddr = Func.Entry + 0x10;
+  MedOp Zero;
+  Zero.Opcode = NdOp::COPY;
+  Zero.Addr = Func.Entry;
+  Zero.Output = Normal;
+  Zero.addInput(MedVar::makeConst(0, 8));
+  Protected.Ops.push_back(Zero);
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Func.Entry + 4;
+  Call.addInput(MedVar::makeConst(MayThrowVA, 8));
+  Protected.Ops.push_back(Call);
+  MedOp Jump;
+  Jump.Opcode = NdOp::BRANCH;
+  Jump.Addr = Func.Entry + 8;
+  Jump.addInput(MedVar::makeConst(HandlerVA, 8));
+  Protected.Ops.push_back(Jump);
+  Protected.Succs = {1};
+
+  MedBlock Handler;
+  Handler.Id = 1;
+  Handler.StartAddr = HandlerVA;
+  Handler.EndAddr = HandlerVA + 0x10;
+  Handler.Preds = {0};
+  MedVar Code;
+  Code.Kind = MedVar::SEHExceptionCode;
+  Code.TheArch = Arch::X64;
+  Code.Id = MedVar::SEHExceptionCodeId;
+  Code.SSAVer = 1;
+  Code.Size = 4;
+  Code.ConstVal = HandlerVA;
+  PhiNode Phi;
+  Phi.Output = Merged;
+  Phi.Args = {{0, Normal}};
+  Phi.ExceptionalEntry = Code;
+  Handler.Phis.push_back(Phi);
+  MedOp StoreValue;
+  StoreValue.Opcode = NdOp::STORE;
+  StoreValue.Addr = HandlerVA;
+  StoreValue.addInput(Sink);
+  StoreValue.addInput(Merged);
+  Handler.Ops.push_back(StoreValue);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = HandlerVA + 8;
+  Handler.Ops.push_back(Return);
+  Func.Blocks.push_back(std::move(Protected));
+  Func.Blocks.push_back(std::move(Handler));
+
+  ExceptionFunction EH;
+  EH.CodeRange = {Func.Entry, Func.Entry + 0x40};
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.PersonalityVA = Func.Entry + 0x300;
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Func.Entry, Func.Entry + 0x10};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = HandlerVA;
+  Scope.ContinuationVA = HandlerVA;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+  const va_t PersonalityVA = EH.PersonalityVA;
+  Func.ExceptionMetadata = std::move(EH);
+  MedFunc Personality =
+      makeAddressBackedPersonality(PersonalityVA, "\01__C_specific_handler");
+
+  llvm::LLVMContext Ctx;
+  MedLLVMEmitter Emitter;
+  auto Mod = Emitter.emit({Func, Personality}, Ctx, "native_seh_shared",
+                          Arch::X64, {{MayThrowVA, "may_throw"}}, nullptr,
+                          BinaryFormat::COFF);
+  ASSERT_NE(Mod, nullptr);
+  expectVerifierClean(*Mod);
+  llvm::Function *F = Mod->getFunction(Func.Name);
+  ASSERT_NE(F, nullptr);
+  // In the pad, the code reaches a store besides the handler's code slot.
+  unsigned CodeStores = 0;
+  for (llvm::BasicBlock &Block : *F) {
+    if (!llvm::isa<llvm::CatchPadInst>(Block.getFirstNonPHIIt()))
+      continue;
+    for (llvm::Instruction &Instruction : Block)
+      if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction)) {
+        const llvm::Value *Stored = Store->getValueOperand();
+        if (auto *Cast = llvm::dyn_cast<llvm::CastInst>(Stored))
+          Stored = Cast->getOperand(0);
+        auto *CodeCall = llvm::dyn_cast<llvm::CallInst>(Stored);
+        CodeStores += CodeCall && CodeCall->getIntrinsicID() ==
+                                      llvm::Intrinsic::eh_exceptioncode;
+      }
+  }
+  EXPECT_GE(CodeStores, 1u);
+}
+
 TEST(COFFExceptionIR, NativeSEHHandlerReadsTheCatchPadExceptionCode) {
   MedFunc Func;
   Func.Entry = 0x140001000;

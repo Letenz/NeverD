@@ -76,8 +76,10 @@ bool propagateInvariantConstants(MedFunc &Func) {
         Edges.insert(Predecessor);
         Values.push_back(Value);
       }
+      // The dispatcher's entry brings a value no predecessor supplies.
       Add(Phi.Output, std::move(Values),
-          Complete && Edges.size() == Phi.Args.size() && Edges == Predecessors);
+          Complete && Edges.size() == Phi.Args.size() &&
+              Edges == Predecessors && !Phi.ExceptionalEntry);
     }
     for (const auto &Op : Block.Ops) {
       if (Op.NumInputs > Op.Inputs.size())

@@ -2245,6 +2245,22 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             DropFallthrough(S.Body, Next);
             DropFallthrough(S.ElseBody, Next);
             break;
+          case StmtKind::SEHTry: {
+            // A __try body or __except handler that ends continues after the
+            // statement. Under a __finally a jump out is an abnormal
+            // termination instead, so it stays.
+            const bool ExceptOnly =
+                !S.EHClauses.empty() &&
+                std::all_of(S.EHClauses.begin(), S.EHClauses.end(),
+                            [](const HighEHClause &Clause) {
+                              return Clause.Kind == HighEHClauseKind::SEHExcept;
+                            });
+            const va_t After = ExceptOnly ? Next : InvalidVA;
+            DropFallthrough(S.Body, After);
+            for (auto &ClauseBody : S.EHClauseBodies)
+              DropFallthrough(ClauseBody, After);
+            break;
+          }
           default:
             DropFallthrough(S.Body, InvalidVA);
             DropFallthrough(S.ElseBody, InvalidVA);

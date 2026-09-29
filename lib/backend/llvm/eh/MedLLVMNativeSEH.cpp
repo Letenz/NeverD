@@ -393,12 +393,29 @@ bool MedLLVMEmitter::emitNativeSEH(
             : static_cast<llvm::Value *>(R.Callback);
     auto *Pad = PB.CreateCatchPad(Switch, {Filter}, "seh.catch.pad.token");
     // The handler reads the exception code the pad receives.
+    llvm::Value *Code = nullptr;
+    auto ExceptionCode = [&]() {
+      if (!Code)
+        Code = PB.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+                                 Mod, llvm::Intrinsic::eh_exceptioncode),
+                             {Pad});
+      return Code;
+    };
     if (auto Slot = SEHExceptionCodeSlots.find(R.Scope->HandlerVA);
         Slot != SEHExceptionCodeSlots.end())
-      PB.CreateStore(PB.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
-                                       Mod, llvm::Intrinsic::eh_exceptioncode),
-                                   {Pad}),
-                     Slot->second);
+      PB.CreateStore(ExceptionCode(), Slot->second);
+    // A handler block ordinary flow also enters merges RAX in PHIs; this
+    // entry supplies their exception-code incoming.
+    if (CurMedFunc)
+      for (const MedBlock &Block : CurMedFunc->Blocks)
+        if (Block.StartAddr == R.Scope->HandlerVA)
+          for (const PhiNode &Phi : Block.Phis)
+            if (Phi.ExceptionalEntry)
+              setVar(Phi.Output,
+                     PB.CreateZExtOrTrunc(
+                         ExceptionCode(),
+                         llvm::Type::getIntNTy(*Ctx, Phi.Output.Size * 8)),
+                     PB);
     if (!med_llvm_eh::attachRewriteWinEHSemanticToken(*Pad, R.SemanticToken))
       llvm_unreachable("prevalidated SEH semantic token was rejected");
     med_llvm_eh::emitWindowsEHProvenanceAnchor(

@@ -501,6 +501,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
   }
 
+  // Handler blocks that ordinary flow also enters, with their exception code.
+  std::vector<std::pair<int, MedVar>> SharedHandlerCodes;
   // __C_specific_handler resumes a Windows x64 __except handler through
   // RtlUnwindEx with the exception code as the return value: EAX holds the
   // code and the upper half of RAX is zero.  Define those views at each
@@ -530,6 +532,13 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Code.SSAVer = ++Ordinal;
       Code.Size = 4;
       Code.ConstVal = Func.Blocks[B].StartAddr;
+      // A handler that ordinary flow also reaches keeps that flow's RAX: its
+      // RAX views merge the two entries in PHIs instead (Step 3b).
+      if (std::any_of(FlowPreds[B].begin(), FlowPreds[B].end(),
+                      [&](int P) { return P != VirtualRoot; })) {
+        SharedHandlerCodes.emplace_back(B, Code);
+        continue;
+      }
       std::vector<MedOp> Defs;
       for (int Id : IdsIt->second) {
         MedOp Def;
@@ -848,6 +857,28 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
   }
 
+  // Step 3b: at a handler block ordinary flow also enters, each RAX view is
+  // a PHI of the ordinary predecessors' values that takes the exception code
+  // on the dispatcher's entry. It defines the view there, so the iterated
+  // frontier below places the PHIs that merge it further on.
+  if (auto IdsIt = RegOffToIds.find(TRI.IntReturnReg);
+      IdsIt != RegOffToIds.end())
+    for (const auto &[B, Code] : SharedHandlerCodes)
+      for (int Id : IdsIt->second) {
+        const MedVar &View = RegVarOfId.at(Id);
+        // A view above the low byte would need a shifted code.
+        if (View.RegOff != TRI.IntReturnReg)
+          continue;
+        PhiNode Phi;
+        Phi.Output = View;
+        for (int P : FlowPreds[B])
+          if (P != VirtualRoot)
+            Phi.Args.push_back({P, View});
+        Phi.ExceptionalEntry = Code;
+        Func.Blocks[B].Phis.push_back(std::move(Phi));
+        VarDefs[Id].insert(B);
+      }
+
   // Step 4: Insert phi nodes
   std::map<int, MedVar> VarIdToVar = RegVarOfId;
   for (auto &Blk : Func.Blocks)
@@ -872,6 +903,14 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         if (D < 0 || D >= N)
           continue;
         if (PhiBlocks.insert(D).second) {
+          Worklist.push(D);
+          // Step 3b already placed this variable's PHI at a shared handler.
+          const auto &Existing = Func.Blocks[D].Phis;
+          if (std::any_of(Existing.begin(), Existing.end(),
+                          [&](const PhiNode &Phi) {
+                            return Phi.Output.Id == VarId;
+                          }))
+            continue;
           auto VIt = VarIdToVar.find(VarId);
           MedVar PhiVar = (VIt != VarIdToVar.end()) ? VIt->second : MedVar{};
 
@@ -881,8 +920,6 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
             if (P != VirtualRoot)
               Phi.Args.push_back({P, PhiVar});
           Func.Blocks[D].Phis.push_back(Phi);
-
-          Worklist.push(D);
         }
       }
     }

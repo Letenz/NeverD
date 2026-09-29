@@ -554,6 +554,88 @@ TEST(MedSEHHandlerEntry, NonvolatileRegisterHoldsItsProtectedValue) {
   EXPECT_EQ(Saved->SSAVer, 0) << Saved->display();
 }
 
+namespace {
+
+// xor eax,eax; mov [rcx],dl (protected); jmp H; H: ret -- the handler is the
+// normal path's return block too, as for `status = 0; __try {..}
+// __except (1) { status = GetExceptionCode(); } return status;`.
+BinaryImage makeSharedHandlerImage() {
+  constexpr va_t Entry = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = 0x10;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const uint8_t Code[] = {0x31, 0xc0,       // xor eax, eax
+                          0x88, 0x11,       // mov [rcx], dl
+                          0xeb, 0x00,       // jmp +0
+                          0xc3};            // ret
+  std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Section Section;
+  Section.Name = ".text";
+  Section.VA = Entry;
+  Section.Size = 0x10;
+  Section.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Section));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry, sizeof(Code)));
+  ExceptionFunction EH;
+  EH.CodeRange = {Entry, Entry + sizeof(Code)};
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.UnwindVersion = 1;
+  EH.UnwindFlags = 1;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.SEH.emplace();
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Entry + 2, Entry + 6};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Entry + 6;
+  EH.SEH->Scopes.push_back(Scope);
+  Img.ExceptionMetadata.Functions.push_back(EH);
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+} // namespace
+
+TEST(MedSEHHandlerEntry, HandlerSharedWithTheNormalPathMergesBothValues) {
+  // The normal path returns 0 and the dispatcher's entry the exception code;
+  // the handler block is both, so RAX there must merge the two.
+  auto Img = makeSharedHandlerImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-shared-handler"));
+  bool Merged = false;
+  for (const MedBlock &Block : Med.Blocks)
+    for (const PhiNode &Phi : Block.Phis)
+      Merged |= Block.StartAddr == Img.Entry + 6 && Phi.ExceptionalEntry &&
+                Phi.ExceptionalEntry->Kind == MedVar::SEHExceptionCode;
+  EXPECT_TRUE(Merged);
+  auto High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Stream.flush();
+  const size_t Handler = Source.find("__except");
+  ASSERT_NE(Handler, std::string::npos) << Source;
+  // The normal path keeps its zero; the arm assigns the code.
+  EXPECT_NE(Source.substr(0, Handler).find(" = 0;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.substr(Handler).find("exception_code;"), std::string::npos)
+      << Source;
+  // The handler block follows the __try: the arm simply ends there.
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+}
+
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   auto Img = makeSEHHandlerRegisterImage();
   auto Low = decodeFixedSEHFrame(Img);

@@ -808,6 +808,52 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
 // convert — top-level MedIR to HighIR pipeline
 //===----------------------------------------------------------------------===//
 
+void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
+                                                     const MedFunc &Med) {
+  // A handler block ordinary flow also enters merges RAX in PHIs. Their
+  // ordinary edges carry copies already; on the dispatcher's entry the arm
+  // assigns the exception code before it jumps to the handler.
+  std::map<va_t, std::vector<HighStmt>> Copies;
+  for (const MedBlock &Block : Med.Blocks)
+    for (const PhiNode &Phi : Block.Phis) {
+      if (!Phi.ExceptionalEntry)
+        continue;
+      HighStmt Copy;
+      Copy.Kind = StmtKind::Assign;
+      Copy.Dst = HighExpr::makeVar(Phi.Output);
+      ExprPtr Code = HighExpr::makeVar(*Phi.ExceptionalEntry);
+      if (Phi.Output.Size > Phi.ExceptionalEntry->Size) {
+        Code = HighExpr::makeUnary(NdOp::INT_ZEXT, Code);
+        Code->Type = NdType::makeInt(Phi.Output.Size, false);
+      }
+      Copy.Val = std::move(Code);
+      Copies[Block.StartAddr].push_back(std::move(Copy));
+    }
+  if (Copies.empty())
+    return;
+  walkStmts(Func.Body, [&](HighStmt &S) {
+    if (S.Kind != StmtKind::SEHTry)
+      return;
+    for (size_t C = 0; C < S.EHClauses.size(); ++C) {
+      if (S.EHClauses[C].Kind != HighEHClauseKind::SEHExcept)
+        continue;
+      auto It = Copies.find(S.EHClauses[C].HandlerVA);
+      if (It == Copies.end())
+        continue;
+      if (S.EHClauseBodies.size() <= C)
+        S.EHClauseBodies.resize(C + 1);
+      auto &Arm = S.EHClauseBodies[C];
+      Arm.insert(Arm.begin(), It->second.begin(), It->second.end());
+      if (Arm.size() == It->second.size()) {
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.GotoTarget = S.EHClauses[C].HandlerVA;
+        Arm.push_back(std::move(Jump));
+      }
+    }
+  });
+}
+
 void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   if (Func.Body.size() > limits::kMaxLateGotoReductionStmts)
     return;
@@ -941,6 +987,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
         });
     ensureTrailingReturn(Func, Med);
     structureExceptionRegions(Func, Med);
+    attachSEHHandlerEntryCopies(Func, Med);
     reduceLateGotos(Func);
     Trace.high(Func, "after-exceptions");
     return Func;
@@ -974,6 +1021,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   // entered by the personality, so ordinary reachability would delete them
   // and leave empty __except/__catch arms.
   structureExceptionRegions(Func, Med);
+  attachSEHHandlerEntryCopies(Func, Med);
   auto TEh = std::chrono::steady_clock::now();
   eliminateDeadStmts(Func);
   auto TDead = std::chrono::steady_clock::now();

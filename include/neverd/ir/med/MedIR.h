@@ -167,6 +167,10 @@ struct MedCxxContinuationExitEvidence {
 struct PhiNode {
   MedVar Output;
   std::vector<std::pair<int, MedVar>> Args;
+  /// The value the PHI takes when its block is entered by the exception
+  /// dispatcher rather than from a predecessor: an SEH handler block that is
+  /// also an ordinary join receives the exception code this way.
+  std::optional<MedVar> ExceptionalEntry;
 };
 
 struct MedOp {
