@@ -1797,11 +1797,15 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         L.erase(L.begin() + I + 1);
         Changed = true;
       }
-      // T4: consecutive ifs with the same straight-line body.
+      // T4: consecutive ifs with the same straight-line body. `a || b` runs
+      // the body once and skips `b` when `a` holds, which matches only a body
+      // that leaves: otherwise both tests would run it, and `b` after it.
       while (I + 1 < L.size() && L[I].Kind == StmtKind::If && L[I].Cond &&
              L[I].ElseBody.empty() && L[I + 1].Kind == StmtKind::If &&
              L[I + 1].Cond && L[I + 1].ElseBody.empty() &&
              !labelStart(L, I + 1) && !L[I].Body.empty() &&
+             (L[I].Body.back().Kind == StmtKind::Return ||
+              L[I].Body.back().Kind == StmtKind::Goto) &&
              sameStraightLineBody(L[I].Body, L[I + 1].Body)) {
         ExprPtr Merged =
             HighExpr::makeBinop(NdOp::BOOL_OR, L[I].Cond, L[I + 1].Cond);
@@ -1862,7 +1866,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         continue;
       }
       // T12: `goto X; do { S...; X: } while (c);`  ->  `while (c) { S... }`.
-      if (L[I].Kind == StmtKind::Goto && I + 1 < L.size() &&
+      // A jump to the loop itself enters its body before the test; the
+      // rewritten loop would test first (T12) or start mid-body (T12b).
+      const bool LoopEntered = I + 1 < L.size() && L[I + 1].Addr != 0 &&
+                               L[I + 1].Addr != InvalidVA &&
+                               usesOf(L[I + 1].Addr) != 0;
+      if (L[I].Kind == StmtKind::Goto && I + 1 < L.size() && !LoopEntered &&
           L[I + 1].Kind == StmtKind::DoWhile && L[I + 1].Cond &&
           usesOf(L[I].GotoTarget) == 1 && !L[I + 1].Body.empty()) {
         auto &Loop = L[I + 1].Body;
@@ -1882,7 +1891,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       }
       // T12b: `goto X; do { A...; X: B... } while (c);`  ->
       // `while (1) { B...; if (!c) break; A... }`.
-      if (L[I].Kind == StmtKind::Goto && I + 1 < L.size() &&
+      if (L[I].Kind == StmtKind::Goto && I + 1 < L.size() && !LoopEntered &&
           L[I + 1].Kind == StmtKind::DoWhile && L[I + 1].Cond &&
           usesOf(L[I].GotoTarget) == 1 &&
           !(L[I].Addr != 0 && L[I].Addr != InvalidVA &&

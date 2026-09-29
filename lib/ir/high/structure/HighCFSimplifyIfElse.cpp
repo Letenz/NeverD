@@ -3780,6 +3780,14 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     }
     if (!PrefixSafe)
       continue;
+    // The merged test runs the first guard's edge copies on both paths, so
+    // the second guard must make the same ones.
+    if (!std::equal(Stmt.Body.begin(), Stmt.Body.end(), Body[J].Body.begin(),
+                    Body[J].Body.end(),
+                    [](const HighStmt &A, const HighStmt &B) {
+                      return A.str() == B.str();
+                    }))
+      continue;
     auto NextCond = composePrefixesIntoCond(
         Body, static_cast<size_t>(I) + 1, J, Body[J].Cond);
     const bool Same =

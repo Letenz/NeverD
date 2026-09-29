@@ -2922,6 +2922,91 @@ TEST(HighControlFlowSemantics, JumpIntoALoopBodySkipsItsTest) {
   EXPECT_FALSE(Kept(Always)) << "an always-true loop skips nothing";
 }
 
+TEST(HighControlFlowSemantics, SameArmsMergeOnlyWhenTheyLeave) {
+  // `if (x == 1) y = y + 1; if (x == 1) y = y + 1; return y;` runs the
+  // increment twice; `if (x == 1 || x == 1)` would run it once.
+  auto MakeIf = [](va_t Address) {
+    auto Increment = assign(Address + 4, 1, 0);
+    Increment.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+    HighStmt If;
+    If.Kind = StmtKind::If;
+    If.Addr = Address;
+    If.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                  HighExpr::makeConst(1, 8));
+    If.Body = {Increment};
+    return If;
+  };
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 0), MakeIf(0x1004), MakeIf(0x1010),
+            result(0x1020, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t { return X == 1 ? 2 : 0; };
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/false);
+  for (uint64_t X : {0, 1}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+  }
+}
+
+TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
+  // `goto X; Top: do { y = y + 1; X: } while (y != 3); if (x) goto Top;`
+  // The jump to Top runs the body before the test; `while (y != 3)` would
+  // test first.
+  auto Increment = assign(0x1104, 1, 0);
+  Increment.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1108;
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Addr = 0x1100;
+  Loop.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(1),
+                                  HighExpr::makeConst(3, 8));
+  Loop.Body = {Increment, Label};
+  HighFunc F;
+  F.Body = {jump(0x1004, 0x1108), Loop, conditional(0x1150, 0x1100),
+            result(0x1200, local(1))};
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/false);
+  bool TestsFirst = false;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    TestsFirst |= S.Kind == StmtKind::While && S.Addr == 0x1100;
+  });
+  EXPECT_FALSE(TestsFirst) << "a re-entry at Top would skip the increment";
+}
+
+TEST(HighControlFlowSemantics, SiblingSkipsKeepTheirOwnEdgeCopies) {
+  // `if (x == 1) { v = 10; goto S; } if (x == 2) { v = 20; goto S; } v = 30;
+  // S: return v;` Merging the guards into one would give x == 2 the first
+  // guard's copy.
+  auto Guard = [](va_t Address, uint64_t Value, uint64_t Copy) {
+    HighStmt If;
+    If.Kind = StmtKind::If;
+    If.Addr = Address;
+    If.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                  HighExpr::makeConst(Value, 8));
+    auto EdgeCopy = assign(Address + 4, 1, Copy);
+    EdgeCopy.IsPhiCopy = true;
+    If.Body = {EdgeCopy, jump(Address + 8, 0x1100)};
+    return If;
+  };
+  HighFunc F;
+  F.Body = {Guard(0x1000, 1, 10), Guard(0x1010, 2, 20), assign(0x1020, 1, 30),
+            result(0x1100, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 1 ? 10 : X == 2 ? 20 : 30;
+  };
+  for (uint64_t X : {0, 1, 2})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  invertSkipGotos(F);
+  for (uint64_t X : {0, 1, 2}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+  }
+}
+
 TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
   for (StmtKind Exit : {StmtKind::Break, StmtKind::Goto, StmtKind::Return}) {
     for (bool HasDefault : {false, true}) {
