@@ -6899,6 +6899,137 @@ TEST(ObjCSourceBindings, ImmutableSwiftSmallStringKeepsSharedAddress) {
   }
 }
 
+TEST(ObjCSourceBindings, SwiftOptionalSelfStaticUsesWitnessBoundedZeroStorage) {
+  constexpr va_t Address = 0x3010;
+  constexpr va_t Witness = 0x4000;
+  constexpr uint64_t Width = 0x400;
+  constexpr const char *StorageName = "_$s4Test5ValueV7currentACSgvpZ";
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.MachOTwoLevelNamespace = true;
+  Segment Code;
+  Code.VA = 0x2000;
+  Code.Size = Code.FileSz = 0x100;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.resize(Code.Size);
+  Image.Segments.push_back(std::move(Code));
+  Section Text;
+  Text.VA = 0x2000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Image.Sections.push_back(Text);
+  Segment Common;
+  Common.VA = 0x3000;
+  Common.Size = 0x800;
+  Common.FileSz = 0;
+  Common.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Common.Data.resize(Common.Size);
+  Image.Segments.push_back(std::move(Common));
+  Section CommonSection;
+  CommonSection.VA = 0x3000;
+  CommonSection.Size = 0x800;
+  CommonSection.FileSz = 0;
+  CommonSection.Type = llvm::MachO::S_ZEROFILL;
+  CommonSection.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Sections.push_back(CommonSection);
+  Segment Constants;
+  Constants.VA = Witness;
+  Constants.Size = Constants.FileSz = 0x100;
+  Constants.Flags = SegmentFlags::Readable;
+  Constants.Data.resize(Constants.Size);
+  llvm::support::endian::write64le(Constants.Data.data() + 64, Width);
+  llvm::support::endian::write64le(Constants.Data.data() + 72, Width);
+  Image.Segments.push_back(std::move(Constants));
+  Section ConstantSection;
+  ConstantSection.VA = Witness;
+  ConstantSection.Size = ConstantSection.FileSz = 0x100;
+  ConstantSection.Flags = SegmentFlags::Readable;
+  Image.Sections.push_back(ConstantSection);
+  Image.Symbols.push_back({StorageName, Address, 0, false});
+  Image.Symbols.push_back({"_nextStorage", Address + Width, 0, false});
+  Image.Symbols.push_back({"_$s4Test5ValueVWV", Witness, 88, false});
+  Image.Symbols.push_back({"_$s4Test5ValueV7currentACSgvau", 0x2000, 0, true});
+  HighFunc Function;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+  Function.Body = {Return};
+
+  const auto Bound = bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Address, Width}}));
+  const auto Helper = Bound.Function.Body[0].RetVal;
+  ASSERT_TRUE(Helper->SourceCallHint);
+  EXPECT_EQ(Helper->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeLocalStorageAddress);
+  EXPECT_EQ(Helper->SourceCallHint->ByteCount, Width);
+  EXPECT_TRUE(objcSourceCallBound(*Helper, Image, {}));
+  std::set<std::string> Helpers;
+  EXPECT_NE(
+      renderObjCLocalStorageHelpers(Image, Bound.LocalStorageExtents, Helpers)
+          .find("storage[1024]"),
+      std::string::npos);
+  EXPECT_NE(renderObjCLocalStorageHelpers(Image, {{Address, 8}}, Helpers)
+                .find("storage[1024]"),
+            std::string::npos);
+
+  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Image;
+    switch (Mutation) {
+    case 0:
+      Changed.Symbols[0].Name = "_untypedStorage";
+      break;
+    case 1:
+      Changed.Symbols[1].Addr += 16;
+      break;
+    case 2:
+      Changed.Symbols[2].Name = "_wrongWitness";
+      break;
+    case 3:
+      llvm::support::endian::write64le(Changed.Segments[2].Data.data() + 64,
+                                       Width - 16);
+      break;
+    case 4:
+      llvm::support::endian::write64le(Changed.Segments[2].Data.data() + 72,
+                                       Width + 16);
+      break;
+    case 5:
+      Changed.Symbols[3].Name = "_wrongAddressor";
+      break;
+    case 6:
+      Changed.Sections[1].Type = llvm::MachO::S_REGULAR;
+      break;
+    case 7:
+      Changed.Segments[1].Data[Address - 0x3000 + 24] = 1;
+      break;
+    case 8:
+      Changed.DataPtrRelocSlots.insert(Address + 16);
+      break;
+    case 9:
+      Changed.Symbols.push_back({"_interior", Address + 32, 0, false});
+      break;
+    case 10:
+      Changed.Symbols[0].Size = Width + 16;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftStaticOptionalSelfStorageHint(
+        Changed, Address));
+    EXPECT_FALSE(objcSourceCallBound(*Helper, Changed, {}));
+    if (Mutation != 0) {
+      EXPECT_THROW(renderObjCLocalStorageHelpers(
+                       Changed, Bound.LocalStorageExtents, Helpers),
+                   std::runtime_error);
+    }
+  }
+}
+
 TEST(ObjCSourceBindings, AnonymousInlineSwiftStringPairsKeepSharedBytes) {
   Fixture F;
   constexpr va_t Address = 0x1040;

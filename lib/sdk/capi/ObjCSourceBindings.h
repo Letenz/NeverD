@@ -3251,6 +3251,97 @@ localStorageHint(const BinaryImage &Image, va_t Address, uint64_t Width) {
   return Hint;
 }
 
+// A Swift static Optional<Self> may be emitted as a zero-filled global whose
+// nlist entry has no size. Its nominal value-witness table supplies an exact
+// size only when the complete zero-filled interval ends at the next named
+// object. This is deliberately narrower than using an arbitrary symbol gap
+// as an object extent: the optional's actual storage is not inferred from the
+// type name or the gap alone.
+inline std::optional<SourceCallTypeHint>
+swiftStaticOptionalSelfStorageHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      Address % 16)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Address, 1);
+  const auto *Section = Image.getSectionFor(Address);
+  if (!Storage || !Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_ZEROFILL)
+    return std::nullopt;
+  llvm::StringRef Name(Storage->Name);
+  if (!Name.consume_front("_$s"))
+    return std::nullopt;
+  auto Component = [](llvm::StringRef &Text) -> std::optional<llvm::StringRef> {
+    size_t Digits = 0;
+    unsigned Length = 0;
+    while (Digits < Text.size() && Digits < 4 && Text[Digits] >= '0' &&
+           Text[Digits] <= '9') {
+      Length = Length * 10 + (Text[Digits] - '0');
+      ++Digits;
+    }
+    if (!Digits || !Length || Length > 1024 ||
+        (Digits < Text.size() && Text[Digits] >= '0' && Text[Digits] <= '9') ||
+        Text.size() - Digits < Length)
+      return std::nullopt;
+    const auto Value = Text.substr(Digits, Length);
+    Text = Text.drop_front(Digits + Length);
+    return Value;
+  };
+  if (!Component(Name) || !Component(Name) || !Name.consume_front("V"))
+    return std::nullopt;
+  const std::string Nominal =
+      Storage->Name.substr(0, Storage->Name.size() - Name.size());
+  if (!Component(Name) || Name != "ACSgvpZ")
+    return std::nullopt;
+  const std::string WitnessName = Nominal + "WV";
+  const std::string AddressorName =
+      llvm::StringRef(Storage->Name).drop_back(3).str() + "vau";
+  const Symbol *Witness = nullptr;
+  size_t Addressors = 0;
+  for (const auto &Candidate : Image.Symbols) {
+    if (Candidate.Name == WitnessName) {
+      if (Witness || Candidate.IsFunc)
+        return std::nullopt;
+      Witness = &Candidate;
+    }
+    if (Candidate.Name == AddressorName) {
+      if (!Candidate.IsFunc || !Image.isCodeAddress(Candidate.Addr))
+        return std::nullopt;
+      ++Addressors;
+    }
+  }
+  if (!Witness || Addressors != 1 || Witness->Addr > InvalidVA - 88 ||
+      (Witness->Size && Witness->Size < 88) ||
+      overlapsPointerStorage(Image, Witness->Addr + 64, 16))
+    return std::nullopt;
+  const auto *WitnessSection = Image.getSectionFor(Witness->Addr);
+  const auto *Layout = Image.readVA(Witness->Addr + 64, 16);
+  if (!WitnessSection || !WitnessSection->isReadable() ||
+      WitnessSection->isExecutable() || !Layout ||
+      Image.getSectionFor(Witness->Addr + 79) != WitnessSection)
+    return std::nullopt;
+  const uint64_t Width = llvm::support::endian::read64le(Layout);
+  const uint64_t Stride = llvm::support::endian::read64le(Layout + 8);
+  if (!Width || Width != Stride || Width % 16 || Width > 1024 * 1024 ||
+      Width > InvalidVA - Address ||
+      (Storage->Size && Storage->Size != Width) ||
+      Image.getSectionFor(Address + Width - 1) != Section ||
+      Image.getSectionFor(Address + Width) != Section)
+    return std::nullopt;
+  size_t BoundarySymbols = 0;
+  for (const auto &Candidate : Image.Symbols)
+    if (!Candidate.IsFunc && Candidate.Addr == Address + Width)
+      ++BoundarySymbols;
+  if (BoundarySymbols != 1)
+    return std::nullopt;
+  const auto *Bytes = Image.readVA(Address, Width);
+  if (!Bytes ||
+      !std::all_of(Bytes, Bytes + Width, [](uint8_t Byte) { return !Byte; }))
+    return std::nullopt;
+  return localStorageHint(Image, Address, Width);
+}
+
 inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
@@ -5247,6 +5338,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         return Expression;
       }
       if (auto Storage =
+              swiftStaticOptionalSelfStorageHint(Image, Original->ConstVal)) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+        Result.LocalStorageExtents[Original->ConstVal] =
+            Expression->SourceCallHint->ByteCount;
+        return Expression;
+      }
+      if (auto Storage =
               swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
         *Expression = *HighExpr::makeCall({}, 0, {});
         Expression->Type = Original->Type;
@@ -6984,6 +7085,13 @@ inline bool objcSourceCallBound(
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
     auto Expected =
         localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
+    if (Expected && Binding.ByteCount > 8 &&
+        llvm::StringRef(Expected->TargetName).ends_with("ACSgvpZ")) {
+      auto Static =
+          swiftStaticOptionalSelfStorageHint(Image, Binding.TargetAddress);
+      if (!Static || Static->ByteCount != Binding.ByteCount)
+        Expected.reset();
+    }
     if (!Expected && Binding.ByteCount == 8)
       Expected = oncePredicateStorageHint(Image, Binding.TargetAddress);
     if (!Expected) {
@@ -8141,7 +8249,21 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
                               std::set<std::string> &SharedFunctions) {
   std::string Source;
   for (const auto &[Address, Width] : Storage) {
+    uint64_t BackingWidth = Width;
     auto Hint = objc_binding_detail::localStorageHint(Image, Address, Width);
+    if (Hint) {
+      auto Static = objc_binding_detail::swiftStaticOptionalSelfStorageHint(
+          Image, Address);
+      if (Static) {
+        if (Width > Static->ByteCount)
+          throw std::runtime_error("Swift static storage extent was exceeded");
+        BackingWidth = Static->ByteCount;
+        Hint = std::move(Static);
+      } else if (Width > 8 &&
+                 llvm::StringRef(Hint->TargetName).ends_with("ACSgvpZ")) {
+        Hint.reset();
+      }
+    }
     if (!Hint && Width == 8)
       Hint = objc_binding_detail::oncePredicateStorageHint(Image, Address);
     if (!Hint) {
@@ -8152,14 +8274,14 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
     }
     if (!Hint)
       throw std::runtime_error("local-storage initializer is no longer valid");
-    const auto *Bytes = Image.readVA(Address, Width);
+    const auto *Bytes = Image.readVA(Address, BackingWidth);
     if (!Bytes)
       continue;
     const std::string Name =
         "neverd_local_storage_" + llvm::utohexstr(Address, true) + "_address";
     SharedFunctions.insert(Name);
     if (const auto Target = objc_binding_detail::localStringPointerInitializer(
-            Image, Address, Width)) {
+            Image, Address, BackingWidth)) {
       const auto ObjectName = "neverd_objc_constant_string_" +
                               llvm::utohexstr(*Target, true) + "_address";
       // The shared cell is initialized before its address is exposed. After
@@ -8189,9 +8311,9 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
     Source += "\nuintptr_t " + Name +
               "(void) {\n"
               "  static _Alignas(16) unsigned char storage[" +
-              std::to_string(Width) + "] = { ";
+              std::to_string(BackingWidth) + "] = { ";
     bool Any = false;
-    for (uint64_t I = 0; I < Width; ++I) {
+    for (uint64_t I = 0; I < BackingWidth; ++I) {
       if (!Bytes[I])
         continue;
       if (Any)
