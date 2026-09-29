@@ -28,6 +28,7 @@
 #include "neverd/sbf/SBFMetadata.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -633,10 +634,13 @@ struct BinaryImage {
   }
 
   std::set<va_t> getSymbolAddresses() const {
-    std::set<va_t> Addrs;
+    // Built from sorted addresses, each node goes in next to the one before.
+    std::vector<va_t> Addrs;
+    Addrs.reserve(Symbols.size());
     for (const auto &Sym : Symbols)
-      Addrs.insert(Sym.Addr);
-    return Addrs;
+      Addrs.push_back(Sym.Addr);
+    llvm::sort(Addrs);
+    return std::set<va_t>(Addrs.begin(), Addrs.end());
   }
 
   /// Function starts whose only evidence is a padding-boundary guess: no
