@@ -94,6 +94,7 @@ constexpr const char *Rsrc = ".rsrc";
 constexpr const char *TLS = ".tls";
 constexpr const char *Debug = ".debug";
 constexpr const char *CRT = ".CRT";
+constexpr const char *Drectve = ".drectve";
 } // namespace coff
 
 namespace macho {

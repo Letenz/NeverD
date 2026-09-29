@@ -1,0 +1,48 @@
+//===- LinkerSyntax.def - Linker input syntax signatures read ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The syntax of the linker inputs signature generation and matching read:
+/// ELF symbol versions and COFF linker directives.  Define the macros a
+/// consumer reads before including this file; the others expand to nothing.
+///
+///   NEVERD_SIGS_SYNTAX_CHAR(Name, Value)    a character
+///   NEVERD_SIGS_SYNTAX_STRING(Name, Value)  a string
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SIGS_SYNTAX_CHAR
+#define NEVERD_SIGS_SYNTAX_CHAR(Name, Value)
+#endif
+#ifndef NEVERD_SIGS_SYNTAX_STRING
+#define NEVERD_SIGS_SYNTAX_STRING(Name, Value)
+#endif
+
+// An ELF symbol's name is followed by its version, as `name@VERSION` or, for
+// the default version, `name@@VERSION`.
+NEVERD_SIGS_SYNTAX_CHAR(ELFVersionSeparator, '@')
+
+// A symbol whose name starts so names a section (`.text$mn`, `.text.hot`) or
+// a label (`$LN5`, ARM's `$x` and `$d`) rather than a routine.
+NEVERD_SIGS_SYNTAX_STRING(SectionSymbolPrefix, ".")
+NEVERD_SIGS_SYNTAX_STRING(LabelSymbolPrefix, "$")
+
+// A COFF object's linker directives (its `.drectve` section) are options
+// separated by whitespace, one that holds whitespace in double quotes; MSVC
+// may open the section with a UTF-8 byte order mark, and pad it with NULs.
+// An option starts with `/` or `-`; `/alternatename:symbol=alternate` names
+// what a symbol no object defines resolves to, and its name is matched
+// without regard to case.
+NEVERD_SIGS_SYNTAX_STRING(DirectiveByteOrderMark, "\xEF\xBB\xBF")
+NEVERD_SIGS_SYNTAX_STRING(DirectiveSeparators, " \t\r\n")
+NEVERD_SIGS_SYNTAX_CHAR(DirectiveQuote, '"')
+NEVERD_SIGS_SYNTAX_CHAR(DirectivePadding, '\0')
+NEVERD_SIGS_SYNTAX_STRING(DirectiveOptionPrefixes, "/-")
+NEVERD_SIGS_SYNTAX_STRING(AlternateNameOption, "alternatename:")
+NEVERD_SIGS_SYNTAX_CHAR(AlternateNameSeparator, '=')
+
+#undef NEVERD_SIGS_SYNTAX_CHAR
+#undef NEVERD_SIGS_SYNTAX_STRING
