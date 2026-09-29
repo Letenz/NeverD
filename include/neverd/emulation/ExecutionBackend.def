@@ -16,11 +16,6 @@ NEVERD_EXECUTION_CONTRACT(CheckedAArch64, "checked-aarch64-v1")
 NEVERD_EXECUTION_CONTRACT(Software, "software-cpu-v1")
 #endif
 #ifdef NEVERD_EXECUTION_TEXT
-NEVERD_EXECUTION_TEXT(BackendOption, "backend")
-NEVERD_EXECUTION_TEXT(BackendHelp, "CPU backend: auto, unicorn, kvm, whp")
-NEVERD_EXECUTION_TEXT(ContractOption, "execution-contract")
-NEVERD_EXECUTION_TEXT(ContractHelp,
-                      "Execution contract: driver-strict or checked-x64-v1")
 NEVERD_EXECUTION_TEXT(RequestedBackend, "requested_backend")
 NEVERD_EXECUTION_TEXT(SelectedBackend, "selected_backend")
 NEVERD_EXECUTION_TEXT(ExecutionContract, "execution_contract")

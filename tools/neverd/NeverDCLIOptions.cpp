@@ -17,6 +17,7 @@
 
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/ExecutionBackend.h"
+#include "neverd/emulation/ExecutionCLIStrings.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 
 using namespace llvm;
@@ -1104,15 +1105,13 @@ cl::opt<unsigned long long> DriverInstructionLimit(
     cl::desc("Maximum guest instructions (must be positive)"),
     cl::init(emulation::profile::DefaultInstructionLimit),
     cl::sub(EmulateDriverCmd));
-cl::opt<std::string> DriverBackend(emulation::execution::BackendOption,
-                                   cl::desc(emulation::execution::BackendHelp),
+cl::opt<std::string> DriverBackend(execution_cli::BackendOption,
+                                   cl::desc(execution_cli::BackendHelp),
                                    cl::init(emulation::execution::Auto),
                                    cl::sub(EmulateDriverCmd));
-cl::opt<std::string>
-    DriverExecutionContract(emulation::execution::ContractOption,
-                            cl::desc(emulation::execution::ContractHelp),
-                            cl::init(emulation::execution::Legacy),
-                            cl::sub(EmulateDriverCmd));
+cl::opt<std::string> DriverExecutionContract(
+    execution_cli::ContractOption, cl::desc(execution_cli::ContractHelp),
+    cl::init(emulation::execution::Legacy), cl::sub(EmulateDriverCmd));
 cl::opt<std::string> DriverScenarioFile(
     "scenario", cl::desc("Strict driver lifecycle scenario JSON file"),
     cl::value_desc("path"), cl::init(""), cl::sub(EmulateDriverCmd));

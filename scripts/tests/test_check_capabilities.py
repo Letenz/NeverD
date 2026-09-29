@@ -3243,16 +3243,20 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "c": [
                     "neverd_emulate_driver_json",
                     "neverd_emulate_driver_scenario_json",
+                    "neverd_emulate_driver_backend_json",
                 ],
                 "python": [],
                 "cli": [
                     "neverd emulate-driver",
                     "neverd emulate-driver --instruction-limit",
                     "neverd emulate-driver --scenario",
+                    "neverd emulate-driver --backend",
+                    "neverd emulate-driver --execution-contract",
                 ],
                 "json": [
                     "neverd_emulate_driver_json",
                     "neverd_emulate_driver_scenario_json",
+                    "neverd_emulate_driver_backend_json",
                 ],
             },
             "exception.itanium.ada-d": no_surfaces,
