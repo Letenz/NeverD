@@ -179,6 +179,7 @@ add_neverd_unittest(NeverDLiftTests
   format/ImmutableChainedValueTests.cpp
   format/COFFRelocatableAbsoluteRelocationTests.cpp
   format/NativePointerRelocationBoundaryTests.cpp
+  format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedVariadicTests.cpp

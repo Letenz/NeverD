@@ -49,6 +49,7 @@ add_neverd_component_library(NeverDLoader
   Go/GoStackMaps.cpp
   InputDigest.cpp
   Loader.cpp
+  PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp
   MachO/MachOChainedFixups.cpp
