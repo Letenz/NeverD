@@ -1,0 +1,221 @@
+//===- LanguageRuntime.def - Evidence of an image's language ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// What each language runtime is called, and the evidence
+/// detectLanguageRuntime reads an image's runtime from.  Define the macros a
+/// consumer reads before including this file; the others expand to nothing.
+///
+///   NEVERD_LANGUAGE_RUNTIME_NAME(Runtime, Spelling)
+///       the name a SourceLanguageRuntime is printed as
+///   NEVERD_LANGUAGE_EVIDENCE(Id, Runtime, Order, Description)
+///       a group of probes, which holds when any of its probes does and then
+///       records Description as evidence of Runtime.  Order says when the
+///       group is tried: `Chain` always, starting a chain; `Otherwise` only
+///       when no group of its chain held before it; `Fallback` only when no
+///       other group held at all.  Groups are tried in the order listed, and
+///       the first runtime found is the image's primary one.
+///   NEVERD_LANGUAGE_PROBE(Id, Kind, Value)
+///       one probe of group Id: a `Section` of that name exists, a `Symbol`
+///       or import has exactly that name, one's name starts with a
+///       `SymbolPrefix`, or a non-executable segment holds the `Bytes`
+///   NEVERD_LANGUAGE_STRING(Name, Value)  a string
+///   NEVERD_LANGUAGE_CHAR(Name, Value)    a character
+///   NEVERD_LANGUAGE_VALUE(Name, Value)   a number
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LANGUAGE_RUNTIME_NAME
+#define NEVERD_LANGUAGE_RUNTIME_NAME(Runtime, Spelling)
+#endif
+#ifndef NEVERD_LANGUAGE_EVIDENCE
+#define NEVERD_LANGUAGE_EVIDENCE(Id, Runtime, Order, Description)
+#endif
+#ifndef NEVERD_LANGUAGE_PROBE
+#define NEVERD_LANGUAGE_PROBE(Id, Kind, Value)
+#endif
+#ifndef NEVERD_LANGUAGE_STRING
+#define NEVERD_LANGUAGE_STRING(Name, Value)
+#endif
+#ifndef NEVERD_LANGUAGE_CHAR
+#define NEVERD_LANGUAGE_CHAR(Name, Value)
+#endif
+#ifndef NEVERD_LANGUAGE_VALUE
+#define NEVERD_LANGUAGE_VALUE(Name, Value)
+#endif
+
+NEVERD_LANGUAGE_RUNTIME_NAME(Unknown, "unknown")
+NEVERD_LANGUAGE_RUNTIME_NAME(C, "c")
+NEVERD_LANGUAGE_RUNTIME_NAME(CxxItanium, "c++-itanium")
+NEVERD_LANGUAGE_RUNTIME_NAME(CxxMSVC, "c++-msvc")
+NEVERD_LANGUAGE_RUNTIME_NAME(Rust, "rust")
+NEVERD_LANGUAGE_RUNTIME_NAME(Go, "go")
+NEVERD_LANGUAGE_RUNTIME_NAME(Delphi, "delphi")
+NEVERD_LANGUAGE_RUNTIME_NAME(ObjectiveC, "objective-c")
+NEVERD_LANGUAGE_RUNTIME_NAME(Swift, "swift")
+NEVERD_LANGUAGE_RUNTIME_NAME(Ada, "ada")
+NEVERD_LANGUAGE_RUNTIME_NAME(D, "d")
+
+//===----------------------------------------------------------------------===//
+// Go.  The Go linker always emits the function table; its section name
+// differs by format and the symbol is present even when the section is
+// merged away.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(GoTableSection, Go, Chain, "go function table section")
+NEVERD_LANGUAGE_PROBE(GoTableSection, Section, ".gopclntab")
+NEVERD_LANGUAGE_PROBE(GoTableSection, Section, "__gopclntab")
+NEVERD_LANGUAGE_PROBE(GoTableSection, Section, ".gosymtab")
+NEVERD_LANGUAGE_EVIDENCE(GoModuleSymbol, Go, Otherwise,
+                         "go runtime module symbol")
+NEVERD_LANGUAGE_PROBE(GoModuleSymbol, Symbol, "runtime.pclntab")
+NEVERD_LANGUAGE_PROBE(GoModuleSymbol, Symbol, "runtime.firstmoduledata")
+NEVERD_LANGUAGE_EVIDENCE(GoPanicSymbol, Go, Otherwise,
+                         "go panic/defer runtime symbol")
+NEVERD_LANGUAGE_PROBE(GoPanicSymbol, SymbolPrefix, "runtime.gopanic")
+NEVERD_LANGUAGE_PROBE(GoPanicSymbol, SymbolPrefix, "runtime.deferreturn")
+// The fixed 14-byte header of the build-info blob the Go linker writes into
+// every binary from 1.13 onward.
+NEVERD_LANGUAGE_EVIDENCE(GoBuildInfo, Go, Chain, "go build-info blob")
+NEVERD_LANGUAGE_PROBE(GoBuildInfo, Bytes, "\xff Go buildinf:")
+
+// The release a Go image names first, `go1.` and the digits and dots after
+// it, read from at most GoVersionWindow bytes.
+NEVERD_LANGUAGE_STRING(GoVersionPrefix, "go1.")
+NEVERD_LANGUAGE_CHAR(GoVersionSeparator, '.')
+NEVERD_LANGUAGE_VALUE(GoVersionWindow, 16)
+
+//===----------------------------------------------------------------------===//
+// Rust.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(RustSymbol, Rust, Chain, "rust core/std symbol")
+NEVERD_LANGUAGE_PROBE(RustSymbol, Symbol, "rust_eh_personality")
+NEVERD_LANGUAGE_PROBE(RustSymbol, SymbolPrefix, "_ZN4core")
+NEVERD_LANGUAGE_PROBE(RustSymbol, SymbolPrefix, "_ZN3std")
+NEVERD_LANGUAGE_PROBE(RustSymbol, SymbolPrefix, "__ZN4core")
+NEVERD_LANGUAGE_PROBE(RustSymbol, SymbolPrefix, "_RN")
+NEVERD_LANGUAGE_EVIDENCE(RustLibraryPath, Rust, Otherwise,
+                         "rust standard library path")
+NEVERD_LANGUAGE_PROBE(RustLibraryPath, Bytes, "/rustc/")
+NEVERD_LANGUAGE_PROBE(RustLibraryPath, Bytes, "library/std/src/panicking.rs")
+
+//===----------------------------------------------------------------------===//
+// Delphi.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(DelphiSymbol, Delphi, Chain, "delphi runtime symbol")
+NEVERD_LANGUAGE_PROBE(DelphiSymbol, SymbolPrefix, "@System@")
+NEVERD_LANGUAGE_PROBE(DelphiSymbol, SymbolPrefix, "@Sysutils@")
+NEVERD_LANGUAGE_PROBE(DelphiSymbol, Symbol, "@HandleAnyException")
+NEVERD_LANGUAGE_PROBE(DelphiSymbol, Symbol, "__DelphiExceptionHandler")
+NEVERD_LANGUAGE_EVIDENCE(DelphiBanner, Delphi, Otherwise,
+                         "delphi runtime banner")
+NEVERD_LANGUAGE_PROBE(DelphiBanner, Bytes,
+                      "Portions Copyright (c) 1983,99 Borland")
+NEVERD_LANGUAGE_PROBE(DelphiBanner, Bytes, "Embarcadero Delphi")
+NEVERD_LANGUAGE_PROBE(DelphiBanner, Bytes, "SOFTWARE\\Borland\\Delphi")
+
+//===----------------------------------------------------------------------===//
+// Ada.  GNAT mangles an Ada name as `package__subprogram`, so the runtime's
+// own units are the most reliable evidence an image is Ada: a program can be
+// built without ever raising an exception, but not without `system__`.
+// `__gnat_rcheck_` is the family of routines a compiler-inserted language
+// check calls, which is how an Ada image raises `Constraint_Error`.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(GnatSymbol, Ada, Chain, "gnat runtime symbol")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, Symbol, "__gnat_personality_v0")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, Symbol, "__gnat_personality_sj0")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, Symbol, "__gnat_personality_seh0")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, SymbolPrefix, "__gnat_rcheck_")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, SymbolPrefix, "ada__exceptions__")
+NEVERD_LANGUAGE_PROBE(GnatSymbol, SymbolPrefix, "system__standard_library")
+
+//===----------------------------------------------------------------------===//
+// D.  A D symbol is `_D` followed by a length-prefixed path, which is too weak
+// a prefix to test on its own: it matches an ordinary C identifier that
+// starts with a digit-free `D`.  The runtime's own package roots are not
+// ambiguous, and neither are druntime's C-linkage entry points.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(DRuntimeSymbol, D, Chain, "d runtime symbol")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, Symbol, "__dmd_personality_v0")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, Symbol, "_d_eh_personality")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, Symbol, "__gdc_personality_v0")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, Symbol, "_d_throw_exception")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, Symbol, "_d_throwdwarf")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "_D3std")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "__D3std")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "_D4core")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "__D4core")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "_D6object")
+NEVERD_LANGUAGE_PROBE(DRuntimeSymbol, SymbolPrefix, "__D6object")
+
+//===----------------------------------------------------------------------===//
+// C++.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(ItaniumSymbol, CxxItanium, Chain,
+                         "itanium c++ runtime symbol")
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, Symbol, "__gxx_personality_v0")
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, Symbol, "__gxx_personality_seh0")
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "_ZSt")
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "_ZNSt")
+NEVERD_LANGUAGE_PROBE(ItaniumSymbol, SymbolPrefix, "__ZNSt")
+NEVERD_LANGUAGE_EVIDENCE(MicrosoftSymbol, CxxMSVC, Chain,
+                         "microsoft c++ runtime symbol")
+NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler3")
+NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler4")
+NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, Symbol, "__CxxFrameHandler")
+NEVERD_LANGUAGE_PROBE(MicrosoftSymbol, SymbolPrefix, "??_7type_info")
+
+//===----------------------------------------------------------------------===//
+// Objective-C and Swift.  Apple's section names and Apple's personality are
+// only half the language.  The GNU runtimes put their classes in
+// `.objc_class_refs`/`__objc_data` and never emit `__objc_personality_v0`, so
+// an image built against libobjc, GNUstep, or ObjFW is recognized by its own
+// personalities and by `objc_msg_lookup`, the message send that replaces
+// `objc_msgSend` there.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(ObjCRuntimeSection, ObjectiveC, Chain,
+                         "objective-c runtime section")
+NEVERD_LANGUAGE_PROBE(ObjCRuntimeSection, Section, "__objc_classlist")
+NEVERD_LANGUAGE_PROBE(ObjCRuntimeSection, Symbol, "__objc_personality_v0")
+NEVERD_LANGUAGE_EVIDENCE(GnuObjCPersonality, ObjectiveC, Otherwise,
+                         "gnu objective-c personality")
+NEVERD_LANGUAGE_PROBE(GnuObjCPersonality, Symbol, "__gnu_objc_personality_v0")
+NEVERD_LANGUAGE_PROBE(GnuObjCPersonality, Symbol, "__gnu_objc_personality_seh0")
+NEVERD_LANGUAGE_PROBE(GnuObjCPersonality, Symbol, "__gnu_objc_personality_sj0")
+NEVERD_LANGUAGE_PROBE(GnuObjCPersonality, Symbol,
+                      "__gnustep_objc_personality_v0")
+NEVERD_LANGUAGE_PROBE(GnuObjCPersonality, Symbol,
+                      "__gnustep_objcxx_personality_v0")
+NEVERD_LANGUAGE_EVIDENCE(ObjCMessageSend, ObjectiveC, Otherwise,
+                         "objective-c message send")
+NEVERD_LANGUAGE_PROBE(ObjCMessageSend, Section, ".objc_class_refs")
+NEVERD_LANGUAGE_PROBE(ObjCMessageSend, Symbol, "objc_msg_lookup")
+NEVERD_LANGUAGE_PROBE(ObjCMessageSend, Symbol, "objc_msgSend")
+NEVERD_LANGUAGE_EVIDENCE(SwiftMetadata, Swift, Chain, "swift metadata")
+NEVERD_LANGUAGE_PROBE(SwiftMetadata, SymbolPrefix, "$s")
+NEVERD_LANGUAGE_PROBE(SwiftMetadata, Section, "__swift5_types")
+
+//===----------------------------------------------------------------------===//
+// C compiled with `-fexceptions`, when nothing else left evidence: its
+// cleanup-only personality.
+//===----------------------------------------------------------------------===//
+
+NEVERD_LANGUAGE_EVIDENCE(CCleanupPersonality, C, Fallback,
+                         "c cleanup-only personality")
+NEVERD_LANGUAGE_PROBE(CCleanupPersonality, Symbol, "__gcc_personality_v0")
+
+#undef NEVERD_LANGUAGE_RUNTIME_NAME
+#undef NEVERD_LANGUAGE_EVIDENCE
+#undef NEVERD_LANGUAGE_PROBE
+#undef NEVERD_LANGUAGE_STRING
+#undef NEVERD_LANGUAGE_CHAR
+#undef NEVERD_LANGUAGE_VALUE
