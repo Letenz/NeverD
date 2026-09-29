@@ -170,9 +170,12 @@ function(add_neverd_unittest name)
   # LABELS ${name} lets `ctest -L <binary>` run just this binary's cases.
   # PRE_TEST avoids concurrent POST_BUILD discovery races across test targets.
   # Discovery gets its own finite timeout; PROPERTIES TIMEOUT remains the
-  # independent per-test execution timeout.
+  # independent per-test execution timeout.  A test keeps no signature files
+  # in the user's cache (see include/neverd/sigs/SignatureCache.def); one that
+  # tests the cache gives it a directory of its own.
   gtest_discover_tests(${name}
     PROPERTIES TIMEOUT ${ARG_TIMEOUT} LABELS ${name}
+               ENVIRONMENT "NEVERD_SIGNATURE_CACHE=off"
     DISCOVERY_MODE PRE_TEST
     DISCOVERY_TIMEOUT ${ARG_DISCOVERY_TIMEOUT})
 endfunction()

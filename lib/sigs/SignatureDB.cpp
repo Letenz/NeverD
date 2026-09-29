@@ -55,31 +55,31 @@ llvm::Expected<ParsedSource> parseSource(llvm::StringRef Text) {
   return std::move(Source);
 }
 
-} // namespace
-
-void SignatureDB::commitSource(std::vector<PatternChunk> &&Chunks,
-                               std::unique_ptr<uint8_t[]> Bytes,
-                               const std::string &LibName,
-                               const std::string &FilePath) {
+/// The modules \p Chunks hold, in order; the names they point into move to
+/// \p Names.
+std::vector<StoredModule> takeModules(std::vector<PatternChunk> &Chunks,
+                                      std::vector<PatternNames> &Names) {
   std::vector<StoredModule> Mods;
-  std::vector<PatternNames> Names;
   for (PatternChunk &Chunk : Chunks) {
     Mods.insert(Mods.end(), Chunk.Modules.begin(), Chunk.Modules.end());
     Names.push_back(std::move(Chunk.Names));
   }
+  return Mods;
+}
 
+} // namespace
+
+void SignatureDB::commitSource(SigSource Src, std::vector<StoredModule> Mods) {
+  Src.ModuleCount = Mods.size();
   auto Existing = std::find_if(
       LoadedFiles.begin(), LoadedFiles.end(),
-      [&](const SigSource &Source) { return Source.Path == FilePath; });
+      [&](const SigSource &Source) { return Source.Path == Src.Path; });
   if (Existing != LoadedFiles.end()) {
     const size_t Start = Existing->ModuleStart;
     Modules.erase(Modules.begin() + Start,
                   Modules.begin() + Start + Existing->ModuleCount);
     Modules.insert(Modules.begin() + Start, Mods.begin(), Mods.end());
-    Existing->LibraryName = LibName;
-    Existing->ModuleCount = Mods.size();
-    Existing->Bytes = std::move(Bytes);
-    Existing->Names = std::move(Names);
+    *Existing = std::move(Src);
 
     size_t ModuleStart = 0;
     for (SigSource &Source : LoadedFiles) {
@@ -91,15 +91,8 @@ void SignatureDB::commitSource(std::vector<PatternChunk> &&Chunks,
     return;
   }
 
-  SigSource Src;
-  Src.Path = FilePath;
-  Src.LibraryName = LibName;
   Src.ModuleStart = Modules.size();
-  Src.ModuleCount = Mods.size();
-  Src.Bytes = std::move(Bytes);
-  Src.Names = std::move(Names);
   LoadedFiles.push_back(std::move(Src));
-
   Modules.insert(Modules.end(), Mods.begin(), Mods.end());
   Index.reset();
   clearMatches();
@@ -126,6 +119,20 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   auto Ext = Path.extension().string();
 
   if (Ext == ".pat") {
+    SigSource Src;
+    Src.Path = Path.string();
+    Src.LibraryName = libraryName(Path);
+    const std::optional<SignatureCache::SourceIdentity> Identity =
+        Cache ? SignatureCache::identify(Path) : std::nullopt;
+    if (Identity) {
+      if (std::optional<SignatureCache::Entry> Hit =
+              Cache->load(Path, *Identity)) {
+        Src.Mapping = std::move(Hit->Mapping);
+        Src.Names.push_back(std::move(Hit->Names));
+        commitSource(std::move(Src), std::move(Hit->Modules));
+        return llvm::Error::success();
+      }
+    }
     auto BufferOrErr = llvm::MemoryBuffer::getFile(
         Path.string(), /*IsText=*/false, /*RequiresNullTerminator=*/false);
     if (!BufferOrErr)
@@ -135,8 +142,12 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
     auto SourceOrErr = parseSource((*BufferOrErr)->getBuffer());
     if (!SourceOrErr)
       return SourceOrErr.takeError();
-    commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
-                 libraryName(Path), Path.string());
+    std::vector<StoredModule> Mods =
+        takeModules(SourceOrErr->Chunks, Src.Names);
+    Src.Bytes = std::move(SourceOrErr->Bytes);
+    if (Identity)
+      Cache->store(Path, *Identity, Mods);
+    commitSource(std::move(Src), std::move(Mods));
     return llvm::Error::success();
   }
 
@@ -150,8 +161,12 @@ llvm::Error SignatureDB::loadPatternText(llvm::StringRef Text,
   auto SourceOrErr = parseSource(Text);
   if (!SourceOrErr)
     return SourceOrErr.takeError();
-  commitSource(std::move(SourceOrErr->Chunks), std::move(SourceOrErr->Bytes),
-               LibraryName.str(), LibraryName.str());
+  SigSource Src;
+  Src.Path = LibraryName.str();
+  Src.LibraryName = LibraryName.str();
+  std::vector<StoredModule> Mods = takeModules(SourceOrErr->Chunks, Src.Names);
+  Src.Bytes = std::move(SourceOrErr->Bytes);
+  commitSource(std::move(Src), std::move(Mods));
   return llvm::Error::success();
 }
 
@@ -267,16 +282,51 @@ llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
 
 llvm::Error
 SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
-  // Every file is cut into chunks of whole lines, and one pool of workers
-  // parses the chunks of all of them: one large file keeps every worker as
-  // busy as many small ones do.  A parsed chunk no longer refers to its text,
-  // so a file is let go as soon as its last chunk is done.
+  // A file the cache holds as it is now is mapped rather than parsed.  Every
+  // entry is opened, and the pieces of all of them -- checking their blocks,
+  // making their modules -- are shared out among the workers, as the chunks
+  // of the files that are parsed are below.
+  std::vector<std::optional<SignatureCache::SourceIdentity>> Identities(
+      PatFiles.size());
+  std::vector<std::optional<SignatureCache::PendingEntry>> Pending(
+      PatFiles.size());
+  if (Cache)
+    neverd::parallelForEach(PatFiles.size(), [&](auto Claim, size_t Total) {
+      for (size_t I = Claim(); I < Total; I = Claim()) {
+        Identities[I] = SignatureCache::identify(PatFiles[I]);
+        if (Identities[I])
+          Pending[I] = Cache->open(PatFiles[I], *Identities[I]);
+      }
+    });
+  std::vector<std::pair<size_t, size_t>> Pieces;
+  for (size_t I = 0; I < PatFiles.size(); ++I)
+    if (Pending[I])
+      for (size_t Piece = 0; Piece < Pending[I]->pieces(); ++Piece)
+        Pieces.emplace_back(I, Piece);
+  std::vector<std::atomic<bool>> Damaged(PatFiles.size());
+  neverd::parallelForEach(Pieces.size(), [&](auto Claim, size_t Total) {
+    for (size_t W = Claim(); W < Total; W = Claim())
+      if (!Pending[Pieces[W].first]->run(Pieces[W].second))
+        Damaged[Pieces[W].first] = true;
+  });
+  std::vector<std::optional<SignatureCache::Entry>> Cached(PatFiles.size());
+  for (size_t I = 0; I < PatFiles.size(); ++I)
+    if (Pending[I] && !Damaged[I])
+      Cached[I] = std::move(*Pending[I]).take();
+  Pending.clear();
+
+  // Every other file is cut into chunks of whole lines, and one pool of
+  // workers parses the chunks of all of them: one large file keeps every
+  // worker as busy as many small ones do.  A parsed chunk no longer refers to
+  // its text, so a file is let go as soon as its last chunk is done.
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> Buffers(PatFiles.size());
   std::vector<std::unique_ptr<uint8_t[]>> Bytes(PatFiles.size());
   std::vector<PatternChunk> Chunks;
   std::vector<size_t> FirstChunk(PatFiles.size() + 1), FileOf;
   for (size_t I = 0; I < PatFiles.size(); ++I) {
     FirstChunk[I] = Chunks.size();
+    if (Cached[I])
+      continue;
     auto BufferOrErr =
         llvm::MemoryBuffer::getFile(PatFiles[I].string(), /*IsText=*/false,
                                     /*RequiresNullTerminator=*/false);
@@ -303,6 +353,10 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   // and leaves the database as it was.
   size_t Count = 0;
   for (size_t I = 0; I < PatFiles.size(); ++I) {
+    if (Cached[I]) {
+      Count += Cached[I]->Modules.size();
+      continue;
+    }
     const llvm::ArrayRef<PatternChunk> FileChunks(
         Chunks.data() + FirstChunk[I], Chunks.data() + FirstChunk[I + 1]);
     const bool Opened = FirstChunk[I] != FirstChunk[I + 1] || Buffers[I];
@@ -329,11 +383,18 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     Source.Path = PatFiles[I].string();
     Source.LibraryName = libraryName(PatFiles[I]);
     Source.ModuleStart = NewModules.size();
-    Source.Bytes = std::move(Bytes[I]);
-    for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C) {
-      NewModules.insert(NewModules.end(), Chunks[C].Modules.begin(),
-                        Chunks[C].Modules.end());
-      Source.Names.push_back(std::move(Chunks[C].Names));
+    if (Cached[I]) {
+      NewModules.insert(NewModules.end(), Cached[I]->Modules.begin(),
+                        Cached[I]->Modules.end());
+      Source.Mapping = std::move(Cached[I]->Mapping);
+      Source.Names.push_back(std::move(Cached[I]->Names));
+    } else {
+      Source.Bytes = std::move(Bytes[I]);
+      for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C) {
+        NewModules.insert(NewModules.end(), Chunks[C].Modules.begin(),
+                          Chunks[C].Modules.end());
+        Source.Names.push_back(std::move(Chunks[C].Names));
+      }
     }
     Source.ModuleCount = NewModules.size() - Source.ModuleStart;
     NewSources.push_back(std::move(Source));
@@ -342,6 +403,18 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   LoadedFiles.swap(NewSources);
   Index.reset();
   clearMatches();
+
+  // What was parsed is kept for the next load, once the whole batch has
+  // loaded.
+  if (Cache)
+    neverd::parallelForEach(LoadedFiles.size(), [&](auto Claim, size_t Total) {
+      for (size_t I = Claim(); I < Total; I = Claim())
+        if (Identities[I] && !LoadedFiles[I].Mapping)
+          Cache->store(
+              PatFiles[I], *Identities[I],
+              llvm::ArrayRef(Modules).slice(LoadedFiles[I].ModuleStart,
+                                            LoadedFiles[I].ModuleCount));
+    });
   return llvm::Error::success();
 }
 
