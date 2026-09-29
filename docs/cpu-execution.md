@@ -18,19 +18,50 @@ select a contract's fixed profile; explicit unsupported values fail.
 | `backend` | `auto` | `auto`, `unicorn`, `kvm` or `whp` |
 | `contract` | `software-cpu-v1` | Versioned execution semantics |
 | `architecture` | `x86_64` | `x86_64` or `aarch64` |
-| `privilege` | Contract profile | `flat`, `supervisor` or `user`; `user` is currently rejected |
+| `privilege` | Contract profile | `flat`, `supervisor` or `user`; must match the chosen contract |
 | `virtual_address_bits` | Contract profile | Checked profiles use 48 bits; flat profiles expose a 64-bit direct mapping namespace |
 | `page_size` | 4096 | Guest mapping granule; other values are rejected |
 | `required_features` | `[]` | Required feature names from [the inventory](../include/neverd/emulation/ExecutionConfiguration.def) |
 
 `driver-strict` accepts x64; `software-cpu-v1` accepts x64 and ARM64.
-`checked-x64-v1` and `checked-aarch64-v1` require their named architecture.
+`checked-x64-v1` and `checked-aarch64-v1` require their named architecture
+and execute at supervisor privilege. `checked-user-x64-v1` and
+`checked-user-aarch64-v1` execute the same bounded scalar instruction inventory
+at CPL3 and EL0, respectively, with architectural MMU isolation. They support
+Unicorn and matching-host KVM/WHP; `auto` follows the existing host selection.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
-64-bit hardware virtual-address mode. Checked profiles execute at supervisor
-privilege with their fixed page-table model. Saving vector register state does
-not establish permission to execute SIMD: checked profiles reject FP/SIMD,
-MMIO, port I/O, service traps, user isolation and parallel CPU requirements.
+64-bit hardware virtual-address mode. Saving vector register state does not
+establish permission to execute SIMD: all checked profiles reject FP/SIMD,
+MMIO, port I/O, service traps and parallel CPU requirements.
+
+User execution requires `UserAccessible` as well as the appropriate `Read`,
+`Write` or `Execute` bit on **every** mapped page. Existing mappings default to
+supervisor access. Aliases have independent rights even when sharing physical
+bytes. `UserAccessible` alone grants no access. Trusted host memory operations
+and supervisor CPUs continue to use RWX; they can prepare or inspect user and
+supervisor pages. Flat software profiles ignore the privilege bit. For example:
+
+```cpp
+Configuration.Contract = ExecutionContract::CheckedUserX64;
+Configuration.Privilege = ExecutionPrivilege::User;
+auto CPU = llvm::cantFail(createExecutionBackend(Configuration, Space)).CPU;
+llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
+```
+
+A CPU's privilege is fixed by its contract. Context restore and address-space
+binding preserve it; writing x64 segment selectors cannot escalate privilege.
+Recoverable data-access faults retain the original instruction and registers
+until their owner resolves or delivers the fault. Host-side `canAccess` checks
+exactly the requested bits; add `UserAccessible` to query user visibility.
+`executable` checks the selected CPU's execution permissions.
+
+Page tables are private CPU projections. A supervisor projection preserves its
+existing supervisor-only translation semantics; a user projection marks only
+explicitly user-accessible guest pages as user pages. ARM64 user projections
+also make user pages non-executable at EL1. This does not expose mutable guest
+page tables or a privilege-switch instruction API. Syscalls, exceptions,
+process loading and OS services remain separate runtime work.
 
 Unknown fields, null field values, invalid names, duplicate required features,
 invalid numeric widths and unsupported combinations fail. Input is limited to
@@ -136,6 +167,8 @@ Older external CPU implementations that only override
 A stopped CPU, software HLT, deadline or guest trap never establishes successful
 workload completion. Instruction/event budgets, service dispatch, process/thread
 exit, exception delivery and workload success remain runtime/OS decisions.
-General runtime extraction, real user privilege, independently interruptible KVM
-and the additional OS workloads remain unfinished; these queries do not claim
-those capabilities.
+General runtime extraction, service/exception delivery, independently
+interruptible KVM and the additional OS workloads remain unfinished. CPU user
+isolation is not evidence of a working Windows, Linux/Android or Darwin app.
+Native Windows and ARM64 user execution still require hardware validation;
+Unicorn execution and cross-compilation do not replace that evidence.

@@ -1,0 +1,36 @@
+//===- UserExecutionCases.def - Privilege boundary fixtures --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_USER_VALUE
+NEVERD_USER_VALUE(PageSize, 4096)
+NEVERD_USER_VALUE(Limit, 16 * PageSize)
+NEVERD_USER_VALUE(Code, 0x10000)
+NEVERD_USER_VALUE(Data, 0x20000)
+NEVERD_USER_VALUE(Alias, 0x30000)
+NEVERD_USER_VALUE(Stack, 0x40000)
+NEVERD_USER_VALUE(Value, 0x12345678)
+NEVERD_USER_VALUE(Updated, 0x87654321)
+NEVERD_USER_VALUE(Timeout, 1000000)
+#endif
+#ifdef NEVERD_USER_X64
+NEVERD_USER_X64(StackX64, 0x50, 0x5a, 0x90)
+NEVERD_USER_X64(LoadX64, 0x48, 0x8b, 0x01, 0x90)
+NEVERD_USER_X64(StoreX64, 0x48, 0x89, 0x01, 0x90)
+NEVERD_USER_X64(PrivilegedX64, 0x0f, 0x20, 0xc0, 0x90)
+#endif
+#ifdef NEVERD_USER_ARM
+NEVERD_USER_ARM(StackARM, 0xf81f0fe0, 0xf84107e2, 0xd503201f)
+NEVERD_USER_ARM(LoadARM, 0xf9400020, 0xd503201f)
+NEVERD_USER_ARM(StoreARM, 0xf9000020, 0xd503201f)
+NEVERD_USER_ARM(PrivilegedARM, 0xd5381000, 0xd503201f)
+#endif
+#ifdef NEVERD_USER_PROFILE
+NEVERD_USER_PROFILE(UnicornX64, Unicorn, X64, CheckedUserX64)
+NEVERD_USER_PROFILE(UnicornARM64, Unicorn, AArch64, CheckedUserAArch64)
+NEVERD_USER_PROFILE(KvmX64, KVM, X64, CheckedUserX64)
+NEVERD_USER_PROFILE(KvmARM64, KVM, AArch64, CheckedUserAArch64)
+NEVERD_USER_PROFILE(WhpX64, WHP, X64, CheckedUserX64)
+NEVERD_USER_PROFILE(WhpARM64, WHP, AArch64, CheckedUserAArch64)
+#endif

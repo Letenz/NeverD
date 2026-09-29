@@ -14,6 +14,8 @@ NEVERD_EXECUTION_CONTRACT(Legacy, "driver-strict")
 NEVERD_EXECUTION_CONTRACT(CheckedX64, "checked-x64-v1")
 NEVERD_EXECUTION_CONTRACT(CheckedAArch64, "checked-aarch64-v1")
 NEVERD_EXECUTION_CONTRACT(Software, "software-cpu-v1")
+NEVERD_EXECUTION_CONTRACT(CheckedUserX64, "checked-user-x64-v1")
+NEVERD_EXECUTION_CONTRACT(CheckedUserAArch64, "checked-user-aarch64-v1")
 #endif
 #ifdef NEVERD_EXECUTION_TEXT
 NEVERD_EXECUTION_TEXT(RequestedBackend, "requested_backend")

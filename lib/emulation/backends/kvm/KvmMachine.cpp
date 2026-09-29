@@ -39,11 +39,13 @@ public:
     S.efer = x64::EFER;
     S.cr8 = State.reg(X64Register::CR8);
     kvm_segment Code{}, Data{};
-    Code.selector = x64::CodeSelector;
+    Code.selector = State.UserMode ? x64::UserCodeSelector : x64::CodeSelector;
+    Code.dpl = State.UserMode ? x64::UserPrivilege : 0;
     Code.type = x64::CodeType;
     Code.present = Code.s = Code.l = Code.g = 1;
     Code.limit = x64::SegmentLimit;
-    Data.selector = x64::DataSelector;
+    Data.selector = State.UserMode ? x64::UserDataSelector : x64::DataSelector;
+    Data.dpl = Code.dpl;
     Data.type = x64::DataType;
     Data.present = Data.s = Data.db = Data.g = 1;
     Data.limit = x64::SegmentLimit;

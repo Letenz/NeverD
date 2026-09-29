@@ -23,7 +23,19 @@
 
 namespace neverd::emulation {
 class AddressSpace;
-enum GuestPermission : unsigned { Read = 1, Write = 2, Execute = 4 };
+/// RWX applies to trusted host/supervisor access. User CPUs additionally
+/// require UserAccessible on every page; the bit alone grants no
+/// read/write/execute right. Flat software contracts ignore privilege and apply
+/// only RWX.
+enum GuestPermission : unsigned {
+#define NEVERD_GUEST_PERMISSION(Name, Value) Name = Value,
+#include "neverd/emulation/GuestPermissions.def"
+#undef NEVERD_GUEST_PERMISSION
+};
+#define NEVERD_GUEST_PERMISSION_MASK(Name, Value)                              \
+  inline constexpr unsigned Name = Value;
+#include "neverd/emulation/GuestPermissions.def"
+#undef NEVERD_GUEST_PERMISSION_MASK
 /// A mapping cannot fit in the configured guest memory budget. Callers may
 /// translate this specific shortage into their documented allocation result.
 class GuestMemoryLimitError : public llvm::ErrorInfo<GuestMemoryLimitError> {

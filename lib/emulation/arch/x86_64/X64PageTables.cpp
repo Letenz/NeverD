@@ -13,8 +13,9 @@
 
 namespace neverd::emulation {
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            uint64_t PreviousRoot) {
-  if (!Memory.needsProjection())
+                                            uint64_t PreviousRoot,
+                                            bool UserMode) {
+  if (!Memory.needsProjection(UserMode))
     return PreviousRoot;
   if (auto E = Memory.validateMappings(x64::canonicalRange))
     return E;
@@ -36,7 +37,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
       if (!Entry) {
         if (Next == x64::TableReserve)
           return diagnostic::error(diagnostic::PageTables);
-        Entry = Next | x64::Present | x64::Writable;
+        Entry = Next | x64::Present | x64::Writable | x64::UserPage;
         Next += x64::PageSize;
         llvm::support::endian::write64le(Slot, Entry);
       }
@@ -44,8 +45,10 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
     }
     auto Index = (VA >> x64::PageBits) & (x64::TableEntries - 1);
     uint64_t Entry = P.Physical;
-    if (P.Permissions)
+    if (P.Permissions & GuestAccessPermissions)
       Entry |= x64::Present;
+    if (UserMode && (P.Permissions & UserAccessible))
+      Entry |= x64::UserPage;
     if (P.Permissions & Write)
       Entry |= x64::Writable;
     if (!(P.Permissions & Execute))
@@ -53,7 +56,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
     llvm::support::endian::write64le(
         Memory.data() + Table + Index * x64::WordBytes, Entry);
   }
-  Memory.commitProjection();
+  Memory.commitProjection(UserMode);
   return Root;
 }
 } // namespace neverd::emulation

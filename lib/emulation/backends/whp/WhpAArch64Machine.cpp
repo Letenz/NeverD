@@ -29,12 +29,14 @@ public:
     };
     for (unsigned N = 0; N < GPRCount; ++N)
       Add(WHV_REGISTER_NAME(WHvArm64RegisterX0 + N), State.Registers[N]);
-    Add(WHvArm64RegisterSpEl1, State.reg(AArch64Register::SP));
+    Add(State.UserMode ? WHvArm64RegisterSpEl0 : WHvArm64RegisterSpEl1,
+        State.reg(AArch64Register::SP));
+    const uint64_t Mode = State.UserMode ? PStateEL0t : PStateEL1h;
     const unsigned GeneralCount = Names.size();
     Add(WHvArm64RegisterPc, EntryGPA);
     Add(WHvArm64RegisterPstate, PStateEL1h | PStateDAIF);
     Add(WHvArm64RegisterElrEl1, State.reg(AArch64Register::PC));
-    Add(WHvArm64RegisterSpsrEl1, State.reg(AArch64Register::NZCV) | PStateEL1h |
+    Add(WHvArm64RegisterSpsrEl1, State.reg(AArch64Register::NZCV) | Mode |
                                      (PStateDAIF & ~PStateDebugMask) |
                                      PStateSingleStep);
     Add(WHvArm64RegisterMdscrEl1,
@@ -54,7 +56,8 @@ public:
     if (auto E = run(Exit, Control))
       return E;
     if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
-        Exit.Hypercall.Header.Pc != VectorGPA + CurrentELVector ||
+        Exit.Hypercall.Header.Pc !=
+            VectorGPA + (State.UserMode ? LowerELVector : CurrentELVector) ||
         Exit.Hypercall.Immediate)
       return diagnostic::error(diagnostic::WhpExit);
     Names.resize(GeneralCount);
@@ -66,7 +69,8 @@ public:
             Partition, 0, Names.data(), Names.size(), Values.data())))
       return diagnostic::error(diagnostic::WhpState);
     if (((Values[GeneralCount].Reg64 >> ExceptionClassShift) &
-         ExceptionClassMask) != StepFromEL1)
+         ExceptionClassMask) !=
+        (State.UserMode ? StepFromLowerEL : StepFromEL1))
       return diagnostic::error(diagnostic::ArmState);
     for (unsigned N = 0; N < GPRCount; ++N)
       State.Registers[N] = Values[N].Reg64;

@@ -108,7 +108,8 @@ std::optional<BackendFaultKind> MemoryProjection::check(uint64_t A, uint64_t N,
   std::lock_guard Lock(Space->State->Memory->State->Mutex);
   return Space->State->check(A, N, P);
 }
-void MemoryProjection::commitProjection() {
+void MemoryProjection::commitProjection(bool UserMode) {
+  ProjectedUserMode = UserMode;
   ProjectedPages = mappings();
   Generation = mappingGeneration();
   ProjectedSpace = Space;

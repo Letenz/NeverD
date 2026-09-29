@@ -1285,6 +1285,8 @@ constants and transport parameters.
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
 | `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-user-x64-v1` | x64 | The checked integer inventory at CPL3 with explicit user page permissions |
+| `checked-user-aarch64-v1` | ARM64 | The checked integer inventory at EL0 with explicit user page permissions |
 
 For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
 matching Windows host, and Unicorn for cross-ISA execution or other host OSes.
@@ -1321,6 +1323,33 @@ replacement or CPU-context restoration. KVM uses `KVM_SET_ONE_REG`,
 an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
 x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
 before accepting guest work.
+
+The checked user profiles additionally require `UserAccessible` on each guest
+instruction/data page. Privilege is immutable CPU state, independent of the
+address-space owner or host OS. Supervisor and flat contracts preserve their
+existing behavior; their RWX mapping projection ignores the user marker.
+User page-table projections encode x64 U/S at every paging level and ARM64 AP,
+UXN/PXN at the leaf. A user marker without RWX leaves the leaf inaccessible.
+Private monitor pages remain supervisor-only. Each projection records its
+privilege mode as well as address-space identity and mapping generation.
+
+Checked Unicorn user execution maps physical RAM and walks the same page-table
+images as the native adapters. Its x64 bootstrap executes a private SYSRET once
+to establish CPL3 segment caches; writing selectors alone is insufficient in
+the pinned engine. ARM64 executes the maintenance gate and ERET to EL0 before
+each guest step, maintaining the architectural exception-level state and stack
+bank. Native x64 adapters set both selector RPL and descriptor DPL; ARM64
+adapters use SP_EL0 and EL0 saved state. WHP accepts the matching lower-EL debug
+vector and syndrome. Guest service instructions remain outside these contracts;
+the monitor transitions do not implement an OS syscall ABI.
+
+These page and privilege encodings follow Intel's
+[system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+and Arm's [address translation guide](https://documentation-service.arm.com/static/5efa1d23dbdee951c1ccdec5).
+Tests bypass checked instruction admission and memory preflight to validate
+user access and denial directly at the machine boundary. Current runtime
+coverage includes Unicorn x64/ARM64 and native x64 KVM; native WHP and ARM64 KVM
+still require corresponding hardware.
 
 Both x64 and ARM64 WHP use one cancellation worker per partition. It observes
 the CPU's borrowed stop token and native deadline, retries cancellation until
