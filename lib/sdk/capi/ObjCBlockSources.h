@@ -87,6 +87,7 @@ struct Value {
     Invoke,
     Isa,
     OpaqueBytes,
+    CapturedBytes, // exact 16-byte context range, with its source offset
     PointerBits,
     Receiver,
     CapturedWord,
@@ -364,7 +365,8 @@ public:
         return V;
       }
       if (Bytes == E->Operands[0]->Type->Size &&
-          (Bytes == 8 || V.K == Value::OpaqueBytes))
+          (Bytes == 8 || V.K == Value::OpaqueBytes ||
+           V.K == Value::CapturedBytes))
         return V;
       // Deferred image bytes are an ordinary loaded value, not a pointer
       // identity. A width conversion loses the raw header-byte recipe while
@@ -869,7 +871,7 @@ inline std::vector<ObjCStackBlockSource>
 stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             const std::map<va_t, const HighFunc *> &Functions,
             const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers,
-            std::string &Reason) {
+            uint64_t ParentLiteralSize, std::string &Reason) {
   const auto &Image = Source.Image;
   // A stack literal needs a store for its ISA/header. Avoid constructing a
   // source-flow graph for the many native functions that cannot build one.
@@ -952,7 +954,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
                  ParentReceivers ? std::optional<size_t>(0) : std::nullopt);
     if (ParentReceivers)
       State.ContextRead = [&](const Value &Address, unsigned Bytes) -> Value {
-        if (Bytes != 8 || Address.Offset < 32)
+        if (Address.Offset < 32 ||
+            static_cast<uint64_t>(Address.Offset) + Bytes > ParentLiteralSize)
+          return {};
+        if (Bytes == 16) {
+          // The vector remains opaque except for an authenticated 8-byte
+          // receiver lane. Its other bytes acquire no object or pointer type.
+          for (unsigned Lane : {0u, 8u})
+            if (ParentReceivers->count(Address.Offset + Lane))
+              return {Value::CapturedBytes, Address.Offset};
+          return {Value::OpaqueBytes};
+        }
+        if (Bytes != 8)
           return {};
         const auto Root = ParentReceivers->find(Address.Offset);
         if (Root == ParentReceivers->end())
@@ -1079,20 +1092,29 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         for (uint64_t Offset = Capture.Offset;
              Offset + 8 <= Capture.Offset + Capture.Size; Offset += 8) {
           const auto Begin = Memory.find(Base + static_cast<int64_t>(Offset));
-          if (Begin == Memory.end() || Begin->second.Index ||
-              Begin->second.Width != 8)
+          if (Begin == Memory.end() ||
+              (Begin->second.Index && Begin->second.Index != 8) ||
+              (Begin->second.Width != 8 && Begin->second.Width != 16))
             continue;
           const auto &Captured = Begin->second.V;
           bool Complete = true;
           for (unsigned I = 1; I < 8; ++I) {
             const auto Byte =
                 Memory.find(Base + static_cast<int64_t>(Offset) + I);
-            Complete &= Byte != Memory.end() && Byte->second.Index == I &&
-                        Byte->second.Width == 8 &&
+            Complete &= Byte != Memory.end() &&
+                        Byte->second.Index == Begin->second.Index + I &&
+                        Byte->second.Width == Begin->second.Width &&
                         Byte->second.V.Producer == Captured.Producer;
           }
           if (!Complete)
             continue;
+          if (Captured.K == Value::CapturedBytes && ParentReceivers) {
+            const auto Parent =
+                ParentReceivers->find(Captured.Offset + Begin->second.Index);
+            if (Parent != ParentReceivers->end())
+              Result.CapturedReceivers.emplace(Offset, Parent->second);
+            continue;
+          }
           if (Captured.K != Value::Receiver)
             continue;
           if (!Captured.Offset && Captured.Bits == Function.Entry) {
@@ -1347,7 +1369,8 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         // block remains discoverable, while any header or owned capture that
         // relies on these untyped bytes still fails closed.
         const Value Stored =
-            scalarWidth(Bytes) || (Bytes == 16 && V.K == Value::OpaqueBytes)
+            scalarWidth(Bytes) || (Bytes == 16 && (V.K == Value::OpaqueBytes ||
+                                                   V.K == Value::CapturedBytes))
                 ? V
                 : Value{Value::UnprovenIdentity};
         State.storeFrame(Address, Bytes, Stored);
@@ -1462,15 +1485,28 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
   std::map<va_t, const HighFunc *> Functions;
   for (const auto &Function : Result.HighFuncs)
     Functions.emplace(Function.Entry, &Function);
+  std::map<va_t, uint64_t> ParentLiteralSizes;
+  if (Previous && Previous->SourceImage == &Image)
+    for (const auto &[Parent, Blocks] : Previous->StackBlocks) {
+      (void)Parent;
+      for (const auto &Block : Blocks) {
+        const auto [It, Inserted] = ParentLiteralSizes.try_emplace(
+            Block.InvokeEntry, Block.Descriptor.LiteralSize);
+        if (!Inserted)
+          It->second = std::min(It->second, Block.Descriptor.LiteralSize);
+      }
+    }
   for (const auto &Function : Result.HighFuncs) {
     std::string Error;
     const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers = nullptr;
+    uint64_t ParentLiteralSize = 0;
     if (Previous && Previous->SourceImage == &Image &&
         Function.SourceTypeHint) {
       const auto Captures = Previous->CaptureReceivers.find(Function.Entry);
       const auto Invoke = Previous->InvokeHints.find(Function.Entry);
       if (Captures != Previous->CaptureReceivers.end() &&
           !Captures->second.empty() &&
+          ParentLiteralSizes.count(Function.Entry) &&
           Invoke != Previous->InvokeHints.end() &&
           objc_projection_detail::sameHint(*Function.SourceTypeHint,
                                            Invoke->second) &&
@@ -1485,9 +1521,11 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
                        objcReceiverTypeHintValid(Image, Root);
               }))
         ParentReceivers = &Captures->second;
+      if (ParentReceivers)
+        ParentLiteralSize = ParentLiteralSizes.at(Function.Entry);
     }
-    auto Blocks =
-        stackBlocks(Source, Function, Functions, ParentReceivers, Error);
+    auto Blocks = stackBlocks(Source, Function, Functions, ParentReceivers,
+                              ParentLiteralSize, Error);
     if (!Error.empty())
       Plan.Rejections[Function.Entry] = std::move(Error);
     for (auto &Block : Blocks)
@@ -1661,9 +1699,8 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
   // plan cannot authorize a receiver read in the current result.
   const auto HasRoots = [](const ObjCBlockSourcePlan &Current) {
     return std::any_of(Current.CaptureReceivers.begin(),
-                       Current.CaptureReceivers.end(), [](const auto &Entry) {
-                         return !Entry.second.empty();
-                       });
+                       Current.CaptureReceivers.end(),
+                       [](const auto &Entry) { return !Entry.second.empty(); });
   };
   for (unsigned Depth = 0; Depth < 16 && HasRoots(Plan); ++Depth) {
     auto Next = discoverObjCBlockSourcesPass(Source, Result, &Plan);

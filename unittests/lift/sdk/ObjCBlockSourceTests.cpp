@@ -394,107 +394,122 @@ TEST(ObjCBlockSources, StrongCaptureRetainsOnlyProvenMethodSelfClass) {
             "TestOwner");
 }
 
-TEST(ObjCBlockSources, NestedStrongCaptureRetainsProvenMethodSelfClass) {
-  OwnedSourceFixture F(Arch::AArch64);
-  ObjCMethod Method;
-  Method.Implementation = F.Caller;
-  Method.ClassName = "TestOwner";
-  Method.Selector = "makeBlock";
-  Method.TypeEncoding = "@16@0:8";
-  Method.TypeHint =
-      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
-  ASSERT_TRUE(Method.TypeHint);
-  F.Image.ObjCMethods.push_back(Method);
-  const auto Signature = objcMethodSourceTypeHint(F.Image, F.Caller);
-  ASSERT_TRUE(Signature);
-  F.caller().SourceTypeHint = *Signature;
-  F.caller().ReturnType = Signature->ReturnType;
-  F.caller().Params.clear();
-  for (const auto &Parameter : Signature->Parameters)
-    F.caller().Params.push_back({Parameter.Name, Parameter.Type});
+TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
+  for (bool Wide : {false, true}) {
+    SCOPED_TRACE(Wide ? "16-byte context copy" : "8-byte context copy");
+    OwnedSourceFixture F(Arch::AArch64);
+    if (Wide) {
+      F.put64(F.Descriptor + 8, 48);
+      F.caller().Body.insert(
+          F.caller().Body.begin() + 5,
+          store(frame(F.Image, -8), HighExpr::makeConst(0, 8)));
+    }
+    ObjCMethod Method;
+    Method.Implementation = F.Caller;
+    Method.ClassName = "TestOwner";
+    Method.Selector = "makeBlock";
+    Method.TypeEncoding = "@16@0:8";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    F.Image.ObjCMethods.push_back(Method);
+    const auto Signature = objcMethodSourceTypeHint(F.Image, F.Caller);
+    ASSERT_TRUE(Signature);
+    F.caller().SourceTypeHint = *Signature;
+    F.caller().ReturnType = Signature->ReturnType;
+    F.caller().Params.clear();
+    for (const auto &Parameter : Signature->Parameters)
+      F.caller().Params.push_back({Parameter.Name, Parameter.Type});
 
-  constexpr va_t NestedInvoke = 0x1500, NestedDescriptor = 0x2280,
-                 NestedSignature = 0x2380;
-  F.put64(NestedDescriptor + 8, 40);
-  F.put64(NestedDescriptor + 16, F.Copy);
-  F.put64(NestedDescriptor + 24, F.Dispose);
-  F.put64(NestedDescriptor + 32, NestedSignature);
-  F.put64(NestedDescriptor + 40, 0x100);
-  F.string(NestedSignature, "i12@?0i8");
+    constexpr va_t NestedInvoke = 0x1500, NestedDescriptor = 0x2280,
+                   NestedSignature = 0x2380;
+    F.put64(NestedDescriptor + 8, Wide ? 48 : 40);
+    F.put64(NestedDescriptor + 16, F.Copy);
+    F.put64(NestedDescriptor + 24, F.Dispose);
+    F.put64(NestedDescriptor + 32, NestedSignature);
+    F.put64(NestedDescriptor + 40, 0x100);
+    F.string(NestedSignature, "i12@?0i8");
 
-  auto &OuterInvoke = F.Result.HighFuncs[0];
-  OuterInvoke.FrameSize = 64;
-  const auto Pointer = NdType::makePtr(NdType::makeVoid());
-  const auto CapturedSelf = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
-                          HighExpr::makeConst(32, 8)),
-      Pointer);
-  OuterInvoke.Body = {
-      store(frame(F.Image, -48),
-            HighExpr::makeLoad(HighExpr::makeConst(F.StackIsa, 8), Pointer)),
-      store(frame(F.Image, -40), HighExpr::makeConst(0xc2000000, 8)),
-      store(frame(F.Image, -32), HighExpr::makeConst(NestedInvoke, 8)),
-      store(frame(F.Image, -24), HighExpr::makeConst(NestedDescriptor, 8)),
-      store(frame(F.Image, -16), CapturedSelf)};
-  HighStmt CopyBlock;
-  CopyBlock.Kind = StmtKind::ExprStmt;
-  CopyBlock.Val =
-      HighExpr::makeCall("objc_retainBlock", 0, {frame(F.Image, -48)});
-  CopyBlock.Val->SourceCallHint = std::make_shared<SourceCallTypeHint>(
-      *objcRuntimeSourceCallHint(F.Image, F.CopyImport));
-  CopyBlock.Val->Type = Pointer;
-  OuterInvoke.Body.push_back(std::move(CopyBlock));
-  OuterInvoke.Body.push_back(ret(parameter(1, NdType::makeInt(4, true))));
+    auto &OuterInvoke = F.Result.HighFuncs[0];
+    OuterInvoke.FrameSize = 64;
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto CapturedSelf = HighExpr::makeLoad(
+        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
+                            HighExpr::makeConst(32, 8)),
+        Wide ? NdType::makeInt(16) : Pointer);
+    OuterInvoke.Body = {
+        store(frame(F.Image, -48),
+              HighExpr::makeLoad(HighExpr::makeConst(F.StackIsa, 8), Pointer)),
+        store(frame(F.Image, -40), HighExpr::makeConst(0xc2000000, 8)),
+        store(frame(F.Image, -32), HighExpr::makeConst(NestedInvoke, 8)),
+        store(frame(F.Image, -24), HighExpr::makeConst(NestedDescriptor, 8)),
+        store(frame(F.Image, -16), CapturedSelf)};
+    HighStmt CopyBlock;
+    CopyBlock.Kind = StmtKind::ExprStmt;
+    CopyBlock.Val =
+        HighExpr::makeCall("objc_retainBlock", 0, {frame(F.Image, -48)});
+    CopyBlock.Val->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+        *objcRuntimeSourceCallHint(F.Image, F.CopyImport));
+    CopyBlock.Val->Type = Pointer;
+    OuterInvoke.Body.push_back(std::move(CopyBlock));
+    OuterInvoke.Body.push_back(ret(parameter(1, NdType::makeInt(4, true))));
 
-  const ObjCBlockSourceContext Source(F.Image);
-  const auto First = discoverObjCBlockSourcesPass(Source, F.Result);
-  ASSERT_EQ(First.CaptureReceivers.count(F.Invoke), 1U)
-      << (First.Rejections.count(F.Caller) ? First.Rejections.at(F.Caller)
-                                           : "");
-  ASSERT_EQ(First.CaptureReceivers.at(F.Invoke).count(32), 1U);
-  ASSERT_EQ(First.CaptureReceivers.at(F.Invoke).at(32).ClassName, "TestOwner");
-  ASSERT_EQ(First.StackBlocks.count(F.Invoke), 1U)
-      << (First.Rejections.count(F.Invoke) ? First.Rejections.at(F.Invoke)
-                                           : "");
-  ASSERT_EQ(First.CaptureReceivers.count(NestedInvoke), 1U)
-      << (First.Rejections.count(F.Invoke) ? First.Rejections.at(F.Invoke)
-                                           : "");
-  EXPECT_TRUE(First.CaptureReceivers.at(NestedInvoke).empty());
-  const auto Second = discoverObjCBlockSourcesPass(Source, F.Result, &First);
-  ASSERT_EQ(Second.CaptureReceivers.count(NestedInvoke), 1U)
-      << (Second.Rejections.count(F.Invoke) ? Second.Rejections.at(F.Invoke)
-                                            : "");
-  ASSERT_EQ(Second.CaptureReceivers.at(NestedInvoke).count(32), 1U)
-      << (Second.Rejections.count(F.Invoke) ? Second.Rejections.at(F.Invoke)
-                                            : "");
-  ASSERT_EQ(Second.CaptureReceivers.at(NestedInvoke).at(32),
-            First.CaptureReceivers.at(F.Invoke).at(32));
-  EXPECT_EQ(discoverObjCBlockSources(Source, F.Result)
-                .CaptureReceivers.at(NestedInvoke)
-                .at(32),
-            First.CaptureReceivers.at(F.Invoke).at(32));
-  const auto HasNestedRoot = [&](const ObjCBlockSourcePlan &Plan) {
-    const auto It = Plan.CaptureReceivers.find(NestedInvoke);
-    return It != Plan.CaptureReceivers.end() && It->second.count(32);
-  };
+    const ObjCBlockSourceContext Source(F.Image);
+    const auto First = discoverObjCBlockSourcesPass(Source, F.Result);
+    ASSERT_EQ(First.CaptureReceivers.count(F.Invoke), 1U)
+        << (First.Rejections.count(F.Caller) ? First.Rejections.at(F.Caller)
+                                             : "");
+    ASSERT_EQ(First.CaptureReceivers.at(F.Invoke).count(32), 1U);
+    ASSERT_EQ(First.CaptureReceivers.at(F.Invoke).at(32).ClassName,
+              "TestOwner");
+    ASSERT_EQ(First.StackBlocks.count(F.Invoke), 1U)
+        << (First.Rejections.count(F.Invoke) ? First.Rejections.at(F.Invoke)
+                                             : "");
+    ASSERT_EQ(First.CaptureReceivers.count(NestedInvoke), 1U)
+        << (First.Rejections.count(F.Invoke) ? First.Rejections.at(F.Invoke)
+                                             : "");
+    EXPECT_TRUE(First.CaptureReceivers.at(NestedInvoke).empty());
+    const auto Second = discoverObjCBlockSourcesPass(Source, F.Result, &First);
+    ASSERT_EQ(Second.CaptureReceivers.count(NestedInvoke), 1U)
+        << (Second.Rejections.count(F.Invoke) ? Second.Rejections.at(F.Invoke)
+                                              : "");
+    ASSERT_EQ(Second.CaptureReceivers.at(NestedInvoke).count(32), 1U)
+        << (Second.Rejections.count(F.Invoke) ? Second.Rejections.at(F.Invoke)
+                                              : "");
+    ASSERT_EQ(Second.CaptureReceivers.at(NestedInvoke).at(32),
+              First.CaptureReceivers.at(F.Invoke).at(32));
+    EXPECT_EQ(discoverObjCBlockSources(Source, F.Result)
+                  .CaptureReceivers.at(NestedInvoke)
+                  .at(32),
+              First.CaptureReceivers.at(F.Invoke).at(32));
+    const auto HasNestedRoot = [&](const ObjCBlockSourcePlan &Plan) {
+      const auto It = Plan.CaptureReceivers.find(NestedInvoke);
+      return It != Plan.CaptureReceivers.end() && It->second.count(32);
+    };
+    if (Wide) {
+      F.put64(F.Descriptor + 8, 40);
+      EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
+      F.put64(F.Descriptor + 8, 48);
+    }
 
-  auto Forged = First;
-  Forged.CaptureReceivers.at(F.Invoke).at(32).ClassName = "OtherOwner";
-  EXPECT_FALSE(
-      HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
-  Forged = First;
-  Forged.CaptureReceivers.at(F.Invoke).clear();
-  EXPECT_FALSE(
-      HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
-  Forged = First;
-  Forged.SourceImage = nullptr;
-  EXPECT_FALSE(
-      HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
-  OuterInvoke.Body[4].StoreVal = parameter(1, NdType::makeInt(4, true));
-  EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
-  OuterInvoke.Body[4].StoreVal = CapturedSelf;
-  F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 8);
-  EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
+    auto Forged = First;
+    Forged.CaptureReceivers.at(F.Invoke).at(32).ClassName = "OtherOwner";
+    EXPECT_FALSE(
+        HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
+    Forged = First;
+    Forged.CaptureReceivers.at(F.Invoke).clear();
+    EXPECT_FALSE(
+        HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
+    Forged = First;
+    Forged.SourceImage = nullptr;
+    EXPECT_FALSE(
+        HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
+    OuterInvoke.Body[4].StoreVal = parameter(1, NdType::makeInt(4, true));
+    EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
+    OuterInvoke.Body[4].StoreVal = CapturedSelf;
+    F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 8);
+    EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
+  }
 }
 
 TEST(ObjCBlockSources,
