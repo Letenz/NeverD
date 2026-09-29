@@ -35,13 +35,15 @@ public:
     std::lock_guard Lock(Mutex);
     Deadline = Limit;
     Armed = true;
+    CancelIssued = false;
     ++Generation;
     Changed.notify_one();
   }
-  void disarm() {
+  bool disarm() {
     std::lock_guard Lock(Mutex);
     Armed = false;
     Changed.notify_one();
+    return CancelIssued;
   }
 
 private:
@@ -56,8 +58,13 @@ private:
             return Shutdown || !Armed || Generation != CurrentGeneration;
           }))
         continue;
+      CancelIssued = true;
       Partition.API.WHvCancelRunVirtualProcessor(Partition.Partition, 0, 0);
-      Armed = false;
+      // A host deschedule can expire the deadline before WHvRun begins.
+      // Cancellation targets an active call; keep requesting it until the
+      // owning thread acknowledges completion by disarming this generation.
+      Deadline = std::chrono::steady_clock::now() +
+                 std::chrono::microseconds(aarch64::CancelRetryMicroseconds);
     }
   }
   WhpPartition &Partition;
@@ -65,7 +72,7 @@ private:
   std::condition_variable Changed;
   std::chrono::steady_clock::time_point Deadline;
   uint64_t Generation = 0;
-  bool Armed = false, Shutdown = false;
+  bool Armed = false, Shutdown = false, CancelIssued = false;
   std::thread Worker;
 };
 class WhpAArch64Machine final : public AArch64Machine, public WhpPartition {
@@ -111,8 +118,7 @@ public:
                       std::chrono::microseconds(NativeStepGraceMicroseconds)));
     const HRESULT Result =
         API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
-    Watchdog->disarm();
-    if (FAILED(Result))
+    if (Watchdog->disarm() || FAILED(Result))
       return diagnostic::error(diagnostic::WhpRun);
     if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
         Exit.Hypercall.Header.Pc != VectorGPA + CurrentELVector ||
