@@ -9,9 +9,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/KernelMMIO.h"
+#include "os/windows/KernelMMIO.h"
 
 namespace neverd::emulation {
 namespace {

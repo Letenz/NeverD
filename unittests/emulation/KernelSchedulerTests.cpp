@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelScheduler.h"
+#include "os/windows/KernelScheduler.h"
 
 #include <utility>
 

@@ -9,12 +9,12 @@
 /// These tests do not imply USB idle permission or a USB provider contract.
 ///
 //===----------------------------------------------------------------------===//
+#include "backends/unicorn/UnicornBackend.h"
 #include "fixtures/driver_kmdf_child_wake_test.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/DriverImage.h"
-#include "windows/KernelModel.h"
-#include "windows/WindowsKernelLayout.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/KernelModel.h"
+#include "os/windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

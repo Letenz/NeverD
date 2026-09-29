@@ -22,20 +22,11 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 }
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
-CheckedX64Backend::create(ExecutionBackendKind Kind, uint64_t Limit) {
+CheckedX64Backend::create(std::unique_ptr<PhysicalMemory> Memory,
+                          std::unique_ptr<X64Machine> Machine) {
   auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend());
-  auto Memory = PhysicalMemory::create(Limit);
-  if (!Memory)
-    return Memory.takeError();
-  B->Memory = std::move(*Memory);
-  auto Machine = Kind == ExecutionBackendKind::KVM
-                     ? createKvmMachine(B->Memory->data(), B->Memory->size())
-                 : Kind == ExecutionBackendKind::WHP
-                     ? createWhpMachine(B->Memory->data(), B->Memory->size())
-                     : createUnicornX64Machine(*B->Memory);
-  if (!Machine)
-    return Machine.takeError();
-  B->Machine = std::move(*Machine);
+  B->Memory = std::move(Memory);
+  B->Machine = std::move(Machine);
   if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
     return E;
   B->CPU.reg(X64Register::FLAGS) = x64::InitialFlags;

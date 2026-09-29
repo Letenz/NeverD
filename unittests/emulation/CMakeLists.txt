@@ -170,22 +170,22 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
   if(_driver_name STREQUAL "driver_async")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverAsyncCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/WindowsKernelLayout.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def")
   endif()
   if(_driver_name STREQUAL "driver_dispatcher")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverDispatcherCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelDispatcherValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def")
   endif()
   if(_driver_name STREQUAL "driver_context_limits")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverContextLimitCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelPoolFlags.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/WindowsKernelLayout.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/windows/KernelDispatcherValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelPoolFlags.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def")
   endif()
   add_custom_command(OUTPUT "${_driver_image}" "${_driver_object}"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"

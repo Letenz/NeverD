@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelAPIIRQL.h"
+#include "os/windows/KernelAPIIRQL.h"
 
 #include <set>
 #include <string>
@@ -30,12 +30,12 @@ void expectLimit(llvm::StringRef Name, uint8_t Expected) {
 TEST(DriverKernelAPIIRQL, CoversExactSupportedInventoryWithoutDuplicates) {
   const llvm::StringLiteral Supported[] = {
 #define NEVERD_KERNEL_API(Name, Arity, Availability) #Name,
-#include "windows/KernelAPIs.def"
+#include "os/windows/KernelAPIs.def"
 #undef NEVERD_KERNEL_API
   };
   const llvm::StringLiteral Catalog[] = {
 #define NEVERD_KERNEL_IRQL_API(Name, Maximum) #Name,
-#include "windows/KernelAPIIRQL.def"
+#include "os/windows/KernelAPIIRQL.def"
 #undef NEVERD_KERNEL_IRQL_API
   };
   std::set<std::string> SupportedNames;
@@ -55,7 +55,7 @@ TEST(DriverKernelAPIIRQL, CoversExactSupportedInventoryWithoutDuplicates) {
 
 TEST(DriverKernelAPIIRQL, EveryRegistryOperationRequiresPassiveLevel) {
 #define NEVERD_KERNEL_REGISTRY_API(Name, Arity) expectLimit(#Name, 0);
-#include "windows/KernelRegistryAPIs.def"
+#include "os/windows/KernelRegistryAPIs.def"
 #undef NEVERD_KERNEL_REGISTRY_API
 }
 
@@ -104,10 +104,10 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
 
 TEST(DriverKernelAPIIRQL, ExecutiveSpinLockInitializationHasAnyLevelCeiling) {
   expectLimit("KeInitializeSpinLock", 15);
-  for (auto Name : {"KeAcquireSpinLockRaiseToDpc", "KeReleaseSpinLock",
-                    "KeAcquireSpinLockAtDpcLevel",
-                    "KeReleaseSpinLockFromDpcLevel",
-                    "KeTryToAcquireSpinLockAtDpcLevel"})
+  for (auto Name :
+       {"KeAcquireSpinLockRaiseToDpc", "KeReleaseSpinLock",
+        "KeAcquireSpinLockAtDpcLevel", "KeReleaseSpinLockFromDpcLevel",
+        "KeTryToAcquireSpinLockAtDpcLevel"})
     expectLimit(Name, 2);
 }
 
@@ -136,13 +136,13 @@ TEST(DriverKernelAPIIRQL,
 
 TEST(DriverKernelAPIIRQL, DispatcherKeepsItsOwnNarrowerChecks) {
 #define NEVERD_KERNEL_DISPATCHER_API(Name, Arity) expectLimit(#Name, 15);
-#include "windows/KernelDispatcherAPIs.def"
+#include "os/windows/KernelDispatcherAPIs.def"
 #undef NEVERD_KERNEL_DISPATCHER_API
 }
 
 TEST(DriverKernelAPIIRQL, UnknownAndInexactSpellingsHaveNoGuessedPolicy) {
   const llvm::StringLiteral Names[] = {
-      "",           "ZwNotModeled",           "ZwOpenKeyEx",  "zwopenkey",
+      "",           "ZwNotModeled",           "ZwOpenKeyEx",    "zwopenkey",
       "ZwOpenKey ", "ntoskrnl.exe!ZwOpenKey", "IoCallDriverEx", "DbgPrintEx2",
       "memcpy_s"};
   for (auto Name : Names) {

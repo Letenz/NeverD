@@ -3,9 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "ExecutionBackend.h"
-
 #include "ExecutionDiagnostics.h"
+
+#include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -23,7 +23,7 @@ const char *backendFaultKindName(BackendFaultKind Kind) {
 #define NEVERD_BACKEND_FAULT_KIND(Name, Spelling)                              \
   case BackendFaultKind::Name:                                                 \
     return Spelling;
-#include "BackendFaults.def"
+#include "neverd/emulation/BackendFaults.def"
 #undef NEVERD_BACKEND_FAULT_KIND
   }
   llvm_unreachable(diagnostic::UnknownFault);
@@ -34,7 +34,7 @@ const char *backendAccessKindName(BackendAccessKind Kind) {
 #define NEVERD_BACKEND_ACCESS_KIND(Name, Spelling)                             \
   case BackendAccessKind::Name:                                                \
     return Spelling;
-#include "BackendFaults.def"
+#include "neverd/emulation/BackendFaults.def"
 #undef NEVERD_BACKEND_ACCESS_KIND
   }
   llvm_unreachable(diagnostic::UnknownAccess);

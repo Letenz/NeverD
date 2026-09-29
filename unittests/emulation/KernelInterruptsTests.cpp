@@ -8,10 +8,10 @@
 /// common lock used by real ISR, synchronized callbacks and manual sections.
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/KernelDispatcher.h"
-#include "windows/KernelInterrupts.h"
+#include "os/windows/KernelDispatcher.h"
+#include "os/windows/KernelInterrupts.h"
 
 #include <array>
 

@@ -9,7 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelResources.h"
+#include "os/windows/KernelResources.h"
 
 namespace neverd::emulation {
 namespace {
@@ -23,7 +23,7 @@ protected:
     Checked.push_back(Owner);
     if (Blocked)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                      "live resource consumer");
+                                     "live resource consumer");
     return llvm::Error::success();
   }};
 
@@ -49,8 +49,10 @@ protected:
     Device.Bus = DriverBusKind::RegisterBank;
     Device.InitialDevicePower = DevicePowerState::D0;
     Device.InitialSystemPower = SystemPowerState::Working;
-    Device.Resources.push_back({"bar0", 0x123400000ULL + Index * 0x10000,
-                                0x234500000ULL + Index * 0x10000, 0x1000,
+    Device.Resources.push_back({"bar0",
+                                0x123400000ULL + Index * 0x10000,
+                                0x234500000ULL + Index * 0x10000,
+                                0x1000,
                                 {{0, 4, DriverRegisterAccess::ReadWrite, 9}}});
     for (unsigned I = 0; I != 2; ++I) {
       DriverInterruptResource Interrupt;
@@ -115,7 +117,8 @@ TEST_F(KernelResourceAssignmentTest, MemoryThenInterruptsUseGenuinePackedAbi) {
   EXPECT_EQ(read(Translated, 68, 4), 0x92u);
 }
 
-TEST_F(KernelResourceAssignmentTest, StartPublishesOneEpochOnlyAtLowerCompletion) {
+TEST_F(KernelResourceAssignmentTest,
+       StartPublishesOneEpochOnlyAtLowerCompletion) {
   EXPECT_FALSE(Model.find(PDO)->Assigned);
   EXPECT_EQ(Model.find(PDO)->Epoch, 0u);
   ok(Model.beginStart(PDO));
@@ -135,7 +138,8 @@ TEST_F(KernelResourceAssignmentTest, StartPublishesOneEpochOnlyAtLowerCompletion
   EXPECT_EQ(Model.find(PDO)->Interrupts.size(), 2u);
 }
 
-TEST_F(KernelResourceAssignmentTest, ReleaseGuardRejectsBeforeAnyStateMutation) {
+TEST_F(KernelResourceAssignmentTest,
+       ReleaseGuardRejectsBeforeAnyStateMutation) {
   Blocked = true;
   reject(Model.beginStart(PDO), "consumer");
   EXPECT_EQ(Model.find(PDO)->Epoch, 0u);
@@ -156,7 +160,8 @@ TEST_F(KernelResourceAssignmentTest, ReleaseGuardRejectsBeforeAnyStateMutation) 
   EXPECT_EQ(Checked.back(), PDO);
 }
 
-TEST_F(KernelResourceAssignmentTest, FailedLowerAndUpperStartsRetainRetryFacts) {
+TEST_F(KernelResourceAssignmentTest,
+       FailedLowerAndUpperStartsRetainRetryFacts) {
   const auto Before = take(Model.resourceList(PDO, true));
   ok(Model.beginStart(PDO));
   ok(Model.completeLowerStart(PDO, Failure));
@@ -178,7 +183,8 @@ TEST_F(KernelResourceAssignmentTest, FailedLowerAndUpperStartsRetainRetryFacts) 
   EXPECT_EQ(take(Model.resourceList(PDO, true)), Before);
 }
 
-TEST_F(KernelResourceAssignmentTest, PhysicalPowerAndPresenceAreIndependentOfEpoch) {
+TEST_F(KernelResourceAssignmentTest,
+       PhysicalPowerAndPresenceAreIndependentOfEpoch) {
   start();
   const auto Epoch = Model.find(PDO)->Epoch;
   const auto Raw = take(Model.resourceList(PDO, false));
@@ -207,7 +213,8 @@ TEST_F(KernelResourceAssignmentTest, PhysicalPowerAndPresenceAreIndependentOfEpo
   EXPECT_FALSE(Model.find(PDO)->Present);
 }
 
-TEST_F(KernelResourceAssignmentTest, MultipleProvidersHaveIndependentStateAndLists) {
+TEST_F(KernelResourceAssignmentTest,
+       MultipleProvidersHaveIndependentStateAndLists) {
   ok(Model.configure(OtherPDO, configuration(1)));
   const auto OtherBefore = take(Model.resourceList(OtherPDO, true));
   start();

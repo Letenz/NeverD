@@ -10,8 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
 
 #include "neverd/emulation/DriverProfile.h"
 
@@ -144,9 +144,9 @@ TEST_F(DriverBackendFault, AdmittedUserReadFaultCanEnterGuestHandler) {
   EXPECT_EQ(Accepted, 1u);
   EXPECT_FALSE(CPU->fault());
   EXPECT_EQ(reg(X64Register::CX), 17u);
-  EXPECT_NE(llvm::toString(CPU->run(CodeAddress + 3, RunTimeout))
-                .find("resume"),
-            std::string::npos);
+  EXPECT_NE(
+      llvm::toString(CPU->run(CodeAddress + 3, RunTimeout)).find("resume"),
+      std::string::npos);
   auto Fault = CPU->takeRecoverableFault();
   ASSERT_TRUE(Fault);
   EXPECT_EQ(Fault->PC, CodeAddress);

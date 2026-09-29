@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelDMA.h"
+#include "os/windows/KernelDMA.h"
 
 #include <algorithm>
 #include <array>

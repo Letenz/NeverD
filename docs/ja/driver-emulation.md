@@ -479,7 +479,7 @@ null を取り得る `fault` オブジェクトは、最初に確定した終端
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` は、同じ v1 オプションと所有権規則を使い、厳密に検証するシナリオ入力を追加します。NULL ではない NUL 終端 JSON 文字列が必要です。従来の `neverd_emulate_driver_json` ABI は変更せず、初期化のみを実行します。C++ パーサー `driverOptionsFromScenarioJSON` は、`emulateDriver` の呼び出し側にも同じシナリオ検証を提供します。
 
-内部 C++ エントリーポイントは `include/neverd/emulation/DriverSession.h` の `neverd::emulation::emulateDriver` です。形式の解析は既存ローダー、Windows のオブジェクト／API 動作は `lib/emulation/windows`、CPU の状態と実行は Unicorn アダプターが担当します。アダプターとモデルは同じゲストメモリインターフェースを使います。Windows API の動作を Unicorn fork に実装すべきではありません。
+内部 C++ エントリーポイントは `include/neverd/emulation/DriverSession.h` の `neverd::emulation::emulateDriver` です。形式の解析は既存ローダー、Windows のオブジェクト／API 動作は `lib/emulation/os/windows`、CPU の状態と実行は Unicorn アダプターが担当します。アダプターとモデルは同じゲストメモリインターフェースを使います。Windows API の動作を Unicorn fork に実装すべきではありません。
 
 WDM `METHOD_NEITHER` では `Type3InputBuffer` と `IRP.UserBuffer` は別々のユーザー割り当てを指します。`ProbeForRead` はページに触れず範囲とアラインメントを確認し、`ProbeForWrite` は各ページに触れます。`ExGetPreviousMode` は要求モードを返します。`MmProbeAndLockPages` は一つのユーザー割り当てをロックし、`MmGetSystemAddressForMdlSafe` は共有エイリアスを返し、`MmUnlockPages` はエイリアスとロックを解除します。任意のプロセスは未対応です。
 

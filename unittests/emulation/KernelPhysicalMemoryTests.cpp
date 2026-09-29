@@ -10,9 +10,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "unicorn/UnicornBackend.h"
-#include "windows/KernelPhysicalMemory.h"
+#include "os/windows/KernelPhysicalMemory.h"
 
 #include <array>
 

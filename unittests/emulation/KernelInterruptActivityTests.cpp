@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/KernelInterrupts.h"
+#include "os/windows/KernelInterrupts.h"
 
 namespace neverd::emulation {
 namespace {

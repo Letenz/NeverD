@@ -11,8 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "windows/DriverImage.h"
-#include "windows/GuardControlFlow.h"
+#include "os/windows/DriverImage.h"
+#include "os/windows/GuardControlFlow.h"
 
 #include "neverd/emulation/DriverSession.h"
 

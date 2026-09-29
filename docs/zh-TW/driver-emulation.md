@@ -479,7 +479,7 @@ JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`�
 
 `neverd_emulate_driver_scenario_json(session, path, scenario_json, options)` 使用相同的 v1 選項及所有權規則，另外接受嚴格驗證的情境輸入。必須傳入非 NULL、以 NUL 結尾的 JSON 字串。原有 `neverd_emulate_driver_json` ABI 維持不變，仍僅執行初始化。C++ 解析器 `driverOptionsFromScenarioJSON` 為 `emulateDriver` 呼叫端提供相同的情境驗證。
 
-內部 C++ 進入點為 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由現有載入器負責；Windows 物件／API 行為由 `lib/emulation/windows` 負責；CPU 狀態及執行由 Unicorn 配接器負責。配接器與模型使用相同的客體記憶體介面。Windows API 行為不應放入 Unicorn fork。
+內部 C++ 進入點為 `include/neverd/emulation/DriverSession.h` 中的 `neverd::emulation::emulateDriver`。格式解析由現有載入器負責；Windows 物件／API 行為由 `lib/emulation/os/windows` 負責；CPU 狀態及執行由 Unicorn 配接器負責。配接器與模型使用相同的客體記憶體介面。Windows API 行為不應放入 Unicorn fork。
 
 WDM `METHOD_NEITHER` 的 `Type3InputBuffer` 與 `IRP.UserBuffer` 分別指向獨立的使用者記憶體。`ProbeForRead` 只檢查範圍與對齊，不觸碰頁面；`ProbeForWrite` 會觸碰每一頁。`ExGetPreviousMode` 傳回請求模式。`MmProbeAndLockPages` 鎖定單一使用者配置的頁面，`MmGetSystemAddressForMdlSafe` 建立共用核心別名，`MmUnlockPages` 撤銷別名並解除鎖定。不支援任意程序位址空間。
 

@@ -742,7 +742,7 @@ stellt Aufrufern von `emulateDriver` dieselbe Szenariovalidierung bereit.
 
 Der interne C++-Einsprungpunkt ist `neverd::emulation::emulateDriver` in
 `include/neverd/emulation/DriverSession.h`. Formatparsing gehört zum vorhandenen
-Loader, Windows-Objekt-/API-Verhalten zu `lib/emulation/windows`, CPU-Zustand
+Loader, Windows-Objekt-/API-Verhalten zu `lib/emulation/os/windows`, CPU-Zustand
 und Ausführung zum Unicorn-Adapter. Adapter und Modell verwenden dieselbe
 Gastspeicherschnittstelle. Windows-API-Verhalten gehört nicht in den Unicorn-Fork.
 
