@@ -125,23 +125,38 @@ void recoverSwitchStatements(HighFunc &Func) {
     if (!SwitchStmt.SwitchExpr)
       SwitchStmt.SwitchExpr = HighExpr::makeConst(0, 4);
 
-    auto FindAndCollect = [&](va_t Target) -> std::vector<HighStmt> {
-      std::vector<HighStmt> Result;
-      for (size_t K = 0; K < Func.Body.size(); ++K) {
-        if (Func.Body[K].Addr >= Target && Func.Body[K].Addr != 0 &&
-            (Func.Body[K].Addr == Target || Func.Body[K].Addr - Target <= 16)) {
-          for (size_t M = K; M < Func.Body.size(); ++M) {
-            Result.push_back(Func.Body[M]);
-            if (Func.Body[M].Kind == StmtKind::Goto ||
-                Func.Body[M].Kind == StmtKind::Return)
-              break;
-          }
-          break;
+    // A case body moves out of the list whole: the block at the case target,
+    // up to and including its jump or return. The block must start exactly at
+    // the target and must not be entered by falling through, or moving it
+    // would change what runs on that other path.
+    struct CaseBlock {
+      size_t Begin = 0;
+      size_t End = 0;
+    };
+    auto FindCaseBlock = [&](va_t Target) -> std::optional<CaseBlock> {
+      size_t K = 0;
+      while (K < Func.Body.size() && (Func.Body[K].Addr != Target ||
+                                      Func.Body[K].Kind == StmtKind::Nop))
+        ++K;
+      if (K == Func.Body.size())
+        return std::nullopt;
+      size_t Before = K;
+      while (Before > 0 && (Func.Body[Before - 1].Kind == StmtKind::Nop ||
+                            (Func.Body[Before - 1].Kind == StmtKind::Block &&
+                             Func.Body[Before - 1].Body.empty())))
+        --Before;
+      if (Before == 0 || (Func.Body[Before - 1].Kind != StmtKind::Goto &&
+                          Func.Body[Before - 1].Kind != StmtKind::Return))
+        return std::nullopt;
+      for (size_t M = K; M < Func.Body.size(); ++M)
+        if (Func.Body[M].Kind == StmtKind::Goto ||
+            Func.Body[M].Kind == StmtKind::Return) {
+          // The chain itself cannot move into one of its cases.
+          if (K < ChainEnd && M + 1 > I)
+            return std::nullopt;
+          return CaseBlock{K, M + 1};
         }
-      }
-      if (!Result.empty() && Result.back().Kind == StmtKind::Goto)
-        Result.pop_back();
-      return Result;
+      return std::nullopt;
     };
 
     // Cases that branch to one target share one copy of its statements:
@@ -154,53 +169,49 @@ void recoverSwitchStatements(HighFunc &Func) {
                      [&](const CaseInfo &A, const CaseInfo &B) {
                        return FirstUse[A.BodyAddr] < FirstUse[B.BodyAddr];
                      });
+    std::map<va_t, CaseBlock> Blocks;
+    bool Movable = true;
+    for (const CaseInfo &Case : CaseInfos)
+      if (!Blocks.count(Case.BodyAddr)) {
+        std::optional<CaseBlock> Block = FindCaseBlock(Case.BodyAddr);
+        Movable &= Block.has_value();
+        if (Block)
+          Blocks.emplace(Case.BodyAddr, *Block);
+      }
+    std::optional<CaseBlock> DefaultBlock;
+    if (Movable && DefaultTarget != 0) {
+      DefaultBlock = FindCaseBlock(DefaultTarget);
+      Movable = DefaultBlock.has_value();
+    }
+    if (!Movable)
+      continue;
+
     std::set<size_t> Consumed;
+    auto TakeBlock = [&](const CaseBlock &Block) {
+      std::vector<HighStmt> Body(Func.Body.begin() + Block.Begin,
+                                 Func.Body.begin() + Block.End);
+      for (size_t M = Block.Begin; M < Block.End; ++M)
+        Consumed.insert(M);
+      return Body;
+    };
     for (size_t CaseIdx = 0; CaseIdx < CaseInfos.size(); ++CaseIdx) {
       const CaseInfo &Case = CaseInfos[CaseIdx];
       SwitchCase NewCase;
       NewCase.Value = Case.Value;
+      Consumed.insert(Case.StmtIdx);
       if (CaseIdx + 1 < CaseInfos.size() &&
           CaseInfos[CaseIdx + 1].BodyAddr == Case.BodyAddr) {
         NewCase.FallsThrough = true;
         SwitchStmt.Cases.push_back(std::move(NewCase));
-        Consumed.insert(Case.StmtIdx);
         continue;
       }
-      NewCase.Body = FindAndCollect(Case.BodyAddr);
+      NewCase.Body = TakeBlock(Blocks.at(Case.BodyAddr));
       SwitchStmt.Cases.push_back(std::move(NewCase));
-
-      Consumed.insert(Case.StmtIdx);
-      for (size_t K = 0; K < Func.Body.size(); ++K) {
-        if (Func.Body[K].Addr >= Case.BodyAddr && Func.Body[K].Addr != 0 &&
-            (Func.Body[K].Addr == Case.BodyAddr ||
-             Func.Body[K].Addr - Case.BodyAddr <= 16)) {
-          for (size_t M = K; M < Func.Body.size(); ++M) {
-            Consumed.insert(M);
-            if (Func.Body[M].Kind == StmtKind::Goto ||
-                Func.Body[M].Kind == StmtKind::Return)
-              break;
-          }
-          break;
-        }
-      }
     }
 
-    if (DefaultTarget != 0) {
-      SwitchStmt.DefaultBody = FindAndCollect(DefaultTarget);
+    if (DefaultBlock) {
+      SwitchStmt.DefaultBody = TakeBlock(*DefaultBlock);
       Consumed.insert(DefaultGotoIdx);
-      for (size_t K = 0; K < Func.Body.size(); ++K) {
-        if (Func.Body[K].Addr >= DefaultTarget && Func.Body[K].Addr != 0 &&
-            (Func.Body[K].Addr == DefaultTarget ||
-             Func.Body[K].Addr - DefaultTarget <= 16)) {
-          for (size_t M = K; M < Func.Body.size(); ++M) {
-            Consumed.insert(M);
-            if (Func.Body[M].Kind == StmtKind::Goto ||
-                Func.Body[M].Kind == StmtKind::Return)
-              break;
-          }
-          break;
-        }
-      }
     }
 
     Func.Body[I] = std::move(SwitchStmt);
@@ -211,14 +222,18 @@ void recoverSwitchStatements(HighFunc &Func) {
         Func.Body.erase(Func.Body.begin() + static_cast<long>(Idx));
     }
 
+    // A case that jumps to what follows the switch breaks out of it; any
+    // other jump stays, since breaking would skip the code it jumps to.
     if (I + 1 < Func.Body.size() && Func.Body[I].Kind == StmtKind::Switch) {
-      auto &SwitchRef = Func.Body[I];
-      if (SwitchRef.DefaultBody.empty() &&
-          (Func.Body[I + 1].Kind == StmtKind::Store ||
-           Func.Body[I + 1].Kind == StmtKind::Assign)) {
-        SwitchRef.DefaultBody.push_back(Func.Body[I + 1]);
-        Func.Body.erase(Func.Body.begin() + static_cast<long>(I + 1));
-      }
+      const va_t After = Func.Body[I + 1].Addr;
+      auto DropBreakJump = [&](std::vector<HighStmt> &Body) {
+        if (!Body.empty() && Body.back().Kind == StmtKind::Goto && After &&
+            Body.back().GotoTarget == After)
+          Body.pop_back();
+      };
+      for (SwitchCase &Case : Func.Body[I].Cases)
+        DropBreakJump(Case.Body);
+      DropBreakJump(Func.Body[I].DefaultBody);
     }
 
     if (I + 1 < Func.Body.size() && Func.Body[I].Kind == StmtKind::Switch) {
