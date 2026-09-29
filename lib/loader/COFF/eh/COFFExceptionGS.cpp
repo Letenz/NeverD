@@ -646,8 +646,7 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
     return DelegationState::Conflict;
   };
 
-  auto completeNormalExit = [&](DelegationState State,
-                                bool IsLocalReturn) {
+  auto completeNormalExit = [&](DelegationState State, bool IsLocalReturn) {
     if (State == DelegationState::Conflict)
       return false;
     // The CRT wrapper first validates the cookie and then conditionally calls
@@ -727,16 +726,16 @@ PrimaryFunctionByBegin indexPrimaryFunctionsByBegin(const BinaryImage &Img) {
 }
 
 std::optional<ExceptionPersonality>
-inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
-                   const PrimaryFunctionByBegin *PrimaryByBegin) {
-  if (F.PersonalityVA == 0 || F.HandlerDataVA == 0)
+gsWrapperBasePersonality(const BinaryImage &Img, va_t PersonalityVA,
+                         const PrimaryFunctionByBegin *PrimaryByBegin) {
+  if (PersonalityVA == 0)
     return std::nullopt;
 
   // On ARM the handler RVA carries the Thumb interworking bit but the runtime
   // function it names does not, so the two spellings have to meet in the
   // middle before the wrapper can be found at all.
   const va_t WrapperVA =
-      Img.Arch == Arch::ARM ? (F.PersonalityVA & ~va_t(1)) : F.PersonalityVA;
+      Img.Arch == Arch::ARM ? (PersonalityVA & ~va_t(1)) : PersonalityVA;
   const ExceptionFunction *Wrapper = nullptr;
   if (PrimaryByBegin) {
     const auto It = PrimaryByBegin->find(WrapperVA);
@@ -771,10 +770,9 @@ inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
   if (!Code)
     return std::nullopt;
 
-  // Static runtime wrappers may be stripped of their COFF names.  Require two
-  // independent signals before recovering GS provenance: a bounded call from
-  // the wrapper runtime function to a named base handler, and a payload that
-  // is valid for that handler followed by valid GS cookie data.
+  // Static runtime wrappers may be stripped of their COFF names.  The first
+  // of two independent signals is a bounded call from the wrapper runtime
+  // function to a named base handler.
   std::vector<std::string> Names;
   if (!collectDirectCallTargets(Img, Img.Arch, BodyVA, Code, CodeSize, Names))
     return std::nullopt;
@@ -793,7 +791,17 @@ inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
   }
   if (BasePersonality == ExceptionPersonality::Unknown)
     return std::nullopt;
+  return BasePersonality;
+}
 
+std::optional<ExceptionPersonality>
+inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
+                   ExceptionPersonality BasePersonality) {
+  if (F.PersonalityVA == 0 || F.HandlerDataVA == 0)
+    return std::nullopt;
+
+  // The second signal: a payload that is valid for the base handler,
+  // followed by valid GS cookie data.
   ExceptionFunction Probe = F;
   Probe.ParseStatus = ExceptionParseStatus::Complete;
   Probe.Diagnostics.clear();
@@ -830,6 +838,18 @@ inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
     break;
   }
   return std::nullopt;
+}
+
+std::optional<ExceptionPersonality>
+inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
+                   const PrimaryFunctionByBegin *PrimaryByBegin) {
+  if (F.PersonalityVA == 0 || F.HandlerDataVA == 0)
+    return std::nullopt;
+  const std::optional<ExceptionPersonality> Base =
+      gsWrapperBasePersonality(Img, F.PersonalityVA, PrimaryByBegin);
+  if (!Base)
+    return std::nullopt;
+  return inferGSPersonality(F, Img, *Base);
 }
 
 } // namespace neverd::coff_loader::detail
