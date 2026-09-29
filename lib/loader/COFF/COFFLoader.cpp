@@ -28,6 +28,7 @@
 #include "neverd/loader/Rust/RustEH.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -578,19 +579,16 @@ COFFLoader::load(const std::filesystem::path &Path) {
               continue;
             uint32_t Insn;
             std::memcpy(&Insn, ApplySeg->Data.data() + RAddr, 4);
-            if ((Insn & 0xfc000000u) != 0x14000000u &&
-                (Insn & 0xfc000000u) != 0x94000000u)
+            if (!branch::A64BranchOrLink.matches(Insn))
               continue;
-            const int64_t Addend = SignExtend(Insn & 0x03ffffffu, 26) * 4;
+            const int64_t Addend = branch::a64BranchDisplacement(Insn);
             auto Target = AddSignedAddend(S, Addend);
             if (!Target)
               continue;
             auto Disp = SignedDifference(*Target, P);
-            if (!Disp || (*Disp & 3) != 0 || *Disp < -(int64_t(1) << 27) ||
-                *Disp > (int64_t(1) << 27) - 4)
+            if (!Disp || !branch::isA64BranchDisplacement(*Disp))
               continue;
-            Insn = (Insn & 0xfc000000u) |
-                   (static_cast<uint32_t>(*Disp >> 2) & 0x03ffffffu);
+            Insn = branch::withA64BranchDisplacement(Insn, *Disp);
             std::memcpy(ApplySeg->Data.data() + RAddr, &Insn, 4);
           } else if (RType == IMAGE_REL_ARM64_PAGEBASE_REL21) {
             if (RAddr + 4 > ApplySeg->Data.size())

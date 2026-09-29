@@ -4,6 +4,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -85,17 +86,9 @@ inline std::optional<uint32_t> objcSynchronizedWord(const BinaryImage &Image,
 inline va_t objcSynchronizedBranchTarget(const BinaryImage &Image,
                                          va_t Address) {
   const auto Instruction = objcSynchronizedWord(Image, Address);
-  if (!Instruction || (*Instruction & 0xfc000000U) != 0x94000000U)
+  if (!Instruction || !branch::A64BranchLink.matches(*Instruction))
     return 0;
-  const int64_t Displacement =
-      static_cast<int64_t>(static_cast<int32_t>(*Instruction << 6) >> 6) * 4;
-  if (Displacement >= 0)
-    return Address <= InvalidVA - static_cast<uint64_t>(Displacement)
-               ? Address + static_cast<uint64_t>(Displacement)
-               : 0;
-  return Address >= static_cast<uint64_t>(-Displacement)
-             ? Address - static_cast<uint64_t>(-Displacement)
-             : 0;
+  return branch::a64BranchTarget(*Instruction, Address).value_or(0);
 }
 
 inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
@@ -291,19 +284,11 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
     return objcSynchronizedCallIs(Image, Address, Name);
   };
   const auto Tail = Word(End + 60);
-  if (!Tail || (*Tail & 0xfc000000U) != 0x14000000U)
+  if (!Tail || !branch::A64Branch.matches(*Tail))
     return std::nullopt;
-  const int64_t TailDisplacement =
-      static_cast<int64_t>(static_cast<int32_t>(*Tail << 6) >> 6) * 4;
   const va_t ReleaseTarget = objcSynchronizedBranchTarget(Image, End + 4);
   if (!ReleaseTarget ||
-      (TailDisplacement >= 0
-           ? End + 60 > InvalidVA - static_cast<uint64_t>(TailDisplacement) ||
-                 End + 60 + static_cast<uint64_t>(TailDisplacement) !=
-                     ReleaseTarget
-           : End + 60 < static_cast<uint64_t>(-TailDisplacement) ||
-                 End + 60 - static_cast<uint64_t>(-TailDisplacement) !=
-                     ReleaseTarget))
+      branch::a64BranchTarget(*Tail, End + 60) != ReleaseTarget)
     return std::nullopt;
   if (Word(Entry) != 0xa9bd57f6U || Word(Entry + 4) != 0xa9014ff4U ||
       Word(Entry + 8) != 0xa9027bfdU || Word(Entry + 12) != 0x910083fdU ||

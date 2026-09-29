@@ -10,6 +10,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -72,10 +73,8 @@ std::optional<va_t> decodeAArch64Veneer(const BinaryImage &Img, va_t Current,
   uint32_t First = readLE<uint32_t>(Bytes);
 
   // Direct B imm26 veneer.
-  if ((First & 0xfc000000u) == 0x14000000u) {
-    int64_t Disp = signExtend(uint64_t(First & 0x03ffffffu) << 2, 28);
-    return addSignedOffset(Current, Disp);
-  }
+  if (branch::A64Branch.matches(First))
+    return branch::a64BranchTarget(First, Current);
 
   uint32_t Second = readLE<uint32_t>(Bytes + 4);
   uint32_t Third = readLE<uint32_t>(Bytes + 8);

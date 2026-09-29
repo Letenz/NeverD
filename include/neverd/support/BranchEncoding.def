@@ -91,10 +91,11 @@ NEVERD_BRANCH_FIELD(ThumbMoveImm8, 0, 8)
 NEVERD_BRANCH_FORM(ThumbAddIPPC, 0xFFFF, 0x44FC)
 NEVERD_BRANCH_FORM(ThumbBranchExchangeIP, 0xFFFF, 0x4760)
 
-// A64 B and BL, and B alone: the offset is in instructions.
+// A64 B and BL, and B or BL alone: the offset is in instructions.
 NEVERD_BRANCH_VALUE(A64InstructionBytes, 4)
 NEVERD_BRANCH_FORM(A64BranchOrLink, 0x7C000000, 0x14000000)
 NEVERD_BRANCH_FORM(A64Branch, 0xFC000000, 0x14000000)
+NEVERD_BRANCH_FORM(A64BranchLink, 0xFC000000, 0x94000000)
 NEVERD_BRANCH_FIELD(A64BranchOffset, 0, 26)
 
 // The A64 range thunks: `adrp x16, page; add x16, x16, #lo12; br x16`, and

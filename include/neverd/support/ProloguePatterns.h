@@ -203,8 +203,7 @@ inline bool isStrictPrologueWordAArch64(uint32_t W) {
   if ((W & 0xFFFFFF3F) == 0xD503241F)
     return true;
   // B / BL — tail-call or thunk
-  if ((W & 0xFC000000) == 0x14000000 || // B
-      (W & 0xFC000000) == 0x94000000)   // BL
+  if (branch::A64BranchOrLink.matches(W))
     return true;
   // NOP (sometimes first instruction due to alignment)
   if (W == 0xD503201F)

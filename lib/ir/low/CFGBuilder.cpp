@@ -22,6 +22,7 @@
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -150,18 +151,9 @@ bool isBackwardSharedEpilogue(const BinaryImage &Image, va_t FunctionEntry,
   };
   const auto BranchTarget = [](uint32_t Word,
                                va_t Address) -> std::optional<va_t> {
-    if ((Word & 0xfc000000) != 0x14000000u)
+    if (!branch::A64Branch.matches(Word))
       return std::nullopt;
-    const uint32_t Immediate = Word & 0x03ffffff;
-    const int64_t Offset =
-        (Immediate & 0x02000000 ? int64_t(Immediate) - 0x04000000
-                                : int64_t(Immediate)) *
-        4;
-    if ((Offset < 0 && Address < uint64_t(-Offset)) ||
-        (Offset >= 0 && Address > InvalidVA - uint64_t(Offset)))
-      return std::nullopt;
-    return Offset < 0 ? Address - uint64_t(-Offset)
-                      : Address + uint64_t(Offset);
+    return branch::a64BranchTarget(Word, Address);
   };
   const auto SourceBytes = readImmutableCodeBytes(Image, Source, 4);
   if (!SourceBytes ||

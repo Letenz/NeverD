@@ -9,6 +9,7 @@
 #include "TranslationJITLinkerInternal.h"
 #include "TranslationLinkGraphVerifierInternal.h"
 
+#include "neverd/support/BranchEncoding.h"
 #include "neverd/translate/TranslationArtifactVerifier.h"
 #include "neverd/translate/TranslationLinkGraphVerifier.h"
 #include "neverd/translate/TranslationObjectRequest.h"
@@ -125,14 +126,12 @@ bool detail::isSealedAArch64Branch26FixupV1(uint32_t OriginalInstruction,
                                             uint32_t FixedInstruction,
                                             uint64_t FixupAddress,
                                             uint64_t ExpectedTargetAddress) {
-  constexpr uint32_t ImmediateMask = 0x03ffffffU;
-  constexpr uint32_t OpcodeMask = ~ImmediateMask;
-  if ((OriginalInstruction & 0x7c000000U) != 0x14000000U ||
-      (OriginalInstruction & ImmediateMask) != 0 ||
+  constexpr uint32_t OpcodeMask = ~branch::A64BranchOffset.mask();
+  if (!branch::A64BranchOrLink.matches(OriginalInstruction) ||
+      branch::A64BranchOffset.extract(OriginalInstruction) != 0 ||
       (FixedInstruction & OpcodeMask) != (OriginalInstruction & OpcodeMask))
     return false;
-  const int64_t Delta = llvm::SignExtend64<28>(
-      static_cast<uint64_t>(FixedInstruction & ImmediateMask) << 2);
+  const int64_t Delta = branch::a64BranchDisplacement(FixedInstruction);
   return llvm::orc::ExecutorAddr(FixupAddress) + Delta ==
          llvm::orc::ExecutorAddr(ExpectedTargetAddress);
 }

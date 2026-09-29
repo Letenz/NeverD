@@ -6,6 +6,8 @@
 
 #include "neverd/translate/TranslationArtifactVerifier.h"
 
+#include "neverd/support/BranchEncoding.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -1191,8 +1193,9 @@ bool isAArch64UnconditionalBranch(llvm::StringRef Contents, uint64_t Offset) {
   if (!hasRelocatedBytes(Contents, Offset, 4))
     return false;
   const uint32_t Instruction = relocatedInstruction32(Contents, Offset);
-  return (Instruction & 0x7c000000u) == 0x14000000u &&
-         (Instruction & 0x03ffffffu) == 0;
+  // A B or BL whose offset field the relocation fills.
+  return branch::A64BranchOrLink.matches(Instruction) &&
+         branch::A64BranchOffset.extract(Instruction) == 0;
 }
 
 bool isAArch64ConditionalBranch(llvm::StringRef Contents, uint64_t Offset) {

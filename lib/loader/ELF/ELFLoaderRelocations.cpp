@@ -20,6 +20,7 @@
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
@@ -912,8 +913,7 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
           int64_t Disp = static_cast<int64_t>(S + RAddend - P);
           uint32_t Insn;
           std::memcpy(&Insn, ApplySeg->Data.data() + RAddr, 4);
-          Insn = (Insn & 0xFC000000u) |
-                 (static_cast<uint32_t>((Disp >> 2) & 0x03FFFFFFu));
+          Insn = branch::withA64BranchDisplacement(Insn, Disp);
           std::memcpy(ApplySeg->Data.data() + RAddr, &Insn, 4);
         } else if (RType == R_AARCH64_ADR_PREL_PG_HI21) {
           if (RAddr + 4 > ApplySeg->Data.size())

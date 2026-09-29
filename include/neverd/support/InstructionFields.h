@@ -35,6 +35,10 @@ struct BitField {
   constexpr uint32_t extract(uint32_t Word) const {
     return (Word >> Low) & llvm::maskTrailingOnes<uint32_t>(Width);
   }
+  /// The field's bits in place.
+  constexpr uint32_t mask() const {
+    return llvm::maskTrailingOnes<uint32_t>(Width) << Low;
+  }
 };
 
 /// Bits concatenated from instruction fields, the first most significant.

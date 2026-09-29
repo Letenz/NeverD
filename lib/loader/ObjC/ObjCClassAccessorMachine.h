@@ -8,6 +8,7 @@
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -39,7 +40,7 @@ objcClassAccessorMachine(const BinaryImage &Image, va_t Entry) {
       Word(6) != 0xa8c17bfd || Word(7) != 0xd65f03c0 ||
       (Word(2) & 0x9f00001f) != 0x90000000 ||
       (Word(3) & 0xffc003ff) != 0x91000000 ||
-      (Word(4) & 0xfc000000) != 0x94000000)
+      !branch::A64BranchLink.matches(Word(4)))
     return std::nullopt;
   for (const auto &Metadata : Image.ExceptionMetadata.Functions)
     if (((Metadata.CodeRange.Begin < Entry + 32 &&
@@ -62,11 +63,7 @@ objcClassAccessorMachine(const BinaryImage &Image, va_t Entry) {
       (int64_t(PageImmediate) - ((PageImmediate & 0x100000) ? 0x200000 : 0)) *
           4096);
   const auto Class = Page ? Add(*Page, (Word(3) >> 10) & 4095) : std::nullopt;
-  const uint32_t BranchImmediate = Word(4) & 0x03ffffff;
-  const auto Target =
-      Add(Entry + 16, (int64_t(BranchImmediate) -
-                       ((BranchImmediate & 0x02000000) ? 0x04000000 : 0)) *
-                          4);
+  const auto Target = branch::a64BranchTarget(Word(4), Entry + 16);
   const auto Slot =
       Target ? darwinImportVeneerSlot(Image, *Target) : std::nullopt;
   const auto Call =

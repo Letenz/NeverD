@@ -1,5 +1,6 @@
 //===- TranslationLinkGraphVerifier.cpp - Preallocation graph audit ------===//
 
+#include "neverd/support/BranchEncoding.h"
 #include "neverd/translate/TranslationLinkGraphVerifier.h"
 
 #include "neverd/translate/RuntimeSymbolRegistry.h"
@@ -479,8 +480,9 @@ validateExecutableCoverage(const LinkGraph &Graph, ObjectFormat Format,
 }
 
 bool isAArch64BranchInstruction(uint32_t Instruction) {
-  return (Instruction & 0x7c000000U) == 0x14000000U &&
-         (Instruction & 0x03ffffffU) == 0;
+  // A B or BL whose offset field the relocation fills.
+  return branch::A64BranchOrLink.matches(Instruction) &&
+         branch::A64BranchOffset.extract(Instruction) == 0;
 }
 
 llvm::Error validateEdges(const LinkGraph &Graph, ObjectFormat Format,

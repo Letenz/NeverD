@@ -10,6 +10,7 @@
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/MachO.h"
@@ -289,18 +290,17 @@ std::optional<unsigned> arm64PageOffShift(uint32_t Instruction) {
 std::optional<uint32_t> applyARM64Branch26(uint32_t Instruction,
                                            uint64_t SymbolAddress,
                                            uint64_t Place, int64_t Addend) {
-  if ((Instruction & 0x7fffffffu) != 0x14000000u)
+  // A B or BL whose offset field the relocation fills.
+  if (!branch::A64BranchOrLink.matches(Instruction) ||
+      branch::A64BranchOffset.extract(Instruction) != 0)
     return std::nullopt;
   auto Target = addSigned(SymbolAddress, Addend);
   if (!Target)
     return std::nullopt;
   auto Displacement = signedDifference(*Target, Place);
-  if (!Displacement || (*Displacement & 3) != 0 ||
-      *Displacement < -(int64_t(1) << 27) ||
-      *Displacement > (int64_t(1) << 27) - 4)
+  if (!Displacement || !branch::isA64BranchDisplacement(*Displacement))
     return std::nullopt;
-  return Instruction |
-         (static_cast<uint32_t>(*Displacement >> 2) & 0x03ffffffu);
+  return branch::withA64BranchDisplacement(Instruction, *Displacement);
 }
 
 std::optional<uint32_t> applyARM64Page21(uint32_t Instruction,

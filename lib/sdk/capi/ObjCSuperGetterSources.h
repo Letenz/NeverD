@@ -12,6 +12,7 @@
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -58,13 +59,10 @@ inline std::optional<va_t> pageAddress(uint32_t First, uint32_t Second,
 }
 
 inline std::optional<va_t> branch(uint32_t Word, va_t Address, bool Link) {
-  if ((Word & 0xfc000000) != (Link ? 0x94000000u : 0x14000000u))
+  if (!(Link ? neverd::branch::A64BranchLink : neverd::branch::A64Branch)
+           .matches(Word))
     return std::nullopt;
-  const uint32_t Immediate = Word & 0x03ffffff;
-  return addSigned(Address,
-                   (Immediate & 0x02000000 ? int64_t(Immediate) - 0x04000000
-                                           : int64_t(Immediate)) *
-                       4);
+  return neverd::branch::a64BranchTarget(Word, Address);
 }
 
 inline const uint8_t *code(const BinaryImage &Image, va_t Address,

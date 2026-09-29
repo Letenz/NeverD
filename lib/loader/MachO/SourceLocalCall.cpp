@@ -7,6 +7,7 @@
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -94,14 +95,9 @@ SourceLocalCalls sourceLocalCalls(const BinaryImage &Image,
       if (!Bytes)
         continue;
       const auto Word = llvm::support::endian::read32le(Bytes->data());
-      const auto Immediate = Word & 0x03ffffff;
-      const int64_t Delta =
-          (int64_t(Immediate) - ((Immediate & 0x02000000) ? 0x04000000 : 0)) *
-          4;
-      if ((Word & 0xfc000000) != 0x94000000 ||
-          (Delta < 0 && Boundary.Address < uint64_t(-Delta)) ||
-          (Delta >= 0 && Boundary.Address > UINT64_MAX - uint64_t(Delta)) ||
-          Boundary.Address + Delta != *Key->StaticTarget ||
+      if (!branch::A64BranchLink.matches(Word) ||
+          branch::a64BranchTarget(Word, Boundary.Address) !=
+              *Key->StaticTarget ||
           *Key->StaticTarget == Caller.Entry)
         continue;
       Result.emplace(*Key, Word);

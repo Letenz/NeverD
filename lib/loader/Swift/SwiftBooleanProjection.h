@@ -9,6 +9,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -93,15 +94,8 @@ inline bool directCall(const BinaryImage &Image,
   if (!Bytes)
     return false;
   const auto Word = llvm::support::endian::read32le(Bytes->data());
-  if ((Word & 0xfc000000) != 0x94000000)
-    return false;
-  const int64_t Displacement =
-      (int64_t(Word & 0x03ffffff) - ((Word & 0x02000000) ? 0x04000000 : 0)) * 4;
-  if ((Displacement < 0 && Site.Instruction < uint64_t(-Displacement)) ||
-      (Displacement >= 0 &&
-       Site.Instruction > UINT64_MAX - uint64_t(Displacement)))
-    return false;
-  return Site.Instruction + Displacement == *Site.StaticTarget;
+  return branch::A64BranchLink.matches(Word) &&
+         branch::a64BranchTarget(Word, Site.Instruction) == *Site.StaticTarget;
 }
 
 inline bool terminalBrk(const BinaryImage &Image, const LowBlock &Block) {

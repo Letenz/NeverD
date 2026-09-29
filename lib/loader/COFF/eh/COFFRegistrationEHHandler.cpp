@@ -8,6 +8,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -181,11 +182,11 @@ bool isExceptHandler4Wrapper(const BinaryImage &Img, va_t HandlerVA) {
       continue;
     }
     std::string TargetName;
-    if (*Opcode == 0xE8 || *Opcode == 0xE9) {
-      auto Displacement = readScalar<int32_t>(Img, VA + 1);
+    if (*Opcode == x86::kCallRel32 || *Opcode == x86::kJmpRel32) {
+      auto Displacement = readScalar<int32_t>(Img, VA + x86::kRel32DispOffset);
       if (!Displacement)
         continue;
-      auto Target = addSignedOffset(VA + 5, *Displacement);
+      auto Target = addSignedOffset(VA + x86::kCallRel32Len, *Displacement);
       if (!Target || !isExecutableAddress(Img, *Target))
         continue;
       TargetName = resolveRoutineName(Img, *Target);
