@@ -378,6 +378,42 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
     const auto Ran = exec(Executable.string(), {});
     EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
   }
+
+  if (LLVM) {
+    const auto Single = tmpFile("single-llvm.c");
+    const std::string Function =
+        std::string_view(Format) == "MachO" ? "_mba_sub32" : "mba_sub32";
+    const auto One = exec(ndBin(), {"decompile", "--llvm", "--func=" + Function,
+                                    "-o", Single.string(), Object.string()});
+    ASSERT_TRUE(One.ok()) << One.err;
+    expectNoResidualMBA(Single, "mba_sub32");
+    const auto SingleSource = readSource(Single);
+    const auto SingleHarness = tmpFile("single-execute.c");
+    std::ofstream(SingleHarness) << SingleSource << R"(
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
+  for (unsigned i = 0; i < 6; ++i)
+    for (unsigned j = 0; j < 6; ++j)
+      if ((uint32_t)mba_sub32(edges[i], edges[j]) != edges[i] - edges[j])
+        return 1;
+  return 0;
+}
+)";
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile("single-execute");
+      const auto Recompiled =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", Optimization, "-Werror=return-type",
+                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+                "-fsanitize-trap=undefined", SingleHarness.string(), "-o",
+                Executable.string()});
+      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << SingleSource;
+      const auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << SingleSource;
+    }
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -726,6 +762,52 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
     ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
     const auto Ran = exec(Executable.string(), {});
     EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+
+  if (Case.LLVM) {
+    // The single-function SDK route emits LLVM from cached MedIR. It must
+    // receive the same semantic optimizer as full-image LLVM-to-C.
+    const auto Single = tmpFile("nested-single-llvm.c");
+    const auto One = exec(ndBin(), {"decompile", "--no-debug", "--llvm",
+                                    "--func=mba_nested_add", "-o",
+                                    Single.string(), Object.string()});
+    ASSERT_TRUE(One.ok()) << One.err;
+    expectNoResidualMBA(Single, "mba_nested_add");
+    const auto SingleSource = readSource(Single);
+    const auto SingleHarness = tmpFile("nested-single-execute.c");
+    std::ofstream(SingleHarness) << SingleSource << R"(
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
+  for (unsigned i = 0; i < 6; ++i)
+    for (unsigned j = 0; j < 6; ++j)
+      if ((uint32_t)mba_nested_add(edges[i], edges[j]) != edges[i] + edges[j])
+        return 1;
+  uint64_t state = UINT64_C(0xf346ab70d21985ce);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t x = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t y = (uint32_t)(state >> 32);
+    if ((uint32_t)mba_nested_add(x, y) != x + y)
+      return 1;
+  }
+  return 0;
+}
+)";
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile("nested-single-execute");
+      const auto Recompiled =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", Optimization, "-Werror=return-type",
+                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+                "-fsanitize-trap=undefined", "-I", tmp().string(),
+                SingleHarness.string(), "-o", Executable.string()});
+      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << SingleSource;
+      const auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << SingleSource;
+    }
   }
 }
 
@@ -1402,6 +1484,105 @@ INSTANTIATE_TEST_SUITE_P(
       return std::string(Info.param.Name) +
              (Info.param.LLVM ? "_LLVMC" : "_HighC");
     });
+
+class MBAMachOExplicitMixedSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<bool> {};
+
+TEST_P(MBAMachOExplicitMixedSourceTest,
+       RecoversUnmarkedFunctionsAndExecutesArithmetic) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto Object = tmpFile("macho-unmarked-mixed.o");
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "armv7-apple-darwin", "-c",
+            (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_unmarked_mixed.s")
+                .string(),
+            "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto NoModeOutput = tmpFile("macho-ambiguous.c");
+  const std::vector<std::vector<std::string>> MissingModes = {
+      {}, {"--arm-function-mode=0x0:thumb"}, {"--func=0x10"}};
+  for (const auto &Missing : MissingModes) {
+    SCOPED_TRACE(Missing.empty() ? "no mode evidence" : Missing.front());
+    std::vector<std::string> Args{"decompile", "--no-debug"};
+    Args.insert(Args.end(), Missing.begin(), Missing.end());
+    if (GetParam())
+      Args.push_back("--llvm");
+    Args.insert(Args.end(), {"-o", NoModeOutput.string(), Object.string()});
+    const auto Result = exec(ndBin(), Args);
+    EXPECT_FALSE(Result.ok());
+    EXPECT_NE(Result.err.find("--arm-function-mode"), std::string::npos)
+        << Result.err;
+  }
+
+  const auto Output = tmpFile("macho-explicit-mixed.c");
+  std::vector<std::string> Args{"decompile", "--no-debug",
+                                "--arm-function-mode=0x0:thumb",
+                                "--arm-function-mode=0x10:arm"};
+  if (GetParam())
+    Args.push_back("--llvm");
+  Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Args);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  EXPECT_FALSE(functionBody(Source, "unmarked_mba").empty());
+  EXPECT_FALSE(functionBody(Source, "unmarked_arm_mba").empty());
+  expectNoResidualMBA(Output, "unmarked_mba");
+  expectNoResidualMBA(Output, "unmarked_arm_mba");
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(uint32_t a, uint32_t b) {
+  if ((uint32_t)unmarked_mba(a, b) != a + b ||
+      (uint32_t)unmarked_arm_mba(a, b) != a + b) {
+    fprintf(stderr, "arithmetic mismatch a=%u b=%u\n", a, b);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x29b84e3c71a0d65f);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t a = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check(a, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-explicit-mixed-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-explicit-mixed-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(HighCAndLLVMC, MBAMachOExplicitMixedSourceTest,
+                         ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool> &Info) {
+                           return Info.param ? "LLVMC" : "HighC";
+                         });
 
 struct NativeFiveCase {
   const char *Name;

@@ -264,9 +264,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         continue;
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
-      if (const auto Cleanup =
-              proveObjCSynchronizedReceiverCleanup(S->Img,
-                                                   BlockBinding.Function))
+      if (const auto Cleanup = proveObjCSynchronizedReceiverCleanup(
+              S->Img, BlockBinding.Function))
         (void)omitProvenObjCSynchronizedLandingPad(BlockBinding.Function,
                                                    *Cleanup);
       auto Inputs =
@@ -716,7 +715,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       std::map<va_t, SourceCallTypeHint::SwiftTypeMetadataAddress>
           SwiftTypeMetadataPairs;
       std::map<va_t, std::string> SwiftNominalDescriptors;
+      std::map<va_t, std::string> SwiftConformanceDescriptors;
       std::map<va_t, std::string> SwiftNominalMetadata;
+      std::map<va_t, std::string> SwiftPrivateNominalMetadataAccessors;
       std::map<va_t, std::string> SwiftWitnessTables;
       std::map<va_t, va_t> SwiftWitnessCaches;
       std::set<va_t> SwiftOnceAccessors;
@@ -759,12 +760,28 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                 "conflicting Swift nominal descriptor identities");
         }
         for (const auto &[Address, Symbol] :
+             Projections.at(Entry).SwiftConformanceDescriptors) {
+          const auto [It, Added] =
+              SwiftConformanceDescriptors.emplace(Address, Symbol);
+          if (!Added && It->second != Symbol)
+            throw std::runtime_error(
+                "conflicting Swift conformance descriptor identities");
+        }
+        for (const auto &[Address, Symbol] :
              Projections.at(Entry).SwiftNominalMetadata) {
           const auto [It, Added] =
               SwiftNominalMetadata.emplace(Address, Symbol);
           if (!Added && It->second != Symbol)
             throw std::runtime_error(
                 "conflicting Swift nominal metadata identities");
+        }
+        for (const auto &[Address, Accessor] :
+             Projections.at(Entry).SwiftPrivateNominalMetadataAccessors) {
+          const auto [It, Added] =
+              SwiftPrivateNominalMetadataAccessors.emplace(Address, Accessor);
+          if (!Added && It->second != Accessor)
+            throw std::runtime_error(
+                "conflicting Swift private nominal metadata accessors");
         }
         for (const auto &[Address, Symbol] :
              Projections.at(Entry).SwiftWitnessTables) {
@@ -854,8 +871,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                              SharedStorageFunctions) +
           renderObjCSwiftNominalDescriptorHelpers(
               S->Img, SwiftNominalDescriptors, SharedStorageFunctions) +
+          renderObjCSwiftConformanceDescriptorHelpers(
+              S->Img, SwiftConformanceDescriptors, SharedStorageFunctions) +
           renderObjCSwiftNominalMetadataHelpers(S->Img, SwiftNominalMetadata,
                                                 SharedStorageFunctions) +
+          renderObjCSwiftPrivateNominalMetadataHelpers(
+              S->Img, SwiftPrivateNominalMetadataAccessors,
+              SharedStorageFunctions) +
           renderObjCSwiftWitnessTableHelpers(S->Img, SwiftWitnessTables,
                                              SharedStorageFunctions) +
           renderObjCSwiftWitnessCacheHelpers(

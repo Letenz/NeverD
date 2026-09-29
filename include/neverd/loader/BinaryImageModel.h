@@ -246,6 +246,10 @@ struct BinaryImage {
   /// other instruction state.  Unlike the file-level Mode, this applies to
   /// every executable instruction and conflicts with contrary local evidence.
   InstructionMode ARMRequiredMode = InstructionMode::Default;
+  /// A file-level mode is a decoder bootstrap, not evidence about an unmarked
+  /// entry. ELF sets this because its symbols and mapping intervals are local
+  /// proofs even when all proven entries happen to use the same mode.
+  bool ARMModeRequiresLocalEvidence = false;
   /// Entry, function-symbol, and validated instruction-relocation evidence
   /// identifies one exact instruction address. It does not authorize decoding
   /// the rest of a function in that mode when mapping symbols are absent.
@@ -616,9 +620,16 @@ struct BinaryImage {
       return IncomingMode;
     if (ARMReachabilityConstrained)
       return std::nullopt;
+    // A weak file-level mode cannot authorize an unmarked function entry.
+    if (ARMModeRequiresLocalEvidence)
+      return std::nullopt;
     if (Mode == InstructionMode::MixedARMThumb)
       return std::nullopt;
-    return Mode == InstructionMode::Default ? InstructionMode::ARM : Mode;
+    if (Mode == InstructionMode::Default)
+      return Format == BinaryFormat::MachO
+                 ? std::nullopt
+                 : std::optional<InstructionMode>(InstructionMode::ARM);
+    return Mode;
   }
 
   std::set<va_t> getSymbolAddresses() const {

@@ -37,9 +37,37 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` 检查完整无环 LowIR 图的两次执行独立性。两侧共享普通入口输入；每次新产生的架构未定义值在复制、重叠写入、溢出保存和重载中保持来源关联。控制谓词先于路径假设接受检查。证书要求 `Complete` 效果元数据，并精确绑定每条指令的完整边界和操作摘要。缺少证据、可达循环、调用、未知别名或预算耗尽都会拒绝证书。结论受显式观察项和无故障栈帧契约限制，不是原生代码到 C 的完整等价证明。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` 使用独立编写、固定映射的 x64 字节，检查原始分支完整收集、精确字节绑定、入口 RSP／返回地址槽强制保持、栈帧与映像分离前提的可满足性，以及失败时不返回残余代码。覆盖缺失或重叠指令、静态不走但未审计的分支、调用、间接转移、循环、执行配置／契约不匹配及元数据／收集预算。此可选门禁不认证异常分派、启用 CET 的执行或原生代码到 C 的等价性；普通恢复仍独立可用。
+
+`NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
+
 核心测试检查上下文拆分、固定点汇合、动态循环、重叠寄存器、别名失效、有限目标派发，以及拒绝时不提供部分替代代码。源码测试汇编原创的寄存器式、栈式和有限地址 x64 机器，恢复两条 C 输出路径，在 O0/O2 下开启未定义行为陷阱编译，并与独立的无符号算术和内存参考实现对照执行。有限地址 fixture 覆盖输入选择的记录和相关游标／key 控制字段；原生检查涵盖 SysV 和 Win64 调用约定。测试还覆盖公开 CLI、恢复预算及不支持输入的报告。需要支持跨目标编译的 Clang 和 LLD；原始 ELF 的执行另需 x64 Linux 主机。工具缺失或主机不匹配属于跳过的覆盖，不代表通过。
 
 `ControlStateRecovery.LongTransparentLoop*` 覆盖独立编写的 20 阶段循环、动态算术参考实现、未知 selector 拒绝和预算耗尽。`LongTransparentPhasesKeepExactBitDemands` 检查 selector 同字节内的无关位仍是可观察的运行时数据，不会成为控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 检查反向发现和重放在新图启动前消耗共享预算，且不发布部分结果。
+
+`X86ShiftCarry.*` 用连续单比特移位校验窄位宽算术右移的进位、掩码后的计数，以及 APX 目标寄存器和标志抑制行为。
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下启用未定义行为陷阱，执行两条恢复 C 路径，覆盖全部字节值和原始计数。
+`NeverDLLVMCIntrinsicSemanticTests` 还在 O0/O2 下执行 i1/8/16/32/64/128 的有符号和无符号整数 min/max，检查赋值和内联结果、操作数生成顺序及单次求值。不支持的标量位宽和畸形操作数必须明确失败。
+
+## 结构化 C 控制流与调用检查
+
+`HighControlFlowSemantics.*` 检查移动循环出口或尾部时是否保留其他跳转仍引用的标签。测试覆盖直接进入循环头部、尾部出口及替换后的 break，并以独立返回值预期执行 O0/O2 编译的生成 C。
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 检查推断出的必需寄存器参数是否保留末尾未知槽位。读取未知的必需参数或条件必须明确触发陷阱；省略、空指针和嵌套操作数不能被悄悄替换为零。已知值和已证明不被读取的多余操作数仍可执行。陷阱是诊断边界，不是恢复行为等价的证明。
 
 ## 驱动模拟检查
 

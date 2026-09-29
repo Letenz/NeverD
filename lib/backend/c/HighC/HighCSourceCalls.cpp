@@ -59,6 +59,10 @@ std::optional<std::string> sourceValue(llvm::StringRef Text,
   if (Carrier && Source && Carrier->Kind == NdTypeKind::Struct &&
       Source->Kind == NdTypeKind::Struct && equalSourceTypes(Carrier, Source))
     return Text.str();
+  if (integerPair(Carrier) && integerPair(Source) &&
+      Source->SourceName == kSourceAArch64Vector128CType)
+    return "__builtin_bit_cast(" + typeToC(Source) + ", (" + typeToC(Carrier) +
+           ")(" + Text.str() + "))";
   if (integerPair(Carrier) && integerPair(Source))
     return "(" + typeToC(Source) + ")(" + Text.str() + ")";
   if (!scalar(Carrier) || !scalar(Source) || Carrier->Size != Source->Size)
@@ -161,6 +165,21 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return Call + "))";
   }
   const auto &Signature = Hint.Signature;
+  if (Hint.CallKind == Kind::DarwinRuntimeCall &&
+      (Hint.ByteCount || Hint.TargetName == "CGContextConcatCTM")) {
+    SourceFunctionTypeHint Expected;
+    Expected.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Expected.ReturnType = NdType::makeVoid();
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    Expected.Parameters = {{"context", Pointer}, {"transform", Pointer}};
+    std::string Diagnostic;
+    if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != 48 ||
+        Hint.TargetName != "CGContextConcatCTM" || Hint.WeakImport ||
+        Hint.DoesNotReturn || Hint.Format ||
+        !assignDarwinScalarSourceABI(Expected, Opts.TheArch, Diagnostic) ||
+        !equalSourceABIs(Signature, Expected))
+      return bad("invalid indirect CGAffineTransform source binding");
+  }
   if (Hint.NilTerminated &&
       (Hint.CallKind != Kind::ObjCMessage || Hint.Format || !Hint.Receiver ||
        Hint.DoesNotReturn || Hint.WeakImport || Hint.ReturnedArgument ||
@@ -169,11 +188,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        !Hint.SwiftStringInputs.empty() || Hint.SwiftTypeMetadata ||
        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
-       Hint.SelectorArgumentStorageUse ||
-       Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
-       Hint.ImmutablePointerSlot || Hint.TargetName != "objc_msgSend" ||
-       Hint.Selector.empty() || !Hint.TargetAddress ||
-       !Hint.SelectorReferenceAddress ||
+       Hint.SelectorArgumentStorageUse || Hint.ObjCIndirectResultStorage ||
+       Hint.ByteCount || Hint.ImmutablePointerSlot ||
+       Hint.TargetName != "objc_msgSend" || Hint.Selector.empty() ||
+       !Hint.TargetAddress || !Hint.SelectorReferenceAddress ||
        Hint.Receiver->Origin !=
            ObjCReceiverTypeHint::OriginKind::ClassReference ||
        !Hint.Receiver->IsClassMethod || !Hint.Receiver->Steps.empty() ||
@@ -420,7 +438,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeSwiftSmallStringAddress ||
       Hint.CallKind == Kind::RuntimeSwiftTypeMetadataAddress ||
       Hint.CallKind == Kind::RuntimeSwiftNominalDescriptorAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftConformanceDescriptorAddress ||
       Hint.CallKind == Kind::RuntimeSwiftNominalMetadataAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftPrivateNominalMetadataAddress ||
       Hint.CallKind == Kind::RuntimeSwiftWitnessTableAddress ||
       Hint.CallKind == Kind::RuntimeSwiftWitnessCacheAddress ||
       Hint.CallKind == Kind::RuntimeSwiftWitnessAccessor ||
@@ -564,10 +584,22 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         return bad("Swift nominal descriptor has no source identity");
       Value = "neverd_swift_nominal_descriptor_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind ==
+               Kind::RuntimeSwiftConformanceDescriptorAddress) {
+      if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
+        return bad("Swift conformance descriptor has no source identity");
+      Value = "neverd_swift_conformance_descriptor_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeSwiftNominalMetadataAddress) {
       if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
         return bad("Swift nominal metadata has no source identity");
       Value = "neverd_swift_nominal_metadata_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind ==
+               Kind::RuntimeSwiftPrivateNominalMetadataAddress) {
+      if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
+        return bad("Swift private nominal metadata has no source identity");
+      Value = "neverd_swift_private_nominal_metadata_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeSwiftWitnessTableAddress) {
       if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
@@ -670,7 +702,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("unsupported result type");
   for (const auto &Parameter : Signature.Parameters)
     if (!scalar(Parameter.Type) &&
-        sourceAggregateMembers(Parameter.Type).empty())
+        sourceAggregateMembers(Parameter.Type).empty() &&
+        !(Signature.HasExplicitABI &&
+          Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+          Parameter.Type && Parameter.Type->Kind == NdTypeKind::Int &&
+          Parameter.Type->Size == 16 &&
+          Parameter.Type->SourceName == kSourceAArch64Vector128CType &&
+          validateSourceABI(Signature, ABIDiagnostic)))
       return bad("unsupported parameter type");
   const bool Block = Hint.CallKind == Kind::BlockInvoke;
   if (Block &&
@@ -882,14 +921,13 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     // constant instead of requiring the integer carrier to have pointer width.
     // Do not widen any nonzero integer here: those still require an explicit,
     // size-compatible pointer carrier.
-    auto Value = Argument.Kind == ExprKind::Const && Carrier &&
-                         Carrier->Kind == NdTypeKind::Int &&
-                         Argument.ConstVal == 0 && SourceType &&
-                         SourceType->Kind == NdTypeKind::Ptr &&
-                         Carrier->Size != SourceType->Size
-                     ? std::optional<std::string>("(" + typeToC(SourceType) +
-                                                  ")0")
-                     : sourceValue(exprStr(Argument), Carrier, SourceType);
+    auto Value =
+        Argument.Kind == ExprKind::Const && Carrier &&
+                Carrier->Kind == NdTypeKind::Int && Argument.ConstVal == 0 &&
+                SourceType && SourceType->Kind == NdTypeKind::Ptr &&
+                Carrier->Size != SourceType->Size
+            ? std::optional<std::string>("(" + typeToC(SourceType) + ")0")
+            : sourceValue(exprStr(Argument), Carrier, SourceType);
     if (!Value)
       return bad("argument carrier disagrees with the source declaration");
     if (I != FirstArgument)

@@ -2157,7 +2157,7 @@ TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
   EXPECT_NE(Source.find("if (", DtorAt), std::string::npos) << Source;
 }
 
-TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
+TEST(LLVMCPointerAddresses, UnrelatedDestructorKeepsSingleUseCallOrder) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-unrelated-dtor", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
@@ -2197,9 +2197,16 @@ TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("if (!(GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= GetLength("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
+  // Different pointer arguments do not prove these external calls have
+  // disjoint global effects or cannot throw. Keep their original order.
+  const auto LengthAt = Source.find("= GetLength(");
+  const auto DtorAt = Source.find("CStringT_dtor(");
+  const auto IfAt = Source.find("if (");
+  ASSERT_NE(LengthAt, std::string::npos) << Source;
+  ASSERT_NE(DtorAt, std::string::npos) << Source;
+  ASSERT_NE(IfAt, std::string::npos) << Source;
+  EXPECT_LT(LengthAt, DtorAt) << Source;
+  EXPECT_LT(DtorAt, IfAt) << Source;
 }
 
 TEST(LLVMCPointerAddresses, JoinCallHomeStaysAssigned) {
@@ -39754,6 +39761,251 @@ TEST(HighCPointerAddresses, CalleeThatWritesRdxOrCallsIndirectlyClobbersIt) {
     const std::string HighC = highcOnlyFunction(
         makeCodeFixture(Entry, callerKeepsRdxAcrossCall(Callee)), Entry);
     EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+  }
+}
+
+TEST(HighCPointerAddresses, RequiredTrailingUnknownCallArgumentKeepsItsSlot) {
+  // The first callee writes every Win64 argument register. Its non-return
+  // register results remain unknown to the caller's call summary. The next
+  // callee reads one such register: that required final slot must survive,
+  // including when all earlier positional slots are provably unread.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Clobber = Entry + 0x20;
+  constexpr va_t Consumer = Entry + 0x40;
+  const std::vector<std::vector<uint8_t>> Consumers = {
+      {0x0f, 0xb6, 0xc1, 0xc3},        // movzx eax, cl; ret
+      {0x0f, 0xb6, 0xc2, 0xc3},        // movzx eax, dl; ret
+      {0x41, 0x0f, 0xb6, 0xc0, 0xc3},  // movzx eax, r8b; ret
+      {0x41, 0x0f, 0xb6, 0xc1, 0xc3}}; // movzx eax, r9b; ret
+  for (unsigned Slots = 1; Slots <= Consumers.size(); ++Slots) {
+    SCOPED_TRACE(Slots);
+    std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                                 0xe8, 0x17, 0x00, 0x00, 0x00, // call clobber
+                                 0xe8, 0x32, 0x00, 0x00, 0x00, // call consumer
+                                 0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                                 0xc3};                        // ret
+    const size_t CallerSize = Code.size();
+    Code.resize(Clobber - Entry, 0xcc);
+    const std::vector<uint8_t> ClobberCode = {0x31, 0xc9,       // xor ecx, ecx
+                                              0x31, 0xd2,       // xor edx, edx
+                                              0x45, 0x31, 0xc0, // xor r8d, r8d
+                                              0x45, 0x31, 0xc9, // xor r9d, r9d
+                                              0xc3};            // ret
+    Code.insert(Code.end(), ClobberCode.begin(), ClobberCode.end());
+    Code.resize(Consumer - Entry, 0xcc);
+    Code.insert(Code.end(), Consumers[Slots - 1].begin(),
+                Consumers[Slots - 1].end());
+    BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
+    Img.Symbols.push_back(Symbol::makeFunc(Entry, CallerSize));
+    Img.Symbols.push_back(Symbol::makeFunc(Clobber, ClobberCode.size()));
+    Img.Symbols.push_back(
+        Symbol::makeFunc(Consumer, Consumers[Slots - 1].size()));
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries.insert(Entry);
+    auto Result = Pipeline().run(Img, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+
+    const MedFunc *Med = nullptr;
+    for (const MedFunc &Function : Result.MedFuncs)
+      if (Function.Entry == Entry)
+        Med = &Function;
+    ASSERT_NE(Med, nullptr);
+    const MedOp *Call = nullptr;
+    for (const MedBlock &Block : Med->Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+            Op.Inputs[0].ConstVal == Consumer)
+          Call = &Op;
+    ASSERT_NE(Call, nullptr);
+    ASSERT_EQ(Call->CalleeRegisterArgs, Slots);
+    ASSERT_EQ(Call->NumInputs, Slots + 1);
+    const MedVar &Trailing = Call->Inputs[Slots];
+    EXPECT_TRUE(std::any_of(Med->CallClobbers.begin(), Med->CallClobbers.end(),
+                            [&](const MedCallClobber &Clobbered) {
+                              return Clobbered.Value.Id == Trailing.Id &&
+                                     Clobbered.Value.SSAVer == Trailing.SSAVer;
+                            }));
+
+    const HighFunc *High = nullptr;
+    for (const HighFunc &Function : Result.HighFuncs)
+      if (Function.Entry == Entry)
+        High = &Function;
+    ASSERT_NE(High, nullptr);
+    const HighExpr *HighCall = nullptr;
+    auto FindCall = [&](const ExprPtr &Expr, auto &&Self) -> void {
+      if (!Expr)
+        return;
+      if (Expr->Kind == ExprKind::Call && Expr->CallAddr == Consumer)
+        HighCall = Expr.get();
+      Expr->forEachChildExpr([&](const ExprPtr &Child) { Self(Child, Self); });
+    };
+    walkStmts(High->Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement,
+                  [&](const ExprPtr &Expr) { FindCall(Expr, FindCall); });
+    });
+    ASSERT_NE(HighCall, nullptr);
+    ASSERT_EQ(HighCall->Operands.size(), Slots) << HighCall->str();
+    ASSERT_NE(HighCall->Operands.back(), nullptr);
+    EXPECT_EQ(HighCall->Operands.back()->Kind, ExprKind::Undef)
+        << HighCall->str();
+    for (unsigned Slot = 0; Slot + 1 < Slots; ++Slot) {
+      ASSERT_NE(HighCall->Operands[Slot], nullptr);
+      EXPECT_EQ(HighCall->Operands[Slot]->Kind, ExprKind::Const);
+      EXPECT_EQ(HighCall->Operands[Slot]->ConstVal, 0u);
+    }
+  }
+}
+
+TEST(HighCPointerAddresses, RequiredUnknownCallArgumentsFailAtTheirUse) {
+  for (unsigned Form = 0; Form != 9; ++Form) {
+    SCOPED_TRACE(Form);
+    const bool Pointer = Form >= 5;
+    const unsigned CallForm = Pointer ? (Form == 8 ? 4 : Form - 5) : Form;
+    HighFunc Consumer;
+    Consumer.Name = "consume_required";
+    Consumer.Entry = 0x140002000;
+    Consumer.ReturnType = NdType::makeInt(8, false);
+    const auto ParameterType =
+        Pointer ? NdType::makePtr() : Consumer.ReturnType;
+    Consumer.Params = {{"arg0", ParameterType}};
+    returnValue(Consumer, HighExpr::makeBinop(
+                              Pointer ? NdOp::INT_NOTEQUAL : NdOp::INT_ADD,
+                              parameter(0, ParameterType),
+                              HighExpr::makeConst(Pointer ? 0 : 9, 8)));
+    HighFunc Ignore;
+    Ignore.Name = "ignore_extra";
+    Ignore.Entry = 0x140003000;
+    Ignore.ReturnType = Consumer.ReturnType;
+    returnValue(Ignore, HighExpr::makeConst(7, 8));
+
+    auto Caller = [&](const char *Name, const HighFunc &Callee,
+                      std::vector<ExprPtr> Args) {
+      HighFunc Function;
+      Function.Name = Name;
+      Function.ReturnType = Consumer.ReturnType;
+      auto Call =
+          HighExpr::makeCall(Callee.Name, Callee.Entry, std::move(Args));
+      Call->Type = Callee.ReturnType;
+      returnValue(Function, std::move(Call));
+      return Function;
+    };
+    std::vector<ExprPtr> Arguments;
+    if (CallForm == 0 || CallForm == 4)
+      Arguments.push_back(HighExpr::makeUndef(8));
+    else if (CallForm == 2)
+      Arguments.push_back(nullptr);
+    else if (CallForm == 3)
+      Arguments.push_back(HighExpr::makeBinop(
+          NdOp::INT_ADD, HighExpr::makeUndef(8), HighExpr::makeConst(5, 8)));
+    // Form 1 omits a required argument of the emitted definition entirely.
+    auto Bad = Caller("unknown_caller", Consumer, std::move(Arguments));
+    if (CallForm == 4) {
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->CallKind = SourceCallTypeHint::Kind::Native;
+      Hint->TargetName = Consumer.Name;
+      Hint->TargetAddress = Consumer.Entry;
+      Hint->Signature.Architecture = Arch::X64;
+      Hint->Signature.ReturnType = Consumer.ReturnType;
+      SourceParameterTypeHint Parameter;
+      Parameter.Name = "arg0";
+      Parameter.Type = ParameterType;
+      Hint->Signature.Parameters.push_back(Parameter);
+      Bad.Body.front().RetVal->SourceCallHint = std::move(Hint);
+    }
+    auto Zero = Caller("known_zero", Consumer, {HighExpr::makeConst(0, 8)});
+    auto Known = Caller("known_value", Consumer, {HighExpr::makeConst(37, 8)});
+    auto Unread = Caller("unread_extra", Ignore, {HighExpr::makeUndef(8)});
+    const std::string Source =
+        emitFunctions({Consumer, Ignore, Zero, Known, Unread, Bad});
+    EXPECT_NE(Source.find("__builtin_trap()"), std::string::npos) << Source;
+    // A trap at an unknown use is an explicit failure, not recovered program
+    // equivalence. Known zero and an unread extra argument remain executable.
+    compileAndRunCallOrdering(Source + R"(
+#include <signal.h>
+#include <stdlib.h>
+static void expected_failure(int signal_number) {
+  (void)signal_number;
+  _Exit(0);
+}
+int main(void) {
+  if (known_zero() != )" + std::string(Pointer ? "0" : "9") +
+                              R"( ||
+      known_value() != )" + std::string(Pointer ? "1" : "46") +
+                              R"( ||
+      unread_extra() != 7)
+    return 2;
+  signal(SIGILL, expected_failure);
+#ifdef SIGTRAP
+  signal(SIGTRAP, expected_failure);
+#endif
+  unknown_caller();
+  return 1;
+}
+)");
+  }
+}
+
+TEST(HighCPointerAddresses, UnknownConditionsFailOnlyWhenRead) {
+  auto Branch = [](const char *Name, ExprPtr Condition,
+                   bool EmptyThen = false) {
+    HighFunc Function;
+    Function.Name = Name;
+    Function.ReturnType = NdType::makeInt(8, false);
+    Function.Params = {{"arg0", NdType::makeInt(8, false)}};
+    HighStmt If;
+    If.Kind = StmtKind::IfElse;
+    If.Cond = std::move(Condition);
+    HighStmt Yes, No;
+    Yes.Kind = No.Kind = StmtKind::Return;
+    Yes.RetVal = HighExpr::makeConst(23, 8);
+    No.RetVal = HighExpr::makeConst(17, 8);
+    if (!EmptyThen)
+      If.Body = {Yes};
+    If.ElseBody = {No};
+    Function.Body = {If};
+    if (EmptyThen)
+      Function.Body.push_back(Yes);
+    return Function;
+  };
+  for (unsigned Form = 0; Form != 3; ++Form) {
+    SCOPED_TRACE(Form);
+    auto Unknown = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                       HighExpr::makeUndef(8));
+    if (Form == 2)
+      Unknown = HighExpr::makeUnary(
+          NdOp::BOOL_NOT,
+          HighExpr::makeBinop(NdOp::BOOL_OR,
+                              HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
+                                                  HighExpr::makeUndef(8)),
+                              HighExpr::makeBinop(NdOp::INT_SLESS, parameter(0),
+                                                  HighExpr::makeUndef(8))));
+    auto Bad = Branch("unknown_condition", Unknown, Form == 1);
+    auto ShortAnd =
+        Branch("short_and", HighExpr::makeBinop(NdOp::BOOL_AND, parameter(0),
+                                                HighExpr::makeUndef(1)));
+    auto ShortOr =
+        Branch("short_or", HighExpr::makeBinop(NdOp::BOOL_OR, parameter(0),
+                                               HighExpr::makeUndef(1)));
+    const std::string Source = emitFunctions({ShortAnd, ShortOr, Bad});
+    compileAndRunCallOrdering(Source + R"(
+#include <signal.h>
+#include <stdlib.h>
+static void expected_failure(int signal_number) {
+  (void)signal_number;
+  _Exit(0);
+}
+int main(void) {
+  if (short_and(0) != 17 || short_or(1) != 23) return 2;
+  signal(SIGILL, expected_failure);
+#ifdef SIGTRAP
+  signal(SIGTRAP, expected_failure);
+#endif
+  unknown_condition(5);
+  return 1;
+}
+)");
   }
 }
 

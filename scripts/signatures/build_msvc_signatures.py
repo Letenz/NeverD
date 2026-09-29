@@ -52,10 +52,14 @@ Four rules decide what a file holds:
 
   * Lines state the routines they branch to as `^offset name` references,
     which the matcher checks in the image (`neverd-sigmaker --references`).
-    Lines of one file with the same bytes and different names are kept when
-    references tell every two of them apart, because at a match only one of
-    them can be confirmed.  Across files the rule above stands: the Rich
-    header loads one release's file, where such a line would have no rival.
+    Several references at one offset name the routines one branch may reach,
+    of which any confirms it: the alternate name a COFF link resolves an
+    undefined symbol to, or the routine another build of the same bytes
+    calls there.  Lines of one file with the same bytes and different names
+    are kept when references tell every two of them apart, because at a
+    match only one of them can be confirmed.  Across files the rule above
+    stands: the Rich header loads one release's file, where such a line would
+    have no rival.
 
 Every file written is read back through `neverd-sigmaker --verify`, the
 loader's own parser: the loader rejects a whole directory for one bad line.
@@ -304,19 +308,30 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     return PatternLine(text, merged.key, names, merged.refs)
 
 
+def ref_table(refs: tuple[tuple[int, str], ...]) -> dict[int, set[str]]:
+    """The routines each branch of a line may reach: the names its references
+    at that offset state, of which a COFF link reaches one."""
+
+    table: dict[int, set[str]] = {}
+    for offset, name in refs:
+        table.setdefault(offset, set()).add(name)
+    return table
+
+
 def distinguished(lines: list[PatternLine]) -> bool:
     """Whether references tell apart every two of these same-byte lines.
 
     Two lines are told apart when one offset holds a reference in both and
-    they name different routines there: at a match, only one of them can be
-    confirmed.  Anything less leaves the bytes naming several routines.
+    no routine the branch there may reach is one both name: at a match, only
+    one of them can be confirmed.  Anything less leaves the bytes naming
+    several routines.
     """
 
-    tables = [dict(line.refs) for line in lines]
+    tables = [ref_table(line.refs) for line in lines]
     for first in range(len(tables)):
         for second in range(first + 1, len(tables)):
             a, b = tables[first], tables[second]
-            if not any(offset in b and b[offset] != name for offset, name in a.items()):
+            if not any(offset in b and not names & b[offset] for offset, names in a.items()):
                 return False
     return True
 
@@ -325,18 +340,18 @@ def common_refs(lines: list[PatternLine]) -> PatternLine:
     """One line for copies that make the same claim under the same names.
 
     Builds of one library can call different routines from byte-identical
-    code -- the debug CRT's `_free_dbg` where the release one calls `free` --
-    so only the references every copy states are kept; the others would
-    contradict the build that lacks them.
+    code -- the debug CRT's `_free_dbg` where the release one calls `free`.
+    A branch every copy states reaches one of the routines they name there,
+    so the line names all of them; a branch some copy states no reference
+    for is left unstated, or it would contradict the build that lacks it.
     """
 
     first = lines[0]
     if all(line.refs == first.refs for line in lines[1:]):
         return first
-    shared = set(first.refs)
-    for line in lines[1:]:
-        shared &= set(line.refs)
-    return first.with_refs(tuple(sorted(shared)))
+    offsets = set.intersection(*(set(ref_table(line.refs)) for line in lines))
+    refs = {(offset, name) for line in lines for offset, name in line.refs if offset in offsets}
+    return first.with_refs(tuple(sorted(refs)))
 
 
 @dataclass(frozen=True)

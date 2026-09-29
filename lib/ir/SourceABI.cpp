@@ -31,6 +31,11 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
   case NdTypeKind::Void:
     return Left->Size == 0;
   case NdTypeKind::Int:
+    if (Left->Size == 16 &&
+        (Left->SourceName == kSourceAArch64Vector128CType ||
+         Right->SourceName == kSourceAArch64Vector128CType) &&
+        Left->SourceName != Right->SourceName)
+      return false;
     return Left->Size == 1 || Left->Size == 2 || Left->Size == 4 ||
            Left->Size == 8 || Left->Size == 16;
   case NdTypeKind::Float:
@@ -110,18 +115,18 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
           ++FloatingParameters >
               getTargetRegInfo(Architecture).FPParamRegs.size())
         return false;
-    } else if (Parameter.Type &&
-               Parameter.Type->Kind == NdTypeKind::Struct) {
+    } else if (Parameter.Type && Parameter.Type->Kind == NdTypeKind::Struct) {
       // The closed CGRect shape lowers to four independent double lanes under
       // arm64 swiftcc. Other records need their own compiler-backed contract.
       const auto Members = sourceAggregateMembers(Parameter.Type);
       if (Architecture != Arch::AArch64 ||
           Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
           Members.size() != 4 || Parameter.Type->Size != 32 ||
-          !std::all_of(Members.begin(), Members.end(), [](const auto &M) {
-            return M.Type && M.Type->Kind == NdTypeKind::Float &&
-                   M.Type->Size == 8;
-          }) ||
+          !std::all_of(Members.begin(), Members.end(),
+                       [](const auto &M) {
+                         return M.Type && M.Type->Kind == NdTypeKind::Float &&
+                                M.Type->Size == 8;
+                       }) ||
           (FloatingParameters += 4) >
               getTargetRegInfo(Architecture).FPParamRegs.size())
         return false;
@@ -330,8 +335,7 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Expected.RegisterOffset = TRI.FPParamRegs[FloatingIndex++];
       } else if (P.Type->Kind == NdTypeKind::Struct) {
         const auto Members = sourceAggregateMembers(P.Type);
-        if (!EmptyLocation(P.Location) ||
-            P.Components.size() != Members.size())
+        if (!EmptyLocation(P.Location) || P.Components.size() != Members.size())
           return fail(Diagnostic, "Unsupported fixed Swift record carrier");
         for (size_t J = 0; J < Members.size(); ++J) {
           const SourceABIValueLocation Member = {
@@ -371,7 +375,13 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
   auto ValidLocation = [&](const TypeRef &Type,
                            const SourceABIValueLocation &Location,
                            bool IsReturn) {
-    if (!scalarType(Type) || Location.ValueBytes != Type->Size)
+    const bool Vector128 =
+        Hint.Origin == SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+        Hint.Architecture == Arch::AArch64 && !IsReturn && Type &&
+        Type->Kind == NdTypeKind::Int && Type->Size == 16 &&
+        Type->SourceName == kSourceAArch64Vector128CType &&
+        Location.Kind == SourceABICarrierKind::FloatingRegister;
+    if ((!scalarType(Type) && !Vector128) || Location.ValueBytes != Type->Size)
       return false;
     if (Location.ExtendTo32Bits &&
         ((IsReturn &&
@@ -389,7 +399,7 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     if (Location.EntryStackOffset != 0)
       return false;
     if (Location.Kind == SourceABICarrierKind::FloatingRegister)
-      return Type->Kind == NdTypeKind::Float &&
+      return (Type->Kind == NdTypeKind::Float || Vector128) &&
              TRI.isVectorReg(Location.RegisterOffset) &&
              (!IsReturn || Location.RegisterOffset == TRI.FPReturnReg);
     if (Location.Kind == SourceABICarrierKind::IntegerRegister)
@@ -493,6 +503,8 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                       Hint.ReturnLocation.RegisterOffset);
   std::vector<std::pair<int64_t, int64_t>> StackRanges;
   size_t PhysicalCount = 0;
+  std::vector<uint64_t> FloatingRegisters;
+  bool HasNativeVector = false;
   for (const auto &Parameter : Hint.Parameters) {
     if (Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary &&
         Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
@@ -508,10 +520,17 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     const auto Locations = Parameter.Components.empty()
                                ? std::vector{Parameter.Location}
                                : Parameter.Components;
+    HasNativeVector |=
+        Hint.Origin == SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+        Hint.Architecture == Arch::AArch64 && Parameter.Type &&
+        Parameter.Type->Kind == NdTypeKind::Int && Parameter.Type->Size == 16 &&
+        Parameter.Type->SourceName == kSourceAArch64Vector128CType;
     PhysicalCount += Locations.size();
     if (PhysicalCount > static_cast<size_t>(limits::kMaxBoundSourceCallArgs))
       return fail(Diagnostic, "Source parameter carrier budget exceeded");
     for (const auto &Location : Locations) {
+      if (Location.Kind == SourceABICarrierKind::FloatingRegister)
+        FloatingRegisters.push_back(Location.RegisterOffset);
       if (Location.Kind == SourceABICarrierKind::Stack) {
         const int64_t Begin = Location.EntryStackOffset;
         const int64_t End = Begin + Location.ValueBytes;
@@ -526,6 +545,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                     "Source parameters share one physical register");
       }
     }
+  }
+  if (HasNativeVector) {
+    if (FloatingRegisters.size() > TRI.FPParamRegs.size())
+      return fail(Diagnostic,
+                  "Native vector parameters exceed the floating register bank");
+    for (size_t Index = 0; Index < FloatingRegisters.size(); ++Index)
+      if (FloatingRegisters[Index] != TRI.FPParamRegs[Index])
+        return fail(Diagnostic,
+                    "Native vector parameters require a contiguous floating "
+                    "register prefix");
   }
   return true;
 }
@@ -816,9 +845,8 @@ bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
          !Hint.Format && !Hint.NilTerminated && !Hint.Receiver &&
          !Hint.SelectorResultUse && !Hint.SelectorResultTypeUse &&
          !Hint.SelectorArgumentTypeUse && !Hint.SelectorForwardingUse &&
-         !Hint.SelectorArgumentStorageUse &&
-         !Hint.ObjCIndirectResultStorage && Hint.ByteCount == 0 &&
-         Hint.ImmutablePointerSlot == 0 &&
+         !Hint.SelectorArgumentStorageUse && !Hint.ObjCIndirectResultStorage &&
+         Hint.ByteCount == 0 && Hint.ImmutablePointerSlot == 0 &&
          equalSourceABIs(Hint.Signature, Expected->Signature);
 }
 

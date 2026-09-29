@@ -4069,8 +4069,7 @@ TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
 
   auto Overlap = Fixture;
-  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] =
-      NdVar::cst(0, 8);
+  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] = NdVar::cst(0, 8);
   EXPECT_FALSE(Overlap.inferVoid(Error));
 
   auto Forged = Fixture;
@@ -4635,7 +4634,7 @@ TEST(NativeSourceHints, FloatingReturnPathsRequireCompleteDefinedLanes) {
     }
 }
 
-TEST(NativeSourceHints, FloatingParametersRequireBoundedScalarEntryBytes) {
+TEST(NativeSourceHints, FloatingParametersRequireProvenEntryBytes) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
       NativeFloatingFixture Fixture(Architecture, 8, true);
@@ -4667,8 +4666,44 @@ TEST(NativeSourceHints, FloatingParametersRequireBoundedScalarEntryBytes) {
         break;
       }
       std::string Error;
+      if (Architecture == Arch::AArch64 && Mutation == 0) {
+        const auto Hint = Fixture.infer(Error);
+        ASSERT_TRUE(Hint) << Error;
+        ASSERT_FALSE(Hint->Parameters.empty());
+        EXPECT_EQ(Hint->Parameters[0].Type->SourceName,
+                  kSourceAArch64Vector128CType);
+        EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, 16U);
+        continue;
+      }
       EXPECT_FALSE(Fixture.infer(Error)) << Mutation << ": " << Error;
     }
+}
+
+TEST(NativeSourceHints, TwoFullQInputsRequireIndependentEntryByteProofs) {
+  for (bool FullSecond : {false, true}) {
+    NativeFloatingFixture Fixture(Arch::AArch64, 8, true);
+    auto &Ops = Fixture.Med.Blocks[0].Ops;
+    for (unsigned Index = 0; Index != (FullSecond ? 2U : 1U); ++Index) {
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(MedVar::makeConst(0x1080 + Index * 16, 8));
+      Store.addInput(Fixture.Med.Params[Index]);
+      Ops.insert(Ops.end() - 1, Store);
+    }
+    std::string Error;
+    const auto Hint = Fixture.infer(Error);
+    ASSERT_TRUE(Hint) << Error;
+    ASSERT_EQ(Hint->Parameters.size(), 2U);
+    EXPECT_EQ(Hint->Parameters[0].Type->SourceName,
+              kSourceAArch64Vector128CType);
+    EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, 16U);
+    EXPECT_EQ(Hint->Parameters[1].Type->SourceName,
+              FullSecond ? kSourceAArch64Vector128CType : "");
+    EXPECT_EQ(Hint->Parameters[1].Location.ValueBytes, FullSecond ? 16U : 8U);
+    for (unsigned Index = 0; Index != 2; ++Index)
+      EXPECT_EQ(Hint->Parameters[Index].Location.RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).FPParamRegs[Index]);
+  }
 }
 
 TEST(NativeSourceHints,

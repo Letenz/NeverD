@@ -72,6 +72,8 @@ oracles. A full-product counterexample ensures low-word rules do not discard
 observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
+The x64 ELF, COFF, and Mach-O cases also exercise single-function LLVMC
+decompilation and execute its simplified result at `-O0` and `-O2`.
 Nested source expressions additionally compile at `-O0` for x86-32/64,
 ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and
@@ -123,6 +125,20 @@ Both C routes must recover their arithmetic and execute it at `-O0`/`-O2`;
 loader tests require the subtype to prove Thumb mode, reject an ARM instruction
 relocation in a Thumb-only image, and fail loading on malformed subtype
 capability bits.
+An A-profile Mach-O object with unmarked ARM and Thumb functions and no
+instruction relocations checks explicit function-entry mode assertions. Both
+HighC and LLVMC must simplify their MBA and execute correctly after host
+recompilation at `-O0` and `-O2`. Loader tests cover object address zero,
+alignment, out-of-range entries, and conflict with an exact Thumb symbol.
+Without mode evidence, or with only one of the two entries asserted, batch
+decompilation must report the ambiguity instead of silently omitting a function.
+Single-function decompilation must give the same mode diagnostic.
+ELF mapping and Windows ARMNT machine evidence separately accept matching
+assertions and reject contradictory ones.
+An ELF object stripped of its mapping and function symbols must reject an
+unmarked ARM or Thumb entry in both C routes. Exact caller assertions recover
+both, and their single-function HighC and LLVMC output must simplify a
+carry-save addition and execute at `-O0` and `-O2`.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
@@ -176,6 +192,24 @@ cmake --build build-release --target NeverDInterpreterSpecializationTests \
 ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource|InterpreterMachineState)Tests$' \
   --output-on-failure
 ```
+
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` checks two-execution independence on complete acyclic LowIR graphs. Ordinary entry inputs are shared; fresh architecture-undefined producers retain their correlations through copies, overlapping writes, spills and reloads. Control predicates are checked before path assumptions. Certificates require `Complete` effect metadata bound to each full instruction boundary and exact operation digest. Missing evidence, reachable loops, calls, unknown aliases and exhausted budgets refuse a certificate. The explicit observation and nonfaulting frame contracts limit the result; this is not full native-to-C equivalence.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to check complete original branch collection, exact byte binding, mandatory entry RSP/return-slot preservation, image-disjoint frame feasibility and refusal without residual code. It covers missing or overlapping instructions, unaudited untaken arms, calls, indirect transfers, cycles, profile/contract mismatches and metadata/collection budgets. This optional gate does not certify exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate.
+
+`NeverDX86UndefinedEffectsTests` checks undefined-bit metadata, defined/preserved flags and stale-certificate refusal. `NeverDX86CarryArithmeticFlagTests` checks ADC/SBB auxiliary carry for register and memory forms against an arithmetic oracle. `NeverDX86LogicIdentityTests` checks that AND with identical operands still clears bits 63:32 of the enclosing 64-bit register for a 32-bit destination in 64-bit mode while preserving unwritten bits for narrower writes.
 
 Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
 
@@ -245,6 +279,21 @@ a control-flow join where only one predecessor defines the flag.
 Temporary-definition tests require every byte to be written earlier in the
 same lifted native instruction, even when an undefined value cancels
 algebraically or reuses the previous instruction's temporary offset.
+
+`X86ShiftCarry.*` checks narrow arithmetic-right-shift carry, masked counts,
+and APX destination/flag-suppression behavior against repeated one-bit shifts.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` executes both recovered C
+routes at O0/O2 with undefined-behavior traps, including every byte value and
+raw count. `NeverDLLVMCIntrinsicSemanticTests` also executes signed/unsigned
+integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
+results, producer ordering, and single evaluation. Unsupported scalar widths
+and malformed operands must fail explicitly.
+
+## Structured C control and call checks
+
+`HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
 ## Driver emulation checks
 

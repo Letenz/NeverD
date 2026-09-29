@@ -25,7 +25,7 @@ int neverd_lift_to_obj(neverd_session_t Sess, const char *InputPath, int NoOpt,
 
   PipelineRunner R;
   std::string Err;
-  if (!R.load(InputPath, Err)) {
+  if (!R.load(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return 1;

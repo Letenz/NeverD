@@ -31,9 +31,12 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace llvm {
 namespace object {
@@ -52,10 +55,15 @@ struct PatternGeneratorOptions {
   /// Bytes stated one by one after the CRC span. A value at least as large
   /// as a function covers it to its end.
   unsigned TailLen = 0;
-  /// State the routines each COFF function branches to directly as
+  /// State the routines each COFF or ELF function branches to directly as
   /// `^offset name` references (see PatternModule::References). Off by
   /// default: a loader older than the references rejects a line with one.
   bool EmitReferences = false;
+  /// The names a COFF link resolves a symbol to when no object defines it,
+  /// as `/alternatename:symbol=alternate` directives give them (see
+  /// collectAlternateNames).  A reference to the symbol also names each
+  /// alternate, at the same offset: the branch reaches one of them.
+  std::map<std::string, std::vector<std::string>, std::less<>> AlternateNames;
 };
 
 /// What one object contributed, and what it could not.
@@ -159,6 +167,25 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
                                                   llvm::ArrayRef<uint8_t> Code,
                                                   uint64_t RelocationOffset,
                                                   uint64_t FunctionOffset);
+
+/// Where an ELF relocation of \p Type states a direct branch, for objects of
+/// \p Machine (an EM_* value): the offset a `^offset name` reference names,
+/// or std::nullopt.  That is a PC32 or PLT32 field after an E8 or E9 opcode
+/// on x86 and x86-64, a CALL26 or JUMP26 instruction on AArch64, and a
+/// THM_CALL or THM_JUMP24 (Thumb-2 BL or B.W) instruction on ARM -- or one
+/// byte past a CALL, JUMP24, PLT32 or PC24 (ARM-state B or BL) instruction,
+/// an odd offset (see PatternModule::References).  The function's bytes are
+/// \p Function and \p Offset is the relocation's offset in them; the branch
+/// must lie within them.
+std::optional<uint64_t>
+elfBranchReferenceOffset(uint16_t Machine, uint32_t Type,
+                         llvm::ArrayRef<uint8_t> Function, uint64_t Offset);
+
+/// Adds the `/alternatename:symbol=alternate` directives of \p Obj's
+/// `.drectve` sections to \p Names, if it is a COFF object.
+void collectAlternateNames(
+    const llvm::object::ObjectFile &Obj,
+    std::map<std::string, std::vector<std::string>, std::less<>> &Names);
 
 /// Writes one .pat line per function \p Obj defines.
 ///

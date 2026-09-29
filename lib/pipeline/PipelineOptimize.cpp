@@ -614,6 +614,14 @@ Pipeline::optimizeModule(llvm::Module &Mod,
   return Result;
 }
 
+OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod) {
+  OptimizationOptions Options;
+  OptimizationResult Result = optimizeModule(Mod, Options);
+  if (Result.Stop == OptimizationStopReason::InputInvalid)
+    promoteScaffoldingAllocas(Mod);
+  return Result;
+}
+
 OptimizationResult Pipeline::optimizeModule(llvm::Module &Mod,
                                             bool Conservative,
                                             OptStrength Strength,

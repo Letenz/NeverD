@@ -88,8 +88,10 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
 
   Img.Bits = ELFT::Is64Bits ? Bitness::Bits64 : Bitness::Bits32;
   Img.Entry = EH.e_entry;
-  if (Img.Arch == Arch::ARM)
+  if (Img.Arch == Arch::ARM) {
     Img.Entry = clearThumbBit(Img.Entry);
+    Img.ARMModeRequiresLocalEvidence = true;
+  }
 
   auto SectionsOr = ELF.sections();
   if (!SectionsOr)
@@ -270,9 +272,13 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
       return ELF64->getELFFile().getHeader().e_phnum != 0;
     return false;
   }();
+  if (llvm::Error E = applyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(E);
   if (Img.Arch == Arch::ARM && !Img.IsRelocatable && HasProgramHeaders)
     if (llvm::Error E = discoverARMReachableModes(Img))
       return std::move(E);
+  if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(E);
 
   runPostLoadDiscovery(Img, "elf: loaded " + Path.filename().string());
   // Classified before any table is read: a decoder that finds an Itanium LSDA

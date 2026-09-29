@@ -6,10 +6,16 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
+#include "neverd/support/Parallel.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -155,4 +161,134 @@ TEST(SignatureMatcherIndex, RefinesCollidingPrefixesWithoutDuplicates) {
 
   constexpr std::array<uint8_t, 3> WrongPrefix = {0xAA, 0xBC, 0x42};
   EXPECT_EQ(Index.candidateCount(WrongPrefix.data(), WrongPrefix.size()), 0u);
+}
+
+namespace {
+
+std::string hexByte(unsigned Value) {
+  static const char Digits[] = "0123456789ABCDEF";
+  return {Digits[(Value >> 4) & 0xF], Digits[Value & 0xF]};
+}
+
+std::string hexWord(unsigned Value) {
+  return hexByte(Value >> 8) + hexByte(Value & 0xFF);
+}
+
+/// The packed modules of \p Text, and the memory they point into.
+struct PackedText {
+  std::vector<PatternChunk> Chunks;
+  std::unique_ptr<uint8_t[]> Bytes;
+  std::vector<StoredModule> Modules;
+
+  explicit PackedText(llvm::StringRef Text, size_t ChunkBytes = 4096) {
+    Chunks = PatternParser::splitChunks(Text, ChunkBytes);
+    Bytes = PatternParser::reserveBytes(Chunks);
+    PatternParser::parseChunks(Chunks);
+    for (const PatternChunk &Chunk : Chunks) {
+      EXPECT_FALSE(Chunk.ErrorLine) << Chunk.Error;
+      Modules.insert(Modules.end(), Chunk.Modules.begin(), Chunk.Modules.end());
+    }
+  }
+};
+
+} // namespace
+
+TEST(SignatureMatcherForms, PackedModulesMatchExactlyAsTheirValues) {
+  std::mt19937 Random(7);
+  unsigned Matched = 0;
+  for (unsigned Case = 0; Case < 3000; ++Case) {
+    // Code, and a module describing it: a leading pattern, a CRC span, and a
+    // tail, with wildcards, sometimes a wrong CRC or a changed byte.
+    const size_t Leading = 1 + Random() % 40, CRCLen = Random() % 8;
+    const size_t Tail = Random() % 90;
+    std::vector<uint8_t> Code(Leading + CRCLen + Tail + 8);
+    for (uint8_t &Byte : Code)
+      Byte = static_cast<uint8_t>(Random());
+    size_t Total = 1 + Random() % (Leading + CRCLen + Tail + 2);
+    if (CRCLen != 0)
+      Total = std::max(Total, Leading + CRCLen);
+    const uint16_t CRC =
+        SignatureMatcher::computeCRC16(Code.data() + Leading, CRCLen);
+    std::string Line;
+    for (size_t I = 0; I < Leading; ++I)
+      Line += Random() % 5 == 0 ? ".." : hexByte(Code[I]);
+    Line += " " + hexByte(static_cast<unsigned>(CRCLen)) + " " +
+            hexWord(Random() % 4 == 0 ? CRC ^ 1 : CRC) + " " +
+            hexWord(static_cast<unsigned>(Total)) + " :0000 routine";
+    if (Tail != 0) {
+      Line += ' ';
+      for (size_t I = 0; I < Tail; ++I)
+        Line += Random() % 5 == 0 ? ".." : hexByte(Code[Leading + CRCLen + I]);
+    }
+    if (Random() % 3 == 0)
+      Code[Random() % Code.size()] ^= 0x10;
+    SCOPED_TRACE(Line);
+
+    auto Value = PatternParser::parseLine(Line);
+    ASSERT_TRUE(static_cast<bool>(Value)) << llvm::toString(Value.takeError());
+    PackedText Packed(Line);
+    ASSERT_EQ(Packed.Modules.size(), 1u);
+    const StoredModule &Stored = Packed.Modules.front();
+
+    for (size_t Available : {Code.size(), Total, Total - 1, Leading}) {
+      const bool Expected =
+          SignatureMatcher::matchPattern(*Value, Code.data(), Available);
+      EXPECT_EQ(SignatureMatcher::matchPattern(Stored, Code.data(), Available),
+                Expected)
+          << Available;
+      Matched += Expected;
+    }
+    EXPECT_EQ(SignatureMatcher::fixedByteCount(Stored),
+              SignatureMatcher::fixedByteCount(*Value));
+    EXPECT_EQ(SignatureMatcher::isFullyVerified(Stored),
+              SignatureMatcher::isFullyVerified(*Value));
+  }
+  EXPECT_GT(Matched, 1000u) << "the cases must include matches";
+}
+
+TEST(SignatureMatcherIndex, ParallelBuildMatchesTheSingleThreadedOne) {
+  // Enough modules for the subtrees to be built on several threads, spread
+  // over many first bytes, with shared prologues and wildcards.
+  std::mt19937 Random(11);
+  std::string Text;
+  for (unsigned I = 0; I < 40000; ++I) {
+    std::string Leading;
+    const unsigned Family = Random() % 6;
+    for (unsigned Byte = 0; Byte < 32; ++Byte) {
+      if (Family == 0 && Byte < 4)
+        Leading += hexByte(0xF30F1EFAu >> (24 - 8 * Byte));
+      else if (Random() % 9 == 0)
+        Leading += "..";
+      else
+        Leading += hexByte(Byte < 3 ? Random() % (Family + 2) + Family * 40
+                                    : Random());
+    }
+    Text += Leading + " 00 0000 0040 :0000 routine_" + std::to_string(I) + "\n";
+  }
+  PackedText Packed(Text);
+  ASSERT_EQ(Packed.Modules.size(), 40000u);
+
+  auto BuildWith = [&](unsigned Threads) {
+    neverd::setWorkerThreadCount(Threads);
+    SignatureMatcher::HashIndex Index;
+    Index.build(Packed.Modules);
+    neverd::setWorkerThreadCount(0);
+    return Index;
+  };
+  const SignatureMatcher::HashIndex One = BuildWith(1);
+  const SignatureMatcher::HashIndex Many = BuildWith(8);
+
+  ASSERT_EQ(Many.Root, One.Root);
+  ASSERT_EQ(Many.Nodes.size(), One.Nodes.size());
+  for (size_t I = 0; I < One.Nodes.size(); ++I) {
+    const auto &A = One.Nodes[I], &B = Many.Nodes[I];
+    ASSERT_EQ(B.Offset, A.Offset) << I;
+    ASSERT_EQ(B.WildcardChild, A.WildcardChild) << I;
+    ASSERT_EQ(B.Candidates, A.Candidates) << I;
+    ASSERT_EQ(B.ExactChildren.size(), A.ExactChildren.size()) << I;
+    for (size_t E = 0; E < A.ExactChildren.size(); ++E) {
+      ASSERT_EQ(B.ExactChildren[E].Value, A.ExactChildren[E].Value) << I;
+      ASSERT_EQ(B.ExactChildren[E].Child, A.ExactChildren[E].Child) << I;
+    }
+  }
 }

@@ -205,8 +205,7 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     const HighExpr *Inner = forwardedExpr(E.Operands[0].get());
     auto IsZero = [&](const ExprPtr &Op) {
       const HighExpr *Cur = unwrapIntegerView(Op.get());
-      return Cur && (Cur->Kind == ExprKind::Undef ||
-                     (Cur->Kind == ExprKind::Const && Cur->ConstVal == 0));
+      return Cur && Cur->Kind == ExprKind::Const && Cur->ConstVal == 0;
     };
     auto SameScalar = [&](const HighExpr *A, const HighExpr *B) {
       auto Peel = [&](const HighExpr *E) {
@@ -649,14 +648,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   for (size_t I = 0; I < PrintedArgs; ++I) {
     if (I > 0)
       S += ", ";
-    if (I >= E.Operands.size()) {
-      S += "0 /* unknown */";
-      continue;
-    }
-    const HighExpr *Op = E.Operands[I].get();
+    ExprPtr Missing;
+    const HighExpr *Op = I < E.Operands.size() ? E.Operands[I].get() : nullptr;
     if (!Op) {
-      S += "0";
-      continue;
+      // Keep absent required operands on the same failure and type-conversion
+      // path as explicit unknowns, including pointer parameters.
+      Missing = HighExpr::makeUndef(8);
+      Op = Missing.get();
     }
     if (const HighExpr *Imm = unwrapIntegerView(Op)) {
       if ((Imm->Kind == ExprKind::Var || Imm->Kind == ExprKind::Phi)) {
@@ -1311,6 +1309,9 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
   }
   if (!Inner)
     Inner = &E;
+  if (Inner->Kind == ExprKind::Undef && Expected &&
+      Expected->Kind == NdTypeKind::Ptr)
+    return "(" + typeToC(Expected) + ")(uintptr_t)(" + exprStr(*Inner) + ")";
   if (Expected && Expected->Kind == NdTypeKind::Ptr) {
     unsigned PeelZero = 0;
     while (Inner && PeelZero++ < limits::kMaxIntegerViewUnwrapDepth &&
@@ -2755,6 +2756,9 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     }
     if (pointerNeedsIntegerView(DeclaredType))
       return "(uintptr_t)" + Name;
+    if (DeclaredType &&
+        DeclaredType->SourceName == kSourceAArch64Vector128CType)
+      return "__builtin_bit_cast(__int128, " + Name + ")";
     return Name;
   }
   case ExprKind::Const: {
@@ -2793,9 +2797,9 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     return constStr(E.ConstVal, E.Type);
   }
   case ExprKind::Undef:
-    // Do not emit the former clobber-0 operand comment. Keep a short unknown
-    // marker so ABI tests can still see that high bits were not invented.
-    return "0 /* unknown */";
+    // An observed unknown value has no recovered semantics. Fail at this
+    // use; an unchosen conditional operand must not fail eagerly.
+    return "(__builtin_trap(), 0 /* unknown value */)";
   case ExprKind::BinOp:
     if (ProjectFrameAliasesIntoStorage)
       if (const auto Disp = certifiedFrameStorageDisplacement(E))
@@ -3406,8 +3410,7 @@ std::string HighCWriter::condStr(const HighExpr &E) {
     if (!Op)
       return false;
     const HighExpr *Z = unwrapIntegerView(Op.get());
-    return Z && (Z->Kind == ExprKind::Undef ||
-                 (Z->Kind == ExprKind::Const && Z->ConstVal == 0));
+    return Z && Z->Kind == ExprKind::Const && Z->ConstVal == 0;
   };
   if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Operands.size() == 2 &&
       Cur->Operands[0] && Cur->Operands[1] && Cur->Op == NdOp::INT_NOTEQUAL) {
@@ -3639,8 +3642,7 @@ std::string HighCWriter::invertCondStr(const HighExpr &E) {
     if (!Op)
       return false;
     const HighExpr *Z = unwrapIntegerView(Op.get());
-    return Z && (Z->Kind == ExprKind::Undef ||
-                 (Z->Kind == ExprKind::Const && Z->ConstVal == 0));
+    return Z && Z->Kind == ExprKind::Const && Z->ConstVal == 0;
   };
   auto IsCompareOp = [](NdOp Op) {
     switch (Op) {

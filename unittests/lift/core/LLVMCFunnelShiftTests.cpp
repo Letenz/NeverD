@@ -124,3 +124,124 @@ int main(void) {
       << Error << Source;
 }
 } // namespace
+
+TEST(LLVMCArithmeticShift, PreservesSignAtTheLLVMOperandWidth) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("arithmetic-shifts", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Wide = Builder.getInt128Ty();
+  std::string Table;
+  for (unsigned Width : {1u, 8u, 16u, 32u, 64u, 128u}) {
+    for (bool Assigned : {false, true}) {
+      const std::string Name =
+          "ashr_" + std::to_string(Width) + "_" + std::to_string(Assigned);
+      Table += Name + ",";
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(Wide, {Wide, Wide, Builder.getPtrTy()},
+                                  false),
+          llvm::GlobalValue::ExternalLinkage, Name, Module);
+      Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+      auto *Ty = Builder.getIntNTy(Width);
+      auto *Shift =
+          Builder.CreateAShr(Builder.CreateTruncOrBitCast(Fn->getArg(0), Ty),
+                             Builder.CreateTruncOrBitCast(Fn->getArg(1), Ty));
+      auto *Result = Builder.CreateZExtOrBitCast(Shift, Wide);
+      Builder.CreateStore(Assigned ? Result : Fn->getArg(0), Fn->getArg(2));
+      Builder.CreateRet(Result);
+    }
+  }
+  // A direct odd-width return must not expose sign-extension carrier bits.
+  // Also keep following arithmetic unsigned, even when AShr itself is signed.
+  for (unsigned Width : {1u, 7u, 17u, 32u, 64u, 65u}) {
+    auto *Ty = Builder.getIntNTy(Width);
+    auto *Fn =
+        llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                               llvm::GlobalValue::ExternalLinkage,
+                               "direct_" + std::to_string(Width), Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+    auto *Value = Builder.CreateAShr(Fn->getArg(0), Fn->getArg(1));
+    if (Width == 32 || Width == 64)
+      Value = Builder.CreateAdd(Value, llvm::ConstantInt::get(Ty, 1));
+    Builder.CreateRet(Value);
+  }
+  std::string Emitted;
+  llvm::raw_string_ostream Stream(Emitted);
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Stream, Options));
+  const std::string Source = Emitted + R"(
+typedef unsigned __int128 U128;
+int main(void) {
+  U128 (*functions[])(U128, U128, void *) = {)" +
+                             Table + R"(};
+  if (direct_1(1, 0) != 1 || direct_7(64, 6) != 127 ||
+      direct_17(65536, 16) != 131071 ||
+      direct_65((U128)1 << 64, 64) != (((U128)1 << 65) - 1)) return 3;
+  if (direct_32(0x7fffffff, 0) != UINT32_C(0x80000000) ||
+      direct_64(UINT64_C(0x7fffffffffffffff), 0) !=
+          UINT64_C(0x8000000000000000)) return 4;
+  const unsigned widths[] = {1, 8, 16, 32, 64, 128};
+  for (unsigned w = 0; w < 6; ++w) {
+    const unsigned width = widths[w];
+    const U128 mask = ~(U128)0 >> (128 - width);
+    const U128 sign = (U128)1 << (width - 1);
+    const U128 edges[] = {0, 1, sign - 1, sign, sign + 1, mask,
+                          ((U128)1 << 100) | 0x12345678};
+    const unsigned values = width == 8 ? 256 : 7;
+    for (unsigned v = 0; v < values; ++v)
+      for (unsigned count = 0; count < width; ++count)
+        for (unsigned assigned = 0; assigned < 2; ++assigned) {
+          const U128 input = width == 8 ? v : edges[v];
+          U128 expected = input & mask;
+          for (unsigned i = 0; i < count; ++i)
+            expected = (expected >> 1) | (expected & sign);
+          U128 stored = 0;
+          if (functions[w * 2 + assigned](input, count, &stored) != expected)
+            return 1;
+          if (stored != (assigned ? expected : input)) return 2;
+        }
+  }
+  return 0;
+}
+)";
+  auto Compiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
+  llvm::SmallString<128> Input, Output, Errors;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-ashr", "c", Input));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-ashr", "out", Output));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-ashr", "err", Errors));
+  llvm::FileRemover RemoveInput(Input), RemoveOutput(Output),
+      RemoveErrors(Errors);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream File(Input, EC);
+    ASSERT_FALSE(EC);
+    File << Source;
+  }
+  for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization.str());
+    const llvm::SmallVector<llvm::StringRef, 12> Args{
+        *Compiler,
+        "-std=c11",
+        Optimization,
+        "-fsanitize=undefined",
+        "-fsanitize-trap=undefined",
+        Input,
+        "-o",
+        Output};
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Errors.str()};
+    std::string Error;
+    const int Compiled = llvm::sys::ExecuteAndWait(
+        *Compiler, Args, std::nullopt, Redirects, 30, 0, &Error);
+    auto Log = llvm::MemoryBuffer::getFile(Errors);
+    ASSERT_EQ(Compiled, 0) << Error << (Log ? (*Log)->getBuffer().str() : "")
+                           << Source;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}, std::nullopt, {}, 30,
+                                        0, &Error),
+              0)
+        << Error << Source;
+  }
+}

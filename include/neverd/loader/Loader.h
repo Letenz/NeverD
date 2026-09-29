@@ -22,6 +22,7 @@
 #include "llvm/Support/SHA256.h"
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -46,6 +47,10 @@ public:
     RestrictFunctionEntries = std::move(Entries);
   }
 
+  void setARMFunctionModes(std::map<va_t, InstructionMode> Modes) {
+    ARMFunctionModes = std::move(Modes);
+  }
+
   /// Auto-detect the binary format from file content and return the
   /// appropriate loader.  Follows LLVM's factory pattern
   /// (cf. llvm::object::ObjectFile::createObjectFile).
@@ -56,6 +61,7 @@ public:
 
 protected:
   std::set<va_t> RestrictFunctionEntries;
+  std::map<va_t, InstructionMode> ARMFunctionModes;
 
   /// Read a file into a MemoryBuffer.  Copy raw bytes into \p Img.Raw unless
   /// \p CopyRaw is false.  `--func` PE loads already keep section bytes in

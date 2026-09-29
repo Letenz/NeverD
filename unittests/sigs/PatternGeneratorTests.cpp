@@ -10,6 +10,7 @@
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -18,6 +19,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,6 +68,9 @@ public:
     Relocations.push_back({Offset, Type});
   }
 
+  /// Linker directives, which build() writes to a `.drectve` section.
+  void setDirectives(StringRef Text) { Directives = Text.str(); }
+
   std::vector<uint8_t> build() const {
     std::vector<Symbol> All = Symbols;
     All.push_back(
@@ -74,11 +80,14 @@ public:
     // Two slots for the section symbol and its auxiliary record.
     const uint32_t TargetIndex = 2 + static_cast<uint32_t>(Symbols.size());
 
-    const uint32_t HeaderSize = 20 + 40;
+    const uint16_t SectionCount = Directives.empty() ? 1 : 2;
+    const uint32_t HeaderSize = 20 + 40 * SectionCount;
     const uint32_t RawOffset = HeaderSize;
     const uint32_t RelocOffset = RawOffset + static_cast<uint32_t>(Code.size());
-    const uint32_t SymbolOffset =
+    const uint32_t DirectiveOffset =
         RelocOffset + 10 * static_cast<uint32_t>(Relocations.size());
+    const uint32_t SymbolOffset =
+        DirectiveOffset + static_cast<uint32_t>(Directives.size());
     const uint32_t SymbolCount = 2 + static_cast<uint32_t>(All.size());
 
     std::vector<uint8_t> Out;
@@ -105,7 +114,7 @@ public:
 
     // File header.
     put16(Machine);
-    put16(1);
+    put16(SectionCount);
     put32(0);
     put32(SymbolOffset);
     put32(SymbolCount);
@@ -124,6 +133,19 @@ public:
     put16(static_cast<uint16_t>(Relocations.size()));
     put16(0);
     put32(Characteristics);
+    if (!Directives.empty()) {
+      putName(".drectve", Strings);
+      put32(0);
+      put32(0);
+      put32(static_cast<uint32_t>(Directives.size()));
+      put32(DirectiveOffset);
+      put32(0);
+      put32(0);
+      put16(0);
+      put16(0);
+      put32(COFF::IMAGE_SCN_LNK_INFO | COFF::IMAGE_SCN_LNK_REMOVE |
+            COFF::IMAGE_SCN_ALIGN_1BYTES);
+    }
 
     Out.insert(Out.end(), Code.begin(), Code.end());
 
@@ -132,6 +154,7 @@ public:
       put32(TargetIndex);
       put16(Type);
     }
+    Out.insert(Out.end(), Directives.begin(), Directives.end());
 
     // Section symbol and its auxiliary section-definition record.
     putName(".text", Strings);
@@ -168,16 +191,21 @@ private:
   uint32_t Characteristics;
   std::vector<Symbol> Symbols;
   std::vector<std::pair<uint32_t, uint16_t>> Relocations;
+  std::string Directives;
 };
 
 /// A relocatable ELF object with one code section, assembled in memory.
 ///
 /// ELFCLASS64 objects carry RELA relocations and ELFCLASS32 ones REL, as the
-/// x86-64 and AArch64, and the i386 and ARM, toolchains write them. Every
-/// function is a global STT_FUNC symbol in .text; every relocation points at
-/// one undefined symbol, added by build().
+/// x86-64 and AArch64, and the i386 and ARM, toolchains write them. Symbol 1
+/// is the section symbol of .text; every function is a global STT_FUNC
+/// symbol in it after that. A relocation names one of the functions, the
+/// section symbol (as SectionSymbol), or an undefined symbol build() adds --
+/// "target" unless it says otherwise.
 class ELFObjectBuilder {
 public:
+  static constexpr const char *SectionSymbol = ".text";
+
   ELFObjectBuilder(uint16_t Machine, bool Is64, std::vector<uint8_t> Code)
       : Machine(Machine), Is64(Is64), Code(std::move(Code)) {}
 
@@ -186,8 +214,9 @@ public:
     Sizes.push_back(Size);
   }
 
-  void addRelocation(uint64_t Offset, uint32_t Type) {
-    Relocations.push_back({Offset, Type});
+  void addRelocation(uint64_t Offset, uint32_t Type,
+                     StringRef Symbol = "target") {
+    Relocations.push_back({Offset, Type, Symbol.str()});
   }
 
   std::vector<uint8_t> build() const {
@@ -203,16 +232,38 @@ public:
     };
 
     std::string Strings(1, '\0');
-    std::vector<uint32_t> NameOffsets;
-    for (const auto &[Name, Offset] : Functions) {
-      NameOffsets.push_back(static_cast<uint32_t>(Strings.size()));
-      Strings += Name;
+    auto addString = [&](StringRef Name) {
+      const uint32_t Offset = static_cast<uint32_t>(Strings.size());
+      Strings += Name.str();
       Strings.push_back('\0');
-    }
-    const uint32_t TargetName = static_cast<uint32_t>(Strings.size());
-    Strings += "target";
-    Strings.push_back('\0');
-    const uint32_t TargetIndex = 1 + static_cast<uint32_t>(Functions.size());
+      return Offset;
+    };
+    std::vector<uint32_t> NameOffsets;
+    for (const auto &[Name, Offset] : Functions)
+      NameOffsets.push_back(addString(Name));
+    auto functionIndex = [&](StringRef Name) -> std::optional<uint32_t> {
+      for (size_t I = 0; I < Functions.size(); ++I)
+        if (Functions[I].first == Name)
+          return 2 + static_cast<uint32_t>(I);
+      return std::nullopt;
+    };
+    std::vector<std::string> Undefined = {"target"};
+    for (const Relocation &Rel : Relocations)
+      if (Rel.Symbol != SectionSymbol && !functionIndex(Rel.Symbol) &&
+          !llvm::is_contained(Undefined, Rel.Symbol))
+        Undefined.push_back(Rel.Symbol);
+    std::vector<uint32_t> UndefinedNames;
+    for (const std::string &Name : Undefined)
+      UndefinedNames.push_back(addString(Name));
+    auto symbolIndex = [&](StringRef Name) -> uint32_t {
+      if (Name == SectionSymbol)
+        return 1;
+      if (std::optional<uint32_t> Index = functionIndex(Name))
+        return *Index;
+      return 2 + static_cast<uint32_t>(Functions.size()) +
+             static_cast<uint32_t>(llvm::find(Undefined, Name) -
+                                   Undefined.begin());
+    };
     const char *RelName = Is64 ? ".rela.text" : ".rel.text";
     std::string SectionNames(1, '\0');
     auto addName = [&](StringRef Name) {
@@ -239,13 +290,14 @@ public:
 
     align(8);
     const size_t RelBegin = Out.size();
-    for (const auto &[Offset, Type] : Relocations) {
-      put(Offset, Addr);
+    for (const Relocation &Rel : Relocations) {
+      const uint32_t Index = symbolIndex(Rel.Symbol);
+      put(Rel.Offset, Addr);
       if (Is64) {
-        put((uint64_t(TargetIndex) << 32) | Type, 8);
+        put((uint64_t(Index) << 32) | Rel.Type, 8);
         put(0, 8);
       } else {
-        put((TargetIndex << 8) | Type, 4);
+        put((Index << 8) | Rel.Type, 4);
       }
     }
     const Placed Rel{RelBegin, Out.size() - RelBegin};
@@ -270,11 +322,13 @@ public:
       }
     };
     putSymbol(0, 0, 0, 0, 0);
+    putSymbol(0, (ELF::STB_LOCAL << 4) | ELF::STT_SECTION, 1, 0, 0);
     for (size_t I = 0; I < Functions.size(); ++I)
       putSymbol(NameOffsets[I], (ELF::STB_GLOBAL << 4) | ELF::STT_FUNC, 1,
                 Functions[I].second, Sizes[I]);
-    putSymbol(TargetName, (ELF::STB_GLOBAL << 4) | ELF::STT_NOTYPE,
-              ELF::SHN_UNDEF, 0, 0);
+    for (uint32_t Name : UndefinedNames)
+      putSymbol(Name, (ELF::STB_GLOBAL << 4) | ELF::STT_NOTYPE, ELF::SHN_UNDEF,
+                0, 0);
     const Placed Symtab{SymBegin, Out.size() - SymBegin};
 
     const Placed Strtab{Out.size(), Strings.size()};
@@ -303,7 +357,7 @@ public:
                Text, 0, 0, 16, 0);
     putSection(RelSectionName, Is64 ? ELF::SHT_RELA : ELF::SHT_REL,
                ELF::SHF_INFO_LINK, Rel, 3, 1, Addr, Is64 ? 24 : 8);
-    putSection(SymtabName, ELF::SHT_SYMTAB, 0, Symtab, 4, 1, Addr,
+    putSection(SymtabName, ELF::SHT_SYMTAB, 0, Symtab, 4, 2, Addr,
                Is64 ? 24 : 16);
     putSection(StrtabName, ELF::SHT_STRTAB, 0, Strtab, 0, 0, 1, 0);
     putSection(ShstrtabName, ELF::SHT_STRTAB, 0, Shstrtab, 0, 0, 1, 0);
@@ -336,9 +390,14 @@ private:
   uint16_t Machine;
   bool Is64;
   std::vector<uint8_t> Code;
+  struct Relocation {
+    uint64_t Offset;
+    uint32_t Type;
+    std::string Symbol;
+  };
   std::vector<std::pair<std::string, uint64_t>> Functions;
   std::vector<uint64_t> Sizes;
-  std::vector<std::pair<uint64_t, uint32_t>> Relocations;
+  std::vector<Relocation> Relocations;
 };
 
 struct Generated {
@@ -518,6 +577,56 @@ TEST(PatternGeneratorCOFF, DirectBranchesBecomeReferencesOnRequest) {
   ASSERT_EQ(Mod->References.size(), 1u);
   EXPECT_EQ(Mod->References[0].Offset, 9u);
   EXPECT_EQ(Mod->References[0].Name, "target");
+}
+
+TEST(PatternGeneratorCOFF, AlternateNamesComeFromTheDirectives) {
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, sequentialCode(32));
+  Builder.addFunction("_f", 0);
+  // MSVC's own spelling, a quoted one, another option, and a second
+  // alternate for one symbol.
+  Builder.setDirectives(
+      "\xEF\xBB\xBF   /ALTERNATENAME:___filter=___filter_default "
+      "/DEFAULTLIB:\"LIBCMT\" "
+      "\"-alternatename:_pRawDllMain=_pDefaultRawDllMain\" "
+      "/alternatename:___filter=___filter_other ");
+  const std::vector<uint8_t> Bytes = Builder.build();
+  auto ObjOrErr = object::ObjectFile::createObjectFile(MemoryBufferRef(
+      StringRef(reinterpret_cast<const char *>(Bytes.data()), Bytes.size()),
+      "directives.obj"));
+  ASSERT_TRUE(static_cast<bool>(ObjOrErr)) << toString(ObjOrErr.takeError());
+
+  std::map<std::string, std::vector<std::string>, std::less<>> Names;
+  collectAlternateNames(**ObjOrErr, Names);
+  ASSERT_EQ(Names.size(), 2u);
+  EXPECT_EQ(Names["___filter"],
+            (std::vector<std::string>{"___filter_default", "___filter_other"}));
+  EXPECT_EQ(Names["_pRawDllMain"],
+            std::vector<std::string>{"_pDefaultRawDllMain"});
+}
+
+TEST(PatternGeneratorCOFF, ABranchToASymbolWithAnAlternateNamesBoth) {
+  // x86: a call at 8 to `target`, which a link without it resolves to
+  // `target_default`.
+  std::vector<uint8_t> Code = sequentialCode(48);
+  Code[8] = 0xE8;
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, Code);
+  Builder.addFunction("caller", 0);
+  Builder.addRelocation(9, COFF::IMAGE_REL_I386_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Opts.EmitReferences = true;
+  Opts.AlternateNames["target"] = {"target_default", "caller"};
+
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines[0]);
+  ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+  // The routine's own name is no alternate the image confirms.
+  ASSERT_EQ(Mod->References.size(), 2u) << Out.Lines[0];
+  EXPECT_EQ(Mod->References[0].Offset, 9u);
+  EXPECT_EQ(Mod->References[0].Name, "target");
+  EXPECT_EQ(Mod->References[1].Offset, 9u);
+  EXPECT_EQ(Mod->References[1].Name, "target_default");
 }
 
 TEST(PatternGeneratorCOFF, BranchReferencesUseEachMachinesOffset) {
@@ -825,6 +934,184 @@ TEST(PatternGeneratorELF, SymbolsThatLabelOneAddressShareALine) {
   auto Parsed = PatternParser::parseLine(Out.Lines[0]);
   ASSERT_TRUE(static_cast<bool>(Parsed));
   EXPECT_EQ(Parsed->PublicNames.size(), 3u);
+}
+
+/// x86-64 code that calls a routine through the PLT at 4 and loads a
+/// RIP-relative word at 9 -- a PC32 field that is no branch -- then runs to
+/// 32 bytes.
+std::vector<uint8_t> callingCode() {
+  std::vector<uint8_t> Code = {0x55, 0x48, 0x89, 0xE5, 0xE8, 0, 0, 0,
+                               0,    0x48, 0x8B, 0x05, 0,    0, 0, 0};
+  std::vector<uint8_t> Rest = sequentialCode(16);
+  Code.insert(Code.end(), Rest.begin(), Rest.end());
+  return Code;
+}
+
+TEST(PatternGeneratorELF, DirectBranchesBecomeReferencesOnRequest) {
+  // ctype_byname<wchar_t>::do_toupper and do_tolower: the same bytes, told
+  // apart only by the routine each calls.
+  std::vector<uint8_t> Code = callingCode();
+  const std::vector<uint8_t> Twin = callingCode();
+  Code.insert(Code.end(), Twin.begin(), Twin.end());
+  ELFObjectBuilder Builder(ELF::EM_X86_64, true, Code);
+  Builder.addFunction("upper", 0, 32);
+  Builder.addFunction("lower", 32, 32);
+  Builder.addRelocation(5, ELF::R_X86_64_PLT32, "towupper_l");
+  Builder.addRelocation(12, ELF::R_X86_64_PC32, "table");
+  Builder.addRelocation(37, ELF::R_X86_64_PLT32, "towlower_l");
+  Builder.addRelocation(44, ELF::R_X86_64_PC32, "table");
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+
+  Generated Plain = generate(Builder.build(), Opts);
+  ASSERT_EQ(Plain.Lines.size(), 2u);
+  EXPECT_EQ(Plain.Lines[0].find('^'), std::string::npos)
+      << "references are off unless asked for";
+
+  Opts.EmitReferences = true;
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 2u);
+  const std::pair<const char *, const char *> Expected[] = {
+      {"upper", "towupper_l"}, {"lower", "towlower_l"}};
+  for (size_t I = 0; I < 2; ++I) {
+    auto Mod = PatternParser::parseLine(Out.Lines[I]);
+    ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+    ASSERT_EQ(Mod->PublicNames.size(), 1u);
+    EXPECT_EQ(Mod->PublicNames[0].Name, Expected[I].first);
+    ASSERT_EQ(Mod->References.size(), 1u) << Out.Lines[I];
+    EXPECT_EQ(Mod->References[0].Offset, 5u);
+    EXPECT_EQ(Mod->References[0].Name, Expected[I].second);
+  }
+}
+
+TEST(PatternGeneratorELF, ReferencesNameOnlyOtherRoutines) {
+  // Calls to the routine itself under an alias, through the section symbol,
+  // and to another routine.
+  std::vector<uint8_t> Code = {0x55, 0xE8, 0, 0,    0, 0, 0xE8, 0,
+                               0,    0,    0, 0xE8, 0, 0, 0,    0};
+  std::vector<uint8_t> Rest = sequentialCode(16);
+  Code.insert(Code.end(), Rest.begin(), Rest.end());
+  ELFObjectBuilder Builder(ELF::EM_X86_64, true, Code);
+  Builder.addFunction("recurse", 0);
+  Builder.addFunction("__recurse", 0);
+  Builder.addRelocation(2, ELF::R_X86_64_PLT32, "__recurse");
+  Builder.addRelocation(7, ELF::R_X86_64_PC32, ELFObjectBuilder::SectionSymbol);
+  Builder.addRelocation(12, ELF::R_X86_64_PLT32, "other");
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Opts.EmitReferences = true;
+
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines[0]);
+  ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+  ASSERT_EQ(Mod->References.size(), 1u) << Out.Lines[0];
+  EXPECT_EQ(Mod->References[0].Offset, 12u);
+  EXPECT_EQ(Mod->References[0].Name, "other");
+}
+
+TEST(PatternGeneratorELF, ACallARelaxationMayEraseIsNoReference) {
+  // General dynamic TLS: data16 lea rdi,[rip+x@tlsgd]; data16 data16 rex64
+  // call __tls_get_addr@PLT, which a static link rewrites -- then a call
+  // that stays.
+  std::vector<uint8_t> Code = {0x66, 0x48, 0x8D, 0x3D, 0,    0, 0,
+                               0,    0x66, 0x66, 0x48, 0xE8, 0, 0,
+                               0,    0,    0xE8, 0,    0,    0, 0};
+  std::vector<uint8_t> Rest = sequentialCode(24);
+  Code.insert(Code.end(), Rest.begin(), Rest.end());
+  ELFObjectBuilder Builder(ELF::EM_X86_64, true, Code);
+  Builder.addFunction("tls_reader", 0);
+  Builder.addRelocation(4, ELF::R_X86_64_TLSGD, "x");
+  Builder.addRelocation(12, ELF::R_X86_64_PLT32, "__tls_get_addr");
+  Builder.addRelocation(17, ELF::R_X86_64_PLT32, "kept");
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Opts.EmitReferences = true;
+
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines[0]);
+  ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+  ASSERT_EQ(Mod->References.size(), 1u) << Out.Lines[0];
+  EXPECT_EQ(Mod->References[0].Offset, 17u);
+  EXPECT_EQ(Mod->References[0].Name, "kept");
+}
+
+TEST(PatternGeneratorELF, ThumbAndAArch64BranchesAreReferences) {
+  // A Thumb-2 BL at 4 and B.W at 8; an AArch64 BL at 4 and B at 8.
+  std::vector<uint8_t> Code = sequentialCode(40);
+  ELFObjectBuilder Thumb(ELF::EM_ARM, false, Code);
+  Thumb.addFunction("thumb", 0);
+  Thumb.addRelocation(4, ELF::R_ARM_THM_CALL, "callee");
+  Thumb.addRelocation(8, ELF::R_ARM_THM_JUMP24, "tail");
+  ELFObjectBuilder AArch64(ELF::EM_AARCH64, true, Code);
+  AArch64.addFunction("a64", 0);
+  AArch64.addRelocation(4, ELF::R_AARCH64_CALL26, "callee");
+  AArch64.addRelocation(8, ELF::R_AARCH64_JUMP26, "tail");
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Opts.EmitReferences = true;
+
+  for (ELFObjectBuilder *Builder : {&Thumb, &AArch64}) {
+    Generated Out = generate(Builder->build(), Opts);
+    ASSERT_EQ(Out.Lines.size(), 1u);
+    auto Mod = PatternParser::parseLine(Out.Lines[0]);
+    ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+    ASSERT_EQ(Mod->References.size(), 2u) << Out.Lines[0];
+    EXPECT_EQ(Mod->References[0].Offset, 4u);
+    EXPECT_EQ(Mod->References[0].Name, "callee");
+    EXPECT_EQ(Mod->References[1].Offset, 8u);
+    EXPECT_EQ(Mod->References[1].Name, "tail");
+  }
+}
+
+TEST(PatternGeneratorELF, BranchReferencesUseEachMachinesOffset) {
+  const std::vector<uint8_t> Call = {0x55, 0xE8, 0, 0, 0, 0, 0xC3};
+  EXPECT_EQ(
+      elfBranchReferenceOffset(ELF::EM_X86_64, ELF::R_X86_64_PLT32, Call, 2),
+      2u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_386, ELF::R_386_PC32, Call, 2),
+            2u);
+  // The same field after a non-branch opcode, at the function's first byte,
+  // or of a type no call has, is no branch.
+  EXPECT_EQ(
+      elfBranchReferenceOffset(ELF::EM_X86_64, ELF::R_X86_64_PC32, Call, 3),
+      std::nullopt);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_386, ELF::R_386_PLT32,
+                                     ArrayRef<uint8_t>(Call).drop_front(2), 0),
+            std::nullopt);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_X86_64, ELF::R_X86_64_GOTPCRELX,
+                                     Call, 2),
+            std::nullopt);
+  const std::vector<uint8_t> Words(16, 0);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_AARCH64, ELF::R_AARCH64_CALL26,
+                                     Words, 8),
+            8u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_AARCH64,
+                                     ELF::R_AARCH64_ADR_PREL_PG_HI21, Words, 8),
+            std::nullopt);
+  // A branch that runs past the function's end is not the function's.
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_AARCH64, ELF::R_AARCH64_JUMP26,
+                                     Words, 14),
+            std::nullopt);
+  EXPECT_EQ(
+      elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_THM_CALL, Words, 6), 6u);
+  EXPECT_EQ(
+      elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_THM_JUMP19, Words, 6),
+      std::nullopt);
+  // An ARM-state branch is stated one byte past its instruction.
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_CALL, Words, 8),
+            9u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_JUMP24, Words, 4),
+            5u);
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_PLT32, Words, 0),
+            1u);
+  // Neither kind of branch is where its instruction set puts none.
+  EXPECT_EQ(elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_CALL, Words, 6),
+            std::nullopt);
+  EXPECT_EQ(
+      elfBranchReferenceOffset(ELF::EM_ARM, ELF::R_ARM_THM_CALL, Words, 5),
+      std::nullopt);
 }
 
 TEST(PatternGeneratorMachine, ObjectsAreKeptForTheirOwnArchitecture) {

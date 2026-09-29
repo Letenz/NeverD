@@ -104,19 +104,18 @@ std::optional<va_t> armPLTVeneerTarget(const uint8_t *Bytes, size_t Available,
 
 } // anonymous namespace
 
-size_t recordARMPLTVeneers(BinaryImage &Img) {
-  if (Img.Arch != Arch::ARM || Img.Imports.empty() ||
-      !isSingleInstructionMode(Img.Mode))
-    return 0;
+std::map<va_t, size_t> findARMPLTVeneers(const BinaryImage &Img) {
+  std::map<va_t, size_t> Veneers;
+  if (Img.Arch != Arch::ARM || Img.Imports.empty())
+    return Veneers;
 
   std::map<va_t, size_t> CellOwners;
   for (size_t I = 0; I < Img.Imports.size(); ++I)
     if (Img.Imports[I].IATAddr != 0)
       CellOwners.try_emplace(Img.Imports[I].IATAddr, I);
   if (CellOwners.empty())
-    return 0;
+    return Veneers;
 
-  size_t Paired = 0;
   for (const Section &Sec : Img.Sections) {
     llvm::StringRef Name(Sec.Name);
     if (Name != section_names::elf::Plt && Name != section_names::elf::Iplt &&
@@ -142,12 +141,20 @@ size_t recordARMPLTVeneers(BinaryImage &Img) {
       if (!Cell)
         continue;
       auto Owner = CellOwners.find(*Cell);
-      if (Owner == CellOwners.end())
-        continue;
-      if (Img.recordImportStub(VA, Owner->second))
-        ++Paired;
+      if (Owner != CellOwners.end())
+        Veneers.try_emplace(VA, Owner->second);
     }
   }
+  return Veneers;
+}
+
+size_t recordARMPLTVeneers(BinaryImage &Img) {
+  if (!isSingleInstructionMode(Img.Mode))
+    return 0;
+  size_t Paired = 0;
+  for (const auto &[VA, Import] : findARMPLTVeneers(Img))
+    if (Img.recordImportStub(VA, Import))
+      ++Paired;
   LLVM_DEBUG(llvm::dbgs() << "elf: paired " << Paired
                           << " ARM PLT veneers with their imports\n");
   return Paired;

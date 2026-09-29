@@ -13,16 +13,25 @@
 #ifndef NEVERD_SIGS_SIGNATUREDB_H
 #define NEVERD_SIGS_SIGNATUREDB_H
 
+#include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/Signature.h"
+#include "neverd/sigs/SignatureMatcher.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -79,13 +88,23 @@ public:
   /// \p FuncEntries are the known function entry addresses to check.
   ///
   /// A module's references (PatternModule::References) are then checked
-  /// against the image.  A reference whose branch goes to a routine the other
-  /// matches name differently contradicts the match, which is dropped.  One
-  /// whose target those matches name the same, or whose target the named
-  /// routine's own pattern matches, confirms it.  Anything else -- an import
-  /// thunk, a veneer, a routine nothing names -- neither confirms nor
-  /// contradicts.  A branch to an incremental-linking thunk is followed to
-  /// the thunk's target when the thunk itself settles nothing.
+  /// against the image, the references at one offset as one branch that
+  /// reaches one of the routines they name.  A branch that goes to a routine
+  /// the other matches name as none of them contradicts the match, which is
+  /// dropped.  One whose target those matches name as one of them, or whose
+  /// target the pattern of one of them matches, confirms it.  In an ELF image a
+  /// branch to an import's PLT stub confirms a reference to that import and
+  /// contradicts one to anything else.  Anything else -- a COFF import thunk,
+  /// a routine nothing names -- neither confirms nor contradicts.  A branch
+  /// to a routine that only jumps on -- an incremental-linking thunk, a
+  /// branch island, a linker's long-branch or interworking thunk -- is
+  /// followed when the routine itself settles nothing.  What it reaches
+  /// confirms a reference to it and contradicts nothing: the same bytes are
+  /// a routine that tail-calls another, `free` jumping to `_free_base`.
+  ///
+  /// What the references confirm and contradict names routines the bytes
+  /// alone could not, and those are what the references of their callers are
+  /// checked against in turn: the check repeats until it names nothing new.
   void apply(const BinaryImage &Img, const std::vector<uint64_t> &FuncEntries);
 
   /// Name the personality routines \p Img installs but cannot name itself,
@@ -149,11 +168,19 @@ private:
     std::string LibraryName;
     size_t ModuleStart = 0;
     size_t ModuleCount = 0;
+    /// What the source's modules point into.
+    std::unique_ptr<uint8_t[]> Bytes;
+    std::vector<PatternNames> Names;
   };
 
-  std::vector<PatternModule> Modules;
+  std::vector<StoredModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
+
+  /// The index of \ref Modules, built by \ref index when first needed and
+  /// dropped whenever the modules change.
+  std::unique_ptr<SignatureMatcher::HashIndex> Index;
+  const SignatureMatcher::HashIndex &index();
 
   /// Per entry of \ref Matches: the module that made it, or NoModule.
   static constexpr size_t NoModule = std::numeric_limits<size_t>::max();
@@ -162,19 +189,30 @@ private:
   void clearMatches();
 
   /// What the matches settle for one address: the name shown, and every name
-  /// the agreeing matches give the routine.
+  /// the agreeing matches give the routine, sorted.  Both view the matches'
+  /// names, and last only as long as the matches do.
   struct SettledRoutine {
-    std::string Name;
-    std::set<std::string> Names;
+    std::string_view Name;
+    llvm::SmallVector<std::string_view, 4> Names;
+    bool hasName(std::string_view Name) const {
+      return std::binary_search(Names.begin(), Names.end(), Name);
+    }
+    bool operator==(const SettledRoutine &) const = default;
   };
   /// The routines the matches settle; see \ref buildNameMap.
   std::unordered_map<uint64_t, SettledRoutine> settleRoutines() const;
+  /// What \p Proposals, the matches at one address, settle there.
+  static std::optional<SettledRoutine>
+  settle(llvm::ArrayRef<const SigMatch *> Proposals);
 
   /// Drop the matches their references contradict and record the ones they
-  /// confirm; see \ref apply.
-  void checkReferences(const BinaryImage &Img);
+  /// confirm; see \ref apply.  \p Hits are the modules that matched at each
+  /// of \p Entries, the addresses the matches were looked for at.
+  void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+                       std::vector<SignatureMatcher::Hit> Hits);
 
-  void commitSource(std::vector<PatternModule> &&Mods,
+  void commitSource(std::vector<PatternChunk> &&Chunks,
+                    std::unique_ptr<uint8_t[]> Bytes,
                     const std::string &LibName, const std::string &FilePath);
 
   /// The library a module was loaded from, by its index in \ref Modules.

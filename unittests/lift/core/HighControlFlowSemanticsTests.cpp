@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -7,6 +8,13 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <optional>
 #include <stdexcept>
@@ -16,6 +24,7 @@ void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
 void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
+void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
 void simplifyAllExprs(std::vector<HighStmt> &);
 void recoverSwitchStatements(HighFunc &);
@@ -2528,6 +2537,125 @@ TEST(HighControlFlowSemantics, ImmutableSingleUseExpressionStillInlines) {
   EXPECT_EQ(F.Body.back().RetVal->Kind, ExprKind::BinOp);
 }
 
+TEST(HighControlFlowSemantics, SharedExpressionKeepsItsRepeatedInputUse) {
+  HighFunc F;
+  auto Calculation = assign(0x1004, 2, 0);
+  Calculation.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(7, 8));
+  auto Shared =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(2), HighExpr::makeConst(1, 8));
+  auto FirstUse = assign(0x1008, 3, 0);
+  FirstUse.Val = Shared;
+  auto SecondUse = assign(0x100c, 4, 0);
+  SecondUse.Val = Shared;
+  F.Body = {
+      assign(0x1000, 1, 10), Calculation, FirstUse, SecondUse,
+      result(0x1010, HighExpr::makeBinop(NdOp::INT_ADD, local(3), local(4)))};
+  ASSERT_EQ(execute(F, 0), 36u);
+  inlineSingleDefSingleUse(F.Body);
+  EXPECT_EQ(execute(F, 0), 36u);
+  EXPECT_EQ(Shared->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Shared->Operands[0]->Var.Id, 2u);
+}
+
+TEST(HighControlFlowSemantics, CopyChainKeepsItsSharedSourceDefinition) {
+  HighFunc F;
+  auto Shared = local(1);
+  auto Copy = assign(0x1004, 2, 0);
+  Copy.Val = Shared;
+  F.Body = {
+      assign(0x1000, 1, 7), Copy,
+      result(0x1008, HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(2)))};
+  ASSERT_EQ(execute(F, 0), 14u);
+  const auto Before = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Before.Complete);
+  ASSERT_TRUE(Before.Items.empty());
+
+  // Sharing an expression object does not merge its two source use sites.
+  foldCopyChains(F);
+
+  const auto After = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(After.Complete);
+  EXPECT_TRUE(After.Items.empty());
+  EXPECT_EQ(execute(F, 0), 14u);
+}
+
+TEST(HighControlFlowSemantics, CopyChainKeepsDependenciesOfParallelRewrites) {
+  HighFunc F;
+  auto FirstCopy = assign(0x1004, 2, 0);
+  FirstCopy.Val = local(1);
+  auto SecondCopy = assign(0x1008, 3, 0);
+  SecondCopy.Val = local(2);
+  F.Body = {assign(0x1000, 1, 7), FirstCopy, SecondCopy,
+            result(0x100c, local(3))};
+  ASSERT_EQ(execute(F, 0), 7u);
+
+  foldCopyChains(F);
+
+  // Rewriting the second copy can still depend on the first copy's source.
+  for (bool CleanDeadValues : {false, true}) {
+    SCOPED_TRACE(CleanDeadValues);
+    if (CleanDeadValues)
+      eliminateUnusedValues(F.Body);
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    EXPECT_EQ(execute(F, 0), 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, CopyChainCountsUsesInEverySwitchArm) {
+  for (bool InDefault : {false, true}) {
+    SCOPED_TRACE(InDefault);
+    HighFunc F;
+    auto Copy = assign(0x1004, 2, 0);
+    Copy.Val = local(1);
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(2));
+    HighStmt Dispatch;
+    Dispatch.Kind = StmtKind::Switch;
+    Dispatch.Addr = 0x1008;
+    MedVar Selector;
+    Selector.Kind = MedVar::Param;
+    Selector.Size = 8;
+    Dispatch.SwitchExpr = HighExpr::makeVar(Selector);
+    Dispatch.Cases.push_back({0, {result(0x100c, InDefault ? local(2) : Sum)}});
+    Dispatch.DefaultBody = {result(0x1010, InDefault ? Sum : local(2))};
+    F.Body = {assign(0x1000, 1, 7), Copy, Dispatch};
+    for (uint64_t Selector : {0, 1})
+      ASSERT_EQ(execute(F, Selector), bool(Selector) == InDefault ? 14u : 7u);
+
+    foldCopyChains(F);
+    eliminateUnusedValues(F.Body);
+
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    for (uint64_t Selector : {0, 1})
+      EXPECT_EQ(execute(F, Selector), bool(Selector) == InDefault ? 14u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, CopyChainRetainsItsSourceBranchEntry) {
+  HighFunc F;
+  auto Copy = assign(0x1008, 2, 0);
+  Copy.Val = local(1);
+  F.Body = {jump(0x1000, 0x1004), assign(0x1004, 1, 7), Copy,
+            result(0x100c, local(2))};
+  ASSERT_EQ(execute(F, 0, true), 7u);
+
+  foldCopyChains(F);
+
+  for (bool CleanDeadValues : {false, true}) {
+    SCOPED_TRACE(CleanDeadValues);
+    if (CleanDeadValues)
+      eliminateUnusedValues(F.Body);
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    EXPECT_EQ(execute(F, 0, true), 7u);
+  }
+}
+
 TEST(HighControlFlowSemantics, NestedCallRetainsItsPrecedingMemorySnapshot) {
   HighFunc F;
   const auto Address = HighExpr::makeConst(0x4000, 8);
@@ -3850,4 +3978,165 @@ TEST(HighControlFlowSemantics, JoinDefaultValueStaysAfterAnArmWritingItsDest) {
   structureIfElse(F, 10);
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(10));
   EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
+}
+
+namespace {
+ExprPtr enteredLoopArgument() {
+  MedVar V;
+  V.Kind = MedVar::Param;
+  V.Id = 0;
+  V.Size = 8;
+  V.TheArch = Arch::X64;
+  return HighExpr::makeVar(V, NdType::makeInt(8, false));
+}
+
+HighFunc enteredLoopFunction(const char *Name) {
+  HighFunc F;
+  F.Name = Name;
+  F.ReturnType = NdType::makeInt(8, false);
+  F.Params = {{"arg0", NdType::makeInt(8, false)}};
+  return F;
+}
+
+// Resolve exact nested entries using the source-flow authority, then execute
+// the emitted C. The oracle values are independent of the rewritten layout.
+void checkEnteredLoopExecution(const HighFunc &F,
+                               llvm::ArrayRef<uint64_t> Expected) {
+  const auto Flow = buildHighSourceFlowGraph(F);
+  std::string Diagnostics;
+  for (const auto &Item : Flow.Diagnostics.Items)
+    Diagnostics += Item.Reason + "\n";
+  ASSERT_TRUE(Flow.Diagnostics.Complete) << Diagnostics;
+
+  std::string Source;
+  llvm::raw_string_ostream SourceOS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, SourceOS, Options));
+  SourceOS << "\nint main(void) {\n";
+  for (size_t I = 0; I < Expected.size(); ++I)
+    SourceOS << "  if (" << F.Name << "(" << I << ") != " << Expected[I]
+             << ") return " << I + 1 << ";\n";
+  SourceOS << "  return 0;\n}\n";
+  SourceOS.flush();
+
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  const auto Found = llvm::sys::findProgramByName("clang");
+  if (!Found)
+    GTEST_SKIP() << "clang is required for the generated-C entry check";
+  const std::string Compiler = *Found;
+#endif
+  llvm::SmallString<128> SourcePath, ExecutablePath, ErrorPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-loop-entry", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-loop-entry", "exe",
+                                                  ExecutablePath));
+  llvm::FileRemover RemoveExecutable(ExecutablePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-loop-entry", "err",
+                                                  ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    OS << Source;
+  }
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization.str());
+    const llvm::SmallVector<llvm::StringRef, 12> Arguments{
+        Compiler,
+        "-std=c11",
+        Optimization,
+        "-D__fastcall=",
+        "-Werror=return-type",
+        SourcePath,
+        "-o",
+        ExecutablePath};
+    const int CompileResult = llvm::sys::ExecuteAndWait(
+        Compiler, Arguments, std::nullopt, Redirects, 30);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(CompileResult, 0)
+        << (Errors ? (*Errors)->getBuffer().str() : "no compiler diagnostic")
+        << "\n"
+        << Source;
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(ExecutablePath, {ExecutablePath},
+                                        std::nullopt, {}, 10),
+              0)
+        << Source;
+  }
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, HoistedExitKeepsEnteredChildGoto) {
+  for (bool TestFirst : {true, false}) {
+    SCOPED_TRACE(TestFirst ? "loop head test" : "loop tail test");
+    auto F = enteredLoopFunction(TestFirst ? "entered_head_exit"
+                                           : "entered_tail_exit");
+    HighStmt Direct;
+    Direct.Kind = StmtKind::If;
+    Direct.Addr = 0x18;
+    Direct.Cond = enteredLoopArgument();
+    Direct.Body = {jump(0, 0x34)};
+    HighStmt Exit;
+    Exit.Kind = StmtKind::If;
+    Exit.Addr = 0x30;
+    Exit.Cond = local(2);
+    Exit.Body = {jump(0x34, 0x60)};
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Addr = 0x20;
+    Loop.Body = {assign(0x40, 1, 7), assign(0x44, 2, 1)};
+    Loop.Body.insert(TestFirst ? Loop.Body.begin() : Loop.Body.end(), Exit);
+    F.Body = {assign(0x10, 1, 3), assign(0x14, 2, 0), Direct, Loop,
+              result(0x60, local(1))};
+
+    // A direct jump to the conditional's child bypasses its false condition
+    // and returns 3. Ordinary entry runs the body and returns 7.
+    checkEnteredLoopExecution(F, {7, 3});
+    ASSERT_TRUE(hoistLoopExitTests(F.Body));
+    checkEnteredLoopExecution(F, {7, 3});
+  }
+}
+
+TEST(HighControlFlowSemantics, MovedLoopTailKeepsEnteredBreak) {
+  auto F = enteredLoopFunction("entered_break");
+  HighStmt Direct;
+  Direct.Kind = StmtKind::If;
+  Direct.Addr = 0x1c;
+  Direct.Cond = enteredLoopArgument();
+  Direct.Body = {jump(0, 0x34)};
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  Break.Addr = 0x34;
+  HighStmt Leave;
+  Leave.Kind = StmtKind::If;
+  Leave.Addr = 0x30;
+  Leave.Cond = local(2);
+  Leave.Body = {Break};
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Addr = 0x20;
+  Loop.Body = {Leave, assign(0x40, 1, 7), assign(0x44, 2, 1)};
+  auto Repeat = assign(0x18, 3, 0);
+  Repeat.Val = HighExpr::makeBinop(NdOp::INT_EQUAL, enteredLoopArgument(),
+                                   HighExpr::makeConst(2, 8));
+  HighStmt Tail;
+  Tail.Kind = StmtKind::If;
+  Tail.Addr = 0x50;
+  Tail.Cond = local(3);
+  Tail.Body = {assign(0x54, 3, 0), jump(0x58, 0x40)};
+  F.Body = {
+      assign(0x10, 1, 3),    assign(0x14, 2, 0), Repeat, Direct, Loop, Tail,
+      result(0x60, local(1))};
+
+  // Inputs cover ordinary loop entry, a direct break, and a direct break
+  // followed by one jump from the tail back into the loop body.
+  checkEnteredLoopExecution(F, {7, 3, 7});
+  ASSERT_TRUE(moveLoopTailsToTheirBreak(F.Body));
+  checkEnteredLoopExecution(F, {7, 3, 7});
 }

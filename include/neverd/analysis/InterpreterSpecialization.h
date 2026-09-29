@@ -8,6 +8,7 @@
 #define NEVERD_ANALYSIS_INTERPRETERSPECIALIZATION_H
 
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/symbolic/SymState.h"
 
 #include "llvm/Support/Error.h"
@@ -46,6 +47,15 @@ struct SpecializationInstruction {
   SpecializationCursor Fallthrough;
   SpecializationNativeStackControl NativeStackControl =
       SpecializationNativeStackControl::None;
+  /// Architecture-owned evidence for this exact instruction's Ops. Missing
+  /// coverage is not evidence that every output is defined.
+  LowInstructionUndefinedEffects UndefinedEffects;
+  /// Owned original instruction bytes, independent of decoder buffer reuse.
+  std::vector<uint8_t> NativeBytes;
+  /// Original native classification, including call-to-fallthrough sequences
+  /// lowered to explicit stack operations with no remaining LowIR CALL.
+  /// Unlike NativeStackControl, this does not authorize omitted stack effects.
+  bool IsNativeCall = false;
 };
 
 /// An exact non-faulting ordinary read whose bytes remain immutable throughout

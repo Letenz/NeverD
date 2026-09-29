@@ -14,12 +14,16 @@
 ///     at one offset are aliases, the linkage names one routine has
 ///   - Optionally, the routines the function branches to directly
 ///
-/// The current loader accepts the text representation of these records.
+/// The current loader accepts the text representation of these records.  A
+/// PatternModule is one record as a value; a StoredModule is the same record
+/// packed into arrays that a large signature set shares.
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_SIGS_SIGNATURE_H
 #define NEVERD_SIGS_SIGNATURE_H
+
+#include "llvm/ADT/ArrayRef.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -53,12 +57,68 @@ struct PatternModule {
   /// The routines the function branches to directly, as `^offset name`
   /// states them.  Offset is where the relocated branch field starts: the
   /// rel32 of an x86 or x64 `call`/`jmp` (E8/E9), and the branch instruction
-  /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  The bytes there are
-  /// wildcards, so matching checks the target separately; see
-  /// SignatureDB::apply.
+  /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  An ARM-state (A32)
+  /// B, BL or BLX is stated one byte past its instruction: its offset is
+  /// odd, which no Thumb-2 instruction's is, so the offset alone says which
+  /// instruction set the branch is in.  Several references at one offset
+  /// name the routines that one branch may reach -- a COFF symbol and the
+  /// alternate name a link resolves it to where no object defines it, or
+  /// the routines two builds of the same bytes call there -- and any of them
+  /// confirms it.  The bytes there are wildcards, so matching checks the
+  /// target separately; see SignatureDB::apply.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;
+};
+
+/// A name a StoredModule gives an offset: one of its public names, or a
+/// routine it references.
+struct StoredName {
+  uint32_t Offset = 0;
+  std::string_view Name;
+};
+
+/// A PatternModule packed for a large signature set.
+///
+/// A signature directory states hundreds of thousands of modules, and a
+/// PatternModule spends several allocations on each: two bytes per pattern
+/// byte, a vector per list, a string per name.  A StoredModule is a small
+/// record pointing into memory shared by every module parsed from the same
+/// text: a pattern byte is one byte and one bit saying whether the line
+/// states it, and the names of a chunk of lines are one array (see
+/// PatternNames).  It records exactly what the line says, and
+/// SignatureMatcher matches both forms by one set of rules.
+struct StoredModule {
+  /// The leading bytes, then the tail bytes; an unstated byte is zero.
+  const uint8_t *Bytes = nullptr;
+  /// Bit I % 8 of byte I / 8 is set when byte I of \ref Bytes is stated.
+  const uint8_t *Stated = nullptr;
+  /// The public names, then the references.
+  const StoredName *Names = nullptr;
+  uint32_t LeadingCount = 0;
+  uint32_t TailCount = 0;
+  uint32_t TotalLen = 0;
+  uint32_t PublicNameCount = 0;
+  uint32_t ReferenceCount = 0;
+  uint16_t CRC16 = 0;
+  uint8_t CRCLen = 0;
+
+  bool isStated(size_t Byte) const {
+    return (Stated[Byte / 8] >> (Byte % 8)) & 1;
+  }
+  llvm::ArrayRef<StoredName> publicNames() const {
+    return {Names, PublicNameCount};
+  }
+  llvm::ArrayRef<StoredName> references() const {
+    return {Names + PublicNameCount, ReferenceCount};
+  }
+};
+
+/// The names StoredModules point into, for one chunk of lines.  Moving it
+/// leaves them where they are.
+struct PatternNames {
+  std::vector<StoredName> Names;
+  std::vector<char> Text;
 };
 
 /// Whether \p A is the better of two linkage names one routine has.

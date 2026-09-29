@@ -361,6 +361,7 @@ void X86Lifter::emitFlagsLogic(LiftState &S, NdVar Result) {
   emitZSPF(S, Result);
   S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
   S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
+  S.recordUndefinedBits(NdVar::reg(x86reg::AF, 1), 0, 1);
 }
 
 // AF (auxiliary carry) reflects a carry/borrow out of bit 3, identical for
@@ -479,16 +480,256 @@ bool hasVexOrEvexEncoding(const cs_insn *Insn, bool Is64Bit) {
          (Insn->bytes[I] == 0x62 && I + 3 < Insn->size);
 }
 
+// An explicit initial audit of legacy integer forms. This describes newly
+// arbitrary architectural outputs, not a proof of the whole instruction's
+// LowIR implementation. In particular, preserving a flag and computing one
+// from inputs both retain any arbitrary input dependencies. Do not infer this
+// coverage from Capstone's coarse eflags mask or the absence of flag writes.
+bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
+  const cs_x86 &X86 = Insn->detail->x86;
+  const bool Is64Bit = TargetArch == Arch::X64;
+  if (Insn->size == 0 || Insn->size > 15 ||
+      X86.op_count > sizeof(X86.operands) / sizeof(X86.operands[0]) ||
+      (Is64Bit ? X86.addr_size != 4 && X86.addr_size != 8
+               : X86.addr_size != 2 && X86.addr_size != 4))
+    return false;
+  size_t OpcodeOffset = 0;
+  while (OpcodeOffset < Insn->size &&
+         isLegacyEncodingPrefix(Insn->bytes[OpcodeOffset], Is64Bit)) {
+    const uint8_t Prefix = Insn->bytes[OpcodeOffset++];
+    if (Prefix == 0xf0 || Prefix == 0xf2 || Prefix == 0xf3)
+      return false;
+  }
+  if (OpcodeOffset == Insn->size || hasVexOrEvexEncoding(Insn, Is64Bit) ||
+      (Is64Bit && Insn->bytes[OpcodeOffset] == 0xd5))
+    return false;
+
+  const uint64_t GeneralRegisterEnd = Is64Bit ? x86reg::RIP : x86reg::R8;
+  auto GeneralRegister = [&](x86_reg Reg, unsigned Size) {
+    const RegInfo Register = mapCapstoneReg(Reg);
+    return Register.Size == Size && Register.Offset < GeneralRegisterEnd &&
+           Register.Offset % 8 + Size <= 8;
+  };
+  auto MemoryOperand = [&](const cs_x86_op &Operand) {
+    const auto &Memory = Operand.mem;
+    switch (Memory.segment) {
+    case X86_REG_INVALID:
+    case X86_REG_CS:
+    case X86_REG_DS:
+    case X86_REG_ES:
+    case X86_REG_FS:
+    case X86_REG_GS:
+    case X86_REG_SS:
+      break;
+    default:
+      return false;
+    }
+    if (Memory.scale != 1 && Memory.scale != 2 && Memory.scale != 4 &&
+        Memory.scale != 8)
+      return false;
+    if (Memory.index == X86_REG_INVALID && Memory.scale != 1)
+      return false;
+    if (X86.addr_size == 2) {
+      if (Memory.scale != 1)
+        return false;
+      if (Memory.index != X86_REG_INVALID)
+        return (Memory.base == X86_REG_BX || Memory.base == X86_REG_BP) &&
+               (Memory.index == X86_REG_SI || Memory.index == X86_REG_DI);
+      return Memory.base == X86_REG_INVALID || Memory.base == X86_REG_BX ||
+             Memory.base == X86_REG_BP || Memory.base == X86_REG_SI ||
+             Memory.base == X86_REG_DI;
+    }
+    const x86_reg IP = X86.addr_size == 8 ? X86_REG_RIP : X86_REG_EIP;
+    if (Memory.base == IP)
+      return Is64Bit && Memory.index == X86_REG_INVALID;
+    if (Memory.base != X86_REG_INVALID &&
+        !GeneralRegister(Memory.base, X86.addr_size))
+      return false;
+    return Memory.index == X86_REG_INVALID ||
+           (Memory.index != X86_REG_ESP && Memory.index != X86_REG_RSP &&
+            GeneralRegister(Memory.index, X86.addr_size));
+  };
+  auto ScalarOperand = [&](const cs_x86_op &Operand) {
+    const unsigned Size = Operand.size;
+    if ((Size != 1 && Size != 2 && Size != 4 && Size != 8) ||
+        (!Is64Bit && Size == 8))
+      return false;
+    if (Operand.type == X86_OP_IMM)
+      return true;
+    if (Operand.type == X86_OP_MEM)
+      return MemoryOperand(Operand);
+    if (Operand.type != X86_OP_REG)
+      return false;
+    // Include AH..BH aliases, but no system, vector, flags or APX registers.
+    return GeneralRegister(static_cast<x86_reg>(Operand.reg), Size);
+  };
+  for (unsigned I = 0; I < X86.op_count; ++I)
+    if (!ScalarOperand(X86.operands[I]))
+      return false;
+  auto Writable = [](const cs_x86_op &Operand) {
+    return Operand.type == X86_OP_REG || Operand.type == X86_OP_MEM;
+  };
+  auto Binary = [&] {
+    return X86.op_count == 2 && Writable(X86.operands[0]) &&
+           X86.operands[0].size == X86.operands[1].size &&
+           !(X86.operands[0].type == X86_OP_MEM &&
+             X86.operands[1].type == X86_OP_MEM);
+  };
+  switch (Insn->id) {
+  // Arithmetic defines all six arithmetic flags; logic defines five and
+  // records AF below. DF is preserved.
+  case X86_INS_ADD:
+  case X86_INS_ADC:
+  case X86_INS_SUB:
+  case X86_INS_SBB:
+  case X86_INS_CMP:
+  case X86_INS_AND:
+  case X86_INS_OR:
+  case X86_INS_XOR:
+  case X86_INS_TEST:
+  case X86_INS_MOV:
+  case X86_INS_MOVABS:
+    return Binary();
+  case X86_INS_MOVZX:
+  case X86_INS_MOVSX:
+    if (X86.op_count != 2 || X86.operands[0].type != X86_OP_REG ||
+        !Writable(X86.operands[1]))
+      return false;
+    // Equal-width 16-bit forms decode, but remain outside this initial audit.
+    return X86.operands[1].size <= 2 &&
+           X86.operands[0].size > X86.operands[1].size;
+  case X86_INS_MOVSXD:
+    return Is64Bit && X86.op_count == 2 && X86.operands[0].type == X86_OP_REG &&
+           Writable(X86.operands[1]) && X86.operands[1].size == 4 &&
+           (X86.operands[0].size == 4 || X86.operands[0].size == 8);
+  case X86_INS_LEA:
+    return X86.op_count == 2 && X86.operands[0].type == X86_OP_REG &&
+           X86.operands[0].size >= 2 && X86.operands[1].type == X86_OP_MEM;
+  case X86_INS_XCHG:
+    return Binary() && Writable(X86.operands[1]);
+  // INC/DEC preserve CF; NEG defines it; NOT/BSWAP preserve every flag.
+  case X86_INS_INC:
+  case X86_INS_DEC:
+  case X86_INS_NEG:
+  case X86_INS_NOT:
+    return X86.op_count == 1 && Writable(X86.operands[0]);
+  case X86_INS_BSWAP:
+    return X86.op_count == 1 && X86.operands[0].type == X86_OP_REG &&
+           X86.operands[0].size >= 4;
+  case X86_INS_PUSH:
+  case X86_INS_POP:
+    return X86.op_count == 1 &&
+           (X86.operands[0].size == 2 ||
+            X86.operands[0].size == (Is64Bit ? 8 : 4)) &&
+           (Insn->id == X86_INS_PUSH || Writable(X86.operands[0]));
+  case X86_INS_CALL:
+  case X86_INS_JMP:
+    return X86.op_count == 1 && (X86.operands[0].type == X86_OP_IMM ||
+                                 X86.operands[0].size == (Is64Bit ? 8 : 4) ||
+                                 (!Is64Bit && X86.operands[0].size == 2));
+  case X86_INS_JE:
+  case X86_INS_JNE:
+  case X86_INS_JA:
+  case X86_INS_JAE:
+  case X86_INS_JB:
+  case X86_INS_JBE:
+  case X86_INS_JG:
+  case X86_INS_JGE:
+  case X86_INS_JL:
+  case X86_INS_JLE:
+  case X86_INS_JS:
+  case X86_INS_JNS:
+  case X86_INS_JO:
+  case X86_INS_JNO:
+  case X86_INS_JP:
+  case X86_INS_JNP:
+  case X86_INS_JCXZ:
+  case X86_INS_JECXZ:
+  case X86_INS_JRCXZ:
+    return X86.op_count == 1 && X86.operands[0].type == X86_OP_IMM;
+  case X86_INS_SETE:
+  case X86_INS_SETNE:
+  case X86_INS_SETA:
+  case X86_INS_SETAE:
+  case X86_INS_SETB:
+  case X86_INS_SETBE:
+  case X86_INS_SETG:
+  case X86_INS_SETGE:
+  case X86_INS_SETL:
+  case X86_INS_SETLE:
+  case X86_INS_SETS:
+  case X86_INS_SETNS:
+  case X86_INS_SETO:
+  case X86_INS_SETNO:
+  case X86_INS_SETP:
+  case X86_INS_SETNP:
+    return X86.op_count == 1 && Writable(X86.operands[0]) &&
+           X86.operands[0].size == 1;
+  case X86_INS_CMOVE:
+  case X86_INS_CMOVNE:
+  case X86_INS_CMOVA:
+  case X86_INS_CMOVAE:
+  case X86_INS_CMOVB:
+  case X86_INS_CMOVBE:
+  case X86_INS_CMOVG:
+  case X86_INS_CMOVGE:
+  case X86_INS_CMOVL:
+  case X86_INS_CMOVLE:
+  case X86_INS_CMOVS:
+  case X86_INS_CMOVNS:
+  case X86_INS_CMOVO:
+  case X86_INS_CMOVNO:
+  case X86_INS_CMOVP:
+  case X86_INS_CMOVNP:
+    return Binary() && X86.operands[0].type == X86_OP_REG &&
+           Writable(X86.operands[1]) && X86.operands[0].size >= 2;
+  case X86_INS_RET:
+    return X86.op_count == 0 ||
+           (X86.op_count == 1 && X86.operands[0].type == X86_OP_IMM);
+  case X86_INS_NOP:
+    return X86.op_count <= 1;
+  case X86_INS_CBW:
+  case X86_INS_CWDE:
+  case X86_INS_CDQE:
+  case X86_INS_CWD:
+  case X86_INS_CDQ:
+  case X86_INS_CQO:
+  case X86_INS_CLC:
+  case X86_INS_STC:
+  case X86_INS_CMC:
+  case X86_INS_CLD:
+  case X86_INS_STD:
+  case X86_INS_LAHF:
+  case X86_INS_SAHF:
+  case X86_INS_PUSHF:
+  case X86_INS_PUSHFD:
+  case X86_INS_PUSHFQ:
+  case X86_INS_POPF:
+  case X86_INS_POPFD:
+  case X86_INS_POPFQ:
+    return X86.op_count == 0;
+  default:
+    return false;
+  }
+}
+
 } // namespace
 
 void X86Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
                      llvm::ArrayRef<RelocatedAddressOperand> Relocs,
-                     llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs) {
-  liftImpl(Insn, Ops, Relocs, ScalarRelocs, false);
+                     llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
+                     LowInstructionUndefinedEffects *UndefinedEffects) {
+  liftImpl(Insn, Ops, Relocs, ScalarRelocs, false, UndefinedEffects);
 }
 
-bool X86Lifter::liftX64MemoryCall(const cs_insn *Insn,
-                                  std::vector<LowOp> &Ops) {
+bool X86Lifter::liftX64MemoryCall(
+    const cs_insn *Insn, std::vector<LowOp> &Ops,
+    LowInstructionUndefinedEffects *UndefinedEffects) {
+  if (UndefinedEffects) {
+    *UndefinedEffects = {};
+    UndefinedEffects->Diagnostic =
+        "instruction has no audited x64 memory-call projection";
+  }
   if (TargetArch != Arch::X64 || !Insn || !Insn->detail ||
       Insn->id != X86_INS_CALL || Insn->size > 15)
     return false;
@@ -512,22 +753,29 @@ bool X86Lifter::liftX64MemoryCall(const cs_insn *Insn,
       X86.operands[0].mem.segment != X86_REG_INVALID ||
       X86.addr_size != (Address32 ? 4 : 8))
     return false;
-  liftImpl(Insn, Ops, {}, {}, true);
+  liftImpl(Insn, Ops, {}, {}, true, UndefinedEffects);
   return true;
 }
 
 void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                          llvm::ArrayRef<RelocatedAddressOperand> Relocs,
                          llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
-                         bool LoadMemoryCallTarget) {
+                         bool LoadMemoryCallTarget,
+                         LowInstructionUndefinedEffects *UndefinedEffects) {
+  if (UndefinedEffects) {
+    *UndefinedEffects = {};
+    UndefinedEffects->Diagnostic = "instruction lift did not complete";
+  }
   LastGetPcOccurrence.reset();
   LastScalarOperandOccurrence.reset();
-  auto *Detail = Insn->detail;
+  auto *Detail = Insn ? Insn->detail : nullptr;
   if (!Detail)
     return;
 
   auto &X86 = Detail->x86;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
+  LowInstructionUndefinedEffects EffectsDraft;
+  S.UndefinedEffects = UndefinedEffects ? &EffectsDraft : nullptr;
   S.LoadMemoryCallTarget = LoadMemoryCallTarget;
   S.AddressSize = X86.addr_size != 0
                       ? static_cast<uint16_t>(X86.addr_size)
@@ -738,6 +986,11 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
     if (Strict)
       throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     S.emit(NdOp::NOP, {}, {});
+    if (UndefinedEffects) {
+      UndefinedEffects->Coverage = LowUndefinedCoverage::Unsupported;
+      UndefinedEffects->OpCount = Ops.size() - S.OpsStart;
+      UndefinedEffects->Diagnostic = "instruction uses an unmapped register";
+    }
     return;
   }
 
@@ -866,6 +1119,42 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
         continue;
       S.emit(NdOp::INT_ZEXT, NdVar::reg(ROffs, 8), {NdVar::reg(ROffs, 4)});
     }
+  }
+
+  if (UndefinedEffects) {
+    EffectsDraft.OpCount = Ops.size() - S.OpsStart;
+    EffectsDraft.OperationDigest = lowUndefinedOperationDigest(
+        llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart));
+    const bool Logic = Id == X86_INS_AND || Id == X86_INS_OR ||
+                       Id == X86_INS_XOR || Id == X86_INS_TEST;
+    const bool HasLogicEffect =
+        EffectsDraft.Effects.size() == 1 &&
+        EffectsDraft.Effects.front().Output == NdVar::reg(x86reg::AF, 1) &&
+        EffectsDraft.Effects.front().BitOffset == 0 &&
+        EffectsDraft.Effects.front().BitCount == 1 &&
+        !EffectsDraft.Effects.front().When &&
+        EffectsDraft.Effects.front().AfterOp > 0 &&
+        EffectsDraft.Effects.front().AfterOp <= EffectsDraft.OpCount;
+    if (!Handled) {
+      EffectsDraft.Coverage = LowUndefinedCoverage::Unsupported;
+      EffectsDraft.Effects.clear();
+      EffectsDraft.Diagnostic = "instruction has no semantic lifter";
+    } else if (!Strict) {
+      EffectsDraft.Diagnostic =
+          "undefined-output coverage requires strict lifting";
+    } else if (EffectsDraft.OpCount == 0 ||
+               !hasAuditedUndefinedOutputs(Insn, TargetArch)) {
+      EffectsDraft.Diagnostic =
+          "instruction form has no complete undefined-output audit";
+    } else if (Logic ? !HasLogicEffect : !EffectsDraft.Effects.empty()) {
+      EffectsDraft.Diagnostic =
+          "instruction effects do not match its undefined-output audit";
+    } else {
+      EffectsDraft.Coverage = LowUndefinedCoverage::Complete;
+    }
+    if (EffectsDraft.Coverage != LowUndefinedCoverage::Complete)
+      EffectsDraft.Effects.clear();
+    *UndefinedEffects = std::move(EffectsDraft);
   }
 }
 

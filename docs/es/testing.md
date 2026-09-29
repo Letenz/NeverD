@@ -42,9 +42,43 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` comprueba la independencia entre dos ejecuciones de grafos LowIR completos y acíclicos. Comparten las entradas ordinarias; cada nuevo valor indefinido por la arquitectura conserva sus correlaciones entre copias, escrituras solapadas, guardados en pila y recargas. Los predicados de control se comprueban antes de asumir condiciones de ruta. Los certificados requieren metadatos de efectos `Complete`, vinculados exactamente a los límites completos de cada instrucción y al resumen de sus operaciones. Se rechazan si faltan pruebas, hay bucles alcanzables, llamadas, alias desconocidos o se agota el presupuesto. El resultado se limita a las observaciones explícitas y al contrato de acceso sin fallos al marco; no demuestra la equivalencia completa del código nativo con C.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` usa bytes x64 independientes con mapeos fijos para comprobar la recopilación completa de ramas originales, su vinculación exacta a los bytes, la preservación del RSP y la dirección de retorno de entrada, la satisfacibilidad de la separación marco/imagen y el rechazo sin código residual. Cubre instrucciones ausentes o solapadas, ramas no tomadas sin auditar, llamadas, transferencias indirectas, ciclos, perfiles/contratos incompatibles y presupuestos de metadatos/recopilación. Este control opcional no certifica excepciones, ejecución con CET activado ni equivalencia de código nativo a C; la recuperación ordinaria sigue separada.
+
+`NeverDX86UndefinedEffectsTests` comprueba metadatos de bits indefinidos, flags definidos o preservados y el rechazo de certificados obsoletos. `NeverDX86CarryArithmeticFlagTests` comprueba el acarreo auxiliar de ADC/SBB en las formas de registro y memoria frente a un oráculo aritmético. `NeverDX86LogicIdentityTests` verifica que AND con operandos idénticos siga poniendo a cero los bits 63:32 del registro de 64 bits correspondiente al escribir un destino de 32 bits en modo de 64 bits y preserve los bits no escritos de destinos más estrechos.
+
 Las pruebas del núcleo comprueban la separación de contextos, uniones de punto fijo, bucles dinámicos, registros solapados, invalidación de alias, despacho finito y rechazo sin sustituciones parciales. Las pruebas de código fuente ensamblan máquinas x64 originales de registros, de pila y de direcciones finitas; incluyen campos de control relacionados y un oráculo nativo independiente SysV/Win64. Ambas rutas C se compilan en O0/O2 con trampas de comportamiento indefinido y se comparan con un oráculo sin signo para cálculos, escrituras en memoria y centinelas de salida. Los casos negativos comprueban certificados ausentes y presupuestos insuficientes. La CLI pública y sus informes verifican controles, presupuestos, contadores y rechazos. Se necesitan Clang multicompilación y LLD; ejecutar el ELF original requiere además Linux x64. Una herramienta ausente o un host incompatible significa cobertura omitida, no éxito.
 
 `ControlStateRecovery.LongTransparentLoop*` cubre un bucle de 20 fases escrito de forma independiente, oráculos aritméticos dinámicos, el rechazo de selectores desconocidos y el agotamiento de presupuestos. `LongTransparentPhasesKeepExactBitDemands` comprueba que los bits ajenos del mismo byte del selector sigan siendo datos observables en ejecución sin convertirse en demandas de control. `ProducerClosureChargesWorkBeforeAnotherRestart` comprueba que el descubrimiento inverso y la reevaluación consuman los presupuestos compartidos antes de iniciar un nuevo grafo, sin publicar resultados parciales.
+
+`X86ShiftCarry.*` comprueba el acarreo del desplazamiento aritmético a la derecha
+de enteros estrechos, los conteos enmascarados y los destinos y la supresión de
+flags APX mediante desplazamientos sucesivos de un bit.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` ejecuta ambas salidas C
+con O0/O2 y trampas de comportamiento indefinido, cubriendo todos los valores de
+byte y conteos originales. `NeverDLLVMCIntrinsicSemanticTests` ejecuta también
+min/max de enteros con y sin signo i1/8/16/32/64/128 con O0/O2: resultados
+asignados o integrados, orden de los productores y evaluación única. Los anchos
+escalares no admitidos y los operandos mal formados deben fallar explícitamente.
+
+## Comprobaciones de control y llamadas en C estructurado
+
+`HighControlFlowSemantics.*` comprueba que mover salidas o bloques finales de bucles conserve las etiquetas referenciadas por otros saltos. Las entradas directas a las salidas iniciales y finales y la sustitución de break ejecutan el C generado con O0/O2 frente a valores de retorno esperados independientes.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` comprueba que los argumentos de registro obligatorios inferidos conserven las posiciones finales desconocidas. Evaluar un argumento obligatorio o una condición desconocida debe provocar una trampa explícita; los operandos omitidos, nulos o anidados no deben convertirse silenciosamente en cero. Los valores conocidos y los operandos adicionales cuya ausencia de lectura esté demostrada siguen siendo ejecutables. Una trampa es un límite de diagnóstico, no una prueba de equivalencia del comportamiento recuperado.
 
 ## Comprobaciones de emulación de controladores
 

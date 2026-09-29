@@ -39,9 +39,37 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests`는 완전한 비순환 LowIR 그래프에서 두 실행의 독립성을 검사합니다. 일반 진입 입력은 공유하며, 아키텍처에서 정의하지 않은 값을 새로 생성할 때마다 복사, 겹치는 쓰기, 스필과 재로드에 걸쳐 해당 값의 상관관계를 유지합니다. 제어 조건은 경로 가정을 추가하기 전에 검사합니다. 인증서는 `Complete` 효과 메타데이터와 각 명령의 전체 경계 및 정확한 연산 다이제스트와의 결합을 요구합니다. 증거 누락, 도달 가능한 루프, 호출, 알 수 없는 별칭, 예산 소진 시 인증서를 거부합니다. 결과는 명시적인 관찰 항목과 오류 없는 프레임 계약으로 제한되며, 네이티브 코드에서 C로의 완전한 동등성 증명이 아닙니다.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`는 독립적으로 작성한 고정 매핑 x64 바이트로 원본 분기 전체 수집, 정확한 바이트 결합, 진입 RSP／반환 주소 슬롯 보존, 프레임과 이미지 분리 전제의 충족 가능성, 실패 시 잔여 코드 미반환을 검사합니다. 누락되거나 겹치는 명령, 정적으로 실행되지 않는 미감사 경로, 호출, 간접 전이, 루프, 실행 설정／계약 불일치, 메타데이터／수집 예산을 포함합니다. 이 선택적 게이트는 예외 디스패치, CET 활성 실행, 네이티브 코드에서 C로의 동등성을 인증하지 않으며 일반 복원은 별도로 유지됩니다.
+
+`NeverDX86UndefinedEffectsTests`는 미정의 비트 메타데이터, 정의되거나 보존되는 플래그, 오래된 인증서 거부를 검사합니다. `NeverDX86CarryArithmeticFlagTests`는 산술 오라클을 기준으로 레지스터 및 메모리 형태 ADC/SBB의 보조 캐리를 검사합니다. `NeverDX86LogicIdentityTests`는 동일 피연산자 AND가 64비트 모드에서 32비트 대상에 쓸 때 해당 64비트 레지스터의 비트 63:32를 0으로 만들면서 더 좁은 쓰기의 미기록 비트는 보존하는지 검사합니다.
+
 코어 테스트는 컨텍스트 분리, 고정점 합류, 동적 루프, 겹치는 레지스터, 별칭 무효화, 유한 대상 디스패치 및 거부 시 부분 교체를 내보내지 않는지 확인합니다. 소스 테스트는 직접 작성한 레지스터형·스택형·유한 주소 x64 머신을 어셈블하고 두 C 경로를 복원하여 정의되지 않은 동작 트랩을 켠 O0/O2로 컴파일한 뒤 독립적인 부호 없는 산술과 메모리 참조 구현과 실행을 비교합니다. 유한 주소 fixture는 입력으로 선택한 레코드와 커서／키 상관관계를 검증하며 네이티브 검사는 SysV/Win64를 다룹니다. 공개 CLI, 복원 예산과 지원하지 않는 입력의 보고서도 확인합니다. 교차 대상 Clang과 LLD가 필요하며 원래 ELF 실행에는 x64 Linux 호스트도 필요합니다. 도구 누락이나 호스트 불일치로 건너뛴 범위는 통과한 검증이 아닙니다.
 
 `ControlStateRecovery.LongTransparentLoop*`는 독립적으로 작성한 20단계 루프, 동적 산술 참조 구현, 알 수 없는 선택자 거부 및 예산 소진을 검증합니다. `LongTransparentPhasesKeepExactBitDemands`는 선택자와 같은 바이트의 무관한 비트가 제어 요구가 되지 않고 관찰 가능한 런타임 데이터로 남는지 확인합니다. `ProducerClosureChargesWorkBeforeAnotherRestart`는 새 그래프가 시작되기 전의 역방향 탐색과 재실행에도 공유 예산을 적용하며 부분 결과를 게시하지 않는지 검증합니다.
+
+`X86ShiftCarry.*`는 반복적인 1비트 시프트를 기준으로 좁은 정수의 산술 오른쪽 시프트 캐리, 마스킹된 횟수, APX 대상 레지스터 및 플래그 억제 동작을 검사합니다.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends`는 정의되지 않은 동작 트랩을 활성화하여 O0/O2에서 두 복원 C 경로를 실행하며 모든 바이트 값과 원시 시프트 횟수를 다룹니다.
+`NeverDLLVMCIntrinsicSemanticTests`는 i1/8/16/32/64/128 부호 있는/없는 정수 min/max도 O0/O2에서 실행하여 대입 및 인라인 결과, 피연산자 생성 순서와 단일 평가를 검사합니다. 지원하지 않는 스칼라 너비와 잘못된 피연산자는 명시적으로 실패해야 합니다.
+
+## 구조화된 C 제어 흐름 및 호출 검사
+
+`HighControlFlowSemantics.*`는 루프의 종료 지점이나 뒷부분을 이동할 때 다른 점프가 참조하는 레이블을 보존하는지 검사합니다. 루프 앞뒤 종료 지점으로 직접 진입하는 경우와 break 교체를 다루며, 생성된 C를 O0/O2로 실행해 독립적인 반환값 기준과 비교합니다.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead`는 추론된 필수 레지스터 인수의 끝에 있는 알 수 없는 슬롯이 유지되는지 검사합니다. 알 수 없는 필수 인수나 조건을 평가하면 명시적으로 트랩해야 하며, 생략된 피연산자, null 피연산자 및 중첩 피연산자를 조용히 0으로 바꾸면 안 됩니다. 알려진 값과 읽히지 않음이 입증된 추가 피연산자는 계속 실행할 수 있습니다. 트랩은 진단 경계이며 복원된 동작의 동등성을 증명하지 않습니다.
 
 ## 드라이버 에뮬레이션 검사
 

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <map>
+#include <tuple>
 #include <vector>
 
 using namespace llvm;
@@ -421,6 +422,45 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
   return std::nullopt;
 }
 
+std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
+                                                 uint32_t Type,
+                                                 ArrayRef<uint8_t> Function,
+                                                 uint64_t Offset) {
+  if (Offset >= Function.size() || Function.size() - Offset < 4)
+    return std::nullopt;
+  switch (Machine) {
+  case ELF::EM_386:
+  case ELF::EM_X86_64: {
+    const bool Rel32 =
+        Machine == ELF::EM_386
+            ? Type == ELF::R_386_PC32 || Type == ELF::R_386_PLT32
+            : Type == ELF::R_X86_64_PC32 || Type == ELF::R_X86_64_PLT32;
+    // As in COFF, the opcode before the field is what makes it a branch.
+    if (!Rel32 || Offset == 0)
+      return std::nullopt;
+    if (Function[Offset - 1] != 0xE8 && Function[Offset - 1] != 0xE9)
+      return std::nullopt;
+    return Offset;
+  }
+  case ELF::EM_AARCH64:
+    if (Type == ELF::R_AARCH64_CALL26 || Type == ELF::R_AARCH64_JUMP26)
+      return Offset;
+    return std::nullopt;
+  case ELF::EM_ARM:
+    if ((Type == ELF::R_ARM_THM_CALL || Type == ELF::R_ARM_THM_JUMP24) &&
+        Offset % 2 == 0)
+      return Offset;
+    // An ARM-state branch is stated one byte past its instruction, at an odd
+    // offset no Thumb-2 instruction has.
+    if ((Type == ELF::R_ARM_CALL || Type == ELF::R_ARM_JUMP24 ||
+         Type == ELF::R_ARM_PLT32 || Type == ELF::R_ARM_PC24) &&
+        Offset % 4 == 0)
+      return Offset + 1;
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 namespace {
 
 void emitPatternBytes(raw_ostream &OS, ArrayRef<uint8_t> Data,
@@ -473,6 +513,33 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
 /// linkage name, not a section (".text$mn") or a label ("$LN5").
 bool isReferenceName(StringRef Name) {
   return !Name.empty() && !Name.starts_with(".") && !Name.starts_with("$");
+}
+
+/// The routine an ELF relocation names, when a reference can name it: an
+/// undefined symbol, which the object calls by its name, or a function
+/// symbol.  Any other defined symbol -- a section, an object, a label of
+/// hand-written assembly -- is no routine a line states.
+StringRef elfReferenceName(const ELFObjectFileBase &Obj,
+                           const RelocationRef &Rel) {
+  const symbol_iterator Sym = Rel.getSymbol();
+  if (Sym == Obj.symbol_end())
+    return {};
+  const ELFSymbolRef Target(*Sym);
+  Expected<uint32_t> Flags = Target.getFlags();
+  if (!Flags) {
+    consumeError(Flags.takeError());
+    return {};
+  }
+  const uint8_t Type = Target.getELFType();
+  if (!(*Flags & SymbolRef::SF_Undefined) && Type != ELF::STT_FUNC &&
+      Type != ELF::STT_GNU_IFUNC)
+    return {};
+  Expected<StringRef> Name = Target.getName();
+  if (!Name) {
+    consumeError(Name.takeError());
+    return {};
+  }
+  return isReferenceName(*Name) ? *Name : StringRef();
 }
 
 /// Every symbol's address, per section, sorted: a function ends at the first
@@ -607,6 +674,8 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
   struct ELFRelocation {
     uint64_t Offset;
     uint32_t Type;
+    /// The routine it names, when a reference can name one.
+    StringRef Routine;
   };
   std::map<SectionRef, std::vector<ELFRelocation>> Relocations;
   for (const SectionRef &Sec : Obj.sections()) {
@@ -619,7 +688,9 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
       continue;
     std::vector<ELFRelocation> &List = Relocations[**Target];
     for (const RelocationRef &Rel : Sec.relocations())
-      List.push_back({Rel.getOffset(), static_cast<uint32_t>(Rel.getType())});
+      List.push_back(
+          {Rel.getOffset(), static_cast<uint32_t>(Rel.getType()),
+           Opts.EmitReferences ? elfReferenceName(Obj, Rel) : StringRef()});
   }
 
   // The function symbols that label one address are one routine's names:
@@ -657,6 +728,7 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
     const uint64_t Begin = Fn.Offset;
     const uint64_t End = Fn.Offset + Fn.Data.size();
     SmallVector<bool, 256> Wildcard(Fn.Data.size(), false);
+    std::vector<FuncRef> References;
     bool Supported = true;
     if (auto It = Relocations.find(Fn.Section); It != Relocations.end()) {
       for (const ELFRelocation &Rel : It->second) {
@@ -678,13 +750,33 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
           continue;
         const uint64_t Start = std::max(From, Begin);
         markWildcard(Wildcard, Start - Begin, std::min(To, End) - Start);
+        // A branch to one of the routine's own names is recursion, not a
+        // reference to anything the image has to confirm.
+        if (Rel.Routine.empty() || Rel.Offset < Begin ||
+            llvm::is_contained(R.Names, Rel.Routine))
+          continue;
+        if (const std::optional<uint64_t> At = elfBranchReferenceOffset(
+                Machine, Rel.Type, Fn.Data, Rel.Offset - Begin))
+          References.push_back({static_cast<uint32_t>(*At), Rel.Routine.str()});
       }
     }
     if (!Supported) {
       ++Stats.UnsupportedRelocation;
       continue;
     }
-    countOrEmit(OS, R.Names, Fn.Data, Wildcard, Opts, Stats);
+    // A call whose opcode another relocation's footprint covers is one the
+    // linker may rewrite: `__tls_get_addr` in a general-dynamic TLS sequence
+    // is gone once the sequence relaxes.  Only a branch the image keeps can
+    // confirm anything.
+    const bool OpcodeBeforeField =
+        Machine == ELF::EM_386 || Machine == ELF::EM_X86_64;
+    llvm::erase_if(References, [&](const FuncRef &Ref) {
+      return OpcodeBeforeField && Wildcard[Ref.Offset - 1];
+    });
+    llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
+      return A.Offset < B.Offset;
+    });
+    countOrEmit(OS, R.Names, Fn.Data, Wildcard, Opts, Stats, References);
   }
   return Stats;
 }
@@ -827,16 +919,30 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       }
       // A branch to the function's own start is recursion, not a reference
       // to anything the image has to confirm.
-      if (isReferenceName(*TargetName) && *TargetName != Fn.Name)
-        References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
+      if (!isReferenceName(*TargetName) || *TargetName == Fn.Name)
+        continue;
+      References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
+      // Where no object defines the symbol, the link resolves it to its
+      // alternate name, which the branch then reaches instead.
+      if (const auto It = Opts.AlternateNames.find(*TargetName);
+          It != Opts.AlternateNames.end())
+        for (const std::string &Alternate : It->second)
+          if (isReferenceName(Alternate) && Alternate != Fn.Name)
+            References.push_back({static_cast<uint32_t>(*At), Alternate});
     }
     if (!Supported) {
       ++Stats.UnsupportedRelocation;
       continue;
     }
     llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
-      return A.Offset < B.Offset;
+      return std::tie(A.Offset, A.Name) < std::tie(B.Offset, B.Name);
     });
+    References.erase(std::unique(References.begin(), References.end(),
+                                 [](const FuncRef &A, const FuncRef &B) {
+                                   return A.Offset == B.Offset &&
+                                          A.Name == B.Name;
+                                 }),
+                     References.end());
 
     ArrayRef<uint8_t> Data = Sec.Contents.slice(Fn.Offset, Size);
     countOrEmit(OS, Fn.Name, Data, Wildcard, Opts, Stats, References);
@@ -845,6 +951,62 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
 }
 
 } // anonymous namespace
+
+void collectAlternateNames(
+    const ObjectFile &Obj,
+    std::map<std::string, std::vector<std::string>, std::less<>> &Names) {
+  const auto *COFFObj = dyn_cast<COFFObjectFile>(&Obj);
+  if (!COFFObj)
+    return;
+  for (const SectionRef &Sec : COFFObj->sections()) {
+    Expected<StringRef> SecName = Sec.getName();
+    if (!SecName) {
+      consumeError(SecName.takeError());
+      continue;
+    }
+    if (*SecName != ".drectve")
+      continue;
+    Expected<StringRef> Contents = Sec.getContents();
+    if (!Contents) {
+      consumeError(Contents.takeError());
+      continue;
+    }
+    // Directives are separated by spaces, and one that holds a space is
+    // quoted; MSVC may open the section with a UTF-8 byte order mark.
+    StringRef Rest = *Contents;
+    Rest.consume_front("\xEF\xBB\xBF");
+    while (!Rest.empty()) {
+      Rest = Rest.ltrim(" \t\r\n");
+      if (Rest.empty())
+        break;
+      StringRef Directive;
+      if (Rest.front() == '"') {
+        const size_t Close = Rest.find('"', 1);
+        Directive = Rest.slice(1, Close);
+        Rest =
+            Close == StringRef::npos ? StringRef() : Rest.drop_front(Close + 1);
+      } else {
+        const size_t End = Rest.find_first_of(" \t\r\n");
+        Directive = Rest.take_front(End);
+        Rest = End == StringRef::npos ? StringRef() : Rest.drop_front(End);
+      }
+      // `/ALTERNATENAME:` and `-alternatename:` alike.
+      constexpr StringRef Option = "alternatename:";
+      Directive = Directive.trim('\0');
+      if (Directive.empty() ||
+          (Directive.front() != '/' && Directive.front() != '-') ||
+          !Directive.drop_front().starts_with_insensitive(Option))
+        continue;
+      const auto [Symbol, Alternate] =
+          Directive.drop_front(1 + Option.size()).split('=');
+      if (Symbol.empty() || Alternate.empty())
+        continue;
+      std::vector<std::string> &List = Names[Symbol.str()];
+      if (!llvm::is_contained(List, Alternate))
+        List.push_back(Alternate.str());
+    }
+  }
+}
 
 size_t statedByteCount(ArrayRef<bool> Wildcard,
                        const PatternGeneratorOptions &Opts) {

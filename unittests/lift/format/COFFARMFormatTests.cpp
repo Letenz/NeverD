@@ -4,9 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "gtest/gtest.h"
-
 #include "COFFARMFormatTestsDetail.h"
+#include "gtest/gtest.h"
 
 namespace {
 
@@ -59,6 +58,28 @@ TEST_F(COFFARMFormat, ARM32IsThumbWithNormalizedEntryAndBoundedRanges) {
   expectFullPDataStartsHaveBoundedSymbols(Img, Path);
   EXPECT_GT(maxFunctionSize(Img), 0u);
   EXPECT_LT(maxFunctionSize(Img), 4096u);
+}
+
+TEST_F(COFFARMFormat, ARM32FunctionModeHintsRespectThumbOnlyMachine) {
+  const fs::path Path = fixture("test_patch_coff_arm.exe");
+  if (!fs::exists(Path))
+    GTEST_SKIP() << "ARM32 PE fixture not built (lld-link unavailable)";
+
+  auto Base = loadBinary(Path);
+  ASSERT_TRUE(static_cast<bool>(Base)) << llvm::toString(Base.takeError());
+  ASSERT_NE(Base->Entry, 0u);
+  BinaryLoadOptions Options;
+  Options.ARMFunctionModes.emplace(Base->Entry, InstructionMode::Thumb);
+  auto Allowed = loadBinary(Path, Options);
+  ASSERT_TRUE(static_cast<bool>(Allowed))
+      << llvm::toString(Allowed.takeError());
+  EXPECT_EQ(Allowed->instructionModeAt(Base->Entry), InstructionMode::Thumb);
+
+  Options.ARMFunctionModes[Base->Entry] = InstructionMode::ARM;
+  auto Rejected = loadBinary(Path, Options);
+  ASSERT_FALSE(static_cast<bool>(Rejected));
+  EXPECT_NE(llvm::toString(Rejected.takeError()).find("required instruction"),
+            std::string::npos);
 }
 
 TEST_F(COFFARMFormat, ARM32CodeExportsAreNormalizedAndSerializedAsThumb) {

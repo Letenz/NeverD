@@ -260,13 +260,11 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         }
         if (!NoOpt) {
           ShardPhase = "optimization";
-          OptimizationOptions Options;
-          OptimizationResult Optimization = optimizeModule(*M, Options);
+          OptimizationResult Optimization = optimizeOrPromoteModule(*M);
           if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
             // Input failed module verification or EH-rewrite contracts.
             // Keep the unoptimized shard so `decompile --llvm` still emits C;
-            // do not treat this as a fatal shard failure.
-            promoteScaffoldingAllocas(*M);
+            // the shared helper already promoted its temporary allocas.
           } else if (isFatalOptimizationStop(Optimization.Stop)) {
             Shard.LLVMVerifierFailed = true;
             fail(optimizationStopReasonName(Optimization.Stop));

@@ -1186,16 +1186,15 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();
-  // A summarized callee reads every register slot below its count, so an
-  // unknown value there still occupies its position; stopping at it would
-  // drop every argument after it.
+  // A summarized callee fixes this positional register-argument prefix.
+  // Preserve its unknown slots, including trailing ones. Only arguments
+  // beyond that required prefix may end at the first unrecovered value.
   const int ReadSlots = SummarizedCallee ? Ops[CallIdx].CalleeRegisterArgs : 0;
   size_t End = 0;
   for (int K = 0; K < MaxArgs; ++K) {
-    if (Found[K] && Found[K]->Kind != ExprKind::Undef)
-      End = static_cast<size_t>(K) + 1;
-    else if (K >= ReadSlots)
+    if (K >= ReadSlots && (!Found[K] || Found[K]->Kind == ExprKind::Undef))
       break;
+    End = static_cast<size_t>(K) + 1;
   }
   for (size_t K = 0; K < End; ++K)
     Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));

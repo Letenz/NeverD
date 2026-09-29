@@ -69,6 +69,12 @@ new image into an SDK session resets its previous decoder state; data symbols
 and unrelated names do not select a decoder mode. A fully stripped image can
 leave an indirect target's state unknowable from static bytes alone; the
 file-level default is not proof that all of its executable bytes use one mode.
+An ELF function entry without exact mode evidence requires a caller assertion
+before either C route can decode it, even when the file-level decoder starts in
+ARM mode. A single-function LLVMC request runs the same semantic LLVM
+optimization as the full-image route before emitting C.
+Both LLVM C routes retain verified output with only temporary-alloca
+promotion when an incomplete native exception contract excludes optimization.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -85,6 +91,19 @@ CPU subtypes are Thumb-only, so their processor constraint supplies a mode even
 for unmarked functions without a relocation. An ARM instruction relocation in
 such an image is contradictory and fails loading. Other ARM CPU subtypes do not
 establish a function mode.
+An A-profile Mach-O image with no mode evidence has unknown mode, not an ARM
+default. Direct decoding therefore waits for a marked entry, reachable edge,
+instruction relocation, or caller assertion.
+When an A-profile function has no usable mode metadata, callers may assert
+its exact entry state before loading through `BinaryLoadOptions::ARMFunctionModes`
+or `neverd_session_set_arm_function_mode()`. The CLI accepts repeated
+`--arm-function-mode=0xADDRESS:arm|thumb` arguments, including address zero in
+an object file. These are caller assertions, not byte-pattern guesses: the
+loader checks alignment, executable ownership, hardware constraints, mapping
+regions, and exact symbol/relocation evidence before reachable decoding. If
+reachable decoding runs, an asserted entry must decode in its stated mode.
+Contradictory or unsupported assertions fail the load. The mode of a different
+unreached function remains unknown until it has its own evidence or assertion.
 
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
@@ -491,6 +510,9 @@ own machine-inferred entry signature. Generated C rebuilds a fresh shared cache
 and repeats the runtime query; it never publishes the captured process cache or
 witness pointer.
 
+Directly linked Swift conformance descriptors and nominal metadata may also serve this accessor. Both identities must be uniquely exported, the descriptor must be immutable, and their demangled nominal types must match. Mixed imported and direct inputs, conflicting exports, and mismatched types reject the binding. When source uses a conformance descriptor address directly, its immutable, uniquely exported `Mc` symbol is rebound by name and revalidated before emission; the original image address is not copied.
+When a detected function also contains independent Swift code after the accessor’s final return, the accessor proof uses only its leading body if every entry path returns and no branch reaches the following block. The trailing code keeps its ordinary diagnostics.
+
 Standard Swift metadata storage addresses use compiler-generated `.self`
 queries; standard Hashable witness storage uses the direct witness argument
 of a compiler-generated constrained generic call. Both require matching SDK
@@ -550,7 +572,12 @@ x86_64 indirect results remain unsupported.
 Darwin ARM64 fixed C calls also return naturally laid-out records of exactly
 six doubles through x8. These are not homogeneous floating aggregates under
 the four-member register limit. By-value six-double parameters remain
-unsupported until their indirect argument storage is modeled.
+unsupported in general. The exact arm64 CoreGraphics `CGContextConcatCTM`
+import is an exception: its second physical argument is a pointer to 48 bytes,
+and a generated helper copies those bytes into a by-value C
+`CGAffineTransform` before calling the original function. The binding requires
+the exact strong provider and is revalidated; it does not infer other indirect
+record parameters.
 Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.
@@ -780,6 +807,10 @@ evidence remains separate from native occurrence and binary patch certificates.
 demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
+
+The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the restricted leaf scope below.
+
+`checkBinaryUndefinedIndependence` collects both arms of every original direct branch before recovery for a call-free, acyclic x64 leaf. Every collected instruction requires immutable original bytes and complete architecture metadata, including statically untaken arms. The explicit normal, nonfaulting, CET-disabled profile requires an image-disjoint frame; the entry predicate excludes every image mapping. Every return must preserve entry RSP and the original return-address slot before the native pop. `specializeBinaryInterpreterWithIndependence` applies this proof before recovery and returns no residual on proof failure. Ordinary recovery does not enable this gate by default. Calls, indirect transfers, structural cycles and unaudited effects are refused; exception dispatch, CET-enabled execution and native-to-C equivalence are outside this certificate.
 
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
@@ -2045,3 +2076,7 @@ For AArch64 source binding, a full-width store whose scalar bits coincide with a
 Native source inference can borrow the exact 24-byte private scratch record passed to authenticated libswiftCore `swift_beginAccess` and `swift_endAccess` calls. The begin call writes its second argument; the end call may modify its first. The existing LowIR proof still checks the call ABI, bounded frame offset, separation from saved registers, and complete state restoration before accepting the helper.
 
 The profiled, whole-module Swift merged `@objc` `CGFloat` setter uses a C ABI with self, selector, double value, ivar-offset pointer, and profile-counter pointer. Its exact mangled symbol and the x3 counter load/increment/store at the machine entry are required before assigning that five-parameter ABI; the unprofiled helper has only four parameters. The candidate still needs its ordinary source-body, data-binding, and dependency-closure proofs.
+
+Private Swift struct or enum metadata used by value-witness code can preserve its linked-image identity through a uniquely exported metadata accessor. Source binding accepts only a matching immutable private nominal descriptor and an immutable AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` leaf that computes exactly the private metadata address; source calls that accessor, and publication rechecks the bytes, relocations, symbols, and exports.
+
+An AArch64 native helper may bind a complete 16-byte `q0` or later `q` input as a by-value C vector only when all 16 entry bytes are observed, earlier floating arguments occupy every preceding `q` register, and the ordinary call, return, and frame proofs hold. HighC bit-casts the payload at source boundaries; a 128-bit integer in `x0`/`x1` is a different ABI. Partial lanes, gaps in the floating-register prefix, and non-native declarations remain unsupported.

@@ -11,6 +11,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/ELF/ELFLoader.h"
+#include "neverd/support/BinaryLoading.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -100,6 +101,31 @@ protected:
     Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
     Output.close();
     return ELFLoader().load(Stripped);
+  }
+
+  /// Links \p Source as an ARM32 shared library and strips its symbol table,
+  /// as an Android JNI library ships: only the dynamic symbols, the PLT, and
+  /// the imports remain.
+  llvm::Expected<BinaryImage>
+  loadStrippedSharedAssembly(const std::string &Name,
+                             const std::string &Source) {
+    const auto Assembly = tmpFile(Name + ".s");
+    std::ofstream(Assembly) << Source;
+    const auto Object = tmpFile(Name + ".o");
+    const auto Library = tmpFile(Name + ".so");
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                                 Assembly.string(), "-o", Object.string()});
+    if (!Compiled.ok())
+      return llvm::make_error<llvm::StringError>(
+          Compiled.err, llvm::inconvertibleErrorCode());
+    const auto LinkedOk =
+        exec("ld.lld", {"-m", "armelf_linux_eabi", "-shared", "--strip-all",
+                        Object.string(), "-o", Library.string()});
+    if (!LinkedOk.ok())
+      return llvm::make_error<llvm::StringError>(
+          LinkedOk.err, llvm::inconvertibleErrorCode());
+    return ELFLoader().load(Library);
   }
 };
 
@@ -245,7 +271,7 @@ TEST_F(ELFARM32ModeTest, LinkedEntryRetainsModeWithoutSymbolEvidence) {
   }
 }
 
-TEST_F(ELFARM32ModeTest, DirectModeEvidenceOverridesWeakImageFallback) {
+TEST_F(ELFARM32ModeTest, DirectEntryModeDoesNotCoverUnmarkedCode) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";
   auto Image = loadAssembly(R"(
@@ -265,13 +291,133 @@ thumb_target:
   ASSERT_EQ(Image->Mode, InstructionMode::ARM);
   EXPECT_EQ(Image->instructionModeAt(0x1000), InstructionMode::ARM);
   EXPECT_FALSE(Image->instructionModeAt(0x1000, InstructionMode::Thumb));
-  EXPECT_EQ(Image->instructionModeAt(0x1008), InstructionMode::ARM);
+  EXPECT_FALSE(Image->instructionModeAt(0x1008));
   EXPECT_EQ(Image->instructionModeAt(0x1008, InstructionMode::Thumb),
             InstructionMode::Thumb);
   Decoder Dec;
   ASSERT_TRUE(Dec.init(*Image));
   ASSERT_TRUE(Dec.selectMode(*Image, 0x1008, InstructionMode::Thumb));
   EXPECT_EQ(Dec.currentMode(), InstructionMode::Thumb);
+}
+
+TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
+
+  for (bool Thumb : {false, true}) {
+    SCOPED_TRACE(Thumb ? "Thumb" : "ARM");
+    const auto Assembly = tmpFile("unmarked-mode.s");
+    std::ofstream(Assembly)
+        << ".syntax unified\n.text\n"
+        << (Thumb ? ".thumb\n" : ".arm\n")
+        << ".globl generic_add\n.type generic_add,%function\n"
+        << (Thumb ? ".thumb_func\n" : "") << "generic_add:\n"
+        << (Thumb ? "  eors r2, r0, r1\n  ands r0, r0, r1\n"
+                    "  lsls r0, r0, #1\n  adds r0, r0, r2\n"
+                  : "  eor r2, r0, r1\n  and r0, r0, r1\n"
+                    "  add r0, r2, r0, lsl #1\n")
+        << "  bx lr\n.size generic_add, .-generic_add\n";
+    const auto Object = tmpFile("unmarked-mode.o");
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                                 Assembly.string(), "-o", Object.string()});
+    ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+    // Remove the symbol table, including the assembler's ARM/Thumb mapping
+    // symbols. The code and its executable section remain intact.
+    std::ifstream Input(Object, std::ios::binary);
+    std::vector<uint8_t> Bytes(std::istreambuf_iterator<char>(Input), {});
+    using ELFT = llvm::object::ELF32LE;
+    ELFT::Ehdr Header;
+    ASSERT_GE(Bytes.size(), sizeof(Header));
+    std::memcpy(&Header, Bytes.data(), sizeof(Header));
+    bool Removed = false;
+    for (unsigned Index = 0; Index != Header.e_shnum; ++Index) {
+      const auto Offset = Header.e_shoff + Index * Header.e_shentsize;
+      ASSERT_LE(Offset + Header.e_shentsize, Bytes.size());
+      ASSERT_GE(Header.e_shentsize, sizeof(ELFT::Shdr));
+      ELFT::Shdr Section;
+      std::memcpy(&Section, Bytes.data() + Offset, sizeof(Section));
+      if (Section.sh_type != llvm::ELF::SHT_SYMTAB)
+        continue;
+      std::memset(Bytes.data() + Offset, 0, Header.e_shentsize);
+      Removed = true;
+    }
+    ASSERT_TRUE(Removed);
+    std::ofstream Output(Object, std::ios::binary | std::ios::trunc);
+    Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+    Output.close();
+
+    auto Image = ELFLoader().load(Object);
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    EXPECT_FALSE(Image->instructionModeAt(0));
+    BinaryLoadOptions Options;
+    Options.ARMFunctionModes[0] =
+        Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+    auto Asserted = loadBinary(Object, Options);
+    ASSERT_TRUE(static_cast<bool>(Asserted))
+        << llvm::toString(Asserted.takeError());
+    EXPECT_EQ(Asserted->instructionModeAt(0), Options.ARMFunctionModes[0]);
+
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      const auto CFile = tmpFile("unmarked-mode.c");
+      std::vector<std::string> Args{"decompile", "--func=0"};
+      if (LLVM)
+        Args.push_back("--llvm");
+      Args.insert(Args.end(), {"-o", CFile.string(), Object.string()});
+      const auto Unknown = exec(ndBin(), Args);
+      EXPECT_FALSE(Unknown.ok());
+      EXPECT_NE(Unknown.err.find("--arm-function-mode"), std::string::npos)
+          << Unknown.err;
+
+      Args.insert(Args.begin() + 2, Thumb ? "--arm-function-mode=0x0:thumb"
+                                          : "--arm-function-mode=0x0:arm");
+      const auto Decompiled = exec(ndBin(), Args);
+      ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+      std::ifstream SourceInput(CFile);
+      const std::string Source(std::istreambuf_iterator<char>(SourceInput), {});
+      ASSERT_NE(Source.find("sub_0("), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(" ^ "), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(" & "), std::string::npos) << Source;
+      const auto Harness = tmpFile("unmarked-mode-execute.c");
+      std::ofstream(Harness) << Source << R"(
+static int check(uint32_t x, uint32_t y) {
+  return (uint32_t)sub_0(x, y) == x + y;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
+  for (unsigned i = 0; i < 6; ++i)
+    for (unsigned j = 0; j < 6; ++j)
+      if (!check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0xa0f6e732d41c895b);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t x = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (!check(x, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile("unmarked-mode-execute");
+        const auto Recompiled =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Optimization, "-Werror=return-type",
+                  "-Werror=implicit-function-declaration",
+                  "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                  Harness.string(), "-o", Executable.string()});
+        ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+        const auto Ran = exec(Executable.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+      }
+    }
+  }
 }
 
 TEST_F(ELFARM32ModeTest, RejectsConditionalCallRelocation) {
@@ -819,6 +965,197 @@ whole:
       << Message;
 }
 
+// A routine that ends in exit_group never returns, so what follows a call
+// to it is not the caller's: here, a Thumb routine the caller also calls.
+TEST_F(ELFARM32ModeTest, StopsAfterACallToARoutineThatExits) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("exits", R"(
+.syntax unified
+.text
+.arm
+.globl _start
+.type _start,%function
+_start:
+  blx helper
+  bl die
+.thumb
+.thumb_func
+helper:
+  adds r0, r0, #1
+  bx lr
+.arm
+die:
+  ldr r7, =248
+  svc #0
+  mov r0, r0
+.ltorg
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  const va_t Helper = Entry + 8, Die = Entry + 12;
+  // `helper` returns, so the caller goes on to call `die`.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 4), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Helper), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Helper + 2), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Die), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Die + 4), InstructionMode::ARM);
+  // The instruction after the exiting system call is never reached.
+  EXPECT_FALSE(Image->instructionModeAt(Die + 8));
+}
+
+// Nor does a system call the path cannot prove is exit end it: a routine
+// that may take either branch returns.
+TEST_F(ELFARM32ModeTest, FollowsACallToARoutineThatMayReturn) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("returns", R"(
+.syntax unified
+.text
+.arm
+.globl _start
+.type _start,%function
+_start:
+  bl maybe
+  mov r0, #1
+  bl other
+  b _start
+maybe:
+  cmp r0, #0
+  bxeq lr
+  mov r7, #248
+  svc #0
+other:
+  mov r7, #20
+  svc #0
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 4), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 12), InstructionMode::ARM);
+  // getpid returns, and so does the routine that makes it.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 40), InstructionMode::ARM);
+}
+
+// A trap does not go on either, and a call that runs only under a condition
+// always may.
+TEST_F(ELFARM32ModeTest, StopsAtATrapButNotAfterAConditionalCall) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedLinkedAssembly("trap", R"(
+.syntax unified
+.text
+.thumb
+.globl _start
+.type _start,%function
+.thumb_func
+_start:
+  cmp r0, #0
+  it eq
+  bleq die
+  blx arm_part
+  udf #254
+.arm
+.p2align 2
+arm_part:
+  add r0, r0, #1
+  bx lr
+die:
+  mov r7, #1
+  svc #0
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = Image->Entry & ~va_t(1);
+  // cmp, it, bleq (4), blx (4), udf: the call to `die` falls through, the
+  // trap does not, and the padding after it is nobody's.
+  EXPECT_EQ(Image->instructionModeAt(Entry + 8), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Entry + 12), InstructionMode::Thumb);
+  EXPECT_FALSE(Image->instructionModeAt(Entry + 14));
+  EXPECT_EQ(Image->instructionModeAt(Entry + 16), InstructionMode::ARM);
+}
+
+// An Android library calls abort through a PLT veneer in ARM code, and its
+// Thumb caller is followed by an ARM routine.  The image has both modes, so
+// its PLT is not paired with the imports; the veneer's own instructions
+// still say which import it forwards to.
+TEST_F(ELFARM32ModeTest, StopsAfterAVeneerToAnImportThatDoesNotReturn) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("import", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  blx callee
+  bl abort
+.arm
+.p2align 2
+.globl callee
+.type callee,%function
+callee:
+  add r0, r0, #1
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+}
+
+// A library's veneer for a routine the library defines goes to that
+// definition, whose code says it never returns: a C++ runtime's throw
+// helpers end in __cxa_throw without being on any list.
+TEST_F(ELFARM32ModeTest, StopsAfterAVeneerToTheLibrarysOwnThrowHelper) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("helper", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  blx callee
+  bl throw_helper
+.arm
+.p2align 2
+.globl callee
+.type callee,%function
+callee:
+  add r0, r0, #1
+  bx lr
+.thumb
+.globl throw_helper
+.type throw_helper,%function
+.thumb_func
+throw_helper:
+  push {r4, lr}
+  bl __cxa_throw
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+}
+
 TEST_F(ELFARM32ModeTest, UsesAddressSpecificModesInMixedImages) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
@@ -876,6 +1213,40 @@ thumb32_add:
     EXPECT_NE(Lifted.out.find("arm32_add"), std::string::npos);
     EXPECT_NE(Lifted.out.find("thumb32_add"), std::string::npos);
   }
+}
+
+TEST_F(ELFARM32ModeTest, FunctionModeHintsRespectMappingEvidence) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
+  auto Image = loadAssembly(R"(
+.syntax unified
+.text
+.thumb
+.globl mapped_thumb
+.type mapped_thumb,%function
+.thumb_func
+mapped_thumb:
+  adds r0, r0, r1
+  bx lr
+.size mapped_thumb, .-mapped_thumb
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const auto Functions = Image->getFunctionSymbols();
+  ASSERT_EQ(Functions.size(), 1u);
+  const va_t Entry = Functions.front()->Addr;
+  BinaryLoadOptions Options;
+  Options.ARMFunctionModes.emplace(Entry, InstructionMode::Thumb);
+  const auto Object = tmpFile("mode.o");
+  auto Allowed = loadBinary(Object, Options);
+  ASSERT_TRUE(static_cast<bool>(Allowed))
+      << llvm::toString(Allowed.takeError());
+  EXPECT_EQ(Allowed->instructionModeAt(Entry), InstructionMode::Thumb);
+
+  Options.ARMFunctionModes[Entry] = InstructionMode::ARM;
+  auto Rejected = loadBinary(Object, Options);
+  ASSERT_FALSE(static_cast<bool>(Rejected));
+  EXPECT_NE(llvm::toString(Rejected.takeError()).find("conflicts"),
+            std::string::npos);
 }
 
 TEST_F(ELFARM32ModeTest, RejectsAThumbFunctionAliasOverARMMappingEvidence) {

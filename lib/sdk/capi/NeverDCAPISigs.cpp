@@ -12,12 +12,52 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/FuncDetector.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
+#include <future>
+#include <vector>
+
 using namespace neverd;
 using namespace neverd::sdk;
+
+/// The addresses signatures are tried at: every function the session lists,
+/// and, until the pipeline has run and published the functions it found,
+/// every entry its detector finds too.  The session lists what the image's
+/// own tables state, which in a stripped image is little of its code -- a
+/// static musl program states 15 of its routines, and an optimized x86 PE
+/// leaves hundreds of its runtime's routines out of every table.  An entry
+/// the pipeline would later reject costs nothing here: a name needs a whole
+/// signature to match there.
+static std::vector<uint64_t> signatureEntries(Session &S) {
+  std::vector<uint64_t> Entries;
+  Entries.reserve(S.Functions.size());
+  for (const auto &F : S.Functions)
+    Entries.push_back(F.Entry);
+  const bool Native = S.Img.Arch == Arch::X86 || S.Img.Arch == Arch::X64 ||
+                      S.Img.Arch == Arch::ARM || S.Img.Arch == Arch::AArch64;
+  if (Native && !(S.PipeRan && S.NativeFunctionsSynchronized)) {
+    Decoder Dec;
+    if (Dec.init(S.Img)) {
+      FuncDetector Detector;
+      for (const auto &Entry : Detector.detect(S.Img, Dec))
+        Entries.push_back(Entry.first);
+    }
+    std::sort(Entries.begin(), Entries.end());
+    Entries.erase(std::unique(Entries.begin(), Entries.end()), Entries.end());
+  }
+  return Entries;
+}
+
+/// signatureEntries for \p S, found while the caller loads signature files:
+/// it reads only the image.
+static std::future<std::vector<uint64_t>> findSignatureEntries(Session &S) {
+  return std::async(std::launch::async, [&S] { return signatureEntries(S); });
+}
 
 /// Match the loaded signature set against \p S and report how many hits it
 /// produced.
@@ -28,13 +68,9 @@ using namespace neverd::sdk;
 /// unconditionally: it only speaks for an address a frame installs as its
 /// personality and the image itself cannot name, so a binary that carries its
 /// own symbols is left exactly as it was.
-static int matchLoadedSignatures(Session &S) {
-  std::vector<uint64_t> Entries;
-  Entries.reserve(S.Functions.size());
-  for (const auto &F : S.Functions)
-    Entries.push_back(F.Entry);
-
-  S.SigDB.apply(S.Img, Entries);
+static int matchLoadedSignatures(Session &S,
+                                 std::future<std::vector<uint64_t>> Entries) {
+  S.SigDB.apply(S.Img, Entries.get());
   S.SigDB.identifyPersonalityRoutines(S.Img);
 
   auto NameMap = S.SigDB.buildNameMap();
@@ -61,13 +97,14 @@ int neverd_apply_signatures(neverd_session_t Sess, const char *SigDir) {
     return -1;
   S->clearError();
 
+  auto Entries = findSignatureEntries(*S);
   auto Err = S->SigDB.loadDirectory(SigDir);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;
   }
 
-  return matchLoadedSignatures(*S);
+  return matchLoadedSignatures(*S, std::move(Entries));
 }
 
 int neverd_apply_signature_file(neverd_session_t Sess, const char *SigPath) {
@@ -76,13 +113,14 @@ int neverd_apply_signature_file(neverd_session_t Sess, const char *SigPath) {
     return -1;
   S->clearError();
 
+  auto Entries = findSignatureEntries(*S);
   auto Err = S->SigDB.loadFile(SigPath);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;
   }
 
-  return matchLoadedSignatures(*S);
+  return matchLoadedSignatures(*S, std::move(Entries));
 }
 
 int neverd_auto_apply_signatures(neverd_session_t Sess,
@@ -134,6 +172,7 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     S->setError(llvm::toString(Files.takeError()));
     return -1;
   }
+  auto Entries = findSignatureEntries(*S);
   auto Err = S->SigDB.loadFiles(
       sigs::SignatureDB::selectForImage(S->Img, std::move(*Files)));
   if (Err) {
@@ -141,7 +180,7 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return -1;
   }
 
-  return matchLoadedSignatures(*S);
+  return matchLoadedSignatures(*S, std::move(Entries));
 }
 
 // ===--------------------------------------------------------------------===//

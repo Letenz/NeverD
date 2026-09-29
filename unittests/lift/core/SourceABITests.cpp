@@ -34,6 +34,189 @@ using namespace neverd;
 
 void executeC(const std::string &Source, bool Math);
 
+TEST(SourceABI, NativeAArch64FullQRegisterRequiresVectorCarrier) {
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.Architecture = Arch::AArch64;
+  Hint.HasExplicitABI = true;
+  Hint.ReturnType = NdType::makeVoid();
+  auto Vector = NdType::makeInt(16);
+  Vector->SourceName = kSourceAArch64Vector128CType;
+  Hint.Parameters = {{"payload", Vector}};
+  Hint.Parameters[0].Location = {SourceABICarrierKind::FloatingRegister,
+                                 a64reg::V0, 0, 16};
+  std::string Error;
+  ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+
+  auto Scalar = NdType::makeInt(16);
+  EXPECT_FALSE(equalSourceTypes(Vector, Scalar));
+  auto Bad = Hint;
+  Bad.Parameters[0].Type = Scalar;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Parameters[0].Location.ValueBytes = 8;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Parameters[0].Location.Kind = SourceABICarrierKind::IntegerRegister;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Parameters[0].Location.RegisterOffset =
+      getTargetRegInfo(Arch::AArch64).FPParamRegs[1];
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Architecture = Arch::X64;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+
+  Hint.Parameters.push_back({"next_payload", Vector});
+  Hint.Parameters[1].Location = {SourceABICarrierKind::FloatingRegister,
+                                 a64reg::V(1), 0, 16};
+  EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+  Bad = Hint;
+  Bad.Parameters[1].Location.RegisterOffset = a64reg::V(2);
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Parameters.erase(Bad.Parameters.begin());
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Hint.Parameters[0].Type = NdType::makeFloat(8);
+  Hint.Parameters[0].Location.ValueBytes = 8;
+  EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+}
+
+TEST(SourceABI, NativeAArch64TwoFullQRegistersEmitExecutableSource) {
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.Architecture = Arch::AArch64;
+  Hint.HasExplicitABI = true;
+  Hint.ReturnType = NdType::makeInt(8);
+  Hint.ReturnLocation = {SourceABICarrierKind::IntegerRegister, a64reg::X0, 0,
+                         8};
+  auto Vector = NdType::makeInt(16);
+  Vector->SourceName = kSourceAArch64Vector128CType;
+  Hint.Parameters = {{"payload", Vector}, {"next_payload", Vector}};
+  Hint.Parameters[0].Location = {SourceABICarrierKind::FloatingRegister,
+                                 a64reg::V0, 0, 16};
+  Hint.Parameters[1].Location = {SourceABICarrierKind::FloatingRegister,
+                                 a64reg::V(1), 0, 16};
+  std::string Error;
+  ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "vector_word_xor";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = Low.Entry + 32;
+  LowOp Extract;
+  Extract.Opcode = NdOp::SUBBYTES;
+  Extract.Addr = Low.Entry;
+  Extract.Output = NdVar::tmp(0, 8);
+  Extract.addInput(NdVar::reg(a64reg::V0, 16));
+  Extract.addInput(NdVar::cst(0, 4));
+  LowOp ExtractHigh = Extract;
+  ExtractHigh.Addr = Low.Entry + 4;
+  ExtractHigh.Output = NdVar::tmp(1, 8);
+  ExtractHigh.Inputs[1] = NdVar::cst(8, 4);
+  LowOp ExtractNext = Extract;
+  ExtractNext.Addr = Low.Entry + 8;
+  ExtractNext.Output = NdVar::tmp(2, 8);
+  ExtractNext.Inputs[0] = NdVar::reg(a64reg::V(1), 16);
+  LowOp ExtractNextHigh = ExtractNext;
+  ExtractNextHigh.Addr = Low.Entry + 12;
+  ExtractNextHigh.Output = NdVar::tmp(3, 8);
+  ExtractNextHigh.Inputs[1] = NdVar::cst(8, 4);
+  LowOp Combine;
+  Combine.Opcode = NdOp::INT_XOR;
+  Combine.Addr = Low.Entry + 16;
+  Combine.Output = NdVar::tmp(4, 8);
+  Combine.addInput(Extract.Output);
+  Combine.addInput(ExtractHigh.Output);
+  LowOp CombineNext = Combine;
+  CombineNext.Addr = Low.Entry + 20;
+  CombineNext.Output = NdVar::tmp(5, 8);
+  CombineNext.Inputs[0] = ExtractNext.Output;
+  CombineNext.Inputs[1] = ExtractNextHigh.Output;
+  LowOp CombineBoth = Combine;
+  CombineBoth.Addr = Low.Entry + 24;
+  CombineBoth.Output = NdVar::reg(a64reg::X0, 8);
+  CombineBoth.Inputs[0] = Combine.Output;
+  CombineBoth.Inputs[1] = CombineNext.Output;
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Low.Entry + 28;
+  Return.addInput(NdVar::reg(a64reg::X0, 8));
+  Block.Ops = {Extract, ExtractHigh, ExtractNext, ExtractNextHigh,
+               Combine, CombineNext, CombineBoth, Return};
+  Low.Blocks = {Block};
+  std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Hint}};
+  LowToMedConverter Converter;
+  Converter.setSourceCalleeTypeHints(&Hints);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Hint;
+  inferMedTypes(Med, Arch::AArch64);
+  ASSERT_TRUE(Med.SourceTypeHint);
+  auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+  ASSERT_TRUE(High.SourceTypeHint);
+
+  LowFunc Forward;
+  Forward.Entry = 0x1100;
+  Forward.Name = "vector_forward";
+  LowBlock ForwardBlock;
+  ForwardBlock.Id = 0;
+  ForwardBlock.StartAddr = Forward.Entry;
+  ForwardBlock.EndAddr = Forward.Entry + 8;
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Forward.Entry;
+  Call.addInput(NdVar::cst(Low.Entry, 8));
+  LowOp ForwardReturn;
+  ForwardReturn.Opcode = NdOp::RETURN;
+  ForwardReturn.Addr = Forward.Entry + 4;
+  ForwardReturn.addInput(NdVar::reg(a64reg::X0, 8));
+  ForwardBlock.Ops = {Call, ForwardReturn};
+  Forward.Blocks = {ForwardBlock};
+  Converter.setSourceCallHintsEnabled(true);
+  auto ForwardMed =
+      Converter.convert(Forward, Arch::AArch64, BinaryFormat::MachO);
+  ForwardMed.SourceTypeHint = Hint;
+  const std::map<va_t, std::string> Names{{Low.Entry, Low.Name}};
+  recoverCallAbi(ForwardMed, Arch::AArch64, Names);
+  inferMedTypes(ForwardMed, Arch::AArch64);
+  MedToHighConverter HighConverter;
+  HighConverter.setFuncNames(&Names);
+  auto ForwardHigh = HighConverter.convert(ForwardMed, Arch::AArch64);
+  ASSERT_TRUE(ForwardHigh.SourceTypeHint);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({ForwardHigh, High}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("vector_size(16)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_bit_cast(uint8_t"), std::string::npos)
+      << Source;
+  executeC(Source + R"(
+int main(void) {
+  uint8_t __attribute__((vector_size(16))) payload = {
+      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+      0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+  uint8_t __attribute__((vector_size(16))) next_payload = {
+      0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  return vector_forward(payload, next_payload) ==
+                 (UINT64_C(0xfedcba9876543210) ^
+                  UINT64_C(0xefcdab8967452301) ^
+                  UINT64_C(0x1122334455667788) ^
+                  UINT64_C(0x8877665544332211))
+             ? 0 : 1;
+}
+)",
+           false);
+}
+
 TEST(SourceABI, EmptyBoundCallDoesNotAcquireUnrelatedRegisterArguments) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
@@ -109,8 +292,8 @@ TEST(SourceABI, SwiftArm64HomogeneousFloatRecordUsesFourFPLanes) {
   Hint.Parameters[0].Components[2].RegisterOffset = TRI.FPParamRegs[4];
   EXPECT_FALSE(validateSourceABI(Hint, Error));
   Hint.Parameters[0].Components[2].RegisterOffset = TRI.FPParamRegs[2];
-  Hint.Parameters[0].Type = NdType::makeStruct(
-      {Double, NdType::makeInt(8), Double, Double});
+  Hint.Parameters[0].Type =
+      NdType::makeStruct({Double, NdType::makeInt(8), Double, Double});
   EXPECT_FALSE(validateSourceABI(Hint, Error));
 }
 
@@ -127,11 +310,13 @@ TEST(SourceABI, BoundRecordCallAbiRetainsEveryRenamedComponent) {
       std::string Error;
       if (Floating && Architecture == Arch::X64) {
         // Darwin x64 floating records are outside the supported fixed layout.
-        EXPECT_FALSE(assignDarwinFixedSourceABI(Hint->Signature, Architecture, Error));
+        EXPECT_FALSE(
+            assignDarwinFixedSourceABI(Hint->Signature, Architecture, Error));
         continue;
       }
       ASSERT_TRUE(
-          assignDarwinFixedSourceABI(Hint->Signature, Architecture, Error)) << Error;
+          assignDarwinFixedSourceABI(Hint->Signature, Architecture, Error))
+          << Error;
       MedOp Call;
       Call.Opcode = NdOp::CALL;
       Call.SourceCallHint = Hint;

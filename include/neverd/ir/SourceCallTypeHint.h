@@ -141,10 +141,17 @@ struct SourceCallTypeHint {
     /// The address of one uniquely exported, read-only Swift nominal type
     /// descriptor passed to an authenticated singleton-metadata runtime call.
     RuntimeSwiftNominalDescriptorAddress,
+    /// The exact exported identity of an immutable Swift protocol
+    /// conformance descriptor, independent of its witness-cache storage.
+    RuntimeSwiftConformanceDescriptorAddress,
     /// The exact exported address of concrete Swift struct metadata used by
     /// a value-witness call. The metadata and its nominal descriptor remain
     /// owned by the original linked image; source only names their identity.
     RuntimeSwiftNominalMetadataAddress,
+    /// A private Swift nominal metadata record returned unchanged by its
+    /// uniquely exported, immutable four-instruction metadata accessor.
+    /// Source calls that accessor to retain the linked image's identity.
+    RuntimeSwiftPrivateNominalMetadataAddress,
     /// The exact address of a uniquely exported Swift protocol witness table.
     /// The table stays owned by the linked image; source names its symbol.
     RuntimeSwiftWitnessTableAddress,
@@ -419,7 +426,8 @@ struct SourceCallTypeHint {
     bool operator==(const ObjCIndirectResultStorageEvidence &) const = default;
   };
   std::optional<ObjCIndirectResultStorageEvidence> ObjCIndirectResultStorage;
-  /// RuntimeBorrowedBytes/RuntimeReadOnlyBytes extent at TargetAddress.
+  /// Kind-specific byte extent: rebuilt storage or borrowed contents for
+  /// address bindings, or an exact indirect record argument for Darwin calls.
   uint32_t ByteCount = 0;
   /// Constant strings/objects: the immutable relocated slot whose loaded
   /// value supplied TargetAddress. For RuntimeCStringStorage, TargetAddress

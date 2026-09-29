@@ -231,3 +231,124 @@ TEST(X86ShiftCount, ImmediateCountMatchesTheSameCountInCL) {
       }
   }
 }
+
+namespace {
+
+void expectNarrowSar(Arch Target, unsigned Width, bool ApxNdd,
+                     bool NoFlags = false) {
+  const unsigned Bits = Width * 8;
+  const uint64_t Sign = UINT64_C(1) << (Bits - 1);
+  const uint64_t Mask = (Sign << 1) - 1;
+  const uint64_t SourceRegister =
+      ApxNdd ? mapCapstoneReg(X86_REG_R30).Offset : x86reg::RAX;
+  const uint64_t DestinationRegister =
+      ApxNdd ? mapCapstoneReg(X86_REG_R31).Offset : x86reg::RAX;
+  const uint64_t FlagRegisters[] = {x86reg::CF, x86reg::PF, x86reg::AF,
+                                    x86reg::ZF, x86reg::SF, x86reg::OF,
+                                    x86reg::DF};
+  for (bool Immediate : {false, true}) {
+    for (unsigned Count :
+         {0u, 1u, Bits - 1, Bits, Bits + 1, 31u, 32u, 33u, 255u}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "arch=" << static_cast<unsigned>(Target) << " width="
+                   << Width << " ndd=" << ApxNdd << " nf=" << NoFlags
+                   << " immediate=" << Immediate << " count=" << Count);
+      std::vector<uint8_t> Bytes;
+      if (ApxNdd) {
+        // EVEX promoted SAR r31b/r31w, r30b/r30w, imm8/CL.
+        Bytes = {0x62, 0xdc, static_cast<uint8_t>(Width == 1 ? 4 : 5),
+                 static_cast<uint8_t>(NoFlags ? 0x14 : 0x10)};
+      } else if (Width == 2) {
+        Bytes.push_back(0x66);
+      }
+      Bytes.push_back(Immediate ? (Width == 1 ? 0xc0 : 0xc1)
+                                : (Width == 1 ? 0xd2 : 0xd3));
+      Bytes.push_back(ApxNdd ? 0xfe : 0xf8);
+      if (Immediate)
+        Bytes.push_back(static_cast<uint8_t>(Count));
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Target));
+      DecodedInsn Insn{};
+      ASSERT_EQ(Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
+                static_cast<int>(Bytes.size()));
+      ASSERT_EQ(Insn.Id, X86_INS_SAR);
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops));
+      ASSERT_FALSE(Ops.empty());
+
+      for (uint64_t Value : {UINT64_C(0), UINT64_C(1), UINT64_C(3), Sign - 1,
+                             Sign, Sign + 1, Mask}) {
+        for (uint64_t Flags : {UINT64_C(0), UINT64_C(0x7f)}) {
+          SCOPED_TRACE(::testing::Message()
+                       << "value=" << Value << " flags=" << Flags);
+          BinaryImage Image;
+          Image.Arch = Target;
+          Image.Bits = Target == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
+          NdOpEmulator Emulator(Image);
+          Emulator.setStrictMode(true);
+          const uint64_t Source =
+              (UINT64_C(0x123456789abcdef0) & ~Mask) | Value;
+          if (ApxNdd)
+            Emulator.setRegister(DestinationRegister,
+                                 UINT64_C(0x876543210fedcba9));
+          Emulator.setRegister(SourceRegister, Source);
+          Emulator.setRegister(x86reg::RCX, Count);
+          for (unsigned I = 0; I != 7; ++I)
+            Emulator.setRegister(FlagRegisters[I], (Flags >> I) & 1);
+          ASSERT_EQ(Emulator.run(Ops), Ops.size());
+          EXPECT_FALSE(Emulator.skips().any());
+
+          // Independent serial oracle: each one-bit arithmetic shift moves
+          // the low bit into CF and replicates the sign bit. This remains
+          // defined when the masked count exceeds an 8/16-bit operand width.
+          uint64_t Expected = Value;
+          uint64_t Carry = Flags & 1;
+          const unsigned MaskedCount = Count & 31;
+          for (unsigned I = 0; I != MaskedCount; ++I) {
+            Carry = Expected & 1;
+            Expected = (Expected >> 1) | (Expected & Sign);
+          }
+          ASSERT_TRUE(Emulator.getRegister(DestinationRegister).has_value());
+          EXPECT_EQ(*Emulator.getRegister(DestinationRegister) & Mask,
+                    Expected);
+          if (ApxNdd)
+            EXPECT_EQ(Emulator.getRegister(SourceRegister), Source);
+          else
+            EXPECT_EQ(Emulator.getRegister(SourceRegister),
+                      (Source & ~Mask) | Expected);
+          if (NoFlags || MaskedCount == 0) {
+            for (unsigned I = 0; I != 7; ++I)
+              EXPECT_EQ(Emulator.getRegister(FlagRegisters[I]),
+                        (Flags >> I) & 1);
+          } else {
+            EXPECT_EQ(Emulator.getRegister(x86reg::CF), Carry);
+            EXPECT_EQ(Emulator.getRegister(x86reg::ZF), Expected == 0);
+            EXPECT_EQ(Emulator.getRegister(x86reg::SF), (Expected & Sign) != 0);
+            unsigned Parity = 0;
+            for (unsigned I = 0; I != 8; ++I)
+              Parity ^= (Expected >> I) & 1;
+            EXPECT_EQ(Emulator.getRegister(x86reg::PF), Parity == 0);
+            EXPECT_EQ(Emulator.getRegister(x86reg::DF), (Flags >> 6) & 1);
+            if (MaskedCount == 1)
+              EXPECT_EQ(Emulator.getRegister(x86reg::OF), 0u);
+            // AF is undefined for nonzero counts; OF is undefined above one.
+          }
+        }
+      }
+    }
+  }
+}
+
+} // namespace
+
+TEST(X86ShiftCarry, NarrowSarCarriesTheLastBitShiftedOut) {
+  for (Arch Target : {Arch::X86, Arch::X64})
+    for (unsigned Width : {1u, 2u})
+      expectNarrowSar(Target, Width, false);
+}
+
+TEST(X86ShiftCarry, NarrowSarNddHonorsCarryAndFlagSuppression) {
+  for (unsigned Width : {1u, 2u})
+    for (bool NoFlags : {false, true})
+      expectNarrowSar(Arch::X64, Width, true, NoFlags);
+}

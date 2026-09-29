@@ -1,3 +1,14 @@
+add_neverd_unittest(NeverDLowIRUndefinedIndependenceTests
+  LowIRUndefinedIndependenceTests.cpp
+  BinaryUndefinedIndependenceTests.cpp
+  LINK_COMPONENTS InterpreterSpecialization Decode Lift
+)
+
+add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
+  OriginalBinaryUndefinedIndependenceTests.cpp
+  LINK_COMPONENTS BinaryInterpreterSpecialization
+)
+
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp

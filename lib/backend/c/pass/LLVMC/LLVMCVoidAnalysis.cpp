@@ -57,12 +57,16 @@ bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
             CallProducer =
                 llvm::dyn_cast<llvm::CallInst>(Extract->getAggregateOperand());
         if (CallProducer) {
-          // A saturating conversion has an exact arithmetic result. It is
-          // not a residual native call register eligible for void inference.
+          // These intrinsics have exact arithmetic results, not residual
+          // native call registers eligible for void inference.
           if (const auto *Intrinsic =
                   llvm::dyn_cast<llvm::IntrinsicInst>(CallProducer))
             if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptosi_sat ||
-                Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptoui_sat)
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptoui_sat ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::umin ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::umax ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::smin ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::smax)
               AllRetResidual = false;
           if (llvm_value_provenance::isSemanticProducer(*CallProducer) ||
               isLinuxX64SyscallInlineAsm(*CallProducer))
