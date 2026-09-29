@@ -6,6 +6,7 @@ add_neverd_unittest(NeverDExecutionSessionTests
 
 add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64MemoryUpdateTests.cpp
+  X64DataTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -854,6 +855,7 @@ endforeach()
 
 add_neverd_unittest(NeverDDriverEmulationTests
   HardwareBackendTests.cpp
+  DriverBackendParityTests.cpp
   DriverWDMUserMappingTests.cpp
   DriverWDMNeitherTests.cpp
   DriverWDMSEHTests.cpp
@@ -982,6 +984,7 @@ target_include_directories(NeverDDriverEmulationTests PRIVATE
   ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
+  NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
   NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}

@@ -9,7 +9,7 @@ ELF `ET_EXEC` programs at CPL3 or EL0. It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
-`PT_TLS`, signals, threads, file systems, FP/SIMD and unsupported services fail
+`PT_TLS`, signals, threads, file systems and unsupported services fail
 explicitly. Windows user processes, Android, Darwin and other kernel workloads
 remain separate implementation work.
 
@@ -25,6 +25,9 @@ host/guest ISA combinations use Unicorn. An unavailable selected backend is an
 error, with no silent fallback. An ELF guest still uses the Linux process model
 when executed on Windows. See [CPU execution](cpu-execution.md) for the checked
 instruction inventory, native availability and cancellation limitations.
+The x64 profile admits the listed SSE/SSE2 moves, logical operations and masked
+scalar subtraction/conversion forms; AArch64 remains an integer instruction
+profile. Vector register storage does not imply an unrestricted SIMD ISA.
 
 The CLI emits one JSON report. Its exit code is 0 for a guest exit status of
 zero, 2 for another guest exit status, 3 for incomplete execution (including

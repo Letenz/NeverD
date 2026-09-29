@@ -35,13 +35,16 @@ struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
   uint64_t GSBase = 0;
+  uint32_t MXCSR = x64::InitialMXCSR;
   std::array<ExecutionBackend::XmmValue, x64::XmmCount> Xmm{};
   uint64_t &reg(X64Register R) { return Registers[unsigned(R)]; }
   uint64_t reg(X64Register R) const { return Registers[unsigned(R)]; }
 };
-/// Native execution of one already admitted integer instruction. No OS models,
+/// Native execution of one already admitted instruction. No OS models,
 /// instruction decoding, memory ownership or lifecycle decisions belong here.
-/// The v1 contract excludes x87/SIMD instructions, privileged instructions,
+/// The v1 contract admits scalar integer and bounded SSE/SSE2 data operations.
+/// Masked scalar FP conversions/subtraction retain MXCSR in the CPU context.
+/// It excludes other floating-point arithmetic, privileged instructions,
 /// debug/flag manipulation and any instruction with unbounded execution.
 class X64Machine {
 public:

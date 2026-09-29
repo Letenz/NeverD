@@ -44,6 +44,15 @@ public:
   void log(llvm::raw_ostream &OS) const override;
   std::error_code convertToErrorCode() const override;
 };
+/// A pure device-read preview and its deferred effect. Preparing or discarding
+/// it must have no device effects. Commit must reject an invalidated preview
+/// before effects and is invoked at most once by the executing CPU. This lets
+/// a memory-to-memory instruction observe its exact write value before either
+/// access takes effect. Device owners retain their own lifetime/version checks.
+struct GuestMMIOPreparedRead {
+  uint64_t Value;
+  std::function<llvm::Error()> Commit;
+};
 /// One device mapping. Validate is pure and receives the original transaction
 /// before any read/write effect. Offsets are relative to the mapped page base.
 /// Callbacks are shared by CPU contexts and live until successful unmap.
@@ -51,6 +60,10 @@ struct GuestMMIOCallbacks {
   std::function<llvm::Error(uint64_t, uint64_t, bool)> Validate;
   std::function<llvm::Expected<uint64_t>(uint64_t, unsigned)> Read;
   std::function<llvm::Error(uint64_t, unsigned, uint64_t)> Write;
+  /// Optional for simple loads; required when a checked instruction must
+  /// preview the read result before offering another access's observer stop.
+  std::function<llvm::Expected<GuestMMIOPreparedRead>(uint64_t, unsigned)>
+      PrepareRead;
 };
 struct GuestAliasRange {
   uint64_t Address, Size;

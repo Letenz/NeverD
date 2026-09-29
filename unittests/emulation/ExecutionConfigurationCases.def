@@ -68,8 +68,6 @@ NEVERD_CONFIGURATION_REJECTION(SmallAddressWidth, VirtualAddressBits, 32)
 NEVERD_CONFIGURATION_REJECTION(ZeroAddressWidth, VirtualAddressBits, 0)
 NEVERD_CONFIGURATION_REJECTION(LargePage, PageSize, 65536)
 NEVERD_CONFIGURATION_REJECTION(ZeroPage, PageSize, 0)
-NEVERD_CONFIGURATION_REJECTION(SIMD, RequiredFeatures, ExecutionFeature::SIMD)
-NEVERD_CONFIGURATION_REJECTION(MMIO, RequiredFeatures, ExecutionFeature::MMIO)
 NEVERD_CONFIGURATION_REJECTION(PortIO, RequiredFeatures,
                                ExecutionFeature::PortIO)
 NEVERD_CONFIGURATION_REJECTION(UserIsolation, RequiredFeatures,

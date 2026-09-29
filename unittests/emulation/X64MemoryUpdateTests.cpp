@@ -150,12 +150,13 @@ TEST_P(X64MemoryUpdate, ReadFaultPrecedesEveryWriteObservation) {
   EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
   EXPECT_EQ(Writes, 0u);
 }
-TEST_P(X64MemoryUpdate, LockedAtomicsRemainExplicitlyUnsupported) {
+TEST_P(X64MemoryUpdate, AlignedLockedUpdatesUseTheSameMemoryContract) {
   std::vector<uint8_t> Bytes{LockPrefix};
   Bytes.insert(Bytes.end(), testCase().Bytes.begin(), testCase().Bytes.end());
   llvm::cantFail(CPU->write(Code, Bytes));
   auto Exit = run();
-  EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation);
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, testCase().Size)), after());
 }
 INSTANTIATE_TEST_SUITE_P(
     Backends, X64MemoryUpdate,

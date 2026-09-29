@@ -1293,7 +1293,8 @@ are supported with cooperative execution, not parallel hardware SMP. Physical
 and per-space mapping budgets currently have a 1 GiB ceiling; page size is
 4 KiB. Device mappings consume virtual mapping capacity but no RAM allocation.
 Direct address-space reads and writes access RAM only; device transactions
-require a supporting backend. The checked profiles reject device mappings.
+require a supporting backend. Only the supervisor x64 checked profile admits
+device mappings, through the architecture-owned transactions below.
 
 [`MemoryView`](../include/neverd/emulation/MemoryView.h) captures exact allocation
 slices and an independent address-space identity token. It retains RAM without
@@ -1337,9 +1338,9 @@ constants and transport parameters.
 |----------|-----------|---------------------|
 | `driver-strict` | x64 | Existing Unicorn driver execution |
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
-| `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-x64-v1` | x64 | Shared bounded integer, SSE/SSE2 and device-transaction admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
-| `checked-user-x64-v1` | x64 | The checked integer inventory at CPL3 with explicit user page permissions |
+| `checked-user-x64-v1` | x64 | The checked x64 instruction inventory at CPL3 with explicit user page permissions, excluding device mappings |
 | `checked-user-aarch64-v1` | ARM64 | The checked integer inventory at EL0 with explicit user page permissions |
 
 For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
@@ -1358,6 +1359,24 @@ pending for their OS owner. Stopping, a deadline, or an engine halt never means
 successful workload completion. Observation precision distinguishes complete
 checked-instruction preflight from software engine memory callbacks. Current
 execution-control capabilities explicitly provide no hard wall-clock bound.
+
+The x64 architecture owns scalar memory-update previews and SETcc write
+directions independently of decoder access annotations. Native transports own
+the resulting register/flag effects and synchronize all XMM registers plus
+MXCSR; masked scalar conversion/subtraction keeps rounding and sticky status.
+The `.def` inventory excludes unmodeled floating-point and vector families.
+Naturally aligned locked scalar updates hold the same physical execution lease;
+this does not introduce parallel-CPU execution.
+
+`CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
+boundary. It validates every access before effects; device pages remain outside
+native RAM mappings. `GuestMMIOPreparedRead` is an optional pure value preview
+with an at-most-once commit, needed when a destination write observer must see
+the exact value before a device source is consumed. The Windows register bank
+owns its preparation, lifetime and power-generation checks. Discarding a preview
+has no effects; callback failures are terminal device exits. A CPU snapshot
+never rolls back committed RAM or device effects. Other devices without read
+preparation reject memory-to-memory reads rather than consuming them early.
 
 The ARM64 checked profile runs little-endian baseline integer instructions at
 EL1. It admits scalar loads/stores, register-offset addressing, literal loads

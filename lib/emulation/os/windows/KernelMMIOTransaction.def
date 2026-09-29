@@ -1,0 +1,11 @@
+//===- KernelMMIOTransaction.def - Prepared register-read diagnostics ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_MMIO_TRANSACTION_TEXT(ExpiredOwner,
+                             "register bank owner no longer exists")
+NEVERD_MMIO_TRANSACTION_TEXT(ChangedRead,
+                             "prepared register read was invalidated")
+NEVERD_MMIO_TRANSACTION_TEXT(MissingRegister,
+                             "validated register lost its identity")

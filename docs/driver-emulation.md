@@ -16,16 +16,32 @@ The default `driver-strict` contract still uses Unicorn. The optional
 `checked-x64-v1` contract selects KVM on Linux x86_64 or WHP on Windows x64
 with `--backend auto`; on an ARM64 host the x64 guest uses the same checked
 contract over Unicorn. Explicit `kvm` and `whp` selections never fall back.
-This is an experimental integer-only execution profile, not full compatibility
-with the driver coverage below. Unavailable hardware or a contract mismatch
-fails before execution.
+The checked instruction inventory remains bounded. The original built-in and
+available WDK driver/scenario corpus is compared against Unicorn, including
+normal/CFG and relocated images. Unavailable hardware or a contract mismatch
+fails before execution; corpus agreement is not arbitrary-driver compatibility.
 
 The checked profile validates each instruction and its memory accesses before
 single stepping. It preserves Windows object access checks and write observers,
-shared RAM aliases, and CPU-only contexts. It rejects SIMD/x87, REP, locked
-operations, general memory read-modify-write, cross-page data accesses, MMIO,
-and unmodeled CPU effects. Unprefixed memory INC/DEC are admitted with separate
-read/write permission and observer checks; native execution owns their flags.
+shared RAM aliases, and CPU-only contexts. Scalar memory arithmetic, naturally
+aligned locked arithmetic, SETcc and register BT retain read/write checks;
+native execution owns their flags. Legacy SSE/SSE2 moves, logical operations,
+MOVLHPS/MOVHLPS and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD are admitted.
+All sixteen XMM registers and MXCSR survive entry and context restoration;
+unmasked SIMD exceptions, DAZ, x87, AVX and unlisted operations remain rejected.
+Full-width XMM stores offer two ordered eight-byte write observations before
+either word changes. Misaligned aligned-vector forms and individual accesses
+crossing a page remain unsupported.
+
+Supervisor MMIO admits one aligned 1/2/4-byte scalar move transaction. Device
+pages never enter native RAM mappings. MOVS/REP MOVS executes one checked element
+at a time, with stop/deadline/budget checks at restart boundaries. A device
+source must offer a pure prepared read so a destination observer can stop before
+the device read commits. Windows register banks implement this preparation;
+other devices without it reject string reads before effects. Device RMW, wide
+MMIO, port I/O and unmodeled CPU effects remain unsupported. Register-bank REP
+instruction counts can differ from Unicorn's extra zero-count termination hook;
+request bytes, device state and write events are compared independently.
 This supervisor contract does not provide a user-process environment.
 Timeout and cancellation are checked between admitted, bounded instructions;
 this path does not provide a general asynchronously preemptible VM runner.
@@ -39,6 +55,11 @@ WHP still requires runtime validation on a Windows host; cross-compilation is
 not runtime evidence. The C API adds `neverd_emulate_driver_backend_json`;
 the existing v1 structure and entry points remain unchanged. New selection
 reports identify the requested/selected backend, execution contract and reason.
+
+KVM transports XMM/MXCSR using the standard XSAVE state interface, including
+the FP/SSE presence bits. The older FPU register interface is insufficient for
+this state contract. See the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
+and [WHP register API](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes).
 
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
