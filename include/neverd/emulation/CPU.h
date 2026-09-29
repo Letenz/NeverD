@@ -100,6 +100,8 @@ public:
   /// Typed execution result. Preconditions/setup failures return Error;
   /// outcomes after execution begins return an exit. Recoverable faults remain
   /// pending until takeRecoverableFault(), preserving explicit OS transfer.
+  /// Service requests remain pending until takeServiceRequest(); run() reports
+  /// these as errors so a legacy caller cannot silently treat them as success.
   /// Built-in CPUs implement this boundary; older external subclasses that
   /// only implement run() reject it explicitly.
   virtual llvm::Expected<ExecutionExit>
@@ -110,6 +112,17 @@ public:
   virtual bool hasDeviceError() const = 0;
   virtual std::optional<BackendFault> fault() const = 0;
   virtual std::optional<BackendFault> takeRecoverableFault() = 0;
+  /// Inspect an intercepted service request without releasing the CPU. A
+  /// pending request prevents run, state mutation, rebind and CPU snapshots.
+  virtual std::optional<ServiceRequest> pendingServiceRequest() const {
+    return std::nullopt;
+  }
+  /// Consume exactly once while stopped. This only releases the pending event;
+  /// it does not advance PC or execute a service. The owner must explicitly
+  /// handle the request before resuming. Unsupported CPUs return no request.
+  virtual std::optional<ServiceRequest> takeServiceRequest() {
+    return std::nullopt;
+  }
   virtual bool executable(uint64_t Address) const = 0;
 
 protected:

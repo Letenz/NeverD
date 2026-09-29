@@ -361,6 +361,20 @@ cmake --build build-cpu --target NeverDUserExecutionTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDUserExecutionTests$' --output-on-failure
 ```
 
+`NeverDServiceRequestTests` also builds without Unicorn. Injected x64/ARM64
+machines fail if entered, proving that service interception precedes transport
+execution. Real CPU cases retain all register state and memory, distinguish
+observer stops/failures and fetch protection, reject other entry mechanisms,
+block context rollback and mutation while a request is pending, and resume a
+following store only after an explicit service return. Unsupported transports
+are skipped; injection-only cases do not claim execution of that store. These
+tests establish a handoff protocol, not working OS syscalls or exception vectors.
+
+```bash
+cmake --build build-cpu --target NeverDServiceRequestTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDServiceRequestTests$' --output-on-failure
+```
+
 `NeverDExecutionConfigurationTests` builds even with Unicorn disabled. It checks
 static capabilities against the same resolver used by the factory, rejects
 unsupported requirements without changing an attached address space, separates

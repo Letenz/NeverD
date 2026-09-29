@@ -13,4 +13,5 @@ NEVERD_EXECUTION_EXIT(UnsupportedOperation, "unsupported_operation")
 NEVERD_EXECUTION_EXIT(DeviceFailure, "device_failure")
 NEVERD_EXECUTION_EXIT(BackendFailure, "backend_failure")
 NEVERD_EXECUTION_EXIT(EngineStop, "engine_stop")
+NEVERD_EXECUTION_EXIT(ServiceRequest, "service_request")
 #endif

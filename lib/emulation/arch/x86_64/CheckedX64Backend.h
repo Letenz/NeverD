@@ -40,6 +40,8 @@ private:
     X64MachineState CPU;
   };
   llvm::Error execute(const cs_insn &Instruction) override;
+  std::optional<ServiceRequest>
+  decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;

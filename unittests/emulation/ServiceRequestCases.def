@@ -1,0 +1,36 @@
+//===- ServiceRequestCases.def - Service boundary fixtures ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SERVICE_VALUE
+NEVERD_SERVICE_VALUE(Immediate, 0x1234)
+NEVERD_SERVICE_VALUE(X64ServiceSize, 2)
+NEVERD_SERVICE_VALUE(ARMServiceSize, 4)
+NEVERD_SERVICE_VALUE(X64StoreSize, 3)
+NEVERD_SERVICE_VALUE(ARMStoreSize, 4)
+NEVERD_SERVICE_VALUE(ServiceResult, 0xcafef00d)
+#endif
+#ifdef NEVERD_SERVICE_X64
+NEVERD_SERVICE_X64(ServiceX64, 0x0f, 0x05, 0x48, 0x89, 0x01, 0x90)
+NEVERD_SERVICE_X64(PrefixedX64, 0x48, 0x0f, 0x05)
+NEVERD_SERVICE_X64(OtherEntryX64, 0x0f, 0x34)
+NEVERD_SERVICE_X64(SoftwareInterruptX64, 0xcd, 0x80)
+#endif
+#ifdef NEVERD_SERVICE_ARM
+NEVERD_SERVICE_ARM(ServiceARM, 0xd4024681, 0xf9000020, 0xd503201f)
+NEVERD_SERVICE_ARM(OtherEntryARM, 0xd4000002)
+NEVERD_SERVICE_ARM(SoftwareInterruptARM, 0xd4200000)
+#endif
+#ifdef NEVERD_SERVICE_IMMEDIATE
+NEVERD_SERVICE_IMMEDIATE(0, 0xd4000001)
+NEVERD_SERVICE_IMMEDIATE(0xffff, 0xd41fffe1)
+NEVERD_SERVICE_IMMEDIATE(0x1234, 0xd4024681)
+#endif
+#ifdef NEVERD_SERVICE_TEXT
+NEVERD_SERVICE_TEXT(CheckedX64Name, "CheckedX64")
+NEVERD_SERVICE_TEXT(CheckedARMName, "CheckedARM64")
+NEVERD_SERVICE_TEXT(SyscallName, "SYSCALL")
+NEVERD_SERVICE_TEXT(SVCName, "SVC")
+NEVERD_SERVICE_TEXT(ObserverFailure, "service observer failed")
+#endif

@@ -12,6 +12,10 @@ NEVERD_EXECUTION_DIAGNOSTIC(PageTables, "guest page-table budget exceeded")
 NEVERD_EXECUTION_DIAGNOSTIC(MemoryAccess,
                             "guest memory access is unmapped or protected")
 NEVERD_EXECUTION_DIAGNOSTIC(Faulted, "cannot execute or mutate a faulted CPU")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    PendingService,
+    "CPU service request must be consumed before resumption or mutation")
+NEVERD_EXECUTION_DIAGNOSTIC(UnknownService, "unknown service request kind")
 NEVERD_EXECUTION_DIAGNOSTIC(Running, "operation requires a stopped CPU")
 NEVERD_EXECUTION_DIAGNOSTIC(ContextExpired, "CPU context owner has expired")
 NEVERD_EXECUTION_DIAGNOSTIC(ContextOwner,

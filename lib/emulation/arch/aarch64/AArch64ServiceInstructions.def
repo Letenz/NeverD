@@ -1,0 +1,10 @@
+//===- AArch64ServiceInstructions.def - Checked user service admission ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Kind, decoded family, encoding mask/value, immediate shift/mask. The
+// immediate is an architectural operand; its OS meaning is not defined here.
+#ifdef NEVERD_AARCH64_SERVICE
+NEVERD_AARCH64_SERVICE(AArch64SVC, SVC, 0xffe0001f, 0xd4000001, 5, 0xffff)
+#endif

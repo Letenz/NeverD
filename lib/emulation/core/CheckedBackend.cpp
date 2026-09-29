@@ -27,6 +27,8 @@ CheckedBackend::~CheckedBackend() {
 llvm::Error CheckedBackend::mutableMemory() const {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
+  if (PendingService)
+    return error(diagnostic::PendingService);
   if (Running)
     return error(diagnostic::Running);
   return Memory->mutableMemory();
@@ -172,6 +174,12 @@ std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
   return std::exchange(RecoverableFault, std::nullopt);
 }
 
+std::optional<ServiceRequest> CheckedBackend::takeServiceRequest() {
+  if (Running)
+    return std::nullopt;
+  return std::exchange(PendingService, std::nullopt);
+}
+
 llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                                                            uint64_t Timeout) {
   bool Started = false, BackendFailed = false;
@@ -181,13 +189,15 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
       return std::move(E);
     return error(diagnostic::MissingExecutionStart);
   }
-  // A transport can fail while enforcing the deadline. Its terminal failure
-  // takes precedence, but the elapsed budget must not disappear from the exit.
-  if (BackendFailed && std::chrono::steady_clock::now() >= Deadline)
+  // A transport failure or service interception can coincide with the deadline.
+  // Retain elapsed budget independently of the higher-priority exit reason.
+  if ((BackendFailed || PendingService) &&
+      std::chrono::steady_clock::now() >= Deadline)
     TimedOut = true;
   return makeExecutionExit(
       std::move(E), {.Fault = FirstFault,
                      .Recoverable = RecoverableFault,
+                     .Service = PendingService,
                      .BackendFailed = BackendFailed,
                      .InstructionRejected =
                          FirstFault && FirstFault->Kind ==
@@ -255,6 +265,11 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
         return error(diagnostic::Faulted);
       if (StopRequested)
         break;
+      if (UserMode) {
+        PendingService = decodeServiceRequest(*Decoded);
+        if (PendingService)
+          break;
+      }
       if (auto E = execute(*Decoded)) {
         if (!FirstFault) {
           const bool Unsupported = E.isA<UnsupportedExecutionError>();
