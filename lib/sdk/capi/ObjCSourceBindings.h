@@ -483,6 +483,35 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
       return State && Buffer && Disjoint(*State, 64) &&
              Disjoint(*Buffer, *Count * 8);
     };
+    // NSFormatter's SDK declaration writes an Objective-C object through its
+    // first out parameter. The other out slot must be a separate private
+    // frame range, and the destination must already contain null or a proven
+    // pointer because the formatter is permitted to leave it untouched.
+    const auto SafeFormatterObjectOut = [&](const HighExpr &E) {
+      const auto *B = E.SourceCallHint.get();
+      if (E.Kind != ExprKind::Call || !B ||
+          B->CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          B->Selector != "getObjectValue:forString:errorDescription:" ||
+          B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          E.Operands.size() != 5 || B->Signature.Parameters.size() != 5 ||
+          !objcSourceCallBound(E, Image, {}))
+        return false;
+      const auto &Out = B->Signature.Parameters[2].Type;
+      const auto &DescriptionOut = B->Signature.Parameters[4].Type;
+      if (!Out || Out->Kind != NdTypeKind::Ptr || !Out->Pointee ||
+          Out->Pointee->Kind != NdTypeKind::Ptr || Out->Size != 8 ||
+          Out->Pointee->Size != 8 || !DescriptionOut ||
+          DescriptionOut->Kind != NdTypeKind::Ptr || !DescriptionOut->Pointee ||
+          DescriptionOut->Pointee->Kind != NdTypeKind::Ptr ||
+          DescriptionOut->Size != 8 || DescriptionOut->Pointee->Size != 8 ||
+          Derived(E.Operands[0]) || Derived(E.Operands[1]) ||
+          Derived(E.Operands[3]))
+        return false;
+      const auto Destination = Offset(E.Operands[2]);
+      const auto OtherOut = Offset(E.Operands[4]);
+      return Destination && *Destination == Slot && OtherOut &&
+             Disjoint(*OtherOut, 8);
+    };
     const auto Evaluate = [&](Fact &F, const HighSourceFlowNode &Node) {
       const auto Check = [&](auto &&Self, const ExprPtr &E) -> void {
         if (!E || !Budget)
@@ -492,7 +521,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
           bool Exposes = E->IndirectTarget && Derived(E->IndirectTarget);
           for (const auto &Arg : E->Operands)
             Exposes |= Derived(Arg);
-          if (Exposes && !SafeEnumeration(*E))
+          if (Exposes && !SafeEnumeration(*E) && !SafeFormatterObjectOut(*E))
             F.Escaped = true;
         } else if (E->Kind == ExprKind::Store) {
           F.Pointer = false;
@@ -534,7 +563,14 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
               S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
             size_t PointerBudget = 4096;
             std::set<VarKey> PointerActive;
-            F.Pointer = provenSourcePointerValue(Value, Definitions, Image,
+            const bool Null =
+                Value->Kind == ExprKind::Const && !Value->ConstVal &&
+                Value->AddressOwnerVA == InvalidVA &&
+                Value->ConstProvenance != ConstantAddressProvenance::Address &&
+                Value->ConstProvenance !=
+                    ConstantAddressProvenance::DataAddress;
+            F.Pointer =
+                Null || provenSourcePointerValue(Value, Definitions, Image,
                                                  PointerBudget, PointerActive);
           } else {
             F.Pointer = false;
@@ -1045,10 +1081,11 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
   return Proven;
 }
 
-/// A block invoke can use one captured word as a Class argument before using
-/// the unchanged word in a dynamic Objective-C format. The bound runtime call
-/// supplies an independent pointer declaration; the block context and its
-/// field must remain private on every source path between the two loads.
+/// A block invoke can use one captured word as a Class argument and in a
+/// dynamic Objective-C format. The bound runtime call supplies an independent
+/// pointer declaration. Its position need not dominate the format call when
+/// the block context and its field remain private and unchanged on every
+/// reachable source path.
 inline std::set<const HighExpr *>
 provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
                              const VarKeyMap<std::vector<ExprPtr>> &Definitions,
@@ -1213,6 +1250,27 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
     std::vector<size_t> Pending{Graph.Entry};
     Incoming[Graph.Entry] = Fact{};
     size_t Work = 0;
+    bool AnyObservation = false;
+    bool AnyEscape = false;
+    const auto IndependentOutStore = [&](const ExprPtr &Address, size_t Bytes) {
+      if (!Address || Address->Kind != ExprKind::Var ||
+          Address->Var.Kind != MedVar::Param || Address->Var.Id <= 0 ||
+          Address->Var.SSAVer != 0 || Address->Var.RenameTag >= 0 ||
+          Address->Var.Size != 8 || !Function.SourceTypeHint ||
+          Function.Params.size() !=
+              Function.SourceTypeHint->Parameters.size() ||
+          static_cast<size_t>(Address->Var.Id) >= Function.Params.size())
+        return false;
+      const auto &Formal = Function.Params[Address->Var.Id].Type;
+      const auto &Declared =
+          Function.SourceTypeHint->Parameters[Address->Var.Id].Type;
+      return Formal && Declared && Address->Type &&
+             equalSourceTypes(Address->Type, Declared) &&
+             Formal->Kind == NdTypeKind::Ptr &&
+             Declared->Kind == NdTypeKind::Ptr && Declared->Pointee &&
+             Formal->Size == 8 && equalSourceTypes(Formal, Declared) && Bytes &&
+             Bytes <= Declared->Pointee->Size;
+    };
     while (!Pending.empty() && Budget && ++Work <= 100000) {
       const size_t Index = Pending.back();
       Pending.pop_back();
@@ -1234,10 +1292,12 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
           const auto Frame = high_detail::frameAddressOffset(
               Address, Function, Image.Arch, Budget, 0, &FrameAliases);
           const auto Bytes = Value && Value->Type ? Value->Type->Size : 0;
-          if (!Frame || !Bytes || Bytes > (1u << 24) ||
-              *Frame < -static_cast<int64_t>(Function.FrameSize) ||
-              *Frame > static_cast<int64_t>(Function.FrameHeadroom) -
-                           static_cast<int64_t>(Bytes) ||
+          const bool PrivateFrame =
+              Frame && Bytes && Bytes <= (1u << 24) &&
+              *Frame >= -static_cast<int64_t>(Function.FrameSize) &&
+              *Frame <= static_cast<int64_t>(Function.FrameHeadroom) -
+                            static_cast<int64_t>(Bytes);
+          if ((!PrivateFrame && !IndependentOutStore(Address, Bytes)) ||
               Derived(Value)) {
             Out.Observed = false;
             Out.Escaped = true;
@@ -1253,8 +1313,10 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
               E.Operands.size() == 2 && objcSourceCallBound(E, Image, {})) {
             std::set<VarKey> Active;
             if (FromCapture(FromCapture, E.Operands[1], Active, 0) == At &&
-                !Out.Escaped)
+                !Out.Escaped) {
               Out.Observed = true;
+              AnyObservation = true;
+            }
           }
         }
       }
@@ -1279,6 +1341,7 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
       Check(Check, Node.Test);
       if (S)
         forEachRhsExpr(*S, [&](const ExprPtr &Root) { Check(Check, Root); });
+      AnyEscape |= Out.Escaped;
       for (const auto Next : Node.Successors) {
         auto &In = Incoming[Next];
         const Fact Merged =
@@ -1293,11 +1356,13 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
     if (!Budget || Work > 100000)
       return {};
     for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
-      if (!Incoming[I] || !Incoming[I]->Observed || Incoming[I]->Escaped)
+      if (!Incoming[I])
         continue;
       const auto *S = Graph.Nodes[I].Statement;
       if (S && S->Kind == StmtKind::Assign && S->Val &&
-          Loads.count(S->Val.get()))
+          Loads.count(S->Val.get()) &&
+          ((Incoming[I]->Observed && !Incoming[I]->Escaped) ||
+           (AnyObservation && !AnyEscape)))
         Proven.insert(S->Val.get());
     }
   }
@@ -5394,48 +5459,29 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                                               PointerBudget, ActivePointers);
             });
         if (!PointerTail) {
-          const auto FrameLoads = provenPrivateFramePointerLoads(
-              Function, Image, FormatDefinitions, *Expression, Fixed);
+          // Each accepted load has its own complete proof. A single format
+          // may mix private-frame objects and captured Classes, so check the
+          // whole tail against the union rather than requiring one proof kind
+          // to account for every argument.
+          std::set<const HighExpr *> ProvenLoads;
+          for (const auto &Group :
+               {provenPrivateFramePointerLoads(
+                    Function, Image, FormatDefinitions, *Expression, Fixed),
+                provenFastEnumerationObjectLoads(
+                    Function, Image, FormatDefinitions, *Expression, Fixed),
+                provenBlockClassCaptureLoads(Function, Image, FormatDefinitions,
+                                             *Expression, Fixed)})
+            ProvenLoads.insert(Group.begin(), Group.end());
           PointerBudget = 4096;
           ActivePointers.clear();
           PointerTail =
-              !FrameLoads.empty() &&
+              !ProvenLoads.empty() &&
               std::all_of(Expression->Operands.begin() + Fixed,
                           Expression->Operands.end(),
                           [&](const ExprPtr &Operand) {
                             return provenSourcePointerValue(
                                 Operand, FormatDefinitions, Image,
-                                PointerBudget, ActivePointers, 0, &FrameLoads);
-                          });
-        }
-        if (!PointerTail) {
-          const auto EnumLoads = provenFastEnumerationObjectLoads(
-              Function, Image, FormatDefinitions, *Expression, Fixed);
-          PointerBudget = 4096;
-          ActivePointers.clear();
-          PointerTail =
-              !EnumLoads.empty() &&
-              std::all_of(Expression->Operands.begin() + Fixed,
-                          Expression->Operands.end(),
-                          [&](const ExprPtr &Operand) {
-                            return provenSourcePointerValue(
-                                Operand, FormatDefinitions, Image,
-                                PointerBudget, ActivePointers, 0, &EnumLoads);
-                          });
-        }
-        if (!PointerTail) {
-          const auto ClassLoads = provenBlockClassCaptureLoads(
-              Function, Image, FormatDefinitions, *Expression, Fixed);
-          PointerBudget = 4096;
-          ActivePointers.clear();
-          PointerTail =
-              !ClassLoads.empty() &&
-              std::all_of(Expression->Operands.begin() + Fixed,
-                          Expression->Operands.end(),
-                          [&](const ExprPtr &Operand) {
-                            return provenSourcePointerValue(
-                                Operand, FormatDefinitions, Image,
-                                PointerBudget, ActivePointers, 0, &ClassLoads);
+                                PointerBudget, ActivePointers, 0, &ProvenLoads);
                           });
         }
         if (PointerTail) {

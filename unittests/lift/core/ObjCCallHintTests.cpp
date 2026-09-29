@@ -5763,7 +5763,7 @@ TEST(ObjCCallHints, FastEnumerationObjectTailRequiresFreshPrivateState) {
   EXPECT_TRUE(Proved(Function, NoFoundation).empty());
 }
 
-TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
+TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresImmutableTypedUse) {
   auto Image = runtimeImage("_objc_opt_isKindOfClass", Arch::AArch64);
   Image.DyldBindSlots[0x2180] = {"_objc_opt_isKindOfClass", 0,
                                  "/usr/lib/libobjc.A.dylib", false};
@@ -5778,6 +5778,8 @@ TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
   Block.TheArch = Arch::AArch64;
   MedVar Object = Block;
   Object.Id = 1;
+  MedVar Success = Block;
+  Success.Id = 2;
   MedVar First = Block;
   First.Kind = MedVar::Temp;
   First.Id = 2;
@@ -5813,11 +5815,14 @@ TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
   HighFunc Function;
   Function.Entry = 0x1100;
   Function.ReturnType = Int;
-  Function.Params = {{"block", Pointer}, {"object", Pointer}};
+  const auto OutPointer = NdType::makePtr(NdType::makeInt(1, false));
+  Function.Params = {
+      {"block", Pointer}, {"object", Pointer}, {"success", OutPointer}};
   SourceFunctionTypeHint Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
   Signature.ReturnType = Int;
-  Signature.Parameters = {{"block", Pointer}, {"object", Pointer}};
+  Signature.Parameters = {
+      {"block", Pointer}, {"object", Pointer}, {"success", OutPointer}};
   Function.SourceTypeHint = Signature;
   Function.Body = {LoadFirst, Observe, LoadSecond, Return};
   auto Format = HighExpr::makeCall(
@@ -5835,6 +5840,9 @@ TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
         Body, Source, Definitions, *Format, 3);
   };
   EXPECT_TRUE(Proved(Function, Image).count(LoadSecond.Val.get()));
+  Format->Operands.back() = HighExpr::makeVar(First, Int);
+  EXPECT_TRUE(Proved(Function, Image).count(LoadFirst.Val.get()));
+  Format->Operands.back() = HighExpr::makeVar(Second, Int);
 
   auto Changed = Function;
   Changed.Body.erase(Changed.Body.begin() + 1);
@@ -5863,6 +5871,22 @@ TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
   Branch.Cond = HighExpr::makeVar(Object, Pointer);
   Branch.Body = {Observe};
   Changed.Body = {LoadFirst, Branch, LoadSecond, Return};
+  EXPECT_TRUE(Proved(Changed, Image).count(LoadSecond.Val.get()));
+  HighStmt WriteSuccess;
+  WriteSuccess.Kind = StmtKind::Store;
+  WriteSuccess.StoreAddr = HighExpr::makeVar(Success, OutPointer);
+  WriteSuccess.StoreVal = HighExpr::makeConst(1, 1);
+  Changed.Body.insert(Changed.Body.begin() + 1, WriteSuccess);
+  EXPECT_TRUE(Proved(Changed, Image).count(LoadSecond.Val.get()));
+  Changed.Body[1].StoreAddr = HighExpr::makeVar(Success, Pointer);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed.Body.erase(Changed.Body.begin() + 1);
+  Changed.Body[1].Body = {Escape};
+  Changed.Body.push_back(Observe);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Branch.Body = {Clobber};
+  Changed.Body.insert(Changed.Body.begin() + 1, Branch);
   EXPECT_TRUE(Proved(Changed, Image).empty());
   Changed = Function;
   Changed.SourceTypeHint->Origin =
@@ -7847,6 +7871,103 @@ ExprPtr receiverCallExpression(const SourceCallTypeHint &Binding) {
   return Call;
 }
 } // namespace
+
+TEST(ObjCCallHints, FormatterObjectOutTailRequiresBoundDisjointFrameSlots) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name =
+      "getObjectValue:forString:errorDescription:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  const auto Hints =
+      buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Hints.size(), 1U);
+  auto Writer = receiverCallExpression(Hints.at(0x1204));
+  const auto Int = NdType::makeInt(8, false);
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.TheArch = Arch::AArch64;
+  SP.Size = 8;
+  SP.RegOff = a64reg::SP;
+  MedVar Base;
+  Base.Kind = MedVar::Temp;
+  Base.Id = 1;
+  Base.Size = 8;
+  MedVar Result = Base;
+  Result.Id = 2;
+  MedVar Reload = Base;
+  Reload.Id = 3;
+  const auto Slot = [&](uint64_t Offset) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Base, Int),
+                               HighExpr::makeConst(Offset, 8));
+  };
+  Writer->Operands[2] = Slot(16);
+  Writer->Operands[4] = Slot(24);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Writer, Image, {}));
+  HighStmt Frame;
+  Frame.Kind = StmtKind::Assign;
+  Frame.Dst = HighExpr::makeVar(Base, Int);
+  Frame.Val = HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(SP, Int),
+                                  HighExpr::makeConst(64, 8));
+  HighStmt Null;
+  Null.Kind = StmtKind::Store;
+  Null.StoreAddr = Slot(16);
+  Null.StoreVal = HighExpr::makeConst(0, 8);
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Dst = HighExpr::makeVar(Result, Writer->Type);
+  Call.Val = Writer;
+  auto Load = HighExpr::makeLoad(Slot(16), Int);
+  HighStmt Read;
+  Read.Kind = StmtKind::Assign;
+  Read.Dst = HighExpr::makeVar(Reload, Int);
+  Read.Val = Load;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  HighFunc Function;
+  Function.FrameSize = 64;
+  Function.ReturnType = NdType::makeVoid();
+  Function.Body = {Frame, Null, Call, Read, Return};
+  auto Format = HighExpr::makeCall(
+      "format", 0,
+      {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+       HighExpr::makeConst(0, 8), HighExpr::makeVar(Reload, Int)});
+  const auto Proved = [&](const HighFunc &Body, const BinaryImage &Source) {
+    VarKeyMap<std::vector<ExprPtr>> Definitions;
+    walkStmts(Body.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+          S.Dst->Kind == ExprKind::Var)
+        Definitions[varKey(S.Dst->Var)].push_back(S.Val);
+    });
+    return sdk::objc_binding_detail::provenPrivateFramePointerLoads(
+        Body, Source, Definitions, *Format, 3);
+  };
+  EXPECT_TRUE(Proved(Function, Image).count(Load.get()));
+
+  auto Changed = Function;
+  Changed.Body.erase(Changed.Body.begin() + 1);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body[2].Val = std::make_shared<HighExpr>(*Writer);
+  Changed.Body[2].Val->SourceCallHint.reset();
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body[2].Val = std::make_shared<HighExpr>(*Writer);
+  Changed.Body[2].Val->Operands[4] = Slot(16);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body[2].Val = std::make_shared<HighExpr>(*Writer);
+  Changed.Body[2].Val->Operands[3] = Slot(16);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  HighStmt Clobber = Null;
+  Clobber.StoreVal = HighExpr::makeConst(7, 8);
+  Changed.Body.insert(Changed.Body.begin() + 3, Clobber);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  auto WrongLibrary = Image;
+  WrongLibrary.DynInfo.NeededLibs.clear();
+  EXPECT_TRUE(Proved(Function, WrongLibrary).empty());
+}
 
 TEST(ObjCCallHints,
      FoundationNonescapingBlocksRequireExactParentAndCallbackDeclarations) {
