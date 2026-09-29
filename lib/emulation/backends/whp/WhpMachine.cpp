@@ -7,45 +7,15 @@
 #include "../../core/ExecutionDiagnostics.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
+#include "WhpPartition.h"
+
 #include <vector>
 #include <windows.h>
-#include <winhvplatform.h>
 
 namespace neverd::emulation {
 namespace {
-#define NEVERD_WHP_STRING(Name, Text) constexpr auto Name = Text;
-#include "WhpProtocol.def"
-#undef NEVERD_WHP_STRING
-struct WhpAPI {
-  HMODULE Module = nullptr;
-#define NEVERD_WHP_FUNCTION(Name) decltype(&::Name) Name = nullptr;
-#include "WhpProtocol.def"
-#undef NEVERD_WHP_FUNCTION
-  ~WhpAPI() {
-    if (Module)
-      FreeLibrary(Module);
-  }
-  llvm::Error load() {
-    Module = LoadLibraryExW(Library, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!Module)
-      return diagnostic::unavailable(diagnostic::WhpCapability);
-#define NEVERD_WHP_FUNCTION(Name)                                              \
-  Name = reinterpret_cast<decltype(Name)>(GetProcAddress(Module, #Name));      \
-  if (!Name)                                                                   \
-    return diagnostic::unavailable(diagnostic::WhpCapability);
-#include "WhpProtocol.def"
-#undef NEVERD_WHP_FUNCTION
-    return llvm::Error::success();
-  }
-};
-class WhpMachine final : public X64Machine {
+class WhpMachine final : public X64Machine, public WhpPartition {
 public:
-  WhpAPI API;
-  WHV_PARTITION_HANDLE Partition = nullptr;
-  ~WhpMachine() override {
-    if (Partition)
-      API.WHvDeletePartition(Partition);
-  }
   llvm::Error step(X64MachineState &State, uint64_t Root) override {
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;

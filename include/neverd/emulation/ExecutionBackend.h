@@ -9,7 +9,41 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <string>
+
 namespace neverd::emulation {
+class BackendUnavailableError
+    : public llvm::ErrorInfo<BackendUnavailableError> {
+public:
+  static char ID;
+  explicit BackendUnavailableError(llvm::StringRef Reason)
+      : Reason(Reason.str()) {}
+  void log(llvm::raw_ostream &OS) const override;
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+
+private:
+  std::string Reason;
+};
+
+class UnsupportedExecutionError
+    : public llvm::ErrorInfo<UnsupportedExecutionError> {
+public:
+  static char ID;
+  void log(llvm::raw_ostream &OS) const override;
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+};
+
+enum class GuestArchitecture {
+#define NEVERD_GUEST_ARCHITECTURE(Name, Text) Name,
+#include "neverd/emulation/ExecutionBackend.def"
+#undef NEVERD_GUEST_ARCHITECTURE
+};
+llvm::Expected<GuestArchitecture> parseGuestArchitecture(llvm::StringRef Name);
+const char *guestArchitectureName(GuestArchitecture Architecture);
 enum class ExecutionBackendKind {
 #define NEVERD_EXECUTION_BACKEND(Name, Text) Name,
 #include "neverd/emulation/ExecutionBackend.def"

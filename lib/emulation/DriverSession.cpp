@@ -13,6 +13,7 @@
 
 #include "DriverScenario.h"
 #include "core/BackendRegistry.h"
+#include "core/ExecutionDiagnostics.h"
 #include "windows/DriverImage.h"
 #include "windows/GuardControlFlow.h"
 #include "windows/KernelException.h"
@@ -70,6 +71,9 @@ std::string guestCallPhase(const GuestCallToken &Token) {
 
 llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                            const DriverOptions &Options) {
+  if (Options.Contract != ExecutionContract::Legacy &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return diagnostic::error(diagnostic::Contract);
   if (!Options.InstructionLimit || !Options.MemoryLimit ||
       !Options.EventLimit || !Options.TimeoutMilliseconds ||
       Options.TimeoutMilliseconds > MaxTimeoutMilliseconds ||

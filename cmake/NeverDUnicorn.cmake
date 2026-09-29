@@ -6,6 +6,18 @@ function(neverd_require_unicorn)
     return()
   endif()
 
+  # The pinned upstream MSVC build selects an x86 JIT from pointer width.
+  # Refuse that incorrect host configuration rather than emit x86 code on ARM64.
+  if(WIN32 AND MSVC AND
+     (CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$" OR
+      CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR
+      CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64"))
+    message(FATAL_ERROR
+      "The pinned Unicorn MSVC build does not support an ARM64 host. "
+      "Use an ARM64 LLVM-MinGW toolchain for Unicorn, or configure "
+      "NEVERD_EMULATION_BACKEND_UNICORN=OFF and BUILD_TESTING=OFF for native WHP.")
+  endif()
+
   # Keep dependency policy local: libneverd still builds as a shared library.
   set(BUILD_SHARED_LIBS OFF)
   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)

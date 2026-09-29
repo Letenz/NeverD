@@ -1,19 +1,59 @@
+# CPU execution can be built independently of the Windows driver environment.
 add_neverd_component_library(NeverDEmulationCore
   GuestMemory.cpp
   core/ExecutionBackend.cpp
-  core/PhysicalMemory.cpp
-  arch/x86_64/CheckedX64Backend.cpp
-  arch/x86_64/X64PageTables.cpp
-  backends/kvm/KvmMachine.cpp
-  backends/whp/WhpMachine.cpp)
+  core/Registers.cpp
+  core/CheckedBackend.cpp
+  core/PhysicalMemory.cpp)
 
-add_neverd_component_library(NeverDEmulationUnicorn
-  unicorn/UnicornBackend.cpp
-  LINK_COMPONENTS EmulationCore
-  LINK_LIBS unicorn)
+add_neverd_component_library(NeverDEmulationNative
+  arch/x86_64/X64PageTables.cpp
+  arch/aarch64/AArch64PageTables.cpp
+  backends/kvm/KvmMachine.cpp
+  backends/kvm/KvmAArch64Machine.cpp
+  backends/whp/WhpMachine.cpp
+  backends/whp/WhpAArch64Machine.cpp
+  LINK_COMPONENTS EmulationCore)
+
+if(NEVERD_EMULATION_BACKEND_UNICORN)
+  add_neverd_component_library(NeverDEmulationUnicorn
+    unicorn/UnicornBackend.cpp
+    unicorn/UnicornMachine.cpp
+    unicorn/UnicornArchitecture.cpp
+    LINK_COMPONENTS EmulationCore
+    LINK_LIBS unicorn)
+else()
+  add_neverd_component_library(NeverDEmulationUnicorn
+    unicorn/UnicornUnavailable.cpp
+    LINK_COMPONENTS EmulationCore)
+endif()
+
+add_neverd_component_library(NeverDEmulationCPU
+  core/BackendRegistry.cpp
+  arch/x86_64/CheckedX64Backend.cpp
+  arch/aarch64/CheckedAArch64Backend.cpp
+  LINK_COMPONENTS EmulationCore EmulationNative EmulationUnicorn)
+
+if(NEVERD_EMULATION_BACKEND_UNICORN)
+  target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_UNICORN=1)
+endif()
+
+if(WIN32)
+  foreach(_component Core Native Unicorn CPU)
+    target_compile_definitions(NeverDEmulation${_component} PRIVATE NOMINMAX)
+  endforeach()
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
+  target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_KVM=1)
+endif()
+if(WIN32 AND NEVERD_EMULATION_BACKEND_WHP)
+  target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_WHP=1)
+endif()
+if(NOT NEVERD_ENABLE_DRIVER_EMULATION)
+  return()
+endif()
 
 add_neverd_component_library(NeverDEmulation
-  core/BackendRegistry.cpp
   DriverResult.cpp
   DriverScenario.cpp
   DriverSession.cpp
@@ -92,16 +132,7 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelAPIIRQL.cpp
   windows/DeviceLifecycle.cpp
   windows/KernelRegistry.cpp
-  LINK_COMPONENTS Loader EmulationCore EmulationUnicorn)
+  LINK_COMPONENTS Loader EmulationCPU)
 if(WIN32)
   target_compile_definitions(NeverDEmulation PRIVATE NOMINMAX)
-  target_compile_definitions(NeverDEmulationCore PRIVATE NOMINMAX)
-  target_compile_definitions(NeverDEmulationUnicorn PRIVATE NOMINMAX)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
-  target_compile_definitions(NeverDEmulationCore PRIVATE NEVERD_EMULATION_KVM=1)
-endif()
-if(WIN32 AND NEVERD_EMULATION_BACKEND_WHP)
-  target_compile_definitions(NeverDEmulationCore PRIVATE NEVERD_EMULATION_WHP=1)
 endif()

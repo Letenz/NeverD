@@ -1100,18 +1100,115 @@ run NeverD's proof-gated semantic simplification to a joint fixed point with
 LLVM optimization; the policy does not supply an executable translation
 backend.
 
+## CPU execution
+
+CPU execution is independent of the guest OS and binary format. Enable
+`NEVERD_ENABLE_CPU_EMULATION` to build it without the Windows driver model;
+`NEVERD_ENABLE_DRIVER_EMULATION` also includes it. The public C++ boundary is
+[`neverd/emulation/CPU.h`](../include/neverd/emulation/CPU.h). It accepts a guest
+ISA, backend and execution contract independently, and returns the selected
+backend and selection reason. It does not infer a guest OS from the host.
+
+| Component | Ownership |
+|-----------|-----------|
+| `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
+| `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
+| `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
+| `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
+| `NeverDEmulation` | Windows image/ABI, API model, policy and driver lifecycle |
+
+```mermaid
+flowchart TD
+  Windows[Windows x64 driver environment] --> CPU[CPU factory and checked contracts]
+  Client[Other C++ CPU clients] --> CPU
+  CPU --> ISA[x64 or ARM64 instruction admission]
+  ISA --> KVM[KVM transport]
+  ISA --> WHP[WHP transport]
+  ISA --> UC[Unicorn transport]
+  KVM --> RAM[Shared physical backing and mappings]
+  WHP --> RAM
+  UC --> RAM
+  CPU --> Software[Unrestricted Unicorn CPU adapter]
+```
+
+`CPURegister` retains ISA identity. Typed `X64Register` and `AArch64Register`
+access cannot reinterpret one architecture's registers as another's. ARM64
+exposes X0–X30, SP, PC, NZCV, TLS registers, FPCR/FPSR and 32 128-bit vector
+registers. Snapshots belong to one backend instance and preserve CPU state;
+restoring one never restores memory, permissions or aliases. Architecture-owned
+`.def` inventories supply register identities, instruction admission, page-table
+constants and transport parameters.
+
+| Contract | Guest ISA | Available execution |
+|----------|-----------|---------------------|
+| `driver-strict` | x64 | Existing Unicorn driver execution |
+| `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
+| `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+
+For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
+matching Windows host, and Unicorn for cross-ISA execution or other host OSes.
+Thus a native Ubuntu ARM64 build selects ARM64 KVM and a native Windows ARM64
+build selects ARM64 WHP. An explicit hardware request for a different ISA is
+rejected. Hardware unavailability is a typed error; execution never restarts
+on a different backend after an effect. Software contracts always select
+Unicorn. A disabled Unicorn adapter also fails explicitly, including a
+cross-ISA `auto` selection.
+
+The ARM64 checked profile runs little-endian baseline integer instructions at
+EL1. It admits scalar loads/stores, register-offset addressing, literal loads
+and checked pair/writeback forms. It rejects FP/SIMD, atomics/exclusives, system
+instructions, MMIO, constrained-unpredictable writeback and individual data
+transactions crossing a page. All accesses in a pair are validated before
+native execution. Unrestricted software execution has a separate contract and
+explicit EL1 reset state; it is not a claim of an implemented guest OS.
+
+ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
+TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
+maintenance pages at `[0x1000, 0x3000)`. The backing arena stays below the
+configured physical-address width. Each entry performs architectural TLB and
+instruction-cache maintenance; stale translations cannot survive alias
+replacement or CPU-context restoration. KVM uses `KVM_SET_ONE_REG`,
+`KVM_ARM_VCPU_INIT` and host single stepping. ARM64 WHP configures GICv3 and uses
+an EL1 debug-exception gateway plus an intercepted hypercall; it does not use
+x64's exception-exit bitmap. Both native ARM64 adapters execute a startup probe
+before accepting guest work. The WHP gateway has a cancellation watchdog;
+failed or interrupted transport is terminal. Normal deadlines are checked
+between instructions. The WHP watchdog permits a 100 ms transport allowance
+for an instruction already entering the native machine. KVM bounds interrupted
+entry retries; it relies on host single stepping for an uninterrupted entry.
+
+These mechanisms follow the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
+and the WHP [partition configuration](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvpartitionpropertydatatypes)
+and [ARM64 register requirements](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvsetvirtualprocessorregisters).
+ARM64 WHP requires a Windows SDK exposing its ARM64 API and a supported
+Windows 11 ARM64 runtime; SDK 10.0.26100.6584 headers are used for local compile
+validation. Native ARM64 execution still requires validation on corresponding
+hardware. Cross-compilation and Unicorn MMU tests do not replace that evidence.
+
+The backend build switches are `NEVERD_EMULATION_BACKEND_UNICORN`,
+`NEVERD_EMULATION_BACKEND_KVM` and `NEVERD_EMULATION_BACKEND_WHP`. They default
+to ON. For a native-only Windows ARM64/MSVC build, disable Unicorn and
+`BUILD_TESTING`; the pinned Unicorn MSVC build assumes an x86 host JIT.
+Enabling Unicorn on Windows ARM64 requires an ARM64 GNU-compatible toolchain,
+such as LLVM-MinGW, together with ARM64-capable WHP SDK headers. This combined
+Windows ARM64 build still requires native validation. Configuring the
+incompatible MSVC/Unicorn combination fails explicitly rather than selecting
+an incorrect JIT architecture.
+
+The Windows ARM64 driver loader, ABI/unwinding and OS environment are not yet
+implemented. Windows ring3, Linux/Android user or kernel environments, and
+Darwin user or kernel environments also need their own loaders, ABI and OS
+models. CPU transport availability does not imply compatibility with these
+workloads.
+
 ## Windows driver emulation
 
-The execution boundary now lives in `core/ExecutionBackend.h`; backend-specific
-CPU snapshots retain instance ownership without restoring memory. The
-`NeverDEmulationCore` target owns the checked hardware runner and shared physical
-backing, `NeverDEmulationUnicorn` owns the software adapter, and `NeverDEmulation`
-composes them with the existing Windows models. `arch/x86_64/X64PageTables.cpp`
-materializes virtual mappings for KVM/WHP. Windows CR8/GS admission belongs to
-`windows/WindowsX64ExecutionPolicy`, not the hardware adapters. The experimental
-`checked-x64-v1` integer contract is explicitly narrower than the existing
-`driver-strict` contract; unsupported accesses stop before native execution.
-See the backend section in [driver emulation](driver-emulation.md).
+Windows CR8/GS admission belongs to `windows/WindowsX64ExecutionPolicy`, not
+the CPU transports. The experimental `checked-x64-v1` integer contract is
+explicitly narrower than the existing `driver-strict` contract; unsupported
+accesses stop before native execution. See the backend section in
+[driver emulation](driver-emulation.md).
 
 `lib/emulation` is an optional execution component, enabled by
 `NEVERD_ENABLE_DRIVER_EMULATION`. The `emulate-driver` CLI reaches it through

@@ -1,3 +1,17 @@
+if(NEVERD_EMULATION_BACKEND_UNICORN)
+  add_neverd_unittest(NeverDCPUEmulationTests
+    CPUArchitectureTests.cpp
+    AArch64ProjectionTests.cpp
+    LINK_COMPONENTS EmulationCPU
+    LINK_LIBS unicorn)
+  target_include_directories(NeverDCPUEmulationTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
+endif()
+
+if(NOT NEVERD_ENABLE_DRIVER_EMULATION OR NOT NEVERD_EMULATION_BACKEND_UNICORN)
+  return()
+endif()
+
 find_program(NEVERD_DRIVER_LLD_LINK NAMES lld-link
   HINTS "${LLVM_TOOLS_BINARY_DIR}")
 set(NEVERD_KMDF_FIXTURE "" CACHE FILEPATH

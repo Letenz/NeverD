@@ -32,16 +32,20 @@ public:
                    unsigned Permissions = Read) const;
   llvm::Error write(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
                     unsigned Permissions = Write);
+  const std::map<uint64_t, Page> &mappings() const { return Pages; }
+  uint64_t mappingGeneration() const { return Generation; }
   uint8_t *data() const { return static_cast<uint8_t *>(Backing.base()); }
   uint64_t size() const { return Backing.allocatedSize(); }
 
 private:
   friend llvm::Expected<uint64_t> buildX64PageTables(PhysicalMemory &Memory,
                                                      uint64_t PreviousRoot);
+  friend llvm::Error buildAArch64PageTables(PhysicalMemory &Memory);
   PhysicalMemory(llvm::sys::MemoryBlock Backing, uint64_t Limit);
   llvm::sys::MemoryBlock Backing;
   uint64_t Limit, Used = 0, NextPhysical;
   bool Dirty = true;
+  uint64_t Generation = 1;
   std::map<uint64_t, Page> Pages;
   std::map<uint64_t, uint64_t> Aliases;
 };

@@ -8,6 +8,8 @@
 
 #include "llvm/Support/FormatVariadic.h"
 #if defined(__linux__) && defined(__x86_64__) && defined(NEVERD_EMULATION_KVM)
+#include "KvmVM.h"
+
 #include <cerrno>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -17,24 +19,8 @@
 
 namespace neverd::emulation {
 namespace {
-#define NEVERD_KVM_STRING(Name, Value) constexpr char Name[] = Value;
-#include "KvmProtocol.def"
-#undef NEVERD_KVM_STRING
-class KvmMachine final : public X64Machine {
+class KvmMachine final : public X64Machine, public KvmVM {
 public:
-  int System = -1, VM = -1, CPU = -1;
-  kvm_run *Run = nullptr;
-  size_t RunSize = 0;
-  ~KvmMachine() override {
-    if (Run)
-      munmap(Run, RunSize);
-    if (CPU >= 0)
-      close(CPU);
-    if (VM >= 0)
-      close(VM);
-    if (System >= 0)
-      close(System);
-  }
   llvm::Error step(X64MachineState &State, uint64_t Root) override {
     kvm_regs R{};
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
@@ -108,32 +94,8 @@ public:
 llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
                                                              uint64_t Size) {
   auto M = std::make_unique<KvmMachine>();
-  M->System = open(Device, O_RDWR | O_CLOEXEC);
-  if (M->System < 0)
-    return diagnostic::unavailable(diagnostic::KvmOpen);
-  if (ioctl(M->System, KVM_GET_API_VERSION, 0) != KVM_API_VERSION ||
-      ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_SET_GUEST_DEBUG) <= 0)
-    return diagnostic::unavailable(diagnostic::KvmCapabilities);
-  M->VM = ioctl(M->System, KVM_CREATE_VM, 0);
-  if (M->VM < 0)
-    return diagnostic::error(diagnostic::KvmCreate);
-  kvm_userspace_memory_region Region{};
-  Region.memory_size = Size;
-  Region.userspace_addr = reinterpret_cast<uintptr_t>(Backing);
-  if (ioctl(M->VM, KVM_SET_USER_MEMORY_REGION, &Region) < 0)
-    return diagnostic::error(diagnostic::KvmMap);
-  M->CPU = ioctl(M->VM, KVM_CREATE_VCPU, 0);
-  if (M->CPU < 0)
-    return diagnostic::error(diagnostic::KvmCreate);
-  int RunSize = ioctl(M->System, KVM_GET_VCPU_MMAP_SIZE, 0);
-  if (RunSize < int(sizeof(kvm_run)))
-    return diagnostic::error(diagnostic::KvmMap);
-  M->RunSize = RunSize;
-  void *Mapping =
-      mmap(nullptr, M->RunSize, PROT_READ | PROT_WRITE, MAP_SHARED, M->CPU, 0);
-  if (Mapping == MAP_FAILED)
-    return diagnostic::error(diagnostic::KvmMap);
-  M->Run = static_cast<kvm_run *>(Mapping);
+  if (auto E = M->initialize(Backing, Size))
+    return E;
   kvm_guest_debug Debug{};
   Debug.control =
       KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;

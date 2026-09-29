@@ -24,7 +24,8 @@ namespace neverd::emulation {
 class UnicornBackend final : public ExecutionBackend {
 public:
   static llvm::Expected<std::unique_ptr<UnicornBackend>>
-  create(uint64_t MemoryLimit);
+  create(uint64_t MemoryLimit,
+         GuestArchitecture Architecture = GuestArchitecture::X64);
   ~UnicornBackend() override;
   llvm::Error map(uint64_t Address, uint64_t Size,
                   unsigned Permissions) override;
@@ -52,13 +53,10 @@ public:
                               llvm::MutableArrayRef<uint8_t> Bytes) override;
   llvm::Error fetch(uint64_t Address,
                     llvm::MutableArrayRef<uint8_t> Bytes) override;
-  llvm::Expected<uint64_t> reg(X64Register Register) override;
-  llvm::Error setReg(X64Register Register, uint64_t Value) override;
-  /// Set the model-owned x64 processor environment base.
-  llvm::Error setGSBase(uint64_t Address) override;
-  using XmmValue = std::array<uint64_t, 2>;
-  llvm::Expected<XmmValue> xmm(unsigned Register) override;
-  llvm::Error setXmm(unsigned Register, const XmmValue &Value) override;
+  GuestArchitecture architecture() const override;
+  llvm::Expected<RegisterValue> readRegister(CPURegister Register) override;
+  llvm::Error writeRegister(CPURegister Register,
+                            const RegisterValue &Value) override;
   /// Capture the complete Unicorn CPU state, including SIMD and FPU registers.
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext() override;
   /// Replace an existing snapshot with this backend's current CPU state.

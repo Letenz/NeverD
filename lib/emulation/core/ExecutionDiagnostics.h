@@ -5,32 +5,9 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_CORE_EXECUTIONDIAGNOSTICS_H
 #define NEVERD_EMULATION_CORE_EXECUTIONDIAGNOSTICS_H
-#include "llvm/Support/Error.h"
+#include "neverd/emulation/ExecutionBackend.h"
 
 namespace neverd::emulation {
-class BackendUnavailableError
-    : public llvm::ErrorInfo<BackendUnavailableError> {
-public:
-  static char ID;
-  explicit BackendUnavailableError(const char *Reason) : Reason(Reason) {}
-  void log(llvm::raw_ostream &OS) const override;
-  std::error_code convertToErrorCode() const override {
-    return llvm::inconvertibleErrorCode();
-  }
-
-private:
-  const char *Reason;
-};
-
-class UnsupportedExecutionError
-    : public llvm::ErrorInfo<UnsupportedExecutionError> {
-public:
-  static char ID;
-  void log(llvm::raw_ostream &OS) const override;
-  std::error_code convertToErrorCode() const override {
-    return llvm::inconvertibleErrorCode();
-  }
-};
 namespace diagnostic {
 #define NEVERD_EXECUTION_DIAGNOSTIC(Name, Text)                                \
   inline constexpr char Name[] = Text;

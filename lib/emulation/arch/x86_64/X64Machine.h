@@ -41,5 +41,7 @@ llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(uint8_t *Backing,
                                                              uint64_t Size);
 llvm::Expected<std::unique_ptr<X64Machine>> createWhpMachine(uint8_t *Backing,
                                                              uint64_t Size);
+llvm::Expected<std::unique_ptr<X64Machine>>
+createUnicornX64Machine(PhysicalMemory &Memory);
 } // namespace neverd::emulation
 #endif

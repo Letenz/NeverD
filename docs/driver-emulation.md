@@ -14,7 +14,8 @@ the driver into the host kernel or forward guest API calls to host OS services.
 
 The default `driver-strict` contract still uses Unicorn. The optional
 `checked-x64-v1` contract selects KVM on Linux x86_64 or WHP on Windows x64
-with `--backend auto`; explicit `kvm` and `whp` selections never fall back.
+with `--backend auto`; on an ARM64 host the x64 guest uses the same checked
+contract over Unicorn. Explicit `kvm` and `whp` selections never fall back.
 This is an experimental integer-only execution profile, not full compatibility
 with the driver coverage below. Unavailable hardware or a contract mismatch
 fails before execution.
@@ -28,9 +29,10 @@ Timeout and cancellation are checked between admitted, bounded instructions;
 this path does not provide a general asynchronously preemptible VM runner.
 No session is restarted on another backend after guest execution begins.
 
-`NEVERD_EMULATION_BACKEND_KVM` and `NEVERD_EMULATION_BACKEND_WHP` control the
-host adapters. Windows APIs are loaded dynamically from the system DLL. KVM
-requires access to `/dev/kvm`; the emulator does not change host permissions.
+`NEVERD_EMULATION_BACKEND_UNICORN`, `NEVERD_EMULATION_BACKEND_KVM` and
+`NEVERD_EMULATION_BACKEND_WHP` control the adapters. Windows APIs are loaded
+dynamically from the system DLL. KVM requires access to `/dev/kvm`; the emulator
+does not change host permissions.
 WHP still requires runtime validation on a Windows host; cross-compilation is
 not runtime evidence. The C API adds `neverd_emulate_driver_backend_json`;
 the existing v1 structure and entry points remain unchanged. New selection
@@ -40,6 +42,9 @@ reports identify the requested/selected backend, execution contract and reason.
 build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
+
+ARM64 CPU execution is available through the independent [C++ CPU interface](architecture.md#cpu-execution).
+This driver CLI still requires the x64 Windows ABI and rejects ARM64 driver images.
 
 ## Build and run
 

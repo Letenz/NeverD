@@ -53,6 +53,7 @@ llvm::Error PhysicalMemory::map(uint64_t Address, uint64_t Size,
   NextPhysical += Size;
   Used += Size;
   Dirty = true;
+  ++Generation;
   return llvm::Error::success();
 }
 
@@ -92,6 +93,7 @@ llvm::Error PhysicalMemory::aliases(llvm::ArrayRef<GuestAliasRange> Remove,
   Aliases.swap(NextAliases);
   Used = NextUsed;
   Dirty = true;
+  ++Generation;
   return llvm::Error::success();
 }
 
@@ -102,6 +104,7 @@ llvm::Error PhysicalMemory::protect(uint64_t Address, uint64_t Size,
   for (uint64_t Offset = 0; Offset < Size; Offset += memory::PageSize)
     Pages.at(Address + Offset).Permissions = Permissions;
   Dirty = true;
+  ++Generation;
   return llvm::Error::success();
 }
 

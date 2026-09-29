@@ -1,4 +1,5 @@
-//===- WhpProtocol.def - Dynamically resolved Windows hypervisor API -------===//
+//===- WhpProtocol.def - Dynamically resolved Windows hypervisor API
+//-------===//
 //
 // NeverD Decompiler
 //
@@ -17,4 +18,5 @@ NEVERD_WHP_FUNCTION(WHvCreateVirtualProcessor)
 NEVERD_WHP_FUNCTION(WHvGetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvSetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvRunVirtualProcessor)
+NEVERD_WHP_FUNCTION(WHvCancelRunVirtualProcessor)
 #endif

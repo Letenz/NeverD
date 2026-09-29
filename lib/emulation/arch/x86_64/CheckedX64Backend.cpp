@@ -15,13 +15,11 @@
 
 namespace neverd::emulation {
 using diagnostic::error;
-namespace {
-bool canonicalRange(uint64_t A, uint64_t N) {
+bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return N && N - 1 <= UINT64_MAX - A && x64::canonical(A) &&
          x64::canonical(A + N - 1) &&
          ((A <= x64::UserMax) == (A + N - 1 <= x64::UserMax));
 }
-} // namespace
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(ExecutionBackendKind Kind, uint64_t Limit) {
@@ -32,189 +30,50 @@ CheckedX64Backend::create(ExecutionBackendKind Kind, uint64_t Limit) {
   B->Memory = std::move(*Memory);
   auto Machine = Kind == ExecutionBackendKind::KVM
                      ? createKvmMachine(B->Memory->data(), B->Memory->size())
-                     : createWhpMachine(B->Memory->data(), B->Memory->size());
+                 : Kind == ExecutionBackendKind::WHP
+                     ? createWhpMachine(B->Memory->data(), B->Memory->size())
+                     : createUnicornX64Machine(*B->Memory);
   if (!Machine)
     return Machine.takeError();
   B->Machine = std::move(*Machine);
-  if (cs_open(CS_ARCH_X86, CS_MODE_64, &B->Decoder) != CS_ERR_OK ||
-      cs_option(B->Decoder, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK)
-    return error(diagnostic::Decode);
+  if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
+    return E;
   B->CPU.reg(X64Register::FLAGS) = x64::InitialFlags;
   B->CPU.reg(X64Register::CS) = x64::CodeSelector;
   B->CPU.reg(X64Register::SS) = x64::DataSelector;
   return std::unique_ptr<ExecutionBackend>(std::move(B));
 }
 
-CheckedX64Backend::~CheckedX64Backend() {
-  if (Decoder)
-    cs_close(&Decoder);
+llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
+  if (!registerMatches(R, architecture()))
+    return error(diagnostic::Register);
+  if (R == CPURegister::X64GSBase)
+    return RegisterValue{CPU.GSBase, 0};
+  if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15)
+    return CPU.Xmm[unsigned(R) - unsigned(CPURegister::X64V0)];
+  return RegisterValue{CPU.Registers[unsigned(R)], 0};
 }
-
-llvm::Error CheckedX64Backend::mutableMemory() const {
-  if (FirstFault || RecoverableFault)
-    return error(diagnostic::Faulted);
-  if (Running)
-    return error(diagnostic::Running);
-  return llvm::Error::success();
-}
-
-llvm::Error CheckedX64Backend::map(uint64_t A, uint64_t N, unsigned P) {
+llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
+                                             const RegisterValue &V) {
   if (auto E = mutableMemory())
     return E;
-  if (!canonicalRange(A, N))
-    return error(diagnostic::InvalidMapping);
-  return Memory->map(A, N, P);
-}
-
-llvm::Error CheckedX64Backend::mapAlias(uint64_t A, uint64_t S, uint64_t N,
-                                        unsigned P) {
-  return replaceAliases({}, {GuestAliasMapping{A, S, N, P}});
-}
-
-llvm::Error CheckedX64Backend::unmapAlias(uint64_t A, uint64_t N) {
-  return replaceAliases({GuestAliasRange{A, N}}, {});
-}
-
-llvm::Error
-CheckedX64Backend::replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
-                                  llvm::ArrayRef<GuestAliasMapping> Add) {
-  if (auto E = mutableMemory())
-    return E;
-  for (const auto &R : Add)
-    if (!canonicalRange(R.Address, R.Size) || !canonicalRange(R.Source, R.Size))
-      return error(diagnostic::InvalidMapping);
-  return Memory->aliases(Remove, Add);
-}
-
-llvm::Error CheckedX64Backend::protect(uint64_t A, uint64_t N, unsigned P) {
-  if (auto E = mutableMemory())
-    return E;
-  return Memory->protect(A, N, P);
-}
-
-llvm::Error CheckedX64Backend::access(uint64_t A, uint64_t N, unsigned P,
-                                      bool Recoverable) {
-  if (FirstFault)
-    return error(diagnostic::Faulted);
-  if (auto Kind = Memory->check(A, N, P)) {
-    auto Access = P == Execute ? BackendAccessKind::Execute
-                  : P == Write ? BackendAccessKind::Write
-                               : BackendAccessKind::Read;
-    BackendFault F{*Kind, CPU.reg(X64Register::PC), A, N, Access, std::nullopt};
-    if (Recoverable && P != Execute && Hooks.RecoverableFault &&
-        Hooks.RecoverableFault(F)) {
-      RecoverableFault = F;
-      StopRequested = true;
-      return llvm::Error::success();
-    }
-    FirstFault = F;
-    if (Hooks.Fault)
-      Hooks.Fault(A, N, backendAccessKindName(Access));
-    return error(diagnostic::MemoryAccess);
+  if (!registerMatches(R, architecture()))
+    return error(diagnostic::Register);
+  if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15) {
+    CPU.Xmm[unsigned(R) - unsigned(CPURegister::X64V0)] = V;
+    return llvm::Error::success();
   }
-  return llvm::Error::success();
-}
-
-llvm::Error CheckedX64Backend::read(uint64_t A,
-                                    llvm::MutableArrayRef<uint8_t> B) {
-  if (auto E = access(A, B.size(), Read))
-    return E;
-  return Memory->read(A, B);
-}
-
-llvm::Error CheckedX64Backend::write(uint64_t A, llvm::ArrayRef<uint8_t> B) {
-  if (auto E = mutableMemory())
-    return E;
-  if (auto E = access(A, B.size(), Write))
-    return E;
-  return Memory->write(A, B);
-}
-
-llvm::Error CheckedX64Backend::fetch(uint64_t A,
-                                     llvm::MutableArrayRef<uint8_t> B) {
-  if (auto E = access(A, B.size(), Execute))
-    return E;
-  return Memory->read(A, B, Execute);
-}
-
-llvm::Expected<bool> CheckedX64Backend::canAccess(uint64_t A, uint64_t N,
-                                                  unsigned P) const {
-  if (FirstFault || (P & ~(Read | Write | Execute)))
-    return error(diagnostic::Faulted);
-  return !Memory->check(A, N, P);
-}
-
-llvm::Error CheckedX64Backend::validateBacking(uint64_t A, uint64_t N) const {
-  if (auto E = mutableMemory())
-    return E;
-  if (Memory->check(A, N, 0))
-    return error(diagnostic::MemoryAccess);
-  return llvm::Error::success();
-}
-
-llvm::Error CheckedX64Backend::readBacking(uint64_t A,
-                                           llvm::MutableArrayRef<uint8_t> B) {
-  if (auto E = validateBacking(A, B.size()))
-    return E;
-  return Memory->read(A, B, 0);
-}
-
-llvm::Error CheckedX64Backend::writeBacking(uint64_t A,
-                                            llvm::ArrayRef<uint8_t> B) {
-  if (auto E = validateBacking(A, B.size()))
-    return E;
-  return Memory->write(A, B, 0);
-}
-
-llvm::Error
-CheckedX64Backend::snapshotBacking(uint64_t A,
-                                   llvm::MutableArrayRef<uint8_t> B) {
-  if (Running)
-    return error(diagnostic::Running);
-  return Memory->read(A, B, 0);
-}
-
-llvm::Expected<uint64_t> CheckedX64Backend::reg(X64Register R) {
-  if (unsigned(R) >= CPU.Registers.size())
+  if (V[1] || (R == CPURegister::X64CR8 && V[0] > x64::MaxCR8) ||
+      (R == CPURegister::X64CS && V[0] != x64::CodeSelector) ||
+      (R == CPURegister::X64SS && V[0] != x64::DataSelector) ||
+      (R == CPURegister::X64FLAGS &&
+       ((V[0] & ~x64::AllowedFlags) || !(V[0] & x64::ReservedFlag))) ||
+      (R == CPURegister::X64GSBase && !x64::canonical(V[0])))
     return error(diagnostic::Register);
-  return CPU.reg(R);
-}
-
-llvm::Error CheckedX64Backend::setReg(X64Register R, uint64_t V) {
-  if (auto E = mutableMemory())
-    return E;
-  if (unsigned(R) >= CPU.Registers.size() ||
-      (R == X64Register::CR8 && V > x64::MaxCR8) ||
-      (R == X64Register::CS && V != x64::CodeSelector) ||
-      (R == X64Register::SS && V != x64::DataSelector) ||
-      (R == X64Register::FLAGS &&
-       ((V & ~x64::AllowedFlags) || !(V & x64::ReservedFlag))))
-    return error(diagnostic::Register);
-  CPU.reg(R) = V;
-  return llvm::Error::success();
-}
-
-llvm::Error CheckedX64Backend::setGSBase(uint64_t A) {
-  if (auto E = mutableMemory())
-    return E;
-  if (!x64::canonical(A))
-    return error(diagnostic::Register);
-  CPU.GSBase = A;
-  return llvm::Error::success();
-}
-
-llvm::Expected<ExecutionBackend::XmmValue> CheckedX64Backend::xmm(unsigned R) {
-  if (R >= CPU.Xmm.size())
-    return error(diagnostic::Register);
-  return CPU.Xmm[R];
-}
-
-llvm::Error CheckedX64Backend::setXmm(unsigned R, const XmmValue &V) {
-  if (auto E = mutableMemory())
-    return E;
-  if (R >= CPU.Xmm.size())
-    return error(diagnostic::Register);
-  CPU.Xmm[R] = V;
+  if (R == CPURegister::X64GSBase)
+    CPU.GSBase = V[0];
+  else
+    CPU.Registers[unsigned(R)] = V[0];
   return llvm::Error::success();
 }
 
@@ -249,17 +108,6 @@ llvm::Error CheckedX64Backend::restoreContext(const BackendContext &C) {
   CPU = static_cast<const SavedState &>(*C.State).CPU;
   TimedOut = false;
   return llvm::Error::success();
-}
-
-llvm::Error CheckedX64Backend::installHooks(BackendHooks H) {
-  if (auto E = mutableMemory())
-    return E;
-  Hooks = std::move(H);
-  return llvm::Error::success();
-}
-
-std::optional<BackendFault> CheckedX64Backend::takeRecoverableFault() {
-  return std::exchange(RecoverableFault, std::nullopt);
 }
 
 llvm::Expected<uint64_t> CheckedX64Backend::operandRegister(unsigned R) const {
@@ -397,69 +245,4 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   return Machine->step(CPU, PageTableRoot);
 }
 
-llvm::Error CheckedX64Backend::run(uint64_t PC, uint64_t Timeout) {
-  if (auto E = mutableMemory())
-    return E;
-  CPU.reg(X64Register::PC) = PC;
-  Running = true;
-  TimedOut = false;
-  StopRequested = false;
-  auto Reset = llvm::scope_exit([&] { Running = false; });
-  auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::microseconds(Timeout);
-  try {
-    while (!StopRequested) {
-      if (std::chrono::steady_clock::now() >= Deadline) {
-        TimedOut = true;
-        break;
-      }
-      PC = CPU.reg(X64Register::PC);
-      std::array<uint8_t, x64::MaxInstructionBytes> Bytes{};
-      size_t Count = 0;
-      for (; Count < Bytes.size() && Count <= UINT64_MAX - PC; ++Count) {
-        if (Memory->check(PC + Count, 1, Execute))
-          break;
-        if (auto E = Memory->read(
-                PC + Count, llvm::MutableArrayRef<uint8_t>(&Bytes[Count], 1),
-                Execute))
-          return E;
-      }
-      cs_insn *Decoded = nullptr;
-      if (!Count)
-        return access(PC, 1, Execute);
-      if (!cs_disasm(Decoder, Bytes.data(), Count, PC, 1, &Decoded)) {
-        FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
-        if (Hooks.InvalidInstruction)
-          Hooks.InvalidInstruction();
-        return llvm::make_error<UnsupportedExecutionError>();
-      }
-      auto Free = llvm::scope_exit([&] { cs_free(Decoded, 1); });
-      if (Hooks.Instruction)
-        Hooks.Instruction(PC, Decoded->size);
-      if (FirstFault)
-        return error(diagnostic::Faulted);
-      if (StopRequested)
-        break;
-      if (auto E = execute(*Decoded)) {
-        if (!FirstFault) {
-          const bool Unsupported = E.isA<UnsupportedExecutionError>();
-          FirstFault =
-              BackendFault{Unsupported ? BackendFaultKind::InvalidInstruction
-                                       : BackendFaultKind::UnhandledException,
-                           PC};
-          if (Unsupported && Hooks.InvalidInstruction)
-            Hooks.InvalidInstruction();
-        }
-        return E;
-      }
-      if (FirstFault)
-        return error(diagnostic::Faulted);
-    }
-  } catch (...) {
-    FirstFault = BackendFault{BackendFaultKind::UnhandledException,
-                              CPU.reg(X64Register::PC)};
-    return error(diagnostic::Callback);
-  }
-  return llvm::Error::success();
-}
 } // namespace neverd::emulation
