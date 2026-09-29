@@ -2898,7 +2898,8 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
     Store.Opcode = NdOp::STORE;
     Store.Addr = Addr;
     Store.addInput(NdVar::address(
-        RelocationFoldObservationVA + NextObservation++ * PointerSize,
+        RelocationFoldObservationVA +
+            static_cast<va_t>(NextObservation++) * PointerSize,
         PointerSize));
     Store.addInput(Value);
     Block.Ops.push_back(std::move(Store));
