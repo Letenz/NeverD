@@ -71,11 +71,12 @@ struct BinaryUndefinedIndependenceResult {
 /// Selecting UserX64NoFaultV1 explicitly enables shared, persistent
 /// PUSHFQ/POPFQ system state, canonical entry flag bits and mandatory final
 /// system-state equality. Every POPFQ must satisfy the TF/AC restriction in
-/// both executions. Exact provider-marked CET-disabled RDSSP projections retain
-/// Missing sidecars and require separate profile receipts; no other CET
-/// operation is authorized. Otherwise only Contract's stated observations are
-/// certified. Limits bound collection, scalar profile transitions and all
-/// executed paths.
+/// both executions. Exact provider-marked CET-disabled RDSSP projections and
+/// unreachable INCSSP #UD boundaries retain Missing sidecars and require
+/// separate profile receipts; feasible INCSSP always violates the nonfaulting
+/// contract. No other CET operation is authorized. Otherwise only Contract's
+/// stated observations are certified. Limits bound collection, scalar profile
+/// transitions and all executed paths.
 BinaryUndefinedIndependenceResult
 checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
                                  const SpecializationOptions &Options,

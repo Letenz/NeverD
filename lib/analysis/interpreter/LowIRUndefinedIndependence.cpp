@@ -62,17 +62,22 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
   return Insn.Origin.ControlFlags == Flags;
 }
 
-// Intel SDM RDSSPD/RDSSPQ: when shadow stacks are disabled this encoding has
-// no architectural effects, including no 32-bit destination zero-extension.
-// The provider classifies the decoded instruction; also bind its canonical
-// encoding and exact projected operation here. Missing coverage stays Missing.
-bool isCetDisabledReadShadowStack(const SpecializationInstruction &Insn) {
-  if (Insn.ProfileProjection !=
-          InterpreterProfileProjection::CetDisabledReadShadowStackV1 ||
-      Insn.IsNativeCall ||
+// Intel SDM: disabled shadow stacks make RDSSPD/RDSSPQ a NOP, including no
+// 32-bit destination zero-extension; INCSSPD/INCSSPQ instead raise #UD. Check
+// the provider's classification against canonical bytes and exact operations.
+// Missing coverage stays Missing. No other CET instruction is authorized.
+bool isCetDisabledProjection(const SpecializationInstruction &Insn) {
+  const bool Read = Insn.ProfileProjection ==
+                    InterpreterProfileProjection::CetDisabledReadShadowStackV1;
+  const bool Trap =
+      Insn.ProfileProjection ==
+      InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1;
+  if ((!Read && !Trap) || Insn.IsNativeCall ||
       Insn.NativeStackControl != SpecializationNativeStackControl::None ||
-      Insn.Origin.Control != LowInstructionControl::None ||
-      Insn.Origin.ControlFlags != LowInstructionControlFlag::None ||
+      Insn.Origin.Control != (Trap ? LowInstructionControl::Terminator
+                                   : LowInstructionControl::None) ||
+      Insn.Origin.ControlFlags != (Trap ? LowInstructionControlFlag::Terminator
+                                        : LowInstructionControlFlag::None) ||
       Insn.Origin.Immediate || Insn.Ops.size() != 1 ||
       Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
       !Insn.UndefinedEffects.Effects.empty() ||
@@ -80,9 +85,17 @@ bool isCetDisabledReadShadowStack(const SpecializationInstruction &Insn) {
           lowUndefinedOperationDigest(Insn.Ops))
     return false;
   const auto &Op = Insn.Ops.front();
-  if (Op.Opcode != NdOp::NOP || Op.Output.Size || Op.NumInputs ||
-      Op.MemoryOrdering != NdMemoryOrdering::None ||
+  if (Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  // Preserve the strict lifter's opaque intrinsic result. It is never
+  // executed: this profile faults before any architectural state update.
+  if (Read ? (Op.Opcode != NdOp::NOP || Op.Output.Size || Op.NumInputs)
+           : (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 1 ||
+              Op.Output != NdVar::reg(x86reg::RAX, 8) ||
+              !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+              Op.Inputs[0].Offset !=
+                  static_cast<uint64_t>(Intrinsic::CetIncSsp)))
     return false;
   const auto &Bytes = Insn.NativeBytes;
   if ((Bytes.size() != 4 && Bytes.size() != 5) || Bytes[0] != 0xf3)
@@ -95,8 +108,8 @@ bool isCetDisabledReadShadowStack(const SpecializationInstruction &Insn) {
       return false;
     ++I;
   }
-  return Bytes[I] == 0x0f && Bytes[I + 1] == 0x1e &&
-         (Bytes[I + 2] & 0xf8) == 0xc8;
+  return Bytes[I] == 0x0f && Bytes[I + 1] == (Read ? 0x1e : 0xae) &&
+         (Bytes[I + 2] & 0xf8) == (Read ? 0xc8 : 0xe8);
 }
 
 bool sameBoundary(const LowInstructionBoundary &A,
@@ -736,9 +749,13 @@ class Checker {
               Raw, LowInstructionBoundaryRequirement::Required))
         fail(Status::Invalid, llvm::toString(std::move(Error)));
       validateEffects(B, Insn.Ops, Insn.UndefinedEffects);
-      const bool Trap = isRetainedNativeTrap(Insn);
       const bool Projection =
-          Contract.X64FlagsProfile && isCetDisabledReadShadowStack(Insn);
+          Contract.X64FlagsProfile && isCetDisabledProjection(Insn);
+      const bool ProjectedTrap =
+          Projection && Insn.ProfileProjection ==
+                            InterpreterProfileProjection::
+                                CetDisabledIncrementShadowStackTrapV1;
+      const bool Trap = isRetainedNativeTrap(Insn) || ProjectedTrap;
       if (Insn.ProfileProjection != InterpreterProfileProjection::None &&
           !Projection)
         fail(Status::Unsupported,
@@ -789,6 +806,9 @@ class Checker {
       }
       if (!Terminal)
         Successors.push_back(Insn.Fallthrough.Address);
+      if (ProjectedTrap)
+        NativeProfileProjections.push_back(
+            {-1, Address, Insn.ProfileProjection});
       NativeInstructions.emplace(Address, std::move(Insn));
       for (va_t Target : Successors)
         Enqueue(Target);
@@ -936,7 +956,7 @@ class Checker {
                                            : &Record->second->Effects;
       const bool ProfileProjection =
           Provider && Contract.X64FlagsProfile &&
-          isCetDisabledReadShadowStack(NativeInstructions.at(B.StartAddr));
+          isCetDisabledProjection(NativeInstructions.at(B.StartAddr));
       if (!DescriptionPointer ||
           (DescriptionPointer->Coverage == LowUndefinedCoverage::Missing &&
            !ProfileProjection))

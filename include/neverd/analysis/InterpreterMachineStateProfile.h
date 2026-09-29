@@ -28,6 +28,7 @@ enum class InterpreterMachineStateProfile : uint8_t {
 enum class InterpreterProfileProjection : uint8_t {
   None,
   CetDisabledReadShadowStackV1,
+  CetDisabledIncrementShadowStackTrapV1,
 };
 
 } // namespace neverd::analysis

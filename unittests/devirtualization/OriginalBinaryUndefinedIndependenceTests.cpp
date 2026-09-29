@@ -936,7 +936,59 @@ TEST(OriginalBinaryUndefinedIndependence,
     }
   Program OtherCET({0xf3, 0x48, 0x0f, 0xae, 0xe8, 0xc3}); // incsspq rax.
   OtherCET.flagsProfile();
-  expectRefusal(OtherCET, Status::Unsupported);
+  expectRefusal(OtherCET, Status::ContractViolation);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackIncrementMustStayUnreachable) {
+  for (unsigned Width : {4u, 8u})
+    for (unsigned Index = 0; Index != 16; ++Index) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Index);
+      // cmp eax,eax; jne trap; ret; trap: incssp rN. There are deliberately
+      // no bytes after the faulting instruction: it has no normal successor.
+      Program P({0x39, 0xc0, 0x75, 1, 0xc3, 0xf3});
+      if (Width == 8 || Index >= 8)
+        P.append(
+            {static_cast<uint8_t>(0x40 | (Width == 8 ? 8 : 0) | (Index >> 3))});
+      P.append({0x0f, 0xae, static_cast<uint8_t>(0xe8 | (Index & 7))});
+      expectRefusal(P, Status::Unsupported);
+      P.flagsProfile();
+      const auto Result = P.check();
+      ASSERT_TRUE(Result.proved()) << Result.Proof.Diagnostic;
+      ASSERT_EQ(Result.Certificate->Instructions.size(), 4U);
+      const auto &Trap = Result.Certificate->Instructions.back();
+      EXPECT_EQ(Trap.Origin.Control, LowInstructionControl::Terminator);
+      EXPECT_EQ(Trap.UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
+      ASSERT_EQ(Trap.Ops.size(), 1U);
+      EXPECT_EQ(Trap.Ops[0].Opcode, NdOp::INTRINSIC);
+      ASSERT_EQ(Result.Certificate->LowIR.NativeProfileProjections.size(), 1U);
+      const auto &Receipt =
+          Result.Certificate->LowIR.NativeProfileProjections.front();
+      EXPECT_EQ(Receipt.BlockId, -1);
+      EXPECT_EQ(Receipt.InstructionAddress, Trap.Origin.Address);
+      EXPECT_EQ(
+          Receipt.Kind,
+          InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1);
+      // Shared ordinary inputs may now reach #UD. The profile cannot assume
+      // this arm away, even if the increment register is zero.
+      P.Image.Segments[0].Data[1] = 0xc8; // cmp eax,ecx.
+      expectRefusal(P, Status::ContractViolation);
+    }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackTrapCannotHideBehindASafeSibling) {
+  // test edi,edi; jne trap; mov eax,0; ret; trap: incsspq rax.
+  Program P({0x85, 0xff, 0x75, 6, 0xb8, 0, 0, 0, 0, 0xc3, 0xf3, 0x48, 0x0f,
+             0xae, 0xe8});
+  P.flagsProfile();
+  const auto Result = P.check();
+  EXPECT_EQ(Result.Proof.Paths, 1U);
+  expectRefusal(P, Status::ContractViolation);
+  Program Zero({0x31, 0xc0, 0xf3, 0x48, 0x0f, 0xae, 0xe8});
+  Zero.flagsProfile();
+  expectRefusal(Zero, Status::ContractViolation);
 }
 
 } // namespace

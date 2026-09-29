@@ -130,6 +130,22 @@ public:
     ret(0x105);
   }
 
+  void untakenProfileTrap() {
+    untakenTrap();
+    auto &Insn = Instructions.at(0x200);
+    Insn.Ops[0].Inputs[0] =
+        NdVar::scalar(static_cast<uint64_t>(Intrinsic::CetIncSsp), 2);
+    Insn.Ops[0].Output = NdVar::reg(0, 8);
+    Insn.Origin.Size = 5;
+    Insn.Origin.ControlFlags = LowInstructionControlFlag::Terminator;
+    Insn.Fallthrough.Address = 0x205;
+    Insn.NativeBytes = {0xf3, 0x48, 0x0f, 0xae, 0xe8};
+    Insn.ProfileProjection =
+        InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1;
+    certify(Insn);
+    Insn.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
+  }
+
   llvm::Expected<SpecializationInstruction>
   instruction(SpecializationCursor Cursor) override {
     ++Fetches[Cursor.Address];
@@ -410,6 +426,82 @@ TEST(NativeUndefinedIndependence,
       break;
     }
     if (Mutation != 8)
+      Insn.UndefinedEffects.OperationDigest =
+          lowUndefinedOperationDigest(Insn.Ops);
+    const auto Result = Check();
+    EXPECT_TRUE(Result.Proof.Status == LowIRIndependenceStatus::Invalid ||
+                Result.Proof.Status == LowIRIndependenceStatus::Unsupported)
+        << Result.Proof.Diagnostic;
+    EXPECT_FALSE(Result.Proof.Certificate.has_value());
+    EXPECT_TRUE(Result.Instructions.empty());
+  }
+}
+
+TEST(NativeUndefinedIndependence,
+     UnreachableProfileTrapStillRequiresExactEvidence) {
+  NativeProvider Provider;
+  Provider.untakenProfileTrap();
+  auto Contract = contract();
+  const auto Check = [&] {
+    return neverd::analysis::detail::checkNativeUndefinedIndependence(
+        Provider, {0x100}, Contract, {});
+  };
+  EXPECT_EQ(Check().Proof.Status, LowIRIndependenceStatus::Unsupported);
+  Contract.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  const auto Valid = Check();
+  ASSERT_TRUE(Valid.Proof.proved()) << Valid.Proof.Diagnostic;
+  const auto Original = Provider.Instructions.at(0x200);
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto &Insn = Provider.Instructions.at(0x200);
+    Insn = Original;
+    switch (Mutation) {
+    case 0:
+      Insn.ProfileProjection = InterpreterProfileProjection::None;
+      break;
+    case 1:
+      Insn.ProfileProjection =
+          InterpreterProfileProjection::CetDisabledReadShadowStackV1;
+      break;
+    case 2:
+      Insn.NativeBytes[4] = 0xe0;
+      break;
+    case 3:
+      Insn.NativeBytes[4] = 0x28;
+      break;
+    case 4:
+      Insn.NativeBytes[0] = 0xf0;
+      break;
+    case 5:
+      Insn.NativeBytes[1] = 0x4c;
+      break;
+    case 6:
+      Insn.Ops[0].Inputs[0].Offset += uint64_t{1} << 32;
+      break;
+    case 7:
+      Insn.Ops[0].Output = NdVar::tmp(0, 8);
+      break;
+    case 8:
+      Insn.Ops[0].addInput(NdVar::scalar(0, 8));
+      break;
+    case 9:
+      Insn.Origin.ControlFlags |= LowInstructionControlFlag::Resumable;
+      break;
+    case 10:
+      Insn.UndefinedEffects.Coverage = LowUndefinedCoverage::Complete;
+      break;
+    case 11:
+      Insn.UndefinedEffects.OperationDigest.clear();
+      break;
+    case 12:
+      Insn.UndefinedEffects.Effects.push_back({0, NdVar::reg(0, 8), 0, 1, {}});
+      break;
+    case 13:
+      Insn.Ops[0].Opcode = NdOp::NOP;
+      Insn.Ops[0].NumInputs = 0;
+      break;
+    }
+    if (Mutation != 11)
       Insn.UndefinedEffects.OperationDigest =
           lowUndefinedOperationDigest(Insn.Ops);
     const auto Result = Check();

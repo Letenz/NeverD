@@ -141,7 +141,8 @@ public:
       // With shadow stacks explicitly disabled, RDSSP leaves its destination
       // unchanged. This instruction-specific architectural rule must precede
       // lifting: the general CET intrinsic requires a shadow-stack model.
-      // Other CET operations, including INCSSP, retain their strict rejection.
+      // INCSSP remains a strict intrinsic and is classified as a profile trap
+      // below. No enabled-CET operation is treated as an ordinary instruction.
       if (Options.X64CetDisabled &&
           (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ)) {
         Result.ProfileProjection =
@@ -164,6 +165,10 @@ public:
           Result.UndefinedEffects = {};
           Decode.liftToLow(Insn, Result.Ops, {}, {}, &Result.UndefinedEffects);
         }
+        if (Options.X64CetDisabled &&
+            (Insn.Id == X86_INS_INCSSPD || Insn.Id == X86_INS_INCSSPQ))
+          Result.ProfileProjection = InterpreterProfileProjection::
+              CetDisabledIncrementShadowStackTrapV1;
       }
     } catch (const UnliftedInstruction &Error) {
       return llvm::createStringError(llvm::errc::not_supported, "%s",
@@ -228,6 +233,14 @@ public:
       default:
         break;
       }
+    }
+    // Intel SDM 253666-093, INCSSPD/INCSSPQ (3-459/460): disabled shadow
+    // stacks cause #UD before any access. Keep the original intrinsic and
+    // Missing sidecar. A nonfaulting proof must show this boundary unreachable.
+    if (Result.ProfileProjection ==
+        InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1) {
+      B.Control = LowInstructionControl::Terminator;
+      B.ControlFlags = LowInstructionControlFlag::Terminator;
     }
     if (Decode.isFunctionTerminator(Insn) &&
         B.Control == LowInstructionControl::None) {

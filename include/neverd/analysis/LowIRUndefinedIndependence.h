@@ -135,6 +135,8 @@ struct LowIRNativeFlagTransition {
 };
 
 struct LowIRNativeProfileProjection {
+  /// -1 records an original profile-dependent trap that must stay unreachable;
+  /// otherwise this identifies a visited block in the finite native trace.
   int BlockId = -1;
   va_t InstructionAddress = 0;
   InterpreterProfileProjection Kind = InterpreterProfileProjection::None;
