@@ -19,6 +19,9 @@
 
 namespace neverd::emulation {
 namespace {
+#define NEVERD_MMIO_TRANSACTION_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "KernelMMIOTransaction.def"
+#undef NEVERD_MMIO_TRANSACTION_TEXT
 llvm::Error mmioError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "MMIO: " + Message);
@@ -86,21 +89,45 @@ llvm::Expected<uint64_t> KernelMMIO::map(uint64_t Physical, uint64_t Length,
   Callbacks.Validate = [this, Address, OwnerLifetime](
                            uint64_t Offset, uint64_t Size, bool Write) {
     if (OwnerLifetime.expired())
-      return mmioError("register bank owner no longer exists");
+      return mmioError(ExpiredOwner);
     return validate(Address, Offset, Size, Write);
   };
   Callbacks.Read = [this, Address,
                     OwnerLifetime](uint64_t Offset,
                                    unsigned Size) -> llvm::Expected<uint64_t> {
     if (OwnerLifetime.expired())
-      return mmioError("register bank owner no longer exists");
+      return mmioError(ExpiredOwner);
     return read(Address, Offset, Size);
   };
   Callbacks.Write = [this, Address, OwnerLifetime](
                         uint64_t Offset, unsigned Size, uint64_t Value) {
     if (OwnerLifetime.expired())
-      return mmioError("register bank owner no longer exists");
+      return mmioError(ExpiredOwner);
     return write(Address, Offset, Size, Value);
+  };
+  Callbacks.PrepareRead =
+      [this, Address,
+       OwnerLifetime](uint64_t Offset,
+                      unsigned Size) -> llvm::Expected<GuestMMIOPreparedRead> {
+    if (OwnerLifetime.expired())
+      return mmioError(ExpiredOwner);
+    auto Value = peek(Address, Offset, Size);
+    if (!Value)
+      return Value.takeError();
+    return GuestMMIOPreparedRead{*Value,
+                                 [this, Address, Offset, Size, OwnerLifetime,
+                                  Expected = *Value]() -> llvm::Error {
+                                   if (OwnerLifetime.expired())
+                                     return mmioError(ExpiredOwner);
+                                   auto Current = peek(Address, Offset, Size);
+                                   if (!Current)
+                                     return Current.takeError();
+                                   if (*Current != Expected)
+                                     return mmioError(ChangedRead);
+                                   auto Committed = read(Address, Offset, Size);
+                                   return Committed ? llvm::Error::success()
+                                                    : Committed.takeError();
+                                 }};
   };
   if (auto E = Memory.mapMMIO(Base, Size, std::move(Callbacks))) {
     bool Exhausted = false;
@@ -167,20 +194,33 @@ void KernelMMIO::restorePowerContext(uint64_t PDO) {
   Device.PowerGeneration = Assignment.PowerGeneration;
 }
 
-llvm::Expected<uint64_t> KernelMMIO::read(uint64_t Address, uint64_t Offset,
-                                          unsigned Size) {
+llvm::Expected<uint64_t> KernelMMIO::peek(uint64_t Address, uint64_t Offset,
+                                          unsigned Size) const {
   if (auto E = validate(Address, Offset, Size, false))
     return E;
   const auto &Mapping = Mappings.at(Address);
-  restorePowerContext(Mapping.PDO);
-  const auto &Resource =
-      Devices.at(Mapping.PDO).Resources[Mapping.ResourceIndex];
+  const auto &Device = Devices.at(Mapping.PDO);
+  const auto &Assignment = *Resources.find(Mapping.PDO);
+  // Preview the same reset value without changing the register bank's power
+  // generation. Only committing the read may restore that context.
+  const auto &Resource = (Device.PowerGeneration == Assignment.PowerGeneration
+                              ? Device.Resources
+                              : Assignment.Memory)[Mapping.ResourceIndex];
   const uint64_t RegisterOffset = Mapping.Physical - Resource.TranslatedStart +
                                   Offset - (Address - Mapping.PageBase);
   for (const auto &Register : Resource.Registers)
     if (Register.Offset == RegisterOffset)
       return Register.Value;
-  llvm_unreachable("validated register lost its identity");
+  llvm_unreachable(MissingRegister);
+}
+
+llvm::Expected<uint64_t> KernelMMIO::read(uint64_t Address, uint64_t Offset,
+                                          unsigned Size) {
+  auto Value = peek(Address, Offset, Size);
+  if (!Value)
+    return Value.takeError();
+  restorePowerContext(Mappings.at(Address).PDO);
+  return *Value;
 }
 
 llvm::Error KernelMMIO::write(uint64_t Address, uint64_t Offset, unsigned Size,
@@ -198,7 +238,7 @@ llvm::Error KernelMMIO::write(uint64_t Address, uint64_t Offset, unsigned Size,
           uint32_t(Value) & uint32_t((uint64_t(1) << (Size * 8)) - 1);
       return llvm::Error::success();
     }
-  llvm_unreachable("validated register lost its identity");
+  llvm_unreachable(MissingRegister);
 }
 
 } // namespace neverd::emulation

@@ -25,8 +25,8 @@ NEVERD_HARDWARE_TEST_CODE(Load, 0x48, 0x8b, 0x01, 0x90)
 NEVERD_HARDWARE_TEST_CODE(Store, 0x48, 0x89, 0x01, 0x90)
 // jmp $
 NEVERD_HARDWARE_TEST_CODE(Loop, 0xeb, 0xfe)
-// rep movsb -- deliberately outside checked-x64-v1
-NEVERD_HARDWARE_TEST_CODE(Unsupported, 0xf3, 0xa4)
+// repne movsb -- no guessed interpretation of unsupported repeat prefixes
+NEVERD_HARDWARE_TEST_CODE(Unsupported, 0xf2, 0xa4)
 // mov eax, -1; add eax, 1; nop
 NEVERD_HARDWARE_TEST_CODE(Arithmetic, 0xb8, 0xff, 0xff, 0xff, 0xff, 0x83, 0xc0,
                           0x01, 0x90)

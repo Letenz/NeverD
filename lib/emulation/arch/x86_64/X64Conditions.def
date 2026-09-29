@@ -1,0 +1,21 @@
+//===- X64Conditions.def - Flags tested by conditional byte stores -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_CONDITION(A, !Carry && !Zero)
+NEVERD_X64_CONDITION(AE, !Carry)
+NEVERD_X64_CONDITION(B, Carry)
+NEVERD_X64_CONDITION(BE, Carry || Zero)
+NEVERD_X64_CONDITION(E, Zero)
+NEVERD_X64_CONDITION(NE, !Zero)
+NEVERD_X64_CONDITION(G, !Zero && Sign == Overflow)
+NEVERD_X64_CONDITION(GE, Sign == Overflow)
+NEVERD_X64_CONDITION(L, Sign != Overflow)
+NEVERD_X64_CONDITION(LE, Zero || Sign != Overflow)
+NEVERD_X64_CONDITION(O, Overflow)
+NEVERD_X64_CONDITION(NO, !Overflow)
+NEVERD_X64_CONDITION(S, Sign)
+NEVERD_X64_CONDITION(NS, !Sign)
+NEVERD_X64_CONDITION(P, Parity)
+NEVERD_X64_CONDITION(NP, !Parity)

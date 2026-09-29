@@ -1,0 +1,35 @@
+//===- ThreadPointerCases.def - Thread-pointer execution fixtures --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_THREAD_VALUE
+NEVERD_THREAD_VALUE(Code, 0x10000)
+NEVERD_THREAD_VALUE(Data, 0x20000)
+NEVERD_THREAD_VALUE(PageSize, 4096)
+NEVERD_THREAD_VALUE(MemoryLimit, 16 * PageSize)
+NEVERD_THREAD_VALUE(Timeout, 1000000)
+NEVERD_THREAD_VALUE(FirstValue, 0x13572468)
+NEVERD_THREAD_VALUE(SecondValue, 0xabcdef01)
+NEVERD_THREAD_VALUE(WordSize, 8)
+NEVERD_THREAD_VALUE(ZeroExtendedOffset, 0x123400000000ULL)
+#endif
+#ifdef NEVERD_THREAD_BYTES
+// mov rax, fs:[0]; nop
+NEVERD_THREAD_BYTES(ReadX64, 0x64, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0, 0x90)
+// mov rax, fs:[eax]; nop (32-bit address calculation precedes the FS base).
+NEVERD_THREAD_BYTES(Read32X64, 0x67, 0x64, 0x48, 0x8b, 0x00, 0x90)
+// mrs x1, tpidr_el0; ldr x0, [x1]; nop
+NEVERD_THREAD_BYTES(ReadARM, 0x41, 0xd0, 0x3b, 0xd5, 0x20, 0x00, 0x40, 0xf9,
+                    0x1f, 0x20, 0x03, 0xd5)
+// msr tpidr_el0, x0; mrs x1, tpidr_el0; nop
+NEVERD_THREAD_BYTES(WriteARM, 0x40, 0xd0, 0x1b, 0xd5, 0x41, 0xd0, 0x3b, 0xd5,
+                    0x1f, 0x20, 0x03, 0xd5)
+// mrs x0, sctlr_el1; nop
+NEVERD_THREAD_BYTES(PrivilegedARM, 0x00, 0x10, 0x38, 0xd5, 0x1f, 0x20, 0x03,
+                    0xd5)
+#endif
+#ifdef NEVERD_THREAD_TEXT
+NEVERD_THREAD_TEXT(RequiresARM, "guest thread-pointer writes require ARM64")
+NEVERD_THREAD_TEXT(RequiresX64, "segment address-size check requires x64")
+#endif

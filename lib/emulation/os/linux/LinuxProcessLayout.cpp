@@ -43,10 +43,40 @@ llvm::Expected<ProcessLayout> processLayout(const BinaryImage &Image) {
     return failure(ProgramHeaders);
   std::optional<uint64_t> TableAddress, DeclaredAddress;
   std::optional<bool> ExecutableStack;
+  bool HasTLS = false;
   for (const auto &Header : Metadata.ProgramHeaders) {
-    if (Header.Type == PT_INTERP || Header.Type == PT_DYNAMIC ||
-        Header.Type == PT_TLS)
+    if (Header.Type == PT_INTERP || Header.Type == PT_DYNAMIC)
       return failure(Dynamic);
+    if (Header.Type == PT_TLS) {
+      if (HasTLS || !Header.MemorySize || Header.FileSize > Header.MemorySize ||
+          Header.FileOffset > Image.Raw.size() ||
+          Header.FileSize > Image.Raw.size() - Header.FileOffset ||
+          Header.VirtualAddress < MinimumAddress ||
+          Header.VirtualAddress >= UserLimit ||
+          Header.MemorySize > UserLimit - Header.VirtualAddress ||
+          (Header.Alignment > 1 &&
+           ((Header.Alignment & (Header.Alignment - 1)) ||
+            Header.VirtualAddress % Header.Alignment !=
+                Header.FileOffset % Header.Alignment)))
+        return failure(TLS);
+      HasTLS = true;
+      bool Readable = !Header.FileSize;
+      for (const auto &Load : Metadata.ProgramHeaders) {
+        if (Load.Type != PT_LOAD || !(Load.Flags & PF_R) ||
+            Header.FileOffset < Load.FileOffset ||
+            Header.VirtualAddress < Load.VirtualAddress)
+          continue;
+        const uint64_t Delta = Header.FileOffset - Load.FileOffset;
+        if (Delta == Header.VirtualAddress - Load.VirtualAddress &&
+            Delta <= Load.FileSize && Header.FileSize <= Load.FileSize - Delta)
+          Readable = true;
+      }
+      if (!Readable)
+        return failure(TLS);
+      // The ELF template is ordinary image data. Guest startup initializes
+      // each TLS block and installs its thread pointer, as on Linux; the OS
+      // model does not guess a libc-specific TCB, DTV or dynamic TLS layout.
+    }
     if (Header.Type == PT_GNU_STACK) {
       const bool Executable = bool(Header.Flags & PF_X);
       if (ExecutableStack && *ExecutableStack != Executable)

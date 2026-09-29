@@ -18,7 +18,17 @@ NEVERD_LINUX_VALUE(StandardOutput, 1)
 NEVERD_LINUX_VALUE(StandardError, 2)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
+NEVERD_LINUX_VALUE(PermissionDenied, 1)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
+#endif
+#ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(ArchPrctl, 158, 2)
+#endif
+#ifdef NEVERD_LINUX_THREAD_POINTER
+NEVERD_LINUX_THREAD_POINTER(SetGS, 0x1001, X64GSBase, true)
+NEVERD_LINUX_THREAD_POINTER(SetFS, 0x1002, X64FSBase, true)
+NEVERD_LINUX_THREAD_POINTER(GetFS, 0x1003, X64FSBase, false)
+NEVERD_LINUX_THREAD_POINTER(GetGS, 0x1004, X64GSBase, false)
 #endif
 #ifdef NEVERD_LINUX_AUX
 // Linux UAPI tag and the process-owned value supplied at exec.
@@ -50,23 +60,44 @@ NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
 NEVERD_LINUX_SERVICE(GetTID, 186, 178, 0)
 #endif
 #ifdef NEVERD_LINUX_ABI
-NEVERD_LINUX_ABI(X64, X64Syscall, X64AX, X64AX, X64SP, X64PC,
-                 X64DI, X64SI, X64DX, X64R10, X64R8, X64R9)
-NEVERD_LINUX_ABI(AArch64, AArch64SVC, AArch64X8, AArch64X0, AArch64SP, AArch64PC,
-                 AArch64X0, AArch64X1, AArch64X2, AArch64X3, AArch64X4, AArch64X5)
+NEVERD_LINUX_ABI(X64, X64Syscall, X64AX, X64AX, X64SP, X64PC, X64DI, X64SI,
+                 X64DX, X64R10, X64R8, X64R9)
+NEVERD_LINUX_ABI(AArch64, AArch64SVC, AArch64X8, AArch64X0, AArch64SP,
+                 AArch64PC, AArch64X0, AArch64X1, AArch64X2, AArch64X3,
+                 AArch64X4, AArch64X5)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
-NEVERD_LINUX_DIAGNOSTIC(Limits, "process limits must be positive and fit the checked execution profile")
-NEVERD_LINUX_DIAGNOSTIC(Image, "Linux ELF64 process profile requires a little-endian x64 or AArch64 ELF executable")
-NEVERD_LINUX_DIAGNOSTIC(ABI, "ELF OS ABI, ABI version or processor flags are unsupported by this Linux profile")
-NEVERD_LINUX_DIAGNOSTIC(Dynamic, "Linux process image requires an unimplemented dynamic-link or TLS contract")
-NEVERD_LINUX_DIAGNOSTIC(ProgramHeaders, "ELF program headers have an invalid or unmapped process layout")
-NEVERD_LINUX_DIAGNOSTIC(AddressRange, "process image or stack exceeds the Linux user address range")
-NEVERD_LINUX_DIAGNOSTIC(Entry, "process entry does not name executable user memory")
-NEVERD_LINUX_DIAGNOSTIC(Stack, "process arguments, environment and auxiliary vector exceed the stack")
-NEVERD_LINUX_DIAGNOSTIC(String, "process argument or environment string contains a NUL byte")
+NEVERD_LINUX_DIAGNOSTIC(
+    Limits,
+    "process limits must be positive and fit the checked execution profile")
+NEVERD_LINUX_DIAGNOSTIC(Image, "Linux ELF64 process profile requires a "
+                               "little-endian x64 or AArch64 ELF executable")
+NEVERD_LINUX_DIAGNOSTIC(ABI, "ELF OS ABI, ABI version or processor flags are "
+                             "unsupported by this Linux profile")
+NEVERD_LINUX_DIAGNOSTIC(
+    Dynamic,
+    "Linux process image requires an unimplemented dynamic-link contract")
+NEVERD_LINUX_DIAGNOSTIC(
+    TLS, "ELF TLS template has an invalid, duplicate or unreadable layout")
+NEVERD_LINUX_DIAGNOSTIC(ThreadOperation,
+                        "unsupported Linux arch_prctl operation {0}")
+NEVERD_LINUX_DIAGNOSTIC(
+    ProgramHeaders,
+    "ELF program headers have an invalid or unmapped process layout")
+NEVERD_LINUX_DIAGNOSTIC(
+    AddressRange, "process image or stack exceeds the Linux user address range")
+NEVERD_LINUX_DIAGNOSTIC(Entry,
+                        "process entry does not name executable user memory")
+NEVERD_LINUX_DIAGNOSTIC(
+    Stack,
+    "process arguments, environment and auxiliary vector exceed the stack")
+NEVERD_LINUX_DIAGNOSTIC(
+    String, "process argument or environment string contains a NUL byte")
 NEVERD_LINUX_DIAGNOSTIC(Service, "unsupported Linux system call {0}")
-NEVERD_LINUX_DIAGNOSTIC(Trap, "service request does not match the process system-call ABI")
-NEVERD_LINUX_DIAGNOSTIC(Output, "captured process output exceeds the workload limit")
-NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit, "CPU stopped without a modeled process continuation")
+NEVERD_LINUX_DIAGNOSTIC(
+    Trap, "service request does not match the process system-call ABI")
+NEVERD_LINUX_DIAGNOSTIC(Output,
+                        "captured process output exceeds the workload limit")
+NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit,
+                        "CPU stopped without a modeled process continuation")
 #endif

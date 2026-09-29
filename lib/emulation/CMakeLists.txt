@@ -40,6 +40,7 @@ add_neverd_component_library(NeverDEmulationCPU
   runtime/ExecutionConfiguration.cpp
   runtime/ExecutionConfigurationJSON.cpp
   arch/x86_64/CheckedX64Backend.cpp
+  arch/x86_64/CheckedX64Memory.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
   LINK_COMPONENTS EmulationCore EmulationNative EmulationUnicorn
   LLVM_COMPONENTS Support)

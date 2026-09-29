@@ -1,0 +1,194 @@
+//===- X64DataCases.def - Scalar and SSE2 regression encodings -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_DATA_VALUE
+NEVERD_DATA_VALUE(InitialFlags, 0x203)
+NEVERD_DATA_VALUE(ArithmeticFlags, 0x8c5)
+NEVERD_DATA_VALUE(Carry, 0x1)
+NEVERD_DATA_VALUE(Parity, 0x4)
+NEVERD_DATA_VALUE(Zero, 0x40)
+NEVERD_DATA_VALUE(Sign, 0x80)
+NEVERD_DATA_VALUE(Overflow, 0x800)
+NEVERD_DATA_VALUE(FlagCombinations, 32)
+NEVERD_DATA_VALUE(Low, 0xfedcba9876543210ULL)
+NEVERD_DATA_VALUE(High, 0x0123456789abcdefULL)
+NEVERD_DATA_VALUE(VectorBytes, 16)
+NEVERD_DATA_VALUE(WordBytes, 8)
+NEVERD_DATA_VALUE(XmmCount, 16)
+NEVERD_DATA_VALUE(RexBase, 0x40)
+NEVERD_DATA_VALUE(RexHighRegister, 0x4)
+NEVERD_DATA_VALUE(ModRMRegisterShift, 3)
+NEVERD_DATA_VALUE(ModRMRegisterMask, 7)
+NEVERD_DATA_VALUE(ModRMCX, 1)
+NEVERD_DATA_VALUE(ModRMOffset, 3)
+NEVERD_DATA_VALUE(NopOpcode, 0x90)
+NEVERD_DATA_VALUE(InitialMXCSR, 0x1f80)
+NEVERD_DATA_VALUE(PrecisionStatus, 0x20)
+NEVERD_DATA_VALUE(InvalidStatus, 0x1)
+NEVERD_DATA_VALUE(RoundingUp, 0x4000)
+NEVERD_DATA_VALUE(RoundingDown, 0x2000)
+NEVERD_DATA_VALUE(RoundingTruncate, 0x6000)
+NEVERD_DATA_VALUE(DoubleOne, 0x3ff0000000000000ULL)
+NEVERD_DATA_VALUE(NegativeHalfULP, 0xbca0000000000000ULL)
+NEVERD_DATA_VALUE(DeviceWidth, 4)
+NEVERD_DATA_VALUE(CopyCount, 2)
+NEVERD_DATA_VALUE(DirectionFlag, 0x400)
+#endif
+#ifdef NEVERD_DATA_BYTES
+NEVERD_DATA_BYTES(StoreXmm, 0x40, 0x0f, 0x11, 0x01)
+NEVERD_DATA_BYTES(LoadXmm, 0x0f, 0x10, 0x01)
+NEVERD_DATA_BYTES(XorSelf, 0x0f, 0x57, 0xc0)
+NEVERD_DATA_BYTES(Bit32, 0x0f, 0xa3, 0xca)
+NEVERD_DATA_BYTES(Bit64, 0x48, 0x0f, 0xa3, 0xca)
+NEVERD_DATA_BYTES(BitMemory, 0x0f, 0xa3, 0x09)
+NEVERD_DATA_BYTES(ScalarFloatAdd, 0xf2, 0x0f, 0x58, 0xc1)
+NEVERD_DATA_BYTES(StringMove, 0x64, 0xa5)
+NEVERD_DATA_BYTES(AVXMove, 0xc5, 0xf8, 0x10, 0xc1)
+NEVERD_DATA_BYTES(MMXMove, 0x0f, 0x6f, 0xc1)
+NEVERD_DATA_BYTES(SubSD, 0xf2, 0x0f, 0x5c, 0xc1)
+NEVERD_DATA_BYTES(ConvertSD, 0xf2, 0x48, 0x0f, 0x2c, 0xc0)
+NEVERD_DATA_BYTES(LoadDevice, 0x8b, 0x01)
+NEVERD_DATA_BYTES(StoreDevice, 0x89, 0x01)
+NEVERD_DATA_BYTES(RepeatMove, 0xf3, 0xa5)
+NEVERD_DATA_BYTES(RepeatMove32, 0x67, 0xf3, 0xa5)
+NEVERD_DATA_BYTES(DeviceUpdate, 0x83, 0x01, 0x01)
+NEVERD_DATA_BYTES(LockedUpdate, 0xf0, 0x83, 0x09, 0x00)
+NEVERD_DATA_BYTES(AlignedVectorStore, 0x0f, 0x29, 0x01)
+#endif
+#ifdef NEVERD_DATA_TEXT
+NEVERD_DATA_TEXT(DeviceFailure, "injected device failure")
+#endif
+#ifdef NEVERD_DATA_CONVERSION
+NEVERD_DATA_CONVERSION(Exact, 0x4026000000000000ULL, 11, 0)
+NEVERD_DATA_CONVERSION(Truncate, 0x4027000000000000ULL, 11, PrecisionStatus)
+NEVERD_DATA_CONVERSION(Negative, 0xc027000000000000ULL, uint64_t(-11),
+                       PrecisionStatus)
+NEVERD_DATA_CONVERSION(NaN, 0x7ff8000000000000ULL, 0x8000000000000000ULL,
+                       InvalidStatus)
+NEVERD_DATA_CONVERSION(Infinity, 0x7ff0000000000000ULL, 0x8000000000000000ULL,
+                       InvalidStatus)
+NEVERD_DATA_CONVERSION(Overflow, 0x43e0000000000000ULL, 0x8000000000000000ULL,
+                       InvalidStatus)
+#endif
+#ifdef NEVERD_DATA_UPDATE
+// Name, width, input, RDX operand, expected result, defined arithmetic flags.
+NEVERD_DATA_UPDATE(Add8, 1, 0x7f, 1, 0x80, 0x880, 0x00, 0x11)
+NEVERD_DATA_UPDATE(Add16, 2, 0x7fff, 1, 0x8000, 0x884, 0x66, 0x01, 0x11)
+NEVERD_DATA_UPDATE(Add32, 4, 0x7fffffff, 1, 0x80000000, 0x884, 0x01, 0x11)
+NEVERD_DATA_UPDATE(Add64, 8, 0x7fffffffffffffffULL, 1, 0x8000000000000000ULL,
+                   0x884, 0x48, 0x01, 0x11)
+NEVERD_DATA_UPDATE(Adc8, 1, 0xfe, 1, 0, 0x45, 0x10, 0x11)
+NEVERD_DATA_UPDATE(Adc16, 2, 0xfffe, 1, 0, 0x45, 0x66, 0x11, 0x11)
+NEVERD_DATA_UPDATE(Adc32, 4, 0xfffffffe, 1, 0, 0x45, 0x11, 0x11)
+NEVERD_DATA_UPDATE(Adc64, 8, 0xfffffffffffffffeULL, 1, 0, 0x45, 0x48, 0x11,
+                   0x11)
+NEVERD_DATA_UPDATE(Sub8, 1, 0, 1, 0xff, 0x85, 0x28, 0x11)
+NEVERD_DATA_UPDATE(Sub16, 2, 0, 1, 0xffff, 0x85, 0x66, 0x29, 0x11)
+NEVERD_DATA_UPDATE(Sub32, 4, 0, 1, 0xffffffff, 0x85, 0x29, 0x11)
+NEVERD_DATA_UPDATE(Sub64, 8, 0, 1, 0xffffffffffffffffULL, 0x85, 0x48, 0x29,
+                   0x11)
+NEVERD_DATA_UPDATE(Sbb8, 1, 0, 0, 0xff, 0x85, 0x18, 0x11)
+NEVERD_DATA_UPDATE(Sbb16, 2, 0, 0, 0xffff, 0x85, 0x66, 0x19, 0x11)
+NEVERD_DATA_UPDATE(Sbb32, 4, 0, 0, 0xffffffff, 0x85, 0x19, 0x11)
+NEVERD_DATA_UPDATE(Sbb64, 8, 0, 0, 0xffffffffffffffffULL, 0x85, 0x48, 0x19,
+                   0x11)
+NEVERD_DATA_UPDATE(And8, 1, 0xff, 0x7f, 0x7f, 0, 0x20, 0x11)
+NEVERD_DATA_UPDATE(And16, 2, 0xffff, 0xff7f, 0xff7f, 0x80, 0x66, 0x21, 0x11)
+NEVERD_DATA_UPDATE(And32, 4, 0xffffffff, 0xffffff7f, 0xffffff7f, 0x80, 0x21,
+                   0x11)
+NEVERD_DATA_UPDATE(And64, 8, 0xffffffffffffffffULL, 0xffffffffffffff7fULL,
+                   0xffffffffffffff7fULL, 0x80, 0x48, 0x21, 0x11)
+NEVERD_DATA_UPDATE(Or8, 1, 0, 0x10, 0x10, 0, 0x08, 0x11)
+NEVERD_DATA_UPDATE(Or16, 2, 0, 0x100, 0x100, 4, 0x66, 0x09, 0x11)
+NEVERD_DATA_UPDATE(Or32, 4, 0, 0x100, 0x100, 4, 0x09, 0x11)
+NEVERD_DATA_UPDATE(Or64, 8, 0, 0x100, 0x100, 4, 0x48, 0x09, 0x11)
+NEVERD_DATA_UPDATE(Xor8, 1, 0xff, 0xff, 0, 0x44, 0x30, 0x11)
+NEVERD_DATA_UPDATE(Xor16, 2, 0xffff, 0xffff, 0, 0x44, 0x66, 0x31, 0x11)
+NEVERD_DATA_UPDATE(Xor32, 4, 0xffffffff, 0xffffffff, 0, 0x44, 0x31, 0x11)
+NEVERD_DATA_UPDATE(Xor64, 8, 0xffffffffffffffffULL, 0xffffffffffffffffULL, 0,
+                   0x44, 0x48, 0x31, 0x11)
+NEVERD_DATA_UPDATE(Neg8, 1, 0x80, 0, 0x80, 0x881, 0xf6, 0x19)
+NEVERD_DATA_UPDATE(Neg16, 2, 0x8000, 0, 0x8000, 0x885, 0x66, 0xf7, 0x19)
+NEVERD_DATA_UPDATE(Neg32, 4, 0x80000000, 0, 0x80000000, 0x885, 0xf7, 0x19)
+NEVERD_DATA_UPDATE(Neg64, 8, 0x8000000000000000ULL, 0, 0x8000000000000000ULL,
+                   0x885, 0x48, 0xf7, 0x19)
+NEVERD_DATA_UPDATE(Not8, 1, 0xf0, 0, 0x0f, 1, 0xf6, 0x11)
+NEVERD_DATA_UPDATE(Not16, 2, 0xfff0, 0, 0x0f, 1, 0x66, 0xf7, 0x11)
+NEVERD_DATA_UPDATE(Not32, 4, 0xfffffff0, 0, 0x0f, 1, 0xf7, 0x11)
+NEVERD_DATA_UPDATE(Not64, 8, 0xfffffffffffffff0ULL, 0, 0x0f, 1, 0x48, 0xf7,
+                   0x11)
+NEVERD_DATA_UPDATE(AndImmediate32, 4, 0xffffffff, 0, 0xffffff7f, 0x80, 0x81,
+                   0x21, 0x7f, 0xff, 0xff, 0xff)
+NEVERD_DATA_UPDATE(OrImmediate64, 8, 0, 0, 0xffffffffffffff80ULL, 0x80, 0x48,
+                   0x83, 0x09, 0x80)
+#endif
+#ifdef NEVERD_DATA_CONDITION
+// Truth-table bit N uses N's bits in CF, PF, ZF, SF, OF order.
+NEVERD_DATA_CONDITION(O, 0xffff0000, 0x0f, 0x90, 0x01)
+NEVERD_DATA_CONDITION(NO, 0x0000ffff, 0x0f, 0x91, 0x01)
+NEVERD_DATA_CONDITION(B, 0xaaaaaaaa, 0x0f, 0x92, 0x01)
+NEVERD_DATA_CONDITION(AE, 0x55555555, 0x0f, 0x93, 0x01)
+NEVERD_DATA_CONDITION(E, 0xf0f0f0f0, 0x0f, 0x94, 0x01)
+NEVERD_DATA_CONDITION(NE, 0x0f0f0f0f, 0x0f, 0x95, 0x01)
+NEVERD_DATA_CONDITION(BE, 0xfafafafa, 0x0f, 0x96, 0x01)
+NEVERD_DATA_CONDITION(A, 0x05050505, 0x0f, 0x97, 0x01)
+NEVERD_DATA_CONDITION(S, 0xff00ff00, 0x0f, 0x98, 0x01)
+NEVERD_DATA_CONDITION(NS, 0x00ff00ff, 0x0f, 0x99, 0x01)
+NEVERD_DATA_CONDITION(P, 0xcccccccc, 0x0f, 0x9a, 0x01)
+NEVERD_DATA_CONDITION(NP, 0x33333333, 0x0f, 0x9b, 0x01)
+NEVERD_DATA_CONDITION(L, 0x00ffff00, 0x0f, 0x9c, 0x01)
+NEVERD_DATA_CONDITION(GE, 0xff0000ff, 0x0f, 0x9d, 0x01)
+NEVERD_DATA_CONDITION(LE, 0xf0fffff0, 0x0f, 0x9e, 0x01)
+NEVERD_DATA_CONDITION(G, 0x0f00000f, 0x0f, 0x9f, 0x01)
+#endif
+#ifdef NEVERD_DATA_STORE
+NEVERD_DATA_STORE(StoreD, 4, 1, 0x66, 0x0f, 0x7e, 0x01)
+NEVERD_DATA_STORE(StoreQ, 8, 1, 0x66, 0x0f, 0xd6, 0x01)
+NEVERD_DATA_STORE(StoreSS, 4, 1, 0xf3, 0x0f, 0x11, 0x01)
+NEVERD_DATA_STORE(StoreSD, 8, 1, 0xf2, 0x0f, 0x11, 0x01)
+NEVERD_DATA_STORE(StoreUPS, 16, 1, 0x0f, 0x11, 0x01)
+NEVERD_DATA_STORE(StoreUPD, 16, 1, 0x66, 0x0f, 0x11, 0x01)
+NEVERD_DATA_STORE(StoreDQU, 16, 1, 0xf3, 0x0f, 0x7f, 0x01)
+NEVERD_DATA_STORE(StoreAPS, 16, 16, 0x0f, 0x29, 0x01)
+NEVERD_DATA_STORE(StoreAPD, 16, 16, 0x66, 0x0f, 0x29, 0x01)
+NEVERD_DATA_STORE(StoreDQA, 16, 16, 0x66, 0x0f, 0x7f, 0x01)
+#endif
+#ifdef NEVERD_DATA_LOAD
+// Loads from memory clear the unused upper bits for legacy scalar moves.
+NEVERD_DATA_LOAD(LoadD, 4, Low & 0xffffffff, 0, 0x66, 0x0f, 0x6e, 0x01)
+NEVERD_DATA_LOAD(LoadQ, 8, Low, 0, 0xf3, 0x0f, 0x7e, 0x01)
+NEVERD_DATA_LOAD(LoadSS, 4, Low & 0xffffffff, 0, 0xf3, 0x0f, 0x10, 0x01)
+NEVERD_DATA_LOAD(LoadSD, 8, Low, 0, 0xf2, 0x0f, 0x10, 0x01)
+NEVERD_DATA_LOAD(LoadUPS, 16, Low, High, 0x0f, 0x10, 0x01)
+NEVERD_DATA_LOAD(LoadUPD, 16, Low, High, 0x66, 0x0f, 0x10, 0x01)
+NEVERD_DATA_LOAD(LoadDQU, 16, Low, High, 0xf3, 0x0f, 0x6f, 0x01)
+NEVERD_DATA_LOAD(LoadAPS, 16, Low, High, 0x0f, 0x28, 0x01)
+NEVERD_DATA_LOAD(LoadAPD, 16, Low, High, 0x66, 0x0f, 0x28, 0x01)
+NEVERD_DATA_LOAD(LoadDQA, 16, Low, High, 0x66, 0x0f, 0x6f, 0x01)
+#endif
+#ifdef NEVERD_DATA_REGISTER
+// XMM0 initially {Low,High}, XMM1 and RDX {High,Low}. Expected XMM0.
+NEVERD_DATA_REGISTER(MoveSS,
+                     (Low & 0xffffffff00000000ULL) | (High & 0xffffffff), High,
+                     0xf3, 0x0f, 0x10, 0xc1)
+NEVERD_DATA_REGISTER(MoveSD, High, High, 0xf2, 0x0f, 0x10, 0xc1)
+NEVERD_DATA_REGISTER(MoveQ, High, 0, 0xf3, 0x0f, 0x7e, 0xc1)
+NEVERD_DATA_REGISTER(MoveGPRD, High & 0xffffffff, 0, 0x66, 0x0f, 0x6e, 0xc2)
+NEVERD_DATA_REGISTER(MoveGPRQ, High, 0, 0x66, 0x48, 0x0f, 0x6e, 0xc2)
+NEVERD_DATA_REGISTER(MoveLH, Low, Low, 0x0f, 0x16, 0xc0)
+NEVERD_DATA_REGISTER(MoveHL, High, High, 0x0f, 0x12, 0xc0)
+NEVERD_DATA_REGISTER(XorPS, UINT64_MAX, UINT64_MAX, 0x0f, 0x57, 0xc1)
+NEVERD_DATA_REGISTER(XorPD, UINT64_MAX, UINT64_MAX, 0x66, 0x0f, 0x57, 0xc1)
+NEVERD_DATA_REGISTER(Pxor, UINT64_MAX, UINT64_MAX, 0x66, 0x0f, 0xef, 0xc1)
+NEVERD_DATA_REGISTER(AndPS, 0, 0, 0x0f, 0x54, 0xc1)
+NEVERD_DATA_REGISTER(AndPD, 0, 0, 0x66, 0x0f, 0x54, 0xc1)
+NEVERD_DATA_REGISTER(Pand, 0, 0, 0x66, 0x0f, 0xdb, 0xc1)
+NEVERD_DATA_REGISTER(OrPS, UINT64_MAX, UINT64_MAX, 0x0f, 0x56, 0xc1)
+NEVERD_DATA_REGISTER(OrPD, UINT64_MAX, UINT64_MAX, 0x66, 0x0f, 0x56, 0xc1)
+NEVERD_DATA_REGISTER(Por, UINT64_MAX, UINT64_MAX, 0x66, 0x0f, 0xeb, 0xc1)
+NEVERD_DATA_REGISTER(AndnPS, High, Low, 0x0f, 0x55, 0xc1)
+NEVERD_DATA_REGISTER(AndnPD, High, Low, 0x66, 0x0f, 0x55, 0xc1)
+NEVERD_DATA_REGISTER(Pandn, High, Low, 0x66, 0x0f, 0xdf, 0xc1)
+#endif
