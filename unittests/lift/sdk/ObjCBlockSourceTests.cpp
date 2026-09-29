@@ -1030,6 +1030,43 @@ TEST(ObjCBlockSources,
       bindObjCSourceReferences(Bound.Function, F.Image).Limitation.empty());
 }
 
+TEST(ObjCBlockSources, UnretainedCapturePreservesAuthenticatedLayout) {
+  SourceFixture F(true);
+  F.put64(F.Descriptor + 24, F.Layout);
+  F.string(F.Layout, llvm::StringRef("\x60", 1));
+  F.caller().Body[4].StoreVal =
+      parameter(0, NdType::makePtr(NdType::makeVoid()));
+
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks.count(F.Caller), 1U);
+  ASSERT_EQ(Plan.StackBlocks.at(F.Caller).size(), 1U);
+  const auto &Descriptor = Plan.StackBlocks.at(F.Caller)[0].Descriptor;
+  ASSERT_EQ(Descriptor.Captures.size(), 1U);
+  EXPECT_EQ(Descriptor.Captures[0].StorageKind,
+            ObjCBlockCaptureRange::Kind::Unretained);
+  EXPECT_EQ(Descriptor.Captures[0].Offset, 32U);
+  EXPECT_EQ(Descriptor.Captures[0].Size, 8U);
+  auto Bound =
+      bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
+  EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(Bound.Dependencies.count(F.Invoke));
+
+  F.caller().Body.erase(F.caller().Body.begin() + 4);
+  const auto Incomplete = discoverObjCBlockSources(F.Image, F.Result);
+  EXPECT_FALSE(Incomplete.StackBlocks.count(F.Caller));
+
+  // Other ownership layouts cannot inherit the unretained allowance.
+  for (const char Opcode : {char(0x30), char(0x40), char(0x50), char(0x70)}) {
+    SourceFixture Other(true);
+    Other.put64(Other.Descriptor + 24, Other.Layout);
+    Other.string(Other.Layout, llvm::StringRef(&Opcode, 1));
+    Other.caller().Body[4].StoreVal =
+        parameter(0, NdType::makePtr(NdType::makeVoid()));
+    const auto Rejected = discoverObjCBlockSources(Other.Image, Other.Result);
+    EXPECT_FALSE(Rejected.StackBlocks.count(Other.Caller));
+  }
+}
+
 TEST(ObjCBlockSources,
      OrdinaryFrameArgumentsBeforeConstructionDoNotHideLaterStackBlocks) {
   for (bool ComputedZero : {false, true})

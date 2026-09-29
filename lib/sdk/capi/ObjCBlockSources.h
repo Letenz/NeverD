@@ -135,7 +135,11 @@ inline bool validDescriptor(const ObjCBlockDescriptor &D) {
       (D.CopyHelper && (!D.CopyTypeHint || !D.DisposeTypeHint)))
     return false;
   return std::all_of(D.Captures.begin(), D.Captures.end(), [&](const auto &R) {
+    // An authenticated unretained field is copied as raw bytes. It has no
+    // ownership helper to recover, and the rebuilt descriptor keeps that
+    // layout so Block_copy cannot acquire a retain that the source lacked.
     return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes ||
+           R.StorageKind == ObjCBlockCaptureRange::Kind::Unretained ||
            (R.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
             D.CopyHelper);
   });
