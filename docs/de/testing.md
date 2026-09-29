@@ -64,6 +64,8 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `LowIRLoopInference.*` und `BinaryLowIRLoopInference.*` verwenden unabhängig geschriebene Zähler, Stack-Ablagen, frühe Rückgaben, native Aufrufe und gepackte Flags. Sie prüfen schmale arithmetische Erweiterung und semantisch gleiche Flags mit unterschiedlichen Ausdrücken. Fehlerhafte Graphen, fehlende oder gefälschte Ursprünge, endlose oder umlaufende Schleifen und erschöpfte Budgets dürfen kein Zertifikat erzeugen.
 
+Unabhängige Regressionen für alternative Schleifen prüfen beide Verzweigungsrichtungen, falsche Schleifenrümpfe, einen nicht terminierenden Nachbarzweig sowie erschöpfte gemeinsame Such-/Beweisbudgets. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
+
 Die Regressionen prüfen zwei und drei verschachtelte Ebenen, auf- und absteigende Zähler, abgeleitete Phasen und Schnittpunkte in echten nativen Schleifenrümpfen. Unerreichbare oder disjunkte Präfixbereiche, falsche Rümpfe, endlose oder überlaufende Übergänge und erschöpfte gemeinsame Such-/Beweisbudgets müssen abgelehnt werden. Präfixzeugen ersetzen keine vollständige Segmentabdeckung.
 
 ```sh

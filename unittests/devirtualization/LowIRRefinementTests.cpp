@@ -844,6 +844,60 @@ TEST(LowIRLoopInference, NestedCountersNeedNoHandwrittenPhases) {
   }
 }
 
+Program alternativeWordLoops(bool ReverseChoice, unsigned FirstStep = 1) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1, 3};
+  P.instruction({op(NdOp::COPY, r(8), {r(16)}),
+                 op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(24), n(0)}),
+                 op(NdOp::COND_BR, {},
+                    {n(ReverseChoice ? 0x400 : 0x200), NdVar::tmp(0, 1)})});
+  for (unsigned Side = 0; Side != 2; ++Side) {
+    const auto Header = 0x200 + 0x200 * Side;
+    const int HeaderId = 1 + 2 * Side;
+    P.block(HeaderId, Header, {HeaderId + 1, 5});
+    P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                   op(NdOp::COND_BR, {}, {n(0x600), NdVar::tmp(0, 1)})});
+    P.block(HeaderId + 1, Header + 0x100, {HeaderId});
+    P.instruction({op(NdOp::INT_ADD, r(0), {r(0), n(Side + 1)}),
+                   op(NdOp::INT_SUB, r(8), {r(8), n(Side ? 1 : FirstStep)}),
+                   op(NdOp::BRANCH, {}, {n(Header)})});
+  }
+  P.block(5, 0x600);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
+  for (bool ReverseChoice : {false, true}) {
+    SCOPED_TRACE(ReverseChoice);
+    const auto P = alternativeWordLoops(ReverseChoice);
+    const auto Inferred = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+    ASSERT_EQ(Inferred.Plan->Cutpoints.size(), 2U);
+    const auto Proof = loopCheck(P, P, *Inferred.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    EXPECT_EQ(Proof.RankingChecks, 2U);
+
+    auto Wrong = P;
+    Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
+    loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+    const auto Infinite = alternativeWordLoops(ReverseChoice, 0);
+    loopRefused(loopCheck(Infinite, Infinite, *Inferred.Plan),
+                Status::Different);
+
+    LowIRLoopInferenceLimits Search;
+    Search.Execution.MaxPaths = Inferred.ScheduledPaths - 1;
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Search);
+    EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(Refused.Plan);
+    LowIRRefinementLimits Limits;
+    Limits.Execution.MaxPaths = Proof.OriginalPaths + Proof.CandidatePaths - 1;
+    loopRefused(loopCheck(P, P, *Inferred.Plan, Limits),
+                Status::BudgetExceeded);
+  }
+}
+
 Program deeperWordLoops(unsigned Depth, bool Ascending, unsigned Step = 1) {
   Program P;
   const auto Address = [](unsigned Id) { return n(0x100 + 0x100 * Id); };

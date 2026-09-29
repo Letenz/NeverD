@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <bit>
 #include <climits>
+#include <deque>
 #include <limits>
 #include <map>
 #include <set>
@@ -425,7 +426,7 @@ class Checker {
     SymRef LeftSystemFlags, RightSystemFlags;
     bool SkipCutpoint = false;
   };
-  std::vector<Path> Pending;
+  std::deque<Path> Pending;
 
   bool inductive() const { return Refinement && Refinement->LoopPlan; }
 
@@ -2248,9 +2249,19 @@ public:
       } else {
         schedule(std::move(Entry), Addresses.at(StartAddress), Predicate);
       }
+      // A replay seeks one feasible prefix. Visit queued siblings before
+      // repeatedly unfolding a loop, which could otherwise starve a short
+      // witness on another branch. Full relation checks retain their order
+      // and still require complete entry and transition coverage.
+      const bool PrefixSearch =
+          Refinement && Refinement->PrefixSearchCutpoint >= 0;
       while (!Pending.empty()) {
-        auto P = std::move(Pending.back());
-        Pending.pop_back();
+        auto P = PrefixSearch ? std::move(Pending.front())
+                              : std::move(Pending.back());
+        if (PrefixSearch)
+          Pending.pop_front();
+        else
+          Pending.pop_back();
         runPath(std::move(P));
       }
       if (Refinement
