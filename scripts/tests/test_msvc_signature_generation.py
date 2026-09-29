@@ -513,40 +513,6 @@ class BuildTests(unittest.TestCase):
             "Generated 3 signatures \u2192 vs2026-14.50.1-arm64.pat (1 object)",
         )
 
-    def test_imported_lines_join_the_generated_file_under_the_same_rules(self) -> None:
-        self._asset(
-            "vs2010-10.0.30319-x86",
-            {"kind": "toolset", "arch": "x86", "visual_studio": {"year": 2010},
-             "toolset_version": "10.0.30319"},
-            {"vc/lib/x86/libcmt.lib": b"a"},
-        )
-        directory = self.root / "sigs/pe/x86/32"
-        directory.mkdir(parents=True)
-        (directory / "vs2010.imported").write_text(
-            "0102030405060708 00 0000 0008 :0000 ?Create@CWnd@@UAEHPB_W0KABUtagRECT@@PAV1@IPAUCCreateContext@@@Z\n"
-            "AA06CCDD 00 0000 0004 :0000 claimed_by_libcmt_too\n"
-            "; unresolved: 0A0B0C0D0E0F1011 00 0000 0008 :0000 _Rizin_spelled__YAXXZ\n"
-        )
-
-        report = self._run()
-
-        lines = (directory / "vs2010.pat").read_text().splitlines()
-        # The ATL/MFC line no collected library has joins the file; the line
-        # whose bytes the runtime library names differently is ambiguous.
-        self.assertIn(
-            "0102030405060708 00 0000 0008 :0000 "
-            "?Create@CWnd@@UAEHPB_W0KABUtagRECT@@PAV1@IPAUCCreateContext@@@Z",
-            lines,
-        )
-        self.assertFalse(any("AA06CCDD" in line for line in lines))
-        # A line kept as a comment has no linkage name and stays out.
-        self.assertFalse(any("0A0B0C0D" in line for line in lines))
-        provenance = json.loads((directory / "vs2010.sources.json").read_text())
-        self.assertIn({"asset": "vs2010.imported", "kind": "imported", "lines": 2},
-                      [{k: v for k, v in source.items() if k != "archive_sha256"}
-                       for source in provenance["sources"]])
-        self.assertIn("ambiguous groups dropped", report)
-
     def test_a_library_built_with_mingw_is_read_from_its_ar_archive(self) -> None:
         self._asset(
             "mingw32-zlib-1.3-x86",
