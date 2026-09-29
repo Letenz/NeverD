@@ -12,3 +12,7 @@ NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(SCTLREL1, 3, 0, 1, 0, 0,
                                        aarch64::SCTLR & ~1ull)
 NEVERD_UNICORN_AARCH64_SYSTEM_REGISTER(CPACREL1, 3, 0, 1, 0, 2, aarch64::CPACR)
 #endif
+// A one-time private CPL3 transition. Never admitted as a guest instruction.
+#ifdef NEVERD_UNICORN_USER_BOOTSTRAP
+NEVERD_UNICORN_USER_BOOTSTRAP(0x48, 0x0f, 0x07)
+#endif

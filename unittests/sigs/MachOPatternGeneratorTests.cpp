@@ -425,6 +425,26 @@ TEST(MachOPatternGenerator, HintWidthTable) {
       machOOptimizationHintWidth(MachO::CPU_TYPE_X86_64, MCLOH_AdrpAdd));
 }
 
+TEST(MachOPatternGenerator, LeavesOutlinedFragmentsUnnamed) {
+  MachOObjectBuilder Builder(MachO::CPU_TYPE_ARM64, sequentialCode(96));
+  Builder.addSymbol("_caller", 0);
+  Builder.addSymbol("_OUTLINED_FUNCTION_0", 32);
+  Builder.addSymbol("_after", 64);
+  // bl _OUTLINED_FUNCTION_0 and bl _after.
+  Builder.addRelocation(8, MachO::ARM64_RELOC_BRANCH26, 2,
+                        "_OUTLINED_FUNCTION_0");
+  Builder.addRelocation(12, MachO::ARM64_RELOC_BRANCH26, 2, "_after");
+  Generated Out = generate(Builder.build());
+  ASSERT_EQ(Out.Lines.size(), 2u);
+  // The fragment still ends the function before it, and only the branch to
+  // a routine of the source is a reference.
+  EXPECT_NE(Out.Lines[0].find(" 0020 :0000 _caller ^000C _after"),
+            std::string::npos);
+  EXPECT_EQ(Out.Lines[0].find("OUTLINED"), std::string::npos);
+  EXPECT_NE(Out.Lines[1].find(":0000 _after"), std::string::npos);
+  EXPECT_EQ(Out.Stats.Synthesized, 1u);
+}
+
 TEST(MachOPatternGenerator, FootprintTable) {
   auto Is = [](uint32_t CPU, uint32_t Type, unsigned Length, unsigned Before,
                unsigned Width) {

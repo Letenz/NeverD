@@ -167,7 +167,8 @@ struct UnicornBackend::Impl {
             ProjectedRAM,
             [&](uint64_t Address, uint64_t Size, const auto &Page) {
               return Mutation(
-                  uc_mem_map_ptr(Engine, Address, Size, Page.Permissions,
+                  uc_mem_map_ptr(Engine, Address, Size,
+                                 Page.Permissions & GuestAccessPermissions,
                                  Memory->physicalPointer(Page.Physical)),
                   unicornDiagnostic::MapGuestMemory);
             }))
@@ -643,8 +644,8 @@ UnicornBackend::snapshotBacking(uint64_t Address,
 
 llvm::Expected<bool> UnicornBackend::canAccess(uint64_t Address, uint64_t Size,
                                                unsigned Permissions) const {
-  if ((Permissions & ~(Read | Write | Execute)) ||
-      State->DeviceCallbackActive || State->effectsStopped())
+  if ((Permissions & ~GuestPermissionMask) || State->DeviceCallbackActive ||
+      State->effectsStopped())
     return failure(
         unicornDiagnostic::CPUAccessPreflightRequiresValidPermissionsAndA);
   return addressSpace()->canAccess(Address, Size, Permissions);

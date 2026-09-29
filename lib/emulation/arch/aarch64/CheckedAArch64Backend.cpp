@@ -38,10 +38,13 @@ bool CheckedAArch64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 }
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedAArch64Backend::create(std::unique_ptr<MemoryProjection> Memory,
-                              std::unique_ptr<AArch64Machine> Machine) {
-  auto B = std::unique_ptr<CheckedAArch64Backend>(new CheckedAArch64Backend());
+                              std::unique_ptr<AArch64Machine> Machine,
+                              bool UserMode) {
+  auto B = std::unique_ptr<CheckedAArch64Backend>(
+      new CheckedAArch64Backend(UserMode));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
+  B->CPU.UserMode = UserMode;
   if (auto E = B->Memory->validateMappings(aarch64::canonicalRange))
     return E;
   if (auto E = B->initializeDecoder(CS_ARCH_AARCH64, CS_MODE_ARM))
@@ -231,12 +234,12 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
                   M.Value & (UINT64_MAX >> (aarch64::WordBits - M.Size * 8)));
     if (StopRequested || FirstFault)
       return llvm::Error::success();
-    if (auto E = access(M.Address, M.Size, M.Permission, true))
+    if (auto E = access(M.Address, M.Size, M.Permission, true, true))
       return E;
     if (StopRequested)
       return llvm::Error::success();
   }
-  if (auto E = buildAArch64PageTables(*this->Memory))
+  if (auto E = buildAArch64PageTables(*this->Memory, UserMode))
     return E;
   return Machine->step(CPU, {Deadline, &StopRequested});
 }

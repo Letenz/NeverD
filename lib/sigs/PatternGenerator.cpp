@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -50,6 +51,11 @@ namespace {
 
 constexpr StringLiteral LocalLabelPrefixes[] = {
 #define NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value) Value,
+#include "neverd/sigs/LinkerSyntax.def"
+};
+
+constexpr StringLiteral SynthesizedRoutinePrefixes[] = {
+#define NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX(Value) Value,
 #include "neverd/sigs/LinkerSyntax.def"
 };
 
@@ -103,7 +109,21 @@ PatternGeneratorStats::operator+=(const PatternGeneratorStats &Other) {
   UnsupportedMachOHints.insert(Other.UnsupportedMachOHints.begin(),
                                Other.UnsupportedMachOHints.end());
   UnreadableHints += Other.UnreadableHints;
+  Synthesized += Other.Synthesized;
   return *this;
+}
+
+bool isSynthesizedRoutineName(StringRef Name) {
+  // One reserved `_` in front, as a Mach-O object adds to every name.
+  Name.consume_front(StringRef(&ReservedNamePrefix, 1));
+  return llvm::any_of(SynthesizedRoutinePrefixes, [&](StringRef Prefix) {
+    StringRef Number = Name;
+    return Number.consume_front(Prefix) && !Number.empty() &&
+           isDigit(Number.front()) && isDigit(Number.back()) &&
+           llvm::all_of(Number, [](char C) {
+             return isDigit(C) || C == SynthesizedNumberSeparator;
+           });
+  });
 }
 
 std::optional<TargetMachine> parseTargetMachine(StringRef Name) {
@@ -438,10 +458,12 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
 }
 
 /// Whether a relocation target's name can be a reference: a routine's
-/// linkage name, not a section (".text$mn") or a label ("$LN5").
+/// linkage name, not a section (".text$mn"), a label ("$LN5") or a routine
+/// a compiler synthesized.
 bool isReferenceName(StringRef Name) {
   return !Name.empty() && !Name.starts_with(SectionSymbolPrefix) &&
-         !Name.starts_with(LabelSymbolPrefix);
+         !Name.starts_with(LabelSymbolPrefix) &&
+         !isSynthesizedRoutineName(Name);
 }
 
 /// Whether \p Name is an assembler's local label rather than a routine.
@@ -514,9 +536,11 @@ struct GenericFunction {
   uint64_t SymbolSize = 0;
 };
 
-/// Calls \p Visit for each function symbol of \p Obj, in symbol-table order.
+/// Calls \p Visit for each function symbol of \p Obj, in symbol-table order,
+/// but a routine a compiler synthesized, which \p Stats counts instead.
 template <typename VisitorT>
-void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
+void forEachGenericFunction(const ObjectFile &Obj, PatternGeneratorStats &Stats,
+                            VisitorT Visit) {
   std::map<SectionRef, std::vector<uint64_t>> SymbolAddresses =
       symbolAddressesBySection(Obj);
   for (const SymbolRef &Sym : Obj.symbols()) {
@@ -536,6 +560,10 @@ void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
     StringRef Name = *NameOrErr;
     if (Name.empty() || isLocalLabel(Name))
       continue;
+    if (isSynthesizedRoutineName(Name)) {
+      ++Stats.Synthesized;
+      continue;
+    }
 
     Expected<uint64_t> AddrOrErr = Sym.getAddress();
     if (!AddrOrErr) {
@@ -584,7 +612,7 @@ PatternGeneratorStats generateGeneric(const ObjectFile &Obj,
                                       const PatternGeneratorOptions &Opts,
                                       raw_ostream &OS) {
   PatternGeneratorStats Stats;
-  forEachGenericFunction(Obj, [&](const GenericFunction &Fn) {
+  forEachGenericFunction(Obj, Stats, [&](const GenericFunction &Fn) {
     SmallVector<bool, 256> Wildcard(Fn.Data.size(), false);
     for (const RelocationRef &Rel : Fn.Section.relocations()) {
       uint64_t RelOffset = Rel.getOffset() - Fn.Offset;
@@ -638,7 +666,7 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
   };
   std::vector<Routine> Routines;
   std::map<std::pair<SectionRef, uint64_t>, size_t> ByStart;
-  forEachGenericFunction(Obj, [&](const GenericFunction &Fn) {
+  forEachGenericFunction(Obj, Stats, [&](const GenericFunction &Fn) {
     auto [It, Fresh] =
         ByStart.try_emplace({Fn.Section, Fn.Offset}, Routines.size());
     if (Fresh)
@@ -863,7 +891,7 @@ PatternGeneratorStats generateMachO(const MachOObjectFile &Obj,
   };
   std::vector<Routine> Routines;
   std::map<std::pair<SectionRef, uint64_t>, size_t> ByStart;
-  forEachGenericFunction(Obj, [&](const GenericFunction &Fn) {
+  forEachGenericFunction(Obj, Stats, [&](const GenericFunction &Fn) {
     auto [It, Fresh] =
         ByStart.try_emplace({Fn.Section, Fn.Offset}, Routines.size());
     if (Fresh)
@@ -1034,7 +1062,12 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
     }
     if (NameOrErr->empty())
       continue;
+    // A routine a compiler synthesized still ends the function before it.
     It->second.FunctionStarts.push_back(Sym.getValue());
+    if (isSynthesizedRoutineName(*NameOrErr)) {
+      ++Stats.Synthesized;
+      continue;
+    }
     Functions.push_back({SectionNumber, Sym.getValue(), *NameOrErr});
   }
   for (auto &Entry : Sections) {

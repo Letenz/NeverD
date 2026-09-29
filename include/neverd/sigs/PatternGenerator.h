@@ -93,6 +93,9 @@ struct PatternGeneratorStats {
   /// Mach-O objects whose linker optimization hints cannot be read; each of
   /// their functions counts in UnsupportedHint.
   unsigned UnreadableHints = 0;
+  /// Routines a compiler synthesized (isSynthesizedRoutineName), which no line
+  /// names.
+  unsigned Synthesized = 0;
 
   PatternGeneratorStats &operator+=(const PatternGeneratorStats &Other);
 };
@@ -135,6 +138,13 @@ machORelocationFootprint(uint32_t CPUType, uint32_t Type, unsigned Length);
 /// this table does not know.
 std::optional<unsigned> machOOptimizationHintWidth(uint32_t CPUType,
                                                    uint32_t Kind);
+
+/// Whether \p Name is a routine a compiler synthesized and numbered per
+/// object, such as LLVM's machine-outlined `OUTLINED_FUNCTION_<n>`, spelled
+/// with one reserved `_` in front in a Mach-O object; see LinkerSyntax.def.
+/// Such a number says nothing about another build's code, so no line is
+/// named after one and no reference names one.
+bool isSynthesizedRoutineName(llvm::StringRef Name);
 
 /// An architecture a signature file is made for; see TargetMachine.def.
 enum class TargetMachine {
@@ -255,7 +265,9 @@ void collectAlternateNames(
 /// out. Each instruction a Mach-O linker optimization hint names is left
 /// unstated too, as machOOptimizationHintWidth says, and a function holding
 /// one it does not know is left out. In an object of any other format every
-/// relocation covers four bytes.
+/// relocation covers four bytes. In every format, a routine a compiler
+/// synthesized (isSynthesizedRoutineName) ends the function before it but is
+/// neither written nor stated as a reference.
 PatternGeneratorStats generatePatterns(const llvm::object::ObjectFile &Obj,
                                        const PatternGeneratorOptions &Opts,
                                        llvm::raw_ostream &OS);

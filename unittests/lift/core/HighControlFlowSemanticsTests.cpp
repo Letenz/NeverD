@@ -29,6 +29,8 @@ void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
 void simplifyAllExprs(std::vector<HighStmt> &);
 void recoverSwitchStatements(HighFunc &);
+void cleanupGuardBeforeSwitch(HighFunc &);
+void eliminateGotoToLoop(std::vector<HighStmt> &);
 void removeUnreachableCode(std::vector<HighStmt> &);
 void eliminateRegAliasCopies(HighFunc &);
 void elimConsecutiveDeadStores(std::vector<HighStmt> &);
@@ -186,6 +188,14 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
         return uint64_t(A != B);
+      case NdOp::INT_LESS:
+        return uint64_t(A < B);
+      case NdOp::INT_LESSEQUAL:
+        return uint64_t(A <= B);
+      case NdOp::INT_SLESS:
+        return uint64_t(static_cast<int64_t>(A) < static_cast<int64_t>(B));
+      case NdOp::INT_SLESSEQUAL:
+        return uint64_t(static_cast<int64_t>(A) <= static_cast<int64_t>(B));
       case NdOp::SUBBYTES:
         return llvm::APInt(E->Operands[0]->Type->Size * 8, A)
             .lshr(B * 8)
@@ -2819,6 +2829,99 @@ TEST(HighControlFlowSemantics, RecoveredSwitchKeepsFallthroughIntoACase) {
   }
 }
 
+/// `if (Guard) return 5; switch (x) { case 1: return 10; case 2: return 20;
+/// default: return 5; }`
+HighFunc guardedSwitch(ExprPtr Guard) {
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1000;
+  If.Cond = std::move(Guard);
+  If.Body = {result(0x1004, HighExpr::makeConst(5, 8))};
+  HighStmt Switch;
+  Switch.Kind = StmtKind::Switch;
+  Switch.Addr = 0x1008;
+  Switch.SwitchExpr = local(0);
+  Switch.SwitchExpr->Type = NdType::makeInt(8);
+  for (uint64_t Value : {1, 2}) {
+    SwitchCase Case;
+    Case.Value = Value;
+    Case.Body = {result(0x1100 * Value, HighExpr::makeConst(10 * Value, 8))};
+    Switch.Cases.push_back(std::move(Case));
+  }
+  Switch.DefaultBody = {result(0x1300, HighExpr::makeConst(5, 8))};
+  HighFunc F;
+  F.Body = {If, Switch};
+  return F;
+}
+
+TEST(HighControlFlowSemantics, SwitchGuardStaysWhenACaseSatisfiesIt) {
+  // `x == 1` catches a case value; erasing it would return 10 for x == 1.
+  auto Key = local(0);
+  Key->Type = NdType::makeInt(8);
+  HighFunc F = guardedSwitch(
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Key, HighExpr::makeConst(1, 8)));
+  auto Expected = [](uint64_t X) -> uint64_t { return X == 2 ? 20 : 5; };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  cleanupGuardBeforeSwitch(F);
+  for (uint64_t X : {0, 1, 2, 3}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+  }
+}
+
+TEST(HighControlFlowSemantics, SwitchGuardGoesWhenOnlyTheDefaultCatchesIt) {
+  // `x > 2` catches no case value, so the default already covers it.
+  auto Key = local(0);
+  Key->Type = NdType::makeInt(8);
+  HighFunc F = guardedSwitch(
+      HighExpr::makeBinop(NdOp::INT_LESS, HighExpr::makeConst(2, 8), Key));
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 1 ? 10 : X == 2 ? 20 : 5;
+  };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  cleanupGuardBeforeSwitch(F);
+  EXPECT_EQ(F.Body.size(), 1u);
+  for (uint64_t X : {0, 1, 2, 3}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+  }
+}
+
+TEST(HighControlFlowSemantics, JumpIntoALoopBodySkipsItsTest) {
+  // `goto B; while (x < 3) { B: x = x + 1; }` enters the body before the
+  // first test, like a do-while. Only a jump to the header, or into a loop
+  // that always runs, is what falling into the loop does.
+  auto MakeLoop = [](ExprPtr Cond) {
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Addr = 0x1100;
+    Loop.LoopHeaderAddr = 0x1100;
+    Loop.Cond = std::move(Cond);
+    auto Step = assign(0x1104, 0, 0);
+    Step.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+    Loop.Body = {Step};
+    return Loop;
+  };
+  auto Less =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(0), HighExpr::makeConst(3, 8));
+  auto Kept = [](const std::vector<HighStmt> &Body) {
+    return !Body.empty() && Body.front().Kind == StmtKind::Goto;
+  };
+  std::vector<HighStmt> IntoBody = {jump(0x1000, 0x1104), MakeLoop(Less)};
+  eliminateGotoToLoop(IntoBody);
+  EXPECT_TRUE(Kept(IntoBody)) << "the jump skips the loop test";
+  std::vector<HighStmt> ToHeader = {jump(0x1000, 0x1100), MakeLoop(Less)};
+  eliminateGotoToLoop(ToHeader);
+  EXPECT_FALSE(Kept(ToHeader)) << "the header runs the test either way";
+  std::vector<HighStmt> Always = {jump(0x1000, 0x1104),
+                                  MakeLoop(HighExpr::makeConst(1, 1))};
+  eliminateGotoToLoop(Always);
+  EXPECT_FALSE(Kept(Always)) << "an always-true loop skips nothing";
+}
+
 TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
   for (StmtKind Exit : {StmtKind::Break, StmtKind::Goto, StmtKind::Return}) {
     for (bool HasDefault : {false, true}) {
@@ -3419,6 +3522,62 @@ TEST(HighControlFlowSemantics, LoopExitRequiresExactContinuationIdentity) {
   detectAndConvertLoops(F, {}, Med, false);
   for (unsigned Input : {0, 1, 19})
     EXPECT_EQ(execute(F, Input, true), 42u);
+}
+
+TEST(HighControlFlowSemantics, LoopHeaderTestKeepsItsOwnExit) {
+  // A search: `v = 3; H: if (v == 0) goto Miss; if (v == x) goto Hit;
+  // v = v - 1; goto H; Hit: return v + 100; Miss: return 99;` The header
+  // test exits to Miss, not to what follows the loop; hoisting it into
+  // `while (v != 0)` would send a failed search into the hit path
+  // (MiMakeIoRangePermanent read the NULL node's fields this way).
+  HighFunc F;
+  F.Entry = 0x1000;
+  auto MissTest = conditional(0x1100, 0x1300);
+  MissTest.Body.front().Addr = 0;
+  MissTest.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(1), HighExpr::makeConst(0, 8));
+  auto HitTest = conditional(0x1104, 0x1200);
+  HitTest.Body.front().Addr = 0;
+  HitTest.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(1), local(0));
+  auto Step = assign(0x1108, 1, 0);
+  Step.Val =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(1), HighExpr::makeConst(1, 8));
+  F.Body = {assign(0x1000, 1, 3),
+            MissTest,
+            HitTest,
+            Step,
+            jump(0x110c, 0x1100),
+            result(0x1200, HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                               HighExpr::makeConst(100, 8))),
+            result(0x1300, HighExpr::makeConst(99, 8))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(6);
+  for (int I = 0; I < 6; ++I)
+    Med.Blocks[I].Id = I;
+  const int Owners[] = {0, 1, 2, 5, 5, 3, 4};
+  for (size_t I = 0; I < F.Body.size(); ++I) {
+    auto &Block = Med.Blocks[Owners[I]];
+    if (!Block.StartAddr)
+      Block.StartAddr = F.Body[I].Addr;
+    MedOp Op;
+    Op.Addr = F.Body[I].Addr;
+    Block.Ops.push_back(Op);
+  }
+  Med.Blocks[0].Succs = {1};
+  Med.Blocks[1].Succs = {2, 4};
+  Med.Blocks[2].Succs = {3, 5};
+  Med.Blocks[5].Succs = {1};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X >= 1 && X <= 3 ? X + 100 : 99;
+  };
+  for (uint64_t X : {0, 1, 2, 3, 5})
+    ASSERT_EQ(execute(F, X, true), Expected(X));
+  detectAndConvertLoops(F, {}, Med, false);
+  for (uint64_t X : {0, 1, 2, 3, 5}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X, true), Expected(X));
+  }
 }
 
 TEST(HighControlFlowSemantics, OuterLoopTransfersKeepTheirNestedLoopScope) {
@@ -4372,6 +4531,139 @@ TEST(HighControlFlowSemantics, JoinValueChainFoldsAJumpToTheUse) {
     walkStmts(F.Body,
               [&](const HighStmt &S) { HasGoto |= S.Kind == StmtKind::Goto; });
     EXPECT_FALSE(HasGoto) << "the jump to the use becomes fallthrough";
+  }
+}
+
+TEST(HighControlFlowSemantics, ElseJumpPastTheNextStatementStays) {
+  // `y = 7; z = 0; if (x != 0) { if (x == 1) y = 1; else if (x == 2) y = 2;
+  // else goto T; z = 5; } T: return y + z;` The inner `else goto T` skips
+  // `z = 5`; T is where the outer if falls through, not where this else arm
+  // does.
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1010;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {assign(0x1014, 1, 2)};
+  Inner.ElseBody = {jump(0x1018, 0x1100)};
+  HighStmt Middle;
+  Middle.Kind = StmtKind::IfElse;
+  Middle.Addr = 0x1008;
+  Middle.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  Middle.Body = {assign(0x100c, 1, 1)};
+  Middle.ElseBody = {Inner};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {Middle, assign(0x1020, 3, 5)};
+  HighFunc F;
+  F.Body = {
+      assign(0x1000, 1, 7), assign(0x1002, 3, 0), Outer,
+      result(0x1100, HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(3)))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 0 ? 7 : X == 1 ? 6 : X == 2 ? 7 : 7;
+  };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  HighFunc Late = F;
+  structureIfElse(F, 10);
+  invertSkipGotos(Late);
+  for (uint64_t X : {0, 1, 2, 3}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+    EXPECT_EQ(execute(Late, X), Expected(X));
+  }
+}
+
+/// A store to the one memory slot the skip-over tests observe.
+HighStmt storeSlot(va_t Address, ExprPtr Value) {
+  HighStmt S;
+  S.Kind = StmtKind::Store;
+  S.Addr = Address;
+  S.StoreAddr = HighExpr::makeConst(0x100, 8);
+  S.StoreVal = std::move(Value);
+  return S;
+}
+
+ExprPtr loadSlot() {
+  return HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
+}
+
+TEST(HighControlFlowSemantics, SkipOverWorkStaysOnTheOuterElsePath) {
+  // `*m = 0; w = 0; if (x != 0) { if (x == 2) { w = 1; goto J; } } else
+  // { w = 3; } *m = 7; J: return *m + w;` The outer else runs into the store
+  // too; moving it under the inner test would skip it there.
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {assign(0x1010, 1, 1), jump(0x1014, 0x1100)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1004;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {Inner};
+  Outer.ElseBody = {assign(0x1008, 1, 3)};
+  HighFunc F;
+  F.Body = {
+      storeSlot(0x0ff0, HighExpr::makeConst(0, 8)), assign(0x1000, 1, 0), Outer,
+      storeSlot(0x1020, HighExpr::makeConst(7, 8)),
+      result(0x1100, HighExpr::makeBinop(NdOp::INT_ADD, loadSlot(), local(1)))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 0 ? 10 : X == 2 ? 1 : 7;
+  };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  HighFunc Late = F;
+  structureIfElse(F, 10);
+  invertSkipGotos(Late);
+  for (uint64_t X : {0, 1, 2, 3}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+    EXPECT_EQ(execute(Late, X), Expected(X));
+  }
+}
+
+TEST(HighControlFlowSemantics, PredicateChainKeepsItsPrefixPath) {
+  // `*m = 0; w = 0; if (x != 0) { w = 5; if (x == 2) { *m = w + 1; goto J; } }
+  // *m = w + 100; J: return *m;` When x != 0 fails the inner test, `w = 5`
+  // still ran before the else work; `if (x != 0 && x == 2)` would skip it.
+  auto Plus = [](uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                               HighExpr::makeConst(N, 8));
+  };
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {storeSlot(0x1010, Plus(1)), jump(0x1014, 0x1100)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {assign(0x1008, 1, 5), Inner};
+  HighFunc F;
+  F.Body = {storeSlot(0x0ff0, HighExpr::makeConst(0, 8)), assign(0x1000, 1, 0),
+            Outer, storeSlot(0x1020, Plus(100)), result(0x1100, loadSlot())};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 0 ? 100 : X == 2 ? 6 : 105;
+  };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  HighFunc Late = F;
+  structureIfElse(F, 10);
+  invertSkipGotos(Late);
+  for (uint64_t X : {0, 1, 2, 3}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(F, X), Expected(X));
+    EXPECT_EQ(execute(Late, X), Expected(X));
   }
 }
 

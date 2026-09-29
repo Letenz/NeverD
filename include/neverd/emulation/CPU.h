@@ -55,7 +55,8 @@ private:
   std::unique_ptr<Storage> State;
 };
 /// CPU execution over an explicitly selected guest ISA and execution contract.
-/// This interface supplies no guest OS, ABI, loader or privilege environment.
+/// Privilege and memory access follow the selected execution contract.
+/// This interface supplies no guest OS, ABI or loader.
 class ExecutionBackend : public GuestMemory {
 public:
   using XmmValue = RegisterValue;

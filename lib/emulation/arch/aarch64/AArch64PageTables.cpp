@@ -11,8 +11,8 @@
 #include <cstring>
 
 namespace neverd::emulation {
-llvm::Error buildAArch64PageTables(MemoryProjection &Memory) {
-  if (!Memory.needsProjection())
+llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
+  if (!Memory.needsProjection(UserMode))
     return llvm::Error::success();
   if (auto E = Memory.validateMappings(aarch64::canonicalRange))
     return E;
@@ -53,9 +53,14 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory) {
     }
     uint64_t Entry =
         PA | TableDescriptor | AccessFlag | InnerShareable | UserNX;
-    if (!Permissions)
+    if (!(Permissions & GuestAccessPermissions))
       Entry = 0;
     else {
+      if (UserMode && (Permissions & UserAccessible)) {
+        Entry |= UserPage | PrivilegedNX;
+        if (Permissions & Execute)
+          Entry &= ~UserNX;
+      }
       if (!(Permissions & Write))
         Entry |= ReadOnly;
       if (!(Permissions & Execute))
@@ -73,7 +78,7 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory) {
   for (const auto &[VA, Page] : Memory.mappings())
     if (auto E = Map(VA, Page.Physical, Page.Permissions))
       return E;
-  Memory.commitProjection();
+  Memory.commitProjection(UserMode);
   return llvm::Error::success();
 }
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,

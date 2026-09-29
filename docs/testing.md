@@ -349,6 +349,20 @@ cmake --build build-cpu --target NeverDCPUEmulationTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDCPUEmulationTests$' --output-on-failure
 ```
 
+`NeverDUserExecutionTests` also builds with Unicorn disabled. It validates
+CPL3/EL0 checked execution, user stacks, user/supervisor page and alias rights,
+permission revocation, recoverable protection faults, CPU contexts and address
+space switching. Its `UserProjection` cases deliberately bypass instruction
+admission and memory preflight: real machine execution must allow user loads
+and reject supervisor memory, non-executable data, read-only stores and
+privileged instructions. Warm translations must observe revocation. Missing
+transports/host ISAs are reported as skips, never native execution coverage.
+
+```bash
+cmake --build build-cpu --target NeverDUserExecutionTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDUserExecutionTests$' --output-on-failure
+```
+
 `NeverDExecutionConfigurationTests` builds even with Unicorn disabled. It checks
 static capabilities against the same resolver used by the factory, rejects
 unsupported requirements without changing an attached address space, separates
