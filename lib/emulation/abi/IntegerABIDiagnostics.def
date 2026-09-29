@@ -1,0 +1,16 @@
+//===- IntegerABIDiagnostics.def - Call boundary failures ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_ABI_DIAGNOSTIC(UnknownConvention, "unknown integer calling convention")
+NEVERD_ABI_DIAGNOSTIC(Architecture,
+                      "integer calling convention does not match the guest CPU")
+NEVERD_ABI_DIAGNOSTIC(StackRange,
+                      "integer call stack or argument range overflows")
+NEVERD_ABI_DIAGNOSTIC(StackAlignment,
+                      "integer call violates the ABI stack alignment")
+NEVERD_ABI_DIAGNOSTIC(StackCapacity,
+                      "integer call frame exceeds the supplied stack")
+NEVERD_ABI_DIAGNOSTIC(StackAccess,
+                      "integer call frame requires writable guest RAM")
