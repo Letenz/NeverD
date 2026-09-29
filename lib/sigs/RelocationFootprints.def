@@ -5,9 +5,10 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The bytes of an object's code that a relocation may leave different in
-/// the linked image, which a pattern line leaves unstated.  Define the macros
-/// a consumer reads before including this file; the others expand to nothing.
+/// The bytes of an object's code that a relocation, or a Mach-O linker
+/// optimization hint, may leave different in the linked image, which a
+/// pattern line leaves unstated.  Define the macros a consumer reads before
+/// including this file; the others expand to nothing.
 ///
 ///   NEVERD_COFF_<MACHINE>_RELOCATION(Type, Width)
 ///       a COFF relocation of Type rewrites Width bytes at its offset
@@ -18,6 +19,15 @@
 ///       so may every type from First to Last not listed one by one
 ///   NEVERD_ELF_ARM_UNSUPPORTED_RELOCATION(Type)
 ///       a type in such a range that a relocatable object does not hold
+///   NEVERD_MACHO_<CPU>_RELOCATION(Type, Before, Width)
+///       a Mach-O relocation of Type may rewrite Before + Width bytes from
+///       Before bytes ahead of its field
+///   NEVERD_MACHO_<CPU>_SIZED_RELOCATION(Type)
+///       a Mach-O relocation of Type rewrites the 1 << r_length bytes of its
+///       field
+///   NEVERD_MACHO_OPTIMIZATION_HINT(CPUType, Width)
+///       a linker optimization hint of a Mach-O object for CPUType lets the
+///       linker rewrite the Width bytes of each instruction it names
 ///   NEVERD_OTHER_RELOCATION(Width)
 ///       a relocation of any other object rewrites Width bytes
 ///
@@ -55,6 +65,21 @@
 #endif
 #ifndef NEVERD_ELF_ARM_UNSUPPORTED_RELOCATION
 #define NEVERD_ELF_ARM_UNSUPPORTED_RELOCATION(Type)
+#endif
+#ifndef NEVERD_MACHO_ARM64_RELOCATION
+#define NEVERD_MACHO_ARM64_RELOCATION(Type, Before, Width)
+#endif
+#ifndef NEVERD_MACHO_ARM64_SIZED_RELOCATION
+#define NEVERD_MACHO_ARM64_SIZED_RELOCATION(Type)
+#endif
+#ifndef NEVERD_MACHO_X86_64_RELOCATION
+#define NEVERD_MACHO_X86_64_RELOCATION(Type, Before, Width)
+#endif
+#ifndef NEVERD_MACHO_X86_64_SIZED_RELOCATION
+#define NEVERD_MACHO_X86_64_SIZED_RELOCATION(Type)
+#endif
+#ifndef NEVERD_MACHO_OPTIMIZATION_HINT
+#define NEVERD_MACHO_OPTIMIZATION_HINT(CPUType, Width)
 #endif
 #ifndef NEVERD_OTHER_RELOCATION
 #define NEVERD_OTHER_RELOCATION(Width)
@@ -285,7 +310,56 @@ NEVERD_ELF_ARM_RELOCATIONS(R_ARM_NONE, R_ARM_TLS_IE12GP, 0, 4)
 NEVERD_ELF_ARM_RELOCATIONS(R_ARM_THM_BF16, R_ARM_THM_BF18, 0, 4)
 
 //===----------------------------------------------------------------------===//
-// Any other object: a relocation is taken to cover four bytes.
+// Mach-O.  Every arm64 code relocation patches one instruction, and a
+// pointer or a difference rewrites the bytes its r_length states.  A Mach-O
+// object of another CPU type has no rows: the functions its relocations patch
+// are left out.
+//===----------------------------------------------------------------------===//
+
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_BRANCH26, 0, 4)
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_PAGE21, 0, 4)
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_PAGEOFF12, 0, 4)
+// ld64 may turn a GOT load it resolves in place into an address computation,
+// ADRP and LDR into ADRP and ADD or into NOP and ADR: still one instruction
+// each.
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_GOT_LOAD_PAGE21, 0, 4)
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_GOT_LOAD_PAGEOFF12, 0, 4)
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_TLVP_LOAD_PAGE21, 0, 4)
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_TLVP_LOAD_PAGEOFF12, 0, 4)
+// The addend of the PAGE21, PAGEOFF12 or BRANCH26 that follows it at the same
+// address, which covers the instruction itself.
+NEVERD_MACHO_ARM64_RELOCATION(ARM64_RELOC_ADDEND, 0, 0)
+NEVERD_MACHO_ARM64_SIZED_RELOCATION(ARM64_RELOC_UNSIGNED)
+NEVERD_MACHO_ARM64_SIZED_RELOCATION(ARM64_RELOC_SUBTRACTOR)
+NEVERD_MACHO_ARM64_SIZED_RELOCATION(ARM64_RELOC_POINTER_TO_GOT)
+NEVERD_MACHO_ARM64_SIZED_RELOCATION(ARM64_RELOC_AUTHENTICATED_POINTER)
+
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_SIGNED, 0, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_SIGNED_1, 0, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_SIGNED_2, 0, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_SIGNED_4, 0, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_BRANCH, 0, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_GOT, 0, 4)
+// ld64 turns a GOT or thread-local variable load it resolves in place from
+// `movq` into `leaq` (OutputFile::applyFixUps rewrites the opcode two bytes
+// ahead of the field), as an ELF linker relaxes GOTPCRELX.
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_GOT_LOAD, 2, 4)
+NEVERD_MACHO_X86_64_RELOCATION(X86_64_RELOC_TLV, 2, 4)
+NEVERD_MACHO_X86_64_SIZED_RELOCATION(X86_64_RELOC_UNSIGNED)
+NEVERD_MACHO_X86_64_SIZED_RELOCATION(X86_64_RELOC_SUBTRACTOR)
+
+// An arm64 object's linker optimization hints (LC_LINKER_OPTIMIZATION_HINT)
+// name the instructions of an address computation -- ADRP, the ADD or LDR
+// that completes it, and the load or store that uses the address -- that the
+// linker may fold into fewer.  It rewrites that last load or store too, which
+// carries no relocation of its own: its offset takes in the ADD's, or it
+// becomes a PC-relative literal load.  An object of another CPU type has no
+// row: the functions its hints name are left out.
+NEVERD_MACHO_OPTIMIZATION_HINT(CPU_TYPE_ARM64, 4)
+
+//===----------------------------------------------------------------------===//
+// Any other object, of neither COFF, ELF nor Mach-O: a relocation is taken to
+// cover four bytes.
 //===----------------------------------------------------------------------===//
 
 NEVERD_OTHER_RELOCATION(4)
@@ -301,4 +375,9 @@ NEVERD_OTHER_RELOCATION(4)
 #undef NEVERD_ELF_ARM_RELOCATION
 #undef NEVERD_ELF_ARM_RELOCATIONS
 #undef NEVERD_ELF_ARM_UNSUPPORTED_RELOCATION
+#undef NEVERD_MACHO_ARM64_RELOCATION
+#undef NEVERD_MACHO_ARM64_SIZED_RELOCATION
+#undef NEVERD_MACHO_X86_64_RELOCATION
+#undef NEVERD_MACHO_X86_64_SIZED_RELOCATION
+#undef NEVERD_MACHO_OPTIMIZATION_HINT
 #undef NEVERD_OTHER_RELOCATION

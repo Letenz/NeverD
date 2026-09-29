@@ -12,13 +12,15 @@ Tooling that builds the `.pat` signatures in the `signatures` submodule
 ## What a signature line says
 
 Every line is produced by `neverd-sigmaker` from a real library, and states
-the bytes of one function with a wildcard wherever a relocation rewrites
+the bytes of one function with a wildcard wherever the linker may rewrite
 them. The tail starts where the CRC span ends. A function whose line would
-state fewer than sixteen bytes exactly is not written at all. `neverd::sigs::PatternGenerator` owns those rules, including how wide
-each COFF relocation is. The name on a line is the linkage name the
-library's symbol table spells, byte for byte: `?Close@CFile@@UEAAXXZ`,
-`_ZNSt6thread4joinEv`, x86 `_memcpy`. It is never demangled, sanitized,
-prefixed, or truncated. One public name sits at offset 0 of each line.
+state fewer than sixteen bytes exactly is not written at all. `neverd::sigs::PatternGenerator` owns those rules, including the bytes
+each COFF, ELF and Mach-O relocation may rewrite, and the arm64 instructions
+a Mach-O linker optimization hint names. The name on a line is the
+linkage name the library's symbol table spells, byte for byte:
+`?Close@CFile@@UEAAXXZ`, `_ZNSt6thread4joinEv`, x86 `_memcpy`, Mach-O
+`_deflate`. It is never demangled, sanitized, prefixed, or truncated. One
+public name sits at offset 0 of each line.
 
 ## Why the exception-runtime databases exist
 
@@ -263,4 +265,6 @@ Every file written is read back through `neverd-sigmaker --verify`, which uses
 the loader's parser, because one bad line makes the loader reject its whole
 directory. A `<name>.sources.json` file next to each `.pat` records the assets
 it was built from, with their archive digests and toolset or SDK versions, and
-the NeverD revision and release tag that produced it.
+the NeverD revision and release tag that produced it. A Homebrew asset also
+records its formula and each bottle's tag and SHA-256, by which Homebrew's
+registry serves the bottle.
