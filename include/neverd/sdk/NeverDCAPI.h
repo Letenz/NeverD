@@ -29,6 +29,7 @@
 ///   - NeverDCAPITranslate.h -- x86-64 to AArch64 relocatable objects
 ///   - NeverDCAPIEmulation.h -- bounded Windows driver initialization
 ///   - NeverDCAPICPU.h     -- CPU configuration and capability queries
+///   - NeverDCAPIProcess.h -- explicit guest process workloads
 ///
 //===----------------------------------------------------------------------===//
 
@@ -43,6 +44,7 @@
 #include "neverd/sdk/NeverDCAPIPatch.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIPlugin.h"
+#include "neverd/sdk/NeverDCAPIProcess.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
 #include "neverd/sdk/NeverDCAPISafety.h"
 #include "neverd/sdk/NeverDCAPISession.h"

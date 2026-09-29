@@ -3682,6 +3682,90 @@
       }
     },
     {
+      "id": "emulation.linux-process",
+      "kind": "execution",
+      "status": "experimental",
+      "owner": "emulation",
+      "targets": [
+        "x86_64",
+        "aarch64"
+      ],
+      "docs": [
+        "docs/process-emulation.md",
+        "docs/architecture.md",
+        "docs/testing.md"
+      ],
+      "limitations": [
+        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, PT_DYNAMIC, PT_TLS, page-overlapping loads and unsupported CPU instructions fail clearly.",
+        "Only write, exit, exit_group, getpid and gettid are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
+        "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
+        "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
+        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.RejectsMalformedRequestsBeforeWorkloadConstruction",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessLayoutTests.cpp",
+          "filter": "LinuxProcessLayout.RejectsContradictoryABIAndSegmentLayoutFacts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.ReturnsOutputAndGuestStatusWithoutLoadingAnalysisImage",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.CLIHasTheSameReportAndSeparatesGuestFailureFromIncomplete",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_emulate_process_json"
+        ],
+        "python": [
+          "Session.emulate_process"
+        ],
+        "cli": [
+          "neverd emulate",
+          "neverd emulate --profile",
+          "neverd emulate --options"
+        ],
+        "json": [
+          "neverd_emulate_process_json"
+        ]
+      }
+    },
+    {
       "id": "emulation.windows-driver-initialization",
       "kind": "execution",
       "status": "experimental",

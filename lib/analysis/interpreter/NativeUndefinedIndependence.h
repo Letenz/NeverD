@@ -43,6 +43,13 @@ NativeLowIRRefinementResult checkNativeLowIRRefinement(
     LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
     const LowIRLoopRefinementPlan *LoopPlan = nullptr);
 
+LowIRLoopInferenceResult
+inferNativeLowIRLoopRefinementPlan(SpecializationProvider &Provider,
+                                   const LowFunc &Candidate,
+                                   const LowIRIndependenceContract &Contract,
+                                   const LowIRLoopInferenceLimits &Limits,
+                                   llvm::ArrayRef<va_t> EligibleCutpoints);
+
 } // namespace neverd::analysis::detail
 
 #endif

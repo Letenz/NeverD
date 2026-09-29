@@ -825,6 +825,8 @@ Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1`
 
 `checkLowIRLoopRefinement` and `checkBinaryLowIRLoopRefinement` add separately typed inductive certificates. Explicit paired cutpoints and pure scalar LowIR state templates are proof candidates: the shared executor checks real-entry initiation, complete segment coverage, every feasible successor, invariant preservation and terminal observations. All cut-to-cut edges must strictly decrease a finite unsigned lexicographic rank; parameter projections prevent a template from resetting that rank without machine progress. Templates start from the common entry state or, with `UseEntryPrefix`, an actually reached paired prefix whose predicate must also be preserved. They check every modified register and the entire frame at cuts, and retain earlier-iteration memory effects in final observations. Each side currently requires a unique address per cutpoint; automatic invariant/rank discovery and arbitrary control alignment are outside this API. Missing cuts, false invariants, wraparound, unproved termination, unsupported semantics or any exhausted shared budget refuse a certificate. The plan, every native segment and original evidence are digest-bound. Finite refinement and strict independence keep their existing meanings; inductive refinement still does not certify a C backend or a physical CPU's undefined-bit choices.
 
+`inferLowIRLoopRefinementPlan` proposes bounded templates using the shared symbolic executor. Feedback cutpoints cover every CFG cycle; widening retains proved fixed bits and prunes unsigned prefix bounds. Observed unit counters and inferred phases form lexicographic ranks for nested ascending or descending loops. `OriginalPrefix` and `CandidatePrefix` require `UseEntryPrefix`. A cut behind earlier cuts can use a separate bounded replay from the real entry to establish a feasible paired prefix witness. This witness does not cover the entry domain: every actual arrival must imply its predicate, and complete entry and transition coverage remain mandatory. `inferAndCheckBinaryLowIRLoopRefinement` requires complete recovery and unique native origins, then independently reruns the full original/candidate checker. Proposals and origin mappings are untrusted; only `Refinement` can contain a certificate. Inference and proof keep separate explicit budgets. This C++ API does not run automatically with `--devirtualize`. Unreachable prefixes, arbitrary control alignment, rank families outside the search, C-backend equivalence and physical CPU choices for undefined bits remain unsupported.
+
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|
 | LowIR | Architecture-neutral `NdOp` operations, basic blocks, CFG, and jump-table metadata | `include/neverd/ir/low`, `lib/ir/low`, produced by `lib/decode` + `lib/lift` |
@@ -1132,7 +1134,12 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
 | `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
-| `NeverDEmulation` | Windows image/ABI, API model, policy and driver lifecycle |
+| `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
+| `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
+| `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
+| `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
+| `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
 The four CPU components declare LLVM Support as their LLVM dependency.
 Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
@@ -1149,8 +1156,10 @@ lib/emulation/
   backends/unicorn/      Portable machine execution
   backends/kvm/          Linux host virtualization
   backends/whp/          Windows host virtualization
-  runtime/               Backend selection and CPU/machine composition
+  abi/                   Guest calling conventions independent of OS and CPU transport
+  runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
+  os/linux/              Linux ELF process startup and system-call ABI/services
 ```
 
 `core` has no implementation dependency on an architecture, backend or guest
@@ -1161,19 +1170,40 @@ composition and the host/guest selection rules. Windows code uses the public
 CPU and memory interfaces, and its CMake source inventory stays in
 `os/windows/CMakeLists.txt`. The existing public headers remain compatible.
 
+[`IntegerABI`](../include/neverd/emulation/IntegerABI.h) owns Win64, SysV
+AMD64 and AAPCS64 call-frame operations for non-variadic 64-bit integer/pointer
+arguments and a single 64-bit result. The Windows driver executor uses the same
+boundary as other CPU clients. Stack arguments, shadow space, return-address
+placement, alignment and the SysV red zone come from one `.def` inventory.
+Caller payloads stay above all parameters; invalid layouts and inaccessible
+frames fail before mutation. Floating-point, aggregates, variadic type
+classification and platform-specific ARM64 ABI extensions are separate work.
+The rules follow the [Microsoft x64 convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention),
+[System V AMD64 ABI](https://gitlab.com/x86-psABIs/x86-64-ABI/-/blob/master/low-level-sys-info.tex)
+and [AAPCS64](https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst).
+
+[`ExecutionBudget`](../include/neverd/emulation/ExecutionBudget.h) owns one
+non-copyable instruction/event account and absolute monotonic deadline per
+workload. OS models share it across invocations and continuations; resuming a
+CPU does not replenish credit or restart the timeout. Instructions count
+admitted attempts, including modeled instructions, rather than hardware
+retirement. The Windows model retains its existing thunk/event admission and
+exception/scheduling policies. This accounting boundary does not introduce a
+generic scheduler or a hard native cancellation deadline.
+
 The `os` directory describes the **guest** environment. Linux-host KVM can
 execute a Windows guest workload; the host never chooses its OS model.
 `DriverSession`, driver scenario parsing and reports belong to `os/windows`,
 because their lifecycle and objects are Windows-specific. The current Windows
 implementation remains one driver environment; moving it does not imply a
-generic process session or a completed Windows user-mode environment.
+completed Windows user-mode environment.
 When a process environment is added, keep its entry point, loader policy and
 user ABI separate from the kernel workload. Move shared OS primitives into a
 common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
 
-Future Linux and Darwin implementations belong beside Windows. Android-specific
+The Linux process environment lives beside Windows. Android-specific
 APIs and runtimes should build on the applicable Linux kernel contracts under
 `os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
 separates its runtime and framework from the kernel. macOS and iOS models should
@@ -1181,9 +1211,31 @@ share applicable Darwin primitives while keeping platform APIs and ABI/version
 profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
 [XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
 identifies their shared kernel foundation. These are extension locations, not
-implemented environments. Add them with real workloads rather than empty
+implemented Android or Darwin environments. Add them with real workloads rather than empty
 classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
 remain explicit OS/workload requirements, independent of the CPU transport.
+
+[`ExecutionSession`](../include/neverd/emulation/ExecutionSession.h) owns one CPU,
+its hooks and pending service/fault continuation. Sessions may share a budget,
+address space and physical bytes while scheduling cooperative quanta. A pending
+request must be consumed once before resumption. CPU failure outranks a
+simultaneous resource stop, and an unexplained engine stop is never workload
+success. This does not claim concurrent SMP execution.
+
+[`ImageMappingPlan`](../include/neverd/emulation/ImageMapping.h) consumes existing
+loader segments; it neither reparses headers nor resolves imports. ELF loaders
+also retain decoded program-header facts in `BinaryImage::ELFMetadata`, allowing
+Linux policy to validate startup without duplicating ELF parsing. Image plans
+check complete extents and overlap before materializing bytes. The Linux model
+sets up a private address space before exposing its CPU.
+
+The [process API](process-emulation.md) adds an explicit `linux-elf64-v1` profile
+through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
+and AArch64 freestanding executables with stack/auxv initialization, typed
+system-call continuations and bounded byte output. It currently rejects dynamic
+linking, TLS, signals and thread creation. Those OS semantics remain in
+`os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
+from WHP. The Windows driver lifecycle remains independently available.
 
 ```mermaid
 flowchart TD

@@ -47,6 +47,8 @@ pipeline. Control hints separate decoder contexts without fixing runtime inputs.
 Unresolved control, unsupported semantics, and exhausted budgets fail explicitly;
 this mode does not certify binary replacement or exception equivalence.
 
+The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
+
 ## Why NeverD?
 
 - **1:1 semantics** — hand-written lifters; unsupported opcodes throw under default strict mode

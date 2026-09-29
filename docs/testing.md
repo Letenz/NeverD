@@ -213,6 +213,10 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopRefinement.*` and `BinaryLowIRLoopRefinement.*` in the same target exercise arbitrary 64-bit counts, nested lexicographic ranks, actual native residuals, entry-prefix templates, overlapping views and correlated spills. Negative controls reject incorrect bodies, narrowed entry domains, nondecreasing ranks, unsigned wraparound, forgotten prior writes, missing cuts, malformed templates and exhausted shared budgets. Successful finite siblings never authorize an incomplete induction proof.
 
+`LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
+
+Nested inference regressions include two and three levels, ascending and descending counters, inferred phase constants and actual native body cutpoints. Unreachable or disjoint prefix domains, incorrect bodies, infinite or wrapping transitions, and exhausted shared search/proof budgets must refuse. Prefix witnesses never replace complete segment coverage.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests
@@ -313,6 +317,25 @@ and malformed operands must fail explicitly.
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
 ## CPU execution checks
+
+`NeverDIntegerABITests` builds three original Clang fixtures for Windows x64,
+Linux x64 and Linux ARM64. The compiled ten-argument functions exercise real
+register/stack parameters, local stack storage, return addresses and balanced
+returns under checked user execution. The matrix uses Unicorn, KVM and WHP;
+unavailable host/ISA pairs are explicit skips. Layout overflow, ABI mismatch,
+frame permissions, payload separation, unused registers and the SysV red zone
+have independent boundary checks. These are scalar call tests, not evidence of
+a complete OS process environment.
+
+`NeverDExecutionBudgetTests` checks shared continuation credit, failed
+reservations, `UINT64_MAX`, one absolute deadline and unrepresentable durations
+without timing-dependent sleeps. Driver lifecycle regression tests exercise the
+same ABI and budget components in real callback, API and SEH flows.
+
+```bash
+cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget)Tests$' --output-on-failure
+```
 
 `NeverDRunControlTests` runs with or without Unicorn and without a hypervisor.
 It checks cancellation before host entry, repeated requests until acknowledgement,
@@ -443,6 +466,17 @@ sustained interruption. The x64 and ARM64 transports share this retry boundary;
 native guest execution remains covered by the architecture suites above.
 
 ## Driver emulation checks
+
+The independent [process emulation suites](process-emulation.md#verification)
+compile real x64/AArch64 ELF process fixtures. `NeverDLinuxProcessTests` verifies
+startup, program-header policy, service continuation, binary output, guest
+faults and resource stops across configured transports. `NeverDProcessPublicTests`
+checks the shared C API/CLI without mutating a loaded analysis image.
+`NeverDExecutionSessionTests` covers two CPUs sharing memory and budgets,
+exactly-once service/fault consumption and image mapping plans.
+`NeverDX64MemoryUpdateTests` checks memory INC/DEC widths, flags, read/write
+permissions and observer stops. The public Python wrapper also participates in
+the ordinary Python SDK tests and declaration audit.
 
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context

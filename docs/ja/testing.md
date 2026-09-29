@@ -57,6 +57,10 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 同じターゲットの `LowIRLoopRefinement.*` と `BinaryLowIRLoopRefinement.*` は、任意の64ビット回数、入れ子の辞書式順位、実際のネイティブ残余コード、入口接頭区間のテンプレート、重なるビューと相関した退避を検査します。誤った本体、入口領域の縮小、減少しない順位、符号なし回り込み、過去の書き込みの欠落、切断点の欠落、不正なテンプレート、共有予算の枯渇を負例で拒否します。有限の兄弟経路が成功しても不完全な帰納証明は承認されません。
 
+`LowIRLoopInference.*` と `BinaryLowIRLoopInference.*` は独立に作成したカウンター、スタック保存、早期リターン、ネイティブ呼び出し、パック済みフラグを使用します。狭い幅の算術拡大と、式は異なるが意味が等しいフラグを検証します。不正なグラフ、欠落／偽造した起源、非停止やラップするループ、推論／証明予算の枯渇で証明書を生成してはいけません。
+
+入れ子推論の回帰は二重・三重ループ、増加・減少カウンタ、自動段階定数、実ネイティブループ本体の切断点を検査します。到達不能または互いに排他的な接頭辞領域、誤った本体、無限・折り返し遷移、共有探索／証明予算の枯渇は拒否されます。接頭辞の証拠は完全な区間網羅の代わりにはなりません。
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

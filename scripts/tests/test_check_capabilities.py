@@ -3198,6 +3198,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "debug.local": "unsupported",
                 "debug.remote": "unsupported",
                 "emulation.cpu-configuration": "experimental",
+                "emulation.linux-process": "experimental",
                 "emulation.windows-driver-initialization": "experimental",
                 "exception.itanium.ada-d": "experimental",
                 "exception.rewrite.end-to-end": "unsupported",
@@ -3215,6 +3216,22 @@ class RepositoryCapabilityTests(unittest.TestCase):
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "emulation.linux-process": {
+                "c": [
+                    "neverd_emulate_process_json"
+                ],
+                "python": [
+                    "Session.emulate_process"
+                ],
+                "cli": [
+                    "neverd emulate",
+                    "neverd emulate --profile",
+                    "neverd emulate --options"
+                ],
+                "json": [
+                    "neverd_emulate_process_json"
+                ]
+            },
             "emulation.cpu-configuration": {
                 "c": ["neverd_cpu_capabilities_json"],
                 "python": ["Session.cpu_capabilities"],

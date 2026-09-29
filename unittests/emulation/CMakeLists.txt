@@ -1,3 +1,74 @@
+add_neverd_unittest(NeverDExecutionSessionTests
+  ExecutionSessionTests.cpp
+  ImageMappingTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationRuntime EmulationImage)
+
+add_neverd_unittest(NeverDX64MemoryUpdateTests
+  X64MemoryUpdateTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
+add_neverd_unittest(NeverDLinuxProcessTests
+  LinuxProcessTests.cpp
+  LinuxProcessLayoutTests.cpp
+  ProcessReportTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationProcess)
+target_include_directories(NeverDLinuxProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(TARGET neverd_shared AND TARGET neverd)
+  add_neverd_unittest(NeverDProcessPublicTests
+    ProcessPublicTests.cpp
+    TIMEOUT 30
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDProcessPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDProcessPublicTests PRIVATE
+    NEVERD_PROCESS_CLI="$<TARGET_FILE:neverd>")
+  if(NOT APPLE)
+    target_link_libraries(NeverDProcessPublicTests PRIVATE LLVMSupport)
+  endif()
+  add_dependencies(NeverDProcessPublicTests neverd)
+endif()
+include(ProcessFixtures.cmake)
+
+add_neverd_unittest(NeverDExecutionBudgetTests
+  ExecutionBudgetTests.cpp
+  LINK_COMPONENTS EmulationRuntime)
+
+add_neverd_unittest(NeverDIntegerABITests
+  IntegerABITests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationABI EmulationCPU
+  LINK_LIBS LLVMObject)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  set(_abi_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/abi-fixtures")
+  file(MAKE_DIRECTORY "${_abi_fixture_dir}")
+  set(_abi_outputs)
+  foreach(_abi_name Win64 SysVAMD64 AAPCS64)
+    if(_abi_name STREQUAL "Win64")
+      set(_abi_target x86_64-pc-windows-msvc)
+    elseif(_abi_name STREQUAL "SysVAMD64")
+      set(_abi_target x86_64-unknown-linux-gnu)
+    else()
+      set(_abi_target aarch64-unknown-linux-gnu)
+    endif()
+    set(_abi_object "${_abi_fixture_dir}/${_abi_name}.obj")
+    add_custom_command(OUTPUT "${_abi_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_abi_target}"
+        -std=c11 -ffreestanding -fno-stack-protector -fno-vectorize
+        -fno-slp-vectorize -O1 -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/integer_call.c" -o "${_abi_object}"
+      DEPENDS fixtures/integer_call.c
+      VERBATIM)
+    list(APPEND _abi_outputs "${_abi_object}")
+  endforeach()
+  add_custom_target(NeverDIntegerABIFixtures DEPENDS ${_abi_outputs})
+  add_dependencies(NeverDIntegerABITests NeverDIntegerABIFixtures)
+  target_compile_definitions(NeverDIntegerABITests PRIVATE
+    NEVERD_ABI_FIXTURE_DIR="${_abi_fixture_dir}")
+endif()
+
 add_neverd_unittest(NeverDServiceRequestTests
   ServiceRequestTests.cpp
   TIMEOUT 15

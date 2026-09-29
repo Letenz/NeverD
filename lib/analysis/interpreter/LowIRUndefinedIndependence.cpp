@@ -347,6 +347,11 @@ struct RefinementSession {
   const LowIRLoopRefinementPlan *LoopPlan = nullptr;
   std::optional<TerminalState> OriginalStart, CandidateStart;
   int StartingCutpoint = -1;
+  // An entry replay may seek one prefix behind earlier cuts. It still starts
+  // from the shared real entry and finds a reachable prefix witness only.
+  // Full entry/transition coverage is checked separately, and every arrival
+  // must imply the witness predicate. No inductive state can seed this replay.
+  int PrefixSearchCutpoint = -1;
   std::set<uint64_t> RegisterBytes;
   std::vector<SymRef> StartingRank;
   SymRef SegmentPredicate;
@@ -364,6 +369,7 @@ struct RefinementSession {
 };
 
 class Checker {
+  friend class LoopPlanInference;
   const LowFunc *Function = nullptr;
   llvm::ArrayRef<LowIRUndefinedInstruction> Records;
   SpecializationProvider *Provider = nullptr;
@@ -443,6 +449,9 @@ class Checker {
         Provider ? P.NativeAddress : Blocks.at(P.BlockId)->StartAddr;
     const auto &Cuts = Refinement->LoopPlan->Cutpoints;
     for (size_t I = 0; I != Cuts.size(); ++I) {
+      if (Refinement->PrefixSearchCutpoint >= 0 &&
+          static_cast<size_t>(Refinement->PrefixSearchCutpoint) != I)
+        continue;
       const auto Expected = CandidateExecution ? Cuts[I].CandidateAddress
                                                : Cuts[I].OriginalAddress;
       if (Address != Expected)
@@ -457,6 +466,8 @@ class Checker {
                            static_cast<int>(I)});
       ++(CandidateExecution ? Refinement->CandidateCutpoints
                             : Refinement->OriginalCutpoints);
+      if (Refinement->PrefixSearchCutpoint >= 0)
+        Pending.clear();
       return true;
     }
     return false;
@@ -1675,8 +1686,15 @@ public:
         for (const auto &I : C.Inputs) {
           if (I.Side != LowIRLoopSide::Entry &&
               I.Side != LowIRLoopSide::Original &&
-              I.Side != LowIRLoopSide::Candidate)
+              I.Side != LowIRLoopSide::Candidate &&
+              I.Side != LowIRLoopSide::OriginalPrefix &&
+              I.Side != LowIRLoopSide::CandidatePrefix)
             fail(Status::Invalid, "unknown loop input side");
+          if ((I.Side == LowIRLoopSide::OriginalPrefix ||
+               I.Side == LowIRLoopSide::CandidatePrefix) &&
+              !C.UseEntryPrefix)
+            fail(Status::Invalid,
+                 "loop prefix input requires a checked prefix");
           Location(I.Location);
           if (!I.Temporary.isTemp() || !scalar(I.Temporary) ||
               I.Temporary.Size != I.Location.Bytes)
@@ -1756,17 +1774,39 @@ private:
   LoopTemplate loopTemplate(size_t Index, TerminalState *Original,
                             TerminalState *Candidate, SymRef Domain) {
     const auto &Cut = Refinement->LoopPlan->Cutpoints[Index];
+    auto &Prefix = Refinement->LoopPrefixes[Index];
+    if (Cut.UseEntryPrefix) {
+      if (!Prefix && Original && Candidate && Refinement->StartingCutpoint < 0)
+        Prefix = LoopPrefix{*Original, *Candidate, Domain};
+      if (!Prefix)
+        fail(Status::Unsupported,
+             "loop template has no reachable entry prefix");
+    }
     TerminalState Entry{*Refinement->Initial,
                         Refinement->Predicate,
                         Refinement->EntrySystem,
                         {},
                         {}};
+    const auto InputState = [&](LowIRLoopSide Side, TerminalState *O,
+                                TerminalState *C) -> TerminalState * {
+      switch (Side) {
+      case LowIRLoopSide::Entry:
+        return &Entry;
+      case LowIRLoopSide::Original:
+        return O;
+      case LowIRLoopSide::Candidate:
+        return C;
+      case LowIRLoopSide::OriginalPrefix:
+        return &Prefix->Original;
+      case LowIRLoopSide::CandidatePrefix:
+        return &Prefix->Candidate;
+      }
+      fail(Status::Invalid, "unknown loop input side");
+    };
     SymState Expressions(Ctx, Contract.ByteOrder);
     std::vector<SymRef> Inputs;
     for (const auto &I : Cut.Inputs) {
-      auto *State = I.Side == LowIRLoopSide::Entry      ? &Entry
-                    : I.Side == LowIRLoopSide::Original ? Original
-                                                        : Candidate;
+      auto *State = InputState(I.Side, Original, Candidate);
       const auto Value =
           State ? loopRead(*State, I.Location)
                 : Ctx.mkFreshVar(I.Location.Bytes * 8, "loop_input");
@@ -1792,12 +1832,6 @@ private:
       fail(Status::Invalid, "loop predicate is not a canonical Boolean");
     LoopTemplate T{Entry, Entry, Ctx.mkEq(Boolean, Ctx.mkConst(8, 1)), {}};
     if (Cut.UseEntryPrefix) {
-      auto &Prefix = Refinement->LoopPrefixes[Index];
-      if (!Prefix && Original && Refinement->StartingCutpoint < 0)
-        Prefix = LoopPrefix{*Original, *Candidate, Domain};
-      if (!Prefix)
-        fail(Status::Unsupported,
-             "loop template has no reachable entry prefix");
       T.Original = Prefix->Original;
       T.Candidate = Prefix->Candidate;
       T.Predicate = Ctx.mkAnd(T.Predicate, Prefix->Predicate);
@@ -1836,10 +1870,8 @@ private:
       const auto Assumption = Ctx.mkAnd(Domain, T.Predicate);
       for (size_t I = 0; I != Cut.Inputs.size(); ++I) {
         const auto &Input = Cut.Inputs[I];
-        auto &State = Input.Side == LowIRLoopSide::Entry      ? Entry
-                      : Input.Side == LowIRLoopSide::Original ? T.Original
-                                                              : T.Candidate;
-        equal(Assumption, loopRead(State, Input.Location), Inputs[I],
+        auto *State = InputState(Input.Side, &T.Original, &T.Candidate);
+        equal(Assumption, loopRead(*State, Input.Location), Inputs[I],
               "loop parameter projection");
       }
     }
@@ -1916,10 +1948,19 @@ public:
           fail(Status::Unsupported,
                "terminal paths do not cover the entry domain");
       };
-      Coverage(Refinement->OriginalReturns);
-      Coverage(Refinement->CandidateReturns);
+      const bool PrefixSearch = Refinement->PrefixSearchCutpoint >= 0;
+      if (!PrefixSearch) {
+        Coverage(Refinement->OriginalReturns);
+        Coverage(Refinement->CandidateReturns);
+      }
       for (auto &Original : Refinement->OriginalReturns)
         for (auto &Candidate : Refinement->CandidateReturns) {
+          // A prefix witness needs an actually executed, feasible pair. It
+          // cannot certify the entry domain or substitute for a loop segment.
+          if (PrefixSearch &&
+              (Original.Cutpoint != Refinement->PrefixSearchCutpoint ||
+               Candidate.Cutpoint != Refinement->PrefixSearchCutpoint))
+            continue;
           if (Refinement->TerminalPairs >= Refinement->Limits.MaxTerminalPairs)
             fail(Status::BudgetExceeded, "terminal-pair budget exhausted");
           ++Refinement->TerminalPairs;
@@ -2040,6 +2081,11 @@ public:
     try {
       if (!validateInput())
         return Result;
+      if (Refinement && Refinement->PrefixSearchCutpoint >= 0 &&
+          (Refinement->StartingCutpoint >= 0 || Refinement->OriginalStart ||
+           Refinement->CandidateStart))
+        fail(Status::Invalid,
+             "loop prefix search must start at the real entry");
       if (Provider)
         collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
@@ -2430,6 +2476,52 @@ refinementResult(RefinementSession &Session,
   return Result;
 }
 
+bool prepareCandidateRecords(
+    RefinementSession &Session,
+    std::vector<LowIRUndefinedInstruction> &CandidateRecords) {
+  const auto &Candidate = Session.Candidate;
+  const auto &Limits = Session.Limits;
+  // This is candidate semantic IR, not a claim of architecture coverage. Bound
+  // its input before copying records or seeding the common entry snapshot.
+  uint64_t Operations = 0;
+  if (Candidate.Blocks.size() > Limits.Execution.MaxBlockVisits) {
+    Session.Statistics.Status = Status::BudgetExceeded;
+    Session.Statistics.Diagnostic = "candidate block metadata budget exhausted";
+    return false;
+  }
+  for (const auto &B : Candidate.Blocks) {
+    if (B.Ops.size() > Limits.Execution.MaxOperations - Operations ||
+        B.InstructionBoundaries.size() >
+            Limits.Execution.MaxInstructions - CandidateRecords.size()) {
+      Session.Statistics.Status = Status::BudgetExceeded;
+      Session.Statistics.Diagnostic = "candidate metadata budget exhausted";
+      return false;
+    }
+    Operations += B.Ops.size();
+    for (const auto &Op : B.Ops)
+      if (Op.NumInputs > 6) {
+        Session.Statistics.Diagnostic = "candidate operand capacity exceeded";
+        return false;
+      }
+    for (const auto &Boundary : B.InstructionBoundaries) {
+      if (Boundary.FirstOp > B.Ops.size() ||
+          Boundary.OpCount > B.Ops.size() - Boundary.FirstOp) {
+        Session.Statistics.Diagnostic =
+            "candidate instruction span exceeds its block";
+        return false;
+      }
+      LowInstructionUndefinedEffects Effects;
+      Effects.Coverage = LowUndefinedCoverage::Complete;
+      Effects.OpCount = Boundary.OpCount;
+      Effects.OperationDigest =
+          lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
+              Boundary.FirstOp, Boundary.OpCount));
+      CandidateRecords.push_back({B.Id, Boundary, std::move(Effects)});
+    }
+  }
+  return true;
+}
+
 LowIRRefinementResult runRefinement(
     const LowFunc *Original,
     llvm::ArrayRef<LowIRUndefinedInstruction> OriginalInstructions,
@@ -2456,45 +2548,9 @@ LowIRRefinementResult runRefinement(
   }
   if (LoopPlan)
     Session.LoopPrefixes.resize(LoopPlan->Cutpoints.size());
-  // This is candidate semantic IR, not a claim of architecture coverage. Bound
-  // its input before copying records or seeding the common entry snapshot.
   std::vector<LowIRUndefinedInstruction> CandidateRecords;
-  uint64_t Operations = 0;
-  if (Candidate.Blocks.size() > Limits.Execution.MaxBlockVisits) {
-    Session.Statistics.Status = Status::BudgetExceeded;
-    Session.Statistics.Diagnostic = "candidate block metadata budget exhausted";
+  if (!prepareCandidateRecords(Session, CandidateRecords))
     return Finish(false);
-  }
-  for (const auto &B : Candidate.Blocks) {
-    if (B.Ops.size() > Limits.Execution.MaxOperations - Operations ||
-        B.InstructionBoundaries.size() >
-            Limits.Execution.MaxInstructions - CandidateRecords.size()) {
-      Session.Statistics.Status = Status::BudgetExceeded;
-      Session.Statistics.Diagnostic = "candidate metadata budget exhausted";
-      return Finish(false);
-    }
-    Operations += B.Ops.size();
-    for (const auto &Op : B.Ops)
-      if (Op.NumInputs > 6) {
-        Session.Statistics.Diagnostic = "candidate operand capacity exceeded";
-        return Finish(false);
-      }
-    for (const auto &Boundary : B.InstructionBoundaries) {
-      if (Boundary.FirstOp > B.Ops.size() ||
-          Boundary.OpCount > B.Ops.size() - Boundary.FirstOp) {
-        Session.Statistics.Diagnostic =
-            "candidate instruction span exceeds its block";
-        return Finish(false);
-      }
-      LowInstructionUndefinedEffects Effects;
-      Effects.Coverage = LowUndefinedCoverage::Complete;
-      Effects.OpCount = Boundary.OpCount;
-      Effects.OperationDigest =
-          lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
-              Boundary.FirstOp, Boundary.OpCount));
-      CandidateRecords.push_back({B.Id, Boundary, std::move(Effects)});
-    }
-  }
   Checker Preflight(Candidate, CandidateRecords, Contract, Limits.Execution,
                     &Session, true, Provider, NativeResult);
   if (!Preflight.validateInput() || (LoopPlan && !Preflight.validateLoopPlan()))
@@ -2517,13 +2573,1058 @@ LowIRRefinementResult runRefinement(
   };
   if (!Segment())
     return Finish(false);
-  if (LoopPlan)
+  if (LoopPlan) {
+    // The normal entry segment can stop before a nested cut. Establish any
+    // missing prefix through a separate bounded replay from the real entry,
+    // retaining the common input snapshot, budgets and segment evidence.
+    // A witness need not cover inputs that bypass this cut. Every actual
+    // arrival still has to imply its predicate in the complete entry and
+    // inductive segment checks; a witness alone proves no equivalence.
+    for (size_t I = 0; I != LoopPlan->Cutpoints.size(); ++I) {
+      if (!LoopPlan->Cutpoints[I].UseEntryPrefix || Session.LoopPrefixes[I])
+        continue;
+      Session.OriginalReturns.clear();
+      Session.CandidateReturns.clear();
+      Session.PrefixSearchCutpoint = static_cast<int>(I);
+      if (!Segment())
+        return Finish(false);
+      if (!Session.LoopPrefixes[I]) {
+        Session.Statistics.Status = Status::Unsupported;
+        Session.Statistics.Diagnostic =
+            "loop template has no reachable entry prefix";
+        return Finish(false);
+      }
+    }
+    Session.PrefixSearchCutpoint = -1;
     for (size_t I = 0; I != LoopPlan->Cutpoints.size(); ++I)
       if (!Preflight.startLoopSegment(I) || !Segment())
         return Finish(false);
+  }
   return Finish(true);
 }
+
+// Inference only proposes a plan. In particular, neither a sampled prefix nor
+// a successful candidate transition is a native/candidate certificate. The
+// caller must run the complete relation with the resulting, untrusted plan.
+class LoopPlanInference {
+  const LowFunc &Candidate;
+  const LowIRIndependenceContract &Contract;
+  const LowIRLoopInferenceLimits &Limits;
+  LowIRRefinementLimits ExecutionLimits;
+  RefinementSession Session;
+  std::vector<LowIRUndefinedInstruction> Records;
+  LowIRLoopRefinementPlan Plan;
+  LowIRLoopInferenceResult Result;
+  std::map<int, const LowBlock *> Blocks;
+  std::vector<va_t> Choices;
+  std::vector<int> ReachableBlocks;
+  bool MultipleCycles = false;
+  std::string Stage;
+  SpecializationProvider *ReadProvider;
+  detail::NativeUndefinedIndependenceResult ReadEvidence;
+
+  struct Word {
+    LowIRLoopLocation Location;
+    uint64_t FixedMask;
+    bool UpperBound = false, LowerBound = false;
+    bool Nonzero = false, Nonmax = false;
+  };
+  size_t ActiveCutpoint = 0;
+  std::vector<std::vector<Word>> Models{1};
+  std::vector<Word> &words() { return Models[ActiveCutpoint]; }
+
+  [[noreturn]] void stop(Status S, llvm::StringRef Diagnostic) {
+    Session.Statistics.Status = S;
+    Session.Statistics.Diagnostic = Diagnostic.str();
+    throw Stop{};
+  }
+
+  Checker checker() {
+    return Checker(Candidate, Records, Contract, Limits.Execution, &Session,
+                   true, ReadProvider, &ReadEvidence);
+  }
+
+  SymRef read(TerminalState &State, const LowIRLoopLocation &Location) {
+    auto C = checker();
+    return C.loopRead(State, Location);
+  }
+
+  bool entails(SymRef Domain, SymRef Fact) {
+    auto C = checker();
+    return C.query(
+               Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact))) ==
+           solver::SatResult::Unsat;
+  }
+
+  void runCandidate() {
+    Session.CandidateReturns.clear();
+    if (!checker().run().proved())
+      throw Stop{};
+  }
+
+  static uint64_t ones(uint16_t Bytes) {
+    return Bytes == 8 ? UINT64_MAX : (uint64_t{1} << (Bytes * 8)) - 1;
+  }
+
+  uint64_t commonBits(SymRef A, SymRef B, uint16_t Bytes) {
+    auto &Ctx = Session.Context;
+    if (A == B)
+      return ones(Bytes);
+    uint64_t Mask = 0;
+    for (unsigned Bit = 0; Bit != Bytes * 8; ++Bit)
+      if (Ctx.mkExtract(A, Bit, 1) == Ctx.mkExtract(B, Bit, 1))
+        Mask |= uint64_t{1} << Bit;
+    checker().nodes();
+    return Mask;
+  }
+
+  uint64_t commonBitsUnder(SymRef A, SymRef B, uint16_t Bytes, SymRef Domain,
+                           uint64_t Wanted = UINT64_MAX) {
+    auto &Ctx = Session.Context;
+    uint64_t Mask = commonBits(A, B, Bytes) & Wanted;
+    std::vector<uint64_t> Pending{ones(Bytes) & Wanted & ~Mask};
+    while (!Pending.empty()) {
+      const uint64_t Bits = Pending.back();
+      Pending.pop_back();
+      if (!Bits)
+        continue;
+      const auto M = Ctx.mkConst(Bytes * 8, Bits);
+      if (entails(Domain, Ctx.mkEq(Ctx.mkAnd(A, M), Ctx.mkAnd(B, M)))) {
+        Mask |= Bits;
+        continue;
+      }
+      if (std::has_single_bit(Bits))
+        continue;
+      // Divide only the undecided bits. Large stable lanes usually require
+      // one query, while a differing bit is never promoted to a fact.
+      unsigned Remaining = std::popcount(Bits) / 2;
+      uint64_t Low = 0;
+      for (unsigned Bit = 0; Remaining; ++Bit)
+        if (Bits & (uint64_t{1} << Bit)) {
+          Low |= uint64_t{1} << Bit;
+          --Remaining;
+        }
+      Pending.push_back(Low);
+      Pending.push_back(Bits & ~Low);
+    }
+    return Mask;
+  }
+
+  bool unitStep(SymRef Before, SymRef After, uint16_t Bytes, bool Increment) {
+    auto &Ctx = Session.Context;
+    for (unsigned Width = Bytes * 8; Width; Width -= 8) {
+      const auto Input = Ctx.mkExtract(Before, 0, Width);
+      const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
+      if (After == Ctx.mkZExtOrTrunc(Ctx.mkAdd(Input, Step), Bytes * 8))
+        return true;
+    }
+    return false;
+  }
+
+  bool additiveRecurrence(SymRef Before, SymRef After, uint16_t Bytes) {
+    auto &Ctx = Session.Context;
+    for (unsigned Width = Bytes * 8; Width; Width -= 8) {
+      const auto Value = Ctx.mkExtract(After, 0, Width);
+      if (Ctx.op(Value) != SymOp::Add ||
+          After != Ctx.mkZExtOrTrunc(Value, Bytes * 8))
+        continue;
+      const auto Input = Ctx.mkExtract(Before, 0, Width);
+      const auto Terms = Ctx.operands(Value);
+      if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
+        return true;
+    }
+    return false;
+  }
+
+  std::vector<LowIRLoopLocation> locations() {
+    std::vector<LowIRLoopLocation> Locations;
+    std::set<uint64_t> Registers;
+    for (uint64_t Byte : Session.RegisterBytes)
+      Registers.insert(Byte & ~uint64_t{7});
+    for (uint64_t Offset : Registers)
+      Locations.push_back({LowIRLoopSpace::Register, Offset, 8});
+    if (Contract.Frame)
+      for (int64_t Offset = Contract.Frame->Begin;
+           Offset < Contract.Frame->End;) {
+        // Respect unaligned contract ends without merging overlapping words.
+        const auto Bytes = static_cast<uint16_t>(
+            std::min<uint64_t>(8 - (static_cast<uint64_t>(Offset) & 7),
+                               static_cast<uint64_t>(Contract.Frame->End) -
+                                   static_cast<uint64_t>(Offset)));
+        Locations.push_back(
+            {LowIRLoopSpace::Frame, static_cast<uint64_t>(Offset), Bytes});
+        Offset += Bytes;
+      }
+    if (Contract.X64FlagsProfile)
+      Locations.push_back({LowIRLoopSpace::SystemFlags, 0, 8});
+    return Locations;
+  }
+
+  bool addChangedWords(llvm::ArrayRef<TerminalState> States) {
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    bool Added = false;
+    for (const auto &Location : locations()) {
+      if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
+            return std::tie(W.Location.Space, W.Location.Offset) ==
+                   std::tie(Location.Space, Location.Offset);
+          }))
+        continue;
+      const auto Initial = read(Prefix, Location);
+      auto Mask = ones(Location.Bytes);
+      for (const auto &State : States) {
+        if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
+          continue;
+        auto Copy = State;
+        const auto Value = read(Copy, Location);
+        // The transition can rebuild an unchanged value from constrained
+        // parameters. Structural inequality must not discard those facts.
+        Mask &=
+            commonBitsUnder(Initial, Value, Location.Bytes, State.Predicate);
+      }
+      if (Mask != ones(Location.Bytes)) {
+        words().push_back({Location, Mask});
+        Added = true;
+      }
+    }
+    return Added;
+  }
+
+  // A failed fixed-bit predicate is widened to bits structurally preserved
+  // by the general transition. This avoids learning a spurious small counter
+  // bound from the first few iterations. No widened predicate is trusted.
+  bool widen() {
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    bool Changed = addChangedWords(Session.CandidateReturns);
+    for (auto &W : words()) {
+      if (!W.FixedMask)
+        continue;
+      const auto Initial = read(Prefix, W.Location);
+      const auto Before = read(*Session.CandidateStart, W.Location);
+      auto Stable = W.FixedMask;
+      bool Holds = true, Additive = true;
+      for (auto &State : Session.CandidateReturns) {
+        if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
+          continue;
+        const auto After = read(State, W.Location);
+        Additive &= additiveRecurrence(Before, After, W.Location.Bytes);
+        Stable &= commonBits(Initial, After, W.Location.Bytes);
+        const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
+        Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
+                                                   Ctx.mkAnd(After, Mask)));
+      }
+      if (!Holds && !Additive) {
+        // Relations such as packed flags often require the path predicate:
+        // equal system bits need not have identical expression trees. Keep
+        // exactly the candidate bits proved stable under this transition.
+        Stable = W.FixedMask;
+        for (auto &State : Session.CandidateReturns)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
+            Stable &=
+                commonBitsUnder(Initial, read(State, W.Location),
+                                W.Location.Bytes, State.Predicate, W.FixedMask);
+      }
+      if (!Holds && Stable != W.FixedMask) {
+        W.FixedMask = Stable;
+        Changed = true;
+      }
+    }
+    return Changed;
+  }
+
+  std::vector<LowIRLoopLocation> boundLocations() {
+    auto &Ctx = Session.Context;
+    std::set<SymRef> Seen, Compared;
+    std::vector<SymRef> Pending;
+    for (const auto &State : Session.CandidateReturns)
+      if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
+        Pending.push_back(State.Predicate);
+    while (!Pending.empty()) {
+      const auto Ref = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Ref).second)
+        continue;
+      if (++Result.PredicateNodes > Limits.Execution.MaxSymbolicNodes)
+        stop(Status::BudgetExceeded,
+             "loop inference predicate analysis budget exhausted");
+      const auto &Node = Ctx.node(Ref);
+      const auto Children = Ctx.operands(Ref);
+      if (Node.Op == SymOp::Ult || Node.Op == SymOp::Ule)
+        Compared.insert(Children.begin(), Children.end());
+      Pending.insert(Pending.end(), Children.begin(), Children.end());
+    }
+    std::vector<LowIRLoopLocation> Bounds;
+    std::set<SymRef> Values;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    for (const auto &Location : locations()) {
+      if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
+            return W.Location.Space == Location.Space &&
+                   W.Location.Offset == Location.Offset;
+          }))
+        continue;
+      const auto Value = read(Prefix, Location);
+      if (Compared.count(Value) && Values.insert(Value).second)
+        Bounds.push_back(Location);
+    }
+    return Bounds;
+  }
+
+  void makeTemplate(std::optional<size_t> Ranked = {}, bool Complement = false,
+                    bool ProgressGuard = false,
+                    std::optional<LowIRLoopLocation> Bound = {}) {
+    auto &Cut = Plan.Cutpoints[ActiveCutpoint];
+    Cut.Inputs.clear();
+    Cut.Expressions.clear();
+    Cut.OriginalState.clear();
+    Cut.CandidateState.clear();
+    Cut.Predicate = NdVar::scalar(1, 1);
+    Cut.Rank = {NdVar::scalar(0, 8)};
+    uint64_t Next = 0;
+    const auto Temp = [&](uint16_t Bytes) {
+      const auto V = NdVar::tmp(Next, Bytes);
+      Next += 8;
+      return V;
+    };
+    const auto Expr = [&](NdOp Opcode, NdVar A, NdVar B, uint16_t Bytes) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Temp(Bytes);
+      Op.addInput(A);
+      Op.addInput(B);
+      Cut.Expressions.push_back(Op);
+      return Op.Output;
+    };
+    for (size_t I = 0; I != words().size(); ++I) {
+      const auto &W = words()[I];
+      const auto Bytes = W.Location.Bytes;
+      const auto Parameter = Temp(Bytes);
+      Cut.Inputs.push_back({LowIRLoopSide::Original, W.Location, Parameter});
+      Cut.OriginalState.push_back({W.Location, Parameter});
+      Cut.CandidateState.push_back({W.Location, Parameter});
+      if (W.FixedMask) {
+        const auto Prefix = Temp(Bytes);
+        Cut.Inputs.push_back(
+            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Mask = NdVar::scalar(W.FixedMask, Bytes);
+        const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
+        const auto B = Expr(NdOp::INT_AND, Prefix, Mask, Bytes);
+        const auto Same = Expr(NdOp::INT_EQUAL, A, B, 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
+      }
+      if (W.UpperBound || W.LowerBound) {
+        const auto Prefix = Temp(Bytes);
+        Cut.Inputs.push_back(
+            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        if (W.UpperBound) {
+          const auto Bound = Expr(NdOp::INT_LESSEQUAL, Parameter, Prefix, 1);
+          Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
+        }
+        if (W.LowerBound) {
+          const auto Bound = Expr(NdOp::INT_LESSEQUAL, Prefix, Parameter, 1);
+          Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
+        }
+      }
+      for (bool Maximum : {false, true}) {
+        if (!(Maximum ? W.Nonmax : W.Nonzero))
+          continue;
+        const auto Guard =
+            Expr(NdOp::INT_NOTEQUAL, Parameter,
+                 NdVar::scalar(Maximum ? ones(Bytes) : 0, Bytes), 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
+      }
+      if (Ranked != I)
+        continue;
+      Cut.Rank = {Complement ? Expr(NdOp::INT_XOR, Parameter,
+                                    NdVar::scalar(ones(Bytes), Bytes), Bytes)
+                             : Parameter};
+      if (ProgressGuard) {
+        const auto Varying = Expr(NdOp::INT_AND, Parameter,
+                                  NdVar::scalar(~W.FixedMask, Bytes), Bytes);
+        const auto Limit = NdVar::scalar(Complement ? ~W.FixedMask : 0, Bytes);
+        const auto Guard = Expr(NdOp::INT_NOTEQUAL, Varying, Limit, 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
+      }
+      if (Bound) {
+        const auto Limit = Temp(Bound->Bytes);
+        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, *Bound, Limit});
+        const auto Guard = Complement
+                               ? Expr(NdOp::INT_LESS, Parameter, Limit, 1)
+                               : Expr(NdOp::INT_LESS, Limit, Parameter, 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
+      }
+    }
+    if (!checker().validateLoopPlan())
+      throw Stop{};
+  }
+
+  void startGeneralTransition() {
+    auto C = checker();
+    if (!C.startLoopSegment(ActiveCutpoint))
+      throw Stop{};
+    runCandidate();
+  }
+
+  bool fits(TerminalState State) {
+    auto C = checker();
+    if (!C.validateInput())
+      throw Stop{};
+    C.EntryRoot = Session.EntryRoot;
+    C.MemoryRoot = Session.MemoryRoot;
+    const auto T =
+        C.loopTemplate(ActiveCutpoint, &State, &State, State.Predicate);
+    if (!entails(State.Predicate, T.Predicate))
+      return false;
+    try {
+      auto Expected = T.Candidate;
+      C.loopStateEqual(State.Predicate, State, Expected, "inferred candidate");
+      return true;
+    } catch (const Stop &) {
+      if (Session.Statistics.Status != Status::Dependent)
+        throw;
+      return false;
+    }
+  }
+
+  bool checkRank(llvm::ArrayRef<TerminalState> Prefixes) {
+    for (const auto &State : Prefixes)
+      if (State.Cutpoint == static_cast<int>(ActiveCutpoint) && !fits(State))
+        return false;
+    startGeneralTransition();
+    bool HasBackedge = false;
+    for (auto &State : Session.CandidateReturns) {
+      if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
+        continue;
+      HasBackedge = true;
+      auto C = checker();
+      auto T = C.loopTemplate(ActiveCutpoint, &State, &State, State.Predicate);
+      if (!entails(State.Predicate,
+                   Session.Context.mkUlt(T.Rank.front(),
+                                         Session.StartingRank.front())))
+        return false;
+      if (!fits(State))
+        return false;
+    }
+    return HasBackedge;
+  }
+
+  bool inferAt(va_t Address) {
+    auto &Cut = Plan.Cutpoints[ActiveCutpoint];
+    Cut = {};
+    Cut.OriginalAddress = Cut.CandidateAddress = Address;
+    Cut.UseEntryPrefix = true;
+    Cut.Rank = {NdVar::scalar(0, 8)};
+    words().clear();
+    Session.LoopPrefixes[ActiveCutpoint].reset();
+    Session.OriginalStart.reset();
+    Session.CandidateStart.reset();
+    Session.StartingCutpoint = -1;
+    runCandidate();
+    auto Prefixes = Session.CandidateReturns;
+    const auto It = std::find_if(Prefixes.begin(), Prefixes.end(),
+                                 [](const auto &S) { return S.Cutpoint == 0; });
+    if (It == Prefixes.end())
+      return false;
+    Session.LoopPrefixes[ActiveCutpoint] = LoopPrefix{*It, *It, It->Predicate};
+    Session.CandidateStart = *It;
+    Session.StartingCutpoint = 0;
+    Session.SegmentPredicate = It->Predicate;
+    runCandidate();
+    if (std::none_of(Session.CandidateReturns.begin(),
+                     Session.CandidateReturns.end(),
+                     [](const auto &S) { return S.Cutpoint == 0; }))
+      return false;
+    addChangedWords(Prefixes);
+    addChangedWords(Session.CandidateReturns);
+    if (words().empty())
+      return false;
+    bool Stable = false;
+    for (uint32_t Round = 0; Round != Limits.MaxWideningRounds; ++Round) {
+      ++Result.WideningRounds;
+      makeTemplate();
+      startGeneralTransition();
+      if (!widen()) {
+        Stable = true;
+        break;
+      }
+    }
+    if (!Stable)
+      stop(Status::BudgetExceeded, "loop inference widening budget exhausted");
+
+    // Prefer directly observed unit recurrences, avoiding expensive guesses
+    // about accumulators before trying a plain induction variable.
+    const auto Bounds = boundLocations();
+    std::vector<std::pair<size_t, bool>> Ranks, OtherRanks;
+    for (size_t I = 0; I != words().size(); ++I) {
+      for (bool Complement : {false, true}) {
+        const auto &W = words()[I];
+        const auto Before = read(*Session.CandidateStart, W.Location);
+        bool Unit = true;
+        for (auto &State : Session.CandidateReturns)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint))
+            Unit &= unitStep(Before, read(State, W.Location), W.Location.Bytes,
+                             Complement);
+        (Unit ? Ranks : OtherRanks).emplace_back(I, Complement);
+      }
+    }
+    Ranks.insert(Ranks.end(), OtherRanks.begin(), OtherRanks.end());
+    for (const auto &[Index, Complement] : Ranks) {
+      const auto Try = [&](bool Guard, std::optional<LowIRLoopLocation> Bound) {
+        if (Result.RankCandidates >= Limits.MaxRankCandidates)
+          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+        ++Result.RankCandidates;
+        makeTemplate(Index, Complement, Guard, Bound);
+        return checkRank(Prefixes);
+      };
+      if (Try(false, {}) || Try(true, {}))
+        return true;
+      for (const auto &Bound : Bounds)
+        if (Bound.Bytes == words()[Index].Location.Bytes && Try(false, Bound))
+          return true;
+    }
+    return false;
+  }
+
+  void findChoices(llvm::ArrayRef<va_t> Eligible) {
+    for (const auto &B : Candidate.Blocks)
+      Blocks.emplace(B.Id, &B);
+    const auto Root = std::find_if(
+        Candidate.Blocks.begin(), Candidate.Blocks.end(),
+        [&](const auto &B) { return B.StartAddr == Candidate.Entry; });
+    std::map<int, unsigned> Color;
+    std::vector<int> Order, Backedges;
+    std::vector<std::pair<int, size_t>> Stack{{Root->Id, 0}};
+    Color[Root->Id] = 1;
+    while (!Stack.empty()) {
+      auto &[Id, Next] = Stack.back();
+      const auto &Succs = Blocks.at(Id)->Succs;
+      if (Next == Succs.size()) {
+        Color[Id] = 2;
+        Order.push_back(Id);
+        Stack.pop_back();
+        continue;
+      }
+      const int S = Succs[Next++];
+      if (Color[S] == 1)
+        Backedges.push_back(S);
+      else if (!Color[S]) {
+        Color[S] = 1;
+        Stack.emplace_back(S, 0);
+      }
+    }
+    ReachableBlocks = Order;
+    MultipleCycles =
+        std::set<int>(Backedges.begin(), Backedges.end()).size() > 1;
+    std::map<int, std::vector<int>> Preds;
+    for (int Id : Order)
+      for (int S : Blocks.at(Id)->Succs)
+        Preds[S].push_back(Id);
+    std::map<int, size_t> Components;
+    std::vector<std::vector<int>> Members;
+    for (auto It = Order.rbegin(); It != Order.rend(); ++It) {
+      if (Components.count(*It))
+        continue;
+      const auto Index = Members.size();
+      Members.emplace_back();
+      std::vector<int> Pending{*It};
+      Components[*It] = Index;
+      while (!Pending.empty()) {
+        const auto Id = Pending.back();
+        Pending.pop_back();
+        Members.back().push_back(Id);
+        for (int P : Preds[Id])
+          if (Components.emplace(P, Index).second)
+            Pending.push_back(P);
+      }
+    }
+    const auto Add = [&](int Id) {
+      const auto Address = Blocks.at(Id)->StartAddr;
+      if (!Eligible.empty() && std::find(Eligible.begin(), Eligible.end(),
+                                         Address) == Eligible.end())
+        return;
+      if (std::find(Choices.begin(), Choices.end(), Address) == Choices.end())
+        Choices.push_back(Address);
+    };
+    for (int Id : Order) {
+      const auto Component = Components.at(Id);
+      const auto &B = *Blocks.at(Id);
+      const bool HasExit =
+          std::any_of(B.Succs.begin(), B.Succs.end(),
+                      [&](int S) { return Components.at(S) != Component; });
+      if (HasExit && Members[Component].size() > 1)
+        for (int S : B.Succs)
+          if (Components.at(S) == Component)
+            Add(S);
+    }
+    for (int Id : Backedges)
+      Add(Id);
+    for (int Id : Order)
+      if (Members[Components.at(Id)].size() > 1)
+        Add(Id);
+  }
+
+  // Select a feedback set before symbolic execution. Trying a single cut on
+  // a nested cycle first would spend the whole finite budget unrolling it.
+  std::optional<std::vector<va_t>> feedbackCuts() {
+    std::set<va_t> Selected;
+    for (;;) {
+      std::map<int, unsigned> Color;
+      std::vector<int> Cycle;
+      for (int Root : ReachableBlocks) {
+        if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
+          continue;
+        std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
+        Color[Root] = 1;
+        while (!Stack.empty() && Cycle.empty()) {
+          auto &[Id, Next] = Stack.back();
+          const auto &Succs = Blocks.at(Id)->Succs;
+          if (Next == Succs.size()) {
+            Color[Id] = 2;
+            Stack.pop_back();
+            continue;
+          }
+          const int S = Succs[Next++];
+          if (Selected.count(Blocks.at(S)->StartAddr))
+            continue;
+          if (Color[S] == 1) {
+            const auto First =
+                std::find_if(Stack.begin(), Stack.end(),
+                             [&](auto P) { return P.first == S; });
+            for (auto It = First; It != Stack.end(); ++It)
+              Cycle.push_back(It->first);
+          } else if (!Color[S]) {
+            Color[S] = 1;
+            Stack.emplace_back(S, 0);
+          }
+        }
+        if (!Cycle.empty())
+          break;
+      }
+      if (Cycle.empty()) {
+        std::vector<va_t> Cuts;
+        for (va_t Address : Choices)
+          if (Selected.count(Address))
+            Cuts.push_back(Address);
+        return Cuts;
+      }
+      const auto Choice =
+          std::find_if(Choices.begin(), Choices.end(), [&](va_t A) {
+            return std::any_of(Cycle.begin(), Cycle.end(), [&](int Id) {
+              return Blocks.at(Id)->StartAddr == A;
+            });
+          });
+      if (Choice == Choices.end())
+        return {};
+      if (Selected.size() >= Limits.MaxCutpointAttempts)
+        stop(Status::BudgetExceeded,
+             "loop inference cutpoint budget exhausted");
+      Selected.insert(*Choice);
+    }
+  }
+
+  struct Edge {
+    size_t Source;
+    TerminalState Before, After;
+  };
+
+  std::vector<Edge> transitions(bool General) {
+    std::vector<Edge> Edges;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      Stage = "candidate transition " + std::to_string(I);
+      if (General) {
+        startGeneralTransition();
+      } else {
+        Session.CandidateStart = Session.LoopPrefixes[I]->Candidate;
+        Session.StartingCutpoint = static_cast<int>(I);
+        Session.SegmentPredicate = Session.CandidateStart->Predicate;
+        runCandidate();
+      }
+      for (auto &After : Session.CandidateReturns)
+        if (After.Cutpoint >= 0)
+          Edges.push_back({I, *Session.CandidateStart, After});
+    }
+    return Edges;
+  }
+
+  // Houdini-style pruning: keep a candidate bound only while every observed
+  // and general incoming transition proves it. Fixed bits share the scalar
+  // widening rules with single-cut inference; no learned fact is assumed by
+  // the final original/candidate checker.
+  bool widenIncoming(std::vector<Edge> &Edges) {
+    auto &Ctx = Session.Context;
+    bool Changed = false;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      auto &Prefix = Session.LoopPrefixes[I]->Candidate;
+      std::vector<TerminalState> Incoming{Prefix};
+      for (const auto &E : Edges)
+        if (E.After.Cutpoint == static_cast<int>(I))
+          Incoming.push_back(E.After);
+      const auto OldSize = words().size();
+      Changed |= addChangedWords(Incoming);
+      for (size_t J = OldSize; J != words().size(); ++J) {
+        auto &W = words()[J];
+        const auto Initial = read(Prefix, W.Location);
+        W.UpperBound = W.LowerBound = true;
+        W.Nonzero =
+            entails(Prefix.Predicate,
+                    Ctx.mkNe(Initial, Ctx.mkConst(W.Location.Bytes * 8, 0)));
+        W.Nonmax =
+            entails(Prefix.Predicate,
+                    Ctx.mkNe(Initial, Ctx.mkConst(W.Location.Bytes * 8,
+                                                  ones(W.Location.Bytes))));
+      }
+      for (auto &W : words()) {
+        const auto Initial = read(Prefix, W.Location);
+        auto Stable = W.FixedMask;
+        bool Holds = true, Additive = false;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(I))
+            continue;
+          const auto After = read(E.After, W.Location);
+          Additive |= additiveRecurrence(read(E.Before, W.Location), After,
+                                         W.Location.Bytes);
+          Stable &= commonBits(Initial, After, W.Location.Bytes);
+          const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
+          if (W.FixedMask)
+            Holds &=
+                entails(E.After.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
+                                                    Ctx.mkAnd(After, Mask)));
+        }
+        if (!Holds && !Additive) {
+          Stable = W.FixedMask;
+          for (auto &State : Incoming)
+            Stable &=
+                commonBitsUnder(Initial, read(State, W.Location),
+                                W.Location.Bytes, State.Predicate, W.FixedMask);
+        }
+        if (!Holds && Stable != W.FixedMask) {
+          W.FixedMask = Stable;
+          Changed = true;
+        }
+        for (auto &State : Incoming) {
+          const auto Value = read(State, W.Location);
+          const auto Keep = [&](bool &Enabled, SymRef Fact) {
+            if (Enabled && !entails(State.Predicate, Fact)) {
+              Enabled = false;
+              Changed = true;
+            }
+          };
+          Keep(W.UpperBound, Ctx.mkUle(Value, Initial));
+          Keep(W.LowerBound, Ctx.mkUle(Initial, Value));
+          Keep(W.Nonzero,
+               Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8, 0)));
+          Keep(W.Nonmax, Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8,
+                                                     ones(W.Location.Bytes))));
+        }
+      }
+    }
+    return Changed;
+  }
+
+  struct Counter {
+    LowIRLoopLocation Location;
+    bool Complement;
+  };
+  using Phases = std::vector<std::vector<uint64_t>>;
+
+  static bool sameLocation(const LowIRLoopLocation &A,
+                           const LowIRLoopLocation &B) {
+    return std::tie(A.Space, A.Offset, A.Bytes) ==
+           std::tie(B.Space, B.Offset, B.Bytes);
+  }
+
+  SymRef counterValue(TerminalState &State, const Counter &Rank) {
+    const auto Value = read(State, Rank.Location);
+    return Rank.Complement
+               ? Session.Context.mkXor(
+                     Value, Session.Context.mkConst(Rank.Location.Bytes * 8,
+                                                    ones(Rank.Location.Bytes)))
+               : Value;
+  }
+
+  SymRef tupleLess(Edge &E, llvm::ArrayRef<Counter> Ranks, const Phases &Phase,
+                   size_t First = 0) {
+    auto &Ctx = Session.Context;
+    auto Equal = Ctx.mkTrue(), Less = Ctx.mkFalse();
+    const auto Append = [&](SymRef Before, SymRef After) {
+      Less = Ctx.mkOr(Less, Ctx.mkAnd(Equal, Ctx.mkUlt(After, Before)));
+      Equal = Ctx.mkAnd(Equal, Ctx.mkEq(After, Before));
+    };
+    for (size_t I = First; I != Ranks.size(); ++I) {
+      Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
+      if (I + 1 != Ranks.size())
+        Append(Ctx.mkConst(64, Phase[I][E.Source]),
+               Ctx.mkConst(64, Phase[I][E.After.Cutpoint]));
+    }
+    return Less;
+  }
+
+  bool inferPhases(std::vector<Edge> &Edges, llvm::ArrayRef<Counter> Ranks,
+                   Phases &Phase) {
+    auto &Ctx = Session.Context;
+    const auto Count = Plan.Cutpoints.size();
+    Phase.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    for (size_t Level = Ranks.size() - 1; Level-- > 0;) {
+      struct Constraint {
+        size_t Source, Target;
+        uint64_t Step;
+      };
+      std::vector<Constraint> Constraints;
+      for (auto &E : Edges) {
+        auto Domain = E.After.Predicate;
+        for (size_t I = 0; I <= Level; ++I)
+          Domain = Ctx.mkAnd(Domain, Ctx.mkEq(counterValue(E.Before, Ranks[I]),
+                                              counterValue(E.After, Ranks[I])));
+        if (entails(Domain, Ctx.mkFalse()))
+          continue;
+        Constraints.push_back(
+            {E.Source, static_cast<size_t>(E.After.Cutpoint),
+             entails(Domain, tupleLess(E, Ranks, Phase, Level + 1)) ? 0U : 1U});
+      }
+      // Nonnegative weighted difference constraints. A positive cycle cannot
+      // be discharged by phase constants; it requires another changing rank.
+      for (size_t Round = 0; Round != Count; ++Round) {
+        bool Changed = false;
+        for (const auto &C : Constraints)
+          if (Phase[Level][C.Source] < Phase[Level][C.Target] + C.Step) {
+            Phase[Level][C.Source] = Phase[Level][C.Target] + C.Step;
+            Changed = true;
+          }
+        if (!Changed)
+          break;
+        if (Round + 1 == Count)
+          return false;
+      }
+    }
+    for (auto &E : Edges)
+      if (!entails(E.After.Predicate, tupleLess(E, Ranks, Phase)))
+        return false;
+    return !Edges.empty();
+  }
+
+  void installRanks(llvm::ArrayRef<Counter> Ranks, const Phases &Phase) {
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      auto &Cut = Plan.Cutpoints[I];
+      uint64_t Next = 0;
+      for (const auto &Input : Cut.Inputs)
+        Next = std::max(Next, Input.Temporary.Offset + 8);
+      for (const auto &Op : Cut.Expressions)
+        Next = std::max(Next, Op.Output.Offset + 8);
+      Cut.Rank.clear();
+      for (size_t J = 0; J != Ranks.size(); ++J) {
+        const auto &R = Ranks[J];
+        auto Input = std::find_if(
+            Cut.Inputs.begin(), Cut.Inputs.end(), [&](const auto &Input) {
+              return Input.Side == LowIRLoopSide::Original &&
+                     sameLocation(Input.Location, R.Location);
+            });
+        NdVar Value;
+        if (Input != Cut.Inputs.end()) {
+          Value = Input->Temporary;
+        } else {
+          Value = NdVar::tmp(Next, R.Location.Bytes);
+          Next += 8;
+          Cut.Inputs.push_back(
+              {LowIRLoopSide::OriginalPrefix, R.Location, Value});
+        }
+        if (R.Complement) {
+          LowOp Op;
+          Op.Opcode = NdOp::INT_XOR;
+          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Next += 8;
+          Op.addInput(Value);
+          Op.addInput(NdVar::scalar(ones(R.Location.Bytes), R.Location.Bytes));
+          Cut.Expressions.push_back(Op);
+          Value = Op.Output;
+        }
+        Cut.Rank.push_back(Value);
+        if (J + 1 != Ranks.size())
+          Cut.Rank.push_back(NdVar::scalar(Phase[J][I], 8));
+      }
+    }
+    if (!checker().validateLoopPlan())
+      throw Stop{};
+  }
+
+  bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
+    Result.CutpointAttempts += Cuts.size();
+    Models.assign(Cuts.size(), {});
+    Plan.Cutpoints.assign(Cuts.size(), {});
+    Session.LoopPrefixes.assign(Cuts.size(), {});
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      auto &Cut = Plan.Cutpoints[I];
+      Cut.OriginalAddress = Cut.CandidateAddress = Cuts[I];
+      Cut.UseEntryPrefix = true;
+      Cut.Rank = {NdVar::scalar(0, 8)};
+    }
+    // These are candidate-only reachable witnesses. The final checker must
+    // recapture paired original/candidate prefixes with its own fresh state.
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      Session.PrefixSearchCutpoint = static_cast<int>(I);
+      Stage = "candidate entry prefix " + std::to_string(I);
+      runCandidate();
+      const auto It = std::find_if(
+          Session.CandidateReturns.begin(), Session.CandidateReturns.end(),
+          [&](const auto &S) { return S.Cutpoint == static_cast<int>(I); });
+      if (It == Session.CandidateReturns.end())
+        return false;
+      Session.LoopPrefixes[I] = LoopPrefix{*It, *It, It->Predicate};
+    }
+    Session.PrefixSearchCutpoint = -1;
+    auto Edges = transitions(false);
+    widenIncoming(Edges);
+    bool Stable = false;
+    for (uint32_t Round = 0; Round != Limits.MaxWideningRounds; ++Round) {
+      ++Result.WideningRounds;
+      for (size_t I = 0; I != Cuts.size(); ++I) {
+        ActiveCutpoint = I;
+        makeTemplate();
+      }
+      Edges = transitions(true);
+      if (!widenIncoming(Edges)) {
+        Stable = true;
+        break;
+      }
+    }
+    if (!Stable)
+      stop(Status::BudgetExceeded, "loop inference widening budget exhausted");
+    for (size_t I = 0; I != Cuts.size(); ++I) {
+      ActiveCutpoint = I;
+      if (!fits(Session.LoopPrefixes[I]->Candidate))
+        return false;
+    }
+    for (const auto &E : Edges) {
+      ActiveCutpoint = E.After.Cutpoint;
+      if (!fits(E.After))
+        return false;
+    }
+    std::vector<Counter> Candidates;
+    for (const auto &Location : locations())
+      for (bool Complement : {false, true}) {
+        bool Unit = false;
+        for (auto &E : Edges)
+          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+                           Location.Bytes, Complement);
+        if (Unit)
+          Candidates.push_back({Location, Complement});
+      }
+    std::vector<Counter> Ranks;
+    Phases Phase;
+    const auto Search = [&](auto &&Self, size_t Size) -> bool {
+      if (Ranks.size() == Size) {
+        if (Result.RankCandidates >= Limits.MaxRankCandidates)
+          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+        ++Result.RankCandidates;
+        return inferPhases(Edges, Ranks, Phase);
+      }
+      for (const auto &C : Candidates) {
+        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
+              return sameLocation(C.Location, R.Location);
+            }))
+          continue;
+        Ranks.push_back(C);
+        if (Self(Self, Size))
+          return true;
+        Ranks.pop_back();
+      }
+      return false;
+    };
+    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
+      if (Search(Search, Size)) {
+        installRanks(Ranks, Phase);
+        return true;
+      }
+    return false;
+  }
+
+public:
+  LoopPlanInference(const LowFunc &F, const LowIRIndependenceContract &C,
+                    const LowIRLoopInferenceLimits &L,
+                    SpecializationProvider *Reader = nullptr)
+      : Candidate(F), Contract(C), Limits(L), ExecutionLimits{L.Execution},
+        Session{{}, {}, F, LowIRRefinementWitness::LiftedBits, ExecutionLimits},
+        ReadProvider(Reader) {
+    Plan.Cutpoints.resize(1);
+    Plan.Cutpoints[ActiveCutpoint].OriginalAddress =
+        Plan.Cutpoints[ActiveCutpoint].CandidateAddress = F.Entry;
+    Plan.Cutpoints[ActiveCutpoint].Rank = {NdVar::scalar(0, 8)};
+    Session.LoopPlan = &Plan;
+    Session.LoopPrefixes.resize(1);
+  }
+
+  LowIRLoopInferenceResult run(llvm::ArrayRef<va_t> Eligible) {
+    try {
+      if (!prepareCandidateRecords(Session, Records) ||
+          !checker().validateInput())
+        throw Stop{};
+      if (Eligible.size() > Limits.Execution.MaxBlockVisits)
+        stop(Status::BudgetExceeded,
+             "loop inference eligibility budget exhausted");
+      if (!Limits.MaxCutpointAttempts || !Limits.MaxWideningRounds ||
+          !Limits.MaxRankCandidates)
+        stop(Status::BudgetExceeded, "loop inference search budget exhausted");
+      findChoices(Eligible);
+      const auto Feedback = feedbackCuts();
+      if (!Feedback)
+        stop(Status::Unsupported,
+             "eligible cutpoints do not cover every cycle");
+      if (Feedback->size() > 1 || MultipleCycles) {
+        if (inferMultiple(*Feedback)) {
+          Result.Status = LowIRLoopInferenceStatus::Inferred;
+          Result.Plan = Plan;
+        }
+      } else
+        for (va_t Address : Choices) {
+          if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
+            stop(Status::BudgetExceeded,
+                 "loop inference cutpoint budget exhausted");
+          ++Result.CutpointAttempts;
+          if (inferAt(Address)) {
+            Result.Status = LowIRLoopInferenceStatus::Inferred;
+            Result.Plan = Plan;
+            break;
+          }
+        }
+      if (!Result.inferred())
+        Result.Diagnostic = "no loop template and unsigned rank inferred";
+    } catch (const Stop &) {
+      Result.Diagnostic = Session.Statistics.Diagnostic;
+      if (!Stage.empty())
+        Result.Diagnostic += " while exploring " + Stage;
+      Result.Status = Session.Statistics.Status == Status::BudgetExceeded
+                          ? LowIRLoopInferenceStatus::BudgetExceeded
+                      : Session.Statistics.Status == Status::Invalid
+                          ? LowIRLoopInferenceStatus::Invalid
+                          : LowIRLoopInferenceStatus::Unsupported;
+    }
+    Result.Operations = Session.Statistics.Operations;
+    Result.BlockId = Session.Statistics.BlockId;
+    Result.InstructionAddress = Session.Statistics.InstructionAddress;
+    Result.OpSeq = Session.Statistics.OpSeq;
+    Result.SolverQueries = Session.Statistics.SolverQueries;
+    Result.ScheduledPaths = Session.ScheduledPaths;
+    return std::move(Result);
+  }
+};
 } // namespace
+
+LowIRLoopInferenceResult
+inferLowIRLoopRefinementPlan(const LowFunc &Candidate,
+                             const LowIRIndependenceContract &Contract,
+                             const LowIRLoopInferenceLimits &Limits,
+                             llvm::ArrayRef<va_t> EligibleCutpoints) {
+  return LoopPlanInference(Candidate, Contract, Limits).run(EligibleCutpoints);
+}
+
+LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
+    SpecializationProvider &Provider, const LowFunc &Candidate,
+    const LowIRIndependenceContract &Contract,
+    const LowIRLoopInferenceLimits &Limits,
+    llvm::ArrayRef<va_t> EligibleCutpoints) {
+  return LoopPlanInference(Candidate, Contract, Limits, &Provider)
+      .run(EligibleCutpoints);
+}
 
 LowIRIndependenceResult checkLowIRUndefinedIndependence(
     const LowFunc &Function,

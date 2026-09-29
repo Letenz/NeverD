@@ -33,6 +33,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -976,6 +977,45 @@ void addItaniumCandidates(const ExceptionFunction &EH,
                     std::make_move_iterator(Regions.end()));
 }
 
+/// Whether a jump in \p Outside lands on a statement of \p Slice other than
+/// the region's entry. Machine code may enter a protected range anywhere; a C
+/// `__try` block only at its top, where the entry label precedes it.
+bool jumpEntersSlice(const std::vector<HighStmt> &Outside,
+                     const std::vector<HighStmt> &Slice, va_t Entry) {
+  std::set<va_t> Labels;
+  auto Collect = [&](auto &&Self, const std::vector<HighStmt> &List) -> void {
+    for (const HighStmt &S : List) {
+      if (S.Addr && S.Addr != InvalidVA && S.Addr != Entry)
+        Labels.insert(S.Addr);
+      Self(Self, S.Body);
+      Self(Self, S.ElseBody);
+      for (const auto &Case : S.Cases)
+        Self(Self, Case.Body);
+      Self(Self, S.DefaultBody);
+      for (const auto &Clause : S.EHClauseBodies)
+        Self(Self, Clause);
+    }
+  };
+  Collect(Collect, Slice);
+  bool Entered = false;
+  auto Scan = [&](auto &&Self, const std::vector<HighStmt> &List) -> void {
+    for (const HighStmt &S : List) {
+      if (Entered)
+        return;
+      Entered = S.Kind == StmtKind::Goto && Labels.count(S.GotoTarget);
+      Self(Self, S.Body);
+      Self(Self, S.ElseBody);
+      for (const auto &Case : S.Cases)
+        Self(Self, Case.Body);
+      Self(Self, S.DefaultBody);
+      for (const auto &Clause : S.EHClauseBodies)
+        Self(Self, Clause);
+    }
+  };
+  Scan(Scan, Outside);
+  return Entered;
+}
+
 bool hasCrossingRegions(const std::vector<RegionCandidate> &Candidates,
                         size_t Index) {
   const ExceptionAddressRange &A = Candidates[Index].Range;
@@ -1122,6 +1162,15 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                              EH.CodeRange, ProtectedBody, InsertAt,
                              /*IncludeFunctionEdgeUnknown=*/true, &Host) ||
         !Host) {
+      Rejected += Candidate.NativeRegionCount;
+      continue;
+    }
+    // A jump from outside into the protected statements has no C spelling;
+    // keep that range unstructured instead of emitting one.
+    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin)) {
+      Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
+                   std::make_move_iterator(ProtectedBody.begin()),
+                   std::make_move_iterator(ProtectedBody.end()));
       Rejected += Candidate.NativeRegionCount;
       continue;
     }

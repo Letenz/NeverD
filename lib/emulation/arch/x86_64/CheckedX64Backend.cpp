@@ -10,6 +10,7 @@
 #include "llvm/ADT/ScopeExit.h"
 
 #include <chrono>
+#include <climits>
 #include <exception>
 #include <utility>
 
@@ -164,6 +165,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     uint64_t Address;
     unsigned Size, Permission;
     uint64_t Value;
+    std::optional<int64_t> Update = std::nullopt;
   };
   std::vector<Access> Accesses;
   auto Value = [&](const cs_x86_op &O) -> llvm::Expected<uint64_t> {
@@ -211,6 +213,21 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (!V)
         return V.takeError();
       Accesses.push_back({A, O.size, Write, *V});
+    } else if (O.access == (CS_AC_READ | CS_AC_WRITE) && N == 0 &&
+               X.op_count == 1) {
+      std::optional<int64_t> Delta;
+      switch (I.id) {
+#define NEVERD_X64_MEMORY_UPDATE(Name, Value)                                  \
+  case X86_INS_##Name:                                                         \
+    Delta = Value;                                                             \
+    break;
+#include "X64MemoryUpdates.def"
+#undef NEVERD_X64_MEMORY_UPDATE
+      default:
+        return llvm::make_error<UnsupportedExecutionError>();
+      }
+      Accesses.push_back({A, O.size, Read, 0});
+      Accesses.push_back({A, O.size, Write, 0, Delta});
     } else
       return llvm::make_error<UnsupportedExecutionError>();
   }
@@ -243,8 +260,20 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   for (const auto &A : Accesses) {
     if (A.Permission == Read && Hooks.Read)
       Hooks.Read(A.Address, A.Size);
-    if (A.Permission == Write && Hooks.Write)
-      Hooks.Write(A.Address, A.Size, A.Value);
+    if (A.Permission == Write && Hooks.Write) {
+      uint64_t Value = A.Value;
+      if (A.Update) {
+        // The preceding read access has already checked user permissions and
+        // offered a pre-effect stop. The physical execution lease prevents a
+        // second CPU from changing these bytes before the actual instruction.
+        auto Original = readInteger(A.Address, A.Size);
+        if (!Original)
+          return Original.takeError();
+        Value = (*Original + uint64_t(*A.Update)) &
+                (UINT64_MAX >> (x64::WordBits - A.Size * CHAR_BIT));
+      }
+      Hooks.Write(A.Address, A.Size, Value);
+    }
     if (StopRequested || FirstFault)
       return llvm::Error::success();
     if (auto E = access(A.Address, A.Size, A.Permission, true, true))

@@ -48,6 +48,8 @@ Le résultat sert à l’analyse et ne constitue pas une preuve de sûreté pour
 patch ou les exceptions. Voir le [guide de récupération](interpreter-recovery.md)
 pour les contrôles, rapports et limites.
 
+L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
+
 ## Pourquoi NeverD ?
 
 - **Sémantique 1:1** — lifters manuscrits ; opcodes non supportés lèvent une exception en mode strict par défaut

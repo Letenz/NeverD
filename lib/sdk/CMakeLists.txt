@@ -3,6 +3,7 @@
 set(NEVERD_SDK_SOURCES
     capi/NeverDCAPI.cpp
     capi/NeverDCAPICPU.cpp
+    capi/NeverDCAPIProcess.cpp
     capi/NeverDCAPIBench.cpp
     capi/NeverDCAPIBenchDecode.cpp
     capi/NeverDCAPIConcolic.cpp
@@ -86,7 +87,7 @@ target_link_libraries(neverd_shared PRIVATE
     ${NEVERD_COMMON_LIBS})
 
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
-    target_link_libraries(neverd_shared PRIVATE NeverDEmulationCPU)
+    target_link_libraries(neverd_shared PRIVATE NeverDEmulationCPU NeverDEmulationProcess)
     target_compile_definitions(neverd_shared PRIVATE
         NEVERD_ENABLE_CPU_EMULATION=1)
 endif()
@@ -150,6 +151,7 @@ endif()
 set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPI.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPICPU.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIProcess.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPITypes.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISession.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDisasm.h
@@ -192,6 +194,7 @@ add_custom_command(TARGET neverd_shared POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/DriverScenarioLimits.def"
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ExecutionReport.def"
+        "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ProcessReport.def"
         "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/emulation"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/LICENSE"

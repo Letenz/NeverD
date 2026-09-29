@@ -23,8 +23,10 @@ fails before execution.
 The checked profile validates each instruction and its memory accesses before
 single stepping. It preserves Windows object access checks and write observers,
 shared RAM aliases, and CPU-only contexts. It rejects SIMD/x87, REP, locked
-operations, memory read-modify-write, cross-page data accesses, MMIO, and
-unmodeled CPU effects. It does not run user processes or another guest OS.
+operations, general memory read-modify-write, cross-page data accesses, MMIO,
+and unmodeled CPU effects. Unprefixed memory INC/DEC are admitted with separate
+read/write permission and observer checks; native execution owns their flags.
+This supervisor contract does not provide a user-process environment.
 Timeout and cancellation are checked between admitted, bounded instructions;
 this path does not provide a general asynchronously preemptible VM runner.
 No session is restarted on another backend after guest execution begins.

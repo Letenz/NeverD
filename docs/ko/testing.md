@@ -56,6 +56,10 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 같은 대상의 `LowIRLoopRefinement.*`와 `BinaryLowIRLoopRefinement.*`는 임의 64비트 반복 횟수, 중첩 사전식 순위, 실제 네이티브 잔여 코드, 진입 접두 템플릿, 겹치는 뷰와 상관된 스필을 검사합니다. 부정 사례는 잘못된 본문, 진입 영역 축소, 감소하지 않는 순위, 부호 없는 순환, 이전 쓰기 누락, 절단점 누락, 잘못된 템플릿과 공유 예산 소진을 거부합니다. 유한한 형제 경로의 성공은 불완전한 귀납 증명을 승인하지 않습니다.
 
+`LowIRLoopInference.*`와 `BinaryLowIRLoopInference.*`는 독립적으로 작성한 카운터, 스택 저장, 조기 반환, 네이티브 호출 및 패킹된 플래그를 사용합니다. 좁은 비트 폭의 산술 확장과 표현식이 달라도 의미가 같은 플래그를 검사합니다. 잘못된 그래프, 누락되거나 위조된 원본, 종료하지 않거나 래핑하는 루프, 추론 또는 증명 예산 소진에서는 인증서를 생성하면 안 됩니다.
+
+중첩 추론 회귀는 2중·3중 루프, 증가·감소 카운터, 자동 단계 상수 및 실제 네이티브 본문 절단점을 다룹니다. 도달 불가능하거나 서로 배타적인 접두 영역, 잘못된 본문, 무한 또는 래핑 전이, 공유 탐색/증명 예산 소진은 거부해야 합니다. 접두 증거가 전체 구간 검증을 대체하지 않습니다.
+
 ```sh
 cmake --build build-release --target NeverDLowIRRefinementTests --parallel 4
 build-release/bin/NeverDLowIRRefinementTests

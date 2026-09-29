@@ -177,6 +177,7 @@ extern llvm::cl::SubCommand OptimizeIRCmd;
 extern llvm::cl::SubCommand TranslateObjectCmd;
 extern llvm::cl::SubCommand EmulateDriverCmd;
 extern llvm::cl::SubCommand CPUCapabilitiesCmd;
+extern llvm::cl::SubCommand EmulateProcessCmd;
 extern llvm::cl::SubCommand AuditCmd;
 extern llvm::cl::SubCommand HuntCmd;
 extern llvm::cl::SubCommand ConcolicCmd;
@@ -437,6 +438,9 @@ extern llvm::cl::opt<std::string> DriverBackend;
 extern llvm::cl::opt<std::string> DriverExecutionContract;
 extern llvm::cl::opt<std::string> CPUConfiguration;
 extern llvm::cl::opt<bool> CPUProbeHost;
+extern llvm::cl::opt<std::string> ProcessInput;
+extern llvm::cl::opt<std::string> ProcessProfile;
+extern llvm::cl::opt<std::string> ProcessOptions;
 
 //===----------------------------------------------------------------------===//
 // Command handlers
@@ -520,6 +524,7 @@ int runOptimizeIR();
 int runTranslateObject();
 int runEmulateDriver();
 int runCPUCapabilities();
+int runEmulateProcess();
 
 // NeverDCmdPipeline.cpp — engine-driven operations.
 bool configureAnalysisSession(neverd_session_t Sess);

@@ -629,6 +629,32 @@ class _SanitizeHost:
 
 
 class SessionTests(unittest.TestCase):
+    def test_process_runs_explicit_profile_and_preserves_binary_report(self) -> None:
+        from neverd_plugin import NeverDError, Session
+
+        host = mock.Mock()
+        host.owned_string.return_value = '{"exit_status":37,"stderr_hex":"00ff7f"}'
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        self.assertEqual(
+            session.emulate_process("guest.elf", "linux-elf64-v1"),
+            {"exit_status": 37, "stderr_hex": "00ff7f"},
+        )
+        self.assertEqual(host.owned_string.call_args.args[0], "neverd_emulate_process_json")
+        self.assertEqual(host.owned_string.call_args.args[2:], (b"guest.elf", b"linux-elf64-v1", None))
+        options = '{"arguments":["guest"],"backend":"unicorn"}'
+        session.emulate_process("guest.elf", "linux-elf64-v1", options)
+        self.assertEqual(host.owned_string.call_args.args[-1], options.encode())
+        for invalid in ("", "bad\0value", "bad\ud800value"):
+            with self.assertRaises(ValueError):
+                session.emulate_process(invalid, "linux-elf64-v1")
+            with self.assertRaises(ValueError):
+                session.emulate_process("guest.elf", invalid)
+            with self.assertRaises(ValueError):
+                session.emulate_process("guest.elf", "linux-elf64-v1", invalid)
+        host.owned_string.side_effect = [None, "unsupported guest profile"]
+        with self.assertRaisesRegex(NeverDError, "unsupported guest profile"):
+            session.emulate_process("guest.elf", "unknown")
+
     def test_cpu_query_preserves_native_validation_and_unloaded_session(self) -> None:
         from neverd_plugin import NeverDError, Session
 

@@ -1,0 +1,11 @@
+//===- ExecutionSession.def - Runtime run boundaries --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SESSION_EXIT
+NEVERD_SESSION_EXIT(CPU, "cpu_exit")
+NEVERD_SESSION_EXIT(Quantum, "quantum")
+NEVERD_SESSION_EXIT(InstructionLimit, "instruction_limit")
+NEVERD_SESSION_EXIT(Timeout, "timeout")
+#endif

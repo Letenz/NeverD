@@ -47,6 +47,8 @@ destinazioni sconosciute e budget esauriti causano un errore. Il risultato serve
 all’analisi e non prova la sicurezza di patch o gestione delle eccezioni. La
 [guida al recupero](interpreter-recovery.md) descrive controlli, report e limiti.
 
+L’API C++ separata per le prove dei cicli inferisce invarianti limitati e ranghi lessicografici per cicli annidati, poi ricontrolla il raffinamento dal nativo a LowIR. Consultare la [guida al recupero](interpreter-recovery.md); non certifica il C emesso.
+
 ## Perché NeverD?
 
 - **Semantica 1:1** — lifter scritti a mano; gli opcode non supportati lanciano eccezione in strict di default

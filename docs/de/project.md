@@ -48,6 +48,8 @@ Budgets führen zum Fehler. Das Ergebnis dient der Analyse und ist kein
 Sicherheitsnachweis für Patches oder Ausnahmebehandlung. Kontrollgrößen,
 Berichte und Grenzen stehen im [Rekonstruktionsleitfaden](interpreter-recovery.md).
 
+Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
+
 ## Warum NeverD?
 
 - **1:1-Semantik** — handgeschriebene Lifter; nicht unterstützte Opcodes werfen im Standard-Strict-Modus
