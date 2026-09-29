@@ -14,6 +14,7 @@ namespace neverd::emulation {
 class AddressSpace;
 class MemoryProjection;
 class MemoryRegion;
+class MemoryView;
 
 /// Physical RAM is independent of address spaces, CPUs and their transports.
 /// Regions and mappings keep their owner alive. Releasing the final reference
@@ -29,6 +30,7 @@ public:
 
 private:
   friend class AddressSpace;
+  friend class MemoryView;
   friend class MemoryProjection;
   friend class MemoryRegion;
   struct Impl;
@@ -48,6 +50,7 @@ public:
 private:
   friend class PhysicalMemory;
   friend class AddressSpace;
+  friend class MemoryView;
   friend class MemoryProjection;
   MemoryRegion(std::shared_ptr<PhysicalMemory> Owner, uint64_t Offset,
                uint64_t Size);

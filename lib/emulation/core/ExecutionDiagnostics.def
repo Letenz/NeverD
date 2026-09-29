@@ -83,3 +83,5 @@ NEVERD_EXECUTION_DIAGNOSTIC(DeviceRetirement,
                             "MMIO unmap requires one exact complete mapping")
 NEVERD_EXECUTION_DIAGNOSTIC(DeviceProtection,
                             "changing MMIO page permissions is unsupported")
+NEVERD_EXECUTION_DIAGNOSTIC(PinnedMemoryUnsupported,
+                            "guest memory does not support retained RAM views")

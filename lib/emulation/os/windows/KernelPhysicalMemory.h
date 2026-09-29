@@ -53,6 +53,7 @@ public:
   struct Region {
     uint64_t Backing, Size;
     bool OwnsPages = false;
+    MemoryView Storage;
   };
   struct Segment {
     uint64_t Physical, Backing, Length;
@@ -121,9 +122,20 @@ private:
   struct PinRecord {
     uint64_t Owner, Offset, Length;
   };
+  using PageKey = std::pair<std::weak_ptr<MemoryRegion>, uint64_t>;
+  struct PageKeyLess {
+    bool operator()(const PageKey &A, const PageKey &B) const {
+      if (A.first.owner_before(B.first))
+        return true;
+      if (B.first.owner_before(A.first))
+        return false;
+      return A.second < B.second;
+    }
+  };
   struct PageRecord {
     uint64_t Physical;
     std::optional<CacheType> Cache;
+    bool Reusable = false;
   };
   llvm::Expected<std::vector<uint64_t>> planRegion(uint64_t Owner,
                                                    uint64_t Backing,
@@ -131,13 +143,20 @@ private:
                                                    CacheType Cache) const;
   llvm::Expected<uint64_t> viewBacking(uint64_t Owner, uint64_t Offset,
                                        uint64_t Length) const;
-  llvm::Expected<uint64_t> pinBacking(uint64_t Pin, uint64_t Offset,
-                                      uint64_t Length) const;
+  llvm::Expected<uint64_t> pinOffset(uint64_t Pin, uint64_t Offset,
+                                     uint64_t Length) const;
+  llvm::Expected<PageKey> pageKey(uint64_t Address) const;
+  PageKey pageKey(const Region &Region, uint64_t Address) const;
+  bool containsPage(const MemoryView &View, const PageKey &Key) const;
+  using Owners = std::multimap<uint64_t, uint64_t>;
+  const Owners *activeOwners() const;
   GuestMemory &Memory;
   std::map<uint64_t, Region> Regions;
-  std::map<uint64_t, uint64_t> OwnersByAddress;
+  std::map<std::shared_ptr<const void>, Owners,
+           std::owner_less<std::shared_ptr<const void>>>
+      OwnersBySpace;
   std::set<uint64_t> UsedOwners;
-  std::map<uint64_t, PageRecord> Pages;
+  std::map<PageKey, PageRecord, PageKeyLess> Pages;
   std::map<uint64_t, PinRecord> Pins;
   uint64_t NextPin = 1;
 };

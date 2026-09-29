@@ -58,7 +58,14 @@ class ExecutionBackend : public GuestMemory {
 public:
   using XmmValue = RegisterValue;
   virtual GuestArchitecture architecture() const = 0;
-  virtual std::shared_ptr<AddressSpace> addressSpace() const = 0;
+  std::shared_ptr<AddressSpace> addressSpace() const override = 0;
+  llvm::Expected<MemoryView> pinBacking(uint64_t, uint64_t) const override;
+  llvm::Error validatePinned(const MemoryView &, uint64_t,
+                             uint64_t) const override;
+  llvm::Error readPinned(const MemoryView &, uint64_t,
+                         llvm::MutableArrayRef<uint8_t>) override;
+  llvm::Error writePinned(const MemoryView &, uint64_t,
+                          llvm::ArrayRef<uint8_t>) override;
   /// Rebind a stopped CPU to another space backed by the same physical owner.
   /// CPU snapshots remain associated with the space where they were captured.
   virtual llvm::Error bindAddressSpace(std::shared_ptr<AddressSpace> Space) = 0;

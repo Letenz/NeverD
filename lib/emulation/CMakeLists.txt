@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDEmulationCore
   core/PhysicalMemory.cpp
   core/AddressSpace.cpp
   core/MemoryProjection.cpp
+  core/MemoryView.cpp
   LLVM_COMPONENTS Support)
 
 add_neverd_component_library(NeverDEmulationNative

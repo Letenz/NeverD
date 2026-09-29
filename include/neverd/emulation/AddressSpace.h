@@ -15,11 +15,21 @@ namespace neverd::emulation {
 /// One guest virtual-address namespace over a shared physical owner.
 /// Permissions and alias budgets belong to this space. Physical allocation
 /// handles can outlive their original mapping and can be mapped into siblings.
-class AddressSpace final : public GuestMemory {
+class AddressSpace final : public GuestMemory,
+                           public std::enable_shared_from_this<AddressSpace> {
 public:
   static llvm::Expected<std::shared_ptr<AddressSpace>>
   create(std::shared_ptr<PhysicalMemory> Memory, uint64_t MappingLimit);
   ~AddressSpace() override;
+  std::shared_ptr<AddressSpace> addressSpace() const override;
+  std::shared_ptr<const void> identity() const;
+  llvm::Expected<MemoryView> pinBacking(uint64_t, uint64_t) const override;
+  llvm::Error validatePinned(const MemoryView &, uint64_t,
+                             uint64_t) const override;
+  llvm::Error readPinned(const MemoryView &, uint64_t,
+                         llvm::MutableArrayRef<uint8_t>) override;
+  llvm::Error writePinned(const MemoryView &, uint64_t,
+                          llvm::ArrayRef<uint8_t>) override;
   std::shared_ptr<PhysicalMemory> physicalMemory() const;
   uint64_t mappedBytes() const;
   uint64_t mappingGeneration() const;
