@@ -621,6 +621,98 @@ TEST(SwiftOnceSources, GenericNativeOnceCallsEraseIgnoredContexts) {
   }
 }
 
+TEST(SwiftOnceSources, SharedObjCGetterErasesOnlyProvenUnobservedContext) {
+  OnceFixture F(Arch::AArch64);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Param = [&](unsigned Id) {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = Id;
+    V.Size = 8;
+    return HighExpr::makeVar(V, Pointer);
+  };
+  auto &Getter = F.Pipeline.HighFuncs[0];
+  Getter.Name = "_$s4Test5valueSo8NSObjectCSgvgZToTm";
+  Getter.Params.resize(5, {"argument", Pointer});
+  Getter.SourceTypeHint->Parameters.resize(5, {"argument", Pointer});
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(*Getter.SourceTypeHint, F.Image.Arch, Error));
+  auto Unknown = HighExpr::makeUndef(8);
+  Unknown->Type = Pointer;
+  F.Once->Operands = {Param(2), Param(4), Unknown};
+  Getter.Body.front().Val->Operands[0] = Param(2);
+  Getter.Body.back().RetVal->Operands[0] = Param(3);
+  HighStmt UpdateStorage;
+  UpdateStorage.Kind = StmtKind::Store;
+  UpdateStorage.StoreAddr = Param(3);
+  UpdateStorage.StoreVal = HighExpr::makeConst(1, 8);
+  Getter.Body.insert(Getter.Body.end() - 1, UpdateStorage);
+
+  auto &Callback = F.Pipeline.HighFuncs[1];
+  Callback.Name = "_$s4Test5value_WZ";
+  F.Image.Symbols = {{"_$s4Test5value_Wz", 0x2000, 8, false},
+                     {"_$s4Test5valueSo8NSObjectCSgvpZ", 0x2010, 8, false},
+                     {Callback.Name, Callback.Entry, 0, true}};
+  auto &Caller = F.Pipeline.HighFuncs[2];
+  auto Call = Caller.Body.front().RetVal;
+  Call->Operands = {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+                    HighExpr::makeConst(0x2000, 8),
+                    HighExpr::makeConst(0x2010, 8),
+                    HighExpr::makeConst(Callback.Entry, 8)};
+  auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+  Hint->Signature = *Getter.SourceTypeHint;
+  Call->SourceCallHint = std::move(Hint);
+  LowFunc Direct;
+  Direct.Entry = Caller.Entry;
+  LowBlock Block;
+  LowOp NativeCall;
+  NativeCall.Opcode = NdOp::CALL;
+  NativeCall.addInput(NdVar::cst(Getter.Entry, 8));
+  Block.Ops.push_back(std::move(NativeCall));
+  Direct.Blocks.push_back(std::move(Block));
+  F.Pipeline.LowFuncs.push_back(std::move(Direct));
+
+  EXPECT_FALSE(swift_once_source_detail::getterContract(Getter, F.Image));
+  ASSERT_TRUE(
+      swift_once_source_detail::sharedObjCOnceGetterContract(Getter, F.Image));
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.Getters.count(Getter.Entry), 1U);
+  EXPECT_TRUE(Plan.Getters.at(Getter.Entry).UndefinedContext);
+  ASSERT_EQ(Plan.UnobservedContextGetters.count(Getter.Entry), 1U);
+  const auto Functions = F.functions();
+  auto Bound = bindSwiftOnceSourceReferences(Getter, F.Image, Plan, Functions);
+  ASSERT_EQ(Bound.Function.Body[1].CallExpr->Operands[2]->Kind,
+            ExprKind::Const);
+  EXPECT_EQ(Bound.Function.Body[1].CallExpr->Operands[2]->ConstVal, 0U);
+  EXPECT_EQ(Bound.Function.Body[2].Kind, StmtKind::Store);
+  EXPECT_EQ(F.Once->Operands[2]->Kind, ExprKind::Undef);
+
+  auto NativeHint = Getter.SourceTypeHint;
+  Getter.SourceTypeHint.reset();
+  const auto UntypedPlan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_EQ(UntypedPlan.GetterHints.count(Getter.Entry), 1U);
+  EXPECT_FALSE(UntypedPlan.UnobservedContextGetters.count(Getter.Entry));
+  Getter.SourceTypeHint = std::move(NativeHint);
+
+  F.Pipeline.LowFuncs.front().Blocks.front().Ops.push_back(
+      F.Pipeline.LowFuncs.front().Blocks.front().Ops.front());
+  const auto UnmatchedPlan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_FALSE(UnmatchedPlan.UnobservedContextGetters.count(Getter.Entry));
+  F.Pipeline.LowFuncs.front().Blocks.front().Ops.pop_back();
+
+  HighStmt Observe;
+  Observe.Kind = StmtKind::ExprStmt;
+  Observe.Val = Param(0);
+  Callback.Body.insert(Callback.Body.begin(), Observe);
+  const auto ReadingPlan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_FALSE(ReadingPlan.UnobservedContextGetters.count(Getter.Entry));
+  Bound = bindSwiftOnceSourceReferences(Getter, F.Image, ReadingPlan,
+                                        F.functions());
+  EXPECT_EQ(Bound.Function.Body[1].CallExpr->Operands[2]->Kind,
+            ExprKind::Undef);
+}
+
 TEST(SwiftOnceSources, ErasedContextLeavesNoDeadUnknownDefinition) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     OnceFixture F(Architecture);

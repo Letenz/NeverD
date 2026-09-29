@@ -3342,6 +3342,103 @@ swiftStaticOptionalSelfStorageHint(const BinaryImage &Image, va_t Address) {
   return localStorageHint(Image, Address, Width);
 }
 
+// A static Optional<Foundation.URL> is kept in Swift's three-word value
+// buffer. The allocation helper may replace its first word with a heap
+// pointer when the resilient value does not fit inline. Require the exact
+// demangled type, its addressor, the fixed buffer boundary, and zero-filled
+// storage; neither URL's runtime size nor a symbol gap alone proves this.
+inline bool swiftStaticOptionalURLBufferSymbol(llvm::StringRef Name) {
+  Name.consume_front("_");
+  if (!Name.ends_with("VSgvpZ"))
+    return false;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(Name, Options);
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  const auto Named = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, llvm::StringRef Text) {
+    return Node.Kind == Kind && Node.Text && *Node.Text == Text &&
+           !Node.Index && Node.Children.empty();
+  };
+  const auto NamedAny = [](const llvm::SwiftDemangleNode &Node,
+                           llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "Static", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Variable", 3))
+    return false;
+  const auto &Variable = Parsed.Root->Children[0].Children[0];
+  const auto &Owner = Variable.Children[0];
+  const auto &Property = Variable.Children[1];
+  const auto &Type = Variable.Children[2];
+  if (!Shape(Owner, "Class", 2) || !NamedAny(Owner.Children[0], "Module") ||
+      !NamedAny(Owner.Children[1], "Identifier") ||
+      !NamedAny(Property, "Identifier") || !Shape(Type, "Type", 1))
+    return false;
+  const auto &Optional = Type.Children[0];
+  if (!Shape(Optional, "BoundGenericEnum", 2) ||
+      !Shape(Optional.Children[0], "Type", 1) ||
+      !Shape(Optional.Children[0].Children[0], "Enum", 2) ||
+      !Named(Optional.Children[0].Children[0].Children[0], "Module", "Swift") ||
+      !Named(Optional.Children[0].Children[0].Children[1], "Identifier",
+             "Optional") ||
+      !Shape(Optional.Children[1], "TypeList", 1) ||
+      !Shape(Optional.Children[1].Children[0], "Type", 1) ||
+      !Shape(Optional.Children[1].Children[0].Children[0], "Structure", 2))
+    return false;
+  const auto &URL = Optional.Children[1].Children[0].Children[0];
+  return Named(URL.Children[0], "Module", "Foundation") &&
+         Named(URL.Children[1], "Identifier", "URL");
+}
+
+inline std::optional<SourceCallTypeHint>
+swiftStaticOptionalURLBufferHint(const BinaryImage &Image, va_t Address) {
+  constexpr uint64_t Width = 3 * sizeof(uint64_t);
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      !Address || Address % 8 || Address > InvalidVA - Width)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Address, Width);
+  const auto *Section = Image.getSectionFor(Address);
+  if (!Storage || !Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_ZEROFILL ||
+      !swiftStaticOptionalURLBufferSymbol(Storage->Name) ||
+      (Storage->Size && Storage->Size != Width) ||
+      Image.getSectionFor(Address + Width - 1) != Section ||
+      Image.getSectionFor(Address + Width) != Section)
+    return std::nullopt;
+  const std::string AddressorName =
+      llvm::StringRef(Storage->Name).drop_back(3).str() + "vau";
+  size_t Addressors = 0;
+  size_t BoundarySymbols = 0;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Name == AddressorName) {
+      if (!Symbol.IsFunc || !Image.isCodeAddress(Symbol.Addr))
+        return std::nullopt;
+      ++Addressors;
+    }
+    if (!Symbol.IsFunc && Symbol.Addr == Address + Width)
+      ++BoundarySymbols;
+  }
+  const auto *Bytes = Image.readVA(Address, Width);
+  if (Addressors != 1 || BoundarySymbols != 1 || !Bytes ||
+      !std::all_of(Bytes, Bytes + Width, [](uint8_t Byte) { return !Byte; }))
+    return std::nullopt;
+  return localStorageHint(Image, Address, Width);
+}
+
 inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
@@ -5348,6 +5445,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         return Expression;
       }
       if (auto Storage =
+              swiftStaticOptionalURLBufferHint(Image, Original->ConstVal)) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+        Result.LocalStorageExtents[Original->ConstVal] =
+            Expression->SourceCallHint->ByteCount;
+        return Expression;
+      }
+      if (auto Storage =
               swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
         *Expression = *HighExpr::makeCall({}, 0, {});
         Expression->Type = Original->Type;
@@ -7085,6 +7192,15 @@ inline bool objcSourceCallBound(
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
     auto Expected =
         localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
+    const bool OptionalURL =
+        swiftStaticOptionalURLBufferSymbol(Binding.TargetName) ||
+        (Expected && swiftStaticOptionalURLBufferSymbol(Expected->TargetName));
+    if (OptionalURL) {
+      auto Static =
+          swiftStaticOptionalURLBufferHint(Image, Binding.TargetAddress);
+      if (!Static || Static->ByteCount < Binding.ByteCount)
+        Expected.reset();
+    }
     if (Expected && Binding.ByteCount > 8 &&
         llvm::StringRef(Expected->TargetName).ends_with("ACSgvpZ")) {
       auto Static =
@@ -7092,7 +7208,7 @@ inline bool objcSourceCallBound(
       if (!Static || Static->ByteCount != Binding.ByteCount)
         Expected.reset();
     }
-    if (!Expected && Binding.ByteCount == 8)
+    if (!Expected && Binding.ByteCount == 8 && !OptionalURL)
       Expected = oncePredicateStorageHint(Image, Binding.TargetAddress);
     if (!Expected) {
       auto Array = swiftInlineStringPairArrayHint(Image, Binding.TargetAddress);
@@ -8251,20 +8367,27 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
   for (const auto &[Address, Width] : Storage) {
     uint64_t BackingWidth = Width;
     auto Hint = objc_binding_detail::localStorageHint(Image, Address, Width);
+    const bool OptionalURL =
+        Hint && objc_binding_detail::swiftStaticOptionalURLBufferSymbol(
+                    Hint->TargetName);
     if (Hint) {
       auto Static = objc_binding_detail::swiftStaticOptionalSelfStorageHint(
           Image, Address);
+      if (!Static)
+        Static = objc_binding_detail::swiftStaticOptionalURLBufferHint(Image,
+                                                                       Address);
       if (Static) {
         if (Width > Static->ByteCount)
           throw std::runtime_error("Swift static storage extent was exceeded");
         BackingWidth = Static->ByteCount;
         Hint = std::move(Static);
-      } else if (Width > 8 &&
-                 llvm::StringRef(Hint->TargetName).ends_with("ACSgvpZ")) {
+      } else if ((Width > 8 &&
+                  llvm::StringRef(Hint->TargetName).ends_with("ACSgvpZ")) ||
+                 OptionalURL) {
         Hint.reset();
       }
     }
-    if (!Hint && Width == 8)
+    if (!Hint && Width == 8 && !OptionalURL)
       Hint = objc_binding_detail::oncePredicateStorageHint(Image, Address);
     if (!Hint) {
       auto Array =

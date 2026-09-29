@@ -2733,6 +2733,50 @@ TEST(ObjCCallHints, FoundationURLAppendingPathKeepsIndirectResultABI) {
   }
 }
 
+TEST(ObjCCallHints, FoundationURLStringInitializerKeepsIndirectOptionalABI) {
+  constexpr llvm::StringLiteral Name = "$s10Foundation3URLV6stringACSgSSh_tcfC";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_" + Name.str(), Architecture);
+    Image.DyldBindSlots[0x2180] = {"_" + Name.str(), 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->SwiftStringInputs,
+              (std::vector<std::pair<uint32_t, uint32_t>>{{1, 2}}));
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 3U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::SwiftIndirectResult);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                            : TRI.IntReturnReg);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              TRI.IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[2].Location.RegisterOffset,
+              TRI.IntParamRegs[1]);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall(Name.str(), 0x2180,
+                                   {HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, StdlibAnyBridgesKeepCompilerObservedSwiftABI) {
   enum class Shape { IndirectAnyResult, GenericToObject };
   struct Bridge {

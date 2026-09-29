@@ -120,6 +120,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 client IR passes URL.init(string:) an indirect
+    // Optional<URL> result followed by the two physical String words.
+    {"$s10Foundation3URLV6stringACSgSSh_tcfC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIzp"},
     {"$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -181,8 +188,8 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftDispatch.dylib", "vI"},
     // Swift 6.1.2 arm64 and x86_64 client IR return the opaque DispatchTime
     // value through the Swift indirect-result pointer.
-    {"$s8Dispatch0A4TimeV3nowACyFZ",
-     "/usr/lib/swift/libswiftDispatch.dylib", "vI"},
+    {"$s8Dispatch0A4TimeV3nowACyFZ", "/usr/lib/swift/libswiftDispatch.dylib",
+     "vI"},
     // Swift 6.1.2 arm64 and x86_64 client IR declare DispatchWorkItem.cancel
     // as swiftcc void (ptr swiftself).
     {"$s8Dispatch0A8WorkItemC6cancelyyFTj",
@@ -370,6 +377,8 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
   if (Hint.TargetName ==
       "$sSo7UIImageC5UIKitE24imageLiteralResourceNameABSS_tcfC")
     Hint.SwiftStringInputs = {{0, 1}};
+  if (Hint.TargetName == "$s10Foundation3URLV6stringACSgSSh_tcfC")
+    Hint.SwiftStringInputs = {{1, 2}};
   for (char Code : Encoding) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());
