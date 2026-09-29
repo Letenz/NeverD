@@ -90,6 +90,13 @@ BinaryImage imageWithValue(uint64_t Value, unsigned Width) {
   return Image;
 }
 
+/// \p Image with its segments writable, so that a store may land in them.
+BinaryImage writable(BinaryImage Image) {
+  for (Segment &Data : Image.Segments)
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  return Image;
+}
+
 void setGpr(NdOpEmulator &Emulator, x86_reg Reg, uint64_t Value) {
   Emulator.setRegister(mapCapstoneReg(Reg).Offset, Value);
 }
@@ -168,6 +175,99 @@ TEST(X86APXNddNfSemantics, SbbNddConsumesCarryAndRejectsReservedNf) {
     Insn.bytes[3] |= 0x04;
     Insn.detail->x86.opcode[3] |= 0x04;
   });
+}
+
+TEST(X86APXNddNfSemantics, AdcSbbImmediatesCombineImmediateAndCarry) {
+  // The results and flags are those the host computes for the legacy ADC or
+  // SBB of the same width and immediate.
+  struct Case {
+    const char *Name;
+    std::vector<uint8_t> Bytes;
+    unsigned Id;
+    bool CarryIn;
+    uint64_t Source;
+    x86_reg Destination;
+    uint64_t Expected;
+    Flags Output;
+  };
+  const std::vector<Case> Cases = {
+      // adc r29b, 0xfe
+      {"adc-imm8",
+       {0x62, 0xdc, 0x7c, 0x08, 0x80, 0xd5, 0xfe},
+       X86_INS_ADC,
+       true,
+       UINT64_C(0xaaaaaaaaaaaaaa01),
+       X86_REG_R29,
+       UINT64_C(0xaaaaaaaaaaaaaa00),
+       {true, true, true, true, false, false, true}},
+      // adc r31, r29, 0xfffffffffffffffe
+      {"adc-ndd-simm32",
+       {0x62, 0xdc, 0x84, 0x10, 0x81, 0xd5, 0xfe, 0xff, 0xff, 0xff},
+       X86_INS_ADC,
+       false,
+       5,
+       X86_REG_R31,
+       3,
+       {true, true, true, false, false, false, true}},
+      // sbb r29, 0xfffffffffffffff6: W=1 wins over the 66 prefix.
+      {"sbb-simm8",
+       {0x62, 0xdc, 0xfd, 0x08, 0x83, 0xdd, 0xf6},
+       X86_INS_SBB,
+       true,
+       0,
+       X86_REG_R29,
+       9,
+       {true, true, true, false, false, false, true}},
+  };
+
+  for (const Case &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    const LiftedInstruction Lifted = liftX64(C.Bytes);
+    ASSERT_EQ(Lifted.Id, C.Id);
+    ASSERT_FALSE(Lifted.Ops.empty());
+
+    NdOpEmulator Emulator(emptyImage());
+    Emulator.setStrictMode(true);
+    setFlags(Emulator, {C.CarryIn, false, false, false, false, false, true});
+    setGpr(Emulator, X86_REG_R31, UINT64_C(0x1111111111111111));
+    setGpr(Emulator, X86_REG_R29, C.Source);
+    ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+    EXPECT_EQ(getGpr(Emulator, C.Destination), C.Expected);
+    if (C.Destination != X86_REG_R29)
+      EXPECT_EQ(getGpr(Emulator, X86_REG_R29), C.Source);
+    expectFlags(Emulator, C.Output);
+    EXPECT_FALSE(Emulator.skips().any());
+  }
+}
+
+TEST(X86APXNddNfSemantics, AdcImmediateRejectsDetailThatDisagreesWithRawBytes) {
+  expectMutatedLiftRejected(
+      {0x62, 0xdc, 0x7c, 0x08, 0x80, 0xd5, 0xfe},
+      [](cs_insn &Insn) { Insn.detail->x86.operands[1].imm = 0x7f; });
+}
+
+TEST(X86APXNddNfSemantics, AdcImmediateToMemoryStoresTheSum) {
+  // adc qword ptr [r29 + r30*4 + 0x20], 0x12345678
+  const LiftedInstruction Lifted = liftX64(
+      {0x62, 0x9c, 0xf8, 0x08, 0x81, 0x54, 0xb5, 0x20, 0x78, 0x56, 0x34, 0x12});
+  ASSERT_EQ(Lifted.Id, X86_INS_ADC);
+  ASSERT_FALSE(Lifted.Ops.empty());
+  // mov rax, qword ptr [rdx] reads the stored sum back.
+  const LiftedInstruction Load = liftX64({0x48, 0x8b, 0x02});
+  std::vector<LowOp> Ops = Lifted.Ops;
+  Ops.insert(Ops.end(), Load.Ops.begin(), Load.Ops.end());
+
+  NdOpEmulator Emulator(
+      writable(imageWithValue(UINT64_C(0x1000000000000000), 8)));
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, {true, false, false, false, false, false, true});
+  setGpr(Emulator, X86_REG_R29, kDataAddress - 0x28);
+  setGpr(Emulator, X86_REG_R30, 2);
+  setGpr(Emulator, X86_REG_RDX, kDataAddress);
+  ASSERT_EQ(Emulator.run(Ops), Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_RAX), UINT64_C(0x1000000012345679));
+  expectFlags(Emulator, {false, false, false, false, false, false, true});
+  EXPECT_FALSE(Emulator.skips().any());
 }
 
 TEST(X86APXNddNfSemantics, ShrNddNfUsesDedicatedSourceAndPreservesFlags) {
