@@ -1,3 +1,10 @@
+add_neverd_unittest(NeverDServiceRequestTests
+  ServiceRequestTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDServiceRequestTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDUserExecutionTests
   UserExecutionTests.cpp
   UserProjectionTests.cpp

@@ -13,6 +13,7 @@
 namespace neverd::emulation {
 struct ExecutionExitFacts {
   std::optional<BackendFault> Fault, Recoverable;
+  std::optional<ServiceRequest> Service;
   bool DeviceFailed = false;
   /// Distinguish transport/observer failure from the synthetic terminal fault
   /// retained by legacy CPU APIs to prevent resumption.
@@ -42,7 +43,10 @@ inline ExecutionExit makeExecutionExit(llvm::Error Error,
     Result.Kind = ExecutionExitKind::BackendFailure;
   else if (Facts.Recoverable)
     Result.Kind = ExecutionExitKind::RecoverableFault;
-  else if (Facts.DeadlineReached)
+  else if (Facts.Service) {
+    Result.Kind = ExecutionExitKind::ServiceRequest;
+    Result.Service = Facts.Service;
+  } else if (Facts.DeadlineReached)
     Result.Kind = ExecutionExitKind::Deadline;
   else if (Facts.StopRequested)
     Result.Kind = ExecutionExitKind::Stopped;

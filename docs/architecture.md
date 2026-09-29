@@ -1342,8 +1342,19 @@ the pinned engine. ARM64 executes the maintenance gate and ERET to EL0 before
 each guest step, maintaining the architectural exception-level state and stack
 bank. Native x64 adapters set both selector RPL and descriptor DPL; ARM64
 adapters use SP_EL0 and EL0 saved state. WHP accepts the matching lower-EL debug
-vector and syndrome. Guest service instructions remain outside these contracts;
-the monitor transitions do not implement an OS syscall ABI.
+vector and syndrome. The monitor transitions do not implement an OS syscall ABI.
+
+User profiles recognize exact unprefixed x64 SYSCALL and ARM64 SVC encodings
+from architecture-owned `.def` inventories. The shared checked lifecycle
+intercepts these after instruction observation and before transport entry,
+retaining an OS-independent service request with PC, next PC and immediate.
+This does not perform architectural privilege entry or mutate registers.
+Pending requests block execution, state mutation, rebinding and CPU snapshots
+until the owner explicitly consumes them. Consumption itself does not advance
+the PC; runtime/OS code owns service-number interpretation, result/clobber
+registers and return or exception transfer. Capability instruction lists derive
+from the same admission inventories. Supervisor profiles still reject these
+instructions, and no OS service or workload completion is inferred from an exit.
 
 These page and privilege encodings follow Intel's
 [system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)

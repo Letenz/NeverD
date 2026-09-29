@@ -37,6 +37,8 @@ private:
     CPU.reg(AArch64Register::PC) = PC;
   }
   llvm::Error execute(const cs_insn &) override;
+  std::optional<ServiceRequest>
+  decodeServiceRequest(const cs_insn &) const override;
   AArch64MachineState CPU;
   std::unique_ptr<AArch64Machine> Machine;
 };

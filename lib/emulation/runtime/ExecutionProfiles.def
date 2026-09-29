@@ -18,6 +18,10 @@ NEVERD_EXECUTION_FEATURE_GROUP(SoftwareFeatures,
                                    Feature::SIMD | Feature::MMIO)
 NEVERD_EXECUTION_FEATURE_GROUP(CheckedFeatures,
                                CommonFeatures | Feature::MemoryPreflight)
+NEVERD_EXECUTION_FEATURE_GROUP(UserFeatures,
+                               CheckedFeatures |
+                                   Feature::UserSupervisorIsolation |
+                                   Feature::ServiceTraps)
 #endif
 #ifdef NEVERD_EXECUTION_PROFILE
 // Name, contract, ISA, privilege, address model, features, native, allowlist.
@@ -32,10 +36,7 @@ NEVERD_EXECUTION_PROFILE(CheckedX64, CheckedX64, X64, Supervisor, Canonical,
 NEVERD_EXECUTION_PROFILE(CheckedARM64, CheckedAArch64, AArch64, Supervisor,
                          Split, CheckedFeatures, true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserX64, CheckedUserX64, X64, User, Canonical,
-                         CheckedFeatures | Feature::UserSupervisorIsolation,
-                         true, true)
+                         UserFeatures, true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
-                         Split,
-                         CheckedFeatures | Feature::UserSupervisorIsolation,
-                         true, true)
+                         Split, UserFeatures, true, true)
 #endif
