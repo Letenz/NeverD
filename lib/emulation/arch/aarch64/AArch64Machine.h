@@ -32,6 +32,7 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 }
 } // namespace aarch64
 struct AArch64MachineState {
+  bool UserMode = false;
   std::array<uint64_t, unsigned(AArch64Register::FPSR) + 1> Registers{};
   std::array<RegisterValue, aarch64::VectorCount> Vectors{};
   uint64_t &reg(AArch64Register R) { return Registers[unsigned(R)]; }
@@ -44,7 +45,8 @@ public:
   virtual llvm::Error step(AArch64MachineState &State,
                            MachineRunControl Control) = 0;
 };
-llvm::Error buildAArch64PageTables(MemoryProjection &Memory);
+llvm::Error buildAArch64PageTables(MemoryProjection &Memory,
+                                   bool UserMode = false);
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
                                  MemoryProjection &Memory);
 } // namespace neverd::emulation

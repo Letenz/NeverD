@@ -96,3 +96,15 @@ NEVERD_CONFIGURATION_ARM(LoadDeviceARM, 0xb9400020, 0xd503201f)
 NEVERD_CONFIGURATION_ARM(LoopARM, 0x14000000)
 NEVERD_CONFIGURATION_ARM(TrapARM, 0xd4000001)
 #endif
+
+#ifdef NEVERD_CONFIGURATION_TEXT
+NEVERD_CONFIGURATION_TEXT(
+    UserX64Configuration,
+    "{\"contract\":\"checked-user-x64-v1\",\"privilege\":\"user\","
+    "\"required_features\":[\"user_supervisor_isolation\"]}")
+NEVERD_CONFIGURATION_TEXT(
+    UserARMConfiguration,
+    "{\"contract\":\"checked-user-aarch64-v1\",\"architecture\":\"aarch64\","
+    "\"privilege\":\"user\",\"required_features\":[\"user_supervisor_"
+    "isolation\"]}")
+#endif

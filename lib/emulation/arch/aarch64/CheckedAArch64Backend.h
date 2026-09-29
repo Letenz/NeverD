@@ -12,7 +12,7 @@ class CheckedAArch64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
   create(std::unique_ptr<MemoryProjection> Memory,
-         std::unique_ptr<AArch64Machine> Machine);
+         std::unique_ptr<AArch64Machine> Machine, bool UserMode = false);
   GuestArchitecture architecture() const override {
     return GuestArchitecture::AArch64;
   }
@@ -23,8 +23,9 @@ public:
   llvm::Error restoreContext(const BackendContext &) override;
 
 private:
-  CheckedAArch64Backend()
-      : CheckedBackend(aarch64::InstructionBytes, aarch64::InstructionBytes) {}
+  CheckedAArch64Backend(bool UserMode)
+      : CheckedBackend(aarch64::InstructionBytes, aarch64::InstructionBytes,
+                       UserMode) {}
   struct SavedState : BackendContext::Storage {
     AArch64MachineState CPU;
   };

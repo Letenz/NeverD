@@ -131,7 +131,7 @@ llvm::Error checkBackendBuild(ExecutionBackendKind Kind,
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 createCheckedBackend(ExecutionBackendKind Kind,
                      std::shared_ptr<AddressSpace> Space,
-                     GuestArchitecture Architecture) {
+                     GuestArchitecture Architecture, bool UserMode) {
   auto Memory = MemoryProjection::create(Space);
   if (!Memory)
     return Memory.takeError();
@@ -141,22 +141,25 @@ createCheckedBackend(ExecutionBackendKind Kind,
   if (auto E = (*Memory)->mutableMemory())
     return E;
   if (Architecture == GuestArchitecture::X64) {
-    auto Machine =
-        Kind == ExecutionBackendKind::KVM   ? createKvmMachine(**Memory)
-        : Kind == ExecutionBackendKind::WHP ? createWhpMachine(**Memory)
-                                            : createUnicornX64Machine(**Memory);
+    auto Machine = Kind == ExecutionBackendKind::KVM
+                       ? createKvmMachine(**Memory)
+                   : Kind == ExecutionBackendKind::WHP
+                       ? createWhpMachine(**Memory)
+                       : createUnicornX64Machine(**Memory, UserMode);
     if (!Machine)
       return Machine.takeError();
-    return CheckedX64Backend::create(std::move(*Memory), std::move(*Machine));
+    return CheckedX64Backend::create(std::move(*Memory), std::move(*Machine),
+                                     UserMode);
   }
   auto Machine = Kind == ExecutionBackendKind::KVM
                      ? createKvmAArch64Machine(**Memory)
                  : Kind == ExecutionBackendKind::WHP
                      ? createWhpAArch64Machine(**Memory)
-                     : createUnicornAArch64Machine(**Memory);
+                     : createUnicornAArch64Machine(**Memory, UserMode);
   if (!Machine)
     return Machine.takeError();
-  return CheckedAArch64Backend::create(std::move(*Memory), std::move(*Machine));
+  return CheckedAArch64Backend::create(std::move(*Memory), std::move(*Machine),
+                                       UserMode);
 }
 } // namespace
 llvm::Expected<BackendSelection>
@@ -181,7 +184,8 @@ createExecutionBackend(const ExecutionConfiguration &Configuration,
                                    BackendAvailability::BuildDisabled);
 #endif
   }
-  auto CPU = createCheckedBackend(Kind, std::move(Space), Config.Architecture);
+  auto CPU = createCheckedBackend(Kind, std::move(Space), Config.Architecture,
+                                  Config.Privilege == ExecutionPrivilege::User);
   if (!CPU)
     return CPU.takeError();
   return BackendSelection{std::move(*CPU), Kind,

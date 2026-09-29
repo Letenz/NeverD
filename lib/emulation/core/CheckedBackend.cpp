@@ -76,10 +76,10 @@ llvm::Error CheckedBackend::protect(uint64_t A, uint64_t N, unsigned P) {
 }
 
 llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
-                                   bool Recoverable) {
+                                   bool Recoverable, bool Guest) {
   if (FirstFault)
     return error(diagnostic::Faulted);
-  if (auto Kind = Memory->check(A, N, P)) {
+  if (auto Kind = Memory->check(A, N, Guest ? executionPermissions(P) : P)) {
     auto Access = P == Execute ? BackendAccessKind::Execute
                   : P == Write ? BackendAccessKind::Write
                                : BackendAccessKind::Read;
@@ -127,7 +127,7 @@ llvm::Error CheckedBackend::fetch(uint64_t A,
 
 llvm::Expected<bool> CheckedBackend::canAccess(uint64_t A, uint64_t N,
                                                unsigned P) const {
-  if (FirstFault || (P & ~(Read | Write | Execute)))
+  if (FirstFault || (P & ~GuestPermissionMask))
     return error(diagnostic::Faulted);
   return Memory->addressSpace()->canAccess(A, N, P);
 }
@@ -232,7 +232,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       std::vector<uint8_t> Bytes(MaxInstructionBytes);
       size_t Count = 0;
       for (; Count < Bytes.size() && Count <= UINT64_MAX - PC; ++Count) {
-        if (Memory->check(PC + Count, 1, Execute))
+        if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
           break;
         if (auto E = Memory->read(
                 PC + Count, llvm::MutableArrayRef<uint8_t>(&Bytes[Count], 1),
@@ -241,7 +241,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       }
       cs_insn *Decoded = nullptr;
       if (!Count)
-        return access(PC, 1, Execute);
+        return access(PC, 1, Execute, false, true);
       if (!cs_disasm(Decoder, Bytes.data(), Count, PC, 1, &Decoded)) {
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
