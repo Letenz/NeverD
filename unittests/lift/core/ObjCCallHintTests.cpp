@@ -5763,6 +5763,113 @@ TEST(ObjCCallHints, FastEnumerationObjectTailRequiresFreshPrivateState) {
   EXPECT_TRUE(Proved(Function, NoFoundation).empty());
 }
 
+TEST(ObjCCallHints, BlockClassCaptureFormatTailRequiresPriorTypedUse) {
+  auto Image = runtimeImage("_objc_opt_isKindOfClass", Arch::AArch64);
+  Image.DyldBindSlots[0x2180] = {"_objc_opt_isKindOfClass", 0,
+                                 "/usr/lib/libobjc.A.dylib", false};
+  const auto ClassHint = objcRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(ClassHint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Int = NdType::makeInt(8, false);
+  MedVar Block;
+  Block.Kind = MedVar::Param;
+  Block.Id = 0;
+  Block.Size = 8;
+  Block.TheArch = Arch::AArch64;
+  MedVar Object = Block;
+  Object.Id = 1;
+  MedVar First = Block;
+  First.Kind = MedVar::Temp;
+  First.Id = 2;
+  MedVar Result = First;
+  Result.Id = 3;
+  MedVar Second = First;
+  Second.Id = 4;
+  const auto Field = [&] {
+    return HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Block, Pointer),
+                               HighExpr::makeConst(32, 8));
+  };
+  HighStmt LoadFirst;
+  LoadFirst.Kind = StmtKind::Assign;
+  LoadFirst.Dst = HighExpr::makeVar(First, Int);
+  LoadFirst.Val = HighExpr::makeLoad(Field(), Int);
+  auto Query = HighExpr::makeCall(
+      "objc_opt_isKindOfClass", 0,
+      {HighExpr::makeVar(Object, Pointer), HighExpr::makeVar(First, Int)});
+  Query->SourceCallHint = std::make_shared<SourceCallTypeHint>(*ClassHint);
+  Query->Type = ClassHint->Signature.ReturnType;
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Query, Image, {}));
+  HighStmt Observe;
+  Observe.Kind = StmtKind::Assign;
+  Observe.Dst = HighExpr::makeVar(Result, Query->Type);
+  Observe.Val = Query;
+  HighStmt LoadSecond;
+  LoadSecond.Kind = StmtKind::Assign;
+  LoadSecond.Dst = HighExpr::makeVar(Second, Int);
+  LoadSecond.Val = HighExpr::makeLoad(Field(), Int);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Second, Int);
+  HighFunc Function;
+  Function.Entry = 0x1100;
+  Function.ReturnType = Int;
+  Function.Params = {{"block", Pointer}, {"object", Pointer}};
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  Signature.ReturnType = Int;
+  Signature.Parameters = {{"block", Pointer}, {"object", Pointer}};
+  Function.SourceTypeHint = Signature;
+  Function.Body = {LoadFirst, Observe, LoadSecond, Return};
+  auto Format = HighExpr::makeCall(
+      "format", 0,
+      {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+       HighExpr::makeConst(0, 8), HighExpr::makeVar(Second, Int)});
+  const auto Proved = [&](const HighFunc &Body, const BinaryImage &Source) {
+    VarKeyMap<std::vector<ExprPtr>> Definitions;
+    walkStmts(Body.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+        Definitions[varKey(S.Dst->Var)].push_back(S.Val);
+    });
+    return sdk::objc_binding_detail::provenBlockClassCaptureLoads(
+        Body, Source, Definitions, *Format, 3);
+  };
+  EXPECT_TRUE(Proved(Function, Image).count(LoadSecond.Val.get()));
+
+  auto Changed = Function;
+  Changed.Body.erase(Changed.Body.begin() + 1);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.Body[1].Val = std::make_shared<HighExpr>(*Query);
+  Changed.Body[1].Val->SourceCallHint.reset();
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  HighStmt Clobber;
+  Clobber.Kind = StmtKind::Store;
+  Clobber.StoreAddr = Field();
+  Clobber.StoreVal = HighExpr::makeConst(0, 8);
+  Changed.Body.insert(Changed.Body.begin() + 2, Clobber);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  HighStmt Escape;
+  Escape.Kind = StmtKind::Call;
+  Escape.CallExpr =
+      HighExpr::makeCall("unknown", 0, {HighExpr::makeVar(Block, Pointer)});
+  Changed.Body.insert(Changed.Body.begin() + 2, Escape);
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Cond = HighExpr::makeVar(Object, Pointer);
+  Branch.Body = {Observe};
+  Changed.Body = {LoadFirst, Branch, LoadSecond, Return};
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+  Changed = Function;
+  Changed.SourceTypeHint->Origin =
+      SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  EXPECT_TRUE(Proved(Changed, Image).empty());
+}
+
 TEST(ObjCCallHints, SelectorStubCommandProofRejectsUnverifiedCodeAndSlots) {
   for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
     SCOPED_TRACE(Mutation);
