@@ -600,23 +600,11 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // protected range, not the value the function was entered with.
   std::map<int, std::vector<int>> SEHProtected;
   std::set<int> SEHTrackedIds;
-  auto NonvolatileFamily = [](const MedVar &V) -> std::optional<uint64_t> {
-    if (V.Kind != MedVar::Reg || V.RegOff >= x86reg::RIP)
-      return std::nullopt;
-    const uint64_t Family = V.RegOff / 8 * 8;
-    switch (Family) {
-    case x86reg::RBX:
-    case x86reg::RBP:
-    case x86reg::RSI:
-    case x86reg::RDI:
-    case x86reg::R12:
-    case x86reg::R13:
-    case x86reg::R14:
-    case x86reg::R15:
-      return Family;
-    default:
-      return std::nullopt;
-    }
+  // The calling convention's callee-saved registers, which the unwinder
+  // restores as well. The stack pointer has its own frame proof.
+  auto IsNonvolatile = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.Size != 0 &&
+           !TRI.isStackPointer(V.RegOff) && fullyPreserved(V.RegOff, V.Size);
   };
 
   // Step 0: Insert implicit definitions for live-in variables in the entry
@@ -761,7 +749,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           SEHProtected[Root] = std::move(Protected);
           for (int Id : LiveIn[Root])
             if (auto V = VarOfId.find(Id);
-                V != VarOfId.end() && NonvolatileFamily(V->second))
+                V != VarOfId.end() && IsNonvolatile(V->second))
               SEHTrackedIds.insert(Id);
         }
       }
@@ -906,10 +894,9 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           Worklist.push(D);
           // Step 3b already placed this variable's PHI at a shared handler.
           const auto &Existing = Func.Blocks[D].Phis;
-          if (std::any_of(Existing.begin(), Existing.end(),
-                          [&](const PhiNode &Phi) {
-                            return Phi.Output.Id == VarId;
-                          }))
+          if (std::any_of(
+                  Existing.begin(), Existing.end(),
+                  [&](const PhiNode &Phi) { return Phi.Output.Id == VarId; }))
             continue;
           auto VIt = VarIdToVar.find(VarId);
           MedVar PhiVar = (VIt != VarIdToVar.end()) ? VIt->second : MedVar{};
@@ -1049,15 +1036,23 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   }
 
   for (const auto &[Root, Blocks] : SEHProtected) {
-    std::set<uint64_t> Written;
+    // Register bytes some protected operation writes.
+    std::vector<std::pair<uint64_t, uint64_t>> Written;
+    auto NoteWrite = [&](const MedVar &V) {
+      if (V.Kind == MedVar::Reg && V.Size != 0)
+        Written.emplace_back(V.RegOff, V.RegOff + V.Size);
+    };
     for (int B : Blocks)
       for (const MedOp &Op : Func.Blocks[B].Ops) {
-        if (auto Family = NonvolatileFamily(Op.Output))
-          Written.insert(*Family);
+        NoteWrite(Op.Output);
         for (const MedVar &Aux : Op.IntrinsicOutputs)
-          if (auto Family = NonvolatileFamily(Aux))
-            Written.insert(*Family);
+          NoteWrite(Aux);
       }
+    auto WrittenInRange = [&](const MedVar &V) {
+      return std::any_of(Written.begin(), Written.end(), [&](const auto &W) {
+        return W.first < V.RegOff + V.Size && V.RegOff < W.second;
+      });
+    };
     for (MedOp &Seed : Func.Blocks[Root].Ops) {
       // The root's seeds come first, all at its address.
       if (Seed.Addr != Func.Blocks[Root].StartAddr)
@@ -1065,9 +1060,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
         continue;
       MedVar &In = Seed.Inputs[0];
-      const auto Family = NonvolatileFamily(In);
-      if (!Family || In.Id != Seed.Output.Id || In.SSAVer != 0 ||
-          Written.count(*Family))
+      if (!IsNonvolatile(In) || In.Id != Seed.Output.Id || In.SSAVer != 0 ||
+          WrittenInRange(In))
         continue;
       std::optional<int> Live;
       bool Same = true;
