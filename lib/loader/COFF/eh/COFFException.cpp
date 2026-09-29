@@ -175,6 +175,10 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
   std::unordered_map<va_t, std::pair<va_t, std::string>> PersonalityCache;
   PersonalityCache.reserve(64);
   std::unordered_map<va_t, ExceptionPersonality> InferredGS;
+  // What the routine at each handler address delegates to, whether or not it
+  // is a GS wrapper: every frame that installs an unnamed handler asks, and a
+  // stripped image's CxxFrameHandler3 is one that thousands of frames share.
+  std::unordered_map<va_t, std::optional<ExceptionPersonality>> GSWrapperBase;
   const std::set<va_t> UnnamedMinGW =
       findUnnamedMinGWPersonalities(Img, PersonalityCache);
   const bool DecodeAll = Wanted.empty();
@@ -215,7 +219,18 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
           F.PersonalityName = getExceptionPersonalityName(Cached->second);
           ResolvedVA = F.PersonalityVA;
         } else if (std::optional<ExceptionPersonality> Inferred =
-                       detail::inferGSPersonality(F, Img, &PrimaryByBegin)) {
+                       [&]() -> std::optional<ExceptionPersonality> {
+                     if (F.HandlerDataVA == 0)
+                       return std::nullopt;
+                     auto [Base, Fresh] =
+                         GSWrapperBase.try_emplace(F.PersonalityVA);
+                     if (Fresh)
+                       Base->second = detail::gsWrapperBasePersonality(
+                           Img, F.PersonalityVA, &PrimaryByBegin);
+                     if (!Base->second)
+                       return std::nullopt;
+                     return detail::inferGSPersonality(F, Img, *Base->second);
+                   }()) {
           F.Personality = *Inferred;
           F.PersonalityName = getExceptionPersonalityName(*Inferred);
           ResolvedVA = F.PersonalityVA;
@@ -241,8 +256,7 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
         // under all of them.
         const bool HasLanguageData =
             F.HandlerDataVA != 0 &&
-            detail::readScalar<uint32_t>(Img, F.HandlerDataVA).value_or(0) !=
-                0;
+            detail::readScalar<uint32_t>(Img, F.HandlerDataVA).value_or(0) != 0;
         detail::diagnose(
             F,
             HasLanguageData ? ExceptionParseStatus::Partial
