@@ -8,6 +8,7 @@
 #define NEVERD_ANALYSIS_BINARYINTERPRETERSPECIALIZATION_H
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -82,6 +83,41 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
                                  const SpecializationOptions &Options,
                                  const LowIRIndependenceContract &Contract,
                                  const LowIRIndependenceLimits &Limits = {});
+
+struct BinaryLowIRRefinementCertificate {
+  std::string InputDigest;
+  LowIRRefinementCertificate Relation;
+  std::vector<SpecializationInstruction> Instructions;
+  /// Includes immutable reads from both original and candidate execution.
+  std::vector<SpecializationReadWitness> Reads;
+};
+
+struct BinaryLowIRRefinementResult {
+  LowIRRefinementResult Proof;
+  std::optional<BinaryLowIRRefinementCertificate> Certificate;
+
+  bool proved() const { return Proof.proved() && Certificate.has_value(); }
+};
+
+/// Prove a deterministic LowIR candidate matches complete finite original
+/// native executions under an explicit constructive undefined-value witness.
+/// Requires matching UserX64NoFaultV1 flag profiles in Options and Contract.
+/// Uses the same original instruction audit, physical CALL/RET, immutable
+/// memory, flags profile and mandatory stack/return-slot preservation as the
+/// independence checker. The candidate may have different control structure;
+/// all its feasible paths must also terminate and satisfy the full contract.
+/// Its LowIR addresses identify graph blocks, not original machine bytes.
+///
+/// This is ISA-allowed refinement into LowIR, not undefined-value independence,
+/// CPU-specific equality, a loop induction proof, or C-backend equivalence.
+/// Audited lifting and symbolic transition semantics remain trusted premises.
+/// A failed witness does not rule out other witnesses. The ordinary recovery
+/// and strict independence APIs retain their existing meanings and defaults.
+BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
+    const LowIRRefinementLimits &Limits = {});
 
 struct SpecializationWithIndependenceResult {
   SpecializationResult Recovery;

@@ -9,6 +9,12 @@ add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   LINK_COMPONENTS BinaryInterpreterSpecialization
 )
 
+add_neverd_unittest(NeverDLowIRRefinementTests
+  LowIRRefinementTests.cpp
+  BinaryLowIRRefinementTests.cpp
+  LINK_COMPONENTS BinaryInterpreterSpecialization
+)
+
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp
