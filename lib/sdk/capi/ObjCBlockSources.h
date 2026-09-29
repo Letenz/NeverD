@@ -35,6 +35,7 @@ struct ObjCStackBlockSource {
   std::map<const HighExpr *, uint64_t> HeaderConstants;
 };
 struct ObjCBlockSourcePlan {
+  const BinaryImage *SourceImage = nullptr;
   std::map<va_t, ObjCBlockLiteral> Globals;
   std::map<va_t, ObjCBlockDescriptor> Descriptors;
   std::map<va_t, SourceFunctionTypeHint> InvokeHints;
@@ -867,6 +868,7 @@ inline bool publish(ObjCBlockSourcePlan &Plan,
 inline std::vector<ObjCStackBlockSource>
 stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             const std::map<va_t, const HighFunc *> &Functions,
+            const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers,
             std::string &Reason) {
   const auto &Image = Source.Image;
   // A stack literal needs a store for its ISA/header. Avoid constructing a
@@ -946,7 +948,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
   bool SawIsa = false;
   va_t FailedAt = InvalidVA;
   try {
-    Values State(Source, Function);
+    Values State(Source, Function,
+                 ParentReceivers ? std::optional<size_t>(0) : std::nullopt);
+    if (ParentReceivers)
+      State.ContextRead = [&](const Value &Address, unsigned Bytes) -> Value {
+        if (Bytes != 8 || Address.Offset < 32)
+          return {};
+        const auto Root = ParentReceivers->find(Address.Offset);
+        if (Root == ParentReceivers->end())
+          return {};
+        return {Value::Receiver, Address.Offset, Root->second.Address,
+                Root->second.ClassName};
+      };
     auto UntouchedEntryPointer = [&](const ExprPtr &Expr,
                                      auto &&Visit) -> bool {
       if (!Expr || !Expr->Type || Expr->Type->Size != 8)
@@ -1030,10 +1043,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       Result.InvokeEntry = Invoke.Bits;
       Result.Descriptor = *D;
       for (unsigned I = 0; I < 8; ++I) {
-        const auto &V = Memory.at(Base + 8 + I).V;
-        if (V.K == Value::ImageBits)
-          Result.HeaderConstants.emplace(V.Producer,
-                                         PooledHeaderValues.at(V.Producer));
+        const auto Byte = Memory.find(Base + 8 + I);
+        if (Byte == Memory.end())
+          throw Invalid("block flags and reserved bytes are not completely "
+                        "initialized");
+        const auto &V = Byte->second.V;
+        if (V.K == Value::ImageBits) {
+          const auto Constant = PooledHeaderValues.find(V.Producer);
+          if (Constant == PooledHeaderValues.end())
+            throw Invalid("block header load has no immutable scalar byte "
+                          "binding");
+          Result.HeaderConstants.emplace(V.Producer, Constant->second);
+        }
       }
       for (uint64_t Offset = 32; Offset < D->LiteralSize; ++Offset) {
         auto B = Memory.find(Base + static_cast<int64_t>(Offset));
@@ -1072,11 +1093,19 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           }
           if (!Complete)
             continue;
-          if (Captured.K != Value::Receiver || Captured.Bits != Function.Entry)
+          if (Captured.K != Value::Receiver)
             continue;
-          const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
-          if (Root && Root->ClassName == Captured.Name)
-            Result.CapturedReceivers.emplace(Offset, *Root);
+          if (!Captured.Offset && Captured.Bits == Function.Entry) {
+            const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
+            if (Root && Root->ClassName == Captured.Name)
+              Result.CapturedReceivers.emplace(Offset, *Root);
+          } else if (ParentReceivers) {
+            const auto Parent = ParentReceivers->find(Captured.Offset);
+            if (Parent != ParentReceivers->end() &&
+                Parent->second.Address == Captured.Bits &&
+                Parent->second.ClassName == Captured.Name)
+              Result.CapturedReceivers.emplace(Offset, Parent->second);
+          }
         }
       }
       Result.References.emplace(
@@ -1408,11 +1437,13 @@ objcBlockParameterReceivers(const BinaryImage &Image,
 }
 
 inline ObjCBlockSourcePlan
-discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
-                         const PipelineResult &Result) {
+discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
+                             const PipelineResult &Result,
+                             const ObjCBlockSourcePlan *Previous = nullptr) {
   using namespace objc_block_source_detail;
   const auto &Image = Source.Image;
   ObjCBlockSourcePlan Plan;
+  Plan.SourceImage = &Image;
   if (Result.SourceImage != &Image)
     throw std::invalid_argument(
         "block source evidence belongs to another image");
@@ -1433,7 +1464,30 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
     Functions.emplace(Function.Entry, &Function);
   for (const auto &Function : Result.HighFuncs) {
     std::string Error;
-    auto Blocks = stackBlocks(Source, Function, Functions, Error);
+    const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers = nullptr;
+    if (Previous && Previous->SourceImage == &Image &&
+        Function.SourceTypeHint) {
+      const auto Captures = Previous->CaptureReceivers.find(Function.Entry);
+      const auto Invoke = Previous->InvokeHints.find(Function.Entry);
+      if (Captures != Previous->CaptureReceivers.end() &&
+          !Captures->second.empty() &&
+          Invoke != Previous->InvokeHints.end() &&
+          objc_projection_detail::sameHint(*Function.SourceTypeHint,
+                                           Invoke->second) &&
+          std::all_of(
+              Captures->second.begin(), Captures->second.end(),
+              [&](const auto &Capture) {
+                const auto &Root = Capture.second;
+                return Capture.first >= 32 &&
+                       Root.Origin ==
+                           ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                       !Root.BlockCaptureOffset && Root.Steps.empty() &&
+                       objcReceiverTypeHintValid(Image, Root);
+              }))
+        ParentReceivers = &Captures->second;
+    }
+    auto Blocks =
+        stackBlocks(Source, Function, Functions, ParentReceivers, Error);
     if (!Error.empty())
       Plan.Rejections[Function.Entry] = std::move(Error);
     for (auto &Block : Blocks)
@@ -1595,6 +1649,30 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
       else
         ++Capture;
   }
+  return Plan;
+}
+
+inline ObjCBlockSourcePlan
+discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
+                         const PipelineResult &Result) {
+  auto Plan = discoverObjCBlockSourcesPass(Source, Result);
+  // Every parent root comes from this exact pipeline result. A later pipeline
+  // iteration may change the block constructor or ownership helper, so its
+  // plan cannot authorize a receiver read in the current result.
+  const auto HasRoots = [](const ObjCBlockSourcePlan &Current) {
+    return std::any_of(Current.CaptureReceivers.begin(),
+                       Current.CaptureReceivers.end(), [](const auto &Entry) {
+                         return !Entry.second.empty();
+                       });
+  };
+  for (unsigned Depth = 0; Depth < 16 && HasRoots(Plan); ++Depth) {
+    auto Next = discoverObjCBlockSourcesPass(Source, Result, &Plan);
+    if (Next.CaptureReceivers == Plan.CaptureReceivers)
+      return Next;
+    Plan = std::move(Next);
+  }
+  if (HasRoots(Plan))
+    throw std::runtime_error("nested block receiver proof did not converge");
   return Plan;
 }
 
