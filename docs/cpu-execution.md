@@ -26,15 +26,21 @@ select a contract's fixed profile; explicit unsupported values fail.
 `driver-strict` accepts x64; `software-cpu-v1` accepts x64 and ARM64.
 `checked-x64-v1` and `checked-aarch64-v1` require their named architecture
 and execute at supervisor privilege. `checked-user-x64-v1` and
-`checked-user-aarch64-v1` execute the same bounded scalar instruction inventory
+`checked-user-aarch64-v1` execute the corresponding bounded instruction inventory
 at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
 service-request exits. They support Unicorn and matching-host KVM/WHP; `auto`
 follows the existing host selection.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
-64-bit hardware virtual-address mode. Saving vector register state does not
-establish permission to execute SIMD: all checked profiles reject FP/SIMD,
-MMIO, port I/O and parallel CPU requirements. Only checked user profiles
+64-bit hardware virtual-address mode. Checked x64 advertises bounded SIMD and
+floating-point families: legacy SSE/SSE2 moves and logic, MOVLHPS/MOVHLPS,
+and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD. MXCSR preserves sticky status,
+rounding and FTZ; DAZ and unmasked exceptions are rejected. Checked ARM64 still
+rejects FP/SIMD execution. Supervisor x64 additionally supports checked scalar
+MMIO and prepared-read string transfers; checked user profiles reject device
+mappings. All checked profiles reject port I/O and parallel CPU requirements.
+The instruction inventory remains authoritative; a feature flag does not
+admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
 supervisor and flat profiles do not advertise that boundary.
 
@@ -105,6 +111,12 @@ startup probe, and does not certify a workload or native ARM64 execution.
 Availability can change after the query. Reasons distinguish disabled builds,
 host platform/ISA mismatches, device access, host API errors, missing capability
 and other initialization failures. No unavailable backend silently falls back.
+
+`thread_pointer` covers x64 FS/GS base state and admitted scalar memory operands,
+and ARM64 `TPIDR_EL0` state with its exact `MRS`/`MSR` encodings. Each native
+transport synchronizes that state, and CPU snapshots preserve it independently
+of memory. Other ARM64 system-register accesses remain outside the checked
+inventory. This capability does not create OS threads or allocate TLS blocks.
 
 Whole-instruction memory preflight is specific to the checked contracts.
 Software engine callbacks can describe split accesses and partial instruction

@@ -23,11 +23,14 @@ llvm::Error failure(const char *Text) {
 llvm::Expected<ImageMappingPlan>
 ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
                          uint64_t PageSize, uint64_t MemoryLimit, bool User,
-                         ImagePagePadding Padding) {
+                         ImagePagePadding Padding, ImageByteSource Source) {
   if (!PageSize || (PageSize & (PageSize - 1)) || !MemoryLimit)
     return failure(Configuration);
   if (Padding != ImagePagePadding::Zero &&
       Padding != ImagePagePadding::FilePages)
+    return failure(Configuration);
+  if (Source != ImageByteSource::LoaderSegments &&
+      Source != ImageByteSource::OriginalFile)
     return failure(Configuration);
   const auto Max = std::numeric_limits<uint64_t>::max();
   if (Image.Entry > Max - Bias || Image.Base > Max - Bias)
@@ -41,13 +44,21 @@ ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
   uint64_t Mapped = 0;
   for (const auto &Segment : Image.Segments) {
     if (!Segment.Size) {
-      if (Segment.FileSz || !Segment.Data.empty())
+      if (Segment.FileSz ||
+          (Source == ImageByteSource::LoaderSegments && !Segment.Data.empty()))
         return failure(Extent);
       continue;
     }
-    if (Segment.FileSz > Segment.Size || Segment.Data.size() < Segment.FileSz ||
-        Segment.Data.size() > Segment.Size || Segment.VA > Max - Bias ||
+    if (Segment.FileSz > Segment.Size || Segment.VA > Max - Bias ||
         Segment.Size > Max - (Segment.VA + Bias))
+      return failure(Extent);
+    if (Source == ImageByteSource::LoaderSegments &&
+        (Segment.Data.size() < Segment.FileSz ||
+         Segment.Data.size() > Segment.Size))
+      return failure(Extent);
+    if (Source == ImageByteSource::OriginalFile &&
+        (Segment.FileOff > Image.Raw.size() ||
+         Segment.FileSz > Image.Raw.size() - Segment.FileOff))
       return failure(Extent);
     const uint64_t VA = Segment.VA + Bias;
     const uint64_t End = VA + Segment.Size;
@@ -98,7 +109,10 @@ ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
       std::fill(Mapping.Bytes.begin() + (Segment.VA + Bias - Region.Address) +
                     Segment.FileSz,
                 Mapping.Bytes.end(), 0);
-    std::copy_n(Segment.Data.begin(), Segment.FileSz,
+    const auto Bytes = Source == ImageByteSource::OriginalFile
+                           ? Image.Raw.begin() + Segment.FileOff
+                           : Segment.Data.begin();
+    std::copy_n(Bytes, Segment.FileSz,
                 Mapping.Bytes.begin() + (Segment.VA + Bias - Region.Address));
     Plan.Regions.push_back(std::move(Mapping));
   }

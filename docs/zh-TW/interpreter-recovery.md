@@ -53,6 +53,10 @@ CLI 與各版本原始碼還原 C API 預設啟用自動探索。不依賴特定
 
 CLI 選項 `--vm-max-refinements=N` 要求正整數，預設值為 16。C 呼叫端可透過 `neverd_devirtualize_source_v2()` 或 `neverd_devirtualize_machine_source_v2()` 設定相同上限：將 `neverd_devirtualize_options_v2` 初始化為零，設定 `base.struct_size = sizeof(neverd_devirtualize_options_v2)`，再設定 `max_control_refinements`（零表示保留預設值 16）。內嵌的 `base` 保存 v1 選項，兩個 reserved 成員都必須為零。既有 v1 版面配置與入口維持不變，並忽略擴充尾部。其他工作與證明預算仍然生效。
 
+`--vm-max-fields=N` 和 `--vm-max-queries=N` 分別設定控制欄位與求解查詢上限，預設值仍為 16 和 4096。這兩個選項及 `--vm-max-refinements` 都要求正的 32 位元十進位整數，且必須搭配 `--devirtualize`；零、正負號、十六進位、尾隨文字和溢位均遭拒絕。兩種原始碼 ABI 與兩個後端使用相同上限。提高預算只允許更多分析工作，不提供控制提示、執行期輸入或新的證明保證；耗盡時仍不發布 C。
+
+C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_machine_source_v3()`：將 `neverd_devirtualize_options_v3` 清零，設定 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`，再設定 `max_control_fields`、`max_solver_queries`，並可設定 `base.max_control_refinements`；零表示採用對應的既有預設值。三個 reserved 欄位必須全部為零。v1/v2 入口忽略 v3 尾部（包含 reserved），v3 忽略未來擴充尾部。報告同時記錄實際工作量與生效的 `maxControlFields`、`maxControlRefinements`、`maxSolverQueries`。
+
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
 ## 執行契約

@@ -3,16 +3,17 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// The fixed checked profiles select supervisor or user scalar execution. Flat
-// software profiles inherit the pinned engine's instruction model; they do not
-// establish architectural user/supervisor isolation or full OS compatibility.
+// The fixed checked profiles select explicit supervisor or user ISA subsets.
+// Flat software profiles inherit the pinned engine's instruction model; they do
+// not establish architectural user/supervisor isolation or full OS
+// compatibility.
 #ifdef NEVERD_EXECUTION_FEATURE_GROUP
 NEVERD_EXECUTION_FEATURE_GROUP(
     CommonFeatures,
     Feature::ScalarInteger | Feature::VectorRegisterState |
         Feature::InstructionObservation | Feature::SharedPhysicalMemory |
         Feature::MultipleAddressSpaces | Feature::RetainedMemoryViews |
-        Feature::TypedExits | Feature::CooperativeCPUs)
+        Feature::TypedExits | Feature::CooperativeCPUs | Feature::ThreadPointer)
 NEVERD_EXECUTION_FEATURE_GROUP(SoftwareFeatures,
                                CommonFeatures | Feature::FloatingPoint |
                                    Feature::SIMD | Feature::MMIO)
@@ -32,11 +33,14 @@ NEVERD_EXECUTION_PROFILE(SoftwareX64, Software, X64, Flat, Flat,
 NEVERD_EXECUTION_PROFILE(SoftwareARM64, Software, AArch64, Flat, Flat,
                          SoftwareFeatures, false, false)
 NEVERD_EXECUTION_PROFILE(CheckedX64, CheckedX64, X64, Supervisor, Canonical,
-                         CheckedFeatures, true, true)
+                         CheckedFeatures | Feature::SIMD |
+                             Feature::FloatingPoint | Feature::MMIO,
+                         true, true)
 NEVERD_EXECUTION_PROFILE(CheckedARM64, CheckedAArch64, AArch64, Supervisor,
                          Split, CheckedFeatures, true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserX64, CheckedUserX64, X64, User, Canonical,
-                         UserFeatures, true, true)
+                         UserFeatures | Feature::SIMD | Feature::FloatingPoint,
+                         true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
                          Split, UserFeatures, true, true)
 #endif

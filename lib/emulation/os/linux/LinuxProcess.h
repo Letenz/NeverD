@@ -25,7 +25,7 @@ inline llvm::Error failure(const char *Text) {
 struct ProcessLayout {
   GuestArchitecture Architecture;
   IntegerABI Calls;
-  uint64_t UserLimit, ProgramHeaderAddress, PageSize;
+  uint64_t UserLimit, ProgramHeaderAddress, PageSize, LoadBias;
   bool ExecutableStack;
 };
 struct ServiceABI {
@@ -38,6 +38,9 @@ llvm::Expected<ProcessServiceEvent> readService(ExecutionBackend &CPU,
                                                 const ServiceRequest &Request);
 llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
                           uint64_t Result);
+llvm::Expected<std::optional<uint64_t>>
+archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
+          const ProcessLayout &Layout, ProcessResult &Result);
 llvm::Expected<ProcessLayout> processLayout(const BinaryImage &Image);
 llvm::Expected<uint64_t> prepareStack(GuestMemory &Memory,
                                       const BinaryImage &Image,

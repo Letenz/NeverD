@@ -56,6 +56,8 @@ build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
+API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Strukturen, alle reserved-Felder und künftige Anhänge. CLI-Tests prüfen Feld-/Abfrageerschöpfung und erfolgreiche Wiederherstellung für beide ABIs und Backends, lehnen ungültige Dezimalgrenzen ab und verlangen `--devirtualize`. Erschöpfte Budgets dürfen weder Quellcode noch partielle Restgraphen veröffentlichen.
+
 `NeverDLowIRRefinementTests` prüft echte rekonstruierte Graphen, unterschiedlich strukturierte endliche Schleifen einschließlich null Iterationen, dynamische Erzeuger, bedingte Wahlen, überlappende Eingaben, korrelierte Kopien und Spills, beidseitige unveränderliche Lesebelege sowie Systemflags und Rückkehrslot-Erhaltung. Falsche Kandidaten, zusätzliche Schreibzugriffe, unvollständige oder unendliche Pfade, veraltete Belege, Scratch-Kollisionen und erschöpfte gemeinsame Budgets müssen Zertifikate verweigern. Die bisherigen Unabhängigkeitstests lehnen beobachtbare beliebige Werte weiterhin ab.
 
 `LowIRLoopRefinement.*` und `BinaryLowIRLoopRefinement.*` im selben Ziel prüfen beliebige 64-Bit-Zähler, verschachtelte lexikografische Ränge, echte native Restprogramme, Eingangsvorlagen, überlappende Ansichten und korrelierte Auslagerungen. Negativtests verwerfen falsche Schleifenkörper, eingeschränkte Eingangsbereiche, nicht sinkende Ränge, vorzeichenlosen Umlauf, vergessene frühere Schreibzugriffe, fehlende Schnittpunkte, ungültige Vorlagen und erschöpfte gemeinsame Budgets. Ein erfolgreicher endlicher Geschwisterpfad legitimiert keinen unvollständigen Induktionsbeweis.

@@ -3,7 +3,18 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// The native instruction owns flags; these deltas predict only the observable
-// written bytes. LOCK, multi-operand RMW and cross-page accesses stay rejected.
-NEVERD_X64_MEMORY_UPDATE(INC, 1)
-NEVERD_X64_MEMORY_UPDATE(DEC, -1)
+// The native instruction owns flags. These unsigned expressions predict only
+// the written bytes after read admission; the caller masks the operand width.
+// Naturally aligned LOCK forms share the same preflight and physical lease.
+// Bit-string memory operations and cross-page accesses stay rejected.
+NEVERD_X64_MEMORY_UPDATE(INC, 1, Original + 1)
+NEVERD_X64_MEMORY_UPDATE(DEC, 1, Original - 1)
+NEVERD_X64_MEMORY_UPDATE(NEG, 1, uint64_t(0) - Original)
+NEVERD_X64_MEMORY_UPDATE(NOT, 1, ~Original)
+NEVERD_X64_MEMORY_UPDATE(ADD, 2, Original + Operand)
+NEVERD_X64_MEMORY_UPDATE(ADC, 2, Original + Operand + Carry)
+NEVERD_X64_MEMORY_UPDATE(SUB, 2, Original - Operand)
+NEVERD_X64_MEMORY_UPDATE(SBB, 2, Original - Operand - Carry)
+NEVERD_X64_MEMORY_UPDATE(AND, 2, Original &Operand)
+NEVERD_X64_MEMORY_UPDATE(OR, 2, Original | Operand)
+NEVERD_X64_MEMORY_UPDATE(XOR, 2, Original ^ Operand)

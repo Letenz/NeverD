@@ -811,6 +811,8 @@ demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
+The v3 recovery C API and CLI map explicit field, refinement and solver-query budgets to the shared specializer. The adapter validates structure sizes and reserved fields before reading extensions; v1/v2 layouts and defaults remain stable. Budget increases change permitted work, not the execution contract or publication criteria.
+
 The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the finite native-path scope below.
 
 Legacy scalar SHL/SAL, SHR and SAR carry count-dependent undefined-bit evidence for 8/16/32/64-bit operands. Masked count zero preserves every flag; nonzero counts make AF arbitrary, counts above one make OF arbitrary, and SHL/SHR counts at least the operand width make CF arbitrary. SAR retains defined carry. Instruction-local Boolean guards use the saved masked count before overlapping destination writes, and are emitted identically with or without metadata. Unsupported encodings never publish partial effects. These rules conservatively cover the [Intel SDM shift contract](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf) and [AMD APM Volume 3](https://docs.amd.com/v/u/en-US/24594_3.37).
@@ -1225,15 +1227,21 @@ success. This does not claim concurrent SMP execution.
 [`ImageMappingPlan`](../include/neverd/emulation/ImageMapping.h) consumes existing
 loader segments; it neither reparses headers nor resolves imports. ELF loaders
 also retain decoded program-header facts in `BinaryImage::ELFMetadata`, allowing
-Linux policy to validate startup without duplicating ELF parsing. Image plans
-check complete extents and overlap before materializing bytes. The Linux model
+Linux policy to validate startup without duplicating ELF parsing. The ELF loader
+also decodes original program dynamic tables without depending on section
+headers. Image plans check complete extents and overlap before materializing
+bytes, with an explicit choice between analysis-patched segments and original
+file bytes. Linux process startup consumes the original bytes, selects one
+load bias for static PIE and supplies relocated entry/PHDR auxiliary values.
+Guest startup owns self-relocation and TLS initialization. The Linux model
 sets up a private address space before exposing its CPU.
 
 The [process API](process-emulation.md) adds an explicit `linux-elf64-v1` profile
 through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
-system-call continuations and bounded byte output. It currently rejects dynamic
-linking, TLS, signals and thread creation. Those OS semantics remain in
+system-call continuations and bounded byte output. It supports static TLS and
+self-relocating static PIE, while rejecting an interpreter, external dynamic
+dependencies, signals and thread creation. Those OS semantics remain in
 `os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
@@ -1293,7 +1301,8 @@ are supported with cooperative execution, not parallel hardware SMP. Physical
 and per-space mapping budgets currently have a 1 GiB ceiling; page size is
 4 KiB. Device mappings consume virtual mapping capacity but no RAM allocation.
 Direct address-space reads and writes access RAM only; device transactions
-require a supporting backend. The checked profiles reject device mappings.
+require a supporting backend. Only the supervisor x64 checked profile admits
+device mappings, through the architecture-owned transactions below.
 
 [`MemoryView`](../include/neverd/emulation/MemoryView.h) captures exact allocation
 slices and an independent address-space identity token. It retains RAM without
@@ -1337,9 +1346,9 @@ constants and transport parameters.
 |----------|-----------|---------------------|
 | `driver-strict` | x64 | Existing Unicorn driver execution |
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
-| `checked-x64-v1` | x64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
+| `checked-x64-v1` | x64 | Shared bounded integer, SSE/SSE2 and device-transaction admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
-| `checked-user-x64-v1` | x64 | The checked integer inventory at CPL3 with explicit user page permissions |
+| `checked-user-x64-v1` | x64 | The checked x64 instruction inventory at CPL3 with explicit user page permissions, excluding device mappings |
 | `checked-user-aarch64-v1` | ARM64 | The checked integer inventory at EL0 with explicit user page permissions |
 
 For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
@@ -1359,9 +1368,28 @@ successful workload completion. Observation precision distinguishes complete
 checked-instruction preflight from software engine memory callbacks. Current
 execution-control capabilities explicitly provide no hard wall-clock bound.
 
+The x64 architecture owns scalar memory-update previews and SETcc write
+directions independently of decoder access annotations. Native transports own
+the resulting register/flag effects and synchronize all XMM registers plus
+MXCSR; masked scalar conversion/subtraction keeps rounding and sticky status.
+The `.def` inventory excludes unmodeled floating-point and vector families.
+Naturally aligned locked scalar updates hold the same physical execution lease;
+this does not introduce parallel-CPU execution.
+
+`CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
+boundary. It validates every access before effects; device pages remain outside
+native RAM mappings. `GuestMMIOPreparedRead` is an optional pure value preview
+with an at-most-once commit, needed when a destination write observer must see
+the exact value before a device source is consumed. The Windows register bank
+owns its preparation, lifetime and power-generation checks. Discarding a preview
+has no effects; callback failures are terminal device exits. A CPU snapshot
+never rolls back committed RAM or device effects. Other devices without read
+preparation reject memory-to-memory reads rather than consuming them early.
+
 The ARM64 checked profile runs little-endian baseline integer instructions at
 EL1. It admits scalar loads/stores, register-offset addressing, literal loads
-and checked pair/writeback forms. It rejects FP/SIMD, atomics/exclusives, system
+and checked pair/writeback forms. It admits exact TPIDR_EL0 reads/writes for
+thread-pointer state and rejects FP/SIMD, atomics/exclusives, other system
 instructions, MMIO, constrained-unpredictable writeback and individual data
 transactions crossing a page. All accesses in a pair are validated before
 native execution. Unrestricted software execution has a separate contract and

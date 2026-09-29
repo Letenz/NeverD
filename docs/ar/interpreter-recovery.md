@@ -66,6 +66,10 @@ neverd decompile program --func vm_entry --devirtualize \
 
 يتطلب خيار CLI‏ `--vm-max-refinements=N` عدداً صحيحاً موجباً، وقيمته الافتراضية 16. يستطيع مستدعو C ضبط الحد نفسه عبر `neverd_devirtualize_source_v2()` أو `neverd_devirtualize_machine_source_v2()`: تُهيَّأ `neverd_devirtualize_options_v2` بالأصفار، ثم يُضبط `base.struct_size = sizeof(neverd_devirtualize_options_v2)` و`max_control_refinements` (يبقي الصفر القيمة الافتراضية 16). يحمل العضو المضمّن `base` خيارات v1، ويجب أن يبقى عضوا reserved صفراً. لا تتغير تخطيطات v1 أو نقاط دخولها القائمة، وهي تتجاهل الامتدادات الملحقة. تظل ميزانيات العمل والإثبات الأخرى سارية.
 
+تضبط `--vm-max-fields=N` و`--vm-max-queries=N` حدود حقول التحكم واستعلامات المحلل، مع بقاء القيم الافتراضية 16 و4096. تتطلب هذه الخيارات و`--vm-max-refinements` أعدادًا عشرية صحيحة موجبة من 32 بت مع `--devirtualize`؛ وتُرفض الصفر والإشارات والصيغة الست عشرية والنص اللاحق والتجاوز. تستخدم واجهتا ABI وخلفيتا المصدر الحدود نفسها. تسمح زيادة الميزانية بمزيد من التحليل دون تقديم تلميحات تحكم أو مدخلات تشغيل أو ضمان إثبات جديد. لا يُنشر C عند نفاد الميزانية.
+
+يستخدم مستدعو C الدالة `neverd_devirtualize_source_v3()` أو `neverd_devirtualize_machine_source_v3()`. صفّر `neverd_devirtualize_options_v3` واضبط `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`، ثم `max_control_fields` و`max_solver_queries` واختياريًا `base.max_control_refinements`؛ تختار القيمة صفر الافتراضي الحالي. يجب أن تكون حقول reserved الثلاثة صفرًا. تتجاهل v1/v2 ذيل v3 بما فيه reserved، وتتجاهل v3 الذيول المستقبلية. يسجل التقرير العمل الفعلي وحدود `maxControlFields` و`maxControlRefinements` و`maxSolverQueries` النافذة.
+
 يضيف تقرير JSON الحقول `discoverControlState` و`maxControlRefinements` و`maxDiscoveryVisits` و`discoveredControlFields` و`discoveredContextFields` و`controlRefinements` و`discoveryVisits` لتسجيل التفعيل والحدود والعمل التحليلي. اكتشاف الحقول وحده لا يثبت نجاح الاستعادة.
 
 ## عقد التنفيذ

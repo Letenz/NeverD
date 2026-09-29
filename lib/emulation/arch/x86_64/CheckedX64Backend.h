@@ -27,11 +27,15 @@ public:
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext() override;
   llvm::Error saveContext(BackendContext &) override;
   llvm::Error restoreContext(const BackendContext &) override;
+  llvm::Error mapMMIO(uint64_t, uint64_t, GuestMMIOCallbacks) override;
+  llvm::Error unmapMMIO(uint64_t, uint64_t) override;
+  bool hasDeviceError() const override { return DeviceFailed; }
 
 private:
   CheckedX64Backend(bool UserMode)
       : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode) {}
   bool canonicalRange(uint64_t, uint64_t) const override;
+  bool supportsDeviceMappings() const override { return !UserMode; }
   uint64_t programCounter() const override { return CPU.reg(X64Register::PC); }
   void setProgramCounter(uint64_t PC) override {
     CPU.reg(X64Register::PC) = PC;
@@ -43,9 +47,26 @@ private:
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;
+  void setOperandRegister(unsigned Register, uint64_t Value);
+  std::shared_ptr<MemoryProjection::Device> deviceAt(uint64_t Address) const;
+  llvm::Error validateDevice(const MemoryProjection::Device &, uint64_t,
+                             unsigned, bool);
+  llvm::Error deviceTransfer(const cs_insn &, uint64_t, unsigned, unsigned,
+                             uint64_t);
+  llvm::Error executeString(const cs_insn &, unsigned Size);
+  llvm::Error deviceResult(llvm::Error E);
+  template <typename Function> auto deviceCallback(Function Call) {
+    try {
+      return Call();
+    } catch (...) {
+      DeviceFailed = true;
+      throw;
+    }
+  }
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;
   uint64_t PageTableRoot = 0;
+  bool DeviceFailed = false;
 };
 } // namespace neverd::emulation
 #endif

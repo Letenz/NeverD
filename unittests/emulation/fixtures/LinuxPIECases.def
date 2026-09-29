@@ -1,0 +1,39 @@
+//===- LinuxPIECases.def - Static PIE startup facts -----------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PIE_VALUE
+NEVERD_PIE_VALUE(PhdrTag, 3)
+NEVERD_PIE_VALUE(PhnumTag, 5)
+NEVERD_PIE_VALUE(BaseTag, 7)
+NEVERD_PIE_VALUE(EntryTag, 9)
+NEVERD_PIE_VALUE(PhdrHeader, 6)
+NEVERD_PIE_VALUE(DynamicHeader, 2)
+NEVERD_PIE_VALUE(RelaTag, 7)
+NEVERD_PIE_VALUE(RelaSizeTag, 8)
+NEVERD_PIE_VALUE(RelaEntryTag, 9)
+NEVERD_PIE_VALUE(RelocationCount, 3)
+NEVERD_PIE_VALUE(SymbolShift, 32)
+NEVERD_PIE_VALUE(MaxEntries, 64)
+NEVERD_PIE_VALUE(DataValue, 41)
+NEVERD_PIE_VALUE(ArgumentValue, 2)
+NEVERD_PIE_VALUE(ComputedValue, 43)
+NEVERD_PIE_VALUE(StandardOutput, 1)
+NEVERD_PIE_VALUE(ExitStatus, 0)
+NEVERD_PIE_VALUE(FailureStatus, 93)
+NEVERD_PIE_VALUE(InstructionLimit, 20000)
+NEVERD_PIE_VALUE(DynamicProbeValue, 0xfedcba98)
+#if defined(__aarch64__)
+NEVERD_PIE_VALUE(Relative, 1027)
+#else
+NEVERD_PIE_VALUE(Relative, 8)
+#endif
+#endif
+#ifdef NEVERD_PIE_TEXT
+NEVERD_PIE_TEXT(Message, "static pie ok\n")
+NEVERD_PIE_TEXT(ExecutableName, "pie-fixture")
+NEVERD_PIE_TEXT(Suffix, "-pie.elf")
+NEVERD_PIE_TEXT(X64File, "X64-pie.elf")
+NEVERD_PIE_TEXT(ARMFile, "AArch64-pie.elf")
+#endif

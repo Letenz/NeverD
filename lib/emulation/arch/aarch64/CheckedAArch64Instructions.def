@@ -3,8 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Operand admission additionally excludes FP/SIMD, SVE, system registers and
-// constrained-unpredictable writeback. HINT is restricted to the NOP encoding.
+// Operand admission excludes FP/SIMD, SVE and constrained-unpredictable
+// writeback. System-register access is restricted to the thread-pointer
+// encodings below. HINT is restricted to the NOP encoding.
 #ifdef NEVERD_AARCH64_INSTRUCTION
 NEVERD_AARCH64_INSTRUCTION(ADC, Integer)
 NEVERD_AARCH64_INSTRUCTION(ADCS, Integer)
@@ -68,6 +69,8 @@ NEVERD_AARCH64_INSTRUCTION(CBNZ, Integer)
 NEVERD_AARCH64_INSTRUCTION(TBZ, Integer)
 NEVERD_AARCH64_INSTRUCTION(TBNZ, Integer)
 NEVERD_AARCH64_INSTRUCTION(HINT, Integer)
+NEVERD_AARCH64_INSTRUCTION(MRS, ThreadPointer)
+NEVERD_AARCH64_INSTRUCTION(MSR, ThreadPointer)
 NEVERD_AARCH64_INSTRUCTION(LDR, Memory)
 NEVERD_AARCH64_INSTRUCTION(LDRB, Memory)
 NEVERD_AARCH64_INSTRUCTION(LDRH, Memory)
@@ -93,6 +96,9 @@ NEVERD_AARCH64_INSTRUCTION(STP, Memory)
 NEVERD_AARCH64_INSTRUCTION(STNP, Memory)
 #endif
 #ifdef NEVERD_AARCH64_ENCODING
+// MRS/MSR TPIDR_EL0, Xt. Only the general-register field is variable.
+NEVERD_AARCH64_ENCODING(ReadThreadPointer, 0xffffffe0, 0xd53bd040)
+NEVERD_AARCH64_ENCODING(WriteThreadPointer, 0xffffffe0, 0xd51bd040)
 NEVERD_AARCH64_ENCODING(UnsignedMemory, 0x3f000000, 0x39000000)
 NEVERD_AARCH64_ENCODING(ImmediateMemory, 0x3f200000, 0x38000000)
 NEVERD_AARCH64_ENCODING(RegisterMemory, 0x3f200c00, 0x38200800)

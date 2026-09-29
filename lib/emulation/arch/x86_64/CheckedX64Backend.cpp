@@ -8,7 +8,9 @@
 #include "../../core/ExecutionDiagnostics.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
 #include <chrono>
 #include <climits>
 #include <exception>
@@ -16,6 +18,85 @@
 
 namespace neverd::emulation {
 using diagnostic::error;
+namespace {
+std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
+  const bool Carry = Flags & x64::CarryFlag;
+  const bool Parity = Flags & x64::ParityFlag;
+  const bool Zero = Flags & x64::ZeroFlag;
+  const bool Sign = Flags & x64::SignFlag;
+  const bool Overflow = Flags & x64::OverflowFlag;
+  switch (Instruction) {
+#define NEVERD_X64_CONDITION(Name, Expression)                                 \
+  case X86_INS_SET##Name:                                                      \
+    return Expression;
+#include "X64Conditions.def"
+#undef NEVERD_X64_CONDITION
+  default:
+    return std::nullopt;
+  }
+}
+std::optional<unsigned> updateArity(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_MEMORY_UPDATE(Name, Arity, Expression)                      \
+  case X86_INS_##Name:                                                         \
+    return Arity;
+#include "X64MemoryUpdates.def"
+#undef NEVERD_X64_MEMORY_UPDATE
+  default:
+    return std::nullopt;
+  }
+}
+uint64_t updateValue(unsigned Instruction, uint64_t Original, uint64_t Operand,
+                     uint64_t Flags) {
+  const uint64_t Carry = bool(Flags & x64::CarryFlag);
+  switch (Instruction) {
+#define NEVERD_X64_MEMORY_UPDATE(Name, Arity, Expression)                      \
+  case X86_INS_##Name:                                                         \
+    return Expression;
+#include "X64MemoryUpdates.def"
+#undef NEVERD_X64_MEMORY_UPDATE
+  default:
+    llvm_unreachable(diagnostic::Instruction);
+  }
+}
+bool isXmm(unsigned R) { return R >= X86_REG_XMM0 && R <= X86_REG_XMM15; }
+struct VectorOperation {
+  unsigned Width, Alignment;
+  bool Move, General;
+};
+std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, General)   \
+  case X86_INS_##Name:                                                         \
+    return VectorOperation{Width, Alignment, Move, General};
+#include "X64VectorInstructions.def"
+#undef NEVERD_X64_VECTOR_INSTRUCTION
+  default:
+    return std::nullopt;
+  }
+}
+bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
+  if (X.op_count != 2)
+    return false;
+  const auto &D = X.operands[0], &S = X.operands[1];
+  auto Xmm = [](const cs_x86_op &O) {
+    return O.type == X86_OP_REG && isXmm(O.reg);
+  };
+  if (!Xmm(D) && !(V.Move && Xmm(S)))
+    return false;
+  for (const auto &O : {D, S}) {
+    if (Xmm(O))
+      continue;
+    if (O.size != V.Width ||
+        (O.type != X86_OP_MEM && !(V.General && O.type == X86_OP_REG)))
+      return false;
+  }
+  return true;
+}
+bool isFloatingPointConversion(unsigned Instruction) {
+  return Instruction == X86_INS_CVTTSD2SI || Instruction == X86_INS_CVTTSS2SI;
+}
+} // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return x64::canonicalRange(A, N);
 }
@@ -27,7 +108,7 @@ CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
-  if (auto E = B->Memory->validateMappings(x64::canonicalRange))
+  if (auto E = B->Memory->validateMappings(x64::canonicalRange, !UserMode))
     return E;
   if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
     return E;
@@ -44,6 +125,10 @@ llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
     return error(diagnostic::Register);
   if (R == CPURegister::X64GSBase)
     return RegisterValue{CPU.GSBase, 0};
+  if (R == CPURegister::X64FSBase)
+    return RegisterValue{CPU.FSBase, 0};
+  if (R == CPURegister::X64MXCSR)
+    return RegisterValue{CPU.MXCSR, 0};
   if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15)
     return CPU.Xmm[unsigned(R) - unsigned(CPURegister::X64V0)];
   return RegisterValue{CPU.Registers[unsigned(R)], 0};
@@ -54,6 +139,16 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
     return E;
   if (!registerMatches(R, architecture()))
     return error(diagnostic::Register);
+  if (R == CPURegister::X64MXCSR) {
+    // The current profile has no SIMD exception-delivery gateway or DAZ
+    // capability negotiation. Preserve rounding, FTZ and sticky status while
+    // requiring masked exceptions and rejecting unsupported control bits.
+    if (V[1] || (V[0] & ~x64::AllowedMXCSR) ||
+        (V[0] & x64::InitialMXCSR) != x64::InitialMXCSR)
+      return error(diagnostic::Register);
+    CPU.MXCSR = V[0];
+    return llvm::Error::success();
+  }
   if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15) {
     CPU.Xmm[unsigned(R) - unsigned(CPURegister::X64V0)] = V;
     return llvm::Error::success();
@@ -65,10 +160,13 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
        V[0] != (UserMode ? x64::UserDataSelector : x64::DataSelector)) ||
       (R == CPURegister::X64FLAGS &&
        ((V[0] & ~x64::AllowedFlags) || !(V[0] & x64::ReservedFlag))) ||
-      (R == CPURegister::X64GSBase && !x64::canonical(V[0])))
+      ((R == CPURegister::X64GSBase || R == CPURegister::X64FSBase) &&
+       !x64::canonical(V[0])))
     return error(diagnostic::Register);
   if (R == CPURegister::X64GSBase)
     CPU.GSBase = V[0];
+  else if (R == CPURegister::X64FSBase)
+    CPU.FSBase = V[0];
   else
     CPU.Registers[unsigned(R)] = V[0];
   return llvm::Error::success();
@@ -151,7 +249,35 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   }
   const auto &X = I.detail->x86;
-  if (X.prefix[0] ||
+  // MOVSD names both a scalar SSE move and a string move in the decoder.
+  // String forms have two implicit memory operands and no XMM operand.
+  if (X.op_count == 2 && X.operands[0].type == X86_OP_MEM &&
+      X.operands[1].type == X86_OP_MEM) {
+    switch (I.id) {
+#define NEVERD_X64_STRING_INSTRUCTION(Name, Width)                             \
+  case X86_INS_##Name:                                                         \
+    return executeString(I, Width);
+#include "X64StringInstructions.def"
+#undef NEVERD_X64_STRING_INSTRUCTION
+    default:
+      break;
+    }
+  }
+  const auto Vector = vectorOperation(I.id);
+  const bool Conversion = isFloatingPointConversion(I.id);
+  if (Conversion &&
+      (X.op_count != 2 || X.operands[0].type != X86_OP_REG ||
+       isXmm(X.operands[0].reg) ||
+       (X.operands[0].size != x64::DWordBytes &&
+        X.operands[0].size != x64::WordBytes) ||
+       (X.operands[1].type != X86_OP_MEM &&
+        !(X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)))))
+    return llvm::make_error<UnsupportedExecutionError>();
+  if (Vector && !Conversion && !admitsVectorOperands(X, *Vector))
+    return llvm::make_error<UnsupportedExecutionError>();
+  const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
+  if ((X.prefix[0] && !Locked) ||
+      (Locked && (!updateArity(I.id) || X.operands[0].type != X86_OP_MEM)) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
       ((I.id == X86_INS_RET || I.id == X86_INS_CALL) &&
        X.prefix[2] == X86_PREFIX_OPSIZE))
@@ -165,7 +291,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     uint64_t Address;
     unsigned Size, Permission;
     uint64_t Value;
-    std::optional<int64_t> Update = std::nullopt;
+    std::optional<unsigned> Update = std::nullopt;
+    uint64_t High = 0;
   };
   std::vector<Access> Accesses;
   auto Value = [&](const cs_x86_op &O) -> llvm::Expected<uint64_t> {
@@ -177,17 +304,22 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   };
   for (unsigned N = 0; N < X.op_count; ++N) {
     const auto &O = X.operands[N];
-    if (O.type == X86_OP_REG) {
+    if (O.type == X86_OP_REG && !(Vector && isXmm(O.reg))) {
       auto V = operandRegister(O.reg);
       if (!V)
         return V.takeError();
     }
     if (O.type != X86_OP_MEM || I.id == X86_INS_LEA || I.id == X86_INS_NOP)
       continue;
-    if (O.size > x64::WordBytes || !O.size ||
+    // Memory BT uses a bit-string address beyond the decoded operand when its
+    // index crosses the word. Admit register forms only until that complete
+    // effective-address contract is implemented and observed.
+    if (I.id == X86_INS_BT)
+      return llvm::make_error<UnsupportedExecutionError>();
+    if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size ||
         (O.mem.segment != X86_REG_INVALID && O.mem.segment != X86_REG_DS &&
          O.mem.segment != X86_REG_SS && O.mem.segment != X86_REG_ES &&
-         O.mem.segment != X86_REG_GS))
+         O.mem.segment != X86_REG_GS && O.mem.segment != X86_REG_FS))
       return llvm::make_error<UnsupportedExecutionError>();
     auto B = operandRegister(O.mem.base), Index = operandRegister(O.mem.index);
     if (!B) {
@@ -204,30 +336,55 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       A = uint32_t(A);
     if (O.mem.segment == X86_REG_GS)
       A += CPU.GSBase;
-    if (O.access == CS_AC_READ)
+    if (O.mem.segment == X86_REG_FS)
+      A += CPU.FSBase;
+    if (Locked && A % O.size)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // Misaligned aligned-vector forms would raise #GP. No native instruction
+    // executes until that exception has an explicit checked-model contract.
+    if (Vector && A % Vector->Alignment)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // Some SETcc and SSE destinations have advisory decoder access metadata
+    // marking them as reads. The architecture owns their actual effects.
+    unsigned OperandAccess = O.access;
+    if (N == 0) {
+      if ((Vector && Vector->Move) || condition(I.id, 0))
+        OperandAccess = CS_AC_WRITE;
+      else if (updateArity(I.id))
+        OperandAccess = CS_AC_READ | CS_AC_WRITE;
+    }
+    if (OperandAccess == CS_AC_READ)
       Accesses.push_back({A, O.size, Read, 0});
-    else if (O.access == CS_AC_WRITE &&
-             (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS) && N == 0 &&
-             X.op_count == 2) {
+    else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
+             X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
+      const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
+      Accesses.push_back({A, O.size, Write, V[0], std::nullopt, V[1]});
+    } else if (OperandAccess == CS_AC_WRITE &&
+               (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS) && N == 0 &&
+               X.op_count == 2) {
       auto V = Value(X.operands[1]);
       if (!V)
         return V.takeError();
       Accesses.push_back({A, O.size, Write, *V});
-    } else if (O.access == (CS_AC_READ | CS_AC_WRITE) && N == 0 &&
-               X.op_count == 1) {
-      std::optional<int64_t> Delta;
-      switch (I.id) {
-#define NEVERD_X64_MEMORY_UPDATE(Name, Value)                                  \
-  case X86_INS_##Name:                                                         \
-    Delta = Value;                                                             \
-    break;
-#include "X64MemoryUpdates.def"
-#undef NEVERD_X64_MEMORY_UPDATE
-      default:
+    } else if (OperandAccess == CS_AC_WRITE && N == 0 && X.op_count == 1 &&
+               O.size == x64::ByteBytes) {
+      auto Condition = condition(I.id, CPU.reg(X64Register::FLAGS));
+      if (!Condition)
         return llvm::make_error<UnsupportedExecutionError>();
+      Accesses.push_back({A, O.size, Write, uint64_t(*Condition)});
+    } else if (OperandAccess == (CS_AC_READ | CS_AC_WRITE) && N == 0) {
+      auto Arity = updateArity(I.id);
+      if (!Arity || X.op_count != *Arity)
+        return llvm::make_error<UnsupportedExecutionError>();
+      uint64_t Operand = 0;
+      if (*Arity == 2) {
+        auto V = Value(X.operands[1]);
+        if (!V)
+          return V.takeError();
+        Operand = *V;
       }
       Accesses.push_back({A, O.size, Read, 0});
-      Accesses.push_back({A, O.size, Write, 0, Delta});
+      Accesses.push_back({A, O.size, Write, Operand, I.id});
     } else
       return llvm::make_error<UnsupportedExecutionError>();
   }
@@ -257,6 +414,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (A.Size - 1 > UINT64_MAX - A.Address ||
         A.Address / x64::PageSize != (A.Address + A.Size - 1) / x64::PageSize)
       return llvm::make_error<UnsupportedExecutionError>();
+  // A device transfer is one bounded scalar MOV, MOVZX or MOVSX. RMW, wide
+  // vector and implicit-stack device accesses cannot be split into callbacks.
+  const Access *DeviceAccess = nullptr;
+  for (const auto &A : Accesses)
+    if (deviceAt(A.Address)) {
+      if (Accesses.size() != 1 || Locked ||
+          (I.id != X86_INS_MOV && I.id != X86_INS_MOVABS &&
+           I.id != X86_INS_MOVZX && I.id != X86_INS_MOVSX) ||
+          (A.Permission == Read && X.operands[0].type != X86_OP_REG))
+        return llvm::make_error<UnsupportedExecutionError>();
+      DeviceAccess = &A;
+    }
   for (const auto &A : Accesses) {
     if (A.Permission == Read && Hooks.Read)
       Hooks.Read(A.Address, A.Size);
@@ -269,10 +438,20 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
         auto Original = readInteger(A.Address, A.Size);
         if (!Original)
           return Original.takeError();
-        Value = (*Original + uint64_t(*A.Update)) &
+        Value = updateValue(*A.Update, *Original, A.Value,
+                            CPU.reg(X64Register::FLAGS)) &
                 (UINT64_MAX >> (x64::WordBits - A.Size * CHAR_BIT));
       }
-      Hooks.Write(A.Address, A.Size, Value);
+      // The scalar observer carries at most one word. A full-width store is
+      // observed as two ordered words, both before any instruction effect.
+      Hooks.Write(A.Address, std::min<unsigned>(A.Size, x64::WordBytes),
+                  A.Size < x64::WordBytes
+                      ? Value &
+                            (UINT64_MAX >> (x64::WordBits - A.Size * CHAR_BIT))
+                      : Value);
+      if (!StopRequested && !FirstFault && A.Size > x64::WordBytes)
+        Hooks.Write(A.Address + x64::WordBytes, A.Size - x64::WordBytes,
+                    A.High);
     }
     if (StopRequested || FirstFault)
       return llvm::Error::success();
@@ -281,6 +460,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (StopRequested)
       return llvm::Error::success();
   }
+  if (DeviceAccess)
+    return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
+                          DeviceAccess->Permission, DeviceAccess->Value);
   auto Root = buildX64PageTables(*Memory, PageTableRoot, UserMode);
   if (!Root)
     return Root.takeError();

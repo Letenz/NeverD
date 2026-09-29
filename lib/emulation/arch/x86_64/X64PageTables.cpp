@@ -17,7 +17,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                                             bool UserMode) {
   if (!Memory.needsProjection(UserMode))
     return PreviousRoot;
-  if (auto E = Memory.validateMappings(x64::canonicalRange))
+  if (auto E = Memory.validateMappings(x64::canonicalRange, !UserMode))
     return E;
   // Updating backing bytes alone does not invalidate cached translations.
   // Alternate roots after each mapping transaction, forcing a CR3 transition
@@ -28,6 +28,10 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
   std::memset(Memory.data(), 0, x64::TableReserve);
   uint64_t Next = x64::FirstChildTable;
   for (const auto &[VA, P] : Memory.mappings()) {
+    // The checked architecture completes admitted device transactions itself.
+    // Device pages never alias private monitor memory or enter native RAM.
+    if (P.IO)
+      continue;
     uint64_t Table = Root;
     for (unsigned Level = x64::TableLevels; Level > 1; --Level) {
       auto Index = (VA >> (x64::PageBits + (Level - 1) * x64::TableBits)) &

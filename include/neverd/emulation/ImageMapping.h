@@ -12,6 +12,9 @@ namespace neverd {
 struct BinaryImage;
 namespace emulation {
 enum class ImagePagePadding { Zero, FilePages };
+/// Analysis may patch segment bytes. Process startup must instead see the
+/// original file image when guest code owns dynamic relocations.
+enum class ImageByteSource { LoaderSegments, OriginalFile };
 struct ImageMapping {
   uint64_t Address;
   unsigned Permissions;
@@ -19,8 +22,8 @@ struct ImageMapping {
 };
 
 /// A finite plan over loader-owned segments. No parsing, symbol resolution or
-/// relocation is performed here. The OS owner supplies bias and privilege and
-/// must complete its link policy before publishing executable mappings.
+/// relocation is performed here. The OS owner supplies bias, privilege and
+/// byte authority. A guest startup routine may own its own relocations.
 struct ImageMappingPlan {
   uint64_t Entry, Base, MappedBytes;
   std::vector<ImageMapping> Regions;
@@ -30,11 +33,13 @@ struct ImageMappingPlan {
   /// rounded file mappings, then clears BSS and its final page tail. Zero
   /// initializes bytes outside the segment's file extent. Shared-page load
   /// policies require an explicit OS implementation; permissions are not
-  /// silently combined.
+  /// silently combined. OriginalFile ignores analysis-patched segment bytes
+  /// and validates every source span against the original file instead.
   static llvm::Expected<ImageMappingPlan>
   create(const BinaryImage &Image, uint64_t Bias, uint64_t PageSize,
          uint64_t MemoryLimit, bool User,
-         ImagePagePadding Padding = ImagePagePadding::Zero);
+         ImagePagePadding Padding = ImagePagePadding::Zero,
+         ImageByteSource Source = ImageByteSource::LoaderSegments);
 };
 } // namespace emulation
 } // namespace neverd

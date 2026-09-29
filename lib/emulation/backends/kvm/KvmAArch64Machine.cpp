@@ -98,6 +98,8 @@ public:
         return E;
     if (auto E = set(SP, State.reg(AArch64Register::SP)))
       return E;
+    if (auto E = set(TpidrEl0, State.reg(AArch64Register::TPIDR_EL0)))
+      return E;
     if (auto E =
             set(PState, Mode | PStateDAIF | State.reg(AArch64Register::NZCV)))
       return E;
@@ -111,6 +113,8 @@ public:
                   State.Registers[N]))
         return E;
     if (auto E = get(SP, State.reg(AArch64Register::SP)))
+      return E;
+    if (auto E = get(TpidrEl0, State.reg(AArch64Register::TPIDR_EL0)))
       return E;
     if (auto E = get(PC, State.reg(AArch64Register::PC)))
       return E;

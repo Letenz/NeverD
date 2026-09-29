@@ -19,7 +19,9 @@ namespace neverd::emulation::linux_model {
 namespace {
 enum class ServiceKind {
 #define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count) Name,
+#define NEVERD_LINUX_X64_SERVICE(Name, Number, Count) Name,
 #include "LinuxValues.def"
+#undef NEVERD_LINUX_X64_SERVICE
 #undef NEVERD_LINUX_SERVICE
 };
 std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
@@ -28,6 +30,11 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
     return ServiceKind::Name;
 #include "LinuxValues.def"
 #undef NEVERD_LINUX_SERVICE
+#define NEVERD_LINUX_X64_SERVICE(Name, Value, Count)                           \
+  if (ISA == GuestArchitecture::X64 && Number == Value)                        \
+    return ServiceKind::Name;
+#include "LinuxValues.def"
+#undef NEVERD_LINUX_X64_SERVICE
   return std::nullopt;
 }
 
@@ -109,9 +116,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Space = AddressSpace::create(*Physical, Options.MemoryLimit);
   if (!Space)
     return Space.takeError();
-  auto Plan = ImageMappingPlan::create(*Image, 0, Layout->PageSize,
-                                       Options.MemoryLimit - Options.StackSize,
-                                       true, ImagePagePadding::FilePages);
+  auto Plan = ImageMappingPlan::create(
+      *Image, Layout->LoadBias, Layout->PageSize,
+      Options.MemoryLimit - Options.StackSize, true,
+      ImagePagePadding::FilePages, ImageByteSource::OriginalFile);
   if (!Plan)
     return Plan.takeError();
   const uint64_t StackBase = StackTop - Options.StackSize;
@@ -242,6 +250,15 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     case ServiceKind::GetTID:
       Value = ThreadID;
       break;
+    case ServiceKind::ArchPrctl: {
+      auto Returned = archPrctl(CPU, *Event, *Layout, Result);
+      if (!Returned) {
+        RuntimeFailure(Returned.takeError());
+        break;
+      }
+      Value = *Returned;
+      break;
+    }
     case ServiceKind::Write: {
       auto Written = writeOutput(CPU, *Event, *Layout, Options, Result);
       if (!Written) {

@@ -32,9 +32,20 @@ public:
   Add(WHvX64Register##WHP, State.reg(X64Register::Name));
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-    const size_t GeneralCount = Names.size();
     // The admitted ISA excludes all instructions observing or modifying TF.
     Values.back().Reg64 |= x64::TrapFlag;
+    for (unsigned I = 0; I < State.Xmm.size(); ++I) {
+      WHV_REGISTER_VALUE V{};
+      V.Reg128.Low64 = State.Xmm[I][0];
+      V.Reg128.High64 = State.Xmm[I][1];
+      Names.push_back(static_cast<WHV_REGISTER_NAME>(WHvX64RegisterXmm0 + I));
+      Values.push_back(V);
+    }
+    WHV_REGISTER_VALUE MXCSR{};
+    MXCSR.XmmControlStatus.XmmStatusControl = State.MXCSR;
+    Names.push_back(WHvX64RegisterXmmControlStatus);
+    Values.push_back(MXCSR);
+    const size_t ObservableCount = Names.size();
     Add(WHvX64RegisterCr0, x64::CR0);
     Add(WHvX64RegisterCr3, Root);
     Add(WHvX64RegisterCr4, x64::CR4);
@@ -58,6 +69,8 @@ public:
       V.Segment.Default = !Code;
       if (Name == WHvX64RegisterGs)
         V.Segment.Base = State.GSBase;
+      if (Name == WHvX64RegisterFs)
+        V.Segment.Base = State.FSBase;
       Names.push_back(Name);
       Values.push_back(V);
     }
@@ -71,13 +84,18 @@ public:
         Exit.VpException.ExceptionType != x64::DebugVector)
       return diagnostic::error(diagnostic::WhpExit);
     if (FAILED(API.WHvGetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), GeneralCount, Values.data())))
+            Partition, 0, Names.data(), ObservableCount, Values.data())))
       return diagnostic::error(diagnostic::WhpState);
     size_t I = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   State.reg(X64Register::Name) = Values[I++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+    for (auto &Xmm : State.Xmm) {
+      Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
+      ++I;
+    }
+    State.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
     State.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
     return llvm::Error::success();
   }

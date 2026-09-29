@@ -436,7 +436,8 @@ int runDecompile(neverd_session_t Sess) {
        !VMControlFrameSlots.empty() || !VMRecoveryReport.empty() ||
        VMMaxNodes.getNumOccurrences() || VMMaxContexts.getNumOccurrences() ||
        VMMaxOperations.getNumOccurrences() ||
-       VMMaxRefinements.getNumOccurrences())) {
+       VMMaxRefinements.getNumOccurrences() ||
+       VMMaxFields.getNumOccurrences() || VMMaxQueries.getNumOccurrences())) {
     WithColor::error() << "VM recovery options require --devirtualize\n";
     return 1;
   }
@@ -444,14 +445,23 @@ int runDecompile(neverd_session_t Sess) {
     WithColor::error() << "VM recovery budgets must be positive\n";
     return 1;
   }
-  uint32_t MaxRefinements = 0;
-  const StringRef RefinementsText(VMMaxRefinements.getValue());
+  uint32_t MaxRefinements = 0, MaxFields = 0, MaxQueries = 0;
+  const auto ParseCount = [](StringRef Text, StringRef Option,
+                             uint32_t &Value) {
+    if (Text.empty() ||
+        Text.find_first_not_of("0123456789") != StringRef::npos ||
+        Text.getAsInteger(10, Value) || !Value) {
+      WithColor::error() << Option
+                         << " expects a positive 32-bit decimal integer\n";
+      return false;
+    }
+    return true;
+  };
   if (Devirtualize &&
-      (RefinementsText.empty() ||
-       RefinementsText.find_first_not_of("0123456789") != StringRef::npos ||
-       RefinementsText.getAsInteger(10, MaxRefinements) || !MaxRefinements)) {
-    WithColor::error()
-        << "--vm-max-refinements expects a positive 32-bit decimal integer\n";
+      (!ParseCount(VMMaxRefinements.getValue(), "--vm-max-refinements",
+                   MaxRefinements) ||
+       !ParseCount(VMMaxFields.getValue(), "--vm-max-fields", MaxFields) ||
+       !ParseCount(VMMaxQueries.getValue(), "--vm-max-queries", MaxQueries))) {
     return 1;
   }
   const char *Source = nullptr;
@@ -498,24 +508,26 @@ int runDecompile(neverd_session_t Sess) {
         }
         FrameSlots.push_back({Offset, static_cast<uint16_t>(Bytes), 0});
       }
-      neverd_devirtualize_options_v2 Recovery{};
-      Recovery.base.struct_size = sizeof(Recovery);
-      Recovery.max_control_refinements = MaxRefinements;
-      Recovery.base.control_registers = Controls.data();
-      Recovery.base.control_register_count = Controls.size();
-      Recovery.base.control_frame_slots = FrameSlots.data();
-      Recovery.base.control_frame_slot_count = FrameSlots.size();
-      Recovery.base.max_nodes = VMMaxNodes;
-      Recovery.base.max_contexts_per_address = VMMaxContexts;
-      Recovery.base.max_operations = VMMaxOperations;
-      Recovery.base.use_llvm = LlvmRoute;
-      Recovery.base.no_opt = NoOpt;
+      neverd_devirtualize_options_v3 Recovery{};
+      Recovery.base.base.struct_size = sizeof(Recovery);
+      Recovery.base.max_control_refinements = MaxRefinements;
+      Recovery.max_control_fields = MaxFields;
+      Recovery.max_solver_queries = MaxQueries;
+      Recovery.base.base.control_registers = Controls.data();
+      Recovery.base.base.control_register_count = Controls.size();
+      Recovery.base.base.control_frame_slots = FrameSlots.data();
+      Recovery.base.base.control_frame_slot_count = FrameSlots.size();
+      Recovery.base.base.max_nodes = VMMaxNodes;
+      Recovery.base.base.max_contexts_per_address = VMMaxContexts;
+      Recovery.base.base.max_operations = VMMaxOperations;
+      Recovery.base.base.use_llvm = LlvmRoute;
+      Recovery.base.base.no_opt = NoOpt;
       const char *Report = nullptr;
       Source =
           VMMachineState
-              ? neverd_devirtualize_machine_source_v2(Sess, Entry, &Recovery,
+              ? neverd_devirtualize_machine_source_v3(Sess, Entry, &Recovery,
                                                       &Report)
-              : neverd_devirtualize_source_v2(Sess, Entry, &Recovery, &Report);
+              : neverd_devirtualize_source_v3(Sess, Entry, &Recovery, &Report);
       if (!VMRecoveryReport.empty() && Report) {
         std::error_code EC;
         raw_fd_ostream OS(VMRecoveryReport, EC);

@@ -5,11 +5,12 @@ transport, image parsing, process entry and OS services have separate owners.
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`; driver emulation also includes it.
 
 The first profile, `linux-elf64-v1`, runs bounded little-endian x64 and AArch64
-ELF `ET_EXEC` programs at CPL3 or EL0. It loads real ELF segments, constructs
+ELF `ET_EXEC` and self-relocating static `ET_DYN` programs at CPL3 or EL0.
+It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
-`PT_TLS`, signals, threads, file systems, FP/SIMD and unsupported services fail
+signals, threads, file systems and unsupported services fail
 explicitly. Windows user processes, Android, Darwin and other kernel workloads
 remain separate implementation work.
 
@@ -25,6 +26,9 @@ host/guest ISA combinations use Unicorn. An unavailable selected backend is an
 error, with no silent fallback. An ELF guest still uses the Linux process model
 when executed on Windows. See [CPU execution](cpu-execution.md) for the checked
 instruction inventory, native availability and cancellation limitations.
+The x64 profile admits the listed SSE/SSE2 moves, logical operations and masked
+scalar subtraction/conversion forms; AArch64 remains an integer instruction
+profile. Vector register storage does not imply an unrestricted SIMD ISA.
 
 The CLI emits one JSON report. Its exit code is 0 for a guest exit status of
 zero, 2 for another guest exit status, 3 for incomplete execution (including
@@ -86,6 +90,21 @@ private address space. Linux mappings preserve file-page prefix/tail bytes,
 zero BSS, honor segment permissions and reserve stack guard gaps. Page-overlap
 layouts and contradictory headers are rejected rather than guessed.
 
+Static PIE uses a deterministic load bias of at least `0x40000000`, increased
+to honor larger `PT_LOAD` alignment. Every mapped segment, entry PC and
+`AT_PHDR`/`AT_ENTRY` uses that same bias; the file's program-header values stay
+unmodified. `AT_BASE` remains zero because no interpreter is loaded. This is a
+reproducible placement policy, not Linux ASLR. Startup follows the direct-entry
+path of the [Linux ELF loader](https://github.com/torvalds/linux/blob/v6.8/fs/binfmt_elf.c).
+
+The mapping source is explicitly the original file, so analysis-time pointer
+fixups cannot leak into guest execution. Guest startup must perform its own
+relocations and initialization. The loader decodes `PT_DYNAMIC` from bounded
+original file records, independently of optional sections; the process model
+requires a readable, terminated table of at most 4096 entries when present. `PT_INTERP`
+and external dependency/filter/audit tags are rejected. The model does not
+silently provide a dynamic linker, symbol resolver or constructor runner.
+
 The initial stack contains aligned argc/argv/envp/auxv, mapped PHDR/PHENT/PHNUM,
 entry/page-size values and identity entries. Model PID/TID/UID/GID are 1000.
 `AT_RANDOM` contains the first 16 bytes of the input's SHA-256 for reproducible
@@ -100,6 +119,25 @@ numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
 the next PC. ARM64 uses x8 for the number and x0 for the result. Unknown calls
 stop as `unsupported_service`; they never execute host syscalls.
 
+Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
+one template, bounded file/memory extents, alignment congruence and readable
+initialized bytes. Guest startup allocates and initializes each TLS block and
+installs its thread pointer; the Linux model does not invent a libc-specific
+TCB or DTV. This permits compiler-generated local-exec TLS in freestanding
+programs. Dynamic TLS, a dynamic linker and OS thread creation remain separate
+work.
+
+On x64, `arch_prctl` supports `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS` and
+`ARCH_GET_GS`. Set accepts an unmapped user-range base; a later dereference still
+checks user permissions. Kernel-range bases return guest `EPERM`; invalid get
+destinations return guest `EFAULT` without faulting the CPU. Other operations
+stop as unsupported, never as a success stub. The behavior follows the
+[Linux arch_prctl implementation](https://github.com/torvalds/linux/blob/master/arch/x86/kernel/process_64.c).
+ARM64 startup installs `TPIDR_EL0` with the architecturally unprivileged `MSR`
+instruction. The corresponding `MRS`, x64 FS/GS memory accesses, and CPU context
+restoration preserve each thread pointer across execution quanta and backend
+entries. This does not itself implement a thread scheduler.
+
 Descriptors 1 and 2 are virtual byte sinks. `write` validates readable user
 pages, returns a readable prefix when a later page is inaccessible, and returns
 guest `EFAULT` when no bytes are readable. A bad descriptor returns `EBADF`;
@@ -112,8 +150,8 @@ limits stop before publishing an over-budget write.
 ## Verification
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # In a shared-library/CLI build:
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
@@ -122,6 +160,13 @@ ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 Tests compile original freestanding ELF entry assembly and C for both ISAs.
 They exercise data/BSS, actual startup metadata, syscall errors, binary output,
 permission faults, partial writes, unsupported services and budget preservation
-across quanta. Backend cells report unavailable transports as skips. The public
+across quanta. Local-exec TLS fixtures initialize independent aligned blocks,
+zero TLS BSS, install thread pointers and check preserved values across switches.
+On x64 they also verify `arch_prctl` errors without losing the previous base.
+Backend cells report unavailable transports as skips. The public
 suite traverses the shared C ABI and CLI and checks report/exit-code agreement.
+The static PIE fixtures check relocated auxiliary values and raw zero RELA
+slots before performing their own data/function-pointer relocations. Mapping
+tests separately retain analysis fixups when that byte source is selected;
+dynamic-table tests cover sections being absent and malformed/dependent input.
 Cross-compilation and Unicorn ARM64 results are not native ARM64 KVM/WHP evidence.

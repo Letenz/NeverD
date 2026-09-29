@@ -70,6 +70,8 @@ private:
                        bool Write) const;
   llvm::Expected<uint64_t> read(uint64_t Address, uint64_t Offset,
                                 unsigned Size);
+  llvm::Expected<uint64_t> peek(uint64_t Address, uint64_t Offset,
+                                unsigned Size) const;
   llvm::Error write(uint64_t Address, uint64_t Offset, unsigned Size,
                     uint64_t Value);
 };

@@ -55,14 +55,17 @@ TEST(ExecutionConfiguration, UnsupportedRequirementsDoNotChangeAddressSpace) {
   }
 }
 TEST(ExecutionConfiguration,
-     RegisterStorageDoesNotAdvertiseInstructionSupport) {
+     CheckedCapabilitiesExposeInstructionAndControlBoundaries) {
   for (auto ISA : {GuestArchitecture::X64, GuestArchitecture::AArch64}) {
     const auto Config = checked(ISA);
     auto Capabilities =
         llvm::cantFail(executionCapabilities(Config.Contract, ISA));
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::VectorRegisterState));
-    EXPECT_FALSE(Capabilities.supports(ExecutionFeature::FloatingPoint));
-    EXPECT_FALSE(Capabilities.supports(ExecutionFeature::SIMD));
+    EXPECT_TRUE(Capabilities.supports(ExecutionFeature::ThreadPointer));
+    EXPECT_EQ(Capabilities.supports(ExecutionFeature::FloatingPoint),
+              ISA == GuestArchitecture::X64);
+    EXPECT_EQ(Capabilities.supports(ExecutionFeature::SIMD),
+              ISA == GuestArchitecture::X64);
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::CooperativeCPUs));
     EXPECT_FALSE(Capabilities.supports(ExecutionFeature::ParallelCPUs));
     EXPECT_TRUE(Capabilities.HasInstructionAllowlist);
@@ -77,6 +80,31 @@ TEST(ExecutionConfiguration,
     EXPECT_EQ(Resolved.Configuration.PageSize, Capabilities.PageSize);
     EXPECT_EQ(Resolved.Configuration.VirtualAddressBits,
               Capabilities.VirtualAddressBits);
+  }
+}
+TEST(ExecutionConfiguration, BoundedFeaturesDependOnISAAndPrivilege) {
+  for (auto ISA : {GuestArchitecture::X64, GuestArchitecture::AArch64}) {
+    for (bool User : {false, true}) {
+      auto Config = checked(ISA);
+      if (User) {
+        Config.Privilege = ExecutionPrivilege::User;
+        Config.Contract = ISA == GuestArchitecture::X64
+                              ? ExecutionContract::CheckedUserX64
+                              : ExecutionContract::CheckedUserAArch64;
+      }
+      for (auto Feature : {ExecutionFeature::FloatingPoint,
+                           ExecutionFeature::SIMD, ExecutionFeature::MMIO}) {
+        Config.RequiredFeatures = Feature;
+        auto Resolved = resolveExecutionConfiguration(Config);
+        const bool Supported = ISA == GuestArchitecture::X64 &&
+                               (!User || Feature != ExecutionFeature::MMIO);
+        EXPECT_EQ(bool(Resolved), Supported);
+        if (!Resolved)
+          llvm::consumeError(Resolved.takeError());
+        else
+          EXPECT_TRUE(Resolved->Capabilities.supports(Feature));
+      }
+    }
   }
 }
 TEST(ExecutionConfiguration,

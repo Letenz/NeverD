@@ -3549,8 +3549,10 @@
       "limitations": [
         "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
+        "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles remain integer-only. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and cross-page data instructions remain unsupported.",
         "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion; general runtime and additional OS workloads remain unfinished.",
-        "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence."
+        "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
+        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; other checked ARM64 system-register encodings remain unsupported."
       ],
       "tests": [
         {
@@ -3662,6 +3664,61 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionConfigurationTests",
+          "source": "unittests/emulation/ExecutionConfigurationTests.cpp",
+          "filter": "ExecutionConfiguration.BoundedFeaturesDependOnISAAndPrivilege",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64DataTests.cpp",
+          "filter": "*/X64Data.EveryXmmRegisterSurvivesNativeExecutionAndContextRestore/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64DataTests.cpp",
+          "filter": "*/X64Device.PreparedStringReadCommitsOnlyAfterWriteObserverAdmitsIt/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDThreadPointerTests",
+          "source": "unittests/emulation/ThreadPointerTests.cpp",
+          "filter": "*/ThreadPointer.NativeReadsAndContextRestoreUseTheRetainedBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDThreadPointerTests",
+          "source": "unittests/emulation/ThreadPointerTests.cpp",
+          "filter": "*/ThreadPointer.AThreadPointerCannotExposeSupervisorMemory/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -3696,11 +3753,12 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, PT_DYNAMIC, PT_TLS, page-overlapping loads and unsupported CPU instructions fail clearly.",
-        "Only write, exit, exit_group, getpid and gettid are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
+        "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC and self-relocating static ET_DYN images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, external dynamic dependencies, page-overlapping loads and unsupported CPU instructions fail clearly. Static PIE uses one aligned deterministic load bias and original file bytes; guest startup owns relocation and initialization.",
+        "write, exit, exit_group, getpid, gettid and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
         "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
-        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work."
+        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, dynamic TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work.",
+        "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta."
       ],
       "tests": [
         {
@@ -3746,6 +3804,42 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.CompilerTLSBlocksRemainIndependentAcrossProcessQuanta/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessLayoutTests.cpp",
+          "filter": "LinuxProcessLayout.ValidatesTLSFileTemplateWithoutInventingThreadBlocks",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/LinuxProcessTests.cpp",
+          "filter": "*/LinuxProcess.StaticPIEReceivesRawSlotsAndRelocatesAtItsActualBias/*",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionSessionTests",
+          "source": "unittests/emulation/ImageMappingTests.cpp",
+          "filter": "ImageMapping.OriginalFileMappingsNeverImportAnalysisRelocations",
+          "platforms": ["darwin", "linux", "windows"]
         }
       ],
       "public_surfaces": {
@@ -3908,7 +4002,8 @@
         "Declared user regions use the existing process-owned allocation and physical backing authority. Completion does not revoke the original VA; explicit request unmap revokes all of that request\u2019s original and declared regions, while process exit includes completed allocations from the same PID. Independent MDL or WDFMEMORY aliases retain pinned bytes until unlock/completion. WDF probing accepts the current request\u2019s declared regions only in caller context. configuration.user_memory preserves declarations and source_request_index; requests[].user_buffers reports ID, address, size, access, revoked and backing_hex. The backing snapshot is diagnostic RAM at stop, including after terminal faults, and does not imply caller-visible output or restored access. GuestMemory.snapshotBacking validates the whole span, reads adapter-owned RAM without engine reentry, rejects running/device-callback/MMIO access and preserves the first fault. Arbitrary mappings, cross-request IDs and remapping the original declared scenario allocations remain unsupported.",
         "Original WDK WDM/KMDF nested-user fixtures exercise two-level structures, duplicate aliases and interior offsets, caught read-only failures, WDM locked workers after unmap/process exit, and WDF caller-context locking before queue delivery. Native cases run normal/CFG and preferred/rebased images; C API/CLI/Python share docs/examples/driver-nested-user-scenario.json and assert diagnostic bytes after revocation. Missing external fixtures skip explicitly; execution evidence remains Linux-only.",
         "IoBuildPartialMdl supports subranges, zero-length remainder, PFN capacity checks, source-independent nonpaged descriptors and separate root-lock/system-alias ownership. Target reuse uses the genuine MmPrepareMdlForReuse inline path. Completion preflights all dependencies before releasing chains in either order; live DMA prevents rebuild or retirement. MmMapLockedPagesSpecifyCache(UserMode) creates independent process-owned NX/read-only-capable views of existing private physical pages at IRQL <= APC_LEVEL without changing MappedSystemVa. Exact pair/process unmapping, canonical alias re-locking, typed resource shortage, process exit and lifetime guards are modeled. Requested addresses preserve page offsets in a bounded reusable arena. Exact unmapping releases address/budget; surviving pins/system aliases retain old backing after VA reuse. Different live processes can own the same VA with independent backing/rights; whole-set process switching preflights alias replacement before publishing context, and another process exit/unmap cannot retire the active view. Live opaque dispatcher objects in outgoing views reject switching. MmNonCached/MmCached/MmWriteCombined requests retain each physical page's existing cache attribute; ordinary model RAM is cached, and conflicting registrations or reserved types fail. Arbitrary virtual-memory allocation, page tables and a general process manager remain unsupported.",
-        "The backend-selecting C API and CLI preserve driver-strict on Unicorn. checked-x64-v1 is an explicit bounded integer contract over Unicorn, matching Linux KVM or matching Windows WHP; cross-ISA auto selection uses Unicorn under that same contract. Hardware unavailability and unsupported instructions fail explicitly. CPU transport availability does not implement the Windows ARM64 driver ABI."
+        "The backend-selecting C API and CLI preserve driver-strict on Unicorn. checked-x64-v1 is an explicit bounded instruction and memory-observation contract over Unicorn, matching Linux KVM or matching Windows WHP; cross-ISA auto selection uses Unicorn under that same contract. Hardware unavailability and unsupported instructions fail explicitly. CPU transport availability does not implement the Windows ARM64 driver ABI.",
+        "Original built-in and configured WDK images/scenarios are compared against legacy Unicorn under checked Unicorn, KVM and WHP, at original and relocated addresses. The comparison includes negative outcomes, request bytes, API results, writes and final model state; backend metadata, diagnostics and REP instruction-count conventions are excluded. Missing artifacts and unavailable host backends skip explicitly; a successful comparison does not mean every negative fixture completed successfully."
       ],
       "tests": [
         {
@@ -9613,6 +9708,17 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDriverEmulationTests",
+          "source": "unittests/emulation/DriverBackendParityTests.cpp",
+          "filter": "*/DriverBackendParity.OriginalImageAndScenarioPreserveObservableResults/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -9654,6 +9760,7 @@
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
         "Default ABI refuses calls and exception boundaries. Explicit machine-state ABI supports certified direct near calls, exhaustively finite register- or memory-indirect near calls and internal returns under a normal nonfaulting CPL3/CET-disabled profile. Memory calls require canonical unsegmented r/m64 encodings and proved target loads before stack effects. Unknown or sampled writable slots, exception execution, mutable code, unresolved control and exhausted budgets refuse recovery.",
         "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
+        "Explicit CLI and v3 C API field, refinement and solver-query budgets retain defaults of 16, 16 and 4096. Larger limits permit additional work without changing semantic assumptions; exhaustion publishes no source.",
         "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Machine-state source preserves numeric guest addresses and requires their original runtime mappings. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
         "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement."
       ],
@@ -9819,7 +9926,38 @@
           "runner": "gtest",
           "target": "NeverDDevirtualizationSourceTests",
           "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
-          "filter": "DevirtualizationSourceTest.CLIRejectsInvalidRefinementBudgets",
+          "filter": "DevirtualizationSourceTest.CLIFieldAndQueryBudgetsAreEnforced",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryVersionsPreserveDefaultsAndFutureTails",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryV3RejectsTruncationAndReservedFields",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.CLIRejectsInvalidDiscoveryBudgets",
           "platforms": [
             "linux"
           ]
@@ -9932,7 +10070,9 @@
           "neverd_devirtualize_source_v1",
           "neverd_devirtualize_machine_source_v1",
           "neverd_devirtualize_source_v2",
-          "neverd_devirtualize_machine_source_v2"
+          "neverd_devirtualize_machine_source_v2",
+          "neverd_devirtualize_source_v3",
+          "neverd_devirtualize_machine_source_v3"
         ],
         "python": [],
         "cli": [
@@ -9944,7 +10084,9 @@
           "neverd decompile --vm-max-contexts",
           "neverd decompile --vm-max-nodes",
           "neverd decompile --vm-max-operations",
-          "neverd decompile --vm-max-refinements"
+          "neverd decompile --vm-max-refinements",
+          "neverd decompile --vm-max-fields",
+          "neverd decompile --vm-max-queries"
         ],
         "json": []
       }
