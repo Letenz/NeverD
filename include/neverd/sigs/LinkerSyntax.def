@@ -13,6 +13,9 @@
 ///   NEVERD_SIGS_SYNTAX_CHAR(Name, Value)    a character
 ///   NEVERD_SIGS_SYNTAX_STRING(Name, Value)  a string
 ///   NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value)   how a local label's name starts
+///   NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX(Value)
+///                                           how the name of a routine a
+///                                           compiler synthesizes starts
 ///
 //===----------------------------------------------------------------------===//
 
@@ -24,6 +27,9 @@
 #endif
 #ifndef NEVERD_SIGS_LOCAL_LABEL_PREFIX
 #define NEVERD_SIGS_LOCAL_LABEL_PREFIX(Value)
+#endif
+#ifndef NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX
+#define NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX(Value)
 #endif
 
 // An ELF symbol's name is followed by its version, as `name@VERSION` or, for
@@ -46,6 +52,16 @@ NEVERD_SIGS_LOCAL_LABEL_PREFIX("ltmp")
 NEVERD_SIGS_LOCAL_LABEL_PREFIX("L_")
 NEVERD_SIGS_LOCAL_LABEL_PREFIX(".L")
 
+// A routine a compiler synthesizes and numbers per object, which no routine
+// of the library's source is: LLVM's machine outliner moves instruction
+// sequences several functions repeat into `OUTLINED_FUNCTION_<n>`, which a
+// Mach-O object spells with the reserved `_` in front, and after a rerun
+// numbers them `<round>_<n>`.  The number says nothing about the code another
+// build numbers alike, so no line is named after one and no reference names
+// one; the routine still ends the function before it.
+NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX("OUTLINED_FUNCTION_")
+NEVERD_SIGS_SYNTAX_CHAR(SynthesizedNumberSeparator, '_')
+
 // A COFF object's linker directives (its `.drectve` section) are options
 // separated by whitespace, one that holds whitespace in double quotes; MSVC
 // may open the section with a UTF-8 byte order mark, and pad it with NULs.
@@ -63,3 +79,4 @@ NEVERD_SIGS_SYNTAX_CHAR(AlternateNameSeparator, '=')
 #undef NEVERD_SIGS_SYNTAX_CHAR
 #undef NEVERD_SIGS_SYNTAX_STRING
 #undef NEVERD_SIGS_LOCAL_LABEL_PREFIX
+#undef NEVERD_SIGS_SYNTHESIZED_ROUTINE_PREFIX
