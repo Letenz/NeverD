@@ -4253,6 +4253,42 @@ TEST(HighControlFlowSemantics, ConstantIncomingBesideARealOneKeepsItsValue) {
   EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(5));
 }
 
+TEST(HighControlFlowSemantics, JoinJumpStillSkipsWorkBeforeTheDefault) {
+  // `if (c) { v = x + 1; goto J; } w = 7; v = x + 3; J: return v + w;`
+  // The jump skips `w = 7`; sinking the default must not make it fall into
+  // that work (KsepShimDatabaseTime's error log ran on its success path).
+  auto Plus = [](uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                               HighExpr::makeConst(N, 8));
+  };
+  auto Incoming = assign(0x1008, 5, 0);
+  Incoming.Val = Plus(1);
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1004;
+  If.Cond = local(0);
+  If.Body = {Incoming, jump(0x100c, 0x1040)};
+  auto Work = assign(0x1010, 3, 0);
+  Work.Val = HighExpr::makeConst(7, 8);
+  auto Default = assign(0x1030, 5, 0);
+  Default.Val = Plus(3);
+  HighFunc F;
+  F.Body = {
+      assign(0x1000, 1, 9),
+      assign(0x1002, 3, 1),
+      If,
+      Work,
+      Default,
+      result(0x1040, HighExpr::makeBinop(NdOp::INT_ADD, local(5), local(3)))};
+  HighFunc Late = F;
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(19));
+  sinkJoinDefaultsLate(Late);
+  EXPECT_EQ(execute(Late, 1), std::optional<uint64_t>(11));
+  EXPECT_EQ(execute(Late, 0), std::optional<uint64_t>(19));
+}
+
 TEST(HighControlFlowSemantics, JoinDefaultKeepsValuesOfAnArmWithTwoJumps) {
   // `if (c) { if (d) { v = a; goto J; } x = 1; v = b; goto J; }
   //  v = def; J: return v;` Either the sink leaves this alone or every
