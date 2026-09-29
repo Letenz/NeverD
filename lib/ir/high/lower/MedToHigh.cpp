@@ -857,6 +857,8 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
 void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   if (Func.Body.size() > limits::kMaxLateGotoReductionStmts)
     return;
+  // The join-default sink models Win64 register joins (structureIfElse).
+  const bool LateJoinSink = !CurMed || CurMed->CC == CallingConv::Win64;
   bool Dirty = duplicateSmallReturnTails(Func.Body);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
@@ -887,6 +889,7 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |
           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
+          (Phase != 0 && LateJoinSink && sinkJoinDefaultsLate(Func)) |
           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
           (Phase != 0 && loopifyTrailingArmBodies(Func.Body));
       if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&

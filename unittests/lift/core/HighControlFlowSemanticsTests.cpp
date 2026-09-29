@@ -4141,3 +4141,113 @@ TEST(HighControlFlowSemantics, MovedLoopTailKeepsEnteredBreak) {
   ASSERT_TRUE(moveLoopTailsToTheirBreak(F.Body));
   checkEnteredLoopExecution(F, {7, 3, 7});
 }
+
+TEST(HighControlFlowSemantics, ConstantIncomingSurvivesTheJoinDefaultSink) {
+  // `if (c) { r = 5; goto J; } r = x + 1; J: return r;` The arm's constant
+  // is its join value; sinking the default must not overwrite it.
+  auto Arm = assign(0x1008, 5, 5);
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Addr = 0x1004;
+  Guard.Cond = local(0);
+  Guard.Body = {Arm, jump(0x100c, 0x1018)};
+  auto Default = assign(0x1010, 5, 0);
+  Default.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Guard, Default, result(0x1018, local(5))};
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(10));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(5));
+}
+
+TEST(HighControlFlowSemantics, ConstantJoinDefaultSinksIntoEveryFallthrough) {
+  // `if (c) { t = x + 1; if (t) { v = t + 7; goto J; } } v = 0; J: return v;`
+  // Both fall-through paths take the constant; the jump carries its own.
+  auto Plus = [](int Id, uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                               HighExpr::makeConst(N, 8));
+  };
+  auto T = assign(0x1008, 2, 0);
+  T.Val = Plus(1, 1);
+  auto V = assign(0x1010, 5, 0);
+  V.Val = Plus(2, 7);
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(2),
+                                   HighExpr::makeConst(0, 8));
+  Inner.Body = {V, jump(0x1014, 0x1020)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = local(0);
+  Outer.Body = {T, Inner};
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Outer, assign(0x1018, 5, 0),
+            result(0x1020, local(5))};
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(0));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(17));
+  unsigned Gotos = 0;
+  walkStmts(F.Body,
+            [&](const HighStmt &S) { Gotos += S.Kind == StmtKind::Goto; });
+  EXPECT_EQ(Gotos, 0u);
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultCoversACopyOnlyInnerArm) {
+  // `if (c) { t = c - 1; if (t) { v = t; goto J; } } v = 0; J: return v;`
+  // The inner arm only copies, yet its else path still takes the default.
+  auto T = assign(0x1008, 2, 0);
+  T.Val =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(0), HighExpr::makeConst(1, 8));
+  auto V = assign(0x1010, 5, 0);
+  V.Val = local(2);
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(2),
+                                   HighExpr::makeConst(0, 8));
+  Inner.Body = {V, jump(0x1014, 0x1020)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = local(0);
+  Outer.Body = {T, Inner};
+  HighFunc F;
+  F.Body = {Outer, assign(0x1018, 5, 0), result(0x1020, local(5))};
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(0));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(0));
+  EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(1));
+}
+
+TEST(HighControlFlowSemantics, ConstantIncomingBesideARealOneKeepsItsValue) {
+  // `if (c == 1) { v = x + 1; goto J; } else if (c == 2) { v = 5; goto J; }
+  //  v = x + 7; J: return v;` Each jump carries its own value.
+  auto Real = assign(0x1008, 5, 0);
+  Real.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+  HighStmt Second;
+  Second.Kind = StmtKind::If;
+  Second.Addr = 0x1010;
+  Second.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Second.Body = {assign(0x1014, 5, 5), jump(0x1018, 0x1030)};
+  HighStmt First;
+  First.Kind = StmtKind::IfElse;
+  First.Addr = 0x1004;
+  First.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  First.Body = {Real, jump(0x100c, 0x1030)};
+  First.ElseBody = {Second};
+  auto Default = assign(0x1020, 5, 0);
+  Default.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(7, 8));
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), First, Default, result(0x1030, local(5))};
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(16));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
+  EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(5));
+}
