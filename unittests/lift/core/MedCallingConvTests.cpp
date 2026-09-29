@@ -2349,6 +2349,13 @@ TEST(MedTypePass, X86InfersFloatReturnFromX87CarrierExtension) {
 
 namespace {
 
+/// The calling convention's view of a register argument \p LiveIn.
+MedVar registerParam(const MedVar &LiveIn) {
+  MedVar P = LiveIn;
+  P.Kind = MedVar::Param;
+  return P;
+}
+
 /// `RETURN CONCAT(SUBBYTES(Upper, 1), Low)`: the byte-register merge a
 /// `mov al, ...; ret` leaves in front of the return.
 MedVar pushByteMerge(MedBlock &Block, const MedVar &Upper, const MedVar &Low,
@@ -2398,7 +2405,7 @@ TEST(MedTypePass, ByteResultOverDefinedRegisterKeepsItsWidth) {
   MedBlock &Block = Func.Blocks[0];
   const MedVar EntryRCX = reg(3, 0, 8, x86reg::RCX, TheArch);
   addLiveIn(Block, EntryRCX);
-  Func.Params.push_back(EntryRCX);
+  Func.Params.push_back(registerParam(EntryRCX));
   const MedVar Loaded = temp(4, 0, 8, TheArch);
   MedOp Load;
   Load.Opcode = NdOp::LOAD;
@@ -2459,7 +2466,7 @@ TEST(MedTypePass, ByteResultOverParameterRegisterKeepsItsWidth) {
   MedBlock &Block = Func.Blocks[0];
   const MedVar EntryX0 = reg(1, 0, 8, TRI.IntReturnReg, TheArch);
   addLiveIn(Block, EntryX0);
-  Func.Params.push_back(EntryX0);
+  Func.Params.push_back(registerParam(EntryX0));
   const MedVar Low = temp(2, 0, 1, TheArch);
   Block.Ops.push_back(unary(NdOp::COPY, Low, MedVar::makeConst(1, 1)));
   pushByteMerge(Block, EntryX0, Low, 10, TheArch);
@@ -2467,6 +2474,64 @@ TEST(MedTypePass, ByteResultOverParameterRegisterKeepsItsWidth) {
   inferMedTypes(Func, TheArch);
 
   ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Size, 8u);
+}
+
+/// Two paths into a return block whose XMM0 PHI takes \p EntryArm from the
+/// entry path and an 8-byte load from the other.
+MedFunc xmm0JoinReturn(bool EntryIsParameter) {
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Func.Blocks[I].Id = I;
+  Func.Blocks[0].Succs = {1, 2};
+  Func.Blocks[1].Preds = {0};
+  Func.Blocks[1].Succs = {2};
+  Func.Blocks[2].Preds = {0, 1};
+  const MedVar EntryXMM0 = reg(1, 0, 16, TRI.FPReturnReg, TheArch);
+  const MedVar EntryRCX = reg(2, 0, 8, x86reg::RCX, TheArch);
+  addLiveIn(Func.Blocks[0], EntryXMM0);
+  addLiveIn(Func.Blocks[0], EntryRCX);
+  Func.Params.push_back(registerParam(EntryRCX));
+  if (EntryIsParameter)
+    Func.Params.push_back(registerParam(EntryXMM0));
+  const MedVar Loaded = temp(3, 0, 8, TheArch);
+  MedOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = Loaded;
+  Load.addInput(EntryRCX);
+  Func.Blocks[1].Ops.push_back(Load);
+  const MedVar Widened = reg(1, 1, 16, TRI.FPReturnReg, TheArch);
+  Func.Blocks[1].Ops.push_back(unary(NdOp::INT_ZEXT, Widened, Loaded));
+  PhiNode Phi;
+  Phi.Output = reg(1, 2, 16, TRI.FPReturnReg, TheArch);
+  Phi.Args = {{0, EntryXMM0}, {1, Widened}};
+  Func.Blocks[2].Phis.push_back(Phi);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(reg(4, 0, 8, TRI.IntReturnReg, TheArch));
+  Func.Blocks[2].Ops.push_back(Return);
+  return Func;
+}
+
+TEST(MedTypePass, VectorCopyThroughXMM0IsNotAFloatResult) {
+  // `movq xmm0, [rcx]; movq [rdx], xmm0` on one path only: the other path
+  // leaves XMM0's undefined entry value, so XMM0 carries no result.
+  MedFunc Func = xmm0JoinReturn(/*EntryIsParameter=*/false);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_NE(Func.ReturnType->Kind, NdTypeKind::Float);
+}
+
+TEST(MedTypePass, FloatArgumentPassedThroughOnOnePathIsAFloatResult) {
+  // `n <= 0 ? x : load`: the entry path returns the FP argument itself.
+  MedFunc Func = xmm0JoinReturn(/*EntryIsParameter=*/true);
+  inferMedTypes(Func, Arch::X64);
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
   EXPECT_EQ(Func.ReturnType->Size, 8u);
 }
 

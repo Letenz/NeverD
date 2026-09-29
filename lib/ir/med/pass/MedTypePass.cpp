@@ -338,11 +338,12 @@ intRetEffWidth(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   return intRetEffWidthRec(Defs, PhiDefs, V, Depth, Memo);
 }
 
-/// True when \p V overlaps a register the calling convention passes in.
+/// True when \p V overlaps a register a parameter arrives in.
 static bool overlapsParameterRegister(const MedFunc &Func, const MedVar &V) {
   for (const MedVar &P : Func.Params)
-    if (P.Kind == MedVar::Reg && P.Size != 0 && P.RegOff < V.RegOff + V.Size &&
-        V.RegOff < P.RegOff + P.Size)
+    if ((P.Kind == MedVar::Param || P.Kind == MedVar::Reg) &&
+        P.RegOff != kNoParamReg && P.Size != 0 &&
+        P.RegOff < V.RegOff + V.Size && V.RegOff < P.RegOff + P.Size)
       return true;
   return false;
 }
@@ -534,6 +535,16 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
           for (const auto &Phi : Blk.Phis) {
             if (Phi.Output.Kind != MedVar::Reg ||
                 Phi.Output.RegOff != TRI.FPReturnReg)
+              continue;
+            // A path that leaves the register's undefined entry value (it is
+            // no parameter to pass through) returns no FP result; that is a
+            // vector copy through XMM0, not a `double` defined on every path.
+            if (std::any_of(Phi.Args.begin(), Phi.Args.end(),
+                            [&](const auto &A) {
+                              return A.second.Kind == MedVar::Reg &&
+                                     A.second.SSAVer == 0 &&
+                                     !overlapsParameterRegister(Func, A.second);
+                            }))
               continue;
             for (const auto &A : Phi.Args) {
               uint16_t E = fpReturnElemSize(Defs, A.second, 0);
