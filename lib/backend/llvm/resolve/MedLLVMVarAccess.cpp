@@ -840,6 +840,10 @@ llvm::Value *MedLLVMEmitter::getRawSegmentOffset(const MedVar &V,
 
 llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
                                     llvm::IRBuilder<> &Builder) {
+  // Any fixed value is as good as another, but every read of one agrees.
+  if (V.Kind == MedVar::Unspecified)
+    return Builder.CreateFreeze(llvm::PoisonValue::get(
+        llvm::Type::getIntNTy(*Ctx, std::max<unsigned>(V.Size, 1) * 8)));
   if (V.Kind == MedVar::SEHExceptionCode) {
     // The native SEH lowering stores the handler's catch pad code here.
     // Without it no edge reaches the handler, so this read is unreachable.

@@ -52,11 +52,17 @@ struct MedVar {
     /// The exception code a Windows __except handler is entered with.  Each
     /// handler entry has its own value: SSAVer numbers the entries from 1 in
     /// address order and ConstVal holds the entry's address.
-    SEHExceptionCode
+    SEHExceptionCode,
+    /// A value the machine leaves unspecified, such as a volatile register
+    /// when the unwinder enters an exception handler. It lowers to an
+    /// explicit unknown rather than any variable's value.
+    Unspecified
   };
   /// The id of every SEHExceptionCode value.  Value maps key a variable by
   /// id and version, so it must differ from the -1 of other synthetic values.
   static constexpr int SEHExceptionCodeId = -2;
+  /// The id of every Unspecified value, distinct from the ids above.
+  static constexpr int UnspecifiedId = -3;
   VarKind Kind = Temp;
   Arch TheArch = Arch::Unknown;
   int16_t RenameTag = -1;
@@ -86,6 +92,15 @@ struct MedVar {
   bool operator!=(const MedVar &O) const { return !(*this == O); }
 
   bool isConst() const { return Kind == Const; }
+
+  static MedVar makeUnspecified(uint16_t Sz, Arch A) {
+    MedVar V;
+    V.Kind = Unspecified;
+    V.TheArch = A;
+    V.Id = UnspecifiedId;
+    V.Size = Sz;
+    return V;
+  }
 
   static MedVar makeConst(uint64_t Val, uint16_t Sz,
                           ConstantAddressProvenance AddressProvenance =

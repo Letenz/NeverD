@@ -326,6 +326,8 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
 }
 
 ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
+  if (V.Kind == MedVar::Unspecified)
+    return HighExpr::makeUndef(V.Size);
   if (V.isConst()) {
     return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
                                V.AddressOwnerVA);

@@ -525,12 +525,11 @@ TEST(MedSEHHandlerEntry, ScratchRegisterIsNotTheNormalPathValue) {
   auto Low = decodeFixedSEHFrame(Img);
   auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
   ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-entry"));
-  // The handler reads ECX as it arrives, not the normal path's `mov ecx,5`.
+  // The unwinder leaves ECX unspecified: neither the normal path's
+  // `mov ecx,5` nor the value the function was entered with.
   auto Scratch = storedValueAt(Med, Img.Entry + 0x24);
   ASSERT_TRUE(Scratch);
-  EXPECT_FALSE(Scratch->isConst()) << Scratch->display();
-  EXPECT_EQ(Scratch->Kind, MedVar::Reg) << Scratch->display();
-  EXPECT_EQ(Scratch->SSAVer, 0) << Scratch->display();
+  EXPECT_EQ(Scratch->Kind, MedVar::Unspecified) << Scratch->display();
 }
 
 TEST(MedSEHHandlerEntry, NonvolatileRegisterHoldsItsProtectedValue) {
@@ -604,6 +603,27 @@ BinaryImage makeSharedHandlerImage() {
 }
 
 } // namespace
+
+TEST(MedSEHHandlerEntry, NonvolatileRegisterWrittenInTheRangeIsUnspecified) {
+  // mov rdi,rcx inside the protected range; the handler stores rdi. Where
+  // the exception struck decides rdi, so the handler cannot know it.
+  auto Img = makeFixedSEHFrameImage();
+  auto &Data = Img.Segments.front().Data;
+  const uint8_t Normal[] = {0x48, 0x89, 0xcf, 0x90, 0x90, 0x90, 0x90, 0x90};
+  std::copy(std::begin(Normal), std::end(Normal), Data.begin() + 8);
+  const uint8_t Handler[] = {0x48, 0x89, 0x7c, 0x24, 0x28, 0x90, 0x90,
+                             0x90, 0x90, 0x90, 0x90, 0xeb, 3};
+  std::copy(std::begin(Handler), std::end(Handler), Data.begin() + 0x20);
+  Img.ExceptionMetadata.Functions.front().SEH->Scopes.front().GuardedRange = {
+      Img.Entry + 8, Img.Entry + 0x11};
+  Img.ExceptionMetadata.rebuildIndex();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-entry"));
+  auto Saved = storedValueAt(Med, Img.Entry + 0x20);
+  ASSERT_TRUE(Saved);
+  EXPECT_EQ(Saved->Kind, MedVar::Unspecified) << Saved->display();
+}
 
 TEST(MedSEHHandlerEntry, HandlerSharedWithTheNormalPathMergesBothValues) {
   // The normal path returns 0 and the dispatcher's entry the exception code;
