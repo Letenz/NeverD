@@ -828,6 +828,14 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Canonical == "objc_enumerationMutation") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_exception_throw") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/libobjc.A.dylib")
+      return std::nullopt;
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"exception", Object}};
+    Result.DoesNotReturn = true;
   } else if (Canonical == "objc_getProperty") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     if (Bind == Image.DyldBindSlots.end() ||

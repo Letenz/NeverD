@@ -88,7 +88,8 @@ inline void collectSourceBodyDiagnostics(
   if (Func.Body.empty())
     Diagnostics.add(SourceProjectionIssue::Body,
                     "no function body was recovered");
-  if ((Func.ExceptionMetadata && !isPlainUnwind(*Func.ExceptionMetadata)) ||
+  if ((Func.ExceptionMetadata &&
+       !isUnhandledObjCThrowSourceUnwind(*Func.ExceptionMetadata)) ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
     Diagnostics.add(SourceProjectionIssue::Exception,
                     "exception-dependent method projection is not supported");
@@ -114,6 +115,11 @@ inline void collectSourceBodyDiagnostics(
     return true;
   };
   std::set<LocalIdentity> DefinedLocals;
+  std::map<va_t, va_t> UnmatchedThrows;
+  if (Func.ExceptionMetadata && Func.ExceptionMetadata->ObjC)
+    for (const auto &Call : Func.ExceptionMetadata->ObjC->RuntimeCalls)
+      if (Call.Kind == ObjCRuntimeCallKind::Throw)
+        UnmatchedThrows.emplace(Call.CallVA, Call.TargetVA);
   auto AddStatements = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
     if (!Spend(Body.size()))
       return false;
@@ -196,6 +202,16 @@ inline void collectSourceBodyDiagnostics(
       Diagnostics.add(SourceProjectionIssue::UnresolvedValue,
                       "method contains an unresolved value", Address,
                       Expression);
+    if (Expression->Kind == ExprKind::Call) {
+      const auto Throw = UnmatchedThrows.find(Address);
+      if (Throw != UnmatchedThrows.end() && !Expression->IsIndirectCall &&
+          Expression->CallAddr == Throw->second && Expression->SourceCallHint &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+          Expression->SourceCallHint->TargetName == "objc_exception_throw" &&
+          Expression->SourceCallHint->DoesNotReturn)
+        UnmatchedThrows.erase(Throw);
+    }
     if (Expression->Kind == ExprKind::Call &&
         !(CallAllowed && CallAllowed(*Expression)) &&
         (Expression->IntrinsicId == Intrinsic::None ||
@@ -290,6 +306,10 @@ inline void collectSourceBodyDiagnostics(
         Expressions.emplace_back(Operand.get(), Depth + 1, Address);
     }
   }
+  for (const auto &Throw : UnmatchedThrows)
+    Diagnostics.add(SourceProjectionIssue::Exception,
+                    "Objective-C throw site has no exact source call",
+                    Throw.first);
 }
 
 /// Empty diagnostics mean complete supported source representation, not a

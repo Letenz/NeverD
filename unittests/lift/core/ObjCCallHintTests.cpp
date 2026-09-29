@@ -5180,6 +5180,28 @@ TEST(ObjCCallHints, PropertyGetterKeepsSignedOffsetAndPlatformBoolABI) {
   }
 }
 
+TEST(ObjCCallHints, ExceptionThrowRequiresStrongLibobjcImport) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_exception_throw", Architecture);
+    auto &Binding = Image.DyldBindSlots[0x2180];
+    Binding.Name = "_objc_exception_throw";
+    Binding.Module = "/usr/lib/libobjc.A.dylib";
+    const auto Hint = objcRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_TRUE(Hint->DoesNotReturn);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    Binding.Module = "/tmp/libobjc.A.dylib";
+    EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+    Binding.Module = "/usr/lib/libobjc.A.dylib";
+    Binding.WeakImport = true;
+    EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+  }
+}
+
 TEST(ObjCCallHints, PropertyRuntimeKeepsValueBeforeSignedOffset) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = runtimeImage("_objc_setProperty_nonatomic_copy", Architecture);
