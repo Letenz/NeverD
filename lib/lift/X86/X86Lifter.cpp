@@ -12,6 +12,8 @@
 
 #include "neverd/lift/X86Lifter.h"
 
+#include "X86ShiftUndefined.h"
+
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 
@@ -576,6 +578,8 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
            !(X86.operands[0].type == X86_OP_MEM &&
              X86.operands[1].type == X86_OP_MEM);
   };
+  if (shiftundefined::isSingleShift(Insn->id))
+    return shiftundefined::form(Insn, TargetArch);
   switch (Insn->id) {
   // Arithmetic defines all six arithmetic flags; logic defines five and
   // records AF below. DF is preserved.
@@ -1136,6 +1140,13 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
         !EffectsDraft.Effects.front().When &&
         EffectsDraft.Effects.front().AfterOp > 0 &&
         EffectsDraft.Effects.front().AfterOp <= EffectsDraft.OpCount;
+    const bool HasExpectedEffects =
+        shiftundefined::isSingleShift(Id)
+            ? shiftundefined::matches(
+                  Id, X86, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
+        : Logic ? HasLogicEffect
+                : EffectsDraft.Effects.empty();
     if (!Handled) {
       EffectsDraft.Coverage = LowUndefinedCoverage::Unsupported;
       EffectsDraft.Effects.clear();
@@ -1147,7 +1158,7 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                !hasAuditedUndefinedOutputs(Insn, TargetArch)) {
       EffectsDraft.Diagnostic =
           "instruction form has no complete undefined-output audit";
-    } else if (Logic ? !HasLogicEffect : !EffectsDraft.Effects.empty()) {
+    } else if (!HasExpectedEffects) {
       EffectsDraft.Diagnostic =
           "instruction effects do not match its undefined-output audit";
     } else {

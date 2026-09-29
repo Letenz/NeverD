@@ -58,6 +58,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
 
+移位回歸涵蓋所有八位元原始次數、零次移位旗標組合、兩種 x86 模式、全部純量位寬、CL 與目的地重疊、AH/CH/DH/BH、擴充暫存器及記憶體。以位元組建模的符號執行對照逐位算術模型，檢查已定義結果與守衛條件。關係測試檢查複製與新生旗標、暫存溢出保存、迴圈重訪、未定義值衍生次數、分支拒絕、畸形編碼及摘要和預算失敗。有限不可變讀取涵蓋 1/2/4/8 位元組、輸入相關選擇、路徑內單位址集合、完整讀取見證與上限綁定，並拒絕相依、缺失、可寫、無檔案支援、重定位或無界候選。
+
 核心測試檢查上下文拆分、固定點匯合、動態迴圈、重疊暫存器、別名失效、有限目標派發，以及拒絕時不提供部分替代程式碼。原始碼測試組譯原創的暫存器式、堆疊式與有限位址 x64 機器，還原兩條 C 輸出路徑，在 O0/O2 下啟用未定義行為陷阱編譯，並與獨立的無號算術和記憶體參考實作對照執行。有限位址 fixture 涵蓋輸入選擇的記錄與相關游標／key 控制欄位；原生檢查涵蓋 SysV 和 Win64 呼叫慣例。測試也涵蓋公開 CLI、還原預算及不支援輸入的報告。需要支援跨目標編譯的 Clang 與 LLD；原始 ELF 的執行另需 x64 Linux 主機。缺少工具或主機不符屬於略過的涵蓋範圍，不代表通過。
 
 `ControlStateRecovery.LongTransparentLoop*` 涵蓋獨立撰寫的 20 階段迴圈、動態算術參考實作、未知 selector 拒絕及預算耗盡。`LongTransparentPhasesKeepExactBitDemands` 檢查 selector 同位元組內的無關位元仍是可觀察的執行期資料，不會成為控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 檢查反向探索及重播在新圖啟動前消耗共用預算，且不發布部分結果。

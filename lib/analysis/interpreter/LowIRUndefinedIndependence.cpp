@@ -171,7 +171,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(6); // Certificate semantic schema, independent of report formatting.
+  Number(7); // Certificate semantic schema, independent of report formatting.
   Number(Contract.X64FlagsProfile.has_value());
   if (Contract.X64FlagsProfile) {
     Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
@@ -287,6 +287,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
   Number(Limits.MaxFrameBytes);
   Number(Limits.MaxSolverQueries);
   Number(Limits.MaxIndirectTargets);
+  Number(Limits.MaxImmutableLoadAddresses);
   Number(Limits.MaxObservations);
   Number(Limits.MaxSymbolicNodes);
   Number(Limits.Solver.Blast.MaxWidth);
@@ -820,6 +821,85 @@ class Checker {
     // at ordinary returns can certify a finite unrolling, never a prefix.
   }
 
+  // The caller first proves two-execution address equality. Enumerate its
+  // ordinary projection without assuming a candidate, and require the final
+  // no-more-values proof before reading any bytes. A shared ITE retains the
+  // input-dependent selection; equal data never excuses a dependent address.
+  SymRef immutableLoad(Path &P, SymRef Address, uint16_t Bytes,
+                       va_t Instruction, int Sequence) {
+    std::vector<uint64_t> Addresses;
+    if (const auto Absolute = Ctx.asConst(Address)) {
+      if (Absolute->getBitWidth() != 64)
+        fail(Status::Invalid, "immutable load address must be 64 bits");
+      Addresses.push_back(Absolute->getZExtValue());
+    } else {
+      uint64_t Queries = Result.SolverQueries;
+      const auto Values = detail::enumerateFiniteValues(
+          Ctx, P.Predicate, {Address}, Limits.MaxImmutableLoadAddresses,
+          Limits.Solver, Limits.MaxSolverQueries, Limits.MaxSymbolicNodes,
+          Queries);
+      Result.SolverQueries = static_cast<uint32_t>(Queries);
+      if (Values.Status != detail::FiniteValueStatus::Complete)
+        fail(Values.Status == detail::FiniteValueStatus::Invalid
+                 ? Status::Invalid
+                 : Status::BudgetExceeded,
+             "immutable load address enumeration is incomplete");
+      if (Values.Tuples.empty())
+        fail(Status::Invalid, "reachable immutable load has no address");
+      for (const auto &Tuple : Values.Tuples) {
+        if (Tuple.size() != 1)
+          fail(Status::Invalid, "malformed immutable load address tuple");
+        Addresses.push_back(Tuple.front());
+      }
+    }
+    const auto &Frame = *Contract.Frame;
+    const auto First = Ctx.mkAdd(
+        EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(Frame.Begin)));
+    const auto Last = Ctx.mkAdd(
+        EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(Frame.End) - 1));
+    SymRef Selected;
+    for (uint64_t Candidate : Addresses) {
+      if (Candidate > UINT64_MAX - Bytes)
+        fail(Status::Unsupported, "immutable load address range wraps");
+      const auto Disjoint =
+          Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, Candidate)),
+                   Ctx.mkUle(Ctx.mkConst(64, Candidate + Bytes), First));
+      if (query(Ctx.mkAnd(P.Predicate, Ctx.mkNot(Disjoint))) !=
+          solver::SatResult::Unsat)
+        fail(Status::Unsupported, "immutable read can alias the mutable frame");
+      const auto Read = Provider->immutableRead(Candidate, Bytes);
+      if (!Read || Read->Bytes.size() != Bytes || Read->Evidence.empty())
+        fail(Status::Unsupported, "missing immutable-read evidence");
+      for (uint64_t Size : {Read->Bytes.size(), Read->Evidence.size()}) {
+        if (Size > Limits.MaxOperations - NativeReadEvidenceBytes)
+          fail(Status::BudgetExceeded,
+               "immutable-read evidence budget exhausted");
+        NativeReadEvidenceBytes += Size;
+      }
+      uint64_t Value = 0;
+      for (uint16_t I = 0; I != Bytes; ++I) {
+        const auto [It, Inserted] =
+            ImmutableBytes.emplace(Candidate + I, Read->Bytes[I]);
+        if (!Inserted && It->second != Read->Bytes[I])
+          fail(Status::Invalid, "immutable provider bytes changed");
+        const unsigned Shift =
+            Contract.ByteOrder == llvm::endianness::little ? I : Bytes - 1 - I;
+        Value |= uint64_t{Read->Bytes[I]} << (Shift * 8);
+      }
+      NativeResult->Reads.push_back(
+          {Instruction, Sequence, Candidate, Read->Bytes, Read->Evidence});
+      const auto Constant = Ctx.mkConst(Bytes * 8, Value);
+      // The first value is a default only outside the exhaustively proved
+      // address set. That case is unreachable under this path's predicate.
+      Selected = Selected
+                     ? Ctx.mkIte(Ctx.mkEq(Address, Ctx.mkConst(64, Candidate)),
+                                 Constant, Selected)
+                     : Constant;
+      nodes();
+    }
+    return Selected;
+  }
+
   void scheduleNative(Path P, va_t Address, SymRef Predicate) {
     if (query(Predicate) == solver::SatResult::Unsat)
       return;
@@ -1024,52 +1104,15 @@ class Checker {
               Difference->getSExtValue() < Frame.End &&
               static_cast<uint64_t>(Frame.End) - Difference->getZExtValue() >=
                   View.AccessSize;
-          if (!InFrame && Provider && !Store && Ctx.asConst(ordinary(A))) {
-            const auto Absolute = Ctx.asConst(ordinary(A));
-            if (!Absolute || Absolute->getActiveBits() > 64 ||
-                Absolute->getZExtValue() > UINT64_MAX - View.AccessSize)
-              fail(Status::Unsupported, "immutable load address is not exact");
-            const uint64_t Address = Absolute->getZExtValue();
-            const auto First = Ctx.mkAdd(
-                EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(Frame.Begin)));
-            const auto Last = Ctx.mkAdd(
-                EntryRoot,
-                Ctx.mkConst(64, static_cast<uint64_t>(Frame.End) - 1));
-            const auto Disjoint = Ctx.mkOr(
-                Ctx.mkUlt(Last, Ctx.mkConst(64, Address)),
-                Ctx.mkUle(Ctx.mkConst(64, Address + View.AccessSize), First));
-            if (query(Ctx.mkAnd(P.Predicate, Ctx.mkNot(Disjoint))) !=
-                solver::SatResult::Unsat)
-              fail(Status::Unsupported,
-                   "immutable read can alias the mutable frame");
-            const auto Read = Provider->immutableRead(Address, View.AccessSize);
-            if (!Read || Read->Bytes.size() != View.AccessSize ||
-                Read->Evidence.empty())
-              fail(Status::Unsupported, "missing immutable-read evidence");
-            for (uint64_t Size : {Read->Bytes.size(), Read->Evidence.size()}) {
-              if (Size > Limits.MaxOperations - NativeReadEvidenceBytes)
-                fail(Status::BudgetExceeded,
-                     "immutable-read evidence budget exhausted");
-              NativeReadEvidenceBytes += Size;
-            }
-            uint64_t Value = 0;
-            for (uint16_t I = 0; I != View.AccessSize; ++I) {
-              const auto [It, Inserted] =
-                  ImmutableBytes.emplace(Address + I, Read->Bytes[I]);
-              if (!Inserted && It->second != Read->Bytes[I])
-                fail(Status::Invalid, "immutable provider bytes changed");
-              const unsigned Shift =
-                  Contract.ByteOrder == llvm::endianness::little
-                      ? I
-                      : View.AccessSize - 1 - I;
-              Value |= uint64_t{Read->Bytes[I]} << (Shift * 8);
-            }
-            NativeResult->Reads.push_back({Boundary.Address, Original.Seq,
-                                           Address, Read->Bytes,
-                                           Read->Evidence});
+          if (!InFrame && Provider && !Store &&
+              (!Difference || Ctx.asConst(ordinary(A)))) {
+            const auto Value = immutableLoad(P, ordinary(A), View.AccessSize,
+                                             Boundary.Address, Original.Seq);
+            P.Left.write(SymSpace::Temporary, AddressTemporary, Value);
+            P.Right.write(SymSpace::Temporary, AddressTemporary, Value);
             Op.Opcode = NdOp::COPY;
             Op.NumInputs = 1;
-            Op.Inputs[0] = NdVar::scalar(Value, View.AccessSize);
+            Op.Inputs[0] = NdVar::tmp(AddressTemporary, View.AccessSize);
           } else {
             if (!Difference || Difference->getBitWidth() != 64)
               fail(Status::Unsupported,
@@ -1226,7 +1269,8 @@ class Checker {
     if (Provider &&
         (NativeEntry.Mode != InstructionMode::Default || !Contract.Frame ||
          Contract.Frame->RootRegister.Bytes != 8 || Contract.Frame->Begin > 0 ||
-         Contract.Frame->End < 8 || !Limits.MaxIndirectTargets))
+         Contract.Frame->End < 8 || !Limits.MaxIndirectTargets ||
+         !Limits.MaxImmutableLoadAddresses))
       fail(Status::Invalid,
            "native proof requires a stack frame and bounded targets");
     uint64_t InputOperations = 0;

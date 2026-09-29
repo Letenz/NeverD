@@ -146,7 +146,21 @@ TEST(BinaryUndefinedIndependence,
 TEST(BinaryUndefinedIndependence,
      UncoveredNativeInstructionRefusesCertificate) {
   BinaryProgram Program;
-  Program.block(0x100, {0xd1, 0xe0, 0xc3}); // shl eax,1; ret
+  Program.block(0x100, {0xd1, 0xc0, 0xc3}); // rol eax,1; ret
   Program.expect(Status::Unsupported);
 }
+TEST(BinaryUndefinedIndependence, ShiftGuardsBindTheCompleteOperationDigest) {
+  BinaryProgram P;
+  P.block(0x100, {0xd2, 0xe0, 0xc3}); // shl al,cl; ret.
+  P.expect(Status::Proved);
+  const auto &Effect = P.Records.front().Effects.Effects.front();
+  ASSERT_TRUE(Effect.When.has_value());
+  const auto After = Effect.AfterOp;
+  ASSERT_GT(After, 0u);
+  auto &Guard = P.Function.Blocks.front().Ops[After - 1];
+  ASSERT_EQ(Guard.Opcode, NdOp::INT_LESSEQUAL);
+  Guard.Inputs[0] = NdVar::scalar(31, Guard.Inputs[0].Size);
+  P.expect(Status::Invalid);
+}
+
 } // namespace

@@ -837,7 +837,8 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_UndefinedEffectsTests.cpp
-  LINK_COMPONENTS Decode Lift Loader
+  x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
+  LINK_COMPONENTS Decode Lift Loader Symbolic
 )
 
 add_neverd_unittest(NeverDX86LogicIdentityTests
