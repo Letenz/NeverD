@@ -154,6 +154,15 @@ public:
   void setDetail(bool On);
   bool detailEnabled() const { return Detail; }
 
+  /// Enable/disable capstone's printing of the mnemonic and operand text for
+  /// subsequent decodes.  Text is on by default.  With it off, a decode fills
+  /// only Addr/Size/Id and the instruction bytes: no text and no operand
+  /// detail, and an x86 compare with a predicate keeps capstone's base id.
+  /// About half an x86 decode is printing, so a sweep that reads only sizes
+  /// and call ids turns it off.  No-op if the state is unchanged.
+  void setText(bool On);
+  bool textEnabled() const { return Text; }
+
   /// True when \p Insn is a trap execution can continue past, so the bytes
   /// after it may still belong to the same function.  Only x86 `int3` is.
   bool isResumableTrap(const DecodedInsn &Insn) const;
@@ -259,6 +268,7 @@ private:
   InstructionMode CurrentMode = InstructionMode::Default;
   bool Strict = true;
   bool Detail = true;
+  bool Text = true;
 
   std::unique_ptr<X86Lifter> X86;
   std::unique_ptr<ARMLifter> ARM;

@@ -818,13 +818,17 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   const bool SweepWithoutDetail =
       Img.Arch == Arch::X86 || Img.Arch == Arch::X64;
   const bool PreviousDetail = Dec.detailEnabled();
-  if (SweepWithoutDetail)
+  const bool PreviousText = Dec.textEnabled();
+  if (SweepWithoutDetail) {
     Dec.setDetail(false);
+    Dec.setText(false);
+  }
 
   if (Chunks.size() <= 1 && PieceJobs.empty()) {
     for (auto &[Seg, Start, End] : Chunks)
       func_detect_detail::scanSegmentCalls(Img, Dec, Seg, Start, End, Out);
     Dec.setDetail(PreviousDetail);
+    Dec.setText(PreviousText);
     return;
   }
 
@@ -865,8 +869,10 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     Decoder LocalDec;
     if (!LocalDec.init(Img))
       return;
-    if (SweepWithoutDetail)
+    if (SweepWithoutDetail) {
       LocalDec.setDetail(false);
+      LocalDec.setText(false);
+    }
     std::set<va_t> LocalEntries;
 
     while (true) {
@@ -976,6 +982,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
                                          Out);
   }
   Dec.setDetail(PreviousDetail);
+  Dec.setText(PreviousText);
 }
 
 } // namespace neverd
