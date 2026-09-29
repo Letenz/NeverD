@@ -1,0 +1,9 @@
+//===- KvmRunControl.def - Linux signal-mask ABI facts --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_KVM_RUN_VALUE
+// KVM_SET_SIGNAL_MASK uses the kernel sigset ABI, not libc's larger sigset_t.
+NEVERD_KVM_RUN_VALUE(SignalSetBytes, 8)
+#endif

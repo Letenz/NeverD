@@ -1,0 +1,22 @@
+//===- KvmCancellationCases.def - Native host-entry interruption facts ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_KVM_CANCEL_VALUE
+NEVERD_KVM_CANCEL_VALUE(PageSize, 4096)
+NEVERD_KVM_CANCEL_VALUE(MarkerOffset, 0x100)
+NEVERD_KVM_CANCEL_VALUE(MarkerValue, 0x1234)
+NEVERD_KVM_CANCEL_VALUE(InitialFlags, 2)
+NEVERD_KVM_CANCEL_VALUE(DeadlineMicroseconds, 1000000)
+NEVERD_KVM_CANCEL_VALUE(StopMicroseconds, 3000000)
+NEVERD_KVM_CANCEL_VALUE(ResumeCount, 8)
+#endif
+#ifdef NEVERD_KVM_CANCEL_BYTES
+// Real mode: mov word [0x100],0x1234; jmp $. The marker proves native entry.
+NEVERD_KVM_CANCEL_BYTES(Loop, 0xc7, 0x06, 0x00, 0x01, 0x34, 0x12, 0xeb, 0xfe)
+NEVERD_KVM_CANCEL_BYTES(Halt, 0xf4)
+#endif
+#ifdef NEVERD_KVM_CANCEL_TEXT
+NEVERD_KVM_CANCEL_TEXT(RequiresX64, "native interruption probe uses an x64 real-mode guest")
+#endif
