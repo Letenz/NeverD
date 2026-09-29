@@ -16,6 +16,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/loader/InputDigest.h"
 
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -77,7 +78,7 @@ protected:
           llvm::inconvertibleErrorCode());
     auto &Buf = *BufOrErr;
     Img.Format = Fmt;
-    Img.InputFileSHA256 = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+    Img.InputFileSHA256 = sha256(llvm::ArrayRef<uint8_t>(
         reinterpret_cast<const uint8_t *>(Buf->getBufferStart()),
         Buf->getBufferSize()));
     if (CopyRaw)
