@@ -94,10 +94,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmRunTests
     KvmRunTests.cpp
     TIMEOUT 10
-    LINK_COMPONENTS EmulationCore)
+    LINK_COMPONENTS EmulationNative)
   target_include_directories(NeverDKvmRunTests PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/emulation)
   target_link_options(NeverDKvmRunTests PRIVATE "-Wl,--wrap=ioctl")
+  add_neverd_unittest(NeverDKvmCancellationTests
+    KvmCancellationTests.cpp
+    TIMEOUT 10
+    LINK_COMPONENTS EmulationNative)
+  target_include_directories(NeverDKvmCancellationTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
 endif()
 
 add_neverd_unittest(NeverDRunControlTests

@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDEmulationNative
   arch/aarch64/AArch64PageTables.cpp
   backends/kvm/KvmMachine.cpp
   backends/kvm/KvmAArch64Machine.cpp
+  backends/kvm/KvmRunControl.cpp
   backends/whp/WhpMachine.cpp
   backends/whp/WhpAArch64Machine.cpp
   LINK_COMPONENTS EmulationCore

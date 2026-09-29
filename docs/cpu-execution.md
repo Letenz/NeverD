@@ -155,12 +155,14 @@ private RAM and a default space. JSON parsing/serialization lives in
 
 ## CPU outcomes
 
-Native execution checks normal budgets between instructions. WHP also requests
-cancellation of an active native entry after its transport allowance or a stop
-request. An interrupted entry with uncertain guest progress is terminal, even
-when `StopRequested` or `DeadlineReached` is set. KVM checks those requests
-before entry and after host interruptions; an uninterrupted entry still relies
-on hardware single stepping. No profile promises a hard wall-clock bound.
+Native execution checks normal budgets between instructions. KVM and WHP also
+request cancellation of an active native entry after its transport allowance
+or a stop request, and acknowledge it before retiring execution resources. An
+interrupted entry with uncertain guest progress is terminal, even when
+`StopRequested` or `DeadlineReached` is set. KVM uses a private execution thread
+and a temporarily unblocked realtime signal without changing caller signal
+masks or process handlers. The selected signal must remain non-ignored during
+an active entry. No profile promises a hard wall-clock bound.
 
 `CPU.runUntilExit(PC, TimeoutMicroseconds)` returns a typed
 [`ExecutionExit`](../include/neverd/emulation/ExecutionExit.h). Preconditions
@@ -218,8 +220,9 @@ backend failures retain higher precedence.
 A stopped CPU, software HLT, deadline or guest trap never establishes successful
 workload completion. Instruction/event budgets, service dispatch, process/thread
 exit, exception delivery and workload success remain runtime/OS decisions.
-General runtime extraction, service/exception delivery, independently
-interruptible KVM and the additional OS workloads remain unfinished. CPU user
-isolation is not evidence of a working Windows, Linux/Android or Darwin app.
+The shared runtime supports cooperative quanta and explicit service/fault
+continuations; the Linux process model executes bounded static ELF workloads.
+General dynamic linking, OS threads, signals and the additional OS workloads
+remain unfinished. CPU user isolation alone does not establish OS compatibility.
 Native Windows and ARM64 user execution still require hardware validation;
 Unicorn execution and cross-compilation do not replace that evidence.

@@ -63,6 +63,8 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 `LowIRLoopInference.*` e `BinaryLowIRLoopInference.*` usano contatori, salvataggi sullo stack, ritorni anticipati, chiamate native e flag impacchettati scritti indipendentemente. Coprono ampliamento aritmetico a larghezza ridotta e flag semanticamente uguali con espressioni diverse. Grafi malformati, origini mancanti o falsificate, cicli infiniti o con riavvolgimento e budget esauriti non devono produrre certificati.
 
+Regressioni indipendenti con cicli alternativi coprono entrambi gli orientamenti dei rami, corpi errati, un ramo fratello non terminante e l’esaurimento dei budget condivisi di ricerca/prova. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
+
 Le regressioni coprono due e tre livelli annidati, contatori crescenti e decrescenti, fasi inferite e tagli in corpi nativi reali. Domini di prefisso irraggiungibili o disgiunti, corpi errati, transizioni infinite o con riavvolgimento aritmetico e budget condivisi esauriti devono essere rifiutati. Un testimone di prefisso non sostituisce la copertura completa dei segmenti.
 
 ```sh
