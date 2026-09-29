@@ -308,7 +308,6 @@ static bool sameMedVar(const MedVar &A, const MedVar &B);
 static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body,
                                          const std::set<va_t> &Targets);
 static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body);
-static void invertEmptyThenAssignCallNested(std::vector<HighStmt> &Body);
 static void invertExternalSkipGotoNested(std::vector<HighStmt> &Body);
 static void foldSameTargetSkipGotoNested(std::vector<HighStmt> &Body);
 static void flattenElseGotoNextLabelNested(std::vector<HighStmt> &Body,
@@ -357,26 +356,6 @@ static bool stmtIsSkipResidue(const HighStmt &S) {
   return isValueAssign(S, Dest, Val) && Val && Val->Kind == ExprKind::Undef;
 }
 
-static bool bodyIsSkipArm(const std::vector<HighStmt> &Body) {
-  if (bodyIsSkipGoto(Body))
-    return true;
-  return std::all_of(Body.begin(), Body.end(), stmtIsSkipResidue);
-}
-
-static size_t findSkipWorkEnd(const std::vector<HighStmt> &Body, size_t Begin) {
-  size_t End = Begin;
-  for (; End < Body.size() && End - Begin <= 32; ++End) {
-    const StmtKind Kind = Body[End].Kind;
-    if (Kind == StmtKind::Store || Kind == StmtKind::If ||
-        Kind == StmtKind::IfElse || Kind == StmtKind::CxxTry ||
-        Kind == StmtKind::SEHTry || Kind == StmtKind::ItaniumTry ||
-        Kind == StmtKind::While || Kind == StmtKind::Goto ||
-        Kind == StmtKind::Return)
-      break;
-  }
-  return End;
-}
-
 static bool rangeHasObservableWork(const std::vector<HighStmt> &Body,
                                    size_t Begin, size_t End) {
   for (size_t K = Begin; K < End; ++K) {
@@ -417,8 +396,12 @@ static bool invertSkipGotosIn(std::vector<HighStmt> &Body) {
   }
   for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
     HighStmt &Stmt = Body[I];
+    // Only a jump skips anything. An empty arm, or one of copies, runs into
+    // what follows it on both paths; reading it as a skip that lost its jump
+    // would make that work conditional.
     if ((Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse) ||
-        !Stmt.Cond || exprHasCall(Stmt.Cond.get()) || !bodyIsSkipArm(Stmt.Body))
+        !Stmt.Cond || exprHasCall(Stmt.Cond.get()) ||
+        !bodyIsSkipGoto(Stmt.Body))
       continue;
     // The rewrite replaces both arms with the skipped work. An else arm that
     // does anything is code the rewrite would drop.
@@ -429,43 +412,19 @@ static bool invertSkipGotosIn(std::vector<HighStmt> &Body) {
                      }))
       continue;
     const size_t NextI = static_cast<size_t>(I) + 1;
-    size_t TargetIndex = SIZE_MAX;
-    if (bodyIsSkipGoto(Stmt.Body)) {
-      const va_t Target = Stmt.Body.back().GotoTarget;
-      TargetIndex = findSkipTargetInList(Body, NextI, Target);
-      if (TargetIndex == SIZE_MAX || TargetIndex <= NextI ||
-          TargetIndex - NextI > 32)
-        continue;
-      bool SkipIsElseGoto = false;
-      for (size_t K = NextI; K < TargetIndex; ++K) {
-        if (Body[K].Kind == StmtKind::Goto && Body[K].GotoTarget &&
-            Body[K].GotoTarget != InvalidVA && Body[K].GotoTarget != Target)
-          SkipIsElseGoto = true;
-      }
-      if (SkipIsElseGoto)
-        continue;
-    } else if (Stmt.Body.empty()) {
-      // `if (c) {} assign_call(); later_call();` — take only the first
-      // assign-call. findSkipWorkEnd would swallow later_call (GetData)
-      // or, if tightened, drop a throw ctor that sits after the call.
-      size_t K = NextI;
-      while (K < Body.size() &&
-             (Body[K].Kind == StmtKind::Nop ||
-              (Body[K].Kind == StmtKind::Block && Body[K].Body.empty())))
-        ++K;
-      if (K < Body.size() && K - NextI <= 8 &&
-          Body[K].Kind == StmtKind::Assign && Body[K].Val &&
-          Body[K].Val->Kind == ExprKind::Call)
-        TargetIndex = K + 1;
-      else
-        TargetIndex = findSkipWorkEnd(Body, NextI);
-      if (TargetIndex <= NextI || TargetIndex - NextI > 32)
-        continue;
-    } else {
-      TargetIndex = findSkipWorkEnd(Body, NextI);
-      if (TargetIndex <= NextI || TargetIndex - NextI > 32)
-        continue;
+    const va_t Target = Stmt.Body.back().GotoTarget;
+    const size_t TargetIndex = findSkipTargetInList(Body, NextI, Target);
+    if (TargetIndex == SIZE_MAX || TargetIndex <= NextI ||
+        TargetIndex - NextI > 32)
+      continue;
+    bool SkipIsElseGoto = false;
+    for (size_t K = NextI; K < TargetIndex; ++K) {
+      if (Body[K].Kind == StmtKind::Goto && Body[K].GotoTarget &&
+          Body[K].GotoTarget != InvalidVA && Body[K].GotoTarget != Target)
+        SkipIsElseGoto = true;
     }
+    if (SkipIsElseGoto)
+      continue;
     if (!rangeHasObservableWork(Body, NextI, TargetIndex))
       continue;
     // The skip path still runs its copies before it reaches the target; they
@@ -539,9 +498,6 @@ void invertSkipGotos(HighFunc &Func) {
   // skip-gotos first; invert would nest the second skip into the first.
   dropDuplicateSkipGotosNested(Func.Body, gotoTargets(Func.Body));
   foldJoinValueGotoChainNested(Func.Body);
-  // Empty `if (c) {} assign_call();` is often outside the EH wrap. Skip-goto
-  // invert stays try-only.
-  invertEmptyThenAssignCallNested(Func.Body);
   invertExternalSkipGotoNested(Func.Body);
   foldSameTargetSkipGotoNested(Func.Body);
   flattenElseGotoNextLabelNested(Func.Body);
@@ -3482,6 +3438,10 @@ static bool foldJoinValueGotoChain(std::vector<HighStmt> &Body) {
             Body[UseI].Val->Kind == ExprKind::Call)) &&
           stmtUsesJoinDest(Body[UseI], Dest)))
       continue;
+    // The arms' jumps become fallthrough into the use. That holds only when
+    // they jump to exactly that statement; a join past it skipped the use.
+    if (AddrMap::entryAddress(Body[UseI]) != Join)
+      continue;
 
     size_t SkipI = SIZE_MAX;
     ExprPtr SkipCond;
@@ -3851,50 +3811,6 @@ static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body) {
   }
   while (foldJoinValueGotoChain(Body))
     ;
-}
-
-static bool invertEmptyThenAssignCall(std::vector<HighStmt> &Body) {
-  bool Changed = false;
-  for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
-    HighStmt &Stmt = Body[I];
-    if ((Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse) ||
-        !Stmt.Cond || exprHasCall(Stmt.Cond.get()) || !Stmt.Body.empty() ||
-        !Stmt.ElseBody.empty())
-      continue;
-    const size_t NextI = static_cast<size_t>(I) + 1;
-    size_t K = NextI;
-    while (K < Body.size() &&
-           (Body[K].Kind == StmtKind::Nop ||
-            (Body[K].Kind == StmtKind::Block && Body[K].Body.empty())))
-      ++K;
-    if (K >= Body.size() || K - NextI > 8 ||
-        Body[K].Kind != StmtKind::Assign || !Body[K].Val ||
-        Body[K].Val->Kind != ExprKind::Call)
-      continue;
-    const size_t TargetIndex = K + 1;
-    Stmt.Kind = StmtKind::If;
-    Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
-    Stmt.Body.clear();
-    for (size_t J = NextI; J < TargetIndex; ++J)
-      Stmt.Body.push_back(std::move(Body[J]));
-    Body.erase(Body.begin() + static_cast<long>(NextI),
-               Body.begin() + static_cast<long>(TargetIndex));
-    Changed = true;
-  }
-  return Changed;
-}
-
-static void invertEmptyThenAssignCallNested(std::vector<HighStmt> &Body) {
-  for (HighStmt &S : Body) {
-    invertEmptyThenAssignCallNested(S.Body);
-    invertEmptyThenAssignCallNested(S.ElseBody);
-    invertEmptyThenAssignCallNested(S.DefaultBody);
-    for (auto &C : S.Cases)
-      invertEmptyThenAssignCallNested(C.Body);
-    for (auto &Clause : S.EHClauseBodies)
-      invertEmptyThenAssignCallNested(Clause);
-  }
-  invertEmptyThenAssignCall(Body);
 }
 
 /// `if (c) goto L_out; work; goto L_cleanup;` when L_out is not inside the

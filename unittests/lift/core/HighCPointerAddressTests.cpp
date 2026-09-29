@@ -8890,7 +8890,9 @@ TEST(HighCPointerAddresses, X86UnmatchedSubStoreBeforeCallStays) {
   EXPECT_NE(Source.find("use(7)"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, InvertEmptySkipInsideCxxTryFoldsThrow) {
+TEST(HighCPointerAddresses, InvertSkipInsideCxxTryFoldsThrow) {
+  // `if (arg0 != 7) goto join; _CxxThrowException(); join: ...` inside a try:
+  // the jump skips the throw, so the inverted test guards it.
   HighFunc Func;
   Func.Name = "cxx_empty_skip";
   Func.Entry = 0x140001220;
@@ -8907,7 +8909,10 @@ TEST(HighCPointerAddresses, InvertEmptySkipInsideCxxTryFoldsThrow) {
   Guard.Cond =
       HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0, NdType::makeInt(4)),
                           HighExpr::makeConst(7, 4));
-  Guard.Body = {Phi};
+  HighStmt Skip;
+  Skip.Kind = StmtKind::Goto;
+  Skip.GotoTarget = 0x14000127A;
+  Guard.Body = {Phi, Skip};
   HighStmt Throw;
   Throw.Kind = StmtKind::Call;
   Throw.CallExpr = HighExpr::makeCall("_CxxThrowException", 0x140002610, {});
@@ -8947,7 +8952,11 @@ TEST(HighCPointerAddresses, InvertEmptySkipInsideCxxTryFoldsThrow) {
   EXPECT_EQ(Func.Body[0].Body[1].Kind, StmtKind::Store);
 }
 
-TEST(HighCPointerAddresses, InvertEmptyThenAssignCallKeepsFollowingCall) {
+TEST(HighCPointerAddresses, EmptyGuardLeavesFollowingCallsUnconditional) {
+  // `if (len <= 0) {} p1 = assign(p1, p0); GetData(p2);` An empty arm skips
+  // nothing, so both calls run on both paths. Reading the arm as a skip that
+  // lost its jump made the assignment conditional where the machine code ran
+  // it unconditionally (an `and rcx, ~3` folded out of the arm).
   HighFunc Func;
   Func.Name = "empty_len_skip";
   Func.Entry = 0x140001000;
@@ -8981,32 +8990,17 @@ TEST(HighCPointerAddresses, InvertEmptyThenAssignCallKeepsFollowingCall) {
   Later.CallExpr = HighExpr::makeCall("GetData", 0x140002200, {parameter(2)});
   Func.Body = {GetLen, Guard, Assign, Later};
   invertSkipGotos(Func);
-  ASSERT_GE(Func.Body.size(), 3u);
-  EXPECT_EQ(Func.Body[0].Kind, StmtKind::Assign);
-  ASSERT_EQ(Func.Body[1].Kind, StmtKind::If);
-  ASSERT_TRUE(Func.Body[1].Cond);
-  EXPECT_EQ(Func.Body[1].Cond->Kind, ExprKind::UnaryOp);
-  EXPECT_EQ(Func.Body[1].Cond->Op, NdOp::BOOL_NOT);
-  bool HasAssign = false;
-  bool HasGetDataInThen = false;
-  for (const HighStmt &S : Func.Body[1].Body) {
-    if (S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Call &&
-        S.Val->CallTarget == "CStringT_assign")
-      HasAssign = true;
-    if (S.Kind == StmtKind::Call && S.CallExpr &&
-        S.CallExpr->CallTarget == "GetData")
-      HasGetDataInThen = true;
-  }
-  EXPECT_TRUE(HasAssign);
-  EXPECT_FALSE(HasGetDataInThen);
-  bool HasGetDataAfter = false;
-  for (size_t I = 2; I < Func.Body.size(); ++I) {
-    const HighStmt &S = Func.Body[I];
-    if (S.Kind == StmtKind::Call && S.CallExpr &&
-        S.CallExpr->CallTarget == "GetData")
-      HasGetDataAfter = true;
-  }
-  EXPECT_TRUE(HasGetDataAfter);
+  auto AtTop = [&](llvm::StringRef Target) {
+    return std::any_of(
+        Func.Body.begin(), Func.Body.end(), [&](const HighStmt &S) {
+          const HighExpr *Call =
+              S.Kind == StmtKind::Call ? S.CallExpr.get() : S.Val.get();
+          return Call && Call->Kind == ExprKind::Call &&
+                 Call->CallTarget == Target;
+        });
+  };
+  EXPECT_TRUE(AtTop("CStringT_assign"));
+  EXPECT_TRUE(AtTop("GetData"));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("CStringT_assign("), std::string::npos) << Source;
   EXPECT_NE(Source.find("GetData("), std::string::npos) << Source;

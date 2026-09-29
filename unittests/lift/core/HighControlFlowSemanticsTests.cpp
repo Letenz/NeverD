@@ -4318,6 +4318,63 @@ TEST(HighControlFlowSemantics, ConstantIncomingBesideARealOneKeepsItsValue) {
   EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(5));
 }
 
+/// `w = 3; if (x) { v = w + 7; goto Join; } v = 5; return v + 1;
+///  0x1040: return 99;`
+HighFunc joinValueChain(va_t Join) {
+  auto Arm = assign(0x1008, 5, 0);
+  Arm.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(7, 8));
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1004;
+  If.Cond = local(0);
+  If.Body = {Arm, jump(0x100c, Join)};
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 3), If, assign(0x1030, 5, 5),
+            result(0x1034, HighExpr::makeBinop(NdOp::INT_ADD, local(5),
+                                               HighExpr::makeConst(1, 8))),
+            result(0x1040, HighExpr::makeConst(99, 8))};
+  return F;
+}
+
+TEST(HighControlFlowSemantics, JoinValueChainKeepsAJumpPastTheUse) {
+  // The arm jumps past the use (MiResetAccessBitPteWorker skipped a
+  // MiSetVaAgeList call this way); falling into the use would run it.
+  for (bool Late : {false, true}) {
+    SCOPED_TRACE(Late);
+    HighFunc F = joinValueChain(0x1040);
+    ASSERT_EQ(execute(F, 1), std::optional<uint64_t>(99));
+    ASSERT_EQ(execute(F, 0), std::optional<uint64_t>(6));
+    if (Late)
+      invertSkipGotos(F);
+    else
+      structureIfElse(F, 10);
+    EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(99));
+    EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(6));
+  }
+}
+
+TEST(HighControlFlowSemantics, JoinValueChainFoldsAJumpToTheUse) {
+  for (bool Late : {false, true}) {
+    SCOPED_TRACE(Late);
+    HighFunc F = joinValueChain(0x1034);
+    ASSERT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+    ASSERT_EQ(execute(F, 0), std::optional<uint64_t>(6));
+    if (Late)
+      invertSkipGotos(F);
+    else
+      structureIfElse(F, 10);
+    EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+    EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(6));
+    if (Late)
+      continue;
+    bool HasGoto = false;
+    walkStmts(F.Body,
+              [&](const HighStmt &S) { HasGoto |= S.Kind == StmtKind::Goto; });
+    EXPECT_FALSE(HasGoto) << "the jump to the use becomes fallthrough";
+  }
+}
+
 TEST(HighControlFlowSemantics, JoinJumpStillSkipsWorkBeforeTheDefault) {
   // `if (c) { v = x + 1; goto J; } w = 7; v = x + 3; J: return v + w;`
   // The jump skips `w = 7`; sinking the default must not make it fall into
