@@ -974,6 +974,14 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         return {Value::Receiver, Address.Offset, Root->second.Address,
                 Root->second.ClassName};
       };
+    std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>> CaptureProof;
+    if (ParentReceivers)
+      CaptureProof.emplace(Function.Entry, *ParentReceivers);
+    const auto CallBound = [&](const HighExpr &E) {
+      return objcSourceCallBound(E, Image, Functions, nullptr, nullptr,
+                                 &Function, nullptr,
+                                 ParentReceivers ? &CaptureProof : nullptr);
+    };
     auto UntouchedEntryPointer = [&](const ExprPtr &Expr,
                                      auto &&Visit) -> bool {
       if (!Expr || !Expr->Type || Expr->Type->Size != 8)
@@ -1153,8 +1161,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             Binding->CallKind != CallKind::ObjCSuper2 ||
             Binding->TargetName != "objc_msgSendSuper2" ||
             E.CallTarget != "objc_msgSendSuper2" ||
-            !objcSourceCallBound(E, Image, Functions, nullptr, nullptr,
-                                 &Function) ||
+            !CallBound(E) ||
             !frameRange(Function, Offset, 16))
           return false;
         const auto InBlock = [&](int64_t Byte) {
@@ -1212,7 +1219,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
               Binding->TargetName == "objc_retainBlock") ||
              (Binding->CallKind == CallKind::DarwinRuntimeCall &&
               Binding->TargetName == "_Block_copy")) &&
-            objcSourceCallBound(E, Image, Functions);
+            CallBound(E);
         std::optional<SourceFunctionTypeHint> Consumer;
         if (Binding && Binding->CallKind == CallKind::DarwinRuntimeCall) {
           const auto Contract =
@@ -1229,7 +1236,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             objc_projection_detail::sameHint(*Block.Descriptor.InvokeTypeHint,
                                              *Consumer);
         const bool DeclaredConsumer =
-            CallbackMatches && objcSourceCallBound(E, Image, Functions);
+            CallbackMatches && CallBound(E);
         if (!Direct && !Runtime && !DeclaredConsumer &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||

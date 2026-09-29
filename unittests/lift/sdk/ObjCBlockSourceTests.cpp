@@ -513,6 +513,59 @@ TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
     OuterInvoke.Body[4].StoreVal = CapturedSelf;
     F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 8);
     EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
+
+    // An Objective-C consumer of the nested block must use the same
+    // authenticated parent capture when its receiver is the captured self.
+    F.caller().Body[4].StoreVal = parameter(0, F.caller().Params[0].Type);
+    F.string(NestedSignature, "v8@?0");
+    F.Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/CoreData.framework/CoreData",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    ObjCClass Class;
+    Class.Name = "TestOwner";
+    Class.SuperclassName = "NSManagedObjectContext";
+    Class.InheritanceStatus = "resolved";
+    F.Image.ObjCClasses.push_back(Class);
+    auto Receiver = First.CaptureReceivers.at(F.Invoke).at(32);
+    Receiver.BlockCaptureOffset = 32;
+    SourceCallTypeHint Binding;
+    Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Binding.TargetName = "objc_msgSend";
+    Binding.Selector = "performBlock:";
+    Binding.Receiver = Receiver;
+    const auto Declaration =
+        objcReceiverSourceTypeHint(F.Image, Binding.Selector, Receiver);
+    ASSERT_TRUE(Declaration.Signature);
+    Binding.Signature = *Declaration.Signature;
+    auto Call = HighExpr::makeCall(
+        "objc_msgSend", 0,
+        {HighExpr::makeLoad(
+             HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
+                                 HighExpr::makeConst(32, 8)),
+             Pointer),
+         HighExpr::makeConst(0x2600, 8), frame(F.Image, -48)});
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+    Call->Type = Binding.Signature.ReturnType;
+    std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>> CaptureProof;
+    CaptureProof.emplace(F.Invoke, First.CaptureReceivers.at(F.Invoke));
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, F.functions(), nullptr,
+                                     nullptr, &OuterInvoke));
+    EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, F.functions(), nullptr,
+                                    nullptr, &OuterInvoke, nullptr,
+                                    &CaptureProof));
+    HighStmt Send;
+    Send.Kind = StmtKind::Call;
+    Send.CallExpr = Call;
+    OuterInvoke.Body[5] = Send;
+    const auto Bound = discoverObjCBlockSourcesPass(Source, F.Result, &First);
+    EXPECT_EQ(Bound.StackBlocks.count(F.Invoke), 1U)
+        << (Bound.Rejections.count(F.Invoke) ? Bound.Rejections.at(F.Invoke)
+                                            : "");
+    EXPECT_TRUE(HasNestedRoot(Bound));
+    CaptureProof.at(F.Invoke).at(32).ClassName = "OtherOwner";
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, F.functions(), nullptr,
+                                     nullptr, &OuterInvoke, nullptr,
+                                     &CaptureProof));
   }
 }
 
