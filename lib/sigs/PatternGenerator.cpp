@@ -14,10 +14,14 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/BinaryFormat/MachO.h"
+#include "llvm/MC/MCLinkerOptimizationHint.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/ELFObjectFile.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/LEB128.h"
 
 #include <algorithm>
 #include <cassert>
@@ -69,13 +73,15 @@ struct TargetMachineInfo {
   uint16_t COFFMachine;
   uint16_t ELFMachine;
   unsigned AddressBytes;
+  uint32_t MachOCPUType;
 };
 
 /// The architectures, in the order of TargetMachine.
 constexpr TargetMachineInfo TargetMachines[] = {
 #define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
-                                   AddressBytes)                               \
-  {Spelling, COFF::COFFMachine, ELF::ELFMachine, AddressBytes},
+                                   AddressBytes, MachOCPUType)                 \
+  {Spelling, COFF::COFFMachine, ELF::ELFMachine, AddressBytes,                 \
+   MachO::MachOCPUType},
 #include "neverd/sigs/TargetMachine.def"
 };
 
@@ -91,6 +97,12 @@ PatternGeneratorStats::operator+=(const PatternGeneratorStats &Other) {
                                     Other.UnsupportedCOFFRelocations.end());
   UnsupportedELFRelocations.insert(Other.UnsupportedELFRelocations.begin(),
                                    Other.UnsupportedELFRelocations.end());
+  UnsupportedMachORelocations.insert(Other.UnsupportedMachORelocations.begin(),
+                                     Other.UnsupportedMachORelocations.end());
+  UnsupportedHint += Other.UnsupportedHint;
+  UnsupportedMachOHints.insert(Other.UnsupportedMachOHints.begin(),
+                               Other.UnsupportedMachOHints.end());
+  UnreadableHints += Other.UnreadableHints;
   return *this;
 }
 
@@ -104,7 +116,7 @@ std::optional<TargetMachine> parseTargetMachine(StringRef Name) {
 ArrayRef<StringLiteral> targetMachineNames() {
   static constexpr StringLiteral Names[] = {
 #define NEVERD_SIGS_TARGET_MACHINE(Name, Spelling, COFFMachine, ELFMachine,    \
-                                   AddressBytes)                               \
+                                   AddressBytes, MachOCPUType)                 \
   Spelling,
 #include "neverd/sigs/TargetMachine.def"
   };
@@ -120,6 +132,8 @@ bool isObjectForMachine(const ObjectFile &Obj, TargetMachine Machine) {
   if (const auto *ELFObj = dyn_cast<ELFObjectFileBase>(&Obj))
     return Obj.getBytesInAddress() == Info.AddressBytes &&
            ELFObj->getEMachine() == Info.ELFMachine;
+  if (const auto *MachOObj = dyn_cast<MachOObjectFile>(&Obj))
+    return MachOObj->getHeader().cputype == Info.MachOCPUType;
   return false;
 }
 
@@ -176,6 +190,53 @@ std::optional<ELFRelocationFootprint> elfRelocationFootprint(uint16_t Machine,
     return ELFRelocationFootprint{Before, Width};
 #include "RelocationFootprints.def"
     return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<RelocationFootprint>
+machORelocationFootprint(uint32_t CPUType, uint32_t Type, unsigned Length) {
+  // A sized relocation's field is as long as its r_length, a power of two,
+  // says.
+  const RelocationFootprint Sized{0, 1u << Length};
+  switch (CPUType) {
+  case MachO::CPU_TYPE_ARM64:
+    switch (Type) {
+#define NEVERD_MACHO_ARM64_RELOCATION(Name, Before, Width)                     \
+  case MachO::Name:                                                            \
+    return RelocationFootprint{Before, Width};
+#define NEVERD_MACHO_ARM64_SIZED_RELOCATION(Name)                              \
+  case MachO::Name:                                                            \
+    return Sized;
+#include "RelocationFootprints.def"
+    }
+    return std::nullopt;
+
+  case MachO::CPU_TYPE_X86_64:
+    switch (Type) {
+#define NEVERD_MACHO_X86_64_RELOCATION(Name, Before, Width)                    \
+  case MachO::Name:                                                            \
+    return RelocationFootprint{Before, Width};
+#define NEVERD_MACHO_X86_64_SIZED_RELOCATION(Name)                             \
+  case MachO::Name:                                                            \
+    return Sized;
+#include "RelocationFootprints.def"
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<unsigned> machOOptimizationHintWidth(uint32_t CPUType,
+                                                   uint32_t Kind) {
+  // The kinds LLVM's assembler writes, and ld64 and lld fold.
+  if (!isValidMCLOHType(Kind))
+    return std::nullopt;
+  switch (CPUType) {
+#define NEVERD_MACHO_OPTIMIZATION_HINT(CPU, Width)                             \
+  case MachO::CPU:                                                             \
+    return Width;
+#include "RelocationFootprints.def"
   }
   return std::nullopt;
 }
@@ -302,6 +363,32 @@ std::optional<uint64_t> elfBranchReferenceOffset(uint16_t Machine,
   return std::nullopt;
 }
 
+std::optional<uint64_t> machOBranchReferenceOffset(uint32_t CPUType,
+                                                   uint32_t Type,
+                                                   ArrayRef<uint8_t> Function,
+                                                   uint64_t Offset) {
+  // As in ELF, every branch relocation changes a word: a rel32 field or an
+  // instruction.
+  if (Offset >= Function.size() || Function.size() - Offset < sizeof(uint32_t))
+    return std::nullopt;
+  switch (CPUType) {
+  case MachO::CPU_TYPE_ARM64:
+    if (Type == MachO::ARM64_RELOC_BRANCH26)
+      return Offset;
+    return std::nullopt;
+  case MachO::CPU_TYPE_X86_64: {
+    // The opcode before the field is what makes it a branch.
+    if (Type != MachO::X86_64_RELOC_BRANCH || Offset < x86::kRel32DispOffset)
+      return std::nullopt;
+    const uint8_t Opcode = Function[Offset - x86::kRel32DispOffset];
+    if (Opcode != x86::kCallRel32 && Opcode != x86::kJmpRel32)
+      return std::nullopt;
+    return Offset;
+  }
+  }
+  return std::nullopt;
+}
+
 namespace {
 
 void emitPatternBytes(raw_ostream &OS, ArrayRef<uint8_t> Data,
@@ -355,6 +442,13 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
 bool isReferenceName(StringRef Name) {
   return !Name.empty() && !Name.starts_with(SectionSymbolPrefix) &&
          !Name.starts_with(LabelSymbolPrefix);
+}
+
+/// Whether \p Name is an assembler's local label rather than a routine.
+bool isLocalLabel(StringRef Name) {
+  return llvm::any_of(LocalLabelPrefixes, [&](StringRef Prefix) {
+    return Name.starts_with(Prefix);
+  });
 }
 
 /// The routine an ELF relocation names, when a reference can name it: an
@@ -440,9 +534,7 @@ void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
       continue;
     }
     StringRef Name = *NameOrErr;
-    if (Name.empty() || llvm::any_of(LocalLabelPrefixes, [&](StringRef Prefix) {
-          return Name.starts_with(Prefix);
-        }))
+    if (Name.empty() || isLocalLabel(Name))
       continue;
 
     Expected<uint64_t> AddrOrErr = Sym.getAddress();
@@ -486,7 +578,7 @@ void forEachGenericFunction(const ObjectFile &Obj, VisitorT Visit) {
   }
 }
 
-/// The reading Mach-O objects keep: every relocation covers
+/// The reading objects of any other format keep: every relocation covers
 /// OtherRelocationWidth bytes.
 PatternGeneratorStats generateGeneric(const ObjectFile &Obj,
                                       const PatternGeneratorOptions &Opts,
@@ -619,6 +711,236 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
     });
     llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
       return A.Offset < B.Offset;
+    });
+    countOrEmit(OS, R.Names, Fn.Data, Wildcard, Opts, Stats, References);
+  }
+  return Stats;
+}
+
+/// The routine a Mach-O relocation names, when a reference can name it: an
+/// undefined symbol, which the object calls by its name, or a function
+/// symbol.  A relocation to a section offset names no symbol, and a local
+/// label is no routine a line states.
+StringRef machOReferenceName(const MachOObjectFile &Obj,
+                             const RelocationRef &Rel) {
+  const symbol_iterator Sym = Rel.getSymbol();
+  if (Sym == Obj.symbol_end())
+    return {};
+  Expected<uint32_t> Flags = Sym->getFlags();
+  if (!Flags) {
+    consumeError(Flags.takeError());
+    return {};
+  }
+  if (!(*Flags & SymbolRef::SF_Undefined)) {
+    Expected<SymbolRef::Type> Type = Sym->getType();
+    if (!Type) {
+      consumeError(Type.takeError());
+      return {};
+    }
+    if (*Type != SymbolRef::ST_Function)
+      return {};
+  }
+  Expected<StringRef> Name = Sym->getName();
+  if (!Name) {
+    consumeError(Name.takeError());
+    return {};
+  }
+  return isReferenceName(*Name) && !isLocalLabel(*Name) ? *Name : StringRef();
+}
+
+/// One linker optimization hint of a Mach-O object: its kind, and the
+/// addresses of the instructions it names.
+struct MachOOptimizationHint {
+  uint32_t Kind;
+  SmallVector<uint64_t, 3> Addresses;
+};
+
+/// The linker optimization hints of \p Obj, none when it has no
+/// LC_LINKER_OPTIMIZATION_HINT, or std::nullopt when they cannot be read: a
+/// ULEB128 runs past the data or overflows, or a hint of a known kind names
+/// another number of instructions than the kind does.  A kind of 0 is the
+/// padding after the last hint.
+std::optional<std::vector<MachOOptimizationHint>>
+readMachOOptimizationHints(const MachOObjectFile &Obj) {
+  const MachO::linkedit_data_command Command = Obj.getLinkOptHintsLoadCommand();
+  const StringRef Data =
+      Obj.getData().substr(Command.dataoff, Command.datasize);
+  if (Data.size() != Command.datasize)
+    return std::nullopt;
+  const uint8_t *Cursor = Data.bytes_begin();
+  const uint8_t *End = Data.bytes_end();
+  const char *Error = nullptr;
+  auto Read = [&] { return decodeULEB128AndInc(Cursor, End, &Error); };
+  std::vector<MachOOptimizationHint> Hints;
+  while (Cursor != End) {
+    const uint64_t Kind = Read();
+    if (Error)
+      return std::nullopt;
+    if (Kind == 0)
+      break;
+    const uint64_t Count = Read();
+    if (Error || Kind > UINT32_MAX ||
+        (isValidMCLOHType(Kind) &&
+         Count != static_cast<uint64_t>(
+                      MCLOHIdToNbArgs(static_cast<MCLOHType>(Kind)))))
+      return std::nullopt;
+    MachOOptimizationHint Hint{static_cast<uint32_t>(Kind), {}};
+    for (uint64_t I = 0; I < Count; ++I) {
+      Hint.Addresses.push_back(Read());
+      if (Error)
+        return std::nullopt;
+    }
+    Hints.push_back(std::move(Hint));
+  }
+  return Hints;
+}
+
+/// A Mach-O object keeps a section's relocations with the section.  Each
+/// relocation leaves its footprint as wildcards, and a function that holds
+/// one machORelocationFootprint does not know -- a scattered one, which no
+/// arm64 or x86-64 object has, or any of another CPU type -- is left out.
+/// So does each instruction a linker optimization hint names, which the
+/// linker may rewrite whole, relocated or not; a function holding one of a
+/// hint machOOptimizationHintWidth does not know, or any function of an
+/// object whose hints cannot be read, is left out.
+PatternGeneratorStats generateMachO(const MachOObjectFile &Obj,
+                                    const PatternGeneratorOptions &Opts,
+                                    raw_ostream &OS) {
+  PatternGeneratorStats Stats;
+  const uint32_t CPUType = Obj.getHeader().cputype;
+
+  // The instructions the hints name, by section.  A hint states addresses in
+  // the object's address space, not offsets in a section as a relocation
+  // does.
+  struct HintedInstruction {
+    uint64_t Offset;
+    uint32_t Kind;
+  };
+  std::map<SectionRef, std::vector<HintedInstruction>> Hinted;
+  const std::optional<std::vector<MachOOptimizationHint>> Hints =
+      readMachOOptimizationHints(Obj);
+  if (!Hints)
+    ++Stats.UnreadableHints;
+  else
+    for (const MachOOptimizationHint &Hint : *Hints)
+      for (const uint64_t Address : Hint.Addresses)
+        for (const SectionRef &Sec : Obj.sections())
+          if (Address >= Sec.getAddress() &&
+              Address - Sec.getAddress() < Sec.getSize()) {
+            Hinted[Sec].push_back({Address - Sec.getAddress(), Hint.Kind});
+            break;
+          }
+
+  struct MachORelocation {
+    uint64_t Offset;
+    uint32_t Type;
+    std::optional<RelocationFootprint> Footprint;
+    /// The routine it names, when a reference can name one.
+    StringRef Routine;
+  };
+  std::map<SectionRef, std::vector<MachORelocation>> Relocations;
+  for (const SectionRef &Sec : Obj.sections()) {
+    std::vector<MachORelocation> &List = Relocations[Sec];
+    for (const RelocationRef &Rel : Sec.relocations()) {
+      const MachO::any_relocation_info Info =
+          Obj.getRelocation(Rel.getRawDataRefImpl());
+      const uint32_t Type = Obj.getAnyRelocationType(Info);
+      std::optional<RelocationFootprint> Footprint;
+      if (!Obj.isRelocationScattered(Info))
+        Footprint = machORelocationFootprint(CPUType, Type,
+                                             Obj.getAnyRelocationLength(Info));
+      const StringRef Routine = Opts.EmitReferences && Footprint
+                                    ? machOReferenceName(Obj, Rel)
+                                    : StringRef();
+      List.push_back({Rel.getOffset(), Type, Footprint, Routine});
+    }
+  }
+
+  // The function symbols that label one address are one routine's names.
+  struct Routine {
+    GenericFunction Fn;
+    SmallVector<StringRef, 2> Names;
+  };
+  std::vector<Routine> Routines;
+  std::map<std::pair<SectionRef, uint64_t>, size_t> ByStart;
+  forEachGenericFunction(Obj, [&](const GenericFunction &Fn) {
+    auto [It, Fresh] =
+        ByStart.try_emplace({Fn.Section, Fn.Offset}, Routines.size());
+    if (Fresh)
+      Routines.push_back({Fn, {}});
+    Routine &R = Routines[It->second];
+    if (!llvm::is_contained(R.Names, Fn.Name))
+      R.Names.push_back(Fn.Name);
+  });
+
+  for (Routine &R : Routines) {
+    llvm::sort(R.Names, [](StringRef A, StringRef B) {
+      return preferredAliasOrder(A, B);
+    });
+    const GenericFunction &Fn = R.Fn;
+    const uint64_t Begin = Fn.Offset;
+    const uint64_t End = Fn.Offset + Fn.Data.size();
+    SmallVector<bool, 256> Wildcard(Fn.Data.size(), false);
+    std::vector<FuncRef> References;
+    bool Supported = true;
+    for (const MachORelocation &Rel : Relocations[Fn.Section]) {
+      if (!Rel.Footprint) {
+        if (Rel.Offset >= Begin && Rel.Offset < End) {
+          Supported = false;
+          Stats.UnsupportedMachORelocations.insert({CPUType, Rel.Type});
+        }
+        continue;
+      }
+      // The footprint may reach back past the function's start, or begin in
+      // the function for a field that starts past its end.
+      const uint64_t From = Rel.Offset > Rel.Footprint->Before
+                                ? Rel.Offset - Rel.Footprint->Before
+                                : 0;
+      const uint64_t To = Rel.Offset + Rel.Footprint->Width;
+      if (To <= Begin || From >= End)
+        continue;
+      const uint64_t Start = std::max(From, Begin);
+      markWildcard(Wildcard, Start - Begin, std::min(To, End) - Start);
+      // A branch to one of the routine's own names is recursion, not a
+      // reference to anything the image has to confirm.
+      if (Rel.Routine.empty() || Rel.Offset < Begin ||
+          llvm::is_contained(R.Names, Rel.Routine))
+        continue;
+      if (const std::optional<uint64_t> At = machOBranchReferenceOffset(
+              CPUType, Rel.Type, Fn.Data, Rel.Offset - Begin))
+        References.push_back({static_cast<uint32_t>(*At), Rel.Routine.str()});
+    }
+    if (!Supported) {
+      ++Stats.UnsupportedRelocation;
+      continue;
+    }
+    bool HintsKnown = Hints.has_value();
+    if (auto It = Hinted.find(Fn.Section); HintsKnown && It != Hinted.end()) {
+      for (const HintedInstruction &Instruction : It->second) {
+        if (Instruction.Offset < Begin || Instruction.Offset >= End)
+          continue;
+        const std::optional<unsigned> Width =
+            machOOptimizationHintWidth(CPUType, Instruction.Kind);
+        if (!Width) {
+          HintsKnown = false;
+          Stats.UnsupportedMachOHints.insert({CPUType, Instruction.Kind});
+          continue;
+        }
+        markWildcard(Wildcard, Instruction.Offset - Begin, *Width);
+      }
+    }
+    if (!HintsKnown) {
+      ++Stats.UnsupportedHint;
+      continue;
+    }
+    // As in ELF, only a call whose opcode no other relocation's footprint
+    // covers is one the image keeps.
+    const bool OpcodeBeforeField = CPUType == MachO::CPU_TYPE_X86_64;
+    llvm::erase_if(References, [&](const FuncRef &Ref) {
+      return OpcodeBeforeField && Wildcard[Ref.Offset - x86::kRel32DispOffset];
+    });
+    llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
+      return std::tie(A.Offset, A.Name) < std::tie(B.Offset, B.Name);
     });
     countOrEmit(OS, R.Names, Fn.Data, Wildcard, Opts, Stats, References);
   }
@@ -919,6 +1241,8 @@ PatternGeneratorStats generatePatterns(const ObjectFile &Obj,
     return generateCOFF(*COFF, Opts, OS);
   if (const auto *ELFObj = dyn_cast<ELFObjectFileBase>(&Obj))
     return generateELF(*ELFObj, Opts, OS);
+  if (const auto *MachOObj = dyn_cast<MachOObjectFile>(&Obj))
+    return generateMachO(*MachOObj, Opts, OS);
   return generateGeneric(Obj, Opts, OS);
 }
 

@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDSignatureTests
+  MachOPatternGeneratorTests.cpp
   PatternGeneratorTests.cpp
   PatternParserTests.cpp
   RichHeaderTests.cpp

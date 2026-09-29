@@ -1101,10 +1101,13 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   auto Judge = [&](std::string_view Name, uint64_t Target) {
     if (const Import *Imp = Img.findImportStubAt(Target)) {
       // An ELF import is the very symbol the library called, named without
-      // the version a `name@VERSION` reference states, so its stub settles
-      // the call either way.  A COFF import thunk is named after the import,
-      // not after the decorated symbol the library called; it settles
-      // nothing.
+      // the version a `name@VERSION` reference states, and a Mach-O stub is
+      // named after the undefined symbol it binds, so either stub settles the
+      // call.  A COFF import thunk is named after the import, not after the
+      // decorated symbol the library called; it settles nothing.
+      if (Img.isMachO())
+        return Imp->Name == Name ? ReferenceVerdict::Confirmed
+                                 : ReferenceVerdict::Contradicted;
       if (!Img.isELF())
         return ReferenceVerdict::Unknown;
       return Imp->Name == Name.substr(0, Name.find(ELFVersionSeparator))

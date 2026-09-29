@@ -21,7 +21,7 @@
 /// consumer that acts on the name it gets -- naming an exception personality,
 /// say -- asks for that; see SignatureMatcher::isFullyVerified.
 ///
-/// --machine keeps only COFF objects built for one architecture, so a
+/// --machine keeps only the objects built for one architecture, so a
 /// library directory that also carries another target's objects cannot file
 /// them under the wrong signature directory.
 ///
@@ -75,13 +75,13 @@ static cl::opt<unsigned>
 /// The names --machine takes, as its help and its diagnostic list them.
 static const std::string MachineNames = join(targetMachineNames(), ", ");
 static const std::string MachineHelp =
-    "Keep only COFF and ELF objects for this architecture (" + MachineNames +
-    "); others are skipped and counted";
+    "Keep only COFF, ELF and Mach-O objects for this architecture (" +
+    MachineNames + "); others are skipped and counted";
 static cl::opt<std::string> Machine("machine", cl::desc(MachineHelp),
                                     cl::init(""));
 static cl::opt<bool> References(
     "references",
-    cl::desc("State the routines each COFF or ELF function branches to "
+    cl::desc("State the routines each COFF, ELF or Mach-O function branches to "
              "directly as ^offset name references, which matching checks "
              "against the image; loaders older than the references reject "
              "such lines"),
@@ -247,6 +247,22 @@ int main(int Argc, char *Argv[]) {
                          << " (machine " << Mach
                          << ") were left out: the bytes it may change are "
                             "unknown\n";
+  for (const auto &[CPU, Type] : Stats.Patterns.UnsupportedMachORelocations)
+    WithColor::warning() << "functions with Mach-O relocation type " << Type
+                         << " (CPU type " << format_hex(CPU, 10)
+                         << ") were left out: the bytes it may change are "
+                            "unknown\n";
+  for (const auto &[CPU, Kind] : Stats.Patterns.UnsupportedMachOHints)
+    WithColor::warning() << "functions with Mach-O linker optimization hint "
+                            "kind "
+                         << Kind << " (CPU type " << format_hex(CPU, 10)
+                         << ") were left out: the bytes it lets the linker "
+                            "change are unknown\n";
+  if (Stats.Patterns.UnreadableHints)
+    WithColor::warning() << "the functions of "
+                         << Stats.Patterns.UnreadableHints
+                         << " Mach-O objects were left out: their linker "
+                            "optimization hints cannot be read\n";
 
   outs() << "Generated " << Stats.Patterns.Functions << " signatures → "
          << OutputFile << " (" << Stats.Objects << " objects";
@@ -264,6 +280,9 @@ int main(int Argc, char *Argv[]) {
   if (Stats.Patterns.UnsupportedRelocation)
     outs() << ", " << Stats.Patterns.UnsupportedRelocation
            << " functions with unsupported relocations";
+  if (Stats.Patterns.UnsupportedHint)
+    outs() << ", " << Stats.Patterns.UnsupportedHint
+           << " functions with unsupported linker optimization hints";
   outs() << ")\n";
   return 0;
 }
