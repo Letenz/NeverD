@@ -82,7 +82,7 @@ public:
   UnicornStepper CPU;
   explicit UnicornX64Machine(MemoryProjection &Memory) : CPU(Memory) {}
   llvm::Error step(X64MachineState &State, uint64_t,
-                   std::chrono::steady_clock::time_point) override {
+                   MachineRunControl) override {
     if (auto E = CPU.synchronize())
       return E;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
@@ -122,8 +122,7 @@ class UnicornAArch64Machine final : public AArch64Machine {
 public:
   UnicornStepper CPU;
   explicit UnicornAArch64Machine(MemoryProjection &Memory) : CPU(Memory) {}
-  llvm::Error step(AArch64MachineState &State,
-                   std::chrono::steady_clock::time_point) override {
+  llvm::Error step(AArch64MachineState &State, MachineRunControl) override {
     if (auto E = CPU.synchronize())
       return E;
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \

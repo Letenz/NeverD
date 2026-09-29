@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_ARCH_X64MACHINE_H
 #define NEVERD_EMULATION_ARCH_X64MACHINE_H
+#include "../../core/MachineRunControl.h"
 #include "../../core/MemoryLayout.h"
 
 #include "neverd/emulation/CPU.h"
@@ -44,7 +45,7 @@ class X64Machine {
 public:
   virtual ~X64Machine() = default;
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
-                           std::chrono::steady_clock::time_point Deadline) = 0;
+                           MachineRunControl Control) = 0;
 };
 } // namespace neverd::emulation
 #endif

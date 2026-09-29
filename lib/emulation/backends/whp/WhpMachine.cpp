@@ -19,7 +19,7 @@ namespace {
 class WhpMachine final : public X64Machine, public WhpPartition {
 public:
   llvm::Error step(X64MachineState &State, uint64_t Root,
-                   std::chrono::steady_clock::time_point) override {
+                   MachineRunControl Control) override {
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
@@ -60,8 +60,8 @@ public:
             Partition, 0, Names.data(), Names.size(), Values.data())))
       return diagnostic::error(diagnostic::WhpState);
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    if (FAILED(API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit))))
-      return diagnostic::error(diagnostic::WhpRun);
+    if (auto E = run(Exit, Control))
+      return E;
     if (Exit.ExitReason != WHvRunVpExitReasonException ||
         Exit.VpException.ExceptionType != x64::DebugVector)
       return diagnostic::error(diagnostic::WhpExit);
@@ -122,6 +122,8 @@ createWhpMachine(MemoryProjection &Memory) {
       return diagnostic::error(diagnostic::WhpMap);
   if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
     return diagnostic::error(diagnostic::WhpCreate);
+  if (auto E = M->initializeRunControl())
+    return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }
 } // namespace neverd::emulation
