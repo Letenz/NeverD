@@ -91,6 +91,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runTranslateObject();
   if (EmulateDriverCmd)
     return runEmulateDriver();
+  if (CPUCapabilitiesCmd)
+    return runCPUCapabilities();
   if (ConcolicCmd)
     return runConcolic();
   if (MobileCmd)

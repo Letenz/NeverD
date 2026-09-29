@@ -8,9 +8,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   target_link_options(NeverDKvmRunTests PRIVATE "-Wl,--wrap=ioctl")
 endif()
 
+add_neverd_unittest(NeverDExecutionConfigurationTests
+  ExecutionConfigurationTests.cpp
+  ExecutionReportTests.cpp
+  LINK_COMPONENTS EmulationCPU)
+
+if(TARGET neverd_shared AND TARGET neverd)
+  add_neverd_unittest(NeverDExecutionCapabilitiesPublicTests
+    ExecutionCapabilitiesPublicTests.cpp
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDExecutionCapabilitiesPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDExecutionCapabilitiesPublicTests PRIVATE
+    NEVERD_CPU_CLI="$<TARGET_FILE:neverd>")
+  if(NOT APPLE)
+    target_link_libraries(NeverDExecutionCapabilitiesPublicTests PRIVATE LLVMSupport)
+  endif()
+  add_dependencies(NeverDExecutionCapabilitiesPublicTests neverd)
+endif()
+
 if(NEVERD_EMULATION_BACKEND_UNICORN)
+  target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
   add_neverd_unittest(NeverDCPUEmulationTests
     CPUArchitectureTests.cpp
+    ExecutionExitTests.cpp
     MemoryLifecycleTests.cpp
     AArch64ProjectionTests.cpp
     LINK_COMPONENTS EmulationCPU

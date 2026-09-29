@@ -71,7 +71,8 @@ public:
   llvm::Error installHooks(BackendHooks Hooks) override;
   /// A normally stopped CPU can continue. A faulted CPU cannot resume: Unicorn
   /// does not guarantee its internal state after an unhandled execution error.
-  llvm::Error run(uint64_t PC, uint64_t TimeoutMicroseconds) override;
+  llvm::Expected<ExecutionExit>
+  runUntilExit(uint64_t PC, uint64_t TimeoutMicroseconds) override;
   bool timedOut() const override;
   void stop() override;
   bool hasMemoryFault() const override;
@@ -83,6 +84,7 @@ public:
   bool executable(uint64_t Address) const override;
 
 private:
+  llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started);
   struct Impl;
   explicit UnicornBackend(std::unique_ptr<Impl> State);
   std::unique_ptr<Impl> State;

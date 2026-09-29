@@ -872,6 +872,31 @@ class Session:
     def _json(self, name: str, operation: str, *arguments: object) -> object:
         return _decode_json(operation, self._owned_string(name, *arguments))
 
+    def cpu_capabilities(
+        self, configuration: str | None = None, *, probe_host: bool = False
+    ) -> object:
+        """Query CPU capabilities without loading a binary.
+
+        ``configuration`` is the same JSON object accepted by the C API and
+        ``cpu-capabilities`` CLI. The native parser owns all profile validation.
+        The default is auto/software-cpu-v1/x86_64. Host availability is null
+        unless explicitly probed; initialization does not verify workloads.
+        """
+
+        encoded = (
+            None
+            if configuration is None
+            else _utf8_argument("CPU configuration", configuration, allow_empty=False)
+        )
+        value = self._owned_string(
+            "neverd_cpu_capabilities_json",
+            encoded,
+            int(_boolean("probe_host", probe_host)),
+        )
+        if value is None:
+            raise NeverDError(self.last_error)
+        return _decode_json("CPU capabilities", value)
+
     @property
     def imports(self) -> object:
         return self._json("neverd_imports_json", "imports")

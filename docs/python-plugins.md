@@ -11,6 +11,12 @@ session C ABI as native plugins. The supported authoring package is
 
 ## Build and runtime requirements
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` exposes the
+[CPU configuration report](cpu-execution.md) independently of a loaded image.
+The optional configuration is JSON parsed by the native API. Static support and
+live host availability remain distinct; probing checks initialization only.
+CPU or driver emulation must be enabled in the host build.
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` defaults to `ON`. Enabled builds require a
 CPython 3.10-or-newer interpreter and embedding development library discoverable
 by CMake:

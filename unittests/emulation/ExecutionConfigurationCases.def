@@ -1,0 +1,93 @@
+//===- ExecutionConfigurationCases.def - CPU requirement fixtures --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_CONFIGURATION_VALUE
+NEVERD_CONFIGURATION_VALUE(PageSize, 4096)
+NEVERD_CONFIGURATION_VALUE(MemoryLimit, 8 * PageSize)
+NEVERD_CONFIGURATION_VALUE(Code, 0x10000)
+NEVERD_CONFIGURATION_VALUE(Device, 0x20000)
+NEVERD_CONFIGURATION_VALUE(DeviceValue, 42)
+NEVERD_CONFIGURATION_VALUE(Timeout, 1000000)
+NEVERD_CONFIGURATION_VALUE(ShortTimeout, 1000)
+#endif
+#ifdef NEVERD_CONFIGURATION_JSON_INVALID
+NEVERD_CONFIGURATION_JSON_INVALID(Array, "[]")
+NEVERD_CONFIGURATION_JSON_INVALID(Null, "null")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownField, "{\"cpu\":0}")
+NEVERD_CONFIGURATION_JSON_INVALID(NullBackend, "{\"backend\":null}")
+NEVERD_CONFIGURATION_JSON_INVALID(BooleanBits,
+                                  "{\"virtual_address_bits\":true}")
+NEVERD_CONFIGURATION_JSON_INVALID(FractionalPage, "{\"page_size\":4096.5}")
+NEVERD_CONFIGURATION_JSON_INVALID(NegativePage, "{\"page_size\":-1}")
+NEVERD_CONFIGURATION_JSON_INVALID(HugeBits,
+                                  "{\"virtual_address_bits\":4294967296}")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownISA, "{\"architecture\":\"mips\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownBackend, "{\"backend\":\"unknown\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownContract, "{\"contract\":\"unknown\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownPrivilege,
+                                  "{\"privilege\":\"unknown\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(UserPrivilege, "{\"privilege\":\"user\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(UnknownFeature,
+                                  "{\"required_features\":[\"unknown\"]}")
+NEVERD_CONFIGURATION_JSON_INVALID(
+    DuplicateFeature,
+    "{\"required_features\":[\"scalar_integer\",\"scalar_integer\"]}")
+NEVERD_CONFIGURATION_JSON_INVALID(FeatureType, "{\"required_features\":[1]}")
+NEVERD_CONFIGURATION_JSON_INVALID(FeatureArray,
+                                  "{\"required_features\":\"mmio\"}")
+NEVERD_CONFIGURATION_JSON_INVALID(SMP,
+                                  "{\"required_features\":[\"parallel_cpus\"]}")
+NEVERD_CONFIGURATION_JSON_INVALID(HardwareSoftware, "{\"backend\":\"kvm\"}")
+#endif
+#ifdef NEVERD_CONFIGURATION_TEXT
+NEVERD_CONFIGURATION_TEXT(
+    ARMConfiguration,
+    "{\"backend\":\"unicorn\",\"architecture\":\"aarch64\",\"contract\":"
+    "\"checked-aarch64-v1\",\"required_features\":[\"cooperative_cpus\","
+    "\"complete_memory_preflight\"]}")
+NEVERD_CONFIGURATION_TEXT(TemporaryPrefix, "neverd-cpu-query")
+NEVERD_CONFIGURATION_TEXT(OutputFile, "report.json")
+NEVERD_CONFIGURATION_TEXT(InvalidProbeError, "CPU host probe must be 0 or 1")
+NEVERD_CONFIGURATION_TEXT(CallbackFailure, "injected observer failure")
+#endif
+#ifdef NEVERD_CONFIGURATION_REJECTION
+NEVERD_CONFIGURATION_REJECTION(UserPrivilege, Privilege,
+                               ExecutionPrivilege::User)
+NEVERD_CONFIGURATION_REJECTION(FlatPrivilege, Privilege,
+                               ExecutionPrivilege::Flat)
+NEVERD_CONFIGURATION_REJECTION(UnknownPrivilege, Privilege,
+                               static_cast<ExecutionPrivilege>(-1))
+NEVERD_CONFIGURATION_REJECTION(SmallAddressWidth, VirtualAddressBits, 32)
+NEVERD_CONFIGURATION_REJECTION(ZeroAddressWidth, VirtualAddressBits, 0)
+NEVERD_CONFIGURATION_REJECTION(LargePage, PageSize, 65536)
+NEVERD_CONFIGURATION_REJECTION(ZeroPage, PageSize, 0)
+NEVERD_CONFIGURATION_REJECTION(SIMD, RequiredFeatures, ExecutionFeature::SIMD)
+NEVERD_CONFIGURATION_REJECTION(MMIO, RequiredFeatures, ExecutionFeature::MMIO)
+NEVERD_CONFIGURATION_REJECTION(PortIO, RequiredFeatures,
+                               ExecutionFeature::PortIO)
+NEVERD_CONFIGURATION_REJECTION(UserIsolation, RequiredFeatures,
+                               ExecutionFeature::UserSupervisorIsolation)
+NEVERD_CONFIGURATION_REJECTION(ServiceTraps, RequiredFeatures,
+                               ExecutionFeature::ServiceTraps)
+NEVERD_CONFIGURATION_REJECTION(ParallelCPUs, RequiredFeatures,
+                               ExecutionFeature::ParallelCPUs)
+NEVERD_CONFIGURATION_REJECTION(UnknownFeature, RequiredFeatures,
+                               static_cast<ExecutionFeature>(uint64_t(1) << 63))
+NEVERD_CONFIGURATION_REJECTION(UnknownBackend, Backend,
+                               static_cast<ExecutionBackendKind>(-1))
+#endif
+#ifdef NEVERD_CONFIGURATION_X64
+// mov eax, [rcx]; nop
+NEVERD_CONFIGURATION_X64(LoadDeviceX64, 0x8b, 0x01, 0x90)
+NEVERD_CONFIGURATION_X64(LoopX64, 0xeb, 0xfe)
+NEVERD_CONFIGURATION_X64(TrapX64, 0xcc)
+NEVERD_CONFIGURATION_X64(HaltX64, 0xf4)
+#endif
+#ifdef NEVERD_CONFIGURATION_ARM
+// ldr w0, [x1]; nop
+NEVERD_CONFIGURATION_ARM(LoadDeviceARM, 0xb9400020, 0xd503201f)
+NEVERD_CONFIGURATION_ARM(LoopARM, 0x14000000)
+NEVERD_CONFIGURATION_ARM(TrapARM, 0xd4000001)
+#endif

@@ -6,6 +6,7 @@
 #include "CheckedBackend.h"
 
 #include "ExecutionDiagnostics.h"
+#include "ExecutionExitBuilder.h"
 
 #include "llvm/ADT/ScopeExit.h"
 
@@ -170,7 +171,28 @@ std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
   return std::exchange(RecoverableFault, std::nullopt);
 }
 
-llvm::Error CheckedBackend::run(uint64_t PC, uint64_t Timeout) {
+llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
+                                                           uint64_t Timeout) {
+  bool Started = false, BackendFailed = false;
+  auto E = runImpl(PC, Timeout, Started, BackendFailed);
+  if (!Started) {
+    if (E)
+      return std::move(E);
+    return error(diagnostic::MissingExecutionStart);
+  }
+  return makeExecutionExit(
+      std::move(E), {.Fault = FirstFault,
+                     .Recoverable = RecoverableFault,
+                     .BackendFailed = BackendFailed,
+                     .InstructionRejected =
+                         FirstFault && FirstFault->Kind ==
+                                           BackendFaultKind::InvalidInstruction,
+                     .StopRequested = StopRequested,
+                     .DeadlineReached = TimedOut});
+}
+
+llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
+                                    bool &Started, bool &BackendFailed) {
   if (auto E = mutableMemory())
     return E;
   if (auto E = Memory->beginRun())
@@ -181,6 +203,7 @@ llvm::Error CheckedBackend::run(uint64_t PC, uint64_t Timeout) {
     return E;
   setProgramCounter(PC);
   Running = true;
+  Started = true;
   TimedOut = false;
   StopRequested = false;
   auto Reset = llvm::scope_exit([&] { Running = false; });
@@ -228,6 +251,7 @@ llvm::Error CheckedBackend::run(uint64_t PC, uint64_t Timeout) {
       if (auto E = execute(*Decoded)) {
         if (!FirstFault) {
           const bool Unsupported = E.isA<UnsupportedExecutionError>();
+          BackendFailed = !Unsupported;
           FirstFault =
               BackendFault{Unsupported ? BackendFaultKind::InvalidInstruction
                                        : BackendFaultKind::UnhandledException,
@@ -241,8 +265,12 @@ llvm::Error CheckedBackend::run(uint64_t PC, uint64_t Timeout) {
         return error(diagnostic::Faulted);
     }
   } catch (...) {
-    FirstFault =
-        BackendFault{BackendFaultKind::UnhandledException, programCounter()};
+    // A secondary observer failure must not replace the original guest fault.
+    if (!FirstFault) {
+      BackendFailed = true;
+      FirstFault =
+          BackendFault{BackendFaultKind::UnhandledException, programCounter()};
+    }
     return error(diagnostic::Callback);
   }
   return llvm::Error::success();

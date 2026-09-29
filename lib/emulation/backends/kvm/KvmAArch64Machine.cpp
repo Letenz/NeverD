@@ -43,7 +43,8 @@ public:
     kvm_guest_debug Debug{};
     Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
-      return diagnostic::unavailable(diagnostic::KvmCapabilities);
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
     if (auto E = runUntilExit(
             Deadline + std::chrono::microseconds(
                            execution_limits::NativeStepGraceMicroseconds)))
@@ -127,11 +128,13 @@ createKvmAArch64Machine(MemoryProjection &Memory) {
   kvm_vcpu_init Init{};
   if (ioctl(M->VM, KVM_ARM_PREFERRED_TARGET, &Init) < 0 ||
       ioctl(M->CPU, KVM_ARM_VCPU_INIT, &Init) < 0)
-    return diagnostic::unavailable(diagnostic::KvmCapabilities);
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
   kvm_guest_debug Debug{};
   Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
   if (ioctl(M->CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
-    return diagnostic::unavailable(diagnostic::KvmCapabilities);
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
   if (auto E = verifyAArch64Machine(*M, Memory))
     return E;
   return std::unique_ptr<AArch64Machine>(std::move(M));

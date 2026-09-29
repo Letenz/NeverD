@@ -3533,6 +3533,122 @@
       }
     },
     {
+      "id": "emulation.cpu-configuration",
+      "kind": "execution",
+      "status": "experimental",
+      "owner": "emulation",
+      "targets": [
+        "x86_64",
+        "aarch64"
+      ],
+      "docs": [
+        "docs/cpu-execution.md",
+        "docs/architecture.md",
+        "docs/testing.md"
+      ],
+      "limitations": [
+        "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
+        "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor address spaces. User privilege, service traps, port I/O and parallel CPUs are unsupported. Checked instruction families do not admit every encoding or operand form.",
+        "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion; general runtime and additional OS workloads remain unfinished.",
+        "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionConfigurationTests",
+          "source": "unittests/emulation/ExecutionConfigurationTests.cpp",
+          "filter": "ExecutionConfiguration.UnsupportedRequirementsDoNotChangeAddressSpace",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionConfigurationTests",
+          "source": "unittests/emulation/ExecutionConfigurationTests.cpp",
+          "filter": "ExecutionConfiguration.ReportedSoftwareMMIOExecutesThroughGuestInstructions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionConfigurationTests",
+          "source": "unittests/emulation/ExecutionReportTests.cpp",
+          "filter": "ExecutionReport.ExplicitProbeReportsUnavailableWithoutChangingBackend",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDCPUEmulationTests",
+          "source": "unittests/emulation/ExecutionExitTests.cpp",
+          "filter": "ExecutionExit.GuestFaultOutranksObserverStopAndPreventsResumption",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDCPUEmulationTests",
+          "source": "unittests/emulation/ExecutionExitTests.cpp",
+          "filter": "ExecutionExit.RecoverableFaultRemainsPendingUntilOSConsumesIt",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionCapabilitiesPublicTests",
+          "source": "unittests/emulation/ExecutionCapabilitiesPublicTests.cpp",
+          "filter": "ExecutionCapabilitiesPublic.CLIUsesTheSameConfigurationAndReport",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDExecutionCapabilitiesPublicTests",
+          "source": "unittests/emulation/ExecutionCapabilitiesPublicTests.cpp",
+          "filter": "ExecutionCapabilitiesPublic.MalformedInputHasAnOwnedDiagnosticAndCanRecover",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_cpu_capabilities_json"
+        ],
+        "python": [
+          "Session.cpu_capabilities"
+        ],
+        "cli": [
+          "neverd cpu-capabilities",
+          "neverd cpu-capabilities --configuration",
+          "neverd cpu-capabilities --probe-host"
+        ],
+        "json": [
+          "neverd_cpu_capabilities_json"
+        ]
+      }
+    },
+    {
       "id": "emulation.windows-driver-initialization",
       "kind": "execution",
       "status": "experimental",

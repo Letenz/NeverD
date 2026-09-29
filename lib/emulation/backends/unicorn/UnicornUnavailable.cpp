@@ -10,10 +10,12 @@
 namespace neverd::emulation {
 llvm::Expected<std::unique_ptr<X64Machine>>
 createUnicornX64Machine(MemoryProjection &) {
-  return diagnostic::unavailable(diagnostic::UnicornDisabled);
+  return diagnostic::unavailable(diagnostic::UnicornDisabled,
+                                 BackendAvailability::BuildDisabled);
 }
 llvm::Expected<std::unique_ptr<AArch64Machine>>
 createUnicornAArch64Machine(MemoryProjection &) {
-  return diagnostic::unavailable(diagnostic::UnicornDisabled);
+  return diagnostic::unavailable(diagnostic::UnicornDisabled,
+                                 BackendAvailability::BuildDisabled);
 }
 } // namespace neverd::emulation
