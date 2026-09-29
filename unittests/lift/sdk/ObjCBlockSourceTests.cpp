@@ -504,6 +504,10 @@ TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
     Forged.SourceImage = nullptr;
     EXPECT_FALSE(
         HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
+    Forged = First;
+    Forged.SourceResult = nullptr;
+    EXPECT_FALSE(
+        HasNestedRoot(discoverObjCBlockSourcesPass(Source, F.Result, &Forged)));
     OuterInvoke.Body[4].StoreVal = parameter(1, NdType::makeInt(4, true));
     EXPECT_FALSE(HasNestedRoot(discoverObjCBlockSources(Source, F.Result)));
     OuterInvoke.Body[4].StoreVal = CapturedSelf;

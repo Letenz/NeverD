@@ -36,6 +36,7 @@ struct ObjCStackBlockSource {
 };
 struct ObjCBlockSourcePlan {
   const BinaryImage *SourceImage = nullptr;
+  const PipelineResult *SourceResult = nullptr;
   std::map<va_t, ObjCBlockLiteral> Globals;
   std::map<va_t, ObjCBlockDescriptor> Descriptors;
   std::map<va_t, SourceFunctionTypeHint> InvokeHints;
@@ -1467,6 +1468,7 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
   const auto &Image = Source.Image;
   ObjCBlockSourcePlan Plan;
   Plan.SourceImage = &Image;
+  Plan.SourceResult = &Result;
   if (Result.SourceImage != &Image)
     throw std::invalid_argument(
         "block source evidence belongs to another image");
@@ -1485,8 +1487,12 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
   std::map<va_t, const HighFunc *> Functions;
   for (const auto &Function : Result.HighFuncs)
     Functions.emplace(Function.Entry, &Function);
+  // Only passes within one discovery call share this immutable HighIR result.
+  // Its stored expression identities cannot be reused across pipeline runs.
+  const bool Reuse = Previous && Previous->SourceImage == &Image &&
+                     Previous->SourceResult == &Result;
   std::map<va_t, uint64_t> ParentLiteralSizes;
-  if (Previous && Previous->SourceImage == &Image)
+  if (Reuse)
     for (const auto &[Parent, Blocks] : Previous->StackBlocks) {
       (void)Parent;
       for (const auto &Block : Blocks) {
@@ -1500,8 +1506,7 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
     std::string Error;
     const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers = nullptr;
     uint64_t ParentLiteralSize = 0;
-    if (Previous && Previous->SourceImage == &Image &&
-        Function.SourceTypeHint) {
+    if (Reuse && Function.SourceTypeHint) {
       const auto Captures = Previous->CaptureReceivers.find(Function.Entry);
       const auto Invoke = Previous->InvokeHints.find(Function.Entry);
       if (Captures != Previous->CaptureReceivers.end() &&
@@ -1524,8 +1529,21 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
       if (ParentReceivers)
         ParentLiteralSize = ParentLiteralSizes.at(Function.Entry);
     }
-    auto Blocks = stackBlocks(Source, Function, Functions, ParentReceivers,
-                              ParentLiteralSize, Error);
+    std::vector<ObjCStackBlockSource> Blocks;
+    if (Reuse && !ParentReceivers) {
+      // A parent receiver can change only an invoke that reads its context.
+      // Reuse all other constructor proofs instead of repeating their flow
+      // analysis for each nesting depth.
+      if (auto Found = Previous->StackBlocks.find(Function.Entry);
+          Found != Previous->StackBlocks.end())
+        Blocks = Found->second;
+      if (auto Found = Previous->Rejections.find(Function.Entry);
+          Found != Previous->Rejections.end())
+        Error = Found->second;
+    } else {
+      Blocks = stackBlocks(Source, Function, Functions, ParentReceivers,
+                           ParentLiteralSize, Error);
+    }
     if (!Error.empty())
       Plan.Rejections[Function.Entry] = std::move(Error);
     for (auto &Block : Blocks)
