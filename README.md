@@ -47,6 +47,8 @@ pipeline. Control hints separate decoder contexts without fixing runtime inputs.
 Unresolved control, unsupported semantics, and exhausted budgets fail explicitly;
 this mode does not certify binary replacement or exception equivalence.
 
+Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--vm-max-queries` keep defaults of 16, 16 and 4096. See the recovery guide for the compatible v3 C API and failure rules.
+
 The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
 
 ## Why NeverD?

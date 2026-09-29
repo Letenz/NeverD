@@ -53,6 +53,10 @@ CLI とすべてのバージョンのソース復元 C API は、自動検出を
 
 CLI オプション `--vm-max-refinements=N` は正の整数を要求し、既定値は 16 です。C の呼び出し側は `neverd_devirtualize_source_v2()` または `neverd_devirtualize_machine_source_v2()` で同じ上限を設定できます。`neverd_devirtualize_options_v2` をゼロ初期化し、`base.struct_size = sizeof(neverd_devirtualize_options_v2)` と `max_control_refinements` を設定します（ゼロなら既定値 16）。埋め込まれた `base` に v1 のオプションを保持し、2 つの reserved メンバーはゼロのままにします。既存の v1 レイアウトと入口は変わらず、拡張末尾を無視します。他の処理予算と証明予算も引き続き適用されます。
 
+`--vm-max-fields=N` と `--vm-max-queries=N` は制御フィールド数とソルバー問い合わせ数の上限を設定し、既定値は 16 と 4096 のままです。これらと `--vm-max-refinements` は正の 32 ビット十進整数と `--devirtualize` を必要とし、ゼロ、符号、十六進数、末尾文字、桁あふれを拒否します。両方のソース ABI とバックエンドに同じ上限が適用されます。予算の増加は解析量を増やすだけで、制御ヒント、実行時入力、新たな証明保証を与えません。予算超過時は C を公開しません。
+
+C では `neverd_devirtualize_source_v3()` または `neverd_devirtualize_machine_source_v3()` を使用します。`neverd_devirtualize_options_v3` をゼロ初期化し、`base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` を設定します。`max_control_fields`、`max_solver_queries`、必要なら `base.max_control_refinements` を指定し、ゼロは従来の既定値を選択します。3 個の reserved フィールドはすべてゼロにします。v1/v2 は reserved を含む v3 末尾を無視し、v3 は将来の拡張末尾を無視します。レポートは実際の処理量と有効な `maxControlFields`、`maxControlRefinements`、`maxSolverQueries` を記録します。
+
 JSON レポートには `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements`、`discoveryVisits` が追加され、有効な動作、上限、解析作業量を記録します。フィールドの検出だけでは復元成功を証明しません。
 
 ## 実行契約

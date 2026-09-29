@@ -9654,6 +9654,7 @@
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
         "Default ABI refuses calls and exception boundaries. Explicit machine-state ABI supports certified direct near calls, exhaustively finite register- or memory-indirect near calls and internal returns under a normal nonfaulting CPL3/CET-disabled profile. Memory calls require canonical unsegmented r/m64 encodings and proved target loads before stack effects. Unknown or sampled writable slots, exception execution, mutable code, unresolved control and exhausted budgets refuse recovery.",
         "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
+        "Explicit CLI and v3 C API field, refinement and solver-query budgets retain defaults of 16, 16 and 4096. Larger limits permit additional work without changing semantic assumptions; exhaustion publishes no source.",
         "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Machine-state source preserves numeric guest addresses and requires their original runtime mappings. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
         "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement."
       ],
@@ -9819,7 +9820,38 @@
           "runner": "gtest",
           "target": "NeverDDevirtualizationSourceTests",
           "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
-          "filter": "DevirtualizationSourceTest.CLIRejectsInvalidRefinementBudgets",
+          "filter": "DevirtualizationSourceTest.CLIFieldAndQueryBudgetsAreEnforced",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryVersionsPreserveDefaultsAndFutureTails",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryV3RejectsTruncationAndReservedFields",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.CLIRejectsInvalidDiscoveryBudgets",
           "platforms": [
             "linux"
           ]
@@ -9932,7 +9964,9 @@
           "neverd_devirtualize_source_v1",
           "neverd_devirtualize_machine_source_v1",
           "neverd_devirtualize_source_v2",
-          "neverd_devirtualize_machine_source_v2"
+          "neverd_devirtualize_machine_source_v2",
+          "neverd_devirtualize_source_v3",
+          "neverd_devirtualize_machine_source_v3"
         ],
         "python": [],
         "cli": [
@@ -9944,7 +9978,9 @@
           "neverd decompile --vm-max-contexts",
           "neverd decompile --vm-max-nodes",
           "neverd decompile --vm-max-operations",
-          "neverd decompile --vm-max-refinements"
+          "neverd decompile --vm-max-refinements",
+          "neverd decompile --vm-max-fields",
+          "neverd decompile --vm-max-queries"
         ],
         "json": []
       }

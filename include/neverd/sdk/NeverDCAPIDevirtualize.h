@@ -59,6 +59,19 @@ typedef struct neverd_devirtualize_options_v2 {
   uint32_t reserved;
 } neverd_devirtualize_options_v2;
 
+/// Version 3 adds explicit control-field and solver-query budgets. Zero the
+/// structure and set base.base.struct_size to its complete size. Zero limits
+/// select the existing defaults (16 fields and 4096 queries). All reserved
+/// fields must be zero. v1/v2 entry points ignore this extension, including
+/// reserved; v3 entry points ignore future tails. Larger budgets authorize
+/// more bounded work, not partial results or stronger semantic assumptions.
+typedef struct neverd_devirtualize_options_v3 {
+  neverd_devirtualize_options_v2 base;
+  uint32_t max_control_fields;
+  uint32_t max_solver_queries;
+  uint32_t reserved;
+} neverd_devirtualize_options_v3;
+
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
 /// mutation and calls, and does not certify binary patching or unwind behavior.
@@ -121,6 +134,16 @@ neverd_devirtualize_source_v2(neverd_session_t Session, neverd_va_t Entry,
 NEVERD_API const char *neverd_devirtualize_machine_source_v2(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v2 *Options, const char **Report);
+
+/// The source contracts and ownership match the corresponding v1/v2 APIs.
+/// Null options select unchanged defaults. Reports record effective budgets.
+NEVERD_API const char *
+neverd_devirtualize_source_v3(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v3 *Options,
+                              const char **Report);
+NEVERD_API const char *neverd_devirtualize_machine_source_v3(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v3 *Options, const char **Report);
 
 #ifdef __cplusplus
 }

@@ -262,7 +262,8 @@ static const char *devirtualizeSource(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v1 *Options, const char **Report,
     bool MachineState,
-    const neverd_devirtualize_options_v2 *ExtendedOptions = nullptr) {
+    const neverd_devirtualize_options_v2 *ExtendedOptions = nullptr,
+    const neverd_devirtualize_options_v3 *BudgetOptions = nullptr) {
   if (Report)
     *Report = nullptr;
   auto *S = toSession(Session);
@@ -312,16 +313,21 @@ static const char *devirtualizeSource(
           "disjoint from "
           "guest memory; fixed original mappings; little-endian 64-bit host";
     if (Options) {
-      const size_t RequiredSize =
-          ExtendedOptions ? sizeof(*ExtendedOptions) : sizeof(*Options);
+      const size_t RequiredSize = BudgetOptions     ? sizeof(*BudgetOptions)
+                                  : ExtendedOptions ? sizeof(*ExtendedOptions)
+                                                    : sizeof(*Options);
       if (Options->struct_size < RequiredSize)
         return Fail(
-            ExtendedOptions
+            BudgetOptions
+                ? "devirtualize options do not cover the complete v3 structure"
+            : ExtendedOptions
                 ? "devirtualize options do not cover the complete v2 structure"
                 : "devirtualize options do not cover the complete v1 "
                   "structure");
-      // A v1 caller may provide an arbitrary future tail. Inspect extension
-      // fields only through a v2 entry point, after validating its full size.
+      // Older entry points may receive arbitrary future tails. Inspect each
+      // extension only through its matching API, after checking its full size.
+      if (BudgetOptions && BudgetOptions->reserved)
+        return Fail("invalid devirtualize v3 flags");
       if (ExtendedOptions && ExtendedOptions->reserved)
         return Fail("invalid devirtualize v2 flags");
       if (Options->reserved ||
@@ -365,6 +371,10 @@ static const char *devirtualizeSource(
         Config.MaxOperations = Options->max_operations;
       if (ExtendedOptions && ExtendedOptions->max_control_refinements)
         Config.MaxControlRefinements = ExtendedOptions->max_control_refinements;
+      if (BudgetOptions && BudgetOptions->max_control_fields)
+        Config.MaxControlFields = BudgetOptions->max_control_fields;
+      if (BudgetOptions && BudgetOptions->max_solver_queries)
+        Config.MaxSolverQueries = BudgetOptions->max_solver_queries;
       PO.LiftMode = Options->use_llvm != 0;
       PO.NoOpt = Options->no_opt != 0;
     }
@@ -567,4 +577,21 @@ extern "C" const char *neverd_devirtualize_machine_source_v2(
     const neverd_devirtualize_options_v2 *Options, const char **Report) {
   return devirtualizeSource(Session, Entry, Options ? &Options->base : nullptr,
                             Report, true, Options);
+}
+
+extern "C" const char *
+neverd_devirtualize_source_v3(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v3 *Options,
+                              const char **Report) {
+  return devirtualizeSource(Session, Entry,
+                            Options ? &Options->base.base : nullptr, Report,
+                            false, Options ? &Options->base : nullptr, Options);
+}
+
+extern "C" const char *neverd_devirtualize_machine_source_v3(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v3 *Options, const char **Report) {
+  return devirtualizeSource(Session, Entry,
+                            Options ? &Options->base.base : nullptr, Report,
+                            true, Options ? &Options->base : nullptr, Options);
 }

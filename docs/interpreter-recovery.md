@@ -176,6 +176,10 @@ holds the v1 options; both reserved members must remain zero. Existing v1
 layouts and entry points are unchanged and ignore extension tails. Other
 work and proof budgets still apply.
 
+`--vm-max-fields=N` and `--vm-max-queries=N` expose the control-field and solver-query limits, with unchanged defaults of 16 and 4096. These options and `--vm-max-refinements` require positive 32-bit decimal integers and `--devirtualize`; zero, signs, hexadecimal, trailing text and overflow are rejected. Both source ABIs and backends use the same limits. Larger budgets permit more analysis work; they supply no control hints or runtime values and provide no new proof guarantee. Exhaustion still publishes no C.
+
+C callers use `neverd_devirtualize_source_v3()` or `neverd_devirtualize_machine_source_v3()`. Zero-initialize `neverd_devirtualize_options_v3` and set `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Set `max_control_fields`, `max_solver_queries` and optionally `base.max_control_refinements`; zero selects the corresponding unchanged default. All three reserved fields must be zero. v1/v2 entry points ignore the v3 tail, including its reserved member, while v3 ignores future tails. The report records effective `maxControlFields`, `maxControlRefinements` and `maxSolverQueries` alongside actual work.
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,
