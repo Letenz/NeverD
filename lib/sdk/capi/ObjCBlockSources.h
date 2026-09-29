@@ -92,7 +92,8 @@ struct Value {
     PointerBits,
     Receiver,
     CapturedWord,
-    UnprovenIdentity
+    UnprovenIdentity,
+    OutParameter // exact non-context formal pointer in a proven block invoke
   } K = Scalar;
   int64_t Offset = 0;
   uint64_t Bits = 0;
@@ -279,8 +280,12 @@ public:
     if (E->Kind == ExprKind::Var) {
       const auto Found =
           Locals.find(objc_projection_detail::localIdentity(E->Var));
-      if (Found != Locals.end())
-        return established(Found->second);
+      if (Found != Locals.end()) {
+        auto V = established(Found->second);
+        return V.K == Value::OutParameter && (Bytes != 8 || E->Var.Size != 8)
+                   ? Value{}
+                   : V;
+      }
       if (E->Var.Kind == MedVar::Param && E->Var.Id == 0 &&
           E->Var.SSAVer == 0 && E->Var.RenameTag < 0 && Bytes == 8 &&
           Function.SourceTypeHint) {
@@ -589,6 +594,25 @@ noEscape(const ObjCBlockSourceContext &Source,
       throw Invalid("block consumer has no recovered parameter binding");
     const auto &F = *Found->second;
     Values State(Source, F, Parameter);
+    if (AllowIndependentOutParameterStores && F.SourceTypeHint &&
+        F.Params.size() == F.SourceTypeHint->Parameters.size()) {
+      for (size_t I = 0; I < F.Params.size(); ++I) {
+        if (I == Parameter)
+          continue;
+        const auto &Recovered = F.Params[I].Type;
+        const auto &Declared = F.SourceTypeHint->Parameters[I].Type;
+        if (!Recovered || !Declared || Recovered->Kind != NdTypeKind::Ptr ||
+            Declared->Kind != NdTypeKind::Ptr || Recovered->Size != 8 ||
+            !equalSourceTypes(Recovered, Declared))
+          continue;
+        MedVar Formal;
+        Formal.Kind = MedVar::Param;
+        Formal.Id = static_cast<int>(I);
+        Formal.Size = 8;
+        State.Locals[objc_projection_detail::localIdentity(Formal)] = {
+            Value::OutParameter, 0, I};
+      }
+    }
     const auto CallBound = [&](const HighExpr &E) {
       return objcSourceCallBound(
           E, Source.Image, Functions, nullptr, nullptr, &F,
@@ -776,25 +800,14 @@ noEscape(const ObjCBlockSourceContext &Source,
         // the value still must not contain any context or frame identity.
         // Copy/dispose helpers and recursively proved native consumers do not
         // receive this permission.
-        const auto IndependentOutParameter = [&] {
-          if (!AllowIndependentOutParameterStores || !S.StoreAddr ||
-              S.StoreAddr->Kind != ExprKind::Var || !S.StoreAddr->Type ||
-              S.StoreAddr->Type->Kind != NdTypeKind::Ptr || !F.SourceTypeHint)
-            return false;
-          const auto &Formal = S.StoreAddr->Var;
-          if (Formal.Kind != MedVar::Param || Formal.Id < 0 ||
-              static_cast<size_t>(Formal.Id) == Parameter ||
-              Formal.SSAVer != 0 || Formal.RenameTag >= 0 ||
-              static_cast<size_t>(Formal.Id) >= F.Params.size() ||
-              static_cast<size_t>(Formal.Id) >=
-                  F.SourceTypeHint->Parameters.size())
-            return false;
-          const auto &Recovered = F.Params[Formal.Id].Type;
-          const auto &Declared = F.SourceTypeHint->Parameters[Formal.Id].Type;
-          return Recovered && Declared &&
-                 equalSourceTypes(Recovered, Declared) &&
-                 equalSourceTypes(S.StoreAddr->Type, Declared);
-        }();
+        const auto OutIndex = Address.Bits;
+        const auto IndependentOutParameter =
+            AllowIndependentOutParameterStores &&
+            Address.K == Value::OutParameter && F.SourceTypeHint &&
+            OutIndex < F.SourceTypeHint->Parameters.size() &&
+            F.SourceTypeHint->Parameters[OutIndex].Type &&
+            F.SourceTypeHint->Parameters[OutIndex].Type->Pointee &&
+            Bytes <= F.SourceTypeHint->Parameters[OutIndex].Type->Pointee->Size;
         if (IndependentOutParameter && !pointerIdentity(V))
           break;
         // A complete image range is disjoint from the private frame/context.

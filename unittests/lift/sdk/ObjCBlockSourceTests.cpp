@@ -2887,6 +2887,42 @@ TEST(ObjCBlockSources,
   EXPECT_FALSE(Prove(true)); // a renamed value lacks formal provenance
 }
 
+TEST(ObjCBlockSources,
+     DescriptorBoundInvokeRetainsExactOutParameterThroughPrivateSpill) {
+  SourceFixture F(true);
+  auto &Function = F.Result.HighFuncs[1];
+  const auto Output = NdType::makePtr(NdType::makePtr(NdType::makeVoid()));
+  Function.Params[1].Type = Output;
+  Function.SourceTypeHint->Parameters[1].Type = Output;
+  Function.FrameSize = 32;
+  const auto Reload = HighExpr::makeLoad(frame(F.Image, -16), Output);
+  Function.Body = {store(frame(F.Image, -16), parameter(1, Output)),
+                   store(Reload, HighExpr::makeConst(0, 8)),
+                   ret(HighExpr::makeConst(0, 4))};
+  const ObjCBlockSourceContext Source(F.Image);
+  const ObjCBlockSourcePlan Plan;
+  std::set<std::pair<va_t, size_t>> Active;
+  std::string Reason;
+  auto Prove = [&] {
+    Reason.clear();
+    return objc_block_source_detail::noEscape(
+        Source, F.functions(), Function.Entry, 0, nullptr, Active, Reason,
+        nullptr, nullptr, &Plan, true);
+  };
+  EXPECT_TRUE(Prove()) << Reason;
+  Function.Body[1].StoreVal = parameter(0, Function.Params[0].Type);
+  EXPECT_FALSE(Prove()); // a spilled out pointer cannot receive the context
+  Function.Body[1].StoreVal = HighExpr::makeConst(0, 16);
+  EXPECT_FALSE(Prove()); // the write exceeds the declared pointee
+  Function.Body[1].StoreVal = HighExpr::makeConst(0, 8);
+  Function.Body[1].StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, Reload, HighExpr::makeConst(8, 8));
+  EXPECT_FALSE(Prove()); // computed addresses lose exact formal provenance
+  Function.Body[1].StoreAddr = Reload;
+  Function.Body[0].StoreVal = parameter(0, Function.Params[0].Type);
+  EXPECT_FALSE(Prove()); // a spill of the context is still private
+}
+
 TEST(ObjCBlockSources, CompleteWideCaptureSpillRetainsConstructionEvidence) {
   SourceFixture F(true);
   F.put64(F.Descriptor + 8, 48);
