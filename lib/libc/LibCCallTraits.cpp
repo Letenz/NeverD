@@ -293,6 +293,11 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
                        : isNoReturnTarget(Img, Target);
 }
 
+bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
+                      const NoReturnTargetIndex *Index) {
+  return Index ? Index->contains(Img, Target) : isNoReturnTarget(Img, Target);
+}
+
 bool isReturnsTwiceFunction(std::string_view Name) {
   // setjmp / _setjmp / sigsetjmp / __sigsetjmp all normalize to one of these.
   return llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))

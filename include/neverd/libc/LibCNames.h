@@ -167,6 +167,11 @@ public:
   bool contains(const BinaryImage &Img, va_t Target) const;
 };
 
+/// isNoReturnTarget() answered through \p Index when one is available, so
+/// every layer that asks about one image gets the same answer.
+bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
+                      const NoReturnTargetIndex *Index);
+
 /// True if Name requires returns-twice register semantics
 /// (setjmp / _setjmp / sigsetjmp / vfork). For setjmp, control re-enters when a
 /// matching longjmp restores the saved context.  The emitter marks such a

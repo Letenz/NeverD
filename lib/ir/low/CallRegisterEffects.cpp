@@ -7,6 +7,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -47,8 +48,9 @@ std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff) {
   return static_cast<unsigned>(RegOff / 8);
 }
 
-LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
-                                        const LowFunc &F) {
+LocalRegisterEffect
+localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
+                    const libc::NoReturnTargetIndex *NoReturnTargets) {
   LocalRegisterEffect Effect;
   if (!F.hasCompleteLiftCoverage() ||
       !F.UnsafeIndirectBranchAddresses.empty() || F.Blocks.empty()) {
@@ -84,12 +86,30 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
     };
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
       const LowOp &Op = Block.Ops[I];
+      const auto [Control, Flags] = ControlOf(I);
+      const bool TailCall = Control == LowInstructionControl::TailCall;
+      const bool DirectTarget = Op.NumInputs > 0 && Op.Inputs[0].isConst();
+      const bool Transfers = Op.Opcode == NdOp::CALL ||
+                             Op.Opcode == NdOp::BRANCH ||
+                             Op.Opcode == NdOp::COND_BR;
+      const bool EntersNoReturnFunction =
+          Transfers && DirectTarget &&
+          libc::isNoReturnTarget(Img, Op.Inputs[0].Offset, NoReturnTargets);
+      // The CFG flags a call that never returns; the LowIR contract keeps a
+      // tail call unflagged, so a tail call into a no-return function is
+      // recognized here.
+      const bool NoReturnCall =
+          Op.Opcode == NdOp::CALL &&
+          (hasLowInstructionControlFlag(Flags,
+                                        LowInstructionControlFlag::NoReturn) ||
+           (TailCall && EntersNoReturnFunction));
       RegisterStep Step;
       for (uint8_t In = 0; In < Op.NumInputs; ++In)
         if (Op.Inputs[In].isReg())
           addRead(Img.Arch, Step.Reads, Op.Inputs[In].Offset,
                   Op.Inputs[In].Size);
-      if (Op.Output.isReg()) {
+      // The result of a call that never returns reaches no one.
+      if (Op.Output.isReg() && !NoReturnCall) {
         const GPRFamilyMask Bit = familyBit(Img.Arch, Op.Output.Offset);
         Effect.Writes |= Bit;
         if (WritesFPReturn(Op.Output))
@@ -104,8 +124,6 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
           Step.LowWrites[*Family] = std::max<uint8_t>(
               Step.LowWrites[*Family], static_cast<uint8_t>(Op.Output.Size));
       }
-      const auto [Control, Flags] = ControlOf(I);
-      const bool TailCall = Control == LowInstructionControl::TailCall;
       switch (Op.Opcode) {
       case NdOp::INDIR_CALL:
         // A rewritten indirect tail jump (`jmp [iat]` in an import thunk)
@@ -125,28 +143,28 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
       case NdOp::COND_BR:
         // A direct branch to another function's entry leaves this body the
         // way a tail call does; the CFG keeps no block for it.
-        if (Op.NumInputs > 0 && Op.Inputs[0].isConst() &&
-            !BlockStarts.count(Op.Inputs[0].Offset)) {
-          Effect.Callees.insert(Op.Inputs[0].Offset);
+        if (DirectTarget && !BlockStarts.count(Op.Inputs[0].Offset)) {
+          // A jump into a function that never returns adds no write a caller
+          // can observe, and an unconditional one ends this path.
+          if (!EntersNoReturnFunction)
+            Effect.Callees.insert(Op.Inputs[0].Offset);
           Step.Callee = Op.Inputs[0].Offset;
           Step.TailCallee = true;
+          Step.Exits = EntersNoReturnFunction && Op.Opcode == NdOp::BRANCH;
         }
         break;
       case NdOp::CALL: {
         // A call that never returns cannot change a register its caller
         // reads, but it still receives this function's registers.
-        const bool NoReturn = hasLowInstructionControlFlag(
-            Flags, LowInstructionControlFlag::NoReturn);
-        Step.Exits = NoReturn;
-        if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() ||
-            Img.findImportAt(Op.Inputs[0].Offset)) {
-          if (!NoReturn)
+        Step.Exits = NoReturnCall;
+        if (!DirectTarget || Img.findImportAt(Op.Inputs[0].Offset)) {
+          if (!NoReturnCall)
             Effect.Unknown = true;
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
         } else {
           Step.Callee = Op.Inputs[0].Offset;
           Step.TailCallee = TailCall;
-          if (!NoReturn)
+          if (!NoReturnCall)
             Effect.Callees.insert(Op.Inputs[0].Offset);
         }
         break;

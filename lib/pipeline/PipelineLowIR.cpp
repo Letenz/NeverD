@@ -2835,7 +2835,7 @@ void computeCallRegisterEffects(
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
   for (const LowFunc &LF : Result.LowFuncs) {
-    Effects[LF.Entry] = localRegisterEffect(Img, LF);
+    Effects[LF.Entry] = localRegisterEffect(Img, LF, &NoReturnTargets);
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
   }
@@ -2864,7 +2864,7 @@ void computeCallRegisterEffects(
       ++ExtraLifts;
       LowFunc Body =
           ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
-      Effects[Callee] = localRegisterEffect(Img, Body);
+      Effects[Callee] = localRegisterEffect(Img, Body, &NoReturnTargets);
       Depth[Callee] = CalleeDepth;
       Work.push_back(Callee);
     }

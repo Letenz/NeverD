@@ -336,8 +336,7 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
     }
   if (Target == InvalidVA)
     return false;
-  return NoReturnTargets ? NoReturnTargets->contains(*CurrentImg, Target)
-                         : libc::isNoReturnTarget(*CurrentImg, Target);
+  return libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets);
 }
 
 void CFGBuilder::restoreAdjacentNoReturnCall(InsnRecord &Rec,
