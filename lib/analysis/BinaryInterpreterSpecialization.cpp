@@ -141,9 +141,12 @@ public:
       // With shadow stacks explicitly disabled, RDSSP leaves its destination
       // unchanged. This instruction-specific architectural rule must precede
       // lifting: the general CET intrinsic requires a shadow-stack model.
-      // Other CET operations, including INCSSP, retain their strict rejection.
+      // INCSSP remains a strict intrinsic and is classified as a profile trap
+      // below. No enabled-CET operation is treated as an ordinary instruction.
       if (Options.X64CetDisabled &&
           (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ)) {
+        Result.ProfileProjection =
+            InterpreterProfileProjection::CetDisabledReadShadowStackV1;
         Result.Ops.push_back(
             LowOp{.Opcode = NdOp::NOP, .Addr = Cursor.Address});
         // This execution-profile projection has no architecture-owned
@@ -153,7 +156,7 @@ public:
         Result.UndefinedEffects.OperationDigest =
             lowUndefinedOperationDigest(Result.Ops);
         Result.UndefinedEffects.Diagnostic =
-            "CET-disabled RDSSP projection has no audited undefined effects";
+            "CET-disabled RDSSP requires explicit profile evidence";
       } else {
         if (Options.ExplicitMachineState && Options.X64CetDisabled)
           LoadedMemoryCall = Decode.liftX64MemoryCallToLow(
@@ -162,6 +165,10 @@ public:
           Result.UndefinedEffects = {};
           Decode.liftToLow(Insn, Result.Ops, {}, {}, &Result.UndefinedEffects);
         }
+        if (Options.X64CetDisabled &&
+            (Insn.Id == X86_INS_INCSSPD || Insn.Id == X86_INS_INCSSPQ))
+          Result.ProfileProjection = InterpreterProfileProjection::
+              CetDisabledIncrementShadowStackTrapV1;
       }
     } catch (const UnliftedInstruction &Error) {
       return llvm::createStringError(llvm::errc::not_supported, "%s",
@@ -226,6 +233,14 @@ public:
       default:
         break;
       }
+    }
+    // Intel SDM 253666-093, INCSSPD/INCSSPQ (3-459/460): disabled shadow
+    // stacks cause #UD before any access. Keep the original intrinsic and
+    // Missing sidecar. A nonfaulting proof must show this boundary unreachable.
+    if (Result.ProfileProjection ==
+        InterpreterProfileProjection::CetDisabledIncrementShadowStackTrapV1) {
+      B.Control = LowInstructionControl::Terminator;
+      B.ControlFlags = LowInstructionControlFlag::Terminator;
     }
     if (Decode.isFunctionTerminator(Insn) &&
         B.Control == LowInstructionControl::None) {
@@ -341,7 +356,7 @@ binaryIndependenceDigest(const BinaryImage &Image,
                          llvm::ArrayRef<SpecializationInstruction> Instructions,
                          llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-original-native-control-independence-v3");
+  Hash.update("neverd-original-native-control-independence-v4");
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -374,6 +389,9 @@ binaryIndependenceDigest(const BinaryImage &Image,
   Number(Options.ExplicitMachineState);
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
+  Number(Options.X64FlagsProfile.has_value());
+  if (Options.X64FlagsProfile)
+    Number(static_cast<unsigned>(*Options.X64FlagsProfile));
   Number(static_cast<unsigned>(Image.ExceptionMetadata.ParseStatus));
   Number(static_cast<unsigned>(Proof.Scope));
   Number(Proof.InputDigest.size());
@@ -411,6 +429,7 @@ binaryIndependenceDigest(const BinaryImage &Image,
     Number(static_cast<unsigned>(Instruction.Fallthrough.Mode));
     Number(static_cast<unsigned>(Instruction.NativeStackControl));
     Number(Instruction.IsNativeCall);
+    Number(static_cast<unsigned>(Instruction.ProfileProjection));
     // The provider has already checked uniqueness, permissions, full file
     // coverage and absence of fixups for this exact native instruction.
     Mappings(Instruction.Origin.Address);
@@ -471,7 +490,8 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
     return Fail(
         Status::Invalid,
         "binary proof requires an accessible entry RSP frame and return slot");
-  if (Contract.ByteOrder != Options.ByteOrder ||
+  if (Contract.X64FlagsProfile != Options.X64FlagsProfile ||
+      Contract.ByteOrder != Options.ByteOrder ||
       Contract.EntryConstants.size() != Options.EntryConstants.size())
     return Fail(Status::Invalid, "proof and recovery entry contracts differ");
   for (size_t I = 0; I != Contract.EntryConstants.size(); ++I) {

@@ -7,6 +7,7 @@
 #ifndef NEVERD_ANALYSIS_INTERPRETERSPECIALIZATION_H
 #define NEVERD_ANALYSIS_INTERPRETERSPECIALIZATION_H
 
+#include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/symbolic/SymState.h"
@@ -56,6 +57,8 @@ struct SpecializationInstruction {
   /// lowered to explicit stack operations with no remaining LowIR CALL.
   /// Unlike NativeStackControl, this does not authorize omitted stack effects.
   bool IsNativeCall = false;
+  InterpreterProfileProjection ProfileProjection =
+      InterpreterProfileProjection::None;
 };
 
 /// An exact non-faulting ordinary read whose bytes remain immutable throughout
@@ -98,6 +101,10 @@ struct SpecializationOptions {
   /// explicit machine-state interface. The binary provider owns their use.
   bool NormalNonfaultingExecution = false;
   bool X64CetDisabled = false;
+  /// Optional native-proof flag environment. None of the three booleans above
+  /// implies this CPL/IOPL/flags contract. The binary proof requires the same
+  /// value in its observation contract; ordinary recovery remains conservative.
+  std::optional<InterpreterMachineStateProfile> X64FlagsProfile;
   /// Demand-driven precision refinement for unresolved control. Discovered
   /// register/frame ranges retain exhaustive finite relations. Repeatedly
   /// unresolved memory dependencies may additionally separate proven constant

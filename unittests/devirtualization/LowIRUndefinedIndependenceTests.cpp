@@ -858,4 +858,12 @@ TEST(LowIRUndefinedIndependence, ExclusionsPermitRedundancyAndBindExactInput) {
   ASSERT_TRUE(F.proved()) << F.Diagnostic;
   EXPECT_NE(E.Certificate->InputDigest, F.Certificate->InputDigest);
 }
+TEST(LowIRUndefinedIndependence, NativeFlagsProfileCannotAuthorizeStaticProof) {
+  Program P;
+  P.finish();
+  ASSERT_TRUE(P.check().proved());
+  P.Contract.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  expectStatus(P, Status::Unsupported);
+}
+
 } // namespace

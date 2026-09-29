@@ -7,6 +7,7 @@
 #ifndef NEVERD_ANALYSIS_INTERPRETERMACHINESTATE_H
 #define NEVERD_ANALYSIS_INTERPRETERMACHINESTATE_H
 
+#include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
 
@@ -31,16 +32,6 @@ struct alignas(8) InterpreterMachineStateX64V1 {
 static_assert(std::is_standard_layout_v<InterpreterMachineStateX64V1>);
 static_assert(sizeof(InterpreterMachineStateX64V1) == 136);
 static_assert(offsetof(InterpreterMachineStateX64V1, RFlags) == 128);
-
-enum class InterpreterMachineStateProfile : uint8_t {
-  /// 64-bit user mode, CPL=3, IOPL=0, shadow stacks disabled, no asynchronous
-  /// events, and successful nonfaulting ordinary execution. TF, RF, VM, AC,
-  /// VIF, and VIP are zero at entry; every executed POPFQ image must leave TF
-  /// and AC zero. Reserved bits have
-  /// their architectural values. This precondition is not inferred from one
-  /// run. Privileged instructions and calls are outside this source wrapper.
-  UserX64NoFaultV1,
-};
 
 /// Check the caller-supplied entry state against the fixed user-mode profile.
 /// Generated source returns a nonzero status for the same invalid states.
