@@ -510,6 +510,9 @@ own machine-inferred entry signature. Generated C rebuilds a fresh shared cache
 and repeats the runtime query; it never publishes the captured process cache or
 witness pointer.
 
+Directly linked Swift conformance descriptors and nominal metadata may also serve this accessor. Both identities must be uniquely exported, the descriptor must be immutable, and their demangled nominal types must match. Mixed imported and direct inputs, conflicting exports, and mismatched types reject the binding. When source uses a conformance descriptor address directly, its immutable, uniquely exported `Mc` symbol is rebound by name and revalidated before emission; the original image address is not copied.
+When a detected function also contains independent Swift code after the accessor’s final return, the accessor proof uses only its leading body if every entry path returns and no branch reaches the following block. The trailing code keeps its ordinary diagnostics.
+
 Standard Swift metadata storage addresses use compiler-generated `.self`
 queries; standard Hashable witness storage uses the direct witness argument
 of a compiler-generated constrained generic call. Both require matching SDK
@@ -2075,3 +2078,5 @@ Native source inference can borrow the exact 24-byte private scratch record pass
 The profiled, whole-module Swift merged `@objc` `CGFloat` setter uses a C ABI with self, selector, double value, ivar-offset pointer, and profile-counter pointer. Its exact mangled symbol and the x3 counter load/increment/store at the machine entry are required before assigning that five-parameter ABI; the unprofiled helper has only four parameters. The candidate still needs its ordinary source-body, data-binding, and dependency-closure proofs.
 
 Private Swift struct or enum metadata used by value-witness code can preserve its linked-image identity through a uniquely exported metadata accessor. Source binding accepts only a matching immutable private nominal descriptor and an immutable AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` leaf that computes exactly the private metadata address; source calls that accessor, and publication rechecks the bytes, relocations, symbols, and exports.
+
+An AArch64 native helper may bind a complete 16-byte `q0` input as a by-value C vector only when all 16 entry bytes are observed and the ordinary call, return, and frame proofs hold. HighC bit-casts the payload at source boundaries; a 128-bit integer in `x0`/`x1` is a different ABI. Partial lanes, other vector registers, and non-native declarations remain unsupported.

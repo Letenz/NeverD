@@ -112,9 +112,8 @@ bool stackCheckFailureBinding(const BinaryImage &Image, const MedOp &Op,
       Binding.NilTerminated || Binding.SwiftTypeMetadata || Binding.Receiver ||
       Binding.SelectorResultUse || Binding.SelectorResultTypeUse ||
       Binding.SelectorArgumentTypeUse || Binding.SelectorForwardingUse ||
-      Binding.SelectorArgumentStorageUse ||
-      Binding.ObjCIndirectResultStorage || Binding.ByteCount ||
-      Binding.ImmutablePointerSlot)
+      Binding.SelectorArgumentStorageUse || Binding.ObjCIndirectResultStorage ||
+      Binding.ByteCount || Binding.ImmutablePointerSlot)
     return false;
   const auto Expected =
       darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
@@ -848,10 +847,9 @@ integerPairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar) {
     if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return std::nullopt;
     for (const auto &Op : Block.Ops) {
-      if (!Remaining-- ||
-          (Op.Opcode == NdOp::INTRINSIC &&
-           !isArchitecturalNoReturn(Op, Architecture) &&
-           !hasNativeScalarIntrinsicEvidence(Op, Architecture)))
+      if (!Remaining-- || (Op.Opcode == NdOp::INTRINSIC &&
+                           !isArchitecturalNoReturn(Op, Architecture) &&
+                           !hasNativeScalarIntrinsicEvidence(Op, Architecture)))
         return std::nullopt;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         if (!Op.SourceCallHint ||
@@ -1179,8 +1177,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   // depend on the enclosing helper's eventual result declaration, which is
   // proved separately below, so retain the narrower effects-only certificate.
   if (!EntryBytes)
-    EntryBytes = observedMedSourceEntryBytes(
-        Med, Hint, SourceEntryDemand::EffectsOnly);
+    EntryBytes =
+        observedMedSourceEntryBytes(Med, Hint, SourceEntryDemand::EffectsOnly);
   std::set<uint64_t> ParameterRegisters;
   std::set<uint64_t> AuxiliaryRegisters;
   std::set<int> StackSlots;
@@ -1229,6 +1227,16 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
           if (!EntryBytes || !EntryBytes->count(Parameter.RegOff))
             return Reject("native floating parameter has no entry-byte proof");
           const auto Bytes = EntryBytes->at(Parameter.RegOff);
+          if (Bytes == 0xFFFF && Type->Kind == NdTypeKind::Int &&
+              Image.Arch == Arch::AArch64 &&
+              Parameter.RegOff == TRI.FPParamRegs.front()) {
+            Source.Type = NdType::makeInt(16, Type->IsSigned);
+            Source.Type->SourceName = kSourceAArch64Vector128CType;
+            Source.Location.Kind = SourceABICarrierKind::FloatingRegister;
+            Source.Location.RegisterOffset = Parameter.RegOff;
+            Hint.Parameters.push_back(std::move(Source));
+            continue;
+          }
           if (!Bytes || (Bytes & ~uint64_t(0xFF)))
             return Reject(
                 "native floating parameter observes non-scalar lanes");

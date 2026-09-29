@@ -949,8 +949,7 @@ SwiftTypeMetadataFixture swiftDispatchTypeMetadataFixture(bool TimerFlags) {
   auto &Data = F.Image.Segments[0].Data;
   llvm::support::endian::write32le(
       Data.data() + SwiftTypeMetadataFixture::Reference + 4 - 0x1000, 9);
-  auto *Type =
-      Data.data() + SwiftTypeMetadataFixture::TypeReference - 0x1000;
+  auto *Type = Data.data() + SwiftTypeMetadataFixture::TypeReference - 0x1000;
   Type[0] = 'S';
   Type[1] = 'a';
   Type[2] = 'y';
@@ -1278,6 +1277,51 @@ TEST(ObjCSourceBindings, SwiftWitnessAccessorRebuildsZeroArgumentCacheHelper) {
   }
 }
 
+TEST(ObjCSourceBindings,
+     SwiftWitnessAccessorIgnoresOnlyDetachedPostReturnCode) {
+  SwiftWitnessAccessorFixture F(Arch::AArch64);
+  auto &Body = F.Accessor.Body;
+  Body[0].Addr = 0x3024;
+  Body[1].Addr = 0x3028;
+  Body[1].Body[0].Addr = 0x302c;
+  Body[2].Addr = 0x3040;
+  Body[3].Addr = 0x3044;
+  Body[4].Addr = 0x3048;
+  HighStmt Detached;
+  Detached.Kind = StmtKind::Block;
+  Detached.Addr = 0x3050;
+  HighStmt AlienReturn;
+  AlienReturn.Kind = StmtKind::Return;
+  AlienReturn.Addr = 0x3054;
+  AlienReturn.RetVal = HighExpr::makeConst(0, 8);
+  Body.push_back(Detached);
+  Body.push_back(AlienReturn);
+
+  const auto Hint = [&] {
+    return sdk::objc_binding_detail::swiftWitnessAccessorCallHint(F.Accessor,
+                                                                  F.Image);
+  };
+  EXPECT_TRUE(Hint());
+  const std::map<va_t, const HighFunc *> Functions{
+      {F.Accessor.Entry, &F.Accessor}};
+  const auto Result =
+      bindObjCSourceReferences(F.Caller, F.Image, nullptr, &Functions);
+  EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  EXPECT_TRUE(Result.Dependencies.empty());
+  EXPECT_EQ(Result.SwiftWitnessCaches,
+            (std::map<va_t, va_t>{{F.Cache, F.Accessor.Entry}}));
+
+  Body[5].Addr = Body[4].Addr;
+  EXPECT_FALSE(Hint());
+  Body[5].Addr = 0x3050;
+  Body[4].Kind = StmtKind::Goto;
+  Body[4].GotoTarget = Body[5].Addr;
+  EXPECT_FALSE(Hint());
+  Body[4].Kind = StmtKind::Return;
+  F.Accessor.StructuredExceptionRegions = true;
+  EXPECT_FALSE(Hint());
+}
+
 TEST(ObjCSourceBindings, SubstringSequenceWitnessKeepsExactMetadataPair) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     SwiftWitnessAccessorFixture F(Architecture, true);
@@ -1302,6 +1346,134 @@ TEST(ObjCSourceBindings, SubstringSequenceWitnessKeepsExactMetadataPair) {
     EXPECT_FALSE(sdk::objc_binding_detail::swiftWitnessAccessorCallHint(
         F.Accessor, F.Image));
   }
+}
+
+TEST(ObjCSourceBindings, LocalWitnessRequiresMatchingExportedNominalType) {
+  constexpr va_t Conformance = 0x5020;
+  constexpr va_t Metadata = 0x6020;
+  constexpr va_t NominalDescriptor = 0x7020;
+  auto Fixture = [&] {
+    SwiftWitnessAccessorFixture F(Arch::AArch64);
+    const auto AddReadOnly = [&](va_t Base) {
+      Segment Mapping;
+      Mapping.Name = "__const";
+      Mapping.VA = Mapping.FileOff = Base;
+      Mapping.Size = Mapping.FileSz = 0x100;
+      Mapping.Flags = SegmentFlags::Readable;
+      Mapping.ReadOnlyAfterRelocations = true;
+      Mapping.Data.resize(0x100);
+      F.Image.Segments.push_back(std::move(Mapping));
+      Section Data;
+      Data.Name = Data.SegmentName = "__const";
+      Data.VA = Data.FileOff = Base;
+      Data.Size = Data.FileSz = 0x100;
+      Data.Flags = SegmentFlags::Readable;
+      F.Image.Sections.push_back(std::move(Data));
+    };
+    AddReadOnly(0x5000);
+    AddReadOnly(0x6000);
+    AddReadOnly(0x7000);
+    constexpr llvm::StringLiteral ConformanceName =
+        "_$s3WMF12RequestErrorOs0C0AAMc";
+    constexpr llvm::StringLiteral MetadataName = "_$s3WMF12RequestErrorON";
+    constexpr llvm::StringLiteral NominalName = "_$s3WMF12RequestErrorOMn";
+    F.Image.Symbols.push_back(
+        {ConformanceName.str(), Conformance, 0x40, false});
+    F.Image.Symbols.push_back({MetadataName.str(), Metadata, 0x20, false});
+    F.Image.Symbols.push_back(
+        {NominalName.str(), NominalDescriptor, 0x40, false});
+    F.Image.Exports.push_back({ConformanceName.str(), 0, Conformance});
+    F.Image.Exports.push_back({MetadataName.str(), 0, Metadata});
+    F.Image.Exports.push_back({NominalName.str(), 0, NominalDescriptor});
+    llvm::support::endian::write64le(F.Image.Segments[3].Data.data() + 0x20,
+                                     0x201);
+    llvm::support::endian::write64le(F.Image.Segments[3].Data.data() + 0x28,
+                                     NominalDescriptor);
+    F.Image.DataPtrRelocSlots.insert(Metadata + 8);
+    F.Image.DataPtrRelocTargetOwners[Metadata + 8] = 0x7000;
+    F.Image.MachOResolvedChainedPointerSlots.insert(Metadata + 8);
+    F.WitnessCall->Operands[0] = HighExpr::makeConst(
+        Conformance, 8, ConstantAddressProvenance::DataAddress);
+    F.WitnessCall->Operands[1] = HighExpr::makeConst(
+        Metadata, 8, ConstantAddressProvenance::DataAddress);
+    return F;
+  };
+  auto F = Fixture();
+  std::array<std::string, 2> Globals;
+  const auto Cache = sdk::objc_binding_detail::swiftWitnessCacheAddressHint(
+      F.Accessor, F.Image, F.Cache, &Globals);
+  ASSERT_TRUE(Cache);
+  EXPECT_EQ(Globals[0], "$s3WMF12RequestErrorOs0C0AAMc");
+  EXPECT_EQ(Globals[1], "$s3WMF12RequestErrorON");
+  const std::map<va_t, const HighFunc *> Functions{
+      {F.Accessor.Entry, &F.Accessor}};
+  const auto Result =
+      bindObjCSourceReferences(F.Caller, F.Image, nullptr, &Functions);
+  EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  EXPECT_EQ(Result.SwiftWitnessCaches,
+            (std::map<va_t, va_t>{{F.Cache, F.Accessor.Entry}}));
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCSwiftWitnessCacheHelpers(
+      F.Image, Result.SwiftWitnessCaches, Functions, Helpers);
+  EXPECT_NE(Source.find("__asm__(\"_$s3WMF12RequestErrorOs0C0AAMc\")"),
+            std::string::npos);
+  EXPECT_NE(Source.find("__asm__(\"_$s3WMF12RequestErrorON\")"),
+            std::string::npos);
+
+  HighFunc Direct;
+  Direct.Entry = 0x3040;
+  Direct.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeConst(Conformance, 8,
+                                      ConstantAddressProvenance::DataAddress);
+  Direct.Body = {Return};
+  const auto Bound = bindObjCSourceReferences(Direct, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.SwiftConformanceDescriptors,
+            (std::map<va_t, std::string>{
+                {Conformance, "_$s3WMF12RequestErrorOs0C0AAMc"}}));
+  const auto Descriptor = Bound.Function.Body[0].RetVal;
+  ASSERT_TRUE(Descriptor->SourceCallHint);
+  EXPECT_EQ(Descriptor->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeSwiftConformanceDescriptorAddress);
+  EXPECT_TRUE(objcSourceCallBound(*Descriptor, F.Image, {}));
+  Helpers.clear();
+  const auto DescriptorSource = renderObjCSwiftConformanceDescriptorHelpers(
+      F.Image, Bound.SwiftConformanceDescriptors, Helpers);
+  EXPECT_NE(
+      DescriptorSource.find("neverd_swift_conformance_descriptor_5020_address"),
+      std::string::npos);
+  EXPECT_NE(
+      DescriptorSource.find("__asm__(\"_$s3WMF12RequestErrorOs0C0AAMc\")"),
+      std::string::npos);
+  Direct.Body[0].RetVal->ConstProvenance = ConstantAddressProvenance::Scalar;
+  EXPECT_TRUE(bindObjCSourceReferences(Direct, F.Image)
+                  .SwiftConformanceDescriptors.empty());
+  F.Image.Exports.erase(F.Image.Exports.begin());
+  EXPECT_FALSE(objcSourceCallBound(*Descriptor, F.Image, {}));
+  EXPECT_THROW(renderObjCSwiftConformanceDescriptorHelpers(
+                   F.Image, Bound.SwiftConformanceDescriptors, Helpers),
+               std::runtime_error);
+
+  auto WrongType = Fixture();
+  WrongType.Image.Symbols[2].Name = "_$s3WMF12DifferentErrorOs0C0AAMc";
+  WrongType.Image.Exports[0].Name = WrongType.Image.Symbols[2].Name;
+  EXPECT_FALSE(sdk::objc_binding_detail::swiftWitnessCacheAddressHint(
+      WrongType.Accessor, WrongType.Image, WrongType.Cache));
+  auto Unexported = Fixture();
+  Unexported.Image.Exports.erase(Unexported.Image.Exports.begin());
+  EXPECT_FALSE(sdk::objc_binding_detail::swiftWitnessCacheAddressHint(
+      Unexported.Accessor, Unexported.Image, Unexported.Cache));
+  auto Unproven = Fixture();
+  Unproven.WitnessCall->Operands[0]->ConstProvenance =
+      ConstantAddressProvenance::Scalar;
+  EXPECT_FALSE(sdk::objc_binding_detail::swiftWitnessCacheAddressHint(
+      Unproven.Accessor, Unproven.Image, Unproven.Cache));
+  auto WrongOwner = Fixture();
+  WrongOwner.WitnessCall->Operands[0]->AddressOwnerVA = Conformance - 8;
+  EXPECT_FALSE(sdk::objc_binding_detail::swiftWitnessCacheAddressHint(
+      WrongOwner.Accessor, WrongOwner.Image, WrongOwner.Cache));
 }
 
 TEST(ObjCSourceBindings, SwiftWitnessAccessorRejectsIncompleteOrStaleEvidence) {

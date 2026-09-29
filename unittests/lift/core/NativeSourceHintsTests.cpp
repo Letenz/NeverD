@@ -4069,8 +4069,7 @@ TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
   EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
 
   auto Overlap = Fixture;
-  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] =
-      NdVar::cst(0, 8);
+  Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] = NdVar::cst(0, 8);
   EXPECT_FALSE(Overlap.inferVoid(Error));
 
   auto Forged = Fixture;
@@ -4635,7 +4634,7 @@ TEST(NativeSourceHints, FloatingReturnPathsRequireCompleteDefinedLanes) {
     }
 }
 
-TEST(NativeSourceHints, FloatingParametersRequireBoundedScalarEntryBytes) {
+TEST(NativeSourceHints, FloatingParametersRequireProvenEntryBytes) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
       NativeFloatingFixture Fixture(Architecture, 8, true);
@@ -4667,6 +4666,15 @@ TEST(NativeSourceHints, FloatingParametersRequireBoundedScalarEntryBytes) {
         break;
       }
       std::string Error;
+      if (Architecture == Arch::AArch64 && Mutation == 0) {
+        const auto Hint = Fixture.infer(Error);
+        ASSERT_TRUE(Hint) << Error;
+        ASSERT_FALSE(Hint->Parameters.empty());
+        EXPECT_EQ(Hint->Parameters[0].Type->SourceName,
+                  kSourceAArch64Vector128CType);
+        EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, 16U);
+        continue;
+      }
       EXPECT_FALSE(Fixture.infer(Error)) << Mutation << ": " << Error;
     }
 }
