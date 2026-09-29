@@ -379,6 +379,10 @@ struct MedFunc {
   /// scalar FP return type so LLVM lowers it to st0 (instead of the XMM0 vector
   /// return used by clang's internal convention for static functions).
   bool FPReturnViaX87 = false;
+  /// Bytes of the result every return path defines when that is fewer than
+  /// the return register holds (a `bool` left in AL over an undefined RAX);
+  /// 0 otherwise.  The bytes above belong to no result.
+  uint16_t DefinedReturnBytes = 0;
 
   /// Every reachable path is proven to terminate without returning.  This is
   /// derived from explicit architectural traps and no-return callees, never

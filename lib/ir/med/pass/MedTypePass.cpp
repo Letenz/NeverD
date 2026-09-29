@@ -338,9 +338,75 @@ intRetEffWidth(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   return intRetEffWidthRec(Defs, PhiDefs, V, Depth, Memo);
 }
 
+/// True when \p V overlaps a register the calling convention passes in.
+static bool overlapsParameterRegister(const MedFunc &Func, const MedVar &V) {
+  for (const MedVar &P : Func.Params)
+    if (P.Kind == MedVar::Reg && P.Size != 0 && P.RegOff < V.RegOff + V.Size &&
+        V.RegOff < P.RegOff + P.Size)
+      return true;
+  return false;
+}
+
+/// Low bytes of \p V this function defines on every path.  The bytes above
+/// them come from the entry value of a register that is not a parameter, so
+/// the caller never gave them a meaning: after `mov al, 1; ret` only AL of RAX
+/// is defined.  Anything else counts as fully defined.
+static uint16_t definedLowBytesRec(
+    const std::map<std::pair<int, int>, const MedOp *> &Defs,
+    const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
+    const MedFunc &Func, const MedVar &V, int Depth,
+    std::map<std::pair<int, int>, uint16_t> &Memo) {
+  if (V.Size == 0 || V.isConst() || Depth > 16)
+    return V.Size;
+  if (V.Kind == MedVar::Reg && V.SSAVer == 0)
+    return overlapsParameterRegister(Func, V) ? V.Size : 0;
+  const std::pair<int, int> Key{V.Id, V.SSAVer};
+  if (auto It = Memo.find(Key); It != Memo.end())
+    return It->second;
+  // A PHI cycle defines what its other arms define.
+  Memo[Key] = V.Size;
+  uint16_t Result = V.Size;
+  if (auto OpIt = Defs.find(Key); OpIt != Defs.end()) {
+    const MedOp &D = *OpIt->second;
+    if (D.Opcode == NdOp::COPY && D.NumInputs == 1 &&
+        D.Inputs[0].Size == V.Size) {
+      Result =
+          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+    } else if (D.Opcode == NdOp::CONCAT && D.NumInputs == 2 &&
+               D.Inputs[0].Size + D.Inputs[1].Size == V.Size) {
+      const MedVar &Hi = D.Inputs[0];
+      const MedVar &Lo = D.Inputs[1];
+      const uint16_t LoDefined =
+          definedLowBytesRec(Defs, PhiDefs, Func, Lo, Depth + 1, Memo);
+      Result = LoDefined < Lo.Size
+                   ? LoDefined
+                   : Lo.Size + definedLowBytesRec(Defs, PhiDefs, Func, Hi,
+                                                  Depth + 1, Memo);
+    } else if (D.Opcode == NdOp::SUBBYTES && D.NumInputs == 2 &&
+               D.Inputs[1].isConst()) {
+      const uint64_t Offset = D.Inputs[1].ConstVal;
+      const uint16_t SourceDefined =
+          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+      Result = SourceDefined > Offset
+                   ? static_cast<uint16_t>(
+                         std::min<uint64_t>(SourceDefined - Offset, V.Size))
+                   : 0;
+    }
+  } else if (auto PhiIt = PhiDefs.find(Key); PhiIt != PhiDefs.end()) {
+    for (const auto &Arg : PhiIt->second->Args)
+      Result =
+          std::min(Result, definedLowBytesRec(Defs, PhiDefs, Func, Arg.second,
+                                              Depth + 1, Memo));
+  }
+  Memo[Key] = Result;
+  return Result;
+}
+
 static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
-                               Arch TheArch, bool &ReturnViaX87) {
+                               Arch TheArch, bool &ReturnViaX87,
+                               uint16_t &DefinedReturnBytes) {
   ReturnViaX87 = false;
+  DefinedReturnBytes = 0;
   uint16_t DefaultSize = TRI.PointerSize > 0 ? TRI.PointerSize : 4;
 
   // The epilogue register-restore filter below applies to x86/x86-64: a `pop`
@@ -534,6 +600,28 @@ static TypeRef inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI,
                   : BestInt->Output.Size;
   if (BestIntPhiWidth > IntSize)
     IntSize = BestIntPhiWidth;
+  // A path that defines only the low bytes of the result over an undefined
+  // entry value (`mov al, 1; ret`) bounds it: the declared type is no wider
+  // than what every path defines, as a compiler returning `bool` guarantees.
+  std::map<std::pair<int, int>, uint16_t> DefinedMemo;
+  uint16_t DefinedCap = 0;
+  for (const auto &Blk : Func.Blocks)
+    for (const auto &Op : Blk.Ops) {
+      if (Op.Opcode != NdOp::RETURN || Op.NumInputs == 0 ||
+          Op.Inputs[0].isConst() || Op.Inputs[0].Size == 0)
+        continue;
+      const uint16_t Defined =
+          definedLowBytesRec(Defs, PhiDefs, Func, Op.Inputs[0], 0, DefinedMemo);
+      if (Defined != 0 && Defined < Op.Inputs[0].Size)
+        DefinedCap = DefinedCap ? std::min(DefinedCap, Defined) : Defined;
+    }
+  if (DefinedCap) {
+    const uint16_t Cap = DefinedCap >= 4 ? 4 : DefinedCap >= 2 ? 2 : 1;
+    if (!IntSize || Cap < IntSize) {
+      IntSize = Cap;
+      DefinedReturnBytes = Cap;
+    }
+  }
   if (IntSize)
     return NdType::makeInt(IntSize);
   return NdType::makeInt(DefaultSize);
@@ -693,7 +781,8 @@ static void inferLocalTypes(MedFunc &Func) {
 void inferMedTypes(MedFunc &Func, Arch TheArch) {
   const auto &TRI = getTargetRegInfo(TheArch);
   bool ReturnViaX87 = false;
-  Func.ReturnType = inferReturnType(Func, TRI, TheArch, ReturnViaX87);
+  Func.ReturnType = inferReturnType(Func, TRI, TheArch, ReturnViaX87,
+                                    Func.DefinedReturnBytes);
   Func.FPReturnViaX87 = ReturnViaX87;
   inferParamTypes(Func, TRI);
   inferLocalTypes(Func);
@@ -921,6 +1010,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
   Func.Params = std::move(BoundParams);
   Func.TypedParams = std::move(BoundTypes);
   Func.ReturnType = Hint.ReturnType;
+  Func.DefinedReturnBytes = 0;
   Func.SourceTypeHint = std::move(Hint);
   Func.SourceParametersBound = true;
   Func.FPReturnViaX87 = false;
