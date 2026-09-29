@@ -154,7 +154,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-建置時簽名庫安裝到 `build/bin/signatures/`。`sigs --auto` 依格式、架構、位寬選擇匹配庫集。若 PE 檔的 Rich 標頭指出其連結器所屬的 Visual Studio 版本，則只載入該版本的 `vs<year>.pat`，以及不屬於任何版本的庫。`--sig-base <dir>` 以相同方式從另一個簽名目錄樹選擇。
+建置時簽名庫安裝到 `build/bin/signatures/`。`sigs --auto` 依格式、架構、位寬選擇匹配庫集。若 PE 檔的 Rich 標頭指出其連結器所屬的 Visual Studio 版本，則只載入該版本的 `vs<year>.pat`，以及不屬於任何版本的庫。`--sig-base <dir>` 以相同方式從另一個簽名目錄樹選擇。 1 MiB 以上的模式檔只解析一次：其模組保存在使用者快取目錄下的 `neverd/signatures`，之後載入時直接對映。`NEVERD_SIGNATURE_CACHE` 可指定其他目錄，設為 `off` 則關閉快取。
 
 ## 建置
 

@@ -1,0 +1,56 @@
+//===- SignatureCache.def - Constants of the signature cache ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The constants of SignatureCache: where it keeps its entries, which files
+/// it keeps, and the format of an entry.  Define the macros a consumer reads
+/// before including this file; the others expand to nothing.
+///
+///   NEVERD_SIGNATURE_CACHE_STRING(Name, Value)  a string
+///   NEVERD_SIGNATURE_CACHE_VALUE(Name, Value)   a number
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SIGNATURE_CACHE_STRING
+#define NEVERD_SIGNATURE_CACHE_STRING(Name, Value)
+#endif
+#ifndef NEVERD_SIGNATURE_CACHE_VALUE
+#define NEVERD_SIGNATURE_CACHE_VALUE(Name, Value)
+#endif
+
+// Where the cache is.  The environment variable names its directory, or, set
+// to the disabling value, turns the cache off; by default it is the
+// directories below in the user's cache directory (XDG_CACHE_HOME or
+// ~/.cache, ~/Library/Caches, %LOCALAPPDATA%).
+NEVERD_SIGNATURE_CACHE_STRING(EnvironmentVariable, "NEVERD_SIGNATURE_CACHE")
+NEVERD_SIGNATURE_CACHE_STRING(DisabledValue, "off")
+NEVERD_SIGNATURE_CACHE_STRING(VendorDirectory, "neverd")
+NEVERD_SIGNATURE_CACHE_STRING(CacheDirectory, "signatures")
+
+// An entry is named after the hash of its source's path, so a changed source
+// replaces its entry rather than adding one.  A smaller source parses faster
+// than its entry would load, so the cache keeps none of them.
+NEVERD_SIGNATURE_CACHE_STRING(EntryExtension, ".nsigcache")
+NEVERD_SIGNATURE_CACHE_VALUE(DefaultMinSourceBytes, 1024 * 1024)
+
+// An entry opens with the magic, the format version and a marker of the byte
+// order that wrote it.  Bump the format version whenever an entry is laid out
+// differently or the parser reads any line differently: an entry of another
+// format version is a miss.  Its records are aligned to the alignment.
+NEVERD_SIGNATURE_CACHE_STRING(EntryMagic, "NDSIGCCH")
+NEVERD_SIGNATURE_CACHE_VALUE(EntryFormatVersion, 1)
+NEVERD_SIGNATURE_CACHE_VALUE(EntryByteOrderMark, 0x01020304)
+NEVERD_SIGNATURE_CACHE_VALUE(EntryAlignment, 8)
+
+// An entry's payload is hashed in blocks of this many bytes, so that loading
+// checks the blocks of every entry at once.  The records are turned into
+// modules and names in runs of these many, again at once.
+NEVERD_SIGNATURE_CACHE_VALUE(EntryBlockBytes, 1024 * 1024)
+NEVERD_SIGNATURE_CACHE_VALUE(ModulesPerRun, 16384)
+NEVERD_SIGNATURE_CACHE_VALUE(NamesPerRun, 32768)
+
+#undef NEVERD_SIGNATURE_CACHE_STRING
+#undef NEVERD_SIGNATURE_CACHE_VALUE

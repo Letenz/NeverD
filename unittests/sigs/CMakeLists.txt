@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDSignatureTests
   PatternGeneratorTests.cpp
   PatternParserTests.cpp
   RichHeaderTests.cpp
+  SignatureCacheTests.cpp
   SignatureDBTests.cpp
   SignatureMatcherTests.cpp
 
