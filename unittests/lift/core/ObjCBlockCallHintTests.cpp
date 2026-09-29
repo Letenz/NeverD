@@ -985,6 +985,77 @@ TEST(ObjCBlockCallHints, BoundReleaseProvesDiscardedResultAcrossJoin) {
       buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls).empty());
 }
 
+TEST(ObjCBlockCallHints, VoidBlockEntryDiscardsInvokeResultAcrossReturn) {
+  Fixture F(Arch::AArch64);
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  F.Entry.ReturnType = NdType::makeVoid();
+  F.Entry.Parameters = {{"block", Pointer},
+                        {"item", Pointer},
+                        {"callback", Pointer},
+                        {"context", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  auto &Entry = F.Low.Blocks[0];
+  Entry.Ops.back() = op(NdOp::BRANCH, {}, {NdVar::cst(0x1020, 8)}, 0x1010);
+  Entry.Succs = {1};
+  F.Low.Blocks.emplace_back();
+  auto &Exit = F.Low.Blocks[1];
+  Exit.Id = 1;
+  Exit.StartAddr = 0x1020;
+  Exit.EndAddr = 0x1024;
+  Exit.Preds = {0};
+  Exit.Ops = {op(NdOp::RETURN, {}, {NdVar::reg(F.R0, 8)}, 0x1020)};
+  const std::map<va_t, SourceCallTypeHint> Calls;
+
+  const auto Hints = buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.at(0x100c).Signature.ReturnType->Kind, NdTypeKind::Void);
+
+  F.Entry.ReturnType = NdType::makeInt(8, false);
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls).empty());
+  F.Entry.ReturnType = NdType::makeVoid();
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls).empty());
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  Exit.Ops.insert(Exit.Ops.begin(), op(NdOp::COPY, NdVar::tmp(2, 8),
+                                       {NdVar::reg(F.R0, 8)}, 0x101c));
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls).empty());
+  Exit.Ops.front().Inputs[0] =
+      NdVar::reg(getTargetRegInfo(F.Image.Arch).FPReturnReg, 8);
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &Calls).empty());
+
+  SourceCallTypeHint Release;
+  Release.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Release.TargetName = "objc_release";
+  Release.Signature.ReturnType = NdType::makeVoid();
+  Release.Signature.Parameters = {{"object", Pointer}};
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(Release.Signature, F.Image.Arch, Error))
+      << Error;
+  Release.Signature.Parameters[0].Location.RegisterOffset = F.R1;
+  const std::map<va_t, SourceCallTypeHint> ReleaseCall{{0x1020, Release}};
+  Exit.Ops = {op(NdOp::COPY, NdVar::reg(F.R1, 8), {NdVar::cst(0, 8)}, 0x101c),
+              op(NdOp::CALL, {}, {NdVar::cst(0x3000, 8)}, 0x1020),
+              op(NdOp::RETURN, {}, {NdVar::reg(F.R0, 8)}, 0x1024)};
+  const auto Released =
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &ReleaseCall);
+  ASSERT_EQ(Released.size(), 1U);
+  EXPECT_EQ(Released.at(0x100c).Signature.ReturnType->Kind, NdTypeKind::Void);
+  Exit.Ops.erase(Exit.Ops.begin());
+  EXPECT_TRUE(
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, &ReleaseCall).empty());
+}
+
 TEST(ObjCBlockCallHints, BoundIntegerMessageResultFeedsVoidBlockArgument) {
   Fixture F(Arch::AArch64);
   auto Pointer = NdType::makePtr(NdType::makeVoid());

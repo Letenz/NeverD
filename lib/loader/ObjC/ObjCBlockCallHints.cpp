@@ -431,6 +431,14 @@ bool discardedResultAcrossCFG(
       TRI.IntReturnRegs.size() < 2 || TRI.FPReturnRegs.empty() ||
       Function.Blocks.size() > 64)
     return false;
+  std::string EntryError;
+  const bool VoidBlockEntry =
+      EntrySignature &&
+      EntrySignature->Origin ==
+          SourceFunctionTypeHint::OriginKind::BlockRuntime &&
+      EntrySignature->HasExplicitABI && EntrySignature->ReturnType &&
+      EntrySignature->ReturnType->Kind == NdTypeKind::Void &&
+      validateSourceABI(*EntrySignature, EntryError);
   std::map<int, const LowBlock *> ById;
   const LowBlock *CallBlock = nullptr;
   size_t CallIndex = 0;
@@ -467,9 +475,20 @@ bool discardedResultAcrossCFG(
       if (!Budget--)
         return false;
       const auto &Op = State.Block->Ops[I];
-      if (Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
-          Op.Opcode == NdOp::RETURN)
+      if (Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR)
         return false;
+      if (Op.Opcode == NdOp::RETURN) {
+        // An AArch64 return can carry the stale X0 machine value even when a
+        // descriptor proves this enclosing block has no source result. The
+        // preceding path still must not have read any invoke-result carrier.
+        if (!VoidBlockEntry || Op.NumInputs > 1 ||
+            (Op.NumInputs == 1 && (!Op.Inputs[0].isReg() ||
+                                   Op.Inputs[0].Offset != TRI.IntReturnReg ||
+                                   !width(Op.Inputs[0].Size))))
+          return false;
+        Released = true;
+        break;
+      }
       for (unsigned J = 0; J < Op.NumInputs; ++J) {
         const auto &Input = Op.Inputs[J];
         if ((State.Integer0Live && overlaps(Input, TRI.IntReturnReg, 8)) ||
@@ -491,6 +510,12 @@ bool discardedResultAcrossCFG(
         }
         if (Op.Opcode == NdOp::CALL &&
             boundReleaseAwayFromResult(BoundCalls, Op.Addr, Image.Arch, TRI))
+          continue;
+        if (VoidBlockEntry && Op.Opcode == NdOp::CALL && !State.Integer1Live &&
+            boundReleaseRegister(BoundCalls, Op.Addr, Image.Arch) ==
+                TRI.IntReturnRegs[1])
+          // X1 was overwritten after the invoke. An authenticated release_x1
+          // therefore consumes the new object, not a second result carrier.
           continue;
         if (Op.Opcode == NdOp::CALL && !State.Integer0Live &&
             (boundVoidObjCMessage(BoundCalls, Op.Addr, Image.Arch) ||
