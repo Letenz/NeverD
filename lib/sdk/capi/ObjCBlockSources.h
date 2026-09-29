@@ -779,8 +779,7 @@ noEscape(const ObjCBlockSourceContext &Source,
         const auto IndependentOutParameter = [&] {
           if (!AllowIndependentOutParameterStores || !S.StoreAddr ||
               S.StoreAddr->Kind != ExprKind::Var || !S.StoreAddr->Type ||
-              S.StoreAddr->Type->Kind != NdTypeKind::Ptr ||
-              !F.SourceTypeHint)
+              S.StoreAddr->Type->Kind != NdTypeKind::Ptr || !F.SourceTypeHint)
             return false;
           const auto &Formal = S.StoreAddr->Var;
           if (Formal.Kind != MedVar::Param || Formal.Id < 0 ||
@@ -791,8 +790,7 @@ noEscape(const ObjCBlockSourceContext &Source,
                   F.SourceTypeHint->Parameters.size())
             return false;
           const auto &Recovered = F.Params[Formal.Id].Type;
-          const auto &Declared =
-              F.SourceTypeHint->Parameters[Formal.Id].Type;
+          const auto &Declared = F.SourceTypeHint->Parameters[Formal.Id].Type;
           return Recovered && Declared &&
                  equalSourceTypes(Recovered, Declared) &&
                  equalSourceTypes(S.StoreAddr->Type, Declared);
