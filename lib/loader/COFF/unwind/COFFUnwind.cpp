@@ -388,6 +388,7 @@ void parseARMExceptions(const COFFObjectFile &Obj, BinaryImage &Img,
         "truncated or misaligned ARM exception directory");
   }
   const auto *RFBytes = reinterpret_cast<const uint8_t *>(ExcPtr);
+  Img.ExceptionMetadata.Functions.reserve(Count);
   const auto FunctionSymbols = indexFunctionSymbols(Img);
   std::set<va_t> Seen;
   for (const auto &Entry : FunctionSymbols)

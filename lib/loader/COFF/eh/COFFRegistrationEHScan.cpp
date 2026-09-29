@@ -9,10 +9,12 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -166,9 +168,12 @@ resolvePrologueHelperCallers(const BinaryImage &Img,
       continue;
     const uint8_t *Data = Seg.Data.data();
     const size_t Size = Seg.Data.size();
-    for (size_t I = 0; I + 5 <= Size; ++I) {
-      if (Data[I] != 0xE8)
-        continue;
+    for (size_t I = 0; I + x86::kCallRel32Len <= Size; ++I) {
+      const void *Call = std::memchr(Data + I, x86::kCallRel32,
+                                     Size - x86::kCallRel32Len + 1 - I);
+      if (!Call)
+        break;
+      I = static_cast<size_t>(static_cast<const uint8_t *>(Call) - Data);
       const va_t CallVA = Seg.VA + I;
       // The helper's own entry usually carries no symbol, so the range the
       // install was attributed to starts at whatever function precedes it.
@@ -231,8 +236,11 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
     const uint8_t *Data = Seg.Data.data();
     const size_t Size = Seg.Data.size();
     for (size_t I = 0; I < Size; ++I) {
-      if (Data[I] != 0x64)
-        continue;
+      const void *Prefix =
+          std::memchr(Data + I, x86::kFSSegmentPrefix, Size - I);
+      if (!Prefix)
+        break;
+      I = static_cast<size_t>(static_cast<const uint8_t *>(Prefix) - Data);
       if (chainHeadReadLength(Data + I, Size - I) == 0)
         continue;
 

@@ -41,6 +41,7 @@ constexpr uint8_t kInt3 = 0xCC;
 constexpr uint8_t kNop = 0x90;
 constexpr uint8_t kJmpIndirectOp = 0xFF;
 constexpr uint8_t kJmpIndirectModRM = 0x25;
+constexpr uint8_t kFSSegmentPrefix = 0x64;
 
 // --- Instruction lengths ---
 constexpr size_t kRel32DispOffset = 1;
