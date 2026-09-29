@@ -46,7 +46,8 @@ cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
-build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
+  --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
@@ -54,7 +55,7 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRUndefinedIndependenceTests` は、完全な非巡回 LowIR グラフについて二つの実行の独立性を検証します。通常の入口入力は共有し、アーキテクチャ上未定義の値を新たに生成するたびに、コピー、重複書き込み、スピルと再ロードを通じた相関を保持します。制御条件は経路の仮定を追加する前に検査します。証明書には `Complete` の効果メタデータと、各命令の完全な境界および正確な操作ダイジェストとの対応が必要です。証拠不足、到達可能なループ、呼び出し、未知のエイリアス、予算切れでは証明書を拒否します。結果は明示的な観測対象と障害を起こさないフレームの契約に限られ、ネイティブコードから C への完全な等価性証明ではありません。
 
-`NeverDOriginalBinaryUndefinedIndependenceTests` は独立に作成した固定マッピングの x64 バイト列で、元の分岐の完全収集、正確なバイト列への結合、入口 RSP／戻りアドレススロットの保持、フレームとイメージの分離条件の充足可能性、失敗時に残余コードを返さないことを検査します。命令の欠落や重複、静的に通らない未監査経路、呼び出し、間接転送、ループ、実行設定／契約の不一致、メタデータ／収集予算も対象です。この任意ゲートは例外ディスパッチ、CET 有効時の実行、ネイティブコードから C への等価性を認証せず、通常の復元は別に利用できます。
+`NeverDOriginalBinaryUndefinedIndependenceTests` は独立に作成した固定マッピングの x64 バイト列で、物理的な CALL/RET、変更された戻り先、有限な間接ターゲットの網羅、メモリからの不変値の読み込みを検査します。同じターゲットが直接分岐の完全収集、バイト列・効果・マッピング・読み込み証拠への正確な結合、外側リターン時の入口 RSP と戻りスロットの保持、フレームとイメージの分離条件を検査します。命令の欠落・重複、未実行経路の未監査効果、直接制御の構造的ループ、不完全なターゲット列挙、設定・契約の不一致、予算切れでは証明書も残余コードも返しません。成功には全実行可能経路の完了が必要です。この任意ゲートはループ不変条件、例外ディスパッチ、CET 有効実行、ネイティブコードから C への等価性を認証せず、通常の復元は別に利用できます。
 
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
 

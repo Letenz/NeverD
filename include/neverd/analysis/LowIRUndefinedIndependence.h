@@ -84,6 +84,9 @@ struct LowIRIndependenceLimits {
   uint32_t MaxProducers = 4096;
   uint32_t MaxFrameBytes = 4096;
   uint32_t MaxSolverQueries = 4096;
+  /// Complete native target sets; solver enumeration requires a final
+  /// no-more-values query. Partial target sets never authorize a proof.
+  uint32_t MaxIndirectTargets = 16;
   /// Bounds checked equalities and the total bytes snapshotted for return
   /// preservation contracts. Each preserved item is checked in both executions.
   uint64_t MaxObservations = 65536;
@@ -108,13 +111,20 @@ enum class LowIRIndependenceStatus : uint8_t {
   ContractViolation,
 };
 
-enum class LowIRIndependenceScope : uint8_t { CompleteAcyclicLowIR };
+enum class LowIRIndependenceScope : uint8_t {
+  CompleteAcyclicLowIR,
+  /// Original native instructions with physical near-call/return expansion.
+  /// Every feasible path must finish; an exhausted prefix proves nothing.
+  CompleteFiniteNativePaths,
+};
 
 struct LowIRIndependenceCertificate {
   LowIRIndependenceScope Scope = LowIRIndependenceScope::CompleteAcyclicLowIR;
   /// SHA256 of the checked operations, CFG, boundaries, sidecars, contract and
   /// proof limits. Recheck the supplied inputs before reusing a certificate;
   /// this digest detects stale inputs, not an untrusted producer of proofs.
+  /// Native scope binds the expanded execution trace; recheck its original
+  /// image through the native driver rather than the static LowIR API.
   std::string InputDigest;
   std::vector<LowIRUndefinedInstruction> Instructions;
   LowIRIndependenceContract Contract;

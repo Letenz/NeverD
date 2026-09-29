@@ -43,7 +43,8 @@ cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
-build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
+  --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
@@ -51,7 +52,7 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRUndefinedIndependenceTests` 检查完整无环 LowIR 图的两次执行独立性。两侧共享普通入口输入；每次新产生的架构未定义值在复制、重叠写入、溢出保存和重载中保持来源关联。控制谓词先于路径假设接受检查。证书要求 `Complete` 效果元数据，并精确绑定每条指令的完整边界和操作摘要。缺少证据、可达循环、调用、未知别名或预算耗尽都会拒绝证书。结论受显式观察项和无故障栈帧契约限制，不是原生代码到 C 的完整等价证明。
 
-`NeverDOriginalBinaryUndefinedIndependenceTests` 使用独立编写、固定映射的 x64 字节，检查原始分支完整收集、精确字节绑定、入口 RSP／返回地址槽强制保持、栈帧与映像分离前提的可满足性，以及失败时不返回残余代码。覆盖缺失或重叠指令、静态不走但未审计的分支、调用、间接转移、循环、执行配置／契约不匹配及元数据／收集预算。此可选门禁不认证异常分派、启用 CET 的执行或原生代码到 C 的等价性；普通恢复仍独立可用。
+`NeverDOriginalBinaryUndefinedIndependenceTests` 使用独立编写、固定映射的 x64 字节，验证物理原生 CALL/RET、改写的返回目标、有限间接目标全集和不可变加载。同一测试目标还检查直接分支完整收集、精确字节／效果／映射／读取见证绑定、外层返回时入口 RSP 及返回地址槽保持，以及栈帧与映像分离前提的可满足性。缺失或重叠指令、未审计的未执行分支、直接结构性循环、不完整目标枚举、执行配置／契约不符和预算耗尽均须拒绝，且不产生证书或残余代码。成功要求每条可行原生路径完整结束。此可选门禁不认证循环不变量、异常分派、启用 CET 的执行或原生代码到 C 的等价性；普通恢复仍独立可用。
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 

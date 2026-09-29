@@ -9,6 +9,7 @@
 #include "ControlDiscovery.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
+#include "NativeStackControl.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Regs.h"
@@ -1551,6 +1552,18 @@ bool Specializer::evaluate(int Id) {
             InputBlock, LowInstructionBoundaryRequirement::Required))
       return fail(SpecializationStatus::InvalidInput,
                   llvm::toString(std::move(Error)));
+    const auto UsesReservedTemporary = [&](const NdVar &V) {
+      return V.isTemp() &&
+             (V.Offset >= DispatchTemp || V.Size > DispatchTemp - V.Offset);
+    };
+    // Check the original operands before expansion introduces its own scratch
+    // values. This also gives every reserved range the same input diagnostic.
+    for (const auto &Op : Instruction.Ops)
+      if (UsesReservedTemporary(Op.Output) ||
+          std::any_of(Op.Inputs, Op.Inputs + Op.NumInputs,
+                      UsesReservedTemporary))
+        return fail(SpecializationStatus::InvalidInput,
+                    "native temporary overlaps the reserved dispatch range");
     std::vector<LowOp> Operations = Instruction.Ops;
     bool ExpandedReturn = false;
     bool ExpandedIndirectCall = false;
@@ -1573,137 +1586,70 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::Unsupported,
                     "native stack control has no exact entry-relative stack "
                     "pointer");
-      const LowOp &Control = Instruction.Ops.back();
-      const auto Make = [&](NdOp Opcode, NdVar Output,
-                            std::initializer_list<NdVar> Inputs) {
-        LowOp Op;
-        Op.Opcode = Opcode;
-        Op.Output = Output;
-        Op.Addr = Cursor.Address;
-        Op.Seq = static_cast<int>(Operations.size());
-        for (const NdVar &Input : Inputs)
-          Op.addInput(Input);
-        Operations.push_back(Op);
-      };
+      const bool IsReturn = Instruction.NativeStackControl ==
+                            SpecializationNativeStackControl::Return;
+      const NdVar Scratch =
+          NdVar::tmp(IsReturn ? NativeReturnTemp : NativeCallTargetTemp, 8);
+      const NdVar Reserved[] = {
+          NdVar::tmp(DispatchTemp, 8), NdVar::tmp(ReadAddressTemp, 8),
+          NdVar::tmp(ReadConditionTemp, 8),
+          NdVar::tmp(IsReturn ? NativeCallTargetTemp : NativeReturnTemp, 8)};
+      auto Expanded = expandNativeStackControl(
+          Instruction, Stack, Scratch,
+          IsReturn && *Displacement == 0
+              ? NativeReturnExpansion::OuterFunctionBoundary
+              : NativeReturnExpansion::InternalTransfer,
+          Reserved);
+      if (!Expanded)
+        return fail(SpecializationStatus::InvalidInput,
+                    llvm::toString(Expanded.takeError()));
+      Operations = std::move(Expanded->Ops);
+      ExpandedReturn = Expanded->ExpandedReturn;
+      ExpandedIndirectCall = Expanded->ExpandedIndirectCall;
+      NativeCallPrefixSize = Expanded->OriginalPrefixSize;
       Frame.NativeStackActive = true;
       if (Instruction.NativeStackControl ==
           SpecializationNativeStackControl::Call) {
-        const bool Direct = Control.Opcode == NdOp::CALL &&
-                            Control.NumInputs == 1 &&
-                            Control.Inputs[0].isConst();
-        const bool Indirect =
-            Control.Opcode == NdOp::INDIR_CALL && Control.NumInputs == 1 &&
-            (Control.Inputs[0].isReg() || Control.Inputs[0].isTemp());
-        if ((!Direct && !Indirect) || Control.Inputs[0].Size != 8 ||
-            !validValue(Control.Inputs[0]) || !Control.Output.isReg() ||
-            Control.Output.Size != 8 || !validValue(Control.Output) ||
-            Control.MemoryOrdering != NdMemoryOrdering::None ||
-            Control.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-            Instruction.Origin.Control != LowInstructionControl::Call)
-          return fail(SpecializationStatus::InvalidInput,
-                      "native near-call certificate does not match its LowIR");
-        NativeCallPrefixSize = Instruction.Ops.size() - 1;
-        if (Control.Inputs[0].isTemp()) {
-          if (!NativeCallPrefixSize)
-            return fail(SpecializationStatus::InvalidInput,
-                        "memory call has no explicit target load");
-          const LowOp &Load = Instruction.Ops[NativeCallPrefixSize - 1];
-          if (Load.Opcode != NdOp::LOAD || Load.Output != Control.Inputs[0] ||
-              Load.Output.Size != 8 || Load.NumInputs != 1 ||
-              Load.Inputs[0].Size != 8)
-            return fail(SpecializationStatus::InvalidInput,
-                        "memory call must consume its final eight-byte load");
-          for (size_t I = 0; I < NativeCallPrefixSize; ++I) {
-            const LowOp &Prefix = Instruction.Ops[I];
-            bool AddressOperation = false;
-            switch (Prefix.Opcode) {
-            case NdOp::COPY:
-            case NdOp::INT_ADD:
-            case NdOp::INT_SUB:
-            case NdOp::INT_MULT:
-            case NdOp::INT_ZEXT:
-            case NdOp::SUBBYTES:
-              AddressOperation = true;
-              break;
-            case NdOp::LOAD:
-              AddressOperation = I + 1 == NativeCallPrefixSize;
-              break;
-            default:
-              break;
-            }
-            if (!AddressOperation || !Prefix.Output.isTemp() ||
-                !supported(Prefix))
-              return fail(SpecializationStatus::InvalidInput,
-                          "memory call prefix is not a pure address and "
-                          "ordinary target load");
-          }
-        } else if (NativeCallPrefixSize) {
-          return fail(SpecializationStatus::InvalidInput,
-                      "direct or register call has an unexpected prefix");
-        }
-        Frame.NativeReturnSlots.insert(*Displacement - 8);
+        // Frame offsets are uint64_t modular displacements, just like the
+        // architectural stack arithmetic. Subtraction through zero is defined.
+        Frame.NativeReturnSlots.insert(*Displacement - uint64_t{8});
         if (Frame.NativeReturnSlots.size() > Options.MaxNativeReturnSlots)
           return fail(SpecializationStatus::BudgetExceeded,
                       "native return-slot context budget exhausted");
-        // Preserve the original effective-address calculation and LOAD. The
-        // target may occupy the same guest slot that the following push
-        // overwrites, or use the original RSP as an address component.
-        Operations.pop_back();
-        if (Indirect) {
-          // The architectural target is evaluated before the stack push.
-          // In particular a register operand may name the stack register.
-          ExpandedIndirectCall = true;
-          Make(NdOp::COPY, NdVar::tmp(NativeCallTargetTemp, 8),
-               {Control.Inputs[0]});
+      } else if (ExpandedReturn) {
+        const SymRef ReturnValue =
+            State.load(State.read(SymSpace::Register, Base.Offset, 8), 8);
+        auto Targets = enumerate(Ctx, Exec.pathPredicate(), {ReturnValue},
+                                 Options.MaxIndirectTargets);
+        if (Failed)
+          return false;
+        if (Targets.Status == FiniteValueStatus::Unknown)
+          return fail(SpecializationStatus::BudgetExceeded,
+                      "native return-target proof exceeded its solver budget");
+        if (Targets.Status != FiniteValueStatus::Complete ||
+            Targets.Tuples.empty()) {
+          discover(State, ReturnValue, FrameRoot);
+          return fail(
+              SpecializationStatus::UnresolvedControl,
+              "native return address is not an exact finite target set");
         }
-        Make(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(8, 8)});
-        Make(NdOp::STORE, {},
-             {Stack, NdVar::scalar(Instruction.Fallthrough.Address, 8)});
-        if (Indirect)
-          Make(NdOp::INDIR_BR, {}, {NdVar::tmp(NativeCallTargetTemp, 8)});
-        else
-          Make(NdOp::BRANCH, {}, {Control.Inputs[0]});
-      } else if (Instruction.NativeStackControl ==
-                 SpecializationNativeStackControl::Return) {
-        if (Instruction.Ops.size() != 1 || Control.Opcode != NdOp::RETURN ||
-            Control.NumInputs > 1 || !supported(Control) ||
-            Instruction.Origin.Control != LowInstructionControl::Return ||
-            (Instruction.Origin.Immediate &&
-             *Instruction.Origin.Immediate != 0))
-          return fail(SpecializationStatus::InvalidInput,
-                      "native near-return certificate does not match its "
-                      "LowIR");
-        if (*Displacement != 0) {
-          const SymRef ReturnValue =
-              State.load(State.read(SymSpace::Register, Base.Offset, 8), 8);
-          auto Targets = enumerate(Ctx, Exec.pathPredicate(), {ReturnValue},
-                                   Options.MaxIndirectTargets);
-          if (Failed)
-            return false;
-          if (Targets.Status == FiniteValueStatus::Unknown)
-            return fail(SpecializationStatus::BudgetExceeded,
-                        "native return-target proof exceeded its solver "
-                        "budget");
-          if (Targets.Status != FiniteValueStatus::Complete ||
-              Targets.Tuples.empty()) {
-            discover(State, ReturnValue, FrameRoot);
-            return fail(SpecializationStatus::UnresolvedControl,
-                        "native return address is not an exact finite target "
-                        "set");
-          }
-          Frame.NativeReturnSlots.erase(*Displacement);
-          Operations.clear();
-          ExpandedReturn = true;
-          Make(NdOp::LOAD, NdVar::tmp(NativeReturnTemp, 8), {Stack});
-          Make(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(8, 8)});
-          Make(NdOp::INDIR_BR, {}, {NdVar::tmp(NativeReturnTemp, 8)});
-        }
-        // Reaching the untouched entry return slot is an outer exit even
-        // when native code has discarded one or more intermediate frames.
-      } else {
-        return fail(SpecializationStatus::InvalidInput,
-                    "unknown native stack-control certificate");
+        Frame.NativeReturnSlots.erase(*Displacement);
       }
+      // Reaching the untouched entry return slot is an outer exit even when
+      // native code has discarded one or more intermediate frames.
+    } else if (Instruction.IsNativeCall &&
+               Instruction.Origin.Control == LowInstructionControl::None) {
+      // The architecture already emitted this call-to-fallthrough push.
+      // Validate it through the same owner without adding another push or stack
+      // context.
+      auto Expanded =
+          expandNativeStackControl(Instruction, NdVar::reg(x86reg::RSP, 8),
+                                   NdVar::tmp(NativeCallTargetTemp, 8),
+                                   NativeReturnExpansion::InternalTransfer);
+      if (!Expanded)
+        return fail(SpecializationStatus::InvalidInput,
+                    llvm::toString(Expanded.takeError()));
+      Operations = std::move(Expanded->Ops);
     }
     NativeSlice Slice{Instruction.Origin, Draft.Block.Ops.size(), 0};
     // LowIR temporary offsets are reused by each native instruction. A prior
@@ -1737,8 +1683,7 @@ bool Specializer::evaluate(int Id) {
         if (ExpandedIndirectCall && I >= NativeCallPrefixSize &&
             V == NdVar::tmp(NativeCallTargetTemp, 8))
           return false;
-        return V.isTemp() &&
-               (V.Offset >= DispatchTemp || V.Size > DispatchTemp - V.Offset);
+        return UsesReservedTemporary(V);
       };
       if (ReservedTemporary(Original.Output) ||
           std::any_of(Original.Inputs, Original.Inputs + Original.NumInputs,

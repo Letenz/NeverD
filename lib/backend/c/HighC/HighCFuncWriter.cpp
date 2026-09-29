@@ -3467,97 +3467,6 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
   Alias(Func.Body);
 }
 
-void HighCWriter::collectPostIfElseValueForward(const HighFunc &Func) {
-  auto CountName = [&](const HighExpr *E, const std::string &Name,
-                       auto &&Self) -> unsigned {
-    if (!E)
-      return 0;
-    unsigned N = 0;
-    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
-        varName(E->Var) == Name)
-      ++N;
-    for (const ExprPtr &Op : E->Operands)
-      N += Self(Op.get(), Name, Self);
-    return N;
-  };
-  auto CountStmts = [&](const std::vector<HighStmt> &Stmts,
-                        const std::string &Name, auto &&Self) -> unsigned {
-    unsigned N = 0;
-    for (const HighStmt &S : Stmts) {
-      if (Analysis.DeadStmts.count(&S) || stmtHiddenFromC(S))
-        continue;
-      forEachRhsExpr(S, [&](const ExprPtr &E) {
-        N += CountName(E.get(), Name, CountName);
-      });
-      N += Self(S.Body, Name, Self);
-      N += Self(S.ElseBody, Name, Self);
-      N += Self(S.DefaultBody, Name, Self);
-      for (const auto &C : S.Cases)
-        N += Self(C.Body, Name, Self);
-      for (const auto &Clause : S.EHClauseBodies)
-        N += Self(Clause, Name, Self);
-    }
-    return N;
-  };
-  std::function<void(const std::vector<HighStmt> &)> Walk =
-      [&](const std::vector<HighStmt> &Body) {
-        for (const HighStmt &S : Body) {
-          Walk(S.Body);
-          Walk(S.ElseBody);
-          Walk(S.DefaultBody);
-          for (const auto &C : S.Cases)
-            Walk(C.Body);
-          for (const auto &Clause : S.EHClauseBodies)
-            Walk(Clause);
-        }
-        for (size_t I = 0; I < Body.size(); ++I) {
-          const HighStmt &If = Body[I];
-          if (If.Kind != StmtKind::IfElse)
-            continue;
-          const HighStmt *Assign = nullptr;
-          for (size_t J = I + 1; J < Body.size(); ++J) {
-            const HighStmt &N = Body[J];
-            if (Analysis.DeadStmts.count(&N) || stmtHiddenFromC(N) ||
-                N.Kind == StmtKind::Nop || N.Kind == StmtKind::Block)
-              continue;
-            if (N.Kind == StmtKind::Assign && N.Dst && N.Val &&
-                (N.Dst->Kind == ExprKind::Var ||
-                 N.Dst->Kind == ExprKind::Phi) &&
-                isForwardableValueExpr(*N.Val) && !N.IsPhiCopy)
-              Assign = &N;
-            break;
-          }
-          if (!Assign)
-            continue;
-          const std::string Name = varName(Assign->Dst->Var);
-          if (Name.empty() || isReservedParamDisplayName(Name) ||
-              ValueForward.count(Name) || FieldForward.count(Name))
-            continue;
-          const unsigned ThenUses = CountStmts(If.Body, Name, CountStmts);
-          const unsigned ElseUses = CountStmts(If.ElseBody, Name, CountStmts);
-          unsigned AfterUses = 0;
-          bool LaterDef = false;
-          for (size_t J = I + 1; J < Body.size(); ++J) {
-            const HighStmt &N = Body[J];
-            if (&N == Assign || Analysis.DeadStmts.count(&N) ||
-                stmtHiddenFromC(N))
-              continue;
-            if (N.Kind == StmtKind::Assign && N.Dst &&
-                (N.Dst->Kind == ExprKind::Var ||
-                 N.Dst->Kind == ExprKind::Phi) &&
-                varName(N.Dst->Var) == Name)
-              LaterDef = true;
-            AfterUses += CountStmts({N}, Name, CountStmts);
-          }
-          if (ThenUses != 0 || ElseUses == 0 || AfterUses != 0 || LaterDef)
-            continue;
-          ValueForward[Name] = Assign->Val.get();
-          Analysis.DeadStmts.insert(Assign);
-        }
-      };
-  Walk(Func.Body);
-}
-
 namespace {
 
 bool isCallResultIdent(llvm::StringRef Name) {
@@ -4576,7 +4485,6 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   nameCxxCatchObjects(Func);
   simulateCatchReaching(Func);
   collectUnusedCallStoreAlias(Func);
-  collectPostIfElseValueForward(Func);
   collectCtorSourceNames(Func);
   collectCallResultNames(Func);
   {
