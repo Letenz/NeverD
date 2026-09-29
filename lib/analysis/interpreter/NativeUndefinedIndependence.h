@@ -9,6 +9,7 @@
 #define NEVERD_ANALYSIS_INTERPRETER_NATIVEUNDEFINEDINDEPENDENCE_H
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 namespace neverd::analysis::detail {
@@ -29,6 +30,17 @@ checkNativeUndefinedIndependence(SpecializationProvider &Provider,
                                  SpecializationCursor Entry,
                                  const LowIRIndependenceContract &Contract,
                                  const LowIRIndependenceLimits &Limits);
+
+struct NativeLowIRRefinementResult {
+  LowIRRefinementResult Proof;
+  std::vector<SpecializationInstruction> Instructions;
+  std::vector<SpecializationReadWitness> Reads;
+};
+
+NativeLowIRRefinementResult checkNativeLowIRRefinement(
+    SpecializationProvider &Provider, SpecializationCursor Entry,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits);
 
 } // namespace neverd::analysis::detail
 

@@ -349,14 +349,13 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   return Result;
 }
 namespace {
-std::string
-binaryIndependenceDigest(const BinaryImage &Image,
-                         const SpecializationOptions &Options,
-                         const LowIRIndependenceCertificate &Proof,
-                         llvm::ArrayRef<SpecializationInstruction> Instructions,
-                         llvm::ArrayRef<SpecializationReadWitness> Reads) {
+std::string binaryExecutionDigest(
+    const BinaryImage &Image, const SpecializationOptions &Options,
+    llvm::StringRef Domain, uint64_t Scope, llvm::StringRef ProofDigest,
+    llvm::ArrayRef<SpecializationInstruction> Instructions,
+    llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-original-native-control-independence-v5");
+  Hash.update(Domain);
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -393,9 +392,9 @@ binaryIndependenceDigest(const BinaryImage &Image,
   if (Options.X64FlagsProfile)
     Number(static_cast<unsigned>(*Options.X64FlagsProfile));
   Number(static_cast<unsigned>(Image.ExceptionMetadata.ParseStatus));
-  Number(static_cast<unsigned>(Proof.Scope));
-  Number(Proof.InputDigest.size());
-  Hash.update(Proof.InputDigest);
+  Number(Scope);
+  Number(ProofDigest.size());
+  Hash.update(ProofDigest);
   Number(Instructions.size());
   for (const auto &Instruction : Instructions) {
     Number(Instruction.Origin.Address);
@@ -447,18 +446,17 @@ binaryIndependenceDigest(const BinaryImage &Image,
   }
   return llvm::toHex(Hash.final());
 }
-} // namespace
-
-BinaryUndefinedIndependenceResult
-checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
-                                 const SpecializationOptions &Options,
-                                 const LowIRIndependenceContract &Contract,
-                                 const LowIRIndependenceLimits &Limits) {
+std::optional<LowIRIndependenceResult>
+prepareBinaryRelation(const BinaryImage &Image,
+                      const SpecializationOptions &Options,
+                      const LowIRIndependenceContract &Contract,
+                      const LowIRIndependenceLimits &Limits,
+                      LowIRIndependenceContract &Effective) {
   using Status = LowIRIndependenceStatus;
-  BinaryUndefinedIndependenceResult Result;
+  LowIRIndependenceResult Result;
   const auto Fail = [&](Status S, std::string Diagnostic) {
-    Result.Proof.Status = S;
-    Result.Proof.Diagnostic = std::move(Diagnostic);
+    Result.Status = S;
+    Result.Diagnostic = std::move(Diagnostic);
     return std::move(Result);
   };
   if (Image.Segments.size() > Limits.MaxInstructions ||
@@ -503,7 +501,7 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
       return Fail(Status::Invalid, "proof and recovery entry constants differ");
   }
 
-  LowIRIndependenceContract Effective = Contract;
+  Effective = Contract;
   for (const auto &Mapping : Image.Segments) {
     if (!Mapping.Size)
       continue;
@@ -533,16 +531,81 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
       Effective.PreservedFrameRanges.push_back({static_cast<int64_t>(I), 1});
   }
 
+  return std::nullopt;
+}
+} // namespace
+
+BinaryUndefinedIndependenceResult
+checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
+                                 const SpecializationOptions &Options,
+                                 const LowIRIndependenceContract &Contract,
+                                 const LowIRIndependenceLimits &Limits) {
+  BinaryUndefinedIndependenceResult Result;
+  LowIRIndependenceContract Effective;
+  if (auto Failure =
+          prepareBinaryRelation(Image, Options, Contract, Limits, Effective)) {
+    Result.Proof = std::move(*Failure);
+    return Result;
+  }
   ImageProvider Provider(Image, Options);
   auto Checked = detail::checkNativeUndefinedIndependence(
       Provider, {Entry, Image.Mode}, Effective, Limits);
   Result.Proof = std::move(Checked.Proof);
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
-    Certificate.InputDigest =
-        binaryIndependenceDigest(Image, Options, *Result.Proof.Certificate,
-                                 Checked.Instructions, Checked.Reads);
+    Certificate.InputDigest = binaryExecutionDigest(
+        Image, Options, "neverd-original-native-control-independence-v6",
+        static_cast<unsigned>(Result.Proof.Certificate->Scope),
+        Result.Proof.Certificate->InputDigest, Checked.Instructions,
+        Checked.Reads);
     Certificate.LowIR = *Result.Proof.Certificate;
+    Certificate.Instructions = std::move(Checked.Instructions);
+    Certificate.Reads = std::move(Checked.Reads);
+    Result.Certificate = std::move(Certificate);
+  }
+  return Result;
+}
+
+BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+  BinaryLowIRRefinementResult Result;
+  if (!Options.X64FlagsProfile) {
+    Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Proof.Diagnostic =
+        "native refinement requires an explicit canonical flags profile";
+    return Result;
+  }
+  LowIRIndependenceContract Effective;
+  if (auto Failure = prepareBinaryRelation(Image, Options, Contract,
+                                           Limits.Execution, Effective)) {
+    switch (Failure->Status) {
+    case LowIRIndependenceStatus::BudgetExceeded:
+      Result.Proof.Status = LowIRRefinementStatus::BudgetExceeded;
+      break;
+    case LowIRIndependenceStatus::Unsupported:
+      Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+      break;
+    default:
+      Result.Proof.Status = LowIRRefinementStatus::Invalid;
+      break;
+    }
+    Result.Proof.Diagnostic = std::move(Failure->Diagnostic);
+    return Result;
+  }
+  ImageProvider Provider(Image, Options);
+  auto Checked = detail::checkNativeLowIRRefinement(
+      Provider, {Entry, Image.Mode}, Candidate, Effective, Witness, Limits);
+  Result.Proof = std::move(Checked.Proof);
+  if (Result.Proof.proved()) {
+    BinaryLowIRRefinementCertificate Certificate;
+    Certificate.InputDigest = binaryExecutionDigest(
+        Image, Options, "neverd-original-native-lowir-refinement-v1",
+        static_cast<unsigned>(Result.Proof.Certificate->Scope),
+        Result.Proof.Certificate->InputDigest, Checked.Instructions,
+        Checked.Reads);
+    Certificate.Relation = *Result.Proof.Certificate;
     Certificate.Instructions = std::move(Checked.Instructions);
     Certificate.Reads = std::move(Checked.Reads);
     Result.Certificate = std::move(Certificate);

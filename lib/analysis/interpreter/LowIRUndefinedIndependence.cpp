@@ -12,6 +12,7 @@
 #include "NativeUndefinedIndependence.h"
 #include "X64UserFlags.h"
 
+#include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymExec.h"
 
@@ -171,7 +172,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(7); // Certificate semantic schema, independent of report formatting.
+  Number(8); // Certificate semantic schema, independent of report formatting.
   Number(Contract.X64FlagsProfile.has_value());
   if (Contract.X64FlagsProfile) {
     Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
@@ -310,6 +311,35 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
 
 struct Stop {};
 
+struct TerminalState {
+  SymState State;
+  SymRef Predicate, SystemFlags, ReturnOperand;
+  std::set<uint64_t> Written;
+};
+
+// Both relations use the same instruction, memory, profile and physical-stack
+// executor. Only undefined-value selection and terminal obligations differ.
+// Selected executions never publish an independence certificate.
+struct RefinementSession {
+  SymContext Context;
+  LowIRIndependenceResult Statistics;
+  const LowFunc &Candidate;
+  LowIRRefinementWitness Witness;
+  const LowIRRefinementLimits &Limits;
+  std::optional<SymState> Initial;
+  SymRef EntryRoot, MemoryRoot, EntrySystem, Predicate;
+  uint64_t ScheduledPaths = 0;
+  uint64_t TerminalPairs = 0;
+  std::vector<TerminalState> OriginalReturns, CandidateReturns;
+  std::vector<LowIRRefinementProducer> Producers;
+  std::string OriginalDigest, CandidateDigest;
+  std::vector<LowIRUndefinedInstruction> OriginalInstructions;
+  std::vector<LowIRNativeFlagTransition> Flags;
+  std::vector<LowIRNativeProfileProjection> Projections;
+  std::map<va_t, uint8_t> ImmutableBytes;
+  uint64_t ReadEvidenceBytes = 0;
+};
+
 class Checker {
   const LowFunc *Function = nullptr;
   llvm::ArrayRef<LowIRUndefinedInstruction> Records;
@@ -318,7 +348,8 @@ class Checker {
   detail::NativeUndefinedIndependenceResult *NativeResult = nullptr;
   std::map<va_t, SpecializationInstruction> NativeInstructions;
   std::map<va_t, va_t> NativeRanges;
-  std::map<va_t, uint8_t> ImmutableBytes;
+  std::map<va_t, uint8_t> OwnedImmutableBytes;
+  std::map<va_t, uint8_t> &ImmutableBytes = OwnedImmutableBytes;
   LowFunc NativeTrace;
   std::vector<LowIRUndefinedInstruction> NativeRecords;
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
@@ -326,12 +357,18 @@ class Checker {
   std::map<int, std::vector<int>> NativeTraceEdges;
   uint64_t NativeInputOperations = 0;
   uint64_t NativeInputEffects = 0;
-  uint64_t NativeReadEvidenceBytes = 0;
+  uint64_t OwnedReadEvidenceBytes = 0;
+  uint64_t &NativeReadEvidenceBytes = OwnedReadEvidenceBytes;
   int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
-  LowIRIndependenceResult Result;
-  SymContext Ctx;
+  LowIRIndependenceResult OwnedResult;
+  LowIRIndependenceResult &Result = OwnedResult;
+  SymContext OwnedContext;
+  SymContext &Ctx = OwnedContext;
+  RefinementSession *Refinement = nullptr;
+  bool CandidateExecution = false;
+  SpecializationProvider *ReadProvider = nullptr;
   SymRef EntryRoot, MemoryRoot;
   std::vector<SymRef> PreservedRegisterEntries;
   std::map<uint64_t, SymRef> PreservedFrameEntries;
@@ -341,7 +378,9 @@ class Checker {
   std::map<std::pair<int, va_t>, const LowIRUndefinedInstruction *> Effects;
   std::unordered_map<uint32_t, SymRef> ZeroLeftChoices;
   uint64_t FrameBytes = 0;
-  uint64_t ScheduledPaths = 0;
+  uint64_t OwnedScheduledPaths = 0;
+  uint64_t &ScheduledPaths = OwnedScheduledPaths;
+  bool Validated = false;
 
   struct Path {
     int BlockId;
@@ -394,7 +433,9 @@ class Checker {
       fail(Failure,
            Failure == Status::ContractViolation
                ? "return contract does not preserve " + Observation.str()
-               : "architecture-arbitrary value affects " + Observation.str());
+               : (Refinement ? "selected original and candidate differ at "
+                             : "architecture-arbitrary value affects ") +
+                     Observation.str());
   }
 
   void preservedReturn(Path &P) {
@@ -430,6 +471,12 @@ class Checker {
           fail(Status::Invalid, "instruction reads an unbound temporary");
   }
 
+  void checkScratch(const NdVar &V) {
+    if (V.isTemp() && V.Size &&
+        (V.Offset >= AddressTemporary || AddressTemporary - V.Offset < V.Size))
+      fail(Status::Invalid, "input temporary overlaps proof memory scratch");
+  }
+
   void define(const NdVar &V, std::set<uint64_t> &Defined) {
     if (V.isTemp())
       for (uint16_t I = 0; I != V.Size; ++I)
@@ -439,7 +486,7 @@ class Checker {
   bool flagIntrinsic(Path &P, const LowOp &Original,
                      const LowInstructionUndefinedEffects &Effects,
                      const std::set<uint64_t> &Defined) {
-    if (!Provider || !Contract.X64FlagsProfile ||
+    if ((!Provider && !CandidateExecution) || !Contract.X64FlagsProfile ||
         Original.Opcode != NdOp::INTRINSIC)
       return false;
     // A separate state namespace prevents either original operands or public
@@ -519,7 +566,7 @@ class Checker {
   }
 
   void arbitrary(Path &P, const LowUndefinedEffect &Effect,
-                 std::set<uint64_t> &Defined) {
+                 uint64_t EffectIndex, std::set<uint64_t> &Defined) {
     if (++Result.Producers > Limits.MaxProducers)
       fail(Status::BudgetExceeded, "arbitrary-producer budget exhausted");
     const unsigned Width = Effect.Output.Size * 8;
@@ -540,9 +587,25 @@ class Checker {
       LeftWhen = Ctx.mkNe(LW, Ctx.mkZero(8));
       RightWhen = Ctx.mkNe(RW, Ctx.mkZero(8));
     }
-    const auto U = Ctx.mkFreshVar(Effect.BitCount, "undefined_left");
-    const auto V = Ctx.mkFreshVar(Effect.BitCount, "undefined_right");
-    ZeroLeftChoices.emplace(U.index(), Ctx.mkZero(Effect.BitCount));
+    if (Refinement) {
+      Refinement->Producers.push_back({Result.Instructions, P.BlockId,
+                                       Result.InstructionAddress, EffectIndex});
+      if (Refinement->Witness == LowIRRefinementWitness::LiftedBits) {
+        // The already computed bits form a constructive choice at this exact
+        // producer occurrence. Copies and spills keep that one choice. The
+        // guard was checked above even though retaining the bits is an
+        // identity.
+        checkTemporary(Effect.Output, Defined);
+        return;
+      }
+    }
+    const auto U = Refinement
+                       ? Ctx.mkZero(Effect.BitCount)
+                       : Ctx.mkFreshVar(Effect.BitCount, "undefined_left");
+    const auto V =
+        Refinement ? U : Ctx.mkFreshVar(Effect.BitCount, "undefined_right");
+    if (!Refinement)
+      ZeroLeftChoices.emplace(U.index(), Ctx.mkZero(Effect.BitCount));
     const auto Mask = llvm::APInt::getBitsSet(
         Width, Effect.BitOffset, Effect.BitOffset + Effect.BitCount);
     const auto Apply = [&](SymState &State, SymRef Fresh, SymRef When) {
@@ -656,7 +719,7 @@ class Checker {
       return;
     if (!Blocks.count(Destination))
       fail(Status::Invalid, "control edge names a missing block");
-    if (P.Ancestors.count(Destination))
+    if (!Refinement && P.Ancestors.count(Destination))
       fail(Status::Unsupported, "reachable cycle requires a loop invariant");
     if (++ScheduledPaths > Limits.MaxPaths)
       fail(Status::BudgetExceeded, "acyclic path budget exhausted");
@@ -683,6 +746,11 @@ class Checker {
           (E.When &&
            (!scalar(*E.When) || E.When->Size != 1 || E.When->isReg())))
         fail(Status::Invalid, "malformed architecture-arbitrary effect");
+    for (const auto &E : D.Effects) {
+      checkScratch(E.Output);
+      if (E.When)
+        checkScratch(*E.When);
+    }
   }
 
   void collectNative(va_t Entry) {
@@ -741,6 +809,11 @@ class Checker {
       for (const auto &Op : Insn.Ops)
         if (Op.NumInputs > 6)
           fail(Status::Invalid, "operand capacity exceeded");
+      for (const auto &Op : Insn.Ops) {
+        checkScratch(Op.Output);
+        for (unsigned I = 0; I != Op.NumInputs; ++I)
+          checkScratch(Op.Inputs[I]);
+      }
       LowBlock Raw;
       Raw.StartAddr = Address;
       Raw.EndAddr = Address + B.Size;
@@ -867,7 +940,7 @@ class Checker {
       if (query(Ctx.mkAnd(P.Predicate, Ctx.mkNot(Disjoint))) !=
           solver::SatResult::Unsat)
         fail(Status::Unsupported, "immutable read can alias the mutable frame");
-      const auto Read = Provider->immutableRead(Candidate, Bytes);
+      const auto Read = ReadProvider->immutableRead(Candidate, Bytes);
       if (!Read || Read->Bytes.size() != Bytes || Read->Evidence.empty())
         fail(Status::Unsupported, "missing immutable-read evidence");
       for (uint64_t Size : {Read->Bytes.size(), Read->Evidence.size()}) {
@@ -1055,7 +1128,10 @@ class Checker {
       const auto Apply = [&](uint64_t Completed) {
         const auto Range = Events.equal_range(Completed);
         for (auto It = Range.first; It != Range.second; ++It)
-          arbitrary(P, *It->second, Defined);
+          arbitrary(
+              P, *It->second,
+              static_cast<uint64_t>(It->second - Description.Effects.data()),
+              Defined);
       };
       Apply(0);
       for (uint64_t I = 0; I != Boundary.OpCount; ++I) {
@@ -1104,7 +1180,7 @@ class Checker {
               Difference->getSExtValue() < Frame.End &&
               static_cast<uint64_t>(Frame.End) - Difference->getZExtValue() >=
                   View.AccessSize;
-          if (!InFrame && Provider && !Store &&
+          if (!InFrame && ReadProvider && !Store &&
               (!Difference || Ctx.asConst(ordinary(A)))) {
             const auto Value = immutableLoad(P, ordinary(A), View.AccessSize,
                                              Boundary.Address, Original.Seq);
@@ -1188,6 +1264,14 @@ class Checker {
                     P.Right.load(Address, 1), "written frame byte");
             }
           ++Result.Paths;
+          if (Refinement) {
+            auto &Returns = CandidateExecution ? Refinement->CandidateReturns
+                                               : Refinement->OriginalReturns;
+            Returns.push_back(
+                {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
+                 Original.NumInputs ? Left.branchTarget() : SymRef{},
+                 std::move(P.Written)});
+          }
           return;
         }
         equal(P.Predicate, Left.branchTarget(), Right.branchTarget(),
@@ -1252,7 +1336,7 @@ class Checker {
 
   void validate() {
     if (Contract.X64FlagsProfile) {
-      if (!Provider)
+      if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
       if (*Contract.X64FlagsProfile !=
           InterpreterMachineStateProfile::UserX64NoFaultV1)
@@ -1322,6 +1406,11 @@ class Checker {
         for (const auto &Op : B.Ops)
           if (Op.NumInputs > 6)
             fail(Status::Invalid, "operand capacity exceeded");
+        for (const auto &Op : B.Ops) {
+          checkScratch(Op.Output);
+          for (unsigned I = 0; I != Op.NumInputs; ++I)
+            checkScratch(Op.Inputs[I]);
+        }
       }
       for (const auto &B : Function->Blocks)
         for (int Successor : B.Succs)
@@ -1443,78 +1532,208 @@ class Checker {
   }
 
 public:
+  bool validateInput() {
+    try {
+      if (!Validated) {
+        validate();
+        Validated = true;
+      }
+      return true;
+    } catch (const Stop &) {
+      return false;
+    }
+  }
+
+  bool compareSelectedReturns() {
+    try {
+      const auto Coverage = [&](const std::vector<TerminalState> &Returns) {
+        auto Covered = Ctx.mkFalse();
+        for (const auto &T : Returns) {
+          Covered = Ctx.mkOr(Covered, T.Predicate);
+          nodes();
+        }
+        if (query(Ctx.mkAnd(Refinement->Predicate, Ctx.mkNot(Covered))) !=
+            solver::SatResult::Unsat)
+          fail(Status::Unsupported,
+               "terminal paths do not cover the entry domain");
+      };
+      Coverage(Refinement->OriginalReturns);
+      Coverage(Refinement->CandidateReturns);
+      for (auto &Original : Refinement->OriginalReturns)
+        for (auto &Candidate : Refinement->CandidateReturns) {
+          if (Refinement->TerminalPairs >= Refinement->Limits.MaxTerminalPairs)
+            fail(Status::BudgetExceeded, "terminal-pair budget exhausted");
+          ++Refinement->TerminalPairs;
+          const auto Predicate =
+              Ctx.mkAnd(Original.Predicate, Candidate.Predicate);
+          if (query(Predicate) == solver::SatResult::Unsat)
+            continue;
+          if (bool(Original.ReturnOperand) != bool(Candidate.ReturnOperand))
+            fail(Status::Dependent,
+                 "original and candidate RETURN arities differ");
+          if (Original.ReturnOperand)
+            equal(Predicate, Original.ReturnOperand, Candidate.ReturnOperand,
+                  "RETURN operand");
+          if (Contract.X64FlagsProfile)
+            equal(Predicate, Original.SystemFlags, Candidate.SystemFlags,
+                  "final system flags");
+          for (const auto &R : Contract.ReturnRegisters)
+            equal(Predicate,
+                  Original.State.read(SymSpace::Register, R.Offset, R.Bytes),
+                  Candidate.State.read(SymSpace::Register, R.Offset, R.Bytes),
+                  "return register");
+          if (Contract.ObserveWrittenFrameBytes) {
+            auto Written = Original.Written;
+            Written.insert(Candidate.Written.begin(), Candidate.Written.end());
+            for (uint64_t Byte : Written) {
+              const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Byte));
+              equal(Predicate, Original.State.load(Address, 1),
+                    Candidate.State.load(Address, 1), "written frame byte");
+            }
+          }
+        }
+      return true;
+    } catch (const Stop &) {
+      return false;
+    }
+  }
+
   Checker(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> R,
-          const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L)
-      : Function(&F), Records(R), Contract(C), Limits(L) {}
+          const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L,
+          RefinementSession *Session = nullptr, bool Candidate = false,
+          SpecializationProvider *Reader = nullptr,
+          detail::NativeUndefinedIndependenceResult *NativeOutput = nullptr)
+      : Function(&F), Records(R), NativeResult(NativeOutput),
+        ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
+        NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
+                                        : OwnedReadEvidenceBytes),
+        Contract(C), Limits(L),
+        Result(Session ? Session->Statistics : OwnedResult),
+        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
+        CandidateExecution(Candidate), ReadProvider(Reader),
+        ScheduledPaths(Session ? Session->ScheduledPaths
+                               : OwnedScheduledPaths) {}
 
   Checker(SpecializationProvider &P, SpecializationCursor Entry,
           const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L,
-          detail::NativeUndefinedIndependenceResult &Output)
-      : Provider(&P), NativeEntry(Entry), NativeResult(&Output), Contract(C),
-        Limits(L) {
+          detail::NativeUndefinedIndependenceResult &Output,
+          RefinementSession *Session = nullptr)
+      : Provider(&P), NativeEntry(Entry), NativeResult(&Output),
+        ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
+        NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
+                                        : OwnedReadEvidenceBytes),
+        Contract(C), Limits(L),
+        Result(Session ? Session->Statistics : OwnedResult),
+        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
+        ReadProvider(&P), ScheduledPaths(Session ? Session->ScheduledPaths
+                                                 : OwnedScheduledPaths) {
     NativeTrace.Entry = Entry.Address;
   }
 
   LowIRIndependenceResult run() {
     try {
-      validate();
+      if (!validateInput())
+        return Result;
       if (Provider)
         collectNative(NativeEntry.Address);
       SymState Initial(Ctx, Contract.ByteOrder);
       SymRef EntrySystem;
-      if (Contract.X64FlagsProfile) {
-        const auto Raw = Ctx.mkFreshVar(64, "entry_flags");
-        const auto Packed =
-            Ctx.mkOr(Ctx.mkAnd(Raw, Ctx.mkConst(64, FlagProfile::EntryMask)),
-                     Ctx.mkConst(64, 2));
-        EntrySystem =
-            Ctx.mkAnd(Packed, Ctx.mkConst(64, ~FlagProfile::SplitMask));
-        for (const auto &[Offset, Bit] : FlagProfile::Flags)
-          Initial.write(SymSpace::Register, Offset,
-                        Ctx.mkZExtOrTrunc(Ctx.mkExtract(Packed, Bit, 1), 8));
-        nodes();
-      }
-      for (const auto &C : Contract.EntryConstants) {
-        Initial.write(SymSpace::Register, C.Location.Offset,
-                      Ctx.mkConst(C.Location.Size * 8, C.Value));
-        nodes();
-      }
       auto Predicate = Ctx.mkTrue();
-      if (Contract.Frame) {
-        const auto &F = *Contract.Frame;
-        EntryRoot = Initial.read(SymSpace::Register, F.RootRegister.Offset, 8);
-        if (F.Begin < 0)
-          Predicate = Ctx.mkAnd(
-              Predicate,
-              Ctx.mkUle(
-                  Ctx.mkConst(64, uint64_t{0} - static_cast<uint64_t>(F.Begin)),
-                  EntryRoot));
-        if (F.End > 0)
-          Predicate = Ctx.mkAnd(
-              Predicate,
-              Ctx.mkUle(EntryRoot,
-                        Ctx.mkConst(64, UINT64_MAX -
-                                            static_cast<uint64_t>(F.End - 1))));
-        // The existing root bounds make these the unsigned first and last
-        // accessible bytes without wraparound. Exclusion is a symbolic entry
-        // precondition: adjacency is allowed, but no byte may overlap a range.
-        const auto First = Ctx.mkAdd(
-            EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.Begin)));
-        const auto Last = Ctx.mkAdd(
-            EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.End) - 1));
-        for (const auto &R : F.ExcludedAddressRanges) {
-          Predicate = Ctx.mkAnd(
-              Predicate, Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, R.Begin)),
-                                  Ctx.mkUle(Ctx.mkConst(64, R.End), First)));
+      if (Refinement && Refinement->Initial) {
+        Initial = *Refinement->Initial;
+        EntryRoot = Refinement->EntryRoot;
+        MemoryRoot = Refinement->MemoryRoot;
+        EntrySystem = Refinement->EntrySystem;
+        Predicate = Refinement->Predicate;
+      } else {
+        if (Contract.X64FlagsProfile) {
+          const auto Raw = Ctx.mkFreshVar(64, "entry_flags");
+          const auto Packed =
+              Ctx.mkOr(Ctx.mkAnd(Raw, Ctx.mkConst(64, FlagProfile::EntryMask)),
+                       Ctx.mkConst(64, 2));
+          EntrySystem =
+              Ctx.mkAnd(Packed, Ctx.mkConst(64, ~FlagProfile::SplitMask));
+          for (const auto &[Offset, Bit] : FlagProfile::Flags)
+            Initial.write(SymSpace::Register, Offset,
+                          Ctx.mkZExtOrTrunc(Ctx.mkExtract(Packed, Bit, 1), 8));
           nodes();
         }
-        MemoryRoot = Ctx.mkFreshVar(64, "proof_frame");
-        // Seed before the twin-state fork: normal frame bytes must stay shared
-        // even when subsequent accesses use different overlapping widths.
-        for (uint64_t I = 0; I != FrameBytes; ++I) {
-          Initial.store(Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, I)),
-                        Ctx.mkFreshVar(8, "entry_frame_byte"));
+        for (const auto &C : Contract.EntryConstants) {
+          Initial.write(SymSpace::Register, C.Location.Offset,
+                        Ctx.mkConst(C.Location.Size * 8, C.Value));
           nodes();
+        }
+        if (Contract.Frame) {
+          const auto &F = *Contract.Frame;
+          EntryRoot =
+              Initial.read(SymSpace::Register, F.RootRegister.Offset, 8);
+          if (F.Begin < 0)
+            Predicate = Ctx.mkAnd(
+                Predicate,
+                Ctx.mkUle(Ctx.mkConst(64, uint64_t{0} -
+                                              static_cast<uint64_t>(F.Begin)),
+                          EntryRoot));
+          if (F.End > 0)
+            Predicate = Ctx.mkAnd(
+                Predicate,
+                Ctx.mkUle(EntryRoot,
+                          Ctx.mkConst(64, UINT64_MAX - static_cast<uint64_t>(
+                                                           F.End - 1))));
+          // The existing root bounds make these the unsigned first and last
+          // accessible bytes without wraparound. Exclusion is a symbolic entry
+          // precondition: adjacency is allowed, but no byte may overlap a
+          // range.
+          const auto First = Ctx.mkAdd(
+              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.Begin)));
+          const auto Last = Ctx.mkAdd(
+              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.End) - 1));
+          for (const auto &R : F.ExcludedAddressRanges) {
+            Predicate = Ctx.mkAnd(
+                Predicate, Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, R.Begin)),
+                                    Ctx.mkUle(Ctx.mkConst(64, R.End), First)));
+            nodes();
+          }
+          MemoryRoot = Ctx.mkFreshVar(64, "proof_frame");
+          // Seed before the twin-state fork: normal frame bytes must stay
+          // shared even when subsequent accesses use different overlapping
+          // widths.
+          for (uint64_t I = 0; I != FrameBytes; ++I) {
+            Initial.store(Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, I)),
+                          Ctx.mkFreshVar(8, "entry_frame_byte"));
+            nodes();
+          }
+        }
+        if (Refinement) {
+          // Seed a common entry bank before either program executes. Different
+          // first-read widths and overlapping writes cannot invent different
+          // ordinary inputs in the two independently explored graphs.
+          const auto Seed = [&](const NdVar &V) {
+            if (!V.isReg())
+              return;
+            if (!scalar(V))
+              fail(Status::Invalid, "invalid candidate register range");
+            for (uint16_t I = 0; I != V.Size; ++I)
+              Initial.read(SymSpace::Register, V.Offset + I, 1);
+            nodes();
+          };
+          for (const auto &B : Refinement->Candidate.Blocks)
+            for (const auto &Op : B.Ops) {
+              if (Op.NumInputs > 6)
+                fail(Status::Invalid, "candidate operand capacity exceeded");
+              if (Op.Output.Size)
+                Seed(Op.Output);
+              for (unsigned I = 0; I != Op.NumInputs; ++I)
+                Seed(Op.Inputs[I]);
+            }
+          for (const auto &R : Contract.ReturnRegisters)
+            Seed(NdVar::reg(R.Offset, R.Bytes));
+          for (const auto &R : Contract.PreservedRegisters)
+            Seed(NdVar::reg(R.Offset, R.Bytes));
+          Refinement->Initial = Initial;
+          Refinement->EntryRoot = EntryRoot;
+          Refinement->MemoryRoot = MemoryRoot;
+          Refinement->EntrySystem = EntrySystem;
+          Refinement->Predicate = Predicate;
         }
       }
       if (query(Predicate) == solver::SatResult::Unsat)
@@ -1553,9 +1772,33 @@ public:
         Pending.pop_back();
         runPath(std::move(P));
       }
-      if (!Result.Paths)
+      if (Refinement
+              ? (CandidateExecution ? Refinement->CandidateReturns.empty()
+                                    : Refinement->OriginalReturns.empty())
+              : !Result.Paths)
         fail(Status::Unsupported, "no reachable return was certified");
-      if (Provider) {
+      if (Refinement) {
+        if (Provider) {
+          for (auto &B : NativeTrace.Blocks)
+            B.Succs = NativeTraceEdges[B.Id];
+          Refinement->OriginalDigest =
+              inputDigest(NativeTrace, NativeRecords, Contract, Limits,
+                          NativeFlagTransitions, NativeProfileProjections);
+          Refinement->OriginalInstructions = std::move(NativeRecords);
+          Refinement->Flags = std::move(NativeFlagTransitions);
+          Refinement->Projections = std::move(NativeProfileProjections);
+          for (auto &[Address, Insn] : NativeInstructions)
+            NativeResult->Instructions.push_back(std::move(Insn));
+        } else if (CandidateExecution) {
+          Refinement->CandidateDigest = inputDigest(
+              *Function, Records, Contract, Limits, NativeFlagTransitions);
+        } else {
+          Refinement->OriginalDigest =
+              inputDigest(*Function, Records, Contract, Limits);
+          Refinement->OriginalInstructions.assign(Records.begin(),
+                                                  Records.end());
+        }
+      } else if (Provider) {
         for (auto &B : NativeTrace.Blocks)
           B.Succs = NativeTraceEdges[B.Id];
         Result.Certificate = LowIRIndependenceCertificate{
@@ -1582,9 +1825,165 @@ public:
     } catch (const Stop &) {
       // No incomplete run owns a certificate.
     }
-    return std::move(Result);
+    return Refinement ? Result : std::move(Result);
   }
 };
+
+LowIRRefinementResult
+refinementResult(RefinementSession &Session,
+                 const LowIRIndependenceContract &Contract, bool Native,
+                 bool Success) {
+  LowIRRefinementResult Result;
+  const auto &Stats = Session.Statistics;
+  switch (Stats.Status) {
+  case Status::Proved:
+    Result.Status = LowIRRefinementStatus::Proved;
+    break;
+  case Status::Dependent:
+    Result.Status = LowIRRefinementStatus::Different;
+    break;
+  case Status::Unsupported:
+    Result.Status = LowIRRefinementStatus::Unsupported;
+    break;
+  case Status::Invalid:
+    Result.Status = LowIRRefinementStatus::Invalid;
+    break;
+  case Status::BudgetExceeded:
+    Result.Status = LowIRRefinementStatus::BudgetExceeded;
+    break;
+  case Status::InfeasibleEntry:
+    Result.Status = LowIRRefinementStatus::InfeasibleEntry;
+    break;
+  case Status::ContractViolation:
+    Result.Status = LowIRRefinementStatus::ContractViolation;
+    break;
+  }
+  Result.Diagnostic = Stats.Diagnostic;
+  Result.BlockId = Stats.BlockId;
+  Result.InstructionAddress = Stats.InstructionAddress;
+  Result.OpSeq = Stats.OpSeq;
+  Result.Operations = Stats.Operations;
+  Result.Instructions = Stats.Instructions;
+  Result.OriginalPaths = Session.OriginalReturns.size();
+  Result.CandidatePaths = Session.CandidateReturns.size();
+  Result.BlockVisits = Stats.BlockVisits;
+  Result.Producers = Stats.Producers;
+  Result.SolverQueries = Stats.SolverQueries;
+  Result.Observations = Stats.Observations;
+  Result.TerminalPairs = Session.TerminalPairs;
+  if (!Success)
+    return Result;
+  LowIRRefinementCertificate Certificate;
+  Certificate.Scope =
+      Native ? LowIRRefinementScope::CompleteFiniteNativeToLowIRPaths
+             : LowIRRefinementScope::CompleteFiniteLowIRPaths;
+  Certificate.OriginalDigest = Session.OriginalDigest;
+  Certificate.CandidateDigest = Session.CandidateDigest;
+  Certificate.Witness = Session.Witness;
+  Certificate.Contract = Contract;
+  Certificate.Limits = Session.Limits;
+  Certificate.OriginalInstructions = std::move(Session.OriginalInstructions);
+  Certificate.Producers = std::move(Session.Producers);
+  Certificate.NativeFlagTransitions = std::move(Session.Flags);
+  Certificate.NativeProfileProjections = std::move(Session.Projections);
+  llvm::SHA256 Hash;
+  Hash.update("neverd-selected-value-refinement-v1");
+  const auto Number = [&](uint64_t N) {
+    uint8_t Bytes[8];
+    for (unsigned I = 0; I != 8; ++I)
+      Bytes[I] = static_cast<uint8_t>(N >> (8 * I));
+    Hash.update(Bytes);
+  };
+  Number(static_cast<unsigned>(Certificate.Scope));
+  Number(static_cast<unsigned>(Certificate.Witness));
+  Number(Session.Limits.MaxTerminalPairs);
+  Hash.update(Certificate.OriginalDigest);
+  Hash.update(Certificate.CandidateDigest);
+  Number(Certificate.Producers.size());
+  for (const auto &Producer : Certificate.Producers) {
+    Number(Producer.InstructionVisit);
+    Number(static_cast<uint64_t>(Producer.BlockId));
+    Number(Producer.InstructionAddress);
+    Number(Producer.EffectIndex);
+  }
+  Certificate.InputDigest = llvm::toHex(Hash.final());
+  Result.Certificate = std::move(Certificate);
+  return Result;
+}
+
+LowIRRefinementResult runRefinement(
+    const LowFunc *Original,
+    llvm::ArrayRef<LowIRUndefinedInstruction> OriginalInstructions,
+    SpecializationProvider *Provider, SpecializationCursor Entry,
+    detail::NativeUndefinedIndependenceResult *NativeResult,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+  RefinementSession Session{{}, {}, Candidate, Witness, Limits};
+  const auto Finish = [&](bool Success) {
+    return refinementResult(Session, Contract, Provider != nullptr, Success);
+  };
+  if (Witness != LowIRRefinementWitness::LiftedBits &&
+      Witness != LowIRRefinementWitness::ZeroBits) {
+    Session.Statistics.Diagnostic = "unknown refinement witness policy";
+    return Finish(false);
+  }
+  // This is candidate semantic IR, not a claim of architecture coverage. Bound
+  // its input before copying records or seeding the common entry snapshot.
+  std::vector<LowIRUndefinedInstruction> CandidateRecords;
+  uint64_t Operations = 0;
+  if (Candidate.Blocks.size() > Limits.Execution.MaxBlockVisits) {
+    Session.Statistics.Status = Status::BudgetExceeded;
+    Session.Statistics.Diagnostic = "candidate block metadata budget exhausted";
+    return Finish(false);
+  }
+  for (const auto &B : Candidate.Blocks) {
+    if (B.Ops.size() > Limits.Execution.MaxOperations - Operations ||
+        B.InstructionBoundaries.size() >
+            Limits.Execution.MaxInstructions - CandidateRecords.size()) {
+      Session.Statistics.Status = Status::BudgetExceeded;
+      Session.Statistics.Diagnostic = "candidate metadata budget exhausted";
+      return Finish(false);
+    }
+    Operations += B.Ops.size();
+    for (const auto &Op : B.Ops)
+      if (Op.NumInputs > 6) {
+        Session.Statistics.Diagnostic = "candidate operand capacity exceeded";
+        return Finish(false);
+      }
+    for (const auto &Boundary : B.InstructionBoundaries) {
+      if (Boundary.FirstOp > B.Ops.size() ||
+          Boundary.OpCount > B.Ops.size() - Boundary.FirstOp) {
+        Session.Statistics.Diagnostic =
+            "candidate instruction span exceeds its block";
+        return Finish(false);
+      }
+      LowInstructionUndefinedEffects Effects;
+      Effects.Coverage = LowUndefinedCoverage::Complete;
+      Effects.OpCount = Boundary.OpCount;
+      Effects.OperationDigest =
+          lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
+              Boundary.FirstOp, Boundary.OpCount));
+      CandidateRecords.push_back({B.Id, Boundary, std::move(Effects)});
+    }
+  }
+  Checker CandidateChecker(Candidate, CandidateRecords, Contract,
+                           Limits.Execution, &Session, true, Provider,
+                           NativeResult);
+  if (!CandidateChecker.validateInput())
+    return Finish(false);
+  const auto First = Provider
+                         ? Checker(*Provider, Entry, Contract, Limits.Execution,
+                                   *NativeResult, &Session)
+                               .run()
+                         : Checker(*Original, OriginalInstructions, Contract,
+                                   Limits.Execution, &Session)
+                               .run();
+  if (!First.proved())
+    return Finish(false);
+  if (!CandidateChecker.run().proved())
+    return Finish(false);
+  return Finish(CandidateChecker.compareSelectedReturns());
+}
 } // namespace
 
 LowIRIndependenceResult checkLowIRUndefinedIndependence(
@@ -1605,6 +2004,30 @@ detail::checkNativeUndefinedIndependence(
   if (!Result.Proof.proved()) {
     Result.Instructions.clear();
     Result.Reads.clear();
+  }
+  return Result;
+}
+
+LowIRRefinementResult checkLowIRRefinement(
+    const LowFunc &Original,
+    llvm::ArrayRef<LowIRUndefinedInstruction> OriginalInstructions,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+  return runRefinement(&Original, OriginalInstructions, nullptr, {}, nullptr,
+                       Candidate, Contract, Witness, Limits);
+}
+
+detail::NativeLowIRRefinementResult detail::checkNativeLowIRRefinement(
+    SpecializationProvider &Provider, SpecializationCursor Entry,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits) {
+  NativeLowIRRefinementResult Result;
+  NativeUndefinedIndependenceResult Evidence;
+  Result.Proof = runRefinement(nullptr, {}, &Provider, Entry, &Evidence,
+                               Candidate, Contract, Witness, Limits);
+  if (Result.Proof.proved()) {
+    Result.Instructions = std::move(Evidence.Instructions);
+    Result.Reads = std::move(Evidence.Reads);
   }
   return Result;
 }
