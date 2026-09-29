@@ -1916,9 +1916,9 @@ TEST(COFFExceptionIR, NativeSEHSharedHandlerMergesTheCodeAtTheCatchPad) {
 
   llvm::LLVMContext Ctx;
   MedLLVMEmitter Emitter;
-  auto Mod = Emitter.emit({Func, Personality}, Ctx, "native_seh_shared",
-                          Arch::X64, {{MayThrowVA, "may_throw"}}, nullptr,
-                          BinaryFormat::COFF);
+  auto Mod =
+      Emitter.emit({Func, Personality}, Ctx, "native_seh_shared", Arch::X64,
+                   {{MayThrowVA, "may_throw"}}, nullptr, BinaryFormat::COFF);
   ASSERT_NE(Mod, nullptr);
   expectVerifierClean(*Mod);
   llvm::Function *F = Mod->getFunction(Func.Name);

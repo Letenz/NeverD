@@ -573,10 +573,10 @@ BinaryImage makeSharedHandlerImage() {
   Text.Size = 0x10;
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data.assign(Text.Size, 0xcc);
-  const uint8_t Code[] = {0x31, 0xc0,       // xor eax, eax
-                          0x88, 0x11,       // mov [rcx], dl
-                          0xeb, 0x00,       // jmp +0
-                          0xc3};            // ret
+  const uint8_t Code[] = {0x31, 0xc0, // xor eax, eax
+                          0x88, 0x11, // mov [rcx], dl
+                          0xeb, 0x00, // jmp +0
+                          0xc3};      // ret
   std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
   Img.Segments.push_back(std::move(Text));
   Section Section;

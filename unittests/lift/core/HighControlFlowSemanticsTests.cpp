@@ -3919,7 +3919,8 @@ TEST(HighControlFlowSemantics, SummarizedCallKeepsArgumentsAfterAnUnknownSlot) {
   }
 }
 
-TEST(HighControlFlowSemantics, JoinDefaultCallStillRunsAfterAnArmWritingItsDest) {
+TEST(HighControlFlowSemantics,
+     JoinDefaultCallStillRunsAfterAnArmWritingItsDest) {
   // `if (p) r = release(p); r = base_dtor(this); return r;` The arm falls
   // through, so the second call runs on both paths. Sinking it into an else
   // arm would drop it where the first call already wrote r.

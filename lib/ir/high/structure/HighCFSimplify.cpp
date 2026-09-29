@@ -1005,9 +1005,8 @@ bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body) {
             continue;
           bool OnlyX = true;
           for (size_t Q = J; Q < Loop.Body.size(); ++Q)
-            OnlyX &= !anyAddressEntered(Loop.Body[Q], [&](va_t A) {
-              return A != X && Entered(A);
-            });
+            OnlyX &= !anyAddressEntered(
+                Loop.Body[Q], [&](va_t A) { return A != X && Entered(A); });
           if (!OnlyX)
             continue;
           Loop.Body.resize(J);
@@ -1071,7 +1070,8 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
             // body, so it is `while (!c) { S } goto X;`. A continue still
             // goes to the test; the loop has no break for the goto to catch.
             Exit = std::move(LoopBody[First].Body[0]);
-            Loop.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, LoopBody[First].Cond);
+            Loop.Cond =
+                HighExpr::makeUnary(NdOp::BOOL_NOT, LoopBody[First].Cond);
             LoopBody.erase(LoopBody.begin() + First);
           } else if (ExitTest(LoopBody[Last - 1]) &&
                      !hasLooseContinue(LoopBody)) {
@@ -1083,7 +1083,8 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
             if (TailEntered)
               continue;
             Exit = std::move(LoopBody[Last - 1].Body[0]);
-            Loop.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, LoopBody[Last - 1].Cond);
+            Loop.Cond =
+                HighExpr::makeUnary(NdOp::BOOL_NOT, LoopBody[Last - 1].Cond);
             Loop.Kind = StmtKind::DoWhile;
             LoopBody.erase(LoopBody.begin() + Last - 1, LoopBody.end());
           } else {
@@ -1167,11 +1168,10 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
               (Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0);
           if (Loop.Kind != StmtKind::While || !Forever)
             continue;
-          auto Last = std::find_if(L.rbegin(), L.rend() - (K + 1),
-                                   [&](const HighStmt &T) {
-                                     return !isEmptyAnchor(T) ||
-                                            Targets.count(T.Addr);
-                                   });
+          auto Last = std::find_if(
+              L.rbegin(), L.rend() - (K + 1), [&](const HighStmt &T) {
+                return !isEmptyAnchor(T) || Targets.count(T.Addr);
+              });
           if (Last == L.rend() - (K + 1) || !endsItsBlock(*Last))
             continue;
           std::vector<HighStmt> Tail(L.begin() + K + 1, L.end());
@@ -1246,15 +1246,15 @@ bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body) {
           const bool Forever =
               !Loop.Cond ||
               (Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0);
-          if ((Loop.Kind != StmtKind::While && Loop.Kind != StmtKind::DoWhile) ||
+          if ((Loop.Kind != StmtKind::While &&
+               Loop.Kind != StmtKind::DoWhile) ||
               (Loop.Kind == StmtKind::While && !Forever) || Loop.Body.empty())
             continue;
           // A label after the last jump still reaches the end of the body.
-          auto Last = std::find_if(Loop.Body.rbegin(), Loop.Body.rend(),
-                                   [&](const HighStmt &T) {
-                                     return !isEmptyAnchor(T) ||
-                                            Targets.count(T.Addr);
-                                   });
+          auto Last = std::find_if(
+              Loop.Body.rbegin(), Loop.Body.rend(), [&](const HighStmt &T) {
+                return !isEmptyAnchor(T) || Targets.count(T.Addr);
+              });
           if (Last == Loop.Body.rend() || !endsItsBlock(*Last) ||
               hasLooseBreak(Loop.Body) || hasLooseContinue(Loop.Body))
             continue;
@@ -1912,8 +1912,8 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           L[I].ElseBody.empty() && !L[I].Body.empty() && I + 1 < L.size() &&
           labelStart(L[I].Body, 0) && usesOf(L[I].Body.front().Addr) != ~0u) {
         // A label after the last jump still runs past the end.
-        auto LastOf = [&](const std::vector<HighStmt> &Stmts, size_t From)
-            -> const HighStmt * {
+        auto LastOf = [&](const std::vector<HighStmt> &Stmts,
+                          size_t From) -> const HighStmt * {
           for (size_t K = Stmts.size(); K > From; --K)
             if (!isEmptyAnchor(Stmts[K - 1]) || usesOf(Stmts[K - 1].Addr) != 0)
               return &Stmts[K - 1];

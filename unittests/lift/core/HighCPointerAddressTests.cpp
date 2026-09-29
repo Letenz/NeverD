@@ -39627,9 +39627,9 @@ TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
   Func.ReturnType = NdType::makeInt(8);
   Func.Params = {{"arg0", NdType::makeInt(8)}};
   const MedVar Result = temporary(1, 1);
-  Func.Body = {assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
-                                                   0x140002000,
-                                                   {parameter(0)}))};
+  Func.Body = {
+      assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ", 0x140002000,
+                                          {parameter(0)}))};
   returnValue(Func, HighExpr::makeVar(Result));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("void SC_DISK_dtor("), std::string::npos) << Source;
@@ -39647,9 +39647,9 @@ TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
   Func.ReturnType = NdType::makeInt(8);
   Func.Params = {{"arg0", NdType::makeInt(8)}};
   const MedVar Result = temporary(1, 1);
-  Func.Body = {assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
-                                                   0x140002000,
-                                                   {parameter(0)}))};
+  Func.Body = {
+      assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ", 0x140002000,
+                                          {parameter(0)}))};
   returnValue(Func, HighExpr::makeVar(Result));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("    SC_DEVICE_dtor(arg0);"), std::string::npos)
@@ -41610,8 +41610,7 @@ TEST(HighCPointerAddresses, DoWhileEnteredAtItsTestBecomesAWhile) {
   Loop.Kind = StmtKind::DoWhile;
   Loop.Cond = HighExpr::makeConst(1, 1);
   Loop.Body = {assignConst(0x1020, 1, 1), labelAnchor(0x1030)};
-  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
-                                returnAt(0x1050)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop, returnAt(0x1050)};
   ASSERT_TRUE(rotateLoopsToTheirEntry(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::While);
   EXPECT_EQ(Body[1].Addr, 0x1030u);
@@ -41625,8 +41624,7 @@ TEST(HighCPointerAddresses, DoWhileWithWorkAfterItsEntryIsKept) {
   Loop.Kind = StmtKind::DoWhile;
   Loop.Cond = HighExpr::makeConst(1, 1);
   Loop.Body = {assignConst(0x1020, 1, 1), assignConst(0x1030, 2, 2)};
-  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
-                                returnAt(0x1050)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop, returnAt(0x1050)};
   EXPECT_FALSE(rotateLoopsToTheirEntry(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::DoWhile);
 }
@@ -41670,10 +41668,9 @@ TEST(HighCPointerAddresses, EndlessLoopTestedLastKeepsAContinue) {
   Restart.Addr = 0x1024;
   Restart.Cond = HighExpr::makeConst(1, 1);
   Restart.Body = {Continue};
-  std::vector<HighStmt> Body = {
-      endlessLoop({assignConst(0x1020, 1, 1), Restart,
-                   condGoto(0x1030, 1, 0x1050)}),
-      returnAt(0x1050)};
+  std::vector<HighStmt> Body = {endlessLoop({assignConst(0x1020, 1, 1), Restart,
+                                             condGoto(0x1030, 1, 0x1050)}),
+                                returnAt(0x1050)};
   EXPECT_FALSE(hoistLoopExitTests(Body));
   EXPECT_EQ(Body[0].Kind, StmtKind::While);
 }
@@ -41687,10 +41684,9 @@ TEST(HighCPointerAddresses, LoopWithABreakKeepsItsExitTest) {
   Leave.Addr = 0x1024;
   Leave.Cond = HighExpr::makeConst(1, 1);
   Leave.Body = {Break};
-  std::vector<HighStmt> Body = {
-      endlessLoop({condGoto(0x1010, 1, 0x1050), assignConst(0x1020, 1, 1),
-                   Leave}),
-      returnAt(0x1040), returnAt(0x1050)};
+  std::vector<HighStmt> Body = {endlessLoop({condGoto(0x1010, 1, 0x1050),
+                                             assignConst(0x1020, 1, 1), Leave}),
+                                returnAt(0x1040), returnAt(0x1050)};
   EXPECT_FALSE(hoistLoopExitTests(Body));
 }
 
@@ -41708,10 +41704,9 @@ TEST(HighCPointerAddresses, SingleEntryBlockRunningIntoALabelMovesToItsJump) {
     return S;
   };
   HighStmt Outer = Arm(
-      0x1000,
-      {Arm(0x1004, {assignConst(0x1005, 1, 1), gotoAt(0x1006, 0x1050)}),
-       Arm(0x1008, {assignConst(0x1009, 8, 8), gotoAt(0x100a, 0x1060)}),
-       returnAt(0x100c)});
+      0x1000, {Arm(0x1004, {assignConst(0x1005, 1, 1), gotoAt(0x1006, 0x1050)}),
+               Arm(0x1008, {assignConst(0x1009, 8, 8), gotoAt(0x100a, 0x1060)}),
+               returnAt(0x100c)});
   std::vector<HighStmt> Body = {Outer, returnAt(0x1010),
                                 assignConst(0x1050, 3, 3),
                                 assignConst(0x1060, 4, 4), returnAt(0x1064)};
@@ -41855,8 +41850,7 @@ TEST(HighCPointerAddresses, LoopWithAnEnteredLabelAtItsEndIsNotUnwrapped) {
   Loop.Cond = HighExpr::makeConst(1, 1);
   Loop.Body = {assignConst(0x1020, 1, 1), gotoAt(0x1024, 0x1050),
                labelAnchor(0x1030)};
-  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
-                                returnAt(0x1050)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop, returnAt(0x1050)};
   EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
   EXPECT_EQ(Body[1].Kind, StmtKind::DoWhile);
 }
