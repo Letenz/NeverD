@@ -283,6 +283,9 @@ int main(int Argc, char *Argv[]) {
   if (Stats.Patterns.UnsupportedHint)
     outs() << ", " << Stats.Patterns.UnsupportedHint
            << " functions with unsupported linker optimization hints";
+  if (Stats.Patterns.Synthesized)
+    outs() << ", " << Stats.Patterns.Synthesized
+           << " compiler-synthesized routines left unnamed";
   outs() << ")\n";
   return 0;
 }
