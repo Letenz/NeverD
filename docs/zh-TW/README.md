@@ -14,7 +14,7 @@
 | [貢獻指南](CONTRIBUTING.md) | 開發環境、建置設定、工作流程、風格與 PR 要求 |
 | [架構](architecture.md) | IR 路徑、元件邊界、嚴格提升、支援深度與修改位置 |
 | [測試](testing.md) | 測試套件、產生的 fixture、Unicorn 往返與增量命令 |
-| [直譯器原始碼還原](interpreter-recovery.md) | 實驗性 x64 直譯器特化、HighC/LLVMC 輸出、執行前提、證據與限制 |
+| [直譯器原始碼還原](interpreter-recovery.md) | 實驗性 x64 直譯器特化、HighC/LLVMC 輸出、執行前提、證據與限制; 有界自動迴圈證明候選 |
 | [Windows 驅動程式模擬](driver-emulation.md) | 有界 x64 WDM 初始化、循序緩衝／直接請求、工作項目、計時器、DPC、事件與等待，以及行為報告和限制; KMDF 1.33 非 PnP 驅動程式／物件生命週期與經驗證的 x64 CFG |
 | [Windows 例外重建](windows-exception-reconstruction.md) | SEH/C++ 展開支援矩陣、IR 契約、原生 patch 規則與 PE 驗證 |
 | [記憶體安全稽核與獵取](memory-safety.md) | 堆積生命週期與拷貝越界分析：各格式身分契約、匯/源目錄、判定、預算與 JSON 模式 |

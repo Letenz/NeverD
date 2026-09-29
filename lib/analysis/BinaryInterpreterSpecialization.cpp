@@ -632,6 +632,85 @@ BinaryLowIRRefinementResult checkBinaryLowIRLoopRefinement(
                                         Contract, Witness, Limits, &Plan);
 }
 
+BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const SpecializationResult &Recovery,
+    const LowIRIndependenceContract &Contract, LowIRRefinementWitness Witness,
+    const LowIRRefinementLimits &ProofLimits,
+    const LowIRLoopInferenceLimits &InferenceLimits) {
+  BinaryAutomaticLowIRRefinementResult Result;
+  const auto Refuse = [&](LowIRLoopInferenceStatus Status,
+                          std::string Message) {
+    Result.Inference.Status = Status;
+    Result.Inference.Diagnostic = std::move(Message);
+    Result.Refinement.Proof.Status =
+        Status == LowIRLoopInferenceStatus::BudgetExceeded
+            ? LowIRRefinementStatus::BudgetExceeded
+        : Status == LowIRLoopInferenceStatus::Invalid
+            ? LowIRRefinementStatus::Invalid
+            : LowIRRefinementStatus::Unsupported;
+    Result.Refinement.Proof.Diagnostic = Result.Inference.Diagnostic;
+  };
+  if (!Recovery.complete()) {
+    Refuse(LowIRLoopInferenceStatus::Invalid,
+           "automatic loop refinement requires complete recovery");
+    return Result;
+  }
+  if (Recovery.Origins.size() > InferenceLimits.Execution.MaxInstructions ||
+      Recovery.Residual.Blocks.size() >
+          InferenceLimits.Execution.MaxBlockVisits) {
+    Refuse(LowIRLoopInferenceStatus::BudgetExceeded,
+           "loop inference origin metadata budget exhausted");
+    return Result;
+  }
+  LowIRIndependenceContract Effective;
+  if (auto Failure = prepareBinaryRelation(Image, Options, Contract,
+                                           ProofLimits.Execution, Effective)) {
+    Refuse(Failure->Status == LowIRIndependenceStatus::BudgetExceeded
+               ? LowIRLoopInferenceStatus::BudgetExceeded
+           : Failure->Status == LowIRIndependenceStatus::Invalid
+               ? LowIRLoopInferenceStatus::Invalid
+               : LowIRLoopInferenceStatus::Unsupported,
+           Failure->Diagnostic);
+    return Result;
+  }
+  if (!Options.X64FlagsProfile) {
+    Refuse(LowIRLoopInferenceStatus::Unsupported,
+           "native refinement requires an explicit canonical flags profile");
+    return Result;
+  }
+  std::map<va_t, unsigned> NativeCounts, ResidualCounts;
+  std::map<va_t, va_t> Origins;
+  for (const auto &Origin : Recovery.Origins) {
+    ++NativeCounts[Origin.NativeInstruction.Address];
+    ++ResidualCounts[Origin.ResidualAddress];
+    Origins[Origin.ResidualAddress] = Origin.NativeInstruction.Address;
+  }
+  std::vector<va_t> Eligible;
+  for (const auto &B : Recovery.Residual.Blocks)
+    if (ResidualCounts[B.StartAddr] == 1 &&
+        NativeCounts[Origins[B.StartAddr]] == 1)
+      Eligible.push_back(B.StartAddr);
+  if (Eligible.empty()) {
+    Refuse(LowIRLoopInferenceStatus::Unsupported,
+           "loop inference has no unique native cutpoint origins");
+    return Result;
+  }
+  ImageProvider Provider(Image, Options);
+  Result.Inference = detail::inferNativeLowIRLoopRefinementPlan(
+      Provider, Recovery.Residual, Effective, InferenceLimits, Eligible);
+  if (!Result.Inference.inferred()) {
+    Refuse(Result.Inference.Status, Result.Inference.Diagnostic);
+    return Result;
+  }
+  for (auto &Cut : Result.Inference.Plan->Cutpoints)
+    Cut.OriginalAddress = Origins.at(Cut.CandidateAddress);
+  Result.Refinement = checkBinaryLowIRLoopRefinement(
+      Image, Entry, Options, Recovery.Residual, Contract,
+      *Result.Inference.Plan, Witness, ProofLimits);
+  return Result;
+}
+
 SpecializationWithIndependenceResult
 specializeBinaryInterpreterWithIndependence(
     const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,

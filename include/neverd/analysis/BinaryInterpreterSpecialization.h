@@ -133,6 +133,26 @@ BinaryLowIRRefinementResult checkBinaryLowIRLoopRefinement(
     LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
     const LowIRRefinementLimits &Limits = {});
 
+struct BinaryAutomaticLowIRRefinementResult {
+  LowIRLoopInferenceResult Inference;
+  BinaryLowIRRefinementResult Refinement;
+
+  bool proved() const { return Refinement.proved(); }
+};
+
+/// Infer loop proof hints from a complete recovery, select unique native
+/// origins for its candidate cutpoints, then independently check the complete
+/// native/candidate relation. Recovery metadata and inferred hints are
+/// untrusted; only Refinement's certificate establishes the relation. Search
+/// and proof budgets are separate and explicit. Neither stage certifies C.
+BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const SpecializationResult &Recovery,
+    const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
+    const LowIRRefinementLimits &ProofLimits = {},
+    const LowIRLoopInferenceLimits &InferenceLimits = {});
+
 struct SpecializationWithIndependenceResult {
   SpecializationResult Recovery;
   BinaryUndefinedIndependenceResult Independence;

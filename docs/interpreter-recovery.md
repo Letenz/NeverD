@@ -440,3 +440,7 @@ memory canaries unchanged. Rebinding to a generated global object cannot satisfy
 this oracle. These local checks do not establish arbitrary VM support.
 
 See [testing.md](testing.md) for the focused targets.
+
+## Automatic loop proof proposals
+
+`inferLowIRLoopRefinementPlan` proposes a single-cutpoint template using the shared symbolic executor: reachable prefixes, changing register/frame words, proved fixed bits, bounded widening, observed unsigned bounds and scalar ranks. `OriginalPrefix` and `CandidatePrefix` inputs require `UseEntryPrefix` and denote checked fixed prefix values. `inferAndCheckBinaryLowIRLoopRefinement` accepts complete recovery, selects unique native origins, then independently reruns the full original/candidate checker. Hints and origin mappings are untrusted; only `Refinement` can contain a certificate. Inference and proof have separate explicit budgets, and failure never increases either budget. Predicate traversal also consumes the inference symbolic-node budget. This C++ API does not run automatically with `--devirtualize`. Multi-cutpoint inference, arbitrary control alignment, C-backend equivalence and physical CPU choices for undefined bits remain outside its scope.

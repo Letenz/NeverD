@@ -432,6 +432,141 @@ TEST(LowIRLoopRefinement, ArbitraryWordCountWithDifferentBody) {
   EXPECT_EQ(Finite.Status, Status::BudgetExceeded);
 }
 
+TEST(LowIRLoopInference, CountAndAccumulatorNeedNoHandwrittenTemplate) {
+  const auto A = wordLoop(), B = wordLoop(1, true);
+  const auto Inferred = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  EXPECT_GT(Inferred.Operations, 0U);
+  EXPECT_GT(Inferred.SolverQueries, 0U);
+  EXPECT_GT(Inferred.RankCandidates, 0U);
+  const auto R = loopCheck(A, B, *Inferred.Plan);
+  ASSERT_TRUE(R.proved()) << R.Diagnostic;
+  EXPECT_EQ(R.Certificate->Scope, LowIRRefinementScope::InductiveLowIRLoops);
+  loopRefused(loopCheck(A, wordLoop(2), *Inferred.Plan), Status::Different);
+}
+
+TEST(LowIRLoopInference, AscendingCountersSpillsAndEarlyReturns) {
+  for (uint16_t Bytes : {4, 8}) {
+    for (bool EarlyReturn : {false, true}) {
+      Program P;
+      P.frame();
+      P.Function.Blocks[0].Succs = {1};
+      P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {n(0)}),
+                     op(NdOp::INT_ZEXT, r(24), {r(16, Bytes)}),
+                     op(NdOp::INT_ADD, r(40), {r(32), n(-8)}),
+                     op(NdOp::STORE, {}, {r(40), r(8)}),
+                     op(NdOp::BRANCH, {}, {n(0x200)})});
+      P.block(1, 0x200, {2, 4});
+      const auto Condition = NdVar::tmp(0, 1);
+      P.instruction({op(NdOp::INT_LESS, Condition, {r(8), r(24)}),
+                     op(NdOp::COND_BR, {}, {n(0x300), Condition})});
+      P.block(2, 0x300, {3});
+      P.instruction(
+          {op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+           op(NdOp::INT_ADD, NdVar::tmp(8, Bytes), {r(8, Bytes), n(1, Bytes)}),
+           op(NdOp::INT_ZEXT, r(8), {NdVar::tmp(8, Bytes)}),
+           op(NdOp::STORE, {}, {r(40), r(8)}),
+           op(NdOp::BRANCH, {}, {n(0x400)})});
+      P.block(3, 0x400,
+              EarlyReturn ? std::vector<int>{4, 1} : std::vector<int>{1});
+      if (EarlyReturn)
+        P.instruction({op(NdOp::INT_EQUAL, Condition, {r(0), r(48)}),
+                       op(NdOp::COND_BR, {}, {n(0x500), Condition})});
+      else
+        P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+      P.block(4, 0x500);
+      P.finish();
+      const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      ASSERT_TRUE(R.inferred()) << "bytes=" << Bytes << " early=" << EarlyReturn
+                                << ": " << R.Diagnostic;
+      const auto Proof = loopCheck(P, P, *R.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    }
+  }
+}
+
+TEST(LowIRLoopInference, InfiniteAndWrappingTransitionsHaveNoPlan) {
+  for (unsigned Step : {0, 2}) {
+    const auto A = wordLoop(Step);
+    const auto R = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+    EXPECT_FALSE(R.inferred()) << R.Diagnostic;
+    EXPECT_FALSE(R.Plan);
+  }
+}
+
+TEST(LowIRLoopInference, SearchBudgetDoesNotExpandTheProofBudget) {
+  const auto A = wordLoop();
+  const auto Good = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  for (unsigned Kind = 0; Kind != 8; ++Kind) {
+    LowIRLoopInferenceLimits Limits;
+    if (Kind == 0)
+      Limits.MaxCutpointAttempts = 0;
+    if (Kind == 1)
+      Limits.MaxWideningRounds = 0;
+    if (Kind == 2)
+      Limits.Execution.MaxOperations = Good.Operations - 1;
+    if (Kind == 3)
+      Limits.Execution.MaxSolverQueries = Good.SolverQueries - 1;
+    if (Kind == 4)
+      Limits.MaxRankCandidates = 0;
+    if (Kind == 5)
+      Limits.Execution.MaxPaths = 0;
+    if (Kind == 6)
+      Limits.Execution.MaxSymbolicNodes = 0;
+    if (Kind == 7)
+      Limits.Execution.MaxObservations = 0;
+    const auto R = inferLowIRLoopRefinementPlan(A.Function, A.Contract, Limits);
+    EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << R.Diagnostic;
+    EXPECT_FALSE(R.Plan);
+  }
+  LowIRRefinementLimits ProofLimits;
+  ProofLimits.Execution.MaxSolverQueries = 0;
+  loopRefused(loopCheck(A, A, *Good.Plan, ProofLimits), Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopInference, MalformedGraphsAndAbsentCutsHaveNoPlan) {
+  const auto Good = wordLoop();
+  for (unsigned Kind = 0; Kind != 6; ++Kind) {
+    auto P = Good;
+    if (Kind == 0)
+      P.Function.Entry = 0x999;
+    if (Kind == 1)
+      P.Function.Blocks[0].Succs.push_back(99);
+    if (Kind == 2)
+      P.Function.Blocks[1].Id = P.Function.Blocks[0].Id;
+    if (Kind == 3)
+      P.Function.Blocks[0].InstructionBoundaries[0].FirstOp = SIZE_MAX;
+    if (Kind == 4)
+      P.Function.Blocks[0].Ops[0].NumInputs = 7;
+    if (Kind == 5)
+      P.Function.Blocks.clear();
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::Invalid)
+        << "kind=" << Kind << ": " << R.Diagnostic;
+    EXPECT_FALSE(R.Plan);
+  }
+  const va_t Absent = 0x999;
+  const auto R =
+      inferLowIRLoopRefinementPlan(Good.Function, Good.Contract, {}, {Absent});
+  EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::Unsupported);
+  EXPECT_FALSE(R.Plan);
+  EXPECT_EQ(R.CutpointAttempts, 0U);
+}
+
+TEST(LowIRLoopRefinement, PrefixInputRequiresCapturedReachablePrefix) {
+  const auto A = wordLoop();
+  auto Plan = wordLoopPlan();
+  Plan.Cutpoints[0].Inputs.push_back(
+      {LowIRLoopSide::OriginalPrefix, regLocation(0), NdVar::tmp(16, 8)});
+  loopRefused(loopCheck(A, A, Plan), Status::Invalid);
+  Plan.Cutpoints[0].UseEntryPrefix = true;
+  ASSERT_TRUE(loopCheck(A, A, Plan).proved());
+  Plan.Cutpoints[0].Inputs.back().Side = LowIRLoopSide::CandidatePrefix;
+  ASSERT_TRUE(loopCheck(A, A, Plan).proved());
+}
+
 TEST(LowIRLoopRefinement, WrongBodyAndInitialStateRefuse) {
   const auto A = wordLoop();
   loopRefused(loopCheck(A, wordLoop(2), wordLoopPlan()), Status::Different);
