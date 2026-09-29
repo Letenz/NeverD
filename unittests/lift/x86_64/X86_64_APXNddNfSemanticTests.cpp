@@ -270,6 +270,82 @@ TEST(X86APXNddNfSemantics, AdcImmediateToMemoryStoresTheSum) {
   EXPECT_FALSE(Emulator.skips().any());
 }
 
+TEST(X86APXNddNfSemantics, NarrowNddDestinationsZeroTheirUpperBits) {
+  // An NDD register receives the result in bits [OSIZE-1:0] and zeros in
+  // bits [63:OSIZE], unlike a legacy 8- or 16-bit destination.
+  struct Case {
+    const char *Name;
+    std::vector<uint8_t> Bytes;
+    unsigned Id;
+    uint64_t Expected;
+  };
+  const std::vector<Case> Cases = {
+      // add r31b, r29b, r30b
+      {"add-8", {0x62, 0x4c, 0x04, 0x10, 0x00, 0xf5}, X86_INS_ADD, 0},
+      // {nf} add r31b, r29b, r30b
+      {"nf-add-8", {0x62, 0x4c, 0x04, 0x14, 0x00, 0xf5}, X86_INS_ADD, 0},
+      // adc r31b, r29b, r30b
+      {"adc-8", {0x62, 0x4c, 0x04, 0x10, 0x10, 0xf5}, X86_INS_ADC, 0x01},
+      // sub r31w, r29w, r30w
+      {"sub-16", {0x62, 0x4c, 0x05, 0x10, 0x29, 0xf5}, X86_INS_SUB, 0x0102},
+      // and r31w, r29w, r30w
+      {"and-16", {0x62, 0x4c, 0x05, 0x10, 0x21, 0xf5}, X86_INS_AND, 0x0001},
+      // shl r31w, r29w, 3
+      {"shl-16",
+       {0x62, 0xdc, 0x05, 0x10, 0xc1, 0xe5, 0x03},
+       X86_INS_SHL,
+       0x0408},
+      // inc r31b, r29b
+      {"inc-8", {0x62, 0xdc, 0x04, 0x10, 0xfe, 0xc5}, X86_INS_INC, 0x82},
+      // neg r31w, r29w
+      {"neg-16", {0x62, 0xdc, 0x05, 0x10, 0xf7, 0xdd}, X86_INS_NEG, 0x7f7f},
+      // not r31b, r29b
+      {"not-8", {0x62, 0xdc, 0x04, 0x10, 0xf6, 0xd5}, X86_INS_NOT, 0x7e},
+  };
+
+  for (const Case &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    const LiftedInstruction Lifted = liftX64(C.Bytes);
+    ASSERT_EQ(Lifted.Id, C.Id);
+    ASSERT_FALSE(Lifted.Ops.empty());
+
+    NdOpEmulator Emulator(emptyImage());
+    Emulator.setStrictMode(true);
+    setFlags(Emulator, {true, false, false, false, false, false, true});
+    setGpr(Emulator, X86_REG_R31, UINT64_C(0x1111111111111111));
+    setGpr(Emulator, X86_REG_R29, UINT64_C(0xaaaaaaaaaaaa8081));
+    setGpr(Emulator, X86_REG_R30, UINT64_C(0x5555555555557f7f));
+    ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+    EXPECT_EQ(getGpr(Emulator, X86_REG_R31), C.Expected);
+    EXPECT_EQ(getGpr(Emulator, X86_REG_R29), UINT64_C(0xaaaaaaaaaaaa8081));
+    EXPECT_EQ(getGpr(Emulator, X86_REG_R30), UINT64_C(0x5555555555557f7f));
+    EXPECT_FALSE(Emulator.skips().any());
+  }
+}
+
+TEST(X86APXNddNfSemantics, SbbImmediateNddReadsAddress32MemoryAndZerosUpper) {
+  // sbb r31w, word ptr [r29d + r30d*4 + 0x20], 0xffff
+  const LiftedInstruction Lifted = liftX64(
+      {0x67, 0x62, 0x9c, 0x01, 0x10, 0x81, 0x5c, 0xb5, 0x20, 0xff, 0xff});
+  ASSERT_EQ(Lifted.Id, X86_INS_SBB);
+  ASSERT_FALSE(Lifted.Ops.empty());
+  for (const LowOp &Op : Lifted.Ops)
+    EXPECT_NE(Op.Opcode, NdOp::STORE);
+
+  NdOpEmulator Emulator(imageWithValue(1, 2));
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, {false, false, false, false, false, false, true});
+  setGpr(Emulator, X86_REG_R31, UINT64_C(0x1111111111111111));
+  // The address wraps at 32 bits, so the upper half of r29 is not part of it.
+  setGpr(Emulator, X86_REG_R29,
+         UINT64_C(0xffffffff00000000) | (kDataAddress - 0x20));
+  setGpr(Emulator, X86_REG_R30, 0);
+  ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_R31), 2U);
+  expectFlags(Emulator, {true, false, true, false, false, false, true});
+  EXPECT_FALSE(Emulator.skips().any());
+}
+
 TEST(X86APXNddNfSemantics, ShrNddNfUsesDedicatedSourceAndPreservesFlags) {
   const LiftedInstruction Lifted =
       liftX64({0x62, 0xdc, 0x04, 0x14, 0xd3, 0xee});

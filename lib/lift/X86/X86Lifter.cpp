@@ -484,6 +484,23 @@ bool hasVexOrEvexEncoding(const cs_insn *Insn, bool Is64Bit) {
          (Insn->bytes[I] == 0x62 && I + 3 < Insn->size);
 }
 
+// APX promotes legacy instructions to EVEX map 4.  With EVEX.ND set, such an
+// instruction writes its destination register in full, as a new data
+// destination and as the zero-upper destination of SETcc and IMUL alike: an
+// 8- or 16-bit result also clears bits 63:OSIZE.
+bool writesWholeApxDestination(const cs_insn *Insn) {
+  size_t I = 0;
+  while (I < Insn->size && isLegacyEncodingPrefix(Insn->bytes[I], true))
+    ++I;
+  if (I + x86::kEvexP2Offset >= Insn->size ||
+      Insn->bytes[I] != x86::kEvexEscape)
+    return false;
+  const uint8_t P0 = Insn->bytes[I + x86::kEvexP0Offset];
+  const uint8_t P2 = Insn->bytes[I + x86::kEvexP2Offset];
+  return (P0 & x86::kEvexMapMask) == x86::kEvexMapPromotedLegacy &&
+         (P2 & x86::kEvexNewDataDestination) != 0;
+}
+
 // An explicit initial audit of legacy integer forms. This describes newly
 // arbitrary architectural outputs, not a proof of the whole instruction's
 // LowIR implementation. In particular, preserving a flag and computing one
@@ -1109,6 +1126,25 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
       S.emit(NdOp::INT_ZEXT, NdVar::reg(Offset, 8),
              {NdVar::reg(Offset, ClearUpper[Index])});
     }
+  }
+
+  // The 8- or 16-bit destination of an APX instruction with EVEX.ND set
+  // loses its upper bits too.  A handler that writes the whole register
+  // itself, as SETZUcc and IMUL with ZU do, leaves nothing to add.
+  if (TargetArch == Arch::X64 && X86.op_count != 0 &&
+      X86.operands[0].type == X86_OP_REG && writesWholeApxDestination(Insn)) {
+    const RegInfo Dst =
+        mapCapstoneReg(static_cast<x86_reg>(X86.operands[0].reg));
+    uint16_t LastWriteSize = 0;
+    for (size_t I = S.OpsStart; I < Ops.size(); ++I) {
+      const NdVar &Out = Ops[I].Output;
+      if (Out.Space == VnodeSpace::REG && Out.Offset == Dst.Offset)
+        LastWriteSize = Out.Size;
+    }
+    if (x86reg::isGeneralRegOffset(Dst.Offset) &&
+        (LastWriteSize == 1 || LastWriteSize == 2))
+      S.emit(NdOp::INT_ZEXT, NdVar::reg(Dst.Offset, 8),
+             {NdVar::reg(Dst.Offset, LastWriteSize)});
   }
 
   // x86-64: writing to a 32-bit register implicitly zero-extends to 64 bits.

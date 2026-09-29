@@ -1105,8 +1105,11 @@ TEST(X86WideISAState, ApxPromotedAluHonorsNddNfAndSubregisterWrites) {
             Emulator.setRegister(x86reg::AF, 0);
             EXPECT_EQ(Emulator.run(Ops), Ops.size());
 
+            // An 8- or 16-bit result merges into a destination without ND
+            // but clears the rest of an NDD register (Intel APX
+            // specification, section 3.1.2.4).
             uint64_t ExpectedDestination = Result;
-            if (Width <= 2)
+            if (Width <= 2 && !Ndd)
               ExpectedDestination = (DestinationBefore & ~WidthMask) | Result;
             EXPECT_EQ(*Emulator.getRegister(Destination.Offset),
                       ExpectedDestination);

@@ -60,6 +60,14 @@ NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
 NEVERD_X86_ENCODING(uint8_t, kFSSegmentPrefix, 0x64)
 
+// --- EVEX prefix: 62 P0 P1 P2 ---
+NEVERD_X86_ENCODING(uint8_t, kEvexEscape, 0x62)
+NEVERD_X86_ENCODING(size_t, kEvexP0Offset, 1)
+NEVERD_X86_ENCODING(size_t, kEvexP2Offset, 3)
+NEVERD_X86_ENCODING(uint8_t, kEvexMapMask, 0x07)
+NEVERD_X86_ENCODING(uint8_t, kEvexMapPromotedLegacy, 0x04)
+NEVERD_X86_ENCODING(uint8_t, kEvexNewDataDestination, 0x10)
+
 // --- Instruction lengths ---
 NEVERD_X86_ENCODING(size_t, kRel32DispOffset, 1)
 NEVERD_X86_ENCODING(size_t, kJmpRel32Len, 5)
