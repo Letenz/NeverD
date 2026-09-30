@@ -175,7 +175,7 @@ proveObjCSynchronizedStackReceiverCleanup(const BinaryImage &Image,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
 }
 
-// A second clang shape keeps the receiver in callee-saved x19. Forward
+// A second clang shape keeps the receiver in a callee-saved register. Forward
 // branches in the prefix must join before loading the enter argument; forward
 // branches in the protected body must join by its end. No path may bypass the
 // lock, reach its pad normally, or skip the first unprotected call. The C guard
@@ -210,12 +210,34 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   if (!EnterCall)
     return std::nullopt;
   const va_t Landing = Region->Landing;
-  const bool ReceiverFromRetainResult =
-      EnterCall >= Function.Entry + 8 && Word(EnterCall - 4) == 0xaa0003f3U &&
-      HasCall(EnterCall - 8, "_objc_retainAutoreleasedReturnValue");
-  const bool ReceiverFromSelf = Word(EnterCall - 4) == 0xaa1303e0U;
+  const auto SaveX0 = [](unsigned Register) { return 0xaa0003e0U | Register; };
+  const auto LoadX0 = [](unsigned Register) {
+    return 0xaa0003e0U | (Register << 16);
+  };
+  unsigned ReceiverRegister = 0;
+  bool ReceiverFromSelf = false, ReceiverFromRetainResult = false;
+  for (unsigned Register = 19; Register <= 22; ++Register) {
+    if (Word(EnterCall - 4) == LoadX0(Register)) {
+      ReceiverRegister = Register;
+      ReceiverFromSelf = true;
+    } else if (Word(EnterCall - 4) == SaveX0(Register) &&
+               EnterCall >= Function.Entry + 8 &&
+               HasCall(EnterCall - 8, "_objc_retainAutoreleasedReturnValue")) {
+      ReceiverRegister = Register;
+      ReceiverFromRetainResult = true;
+    }
+  }
+  if (!ReceiverRegister)
+    return std::nullopt;
+  unsigned ExceptionRegister = 0;
+  for (unsigned Register = 19; Register <= 22; ++Register)
+    if (Register != ReceiverRegister && Word(Landing) == SaveX0(Register))
+      ExceptionRegister = Register;
+  if (!ExceptionRegister)
+    return std::nullopt;
   va_t Normal = Region->End;
-  if (Word(Normal) == 0xaa0003f4U || Word(Normal) == 0xaa0003f5U)
+  if (Word(Normal) == SaveX0(20) || Word(Normal) == SaveX0(21) ||
+      Word(Normal) == SaveX0(22))
     Normal += 4; // retain an already computed result across ARC releases
   va_t FirstRetain = 0;
   uint8_t UnprotectedRetains = 0;
@@ -238,19 +260,19 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
     Normal += 8;
   }
   const va_t ExitCall = Normal + 4;
-  if ((!ReceiverFromSelf && !ReceiverFromRetainResult) ||
-      !HasCall(EnterCall, "_objc_sync_enter") || Normal >= Landing - 4 ||
-      Word(Normal) != 0xaa1303e0U || !HasCall(ExitCall, "_objc_sync_exit") ||
-      Word(Landing) != 0xaa0003f4U || Word(Landing + 4) != 0xaa1303e0U ||
+  if (!HasCall(EnterCall, "_objc_sync_enter") || Normal >= Landing - 4 ||
+      Word(Normal) != LoadX0(ReceiverRegister) ||
+      !HasCall(ExitCall, "_objc_sync_exit") ||
+      Word(Landing + 4) != LoadX0(ReceiverRegister) ||
       !HasCall(Landing + 8, "_objc_sync_exit") ||
-      Word(Landing + 12) != 0xaa1403e0U ||
+      Word(Landing + 12) != LoadX0(ExceptionRegister) ||
       !HasCall(Landing + 16, "__Unwind_Resume"))
     return std::nullopt;
 
   va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
   if (ReceiverFromSelf) {
     for (va_t Address = Function.Entry; Address + 4 < EnterCall; Address += 4) {
-      if (Word(Address) != 0xaa0003f3U)
+      if (Word(Address) != SaveX0(ReceiverRegister))
         continue;
       if (SavedReceiver || Address > Function.Entry + 32)
         return std::nullopt;
@@ -263,6 +285,12 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   Decoder Decoder;
   if (!Decoder.init(Arch::AArch64))
     return std::nullopt;
+  const unsigned ReceiverXRegisters[] = {ARM64_REG_X19, ARM64_REG_X20,
+                                         ARM64_REG_X21, ARM64_REG_X22};
+  const unsigned ReceiverWRegisters[] = {ARM64_REG_W19, ARM64_REG_W20,
+                                         ARM64_REG_W21, ARM64_REG_W22};
+  const unsigned ReceiverX = ReceiverXRegisters[ReceiverRegister - 19];
+  const unsigned ReceiverW = ReceiverWRegisters[ReceiverRegister - 19];
   for (va_t Address = Function.Entry; Address < ExitCall; Address += 4) {
     const uint8_t *Bytes = Image.readVA(Address, 4);
     DecodedInsn Instruction{};
@@ -279,7 +307,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
           (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0))
         return std::nullopt;
       if (Address > SavedReceiver &&
-          (Writes[I] == ARM64_REG_X19 || Writes[I] == ARM64_REG_W19))
+          (Writes[I] == ReceiverX || Writes[I] == ReceiverW))
         return std::nullopt;
     }
     const bool IsJump =
