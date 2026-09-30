@@ -6,6 +6,7 @@
 #include "CheckedAArch64Backend.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/RAMTransaction.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -260,6 +261,25 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   }
   if (auto E = buildAArch64PageTables(*this->Memory, UserMode))
     return E;
-  return Machine->step(CPU, {Deadline, &StopRequested});
+  std::vector<RAMWriteRange> Writes;
+  for (const auto &M : Accesses)
+    if (M.Permission == Write)
+      Writes.push_back({M.Address, M.Size});
+  auto Transaction = RAMTransaction::create(
+      *this->Memory, Writes, execution_limits::InstructionRAMWriteBytes,
+      executionPermissions(Write));
+  if (!Transaction)
+    return Transaction.takeError();
+  auto Next = CPU;
+  if (auto E = Machine->step(Next, {Deadline, &StopRequested}))
+    return E;
+  if (auto E = (*Transaction)->stage())
+    return E;
+  if (StopRequested || FirstFault)
+    return llvm::Error::success();
+  if (auto E = (*Transaction)->commit())
+    return E;
+  CPU = Next;
+  return llvm::Error::success();
 }
 } // namespace neverd::emulation

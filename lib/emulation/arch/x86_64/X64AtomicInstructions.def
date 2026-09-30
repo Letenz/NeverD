@@ -1,0 +1,8 @@
+//===- X64AtomicInstructions.def - Bounded scalar exchange effects --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_ATOMIC_INSTRUCTION(XCHG)
+NEVERD_X64_ATOMIC_INSTRUCTION(XADD)
+NEVERD_X64_ATOMIC_INSTRUCTION(CMPXCHG)

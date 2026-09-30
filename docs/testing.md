@@ -322,6 +322,28 @@ and malformed operands must fail explicitly.
 
 ## CPU execution checks
 
+`NeverDRAMTransactionTests` checks physical-alias deduplication, independent
+cross-page owners, bounded footprints, complete staged reads, write-only RAM,
+lease and phase errors, rejected devices/permissions, and cross-thread access.
+Injected x64/ARM64 transports modify RAM and CPU before reporting failure,
+cancellation or throwing; no speculative state may escape. An injected CPU
+exception separately verifies restored RAM and retained architectural status
+before OS delivery. These injections test ownership, not native ISA behavior.
+
+Its `X64Atomic` matrix executes original 8/16/32/64-bit `XCHG`/`XADD`/`CMPXCHG`
+encodings with and without LOCK at supervisor/user privilege. On an x64 host,
+an independent native instruction oracle supplies exact RAM, accumulator,
+source-register and flags results, including successful/failed comparisons.
+Observers must see original CPU/aliases and staged results; read stops, result
+stops, callback exceptions and missing write permissions cannot publish effects.
+Unavailable transports and non-x64 oracle hosts are explicit skips. The target
+builds with Unicorn disabled; native WHP and ARM64 still require those hosts.
+
+```bash
+cmake --build build-cpu --target NeverDRAMTransactionTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDRAMTransactionTests$' --output-on-failure
+```
+
 `NeverDIntegerABITests` builds three original Clang fixtures for Windows x64,
 Linux x64 and Linux ARM64. The compiled ten-argument functions exercise real
 register/stack parameters, local stack storage, return addresses and balanced

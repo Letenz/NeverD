@@ -47,6 +47,15 @@ MemoryProjection::lock() const {
     return diagnostic::error(diagnostic::Running);
   return Lock;
 }
+llvm::Expected<std::unique_lock<std::recursive_mutex>>
+MemoryProjection::executionLock() const {
+  auto Lease = lock();
+  if (!Lease)
+    return Lease.takeError();
+  if (!Space->State->Memory->State->Running)
+    return diagnostic::error(diagnostic::RAMTransactionLease);
+  return std::move(*Lease);
+}
 llvm::Error MemoryProjection::mutableMemory() const {
   auto &RAM = *Space->State->Memory->State;
   std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
