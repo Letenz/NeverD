@@ -92,6 +92,30 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
+// A missing call-site-table interval is not a zero-landing-pad call site.
+// Accept such an interval only when every instruction decodes and none is a
+// call. The complete lifetime proof still checks its control flow and writes.
+inline bool objcSynchronizedNonCallGap(const BinaryImage &Image, va_t Begin,
+                                       va_t End) {
+  if (Image.Arch != Arch::AArch64 || Begin >= End || End - Begin > 16384 ||
+      (Begin | End) % 4)
+    return false;
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return false;
+  for (va_t Address = Begin; Address < End; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET))
+      return false;
+  }
+  return true;
+}
+
 // LSDA ranges may share one cleanup, with unprotected instructions between
 // them. Preserve those holes rather than treating their union as one protected
 // interval. Every table entry and pad record must agree exactly.
@@ -103,7 +127,8 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
   if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
-      Sites.back().LandingPadVA || EH.CodeRange.End < 20)
+      Sites.back().LandingPadVA || EH.CodeRange.End < 20 ||
+      Sites.front().GuardedRange.Begin != Function.Entry)
     return std::nullopt;
   const va_t Cleanup = EH.CodeRange.End - 20;
   va_t Landing = InvalidVA;
@@ -127,9 +152,12 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
   va_t Next = Function.Entry;
   for (const auto &Site : Sites) {
     const auto &Range = Site.GuardedRange;
-    if (Range.Begin != Next || Range.End <= Range.Begin ||
+    if (Range.Begin < Next || Range.End <= Range.Begin ||
         Range.End > EH.CodeRange.End || (Range.Begin | Range.End) % 4 ||
         Site.FirstActionOffset)
+      return std::nullopt;
+    if (Range.Begin != Next &&
+        !objcSynchronizedNonCallGap(Image, Next, Range.Begin))
       return std::nullopt;
     Next = Range.End;
     if (!Site.LandingPadVA)

@@ -2499,6 +2499,9 @@ TEST(ObjCSourceProjection, SynchronizedInterleavedRangesPreserveEveryHole) {
   const auto Sites = EH.Itanium->CallSites;
   const auto Pads = EH.ObjC->LandingPads;
   EH.Itanium->CallSites[2].GuardedRange.Begin += 4;
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites[2].GuardedRange.Begin +=
+      8; // omitted ARC call at 0x303c
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
   EH.Itanium->CallSites = Sites;
   EH.Itanium->CallSites[2].FirstActionOffset = 0;
@@ -2560,6 +2563,42 @@ struct SynchronizedForwardedPadFixture : SynchronizedInterleavedFixture {
   }
 };
 } // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSparseLSDARequiresCompleteNonCallGaps) {
+  SynchronizedForwardedPadFixture F;
+  auto &EH = *F.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[2].GuardedRange = {0x3038, 0x303c};
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EXPECT_TRUE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x303c, 0x3044));
+  // The second gap above contains an ARC call. A table must explicitly
+  // describe it as unprotected rather than silently omit its unwind policy.
+  EH.Itanium->CallSites[2].GuardedRange.End = 0x3040;
+  ASSERT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  for (uint32_t Word :
+       {0x94000001U, 0xd63f0260U, 0xffffffffU, 0xd4000001U, 0xd69f03e0U}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, Word);
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  // A decodable branch in an omitted interval is still subject to the
+  // lifetime proof: backwards edges, skipped unlocks and pad entry fail.
+  for (va_t Target : {0x3024U, 0x3074U, 0x3088U, 0x308cU}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, 0x14000000U | ((Target - 0x3034) / 4 & 0x3ffffffU));
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3035, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3034));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x8000, 0x8004));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x7038));
+}
 
 TEST(ObjCSourceProjection,
      SynchronizedForwardedPadKeepsBothExceptionalEntries) {
