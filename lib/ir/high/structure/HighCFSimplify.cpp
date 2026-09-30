@@ -1622,15 +1622,14 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   };
 
   // Reads of each variable anywhere in the function (assignment targets are
-  // writes, not reads).
+  // writes, not reads). An indirect call reads its target like an operand.
   std::unordered_map<VarKey, unsigned, VarKeyHash> Reads;
   std::function<void(const ExprPtr &)> CountReads = [&](const ExprPtr &E) {
     if (!E)
       return;
     if (E->Kind == ExprKind::Var)
       ++Reads[varKey(E->Var)];
-    for (const ExprPtr &Op : E->Operands)
-      CountReads(Op);
+    E->forEachChildExpr(CountReads);
   };
   walkStmts(Body, [&](const HighStmt &S) {
     forEachExpr(S, [&](const ExprPtr &E) {
@@ -1652,7 +1651,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         for (ExprPtr &Op : E->Operands)
           if (Substitute(Op, Key, Value))
             return true;
-        return false;
+        return Substitute(E->IndirectTarget, Key, Value);
       };
   // A load or pure value with no call inside it.
   std::function<bool(const HighExpr &, unsigned)> Foldable =
@@ -1774,8 +1773,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             return;
           if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
             ++CondReads;
-          for (const ExprPtr &Op : E->Operands)
-            CountKey(Op);
+          E->forEachChildExpr(CountKey);
         };
         CountKey(L[I + 1].Cond);
         if (ReadIt != Reads.end() && ReadIt->second == 1 && CondReads == 1 &&
