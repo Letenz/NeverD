@@ -34,12 +34,14 @@ struct ObjCSynchronizedSourceProof {
   uint8_t UnprotectedRetains = 0;
   bool ReceiverHasStackCopy = false;
   uint8_t SuspendARC = 0; // release=1, retain=2; all such calls are unprotected
+  uint8_t LandingPadPrelude = 0; // exact B to the five-instruction cleanup
 };
 
 struct ObjCSynchronizedSourceRegion {
   va_t Begin = 0;
   va_t End = 0;
   va_t Landing = 0;
+  uint8_t LandingPadPrelude = 0;
 };
 
 inline bool objcSynchronizedSourceEHValid(const BinaryImage &Image,
@@ -90,6 +92,30 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
+// A missing call-site-table interval is not a zero-landing-pad call site.
+// Accept such an interval only when every instruction decodes and none is a
+// call. The complete lifetime proof still checks its control flow and writes.
+inline bool objcSynchronizedNonCallGap(const BinaryImage &Image, va_t Begin,
+                                       va_t End) {
+  if (Image.Arch != Arch::AArch64 || Begin >= End || End - Begin > 16384 ||
+      (Begin | End) % 4)
+    return false;
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return false;
+  for (va_t Address = Begin; Address < End; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET))
+      return false;
+  }
+  return true;
+}
+
 // LSDA ranges may share one cleanup, with unprotected instructions between
 // them. Preserve those holes rather than treating their union as one protected
 // interval. Every table entry and pad record must agree exactly.
@@ -101,36 +127,61 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
   if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
-      Sites.back().LandingPadVA)
+      Sites.back().LandingPadVA || EH.CodeRange.End < 20 ||
+      Sites.front().GuardedRange.Begin != Function.Entry)
     return std::nullopt;
+  const va_t Cleanup = EH.CodeRange.End - 20;
+  va_t Landing = InvalidVA;
+  for (const auto &Site : Sites)
+    if (Site.LandingPadVA)
+      Landing = std::min(Landing, Site.LandingPadVA);
+  if (Landing < Function.Entry || Landing > Cleanup ||
+      (Cleanup - Landing != 0 && Cleanup - Landing != 4) ||
+      (Landing | Cleanup) % 4)
+    return std::nullopt;
+  const uint8_t Prelude = static_cast<uint8_t>(Cleanup - Landing);
+  // Clang can give an early range a separate entry consisting solely of
+  // B +4. Keep that address as exceptional too; all entries must reach the
+  // same exact unlock/resume sequence, with no intervening effects.
+  if (Prelude) {
+    const uint8_t *Bytes = Image.readVA(Landing, 4);
+    if (!Bytes || llvm::support::endian::read32le(Bytes) != 0x14000001U)
+      return std::nullopt;
+  }
   std::vector<ObjCSynchronizedSourceRegion> Regions;
-  va_t Next = Function.Entry, Landing = 0;
+  va_t Next = Function.Entry;
   for (const auto &Site : Sites) {
     const auto &Range = Site.GuardedRange;
-    if (Range.Begin != Next || Range.End <= Range.Begin ||
+    if (Range.Begin < Next || Range.End <= Range.Begin ||
         Range.End > EH.CodeRange.End || (Range.Begin | Range.End) % 4 ||
         Site.FirstActionOffset)
+      return std::nullopt;
+    if (Range.Begin != Next &&
+        !objcSynchronizedNonCallGap(Image, Next, Range.Begin))
       return std::nullopt;
     Next = Range.End;
     if (!Site.LandingPadVA)
       continue;
-    if (Landing && Landing != Site.LandingPadVA)
+    if (Site.LandingPadVA != Landing && Site.LandingPadVA != Cleanup)
       return std::nullopt;
-    Landing = Site.LandingPadVA;
     if (Range.End > Landing ||
         std::count_if(EH.ObjC->LandingPads.begin(), EH.ObjC->LandingPads.end(),
                       [&](const auto &Pad) {
-                        return Pad.PadVA == Landing &&
-                               Pad.Kind == ObjCPadKind::SynchronizedExit &&
+                        const bool KindMatches =
+                            Pad.PadVA == Cleanup
+                                ? Pad.Kind == ObjCPadKind::SynchronizedExit
+                                : Pad.Kind == ObjCPadKind::Cleanup ||
+                                      Pad.Kind == ObjCPadKind::SynchronizedExit;
+                        return Pad.PadVA == Site.LandingPadVA && KindMatches &&
+                               Pad.Catches.empty() &&
                                Pad.GuardedRange.Begin == Range.Begin &&
                                Pad.GuardedRange.End == Range.End;
                       }) != 1)
       return std::nullopt;
-    Regions.push_back({Range.Begin, Range.End, Landing});
+    Regions.push_back({Range.Begin, Range.End, Landing, Prelude});
   }
   if (Regions.empty() || Regions.size() != EH.ObjC->LandingPads.size() ||
-      Next != EH.CodeRange.End || !Landing || Landing > InvalidVA - 20 ||
-      EH.CodeRange.End != Landing + 20)
+      Next != EH.CodeRange.End || !Landing)
     return std::nullopt;
   return Regions;
 }
@@ -634,9 +685,11 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
 // This permits backward joins without permitting a loop, pad entry or relock.
 inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
                                               va_t Entry, va_t Begin,
-                                              va_t Landing) {
+                                              va_t Landing,
+                                              uint8_t LandingPadPrelude = 0) {
   if (Begin < Entry || Begin >= Landing || Landing - Entry > 16384 ||
-      Landing > InvalidVA - 20 || (Begin | Landing) % 4)
+      (LandingPadPrelude != 0 && LandingPadPrelude != 4) ||
+      Landing > InvalidVA - 20 - LandingPadPrelude || (Begin | Landing) % 4)
     return false;
   Decoder Decoder;
   if (!Decoder.init(Arch::AArch64))
@@ -673,7 +726,8 @@ inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
       if (!Target)
         return false;
       const bool Unconditional = Word && branch::A64Branch.matches(*Word);
-      if (Unconditional && (*Target < Entry || *Target >= Landing + 20))
+      if (Unconditional &&
+          (*Target < Entry || *Target >= Landing + 20 + LandingPadPrelude))
         continue;
       if (!AddEdge(Address, *Target))
         return false;
@@ -704,6 +758,8 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       Regions->front().Landing - Function.Entry > 16384)
     return std::nullopt;
   const va_t Landing = Regions->front().Landing;
+  const uint8_t Prelude = Regions->front().LandingPadPrelude;
+  const va_t Cleanup = Landing + Prelude;
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
   };
@@ -738,13 +794,13 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       ReceiverFromRetainResult = true;
     }
   for (unsigned Register = 19; Register <= 22; ++Register)
-    if (Register != ReceiverRegister && Word(Landing) == SaveX0(Register))
+    if (Register != ReceiverRegister && Word(Cleanup) == SaveX0(Register))
       ExceptionRegister = Register;
   if (!ReceiverRegister || !ExceptionRegister ||
-      Word(Landing + 4) != LoadX0(ReceiverRegister) ||
-      !HasCall(Landing + 8, "_objc_sync_exit") ||
-      Word(Landing + 12) != LoadX0(ExceptionRegister) ||
-      !HasCall(Landing + 16, "__Unwind_Resume"))
+      Word(Cleanup + 4) != LoadX0(ReceiverRegister) ||
+      !HasCall(Cleanup + 8, "_objc_sync_exit") ||
+      Word(Cleanup + 12) != LoadX0(ExceptionRegister) ||
+      !HasCall(Cleanup + 16, "__Unwind_Resume"))
     return std::nullopt;
   va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
   va_t ExitCall = 0;
@@ -847,18 +903,19 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   // The legacy proofs own ordinary single-range lifetimes. This proof also
   // handles a single range when a verified prefix path bypasses the lock;
   // no ARC suspension is needed if every locked-body call is protected.
-  if ((Regions->size() == 1 && !BypassesLock) ||
+  if ((Regions->size() == 1 && !BypassesLock && !Prelude) ||
       (Regions->size() > 1 && !UnprotectedARC) ||
       (UnprotectedARC & ProtectedARC))
     return std::nullopt;
   if (!objcSynchronizedNormalSuffixValid(Image, Function.Entry, ExitCall + 4,
-                                         Landing))
+                                         Landing, Prelude))
     return std::nullopt;
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
-      objcSynchronizedBranchTarget(Image, Landing + 16)};
+      objcSynchronizedBranchTarget(Image, Cleanup + 16)};
   Proof.ReceiverIsSavedLocal = ReceiverFromRetainResult;
   Proof.SuspendARC = UnprotectedARC;
+  Proof.LandingPadPrelude = Prelude;
   return Proof;
 }
 
@@ -882,17 +939,30 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
 // The proved pad is an exceptional entry, not a normal source path. A full
 // image analysis can retain it as an unreachable suffix after the ordinary
 // return. Remove that suffix only when its label and statement addresses
-// match the five proved machine instructions, with no source edge into it.
+// match the proved branch entry and five cleanup instructions, with no source
+// edge into either exceptional entry.
 // The cleanup variable below supplies the same exceptional unlock.
 inline bool
 omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
                                      const ObjCSynchronizedSourceProof &Proof) {
   if (!Proof.LandingPad || !Proof.ResumeTarget ||
-      Proof.LandingPad > InvalidVA - 20 || Function.Body.empty())
+      (Proof.LandingPadPrelude != 0 && Proof.LandingPadPrelude != 4) ||
+      Proof.LandingPad > InvalidVA - 20 - Proof.LandingPadPrelude ||
+      Function.Body.empty())
     return false;
   const va_t Landing = Proof.LandingPad;
+  const va_t Cleanup = Landing + Proof.LandingPadPrelude;
   const auto InPad = [&](va_t Address) {
-    return Address >= Landing && Address < Landing + 20;
+    return Address >= Landing && Address < Cleanup + 20;
+  };
+  const auto EmptyLabel = [](const HighStmt &S) {
+    return S.Kind == StmtKind::Block && S.Body.empty() && S.ElseBody.empty() &&
+           !S.Dst && !S.Val && !S.Cond && !S.RetVal && !S.StoreAddr &&
+           !S.StoreVal && !S.CallExpr && !S.SwitchExpr && S.Cases.empty() &&
+           S.DefaultBody.empty() && !S.GotoTarget && S.EHClauseBodies.empty() &&
+           S.EHClauses.empty() && S.MemoryOrdering == NdMemoryOrdering::None &&
+           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           !S.EHRange.Begin && !S.EHRange.End;
   };
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
@@ -926,25 +996,19 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
   if (Marker == Body.end())
     return Body.back().Kind == StmtKind::Return;
   if (Marker == Body.begin() || (Marker - 1)->Kind != StmtKind::Return ||
-      Marker->Addr != Landing || Marker->Kind != StmtKind::Block ||
-      !Marker->Body.empty() || !Marker->ElseBody.empty() || Marker->Dst ||
-      Marker->Val || Marker->Cond || Marker->RetVal || Marker->StoreAddr ||
-      Marker->StoreVal || Marker->CallExpr || Marker->SwitchExpr ||
-      !Marker->Cases.empty() || !Marker->DefaultBody.empty() ||
-      Marker->GotoTarget || !Marker->EHClauseBodies.empty() ||
-      !Marker->EHClauses.empty() ||
-      Marker->MemoryOrdering != NdMemoryOrdering::None ||
-      Marker->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-      Marker->EHRange.Begin || Marker->EHRange.End)
+      Marker->Addr != Landing || !EmptyLabel(*Marker))
     return false;
   bool SawResume = false;
   for (auto It = Marker + 1; It != Body.end(); ++It) {
-    if (It->Addr == Landing + 16 && It->Kind == StmtKind::Assign && It->Val &&
+    if (Proof.LandingPadPrelude && It == Marker + 1 && It->Addr == Cleanup &&
+        EmptyLabel(*It))
+      continue;
+    if (It->Addr == Cleanup + 16 && It->Kind == StmtKind::Assign && It->Val &&
         It->Val->Kind == ExprKind::Call &&
         It->Val->CallAddr == Proof.ResumeTarget)
       SawResume = true;
     else if (InPad(It->Addr) && It->Kind == StmtKind::Assign &&
-             (It->Addr == Landing + 4 || It->Addr == Landing + 8))
+             (It->Addr == Cleanup + 4 || It->Addr == Cleanup + 8))
       continue;
     else if (It + 1 == Body.end() && It->Addr == 0 &&
              It->Kind == StmtKind::Return &&
@@ -1159,18 +1223,20 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
           "extern void objc_release(void*);\n"
           "static void neverd_objc_sync_release(void **guard, void *lock, "
           "void *object) {\n"
+          "    void *active = *guard ? lock : 0;\n"
           "    *guard = 0;\n"
           "    objc_release(object);\n"
-          "    *guard = lock;\n"
+          "    *guard = active;\n"
           "}\n";
     else
       Helpers +=
           "extern void *objc_retain(void*);\n"
           "static void *neverd_objc_sync_retain(void **guard, void *lock, "
           "void *object) {\n"
+          "    void *active = *guard ? lock : 0;\n"
           "    *guard = 0;\n"
           "    void *result = objc_retain(object);\n"
-          "    *guard = lock;\n"
+          "    *guard = active;\n"
           "    return result;\n"
           "}\n";
   }
@@ -1182,6 +1248,88 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
     Result.replace(At, Length, Replacement);
   }
   return Helpers + Result;
+}
+
+// The emitter may expand a shared unlock into early-return tails. Before
+// accepting another rendered unlock, require the preceding one to terminate
+// its path with an unconditional return. Ignore literals and comments; reject
+// intervening control flow, labels and nested scopes instead of guessing it.
+inline bool objcSynchronizedUnlockReturns(llvm::StringRef Source, size_t Exit,
+                                          size_t NextExit) {
+  const size_t End = Source.find(';', Exit);
+  if (End == std::string::npos || End >= NextExit || NextExit > Source.size() ||
+      NextExit - End > 16 * 1024 * 1024)
+    return false;
+  enum class Lexical { Normal, String, Character, LineComment, BlockComment };
+  Lexical State = Lexical::Normal;
+  bool StatementStart = true, Returning = false;
+  unsigned Parentheses = 0;
+  for (size_t I = End + 1; I < NextExit; ++I) {
+    const char C = Source[I], Next = I + 1 < NextExit ? Source[I + 1] : 0;
+    if (State == Lexical::String || State == Lexical::Character) {
+      if (C == '\\')
+        ++I;
+      else if (C == (State == Lexical::String ? '"' : '\''))
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::LineComment) {
+      if (C == '\n')
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::BlockComment) {
+      if (C == '*' && Next == '/') {
+        State = Lexical::Normal;
+        ++I;
+      }
+      continue;
+    }
+    if (C == '/' && (Next == '/' || Next == '*')) {
+      State = Next == '/' ? Lexical::LineComment : Lexical::BlockComment;
+      ++I;
+      continue;
+    }
+    if (llvm::isSpace(C))
+      continue;
+    if (C == '"' || C == '\'') {
+      State = C == '"' ? Lexical::String : Lexical::Character;
+      StatementStart = false;
+      continue;
+    }
+    if (C == '{' || C == '}' || C == '#' || (C == ':' && !Parentheses))
+      return false;
+    if (llvm::isAlpha(C) || C == '_') {
+      const size_t Begin = I;
+      while (I + 1 < NextExit &&
+             (llvm::isAlnum(Source[I + 1]) || Source[I + 1] == '_'))
+        ++I;
+      const auto Token = Source.slice(Begin, I + 1);
+      if (Token == "if" || Token == "switch" || Token == "for" ||
+          Token == "while" || Token == "do" || Token == "goto" ||
+          Token == "break" || Token == "continue")
+        return false;
+      if (Token == "return") {
+        if (!StatementStart || Parentheses || Returning)
+          return false;
+        Returning = true;
+      }
+      StatementStart = false;
+    } else if (C == '(') {
+      ++Parentheses;
+      StatementStart = false;
+    } else if (C == ')') {
+      if (!Parentheses)
+        return false;
+      --Parentheses;
+    } else if (C == ';' && !Parentheses) {
+      if (Returning)
+        return true;
+      StatementStart = true;
+    } else
+      StatementStart = false;
+  }
+  return false;
 }
 
 inline std::optional<std::string>
@@ -1243,8 +1391,7 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   if (EnterEnd == std::string::npos)
     return std::nullopt;
   if (Proof.SuspendARC) {
-    if (!StopAtExit || Exits.size() != 1 || Proof.UnprotectedReleases ||
-        Proof.UnprotectedRetains ||
+    if (!StopAtExit || Proof.UnprotectedReleases || Proof.UnprotectedRetains ||
         (!Proof.ReceiverIsSavedLocal &&
          (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
           !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))))
@@ -1306,6 +1453,9 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
     // statement. Clear the guard on every rendered normal-unlock path.
     if (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName))
       return std::nullopt;
+    for (size_t I = 1; I < Exits.size(); ++I)
+      if (!objcSynchronizedUnlockReturns(Scoped, Exits[I - 1], Exits[I]))
+        return std::nullopt;
     for (auto It = Exits.rbegin(); It != Exits.rend(); ++It) {
       const size_t Line = Source.rfind('\n', *It);
       if (*It <= EnterEnd || Line == std::string::npos ||
@@ -1342,7 +1492,11 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
     if (!RenderedBody)
       return std::nullopt;
     const size_t RenderedEnter = Result.find(EnterName, RenderedBody->first);
-    const size_t RenderedExit = Result.find(ExitName, RenderedBody->first);
+    // A shared machine unlock can be duplicated into early HighC returns.
+    // ARC calls after an earlier rendered unlock must leave its guard zero;
+    // suspend every occurrence through the last normal unlock, preserving
+    // whether that path still owns the lock.
+    const size_t RenderedExit = Result.rfind(ExitName, RenderedBody->second);
     const size_t RenderedEnterEnd = Result.find(';', RenderedEnter);
     return objcSynchronizedSuspendARC(Result, RenderedEnterEnd + 1,
                                       RenderedExit, Proof.SuspendARC, Receiver);

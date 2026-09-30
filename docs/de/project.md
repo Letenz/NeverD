@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, Integratoren und KI-Agenten nutzen eine Engine — **`libneverd`** — übe
 
 Eingabeformate, Host-Verträge und Grenzen stehen in den Leitfäden für [EVM](evm.md) und [Solana SBF](sbf.md).
 
-Die experimentelle CLI `neverd mobile app.apk -o recovered-app` stellt Java aus APK (multidex), DEX und smali wieder her und erzeugt `report.json`. Die Standard-Engine ist in C++20 implementiert und benötigt zur Ausführung weder Python noch Java oder JADX. Weder `NEVERD_JADX` noch ein `jadx` im PATH wählen die externe Engine aus; dies geschieht ausschließlich durch ein explizites `--jadx PATH`. Es gibt keinen automatischen Rückgriff. Pfade mit Leerzeichen müssen in Anführungszeichen stehen. Unterstützte Eingaben, Berichte und Grenzen erläutert der [Android-Leitfaden](android.md).
+Die experimentelle CLI `neverd mobile app.apk -o recovered-app` stellt Java aus APK (multidex), DEX und smali wieder her und erzeugt `report.json`. Die Android-Wiederherstellung verwendet ausschließlich die integrierte C++20-Engine von NeverD und benötigt keine Python- oder Java-Laufzeit. Pfade mit Leerzeichen müssen in Anführungszeichen stehen. Unterstützte Eingaben, Berichte und Grenzen erläutert der [Android-Leitfaden](android.md).
 
 Der experimentelle iOS-Ablauf `neverd mobile App.ipa -o recovered-ios` exportiert natives C und unterstützte Objective-C-/Swift-Quellen aus IPA, `.app` oder Mach-O. Laufzeitlayouts, Quelltexteinheiten und Auslassungen pro Methode bleiben sichtbar; generierter Code verwendet keine Brücke zur Originalbinärdatei. Einrichtung, Abdeckung und unabhängige Kompilierprüfungen stehen im [iOS-Leitfaden](ios.md).
 
@@ -101,7 +101,7 @@ Die Rekonstruktion hängt von unterstützten Codemustern ab; Umfang und Grenzen 
 
 Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Gast-OS-Richtlinien. `NEVERD_ENABLE_CPU_EMULATION` aktiviert die x64/ARM64-CPU-Schicht; `NEVERD_ENABLE_DRIVER_EMULATION` ergänzt die begrenzte x64-Windows-WDM/KMDF-Umgebung. `linux-elf64-v1` führt unterstützte Linux-ELF-Prozesse aus. Siehe [CPU-Ausführung](cpu-execution.md), [Gastprozess-Emulation](process-emulation.md) und [Emulation von Windows-Treibern](driver-emulation.md).
 
-Checked-Profile verwenden KVM auf Linux und WHP auf Windows bei gleicher ISA sowie Unicorn bei unterschiedlicher ISA. Native ARM64/WHP-Ausführung bleibt unvalidiert. `driver-strict` verwendet derzeit Unicorn; der KVM/WHP-Treiberpfad benötigt `checked-x64-v1`. Ein ausdrücklich gewähltes, nicht verfügbares Backend schlägt klar fehl. Gemeinsamer RAM, Aliase, gestufte Schreibvorgänge, skalare Atomoperationen, typisierte Ausnahmen und vollständige x64-FP/SSE-Kontexte sind innerhalb der dokumentierten ISA/OS-Verträge implementiert. Dies verspricht weder beliebige Treiberkompatibilität noch implementierte Android/Darwin-Umgebungen.
+`driver-strict` / `checked-x64-v1` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Native ARM64/WHP-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
 
 <!-- i18n-section: how-it-works -->
 

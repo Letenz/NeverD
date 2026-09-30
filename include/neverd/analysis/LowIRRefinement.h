@@ -9,6 +9,8 @@
 
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
+#include "llvm/Support/Error.h"
+
 namespace neverd::analysis {
 
 /// An explicit, constructive choice at each original undefined producer.
@@ -117,6 +119,42 @@ struct LowIRLoopRefinementPlan {
   /// segment exploration and cannot be treated as an inductive edge.
   std::vector<LowIRLoopCutpoint> Cutpoints;
 };
+
+/// Propose equality between induction inputs at two full-width locations.
+/// Both bindings are retained; the refinement checker must validate their
+/// projections and every real arrival at the paired cutpoint.
+struct LowIRLoopInputPair {
+  LowIRLoopLocation Original, Candidate;
+};
+
+struct LowIRLoopCutpointPair {
+  va_t OriginalAddress = 0, CandidateAddress = 0;
+  std::vector<LowIRLoopInputPair> SharedInputs;
+};
+
+/// Combine two independently proposed self-relation plans into one untrusted
+/// original/candidate proposal. Pairings must cover each plan exactly once.
+/// Each input plan uses identical original/candidate addresses and assignments,
+/// Entry/Original/OriginalPrefix inputs, and nonoverlapping temporary
+/// definitions with exact-width uses. Prefix policies must agree on
+/// UseEntryPrefix; GeneralizeEntryPrefix is enabled if either proposal requires
+/// it.
+///
+/// Temporaries and input bindings are renamed independently. Equality
+/// predicates couple explicitly paired Original inputs without removing
+/// either projection. Candidate-side prefix inputs remain candidate-side
+/// snapshots. Both predicates are retained, with the original plan's rank.
+/// No solver runs here, no invariant is assumed, and no certificate is
+/// produced. The complete original/candidate checker remains mandatory,
+/// including input domain, state/frame equality, coverage, termination and
+/// observation checks. MaxMetadata bounds the total input cuts, bindings,
+/// expressions, assignments, ranking components and requested pairs before
+/// construction allocates copies.
+llvm::Expected<LowIRLoopRefinementPlan>
+pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
+                             const LowIRLoopRefinementPlan &Candidate,
+                             llvm::ArrayRef<LowIRLoopCutpointPair> Pairings,
+                             uint64_t MaxMetadata = 65536);
 
 enum class LowIRLoopInferenceStatus : uint8_t {
   Inferred,

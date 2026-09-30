@@ -105,55 +105,61 @@ static void collectStmtRefsLocal(const std::vector<HighStmt> &Stmts,
   });
 }
 
+/// Addresses a jump or an exception handler enters; a statement removed at
+/// one of them leaves an empty block so its label keeps its place.
+static std::set<va_t> enteredAddresses(const std::vector<HighStmt> &Stmts) {
+  std::set<va_t> Entered = gotoTargets(Stmts);
+  walkStmts(Stmts, [&](const HighStmt &S) {
+    for (const HighEHClause &Clause : S.EHClauses)
+      Entered.insert(Clause.HandlerVA);
+  });
+  return Entered;
+}
+
 static bool eliminateDeadAssignsLocal(std::vector<HighStmt> &Stmts,
-                                      const VarKeySet &Refs) {
+                                      const VarKeySet &Refs,
+                                      const std::set<va_t> &Entered) {
   bool Changed = false;
-  Stmts.erase(std::remove_if(Stmts.begin(), Stmts.end(),
-                             [&](const HighStmt &S) {
-                               if (S.Kind == StmtKind::Assign && S.Dst &&
-                                   S.Val && S.Dst->Kind == ExprKind::Var &&
-                                   S.Val->Kind == ExprKind::Var &&
-                                   VK(S.Dst->Var) == VK(S.Val->Var)) {
-                                 Changed = true;
-                                 return true;
-                               }
-                               if (S.Kind == StmtKind::Assign && S.Dst &&
-                                   S.Val && S.Dst->Kind == ExprKind::Var &&
-                                   S.Val->Kind != ExprKind::Call &&
-                                   !S.Val->hasOrderedMemoryAccess() &&
-                                   Refs.count(VK(S.Dst->Var)) == 0) {
-                                 Changed = true;
-                                 return true;
-                               }
-                               return false;
-                             }),
-              Stmts.end());
-  for (auto &S : Stmts) {
-    if (!S.Body.empty() && eliminateDeadAssignsLocal(S.Body, Refs))
+  eraseKeepingBranchEntries(Stmts, Entered, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+        S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Var &&
+        VK(S.Dst->Var) == VK(S.Val->Var)) {
       Changed = true;
-    if (!S.ElseBody.empty() && eliminateDeadAssignsLocal(S.ElseBody, Refs))
+      return true;
+    }
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+        S.Dst->Kind == ExprKind::Var && S.Val->Kind != ExprKind::Call &&
+        !S.Val->hasOrderedMemoryAccess() && Refs.count(VK(S.Dst->Var)) == 0) {
+      Changed = true;
+      return true;
+    }
+    return false;
+  });
+  for (auto &S : Stmts) {
+    if (!S.Body.empty() && eliminateDeadAssignsLocal(S.Body, Refs, Entered))
+      Changed = true;
+    if (!S.ElseBody.empty() &&
+        eliminateDeadAssignsLocal(S.ElseBody, Refs, Entered))
       Changed = true;
     for (auto &C : S.Cases)
-      if (eliminateDeadAssignsLocal(C.Body, Refs))
+      if (eliminateDeadAssignsLocal(C.Body, Refs, Entered))
         Changed = true;
     if (!S.DefaultBody.empty() &&
-        eliminateDeadAssignsLocal(S.DefaultBody, Refs))
+        eliminateDeadAssignsLocal(S.DefaultBody, Refs, Entered))
       Changed = true;
   }
   return Changed;
 }
 
 void postRenameCleanup(std::vector<HighStmt> &Stmts) {
+  const std::set<va_t> Entered = enteredAddresses(Stmts);
   std::function<void(std::vector<HighStmt> &)> RemoveSelfAssigns;
   RemoveSelfAssigns = [&](std::vector<HighStmt> &Body) {
-    Body.erase(std::remove_if(Body.begin(), Body.end(),
-                              [](const HighStmt &S) {
-                                return S.Kind == StmtKind::Assign && S.Dst &&
-                                       S.Val && S.Dst->Kind == ExprKind::Var &&
-                                       S.Val->Kind == ExprKind::Var &&
-                                       S.Dst->structuralEq(*S.Val);
-                              }),
-               Body.end());
+    eraseKeepingBranchEntries(Body, Entered, [](const HighStmt &S) {
+      return S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+             S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Var &&
+             S.Dst->structuralEq(*S.Val);
+    });
     for (auto &S : Body) {
       RemoveSelfAssigns(S.Body);
       RemoveSelfAssigns(S.ElseBody);
@@ -195,8 +201,17 @@ void postRenameCleanup(std::vector<HighStmt> &Stmts) {
           Prev.Dst = nullptr;
           Prev.Val = nullptr;
         } else if (!Prev.Val || !Prev.Val->hasOrderedMemoryAccess()) {
-          Body.erase(Body.begin() + static_cast<long>(I));
-          --I;
+          if (Prev.Addr != 0 && Prev.Addr != InvalidVA &&
+              Entered.count(Prev.Addr)) {
+            // The overwritten value is dead; its label stays.
+            HighStmt Anchor;
+            Anchor.Kind = StmtKind::Block;
+            Anchor.Addr = Prev.Addr;
+            Prev = std::move(Anchor);
+          } else {
+            Body.erase(Body.begin() + static_cast<long>(I));
+            --I;
+          }
         }
       }
     }
@@ -212,7 +227,7 @@ void postRenameCleanup(std::vector<HighStmt> &Stmts) {
 
   VarKeySet FinalRefs;
   collectStmtRefsLocal(Stmts, FinalRefs);
-  eliminateDeadAssignsLocal(Stmts, FinalRefs);
+  eliminateDeadAssignsLocal(Stmts, FinalRefs, Entered);
 }
 
 } // namespace neverd

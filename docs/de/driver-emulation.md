@@ -4,16 +4,11 @@
 
 # Emulation von Windows-Treibern
 
-NeverDs optionaler Treiberemulator führt den PE-Einsprungpunkt eines unterstützten
-x64-WDM-Treibers aus und kann vor dem Entladen ein ausdrücklich angegebenes
-Szenario serieller Anforderungen durchlaufen. Für die CPU-Ausführung verwendet
-er Unicorn, für die begrenzte Windows-Umgebung NeverDs eigenes Modell. Er lädt
-den Treiber nicht in den Host-Kernel und leitet Gast-API-Aufrufe nicht an
-Betriebssystemdienste des Hosts weiter.
+NeverDs optionaler Treiberemulator führt den PE-Einstieg eines unterstützten x64-WDM-Treibers aus und kann vor dem Entladen ein explizites Anfrageszenario ausführen. Die CLI wählt mit `auto` KVM auf passenden Linux-Hosts und WHP auf Windows-Hosts. Die bisherigen C++-Standardwerte und die V1-API behalten Unicorn. Alle Transporte verwenden NeverDs begrenztes Windows-Umgebungsmodell, das Gast-API-Aufrufe verarbeitet und den Treiber vom Host-Kernel isoliert.
 
 ## Ausführungsbackends
 
-Der Standardvertrag `driver-strict` verwendet weiterhin Unicorn. Der experimentelle Vertrag mit begrenztem Befehlsumfang `checked-x64-v1` wählt mit `--backend auto` KVM auf Linux x86_64 beziehungsweise WHP auf Windows x64. Eine ausdrückliche Auswahl fällt nicht auf ein anderes Backend zurück; fehlende Hardware oder ein unpassender Vertrag führen vor der Ausführung zum Fehler.
+`driver-strict` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Native ARM64/WHP-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
 
 Auf einem ARM64-Host verwendet `checked-x64-v1` Unicorn für den x64-Gast. Jede Anweisung und jeder Speicherzugriff wird vor dem Einzelschritt geprüft; Windows-Objektprüfungen, Schreibbeobachter, RAM-Aliase und CPU-only-Kontexte bleiben erhalten. Skalarer Speicherarithmetik, natürlich ausgerichtete gesperrte Arithmetik, SETcc und Register-BT sind mit Lese-/Schreibprüfungen zugelassen; die native Ausführung verwaltet Flags. Begrenzte SIMD-Unterstützung umfasst SSE/SSE2-Moves/Logik, `MOVLHPS`/`MOVHLPS` und maskierte skalare Umwandlung/Subtraktion. Alle 16 XMM-Register und MXCSR überstehen Eintritt und Kontextwiederherstellung; nicht maskierte SIMD-Ausnahmen, DAZ, x87, AVX und nicht gelistete Befehle werden abgelehnt. Volle XMM-Stores erzeugen zwei geordnete 8-Byte-Schreibbeobachtungen, bevor eines der Wörter geändert wird. Nicht ausgerichtete aligned-vector-Formen bleiben ausgeschlossen. Gewöhnliche RAM-Operanden dürfen separat zugewiesene oder aliasierte Seiten überschreiten. Der gesamte Bereich wird vor dem Schreiben geprüft; das erste unzugängliche Byte bezeichnet den Fehlerort. MOVS erhält abgeschlossene Elemente und die Wiederanlaufregister des fehlerhaften Elements, ohne dieses teilweise zu übernehmen.
 
@@ -780,3 +775,5 @@ Checked x64 führt `DIV`/`IDIV` mit echten Prozessorergebnissen und `#DE` aus. K
 ## Vollständiger x87-Zustand
 
 `NeverDEmulationArch` besitzt ISA-Verträge, Seitentabellen und das FP-Layout, das native Transporte und Unicorn gemeinsam nutzen. x64-Kontexte erhalten Steuerung, Status, TOP, physische Tags, Opcode, Befehls-/Datenzeiger und acht 80-Bit-Register. `FP0`–`FP7` verwenden `RegisterValue`; skalare Zugriffe lehnen eine Kürzung ab. `FPTag` ist die physische Maske nicht leerer Register. `NeverDX64FPTests` prüft alle TOP-Werte, exakte Operationen gegen Host-FXSAVE/FXRSTOR und die Wiederherstellung. Dies lässt keine x87-Befehle im checked-Vertrag zu und beweist nicht sämtliche Rundungssemantik. Fehlende native Hosts werden ausdrücklich übersprungen.
+
+Das ausgewählte Profil lässt sich mit `executionCapabilities(Contract, ISA, Backend)` abfragen. `NativeLegacyX64` beschreibt die native Ausführung von x64-Treibern. `NeverDNativeDriverTests` prüft den vorhandenen Treiberkorpus und kann auch in einem Build ohne Unicorn laufen.

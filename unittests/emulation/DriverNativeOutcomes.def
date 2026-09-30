@@ -1,0 +1,35 @@
+//===- DriverNativeOutcomes.def - Original corpus outcome oracle ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original built-in/WDK corpus outcomes captured with the portable driver
+// environment before native driver-strict admission. Other available corpus
+// entries return STATUS_SUCCESS with a successful scenario. A new negative
+// workload must declare its expected outcome here. These outcomes use the
+// corpus test's instruction/event budgets, not the CLI's default budgets.
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinApifault, MemoryFault, std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinDriverGuardInvalidCheck, ModelError,
+                             std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinDriverGuardInvalidDispatch, ModelError,
+                             std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinDriverRegistry, ModelError, std::nullopt,
+                             false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinFailure, Returned, 0xc0000001, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinFault, MemoryFault, std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinLoop, InstructionLimit, std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinOpaque, ModelError, std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinOpaqueargument, ModelError, std::nullopt,
+                             false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinPendingentry, ModelError, 259, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinPrivileged, UnsupportedInstruction,
+                             std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinReadonly, MemoryFault, std::nullopt, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(BuiltinUnknown, UnsupportedAPI, std::nullopt,
+                             false)
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverWdmElevatedPowerScenario, ModelError, 0,
+                             false)
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverWdmElevatedPowerScenarioCfg, ModelError, 0,
+                             false)
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverD2PowerScenario, Returned, 0, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverD2PowerScenarioCfg, Returned, 0, false)

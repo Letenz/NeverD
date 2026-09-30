@@ -217,6 +217,8 @@ Recovery API tests cover v1/v2/v3 defaults, explicit budgets, truncated structur
 
 `LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
 
+`LowIRLoopPlanPairing.*` in the same target checks renamed registers, different arithmetic bodies, side-specific prefix snapshots, retained predicates, shared frame inputs, nested cut coverage and fresh proof budgets. Missing relations, incorrect writes, malformed temporary bindings, incomplete pairings and exhausted metadata limits must not establish a certificate.
+
 Cached equality exits in two- and three-level loops check correlated operands, moving bounds, counter resets and corrupted copies.
 
 Cached comparison regressions cover equality and inequality, guarded and constant-folded starts, fields first discovered after widening, and bits 7/31/63 in byte/dword/qword caches. Changing only an adjacent bit while preserving the tested bit must fail full state comparison. Zero steps, moving bounds, resets and exhausted shared budgets must refuse.
@@ -1713,3 +1715,11 @@ The driver gap regression suites additionally cover:
   system-policy Query/Set children and
   missing/mismatched explicit responses. The public C API checks child origins
   and response indices without assuming result rows are grouped by origin.
+
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+
+Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
+
+The existing CI workflow runs the complete emulation test directory before the general profiles and saves the discovery inventory, JUnit results and CTest log in `emulation-focused`. A failure elsewhere cannot prevent this focused run. Unavailable hardware and optional driver fixtures remain explicit skips; a passing software or compile check does not establish native execution.
+
+On Linux, `NeverDUnicornDeadlineTests` completes the actual timer thread before guest entry using controlled pthread scheduling. It covers x64, ARM32 and ARM64, requires zero guest effects after pre-entry cancellation, and verifies that the next run uses its own budget. The test uses public engine APIs and does not mutate engine-private state.

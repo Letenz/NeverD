@@ -22,12 +22,11 @@ NEVERD_EXECUTION_TEXT(RequestedBackend, "requested_backend")
 NEVERD_EXECUTION_TEXT(SelectedBackend, "selected_backend")
 NEVERD_EXECUTION_TEXT(ExecutionContract, "execution_contract")
 NEVERD_EXECUTION_TEXT(SelectionReason, "backend_selection_reason")
-NEVERD_EXECUTION_TEXT(
-    LegacySelection,
-    "driver-strict requires the complete Unicorn observation contract")
+NEVERD_EXECUTION_TEXT(LegacySelection,
+                      "selected the portable driver execution profile")
 NEVERD_EXECUTION_TEXT(
     HostSelection,
-    "selected the native backend for this host and checked contract")
+    "selected the native backend for this host and execution profile")
 NEVERD_EXECUTION_TEXT(ExplicitSelection, "explicit backend selection")
 #endif
 

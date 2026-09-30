@@ -4,15 +4,11 @@
 
 # Émulation des pilotes Windows
 
-L’émulateur de pilotes optionnel de NeverD exécute le point d’entrée PE d’un
-pilote WDM x64 pris en charge et peut parcourir un scénario explicite de requêtes
-sérielles avant de le décharger. Il utilise Unicorn pour l’exécution CPU et le
-modèle Windows borné propre à NeverD. Il ne charge pas le pilote dans le noyau
-hôte et ne transmet pas les appels d’API invités aux services du système hôte.
+L’émulateur de pilotes optionnel de NeverD exécute le point d’entrée PE d’un pilote WDM x64 pris en charge et peut appliquer un scénario de requêtes explicite avant son déchargement. Avec `auto`, la CLI choisit KVM sur un hôte Linux compatible et WHP sur Windows. Les valeurs par défaut C++ et l’API V1 conservent Unicorn. Tous les transports partagent le modèle Windows limité de NeverD, qui traite les appels API invités et maintient le pilote isolé du noyau hôte.
 
 ## Moteurs d’exécution
 
-Le contrat par défaut `driver-strict` conserve Unicorn. Le contrat expérimental à instructions bornées `checked-x64-v1` choisit KVM sur Linux x86_64 ou WHP sur Windows x64 avec `--backend auto`. Une sélection explicite ne bascule pas vers un autre moteur. Une indisponibilité ou un contrat incompatible échoue avant l’exécution.
+`driver-strict` accepte KVM sur un hôte Linux x64 compatible et WHP sur un hôte Windows x64 compatible ; `auto` sélectionne ce transport natif, et les ISA différentes utilisent Unicorn. Unicorn explicite et l’API V1 conservent le profil logiciel portable. L’exécution native vérifie les adresses canoniques et les effets avant l’entrée ; le matériel indisponible provoque un échec sans repli. Instructions et comportements OS non pris en charge échouent explicitement. Les preuves natives ARM64/WHP restent manquantes ; aucune compatibilité universelle des pilotes ou Android/Darwin n’est établie.
 
 Sur un hôte ARM64, `checked-x64-v1` utilise Unicorn pour le guest x64. Chaque instruction et accès mémoire est vérifié avant exécution pas à pas ; contrôles des objets Windows, observateurs d’écriture, alias RAM et contextes CPU seuls sont préservés. Arithmétique scalaire mémoire, opérations verrouillées naturellement alignées, SETcc et BT registre sont admis avec contrôles lecture/écriture ; l’exécution native gère les flags. Le SIMD borné comprend déplacements/logique SSE/SSE2, `MOVLHPS`/`MOVHLPS` et conversions/soustractions scalaires masquées. Les 16 registres XMM et MXCSR survivent aux entrées/restaurations ; exceptions SIMD non masquées, DAZ, x87, AVX et opérations non listées sont rejetés. Un store XMM pleine largeur produit deux observations ordonnées de 8 octets avant toute modification. Les formes aligned-vector mal alignées restent exclues. Un opérande RAM ordinaire peut traverser des pages allouées séparément ou aliasées ; toute la plage est vérifiée avant écriture et le premier octet inaccessible est signalé. MOVS conserve les éléments terminés et les registres de reprise de l’élément fautif, sans commit partiel de cet élément.
 
@@ -783,3 +779,5 @@ Les `DIV`/`IDIV` checked x64 utilisent le résultat du processeur et `#DE`. KVM 
 ## État x87 complet
 
 `NeverDEmulationArch` possède les contrats ISA, les tables de pages et le format FP partagé par les transports natifs et Unicorn. Les contextes x64 conservent contrôle, état, TOP, tags physiques, opcode, pointeurs instruction/données et huit registres de 80 bits. `FP0`–`FP7` utilisent `RegisterValue` ; les accès scalaires refusent la troncature. `FPTag` est le masque physique des registres non vides. `NeverDX64FPTests` vérifie tous les TOP, les opérations exactes contre FXSAVE/FXRSTOR du processeur hôte et la restauration. Cela ne rend pas les instructions x87 admissibles en mode checked et ne prouve pas tous les arrondis. Les hôtes natifs indisponibles sont explicitement ignorés.
+
+Interrogez le profil sélectionné avec `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` décrit l’exécution native des pilotes x64. `NeverDNativeDriverTests` valide le corpus existant et peut fonctionner dans une compilation sans Unicorn.

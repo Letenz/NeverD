@@ -61,6 +61,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` と `BinaryLowIRLoopInference.*` は独立に作成したカウンター、スタック保存、早期リターン、ネイティブ呼び出し、パック済みフラグを使用します。狭い幅の算術拡大と、式は異なるが意味が等しいフラグを検証します。不正なグラフ、欠落／偽造した起源、非停止やラップするループ、推論／証明予算の枯渇で証明書を生成してはいけません。
 
+同じターゲットの `LowIRLoopPlanPairing.*` は、レジスター名の変更、異なる算術本体、各側の前置スナップショット、述語の保持、共有フレーム入力、入れ子のカット点網羅性、独立した証明予算を検査します。関係の欠落、誤った書き込み、不正な一時値束縛、不完全な対応付け、メタデータ上限の超過から証明書を生成してはいけません。
+
 二段・三段のループのキャッシュされた等値終了条件では、オペランドの相関、変化する境界、カウンターのリセット、破損したコピーを検査します。
 
 比較キャッシュの回帰は等値・不等値、入口ガードと定数畳み込み、拡幅後に初めて変化するフィールド、1/4/8 バイトのキャッシュのビット 7/31/63 を検証します。対象ビットを保ったまま隣接ビットだけを変更しても全状態比較で拒否します。ゼロ増分、移動する境界、カウンタのリセット、共通予算の枯渇も拒否します。
@@ -852,3 +854,11 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 ## 完全な x87 状態
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
+
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
+
+既存の CI ワークフローは一般のテストプロファイルより先にエミュレーションの全テストを実行し、検出一覧、JUnit 結果、CTest ログを `emulation-focused` に保存します。他のモジュールの失敗はこの実行を妨げません。利用できないハードウェアと任意のドライバー資料は明示的なスキップとなり、ソフトウェア実行やコンパイルの成功はネイティブ実行の証拠にはなりません。
+
+Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリングを制御し、実際のタイマースレッドをゲストへの進入前に完了させます。x64、ARM32、ARM64 で、進入前の取り消しがゲストに影響せず、次の実行が独立した予算を使うことを検証します。公開エンジン API を使い、エンジン内部状態は変更しません。

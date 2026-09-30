@@ -764,7 +764,6 @@ class Verify:
         self.environment = os.environ.copy()
         self.environment["JAVA_HOME"] = str(jdk)
         self.environment["PATH"] = str(jdk / "bin") + os.pathsep + self.environment.get("PATH", "")
-        self.environment["NEVERD_JADX"] = str(work / "external-decompiler-must-not-run")
         for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"):
             self.environment.pop(key, None)
         suffix = ".exe" if os.name == "nt" else ""

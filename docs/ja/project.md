@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI・統合側・AI エージェントは **純粋 C API** 経由で同じエ�
 
 input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF ガイド](sbf.md)を参照してください。
 
-実験的な CLI `neverd mobile app.apk -o recovered-app` は APK、DEX、smali から Java と `report.json` を生成します。既定のエンジンは C++20 で実装されており、実行時に Python、Java、JADX は不要です。`NEVERD_JADX` や PATH 上の `jadx` は外部エンジンを選択しません。明示的な `--jadx PATH` のみが互換アダプターを選びます。自動切り替えはありません。空白を含むパスは引用符で囲んでください。対応入力、レポート、復元の制限は [Android ガイド](android.md)を参照してください。
+実験的な CLI `neverd mobile app.apk -o recovered-app` は APK、DEX、smali から Java と `report.json` を生成します。Android の復元には NeverD の C++20 内蔵エンジンのみを使用し、Python や Java のランタイムは不要です。空白を含むパスは引用符で囲んでください。対応入力、レポート、復元の制限は [Android ガイド](android.md)を参照してください。
 
 実験的な iOS フロー `neverd mobile App.ipa -o recovered-ios` は IPA、`.app`、Mach-O からネイティブ C と対応する Objective-C/Swift ソースを出力します。ランタイム配置、ソース単位、省略理由を保持し、生成コードは元バイナリへのブリッジを使いません。設定、カバレッジ、独立した再コンパイル検証は [iOS ガイド](ios.md)を参照してください。
 
@@ -99,7 +99,7 @@ metadata、Low/Med/High IR、検証済み LLVM、portable C11、安全な stable
 
 CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、ゲスト OS 方針を分離します。`NEVERD_ENABLE_CPU_EMULATION` は x64/ARM64 CPU 層を有効にし、`NEVERD_ENABLE_DRIVER_EMULATION` は範囲を限定した x64 Windows WDM/KMDF 環境を追加します。`linux-elf64-v1` は対応する Linux ELF プロセスを実行します。[CPU 実行](cpu-execution.md)、[ゲストプロセスのエミュレーション](process-emulation.md)、[Windows ドライバーエミュレーション](driver-emulation.md)を参照してください。
 
-checked プロファイルは ISA が一致する Linux ホストで KVM、Windows ホストで WHP、異なる ISA 間で Unicorn を使います。ネイティブ ARM64/WHP の実行検証は未完了です。現在 `driver-strict` は Unicorn を使い、ドライバーの KVM/WHP 経路には `checked-x64-v1` が必要です。明示したバックエンドが利用できなければ明確に失敗します。共有 RAM、エイリアス、段階的書き込み、スカラー原子操作、型付き例外、完全な x64 FP/SSE コンテキストは記載された命令と OS 契約の範囲で実装されています。任意のドライバーへの互換性や Android/Darwin 環境の実装を意味しません。
+`driver-strict` / `checked-x64-v1` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 <!-- i18n-section: how-it-works -->
 

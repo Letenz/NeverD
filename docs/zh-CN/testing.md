@@ -58,6 +58,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` 和 `BinaryLowIRLoopInference.*` 使用独立编写的计数器、栈存储、提前返回、原生调用和打包标志位用例，覆盖窄位宽算术拓宽以及表达式不同但语义相等的标志状态。畸形图、缺失或伪造的来源、不终止／回绕循环，以及推导或证明预算耗尽均不得产生证书。
 
+同一目标中的 `LowIRLoopPlanPairing.*` 检查寄存器重命名、不同算术体、双方独立前缀快照、谓词保留、共享帧输入、嵌套切点覆盖和独立证明预算。缺失关系、错误写入、无效临时值绑定、不完整配对或元数据预算耗尽均不得产生证书。
+
 两层和三层循环的缓存相等退出测试覆盖操作数相关性、变化的边界、计数器重置和被破坏的复制。
 
 比较缓存回归覆盖相等与不等、带守卫和常量折叠的初始化、扩宽后才出现的字段，以及字节、双字和四字缓存中的第 7/31/63 位。保留被检查位而仅改变相邻位，也必须被完整状态比较拒绝。零步长、移动边界、计数器重置和共享预算耗尽必须拒绝。
@@ -782,3 +784,11 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 ## 完整 x87 状态
 
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
+
+`driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+
+使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
+
+现有 CI 工作流在通用测试配置前运行完整模拟测试目录，并在 `emulation-focused` 保存发现清单、JUnit 结果和 CTest 日志。其他模块的失败不会阻止这组测试执行。硬件不可用及可选驱动样例缺失仍明确记录为跳过；软件运行或编译通过不能作为原生执行证据。
+
+在 Linux 上，`NeverDUnicornDeadlineTests` 通过受控的 pthread 调度，让实际计时线程在客体入口前完成。测试覆盖 x64、ARM32 和 ARM64，要求入口前取消不产生客体效果，并验证下一次运行使用独立预算。测试调用公开引擎 API，不修改引擎私有状态。

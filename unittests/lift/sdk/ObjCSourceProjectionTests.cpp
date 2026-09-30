@@ -1410,6 +1410,48 @@ TEST(ObjCSourceProjection, SpecializedArrayCastInferenceRequiresCompleteAudit) {
   }
 }
 
+TEST(ObjCSourceProjection, SpecializedArrayBufferSchedulesSwiftSelfRelift) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.Image.Format = BinaryFormat::MachO;
+  F.Image.Bits = Bitness::Bits64;
+  F.Image.Symbols.push_back({"_$ss15ContiguousArrayV16_"
+                             "createNewBuffer14bufferIsUnique15minimumCapacity"
+                             "13growForAppendySb_SiSbtF10Foundation3URLVSg_Tg5",
+                             0x3000, 0, true});
+  F.call(0, 0x3000);
+  MedFunc Med;
+  Med.Entry = 0x3000;
+  F.Result.MedFuncs.push_back(Med);
+  HighFunc High;
+  High.Entry = 0x3000;
+  F.Result.HighFuncs.push_back(High);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = 0x3000;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  F.Result.FunctionAudits.push_back(Audit);
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 1U);
+  ASSERT_TRUE(Options.SourceTypeHints.count(0x3000));
+  const auto &Hint = Options.SourceTypeHints.at(0x3000);
+  ASSERT_EQ(Hint.Parameters.size(), 4U);
+  EXPECT_EQ(Hint.ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint.Parameters[3].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint.Parameters[3].Location.RegisterOffset, a64reg::X20);
+  EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+  F.Result.FunctionAudits[0].MedIRVerified = false;
+  PipelineOptions Incomplete;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Incomplete, Diagnostics),
+      0U);
+  EXPECT_TRUE(Incomplete.SourceTypeHints.empty());
+}
+
 TEST(ObjCSourceProjection, NativeInferenceUsesSourceBoundRefinementBodies) {
   NativeDependencyFixture F;
   F.Image.Arch = Arch::AArch64;
@@ -2499,6 +2541,9 @@ TEST(ObjCSourceProjection, SynchronizedInterleavedRangesPreserveEveryHole) {
   const auto Sites = EH.Itanium->CallSites;
   const auto Pads = EH.ObjC->LandingPads;
   EH.Itanium->CallSites[2].GuardedRange.Begin += 4;
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites[2].GuardedRange.Begin +=
+      8; // omitted ARC call at 0x303c
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
   EH.Itanium->CallSites = Sites;
   EH.Itanium->CallSites[2].FirstActionOffset = 0;
@@ -2546,6 +2591,289 @@ TEST(ObjCSourceProjection,
   F.Image.DyldBindSlots[0x5118].WeakImport = false;
   F.Image.DyldBindSlots[0x5118].Module = "/tmp/foreign.dylib";
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+namespace {
+struct SynchronizedForwardedPadFixture : SynchronizedInterleavedFixture {
+  SynchronizedForwardedPadFixture() {
+    put(0x3088, 0x14000001U); // a second exceptional entry: B 0x308c
+    put(0x3084, 0xd65f03c0U); // normal return never enters either pad
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Itanium->CallSites[1].LandingPadVA = 0x3088;
+    EH.ObjC->LandingPads[0].PadVA = 0x3088;
+    EH.ObjC->LandingPads[0].Kind = ObjCPadKind::Cleanup;
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSparseLSDARequiresCompleteNonCallGaps) {
+  SynchronizedForwardedPadFixture F;
+  auto &EH = *F.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[2].GuardedRange = {0x3038, 0x303c};
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EXPECT_TRUE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x303c, 0x3044));
+  // The second gap above contains an ARC call. A table must explicitly
+  // describe it as unprotected rather than silently omit its unwind policy.
+  EH.Itanium->CallSites[2].GuardedRange.End = 0x3040;
+  ASSERT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  for (uint32_t Word :
+       {0x94000001U, 0xd63f0260U, 0xffffffffU, 0xd4000001U, 0xd69f03e0U}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, Word);
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  // A decodable branch in an omitted interval is still subject to the
+  // lifetime proof: backwards edges, skipped unlocks and pad entry fail.
+  for (va_t Target : {0x3024U, 0x3074U, 0x3088U, 0x308cU}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, 0x14000000U | ((Target - 0x3034) / 4 & 0x3ffffffU));
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3035, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3034));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x8000, 0x8004));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x7038));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadKeepsBothExceptionalEntries) {
+  SynchronizedForwardedPadFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->LandingPad, 0x3088U);
+  EXPECT_EQ(Proof->LandingPadPrelude, 4U);
+  EXPECT_EQ(Proof->ResumeTarget, 0x4220U);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+
+  for (uint32_t Word : {0x14000000U, 0x14000002U, 0x17ffffffU, 0x54000020U,
+                        0xd61f0260U, 0xd503201fU, 0xf90007e0U, 0xaa0003f3U}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.put(0x3088, Word);
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  for (va_t Target : {0x3088U, 0x308cU, 0x309cU}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.put(0x3084, 0x14000000U | ((Target - 0x3084) / 4));
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SynchronizedForwardedPadFixture Changed;
+    auto &EH = *Changed.Function.ExceptionMetadata;
+    switch (Mutation) {
+    case 0:
+      EH.Itanium->CallSites[3].LandingPadVA += 4;
+      break;
+    case 1:
+      EH.ObjC->LandingPads[0].Kind = ObjCPadKind::Catch;
+      break;
+    case 2:
+      EH.ObjC->LandingPads[1].Kind = ObjCPadKind::Cleanup;
+      break;
+    case 3:
+      EH.ObjC->LandingPads[0].Catches.emplace_back();
+      break;
+    case 4:
+      EH.CodeRange.End += 4;
+      break;
+    case 5:
+      Changed.put(0x3090, 0xaa1403e0U);
+      break;
+    case 6:
+      Changed.put(0x3098, 0xaa1303e0U);
+      break;
+    case 7:
+      Changed.call(0x3094, 0x4120);
+      break;
+    }
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function))
+        << Mutation;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadOnlyOmitsPureUnreachableTail) {
+  SynchronizedForwardedPadFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.Addr = 0x3084;
+  HighStmt ForwardLabel;
+  ForwardLabel.Kind = StmtKind::Block;
+  ForwardLabel.Addr = 0x3088;
+  HighStmt CleanupLabel = ForwardLabel;
+  CleanupLabel.Addr = 0x308c;
+  HighStmt Exit;
+  Exit.Kind = StmtKind::Assign;
+  Exit.Addr = 0x3094;
+  Exit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210, {});
+  HighStmt Resume = Exit;
+  Resume.Addr = 0x309c;
+  Resume.Val = HighExpr::makeCall("__Unwind_Resume", 0x4220, {});
+  HighStmt SyntheticReturn;
+  SyntheticReturn.Kind = StmtKind::Return;
+  F.Function.Body = {Return, ForwardLabel, CleanupLabel,
+                     Exit,   Resume,       SyntheticReturn};
+  for (va_t Target : {0x3088U, 0x308cU, 0x309cU}) {
+    auto Changed = F.Function;
+    HighStmt Goto;
+    Goto.Kind = StmtKind::Goto;
+    Goto.GotoTarget = Target;
+    Changed.Body.insert(Changed.Body.begin(), Goto);
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(Changed, *Proof));
+  }
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    auto Changed = F.Function;
+    switch (Mutation) {
+    case 0:
+      Changed.Body[1].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    case 1:
+      Changed.Body[2].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    case 2:
+      Changed.Body[2].Body.push_back(Exit);
+      break;
+    case 3:
+      Changed.Body[3].Addr = 0x3098;
+      break;
+    case 4:
+      Changed.Body[4].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    }
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(Changed, *Proof))
+        << Mutation;
+  }
+  EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  ASSERT_EQ(F.Function.Body.size(), 1U);
+  EXPECT_EQ(F.Function.Body.front().Addr, 0x3084U);
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadARCDoesNotRearmAnUnlockedPath) {
+  SynchronizedForwardedPadFixture F;
+  F.put(0x3040, 0xb4000175U); // early path joins the normal unlock at 0x306c
+  F.put(0x3074, 0xaa1303e0U);
+  F.call(0x3078, 0x4120); // ARC release after the lock has been closed
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+void neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 2);
+    objc_release(value);
+    if (!path) {
+        (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+        objc_release(objc_self);
+        return;
+    }
+    work(value, 4);
+    objc_release(value);
+    (uint64_t)(uintptr_t)objc_retain(value);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+}
+)C";
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  auto ExtraUnlock = Source;
+  ExtraUnlock.insert(
+      ExtraUnlock.rfind("    objc_release(objc_self);"),
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(ExtraUnlock, *Proof));
+  EXPECT_NE(Result->find("void *active = *guard ? lock : 0;"),
+            std::string::npos);
+  auto Changed = Source;
+  const auto LastExit = Changed.rfind("sync_exit(objc_self)");
+  Changed.replace(LastExit, std::string("sync_exit(objc_self)").size(),
+                  "sync_exit(value)");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static int failure, order, bad, exits, releases;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object, int tag) { step(object, value, tag); }
+extern "C" void objc_release(void *object) {
+    if (object == lock) step(object, lock, 9);
+    else step(object, value, ++releases == 1 ? 3 : 5);
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, value, 6); return object;
+}
+extern "C" void neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        const int wanted[] = {12345679, 1, 127, 123, 12347, 12345,
+                              123456, 1234567, 12345679, 12345679};
+        const int shortWanted[] = {12379, 1, 127, 123, 12379, 12379,
+                                   12379, 1237, 12379, 12379};
+        for (failure = 0; failure <= 9; ++failure) {
+            order = bad = exits = releases = 0;
+            int caught = 0;
+            try { neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            const int thrown = failure == 8 ||
+                (!path && failure >= 4 && failure <= 6) ? 0 : failure;
+            const int unlocks = thrown == 0 || thrown == 2 || thrown == 4 ||
+                                thrown == 7 || thrown == 9;
+            if (caught != thrown || exits != unlocks || bad ||
+                order != (path ? wanted[failure] : shortWanted[failure]))
+                return 10 + failure + path * 10;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+}
+
+TEST(ObjCSourceProjection, SynchronizedExpandedUnlockNeedsUnconditionalReturn) {
+  for (const char *Tail : {"\nobjc_release(p);\nreturn;\n",
+                           "\n/* if (...) { goto x; } */ return;\n",
+                           "\nconsume(\"}; return; if\"); return 0;\n"}) {
+    const std::string Source = "exit();" + std::string(Tail) + "next_exit();";
+    EXPECT_TRUE(
+        objcSynchronizedUnlockReturns(Source, 0, Source.find("next_exit")));
+  }
+  for (const char *Tail :
+       {"\nobjc_release(p);\n", "\n/* return; */\n",
+        "\nconsume(\"return;\");\n", "\nif (p) return;\n",
+        "\nif (p)\nreturn;\n", "\n{ return; }\n", "\ngoto done; return;\n",
+        "\n} return;\n", "\ndone: return;\n", "\nreturn next_exit();\n"}) {
+    const std::string Source = "exit();" + std::string(Tail) + "next_exit();";
+    EXPECT_FALSE(
+        objcSynchronizedUnlockReturns(Source, 0, Source.find("next_exit")));
+  }
 }
 
 TEST(ObjCSourceProjection, SynchronizedInterleavedCOnlyWrapsUnprotectedARC) {

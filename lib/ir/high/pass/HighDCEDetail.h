@@ -72,6 +72,9 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts);
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture);
 void narrowSourceConcatLocals(HighFunc &Func);
+/// Define each register value whose every read selects the same low bytes as
+/// that zero-extended prefix, dropping only pure upper bytes.
+void narrowUnreadRegisterBytes(HighFunc &Func);
 /// Whether evaluating an unused integer value can be discarded without a
 /// memory access, call, or trap. This never supplies values for unknown bits.
 bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget);

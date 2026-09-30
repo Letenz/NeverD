@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
+<!-- i18n-source: 935250779b9be103631f1cb612200e7fb175dfa74d352b939b15287e751778b8 -->
 
 [← Projet NeverD](project.md)
 
@@ -14,7 +14,7 @@ Les guides anglais se trouvent directement dans `docs/`. Les traductions sont re
 
 L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
 
-Les profils checked utilisent KVM sur Linux et WHP sur Windows lorsque l’ISA correspond, et Unicorn entre ISA différentes. La validation native ARM64/WHP reste à réaliser. `driver-strict` utilise actuellement Unicorn ; le chemin pilote KVM/WHP exige `checked-x64-v1`. Un moteur explicitement demandé et indisponible échoue clairement. RAM partagée, alias, écritures par étapes, opérations atomiques scalaires, exceptions typées et état complet FP/SSE x64 sont implémentés dans les contrats ISA/OS documentés. Cela ne garantit ni les pilotes arbitraires ni des environnements Android/Darwin implémentés.
+`driver-strict` / `checked-x64-v1` accepte KVM sur un hôte Linux x64 compatible et WHP sur un hôte Windows x64 compatible ; `auto` sélectionne ce transport natif, et les ISA différentes utilisent Unicorn. Unicorn explicite et l’API V1 conservent le profil logiciel portable. L’exécution native vérifie les adresses canoniques et les effets avant l’entrée ; le matériel indisponible provoque un échec sans repli. Instructions et comportements OS non pris en charge échouent explicitement. Les preuves natives ARM64/WHP restent manquantes ; aucune compatibilité universelle des pilotes ou Android/Darwin n’est établie.
 
 | Document | Description |
 |----------|-------------|

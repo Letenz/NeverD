@@ -63,6 +63,8 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopInference.*` y `BinaryLowIRLoopInference.*` usan contadores, guardados en pila, retornos anticipados, llamadas nativas y banderas empaquetadas escritos independientemente. Cubren ampliación aritmética estrecha y banderas semánticamente iguales con expresiones distintas. Grafos malformados, orígenes ausentes o falsificados, bucles infinitos o con desbordamiento modular y presupuestos agotados no deben producir certificados.
 
+`LowIRLoopPlanPairing.*`, en el mismo destino, comprueba registros renombrados, cuerpos aritméticos distintos, instantáneas de prefijo de cada lado, predicados conservados, entradas de memoria compartidas, cortes anidados y presupuestos de prueba independientes. Relaciones ausentes, escrituras incorrectas, temporales mal vinculados, emparejamientos incompletos o límites de metadatos agotados no deben producir certificados.
+
 Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
 
 Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.
@@ -925,3 +927,11 @@ Los `DIV`/`IDIV` checked x64 usan resultados reales del procesador y `#DE`. KVM 
 ## Estado x87 completo
 
 `NeverDEmulationArch` posee los contratos ISA, las tablas de páginas y el formato FP compartido por los transportes nativos y Unicorn. Los contextos x64 conservan control, estado, TOP, etiquetas físicas, código de operación, punteros de instrucciones/datos y ocho registros de 80 bits. `FP0`–`FP7` usan `RegisterValue`; el acceso escalar rechaza el truncamiento. `FPTag` es la máscara física de registros no vacíos. `NeverDX64FPTests` comprueba todos los TOP, operaciones exactas frente a FXSAVE/FXRSTOR del host y restauración. Esto no admite instrucciones x87 en checked ni prueba todos los redondeos. Los hosts nativos no disponibles se omiten explícitamente.
+
+`driver-strict` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
+
+Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` describe la ejecución nativa de controladores x64. `NeverDNativeDriverTests` valida el corpus existente y también puede ejecutarse en una compilación sin Unicorn.
+
+El workflow CI existente ejecuta todo el directorio de pruebas de emulación antes de los perfiles generales y guarda el inventario, los resultados JUnit y el registro CTest en `emulation-focused`. Un fallo en otro módulo no impide esta ejecución. El hardware no disponible y los controladores opcionales ausentes siguen siendo omisiones explícitas; una ejecución de software o compilación correcta no demuestra ejecución nativa.
+
+En Linux, `NeverDUnicornDeadlineTests` completa el hilo real del temporizador antes de entrar al invitado mediante planificación pthread controlada. Cubre x64, ARM32 y ARM64, exige que la cancelación previa no produzca efectos y verifica un presupuesto independiente en la siguiente ejecución. Usa API públicas sin modificar el estado privado del motor.

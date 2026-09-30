@@ -37,6 +37,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &);
 void postRenameCleanup(std::vector<HighStmt> &);
 void renameVars(std::vector<HighStmt> &);
 void eliminateUnusedValues(std::vector<HighStmt> &);
+void narrowUnreadRegisterBytes(HighFunc &);
 } // namespace neverd
 using namespace neverd;
 
@@ -5421,4 +5422,83 @@ TEST(HighControlFlowSemantics,
   ASSERT_EQ(Found->Operands.size(), 1u);
   ASSERT_EQ(Found->Operands[0]->Kind, ExprKind::Const);
   EXPECT_EQ(Found->Operands[0]->ConstVal, 7u);
+}
+
+TEST(HighControlFlowSemantics, RenameCleanupKeepsLabelsOfRemovedStatements) {
+  // v = 7; if (c) goto X; v = 3; X: v = v; return v; -- the self copy goes,
+  // but the jump still needs its label.
+  auto Self = assign(0x1010, 1, 0);
+  Self.Val = local(1);
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 7), conditional(0x1000, 0x1010),
+            assign(0x1004, 1, 3), Self, result(0x1014, local(1))};
+  postRenameCleanup(F.Body);
+  auto Labeled = [&](va_t Addr) {
+    bool Found = false;
+    walkStmts(F.Body, [&](const HighStmt &S) { Found |= S.Addr == Addr; });
+    return Found;
+  };
+  EXPECT_TRUE(Labeled(0x1010));
+  EXPECT_EQ(execute(F, 1, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(7));
+  EXPECT_EQ(execute(F, 0, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(3));
+
+  // X: v = 1; v = 2; -- the overwritten assignment goes, its label stays.
+  F.Body = {conditional(0x1000, 0x1010), assign(0x1004, 1, 3),
+            assign(0x1010, 1, 1), assign(0x1012, 1, 2),
+            result(0x1014, local(1))};
+  postRenameCleanup(F.Body);
+  EXPECT_TRUE(Labeled(0x1010));
+  EXPECT_EQ(execute(F, 1, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(2));
+}
+
+TEST(HighControlFlowSemantics, ByteWriteIntoUnsetRegisterDropsUnreadBytes) {
+  // v = CONCAT(unset upper seven bytes, 1); return (uint8_t)v; -- `mov al,
+  // 1` in a function that never set RAX. Only the low byte is read, so the
+  // unset bytes are dropped instead of printing as an unknown register.
+  auto ByteWrite = [] {
+    auto Upper = HighExpr::makeBinop(NdOp::SUBBYTES, HighExpr::makeUndef(8),
+                                     HighExpr::makeConst(1, 4));
+    Upper->Type = NdType::makeInt(7, false);
+    auto Low = HighExpr::makeConst(1, 1);
+    auto Joined = HighExpr::makeBinop(NdOp::CONCAT, Upper, Low);
+    Joined->Type = NdType::makeInt(8, false);
+    auto Write = assign(0x1000, 1, 0);
+    Write.Val = Joined;
+    return Write;
+  };
+  auto LowByte =
+      HighExpr::makeBinop(NdOp::SUBBYTES, local(1), HighExpr::makeConst(0, 4));
+  LowByte->Type = NdType::makeInt(1, false);
+  auto HasUndef = [](const HighFunc &F) {
+    bool Found = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+          Found |= N.Kind == ExprKind::Undef;
+          N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+        };
+        if (E)
+          Walk(*E);
+      });
+    });
+    return Found;
+  };
+  HighFunc F;
+  F.Body = {ByteWrite(), result(0x1004, LowByte)};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_FALSE(HasUndef(F));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
+
+  // A full-width read observes the unset bytes, so they stay.
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.Addr = 0x1002;
+  Keep.StoreAddr = HighExpr::makeConst(0x9000, 8);
+  Keep.StoreVal = local(1);
+  F.Body = {ByteWrite(), Keep, result(0x1004, LowByte)};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_TRUE(HasUndef(F));
 }

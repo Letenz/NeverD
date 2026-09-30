@@ -77,8 +77,6 @@ llvm::json::Object recover(const Options &requested) {
        options.architecture != "auto" || options.max_functions))
     throw Error("--metadata-only, --artifact, --arch and --max-func "
                 "apply only to iOS");
-  if (options.platform == "ios" && options.jadx)
-    throw Error("--jadx applies only to Android");
   fs::create_directories(options.output.parent_path());
   llvm::SmallString<256> temporary;
   auto pattern =

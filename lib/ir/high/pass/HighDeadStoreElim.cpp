@@ -544,6 +544,169 @@ void narrowSourceConcatLocals(HighFunc &Func) {
   }
 }
 
+// A register value whose every read selects the same low bytes has dead upper
+// bytes; a byte write into a register the function never set leaves them
+// undefined, and they would print as an unknown read. Each definition becomes
+// its low prefix, zero-extended to the carrier, when the bytes it drops are
+// pure. No definition moves and no read changes.
+void narrowUnreadRegisterBytes(HighFunc &Func) {
+  size_t Budget = 200000;
+  bool Abort = false;
+  struct Value {
+    uint16_t Carrier = 0;
+    uint16_t Read = 0;
+    bool Valid = true;
+    std::vector<HighStmt *> Definitions;
+    std::vector<VarKey> CopiesTo;
+  };
+  VarKeyMap<Value> Values;
+  auto Candidate = [](const ExprPtr &D) {
+    return D && D->Kind == ExprKind::Var && D->Operands.empty() &&
+           D->Var.Id >= 0 &&
+           (D->Var.Kind == MedVar::Reg || D->Var.Kind == MedVar::Temp) &&
+           D->Var.RenameTag < 0 && D->Type &&
+           D->Type->Kind == NdTypeKind::Int && D->Type->Size >= 2 &&
+           D->Type->Size <= 8 && D->Var.Size == D->Type->Size &&
+           D->IntrinsicId == Intrinsic::None && D->IntrinsicOutputs.empty();
+  };
+  // Record how many low bytes of \p E its context reads (0: all of them).
+  std::function<void(const ExprPtr &, uint16_t)> Visit =
+      [&](const ExprPtr &E, uint16_t Selected) {
+        if (!E)
+          return;
+        if (!Budget--) {
+          Abort = true;
+          return;
+        }
+        for (const MedVar &Output : E->IntrinsicOutputs)
+          Values[varKey(Output)].Valid = false;
+        auto Narrowed = [&](uint16_t Bytes) {
+          return Selected ? std::min(Selected, Bytes) : Bytes;
+        };
+        if (E->Kind == ExprKind::Var) {
+          Value &V = Values[varKey(E->Var)];
+          V.Read =
+              std::max<uint16_t>(V.Read, Selected ? Selected : E->Var.Size);
+          return;
+        }
+        const ExprPtr Only = E->Operands.size() == 1 ? E->Operands[0] : nullptr;
+        if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+            E->Operands.size() == 2 && E->Operands[1] &&
+            E->Operands[1]->Kind == ExprKind::Const &&
+            E->Operands[1]->ConstVal == 0 && E->Type && E->Type->Size) {
+          Visit(E->Operands[0], Narrowed(E->Type->Size));
+          return;
+        }
+        if (E->Kind == ExprKind::Cast && E->CastTo &&
+            E->CastTo->Kind == NdTypeKind::Int && Only && Only->Type &&
+            Only->Type->Kind == NdTypeKind::Int &&
+            E->CastTo->Size <= Only->Type->Size) {
+          Visit(Only, Narrowed(E->CastTo->Size));
+          return;
+        }
+        E->forEachChildExpr([&](const ExprPtr &C) { Visit(C, 0); });
+      };
+  walkStmts(Func.Body, [&](HighStmt &S) {
+    if (Abort)
+      return;
+    const bool Defines = S.Kind == StmtKind::Assign && Candidate(S.Dst);
+    if (Defines) {
+      Value &V = Values[varKey(S.Dst->Var)];
+      V.Valid &= !V.Carrier || V.Carrier == S.Dst->Type->Size;
+      V.Carrier = S.Dst->Type->Size;
+      V.Definitions.push_back(&S);
+      if (S.Val && S.Val->Kind == ExprKind::Var && S.Val->Operands.empty()) {
+        Values[varKey(S.Val->Var)].CopiesTo.push_back(varKey(S.Dst->Var));
+        return;
+      }
+    } else if (S.Kind == StmtKind::Assign && S.Dst &&
+               S.Dst->Kind == ExprKind::Var) {
+      Values[varKey(S.Dst->Var)].Valid = false;
+    }
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
+          E->Kind == ExprKind::Var)
+        return;
+      Visit(E, 0);
+    });
+  });
+  if (Abort)
+    return;
+  // A copy reads what its destination's reads select.
+  for (bool Changed = true; Changed;) {
+    Changed = false;
+    for (auto &[Key, V] : Values)
+      for (const VarKey &To : V.CopiesTo) {
+        auto Dest = Values.find(To);
+        if (Dest == Values.end())
+          continue;
+        const uint16_t Read =
+            Dest->second.Valid ? Dest->second.Read : Dest->second.Carrier;
+        if (Read > V.Read) {
+          V.Read = Read;
+          Changed = true;
+        }
+      }
+  }
+  // The low \p Bytes of \p Val, dropping only pure high operands.
+  auto LowPrefix = [&](ExprPtr Val, uint16_t Bytes) -> ExprPtr {
+    for (unsigned Depth = 0; Depth < 16; ++Depth) {
+      if (!Val || !Val->Type || Val->Type->Kind != NdTypeKind::Int ||
+          Val->Type->Size < Bytes || Val->IntrinsicId != Intrinsic::None ||
+          !Val->IntrinsicOutputs.empty())
+        return nullptr;
+      if (Val->Type->Size == Bytes)
+        return Val;
+      const ExprPtr Only =
+          Val->Operands.size() == 1 ? Val->Operands[0] : nullptr;
+      if (Val->Kind == ExprKind::BinOp && Val->Op == NdOp::CONCAT &&
+          Val->Operands.size() == 2 && Val->Operands[0] && Val->Operands[1] &&
+          Val->Operands[1]->Type &&
+          Val->Operands[1]->Type->Kind == NdTypeKind::Int &&
+          Val->Operands[1]->Type->Size >= Bytes) {
+        if (!discardableIntegerValue(Val->Operands[0], Budget))
+          return nullptr;
+        Val = Val->Operands[1];
+        continue;
+      }
+      if (Only && Only->Type && Only->Type->Kind == NdTypeKind::Int &&
+          Only->Type->Size >= Bytes &&
+          ((Val->Kind == ExprKind::UnaryOp &&
+            (Val->Op == NdOp::INT_ZEXT || Val->Op == NdOp::INT_SEXT)) ||
+           (Val->Kind == ExprKind::Cast && Val->CastTo &&
+            Val->CastTo->Kind == NdTypeKind::Int))) {
+        Val = Only;
+        continue;
+      }
+      break;
+    }
+    auto Prefix =
+        HighExpr::makeBinop(NdOp::SUBBYTES, Val, HighExpr::makeConst(0, 4));
+    Prefix->Type = NdType::makeInt(Bytes, false);
+    return Prefix;
+  };
+  for (auto &[Key, V] : Values) {
+    if (!V.Valid || !V.Carrier || !V.Read || V.Read >= V.Carrier ||
+        V.Definitions.empty())
+      continue;
+    std::vector<ExprPtr> Prefixes;
+    for (HighStmt *S : V.Definitions) {
+      ExprPtr Prefix = LowPrefix(S->Val, V.Read);
+      if (!Prefix)
+        break;
+      Prefixes.push_back(std::move(Prefix));
+    }
+    if (Prefixes.size() != V.Definitions.size())
+      continue;
+    for (size_t I = 0; I < Prefixes.size(); ++I) {
+      HighStmt &S = *V.Definitions[I];
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Prefixes[I]);
+      Extended->Type = S.Dst->Type;
+      S.Val = std::move(Extended);
+    }
+  }
+}
+
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
   if (Func.FrameSize <= 0 || Architecture == Arch::Unknown ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)

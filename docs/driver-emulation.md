@@ -4,22 +4,11 @@
 
 # Windows driver emulation
 
-NeverD's optional driver emulator executes the PE entry point of a supported
-x64 WDM driver and optionally exercises an explicit request
-scenario before unloading it. By default it uses Unicorn for CPU execution and NeverD's
-own bounded Windows environment model. It does not load
-the driver into the host kernel or forward guest API calls to host OS services.
+NeverD's optional driver emulator executes a supported x64 WDM driver's PE entry point and can exercise an explicit request scenario before unloading it. The CLI selects KVM on matching Linux hosts and WHP on matching Windows hosts through `auto`; the original C++ defaults and V1 API retain Unicorn. Every transport uses NeverD's bounded Windows environment model. Guest API calls are handled by that model, and the driver remains isolated from the host kernel.
 
 ## Execution backends
 
-The default `driver-strict` contract still uses Unicorn. The optional
-`checked-x64-v1` contract selects KVM on Linux x86_64 or WHP on Windows x64
-with `--backend auto`; on an ARM64 host the x64 guest uses the same checked
-contract over Unicorn. Explicit `kvm` and `whp` selections never fall back.
-The checked instruction inventory remains bounded. The original built-in and
-available WDK driver/scenario corpus is compared against Unicorn, including
-normal/CFG and relocated images. Unavailable hardware or a contract mismatch
-fails before execution; corpus agreement is not arbitrary-driver compatibility.
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 The checked profile validates each instruction and its memory accesses before
 single stepping. It preserves Windows object access checks and write observers,
@@ -1126,3 +1115,5 @@ access rejects truncation, and `FPTag` is the physical abridged mask.
 `NeverDX64FPTests` verifies every TOP, exact host FXSAVE/FXRSTOR comparisons and
 context restoration. This state coverage does not admit checked x87
 instructions or certify all software rounding semantics.
+
+Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.

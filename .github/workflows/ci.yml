@@ -251,6 +251,33 @@ jobs:
         env:
           BUILD_PARALLEL: ${{ matrix.parallel }}
 
+      - name: Run emulation regressions
+        id: emulation
+        if: ${{ !cancelled() && steps.default_build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="$PWD/build-ci/emulation-focused"
+          cmake -E make_directory "$evidence"
+          ctest --test-dir build-ci/unittests/emulation \
+            --build-config Release --show-only=json-v1 > "$evidence/inventory.json"
+          ctest --test-dir build-ci/unittests/emulation \
+            --build-config Release --no-tests=error \
+            --parallel "$TEST_PARALLEL" --output-on-failure \
+            --output-junit "$evidence/results.xml" \
+            --output-log "$evidence/ctest.log"
+        env:
+          TEST_PARALLEL: ${{ matrix.parallel }}
+
+      - name: Upload emulation regression evidence
+        if: ${{ always() && steps.emulation.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulation-focused-${{ matrix.test_profile }}
+          path: build-ci/emulation-focused/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run and audit mobile native regressions
         if: ${{ !cancelled() && steps.default_build.outcome == 'success' }}
         shell: bash

@@ -64,6 +64,8 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `LowIRLoopInference.*` und `BinaryLowIRLoopInference.*` verwenden unabhängig geschriebene Zähler, Stack-Ablagen, frühe Rückgaben, native Aufrufe und gepackte Flags. Sie prüfen schmale arithmetische Erweiterung und semantisch gleiche Flags mit unterschiedlichen Ausdrücken. Fehlerhafte Graphen, fehlende oder gefälschte Ursprünge, endlose oder umlaufende Schleifen und erschöpfte Budgets dürfen kein Zertifikat erzeugen.
 
+`LowIRLoopPlanPairing.*` im selben Ziel prüft umbenannte Register, unterschiedliche Rechenkörper, seitenspezifische Präfixzustände, erhaltene Prädikate, gemeinsame Speicherrahmeneingaben, verschachtelte Schnittpunkte und unabhängige Beweisbudgets. Fehlende Beziehungen, falsche Schreibzugriffe, ungültige Temporärbindungen, unvollständige Zuordnungen und erschöpfte Metadatengrenzen dürfen kein Zertifikat erzeugen.
+
 Zwischengespeicherte Gleichheitsbedingungen in zwei- und dreifach verschachtelten Schleifen prüfen korrelierte Operanden, veränderliche Grenzen, Zählerrücksetzungen und beschädigte Kopien.
 
 Regressionen für Vergleichscaches prüfen Gleichheit und Ungleichheit, Guards und konstante Initialisierung, erst nach Erweiterung entdeckte Felder sowie Bits 7/31/63 in 1/4/8-Byte-Caches. Auch ein geändertes Nachbarbit bei unverändertem Prüfbit muss am vollständigen Zustandsvergleich scheitern. Nullschritte, bewegliche Grenzen, Rücksetzungen und erschöpfte Budgets müssen abgewiesen werden.
@@ -941,3 +943,11 @@ Checked x64 führt `DIV`/`IDIV` mit echten Prozessorergebnissen und `#DE` aus. K
 ## Vollständiger x87-Zustand
 
 `NeverDEmulationArch` besitzt ISA-Verträge, Seitentabellen und das FP-Layout, das native Transporte und Unicorn gemeinsam nutzen. x64-Kontexte erhalten Steuerung, Status, TOP, physische Tags, Opcode, Befehls-/Datenzeiger und acht 80-Bit-Register. `FP0`–`FP7` verwenden `RegisterValue`; skalare Zugriffe lehnen eine Kürzung ab. `FPTag` ist die physische Maske nicht leerer Register. `NeverDX64FPTests` prüft alle TOP-Werte, exakte Operationen gegen Host-FXSAVE/FXRSTOR und die Wiederherstellung. Dies lässt keine x87-Befehle im checked-Vertrag zu und beweist nicht sämtliche Rundungssemantik. Fehlende native Hosts werden ausdrücklich übersprungen.
+
+`driver-strict` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Native ARM64/WHP-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
+
+Das ausgewählte Profil lässt sich mit `executionCapabilities(Contract, ISA, Backend)` abfragen. `NativeLegacyX64` beschreibt die native Ausführung von x64-Treibern. `NeverDNativeDriverTests` prüft den vorhandenen Treiberkorpus und kann auch in einem Build ohne Unicorn laufen.
+
+Der bestehende CI-Workflow führt vor den allgemeinen Profilen das gesamte Emulationstestverzeichnis aus und speichert Inventar, JUnit-Ergebnisse und CTest-Protokoll in `emulation-focused`. Fehler anderer Module verhindern diesen Lauf nicht. Fehlende Hardware und optionale Treiberdateien bleiben ausdrücklich übersprungene Tests; erfolgreiche Softwareausführung oder Kompilierung belegt keine native Ausführung.
+
+Unter Linux lässt `NeverDUnicornDeadlineTests` den tatsächlichen Timer-Thread durch gesteuerte pthread-Abläufe vor dem Gasteintritt fertig werden. Für x64, ARM32 und ARM64 prüft der Test, dass eine vorherige Abbruchanforderung keine Gasteffekte erzeugt und der nächste Lauf ein eigenes Budget verwendet. Er nutzt öffentliche APIs und verändert keinen privaten Engine-Zustand.

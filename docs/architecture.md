@@ -1384,14 +1384,14 @@ constants and transport parameters.
 
 | Contract | Guest ISA | Available execution |
 |----------|-----------|---------------------|
-| `driver-strict` | x64 | Existing Unicorn driver execution |
+| `driver-strict` | x64 | Unicorn / KVM / WHP (backend-qualified) |
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
 | `checked-x64-v1` | x64 | Shared bounded integer, SSE/SSE2 and device-transaction admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared integer admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-user-x64-v1` | x64 | The checked x64 instruction inventory at CPL3 with explicit user page permissions, excluding device mappings |
 | `checked-user-aarch64-v1` | ARM64 | The checked integer inventory at EL0 with explicit user page permissions |
 
-For a checked contract, `auto` chooses KVM on a matching Linux host, WHP on a
+For a checked contract or `driver-strict`, `auto` chooses KVM on a matching Linux host, WHP on a
 matching Windows host, and Unicorn for cross-ISA execution or other host OSes.
 Thus a native Ubuntu ARM64 build selects ARM64 KVM and a native Windows ARM64
 build selects ARM64 WHP. An explicit hardware request for a different ISA is
@@ -1557,7 +1557,7 @@ incompatible MSVC/Unicorn combination fails explicitly rather than selecting
 an incorrect JIT architecture.
 
 The Windows ARM64 driver loader, ABI/unwinding and OS environment are not yet
-implemented. Windows ring3, Linux/Android user or kernel environments, and
+implemented. Windows ring3, Linux kernel and Android user or kernel environments, and
 Darwin user or kernel environments also need their own loaders, ABI and OS
 models. CPU transport availability does not imply compatibility with these
 workloads.
@@ -1565,9 +1565,10 @@ workloads.
 ## Windows driver emulation
 
 Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not
-the CPU transports. The experimental `checked-x64-v1` integer contract is
-explicitly narrower than the existing `driver-strict` contract; unsupported
-accesses stop before native execution. See the backend section in
+the CPU transports. Native `driver-strict` uses the architecture's validated
+instruction/effect boundary; the Windows environment continues to own driver
+objects, API semantics and lifecycle. Unsupported accesses stop before native
+execution. See the backend section in
 [driver emulation](driver-emulation.md).
 
 `lib/emulation` is an optional execution component, enabled by
@@ -1576,9 +1577,9 @@ the public C API. `DriverSession` owns bounded x64 WDM initialization and
 optional serial create/IOCTL/read/write/cleanup/close/unload invocations;
 Windows image mapping consumes the existing loader's complete `BinaryImage`,
 and the Windows model owns guest objects and API semantics. Under `driver-strict`,
-the Unicorn adapter owns CPU execution over the shared physical-memory and
-address-space authority described above; checked hardware execution projects
-the same backing. This path does not use
+the selected Unicorn, KVM or WHP adapter executes over the same shared physical
+memory and address-space authority. Backend-qualified capabilities describe the
+portable engine callbacks or native architectural preflight boundary. This path does not use
 the experimental native translation pipeline or alter its supported profile.
 
 Unicorn is configured once through `cmake/NeverDUnicorn.cmake`, shared with
@@ -2557,3 +2558,7 @@ An AArch64 native helper may bind a complete 16-byte `q0` or later `q` input as 
 Nested Objective-C stack-block discovery carries a method receiver class into a child block only when the current pipeline result proves the parent's strong capture and the child's complete owned copy of that field. Discovery reaches a bounded fixed point within that result; a later pipeline run must prove the chain again. A selector, bare `id`, or unqualified block consumer does not establish a receiver class, call ABI, or block lifetime. A 16-byte context copy preserves this proof only for an exact eight-byte lane inside every authenticated parent literal; partial or rearranged lanes do not.
 
 A verified descriptor may seed the invoke ABI before its body is accepted; consumer calls use receiver captures from the same validated block plan, and publication still requires independent body and lifetime proofs.
+
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+
+Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.

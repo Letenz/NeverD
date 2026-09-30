@@ -48,7 +48,7 @@ enum class ExecutionFeature : uint64_t {
 };
 
 /// Requirements are checked before allocating or attaching any CPU transport.
-/// Omitted privilege/address/page fields select the contract's fixed profile;
+/// Omitted privilege/address/page fields select the resolved backend's profile;
 /// explicit unsupported values fail instead of being silently substituted.
 struct ExecutionConfiguration {
   ExecutionBackendKind Backend = ExecutionBackendKind::Auto;
@@ -75,7 +75,7 @@ struct ExecutionCapabilities {
   bool HasInstructionAllowlist;
   llvm::ArrayRef<const char *> InstructionFamilies;
   /// Memory callbacks may observe a split access or partially completed
-  /// instruction. Only the checked contracts preflight every admitted effect.
+  /// instruction. Architectural profiles preflight every admitted effect.
   ExecutionMemoryObservation MemoryObservation;
   /// Cooperative stop/deadline behavior is not a hard wall-clock bound: guest
   /// admission, native entry, and caller callbacks have distinct lifetimes.
@@ -113,9 +113,17 @@ llvm::Expected<ExecutionBackendBuild>
 queryExecutionBackendBuild(ExecutionBackendKind Backend,
                            GuestArchitecture Architecture);
 
+/// Compatibility query: driver-strict returns its portable software profile.
+/// Use the backend-qualified query for selection, probes and requirements.
 llvm::Expected<ExecutionCapabilities>
 executionCapabilities(ExecutionContract Contract,
                       GuestArchitecture Architecture);
+/// Static support for a selected backend; Auto resolves the host preference.
+/// This query does not inspect build options or initialize a host transport.
+llvm::Expected<ExecutionCapabilities>
+executionCapabilities(ExecutionContract Contract,
+                      GuestArchitecture Architecture,
+                      ExecutionBackendKind Backend);
 llvm::Expected<ResolvedExecutionConfiguration>
 resolveExecutionConfiguration(const ExecutionConfiguration &Configuration);
 llvm::Expected<ExecutionBackendProbe>
