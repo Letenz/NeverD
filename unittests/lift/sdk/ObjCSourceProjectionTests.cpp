@@ -2578,6 +2578,117 @@ int main() {
   executeSynchronizedSource(*Result, Harness);
 }
 
+TEST(ObjCSourceProjection, SynchronizedInterleavedPrefixCanSkipWholeLock) {
+  for (uint32_t Branch :
+       {0x14000017U, 0xb40002f4U, 0xb50002f4U, 0x360002f4U, 0x370002f4U}) {
+    SynchronizedInterleavedFixture F;
+    F.put(0x3018, Branch); // forward branch to 0x3074, after normal unlock
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof) << llvm::utohexstr(Branch);
+    EXPECT_EQ(Proof->SuspendARC, 3U);
+  }
+  for (uint32_t Branch : {
+           0x14000003U, // enter the protected body without acquiring
+           0x14000015U, // enter the normal unlock argument load
+           0x14000016U, // unlock without acquiring
+           0x1400001dU, // enter the exceptional pad
+           0x17ffffffU, // backward branch
+           0xd61f0280U  // indirect branch through x20
+       }) {
+    SynchronizedInterleavedFixture F;
+    F.put(0x3018, Branch);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Branch);
+  }
+  SynchronizedInterleavedFixture F;
+  F.put(0x3018, 0x14000017U);
+  F.put(0x3074, 0x14000006U); // bypass route reaches the cleanup pad
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedInterleavedBypassNeverUnlocks) {
+  SynchronizedInterleavedFixture F;
+  F.put(0x3018, 0xb40002f4U);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void after(void);
+uint64_t neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    uint64_t result = (uint64_t)(uintptr_t)value;
+    if (path) {
+        (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+        work(value, 2);
+        objc_release(value);
+        work(value, 4);
+        objc_release(value);
+        result = (uint64_t)(uintptr_t)objc_retain(value);
+        (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    }
+    after();
+    return result;
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static void *retained = (void*)(uintptr_t)0x3333;
+static int failure, order, bad, exits, releases;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object, int tag) { step(object, value, tag); }
+extern "C" void objc_release(void *object) {
+    step(object, value, ++releases == 1 ? 3 : 5);
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, value, 6); return retained;
+}
+extern "C" void after(void) { step(value, value, 8); }
+extern "C" uint64_t neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    const int wanted[] = {12345678, 1, 127, 123, 12347, 12345,
+                          123456, 1234567, 12345678};
+    for (int path = 0; path < 2; ++path)
+        for (failure = 0; failure <= 8; ++failure) {
+            order = bad = exits = releases = 0;
+            int caught = 0;
+            uint64_t result = 0;
+            try { result = neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            const int thrown = path || failure == 8 ? failure : 0;
+            const int unlocks = path && (thrown == 0 || thrown == 2 ||
+                                         thrown == 4 || thrown == 7 || thrown == 8);
+            const uint64_t returned = (uint64_t)(uintptr_t)(path ? retained : value);
+            if (caught != thrown || order != (path ? wanted[failure] : 8) ||
+                exits != unlocks || bad || (!thrown && result != returned))
+                return 10 + failure + path * 9;
+        }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
 namespace {
 struct SynchronizedInterleavedLocalFixture : SynchronizedInterleavedFixture {
   SynchronizedInterleavedLocalFixture() {

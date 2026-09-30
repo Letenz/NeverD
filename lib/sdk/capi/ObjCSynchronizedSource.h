@@ -158,7 +158,8 @@ inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
 }
 
 inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
-                                          va_t LastTarget) {
+                                          va_t LastTarget,
+                                          va_t FirstTarget = 0) {
   if (!Instruction.Raw || !Instruction.Raw->detail)
     return false;
   switch (Instruction.Id) {
@@ -177,6 +178,7 @@ inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
   const auto &Target = Operands.operands[Operands.op_count - 1];
   return Target.type == AARCH64_OP_IMM && Target.imm >= 0 &&
          static_cast<va_t>(Target.imm) > Instruction.Addr &&
+         static_cast<va_t>(Target.imm) >= FirstTarget &&
          static_cast<va_t>(Target.imm) <= LastTarget && Target.imm % 4 == 0;
 }
 
@@ -727,12 +729,21 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
         (!ReceiverFromRetainResult && Address < SavedReceiver &&
          (IsJump || IsCall)))
       return std::nullopt;
-    if (IsJump &&
-        !objcSynchronizedForwardBranch(
-            Instruction, Address < EnterCall
-                             ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
-                             : ExitCall - 4))
-      return std::nullopt;
+    if (IsJump) {
+      const bool BeforeEnter = Address < EnterCall;
+      const bool JoinsLockedPath = objcSynchronizedForwardBranch(
+          Instruction, BeforeEnter
+                           ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
+                           : ExitCall - 4);
+      // A pre-acquisition branch can skip the whole lock lifetime and join
+      // the verified normal suffix. The source guard remains zero on that
+      // path; entering the body, unlock or exceptional pad is still rejected.
+      const bool SkipsLock =
+          BeforeEnter &&
+          objcSynchronizedForwardBranch(Instruction, Landing - 4, ExitCall + 4);
+      if (!JoinsLockedPath && !SkipsLock)
+        return std::nullopt;
+    }
     if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
         HasCall(Address, "_objc_sync_exit"))
       return std::nullopt;
