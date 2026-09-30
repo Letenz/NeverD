@@ -131,6 +131,8 @@ L’absence de matériel ARM64 ou d’hyperviseur est une couverture native omis
 
 Les [suites indépendantes de processus](process-emulation.md) compilent de vraies fixtures ELF x64/AArch64. `NeverDLinuxProcessTests` vérifie démarrage, politique des en-têtes, requêtes de service, sortie binaire, défauts et limites. `NeverDProcessPublicTests` contrôle l’API C/CLI sans modifier l’image d’analyse. `NeverDExecutionSessionTests` couvre deux CPU partageant mémoire/budget et la consommation exactement unique des requêtes/défauts. `NeverDX64MemoryUpdateTests` contrôle arithmétique mémoire, SETcc, BT, XMM/MXCSR, observateurs d’écriture, frontières REP et lectures préparées de périphériques. `DriverBackendParityTests.cpp` exécute les fixtures WDK originales et relocalisées puis compare le rapport observable complet à Unicorn ; images/backends absents sont ignorés.
 
+Le x64 vérifié admet aussi les formes masquées historiques `SS`, `SD`, `PS`, `PD` de `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` centralise les largeurs, alignements et règles d’admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compare les formes registre/RAM à un oracle CPU hôte indépendant : quatre arrondis, FTZ, zéros signés, subnormaux et NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` vérifie l’arrêt avant les effets. DAZ, exceptions non masquées, x87 et AVX restent exclus.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

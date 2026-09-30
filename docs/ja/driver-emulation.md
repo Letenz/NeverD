@@ -14,6 +14,8 @@ ARM64 host では `checked-x64-v1` が x64 guest に Unicorn を使います。�
 
 supervisor x64 は1/2/4-byte の aligned scalar MMIO transaction を許可し、device page は native RAM mapping に入りません。MOVS/REP MOVS は restart boundary ごとに1要素だけ実行します。destination observer が device read の commit 前に停止できるよう、device source は副作用のない prepared read を提供する必要があります。Windows register bank はこれを実装し、その他の device は string read を効果発生前に拒否します。device RMW、wide MMIO、port I/O は未対応です。request byte、device state、write event は Unicorn の zero-count REP 終了 hook との差を除いて個別に比較します。KVM は標準 XSAVE interface と FP/SSE presence bit で XMM/MXCSR を転送します。この supervisor contract は user-process environment ではありません。timeout/cancellation は許可済み有界命令間で確認し、一般 async preemption や実行開始後の backend 再起動はありません。組み込み corpus と利用可能な WDK scenario は通常/CFG/relocated image で Unicorn と比較されますが、corpus parity は任意 driver の互換性を保証しません。
 
+checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
+
 ビルド設定は `NEVERD_EMULATION_BACKEND_KVM` と `NEVERD_EMULATION_BACKEND_WHP` です。KVM には `/dev/kvm` へのアクセスが必要です。WHP はシステム DLL を動的にロードし、Windows 上での実行検証が別途必要です。新 C API は `neverd_emulate_driver_backend_json` で、v1 ABI は維持されます。レポートにはバックエンド、契約、選択理由が含まれます。
 
 ```bash

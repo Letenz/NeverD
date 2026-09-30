@@ -560,6 +560,8 @@ Unicorn, KVM and WHP separately at supported privileges, with explicit unavailab
 backend skips. The public Python wrapper also participates in
 the ordinary Python SDK tests and declaration audit.
 
+Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
+
 ## Driver emulation checks
 
 `NeverDX64ExceptionTests` builds with Unicorn disabled. Its raw native machine

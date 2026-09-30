@@ -66,6 +66,8 @@ the FP/SSE presence bits. The older FPU register interface is insufficient for
 this state contract. See the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and [WHP register API](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes).
 
+Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
+
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
