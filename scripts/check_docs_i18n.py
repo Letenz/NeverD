@@ -785,6 +785,7 @@ class RepositoryView:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self._index_cache[relative_path] = (
                 result.stdout if result.returncode == 0 else None
@@ -823,6 +824,7 @@ class RepositoryView:
                     check=True,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self._index_exists_cache[relative_path] = bool(result.stdout.strip())
         return self._index_exists_cache[relative_path]
@@ -3122,6 +3124,7 @@ def validate_staged(errors: list[str]) -> None:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     staged = tuple(line for line in result.stdout.splitlines() if line)
     prohibited = sorted(
