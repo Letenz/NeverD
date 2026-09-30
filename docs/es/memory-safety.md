@@ -15,6 +15,8 @@ El motor reutiliza la ejecución simbólica y el solver de vectores de bits inte
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## Invariante central: fallar cerrado
 
 Una operación no levantada, una llamada cuyos argumentos el paso ABI no pudo recuperar, un destino indirecto sin resolver o un presupuesto agotado producen **UNKNOWN**, nunca SAFE. Un destino cuya capacidad no se puede recuperar es UNKNOWN. El lifting estricto no cambia; la capa de seguridad solo añade veredictos conservadores encima.
@@ -22,6 +24,8 @@ Una operación no levantada, una llamada cuyos argumentos el paso ABI no pudo re
 Los efectos de llamada usan semántica de mundo cerrado: un resumen solo se aplica cuando se conocen sus precondiciones y todos los efectos pertinentes. Un efecto desconocido o un resumen aplicable solo en parte conserva UNKNOWN; nunca se rellena el hueco suponiendo que no hay efecto o que la llamada tuvo éxito.
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## Contrato de identidad por formato
 
@@ -37,6 +41,8 @@ Ambas pistas requieren el pipeline de lift (recupera argumentos por llamada). Ca
 
 Las firmas de procedimiento del PDB sirven para distinguir los asignadores que devuelven un valor de las funciones de liberación `void`. La recuperación rica de tipos locales y de pila desde un PDB sigue siendo limitada; cuando no puede establecer un tamaño de objeto exacto, la caza recurre al modelo de marco o de asignación e informa UNKNOWN en lugar de inventar un tamaño.
 
+<!-- i18n-section: name-precedence -->
+
 ### Precedencia de `name_source`
 
 Cada hallazgo lleva un `name_source` que describe de dónde salió el nombre del callee, con esta precedencia:
@@ -51,6 +57,8 @@ Cada hallazgo lleva un `name_source` que describe de dónde salió el nombre del
 Un `memcpy` enlazado estáticamente nombrado por DWARF informa `dwarf`; un `memcpy` importado informa `import` en todos los formatos. Una coincidencia de firmas nunca desplaza un nombre que el depurador o la tabla de importaciones ya establecieron.
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## Catálogo de sumideros y fuentes
 
@@ -87,6 +95,8 @@ Un sumidero personalizado no acotado que solo tiene destino no se deduce de una 
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## Hunt: veredictos de desbordamiento de copia
 
 Para cada sumidero de copia, la caza recupera la capacidad de destino — tamaño de array declarado por depuración, luego un sitio de asignación de montón de tamaño conocido, luego un límite sano de marco de pila — y clasifica el argumento que decide la longitud de escritura con un recorrido SSA hacia atrás (siguiendo spill/reload por ranuras de pila):
@@ -99,11 +109,21 @@ Para cada sumidero de copia, la caza recupera la capacidad de destino — tamañ
 
 Toda capacidad recuperada es una **cota superior** del tamaño real, así que un desbordamiento demostrado nunca es un falso positivo.
 
+<!-- i18n-section: formatted-input -->
+
 ### Entrada con formato
 
 Para `scanf`/`fscanf` y sus grafías versionadas, un formato constante legible asigna cada conversión no suprimida a su argumento variádico de salida real. Las salidas `%s`/`%[` no acotadas contaminan los usos posteriores de cadenas; las salidas numéricas y de caracteres contaminan los valores cargados desde el objeto escrito, pero no el valor del puntero de salida. `sscanf` solo propaga esos efectos cuando su cadena de entrada ya está influida por el atacante. Las salidas de texto acotadas como `%Ns`/`%N[` propagan taint junto con una extensión `MaxBytes` que incluye el terminador; las variantes de caracteres anchos calculan esa extensión en bytes con el ancho de `wchar_t` de la plataforma. Las conversiones suprimidas, los argumentos sobrantes, los formatos dependientes de posición o no admitidos y `%n` permanecen UNKNOWN en lugar de adivinarse.
 
+<!-- i18n-section: formatted-output -->
+
+### Salida formateada
+
+`snprintf`/`vsnprintf` conservan una longitud máxima de escritura; las variantes reforzadas `_chk` añaden el tamaño de objeto destino del compilador. Son límites independientes. Un formato constante fiable con solo literales y `%%` tiene extensión exacta, incluido NUL, comprobada con el modelo heap/pila de las copias. Si la escritura máxima cabe en una capacidad exacta es SAFE; una salida literal demasiado grande es UNSAFE. Las conversiones permanecen UNKNOWN hasta demostrar las extensiones de sus argumentos. UNSAFE de alta confianza requiere además que la reproducción LowIR pruebe la accesibilidad de la llamada. Un formato controlado por el atacante se informa como `format_string`, independientemente del truncamiento.
+
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## Audit: veredictos de vida del montón
 
@@ -118,6 +138,16 @@ Los **envoltorios** de asignación y liberación se reconocen con resúmenes de 
 La máquina de estados del montón emite primero una secuencia de eventos candidata (asignación, liberación, uso o salida por retorno). Una segunda pasada debe reproducir esa secuencia sobre un camino LowIR simbólico y demostrar que su predicado de camino es satisfacible antes de que el hallazgo sea UNSAFE de confianza ALTA. La falta de LowIR, las operaciones opacas, las llamadas sin resumen, la incertidumbre del solucionador y los límites de exploración rebajan el candidato a UNKNOWN. El havoc de memoria may-alias conservador se rastrea por separado, de modo que las escrituras ordinarias al marco de pila no invalidan una evidencia de alcanzabilidad por lo demás exacta.
 
 ---
+
+<!-- i18n-section: stack-initialization -->
+
+## Auditoría: inicialización de pila local
+
+La auditoría sigue escrituras de anchura completa que llegan a lecturas de slots locales por debajo del puntero de pila de entrada. Una lectura sin inicialización previa posible produce `uninitialized_read`; la reproducción LowIR debe probar su accesibilidad antes de declarar UNSAFE de alta confianza. Inicialización condicional, escrituras parciales, direcciones escapadas y definiciones inciertas siguen UNKNOWN. Se excluyen los slots de argumentos del llamador en el puntero de entrada o por encima.
+
+---
+
+<!-- i18n-section: reachability -->
 
 ## Alcanzabilidad interprocedimental desde entradas conocidas
 
@@ -165,6 +195,8 @@ Son independientes de `safe`, `unsafe` y `unknown`, que cuentan veredictos.
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## Presupuestos, salida y enlaces
 
 La exploración de caza y el solver están acotados (`--max-paths`, `--max-steps`, `--max-loop`, `--solver-conflicts`). En el trabajo interprocedimental, `max_call_depth` limita el número de aristas de llamada internas desde una entrada conocida y `max_summary_iterations` limita las rondas del punto fijo de control del atacante. Sus valores predeterminados son 64 aristas y la profundidad efectiva más una ronda, respectivamente. El agotamiento falla cerrado como se describe arriba. Agotar `max_call_depth` puede dejar `status=UNKNOWN` en una función aún no alcanzada; agotar `max_summary_iterations` no elimina el testigo estructural, por lo que `status=REACHABLE` puede coexistir con `attacker_control=UNKNOWN` y `budget_hit=true`. Ambos comandos imprimen JSON y respetan `-o`. El código de salida es `0` para SAFE, `2` para UNSAFE y `1` para UNKNOWN o un error.
@@ -184,6 +216,8 @@ signo de 32 bits.
 
 Los mismos análisis están disponibles por la API C (`neverd_session_audit_json` / `neverd_session_hunt_json` con `neverd_safety_options` versionado) y el SDK de Python (`Session.audit()` / `Session.hunt()`).
 
+<!-- i18n-section: finding-schema -->
+
 ### Esquema de un hallazgo
 
 ```json
@@ -202,8 +236,32 @@ Los mismos análisis están disponibles por la API C (`neverd_session_audit_json
   "capacity": 16,
   "capacity_kind": "exact",
   "corroboration": "path predicate and overflow are jointly satisfiable",
-  "reachability": { "status": "REACHABLE", "attacker_control": "TAINTED", "budget_hit": false, "entry": { "va": "0x1000", "name": "main", "kind": "application" }, "call_chain": [{ "caller_va": "0x1000", "call_va": "0x1080", "callee_va": "0x1100", "kind": "direct" }] },
-  "evidence": { "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" }, "candidate_values": [{ "name": "copy_length", "value": "17" }, { "name": "argv[1]", "value": "16 bytes" }], "replayable": false, "replay": { "adapter": "process-input-v1", "reason": "argv input is not supported by process-input-v1" }, "symbolic_model": [{ "id": 0, "name": "copy_len", "width": 64, "value_hex": "0x11", "origin": "input" }] }
+  "reachability": {
+    "status": "REACHABLE",
+    "attacker_control": "TAINTED",
+    "budget_hit": false,
+    "entry": { "va": "0x1000", "name": "main", "kind": "application" },
+    "call_chain": [
+      { "caller_va": "0x1000", "call_va": "0x1080",
+        "callee_va": "0x1100", "kind": "direct" }
+    ]
+  },
+  "evidence": {
+    "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" },
+    "candidate_values": [
+      { "name": "copy_length", "value": "17" },
+      { "name": "argv[1]", "value": "16 bytes" }
+    ],
+    "replayable": false,
+    "replay": {
+      "adapter": "process-input-v1",
+      "reason": "argv input is not supported by process-input-v1"
+    },
+    "symbolic_model": [
+      { "id": 0, "name": "copy_len", "width": 64,
+        "value_hex": "0x11", "origin": "input" }
+    ]
+  }
 }
 ```
 
@@ -211,11 +269,39 @@ Los mismos análisis están disponibles por la API C (`neverd_session_audit_json
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
+## Guardas estrictas y publicación autenticada
+
+`binary-sanitizer-v1` es una transacción experimental separada que no cambia el veredicto audit/hunt. Un hunt estricto completo debe asociar cada hallazgo con una ocurrencia exacta de escritura contada, capacidad restante exacta y metadatos de llamada del compilador coincidentes. Hallazgos no admitidos, identidad caducada/ambigua, lifting incompleto, presupuesto agotado, errores de generación y límites de destino/firma rechazan toda la transacción. No hay éxito parcial. Se rechazan, entre otros, objetos reubicables, bibliotecas dinámicas, Mach-O universales y miembros de bundles Mach-O protegidos.
+
+Las entradas públicas son C `neverd_session_sanitize`, CLI `neverd patch --sanitize=strict` y Python `Session.sanitize`. Para publicación autenticada, C debe consultar primero `neverd_sanitize_publication_abi_version()`. Todas exigen un publication receipt v1 completo y coherente. Fuera de Darwin, tras autenticar y normalizar la entrada, se devuelve `UNSUPPORTED_TARGET` antes del lifting, generación de guardas, creación del candidato o cambio del espacio de nombres.
+
+Darwin admite dos éxitos. `CREATE_EXCLUSIVE` publica un candidato nuevo del mismo directorio en un destino ausente con una operación atómica sin reemplazo. El recibo acredita atomicidad, creación exclusiva y vinculación de operandos reales, pero no CAS de reemplazo ni durabilidad ante fallos. `NO_CHANGE` es de solo lectura: un plan vacío vuelve a autenticar el objeto fuente cargado y retenido, informa `NOT_PUBLISHED` y no afirma garantías de publicación o vinculación. Un plan con guardas no puede escribir sobre la fuente cargada. Nunca se reemplaza otro destino existente: hay que elegir una ruta nueva. Publicación indeterminada o recibo final incompleto significa fallo; el destino puede existir y debe inspeccionarse antes de usarlo, reintentar o borrarlo.
+
+Los bytes fuente se comparan con el resumen externo de la sesión y se observan mediante un descriptor retenido. Fuente y directorio destino permanecen anclados durante la transacción. Metadatos e identidad estable son observaciones del momento, no prueba de invariancia desde la carga. El directorio abierto puede renombrarse: el recibo autentica ese objeto, no la continuidad de la ruta inicial durante o después de la operación. No es una vinculación duradera y autónoma de ruta; una apertura posterior requiere ancla externa y nueva autenticación. Como rename de Darwin usa la ruta del candidato y no su descriptor, el directorio debe pertenecer al uid efectivo, sin ACL extendida ni escritura de grupo/otros, en un volumen que acredite propiedad POSIX normal. Se reautentica antes de crear y publicar. Se excluyen procesos con igual privilegio, root/elusión DAC y sistemas de archivos o servidores adversarios; se supone que kernel, VFS y sistema de archivos respetan la semántica declarada.
+
+---
+
+<!-- i18n-section: native-replay -->
+
+## Reproducción nativa de procesos: solo fase 0
+
+El plan neutral `process-replay-v1` y su coordinador definen las pruebas de una futura ejecución autenticada; ningún anfitrión la realiza actualmente. `NativeProcessReplayAdapter` es una frontera C++ de disponibilidad/fábrica, no una interfaz de ejecución C, Python, CLI o JSON.
+
+La consulta sin cambios valida el plan completo, límites, localizador absoluto del ejecutable y mapa único de llamadas físicas, sin abrir el destino, invocar callbacks ni iniciar procesos. El localizador sirve para encontrar un objeto futuro, nunca como autoridad de ejecución por ruta tras autenticar. Si falta cualquier garantía de aislamiento, identidad, interposición de entrada, certificación de ocurrencia, límites o limpieza, `Available` y todas las capacidades siguen false; la fábrica falla sin tabla de operaciones.
+
+Es así en todos los anfitriones. Linux aún necesita instrumentación fiable de ELF estático, supervisor persistente, aislamiento completo, límites y certificación de ejecución. Las primitivas públicas admitidas de macOS no aportan conjuntamente ejecución del objeto retenido, sandbox de cualquier destino antes de su código y aislamiento del árbol de procesos sin carreras. Otras plataformas tampoco están admitidas. Las tablas de pruebas unitarias validan el contrato del coordinador, no la disponibilidad nativa.
+
+---
+
+<!-- i18n-section: scope -->
+
 ## Cotas de falsos positivos y alcance
 
 - La capacidad es exacta o una cota superior del tamaño real, así que UNSAFE refleja un desbordamiento real. Sin tamaño exacto, una cota de región insuficiente para probar seguridad produce UNKNOWN.
 - Una copia acotada se retira antes del solver y cuenta en `skipped`; una capacidad exacta puede probar SAFE, mientras una cota sola permanece UNKNOWN.
 - Las copias de caracteres anchos y de anexado catalogadas permanecen UNKNOWN hasta recuperar el ancho de elemento y la extensión actual del destino. Los asignadores por parámetro de salida y la propiedad condicional de `realloc` también permanecen UNKNOWN si no puede probarse la transición del manejador.
-- **P0** (esta versión, los tres formatos): catálogo de sumideros, prefiltro de argumentos, caza de desbordamiento de copia, auditoría de vida del montón. Cada host ejecuta seis fixtures PE, ELF y Mach-O para x86-64 y AArch64.
-- **P1**: ya están disponibles los desbordamientos de pila/global, las lecturas locales no inicializadas y las comprobaciones de cadenas de formato; los tipos de pila PDB más ricos y más asignadores de plataforma siguen siendo cobertura incremental, y la ausencia de un resumen exacto permanece UNKNOWN.
+- **Phase 1**: Esta versión incluye, en los tres formatos, catálogo de sinks, prefiltro de argumentos, búsqueda de desbordamientos de copia de pila/globales, auditoría del heap, lecturas locales no inicializadas y formatos. Cada anfitrión de prueba debe ejecutar las fixtures registradas PE, ELF y Mach-O en x86-64 y AArch64.
+- Tipos de pila PDB más ricos y otros asignadores siguen siendo ampliaciones; sin resumen exacto se mantiene UNKNOWN.
 - El corte actual cubre entradas conocidas, alcanzabilidad interprocedimental estructural y propagación monótona de parámetros del atacante. El adaptador experimental independiente `lowir-concolic-v1` proporciona ahora cambios de rama con semillas de registro verificadas por reproducción en la matriz nativa obligatoria de formatos y arquitecturas; sigue siendo no exhaustivo y no modifica los veredictos de seguridad. El `binary-sanitizer-v1` experimental ofrece ahora en Darwin guardas de escritura contada de todo-o-rechazo y publicación autenticada; su receipt autentica el objeto de directorio retenido durante la transacción, no un vínculo duradero y revalidable del pathname original. El `process-replay-v1` más amplio sigue limitado a una frontera fail-closed de Phase 0 para plan, coordinador y disponibilidad; ningún host ejecuta hoy replay nativo.

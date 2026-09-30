@@ -34,6 +34,8 @@ modificare la normale cache di decompilazione della sessione. Un errore non
 restituisce sorgente, ma può comunque restituire una diagnosi JSON. Entrambe
 le stringhe allocate si liberano con `neverd_free_string()`.
 
+<!-- i18n-section: control-discovery -->
+
 ## Individuazione automatica dello stato di controllo
 
 La CLI e tutte le versioni delle API C di recupero del sorgente attivano l’individuazione automatica per impostazione predefinita. Nell’API C++ indipendente dal provider, `SpecializationOptions::DiscoverControlState = false` rimane il valore predefinito; il chiamante può impostare `true`. I suggerimenti manuali `--vm-control` e `--vm-control-stack` restano chiavi di contesto facoltative. I normali campi automatici conservano relazioni congiunte di valori finiti e limitati, senza creare chiavi di contesto né fissare gli input a valori campionati. I contatori restano dinamici, salvo quando il raffinamento selettivo della memoria descritto sotto richiede le loro costanti dimostrate.
@@ -76,6 +78,8 @@ In C si usa `neverd_devirtualize_source_v3()` o `neverd_devirtualize_machine_sou
 
 Il rapporto JSON aggiunge `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` e `discoveryVisits` per registrare attivazione, limiti e lavoro di analisi. L’individuazione dei campi, da sola, non prova il successo del recupero.
 
+<!-- i18n-section: execution-contract -->
+
 ## Contratto di esecuzione
 
 L’adattatore binario accetta attualmente immagini x64 ELF e PE già collegate,
@@ -117,9 +121,36 @@ Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direz
 
 I temporanei LowIR sono locali a una sola istruzione nativa sollevata. Ogni byte letto deve essere stato definito prima nella stessa istruzione; il riuso di un offset da un’istruzione precedente o l’annullamento algebrico di un valore indefinito non dimostrano la validità del sorgente. Le costanti d’ingresso possono vincolare solo registri fisici.
 
+<!-- i18n-section: machine-state -->
+
+## Recupero con stato macchina esplicito
+
+```sh
+neverd decompile program --func entry --devirtualize --vm-machine-state \
+  --recovery-report machine-report.json -o machine.c
+```
+
+`--devirtualize --vm-machine-state` o `neverd_devirtualize_machine_source_v1()` seleziona una ABI separata: un puntatore a 17 parole `uint64_t` allineate (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8–R15, RFLAGS). Solo lo stato unsigned a 64 bit uguale a zero indica successo. Un valore diverso non annulla le scritture. Lo stato è acquisito prima del pop dell’indirizzo nel RET finale. La sua memoria non deve sovrapporsi a quella guest; sono richieste le mappature originali e un host little-endian a 64 bit.
+
+Gli indirizzi originali del codice e dei dati ospiti conservano il loro esatto valore numerico, inclusi quelli osservati nei registri di output. La generazione del sorgente non deve sostituirli con indirizzi di oggetti globali del programma generato. Il chiamante fornisce le mappature ospiti originali necessarie; generare C non riloca lo spazio degli indirizzi ospite. Le prove e i rapporti di recupero continuano a riferirsi all’immagine di input originale.
+
+Il profilo richiede CPL3/IOPL0, shadow stack disattivato, assenza di eventi asincroni ed esecuzione normale senza fault. I flag iniziali devono essere canonici con TF/RF/VM/AC/VIF/VIP a zero; POPFQ deve mantenere TF/AC a zero, verificato dal codice generato. PUSHFQ/POPFQ usano lo stato esplicito; RDSSP conserva la destinazione e INCSSP raggiunto viene rifiutato. I puntatori di frame salvati integralmente si propagano; scritture parziali o alias possibili invalidano i fatti. I metadati di eccezione ammettono solo il percorso normale, senza equivalenza di dispatch o unwinding. Il rapporto registra `sourceABI` e `executionProfile`; l’ABI predefinita mantiene le restrizioni.
+
+Questa ABI di stato macchina supporta CALL near dirette e indirette tramite registro con un insieme finito di destinazioni dimostrato esaustivamente. La chiamata indiretta tramite registro acquisisce il registro destinazione originale prima di modificare RSP e salva esattamente una volta l’indirizzo reale dell’istruzione successiva. Un RET near interno può scegliere da un insieme finito completamente dimostrato. Il codice residuo mantiene una lettura dello stack ospite, ne acquisisce il valore prima di incrementare il puntatore e usa quel valore per il dispatch. Raggiungere lo slot di ritorno d’ingresso preservato resta un’uscita esterna, anche dopo aver scartato frame interni. Destinazioni sconosciute, insiemi con destinazioni mancanti o non eseguibili, ritorni con pulizia aggiuntiva e cambi arbitrari dello stack restano rifiutati.
+
+Le CALL near indirette tramite memoria sono supportate solo con questa ABI di stato esplicito, shadow stack disattivato ed esecuzione normale senza fault. L’operando in memoria deve usare una codifica canonica `r/m64` senza override di segmento, con override della dimensione dell’indirizzo (`addr32`) e REX facoltativi. La semantica x64 condivisa dell’indirizzo effettivo e di LOAD legge la destinazione prima di modificare RSP e inserire nello stack l’indirizzo reale dell’istruzione successiva. Vale anche quando il push sovrascrive lo slot destinazione; l’indirizzo dello slot non sostituisce mai quello della funzione caricata. Slot di puntatori o tabelle finite in sola lettura richiedono prove di lettura immutabile; valori dello stack ospite con inizializzazione dimostrata richiedono comunque la prova completa dell’insieme finito di destinazioni. Byte iniziali o snapshot di esecuzione di slot scrivibili non provano l’immutabilità. Letture esterne non dimostrate, fatti di stack invalidati, destinazioni invalide, override FS/GS o di altri segmenti, chiamate far e prefissi aggiuntivi o non canonici restano rifiutati. L’ABI sorgente predefinita continua a rifiutare le chiamate native.
+
+L’ABI sorgente ordinaria ricostruisce un frame privato dell’invocazione. Ogni intervallo LOAD/STORE di origine esterna, incluse le destinazioni calcolate, deve essere disgiunto dal frame nativo privato e dalla sua memoria ricostruita nel sorgente: è una precondizione esplicita. La prova condivisa rifiuta indirizzi di frame che sfuggono, risultati o rami che ne dipendono e letture private non inizializzate. L’ABI con stato macchina conserva gli indirizzi guest e non usa questa precondizione sul frame privato.
+
+Se i flag indefiniti influenzano il controllo, gli indirizzi o gli output definiti, serve una prova indipendente di non interferenza. Il rapporto attuale non fornisce tale prova né certifica questo comportamento dipendente dal processore.
+
+<!-- i18n-section: limits -->
+
 ## Limiti attuali
 
 Gli indirizzi di bytecode dipendenti dall’ingresso e le relazioni fra stati del decodificatore sono supportati solo quando i domini finiti e le correlazioni necessari sono dimostrabili entro i limiti configurati. Questo non dimostra il supporto di qualsiasi schema di decodifica indiretta. Rami e cicli dinamici possono essere recuperati se ogni destinazione di dispatch è dimostrata; la copertura dei normali rami non basta a provarlo. Controllo irrisolto o esaurimento di un budget di prova necessario costituiscono un errore, senza pubblicare sorgenti recuperati o sostituzioni parziali. Chiamate ausiliarie native, confini di eccezione o rientro, codice modificabile e altre architetture restano fuori dal contratto dell’adattatore.
+
+<!-- i18n-section: implementation -->
 
 ## Implementazione condivisa
 
@@ -158,6 +189,8 @@ pubblica verifica entrambi i risultati e ne segnala la differenza.
 
 Gli insiemi finiti di indirizzi di lettura, le tuple congiunte di controllo e il numero di campi di controllo hanno limiti espliciti. Un limite globale alle interrogazioni del risolutore e limiti per interrogazione a porte, conflitti, propagazioni e visite ai letterali sorvegliati delimitano il lavoro di prova; il limite ai nodi simbolici delimita la crescita delle espressioni. Il rapporto JSON include questi budget insieme a `solverQueries` e `relationalWidenings`.
 
+<!-- i18n-section: evidence -->
+
 ## Evidenze e test
 
 Il report JSON locale facoltativo include hash dell’input, controlli scelti,
@@ -185,21 +218,7 @@ Una regressione separata con indirizzi fissi fornisce memoria ospite scrivibile 
 
 I target di test mirati sono descritti in [testing.md](testing.md).
 
-## Recupero con stato macchina esplicito
-
-`--devirtualize --vm-machine-state` o `neverd_devirtualize_machine_source_v1()` seleziona una ABI separata: un puntatore a 17 parole `uint64_t` allineate (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8–R15, RFLAGS). Solo lo stato unsigned a 64 bit uguale a zero indica successo. Un valore diverso non annulla le scritture. Lo stato è acquisito prima del pop dell’indirizzo nel RET finale. La sua memoria non deve sovrapporsi a quella guest; sono richieste le mappature originali e un host little-endian a 64 bit.
-
-Gli indirizzi originali del codice e dei dati ospiti conservano il loro esatto valore numerico, inclusi quelli osservati nei registri di output. La generazione del sorgente non deve sostituirli con indirizzi di oggetti globali del programma generato. Il chiamante fornisce le mappature ospiti originali necessarie; generare C non riloca lo spazio degli indirizzi ospite. Le prove e i rapporti di recupero continuano a riferirsi all’immagine di input originale.
-
-Il profilo richiede CPL3/IOPL0, shadow stack disattivato, assenza di eventi asincroni ed esecuzione normale senza fault. I flag iniziali devono essere canonici con TF/RF/VM/AC/VIF/VIP a zero; POPFQ deve mantenere TF/AC a zero, verificato dal codice generato. PUSHFQ/POPFQ usano lo stato esplicito; RDSSP conserva la destinazione e INCSSP raggiunto viene rifiutato. I puntatori di frame salvati integralmente si propagano; scritture parziali o alias possibili invalidano i fatti. I metadati di eccezione ammettono solo il percorso normale, senza equivalenza di dispatch o unwinding. Il rapporto registra `sourceABI` e `executionProfile`; l’ABI predefinita mantiene le restrizioni.
-
-Questa ABI di stato macchina supporta CALL near dirette e indirette tramite registro con un insieme finito di destinazioni dimostrato esaustivamente. La chiamata indiretta tramite registro acquisisce il registro destinazione originale prima di modificare RSP e salva esattamente una volta l’indirizzo reale dell’istruzione successiva. Un RET near interno può scegliere da un insieme finito completamente dimostrato. Il codice residuo mantiene una lettura dello stack ospite, ne acquisisce il valore prima di incrementare il puntatore e usa quel valore per il dispatch. Raggiungere lo slot di ritorno d’ingresso preservato resta un’uscita esterna, anche dopo aver scartato frame interni. Destinazioni sconosciute, insiemi con destinazioni mancanti o non eseguibili, ritorni con pulizia aggiuntiva e cambi arbitrari dello stack restano rifiutati.
-
-Le CALL near indirette tramite memoria sono supportate solo con questa ABI di stato esplicito, shadow stack disattivato ed esecuzione normale senza fault. L’operando in memoria deve usare una codifica canonica `r/m64` senza override di segmento, con override della dimensione dell’indirizzo (`addr32`) e REX facoltativi. La semantica x64 condivisa dell’indirizzo effettivo e di LOAD legge la destinazione prima di modificare RSP e inserire nello stack l’indirizzo reale dell’istruzione successiva. Vale anche quando il push sovrascrive lo slot destinazione; l’indirizzo dello slot non sostituisce mai quello della funzione caricata. Slot di puntatori o tabelle finite in sola lettura richiedono prove di lettura immutabile; valori dello stack ospite con inizializzazione dimostrata richiedono comunque la prova completa dell’insieme finito di destinazioni. Byte iniziali o snapshot di esecuzione di slot scrivibili non provano l’immutabilità. Letture esterne non dimostrate, fatti di stack invalidati, destinazioni invalide, override FS/GS o di altri segmenti, chiamate far e prefissi aggiuntivi o non canonici restano rifiutati. L’ABI sorgente predefinita continua a rifiutare le chiamate native.
-
-L’ABI sorgente ordinaria ricostruisce un frame privato dell’invocazione. Ogni intervallo LOAD/STORE di origine esterna, incluse le destinazioni calcolate, deve essere disgiunto dal frame nativo privato e dalla sua memoria ricostruita nel sorgente: è una precondizione esplicita. La prova condivisa rifiuta indirizzi di frame che sfuggono, risultati o rami che ne dipendono e letture private non inizializzate. L’ABI con stato macchina conserva gli indirizzi guest e non usa questa precondizione sul frame privato.
-
-Se i flag indefiniti influenzano il controllo, gli indirizzi o gli output definiti, serve una prova indipendente di non interferenza. Il rapporto attuale non fornisce tale prova né certifica questo comportamento dipendente dal processore.
+<!-- i18n-section: loop-proposals -->
 
 ## Inferenza automatica di candidati per prove dei cicli
 

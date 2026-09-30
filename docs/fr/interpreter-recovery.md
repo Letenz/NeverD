@@ -34,6 +34,8 @@ modifier le cache de décompilation ordinaire de la session. En cas d’échec, 
 ne renvoie aucun source, mais peut fournir un diagnostic JSON. Les deux chaînes
 allouées se libèrent avec `neverd_free_string()`.
 
+<!-- i18n-section: control-discovery -->
+
 ## Découverte automatique de l’état de contrôle
 
 La CLI et toutes les versions des API C de récupération activent la découverte automatique par défaut. L’API C++ indépendante du fournisseur conserve `SpecializationOptions::DiscoverControlState = false` ; l’appelant peut choisir `true`. Les indications manuelles `--vm-control` et `--vm-control-stack` restent des clés de contexte facultatives. Les champs automatiques ordinaires ne conservent que des relations conjointes finies et bornées, sans créer de clés de contexte ni fixer les entrées à des valeurs échantillonnées. Les compteurs restent dynamiques, sauf si le raffinement mémoire sélectif ci-dessous nécessite leurs constantes prouvées.
@@ -75,6 +77,8 @@ L’option CLI `--vm-max-refinements=N` exige un entier strictement positif et v
 En C, utiliser `neverd_devirtualize_source_v3()` ou `neverd_devirtualize_machine_source_v3()`. Initialiser `neverd_devirtualize_options_v3` à zéro et définir `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Renseigner `max_control_fields`, `max_solver_queries` et éventuellement `base.max_control_refinements` ; zéro sélectionne la valeur par défaut inchangée. Les trois champs reserved doivent être nuls. v1/v2 ignorent la fin v3, y compris reserved ; v3 ignore les extensions futures. Le rapport consigne le travail réel et les limites effectives `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
 Le rapport JSON ajoute `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` et `discoveryVisits` pour décrire l’activation, les limites et le travail effectué. Découvrir des champs ne prouve pas la réussite de la récupération.
+
+<!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution
 
@@ -118,9 +122,36 @@ Avant une capture complète des drapeaux, chaque drapeau arithmétique ou de dir
 
 Les temporaires LowIR sont propres à une seule instruction native relevée. Chaque octet lu doit avoir été défini auparavant dans cette instruction ; réutiliser un décalage d’une instruction précédente ou annuler algébriquement une valeur indéfinie ne prouve pas la validité du code source. Les constantes d’entrée ne peuvent lier que des registres physiques.
 
+<!-- i18n-section: machine-state -->
+
+## Récupération avec état machine explicite
+
+```sh
+neverd decompile program --func entry --devirtualize --vm-machine-state \
+  --recovery-report machine-report.json -o machine.c
+```
+
+`--devirtualize --vm-machine-state` ou `neverd_devirtualize_machine_source_v1()` sélectionne une ABI distincte : un pointeur vers 17 mots `uint64_t` alignés (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 à R15, RFLAGS). Le résultat non signé de 64 bits doit être zéro. Un statut non nul ne restaure pas les écritures mémoire. L’état est capturé avant le dépilement du RET final. Son stockage ne doit pas chevaucher la mémoire invitée ; les adresses gardent leurs mappings et l’hôte doit être 64 bits petit-boutiste.
+
+Les adresses originales du code et des données invités conservent leur valeur numérique exacte, y compris celles observées dans les registres de sortie. La génération de source ne doit pas les remplacer par des adresses d’objets globaux du programme généré. L’appelant fournit les mappings invités originaux nécessaires ; produire du C ne reloge pas l’espace d’adressage invité. Les preuves et rapports de récupération restent liés à l’image d’entrée originale.
+
+Le profil impose CPL3/IOPL0, pile fantôme désactivée, aucune interruption asynchrone et exécution normale sans faute. Les flags d’entrée sont canoniques, TF/RF/VM/AC/VIF/VIP nuls ; POPFQ doit garder TF/AC nuls, vérifiés dans le code généré. PUSHFQ/POPFQ utilisent l’état explicite ; RDSSP conserve sa destination et INCSSP atteint est refusé. Les pointeurs de cadre sauvegardés entièrement sont propagés ; écritures partielles ou alias possibles invalident les faits. Les métadonnées d’exception sont admises uniquement pour le chemin normal, sans équivalence de distribution ou déroulement. `sourceABI` et `executionProfile` consignent le contrat ; l’ABI par défaut reste stricte.
+
+Cette ABI d’état machine prend en charge les CALL near directs et indirects par registre dont l’ensemble fini de cibles est prouvé exhaustivement. Un appel indirect par registre capture le registre cible d’origine avant de modifier RSP et écrit exactement une fois l’adresse réelle de l’instruction suivante. Un RET near interne peut choisir parmi un ensemble fini entièrement prouvé. Le code résiduel conserve une lecture de la pile invitée, capture sa valeur avant d’incrémenter le pointeur et distribue selon cette valeur. Atteindre l’emplacement de retour d’entrée préservé reste une sortie externe, même après abandon de cadres internes. Les cibles inconnues, les ensembles contenant une cible absente ou non exécutable, les retours dépilant des arguments et les changements arbitraires de pile restent refusés.
+
+Les CALL near indirects par mémoire sont aussi pris en charge uniquement sous cette ABI d’état explicite, avec pile fantôme désactivée et exécution normale sans faute. L’opérande mémoire doit utiliser un encodage canonique `r/m64` sans surcharge de segment, avec surcharge de taille d’adresse (`addr32`) et REX facultatifs. La sémantique x64 commune des adresses effectives et de LOAD lit la cible avant de modifier RSP et d’empiler l’adresse réelle de l’instruction suivante. Cela vaut même si l’empilement écrase l’emplacement cible ; son adresse ne remplace jamais l’appelé chargé. Les emplacements de pointeurs ou tables finies en lecture seule exigent des preuves de lecture immuable ; les valeurs de pile invitée dont l’initialisation est prouvée nécessitent toujours une preuve complète de l’ensemble fini de cibles. Les octets initiaux ou un instantané d’exécution d’un emplacement modifiable ne prouvent pas l’immuabilité. Les lectures externes non prouvées, faits de pile invalidés, cibles invalides, préfixes FS/GS ou d’autres segments, appels far et préfixes supplémentaires ou non canoniques restent refusés. L’ABI de source par défaut refuse toujours les appels natifs.
+
+L’ABI source ordinaire reconstruit un cadre privé à l’invocation : toutes les plages LOAD/STORE d’origine externe, y compris les adresses calculées, doivent être disjointes du cadre natif privé et de son stockage source reconstruit. C’est une précondition explicite. La preuve partagée refuse les adresses de cadre échappées, les résultats ou branches qui en dépendent et les lectures de bytes privés non initialisés. L’ABI à état machine conserve les adresses invitées et n’utilise pas cette précondition de cadre privé.
+
+Si des indicateurs indéfinis influencent le contrôle, les adresses ou des sorties définies, une preuve indépendante de non-interférence est nécessaire. Le rapport actuel ne fournit pas cette preuve et ne certifie pas ce comportement dépendant du processeur.
+
+<!-- i18n-section: limits -->
+
 ## Limites actuelles
 
 Les adresses de bytecode dépendant des entrées et les relations entre états du décodeur sont prises en charge uniquement lorsque les domaines finis et les corrélations nécessaires peuvent être prouvés dans les limites configurées. Cela ne démontre pas la prise en charge de tous les schémas de décodage indirect. Les branches et boucles dynamiques peuvent être récupérées si chaque cible de distribution est prouvée ; la couverture des branches ordinaires ne suffit pas à établir cette propriété. Un contrôle non résolu ou l’épuisement d’un budget de preuve requis entraîne un échec, sans source récupéré ni remplacement partiel. Les appels auxiliaires natifs, frontières d’exception ou de réentrée, code modifiable et autres architectures restent hors du contrat de cet adaptateur.
+
+<!-- i18n-section: implementation -->
 
 ## Implémentation partagée
 
@@ -160,6 +191,8 @@ deux résultats.
 
 Les ensembles finis d’adresses de lecture, les tuples conjoints de contrôle et le nombre de champs de contrôle ont aussi des limites explicites. Un plafond global de requêtes au solveur et des plafonds par requête sur les portes, conflits, propagations et visites de littéraux surveillés bornent le travail de preuve ; le nombre de nœuds symboliques borne la croissance des expressions. Le rapport JSON contient ces budgets ainsi que `solverQueries` et `relationalWidenings`.
 
+<!-- i18n-section: evidence -->
+
 ## Preuves et tests
 
 Le rapport JSON local facultatif contient le hachage de l’entrée, les contrôles
@@ -189,21 +222,7 @@ Une régression d’exécution distincte à adresse fixe fournit de la mémoire 
 
 Voir [testing.md](testing.md) pour les cibles de test ciblées.
 
-## Récupération avec état machine explicite
-
-`--devirtualize --vm-machine-state` ou `neverd_devirtualize_machine_source_v1()` sélectionne une ABI distincte : un pointeur vers 17 mots `uint64_t` alignés (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 à R15, RFLAGS). Le résultat non signé de 64 bits doit être zéro. Un statut non nul ne restaure pas les écritures mémoire. L’état est capturé avant le dépilement du RET final. Son stockage ne doit pas chevaucher la mémoire invitée ; les adresses gardent leurs mappings et l’hôte doit être 64 bits petit-boutiste.
-
-Les adresses originales du code et des données invités conservent leur valeur numérique exacte, y compris celles observées dans les registres de sortie. La génération de source ne doit pas les remplacer par des adresses d’objets globaux du programme généré. L’appelant fournit les mappings invités originaux nécessaires ; produire du C ne reloge pas l’espace d’adressage invité. Les preuves et rapports de récupération restent liés à l’image d’entrée originale.
-
-Le profil impose CPL3/IOPL0, pile fantôme désactivée, aucune interruption asynchrone et exécution normale sans faute. Les flags d’entrée sont canoniques, TF/RF/VM/AC/VIF/VIP nuls ; POPFQ doit garder TF/AC nuls, vérifiés dans le code généré. PUSHFQ/POPFQ utilisent l’état explicite ; RDSSP conserve sa destination et INCSSP atteint est refusé. Les pointeurs de cadre sauvegardés entièrement sont propagés ; écritures partielles ou alias possibles invalident les faits. Les métadonnées d’exception sont admises uniquement pour le chemin normal, sans équivalence de distribution ou déroulement. `sourceABI` et `executionProfile` consignent le contrat ; l’ABI par défaut reste stricte.
-
-Cette ABI d’état machine prend en charge les CALL near directs et indirects par registre dont l’ensemble fini de cibles est prouvé exhaustivement. Un appel indirect par registre capture le registre cible d’origine avant de modifier RSP et écrit exactement une fois l’adresse réelle de l’instruction suivante. Un RET near interne peut choisir parmi un ensemble fini entièrement prouvé. Le code résiduel conserve une lecture de la pile invitée, capture sa valeur avant d’incrémenter le pointeur et distribue selon cette valeur. Atteindre l’emplacement de retour d’entrée préservé reste une sortie externe, même après abandon de cadres internes. Les cibles inconnues, les ensembles contenant une cible absente ou non exécutable, les retours dépilant des arguments et les changements arbitraires de pile restent refusés.
-
-Les CALL near indirects par mémoire sont aussi pris en charge uniquement sous cette ABI d’état explicite, avec pile fantôme désactivée et exécution normale sans faute. L’opérande mémoire doit utiliser un encodage canonique `r/m64` sans surcharge de segment, avec surcharge de taille d’adresse (`addr32`) et REX facultatifs. La sémantique x64 commune des adresses effectives et de LOAD lit la cible avant de modifier RSP et d’empiler l’adresse réelle de l’instruction suivante. Cela vaut même si l’empilement écrase l’emplacement cible ; son adresse ne remplace jamais l’appelé chargé. Les emplacements de pointeurs ou tables finies en lecture seule exigent des preuves de lecture immuable ; les valeurs de pile invitée dont l’initialisation est prouvée nécessitent toujours une preuve complète de l’ensemble fini de cibles. Les octets initiaux ou un instantané d’exécution d’un emplacement modifiable ne prouvent pas l’immuabilité. Les lectures externes non prouvées, faits de pile invalidés, cibles invalides, préfixes FS/GS ou d’autres segments, appels far et préfixes supplémentaires ou non canoniques restent refusés. L’ABI de source par défaut refuse toujours les appels natifs.
-
-L’ABI source ordinaire reconstruit un cadre privé à l’invocation : toutes les plages LOAD/STORE d’origine externe, y compris les adresses calculées, doivent être disjointes du cadre natif privé et de son stockage source reconstruit. C’est une précondition explicite. La preuve partagée refuse les adresses de cadre échappées, les résultats ou branches qui en dépendent et les lectures de bytes privés non initialisés. L’ABI à état machine conserve les adresses invitées et n’utilise pas cette précondition de cadre privé.
-
-Si des indicateurs indéfinis influencent le contrôle, les adresses ou des sorties définies, une preuve indépendante de non-interférence est nécessaire. Le rapport actuel ne fournit pas cette preuve et ne certifie pas ce comportement dépendant du processeur.
+<!-- i18n-section: loop-proposals -->
 
 ## Inférence automatique de candidats de preuve de boucle
 

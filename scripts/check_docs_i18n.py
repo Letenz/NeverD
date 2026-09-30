@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import posixpath
 import re
 import subprocess
 import sys
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -2640,6 +2641,210 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         )
 
 
+README_SECTION_MARKER = re.compile(r'^<!-- i18n-section: ([a-z0-9-]+) -->$', re.MULTILINE)
+README_SOURCE_REVISION = re.compile(r'^<!-- i18n-source: ([0-9a-f]{64}) -->$', re.MULTILINE)
+SYNCHRONIZED_GUIDES = (
+    "process-emulation", "memory-safety", "solver", "interpreter-recovery",
+)
+GUIDE_SECTION_CONTRACTS = {
+    ("process-emulation", "linux-semantics"): (
+        "mmap", "mprotect", "munmap", "brk", "PROT_NONE", "ENOMEM",
+        "MAP_PRIVATE | MAP_ANONYMOUS", "PT_DYNAMIC", "PT_TLS", "arch_prctl",
+    ),
+    ("memory-safety", "formatted-output"): (
+        "snprintf", "vsnprintf", "_chk", "%%", "format_string",
+    ),
+    ("memory-safety", "stack-initialization"): ("uninitialized_read",),
+    ("memory-safety", "strict-publication"): (
+        "binary-sanitizer-v1", "neverd_session_sanitize",
+        "neverd patch --sanitize=strict", "Session.sanitize",
+        "neverd_sanitize_publication_abi_version()", "UNSUPPORTED_TARGET",
+        "CREATE_EXCLUSIVE", "NO_CHANGE", "NOT_PUBLISHED",
+    ),
+    ("memory-safety", "native-replay"): (
+        "process-replay-v1", "NativeProcessReplayAdapter", "Available",
+    ),
+}
+
+
+def readme_sections(
+    text: str, path: Path, errors: list[str], label: str = "README"
+) -> list[tuple[str, str]]:
+    markers = list(README_SECTION_MARKER.finditer(text))
+    sections = [('banner', text[:markers[0].start()] if markers else text)]
+    seen: set[str] = set()
+    for index, marker in enumerate(markers):
+        key = marker.group(1)
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        body = text[marker.end():end]
+        if key in seen or not re.match(r'\s*#{2,3} [^\n]+\n', body):
+            report(errors, f'{path}: duplicate or detached {label} section {key}')
+        seen.add(key)
+        sections.append((key, body))
+    headings = re.findall(r'^#{2,3} ', without_markdown_fences(text), re.MULTILINE)
+    if len(headings) != len(markers):
+        report(errors, f'{path}: {label} headings require stable section markers')
+    return sections
+
+
+def readme_visible_text(text: str) -> str:
+    return re.sub(r'<!--.*?-->', '', without_markdown_fences(text), flags=re.DOTALL)
+
+
+def readme_example_signature(text: str) -> list[tuple[str, str]]:
+    result = []
+    for match in re.finditer(r'^```([^\n]*)\n(.*?)^```\s*$', text, re.MULTILINE | re.DOTALL):
+        language, body = match.group(1).strip(), match.group(2)
+        if language in ('bash', 'sh'):
+            body = '\n'.join(line.rstrip() for line in body.splitlines()
+                             if line.strip() and not line.lstrip().startswith('#'))
+            language = 'shell'
+        elif language == 'text' and not body.lstrip().startswith('neverd '):
+            # Diagram descriptions are translated; executable examples are not.
+            body = '\n'.join(re.findall(r'[→├└│─]+', body))
+        result.append((language, body.strip()))
+    return result
+
+
+def readme_table_signature(text: str) -> list[list[tuple[int, tuple[str, ...]]]]:
+    tables: list[list[tuple[int, tuple[str, ...]]]] = []
+    table: list[tuple[int, tuple[str, ...]]] = []
+    for line in readme_visible_text(text).splitlines() + ['']:
+        if line.startswith('|'):
+            cells = re.split(r'(?<!\\)\|', line.strip().strip('|'))
+            first = cells[0].strip()
+            keys = re.findall(r'`([^`]+)`', first)
+            if not keys:
+                keys = re.findall(r'\*\*([^*]+)\*\*', first)
+            table.append((len(cells), tuple(keys)))
+        elif table:
+            tables.append(table)
+            table = []
+    return tables
+
+
+def readme_urls(text: str) -> list[str]:
+    text = readme_visible_text(text)
+    text = re.sub(r'`[^`\n]*`', '', text)
+    urls = re.findall(r'\]\(([^\s)]+)(?:\s+["\'][^\n]*?["\'])?\)', text)
+    # A reference link must be defined, and its destination participates in parity.
+    definitions = {label.casefold(): url for label, url in re.findall(
+        r'^\s*\[([^\]]+)\]:\s*(\S+)', text, re.MULTILINE)}
+    for label, reference in re.findall(r'\[([^\]\n]+)\]\[([^\]\n]*)\]', text):
+        urls.append(definitions.get((reference or label).casefold(), 'missing-reference:' + (reference or label)))
+    return urls
+
+
+def canonical_readme_url(url: str, path: Path, section_slugs: dict[str, str]) -> str:
+    if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', url) or url.startswith('//'):
+        return url
+    target, sep, fragment = url.partition('#')
+    resolved = Path(posixpath.normpath(str(path.parent / unquote(target)))) if target else path
+    parts = resolved.parts
+    if len(parts) >= 3 and parts[0] == 'docs' and parts[1] in LOCALES:
+        name = '/'.join(parts[2:])
+        resolved = Path({'project.md': 'README.md', 'CONTRIBUTING.md': 'CONTRIBUTING.md',
+                         'ATTRIBUTION.md': 'ATTRIBUTION.md'}.get(name, 'docs/' + name))
+    if not target:
+        fragment = section_slugs.get(unquote(fragment), fragment)
+    return str(resolved) + (sep + fragment if sep else '')
+
+
+def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
+    """Check source-relative structure and examples, not translation quality."""
+    for source, filename in ((Path('README.md'), 'project.md'), (Path('docs/README.md'), 'README.md')):
+        original = view.read_text(source)
+        source_revision = hashlib.sha256(original.encode("utf-8")).hexdigest()
+        selector_locales = ('zh-CN', 'zh-TW', 'ja', 'ko', 'fr', 'de', 'es', 'it', 'ru', 'ar')
+        source_selector = ['README.md'] + [
+            (f'docs/{locale}/project.md' if filename == 'project.md'
+             else f'{locale}/README.md') for locale in selector_locales]
+        if readme_urls(original.split('\n', 1)[0]) != source_selector:
+            report(errors, f'{source}: README language selector differs')
+        original_sections = readme_sections(original, source, errors) if filename == 'project.md' else [('index', original)]
+        for locale in LOCALES:
+            path = Path(f'docs/{locale}/{filename}')
+            text = view.read_text(path)
+            if README_SOURCE_REVISION.findall(text) != [source_revision]:
+                report(errors, f'{path}: README source revision differs from {source}; '
+                       'review the translation before updating its i18n-source SHA-256')
+            translated_sections = readme_sections(text, path, errors) if filename == 'project.md' else [('index', text)]
+            if [key for key, _ in translated_sections] != [key for key, _ in original_sections]:
+                report(errors, f'{path}: README section order differs from {source}')
+                continue
+            slugs: dict[str, str] = {}
+            for key, body in translated_sections:
+                heading = re.search(r'^#{2,3} (.+)$', body, re.MULTILINE)
+                if heading:
+                    slugs[github_slug_base(heading.group(1))] = key
+            for (key, expected), (_, actual) in zip(original_sections, translated_sections):
+                if readme_example_signature(expected) != readme_example_signature(actual):
+                    report(errors, f'{path}: README examples differ in {key}')
+                if readme_table_signature(expected) != readme_table_signature(actual):
+                    report(errors, f'{path}: README table rows differ in {key}')
+                expected_visible, actual_visible = readme_visible_text(expected), readme_visible_text(actual)
+                expected_codes = Counter(re.findall(r'`([^`\n]+)`', expected_visible))
+                actual_codes = Counter(re.findall(r'`([^`\n]+)`', actual_visible))
+                missing = expected_codes - actual_codes
+                if missing:
+                    report(errors, f'{path}: README API/options missing in {key}: {", ".join(sorted(missing))}')
+                # Navigation selectors intentionally link all languages. Check them
+                # separately, then compare only the translated body destinations.
+                if key in ('banner', 'index'):
+                    expected_visible = expected_visible.split('\n', 1)[1]
+                    actual_visible = actual_visible.split('\n', 1)[1]
+                expected_links = [canonical_readme_url(url, source, {}) for url in readme_urls(expected_visible)]
+                actual_links = [canonical_readme_url(url, path, slugs) for url in readme_urls(actual_visible)]
+                if expected_links != actual_links:
+                    report(errors, f'{path}: README link order or destinations differ in {key}')
+                for target in readme_urls(actual_visible):
+                    if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', target) or target.startswith(('#', '//')):
+                        continue
+                    raw = target.partition('#')[0]
+                    resolved = Path(posixpath.normpath(str(path.parent / unquote(raw))))
+                    if resolved.parts and resolved.parts[0] == '..':
+                        report(errors, f'{path}: README link escapes the repository: {target}')
+                    elif not view.exists(resolved):
+                        report(errors, f'{path}: missing README link target: {target}')
+                    if len(resolved.parts) > 2 and resolved.parts[0] == 'docs' and resolved.parts[1] in LOCALES and resolved.parts[1] != locale:
+                        report(errors, f'{path}: body link targets another locale: {target}')
+                html_assets = lambda s: re.findall(r'\b(?:src|srcset)="([^"\n]+)"', s)
+                if [canonical_readme_url(u, source, {}) for u in html_assets(expected_visible)] != [canonical_readme_url(u, path, {}) for u in html_assets(actual_visible)]:
+                    report(errors, f'{path}: README HTML assets differ in {key}')
+                for asset in html_assets(actual_visible):
+                    if not re.match(r'https?://', asset):
+                        asset_path = Path(posixpath.normpath(str(path.parent / asset)))
+                        if not view.exists(asset_path):
+                            report(errors, f'{path}: missing README HTML asset: {asset}')
+            expected_selector = [('../../README.md' if filename == 'project.md' else '../README.md')]
+            selector_locales = ('zh-CN','zh-TW','ja','ko','fr','de','es','it','ru','ar')
+            expected_selector += [filename if item == locale else f'../{item}/{filename}' for item in selector_locales]
+            if readme_urls(text.split('\n', 1)[0]) != expected_selector:
+                report(errors, f'{path}: README language selector differs')
+
+
+def validate_synced_guide_examples(errors: list[str], view: RepositoryView) -> None:
+    """Keep executable examples in their matching translated sections."""
+    for stem in SYNCHRONIZED_GUIDES:
+        source = Path(f"docs/{stem}.md")
+        original = readme_sections(view.read_text(source), source, errors, "guide")
+        for locale in LOCALES:
+            path = Path(f"docs/{locale}/{stem}.md")
+            translated = readme_sections(view.read_text(path), path, errors, "guide")
+            if [key for key, _ in original] != [key for key, _ in translated]:
+                report(errors, f"{path}: guide section order differs from {source}")
+                continue
+            for (key, expected), (_, actual) in zip(original, translated):
+                if readme_example_signature(expected) != readme_example_signature(actual):
+                    report(errors, f"{path}: guide examples differ in {key}")
+                visible = readme_visible_text(actual)
+                codes = set(re.findall(r"`([^`\n]+)`", visible))
+                missing = set(GUIDE_SECTION_CONTRACTS.get((stem, key), ())) - codes
+                if missing:
+                    report(errors, f"{path}: guide contract missing in {key}: "
+                           + ", ".join(sorted(missing)))
+
+
 def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     # Execution contracts and document paths stay in the .def inventory, so
     # every locale is checked against one set of semantic entry points.
@@ -2665,6 +2870,8 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     if errors:
         return
 
+    validate_readme_parity(errors, view)
+    validate_synced_guide_examples(errors, view)
     validate_driver_documents(errors, view)
     validate_architecture_semantics(errors, view)
     validate_sbf_evidence(errors, view)

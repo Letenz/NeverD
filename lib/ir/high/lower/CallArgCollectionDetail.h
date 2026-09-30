@@ -59,6 +59,12 @@ struct CallArgScan {
   int MaxArgs = 0;
   int FirstStackSlot = 0;
   int StoreScanWindow = 0;
+  /// Register arguments a summarized callee reads (MedOp::CalleeRegisterArgs),
+  /// or -1 when the callee has no summary.
+  int CalleeRegisterArgs = -1;
+  /// Positional arguments its incoming stack reads imply
+  /// (MedOp::CalleeStackArgs), or -1 when they are unbounded.
+  int CalleeStackArgs = -1;
   /// Trailing windows of immediate predecessors of a call-only block.
   /// Each `Before` is the last op index to scan (typically `size()-1`);
   /// the scan stops at the previous CALL, matching same-block setup.

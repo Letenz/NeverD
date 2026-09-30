@@ -607,6 +607,8 @@ Contract намеренно `abstract`. Переопределите `_evmHost` 
 solc --bin contract.sol
 ```
 
+<a id="c-api"></a>
+
 ## API C
 
 ```c

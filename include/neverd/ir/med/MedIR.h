@@ -217,6 +217,9 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
+  /// Positional arguments implied by the incoming stack slots that same
+  /// summarized callee reads (0 when it reads none); -1 when unbounded.
+  int8_t CalleeStackArgs = -1;
   /// The source instruction is a proven no-return call.  This is explicit MedIR
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
