@@ -527,6 +527,20 @@ the ordinary Python SDK tests and declaration audit.
 
 ## Driver emulation checks
 
+`NeverDX64ExceptionTests` builds with Unicorn disabled. Its raw native machine
+cases bypass decoding and memory preflight to check real divide, invalid-opcode,
+alignment, noncanonical-address and page exceptions at CPL0/CPL3. They verify
+vectors, error codes, fault addresses, original CPU/RAM state, repeated recovery,
+gateway relocation, projection variants and rejection of forged gateway exits.
+Its public CPU matrix checks register/RAM `DIV`/`IDIV` at 8/16/32/64 bits,
+partial-register results, observer stops, terminal traps and explicit recoverable
+continuations. Missing native hosts are skips, including WHP on Linux.
+`DriverWDMCPUException` additionally executes the original genuine-WDK SEH
+fixture on explicit transports, normal/CFG images and both load addresses;
+real zero-divisor and quotient-overflow faults unwind `__finally`, while a
+negative filter edits RCX and retries the original division successfully.
+These cases require `NEVERD_WDM_SEH_FIXTURE` and its optional CFG companion.
+
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
 restore against current mappings, fault lifetime, bounded loops, unsupported

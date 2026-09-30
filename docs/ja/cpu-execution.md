@@ -67,3 +67,7 @@ checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS
 thread pointer は x64 FS/GS base と ARM64 `TPIDR_EL0` を正確な `MRS`/`MSR` encoding で扱います。native transport と CPU snapshot は memory とは独立してこの状態を保持しますが、OS thread や TLS block を作るものではありません。supervisor x64 は1/2/4 byte の aligned scalar MMIO と restart boundary ごとに1要素の MOVS を許可します。device read には effect のない prepared preview と最大一度の commit が必要です。user profile は device mapping を拒否し、RMW、wide MMIO、port I/O も未対応です。
 
 KVM/WHP は active native entry を cancel し、実行資源を解放する前に acknowledgement を待ちます。KVM は専用 execution thread と一時的に unblock する realtime signal を使います。entry 中、選択した signal は ignored であってはなりません。caller の signal mask/handler は変更しません。guest の進行が不確かな中断は terminal failure であり、厳密な wall-clock deadline は保証しません。
+
+## x64 のネイティブ同期例外
+
+checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない WHP/ARM64 ホストは明示的にスキップします。

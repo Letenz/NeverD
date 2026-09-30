@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDEmulationCore
 
 add_neverd_component_library(NeverDEmulationNative
   arch/x86_64/X64PageTables.cpp
+  arch/x86_64/X64ExceptionMonitor.cpp
   arch/aarch64/AArch64PageTables.cpp
   backends/kvm/KvmMachine.cpp
   backends/kvm/KvmAArch64Machine.cpp

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MemoryProjection.h"
+#include "X64ExceptionMonitor.h"
 #include "X64Machine.h"
 
 #include "llvm/Support/Endian.h"
@@ -14,8 +15,11 @@
 namespace neverd::emulation {
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                                             uint64_t PreviousRoot,
-                                            bool UserMode) {
-  if (!Memory.needsProjection(UserMode))
+                                            bool UserMode,
+                                            bool ExceptionMonitor) {
+  const uint64_t Variant =
+      ExceptionMonitor ? x64::gateway::ProjectionVariant : 0;
+  if (!Memory.needsProjection(UserMode, Variant))
     return PreviousRoot;
   if (auto E = Memory.validateMappings(x64::canonicalRange, !UserMode))
     return E;
@@ -27,27 +31,32 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                             : x64::FirstTableRoot;
   std::memset(Memory.data(), 0, x64::TableReserve);
   uint64_t Next = x64::FirstChildTable;
-  for (const auto &[VA, P] : Memory.mappings()) {
-    // The checked architecture completes admitted device transactions itself.
-    // Device pages never alias private monitor memory or enter native RAM.
-    if (P.IO)
-      continue;
+  auto MapPage = [&](uint64_t VA, uint64_t Entry) -> llvm::Error {
     uint64_t Table = Root;
     for (unsigned Level = x64::TableLevels; Level > 1; --Level) {
       auto Index = (VA >> (x64::PageBits + (Level - 1) * x64::TableBits)) &
                    (x64::TableEntries - 1);
       auto *Slot = Memory.data() + Table + Index * x64::WordBytes;
-      uint64_t Entry = llvm::support::endian::read64le(Slot);
-      if (!Entry) {
+      uint64_t Child = llvm::support::endian::read64le(Slot);
+      if (!Child) {
         if (Next == x64::TableReserve)
           return diagnostic::error(diagnostic::PageTables);
-        Entry = Next | x64::Present | x64::Writable | x64::UserPage;
+        Child = Next | x64::Present | x64::Writable | x64::UserPage;
         Next += x64::PageSize;
-        llvm::support::endian::write64le(Slot, Entry);
+        llvm::support::endian::write64le(Slot, Child);
       }
-      Table = Entry & x64::AddressMask;
+      Table = Child & x64::AddressMask;
     }
     auto Index = (VA >> x64::PageBits) & (x64::TableEntries - 1);
+    llvm::support::endian::write64le(
+        Memory.data() + Table + Index * x64::WordBytes, Entry);
+    return llvm::Error::success();
+  };
+  for (const auto &[VA, P] : Memory.mappings()) {
+    // Admitted device transactions are completed by the architecture. Device
+    // pages never alias private monitor memory or enter native RAM.
+    if (P.IO)
+      continue;
     uint64_t Entry = P.Physical;
     if (P.Permissions & GuestAccessPermissions)
       Entry |= x64::Present;
@@ -57,10 +66,26 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
       Entry |= x64::Writable;
     if (!(P.Permissions & Execute))
       Entry |= x64::NoExecute;
-    llvm::support::endian::write64le(
-        Memory.data() + Table + Index * x64::WordBytes, Entry);
+    if (auto E = MapPage(VA, Entry))
+      return E;
   }
-  Memory.commitProjection(UserMode);
+  if (ExceptionMonitor) {
+    auto Base = initializeX64ExceptionMonitor(Memory);
+    if (!Base)
+      return Base.takeError();
+    // Monitor pages have no user bit. Read/execute code is separate from the
+    // writable non-executable descriptor/IST pages, and no guest VA is hidden.
+    for (uint64_t Page = 0; Page < x64::gateway::Pages; ++Page) {
+      const uint64_t Physical = x64::gateway::DataGPA + Page * x64::PageSize;
+      const uint64_t Rights =
+          Physical == x64::gateway::CodeGPA
+              ? x64::Present
+              : x64::Present | x64::Writable | x64::NoExecute;
+      if (auto E = MapPage(*Base + Page * x64::PageSize, Physical | Rights))
+        return E;
+    }
+  }
+  Memory.commitProjection(UserMode, Variant);
   return Root;
 }
 } // namespace neverd::emulation

@@ -39,4 +39,12 @@ enum {
   SehRecoverControlCode = 0x222403,
   SehRecoveredValue = 0x12345678
 };
+enum {
+#define NEVERD_SEH_CPU_VALUE(Name, Value) Name = Value,
+#include "driver_seh_cpu.def"
+#undef NEVERD_SEH_CPU_VALUE
+};
+#define NEVERD_SEH_CPU_TEXT(Name, Text) static const char Name[] = Text;
+#include "driver_seh_cpu.def"
+#undef NEVERD_SEH_CPU_TEXT
 #endif

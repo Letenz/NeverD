@@ -1395,6 +1395,17 @@ The `.def` inventory excludes unmodeled floating-point and vector families.
 Naturally aligned locked scalar updates hold the same physical execution lease;
 this does not introduce parallel-CPU execution.
 
+The x64 machine boundary returns typed synchronous processor exceptions,
+separately from transport errors. KVM projects private supervisor descriptor,
+code and IST pages into an unclaimed canonical range; it authenticates the
+completed gateway and saved frame before publishing fault state. Those pages
+cannot shadow a guest allocation or acquire user access. Projection caching
+includes the monitor variant. WHP intercepts an explicit exception bitmap;
+checked Unicorn captures corresponding engine exception events. The shared
+checked lifecycle owns recoverable-versus-terminal delivery, and the guest OS
+alone translates supported vectors into its exception ABI. Integer division
+uses real processor effects and `#DE`, including quotient overflow.
+
 `CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
 boundary. It validates every access before effects; device pages remain outside
 native RAM mappings. `GuestMMIOPreparedRead` is an optional pure value preview

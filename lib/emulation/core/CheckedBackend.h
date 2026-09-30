@@ -80,6 +80,7 @@ protected:
   llvm::Error mutableMemory() const;
   llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false,
                      bool Guest = false);
+  llvm::Error raiseFault(BackendFault, bool Recoverable);
   unsigned executionPermissions(unsigned P) const {
     return P | (UserMode ? UserAccessible : 0);
   }

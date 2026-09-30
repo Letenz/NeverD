@@ -76,6 +76,16 @@ completed elements survive a later fault. Mixed RAM/device operands remain
 unsupported before observers or device callbacks. Independent native x64
 fault probes check these ordinary and REP store boundaries.
 
+Checked x64 admits `DIV` and `IDIV` with register or ordinary RAM operands at
+all four integer widths. The processor computes the quotient and remainder;
+zero divisors and quotient overflow report the actual `#DE`, preserving the
+faulting context. An admitted `RecoverableFault` callback leaves the event
+pending until its OS owner consumes it and explicitly installs a continuation.
+Otherwise it remains a terminal guest trap. Native synchronous exceptions are
+distinct from transport failures; this does not admit unlisted instructions.
+KVM uses a private supervisor IDT/IST gateway chosen outside guest mappings,
+while WHP intercepts an explicit architectural exception bitmap.
+
 Page tables are private CPU projections. A supervisor projection preserves its
 existing supervisor-only translation semantics; a user projection marks only
 explicitly user-accessible guest pages as user pages. ARM64 user projections

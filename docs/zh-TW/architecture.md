@@ -690,3 +690,7 @@ AArch64 原生輔助函式只有在完整觀測每個向量輸入的 16 個入�
 巢狀 Objective-C 堆疊 Block 只有在目前管線結果證明父 Block 強參照擷取方法接收者，且子 Block 完整複製並持有同一欄位時，才能繼承該接收者的類別。探索程序在這次結果內進行有界不動點迭代；下一次管線執行必須重新證明整條鏈。選擇器、未標型的 `id` 或未限定接收者的 Block 消費者，都不能單獨確立接收者類別、呼叫 ABI 或 Block 生命週期。 16 位元組上下文複製只有在對應的 8 位元組通道完整落在每個已驗證父 Block 實體內時才保留此證明；部分或重排的通道不會保留。
 
 已驗證的 Block 描述符可在 invoke 函式主體獲接受前提供呼叫 ABI；消費者呼叫只使用同一份已驗證 Block 方案中的接收者擷取證明，發佈仍須獨立證明函式主體與生命週期。
+
+## x64 原生同步例外
+
+checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 supervisor IDT/IST 接收例外，WHP 使用明確的例外攔截位圖；原始上下文與可用錯誤碼和傳輸錯誤分開保留。OS 模型先消費可恢復事件，再安裝明確的繼續執行上下文。Windows 驅動將零除與商溢位映射為 `STATUS_INTEGER_DIVIDE_BY_ZERO`，執行實際 SEH filter、`__finally` 與重試。`NeverDX64ExceptionTests` 可停用 Unicorn 建置，`DriverWDMCPUException` 驗證原始 WDK 用例；缺少 WHP/ARM64 主機時明確跳過。

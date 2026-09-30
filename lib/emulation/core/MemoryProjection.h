@@ -64,14 +64,15 @@ public:
     return Space->State->Pages;
   }
   uint64_t mappingGeneration() const { return Space->mappingGeneration(); }
-  bool needsProjection(bool UserMode = false) const {
+  bool needsProjection(bool UserMode = false, uint64_t Variant = 0) const {
     return ProjectedSpace.lock() != Space ||
-           Generation != mappingGeneration() || ProjectedUserMode != UserMode;
+           Generation != mappingGeneration() || ProjectedUserMode != UserMode ||
+           ProjectedVariant != Variant;
   }
   const std::map<uint64_t, std::shared_ptr<Device>> &devices() const {
     return Space->State->Devices;
   }
-  void commitProjection(bool UserMode = false);
+  void commitProjection(bool UserMode = false, uint64_t Variant = 0);
   uint8_t *data() const { return static_cast<uint8_t *>(Projection.base()); }
   std::array<MemoryRegistration, 2> registrations() const;
   uint8_t *physicalPointer(uint64_t GPA) const;
@@ -83,6 +84,7 @@ private:
   llvm::sys::MemoryBlock Projection;
   uint64_t Generation = 0;
   bool ProjectedUserMode = false;
+  uint64_t ProjectedVariant = 0;
   std::weak_ptr<AddressSpace> ProjectedSpace;
   // Keep old allocations pinned until the transport retires the old mapping.
   std::map<uint64_t, Page> ProjectedPages;

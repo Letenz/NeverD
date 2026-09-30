@@ -30,7 +30,8 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 class MemoryProjection;
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
                                             uint64_t PreviousRoot,
-                                            bool UserMode = false);
+                                            bool UserMode = false,
+                                            bool ExceptionMonitor = false);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
@@ -45,11 +46,14 @@ struct X64MachineState {
 /// instruction decoding, memory ownership or lifecycle decisions belong here.
 /// The v1 contract admits scalar integer and bounded SSE/SSE2 data operations.
 /// Masked scalar FP conversions/subtraction retain MXCSR in the CPU context.
+/// Synchronous processor faults return X64ExceptionError with their original
+/// architectural context. Transport failures do not publish partial CPU state.
 /// It excludes other floating-point arithmetic, privileged instructions,
 /// debug/flag manipulation and any instruction with unbounded execution.
 class X64Machine {
 public:
   virtual ~X64Machine() = default;
+  virtual bool requiresExceptionMonitor() const { return false; }
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            MachineRunControl Control) = 0;
 };

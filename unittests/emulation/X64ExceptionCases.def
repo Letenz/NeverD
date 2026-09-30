@@ -1,0 +1,45 @@
+//===- X64ExceptionCases.def - Independent native exception fixtures ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_TRAP_VALUE
+NEVERD_X64_TRAP_VALUE(Code, 0x100000)
+NEVERD_X64_TRAP_VALUE(Data, 0x200000)
+NEVERD_X64_TRAP_VALUE(PageSize, 4096)
+NEVERD_X64_TRAP_VALUE(Limit, 8 * 1024 * 1024)
+NEVERD_X64_TRAP_VALUE(Timeout, 1'000'000)
+NEVERD_X64_TRAP_VALUE(NoError, UINT64_MAX)
+NEVERD_X64_TRAP_VALUE(Unmapped, Data + 2 * PageSize)
+NEVERD_X64_TRAP_VALUE(Noncanonical, 0x0000800000000000ULL)
+NEVERD_X64_TRAP_VALUE(Stack, Data + PageSize / 2)
+NEVERD_X64_TRAP_VALUE(InitialFlags, 0x202)
+NEVERD_X64_TRAP_VALUE(Low, 0x123456789abcdef0ULL)
+NEVERD_X64_TRAP_VALUE(High, 0xfedcba9876543210ULL)
+NEVERD_X64_TRAP_VALUE(SignedMinimum, 0x8000000000000000ULL)
+NEVERD_X64_TRAP_VALUE(Fill, 0xa5)
+NEVERD_X64_TRAP_VALUE(ResumeCount, 20)
+NEVERD_X64_TRAP_VALUE(Nop, 0x90)
+NEVERD_X64_TRAP_VALUE(Halt, 0xf4)
+NEVERD_X64_TRAP_VALUE(GeneralProtectionVector, 13)
+NEVERD_X64_TRAP_VALUE(UserError, 4)
+NEVERD_X64_TRAP_VALUE(ResumeOffset, 0x100)
+#endif
+#ifdef NEVERD_X64_TRAP_CASE
+// Name, cause, expected vector, expected error (NoError means absent), bytes.
+NEVERD_X64_TRAP_CASE(DivideByZero, DivideZero, 0, NoError, 0x48, 0xf7, 0xf1)
+NEVERD_X64_TRAP_CASE(DivideOverflow, DivideOverflow, 0, NoError, 0x48, 0xf7,
+                     0xf1)
+NEVERD_X64_TRAP_CASE(SignedOverflow, SignedOverflow, 0, NoError, 0x48, 0xf7,
+                     0xf9)
+NEVERD_X64_TRAP_CASE(InvalidOpcode, InvalidOpcode, 6, NoError, 0x0f, 0x0b)
+NEVERD_X64_TRAP_CASE(AlignedVector, AlignedVector, 13, 0, 0x66, 0x0f, 0x6f,
+                     0x01)
+NEVERD_X64_TRAP_CASE(NoncanonicalData, NoncanonicalData, 13, 0, 0x48, 0x8b,
+                     0x01)
+NEVERD_X64_TRAP_CASE(NoncanonicalStack, NoncanonicalStack, 12, 0, 0x48, 0x8b,
+                     0x04, 0x24)
+NEVERD_X64_TRAP_CASE(UnmappedData, UnmappedData, 14, 0, 0x48, 0x8b, 0x01)
+NEVERD_X64_TRAP_CASE(ReadOnlyData, ReadOnlyData, 14, 3, 0x48, 0x89, 0x01)
+NEVERD_X64_TRAP_CASE(ExecuteDenied, ExecuteDenied, 14, 17, 0x90)
+#endif

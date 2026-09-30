@@ -770,3 +770,7 @@ Explizite `messages` legen MSI-Adresse, Daten, Vektor, Ebene, Affinität und Pol
 `WdfDeviceInitSetPowerPolicyOwnership` legt den Richtlinienbesitzer fest. Init/Suspend/Restart/Flush/Cleanup und die D0-Callbacks werden ausgeführt; normales D3/D0 erhält Ressourcen. Die Standardrichtlinie ordnet Sleeping3/Working über explizite `requested_device_power` D3/D0 zu. Jedes Kind-IRP hat `origin: "framework_power_policy"` und `response_index`. S3 wartet auf sein Kind; S0 darf nach Anforderung von D0 abschließen. Automatische Neuerkennung bleiben unmodelliert.
 
 Eine System-Query wartet auf die passende Geräte-Query und übernimmt deren Ergebnis, ohne den Energiezustand zu ändern.
+
+## Native synchrone x64-Ausnahmen
+
+Checked x64 führt `DIV`/`IDIV` mit echten Prozessorergebnissen und `#DE` aus. KVM nutzt eine private Supervisor-IDT/IST, WHP eine explizite Ausnahme-Bitmap; ursprünglicher Kontext und verfügbare Fehlercodes bleiben von Transportfehlern getrennt. Das OS konsumiert das wiederaufnehmbare Ereignis vor dem Setzen einer Fortsetzung. Windows-Treiber behandeln Nulldivision und Quotientenüberlauf als `STATUS_INTEGER_DIVIDE_BY_ZERO`, mit echten SEH-Filtern, `__finally` und Wiederholung. `NeverDX64ExceptionTests` baut ohne Unicorn; `DriverWDMCPUException` prüft originale WDK-Fälle. Nicht verfügbare WHP/ARM64-Hosts werden explizit übersprungen.

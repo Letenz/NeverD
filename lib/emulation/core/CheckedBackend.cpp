@@ -95,19 +95,26 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
                                : BackendAccessKind::Read;
     BackendFault F{Failure->Kind, programCounter(), Failure->Address,
                    Failure->Size, Access,           std::nullopt};
-    if (Recoverable && P != Execute && Hooks.RecoverableFault &&
-        Hooks.RecoverableFault(F)) {
-      RecoverableFault = F;
-      StopRequested = true;
-      return llvm::Error::success();
-    }
-    FirstFault = F;
-    if (Hooks.Fault)
-      Hooks.Fault(Failure->Address, Failure->Size,
-                  backendAccessKindName(Access));
-    return error(diagnostic::MemoryAccess);
+    return raiseFault(F, Recoverable && P != Execute);
   }
   return llvm::Error::success();
+}
+
+llvm::Error CheckedBackend::raiseFault(BackendFault Fault, bool Recoverable) {
+  if (FirstFault || RecoverableFault)
+    return error(diagnostic::Faulted);
+  if (Recoverable && Hooks.RecoverableFault && Hooks.RecoverableFault(Fault)) {
+    RecoverableFault = Fault;
+    StopRequested = true;
+    return llvm::Error::success();
+  }
+  FirstFault = Fault;
+  if (Fault.Interrupt && Hooks.Interrupt)
+    Hooks.Interrupt(*Fault.Interrupt);
+  if (Fault.Address && Fault.Size && Fault.Access && Hooks.Fault)
+    Hooks.Fault(*Fault.Address, *Fault.Size,
+                backendAccessKindName(*Fault.Access));
+  return error(Fault.Access ? diagnostic::MemoryAccess : diagnostic::Faulted);
 }
 
 llvm::Error CheckedBackend::read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) {

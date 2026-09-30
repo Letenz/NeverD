@@ -505,3 +505,7 @@ WDM READ/WRITE/IOCTL 要求或無限並行 KMDF 預設佇列中的要求可設�
 `WdfDeviceInitSetPowerPolicyOwnership` 控制電源策略所有權。自管理 I/O 的 Init/Suspend/Restart/Flush/Cleanup 與 D0 前後回呼實際執行，普通 D3/D0 保留硬體資源。預設策略將 Sleeping3/Working 對應至 D3/D0，消費明確的 `requested_device_power`；獨立子 IRP 報告 `origin: "framework_power_policy"` 與 `response_index`。S3 等待子請求，S0 可於發出 D0 後完成。失敗裝置自動重新列舉仍未建模。
 
 系統 Query 等待對應裝置 Query 並保留其狀態；查詢本身不改變電源狀態。
+
+## x64 原生同步例外
+
+checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 supervisor IDT/IST 接收例外，WHP 使用明確的例外攔截位圖；原始上下文與可用錯誤碼和傳輸錯誤分開保留。OS 模型先消費可恢復事件，再安裝明確的繼續執行上下文。Windows 驅動將零除與商溢位映射為 `STATUS_INTEGER_DIVIDE_BY_ZERO`，執行實際 SEH filter、`__finally` 與重試。`NeverDX64ExceptionTests` 可停用 Unicorn 建置，`DriverWDMCPUException` 驗證原始 WDK 用例；缺少 WHP/ARM64 主機時明確跳過。
