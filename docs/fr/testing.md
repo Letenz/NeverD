@@ -64,6 +64,8 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 `LowIRLoopInference.*` et `BinaryLowIRLoopInference.*` utilisent des compteurs, sauvegardes sur pile, retours anticipés, appels natifs et drapeaux compactés écrits indépendamment. Ils couvrent l’élargissement arithmétique étroit et les drapeaux égaux malgré des expressions différentes. Graphes malformés, origines absentes ou falsifiées, boucles infinies ou avec rebouclage et budgets épuisés ne doivent produire aucun certificat.
 
+`LowIRLoopPlanPairing.*`, dans la même cible, vérifie le renommage des registres, des corps arithmétiques différents, les préfixes propres à chaque côté, les prédicats conservés, les entrées mémoire partagées, les coupures imbriquées et les budgets de preuve indépendants. Relations manquantes, écritures incorrectes, temporaires mal liés, appariements incomplets et limites de métadonnées épuisées ne doivent produire aucun certificat.
+
 Les sorties par égalité mises en cache dans des boucles à deux et trois niveaux couvrent les opérandes corrélés, les bornes mobiles, les compteurs réinitialisés et les copies altérées.
 
 Les régressions des comparaisons en cache couvrent égalité et inégalité, gardes et initialisations constantes, champs découverts après élargissement et bits 7/31/63 des caches de 1/4/8 octets. Modifier seulement un bit voisin tout en conservant le bit testé doit échouer à la comparaison de tout l’état. Pas nul, bornes mobiles, remises à zéro et budgets épuisés doivent être refusés.

@@ -217,6 +217,8 @@ Recovery API tests cover v1/v2/v3 defaults, explicit budgets, truncated structur
 
 `LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
 
+`LowIRLoopPlanPairing.*` in the same target checks renamed registers, different arithmetic bodies, side-specific prefix snapshots, retained predicates, shared frame inputs, nested cut coverage and fresh proof budgets. Missing relations, incorrect writes, malformed temporary bindings, incomplete pairings and exhausted metadata limits must not establish a certificate.
+
 Cached equality exits in two- and three-level loops check correlated operands, moving bounds, counter resets and corrupted copies.
 
 Cached comparison regressions cover equality and inequality, guarded and constant-folded starts, fields first discovered after widening, and bits 7/31/63 in byte/dword/qword caches. Changing only an adjacent bit while preserving the tested bit must fail full state comparison. Zero steps, moving bounds, resets and exhausted shared budgets must refuse.

@@ -63,6 +63,8 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopInference.*` y `BinaryLowIRLoopInference.*` usan contadores, guardados en pila, retornos anticipados, llamadas nativas y banderas empaquetadas escritos independientemente. Cubren ampliación aritmética estrecha y banderas semánticamente iguales con expresiones distintas. Grafos malformados, orígenes ausentes o falsificados, bucles infinitos o con desbordamiento modular y presupuestos agotados no deben producir certificados.
 
+`LowIRLoopPlanPairing.*`, en el mismo destino, comprueba registros renombrados, cuerpos aritméticos distintos, instantáneas de prefijo de cada lado, predicados conservados, entradas de memoria compartidas, cortes anidados y presupuestos de prueba independientes. Relaciones ausentes, escrituras incorrectas, temporales mal vinculados, emparejamientos incompletos o límites de metadatos agotados no deben producir certificados.
+
 Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
 
 Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.

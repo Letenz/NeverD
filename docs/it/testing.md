@@ -63,6 +63,8 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 `LowIRLoopInference.*` e `BinaryLowIRLoopInference.*` usano contatori, salvataggi sullo stack, ritorni anticipati, chiamate native e flag impacchettati scritti indipendentemente. Coprono ampliamento aritmetico a larghezza ridotta e flag semanticamente uguali con espressioni diverse. Grafi malformati, origini mancanti o falsificate, cicli infiniti o con riavvolgimento e budget esauriti non devono produrre certificati.
 
+`LowIRLoopPlanPairing.*`, nello stesso target, verifica registri rinominati, corpi aritmetici differenti, prefissi specifici di ciascun lato, predicati conservati, ingressi di memoria condivisi, tagli annidati e budget di prova indipendenti. Relazioni mancanti, scritture errate, temporanei mal associati, abbinamenti incompleti e limiti dei metadati esauriti non devono produrre certificati.
+
 Le uscite per uguaglianza memorizzate nei cicli a due e tre livelli verificano operandi correlati, limiti variabili, azzeramenti dei contatori e copie alterate.
 
 Le regressioni dei confronti in cache coprono uguaglianza e disuguaglianza, guardie e inizializzazione costante, campi scoperti dopo l’ampliamento e bit 7/31/63 in cache da 1/4/8 byte. Cambiare solo un bit vicino conservando quello verificato deve fallire nel confronto dell’intero stato. Passi nulli, limiti mobili, azzeramenti e budget esauriti devono essere rifiutati.

@@ -2648,6 +2648,11 @@ SYNCHRONIZED_GUIDES = (
     "process-emulation", "memory-safety", "solver", "interpreter-recovery",
 )
 GUIDE_SECTION_CONTRACTS = {
+    ("interpreter-recovery", "loop-proposals"): (
+        "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",
+        "CandidatePrefix", "UseEntryPrefix", "GeneralizeEntryPrefix",
+        "MaxMetadata", "checkLowIRLoopRefinement",
+    ),
     ("process-emulation", "linux-semantics"): (
         "mmap", "mprotect", "munmap", "brk", "PROT_NONE", "ENOMEM",
         "MAP_PRIVATE | MAP_ANONYMOUS", "PT_DYNAMIC", "PT_TLS", "arch_prctl",
