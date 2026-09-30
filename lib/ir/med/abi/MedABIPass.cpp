@@ -512,26 +512,48 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       const bool HasIntegerResult =
           Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == TRI.IntReturnReg;
       const MedVar ExistingOutput = Op.Output;
-      const bool HasSyntheticWideResult =
-          TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0 &&
+      // The synthetic split is the call's 64-bit temp followed, at the call's
+      // address, by the SUBBYTES that place its halves in the two integer
+      // return registers.  Register DCE may already have removed a half that
+      // nothing reads, so accept either half or both; the temp must have no
+      // other reader, or the split is a real wide result.
+      size_t SyntheticWideHalves = 0;
+      if (TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0 &&
           ExistingOutput.Kind == MedVar::Temp &&
-          ExistingOutput.Size == 2 * TRI.PointerSize &&
-          OI + 2 < Blk.Ops.size() && Blk.Ops[OI + 1].Opcode == NdOp::SUBBYTES &&
-          Blk.Ops[OI + 1].Addr == Op.Addr && Blk.Ops[OI + 1].NumInputs >= 2 &&
-          Blk.Ops[OI + 1].Inputs[0] == ExistingOutput &&
-          Blk.Ops[OI + 1].Inputs[1].isConst() &&
-          Blk.Ops[OI + 1].Inputs[1].ConstVal == 0 &&
-          Blk.Ops[OI + 1].Output.Kind == MedVar::Reg &&
-          Blk.Ops[OI + 1].Output.RegOff == TRI.IntReturnReg &&
-          Blk.Ops[OI + 1].Output.Size == TRI.PointerSize &&
-          Blk.Ops[OI + 2].Opcode == NdOp::SUBBYTES &&
-          Blk.Ops[OI + 2].Addr == Op.Addr && Blk.Ops[OI + 2].NumInputs >= 2 &&
-          Blk.Ops[OI + 2].Inputs[0] == ExistingOutput &&
-          Blk.Ops[OI + 2].Inputs[1].isConst() &&
-          Blk.Ops[OI + 2].Inputs[1].ConstVal == TRI.PointerSize &&
-          Blk.Ops[OI + 2].Output.Kind == MedVar::Reg &&
-          Blk.Ops[OI + 2].Output.RegOff == TRI.IntReturnReg2 &&
-          Blk.Ops[OI + 2].Output.Size == TRI.PointerSize;
+          ExistingOutput.Size == 2 * TRI.PointerSize) {
+        auto isHalf = [&](const MedOp &Half, uint64_t RegOff, uint64_t Offset) {
+          return Half.Opcode == NdOp::SUBBYTES && Half.Addr == Op.Addr &&
+                 Half.NumInputs == 2 && Half.Inputs[0] == ExistingOutput &&
+                 Half.Inputs[1].isConst() &&
+                 Half.Inputs[1].ConstVal == Offset &&
+                 Half.Output.Kind == MedVar::Reg &&
+                 Half.Output.RegOff == RegOff &&
+                 Half.Output.Size == TRI.PointerSize;
+        };
+        bool SawLow = false, SawHigh = false;
+        while (OI + 1 + SyntheticWideHalves < Blk.Ops.size()) {
+          const MedOp &Half = Blk.Ops[OI + 1 + SyntheticWideHalves];
+          if (!SawLow && isHalf(Half, TRI.IntReturnReg, 0))
+            SawLow = true;
+          else if (!SawHigh && isHalf(Half, TRI.IntReturnReg2, TRI.PointerSize))
+            SawHigh = true;
+          else
+            break;
+          ++SyntheticWideHalves;
+        }
+        size_t Readers = 0;
+        for (const MedBlock &Other : Func.Blocks) {
+          for (const MedOp &User : Other.Ops)
+            for (uint8_t I = 0; I < User.NumInputs; ++I)
+              Readers += User.Inputs[I] == ExistingOutput;
+          for (const PhiNode &Phi : Other.Phis)
+            for (const auto &[Pred, Arg] : Phi.Args)
+              Readers += Arg == ExistingOutput;
+        }
+        if (Readers != SyntheticWideHalves)
+          SyntheticWideHalves = 0;
+      }
+      const bool HasSyntheticWideResult = SyntheticWideHalves != 0;
       if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
           CalleeFPReturnSize && (HasIntegerResult || HasSyntheticWideResult) &&
           Op.CallSiteId != 0) {
@@ -552,8 +574,30 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (ClobberIt != Func.CallClobbers.end()) {
             Op.Output = ClobberIt->Value;
             Func.CallClobbers.erase(ClobberIt);
-            if (HasSyntheticWideResult)
-              Blk.Ops.erase(Blk.Ops.begin() + OI + 1, Blk.Ops.begin() + OI + 3);
+            // The integer return registers are caller-saved scratch after a
+            // floating-point call.  A remaining reader of either half now
+            // observes that clobber instead of a fabricated result.
+            if (HasSyntheticWideResult) {
+              auto isRead = [&](const MedVar &V) {
+                for (const MedBlock &Other : Func.Blocks) {
+                  for (const MedOp &User : Other.Ops)
+                    for (uint8_t I = 0; I < User.NumInputs; ++I)
+                      if (User.Inputs[I] == V)
+                        return true;
+                  for (const PhiNode &Phi : Other.Phis)
+                    for (const auto &[Pred, Arg] : Phi.Args)
+                      if (Arg == V)
+                        return true;
+                }
+                return false;
+              };
+              const auto First = Blk.Ops.begin() + OI + 1;
+              const auto Last = First + SyntheticWideHalves;
+              for (auto Half = First; Half != Last; ++Half)
+                if (isRead(Half->Output))
+                  Func.CallClobbers.push_back({Half->Output, Op.CallSiteId});
+              Blk.Ops.erase(First, Last);
+            }
           }
         }
       }

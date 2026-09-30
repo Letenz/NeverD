@@ -3232,6 +3232,105 @@ TEST(MedCallAbi, ExactVectorReturnReplacesFalseWideIntegerPair) {
   EXPECT_TRUE(verifyMedFunc(Func, "test-exact-vector-over-false-wide-pair"));
 }
 
+namespace {
+
+/// An i386 call to \p Callee whose result LowToMed split into a false EDX:EAX
+/// pair.  Register DCE already removed the unread EAX half; the EDX half
+/// survives because the following internal call may take EDX as a regparm
+/// argument, and \p ReadsHigh stores it to keep a reader.  \p ReadsWhole adds
+/// a reader of the whole 64-bit temp.
+MedFunc falseWideHalfCall(va_t Callee, bool ReadsHigh, bool ReadsWhole) {
+  constexpr Arch TheArch = Arch::X86;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "fp_return_over_partial_false_wide_pair";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const MedVar FalseWide = temp(20, 1, 8, TheArch);
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1004;
+  Call.CallSiteId = 1;
+  Call.Output = FalseWide;
+  Call.addInput(MedVar::makeConst(Callee, TRI.PointerSize));
+  Block.Ops.push_back(Call);
+
+  const MedVar HighHalf =
+      reg(22, 1, TRI.PointerSize, TRI.IntReturnReg2, TheArch);
+  MedOp High = binary(NdOp::SUBBYTES, HighHalf, FalseWide,
+                      MedVar::makeConst(TRI.PointerSize, TRI.PointerSize));
+  High.Addr = Call.Addr;
+  Block.Ops.push_back(High);
+
+  auto store = [&](const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = 0x1008;
+    Store.addInput(MedVar::makeConst(0x5000, TRI.PointerSize));
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+  if (ReadsHigh)
+    store(HighHalf);
+  if (ReadsWhole)
+    store(FalseWide);
+
+  Func.CallClobbers.push_back(
+      {reg(10, 1, 16, TRI.FPReturnReg, TheArch), Call.CallSiteId});
+  return Func;
+}
+
+} // namespace
+
+TEST(MedCallAbi, ExactVectorReturnReplacesAPartialFalseWideIntegerPair) {
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func = falseWideHalfCall(Callee, /*ReadsHigh=*/true,
+                                   /*ReadsWhole=*/false);
+  const MedVar FPResult = Func.CallClobbers.front().Value;
+  const MedVar HighHalf = Func.Blocks[0].Ops[1].Output;
+
+  const std::map<va_t, std::string> Names{{Callee, "fp_callee"}};
+  const std::map<va_t, uint16_t> FPReturnSize{{Callee, 8}};
+  recoverCallAbi(Func, TheArch, Names, nullptr, nullptr, nullptr, nullptr,
+                 &FPReturnSize);
+
+  const MedBlock &Block = Func.Blocks[0];
+  ASSERT_EQ(Block.Ops.size(), 2u);
+  EXPECT_EQ(Block.Ops[0].Output, FPResult);
+  EXPECT_EQ(Block.Ops[1].Opcode, NdOp::STORE);
+  // The surviving reader now sees EDX as the call leaves it: clobbered.
+  ASSERT_EQ(Func.CallClobbers.size(), 1u);
+  EXPECT_EQ(Func.CallClobbers[0].Value, HighHalf);
+  EXPECT_EQ(Func.CallClobbers[0].Value.RegOff, TRI.IntReturnReg2);
+  EXPECT_EQ(Func.CallClobbers[0].CallSiteId, Block.Ops[0].CallSiteId);
+  EXPECT_TRUE(verifyMedFunc(Func, "test-exact-vector-over-partial-wide-pair"));
+}
+
+TEST(MedCallAbi, ExactVectorReturnKeepsAWideResultWithAnotherReader) {
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  MedFunc Func = falseWideHalfCall(Callee, /*ReadsHigh=*/false,
+                                   /*ReadsWhole=*/true);
+  const MedVar FalseWide = Func.Blocks[0].Ops[0].Output;
+
+  const std::map<va_t, std::string> Names{{Callee, "fp_callee"}};
+  const std::map<va_t, uint16_t> FPReturnSize{{Callee, 8}};
+  recoverCallAbi(Func, TheArch, Names, nullptr, nullptr, nullptr, nullptr,
+                 &FPReturnSize);
+
+  const MedBlock &Block = Func.Blocks[0];
+  ASSERT_EQ(Block.Ops.size(), 3u);
+  EXPECT_EQ(Block.Ops[0].Output, FalseWide);
+  EXPECT_EQ(Block.Ops[1].Opcode, NdOp::SUBBYTES);
+  ASSERT_EQ(Func.CallClobbers.size(), 1u);
+}
+
 TEST(MedCallAbi, IntegerReturnKeepsFPCallClobber) {
   constexpr Arch TheArch = Arch::X64;
   constexpr va_t Callee = 0x3000;
