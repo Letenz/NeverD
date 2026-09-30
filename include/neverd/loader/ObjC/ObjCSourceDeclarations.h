@@ -125,6 +125,13 @@ std::optional<SourceFunctionTypeHint>
 objcMethodSourceTypeHint(const BinaryImage &Image, va_t Entry);
 bool objcReceiverTypeHintValid(const BinaryImage &Image,
                                const ObjCReceiverTypeHint &Receiver);
+/// Retain a common declared receiver class across distinct reaching proofs.
+/// All alternatives are revalidated, flattened, and bounded. Block inputs and
+/// captured receivers retain their separate invoke-to-descriptor proof rules.
+std::optional<ObjCReceiverTypeHint>
+objcMergeReceiverTypeHints(const BinaryImage &Image,
+                           const ObjCReceiverTypeHint &Left,
+                           const ObjCReceiverTypeHint &Right);
 /// Resolve an authenticated instance receiver's declared class after all
 /// field and message-result type steps. Protocol-only and class receivers do
 /// not establish a concrete class contract.

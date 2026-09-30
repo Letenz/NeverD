@@ -1528,7 +1528,33 @@ bool validReceiverRoot(const BinaryImage &Image,
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return false;
+  if (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::Merged &&
+      !Receiver.Alternatives.empty())
+    return false;
   switch (Receiver.Origin) {
+  case ObjCReceiverTypeHint::OriginKind::Merged:
+    if (!Receiver.OutParameters.empty() || Receiver.Alternatives.size() < 2 ||
+        Receiver.Alternatives.size() > 8 ||
+        Receiver.Address != Receiver.Alternatives.front().Address)
+      return false;
+    // Descriptor-to-invoke association and captured-field ownership are
+    // published separately by the block source plan. A merge cannot bypass
+    // those checks by hiding a block proof inside ordinary receiver evidence.
+    if (!llvm::all_of(Receiver.Alternatives, [&](const auto &Alternative) {
+          return Alternative.Origin !=
+                     ObjCReceiverTypeHint::OriginKind::Merged &&
+                 Alternative.Origin !=
+                     ObjCReceiverTypeHint::OriginKind::BlockParameter &&
+                 Alternative.Alternatives.empty() &&
+                 !Alternative.BlockCaptureOffset &&
+                 Alternative.Steps.size() + Receiver.Steps.size() <= 8;
+        }))
+      return false;
+    return std::is_sorted(Receiver.Alternatives.begin(),
+                          Receiver.Alternatives.end()) &&
+           std::adjacent_find(Receiver.Alternatives.begin(),
+                              Receiver.Alternatives.end()) ==
+               Receiver.Alternatives.end();
   case ObjCReceiverTypeHint::OriginKind::MethodEntry: {
     if (!Receiver.OutParameters.empty())
       return false;
@@ -1687,6 +1713,14 @@ std::optional<ReceiverType> receiverType(const BinaryImage &Image,
                       Receiver.Origin !=
                           ObjCReceiverTypeHint::OriginKind::ClassReference,
                       false};
+  if (Receiver.Origin == ObjCReceiverTypeHint::OriginKind::Merged) {
+    for (const auto &Alternative : Receiver.Alternatives) {
+      const auto Type = receiverType(Image, Alternative);
+      if (!Type || Type->IsProtocol || Type->ClassName != Receiver.ClassName ||
+          Type->IsClassMethod != Receiver.IsClassMethod)
+        return std::nullopt;
+    }
+  }
   for (const auto &Access : Receiver.Steps) {
     if (Access.TheKind ==
         ObjCReceiverTypeHint::TypeStep::Kind::FastEnumerationElement) {
@@ -1953,6 +1987,11 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
               Name == "SDGraphicsImageRenderer" && !Type.IsClassMethod &&
               Selector == "initWithSize:format:" &&
               hasEmbeddedSDGraphicsImageRenderer(Image);
+          // SDCallbackQueue.h retains the factory's concrete return class,
+          // although its runtime encoding is just id.
+          const bool SDCallbackMainQueue =
+              Name == "SDCallbackQueue" && Type.IsClassMethod &&
+              Selector == "mainQueue" && hasEmbeddedSDCallbackQueueAsync(Image);
           const bool WMFCalendarResult =
               Name == "NSCalendar" && !Type.IsClassMethod &&
               Selector == "wmf_components:fromDate:toDate:" &&
@@ -1980,6 +2019,8 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
                   ? std::optional<std::string>("SDWebImageOptionsResult")
               : SDGraphicsRendererInit
                   ? std::optional<std::string>("SDGraphicsImageRenderer")
+              : SDCallbackMainQueue
+                  ? std::optional<std::string>("SDCallbackQueue")
               : WMFCalendarResult
                   ? std::optional<std::string>("NSDateComponents")
               : WMFCalendarFactory ? std::optional<std::string>("NSCalendar")
@@ -2060,6 +2101,52 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
 }
 
 } // namespace
+
+std::optional<ObjCReceiverTypeHint>
+objcMergeReceiverTypeHints(const BinaryImage &Image,
+                           const ObjCReceiverTypeHint &Left,
+                           const ObjCReceiverTypeHint &Right) {
+  const auto LeftType = receiverType(Image, Left);
+  const auto RightType = receiverType(Image, Right);
+  if (!LeftType || !RightType || LeftType->IsProtocol ||
+      RightType->IsProtocol || LeftType->ClassName != RightType->ClassName ||
+      LeftType->IsClassMethod != RightType->IsClassMethod)
+    return std::nullopt;
+  if (Left == Right)
+    return Left;
+  std::vector<ObjCReceiverTypeHint> Alternatives;
+  const auto Add = [&](const ObjCReceiverTypeHint &Receiver) {
+    if (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::Merged) {
+      Alternatives.push_back(Receiver);
+      return;
+    }
+    for (auto Alternative : Receiver.Alternatives) {
+      Alternative.Steps.insert(Alternative.Steps.end(), Receiver.Steps.begin(),
+                               Receiver.Steps.end());
+      Alternatives.push_back(std::move(Alternative));
+    }
+  };
+  Add(Left);
+  Add(Right);
+  llvm::sort(Alternatives);
+  Alternatives.erase(std::unique(Alternatives.begin(), Alternatives.end()),
+                     Alternatives.end());
+  if (Alternatives.empty() || Alternatives.size() > 8)
+    return std::nullopt;
+  if (Alternatives.size() == 1)
+    return objcReceiverTypeHintValid(Image, Alternatives.front())
+               ? std::optional<ObjCReceiverTypeHint>(Alternatives.front())
+               : std::nullopt;
+  ObjCReceiverTypeHint Result;
+  Result.Origin = ObjCReceiverTypeHint::OriginKind::Merged;
+  Result.Address = Alternatives.front().Address;
+  Result.ClassName = LeftType->ClassName;
+  Result.IsClassMethod = LeftType->IsClassMethod;
+  Result.Alternatives = std::move(Alternatives);
+  return objcReceiverTypeHintValid(Image, Result)
+             ? std::optional<ObjCReceiverTypeHint>(std::move(Result))
+             : std::nullopt;
+}
 
 ObjCReceiverDeclaration
 objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,

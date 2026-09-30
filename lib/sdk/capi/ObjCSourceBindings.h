@@ -7809,6 +7809,16 @@ inline bool objcSourceCallBound(
     return Expected && runtimeBindingMatches(Binding, *Expected);
   }
   if (Binding.Receiver) {
+    // A common class does not turn another method's self into this method's
+    // receiver. Captured and block-parameter alternatives are rejected by the
+    // loader; retain the ordinary entry association for every remaining root.
+    if (Binding.Receiver->Origin == ObjCReceiverTypeHint::OriginKind::Merged &&
+        ContainingFunction &&
+        llvm::any_of(Binding.Receiver->Alternatives, [&](const auto &Root) {
+          return Root.Origin == ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                 Root.Address != ContainingFunction->Entry;
+        }))
+      return false;
     if (Binding.Receiver->Origin ==
             ObjCReceiverTypeHint::OriginKind::MethodEntry &&
         (Binding.Receiver->BlockCaptureOffset ||

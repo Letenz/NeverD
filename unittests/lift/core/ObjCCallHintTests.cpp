@@ -9876,16 +9876,18 @@ TEST(ObjCCallHints, RuntimeReturnIdentityConvergesAcrossJoinsAndBackedges) {
   }
 }
 
-TEST(ObjCCallHints, ReceiverResultsKeepMessagePathsDistinctAtJoins) {
+TEST(ObjCCallHints, ReceiverJoinsKeepEveryProofOfTheCommonDeclaredClass) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
-    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
       auto Image = receiverResultImage(Architecture);
       auto Property = Image.ObjCProperties.front();
       Property.Getter = "otherError";
+      if (Mutation == 3)
+        Property.TypeEncoding = "@\"NSString\"";
       Image.ObjCProperties.push_back(Property);
       Image.ObjCSourceReferences[0x2118] = {
           ObjCSourceReference::Kind::Selector, 0x2118, 8,
-          Mutation == 1 ? "otherError" : "error"};
+          Mutation == 1 || Mutation == 3 ? "otherError" : "error"};
       const auto &TRI = getTargetRegInfo(Architecture);
       LowFunc Function;
       Function.Entry = 0x1200;
@@ -9912,6 +9914,10 @@ TEST(ObjCCallHints, ReceiverResultsKeepMessagePathsDistinctAtJoins) {
         Op.Addr += 0x100;
       if (Mutation == 2)
         Function.ModuleAnalysisRoots.insert(0x1400);
+      if (Mutation == 4)
+        Right.Ops.push_back(operation(NdOp::COPY,
+                                      NdVar::reg(TRI.IntParamRegs[0], 4),
+                                      {NdVar::cst(0, 4)}, 0x140c));
       auto Join = receiverCaller(Architecture).Blocks.front();
       Join.Id = 3;
       Join.StartAddr = 0x1500;
@@ -9925,9 +9931,113 @@ TEST(ObjCCallHints, ReceiverResultsKeepMessagePathsDistinctAtJoins) {
         for (auto Index : Order)
           Function.Blocks.push_back(Blocks[Index]);
         const auto Hints = buildObjCSourceCallHints(Image, Function);
-        EXPECT_EQ(Hints.count(0x1504), Mutation == 0) << Mutation;
+        ASSERT_EQ(Hints.count(0x1504), Mutation < 2) << Mutation;
+        if (Mutation == 1) {
+          const auto &Receiver = Hints.at(0x1504).Receiver;
+          ASSERT_TRUE(Receiver);
+          EXPECT_EQ(Receiver->Origin, ObjCReceiverTypeHint::OriginKind::Merged);
+          EXPECT_EQ(Receiver->ClassName, "NSError");
+          ASSERT_EQ(Receiver->Alternatives.size(), 2U);
+          EXPECT_NE(Receiver->Alternatives[0].Steps,
+                    Receiver->Alternatives[1].Steps);
+          EXPECT_TRUE(sdk::objcSourceCallBound(
+              *receiverCallExpression(Hints.at(0x1504)), Image, {}));
+        }
       } while (std::next_permutation(Order.begin(), Order.end()));
     }
+  }
+}
+
+TEST(ObjCCallHints, MergedReceiverProofsRevalidateEveryRootAndStayBounded) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverResultImage(Architecture);
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    std::vector<ObjCReceiverTypeHint> Results;
+    for (unsigned I = 0; I < 9; ++I) {
+      auto Property = Image.ObjCProperties.front();
+      Property.Getter = "error" + std::to_string(I);
+      Image.ObjCProperties.push_back(Property);
+      auto Result =
+          objcReceiverCallResultTypeHint(Image, *Root, Property.Getter);
+      ASSERT_TRUE(Result);
+      Results.push_back(*Result);
+    }
+    auto Merged = objcMergeReceiverTypeHints(Image, Results[0], Results[1]);
+    ASSERT_TRUE(Merged);
+    EXPECT_EQ(Merged,
+              objcMergeReceiverTypeHints(Image, Results[1], Results[0]));
+    EXPECT_EQ(Merged, objcMergeReceiverTypeHints(Image, *Merged, Results[0]));
+    EXPECT_EQ(Merged, objcMergeReceiverTypeHints(Image, *Merged, *Merged));
+    EXPECT_EQ(Merged->ClassName, "NSError");
+    EXPECT_EQ(Merged->Alternatives.size(), 2U);
+    for (unsigned I = 2; I < 8; ++I) {
+      Merged = objcMergeReceiverTypeHints(Image, *Merged, Results[I]);
+      ASSERT_TRUE(Merged);
+    }
+    EXPECT_EQ(Merged->Alternatives.size(), 8U);
+    EXPECT_FALSE(objcMergeReceiverTypeHints(Image, *Merged, Results[8]));
+
+    auto Changed = Image;
+    Changed.ObjCProperties[5].TypeEncoding = "@\"NSString\"";
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Merged));
+    EXPECT_FALSE(objcMergeReceiverTypeHints(Changed, *Merged, Results[0]));
+    auto Unsorted = *Merged;
+    std::reverse(Unsorted.Alternatives.begin(), Unsorted.Alternatives.end());
+    EXPECT_FALSE(objcReceiverTypeHintValid(Image, Unsorted));
+    auto Duplicate = *Merged;
+    Duplicate.Alternatives[1] = Duplicate.Alternatives[0];
+    EXPECT_FALSE(objcReceiverTypeHintValid(Image, Duplicate));
+    auto Nested = *Merged;
+    Nested.Alternatives[0] = *Merged;
+    EXPECT_FALSE(objcReceiverTypeHintValid(Image, Nested));
+    auto Captured = Results[0];
+    Captured.BlockCaptureOffset = 32;
+    EXPECT_FALSE(objcMergeReceiverTypeHints(Image, Captured, Results[1]));
+
+    const auto Description =
+        objcReceiverCallResultTypeHint(Image, *Merged, "localizedDescription");
+    const auto Other = objcReceiverCallResultTypeHint(Image, Results[8],
+                                                      "localizedDescription");
+    ASSERT_TRUE(Description);
+    ASSERT_TRUE(Other);
+    EXPECT_EQ(Description->Steps.size(), 1U);
+    EXPECT_FALSE(objcMergeReceiverTypeHints(Image, *Description, *Other));
+    const auto Pair = objcMergeReceiverTypeHints(Image, Results[0], Results[1]);
+    ASSERT_TRUE(Pair);
+    const auto PairDescription =
+        objcReceiverCallResultTypeHint(Image, *Pair, "localizedDescription");
+    ASSERT_TRUE(PairDescription);
+    const auto Three =
+        objcMergeReceiverTypeHints(Image, *PairDescription, *Other);
+    ASSERT_TRUE(Three);
+    EXPECT_EQ(Three->ClassName, "NSString");
+    EXPECT_EQ(Three->Alternatives.size(), 3U);
+    EXPECT_TRUE(Three->Steps.empty());
+    for (const auto &Alternative : Three->Alternatives)
+      EXPECT_EQ(Alternative.Steps.size(), 2U);
+
+    // Matching classes do not certify another method's uncaptured self.
+    auto ForeignMethod = Image.ObjCMethods.front();
+    ForeignMethod.Implementation = 0x1700;
+    Image.ObjCMethods.push_back(ForeignMethod);
+    const auto Foreign = objcMethodReceiverTypeHint(Image, 0x1700);
+    ASSERT_TRUE(Foreign);
+    const auto ForeignMerge =
+        objcMergeReceiverTypeHints(Image, *Root, *Foreign);
+    ASSERT_TRUE(ForeignMerge);
+    const auto Declaration =
+        objcReceiverSourceTypeHint(Image, "error", *ForeignMerge);
+    ASSERT_TRUE(Declaration.Signature);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "error";
+    Call.Receiver = *ForeignMerge;
+    Call.Signature = *Declaration.Signature;
+    HighFunc Containing;
+    Containing.Entry = 0x1200;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*receiverCallExpression(Call), Image,
+                                          {}, nullptr, nullptr, &Containing));
   }
 }
 
@@ -10999,6 +11109,70 @@ TEST(ObjCCallHints, SDWebImageIndicatorQueueParameterQualifiesAsyncBlock) {
     ASSERT_TRUE(Contract);
     EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
   }
+  Image.ObjCSourceReferences[0x2110] = {ObjCSourceReference::Kind::Selector,
+                                        0x2110, 8, "mainQueue"};
+  Image.ObjCSourceReferences[0x2130] = {ObjCSourceReference::Kind::Class,
+                                        0x2130, 8, Queue.Name};
+  Image.ObjCSourceReferences.at(0x2100).Name = "async:";
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+  const auto Command = NdVar::reg(TRI.IntParamRegs[1], 8);
+  const auto Saved = NdVar::reg(a64reg::X19, 8);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  LowBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1200;
+  Entry.Succs = {1, 2};
+  Entry.Ops = {operation(NdOp::COPY, Saved,
+                         {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x1200)};
+  LowBlock Parameter;
+  Parameter.Id = 1;
+  Parameter.StartAddr = 0x1210;
+  Parameter.Preds = {0};
+  Parameter.Succs = {3};
+  LowBlock Factory;
+  Factory.Id = 2;
+  Factory.StartAddr = 0x1220;
+  Factory.Preds = {0};
+  Factory.Succs = {3};
+  Factory.Ops = {
+      operation(NdOp::LOAD, Self, {NdVar::cst(0x2130, 8)}, 0x1220),
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2110, 8)}, 0x1224),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1228),
+      operation(NdOp::COPY, Saved, {NdVar::reg(TRI.IntReturnReg, 8)}, 0x122c)};
+  LowBlock Joined;
+  Joined.Id = 3;
+  Joined.StartAddr = 0x1240;
+  Joined.Preds = {1, 2};
+  Joined.Ops = {
+      operation(NdOp::COPY, Self, {Saved}, 0x1240),
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2100, 8)}, 0x1244),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1248)};
+  Function.Blocks = {Entry, Parameter, Factory, Joined};
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1248));
+  ASSERT_TRUE(Hints.at(0x1248).Receiver);
+  EXPECT_EQ(Hints.at(0x1248).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::Merged);
+  EXPECT_EQ(Hints.at(0x1248).Receiver->Alternatives.size(), 2U);
+  EXPECT_TRUE(objcBlockParameterContract(Image, Hints.at(0x1248), 2));
+  EXPECT_TRUE(sdk::objcSourceCallBound(
+      *receiverCallExpression(Hints.at(0x1248)), Image, {}));
+  std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+  const auto Reordered = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Reordered.count(0x1248));
+  EXPECT_EQ(Reordered.at(0x1248).Receiver, Hints.at(0x1248).Receiver);
+
+  auto WrongClass = Image;
+  WrongClass.ObjCSourceReferences.at(0x2130).Name = "UIView";
+  const auto WrongHints = buildObjCSourceCallHints(WrongClass, Function);
+  EXPECT_FALSE(WrongHints.count(0x1248) && WrongHints.at(0x1248).Receiver);
+  auto InvalidFactory = Image;
+  InvalidFactory.ObjCMethods[1].TypeEncoding = "^v16@0:8";
+  EXPECT_FALSE(
+      objcReceiverTypeHintValid(InvalidFactory, *Hints.at(0x1248).Receiver));
+
   auto Changed = Image;
   Changed.ObjCMethods[2].TypeEncoding = "v16@0:8";
   EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));

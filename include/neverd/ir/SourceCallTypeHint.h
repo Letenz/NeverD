@@ -20,7 +20,8 @@ struct ObjCReceiverTypeHint {
     MethodParameter,
     BlockParameter,
     ClassReference,
-    OutParameter
+    OutParameter,
+    Merged
   };
   OriginKind Origin = OriginKind::MethodEntry;
   va_t Address = 0;
@@ -68,6 +69,10 @@ struct ObjCReceiverTypeHint {
   /// For OutParameter roots, each item identifies one authenticated selector
   /// reference and compiler-declared object-pointer argument reaching a join.
   std::vector<OutParameterRoot> OutParameters;
+  /// A bounded, canonical set of ordinary receiver proofs reaching a join.
+  /// Every alternative must resolve to the same declared class and dispatch
+  /// role. This preserves type evidence, without equating object identities.
+  std::vector<ObjCReceiverTypeHint> Alternatives;
   /// Source parameter index for a declaration erased to an Objective-C id.
   unsigned SourceParameter = 0;
   /// Exact runtime descriptor that declares a block callback parameter.
@@ -84,10 +89,23 @@ struct ObjCReceiverTypeHint {
            ClassName == Other.ClassName &&
            IsClassMethod == Other.IsClassMethod && Steps == Other.Steps &&
            OutParameters == Other.OutParameters &&
+           Alternatives == Other.Alternatives &&
            SourceParameter == Other.SourceParameter &&
            BlockDescriptorAddress == Other.BlockDescriptorAddress &&
            BlockDescriptorFlags == Other.BlockDescriptorFlags &&
            BlockCaptureOffset == Other.BlockCaptureOffset;
+  }
+
+  bool operator<(const ObjCReceiverTypeHint &Other) const {
+    return std::tie(Origin, Address, ClassName, IsClassMethod, Steps,
+                    OutParameters, Alternatives, SourceParameter,
+                    BlockDescriptorAddress, BlockDescriptorFlags,
+                    BlockCaptureOffset) <
+           std::tie(Other.Origin, Other.Address, Other.ClassName,
+                    Other.IsClassMethod, Other.Steps, Other.OutParameters,
+                    Other.Alternatives, Other.SourceParameter,
+                    Other.BlockDescriptorAddress, Other.BlockDescriptorFlags,
+                    Other.BlockCaptureOffset);
   }
 };
 

@@ -600,7 +600,24 @@ struct CallFacts {
         ++It;
   }
 
-  void merge(const CallFacts &Other) {
+  void merge(const CallFacts &Other, const BinaryImage &Image) {
+    auto MergeReceiver = [&](Value &Left, const Value &Right) {
+      if (Left == Right)
+        return true;
+      const auto Ordinary = [](const Value &V) {
+        return (V.TheKind == Value::Kind::Receiver ||
+                V.TheKind == Value::Kind::SourceParameter) &&
+               V.Object && !V.Block;
+      };
+      if (!Ordinary(Left) || !Ordinary(Right))
+        return false;
+      auto Merged =
+          objcMergeReceiverTypeHints(Image, *Left.Object, *Right.Object);
+      if (!Merged)
+        return false;
+      Left = Value{Value::Kind::Receiver, 0, {}, std::move(Merged)};
+      return true;
+    };
     // A lost alias must not survive elsewhere as a supposedly private copied
     // block. Drop this family on any inconsistent reaching alias, including
     // an alias present on only one predecessor.
@@ -626,6 +643,10 @@ struct CallFacts {
       if (!(It->second == Found->second)) {
         if (auto Merged = mergeNumberCandidates(It->second, Found->second)) {
           It->second = std::move(*Merged);
+          ++It;
+          continue;
+        }
+        if (MergeReceiver(It->second, Found->second)) {
           ++It;
           continue;
         }
@@ -694,7 +715,7 @@ struct CallFacts {
       for (auto It = TypedFrameSlots.begin(); It != TypedFrameSlots.end();) {
         const auto Found = Other.TypedFrameSlots.find(It->first);
         if (Found == Other.TypedFrameSlots.end() ||
-            !(It->second == Found->second) ||
+            !MergeReceiver(It->second, Found->second) ||
             !typedFrameRangePrivate(It->first.first, It->first.second))
           It = TypedFrameSlots.erase(It);
         else
@@ -709,7 +730,8 @@ struct CallFacts {
     }
     for (auto It = FrameSlots.begin(); It != FrameSlots.end();) {
       const auto Found = Other.FrameSlots.find(It->first);
-      if (Found == Other.FrameSlots.end() || !(It->second == Found->second))
+      if (Found == Other.FrameSlots.end() ||
+          !MergeReceiver(It->second, Found->second))
         It = FrameSlots.erase(It);
       else
         ++It;
@@ -1130,8 +1152,9 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
   using ReceiverKey =
       std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
                  std::vector<ObjCReceiverTypeHint::TypeStep>,
-                 std::vector<ObjCReceiverTypeHint::OutParameterRoot>, unsigned,
-                 va_t, uint32_t, uint64_t, std::string>;
+                 std::vector<ObjCReceiverTypeHint::OutParameterRoot>,
+                 std::vector<ObjCReceiverTypeHint>, unsigned, va_t, uint32_t,
+                 uint64_t, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts State,
                       Hints &BlockHints) -> std::optional<Facts> {
@@ -1697,8 +1720,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             auto [It, Inserted] = ReceiverDeclarations.try_emplace(std::tuple{
                 Receiver->Origin, Receiver->Address, Receiver->ClassName,
                 Receiver->IsClassMethod, Receiver->Steps,
-                Receiver->OutParameters, Receiver->SourceParameter,
-                Receiver->BlockDescriptorAddress,
+                Receiver->OutParameters, Receiver->Alternatives,
+                Receiver->SourceParameter, Receiver->BlockDescriptorAddress,
                 Receiver->BlockDescriptorFlags, Receiver->BlockCaptureOffset,
                 Target->Selector});
             if (Inserted)
@@ -2574,7 +2597,7 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         Incoming = *Exits[Parent];
         Initialized = true;
       } else {
-        Incoming.merge(*Exits[Parent]);
+        Incoming.merge(*Exits[Parent], Image);
       }
     }
     if (!Initialized)
