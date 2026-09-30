@@ -148,6 +148,11 @@ struct TargetRegInfo {
   /// in FPReturnReg (x86 returns FP in XMM0).  Set by getTargetRegInfo().
   bool ModelsFPReturnInIntReg = false;
 
+  /// The ABI returns a scalar floating-point value in logical x87 st0 (i386),
+  /// so the carrying physical slot depends on TOP at the return.  Set by
+  /// getTargetRegInfo().
+  bool ReturnsFPInX87 = false;
+
   /// An auto-declared unknown external callee must use a variadic prototype so
   /// the backend never mislays arguments (true on ARM/AArch64 where variadic
   /// and non-variadic calling conventions differ).  Set by getTargetRegInfo().
@@ -316,6 +321,12 @@ struct TargetRegInfo {
   /// x86/x86-64 only; always false on ARM/AArch64.  Used to recognize the i386
   /// cdecl convention that returns floating point through st0.
   bool isX87StackReg(uint64_t RegOff) const;
+
+  /// Whether \p RegOff is an x87 stack slot that can carry the ABI
+  /// floating-point return value (logical st0 at the return site).
+  bool isX87ReturnReg(uint64_t RegOff) const {
+    return ReturnsFPInX87 && isX87StackReg(RegOff);
+  }
 
   /// Whether the architecture has a floating-point return register.
   bool hasFPReturnReg() const { return FPReturnReg != 0; }

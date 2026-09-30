@@ -37,6 +37,14 @@ constexpr uint64_t R14 = 112;
 constexpr uint64_t R15 = 120;
 constexpr uint64_t RIP = 128;
 
+/// General-purpose register \p Number in the x86 encoding order (RAX, RCX,
+/// RDX, RBX, RSP, RBP, RSI, RDI, R8-R15), the numbering ModRM and x64 unwind
+/// codes use.
+constexpr uint64_t GeneralRegStride = RCX - RAX;
+inline constexpr uint64_t generalReg(unsigned Number) {
+  return RAX + static_cast<uint64_t>(Number) * GeneralRegStride;
+}
+
 /// FLAGS register
 constexpr uint64_t CF = 200;
 constexpr uint64_t PF = 201;

@@ -1357,6 +1357,15 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                      Operation.NumInputs == 1 &&
                      Operation.Inputs[0] == NdVar::scalar(0, sizeof(uint64_t));
             });
+        // `and r, r` is the identity, written back explicitly so a 32-bit
+        // form still zero-extends its register.
+        const size_t IdentityWrites =
+            llvm::count_if(InstructionOps, [&](const LowOp &Operation) {
+              return Operation.Opcode == NdOp::COPY &&
+                     Operation.Output == Destination &&
+                     Operation.NumInputs == 1 &&
+                     Operation.Inputs[0] == Destination;
+            });
         constexpr std::array<uint64_t, 5> RequiredFlags = {
             x86reg::CF, x86reg::PF, x86reg::ZF, x86reg::SF, x86reg::OF};
         const bool HasAllFlagWrites =
@@ -1375,7 +1384,8 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                 ? DestinationWrites == 1 && ZeroingWrites == 1 &&
                       LogicOperations == 0
             : (Instruction.Id == X86_INS_AND && SameRegister)
-                ? DestinationWrites == 0 && LogicOperations == 1
+                ? DestinationWrites == 1 && IdentityWrites == 1 &&
+                      LogicOperations == 0
                 : DestinationWrites == 1 && LogicOperations == 1;
         if (!HasCanonicalResult || !HasAllFlagWrites || !HasNoAFWrite) {
           std::string Detail;
@@ -1385,6 +1395,7 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                  << DestinationWrites
                  << ", logic operations=" << LogicOperations
                  << ", zeroing writes=" << ZeroingWrites
+                 << ", identity writes=" << IdentityWrites
                  << ", flag writes complete=" << HasAllFlagWrites
                  << ", AF preserved=" << HasNoAFWrite;
           return Reject(Stream.str());
@@ -1461,8 +1472,7 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
           X86.operands[0].type != X86_OP_IMM)
         return Reject("v1 JMPABS must be the final absolute instruction");
       if (InstructionBytes.size() != 11 || InstructionBytes[0] != 0xd5 ||
-          (InstructionBytes[1] & 0x88) != 0 ||
-          InstructionBytes[2] != 0xa1)
+          (InstructionBytes[1] & 0x88) != 0 || InstructionBytes[2] != 0xa1)
         return Reject("v1 JMPABS requires canonical REX2 A1 iq encoding");
       if (InstructionOps.size() != 1 ||
           InstructionOps.front().Opcode != NdOp::BRANCH ||

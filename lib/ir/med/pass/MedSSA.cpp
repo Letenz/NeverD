@@ -14,10 +14,11 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/LowToMedError.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
-#include "neverd/ir/med/LowToMedError.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -36,8 +37,10 @@ namespace {
 
 /// Windows resumes an in-function __except body with its establisher SP, not
 /// with the entry SP used for an independent ordinary machine-code root.
-/// Certify the simple fixed-frame case against both normalized unwind actions
-/// and the decoded instructions. FrameSize is storage sizing, not this proof.
+/// Certify the fixed-frame case against both normalized unwind actions and the
+/// decoded instructions. FrameSize is storage sizing, not this proof.  A frame
+/// register leaves that SP unchanged: the unwinder restores it as a
+/// nonvolatile, and it is certified only as UWOP_SET_FPREG describes it.
 uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
                                   va_t Handler, const TargetRegInfo &TRI) {
   auto Fail = [](const char *Why) -> void {
@@ -49,12 +52,15 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
       EH.Encoding == ExceptionEncoding::X64UnwindV1 && EH.UnwindVersion == 1;
   const bool UnwindV2 =
       EH.Encoding == ExceptionEncoding::X64UnwindV2 && EH.UnwindVersion == 2;
+  const bool HasFrameRegister = EH.FrameRegister != 0;
+  const uint64_t FrameRegister = x86reg::generalReg(EH.FrameRegister);
   if (EH.ParseStatus != ExceptionParseStatus::Complete ||
       (!UnwindV1 && !UnwindV2) || EH.Kind != RuntimeFunctionKind::Primary ||
       EH.ChainedPrimaryRange || EH.ChainedUnwindInfoRVA ||
-      EH.PrimaryFunctionIndex || (EH.UnwindFlags & ~3u) || EH.FrameRegister ||
-      EH.FrameOffset || EH.CodeRange.Begin != Low.Entry ||
-      !EH.CodeRange.contains(Handler))
+      EH.PrimaryFunctionIndex || (EH.UnwindFlags & ~3u) ||
+      (!HasFrameRegister && EH.FrameOffset) ||
+      (HasFrameRegister && FrameRegister == TRI.StackPointer) ||
+      EH.CodeRange.Begin != Low.Entry || !EH.CodeRange.contains(Handler))
     Fail("unsupported unwind or frame-register contract");
   if (Low.Blocks.empty() || Low.Blocks.front().StartAddr != Low.Entry ||
       EH.PrologueSize > EH.CodeRange.End - Low.Entry)
@@ -84,22 +90,38 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
   // Every ordinary predecessor path into a protected block participates. A
   // stack adjustment before the guarded interval matters just as much as one
   // inside it. Independent sources cannot inherit the entry prologue proof.
+  // An __except body of this function is the one other source: the unwinder
+  // resumes it with the SP of its own protected scope, so when its flow
+  // reaches this scope, that scope joins the certificate as well.
   std::vector<bool> Relevant(N, false);
   std::vector<int> Work;
-  for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
-    if (Scope.HandlerVA != Handler)
-      continue;
-    auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
-    if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range ||
-        Range->Begin < PrologueEnd)
-      Fail("protected scope overlaps an incomplete prologue");
-    for (size_t B = 0; B < N; ++B)
-      if (Low.Blocks[B].StartAddr < Range->End &&
-          Low.Blocks[B].EndAddr > Range->Begin)
-        Work.push_back(static_cast<int>(B));
-  }
-  if (Work.empty())
+  auto AddProtectedBlocks = [&](va_t ScopeHandler) {
+    const size_t Before = Work.size();
+    for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+      if (Scope.HandlerVA != ScopeHandler)
+        continue;
+      auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+      if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range ||
+          Range->Begin < PrologueEnd)
+        Fail("protected scope overlaps an incomplete prologue");
+      for (size_t B = 0; B < N; ++B)
+        if (Low.Blocks[B].StartAddr < Range->End &&
+            Low.Blocks[B].EndAddr > Range->Begin)
+          Work.push_back(static_cast<int>(B));
+    }
+    return Work.size() != Before;
+  };
+  auto IsHandlerSource = [&](int B) {
+    const va_t Start = Low.Blocks[B].StartAddr;
+    return B != 0 && Preds[B].empty() &&
+           !Low.OrdinaryModuleAnalysisRoots.count(Start) &&
+           llvm::any_of(EH.SEH->Scopes, [&](const SEHScopeRecord &Scope) {
+             return Scope.HandlerVA == Start;
+           });
+  };
+  if (!AddProtectedBlocks(Handler))
     Fail("handler has no decoded protected scope");
+  std::vector<int> Sources{0};
   while (!Work.empty()) {
     const int B = Work.back();
     Work.pop_back();
@@ -107,9 +129,14 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
       continue;
     Relevant[B] = true;
     Work.insert(Work.end(), Preds[B].begin(), Preds[B].end());
+    if (IsHandlerSource(B)) {
+      Sources.push_back(B);
+      if (!AddProtectedBlocks(Low.Blocks[B].StartAddr))
+        Fail("handler has no decoded protected scope");
+    }
   }
   std::vector<bool> Reachable(N, false);
-  Work = {0};
+  Work = Sources;
   while (!Work.empty()) {
     int B = Work.back();
     Work.pop_back();
@@ -128,6 +155,7 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
   // X64 CodeOffset is the byte offset of the prologue instruction end,
   // not an index in the native unwind slot array.
   std::map<uint32_t, uint64_t> ExpectedAdjustments;
+  std::optional<uint32_t> SetFramePointerOffset;
   uint32_t PreviousOffset = EH.PrologueSize;
   uint64_t FrameBytes = 0;
   for (const UnwindOperation &Op : EH.UnwindOperations) {
@@ -155,6 +183,11 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
     case UnwindOperationKind::SaveXMM128:
     case UnwindOperationKind::SaveXMM128Far:
       break;
+    case UnwindOperationKind::SetFramePointer:
+      if (!HasFrameRegister || SetFramePointerOffset)
+        Fail("frame register disagrees with UWOP_SET_FPREG");
+      SetFramePointerOffset = Op.CodeOffset;
+      break;
     default:
       Fail("unwind action has no certified fixed SP effect");
     }
@@ -166,10 +199,57 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
     }
   }
 
-  auto OverlapsSP = [&](const NdVar &V) {
-    return V.isReg() && V.Size && V.Offset < TRI.StackPointer + 8 &&
-           V.Offset + V.Size > TRI.StackPointer;
+  if (HasFrameRegister && !SetFramePointerOffset)
+    Fail("frame register disagrees with UWOP_SET_FPREG");
+
+  auto Overlaps = [](const NdVar &V, uint64_t Reg) {
+    return V.isReg() && V.Size && V.Offset < Reg + 8 && V.Offset + V.Size > Reg;
   };
+  auto OverlapsSP = [&](const NdVar &V) {
+    return Overlaps(V, TRI.StackPointer);
+  };
+  // `lea fp, [rsp + FrameOffset]` (`mov fp, rsp` for a zero offset): one
+  // full-width copy of a value the same instruction computes as SP plus that
+  // constant.
+  auto SetsFramePointer = [&](const LowBlock &Block,
+                              const LowInstructionBoundary &Boundary,
+                              size_t Index) {
+    const LowOp &Op = Block.Ops[Index];
+    if (Op.Opcode != NdOp::COPY || Op.Output != NdVar::reg(FrameRegister, 8) ||
+        Op.NumInputs != 1)
+      return false;
+    const NdVar SP = NdVar::reg(TRI.StackPointer, 8);
+    std::map<uint64_t, std::optional<uint64_t>> TempDisplacement;
+    auto displacement = [&](const NdVar &V) -> std::optional<uint64_t> {
+      if (V == SP)
+        return 0;
+      if (!V.isTemp() || V.Size != 8)
+        return std::nullopt;
+      auto It = TempDisplacement.find(V.Offset);
+      return It == TempDisplacement.end() ? std::nullopt : It->second;
+    };
+    for (size_t I = Boundary.FirstOp; I < Index; ++I) {
+      const LowOp &Def = Block.Ops[I];
+      if (!Def.Output.isTemp())
+        continue;
+      std::optional<uint64_t> Value;
+      if (Def.Output.Size == 8 && Def.Opcode == NdOp::COPY &&
+          Def.NumInputs == 1) {
+        Value = displacement(Def.Inputs[0]);
+      } else if (Def.Output.Size == 8 &&
+                 (Def.Opcode == NdOp::INT_ADD || Def.Opcode == NdOp::INT_SUB) &&
+                 Def.NumInputs == 2 && Def.Inputs[1].isConst() &&
+                 Def.Inputs[1].Size == 8) {
+        if (auto Base = displacement(Def.Inputs[0]))
+          Value = Def.Opcode == NdOp::INT_ADD ? *Base + Def.Inputs[1].Offset
+                                              : *Base - Def.Inputs[1].Offset;
+      }
+      TempDisplacement[Def.Output.Offset] = Value;
+    }
+    const std::optional<uint64_t> Displacement = displacement(Op.Inputs[0]);
+    return Displacement && *Displacement == EH.FrameOffset;
+  };
+  unsigned FramePointerWrites = 0;
   std::map<uint32_t, uint64_t> ActualAdjustments;
   std::map<va_t, uint64_t> DecodedAdjustments;
   for (size_t B = 0; B < N; ++B) {
@@ -185,6 +265,15 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
       for (size_t I = Boundary.FirstOp; I < Boundary.FirstOp + Boundary.OpCount;
            ++I) {
         const LowOp &Op = Block.Ops[I];
+        if (HasFrameRegister && Overlaps(Op.Output, FrameRegister)) {
+          const uint64_t End = Boundary.Address + Boundary.Size;
+          if (B != 0 || End > PrologueEnd ||
+              End - Low.Entry != *SetFramePointerOffset ||
+              !SetsFramePointer(Block, Boundary, I))
+            Fail("frame register is not set once by the prologue");
+          ++FramePointerWrites;
+          continue;
+        }
         if (!OverlapsSP(Op.Output))
           continue;
         if (B != 0 || Boundary.Address + Boundary.Size > PrologueEnd ||
@@ -224,6 +313,8 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
           Fail("converted ABI effect changes the protected SP");
       }
     }
+  if (HasFrameRegister && FramePointerWrites != 1)
+    Fail("frame register is not set once by the prologue");
   if (ConvertedAdjustments != DecodedAdjustments)
     Fail("converted prologue disagrees with decoded SP effects");
   if (ExpectedAdjustments != ActualAdjustments)
@@ -457,8 +548,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // the protected call's ordinary register values, while all preserved frame
   // registers continue to flow over the exceptional edge.
   const uint64_t EHSelectorReg =
-      TRI.IntReturnRegs.size() > 1 ? TRI.IntReturnRegs[1]
-                                  : TRI.IntReturnReg2;
+      TRI.IntReturnRegs.size() > 1 ? TRI.IntReturnRegs[1] : TRI.IntReturnReg2;
   auto InsertEHDefs = [&](MedBlock &Block, uint64_t RegOff,
                           MedVar::VarKind Kind) {
     auto IdsIt = RegOffToIds.find(RegOff);
@@ -586,8 +676,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           continue;
       for (int Id : Ids) {
         auto It = RegVarOfId.find(Id);
-        if (It == RegVarOfId.end() ||
-            !fullyPreserved(RegOff, It->second.Size))
+        if (It == RegVarOfId.end() || !fullyPreserved(RegOff, It->second.Size))
           Result.insert(Id);
       }
     }
@@ -783,8 +872,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           Input.SSAVer = 0;
           Input.Size = TRI.PointerSize;
         } else if (IsItaniumEHRoot && EHSelectorReg != 0 &&
-                   Input.Kind == MedVar::Reg &&
-                   Input.RegOff == EHSelectorReg) {
+                   Input.Kind == MedVar::Reg && Input.RegOff == EHSelectorReg) {
           Input.Kind = MedVar::EHSelector;
           Input.Id = -1;
           Input.SSAVer = 0;

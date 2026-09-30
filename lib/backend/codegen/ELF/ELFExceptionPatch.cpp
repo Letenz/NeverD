@@ -226,15 +226,65 @@ bool readHeaderPointer(const uint8_t *Bytes, size_t Size, size_t &Cursor,
   return true;
 }
 
+/// Append \p Value in \p Encoding as a field of the header at \p HeaderVA, the
+/// inverse of readHeaderPointer: the field's header-relative position is the
+/// current size of \p Out.
+bool writeHeaderPointer(std::vector<uint8_t> &Out, uint64_t Value,
+                        uint8_t Encoding, uint64_t HeaderVA,
+                        bool Is64BitAddress) {
+  if (Encoding == Omit || (Encoding & Indirect) != 0)
+    return false;
+  uint64_t Base = 0;
+  switch (getApplication(Encoding)) {
+  case AbsoluteApp:
+    break;
+  case PCRel:
+    if (Out.size() > std::numeric_limits<uint64_t>::max() - HeaderVA)
+      return false;
+    Base = HeaderVA + Out.size();
+    break;
+  default:
+    return false;
+  }
+  auto PushUnsigned = [&](uint64_t Unsigned, unsigned Width) {
+    for (unsigned I = 0; I < Width; ++I)
+      Out.push_back(static_cast<uint8_t>(Unsigned >> (8 * I)));
+  };
+  int64_t Delta = 0;
+  switch (getFormat(Encoding)) {
+  case Absptr:
+  case Udata4:
+  case Udata8: {
+    const unsigned Width = getFormat(Encoding) == Absptr
+                               ? (Is64BitAddress ? 8 : 4)
+                               : getEncodedSize(Encoding);
+    if (Value < Base ||
+        (Width == 4 && Value - Base > std::numeric_limits<uint32_t>::max()))
+      return false;
+    PushUnsigned(Value - Base, Width);
+    return true;
+  }
+  case Sdata4:
+    return signedDelta(Value, Base, Delta) && pushSData4(Out, Delta);
+  case Sdata8:
+    if (!signedDelta(Value, Base, Delta))
+      return false;
+    PushUnsigned(static_cast<uint64_t>(Delta), 8);
+    return true;
+  default:
+    return false;
+  }
+}
+
 /// Merge the existing `.eh_frame_hdr` search table with entries for the
-/// appended functions and re-emit the whole section.  Only the encoding real
-/// toolchains produce -- a `datarel sdata4` table over an `.eh_frame_hdr`
-/// relative base -- is rewritten; any other shape returns false and the caller
-/// fails closed.
+/// appended functions and re-emit the whole section for \p OutHdrVA.  Only the
+/// encoding real toolchains produce -- a `datarel sdata4` table over an
+/// `.eh_frame_hdr` relative base -- is rewritten; any other shape returns false
+/// and the caller fails closed.
 bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
                        const ELFEHFrameRegion &Region,
                        const std::vector<FdeEntry> &NewEntries,
-                       std::vector<uint8_t> &Out) {
+                       uint64_t OutHdrVA, std::vector<uint8_t> &Out) {
   if (Region.HdrSize < kEhFrameHdrMinSize ||
       !rangeInBounds(Region.HdrFileOff, Region.HdrSize, Binary.size()))
     return false;
@@ -282,7 +332,7 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
                          Region.Is64, EHFramePointer) ||
       EHFramePointer != Region.SectionVA)
     return false;
-  const size_t PrefixEnd = Cursor; // header + eh_frame_ptr, copied verbatim
+  const size_t PrefixEnd = Cursor; // header + eh_frame_ptr
 
   size_t CountSize = getEncodedSize(Hdr.FdeCountEnc);
   if (CountSize == 0 || !rangeInBounds(Cursor, CountSize, HN))
@@ -326,7 +376,17 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
     Entries[Entry.InitLocVA] = Entry.FdeVA;
   }
 
-  Out.assign(H, H + PrefixEnd);
+  // A header that stays in place keeps its prefix bytes.  A relocated one
+  // re-encodes `eh_frame_ptr` against its new address; the pointer still names
+  // the image's own `.eh_frame`.
+  if (OutHdrVA == Region.HdrVA) {
+    Out.assign(H, H + PrefixEnd);
+  } else {
+    Out.assign(H, H + sizeof(EhFrameHdrHeader));
+    if (!writeHeaderPointer(Out, Region.SectionVA, Hdr.EhFramePtrEnc, OutHdrVA,
+                            Region.Is64))
+      return false;
+  }
   if (!writeEncodedCount(Out, Entries.size(), Hdr.FdeCountEnc))
     return false;
   uint64_t Previous = 0;
@@ -336,9 +396,9 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
       return false;
     int64_t InitRel = 0;
     int64_t FdeRel = 0;
-    if (!signedDelta(InitVA, Region.HdrVA, InitRel) ||
-        !signedDelta(FdeVA, Region.HdrVA, FdeRel) ||
-        !pushSData4(Out, InitRel) || !pushSData4(Out, FdeRel))
+    if (!signedDelta(InitVA, OutHdrVA, InitRel) ||
+        !signedDelta(FdeVA, OutHdrVA, FdeRel) || !pushSData4(Out, InitRel) ||
+        !pushSData4(Out, FdeRel))
       return false;
     Previous = InitVA;
     HasPrevious = true;
@@ -355,6 +415,52 @@ void growELFSection(std::vector<uint8_t> &Binary, uint64_t HeaderOff, bool Is64,
   writeELFShdr(Binary.data() + HeaderOff, Is64, F);
 }
 
+/// Whether \p Region still describes \p Binary exactly, so a caller's stale or
+/// forged region can never steer a write.
+bool isCurrentRegion(llvm::ArrayRef<uint8_t> Binary,
+                     const ELFEHFrameRegion &Region) {
+  const std::optional<ELFEHFrameRegion> Current = findELFEHFrameRegion(Binary);
+  return Current && Current->Is64 == Region.Is64 &&
+         Current->SectionVA == Region.SectionVA &&
+         Current->SectionFileOff == Region.SectionFileOff &&
+         Current->AppendVA == Region.AppendVA &&
+         Current->AppendFileOff == Region.AppendFileOff &&
+         Current->LimitFileOff == Region.LimitFileOff &&
+         Current->SectionHeaderOff == Region.SectionHeaderOff &&
+         Current->HasHdr == Region.HasHdr && Current->HdrVA == Region.HdrVA &&
+         Current->HdrFileOff == Region.HdrFileOff &&
+         Current->HdrSize == Region.HdrSize &&
+         Current->HdrLimitFileOff == Region.HdrLimitFileOff &&
+         Current->HdrSectionHeaderOff == Region.HdrSectionHeaderOff &&
+         Current->GnuEhFramePhdrOff == Region.GnuEhFramePhdrOff;
+}
+
+/// Decode the regenerated records laid out at \p RecordsVA into search-table
+/// entries, requiring one that starts at and covers every function the module
+/// needs registered.
+std::optional<std::vector<FdeEntry>>
+decodeRegeneratedEntries(llvm::ArrayRef<uint8_t> Records, uint64_t RecordsVA,
+                         bool Is64,
+                         llvm::ArrayRef<uint64_t> RequiredFunctions) {
+  auto Decoded = decodeDwarfEHFrameRecords(Records, RecordsVA, Is64);
+  if (!Decoded) {
+    llvm::consumeError(Decoded.takeError());
+    return std::nullopt;
+  }
+  std::vector<FdeEntry> Entries;
+  Entries.reserve(Decoded->size());
+  for (const DwarfEHFrameRecord &Record : *Decoded)
+    Entries.push_back({Record.BeginVA, Record.RecordVA});
+  for (uint64_t Address : RequiredFunctions)
+    if (std::none_of(Decoded->begin(), Decoded->end(),
+                     [&](const DwarfEHFrameRecord &Record) {
+                       return Record.BeginVA == Address &&
+                              Record.covers(Address);
+                     }))
+      return std::nullopt;
+  return Entries;
+}
+
 /// Install the regenerated records and the search-table entries that make them
 /// findable, or leave the image untouched and report failure.  Nothing is
 /// written until every part is known to fit, so a rejected install never leaves
@@ -363,20 +469,7 @@ bool installRecordsAndTable(std::vector<uint8_t> &Binary,
                             const ELFEHFrameRegion &Region,
                             const CompiledSection &Generated,
                             llvm::ArrayRef<uint64_t> RequiredFunctions) {
-  const std::optional<ELFEHFrameRegion> Current = findELFEHFrameRegion(Binary);
-  if (!Current || Current->Is64 != Region.Is64 ||
-      Current->SectionVA != Region.SectionVA ||
-      Current->SectionFileOff != Region.SectionFileOff ||
-      Current->AppendVA != Region.AppendVA ||
-      Current->AppendFileOff != Region.AppendFileOff ||
-      Current->LimitFileOff != Region.LimitFileOff ||
-      Current->SectionHeaderOff != Region.SectionHeaderOff ||
-      Current->HasHdr != Region.HasHdr || Current->HdrVA != Region.HdrVA ||
-      Current->HdrFileOff != Region.HdrFileOff ||
-      Current->HdrSize != Region.HdrSize ||
-      Current->HdrLimitFileOff != Region.HdrLimitFileOff ||
-      Current->HdrSectionHeaderOff != Region.HdrSectionHeaderOff ||
-      Current->GnuEhFramePhdrOff != Region.GnuEhFramePhdrOff)
+  if (!isCurrentRegion(Binary, Region))
     return false;
 
   if (!Region.HasHdr || Generated.VA != Region.AppendVA ||
@@ -428,26 +521,14 @@ bool installRecordsAndTable(std::vector<uint8_t> &Binary,
   if (!LogicalAppend || *LogicalAppend != ExistingEHSize)
     return false;
 
-  auto Decoded = decodeDwarfEHFrameRecords(Generated.ExternalBytes,
-                                           Region.AppendVA, Region.Is64);
-  if (!Decoded) {
-    llvm::consumeError(Decoded.takeError());
+  const std::optional<std::vector<FdeEntry>> NewEntries =
+      decodeRegeneratedEntries(Generated.ExternalBytes, Region.AppendVA,
+                               Region.Is64, RequiredFunctions);
+  if (!NewEntries)
     return false;
-  }
-  std::vector<FdeEntry> NewEntries;
-  NewEntries.reserve(Decoded->size());
-  for (const DwarfEHFrameRecord &Record : *Decoded)
-    NewEntries.push_back({Record.BeginVA, Record.RecordVA});
-  for (uint64_t Address : RequiredFunctions)
-    if (std::none_of(Decoded->begin(), Decoded->end(),
-                     [&](const DwarfEHFrameRecord &Record) {
-                       return Record.BeginVA == Address &&
-                              Record.covers(Address);
-                     }))
-      return false;
 
   std::vector<uint8_t> NewHdr;
-  if (!rebuildEhFrameHdr(Binary, Region, NewEntries, NewHdr))
+  if (!rebuildEhFrameHdr(Binary, Region, *NewEntries, Region.HdrVA, NewHdr))
     return false;
   if (NewHdr.size() > Region.HdrLimitFileOff - Region.HdrFileOff ||
       !rangeInBounds(Region.HdrFileOff, NewHdr.size(), Binary.size()) ||
@@ -685,6 +766,127 @@ llvm::Error installELFEHFrame(std::vector<uint8_t> &Binary,
       llvm::dbgs() << "elf exception patch: omitting unregistered CFI-only "
                       ".eh_frame records\n";
   });
+  return llvm::Error::success();
+}
+
+llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
+    llvm::ArrayRef<uint8_t> Binary, const ELFEHFrameRegion &Region,
+    const CompiledImage &Compiled, const llvm::Module &Mod, uint64_t HdrVA) {
+  auto Requirements = exception_rewrite::validateExceptionRewriteContracts(Mod);
+  if (!Requirements)
+    return Requirements.takeError();
+  if (Requirements->RequiresRegisteredUnwind && !Compiled.Unresolved.empty())
+    return patchError("required unwind output has unresolved symbols");
+  auto RequiredFunctions = exception_rewrite::resolveRequiredFunctionAddresses(
+      *Requirements, Compiled);
+  if (!RequiredFunctions)
+    return RequiredFunctions.takeError();
+  if (!Region.HasHdr || !isCurrentRegion(Binary, Region))
+    return patchError("no .eh_frame_hdr search table to relocate");
+
+  const CompiledSection *Generated = nullptr;
+  for (const CompiledSection &Section : Compiled.Sections)
+    if (Section.IsAllocated && Section.Name == section_names::elf::EhFrame) {
+      if (Generated)
+        return patchError("multiple regenerated .eh_frame sections");
+      Generated = &Section;
+    }
+  // The relocated header names records that ride in the patch image itself.
+  if (!Generated || !Generated->IsInImage ||
+      !rangeInBounds(Generated->Offset, Generated->Size,
+                     Compiled.Bytes.size()) ||
+      Generated->Offset >
+          std::numeric_limits<uint64_t>::max() - Compiled.BaseVA ||
+      Generated->VA != Compiled.BaseVA + Generated->Offset)
+    return patchError("no in-image .eh_frame to register");
+
+  const std::optional<std::vector<FdeEntry>> NewEntries =
+      decodeRegeneratedEntries(
+          llvm::ArrayRef<uint8_t>(Compiled.Bytes.data() + Generated->Offset,
+                                  static_cast<size_t>(Generated->Size)),
+          Generated->VA, Region.Is64, *RequiredFunctions);
+  if (!NewEntries)
+    return patchError("regenerated .eh_frame does not describe every "
+                      "required function");
+
+  std::vector<uint8_t> Hdr;
+  if (!rebuildEhFrameHdr(Binary, Region, *NewEntries, HdrVA, Hdr) ||
+      (!Region.Is64 && Hdr.size() > std::numeric_limits<uint32_t>::max()))
+    return patchError("cannot rebuild .eh_frame_hdr at its new address");
+  return Hdr;
+}
+
+llvm::Error retargetELFEHFrameHdr(std::vector<uint8_t> &Binary, uint64_t HdrVA,
+                                  uint64_t HdrSize) {
+  const uint8_t *Data = Binary.data();
+  const size_t Size = Binary.size();
+  ELFHeaderInfo Hdr;
+  if (!validateELFHeaderTables(Data, Size, Hdr) ||
+      HdrSize < kEhFrameHdrMinSize ||
+      HdrVA > std::numeric_limits<uint64_t>::max() - HdrSize ||
+      (!Hdr.Is64 && HdrVA + HdrSize > std::numeric_limits<uint32_t>::max()))
+    return patchError("cannot publish the relocated .eh_frame_hdr");
+
+  // The header must be file-backed by exactly one loadable segment, and the
+  // image must publish exactly one header for the unwinder to find.
+  unsigned GnuCount = 0;
+  uint64_t GnuOff = 0;
+  unsigned LoadCount = 0;
+  uint64_t FileOff = 0;
+  forEachELFPhdr(
+      Data, Size, [&](const ELFPhdrFields &P, const uint8_t *Ptr, bool) {
+        if (P.Type == llvm::ELF::PT_GNU_EH_FRAME) {
+          ++GnuCount;
+          GnuOff = static_cast<uint64_t>(Ptr - Data);
+          return;
+        }
+        if (P.Type != llvm::ELF::PT_LOAD ||
+            !rangeInBounds(P.Offset, P.FileSz, Size) || HdrVA < P.VAddr)
+          return;
+        const uint64_t Delta = HdrVA - P.VAddr;
+        if (Delta > P.FileSz || HdrSize > P.FileSz - Delta)
+          return;
+        ++LoadCount;
+        FileOff = P.Offset + Delta;
+      });
+  if (GnuCount != 1 || LoadCount != 1)
+    return patchError("cannot publish the relocated .eh_frame_hdr");
+
+  const uint64_t ShStrOff =
+      Hdr.ShOff + static_cast<uint64_t>(Hdr.ShStrNdx) * Hdr.ShEntSize;
+  if (!rangeInBounds(ShStrOff, Hdr.ShEntSize, Size))
+    return patchError("malformed section string table");
+  const ELFShdrFields ShStr = readELFShdr(Data + ShStrOff, Hdr.Is64);
+  unsigned HdrSectionCount = 0;
+  uint64_t HdrSectionOff = 0;
+  bool InvalidSectionName = false;
+  forEachELFShdr(Data, Size, [&](const ELFShdrFields &F, uint16_t I) {
+    auto Name = readELFSectionName(Data, Size, ShStr, F.Name);
+    if (!Name) {
+      InvalidSectionName = true;
+      return;
+    }
+    if (*Name == section_names::elf::EhFrameHdr) {
+      ++HdrSectionCount;
+      HdrSectionOff = Hdr.ShOff + static_cast<uint64_t>(I) * Hdr.ShEntSize;
+    }
+  });
+  if (InvalidSectionName || HdrSectionCount != 1)
+    return patchError("cannot publish the relocated .eh_frame_hdr");
+
+  ELFPhdrFields PH = readELFPhdr(Binary.data() + GnuOff, Hdr.Is64);
+  PH.Offset = FileOff;
+  PH.VAddr = HdrVA;
+  PH.PAddr = HdrVA;
+  PH.FileSz = HdrSize;
+  PH.MemSz = HdrSize;
+  writeELFPhdr(Binary.data() + GnuOff, Hdr.Is64, PH);
+
+  ELFShdrFields SH = readELFShdr(Binary.data() + HdrSectionOff, Hdr.Is64);
+  SH.Addr = HdrVA;
+  SH.Offset = FileOff;
+  SH.Size = HdrSize;
+  writeELFShdr(Binary.data() + HdrSectionOff, Hdr.Is64, SH);
   return llvm::Error::success();
 }
 

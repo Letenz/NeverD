@@ -362,6 +362,101 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+BinaryImage makeFramePointerSEHFrameImage() {
+  BinaryImage Img = makeFixedSEHFrameImage();
+  const va_t Entry = Img.Entry;
+  Segment &Text = Img.Segments.front();
+  Text.Size = 0x39;
+  Text.Data.assign(Text.Size, 0xcc);
+  // push rbp; sub rsp,64; lea rbp,[rsp+64]; mov dword [rbp-4],1; nop; jmp join.
+  const uint8_t Prologue[] = {0x55, 0x48, 0x83, 0xec, 0x40, 0x48, 0x8d,
+                              0x6c, 0x24, 0x40, 0xc7, 0x45, 0xfc, 1,
+                              0,    0,    0,    0x90, 0xeb, 0x1c};
+  std::copy(std::begin(Prologue), std::end(Prologue), Text.Data.begin());
+  // Handler: eax=[rbp-4]; eax+=20; [rbp-4]=eax; jmp join.
+  const uint8_t Handler[] = {0x8b, 0x45, 0xfc, 0x83, 0xc0, 20,
+                             0x89, 0x45, 0xfc, 0xeb, 5};
+  std::copy(std::begin(Handler), std::end(Handler), Text.Data.begin() + 0x20);
+  // Join: eax=[rbp-4]; add rsp,64; pop rbp; ret.
+  const uint8_t Join[] = {0x8b, 0x45, 0xfc, 0x48, 0x83, 0xc4, 0x40, 0x5d, 0xc3};
+  std::copy(std::begin(Join), std::end(Join), Text.Data.begin() + 0x30);
+  Img.Sections.front().Size = Text.Size;
+  Img.Symbols.front() = Symbol::makeFunc(Entry, Text.Size);
+
+  ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
+  EH.CodeRange = {Entry, Entry + Text.Size};
+  EH.PrologueSize = 10;
+  EH.FrameRegister = 5;
+  EH.FrameOffset = 0x40;
+  EH.UnwindOperations.clear();
+  UnwindOperation SetFP;
+  SetFP.Kind = UnwindOperationKind::SetFramePointer;
+  SetFP.CodeOffset = 10;
+  EH.UnwindOperations.push_back(SetFP);
+  UnwindOperation Alloc;
+  Alloc.Kind = UnwindOperationKind::AllocateSmall;
+  Alloc.CodeOffset = 5;
+  Alloc.StackOffset = 0x40;
+  EH.UnwindOperations.push_back(Alloc);
+  UnwindOperation Push;
+  Push.Kind = UnwindOperationKind::PushNonVolatile;
+  Push.CodeOffset = 1;
+  Push.Register = 5;
+  EH.UnwindOperations.push_back(Push);
+  EH.SEH->Scopes.front().GuardedRange = {Entry + 0x11, Entry + 0x12};
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+TEST(MedSEHEstablisherFrame, FramePointerHandlerAndJoinUseTheSameLocalSlot) {
+  // clang-cl keeps locals behind `lea rbp,[rsp+N]`.  The unwinder resumes the
+  // __except body with the fixed-frame SP and restores RBP as a nonvolatile,
+  // so every `[rbp-4]` names one slot, 12 bytes below the entry SP.
+  auto Img = makeFramePointerSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-establisher-frame-pointer"));
+  std::set<va_t> Seen;
+  const std::set<va_t> Expected = {Img.Entry + 0x0a, Img.Entry + 0x20,
+                                   Img.Entry + 0x26, Img.Entry + 0x30};
+  for (const MedBlock &B : Med.Blocks)
+    for (const MedOp &Op : B.Ops)
+      if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
+          Expected.count(Op.Addr)) {
+        ASSERT_GT(Op.NumInputs, 0u);
+        EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -12) << Op.Addr;
+        Seen.insert(Op.Addr);
+      }
+  EXPECT_EQ(Seen, Expected);
+}
+
+TEST(MedSEHEstablisherFrame, RejectsAFramePointerTheUnwindInfoDoesNotName) {
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Img = makeFramePointerSEHFrameImage();
+    auto Low = decodeFixedSEHFrame(Img);
+    auto &EH = *Low.ExceptionMetadata;
+    if (Case == 0)
+      EH.FrameOffset = 0x20;
+    if (Case == 1)
+      EH.UnwindOperations.front().CodeOffset = 5;
+    if (Case == 2) {
+      // A second frame-register write before the protected range.
+      for (auto &Op : Low.Blocks.front().Ops)
+        if (Op.Opcode == NdOp::STORE && Op.Addr == Low.Entry + 0x0a) {
+          Op.Opcode = NdOp::COPY;
+          Op.Output = NdVar::reg(x86reg::RBP, 8);
+          Op.NumInputs = 1;
+          Op.Inputs[0] =
+              NdVar::reg(getTargetRegInfo(Arch::X64).IntReturnReg, 8);
+        }
+    }
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        LowToMedConversionError);
+  }
+}
+
 TEST(MedSEHEstablisherFrame, AcceptsVersion2EpilogDescriptors) {
   // Version 2 unwind info lists epilog descriptors before the prologue codes.
   // They locate epilogs for the unwinder and do not move the frame.

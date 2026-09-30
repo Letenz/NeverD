@@ -15,6 +15,10 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -22,9 +26,6 @@
 #include <tuple>
 
 namespace neverd {
-
-using med_calling_conv_detail::computeForwardValueClosure;
-using med_calling_conv_detail::containsValue;
 
 //===----------------------------------------------------------------------===//
 // XMM / floating-point parameter detection (x86-64)
@@ -44,82 +45,157 @@ void detectXMMParams(
   // for every vector register the body touches, including those used purely as
   // scratch for an FP computation (e.g. an i386 `int` function whose body
   // builds a determinant in XMM0-7, each register first zeroed by `xorps x,x`).
-  // A real FP parameter's incoming value reaches a genuine consumer; a scratch
-  // register's only flows — possibly carried through PHIs — into
-  // self-cancelling idioms (`x^x`, `x-x` = 0) that discard it.  On i386 every
-  // argument is stack-passed, so a phantom XMM parameter shifts every real
-  // stack argument to a wrong offset; recover the register only when its
-  // live-in is truly used.
-  auto liveInValueUsed = [&](const MedVar &LiveIn) {
-    // A value-preserving forward (the live-in keeps flowing, not yet consumed).
-    auto isPassThrough = [](const MedOp &Op) {
-      switch (Op.Opcode) {
-      case NdOp::COPY:
-        return Op.NumInputs == 1;
-      case NdOp::INT_ZEXT:
-      case NdOp::INT_SEXT:
-        return Op.NumInputs == 1;
-      case NdOp::SUBBYTES:
-        return Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
-               Op.Inputs[1].ConstVal == 0;
-      default:
-        return false;
+  // A real FP parameter's incoming value reaches a genuine consumer.  A
+  // scratch register's flows -- possibly carried through PHIs -- only into
+  // self-cancelling idioms (`x^x`, `x-x` = 0) that discard it, or into lanes
+  // that nothing reads: a scalar write such as `cvtsi2ss xmm2, eax` keeps the
+  // upper lanes of xmm2, so the incoming value lives on there unobserved.  On
+  // i386 every argument is stack-passed, so a phantom XMM parameter shifts
+  // every real stack argument to a wrong offset; recover the register only
+  // when an incoming byte is truly used.
+  using med_calling_conv_detail::ValueKey;
+  using med_calling_conv_detail::valueKey;
+  struct ValueUse {
+    const MedOp *Op = nullptr;
+    const PhiNode *Phi = nullptr;
+  };
+  llvm::DenseMap<ValueKey, llvm::SmallVector<ValueUse, 2>> Uses;
+  for (const MedBlock &Block : Func.Blocks) {
+    for (const PhiNode &Phi : Block.Phis)
+      for (const auto &[Pred, Arg] : Phi.Args) {
+        (void)Pred;
+        if (!Arg.isConst())
+          Uses[valueKey(Arg)].push_back({nullptr, &Phi});
       }
-    };
-    // `x ^ x` / `x - x`: both operands the same tainted value, result is 0 —
-    // the value is discarded, not consumed.
-    auto isSelfCancel = [&](const MedOp &Op,
-                            const med_calling_conv_detail::ValueSet &Values) {
-      if ((Op.Opcode != NdOp::INT_XOR && Op.Opcode != NdOp::INT_SUB) ||
-          Op.NumInputs != 2)
-        return false;
-      const MedVar &A = Op.Inputs[0], &B = Op.Inputs[1];
-      return containsValue(Values, A) && A.Id == B.Id && A.SSAVer == B.SSAVer &&
-             A.Kind == B.Kind;
-    };
+    for (const MedOp &Op : Block.Ops)
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        if (!Op.Inputs[I].isConst())
+          Uses[valueKey(Op.Inputs[I])].push_back({&Op, nullptr});
+  }
+  // A RETURN may read an FP return register.  i386 returns floating point in
+  // x87 st0 and records through memory; XMM0 carries only a vector result
+  // there, so a scalar lane merge that reaches XMM0 is not returned.
+  auto isFPReturnReg = [&](uint64_t RegOff) {
+    if (TRI.ReturnsFPInX87)
+      return false;
+    return (TRI.hasFPReturnReg() && RegOff == TRI.FPReturnReg) ||
+           llvm::is_contained(TRI.FPReturnRegs, RegOff);
+  };
 
+  auto liveInValueUsed = [&](const MedVar &LiveIn) {
+    // The incoming bytes each value carries, one mask bit per byte.
+    constexpr uint16_t MaskBytes = 64;
+    auto byteMask = [](uint16_t Size) {
+      return Size >= MaskBytes ? ~uint64_t{0} : (uint64_t{1} << Size) - 1;
+    };
+    llvm::DenseMap<ValueKey, uint64_t> Carried;
+    llvm::SmallVector<ValueKey, 16> Work;
+    auto carried = [&](const MedVar &V) -> uint64_t {
+      if (V.Kind != MedVar::Reg && V.Kind != MedVar::Temp)
+        return 0;
+      auto It = Carried.find(valueKey(V));
+      return It == Carried.end() ? 0 : It->second;
+    };
+    auto record = [&](const MedVar &Output, uint64_t Mask) {
+      uint64_t &Known = Carried[valueKey(Output)];
+      if ((Mask & ~Known) == 0)
+        return;
+      Known |= Mask;
+      Work.push_back(valueKey(Output));
+    };
+    // Carry incoming bytes into \p Output.  Returns false when that already
+    // observes one: a reinterpret into a general-purpose register (`fmov w0,
+    // s0` / `movd eax, xmm0`) materializes the value's bits in the integer
+    // domain, and a RETURN may read an FP return register.
+    auto carry = [&](const MedVar &Output, uint64_t Mask) {
+      if (Output.Kind != MedVar::Reg && Output.Kind != MedVar::Temp)
+        return true;
+      if (Output.Size == 0 || Output.Size > MaskBytes)
+        return Mask == 0;
+      Mask &= byteMask(Output.Size);
+      if (Mask == 0)
+        return true;
+      if (Output.Kind == MedVar::Reg &&
+          (!TRI.isVectorReg(Output.RegOff) || isFPReturnReg(Output.RegOff)))
+        return false;
+      record(Output, Mask);
+      return true;
+    };
     auto isSelfCopy = [](const MedOp &Op) {
       return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
              Op.Output.Kind == MedVar::Reg && Op.Inputs[0].Id == Op.Output.Id;
     };
-    auto Taint = computeForwardValueClosure(
-        Func, LiveIn, [&](const MedOp &Op, unsigned InputIdx) {
-          return InputIdx == 0 &&
-                 (Op.Output.Kind == MedVar::Reg ||
-                  Op.Output.Kind == MedVar::Temp) &&
-                 (isSelfCopy(Op) || isPassThrough(Op));
-        });
-    auto tainted = [&](const MedVar &V) {
-      return (V.Kind == MedVar::Reg || V.Kind == MedVar::Temp) &&
-             containsValue(Taint, V);
+    // Whether \p Op observes an incoming byte; otherwise carry them on.
+    auto observes = [&](const MedOp &Op) {
+      llvm::SmallVector<uint64_t, 4> In(Op.NumInputs, 0);
+      uint64_t Any = 0;
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        Any |= In[I] = carried(Op.Inputs[I]);
+      if (Any == 0)
+        return false;
+      switch (Op.Opcode) {
+      case NdOp::COPY:
+        if (Op.NumInputs != 1)
+          return true;
+        if (isSelfCopy(Op)) {
+          record(Op.Output, In[0] & byteMask(Op.Output.Size));
+          return false;
+        }
+        return !carry(Op.Output, In[0]);
+      case NdOp::INT_ZEXT:
+        return Op.NumInputs != 1 || !carry(Op.Output, In[0]);
+      case NdOp::INT_SEXT: {
+        const uint16_t InSize = Op.Inputs[0].Size;
+        if (Op.NumInputs != 1 || InSize == 0 || InSize > MaskBytes)
+          return true;
+        // The sign byte fills every widened byte.
+        uint64_t Mask = In[0];
+        if ((Mask >> (InSize - 1)) & 1)
+          Mask |= ~byteMask(InSize);
+        return !carry(Op.Output, Mask);
+      }
+      case NdOp::SUBBYTES: {
+        if (Op.NumInputs != 2 || !Op.Inputs[1].isConst() || In[1] != 0)
+          return true;
+        const uint64_t Offset = Op.Inputs[1].ConstVal;
+        return !carry(Op.Output, Offset >= MaskBytes ? 0 : In[0] >> Offset);
+      }
+      case NdOp::CONCAT: {
+        const uint16_t LowSize = Op.NumInputs == 2 ? Op.Inputs[1].Size : 0;
+        if (Op.NumInputs != 2 || LowSize == 0 ||
+            (LowSize >= MaskBytes && In[0] != 0))
+          return true;
+        const uint64_t High = LowSize >= MaskBytes ? 0 : In[0] << LowSize;
+        return !carry(Op.Output, High | In[1]);
+      }
+      case NdOp::INT_XOR:
+      case NdOp::INT_SUB:
+        // `x ^ x` / `x - x`: the value is discarded, not consumed.
+        return Op.NumInputs != 2 || !(Op.Inputs[0] == Op.Inputs[1]);
+      default:
+        return true; // a genuine consumer of an incoming byte
+      }
     };
 
-    for (const MedBlock &Block : Func.Blocks) {
-      for (const MedOp &Op : Block.Ops) {
-        bool Reads = false;
-        for (uint8_t I = 0; I < Op.NumInputs; ++I)
-          if (tainted(Op.Inputs[I])) {
-            Reads = true;
-            break;
-          }
-        if (!Reads || isSelfCancel(Op, Taint))
+    record(LiveIn, byteMask(LiveIn.Size));
+    while (!Work.empty()) {
+      const ValueKey Key = Work.pop_back_val();
+      auto It = Uses.find(Key);
+      if (It == Uses.end())
+        continue;
+      for (const ValueUse &Use : It->second) {
+        if (Use.Op) {
+          if (observes(*Use.Op))
+            return true;
           continue;
-        // A reinterpret of the FP value into a general-purpose register
-        // (`fmov w0, s0` / `movd eax, xmm0`) materializes the float's bits in
-        // the integer domain: a genuine use of the FP parameter even though
-        // it is a single-operand COPY/cast.  A function that only bit-casts
-        // its float argument to its integer representation (`uint32_t
-        // fbits(float f){ return *(uint32_t*)&f; }`) has no other consumer,
-        // so without this its incoming value looks "unused" and the FP
-        // parameter is dropped (the function then reads 0).  Same-class
-        // FP->FP forwards and flows into a Temp stay value-preserving.
-        if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
-             Op.Opcode == NdOp::INT_SEXT || Op.Opcode == NdOp::SUBBYTES) &&
-            Op.Output.Kind == MedVar::Reg && !TRI.isVectorReg(Op.Output.RegOff))
+        }
+        uint64_t Mask = 0;
+        for (const auto &[Pred, Arg] : Use.Phi->Args) {
+          (void)Pred;
+          Mask |= carried(Arg);
+        }
+        if (!carry(Use.Phi->Output, Mask))
           return true;
-        if (isSelfCopy(Op) || isPassThrough(Op))
-          continue;
-        return true; // a genuine consumer of the live-in value
       }
     }
     return false;
@@ -243,11 +319,12 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // and the arg is read as 0.
   std::set<std::tuple<int, int, uint64_t>> VisitedPhi;
   // Every def visited on the current esp-chain walk, keyed by SSA identity.  A
-  // value cycle through COPY/ADD/SUB/extend defs (not only PHIs) would otherwise
-  // recurse until the depth cap — but 4096 levels of this std::function
-  // recursion overflow even the enlarged main stack (SIGBUS).  Cutting a re-entry
-  // of any already-seen def bounds the walk to the (small) number of distinct
-  // SSA vars, so the depth cap only guards genuinely long acyclic chains.
+  // value cycle through COPY/ADD/SUB/extend defs (not only PHIs) would
+  // otherwise recurse until the depth cap — but 4096 levels of this
+  // std::function recursion overflow even the enlarged main stack (SIGBUS).
+  // Cutting a re-entry of any already-seen def bounds the walk to the (small)
+  // number of distinct SSA vars, so the depth cap only guards genuinely long
+  // acyclic chains.
   std::set<std::tuple<int, int, int, uint64_t>> VisitedDef;
   std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
@@ -255,8 +332,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       VisitedPhi.clear();
       VisitedDef.clear();
     }
-    if (!VisitedDef
-             .insert({static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff})
+    if (!VisitedDef.insert({static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff})
              .second)
       return std::nullopt;
     // The esp chain to a stack access can be long: each i386 stack adjustment

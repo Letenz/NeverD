@@ -23,6 +23,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace {
@@ -411,8 +412,7 @@ TEST(LowToMedX64CallingConv, Win64HomeLoadsAreNotStackParameters) {
   Ret.addInput(NdVar::reg(x86reg::RAX, 8));
   Block.Ops.push_back(Ret);
 
-  MedFunc Med =
-      LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
   ASSERT_EQ(Med.CC, CallingConv::Win64);
   ASSERT_EQ(Med.Params.size(), 4u) << Med.Params.size();
   EXPECT_EQ(Med.Params[0].RegOff, x86reg::RCX);
@@ -460,8 +460,7 @@ TEST(LowToMedX64CallingConv, Win64CoffKeepsRsiRdiAcrossCall) {
   Ret.addInput(NdVar::reg(x86reg::RAX, 8));
   Block.Ops.push_back(Ret);
 
-  MedFunc Med =
-      LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
   const MedOp *RaxUse = nullptr;
   const MedOp *RdiStore = nullptr;
   for (const MedBlock &Blk : Med.Blocks)
@@ -566,8 +565,7 @@ TEST(HighCallArguments, AArch64FullRegisterBankExtendsStackStoreScan) {
   MedBlock &Block = Func.Blocks[0];
   Block.Id = 0;
 
-  const MedVar EntrySP =
-      reg(1, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
+  const MedVar EntrySP = reg(1, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
   addLiveIn(Block, EntrySP);
 
   MedOp Store;
@@ -581,14 +579,14 @@ TEST(HighCallArguments, AArch64FullRegisterBankExtendsStackStoreScan) {
   // each of x0-x7 before the call, but a complete register bank proves that a
   // following [sp] slot is ABI-plausible as argument 8.
   for (int I = 0; I < 5; ++I)
-    Block.Ops.push_back(unary(
-        NdOp::COPY, temp(10 + I, 0, TRI.PointerSize, TheArch),
-        MedVar::makeConst(0x100 + I, TRI.PointerSize)));
+    Block.Ops.push_back(unary(NdOp::COPY,
+                              temp(10 + I, 0, TRI.PointerSize, TheArch),
+                              MedVar::makeConst(0x100 + I, TRI.PointerSize)));
   for (int I = 0; I < 8; ++I)
-    Block.Ops.push_back(unary(
-        NdOp::COPY,
-        reg(20 + I, 0, TRI.PointerSize, TRI.IntParamRegs[I], TheArch),
-        MedVar::makeConst(I + 1, TRI.PointerSize)));
+    Block.Ops.push_back(
+        unary(NdOp::COPY,
+              reg(20 + I, 0, TRI.PointerSize, TRI.IntParamRegs[I], TheArch),
+              MedVar::makeConst(I + 1, TRI.PointerSize)));
 
   MedOp Call;
   Call.Opcode = NdOp::CALL;
@@ -797,9 +795,9 @@ TEST(MedABIPass, Win64InBlockConstantOverridesJoinPhi) {
   Func.Blocks[3].Id = 3;
   Func.Blocks[3].Preds = {1, 2};
   Func.Blocks[3].Phis.push_back({R9Join, {{1, R9Then}, {2, R9Else}}});
-  Func.Blocks[3].Ops.push_back(
-      unary(NdOp::COPY, reg(13, 4, 4, x86reg::R9, Arch::X64),
-            MedVar::makeConst(0, 4)));
+  Func.Blocks[3].Ops.push_back(unary(NdOp::COPY,
+                                     reg(13, 4, 4, x86reg::R9, Arch::X64),
+                                     MedVar::makeConst(0, 4)));
   Func.Blocks[3].Ops.push_back(unary(NdOp::COPY, R81, MedVar::makeConst(1, 4)));
   Func.Blocks[3].Ops.push_back(
       unary(NdOp::COPY, RDX1, MedVar::makeConst(0x140005000, 8)));
@@ -987,8 +985,9 @@ TEST(MedABIPass, Win64InterveningThiscallKeepsPredNonNullGuardAsThis) {
   Img.Arch = Arch::X64;
   Img.Bits = Bitness::Bits64;
   Img.Format = BinaryFormat::COFF;
-  const std::map<va_t, std::string> Names{{GetCatalog, "CRecordData_GetCatalogBoxID"},
-                                         {GetPeriod, "RecordCatalogBoxTable_GetPeriodID"}};
+  const std::map<va_t, std::string> Names{
+      {GetCatalog, "CRecordData_GetCatalogBoxID"},
+      {GetPeriod, "RecordCatalogBoxTable_GetPeriodID"}};
   std::map<va_t, int> RegArity{{GetCatalog, 1}, {GetPeriod, 2}};
   std::map<va_t, int> TotalArity{{GetCatalog, 1}, {GetPeriod, 2}};
   recoverCallAbi(Func, Arch::X64, Names, &Img, &RegArity, &TotalArity);
@@ -2347,6 +2346,109 @@ TEST(MedTypePass, X86InfersFloatReturnFromX87CarrierExtension) {
   EXPECT_TRUE(Func.FPReturnViaX87);
 }
 
+TEST(MedDCE, X86KeepsTheX87ReturnForReturnTyping) {
+  // `push eax; call 1f; 1: pop eax; ...; fld dword [esp]; pop eax; ret`: an
+  // i386 PIC function returning `float`.  LowIR's RETURN reads only EAX.  The
+  // result is left in logical st0 (physical ST7 after the `fld`), which only
+  // return typing and the RETURN emitter read.  The final `pop eax` loads
+  // through the address the PIC thunk left, so typing proves it a register
+  // restore only by the stack advance after it.  Register DCE must keep both.
+  // An x87 write that a later write of the same slot replaces is still dead.
+  constexpr Arch TheArch = Arch::X86;
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "x87_float_return_after_dce";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  const MedVar PointerSize =
+      MedVar::makeConst(TRI.PointerSize, TRI.PointerSize);
+  auto store = [&](const MedVar &Address, const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(Address);
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+  auto load = [&](const MedVar &Output, const MedVar &Address) {
+    Block.Ops.push_back(unary(NdOp::LOAD, Output, Address));
+  };
+
+  const MedVar EntrySP = reg(30, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
+  const MedVar EntryEAX =
+      reg(40, 0, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  addLiveIn(Block, EntrySP);
+  addLiveIn(Block, EntryEAX);
+
+  const MedVar PushedSP =
+      reg(30, 1, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, PushedSP, EntrySP, PointerSize));
+  store(PushedSP, EntryEAX);
+  const MedVar ThunkSP = reg(30, 2, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, ThunkSP, PushedSP, PointerSize));
+  store(ThunkSP, MedVar::makeConst(0x100C, TRI.PointerSize));
+  const MedVar PicBase = temp(31, 0, TRI.PointerSize, TheArch);
+  load(PicBase, ThunkSP);
+  const MedVar AfterThunk = temp(34, 0, TRI.PointerSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_ADD, AfterThunk, ThunkSP, PointerSize));
+
+  const MedVar Replaced = temp(12, 0, x86reg::FPURegSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Replaced,
+                             MedVar::makeConst(7, 4),
+                             MedVar::makeConst(x86reg::FPURegSize, 4)));
+  const MedVar StaleTop = reg(20, 1, x86reg::FPURegSize, x86reg::ST7, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, StaleTop, Replaced));
+
+  const MedVar Scalar = temp(10, 0, 4, TheArch);
+  Block.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Scalar,
+                             MedVar::makeConst(42, 4),
+                             MedVar::makeConst(4, 4)));
+  const MedVar Carrier = temp(11, 0, x86reg::FPURegSize, TheArch);
+  Block.Ops.push_back(unary(NdOp::FLOAT_FLOAT2FLOAT, Carrier, Scalar));
+  const MedVar X87Top = reg(20, 2, x86reg::FPURegSize, x86reg::ST7, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, X87Top, Carrier));
+
+  const MedVar Restored = temp(32, 0, TRI.PointerSize, TheArch);
+  load(Restored, AfterThunk);
+  const MedVar RestoredEAX =
+      reg(40, 1, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, RestoredEAX, Restored));
+  const MedVar Advanced = temp(33, 0, TRI.PointerSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_ADD, Advanced, AfterThunk, PointerSize));
+  const MedVar PoppedSP =
+      reg(30, 3, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, PoppedSP, Advanced));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(RestoredEAX);
+  Block.Ops.push_back(Return);
+
+  LowToMedConverter().runRegisterDce(Func, TheArch);
+
+  auto defines = [&](const MedVar &V) {
+    return std::any_of(
+        Block.Ops.begin(), Block.Ops.end(), [&](const MedOp &Op) {
+          return Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer;
+        });
+  };
+  EXPECT_TRUE(defines(X87Top));
+  EXPECT_TRUE(defines(Carrier));
+  EXPECT_TRUE(defines(PoppedSP));
+  EXPECT_FALSE(defines(StaleTop));
+  EXPECT_FALSE(defines(Replaced));
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 4u);
+  EXPECT_TRUE(Func.FPReturnViaX87);
+}
+
 namespace {
 
 /// The calling convention's view of a register argument \p LiveIn.
@@ -3091,8 +3193,8 @@ TEST(LowToMedX86CallingConv,
   for (const MedBlock &MedBlock : Med.Blocks)
     for (const MedOp &Op : MedBlock.Ops) {
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
-        SawParameterUse |= Op.Inputs[I].Kind == MedVar::Param &&
-                           Op.Inputs[I].Id == 0;
+        SawParameterUse |=
+            Op.Inputs[I].Kind == MedVar::Param && Op.Inputs[I].Id == 0;
       EXPECT_NE(Op.Opcode, NdOp::LOAD);
     }
   EXPECT_TRUE(SawParameterUse);
@@ -4952,11 +5054,10 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     const MedVar Rsp2 = reg(4, 2, 8, x86reg::RSP, Arch::X64);
     const MedVar Rsp3 = reg(4, 3, 8, x86reg::RSP, Arch::X64);
     int NextTemp = 100;
-    auto stackStore = [&](const MedVar &Base, uint64_t Offset,
-                          uint64_t Value) {
+    auto stackStore = [&](const MedVar &Base, uint64_t Offset, uint64_t Value) {
       const MedVar Address = temp(NextTemp++, 1, 8, Arch::X64);
-      Block.Ops.push_back(binary(NdOp::INT_ADD, Address, Base,
-                                 MedVar::makeConst(Offset, 8)));
+      Block.Ops.push_back(
+          binary(NdOp::INT_ADD, Address, Base, MedVar::makeConst(Offset, 8)));
       MedOp Store;
       Store.Opcode = NdOp::STORE;
       Store.addInput(Address);
@@ -4968,8 +5069,8 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     // A scan widened without an SP basis boundary would invent a ninth arg.
     if (Mode == 1)
       stackStore(Rsp0, 0x40, 99);
-    Block.Ops.push_back(binary(NdOp::INT_SUB, Rsp1, Rsp0,
-                               MedVar::makeConst(0x80, 8)));
+    Block.Ops.push_back(
+        binary(NdOp::INT_SUB, Rsp1, Rsp0, MedVar::makeConst(0x80, 8)));
     if (Mode == 2) {
       // A later COPY restores the entry SP, so this store belongs to the
       // abandoned frame even though its offset looks like a ninth arg.
@@ -4982,19 +5083,15 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     // This SSA rename preserves the stack base; it must not stop the scan.
     Block.Ops.push_back(unary(NdOp::COPY, RenamedSp, ActiveSp));
     for (int I = 0; I < 9; ++I)
-      Block.Ops.push_back(unary(NdOp::COPY,
-                                temp(NextTemp++, 1, 8, Arch::X64),
+      Block.Ops.push_back(unary(NdOp::COPY, temp(NextTemp++, 1, 8, Arch::X64),
                                 MedVar::makeConst(100 + I, 8)));
     stackStore(RenamedSp, 0x30, 7);
     stackStore(RenamedSp, 0x28, 6);
     stackStore(RenamedSp, 0x20, 5);
     for (const auto &[Id, Off, Value] :
-         {std::tuple{10, x86reg::RCX, 1u},
-          std::tuple{11, x86reg::RDX, 2u},
-          std::tuple{12, x86reg::R8, 3u},
-          std::tuple{13, x86reg::R9, 4u}})
-      Block.Ops.push_back(unary(NdOp::COPY,
-                                reg(Id, 1, 8, Off, Arch::X64),
+         {std::tuple{10, x86reg::RCX, 1u}, std::tuple{11, x86reg::RDX, 2u},
+          std::tuple{12, x86reg::R8, 3u}, std::tuple{13, x86reg::R9, 4u}})
+      Block.Ops.push_back(unary(NdOp::COPY, reg(Id, 1, 8, Off, Arch::X64),
                                 MedVar::makeConst(Value, 8)));
     MedOp Call;
     Call.Opcode = NdOp::CALL;
@@ -5081,6 +5178,94 @@ TEST(LowToMedX64CallingConv, ByteWriteRebuildIsNotAParameter) {
   for (const MedVar &P : Full.Params)
     HasR8 |= P.RegOff == x86reg::R8;
   EXPECT_TRUE(HasR8) << Full.Params.size();
+}
+
+namespace {
+
+/// One-block LowIR function whose ops \p Build appends at \p Entry.
+template <typename BuildFn>
+LowFunc makeOneBlockLow(va_t Entry, const char *Name, BuildFn Build) {
+  LowFunc Low;
+  Low.Entry = Entry;
+  Low.Name = Name;
+  Low.Blocks.resize(1);
+  LowBlock &Block = Low.Blocks[0];
+  Block.Id = 0;
+  Block.StartAddr = Entry;
+  Block.EndAddr = Entry + 0x10;
+  auto Push = [&](NdOp Opcode, NdVar Out, std::initializer_list<NdVar> In) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Addr = Entry;
+    Op.Output = Out;
+    for (const NdVar &V : In)
+      Op.addInput(V);
+    Block.Ops.push_back(Op);
+  };
+  Build(Push);
+  LowOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  Ret.Addr = Entry + 0xc;
+  Block.Ops.push_back(Ret);
+  return Low;
+}
+
+bool hasParameterIn(const MedFunc &Med, uint64_t RegOff) {
+  return std::any_of(Med.Params.begin(), Med.Params.end(),
+                     [&](const MedVar &P) { return P.RegOff == RegOff; });
+}
+
+} // namespace
+
+TEST(LowToMedX86CallingConv, ScalarSSEMergeIsNotAParameterUntilALaneIsRead) {
+  // `cvtsi2ss xmm2, eax; movss [esp+4], xmm2` keeps xmm2's upper lanes, so
+  // its incoming value flows on there unread.  A phantom XMM parameter would
+  // shift every i386 stack argument, so xmm2 is not one -- until a consumer
+  // reads one of those incoming lanes.
+  auto Convert = [](bool ReadUpperLane) {
+    const NdVar ESP = NdVar::reg(x86reg::RSP, 4);
+    const NdVar XMM2 = NdVar::reg(x86reg::XMM2, 16);
+    LowFunc Low = makeOneBlockLow(0x1000, "sse_merge", [&](auto Push) {
+      Push(NdOp::INT_ADD, NdVar::tmp(1, 4), {ESP, NdVar::cst(4, 4)});
+      Push(NdOp::LOAD, NdVar::tmp(2, 4), {NdVar::tmp(1, 4)});
+      Push(NdOp::FLOAT_INT2FLOAT, NdVar::tmp(3, 4), {NdVar::tmp(2, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(4, 12), {XMM2, NdVar::cst(4, 4)});
+      Push(NdOp::CONCAT, XMM2, {NdVar::tmp(4, 12), NdVar::tmp(3, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(5, 4), {XMM2, NdVar::cst(0, 4)});
+      Push(NdOp::STORE, NdVar(), {NdVar::tmp(1, 4), NdVar::tmp(5, 4)});
+      if (ReadUpperLane) {
+        Push(NdOp::SUBBYTES, NdVar::tmp(6, 4), {XMM2, NdVar::cst(4, 4)});
+        Push(NdOp::STORE, NdVar(), {NdVar::tmp(1, 4), NdVar::tmp(6, 4)});
+      }
+    });
+    return LowToMedConverter().convert(Low, Arch::X86);
+  };
+  const MedFunc Merged = Convert(false);
+  EXPECT_FALSE(hasParameterIn(Merged, x86reg::XMM2));
+  EXPECT_TRUE(hasParameterIn(Merged, kNoParamReg));
+  EXPECT_TRUE(hasParameterIn(Convert(true), x86reg::XMM2));
+}
+
+TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
+  // `movss xmm0, [p]` into an incoming xmm0 whose upper lanes reach the
+  // return register.  x86-64 returns a vector there, so those lanes may be
+  // returned and xmm0 stays a parameter.  i386 returns floating point in x87
+  // st0 and records in memory, so a merge into xmm0 is not returned.
+  auto Convert = [](Arch TheArch) {
+    const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+    const NdVar Pointer = NdVar::reg(
+        TRI.IntParamRegs.empty() ? x86reg::RAX : TRI.IntParamRegs.front(),
+        TRI.PointerSize);
+    const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+    LowFunc Low = makeOneBlockLow(0x1000, "lane_insert", [&](auto Push) {
+      Push(NdOp::LOAD, NdVar::tmp(1, 4), {Pointer});
+      Push(NdOp::SUBBYTES, NdVar::tmp(2, 12), {XMM0, NdVar::cst(4, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(2, 12), NdVar::tmp(1, 4)});
+    });
+    return LowToMedConverter().convert(Low, TheArch);
+  };
+  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86), x86reg::XMM0));
 }
 
 TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
