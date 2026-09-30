@@ -399,8 +399,8 @@ int pointer_table_lane(int input) {
 }
 
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
-  auto ImageOrErr = neverd::loadBinary(
-      fs::path(TEST_OBJ_DIR) / "test_i386_three_switch_loops.o");
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_i386_three_switch_loops.o");
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
       << llvm::toString(ImageOrErr.takeError());
   neverd::BinaryImage &Image = *ImageOrErr;
@@ -419,13 +419,14 @@ TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
     EXPECT_EQ(Table.Targets.size(), 5u);
     EXPECT_TRUE(StorageBases.insert(Table.BaseAddr).second);
   }
-  EXPECT_EQ(Builder.jumpTableGroupLifecycleStateForTesting().PublishedMemberCount,
-            3u);
+  EXPECT_EQ(
+      Builder.jumpTableGroupLifecycleStateForTesting().PublishedMemberCount,
+      3u);
 }
 
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsRemainOpaqueOnIncompleteModelProof) {
-  auto ImageOrErr = neverd::loadBinary(
-      fs::path(TEST_OBJ_DIR) / "test_i386_three_switch_loops.o");
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_i386_three_switch_loops.o");
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
       << llvm::toString(ImageOrErr.takeError());
   neverd::BinaryImage &Image = *ImageOrErr;
@@ -1209,7 +1210,8 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopProvesBothFiniteDispatches) {
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
-  const auto Low = Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  const auto Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
   ASSERT_EQ(Low.JumpTables.size(), 2u);
   for (const auto &Table : Low.JumpTables) {
     EXPECT_EQ(Table.BaseAddr, Storage->Addr);
@@ -1234,8 +1236,7 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
         << llvm::toString(ImageOrErr.takeError());
     auto &Image = *ImageOrErr;
     const auto *Function = Image.findSymbol("jt_i386_gotoff_joint_loop");
-    const auto *Second =
-        Image.findSymbol("jt_i386_gotoff_joint_second_branch");
+    const auto *Second = Image.findSymbol("jt_i386_gotoff_joint_second_branch");
     const auto *Storage = Image.findSymbol("jt_i386_gotoff_joint_table");
     ASSERT_NE(Function, nullptr);
     ASSERT_NE(Second, nullptr);
@@ -1247,8 +1248,8 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
       for (auto &[FieldVA, Field] : Image.DataAddressRelocOperands)
         if (FieldVA >= Function->Addr &&
             FieldVA < Function->Addr + Function->Size &&
-            Field.TargetVA == Storage->Addr &&
-            FieldVA > Second->Addr - 16 && FieldVA < Second->Addr) {
+            Field.TargetVA == Storage->Addr && FieldVA > Second->Addr - 16 &&
+            FieldVA < Second->Addr) {
           Field.Kind = neverd::RelocatedAddressFieldKind::Generic;
           ++Mutations;
         }
@@ -1274,12 +1275,11 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
     neverd::Decoder Decoder;
     ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
     neverd::CFGBuilder Builder;
-    const auto Low = Builder.build(Image, Decoder, Function->Addr,
-                                   Function->Name);
-    EXPECT_TRUE(std::none_of(Low.JumpTables.begin(), Low.JumpTables.end(),
-                             [&](const auto &Table) {
-                               return Table.InsnAddr == Second->Addr;
-                             }));
+    const auto Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    EXPECT_TRUE(std::none_of(
+        Low.JumpTables.begin(), Low.JumpTables.end(),
+        [&](const auto &Table) { return Table.InsnAddr == Second->Addr; }));
     EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
   }
 }
@@ -1301,16 +1301,15 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsOutOfRangeAndExhaustion) {
     neverd::CFGBuilder Builder;
     if (Budget)
       Builder.setMaskFixedPointEvidenceBudgetForTesting(Budget);
-    const auto Low = Builder.build(Image, Decoder, Function->Addr,
-                                   Function->Name);
-    EXPECT_TRUE(std::none_of(Low.JumpTables.begin(), Low.JumpTables.end(),
-                             [&](const auto &Table) {
-                               return Table.InsnAddr == Second->Addr;
-                             }));
+    const auto Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    EXPECT_TRUE(std::none_of(
+        Low.JumpTables.begin(), Low.JumpTables.end(),
+        [&](const auto &Table) { return Table.InsnAddr == Second->Addr; }));
     EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
   };
-  Run("jt_i386_gotoff_joint_oob_loop",
-      "jt_i386_gotoff_joint_oob_second_branch", std::nullopt);
+  Run("jt_i386_gotoff_joint_oob_loop", "jt_i386_gotoff_joint_oob_second_branch",
+      std::nullopt);
   Run("jt_i386_gotoff_joint_loop", "jt_i386_gotoff_joint_second_branch",
       size_t{0});
 }
@@ -9012,16 +9011,16 @@ TEST_F(JTE_AArch64, PageOffsetOutputRequiresExactReachingPageBase) {
   neverd::BinaryImage &WrongImage = *WrongImageOrErr;
   const neverd::LowFunc Wrong =
       buildFunction(WrongImage, "a64_pageoff_wrong_base_no_escape");
-  EXPECT_TRUE(outputCertificates(WrongImage, Wrong,
-                                 "a64_pageoff_wrong_base_table")
-                  .empty())
+  EXPECT_TRUE(
+      outputCertificates(WrongImage, Wrong, "a64_pageoff_wrong_base_table")
+          .empty())
       << "a PAGEOFF relocation alone must not authenticate its output";
 
   const neverd::LowFunc Clobbered =
       buildFunction(Image, "a64_pageoff_clobbered_base_no_escape");
-  EXPECT_TRUE(outputCertificates(Image, Clobbered,
-                                 "a64_pageoff_clobbered_base_table")
-                  .empty())
+  EXPECT_TRUE(
+      outputCertificates(Image, Clobbered, "a64_pageoff_clobbered_base_table")
+          .empty())
       << "a matching ADRP killed before the ADD is not a reaching source";
 
   auto BypassImageOrErr = neverd::loadBinary(pageoffReachingA64Obj());
@@ -9064,8 +9063,8 @@ TEST_F(JTE_AArch64, WrongBasePageOffsetFailsClosedOnEscape) {
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
-  const neverd::LowFunc Low = Builder.build(
-      Image, Decoder, Function->Addr, "a64_pageoff_wrong_base_no_escape");
+  const neverd::LowFunc Low = Builder.build(Image, Decoder, Function->Addr,
+                                            "a64_pageoff_wrong_base_no_escape");
   ASSERT_EQ(Low.JumpTables.size(), 1u);
   EXPECT_EQ(Low.JumpTables.front().Targets.size(), 2u);
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
@@ -9075,16 +9074,15 @@ TEST_F(JTE_AArch64, WrongBasePageOffsetFailsClosedOnEscape) {
   EXPECT_NE(LLVM.err.find("incomplete relocatable address value"),
             std::string::npos)
       << LLVM.err;
-  EXPECT_NE(LLVM.err.find("escapes through a call argument"),
-            std::string::npos)
+  EXPECT_NE(LLVM.err.find("escapes through a call argument"), std::string::npos)
       << LLVM.err;
 }
 
 TEST_F(JTE_AArch64, ClobberedPageOffsetKeepsIndependentSwitch) {
   auto LLVM = liftToLLVMIRUnopt(indexIdentityA64Obj());
   ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
-  const std::string Body = llvmFunctionBody(
-      LLVM.out, "a64_pageoff_clobbered_base_no_escape");
+  const std::string Body =
+      llvmFunctionBody(LLVM.out, "a64_pageoff_clobbered_base_no_escape");
   ASSERT_FALSE(Body.empty()) << LLVM.out;
   EXPECT_NE(Body.find("switch i"), std::string::npos) << Body;
   EXPECT_TRUE(llvmHasSwitchCase(Body, 0)) << Body;
