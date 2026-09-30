@@ -16,11 +16,12 @@
 #include <iterator>
 #include <tuple>
 #if defined(__linux__) && defined(__x86_64__)
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <new>
 #include <sys/mman.h>
-#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -528,16 +529,68 @@ TEST_P(X64CrossPageDevice,
     EXPECT_EQ(Actual[I], uint8_t(High >> (I * CHAR_BIT)));
 }
 
+#if defined(__linux__) && defined(__x86_64__)
+struct NativeFaultRecord {
+  std::atomic<int> Signal{0}, Code{0};
+  std::atomic<uintptr_t> Address{0};
+};
+static_assert(sizeof(NativeFaultRecord) <= PageSize);
+static_assert(std::atomic<int>::is_always_lock_free);
+static_assert(std::atomic<uintptr_t>::is_always_lock_free);
+static_assert(std::atomic<NativeFaultRecord *>::is_always_lock_free);
+std::atomic<NativeFaultRecord *> NativeFault{nullptr};
+void nativeFault(int Signal, siginfo_t *Info, void *) {
+  auto *Record = NativeFault.load(std::memory_order_relaxed);
+  if (!Record)
+    _exit(OracleSetupFailure);
+  Record->Signal.store(Signal, std::memory_order_relaxed);
+  Record->Code.store(Info->si_code, std::memory_order_relaxed);
+  Record->Address.store(reinterpret_cast<uintptr_t>(Info->si_addr),
+                        std::memory_order_relaxed);
+  _exit(OracleFaultExit);
+}
+bool captureNativeFault(NativeFaultRecord &Record) {
+  // Install only in the child. A piped system core collector can run even with
+  // RLIMIT_CORE=0; record the actual signal/address without invoking it.
+  NativeFault.store(&Record, std::memory_order_relaxed);
+  struct sigaction Action{};
+  Action.sa_sigaction = nativeFault;
+  Action.sa_flags = SA_SIGINFO;
+  sigemptyset(&Action.sa_mask);
+  sigset_t Signal;
+  sigemptyset(&Signal);
+  sigaddset(&Signal, SIGSEGV);
+  return sigaction(SIGSEGV, &Action, nullptr) == 0 &&
+         sigprocmask(SIG_UNBLOCK, &Signal, nullptr) == 0;
+}
+void expectNativeFault(pid_t Child, const NativeFaultRecord &Record,
+                       const uint8_t *Address) {
+  int Status = 0;
+  pid_t Waited;
+  do {
+    Waited = waitpid(Child, &Status, 0);
+  } while (Waited < 0 && errno == EINTR);
+  ASSERT_EQ(Waited, Child);
+  ASSERT_TRUE(WIFEXITED(Status));
+  EXPECT_EQ(WEXITSTATUS(Status), OracleFaultExit);
+  EXPECT_EQ(Record.Signal.load(), SIGSEGV);
+  EXPECT_EQ(Record.Code.load(), SEGV_ACCERR);
+  EXPECT_EQ(Record.Address.load(), reinterpret_cast<uintptr_t>(Address));
+}
+#endif
+
 TEST(X64CrossPageOracle, NativeFaultCannotCommitAnyPrefixStore) {
 #if defined(__linux__) && defined(__x86_64__)
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);
     auto *DataBytes = static_cast<uint8_t *>(
-        mmap(nullptr, 2 * PageSize, PROT_READ | PROT_WRITE,
+        mmap(nullptr, OraclePages * PageSize, PROT_READ | PROT_WRITE,
              MAP_SHARED | MAP_ANONYMOUS, -1, 0));
     ASSERT_NE(DataBytes, MAP_FAILED);
     auto ReleaseData =
-        llvm::scope_exit([&] { munmap(DataBytes, 2 * PageSize); });
+        llvm::scope_exit([&] { munmap(DataBytes, OraclePages * PageSize); });
+    auto *Record =
+        new (DataBytes + OracleDataPages * PageSize) NativeFaultRecord;
     const uint64_t Offset = PageSize - Case.Width / 2;
     const std::array<uint64_t, 2> Before{Case.Before, High};
     std::memcpy(DataBytes + Offset, Before.data(), sizeof(Before));
@@ -554,8 +607,7 @@ TEST(X64CrossPageOracle, NativeFaultCannotCommitAnyPrefixStore) {
     const pid_t Child = fork();
     ASSERT_GE(Child, 0);
     if (!Child) {
-      const rlimit NoCore{0, 0};
-      if (setrlimit(RLIMIT_CORE, &NoCore) ||
+      if (!captureNativeFault(*Record) ||
           mprotect(DataBytes + PageSize, PageSize, PROT_NONE))
         _exit(OracleSetupFailure);
       using Function =
@@ -564,14 +616,7 @@ TEST(X64CrossPageOracle, NativeFaultCannotCommitAnyPrefixStore) {
                                             DataBytes + Offset);
       _exit(OracleUnexpectedReturn);
     }
-    int Status = 0;
-    pid_t Waited;
-    do {
-      Waited = waitpid(Child, &Status, 0);
-    } while (Waited < 0 && errno == EINTR);
-    ASSERT_EQ(Waited, Child);
-    ASSERT_TRUE(WIFSIGNALED(Status));
-    EXPECT_EQ(WTERMSIG(Status), SIGSEGV);
+    expectNativeFault(Child, *Record, DataBytes + PageSize);
     EXPECT_EQ(std::memcmp(DataBytes + Offset, Before.data(), sizeof(Before)),
               0);
   }
@@ -582,11 +627,13 @@ TEST(X64CrossPageOracle, NativeFaultCannotCommitAnyPrefixStore) {
 
 TEST(X64CrossPageOracle, NativeRepeatFaultPreservesCompletedElements) {
 #if defined(__linux__) && defined(__x86_64__)
-  auto *DataBytes =
-      static_cast<uint8_t *>(mmap(nullptr, 2 * PageSize, PROT_READ | PROT_WRITE,
-                                  MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+  auto *DataBytes = static_cast<uint8_t *>(
+      mmap(nullptr, OraclePages * PageSize, PROT_READ | PROT_WRITE,
+           MAP_SHARED | MAP_ANONYMOUS, -1, 0));
   ASSERT_NE(DataBytes, MAP_FAILED);
-  auto ReleaseData = llvm::scope_exit([&] { munmap(DataBytes, 2 * PageSize); });
+  auto ReleaseData =
+      llvm::scope_exit([&] { munmap(DataBytes, OraclePages * PageSize); });
+  auto *Record = new (DataBytes + OracleDataPages * PageSize) NativeFaultRecord;
   auto *CodeBytes =
       static_cast<uint8_t *>(mmap(nullptr, PageSize, PROT_READ | PROT_WRITE,
                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
@@ -598,8 +645,7 @@ TEST(X64CrossPageOracle, NativeRepeatFaultPreservesCompletedElements) {
   const pid_t Child = fork();
   ASSERT_GE(Child, 0);
   if (!Child) {
-    const rlimit NoCore{0, 0};
-    if (setrlimit(RLIMIT_CORE, &NoCore) ||
+    if (!captureNativeFault(*Record) ||
         mprotect(DataBytes + PageSize, PageSize, PROT_NONE))
       _exit(OracleSetupFailure);
     using Function = void (*)(const uint64_t *, uint8_t *, uint64_t);
@@ -607,14 +653,7 @@ TEST(X64CrossPageOracle, NativeRepeatFaultPreservesCompletedElements) {
         Source.data(), DataBytes + PageSize - WordBytes, CopyCount);
     _exit(OracleUnexpectedReturn);
   }
-  int Status = 0;
-  pid_t Waited;
-  do {
-    Waited = waitpid(Child, &Status, 0);
-  } while (Waited < 0 && errno == EINTR);
-  ASSERT_EQ(Waited, Child);
-  ASSERT_TRUE(WIFSIGNALED(Status));
-  EXPECT_EQ(WTERMSIG(Status), SIGSEGV);
+  expectNativeFault(Child, *Record, DataBytes + PageSize);
   std::array<uint64_t, 2> Actual{};
   std::memcpy(Actual.data(), DataBytes + PageSize - WordBytes, sizeof(Actual));
   EXPECT_EQ(Actual, (std::array<uint64_t, 2>{Low, 0}));
