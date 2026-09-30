@@ -764,3 +764,7 @@ Solo una richiesta CREATE può impostare il booleano `asynchronous_file: true`; 
 `WdfDeviceInitSetPowerPolicyOwnership` imposta il proprietario della politica. Init/Suspend/Restart/Flush/Cleanup e i callback D0 vengono eseguiti; D3/D0 mantiene le risorse. La politica predefinita associa Sleeping3/Working a D3/D0 consumando `requested_device_power` esplicito. Ogni IRP figlio ha `origin: "framework_power_policy"` e `response_index`. S3 attende il figlio; S0 può terminare dopo la richiesta D0. La rienumerazione automatica restano esclusi.
 
 Una Query di sistema attende la Query del dispositivo e ne trasmette il risultato senza cambiare lo stato di alimentazione.
+
+## Eccezioni sincrone native x64
+
+Le `DIV`/`IDIV` checked x64 usano risultati reali del processore e `#DE`. KVM usa una IDT/IST supervisor privata, WHP una bitmap esplicita; contesto originale e codici disponibili restano distinti dagli errori di trasporto. Il sistema operativo consuma l’evento recuperabile prima di impostare la continuazione. I driver Windows traducono divisione per zero e overflow del quoziente in `STATUS_INTEGER_DIVIDE_BY_ZERO`, eseguendo veri filtri SEH, `__finally` e tentativi successivi. `NeverDX64ExceptionTests` compila senza Unicorn; `DriverWDMCPUException` verifica casi WDK originali. Gli host WHP/ARM64 non disponibili sono saltati esplicitamente.

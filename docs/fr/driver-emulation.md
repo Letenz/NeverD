@@ -773,3 +773,7 @@ Les `messages` explicites définissent adresse, données, vecteur, niveau, affin
 `WdfDeviceInitSetPowerPolicyOwnership` définit le propriétaire de la politique. Les callbacks Init/Suspend/Restart/Flush/Cleanup et ceux entourant D0 sont exécutés ; D3/D0 conserve les ressources. La politique par défaut associe Sleeping3/Working à D3/D0 via `requested_device_power` explicite. Chaque IRP enfant porte `origin: "framework_power_policy"` et `response_index`. S3 attend son enfant ; S0 peut finir après émission de D0. La réénumération automatique restent exclus.
 
 Une Query système attend la Query périphérique correspondante et transmet son résultat sans changer l’état d’alimentation.
+
+## Exceptions synchrones natives x64
+
+Les `DIV`/`IDIV` checked x64 utilisent le résultat du processeur et `#DE`. KVM emploie une IDT/IST supervisor privée, WHP un bitmap explicite ; le contexte original et les codes disponibles restent distincts des erreurs de transport. L’OS consomme l’événement récupérable avant d’installer une continuation. Le modèle de pilote Windows traduit la division par zéro et le débordement du quotient en `STATUS_INTEGER_DIVIDE_BY_ZERO`, avec de vrais filtres SEH, `__finally` et reprises. `NeverDX64ExceptionTests` se construit sans Unicorn ; `DriverWDMCPUException` valide les cas WDK originaux. Les hôtes WHP/ARM64 indisponibles sont explicitement ignorés.

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../arch/aarch64/AArch64Machine.h"
+#include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
@@ -96,6 +97,15 @@ public:
   llvm::Error initialize() {
     if (auto E = CPU.initialize(UC_ARCH_X86, UC_MODE_64))
       return E;
+    uc_hook Hook;
+    if (auto E =
+            check(uc_hook_add(CPU.Engine, &Hook, UC_HOOK_INTR,
+                              reinterpret_cast<void *>(exception), this, 1, 0)))
+      return E;
+    if (auto E =
+            check(uc_hook_add(CPU.Engine, &Hook, UC_HOOK_INSN_INVALID,
+                              reinterpret_cast<void *>(invalid), this, 1, 0)))
+      return E;
     if (!CPU.UserMode)
       return llvm::Error::success();
     // In 64-bit Unicorn, writing CS/SS changes selectors only. SYSRET installs
@@ -126,7 +136,16 @@ public:
       return E;
     if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_R11, &Flags)))
       return E;
-    return CPU.run(x64::BootstrapPC);
+    if (auto E = CPU.run(x64::BootstrapPC))
+      return E;
+    if (PendingException)
+      return diagnostic::error(x64::exceptiontext::Bootstrap);
+    uint64_t ReturnedPC = 0;
+    if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_RIP, &ReturnedPC)))
+      return E;
+    if (ReturnedPC != PC)
+      return diagnostic::error(x64::exceptiontext::Bootstrap);
+    return llvm::Error::success();
   }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl) override {
@@ -158,24 +177,52 @@ public:
     if (auto E =
             check(uc_reg_write(CPU.Engine, UC_X86_REG_MXCSR, &State.MXCSR)))
       return E;
-    if (auto E = CPU.run(State.reg(X64Register::PC)))
-      return E;
+    PendingException.reset();
+    auto RunError = CPU.run(State.reg(X64Register::PC));
+    if (!PendingException && RunError)
+      return RunError;
+    llvm::consumeError(std::move(RunError));
+    auto Next = State;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   if (auto E = check(uc_reg_read(CPU.Engine, registerID(X64Register::Name),    \
-                                 &State.reg(X64Register::Name))))              \
+                                 &Next.reg(X64Register::Name))))               \
     return E;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-    for (unsigned I = 0; I < State.Xmm.size(); ++I)
-      if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_XMM0 + I,
-                                     State.Xmm[I].data())))
+    for (unsigned I = 0; I < Next.Xmm.size(); ++I)
+      if (auto E = check(
+              uc_reg_read(CPU.Engine, UC_X86_REG_XMM0 + I, Next.Xmm[I].data())))
         return E;
-    if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_MXCSR, &State.MXCSR)))
+    if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_MXCSR, &Next.MXCSR)))
       return E;
+    if (PendingException) {
+      std::optional<uint64_t> Address;
+      if (*PendingException == unsigned(x64::ExceptionVector::PageFault)) {
+        uint64_t CR2 = 0;
+        if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_CR2, &CR2)))
+          return E;
+        Address = CR2;
+      }
+      State = Next;
+      return llvm::make_error<X64ExceptionError>(
+          X64Exception{*PendingException, std::nullopt, Address});
+    }
+    State = Next;
     return llvm::Error::success();
   }
 
 private:
+  std::optional<unsigned> PendingException;
+  static void exception(uc_engine *Engine, uint32_t Vector, void *Opaque) {
+    auto &Machine = *static_cast<UnicornX64Machine *>(Opaque);
+    if (!Machine.PendingException)
+      Machine.PendingException = Vector;
+    uc_emu_stop(Engine);
+  }
+  static bool invalid(uc_engine *Engine, void *Opaque) {
+    exception(Engine, unsigned(x64::ExceptionVector::InvalidOpcode), Opaque);
+    return false;
+  }
   static int registerID(X64Register R) {
     switch (R) {
 #define NEVERD_X64_REGISTER(Name, Decoder, Backend)                            \

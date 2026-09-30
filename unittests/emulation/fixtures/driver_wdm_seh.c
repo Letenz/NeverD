@@ -789,6 +789,74 @@ __declspec(noinline) static NTSTATUS UnsupportedCPUFault(VOID) {
   return (NTSTATUS)Value;
 }
 
+static volatile BOOLEAN DivideContextValid;
+
+__declspec(noinline) static ULONG64 DivideHelper(VOID) {
+  ULONG64 Low = SehDivideDividend;
+  ULONG64 High = Mode == SehDivideOverflow;
+  const ULONG64 Divisor = Mode == SehDivideOverflow;
+  __asm__ volatile(NEVERD_SEH_CPU_DIVIDE_ASM
+                   : "+a"(Low), "+d"(High)
+                   : "c"(Divisor));
+  return Low;
+}
+
+static LONG DivideFilter(PEXCEPTION_POINTERS Pointers) {
+  const PCONTEXT Context = Pointers->ContextRecord;
+  const PEXCEPTION_RECORD Record = Pointers->ExceptionRecord;
+  DivideContextValid =
+      Record->ExceptionCode == STATUS_INTEGER_DIVIDE_BY_ZERO &&
+      Record->NumberParameters == 0 &&
+      Record->ExceptionAddress == (PVOID)(ULONG_PTR)Context->Rip &&
+      Context->Rax == SehDivideDividend &&
+      Context->Rdx == (ULONG64)(Mode == SehDivideOverflow) &&
+      Context->Rcx == (ULONG64)(Mode == SehDivideOverflow) &&
+      !(Context->EFlags & SehDivideTrapFlag) && Stage == SehDivideBefore;
+  DbgPrint(SehDivideFilterMessage, Record->ExceptionCode, Mode);
+  if (DivideContextValid && Mode == SehDivideContinue) {
+    Context->Rcx = SehDivideRecoveryDivisor;
+    return EXCEPTION_CONTINUE_EXECUTION;
+  }
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+__declspec(noinline) static ULONG64 DivideWithFinally(VOID) {
+  ULONG64 Result = 0;
+  __try {
+    Result = DivideHelper();
+  } __finally {
+    Stage = SehDivideFinally;
+    DbgPrint(SehDivideFinallyMessage, AbnormalTermination());
+  }
+  return Result;
+}
+
+__declspec(noinline) static NTSTATUS ProcessorDivision(VOID) {
+  for (ULONG Iteration = 0; Iteration < SehDivideIterations; ++Iteration) {
+    ULONG64 Result = 0;
+    DivideContextValid = FALSE;
+    Stage = SehDivideBefore;
+    __try {
+      Result = DivideWithFinally();
+      if (Mode != SehDivideContinue)
+        Stage = SehDivideBad;
+    } __except (DivideFilter(GetExceptionInformation())) {
+      REQUIRE(GetExceptionCode() == STATUS_INTEGER_DIVIDE_BY_ZERO);
+      REQUIRE(Stage == SehDivideFinally);
+      Stage = SehDivideHandler;
+    }
+    REQUIRE(DivideContextValid);
+    if (Mode == SehDivideContinue) {
+      REQUIRE(Result == SehDivideDividend / SehDivideRecoveryDivisor);
+      REQUIRE(Stage == SehDivideFinally);
+    } else {
+      REQUIRE(Stage == SehDivideHandler);
+    }
+    DbgPrint(SehDivideCompleteMessage, Iteration);
+  }
+  return STATUS_SUCCESS;
+}
+
 static DRIVER_UNLOAD Unload;
 static VOID Unload(PDRIVER_OBJECT DriverObject) {
   if (DriverObject->DeviceObject)
@@ -803,16 +871,27 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
   NTSTATUS Status;
   if (RegistryPath && RegistryPath->Length >= sizeof(WCHAR)) {
     WCHAR Last = RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) - 1];
+    const BOOLEAN ProcessorMode =
+        RegistryPath->Length >= SehDivideModeCharacters * sizeof(WCHAR) &&
+        RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
+                             SehDivideModeCharacters] == SehDivideModeMarker;
     if ((Last >= 'A' && Last <= 'Z') || Last == SehXmmUnwind ||
         Last == SehChainedUnwind || Last == SehPrologueUnwind ||
         Last == SehGSCookie || Last == SehGSAlignedCookie ||
         Last == SehGSCorruptCookie || Last == SehGSAlignedCorruptCookie ||
         Last == SehGSStandaloneCookie || Last == SehGSStandaloneAlignedCookie ||
         Last == SehGSStandaloneCorruptCookie ||
-        Last == SehGSStandaloneAlignedCorruptCookie)
+        Last == SehGSStandaloneAlignedCorruptCookie ||
+        (ProcessorMode && (Last == SehDivideZero || Last == SehDivideOverflow ||
+                           Last == SehDivideContinue)))
       Mode = (CHAR)Last;
   }
   switch (Mode) {
+  case SehDivideZero:
+  case SehDivideOverflow:
+  case SehDivideContinue:
+    Test = ProcessorDivision;
+    break;
   case SehGSCookie:
   case SehGSAlignedCookie:
   case SehGSCorruptCookie:

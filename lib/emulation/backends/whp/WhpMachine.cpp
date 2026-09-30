@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MemoryProjection.h"
@@ -80,23 +81,43 @@ public:
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
     if (auto E = run(Exit, Control))
       return E;
-    if (Exit.ExitReason != WHvRunVpExitReasonException ||
-        Exit.VpException.ExceptionType != x64::DebugVector)
+    if (Exit.ExitReason != WHvRunVpExitReasonException)
       return diagnostic::error(diagnostic::WhpExit);
     if (FAILED(API.WHvGetVirtualProcessorRegisters(
             Partition, 0, Names.data(), ObservableCount, Values.data())))
       return diagnostic::error(diagnostic::WhpState);
+    auto Next = State;
     size_t I = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  State.reg(X64Register::Name) = Values[I++].Reg64;
+  Next.reg(X64Register::Name) = Values[I++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-    for (auto &Xmm : State.Xmm) {
+    for (auto &Xmm : Next.Xmm) {
       Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
       ++I;
     }
-    State.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
-    State.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
+    Next.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
+    Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
+    const unsigned Vector = Exit.VpException.ExceptionType;
+    if (Vector != x64::DebugVector) {
+      if (!x64::isExceptionVector(Vector) ||
+          !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
+        return diagnostic::error(diagnostic::WhpExit);
+      const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
+      Next.reg(X64Register::FLAGS) =
+          (Next.reg(X64Register::FLAGS) & ~Instrumentation) |
+          (State.reg(X64Register::FLAGS) & Instrumentation);
+      State = Next;
+      return llvm::make_error<X64ExceptionError>(X64Exception{
+          Vector,
+          Exit.VpException.ExceptionInfo.ErrorCodeValid
+              ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
+              : std::nullopt,
+          Vector == unsigned(x64::ExceptionVector::PageFault)
+              ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
+              : std::nullopt});
+    }
+    State = Next;
     return llvm::Error::success();
   }
 };
@@ -117,6 +138,12 @@ createWhpMachine(MemoryProjection &Memory) {
       !C.ExtendedVmExits.ExceptionExit)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
+  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeExceptionExitBitmap, &C,
+                                     sizeof(C), nullptr)) ||
+      (C.ExceptionExitBitmap & x64::ExceptionExitBitmap) !=
+          x64::ExceptionExitBitmap)
+    return diagnostic::unavailable(diagnostic::WhpCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvCreatePartition(&M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_PARTITION_PROPERTY P{};
@@ -131,7 +158,7 @@ createWhpMachine(MemoryProjection &Memory) {
           sizeof(P))))
     return diagnostic::error(diagnostic::WhpCreate);
   P = {};
-  P.ExceptionExitBitmap = uint64_t(1) << x64::DebugVector;
+  P.ExceptionExitBitmap = x64::ExceptionExitBitmap;
   if (FAILED(M->API.WHvSetPartitionProperty(
           M->Partition, WHvPartitionPropertyCodeExceptionExitBitmap, &P,
           sizeof(P))) ||

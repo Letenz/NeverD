@@ -381,8 +381,22 @@ struct UnicornBackend::Impl {
     auto &S = *static_cast<Impl *>(Opaque);
     // RIP may already follow INT3. The code hook identifies the instruction
     // that raised the event, including a synchronous CPU exception such as #DE.
-    S.retain({BackendFaultKind::Interrupt, S.InstructionPC, std::nullopt,
-              std::nullopt, std::nullopt, Number});
+    BackendFault Fault{BackendFaultKind::Interrupt,
+                       S.InstructionPC,
+                       std::nullopt,
+                       std::nullopt,
+                       std::nullopt,
+                       Number};
+    S.invoke([&] {
+      if (!S.effectsStopped() && S.Hooks.RecoverableFault &&
+          S.Hooks.RecoverableFault(Fault))
+        S.RecoverableFault = Fault;
+    });
+    if (S.RecoverableFault) {
+      uc_emu_stop(S.Engine);
+      return;
+    }
+    S.retain(Fault);
     S.invoke([&] {
       if (S.Hooks.Interrupt)
         S.Hooks.Interrupt(Number);
@@ -688,7 +702,8 @@ llvm::Error UnicornBackend::writeRegister(CPURegister R,
 }
 
 llvm::Expected<std::unique_ptr<BackendContext>> UnicornBackend::saveContext() {
-  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
+  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
+      State->RecoverableFault)
     return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
   auto Saved = std::make_unique<UnicornContext>();
   Saved->Owner = State->Identity;
@@ -708,7 +723,8 @@ llvm::Error UnicornBackend::saveContext(BackendContext &Context) {
   if (contextStorage(Context)->Owner.lock() != State->Identity)
     return failure(
         unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
-  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
+  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
+      State->RecoverableFault)
     return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
   contextStorage(Context)->Space = addressSpace();
   return check(
@@ -724,7 +740,8 @@ llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
   if (contextStorage(Context)->Owner.lock() != State->Identity)
     return failure(
         unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
-  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed)
+  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
+      State->RecoverableFault)
     return failure(unicornDiagnostic::CannotRestoreAFaultedCPUInstance);
   if (State->Running)
     return failure(
@@ -826,16 +843,30 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
   if (auto E = State->deviceError())
     return E;
   if (State->RecoverableFault) {
-    // Unicorn reports the original memory error even after the hook stops the
+    // Unicorn can report the original exception even after the hook stops the
     // instruction. Only that exact hook-admitted event may be resumed by a
     // caller-supplied exception transfer; all other errors remain terminal.
-    if (State->CallbackFailed || State->FirstFault ||
-        (Status != UC_ERR_OK && Status != UC_ERR_READ_UNMAPPED &&
-         Status != UC_ERR_WRITE_UNMAPPED && Status != UC_ERR_READ_PROT &&
-         Status != UC_ERR_WRITE_PROT)) {
+    const auto &Fault = *State->RecoverableFault;
+    const bool Interrupt = Fault.Kind == BackendFaultKind::Interrupt;
+    const bool ExpectedStatus =
+        Status == UC_ERR_OK ||
+        (Interrupt ? Status == UC_ERR_EXCEPTION
+         : Fault.Kind == BackendFaultKind::UnmappedMemory
+             ? (Fault.Access == BackendAccessKind::Read
+                    ? Status == UC_ERR_READ_UNMAPPED
+                : Fault.Access == BackendAccessKind::Write
+                    ? Status == UC_ERR_WRITE_UNMAPPED
+                    : Status == UC_ERR_FETCH_UNMAPPED)
+             : Fault.Kind == BackendFaultKind::Protection &&
+                   (Fault.Access == BackendAccessKind::Read
+                        ? Status == UC_ERR_READ_PROT
+                    : Fault.Access == BackendAccessKind::Write
+                        ? Status == UC_ERR_WRITE_PROT
+                        : Status == UC_ERR_FETCH_PROT));
+    if (State->CallbackFailed || State->FirstFault || !ExpectedStatus) {
       State->retain(*State->RecoverableFault);
       State->RecoverableFault.reset();
-      return check(Status, unicornDiagnostic::ExecuteGuestAfterMemoryException);
+      return check(Status, unicornDiagnostic::ExecuteGuestAfterException);
     }
     return llvm::Error::success();
   }

@@ -31,6 +31,9 @@ struct BackendFault {
   std::optional<uint64_t> Size;
   std::optional<BackendAccessKind> Access;
   std::optional<uint32_t> Interrupt;
+  /// Processor-supplied exception code, interpreted only by the guest ISA/OS.
+  /// Absence differs from a valid zero code; transport errors never invent one.
+  std::optional<uint64_t> ErrorCode;
 };
 } // namespace neverd::emulation
 #endif

@@ -762,3 +762,7 @@ AArch64 原生辅助函数只有在完整观测每个向量输入的 16 个入�
 嵌套 Objective-C 栈 Block 只有在当前流水线结果证明父 Block 强引用捕获方法接收者、且子 Block 完整地复制并持有同一字段时，才能继承该接收者的类。发现过程在本次结果内进行有界不动点迭代；下一次流水线运行必须重新证明整条链。选择器、裸 `id` 或未限定接收者的 Block 消费者都不能单独确立接收者类、调用 ABI 或 Block 生命周期。 16 字节上下文复制只有在对应的 8 字节通道完整落入每个已验证父 Block 实体时才保留该证明；部分或重排的通道不会保留。
 
 已验证的 Block 描述符可以在 invoke 函数体被接受之前提供调用 ABI；消费者调用只使用同一份已验证 Block 方案中的接收者捕获证明，发布仍须独立证明函数体和生命周期。
+
+## x64 原生同步异常
+
+checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通过私有 supervisor IDT/IST 接收异常，WHP 使用明确的异常拦截位图；异常保留原始上下文和可用的错误码，与后端传输错误分开。OS 模型必须先消费可恢复事件，再安装明确的继续执行上下文。Windows 驱动将零除及商溢出映射为 `STATUS_INTEGER_DIVIDE_BY_ZERO`，并执行实际 SEH filter、`__finally` 和重试。`NeverDX64ExceptionTests` 可在禁用 Unicorn 时构建；原始 WDK 用例由 `DriverWDMCPUException` 验证。缺少的 WHP/ARM64 主机覆盖会明确跳过。

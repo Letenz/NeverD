@@ -822,3 +822,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 ```
 
 프레임 spill 행렬은 두 C 백엔드에서 x86-32(ELF/COFF/Mach-O), ARM32(ARM 및 Thumb ELF), AArch64(ELF/COFF/Mach-O)도 검사합니다. 반복되는 비공개 프레임 로드는 덧셈이나 뺄셈으로 줄어야 하고, 두 최적화 수준에서 바이트 쌍, 워드 경계 쌍, 결정적 난수 워드에 대해 올바르게 실행되어야 합니다. Clang AST 검사는 전체 spill 함수에 남은 MBA 연산을 찾되 유효한 주소식을 구분합니다. HighFrameStoreForwarding은 접근 폭, 로컬 변수 변경, 메모리 쓰기, 별칭, 겹침, 순서가 지정된 메모리, 잘못된 그래프, 확장 예산을 검사합니다. HighCStoreForwarding은 부동소수점 재해석을 포함한 네 아키텍처에서 캐시 값의 정의를 살아 있게 하고, SymSimplifyGuard는 로드 동일성과 순서, volatile/atomic 및 poison 경계를 검사합니다. ELFARM32ModeTest는 ARM/Thumb 선택, 주소 정규화, 혼합 메타데이터 및 모순 증거 거부를 검사합니다. ELFARM32ModeCAPITest는 명시적인 SDK 오류와 Thumb 재로드 뒤 디코더 복구를 확인하고, InstructionMode는 디코더, 코드 포인터, 분기, 코드 생성 경계를 검사합니다. 크로스 타깃 Clang이 없으면 건너뛰며, 해당 형식의 성공 증거로 보지 않습니다.
+
+## x64 네이티브 동기 예외
+
+checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 WHP/ARM64 호스트는 명시적으로 건너뜁니다.

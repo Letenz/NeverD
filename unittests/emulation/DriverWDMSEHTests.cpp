@@ -12,9 +12,11 @@
 #include "gtest/gtest.h"
 #include "os/windows/DriverImage.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <tuple>
 
 namespace neverd::emulation {
 namespace {
@@ -67,6 +69,66 @@ void clean(const DriverResult &Result, char Mode) {
   EXPECT_LT(Complete, Result.Messages.size());
   EXPECT_LT(Complete, messageIndex(Result, "WDM SEH: unload"));
 }
+
+using DivideParameter =
+    std::tuple<std::pair<ExecutionBackendKind, ExecutionContract>, char>;
+class DriverWDMCPUException : public testing::TestWithParam<DivideParameter> {};
+
+TEST_P(DriverWDMCPUException,
+       GenuineDivideUnwindsOrRetriesOriginalInstruction) {
+  const auto [Transport, Mode] = GetParam();
+  auto Probe = createExecutionBackend(Transport.first, Transport.second,
+                                      profile::DefaultMemoryLimit);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    auto Text = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Text;
+    FAIL() << Text;
+  }
+  for (const auto *Image : images())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = options(Mode, Address);
+      Options.ServiceName.insert(Options.ServiceName.size() - 1, 1,
+                                 char(SehDivideModeMarker));
+      Options.Backend = Transport.first;
+      Options.Contract = Transport.second;
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      clean(*Result, Mode);
+      EXPECT_EQ(Result->ImageBase, Address);
+      raisedCalls(*Result, {});
+      for (const char *Format :
+           {SehDivideFilterMessage, SehDivideFinallyMessage,
+            SehDivideCompleteMessage}) {
+        const llvm::StringRef Text(Format);
+        const auto Prefix = Text.take_front(Text.find('%'));
+        EXPECT_EQ(std::count_if(Result->Messages.begin(),
+                                Result->Messages.end(),
+                                [&](const std::string &M) {
+                                  return llvm::StringRef(M).starts_with(Prefix);
+                                }),
+                  SehDivideIterations);
+      }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Transports, DriverWDMCPUException,
+    testing::Combine(testing::Values(std::pair{ExecutionBackendKind::Unicorn,
+                                               ExecutionContract::Legacy},
+                                     std::pair{ExecutionBackendKind::Unicorn,
+                                               ExecutionContract::CheckedX64},
+                                     std::pair{ExecutionBackendKind::KVM,
+                                               ExecutionContract::CheckedX64},
+                                     std::pair{ExecutionBackendKind::WHP,
+                                               ExecutionContract::CheckedX64}),
+                     testing::Values(char(SehDivideZero),
+                                     char(SehDivideOverflow),
+                                     char(SehDivideContinue))));
 
 TEST(DriverWDMSEH, ThreeRaiseExportsExecuteConstantHandlersWithCfgAndRebasing) {
   for (const auto *Image : images())

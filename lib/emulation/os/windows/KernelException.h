@@ -16,6 +16,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace neverd::emulation {
 namespace exceptions {
@@ -23,6 +24,11 @@ namespace exceptions {
   inline constexpr uint32_t Name = Value;
 #include "KernelExceptionValues.def"
 #undef NEVERD_KERNEL_EXCEPTION_VALUE
+#define NEVERD_KERNEL_EXCEPTION_DIAGNOSTIC(Name, Text)                         \
+  inline constexpr const char *Name = Text;
+#include "KernelExceptionValues.def"
+#undef NEVERD_KERNEL_EXCEPTION_DIAGNOSTIC
+std::optional<uint32_t> kernelX64ExceptionStatus(uint32_t Vector);
 } // namespace exceptions
 
 class KernelGuestException final

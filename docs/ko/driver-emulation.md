@@ -500,3 +500,7 @@ CREATE 요청만 불리언 `asynchronous_file: true`를 지정할 수 있습니�
 `WdfDeviceInitSetPowerPolicyOwnership`는 전원 정책 소유권을 설정합니다. 자체 관리 I/O Init/Suspend/Restart/Flush/Cleanup과 D0 전후 콜백을 실행하고 일반 D3/D0에서 리소스를 유지합니다. 기본 정책은 Sleeping3/Working을 D3/D0에 연결하고 명시적 `requested_device_power`를 소비합니다. 독립 자식 IRP에는 `origin: "framework_power_policy"`와 `response_index`가 있습니다. S3는 자식 완료를 기다리며 S0는 D0 발행 후 완료할 수 있습니다. 실패 장치 자동 재열거는 지원하지 않습니다.
 
 시스템 Query는 해당 장치 Query를 기다려 결과를 전달하며 전원 상태를 변경하지 않습니다.
+
+## x64 네이티브 동기 예외
+
+checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 WHP/ARM64 호스트는 명시적으로 건너뜁니다.

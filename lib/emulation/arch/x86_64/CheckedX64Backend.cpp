@@ -6,6 +6,7 @@
 #include "CheckedX64Backend.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "X64Exception.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -469,11 +470,20 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (DeviceAccess)
     return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
                           DeviceAccess->Permission, DeviceAccess->Value);
-  auto Root = buildX64PageTables(*Memory, PageTableRoot, UserMode);
+  auto Root = buildX64PageTables(*Memory, PageTableRoot, UserMode,
+                                 Machine->requiresExceptionMonitor());
   if (!Root)
     return Root.takeError();
   PageTableRoot = *Root;
-  return Machine->step(CPU, PageTableRoot, {Deadline, &StopRequested});
+  return llvm::handleErrors(
+      Machine->step(CPU, PageTableRoot, {Deadline, &StopRequested}),
+      [&](const X64ExceptionError &E) {
+        BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+        Fault.Interrupt = E.exception().Vector;
+        Fault.Address = E.exception().FaultAddress;
+        Fault.ErrorCode = E.exception().ErrorCode;
+        return raiseFault(Fault, true);
+      });
 }
 
 } // namespace neverd::emulation

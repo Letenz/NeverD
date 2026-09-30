@@ -26,6 +26,13 @@ Enabled builds stage these notices and the dependency's GPL/LGPL texts under
 `licenses/unicorn` beside the binaries and in the staged SDK. NeverD's project
 license does not replace these dependency notices.
 
+The pinned NeverSight fork includes the original 2026-09-30 exception-delivery
+fix by NeverD contributors: x86 interrupt hooks acknowledge the in-flight
+exception before resumption, preventing unrelated later faults from becoming
+double faults. The change and original regression tests are preserved in
+[commit cf40fa2c](https://github.com/NeverSight/unicorn/commit/cf40fa2c3ccdd90ab7cbb4ff060d9e07921aa3ae).
+The modified QEMU file retains its original LGPL notice.
+
 ## Swift runtime ABI declarations
 
 `lib/loader/Swift/SwiftRuntimeDeclarations.inc` derives fixed C and Swift ABI declarations

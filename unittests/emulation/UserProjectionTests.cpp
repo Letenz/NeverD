@@ -98,7 +98,8 @@ protected:
     const auto Deadline =
         std::chrono::steady_clock::now() + std::chrono::microseconds(Timeout);
     if (X64) {
-      auto R = buildX64PageTables(*Memory, Root, true);
+      auto R = buildX64PageTables(*Memory, Root, true,
+                                  X64->requiresExceptionMonitor());
       if (!R)
         return R.takeError();
       Root = *R;

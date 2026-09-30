@@ -538,3 +538,7 @@ python3 scripts/validate_windows_driver_sample.py \
 تحدد `WdfDeviceInitSetPowerPolicyOwnership` ملكية سياسة الطاقة. تُنفذ Init/Suspend/Restart/Flush/Cleanup واستدعاءات D0، وتحفظ D3/D0 الموارد. تربط السياسة الافتراضية Sleeping3/Working مع D3/D0 باستهلاك `requested_device_power` الصريح. لكل IRP فرعي `origin: "framework_power_policy"` و`response_index`. تنتظر S3 الفرع؛ ويمكن إكمال S0 بعد إصدار D0. تظل إعادة التعداد التلقائية غير ممثلة.
 
 ينتظر Query النظام طلب Query الجهاز المقابل وينقل نتيجته دون تغيير حالة الطاقة.
+
+## الاستثناءات المتزامنة الأصلية في x64
+
+تستخدم تعليمات `DIV`/`IDIV` في checked x64 نتائج المعالج الحقيقية و`#DE`. يعتمد KVM على IDT/IST خاصة بالمشرف، ويستخدم WHP خريطة اعتراض صريحة؛ يُحتفظ بالسياق الأصلي وأكواد الخطأ المتاحة بصورة مستقلة عن أخطاء النقل. يستهلك نموذج نظام التشغيل الحدث القابل للاستعادة قبل تثبيت سياق المتابعة. يحوّل نموذج برامج تشغيل Windows القسمة على صفر وفيض خارج القسمة إلى `STATUS_INTEGER_DIVIDE_BY_ZERO` مع تنفيذ مرشحات SEH و`__finally` وإعادة المحاولة فعليًا. يُبنى `NeverDX64ExceptionTests` دون Unicorn، ويتحقق `DriverWDMCPUException` من أمثلة WDK الأصلية. تُتخطى مضيفات WHP/ARM64 غير المتاحة صراحةً.
