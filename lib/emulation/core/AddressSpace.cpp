@@ -307,24 +307,36 @@ llvm::Error AddressSpace::unmapMMIO(uint64_t Address, uint64_t Size) {
   ++State->Generation;
   return llvm::Error::success();
 }
-std::optional<BackendFaultKind>
-AddressSpace::Impl::check(uint64_t Address, uint64_t Size,
-                          unsigned Permissions) const {
+std::optional<MemoryAccessFailure>
+AddressSpace::Impl::firstAccessFailure(uint64_t Address, uint64_t Size,
+                                       unsigned Permissions) const {
   if (!Size)
     return std::nullopt;
   if (Size - 1 > UINT64_MAX - Address)
-    return BackendFaultKind::InvalidMemoryRange;
+    return MemoryAccessFailure{BackendFaultKind::InvalidMemoryRange, Address,
+                               Size};
   const uint64_t Last = (Address + Size - 1) & ~(memory::PageSize - 1);
   for (uint64_t VA = Address & ~(memory::PageSize - 1);;
        VA += memory::PageSize) {
     auto I = Pages.find(VA);
+    const uint64_t First = std::max(Address, VA);
+    const uint64_t Count = std::min(
+        Size - (First - Address), memory::PageSize - First % memory::PageSize);
     if (I == Pages.end())
-      return BackendFaultKind::UnmappedMemory;
+      return MemoryAccessFailure{BackendFaultKind::UnmappedMemory, First,
+                                 Count};
     if ((I->second.Permissions & Permissions) != Permissions)
-      return BackendFaultKind::Protection;
+      return MemoryAccessFailure{BackendFaultKind::Protection, First, Count};
     if (VA == Last)
       return std::nullopt;
   }
+}
+std::optional<BackendFaultKind>
+AddressSpace::Impl::check(uint64_t Address, uint64_t Size,
+                          unsigned Permissions) const {
+  if (auto Failure = firstAccessFailure(Address, Size, Permissions))
+    return Failure->Kind;
+  return std::nullopt;
 }
 llvm::Expected<bool> AddressSpace::canAccess(uint64_t Address, uint64_t Size,
                                              unsigned Permissions) const {

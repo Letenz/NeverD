@@ -108,10 +108,14 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size) {
   }
   const uint64_t Source = Address(CPU.reg(X64Register::SI));
   const uint64_t Destination = Address(CPU.reg(X64Register::DI));
-  for (uint64_t A : {Source, Destination})
-    if (Size - 1 > UINT64_MAX - A ||
-        A / x64::PageSize != (A + Size - 1) / x64::PageSize)
+  for (uint64_t A : {Source, Destination}) {
+    if (Size - 1 > UINT64_MAX - A)
+      return access(A, Size, A == Source ? Read : Write, true, true);
+    const uint64_t Last = A + Size - 1;
+    if (A / x64::PageSize != Last / x64::PageSize &&
+        (deviceAt(A) || deviceAt(Last)))
       return llvm::make_error<UnsupportedExecutionError>();
+  }
   auto Input = deviceAt(Source), Output = deviceAt(Destination);
   if (Input && !Input->Callbacks.PrepareRead)
     return llvm::make_error<UnsupportedExecutionError>();
@@ -177,11 +181,12 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size) {
   } else {
     // Admission and the physical execution lease retain this complete RAM
     // slice. Public host writes remain forbidden while a CPU is running.
-    const auto &P = Memory->mappings().at(Destination & ~(x64::PageSize - 1));
-    auto *Bytes =
-        Memory->physicalPointer(P.Physical + Destination % x64::PageSize);
-    for (unsigned N = 0; N < Size; ++N)
-      Bytes[N] = uint8_t(Value >> (N * CHAR_BIT));
+    for (unsigned N = 0; N < Size; ++N) {
+      const uint64_t Address = Destination + N;
+      const auto &P = Memory->mappings().at(Address & ~(x64::PageSize - 1));
+      *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
+          uint8_t(Value >> (N * CHAR_BIT));
+    }
   }
   const uint64_t Delta = CPU.reg(X64Register::FLAGS) & x64::DirectionFlag
                              ? uint64_t(0) - Size

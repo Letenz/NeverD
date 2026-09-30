@@ -355,14 +355,21 @@ TEST_P(X64Data, VectorLoadReadObserverStopsBeforeRegisterChanges) {
   EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
 }
 
-TEST_P(X64Data, CrossPageVectorStoresFailBeforeObserversOrEffects) {
+TEST_P(X64Data, CrossPageVectorStoreReportsTheMissingSecondPage) {
   llvm::cantFail(CPU->setReg(X64Register::CX, Data + PageSize - WordBytes));
   unsigned Writes = 0;
   BackendHooks H;
   H.Write = [&](uint64_t, uint32_t, uint64_t) { ++Writes; };
   auto Exit = run(StoreXmm, std::move(H));
-  EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation);
-  EXPECT_EQ(Writes, 0u);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::GuestFault) << Exit.Diagnostic;
+  ASSERT_TRUE(Exit.Fault);
+  EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::UnmappedMemory);
+  EXPECT_EQ(Exit.Fault->Address, Data + PageSize);
+  EXPECT_EQ(Exit.Fault->Size, WordBytes);
+  EXPECT_EQ(Writes, 2u);
+  std::array<uint8_t, WordBytes> Prefix{};
+  llvm::cantFail(CPU->snapshotBacking(Data + PageSize - WordBytes, Prefix));
+  EXPECT_EQ(Prefix, (std::array<uint8_t, WordBytes>{}));
 }
 
 TEST_P(X64Data, MisalignedAlignedVectorStoreRejectsBeforeObservations) {
