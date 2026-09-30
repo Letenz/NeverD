@@ -46,6 +46,18 @@ admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
 supervisor and flat profiles do not advertise that boundary.
 
+Checked x64 also admits scalar `XCHG`, `XADD` and `CMPXCHG` at 8/16/32/64 bits,
+with natural alignment for locked or implicit-lock memory forms. An ISA-owned
+footprint describes every ordinary RAM write. The physical execution lease and
+bounded `RAMTransaction` keep the actual next CPU/RAM state private until the
+observers accept it; result callbacks see original state and exact processor
+write values. Cancellation, callback failure or a transport error discards
+speculative effects. On a processor exception, RAM rolls back before OS
+delivery while architectural exception status is retained. ARM64 scalar/pair
+stores use the same RAM authority. Devices, unknown footprints and parallel
+hardware SMP remain outside this transaction. CPU snapshots do not undo already
+committed RAM.
+
 User execution requires `UserAccessible` as well as the appropriate `Read`,
 `Write` or `Execute` bit on **every** mapped page. Existing mappings default to
 supervisor access. Aliases have independent rights even when sharing physical

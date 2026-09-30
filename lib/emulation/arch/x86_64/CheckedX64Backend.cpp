@@ -6,6 +6,7 @@
 #include "CheckedX64Backend.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/RAMTransaction.h"
 #include "X64Exception.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -96,6 +97,17 @@ bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
 }
 bool isFloatingPointConversion(unsigned Instruction) {
   return Instruction == X86_INS_CVTTSD2SI || Instruction == X86_INS_CVTTSS2SI;
+}
+bool isAtomic(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_ATOMIC_INSTRUCTION(Name)                                    \
+  case X86_INS_##Name:                                                         \
+    return true;
+#include "X64AtomicInstructions.def"
+#undef NEVERD_X64_ATOMIC_INSTRUCTION
+  default:
+    return false;
+  }
 }
 } // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
@@ -277,8 +289,15 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (Vector && !Conversion && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
+  const bool Atomic = isAtomic(I.id);
+  if (Atomic &&
+      (X.op_count != 2 || X.operands[1].type != X86_OP_REG ||
+       (X.operands[0].type != X86_OP_REG && X.operands[0].type != X86_OP_MEM) ||
+       X.operands[0].size != X.operands[1].size))
+    return llvm::make_error<UnsupportedExecutionError>();
   if ((X.prefix[0] && !Locked) ||
-      (Locked && (!updateArity(I.id) || X.operands[0].type != X86_OP_MEM)) ||
+      (Locked &&
+       ((!updateArity(I.id) && !Atomic) || X.operands[0].type != X86_OP_MEM)) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
       ((I.id == X86_INS_RET || I.id == X86_INS_CALL) &&
        X.prefix[2] == X86_PREFIX_OPSIZE))
@@ -294,6 +313,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     uint64_t Value;
     std::optional<unsigned> Update = std::nullopt;
     uint64_t High = 0;
+    bool Deferred = false;
   };
   std::vector<Access> Accesses;
   auto Value = [&](const cs_x86_op &O) -> llvm::Expected<uint64_t> {
@@ -339,7 +359,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       A += CPU.GSBase;
     if (O.mem.segment == X86_REG_FS)
       A += CPU.FSBase;
-    if (Locked && A % O.size)
+    if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
       return llvm::make_error<UnsupportedExecutionError>();
     // Misaligned aligned-vector forms would raise #GP. No native instruction
     // executes until that exception has an explicit checked-model contract.
@@ -352,6 +372,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if ((Vector && Vector->Move) || condition(I.id, 0))
         OperandAccess = CS_AC_WRITE;
       else if (updateArity(I.id))
+        OperandAccess = CS_AC_READ | CS_AC_WRITE;
+      else if (Atomic)
         OperandAccess = CS_AC_READ | CS_AC_WRITE;
     }
     if (OperandAccess == CS_AC_READ)
@@ -373,6 +395,10 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (!Condition)
         return llvm::make_error<UnsupportedExecutionError>();
       Accesses.push_back({A, O.size, Write, uint64_t(*Condition)});
+    } else if (Atomic && N == 0 &&
+               OperandAccess == (CS_AC_READ | CS_AC_WRITE)) {
+      Accesses.push_back({A, O.size, Read, 0});
+      Accesses.push_back({A, O.size, Write, 0, std::nullopt, 0, true});
     } else if (OperandAccess == (CS_AC_READ | CS_AC_WRITE) && N == 0) {
       auto Arity = updateArity(I.id);
       if (!Arity || X.op_count != *Arity)
@@ -436,7 +462,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   for (const auto &A : Accesses) {
     if (A.Permission == Read && Hooks.Read)
       Hooks.Read(A.Address, A.Size);
-    if (A.Permission == Write && Hooks.Write) {
+    if (A.Permission == Write && Hooks.Write && !A.Deferred) {
       uint64_t Value = A.Value;
       if (A.Update) {
         // The preceding read access has already checked user permissions and
@@ -475,15 +501,52 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (!Root)
     return Root.takeError();
   PageTableRoot = *Root;
-  return llvm::handleErrors(
-      Machine->step(CPU, PageTableRoot, {Deadline, &StopRequested}),
-      [&](const X64ExceptionError &E) {
-        BackendFault Fault{BackendFaultKind::Interrupt, I.address};
-        Fault.Interrupt = E.exception().Vector;
-        Fault.Address = E.exception().FaultAddress;
-        Fault.ErrorCode = E.exception().ErrorCode;
-        return raiseFault(Fault, true);
-      });
+  std::vector<RAMWriteRange> Writes;
+  for (const auto &A : Accesses)
+    if (A.Permission == Write)
+      Writes.push_back({A.Address, A.Size});
+  auto Transaction = RAMTransaction::create(
+      *Memory, Writes, execution_limits::InstructionRAMWriteBytes,
+      executionPermissions(Write));
+  if (!Transaction)
+    return Transaction.takeError();
+  auto Next = CPU;
+  if (auto E = Machine->step(Next, PageTableRoot, {Deadline, &StopRequested})) {
+    // Discard speculative RAM before the OS receives a processor exception.
+    // Its architectural fault state (including FP status) remains
+    // authoritative.
+    Transaction->reset();
+    return llvm::handleErrors(std::move(E), [&](const X64ExceptionError &E) {
+      CPU = Next;
+      BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+      Fault.Interrupt = E.exception().Vector;
+      Fault.Address = E.exception().FaultAddress;
+      Fault.ErrorCode = E.exception().ErrorCode;
+      return raiseFault(Fault, true);
+    });
+  }
+  if (auto E = (*Transaction)->stage())
+    return E;
+  if (StopRequested || FirstFault)
+    return llvm::Error::success();
+  for (const auto &A : Accesses)
+    if (A.Deferred && Hooks.Write) {
+      std::array<uint8_t, x64::WordBytes> Bytes{};
+      if (auto E = (*Transaction)
+                       ->read(A.Address,
+                              llvm::MutableArrayRef(Bytes.data(), A.Size)))
+        return E;
+      uint64_t Value = 0;
+      for (unsigned N = 0; N < A.Size; ++N)
+        Value |= uint64_t(Bytes[N]) << (N * CHAR_BIT);
+      Hooks.Write(A.Address, A.Size, Value);
+      if (StopRequested || FirstFault)
+        return llvm::Error::success();
+    }
+  if (auto E = (*Transaction)->commit())
+    return E;
+  CPU = Next;
+  return llvm::Error::success();
 }
 
 } // namespace neverd::emulation

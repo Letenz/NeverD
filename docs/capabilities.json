@@ -3548,6 +3548,7 @@
       ],
       "limitations": [
         "Checked x64 admits register and ordinary-RAM DIV/IDIV at all integer widths. The actual processor #DE, including quotient overflow, is retained as a guest trap or explicitly admitted recoverable event. KVM authenticates a private supervisor IDT/IST gateway outside guest mappings; WHP intercepts an explicit exception bitmap. This boundary does not admit unlisted instructions or implement a general OS exception subsystem.",
+        "Checked x64 scalar XCHG/XADD/CMPXCHG uses actual processor results at all integer widths, with natural alignment for locked or implicit-lock memory forms. Declared ordinary-RAM writes use a bounded physical-union transaction; observers see original CPU/RAM and exact staged results. Cancellation, observer exceptions and transport failures discard speculative effects; CPU exception status survives RAM rollback. ARM64 scalar/pair writes use the same RAM authority. Unknown footprints, device atomics and parallel hardware SMP remain unsupported.",
         "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
         "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles remain integer-only. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and operands mixing RAM/device pages remain unsupported. Ordinary RAM operands can span separately owned or aliased pages; faults identify the first failed page without partial stores. REP preserves complete earlier elements and restart registers.",
@@ -3557,6 +3558,50 @@
         "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; other checked ARM64 system-register encodings remain unsupported."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDRAMTransactionTests",
+          "source": "unittests/emulation/X64AtomicTests.cpp",
+          "filter": "*/X64Atomic.ObserverExceptionDiscardsTheCompletedNativeWrite/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRAMTransactionTests",
+          "source": "unittests/emulation/X64AtomicTests.cpp",
+          "filter": "*/X64Atomic.ExactRAMAndRegisterResultsMatchIndependentHostExecution/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRAMTransactionTests",
+          "source": "unittests/emulation/RAMTransactionTests.cpp",
+          "filter": "RAMFaultDelivery.OSSeesRestoredRAMAndArchitecturalExceptionStatus",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRAMTransactionTests",
+          "source": "unittests/emulation/RAMTransactionTests.cpp",
+          "filter": "RAMEffects.AliasesShareOneBudgetAndStageBeforeCommitting",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDX64ExceptionTests",

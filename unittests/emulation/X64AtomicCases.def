@@ -1,0 +1,49 @@
+//===- X64AtomicCases.def - Independent scalar exchange encodings ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ATOMIC_VALUE
+NEVERD_ATOMIC_VALUE(Limit, 1024 * 1024)
+NEVERD_ATOMIC_VALUE(Code, 0x10000)
+NEVERD_ATOMIC_VALUE(Data, 0x20000)
+NEVERD_ATOMIC_VALUE(Alias, 0x30000)
+NEVERD_ATOMIC_VALUE(Timeout, 1000000)
+NEVERD_ATOMIC_VALUE(Source, 0xfedcba9876543210ULL)
+NEVERD_ATOMIC_VALUE(Original, 0x89abcdef0f1e2d3cULL)
+NEVERD_ATOMIC_VALUE(AccumulatorHigh, 0xa5a5a5a500000000ULL)
+NEVERD_ATOMIC_VALUE(InitialFlags, 0x2c7)
+NEVERD_ATOMIC_VALUE(Nop, 0x90)
+NEVERD_ATOMIC_VALUE(Lock, 0xf0)
+NEVERD_ATOMIC_VALUE(WordBytes, 8)
+NEVERD_ATOMIC_VALUE(ScalarWidthCount, 4)
+#endif
+#ifdef NEVERD_ATOMIC_TEXT
+NEVERD_ATOMIC_TEXT(
+    OracleUnavailable,
+    "the independent x64 instruction oracle requires an x64 host")
+#endif
+#ifdef NEVERD_ATOMIC_ORACLE_BYTES
+// Host argument points to {RAX, RDX, RFLAGS, target RAM}. Preserve host RBX.
+NEVERD_ATOMIC_ORACLE_BYTES(SysVArgument, 0x48, 0x89, 0xfb)
+NEVERD_ATOMIC_ORACLE_BYTES(Win64Argument, 0x48, 0x89, 0xcb)
+NEVERD_ATOMIC_ORACLE_BYTES(Prefix, 0x53)
+NEVERD_ATOMIC_ORACLE_BYTES(Load, 0x48, 0x8b, 0x03, 0x48, 0x8b, 0x53, 0x08, 0x48,
+                           0x8d, 0x4b, 0x18, 0xff, 0x73, 0x10, 0x9d)
+NEVERD_ATOMIC_ORACLE_BYTES(Save, 0x48, 0x89, 0x03, 0x48, 0x89, 0x53, 0x08, 0x9c,
+                           0x8f, 0x43, 0x10, 0x5b, 0xc3)
+#endif
+#ifdef NEVERD_ATOMIC_CASE
+NEVERD_ATOMIC_CASE(Exchange8, 1, false, 0x86, 0x11)
+NEVERD_ATOMIC_CASE(Exchange16, 2, false, 0x66, 0x87, 0x11)
+NEVERD_ATOMIC_CASE(Exchange32, 4, false, 0x87, 0x11)
+NEVERD_ATOMIC_CASE(Exchange64, 8, false, 0x48, 0x87, 0x11)
+NEVERD_ATOMIC_CASE(AddExchange8, 1, false, 0x0f, 0xc0, 0x11)
+NEVERD_ATOMIC_CASE(AddExchange16, 2, false, 0x66, 0x0f, 0xc1, 0x11)
+NEVERD_ATOMIC_CASE(AddExchange32, 4, false, 0x0f, 0xc1, 0x11)
+NEVERD_ATOMIC_CASE(AddExchange64, 8, false, 0x48, 0x0f, 0xc1, 0x11)
+NEVERD_ATOMIC_CASE(CompareExchange8, 1, true, 0x0f, 0xb0, 0x11)
+NEVERD_ATOMIC_CASE(CompareExchange16, 2, true, 0x66, 0x0f, 0xb1, 0x11)
+NEVERD_ATOMIC_CASE(CompareExchange32, 4, true, 0x0f, 0xb1, 0x11)
+NEVERD_ATOMIC_CASE(CompareExchange64, 8, true, 0x48, 0x0f, 0xb1, 0x11)
+#endif

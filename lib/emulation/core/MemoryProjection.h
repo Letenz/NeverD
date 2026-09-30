@@ -30,6 +30,9 @@ public:
   ~MemoryProjection();
   std::shared_ptr<AddressSpace> addressSpace() const { return Space; }
   llvm::Expected<std::unique_lock<std::recursive_mutex>> lock() const;
+  /// Borrow the current thread's active physical execution lease. A stopped
+  /// owner or a different host thread cannot stage private instruction effects.
+  llvm::Expected<std::unique_lock<std::recursive_mutex>> executionLock() const;
   llvm::Error mutableMemory() const;
   llvm::Error
   validateMappings(llvm::function_ref<bool(uint64_t, uint64_t)> Valid,
