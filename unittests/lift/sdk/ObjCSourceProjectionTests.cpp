@@ -3831,3 +3831,280 @@ int main() {
 )CPP";
   executeSynchronizedSource(*Result, Harness);
 }
+
+namespace {
+struct SynchronizedSequentialFixture : SynchronizedInterleavedFixture {
+  SynchronizedSequentialFixture() {
+    for (va_t Address = 0x3000; Address < 0x30a0; Address += 4)
+      put(Address, 0xd503201fU);
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xa9bd57f6U},
+          {0x3004, 0xa9014ff4U},
+          {0x3008, 0xa9027bfdU},
+          {0x300c, 0x910083fdU},
+          {0x3010, 0xaa0203f4U},
+          {0x3014, 0xaa0003f3U},
+          {0x3018, 0xaa1303e0U},
+          {0x3020, 0xaa1303e0U},
+          {0x3028, 0xaa1403e0U},
+          {0x3030, 0xaa1303e0U},
+          {0x3038, 0xaa1303e0U},
+          {0x3040, 0xb40001d4U}, // cbz x20, 0x3078: skip second lock
+          {0x3044, 0xaa1403e0U},
+          {0x304c, 0xaa1303e0U},
+          {0x3054, 0xaa1303e0U},
+          {0x305c, 0xaa1403e0U},
+          {0x3064, 0xaa1303e0U},
+          {0x306c, 0xaa1303e0U},
+          {0x3074, 0x14000001U},
+          {0x3078, 0xa9427bfdU},
+          {0x307c, 0xa9414ff4U},
+          {0x3080, 0xa8c357f6U},
+          {0x3084, 0xd65f03c0U},
+          {0x3088, 0x14000001U},
+          {0x308c, 0xaa0003f4U},
+          {0x3090, 0xaa1303e0U},
+          {0x3098, 0xaa1403e0U}})
+      put(Address, Word);
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x301c, 0x4130},
+                                          {0x3024, 0x4200},
+                                          {0x302c, 0x4000},
+                                          {0x3034, 0x4210},
+                                          {0x303c, 0x4120},
+                                          {0x3048, 0x4040},
+                                          {0x3050, 0x4130},
+                                          {0x3058, 0x4200},
+                                          {0x3060, 0x4000},
+                                          {0x3068, 0x4210},
+                                          {0x3070, 0x4120},
+                                          {0x3094, 0x4210},
+                                          {0x309c, 0x4220}})
+      call(Address, Target);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Itanium->CallSites.assign(5, {});
+    auto &Sites = EH.Itanium->CallSites;
+    Sites[0].GuardedRange = {0x3000, 0x3028};
+    Sites[1].GuardedRange = {0x3028, 0x3030};
+    Sites[1].LandingPadVA = 0x308c;
+    Sites[2].GuardedRange = {0x3030, 0x305c};
+    Sites[3].GuardedRange = {0x305c, 0x3064};
+    Sites[3].LandingPadVA = 0x3088;
+    Sites[4].GuardedRange = {0x3064, 0x30a0};
+    EH.ObjC->LandingPads = {
+        {{0x3028, 0x3030}, 0x308c, ObjCPadKind::SynchronizedExit, {}},
+        {{0x305c, 0x3064}, 0x3088, ObjCPadKind::Cleanup, {}}};
+  }
+};
+
+const char *SynchronizedSequentialSource = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*, int);
+void neverd_objc_imp_3000(void *objc_self, void *value, int path) {
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 3);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+    if (!path) return;
+    work(value, 5);
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 8);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSequentialLocksKeepDistinctLifetimes) {
+  SynchronizedSequentialFixture F;
+  EXPECT_FALSE(proveObjCSynchronizedInterleavedCleanup(F.Image, F.Function));
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->Lifetimes.size(), 2U);
+  EXPECT_EQ(Proof->Lifetimes[0].EnterCall, 0x3024U);
+  EXPECT_EQ(Proof->Lifetimes[0].ExitCall, 0x3034U);
+  EXPECT_EQ(Proof->Lifetimes[1].EnterCall, 0x3058U);
+  EXPECT_EQ(Proof->Lifetimes[1].ExitCall, 0x3068U);
+  EXPECT_EQ(Proof->LandingPad, 0x3088U);
+  EXPECT_EQ(Proof->LandingPadPrelude, 4U);
+  EXPECT_EQ(Proof->SuspendARC, 0U);
+  // A prefix can bypass the whole first acquisition and join the unlocked
+  // gap, without inheriting either protected body's lock state.
+  F.put(0x3018, 0xb4000154U); // cbz x20, 0x3040
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  const auto Source =
+      addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource, *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_NE(
+      Source->find("neverd_objc_sync_guard = 0;\n    "
+                   "(uint32_t)(neverd_darwin_objc_sync_exit(objc_self));"),
+      std::string::npos);
+  EXPECT_NE(
+      Source->find("neverd_objc_sync_guard = objc_self;\n    work(value, 8)"),
+      std::string::npos);
+  EXPECT_EQ(Source->find("neverd_objc_sync_release"), std::string::npos);
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialRejectsAmbiguousLockState) {
+  const std::vector<std::pair<va_t, uint32_t>> Mutations = {
+      {0x3014, 0xd503201fU},  // no saved self
+      {0x3014, 0x2a0003f3U},  // only W19 saved
+      {0x3020, 0xaa1403e0U},  // different first lock
+      {0x3030, 0xaa1403e0U},  // different first unlock
+      {0x3054, 0xaa1403e0U},  // different second lock
+      {0x3064, 0xaa1403e0U},  // different second unlock
+      {0x3090, 0xaa1403e0U},  // different exceptional unlock
+      {0x3098, 0xaa1303e0U},  // wrong exception value
+      {0x3088, 0x14000002U},  // effectful exceptional forwarding
+      {0x3044, 0xaa0003f3U},  // overwrite receiver in unlocked gap
+      {0x3028, 0xd65f03c0U},  // return holding first lock
+      {0x305c, 0xd65f03c0U},  // return holding second lock
+      {0x3040, 0xb4000114U},  // bypass second enter and join its protected body
+      {0x3018, 0xb4000094U},  // bypass first enter and join its protected body
+      {0x3074, 0x17fffffeU},  // cycle in normal suffix
+      {0x3074, 0x14000005U}}; // normal edge into cleanup
+  for (const auto &[Address, Word] : Mutations) {
+    SynchronizedSequentialFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << std::hex << Address << ":" << Word;
+  }
+  for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x3024, 0x4000},
+                                        {0x3034, 0x4000},
+                                        {0x3058, 0x4000},
+                                        {0x3068, 0x4000},
+                                        {0x3048, 0x4200},
+                                        {0x309c, 0x4000}}) {
+    SynchronizedSequentialFixture F;
+    F.call(Address, Target);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+  SynchronizedSequentialFixture F;
+  F.put(0x3010, 0xaa0103e0U); // lose the incoming self before its save
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  SynchronizedSequentialFixture Range;
+  Range.Function.ExceptionMetadata->Itanium->CallSites[1].GuardedRange.End =
+      0x304c;
+  Range.Function.ExceptionMetadata->ObjC->LandingPads[0].GuardedRange.End =
+      0x304c;
+  EXPECT_FALSE(
+      proveObjCSynchronizedReceiverCleanup(Range.Image, Range.Function));
+  SynchronizedSequentialFixture Unprotected;
+  auto &EH = *Unprotected.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[1].GuardedRange.End = 0x302c;
+  EH.Itanium->CallSites[2].GuardedRange.Begin = 0x302c;
+  EH.ObjC->LandingPads[0].GuardedRange.End = 0x302c;
+  // The call at 0x302c owns the lock but no longer has an LSDA cleanup.
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Unprotected.Image,
+                                                    Unprotected.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialRenderingNeedsEveryExactCall) {
+  SynchronizedSequentialFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  for (const char *Replacement :
+       {"(uint32_t)(neverd_darwin_objc_sync_enter(value));",
+        "if (path) (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));",
+        "(uint32_t)(neverd_darwin_objc_sync_exit(objc_self));",
+        "/* (uint32_t)(neverd_darwin_objc_sync_enter(objc_self)); */"}) {
+    std::string Changed = SynchronizedSequentialSource;
+    const std::string Enter =
+        "(uint32_t)(neverd_darwin_objc_sync_enter(objc_self));";
+    Changed.replace(Changed.rfind(Enter), Enter.size(), Replacement);
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+  auto Changed = *Proof;
+  Changed.SuspendARC = 1;
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource,
+                                                  Changed));
+  Changed = *Proof;
+  Changed.Lifetimes[1].EnterCall = Changed.Lifetimes[0].ExitCall;
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource,
+                                                  Changed));
+  const std::string Tail =
+      "\nvoid helper(void *p) { neverd_darwin_objc_sync_enter(p); }\n";
+  const auto Source = addObjCSynchronizedReceiverCleanup(
+      std::string(SynchronizedSequentialSource) + Tail, *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_EQ(Source->substr(Source->size() - Tail.size()), Tail);
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialExceptionsUnlockOnlyHeldLock) {
+  SynchronizedSequentialFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source =
+      addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource, *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static int failure, bad, exits, enters, retains, releases, held;
+static uint64_t order;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 11 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, lock, ++retains == 1 ? 1 : 6); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    if (held) bad = 1;
+    step(object, lock, ++enters == 1 ? 2 : 7); held = 1; return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    if (!held) bad = 1;
+    held = 0; ++exits;
+    step(object, lock, enters == 1 ? 4 : 9); return 0;
+}
+extern "C" void objc_release(void *object) {
+    if (held) bad = 1;
+    step(object, lock, ++releases == 1 ? 10 : 11);
+}
+extern "C" void work(void *object, int tag) {
+    if (held != (tag != 5)) bad = 1;
+    step(object, value, tag);
+}
+extern "C" void neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        for (failure = 0; failure <= 11; ++failure) {
+            order = bad = exits = enters = retains = releases = held = 0;
+            uint64_t expectedOrder = 0;
+            int expectedExits = 0, expectedThrow = 0;
+            const int tags[] = {1,2,3,4,10,5,6,7,8,9,11};
+            for (int i = 0; i < (path ? 11 : 5); ++i) {
+                const int tag = tags[i];
+                expectedOrder = expectedOrder * 11 + tag;
+                if (tag == 4 || tag == 9) ++expectedExits;
+                if (tag != failure) continue;
+                expectedThrow = tag;
+                if (tag == 3 || tag == 8) {
+                    expectedOrder = expectedOrder * 11 + (tag == 3 ? 4 : 9);
+                    ++expectedExits;
+                }
+                break;
+            }
+            int caught = 0;
+            try { neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            if (caught != expectedThrow || exits != expectedExits || held ||
+                order != expectedOrder || bad)
+                return 10 + failure + path * 20;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
