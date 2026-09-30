@@ -33,6 +33,18 @@ double faults. The change and original regression tests are preserved in
 [commit cf40fa2c](https://github.com/NeverSight/unicorn/commit/cf40fa2c3ccdd90ab7cbb4ff060d9e07921aa3ae).
 The modified QEMU file retains its original LGPL notice.
 
+The fork also includes the original 2026-09-30 SSE denormal-status fix by NeverD
+contributors. The x86 arithmetic helpers report MXCSR.DE for subnormal inputs
+without changing the shared SoftFloat model for other architectures, and retain
+NaN, divide-by-zero and negative-square-root priority. Original regressions and
+the dated modification notice are preserved in
+[commit 16c0b3fd](https://github.com/NeverSight/unicorn/commit/16c0b3fd9486b598287ad79553768ed44805e217).
+The modified SSE helper retains its original LGPL notice. The instruction
+semantics were checked against the
+[Intel floating-point reference](https://www.intel.com/content/www/us/en/developer/articles/technical/floating-point-reference-sheet-for-intel-architecture.html)
+and independently executed host instructions; no reference implementation was
+copied into NeverD.
+
 ## Swift runtime ABI declarations
 
 `lib/loader/Swift/SwiftRuntimeDeclarations.inc` derives fixed C and Swift ABI declarations

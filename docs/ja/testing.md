@@ -122,6 +122,8 @@ ARM64 hardware や hypervisor がない場合は native coverage の skip であ
 
 [独立 process suite](process-emulation.md#検証) は x64/AArch64 の実際の ELF fixture を compile します。`NeverDLinuxProcessTests` は起動、program-header policy、service continuation、binary output、guest fault、resource stop を検証します。`NeverDProcessPublicTests` は分析用 image を変更せず C API/CLI を確認します。`NeverDExecutionSessionTests` は memory/budget を共有する CPU と request/fault の exactly-once 消費を扱います。`NeverDX64MemoryUpdateTests` は memory arithmetic、SETcc、BT、XMM/MXCSR、write observer、REP boundary、prepared device read を確認します。`DriverBackendParityTests.cpp` は original/relocated WDK fixture を実行し、観測可能な完全 report を Unicorn と比較します。fixture/backend 不在は明示的に skip します。
 
+checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

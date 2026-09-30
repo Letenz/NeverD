@@ -17,6 +17,8 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp

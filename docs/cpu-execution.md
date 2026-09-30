@@ -46,6 +46,8 @@ admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
 supervisor and flat profiles do not advertise that boundary.
 
+Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
+
 Checked x64 also admits scalar `XCHG`, `XADD` and `CMPXCHG` at 8/16/32/64 bits,
 with natural alignment for locked or implicit-lock memory forms. An ISA-owned
 footprint describes every ordinary RAM write. The physical execution lease and
