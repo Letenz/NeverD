@@ -92,17 +92,24 @@ struct LowIRLoopCutpoint {
   va_t OriginalAddress = 0;
   va_t CandidateAddress = 0;
   /// Use the first feasible paired entry-prefix arrival as the template base
-  /// instead of the function entry state. Its path predicate is also retained
-  /// and proved on every arrival. A cut behind earlier cuts is reached by a
-  /// separate bounded replay from the real entry. That replay establishes only
-  /// a feasible paired witness; complete entry/transition coverage is still
-  /// required. No abstract state is invented for an unreached cut.
+  /// instead of the function entry state. By default its path predicate is
+  /// retained and proved on every arrival. A cut behind earlier cuts is reached
+  /// by a separate bounded replay from the real entry. That replay establishes
+  /// only a feasible paired witness; complete entry/transition coverage is
+  /// still required. No abstract state is invented for an unreached cut.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;
   std::vector<LowIRLoopAssignment> OriginalState, CandidateState;
   NdVar Predicate = NdVar::scalar(1, 1);
   std::vector<NdVar> Rank;
+  /// Requires UseEntryPrefix. Treat the captured state expressions as total,
+  /// untrusted template functions outside the witness's path domain, without
+  /// assuming its path predicate. This does not replay the prefix on that
+  /// larger domain: all real arrivals must match the full template, and the
+  /// expanded induction domain must pass projection, coverage, transition,
+  /// observation and strict rank checks. A feasible paired prefix is required.
+  bool GeneralizeEntryPrefix = false;
 };
 
 struct LowIRLoopRefinementPlan {
