@@ -1341,6 +1341,75 @@ TEST(ObjCSourceProjection, NativeInferenceSkipsCallOnlyThunkTargets) {
   EXPECT_FALSE(Diagnostics.count(0x3000));
 }
 
+TEST(ObjCSourceProjection, SpecializedArrayCastInferenceRequiresCompleteAudit) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.Image.Format = BinaryFormat::MachO;
+  F.Image.Bits = Bitness::Bits64;
+  F.Image.Symbols.push_back(
+      {"_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_AFSgTg5",
+       0x3000, 0, true});
+  F.call(0, 0x3000);
+  MedFunc Med;
+  Med.Entry = 0x3000;
+  F.Result.MedFuncs.push_back(Med);
+  HighFunc High;
+  High.Entry = 0x3000;
+  F.Result.HighFuncs.push_back(High);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = 0x3000;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  F.Result.FunctionAudits.push_back(Audit);
+
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 1U);
+  ASSERT_TRUE(Options.SourceTypeHints.count(0x3000));
+  const auto &Hint = Options.SourceTypeHints.at(0x3000);
+  ASSERT_EQ(Hint.Parameters.size(), 1U);
+  EXPECT_EQ(Hint.Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint.ReturnLocation.RegisterOffset, a64reg::X0);
+  // Inference schedules re-lifting. It does not publish the old untyped body.
+  EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 0U);
+
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    F.Result.FunctionAudits[0] = Audit;
+    auto &Broken = F.Result.FunctionAudits[0];
+    switch (Case) {
+    case 0:
+      Broken.Disposition = PipelineFunctionDisposition::RejectedLowIR;
+      break;
+    case 1:
+      Broken.HasLowIR = false;
+      break;
+    case 2:
+      Broken.HasMedIR = false;
+      break;
+    case 3:
+      Broken.MedIRVerified = false;
+      break;
+    case 4:
+      Broken.LiftedInstructions = 0;
+      break;
+    case 5:
+      Broken.DecodedInstructions = 0;
+      break;
+    }
+    PipelineOptions Invalid;
+    Diagnostics.clear();
+    EXPECT_EQ(
+        inferObjCNativeDependencies(F.Image, F.Result, Invalid, Diagnostics),
+        0U);
+    EXPECT_TRUE(Invalid.SourceTypeHints.empty());
+  }
+}
+
 TEST(ObjCSourceProjection, NativeInferenceUsesSourceBoundRefinementBodies) {
   NativeDependencyFixture F;
   F.Image.Arch = Arch::AArch64;
