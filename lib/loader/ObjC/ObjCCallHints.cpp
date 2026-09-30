@@ -1071,8 +1071,10 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             const auto &[Offset, Root] = Capture;
             return Offset >= 32 && Offset <= (1u << 20) - 8 &&
                    Offset % 8 == 0 &&
-                   Root.Origin ==
-                       ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                   (Root.Origin ==
+                        ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+                    Root.Origin ==
+                        ObjCReceiverTypeHint::OriginKind::MethodParameter) &&
                    Root.Address != Function.Entry && Root.Steps.empty() &&
                    objcReceiverTypeHintValid(Image, Root);
           });

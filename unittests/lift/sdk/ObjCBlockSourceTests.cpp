@@ -394,6 +394,60 @@ TEST(ObjCBlockSources, StrongCaptureRetainsOnlyProvenMethodSelfClass) {
             "TestOwner");
 }
 
+TEST(ObjCBlockSources, StrongCaptureRetainsProvenUIImageMethodParameter) {
+  OwnedSourceFixture F(Arch::AArch64);
+  F.Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit",
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "SDImageCoderHelper";
+  Owner.Address = 0x2800;
+  Owner.SuperclassName = "NSObject";
+  Owner.InheritanceStatus = "resolved";
+  F.Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.Implementation = F.Caller;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2900;
+  Method.IsClassMethod = true;
+  Method.Selector = "decodedImageWithImage:policy:";
+  Method.TypeEncoding = "@32@0:8@16Q24";
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  F.Image.ObjCMethods.push_back(Method);
+  const auto Signature = objcMethodSourceTypeHint(F.Image, F.Caller);
+  ASSERT_TRUE(Signature);
+  F.caller().SourceTypeHint = *Signature;
+  F.caller().ReturnType = Signature->ReturnType;
+  F.caller().Params.clear();
+  for (const auto &Parameter : Signature->Parameters)
+    F.caller().Params.push_back({Parameter.Name, Parameter.Type});
+  F.caller().Body[4].StoreVal = parameter(2, F.caller().Params[2].Type);
+  ASSERT_TRUE(objcMethodParameterReceiverTypeHint(F.Image, F.Caller, 2));
+
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks.count(F.Caller), 1U)
+      << (Plan.Rejections.count(F.Caller) ? Plan.Rejections.at(F.Caller) : "");
+  ASSERT_EQ(Plan.CaptureReceivers.count(F.Invoke), 1U);
+  ASSERT_EQ(Plan.CaptureReceivers.at(F.Invoke).count(32), 1U);
+  EXPECT_EQ(Plan.CaptureReceivers.at(F.Invoke).at(32).ClassName, "UIImage");
+  EXPECT_EQ(Plan.CaptureReceivers.at(F.Invoke).at(32).Origin,
+            ObjCReceiverTypeHint::OriginKind::MethodParameter);
+
+  F.caller().Body[4].StoreVal = parameter(3, F.caller().Params[3].Type);
+  EXPECT_TRUE(discoverObjCBlockSources(F.Image, F.Result)
+                  .CaptureReceivers.at(F.Invoke)
+                  .empty());
+  F.caller().Body[4].StoreVal = parameter(2, F.caller().Params[2].Type);
+  F.Image.ObjCMethods[0].TypeEncoding = "@32@0:8@16q24";
+  EXPECT_TRUE(discoverObjCBlockSources(F.Image, F.Result)
+                  .CaptureReceivers.at(F.Invoke)
+                  .empty());
+}
+
 TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
   for (bool Wide : {false, true}) {
     SCOPED_TRACE(Wide ? "16-byte context copy" : "8-byte context copy");

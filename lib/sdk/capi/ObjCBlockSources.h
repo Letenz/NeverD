@@ -300,6 +300,18 @@ public:
                                              *Signature))
           return {Value::Receiver, 0, Function.Entry, Root->ClassName, E.get()};
       }
+      if (E->Var.Kind == MedVar::Param && E->Var.Id >= 2 &&
+          E->Var.SSAVer == 0 && E->Var.RenameTag < 0 && Bytes == 8 &&
+          E->Var.Id < Function.Params.size() && Function.SourceTypeHint) {
+        const auto Root = objcMethodParameterReceiverTypeHint(
+            Image, Function.Entry, unsigned(E->Var.Id));
+        const auto Signature = objcMethodSourceTypeHint(Image, Function.Entry);
+        if (Root && Signature &&
+            objc_projection_detail::sameHint(*Function.SourceTypeHint,
+                                             *Signature))
+          return {Value::Receiver, int64_t(E->Var.Id), Function.Entry,
+                  Root->ClassName, E.get()};
+      }
       if (E->Var.Kind == MedVar::Param && E->Var.RenameTag < 0)
         return {};
       if (E->Var.Kind == MedVar::Reg && E->Var.RenameTag < 0 &&
@@ -1175,8 +1187,13 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           }
           if (Captured.K != Value::Receiver)
             continue;
-          if (!Captured.Offset && Captured.Bits == Function.Entry) {
-            const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
+          if (Captured.Bits == Function.Entry && Captured.Offset >= 0 &&
+              Captured.Offset < 8) {
+            const auto Root =
+                Captured.Offset == 0
+                    ? objcMethodReceiverTypeHint(Image, Function.Entry)
+                    : objcMethodParameterReceiverTypeHint(
+                          Image, Function.Entry, unsigned(Captured.Offset));
             if (Root && Root->ClassName == Captured.Name)
               Result.CapturedReceivers.emplace(Offset, *Root);
           } else if (ParentReceivers) {
@@ -1576,8 +1593,10 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
               [&](const auto &Capture) {
                 const auto &Root = Capture.second;
                 return Capture.first >= 32 &&
-                       Root.Origin ==
-                           ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                       (Root.Origin ==
+                            ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+                        Root.Origin == ObjCReceiverTypeHint::OriginKind::
+                                           MethodParameter) &&
                        !Root.BlockCaptureOffset && Root.Steps.empty() &&
                        objcReceiverTypeHintValid(Image, Root);
               }))

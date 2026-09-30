@@ -10596,6 +10596,87 @@ TEST(ObjCCallHints, WMFNewsArrayParameterQualifiesEnumerationBlock) {
   EXPECT_FALSE(objcReceiverTypeHintValid(Image, WrongParameter));
 }
 
+TEST(ObjCCallHints, SDImageCoderInputKeepsUIImageReceiverIdentity) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit",
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "SDImageCoderHelper";
+  Owner.Address = 0x2300;
+  Owner.SuperclassName = "NSObject";
+  Owner.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.IsClassMethod = true;
+  Method.Selector = "decodedImageWithImage:policy:";
+  Method.TypeEncoding = "@32@0:8@16Q24";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "UIImage");
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto Drawing = objcReceiverSourceTypeHint(Image, "drawInRect:", *Root);
+  ASSERT_TRUE(Drawing.Signature);
+  EXPECT_EQ(Drawing.Signature->Parameters.size(), 3U);
+  EXPECT_EQ(Drawing.Signature->Parameters[2].Type->Size, 32U);
+
+  Image.ObjCSourceReferences.at(0x2100).Name = "drawInRect:";
+  auto Invoke = caller();
+  Invoke.Entry = 0x1600;
+  auto &Ops = Invoke.Blocks.front();
+  Ops.StartAddr = 0x1600;
+  Ops.EndAddr = 0x1610;
+  Ops.Ops = {operation(NdOp::INT_ADD, NdVar::reg(a64reg::X9, 8),
+                       {NdVar::reg(a64reg::X0, 8), NdVar::cst(32, 4)}, 0x1600),
+             operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                       {NdVar::reg(a64reg::X9, 8)}, 0x1604),
+             operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1608),
+             operation(NdOp::RETURN, {}, {}, 0x160c)};
+  const std::map<uint64_t, ObjCReceiverTypeHint> Captures{{32, *Root}};
+  const auto Calls =
+      buildObjCSourceCallHints(Image, Invoke, nullptr, &Captures);
+  ASSERT_TRUE(Calls.count(0x1608));
+  ASSERT_TRUE(Calls.at(0x1608).Receiver);
+  EXPECT_EQ(Calls.at(0x1608).Receiver->ClassName, "UIImage");
+  EXPECT_EQ(Calls.at(0x1608).Receiver->SourceParameter, 2U);
+  EXPECT_EQ(Calls.at(0x1608).Receiver->BlockCaptureOffset, 32U);
+  auto Misaligned = *Calls.at(0x1608).Receiver;
+  Misaligned.BlockCaptureOffset = 33;
+  EXPECT_FALSE(objcReceiverTypeHintValid(Image, Misaligned));
+  auto WrongField = Invoke;
+  WrongField.Blocks.front().Ops[0].Inputs[1] = NdVar::cst(40, 4);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, WrongField, nullptr, &Captures)
+                   .count(0x1608));
+
+  auto Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "@32@0:8@16q24";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods[0].IsClassMethod = false;
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Method);
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Image, 0x1200, 3));
+}
+
 TEST(ObjCCallHints, SDImagePipelineArrayParameterQualifiesEnumeration) {
   auto Image = image();
   Image.ObjCMethods.clear();

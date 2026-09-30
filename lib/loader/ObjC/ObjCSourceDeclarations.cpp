@@ -947,6 +947,73 @@ objcMethodParameterReceiverTypeHint(const BinaryImage &Image, va_t Entry,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry)
     return std::nullopt;
+  // SDWebImage 5.21.3 declares decodedImageWithImage:policy:'s image input
+  // as UIImage *. Objective-C's runtime encoding retains only id here.
+  // Authenticate the exact embedded method before applying UIKit's drawing
+  // declaration to that source parameter or a block that captures it.
+  if (Parameter == 2) {
+    const bool CoderEntry =
+        std::any_of(Image.ObjCMethods.begin(), Image.ObjCMethods.end(),
+                    [&](const ObjCMethod &Method) {
+                      return Method.Implementation == Entry &&
+                             Method.ClassName == "SDImageCoderHelper" &&
+                             Method.Selector == "decodedImageWithImage:policy:";
+                    });
+    if (CoderEntry) {
+      const auto UIKit = objc::sdkReceiverDeclarations(Image, "UIImage", false,
+                                                       false, "drawInRect:");
+      if (!UIKit.Present || !UIKit.Complete || UIKit.Members.size() != 1 ||
+          !UIKit.Members.front().Signature)
+        return std::nullopt;
+      const ObjCClass *Owner = nullptr;
+      for (const auto &Class : Image.ObjCClasses)
+        if (Class.Name == "SDImageCoderHelper") {
+          if (Owner)
+            return std::nullopt;
+          Owner = &Class;
+        }
+      if (!Owner || !Owner->Address || Owner->RootClass ||
+          Owner->InheritanceStatus != "resolved" ||
+          Owner->SuperclassName != "NSObject")
+        return std::nullopt;
+      const ObjCMethod *Found = nullptr;
+      for (const auto &Method : Image.ObjCMethods) {
+        if (Method.Implementation != Entry &&
+            !(Method.ClassName == Owner->Name &&
+              Method.Selector == "decodedImageWithImage:policy:"))
+          continue;
+        if (Found || Method.Implementation != Entry ||
+            Method.ClassName != Owner->Name ||
+            Method.ClassAddress != Owner->Address ||
+            Method.Selector != "decodedImageWithImage:policy:" ||
+            Method.CategoryAddress || !Method.CategoryName.empty() ||
+            !Method.MetadataAddress || !Method.IsClassMethod ||
+            Method.TypeEncoding != "@32@0:8@16Q24" ||
+            !objcMethodHasSourceBody(Method) || !Image.isCodeAddress(Entry))
+          return std::nullopt;
+        Found = &Method;
+      }
+      if (!Found)
+        return std::nullopt;
+      const auto Signature = objcMethodSourceTypeHint(Image, Entry);
+      if (!Signature || Signature->Parameters.size() != 4 ||
+          !Signature->Parameters[Parameter].Type ||
+          Signature->Parameters[Parameter].Type->Kind != NdTypeKind::Ptr ||
+          Signature->Parameters[Parameter].Type->Size != 8 ||
+          Signature->Parameters[Parameter].Location.Kind !=
+              SourceABICarrierKind::IntegerRegister ||
+          Signature->Parameters[Parameter].Location.RegisterOffset !=
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[Parameter] ||
+          Signature->Parameters[Parameter].Location.ValueBytes != 8)
+        return std::nullopt;
+      ObjCReceiverTypeHint Result;
+      Result.Origin = ObjCReceiverTypeHint::OriginKind::MethodParameter;
+      Result.Address = Entry;
+      Result.ClassName = "UIImage";
+      Result.SourceParameter = Parameter;
+      return Result;
+    }
+  }
   // SDWebImage 5.21.3 UIView+WebCache.m declares both indicator queue inputs
   // as SDCallbackQueue *. Linker category merging can change the category
   // name, so authenticate the two embedded UIView methods together.
@@ -1353,7 +1420,10 @@ bool validReceiverRoot(const BinaryImage &Image,
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
        (Receiver.BlockDescriptorAddress || Receiver.BlockDescriptorFlags)) ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+       Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodParameter &&
        Receiver.BlockCaptureOffset) ||
+      (Receiver.BlockCaptureOffset &&
+       (Receiver.BlockCaptureOffset < 32 || Receiver.BlockCaptureOffset % 8)) ||
       Receiver.BlockCaptureOffset > (1u << 20) - 8 ||
       Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
