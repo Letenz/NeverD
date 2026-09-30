@@ -408,12 +408,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       return llvm::make_error<UnsupportedExecutionError>();
     Accesses.push_back({SP, x64::WordBytes, Read, 0});
   }
-  // Single-page transactions are the initial contract. Cross-page partial
-  // effects and MMIO are not approximated by a sequence of host callbacks.
-  for (const auto &A : Accesses)
-    if (A.Size - 1 > UINT64_MAX - A.Address ||
-        A.Address / x64::PageSize != (A.Address + A.Size - 1) / x64::PageSize)
+  // RAM operands may cross pages with unrelated physical owners. Validate
+  // their whole extent before native execution; a synchronous fault cannot
+  // publish a prefix store. Device transfers remain indivisible and cannot
+  // combine RAM and device pages or two independent device transactions.
+  for (const auto &A : Accesses) {
+    if (A.Size - 1 > UINT64_MAX - A.Address)
+      return access(A.Address, A.Size, A.Permission, true, true);
+    const uint64_t Last = A.Address + A.Size - 1;
+    if (A.Address / x64::PageSize != Last / x64::PageSize &&
+        (deviceAt(A.Address) || deviceAt(Last)))
       return llvm::make_error<UnsupportedExecutionError>();
+  }
   // A device transfer is one bounded scalar MOV, MOVZX or MOVSX. RMW, wide
   // vector and implicit-stack device accesses cannot be split into callbacks.
   const Access *DeviceAccess = nullptr;

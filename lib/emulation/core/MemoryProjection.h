@@ -49,6 +49,8 @@ public:
   llvm::Error protect(uint64_t A, uint64_t N, unsigned P) {
     return Space->protect(A, N, P);
   }
+  std::optional<MemoryAccessFailure> firstAccessFailure(uint64_t A, uint64_t N,
+                                                        unsigned P) const;
   std::optional<BackendFaultKind> check(uint64_t A, uint64_t N,
                                         unsigned P) const;
   llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> B,

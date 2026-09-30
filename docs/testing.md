@@ -483,6 +483,16 @@ cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --
 ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
 ```
 
+`X64CrossPageTests.cpp` in `NeverDX64MemoryUpdateTests` checks scalar/SSE
+loads, stores and arithmetic across every byte split of adjacent RAM pages,
+with separate physical owners and aliases. User and supervisor cells verify
+per-page rights, precise second-page faults, observer stops, fault consumption
+and retry. REP tests preserve completed elements and restart registers; mixed
+RAM/device tests reject without callbacks. Linux x64 additionally executes the
+same original scalar/SSE instruction bytes and a REP copy natively in child
+processes to establish independent store-fault behavior. Other native-oracle
+hosts skip explicitly; backend cells distinguish unavailable execution.
+
 ## Process emulation checks
 
 `LinuxMemory.*` in `NeverDLinuxProcessTests` checks raw anonymous-memory syscall
