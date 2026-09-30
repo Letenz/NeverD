@@ -319,11 +319,12 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // and the arg is read as 0.
   std::set<std::tuple<int, int, uint64_t>> VisitedPhi;
   // Every def visited on the current esp-chain walk, keyed by SSA identity.  A
-  // value cycle through COPY/ADD/SUB/extend defs (not only PHIs) would otherwise
-  // recurse until the depth cap — but 4096 levels of this std::function
-  // recursion overflow even the enlarged main stack (SIGBUS).  Cutting a re-entry
-  // of any already-seen def bounds the walk to the (small) number of distinct
-  // SSA vars, so the depth cap only guards genuinely long acyclic chains.
+  // value cycle through COPY/ADD/SUB/extend defs (not only PHIs) would
+  // otherwise recurse until the depth cap — but 4096 levels of this
+  // std::function recursion overflow even the enlarged main stack (SIGBUS).
+  // Cutting a re-entry of any already-seen def bounds the walk to the (small)
+  // number of distinct SSA vars, so the depth cap only guards genuinely long
+  // acyclic chains.
   std::set<std::tuple<int, int, int, uint64_t>> VisitedDef;
   std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
@@ -331,8 +332,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       VisitedPhi.clear();
       VisitedDef.clear();
     }
-    if (!VisitedDef
-             .insert({static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff})
+    if (!VisitedDef.insert({static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff})
              .second)
       return std::nullopt;
     // The esp chain to a stack access can be long: each i386 stack adjustment

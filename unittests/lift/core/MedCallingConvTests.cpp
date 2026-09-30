@@ -412,8 +412,7 @@ TEST(LowToMedX64CallingConv, Win64HomeLoadsAreNotStackParameters) {
   Ret.addInput(NdVar::reg(x86reg::RAX, 8));
   Block.Ops.push_back(Ret);
 
-  MedFunc Med =
-      LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
   ASSERT_EQ(Med.CC, CallingConv::Win64);
   ASSERT_EQ(Med.Params.size(), 4u) << Med.Params.size();
   EXPECT_EQ(Med.Params[0].RegOff, x86reg::RCX);
@@ -461,8 +460,7 @@ TEST(LowToMedX64CallingConv, Win64CoffKeepsRsiRdiAcrossCall) {
   Ret.addInput(NdVar::reg(x86reg::RAX, 8));
   Block.Ops.push_back(Ret);
 
-  MedFunc Med =
-      LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
   const MedOp *RaxUse = nullptr;
   const MedOp *RdiStore = nullptr;
   for (const MedBlock &Blk : Med.Blocks)
@@ -567,8 +565,7 @@ TEST(HighCallArguments, AArch64FullRegisterBankExtendsStackStoreScan) {
   MedBlock &Block = Func.Blocks[0];
   Block.Id = 0;
 
-  const MedVar EntrySP =
-      reg(1, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
+  const MedVar EntrySP = reg(1, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
   addLiveIn(Block, EntrySP);
 
   MedOp Store;
@@ -582,14 +579,14 @@ TEST(HighCallArguments, AArch64FullRegisterBankExtendsStackStoreScan) {
   // each of x0-x7 before the call, but a complete register bank proves that a
   // following [sp] slot is ABI-plausible as argument 8.
   for (int I = 0; I < 5; ++I)
-    Block.Ops.push_back(unary(
-        NdOp::COPY, temp(10 + I, 0, TRI.PointerSize, TheArch),
-        MedVar::makeConst(0x100 + I, TRI.PointerSize)));
+    Block.Ops.push_back(unary(NdOp::COPY,
+                              temp(10 + I, 0, TRI.PointerSize, TheArch),
+                              MedVar::makeConst(0x100 + I, TRI.PointerSize)));
   for (int I = 0; I < 8; ++I)
-    Block.Ops.push_back(unary(
-        NdOp::COPY,
-        reg(20 + I, 0, TRI.PointerSize, TRI.IntParamRegs[I], TheArch),
-        MedVar::makeConst(I + 1, TRI.PointerSize)));
+    Block.Ops.push_back(
+        unary(NdOp::COPY,
+              reg(20 + I, 0, TRI.PointerSize, TRI.IntParamRegs[I], TheArch),
+              MedVar::makeConst(I + 1, TRI.PointerSize)));
 
   MedOp Call;
   Call.Opcode = NdOp::CALL;
@@ -798,9 +795,9 @@ TEST(MedABIPass, Win64InBlockConstantOverridesJoinPhi) {
   Func.Blocks[3].Id = 3;
   Func.Blocks[3].Preds = {1, 2};
   Func.Blocks[3].Phis.push_back({R9Join, {{1, R9Then}, {2, R9Else}}});
-  Func.Blocks[3].Ops.push_back(
-      unary(NdOp::COPY, reg(13, 4, 4, x86reg::R9, Arch::X64),
-            MedVar::makeConst(0, 4)));
+  Func.Blocks[3].Ops.push_back(unary(NdOp::COPY,
+                                     reg(13, 4, 4, x86reg::R9, Arch::X64),
+                                     MedVar::makeConst(0, 4)));
   Func.Blocks[3].Ops.push_back(unary(NdOp::COPY, R81, MedVar::makeConst(1, 4)));
   Func.Blocks[3].Ops.push_back(
       unary(NdOp::COPY, RDX1, MedVar::makeConst(0x140005000, 8)));
@@ -988,8 +985,9 @@ TEST(MedABIPass, Win64InterveningThiscallKeepsPredNonNullGuardAsThis) {
   Img.Arch = Arch::X64;
   Img.Bits = Bitness::Bits64;
   Img.Format = BinaryFormat::COFF;
-  const std::map<va_t, std::string> Names{{GetCatalog, "CRecordData_GetCatalogBoxID"},
-                                         {GetPeriod, "RecordCatalogBoxTable_GetPeriodID"}};
+  const std::map<va_t, std::string> Names{
+      {GetCatalog, "CRecordData_GetCatalogBoxID"},
+      {GetPeriod, "RecordCatalogBoxTable_GetPeriodID"}};
   std::map<va_t, int> RegArity{{GetCatalog, 1}, {GetPeriod, 2}};
   std::map<va_t, int> TotalArity{{GetCatalog, 1}, {GetPeriod, 2}};
   recoverCallAbi(Func, Arch::X64, Names, &Img, &RegArity, &TotalArity);
@@ -3195,8 +3193,8 @@ TEST(LowToMedX86CallingConv,
   for (const MedBlock &MedBlock : Med.Blocks)
     for (const MedOp &Op : MedBlock.Ops) {
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
-        SawParameterUse |= Op.Inputs[I].Kind == MedVar::Param &&
-                           Op.Inputs[I].Id == 0;
+        SawParameterUse |=
+            Op.Inputs[I].Kind == MedVar::Param && Op.Inputs[I].Id == 0;
       EXPECT_NE(Op.Opcode, NdOp::LOAD);
     }
   EXPECT_TRUE(SawParameterUse);
@@ -5056,11 +5054,10 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     const MedVar Rsp2 = reg(4, 2, 8, x86reg::RSP, Arch::X64);
     const MedVar Rsp3 = reg(4, 3, 8, x86reg::RSP, Arch::X64);
     int NextTemp = 100;
-    auto stackStore = [&](const MedVar &Base, uint64_t Offset,
-                          uint64_t Value) {
+    auto stackStore = [&](const MedVar &Base, uint64_t Offset, uint64_t Value) {
       const MedVar Address = temp(NextTemp++, 1, 8, Arch::X64);
-      Block.Ops.push_back(binary(NdOp::INT_ADD, Address, Base,
-                                 MedVar::makeConst(Offset, 8)));
+      Block.Ops.push_back(
+          binary(NdOp::INT_ADD, Address, Base, MedVar::makeConst(Offset, 8)));
       MedOp Store;
       Store.Opcode = NdOp::STORE;
       Store.addInput(Address);
@@ -5072,8 +5069,8 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     // A scan widened without an SP basis boundary would invent a ninth arg.
     if (Mode == 1)
       stackStore(Rsp0, 0x40, 99);
-    Block.Ops.push_back(binary(NdOp::INT_SUB, Rsp1, Rsp0,
-                               MedVar::makeConst(0x80, 8)));
+    Block.Ops.push_back(
+        binary(NdOp::INT_SUB, Rsp1, Rsp0, MedVar::makeConst(0x80, 8)));
     if (Mode == 2) {
       // A later COPY restores the entry SP, so this store belongs to the
       // abandoned frame even though its offset looks like a ninth arg.
@@ -5086,19 +5083,15 @@ TEST(MedToHighCallArgs, Win64LateEighthStackArgKeepsCurrentFrameOnly) {
     // This SSA rename preserves the stack base; it must not stop the scan.
     Block.Ops.push_back(unary(NdOp::COPY, RenamedSp, ActiveSp));
     for (int I = 0; I < 9; ++I)
-      Block.Ops.push_back(unary(NdOp::COPY,
-                                temp(NextTemp++, 1, 8, Arch::X64),
+      Block.Ops.push_back(unary(NdOp::COPY, temp(NextTemp++, 1, 8, Arch::X64),
                                 MedVar::makeConst(100 + I, 8)));
     stackStore(RenamedSp, 0x30, 7);
     stackStore(RenamedSp, 0x28, 6);
     stackStore(RenamedSp, 0x20, 5);
     for (const auto &[Id, Off, Value] :
-         {std::tuple{10, x86reg::RCX, 1u},
-          std::tuple{11, x86reg::RDX, 2u},
-          std::tuple{12, x86reg::R8, 3u},
-          std::tuple{13, x86reg::R9, 4u}})
-      Block.Ops.push_back(unary(NdOp::COPY,
-                                reg(Id, 1, 8, Off, Arch::X64),
+         {std::tuple{10, x86reg::RCX, 1u}, std::tuple{11, x86reg::RDX, 2u},
+          std::tuple{12, x86reg::R8, 3u}, std::tuple{13, x86reg::R9, 4u}})
+      Block.Ops.push_back(unary(NdOp::COPY, reg(Id, 1, 8, Off, Arch::X64),
                                 MedVar::makeConst(Value, 8)));
     MedOp Call;
     Call.Opcode = NdOp::CALL;

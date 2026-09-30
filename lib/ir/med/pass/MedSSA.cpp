@@ -548,8 +548,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // the protected call's ordinary register values, while all preserved frame
   // registers continue to flow over the exceptional edge.
   const uint64_t EHSelectorReg =
-      TRI.IntReturnRegs.size() > 1 ? TRI.IntReturnRegs[1]
-                                  : TRI.IntReturnReg2;
+      TRI.IntReturnRegs.size() > 1 ? TRI.IntReturnRegs[1] : TRI.IntReturnReg2;
   auto InsertEHDefs = [&](MedBlock &Block, uint64_t RegOff,
                           MedVar::VarKind Kind) {
     auto IdsIt = RegOffToIds.find(RegOff);
@@ -677,8 +676,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           continue;
       for (int Id : Ids) {
         auto It = RegVarOfId.find(Id);
-        if (It == RegVarOfId.end() ||
-            !fullyPreserved(RegOff, It->second.Size))
+        if (It == RegVarOfId.end() || !fullyPreserved(RegOff, It->second.Size))
           Result.insert(Id);
       }
     }
@@ -874,8 +872,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           Input.SSAVer = 0;
           Input.Size = TRI.PointerSize;
         } else if (IsItaniumEHRoot && EHSelectorReg != 0 &&
-                   Input.Kind == MedVar::Reg &&
-                   Input.RegOff == EHSelectorReg) {
+                   Input.Kind == MedVar::Reg && Input.RegOff == EHSelectorReg) {
           Input.Kind = MedVar::EHSelector;
           Input.Id = -1;
           Input.SSAVer = 0;

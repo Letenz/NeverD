@@ -820,10 +820,9 @@ TEST(LLVMCIntrinsicSemantics, X87FpremKeepsTenByteOperandsAndC2) {
   auto *I80 = B.getIntNTy(80);
   auto *F80 = llvm::Type::getX86_FP80Ty(C);
   auto *Fn = llvm::Function::Create(
-      llvm::FunctionType::get(B.getInt32Ty(),
-                              {B.getPtrTy(), B.getPtrTy(), B.getPtrTy(),
-                               B.getPtrTy()},
-                              false),
+      llvm::FunctionType::get(
+          B.getInt32Ty(),
+          {B.getPtrTy(), B.getPtrTy(), B.getPtrTy(), B.getPtrTy()}, false),
       llvm::GlobalValue::ExternalLinkage, "fprem_c2", M);
   B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
   auto Arg = Fn->arg_begin();
@@ -843,8 +842,7 @@ TEST(LLVMCIntrinsicSemantics, X87FpremKeepsTenByteOperandsAndC2) {
       llvm::FunctionType::get(F80, {F80, F80}, false), "fprem",
       "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}", true);
   auto *Reduced = B.CreateCall(
-      Fprem, {B.CreateBitCast(LargeBits, F80),
-              B.CreateBitCast(SmallBits, F80)},
+      Fprem, {B.CreateBitCast(LargeBits, F80), B.CreateBitCast(SmallBits, F80)},
       "partial_remainder");
   // A pure bitcast between FPREM and FNSTSW can make C compilation spill and
   // pop the x87 stack.  The status must be captured in the same asm as FPREM.
@@ -856,15 +854,14 @@ TEST(LLVMCIntrinsicSemantics, X87FpremKeepsTenByteOperandsAndC2) {
   B.CreateStore(Status, StatusOut)->setVolatile(true);
   B.CreateStore(RemainderBits, Remainder)->setVolatile(true);
   auto *C2 = B.CreateAnd(Status, B.getInt16(0x0400));
-  B.CreateRet(B.CreateSelect(B.CreateICmpNE(C2, B.getInt16(0)),
-                             B.getInt32(0), B.getInt32(1)));
+  B.CreateRet(B.CreateSelect(B.CreateICmpNE(C2, B.getInt16(0)), B.getInt32(0),
+                             B.getInt32(1)));
 
   const std::string Text = emit(M);
   EXPECT_NE(Text.find("__uint128_t"), std::string::npos) << Text;
   EXPECT_NE(Text.find("long double"), std::string::npos) << Text;
   EXPECT_NE(Text.find("__builtin_memcpy"), std::string::npos) << Text;
-  EXPECT_NE(Text.find("fprem\\n\\tfnstsw %%ax"), std::string::npos)
-      << Text;
+  EXPECT_NE(Text.find("fprem\\n\\tfnstsw %%ax"), std::string::npos) << Text;
   EXPECT_NE(Text.find("fnstsw %%ax"), std::string::npos) << Text;
   EXPECT_NE(Text.find("1024"), std::string::npos) << Text;
 #if defined(__x86_64__) && defined(__linux__)
@@ -891,9 +888,8 @@ TEST(LLVMCIntrinsicSemantics, X87FusedFpremStatusKeepsTop) {
   auto *Pair = llvm::StructType::create(C, "struct.neverd.x87.fprem_result");
   Pair->setBody({F80, B.getInt16Ty()});
   auto *Fn = llvm::Function::Create(
-      llvm::FunctionType::get(B.getVoidTy(),
-                              {B.getPtrTy(), B.getPtrTy(), B.getPtrTy()},
-                              false),
+      llvm::FunctionType::get(
+          B.getVoidTy(), {B.getPtrTy(), B.getPtrTy(), B.getPtrTy()}, false),
       llvm::GlobalValue::ExternalLinkage, "fused_fprem", M);
   B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
   auto Arg = Fn->arg_begin();
@@ -909,23 +905,18 @@ TEST(LLVMCIntrinsicSemantics, X87FusedFpremStatusKeepsTop) {
   auto *SmallBits = B.CreateLoad(I80, Small, "small_bits");
   SmallBits->setVolatile(true);
   auto *Fprem = llvm::InlineAsm::get(
-      llvm::FunctionType::get(Pair, {F80, F80}, false),
-      "fprem\n\tfnstsw $1",
+      llvm::FunctionType::get(Pair, {F80, F80}, false), "fprem\n\tfnstsw $1",
       "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}", true);
   auto *Reduced = B.CreateCall(
-      Fprem, {B.CreateBitCast(LargeBits, F80),
-              B.CreateBitCast(SmallBits, F80)},
+      Fprem, {B.CreateBitCast(LargeBits, F80), B.CreateBitCast(SmallBits, F80)},
       "partial_remainder_and_status");
-  auto *RemainderBits =
-      B.CreateBitCast(B.CreateExtractValue(Reduced, 0), I80);
-  B.CreateStore(B.CreateExtractValue(Reduced, 1), StatusOut)
-      ->setVolatile(true);
+  auto *RemainderBits = B.CreateBitCast(B.CreateExtractValue(Reduced, 0), I80);
+  B.CreateStore(B.CreateExtractValue(Reduced, 1), StatusOut)->setVolatile(true);
   (void)RemainderBits;
   B.CreateRetVoid();
 
   const std::string Text = emit(M);
-  EXPECT_NE(Text.find("fprem\\n\\tfnstsw %%ax"), std::string::npos)
-      << Text;
+  EXPECT_NE(Text.find("fprem\\n\\tfnstsw %%ax"), std::string::npos) << Text;
   EXPECT_NE(Text.find("field_0"), std::string::npos) << Text;
   EXPECT_NE(Text.find("field_1"), std::string::npos) << Text;
 #if defined(__x86_64__) && defined(__linux__)
@@ -955,8 +946,7 @@ TEST(LLVMCIntrinsicSemantics, LinuxX64SyscallUsesRegisterABI) {
       llvm::GlobalValue::ExternalLinkage, "neverd_test_getpid", M);
   B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
   auto *Syscall = llvm::InlineAsm::get(
-      llvm::FunctionType::get(Pair,
-                              {I64, I64, I64, I64, I64, I64, I64}, false),
+      llvm::FunctionType::get(Pair, {I64, I64, I64, I64, I64, I64, I64}, false),
       "syscall",
       "={ax},={r11},0,{di},{si},{dx},{r10},{r8},{r9},~{rcx},~{memory},"
       "~{dirflag},~{fpsr},~{flags}",
@@ -972,17 +962,15 @@ TEST(LLVMCIntrinsicSemantics, LinuxX64SyscallUsesRegisterABI) {
   EXPECT_NE(Text.find("__asm__(\"r8\")"), std::string::npos) << Text;
   EXPECT_NE(Text.find("__asm__(\"r9\")"), std::string::npos) << Text;
   EXPECT_NE(Text.find("__asm__(\"r11\")"), std::string::npos) << Text;
-  EXPECT_NE(Text.find("__asm__ volatile(\"syscall\""),
-            std::string::npos)
+  EXPECT_NE(Text.find("__asm__ volatile(\"syscall\""), std::string::npos)
       << Text;
 #if defined(__x86_64__) && defined(__linux__)
-  compileAndCheck(
-      "#include <stdint.h>\n#include <unistd.h>\n" + Text +
-      "int main(void) {\n"
-      "  uint64_t flags = 0;\n"
-      "  uint64_t pid = neverd_test_getpid(&flags);\n"
-      "  return pid == (uint64_t)getpid() && (flags & 2) ? 0 : 1;\n"
-      "}\n");
+  compileAndCheck("#include <stdint.h>\n#include <unistd.h>\n" + Text +
+                  "int main(void) {\n"
+                  "  uint64_t flags = 0;\n"
+                  "  uint64_t pid = neverd_test_getpid(&flags);\n"
+                  "  return pid == (uint64_t)getpid() && (flags & 2) ? 0 : 1;\n"
+                  "}\n");
 #endif
 }
 
@@ -993,9 +981,9 @@ TEST(LLVMCIntrinsicSemantics, X87I80BitcastMaterializesExpressionSource) {
   llvm::IRBuilder<llvm::NoFolder> B(C);
   auto *I80 = B.getIntNTy(80);
   auto *F80 = llvm::Type::getX86_FP80Ty(C);
-  auto *Fn = llvm::Function::Create(
-      llvm::FunctionType::get(I80, {I80}, false),
-      llvm::GlobalValue::ExternalLinkage, "x87_bits_roundtrip", M);
+  auto *Fn = llvm::Function::Create(llvm::FunctionType::get(I80, {I80}, false),
+                                    llvm::GlobalValue::ExternalLinkage,
+                                    "x87_bits_roundtrip", M);
   B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
   auto *Value = B.CreateAdd(&*Fn->arg_begin(), llvm::ConstantInt::get(I80, 1));
   B.CreateRet(B.CreateBitCast(B.CreateBitCast(Value, F80), I80));
@@ -1004,13 +992,12 @@ TEST(LLVMCIntrinsicSemantics, X87I80BitcastMaterializesExpressionSource) {
   EXPECT_NE(Text.find("__uint128_t"), std::string::npos) << Text;
   EXPECT_NE(Text.find("__builtin_memcpy"), std::string::npos) << Text;
 #if defined(__x86_64__) && defined(__linux__)
-  compileAndCheck(
-      "#include <stdint.h>\n" + Text +
-      "int main(void) {\n"
-      "  __uint128_t bits = (((__uint128_t)0x7ffeULL << 64) | "
-      "0x8000000000000001ULL);\n"
-      "  return x87_bits_roundtrip(bits) == bits + 1 ? 0 : 1;\n"
-      "}\n");
+  compileAndCheck("#include <stdint.h>\n" + Text +
+                  "int main(void) {\n"
+                  "  __uint128_t bits = (((__uint128_t)0x7ffeULL << 64) | "
+                  "0x8000000000000001ULL);\n"
+                  "  return x87_bits_roundtrip(bits) == bits + 1 ? 0 : 1;\n"
+                  "}\n");
 #endif
 }
 
@@ -1223,30 +1210,29 @@ TEST(LLVMCIntrinsicSemantics, X87OperandsShareOverlappingImageByteArray) {
   CEmitterOptions OnlyOptions;
   OnlyOptions.TheArch = Arch::X64;
   OnlyOptions.EmitIncludes = false;
-  EXPECT_TRUE(LLVMCEmitter().emit(M, OnlyOS, OnlyOptions, nullptr, nullptr, Fn));
-  EXPECT_NE(OnlyText.find("uint8_t g_402000[32] = {0};"),
-            std::string::npos)
+  EXPECT_TRUE(
+      LLVMCEmitter().emit(M, OnlyOS, OnlyOptions, nullptr, nullptr, Fn));
+  EXPECT_NE(OnlyText.find("uint8_t g_402000[32] = {0};"), std::string::npos)
       << OnlyText;
   EXPECT_EQ(OnlyText.find("g_402008"), std::string::npos) << OnlyText;
 #if defined(__x86_64__) && defined(__linux__)
-  compileAndCheck(
-      "#include <stdint.h>\n" + Text +
-      "int main(void) {\n"
-      "  unsigned char large[10] = {0}, small[10] = {0};\n"
-      "  const unsigned char want_large[10] = "
-      "{1,0,0,0,0,0,0,0x80,0xfe,0x7f};\n"
-      "  const unsigned char want_small[10] = "
-      "{3,0,0,0,0,0,0,0x80,0xbe,0xff};\n"
-      "  copy_x87_operands(large, small);\n"
-      "  for (unsigned i = 0; i < 10; ++i) {\n"
-      "    if (large[i] != want_large[i] || "
-      "g_402000[i] != want_large[i]) return 1;\n"
-      "    if (small[i] != want_small[i] || "
-      "g_402000[10 + i] != want_small[i] || "
-      "g_402000[20 + i] != want_small[i]) return 2;\n"
-      "  }\n"
-      "  return g_402000[30] == 0 && g_402000[31] == 4 ? 0 : 3;\n"
-      "}\n");
+  compileAndCheck("#include <stdint.h>\n" + Text +
+                  "int main(void) {\n"
+                  "  unsigned char large[10] = {0}, small[10] = {0};\n"
+                  "  const unsigned char want_large[10] = "
+                  "{1,0,0,0,0,0,0,0x80,0xfe,0x7f};\n"
+                  "  const unsigned char want_small[10] = "
+                  "{3,0,0,0,0,0,0,0x80,0xbe,0xff};\n"
+                  "  copy_x87_operands(large, small);\n"
+                  "  for (unsigned i = 0; i < 10; ++i) {\n"
+                  "    if (large[i] != want_large[i] || "
+                  "g_402000[i] != want_large[i]) return 1;\n"
+                  "    if (small[i] != want_small[i] || "
+                  "g_402000[10 + i] != want_small[i] || "
+                  "g_402000[20 + i] != want_small[i]) return 2;\n"
+                  "  }\n"
+                  "  return g_402000[30] == 0 && g_402000[31] == 4 ? 0 : 3;\n"
+                  "}\n");
 #endif
 }
 
