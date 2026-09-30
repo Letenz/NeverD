@@ -61,6 +61,23 @@ bool sameState(const kvm_sregs &L, const kvm_sregs &R) {
 #undef NEVERD_KVM_X64_SPECIAL_SEGMENT
   return true;
 }
+bool sameGeneralRegisters(const X64MachineState &L, const X64MachineState &R) {
+#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
+  if (L.reg(X64Register::Name) != R.reg(X64Register::Name))                    \
+    return false;
+#include "../../arch/x86_64/X64HostRegisters.def"
+#undef NEVERD_X64_HOST_REGISTER
+  return true;
+}
+bool sameFPRegisters(const X64MachineState &L, const X64MachineState &R) {
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  if (L.FP.Member != R.FP.Member)                                              \
+    return false;
+#include "../../arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+  return L.FP.Tag == R.FP.Tag && L.FP.Registers == R.FP.Registers &&
+         L.MXCSR == R.MXCSR && L.Xmm == R.Xmm;
+}
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
@@ -132,11 +149,14 @@ public:
       if ((!WasRunnable && ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0) ||
           (!sameState(PreviousSpecial, S) &&
            ioctl(CPU, KVM_SET_SREGS, &S) < 0) ||
-          ioctl(CPU, KVM_SET_REGS, &R) < 0 || ioctl(CPU, KVM_SET_XSAVE, &F) < 0)
+          ((!WasRunnable || !sameGeneralRegisters(State, CapturedState)) &&
+           ioctl(CPU, KVM_SET_REGS, &R) < 0) ||
+          ((!WasRunnable || !sameFPRegisters(State, CapturedState)) &&
+           ioctl(CPU, KVM_SET_XSAVE, &F) < 0))
         return diagnostic::error(diagnostic::KvmState);
       // KVM associates software single stepping with the current linear RIP.
-      // Arm it after installing this invocation's registers, including on
-      // resume.
+      // Arm it after any required register installation, including on resume.
+      // A reused capture already describes the actual RIP at this boundary.
       kvm_guest_debug Debug{};
       Debug.control =
           KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
@@ -204,12 +224,17 @@ public:
       return llvm::make_error<X64ExceptionError>(*Trap);
     }
     State = Next;
+    // Only acknowledged, fully decoded debug exits establish reusable state.
+    // Host writes or context restoration are compared against this capture;
+    // faults, failed transfers and cancellation invalidate it on next entry.
+    CapturedState = Next;
     Runnable = true;
     return llvm::Error::success();
   }
 
 private:
   MemoryProjection &Memory;
+  X64MachineState CapturedState;
   bool Runnable = false;
 };
 } // namespace

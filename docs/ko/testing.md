@@ -857,3 +857,7 @@ Linux의 `NeverDUnicornDeadlineTests`는 pthread 스케줄링을 제어해 실�
 
 
 `NeverDKvmRunTests`는 `/dev/kvm` 없이 `KvmRunControl`의 빌린 전송 콜백을 검증합니다. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries`는 준비, 수집과 가로챈 호스트 진입이 같은 스레드를 사용하며 중단 후 재시도 중에도 준비를 한 번만 수행하는지 확인합니다. 다른 사례는 진입 없는 준비 실패, 수집 실패, 준비 중 정지와 활성 진입 취소를 검증한 뒤 새 실행이 이전 콜백을 재사용하지 않는지 확인합니다. 실제 취소, RAM 롤백, 예외와 기존 드라이버 테스트도 계속 포함해야 합니다.
+
+`ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops`는 호스트가 일반 레지스터, 첫 번째와 마지막 XMM 레지스터, MXCSR 및 x87 제어어를 변경한 뒤 연속 실행과 실제 CPU 저장을 검증합니다. 정지된 진입 이후의 실제 `FXSAVE64` 바이트로 모든 물리 80비트 레지스터, TOP, 태그, 연산 코드와 포인터를 확인하며 반복 나눗셈 예외도 재사용을 무효화합니다. 이 머신 경계 테스트는 checked 프로필에 추가 x87 명령을 허용하지 않습니다.
+
+`NeverDKvmStateTransferTests`는 실제 KVM 실행 후 레지스터 또는 XSAVE 읽기 실패를 주입하고 변경되지 않은 입력으로 재시도합니다. 독립적인 정수와 패킹된 바이트 결과로 수집 실패 후 이미 진행된 네이티브 상태를 재사용하지 않는지 확인합니다. 이 실행 파일만 `ioctl`을 래핑하며 네이티브 호스트가 없으면 명시적으로 건너뜁니다.
