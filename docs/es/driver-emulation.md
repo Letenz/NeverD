@@ -4,16 +4,11 @@
 
 # Emulación de controladores de Windows
 
-El emulador opcional de controladores de NeverD ejecuta el punto de entrada PE
-de un controlador WDM x64 compatible y, opcionalmente, recorre un escenario
-explícito de solicitudes en serie antes de descargarlo. Utiliza Unicorn para
-ejecutar la CPU y el modelo acotado de Windows propio de NeverD. No carga el
-controlador en el kernel del host ni reenvía las llamadas de API del invitado
-a los servicios del sistema operativo anfitrión.
+El emulador opcional de controladores de NeverD ejecuta el punto de entrada PE de un controlador WDM x64 admitido y puede ejecutar un escenario explícito de solicitudes antes de descargarlo. Con `auto`, la CLI selecciona KVM en anfitriones Linux compatibles y WHP en Windows. Los valores predeterminados de C++ y la API V1 mantienen Unicorn. Todos los transportes comparten el modelo limitado de Windows de NeverD, que procesa las llamadas API del invitado y mantiene el controlador aislado del núcleo anfitrión.
 
 ## Motores de ejecución
 
-El contrato predeterminado `driver-strict` mantiene Unicorn. El contrato experimental de instrucciones acotadas `checked-x64-v1` selecciona KVM en Linux x86_64 o WHP en Windows x64 con `--backend auto`. Una selección explícita no cambia a otro motor; la falta de hardware o un contrato incompatible falla antes de ejecutar.
+`driver-strict` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
 
 En un host ARM64, `checked-x64-v1` usa Unicorn para el invitado x64. Cada instrucción y acceso a memoria se valida antes del paso; se conservan comprobaciones de objetos Windows, observadores de escritura, alias RAM y contextos solo CPU. Se admiten aritmética escalar de memoria, operaciones bloqueadas con alineación natural, SETcc y BT de registro con controles de lectura/escritura; la ejecución nativa administra los flags. El SIMD acotado incluye movimientos/lógica SSE/SSE2, `MOVLHPS`/`MOVHLPS` y conversiones/restas escalares enmascaradas. Los 16 registros XMM y MXCSR sobreviven a la entrada/restauración; se rechazan excepciones SIMD no enmascaradas, DAZ, x87, AVX e instrucciones no listadas. Los stores XMM completos generan dos observaciones ordenadas de 8 bytes antes de modificar ninguna palabra. Las formas aligned-vector desalineadas siguen rechazadas. Los operandos RAM ordinarios pueden cruzar páginas asignadas por separado o con alias; se valida todo el rango antes de escribir y se informa el primer byte inaccesible. MOVS conserva los elementos completados y los registros de reinicio del elemento fallido, sin confirmarlo parcialmente.
 
@@ -787,3 +782,5 @@ Los `DIV`/`IDIV` checked x64 usan resultados reales del procesador y `#DE`. KVM 
 ## Estado x87 completo
 
 `NeverDEmulationArch` posee los contratos ISA, las tablas de páginas y el formato FP compartido por los transportes nativos y Unicorn. Los contextos x64 conservan control, estado, TOP, etiquetas físicas, código de operación, punteros de instrucciones/datos y ocho registros de 80 bits. `FP0`–`FP7` usan `RegisterValue`; el acceso escalar rechaza el truncamiento. `FPTag` es la máscara física de registros no vacíos. `NeverDX64FPTests` comprueba todos los TOP, operaciones exactas frente a FXSAVE/FXRSTOR del host y restauración. Esto no admite instrucciones x87 en checked ni prueba todos los redondeos. Los hosts nativos no disponibles se omiten explícitamente.
+
+Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` describe la ejecución nativa de controladores x64. `NeverDNativeDriverTests` valida el corpus existente y también puede ejecutarse en una compilación sin Unicorn.

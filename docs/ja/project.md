@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -99,7 +99,7 @@ metadata、Low/Med/High IR、検証済み LLVM、portable C11、安全な stable
 
 CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、ゲスト OS 方針を分離します。`NEVERD_ENABLE_CPU_EMULATION` は x64/ARM64 CPU 層を有効にし、`NEVERD_ENABLE_DRIVER_EMULATION` は範囲を限定した x64 Windows WDM/KMDF 環境を追加します。`linux-elf64-v1` は対応する Linux ELF プロセスを実行します。[CPU 実行](cpu-execution.md)、[ゲストプロセスのエミュレーション](process-emulation.md)、[Windows ドライバーエミュレーション](driver-emulation.md)を参照してください。
 
-checked プロファイルは ISA が一致する Linux ホストで KVM、Windows ホストで WHP、異なる ISA 間で Unicorn を使います。ネイティブ ARM64/WHP の実行検証は未完了です。現在 `driver-strict` は Unicorn を使い、ドライバーの KVM/WHP 経路には `checked-x64-v1` が必要です。明示したバックエンドが利用できなければ明確に失敗します。共有 RAM、エイリアス、段階的書き込み、スカラー原子操作、型付き例外、完全な x64 FP/SSE コンテキストは記載された命令と OS 契約の範囲で実装されています。任意のドライバーへの互換性や Android/Darwin 環境の実装を意味しません。
+`driver-strict` / `checked-x64-v1` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 <!-- i18n-section: how-it-works -->
 

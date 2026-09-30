@@ -4,16 +4,11 @@
 
 # Emulazione dei driver Windows
 
-L’emulatore opzionale di driver di NeverD esegue il punto di ingresso PE di un
-driver WDM x64 supportato e, facoltativamente, percorre uno scenario esplicito
-di richieste seriali prima di scaricarlo. Usa Unicorn per l’esecuzione della
-CPU e il modello circoscritto dell’ambiente Windows proprio di NeverD. Non
-carica il driver nel kernel dell’host e non inoltra le chiamate API del guest
-ai servizi del sistema operativo host.
+L’emulatore opzionale di driver di NeverD esegue il punto di ingresso PE di un driver WDM x64 supportato e può eseguire uno scenario esplicito di richieste prima dello scaricamento. Con `auto`, la CLI seleziona KVM su host Linux compatibili e WHP su Windows. I valori predefiniti C++ e l’API V1 mantengono Unicorn. Tutti i trasporti condividono il modello Windows limitato di NeverD, che gestisce le chiamate API del guest e mantiene il driver isolato dal kernel host.
 
 ## Backend di esecuzione
 
-Il contratto predefinito `driver-strict` mantiene Unicorn. Il contratto sperimentale a istruzioni limitate `checked-x64-v1` seleziona KVM su Linux x86_64 o WHP su Windows x64 con `--backend auto`. Una scelta esplicita non passa a un altro backend; hardware assente o contratto incompatibile causano un errore prima dell’esecuzione.
+`driver-strict` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. Mancano prove native ARM64/WHP; non è stabilita la compatibilità universale dei driver o Android/Darwin.
 
 Su host ARM64, `checked-x64-v1` usa Unicorn per il guest x64. Ogni istruzione e accesso alla memoria è verificato prima del singolo passo; restano controlli degli oggetti Windows, observer delle scritture, alias RAM e contesti solo CPU. Aritmetica scalare in memoria, operazioni locked naturalmente allineate, SETcc e BT su registro sono ammessi con controlli read/write; l’esecuzione nativa gestisce i flag. Il SIMD limitato comprende move/logica SSE/SSE2, `MOVLHPS`/`MOVHLPS` e conversioni/sottrazioni scalari mascherate. Tutti i 16 registri XMM e MXCSR sopravvivono a ingresso/ripristino; eccezioni SIMD non mascherate, DAZ, x87, AVX e operazioni non elencate sono rifiutati. Uno store XMM completo produce due observer ordinati da 8 byte prima di modificare una parola. Le forme aligned-vector disallineate restano escluse. Gli operandi RAM ordinari possono attraversare pagine allocate separatamente o con alias; l’intero intervallo viene verificato prima della scrittura e viene segnalato il primo byte inaccessibile. MOVS conserva gli elementi completati e i registri di ripresa dell’elemento guasto, senza commit parziale.
 
@@ -774,3 +769,5 @@ Le `DIV`/`IDIV` checked x64 usano risultati reali del processore e `#DE`. KVM us
 ## Stato x87 completo
 
 `NeverDEmulationArch` possiede i contratti ISA, le tabelle delle pagine e il formato FP condiviso dai trasporti nativi e Unicorn. I contesti x64 conservano controllo, stato, TOP, tag fisici, opcode, puntatori istruzione/dati e otto registri a 80 bit. `FP0`–`FP7` usano `RegisterValue`; gli accessi scalari rifiutano il troncamento. `FPTag` è la maschera fisica dei registri non vuoti. `NeverDX64FPTests` verifica tutti i TOP, operazioni esatte contro FXSAVE/FXRSTOR dell’host e ripristino. Ciò non ammette istruzioni x87 nel contratto checked e non prova tutti gli arrotondamenti. Gli host nativi non disponibili vengono esplicitamente saltati.
+
+Interrogare il profilo selezionato con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` descrive l’esecuzione nativa dei driver x64. `NeverDNativeDriverTests` verifica il corpus esistente e può essere eseguito anche in una compilazione senza Unicorn.

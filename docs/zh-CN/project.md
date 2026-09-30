@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -99,7 +99,7 @@ Low/Med/High IR、已验证 LLVM、可移植 C11 与安全 stable Rust。详见
 
 CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
 
-checked 配置在 ISA 匹配的 Linux 主机上使用 KVM，在匹配的 Windows 主机上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 运行覆盖仍待实机验证。`driver-strict` 当前使用 Unicorn；驱动的 KVM/WHP 路径需选择 `checked-x64-v1`。显式后端不可用时明确失败。共享 RAM、别名、分阶段写入、标量原子操作、类型化异常和完整 x64 FP/SSE 上下文已在文档规定的指令及 OS 契约内实现。这不表示兼容任意驱动或已实现 Android/Darwin 环境。
+`driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
 <!-- i18n-section: how-it-works -->
 

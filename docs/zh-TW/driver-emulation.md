@@ -4,11 +4,11 @@
 
 # Windows 驅動程式模擬
 
-NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 進入點，並可在卸載前執行明確指定的循序請求情境。它使用 Unicorn 執行 CPU 指令，使用 NeverD 自有的有界 Windows 環境模型。它不會將驅動程式載入主機核心，也不會把客體 API 呼叫轉送給主機作業系統服務。
+NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 入口，並可在卸載前執行明確的請求情境。CLI 透過 `auto` 在匹配 Linux 主機上選取 KVM，在匹配 Windows 主機上選取 WHP；原有 C++ 預設設定與 V1 API 保留 Unicorn。所有後端共用 NeverD 的受限 Windows 環境模型，由模型處理客體 API 呼叫，驅動程式與主機核心保持隔離。
 
 ## 執行後端
 
-預設 `driver-strict` 契約繼續使用 Unicorn。實驗性有限指令 `checked-x64-v1` 設定以 `--backend auto` 在 Linux x86_64 選擇 KVM，在 Windows x64 選擇 WHP；明確選擇不會降級。硬體不可用或契約不符會在執行前失敗。
+`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。原生 ARM64/WHP 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
 
 ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與暫存器 BT，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 都會跨入口和內容還原保存；拒絕未遮罩 SIMD 例外、DAZ、x87、AVX 與未列出的操作。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式仍不支援。一般 RAM 運算元可跨越獨立配置或別名映射的頁面；整段權限驗證通過後才寫入，失敗定位到第一個無法存取的位元組。MOVS 保留已完成元素與故障元素的重啟暫存器，不提交部分元素。
 
@@ -515,3 +515,5 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 ## 完整 x87 狀態
 
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
+
+使用 `executionCapabilities(Contract, ISA, Backend)` 查詢所選後端的能力設定。`NativeLegacyX64` 描述原生 x64 驅動程式執行；`NeverDNativeDriverTests` 驗證原有驅動程式集，也可在停用 Unicorn 的組建中執行。

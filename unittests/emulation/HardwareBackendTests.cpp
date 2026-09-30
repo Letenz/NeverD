@@ -6,6 +6,7 @@
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
 #include "gtest/gtest.h"
+#include "runtime/HostEnvironment.h"
 
 #include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
@@ -220,8 +221,13 @@ TEST_F(HardwareBackend, BoundedLoopAndUnsupportedInstruction) {
 }
 
 TEST_F(HardwareBackend, DriverBehaviorMatchesSoftwareOnAdmittedFixtures) {
+  const auto Software = llvm::cantFail(queryExecutionBackendBuild(
+      ExecutionBackendKind::Unicorn, GuestArchitecture::X64));
+  if (Software.Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Software.Reason;
   for (const char *Name : {Success, Failure, Fault, Unknown}) {
     DriverOptions Options;
+    Options.Backend = ExecutionBackendKind::Unicorn;
     auto Expected = emulateDriver(
         std::filesystem::path(NEVERD_DRIVER_FIXTURES) / Name, Options);
     ASSERT_TRUE(bool(Expected)) << llvm::toString(Expected.takeError());
@@ -238,18 +244,26 @@ TEST_F(HardwareBackend, DriverBehaviorMatchesSoftwareOnAdmittedFixtures) {
   }
 }
 
-TEST(BackendSelection, LegacyAutoPreservesCompleteContract) {
-  auto B = createExecutionBackend(ExecutionBackendKind::Auto,
-                                  ExecutionContract::Legacy,
-                                  MemoryPages * x64::PageSize);
-  ASSERT_TRUE(bool(B)) << llvm::toString(B.takeError());
-  EXPECT_EQ(B->Kind, ExecutionBackendKind::Unicorn);
+TEST(BackendSelection, DriverStrictAutoUsesMatchingHostTransport) {
+  ExecutionConfiguration Config;
+  Config.Contract = ExecutionContract::Legacy;
+  const auto Resolved = llvm::cantFail(resolveExecutionConfiguration(Config));
+  const auto Expected = runtime::matchesHost(Config.Architecture)
+                            ? runtime::nativeBackend()
+                            : ExecutionBackendKind::Unicorn;
+  EXPECT_EQ(Resolved.Configuration.Backend, Expected);
+  auto B = createExecutionBackend(Config, MemoryPages * x64::PageSize);
+  if (!B) {
+    auto E = B.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(B->Kind, Expected);
   EXPECT_FALSE(B->Reason.empty());
-  auto Explicit = createExecutionBackend(ExecutionBackendKind::KVM,
-                                         ExecutionContract::Legacy,
-                                         MemoryPages * x64::PageSize);
-  ASSERT_FALSE(bool(Explicit));
-  llvm::consumeError(Explicit.takeError());
 }
+
 } // namespace
 } // namespace neverd::emulation

@@ -44,3 +44,13 @@ NEVERD_EXECUTION_PROFILE(CheckedUserX64, CheckedUserX64, X64, User, Canonical,
 NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
                          Split, UserFeatures, true, true)
 #endif
+
+#ifdef NEVERD_NATIVE_EXECUTION_PROFILE
+// Backend-qualified driver execution preserves the Windows environment policy
+// while using the architectural supervisor address/observation boundary.
+NEVERD_NATIVE_EXECUTION_PROFILE(NativeLegacyX64, Legacy, X64, Supervisor,
+                                Canonical,
+                                CheckedFeatures | Feature::SIMD |
+                                    Feature::FloatingPoint | Feature::MMIO,
+                                true, true)
+#endif

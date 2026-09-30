@@ -923,3 +923,11 @@ Le `DIV`/`IDIV` checked x64 usano risultati reali del processore e `#DE`. KVM us
 ## Stato x87 completo
 
 `NeverDEmulationArch` possiede i contratti ISA, le tabelle delle pagine e il formato FP condiviso dai trasporti nativi e Unicorn. I contesti x64 conservano controllo, stato, TOP, tag fisici, opcode, puntatori istruzione/dati e otto registri a 80 bit. `FP0`–`FP7` usano `RegisterValue`; gli accessi scalari rifiutano il troncamento. `FPTag` è la maschera fisica dei registri non vuoti. `NeverDX64FPTests` verifica tutti i TOP, operazioni esatte contro FXSAVE/FXRSTOR dell’host e ripristino. Ciò non ammette istruzioni x87 nel contratto checked e non prova tutti gli arrotondamenti. Gli host nativi non disponibili vengono esplicitamente saltati.
+
+`driver-strict` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. Mancano prove native ARM64/WHP; non è stabilita la compatibilità universale dei driver o Android/Darwin.
+
+Interrogare il profilo selezionato con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` descrive l’esecuzione nativa dei driver x64. `NeverDNativeDriverTests` verifica il corpus esistente e può essere eseguito anche in una compilazione senza Unicorn.
+
+Il workflow CI esistente esegue l’intera directory dei test di emulazione prima dei profili generali e conserva inventario, risultati JUnit e log CTest in `emulation-focused`. Un errore in altri moduli non impedisce questa esecuzione. Hardware non disponibile e driver opzionali mancanti rimangono salti espliciti; una compilazione o esecuzione software riuscita non prova l’esecuzione nativa.
+
+Su Linux, `NeverDUnicornDeadlineTests` completa il vero thread del timer prima dell’ingresso nel guest tramite una pianificazione pthread controllata. Per x64, ARM32 e ARM64 verifica che l’annullamento preventivo non produca effetti e che l’esecuzione successiva usi un budget indipendente. Utilizza API pubbliche senza modificare lo stato privato del motore.

@@ -25,7 +25,7 @@ select a contract's fixed profile; explicit unsupported values fail.
 | `page_size` | 4096 | Guest mapping granule; other values are rejected |
 | `required_features` | `[]` | Required feature names from [the inventory](../include/neverd/emulation/ExecutionConfiguration.def) |
 
-`driver-strict` accepts x64; `software-cpu-v1` accepts x64 and ARM64.
+`driver-strict` accepts x64 with backend-qualified capabilities; `software-cpu-v1` accepts x64 and ARM64.
 `checked-x64-v1` and `checked-aarch64-v1` require their named architecture
 and execute at supervisor privilege. `checked-user-x64-v1` and
 `checked-user-aarch64-v1` execute the corresponding bounded instruction inventory
@@ -269,3 +269,7 @@ General dynamic linking, OS threads, signals and the additional OS workloads
 remain unfinished. CPU user isolation alone does not establish OS compatibility.
 Native Windows and ARM64 user execution still require hardware validation;
 Unicorn execution and cross-compilation do not replace that evidence.
+
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+
+Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.

@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
+<!-- i18n-source: 935250779b9be103631f1cb612200e7fb175dfa74d352b939b15287e751778b8 -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -14,7 +14,7 @@
 
 CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
 
-checked 프로필은 ISA가 일치하는 Linux 호스트에서 KVM, Windows 호스트에서 WHP, 다른 ISA 사이에서는 Unicorn을 사용합니다. 네이티브 ARM64/WHP 실행 검증은 아직 필요합니다. 현재 `driver-strict`는 Unicorn을 사용하며 드라이버의 KVM/WHP 경로에는 `checked-x64-v1`이 필요합니다. 지정된 백엔드를 사용할 수 없으면 명확히 실패합니다. 공유 RAM, 별칭, 단계적 쓰기, 스칼라 원자 연산, 형식화된 예외와 전체 x64 FP/SSE 컨텍스트는 문서의 명령 및 OS 계약 범위에서 구현되어 있습니다. 임의의 드라이버 호환성이나 Android/Darwin 환경 구현을 뜻하지 않습니다.
+`driver-strict` / `checked-x64-v1`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. native ARM64/WHP 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
 
 | 문서 | 설명 |
 |------|------|

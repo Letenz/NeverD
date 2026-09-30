@@ -805,3 +805,11 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 ## 完整 x87 狀態
 
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
+
+`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。原生 ARM64/WHP 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+
+使用 `executionCapabilities(Contract, ISA, Backend)` 查詢所選後端的能力設定。`NativeLegacyX64` 描述原生 x64 驅動程式執行；`NeverDNativeDriverTests` 驗證原有驅動程式集，也可在停用 Unicorn 的組建中執行。
+
+現有 CI 工作流程在通用測試設定前執行完整模擬測試目錄，並在 `emulation-focused` 儲存探索清單、JUnit 結果和 CTest 日誌。其他模組的失敗不會阻止這組測試執行。硬體不可用及選用驅動程式範例缺失仍明確記錄為略過；軟體執行或編譯通過不能作為原生執行證據。
+
+在 Linux 上，`NeverDUnicornDeadlineTests` 透過受控 pthread 排程，讓實際計時執行緒在客體入口前完成。測試涵蓋 x64、ARM32 和 ARM64，要求入口前取消不產生客體效果，並驗證下一次執行使用獨立預算。測試呼叫公開引擎 API，不修改引擎私有狀態。

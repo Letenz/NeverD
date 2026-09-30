@@ -88,6 +88,18 @@ ExecutionCapabilities profile(ExecutionContract Contract, GuestArchitecture ISA,
                   : ExecutionControlPrecision::EngineRequest,
           false};
 }
+std::optional<ExecutionCapabilities>
+nativeProfile(ExecutionContract Contract, GuestArchitecture Architecture) {
+#define NEVERD_NATIVE_EXECUTION_PROFILE(Name, ContractID, ISA, Privilege,      \
+                                        Model, Features, Native, Allowlist)    \
+  if (Contract == ExecutionContract::ContractID &&                             \
+      Architecture == GuestArchitecture::ISA)                                  \
+    return profile(Contract, Architecture, ExecutionPrivilege::Privilege,      \
+                   ExecutionAddressModel::Model, Features, Native, Allowlist);
+#include "ExecutionProfiles.def"
+#undef NEVERD_NATIVE_EXECUTION_PROFILE
+  return std::nullopt;
+}
 } // namespace
 
 llvm::Expected<ExecutionCapabilities>
@@ -107,30 +119,47 @@ executionCapabilities(ExecutionContract Contract,
   return diagnostic::error(diagnostic::Contract);
 }
 
-llvm::Expected<ResolvedExecutionConfiguration>
-resolveExecutionConfiguration(const ExecutionConfiguration &Configuration) {
-  auto Capabilities =
-      executionCapabilities(Configuration.Contract, Configuration.Architecture);
+llvm::Expected<ExecutionCapabilities>
+executionCapabilities(ExecutionContract Contract,
+                      GuestArchitecture Architecture,
+                      ExecutionBackendKind Backend) {
+  if (Backend == ExecutionBackendKind::Auto) {
+    ExecutionConfiguration Configuration;
+    Configuration.Contract = Contract;
+    Configuration.Architecture = Architecture;
+    auto Resolved = resolveExecutionConfiguration(Configuration);
+    if (!Resolved)
+      return Resolved.takeError();
+    return Resolved->Capabilities;
+  }
+  auto Capabilities = executionCapabilities(Contract, Architecture);
   if (!Capabilities)
     return Capabilities.takeError();
-  if (Configuration.Privilege &&
-      *Configuration.Privilege != Capabilities->Privilege)
-    return diagnostic::error(diagnostic::ConfigurationPrivilege);
-  if (Configuration.VirtualAddressBits &&
-      *Configuration.VirtualAddressBits != Capabilities->VirtualAddressBits)
-    return diagnostic::error(diagnostic::ConfigurationAddressWidth);
-  if (Configuration.PageSize &&
-      *Configuration.PageSize != Capabilities->PageSize)
-    return diagnostic::error(diagnostic::ConfigurationPageSize);
-  if (!Capabilities->supports(Configuration.RequiredFeatures))
-    return diagnostic::error(diagnostic::ConfigurationFeatures);
+  if (Backend == ExecutionBackendKind::Unicorn)
+    return Capabilities;
+  if (Backend != ExecutionBackendKind::KVM &&
+      Backend != ExecutionBackendKind::WHP)
+    return diagnostic::error(diagnostic::BackendName);
+  if (auto Native = nativeProfile(Contract, Architecture))
+    return *Native;
+  if (!Capabilities->SupportsNativeExecution)
+    return diagnostic::error(diagnostic::Contract);
+  return Capabilities;
+}
+
+llvm::Expected<ResolvedExecutionConfiguration>
+resolveExecutionConfiguration(const ExecutionConfiguration &Configuration) {
+  auto Portable =
+      executionCapabilities(Configuration.Contract, Configuration.Architecture);
+  if (!Portable)
+    return Portable.takeError();
   auto Resolved = Configuration;
-  Resolved.Privilege = Capabilities->Privilege;
-  Resolved.VirtualAddressBits = Capabilities->VirtualAddressBits;
-  Resolved.PageSize = Capabilities->PageSize;
   std::string Reason = execution::ExplicitSelection;
   if (Resolved.Backend == ExecutionBackendKind::Auto) {
-    if (!Capabilities->SupportsNativeExecution) {
+    const bool Native =
+        Portable->SupportsNativeExecution ||
+        nativeProfile(Resolved.Contract, Resolved.Architecture).has_value();
+    if (!Native) {
       Resolved.Backend = ExecutionBackendKind::Unicorn;
       Reason = Resolved.Contract == ExecutionContract::Legacy
                    ? execution::LegacySelection
@@ -145,13 +174,24 @@ resolveExecutionConfiguration(const ExecutionConfiguration &Configuration) {
                    : execution::HostSelection;
     }
   }
-  if (Resolved.Backend != ExecutionBackendKind::Unicorn &&
-      Resolved.Backend != ExecutionBackendKind::KVM &&
-      Resolved.Backend != ExecutionBackendKind::WHP)
-    return diagnostic::error(diagnostic::BackendName);
-  if (Resolved.Backend != ExecutionBackendKind::Unicorn &&
-      !Capabilities->SupportsNativeExecution)
-    return diagnostic::error(diagnostic::Contract);
+  auto Capabilities = executionCapabilities(
+      Resolved.Contract, Resolved.Architecture, Resolved.Backend);
+  if (!Capabilities)
+    return Capabilities.takeError();
+  if (Configuration.Privilege &&
+      *Configuration.Privilege != Capabilities->Privilege)
+    return diagnostic::error(diagnostic::ConfigurationPrivilege);
+  if (Configuration.VirtualAddressBits &&
+      *Configuration.VirtualAddressBits != Capabilities->VirtualAddressBits)
+    return diagnostic::error(diagnostic::ConfigurationAddressWidth);
+  if (Configuration.PageSize &&
+      *Configuration.PageSize != Capabilities->PageSize)
+    return diagnostic::error(diagnostic::ConfigurationPageSize);
+  if (!Capabilities->supports(Configuration.RequiredFeatures))
+    return diagnostic::error(diagnostic::ConfigurationFeatures);
+  Resolved.Privilege = Capabilities->Privilege;
+  Resolved.VirtualAddressBits = Capabilities->VirtualAddressBits;
+  Resolved.PageSize = Capabilities->PageSize;
   return ResolvedExecutionConfiguration{Resolved, *Capabilities,
                                         std::move(Reason)};
 }
