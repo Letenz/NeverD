@@ -30,15 +30,20 @@ MOVLHPS/MOVHLPS and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD are admitted.
 All sixteen XMM registers and MXCSR survive entry and context restoration;
 unmasked SIMD exceptions, DAZ, x87, AVX and unlisted operations remain rejected.
 Full-width XMM stores offer two ordered eight-byte write observations before
-either word changes. Misaligned aligned-vector forms and individual accesses
-crossing a page remain unsupported.
+either word changes. Ordinary RAM operands may cross mapped pages, including
+aliases of nonconsecutive physical pages. The whole operand must pass permission
+checks before any architectural store; a failing page is reported at its first
+inaccessible byte. Misaligned aligned-vector forms remain unsupported.
 
 Supervisor MMIO admits one aligned 1/2/4-byte scalar move transaction. Device
 pages never enter native RAM mappings. MOVS/REP MOVS executes one checked element
 at a time, with stop/deadline/budget checks at restart boundaries. A device
 source must offer a pure prepared read so a destination observer can stop before
 the device read commits. Windows register banks implement this preparation;
-other devices without it reject string reads before effects. Device RMW, wide
+other devices without it reject string reads before effects. RAM elements may
+cross pages; faults preserve completed elements and the faulting element's
+restart registers without a partial store. One element cannot mix RAM and device
+pages or split an indivisible device transaction. Device RMW, wide
 MMIO, port I/O and unmodeled CPU effects remain unsupported. Register-bank REP
 instruction counts can differ from Unicorn's extra zero-count termination hook;
 request bytes, device state and write events are compared independently.

@@ -88,11 +88,13 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
                                    bool Recoverable, bool Guest) {
   if (FirstFault)
     return error(diagnostic::Faulted);
-  if (auto Kind = Memory->check(A, N, Guest ? executionPermissions(P) : P)) {
+  if (auto Failure = Memory->firstAccessFailure(
+          A, N, Guest ? executionPermissions(P) : P)) {
     auto Access = P == Execute ? BackendAccessKind::Execute
                   : P == Write ? BackendAccessKind::Write
                                : BackendAccessKind::Read;
-    BackendFault F{*Kind, programCounter(), A, N, Access, std::nullopt};
+    BackendFault F{Failure->Kind, programCounter(), Failure->Address,
+                   Failure->Size, Access,           std::nullopt};
     if (Recoverable && P != Execute && Hooks.RecoverableFault &&
         Hooks.RecoverableFault(F)) {
       RecoverableFault = F;
@@ -101,7 +103,8 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
     }
     FirstFault = F;
     if (Hooks.Fault)
-      Hooks.Fault(A, N, backendAccessKindName(Access));
+      Hooks.Fault(Failure->Address, Failure->Size,
+                  backendAccessKindName(Access));
     return error(diagnostic::MemoryAccess);
   }
   return llvm::Error::success();

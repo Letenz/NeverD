@@ -25,7 +25,8 @@ struct BackendFault {
   BackendFaultKind Kind;
   uint64_t PC = 0;
   /// Memory-event address and access size, not a decoded operand extent.
-  /// Unicorn may split a memory access at a page boundary.
+  /// Checked faults identify the first inaccessible page fragment. Unicorn
+  /// may split a memory access at a page boundary.
   std::optional<uint64_t> Address;
   std::optional<uint64_t> Size;
   std::optional<BackendAccessKind> Access;

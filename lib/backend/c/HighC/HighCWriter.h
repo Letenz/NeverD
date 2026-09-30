@@ -463,6 +463,8 @@ public:
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   bool NeedsX87FpremHelpers = false;
   bool NeedsX64SyscallHelper = false;
+  /// A Windows x86 function renders an <intrin.h>-only intrinsic.
+  bool NeedsMsvcIntrinsics = false;
   bool NeedsFEnvAccess = false;
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;

@@ -67,6 +67,15 @@ until their owner resolves or delivers the fault. Host-side `canAccess` checks
 exactly the requested bits; add `UserAccessible` to query user visibility.
 `executable` checks the selected CPU's execution permissions.
 
+Checked x64 RAM operands may span pages backed by separate allocations or
+aliases. The complete operand is validated before native execution. An
+inaccessible later page reports its first failing address and remaining
+in-page extent; the CPU and writable prefix retain their original state.
+REP MOVS commits one complete element per restart boundary, so earlier
+completed elements survive a later fault. Mixed RAM/device operands remain
+unsupported before observers or device callbacks. Independent native x64
+fault probes check these ordinary and REP store boundaries.
+
 Page tables are private CPU projections. A supervisor projection preserves its
 existing supervisor-only translation semantics; a user projection marks only
 explicitly user-accessible guest pages as user pages. ARM64 user projections

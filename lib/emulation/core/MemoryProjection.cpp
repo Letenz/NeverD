@@ -103,6 +103,11 @@ void MemoryProjection::endRun() {
   RAM.Running = false;
   RAM.Mutex.unlock();
 }
+std::optional<MemoryAccessFailure>
+MemoryProjection::firstAccessFailure(uint64_t A, uint64_t N, unsigned P) const {
+  std::lock_guard Lock(Space->State->Memory->State->Mutex);
+  return Space->State->firstAccessFailure(A, N, P);
+}
 std::optional<BackendFaultKind> MemoryProjection::check(uint64_t A, uint64_t N,
                                                         unsigned P) const {
   std::lock_guard Lock(Space->State->Memory->State->Mutex);

@@ -19,6 +19,7 @@
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/Common.h"
+#include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
@@ -1038,8 +1039,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId != Intrinsic::None &&
-               intrinsicCName(Ex.IntrinsicId))
+               (intrinsicCName(Ex.IntrinsicId) ||
+                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
+      if (Opts.Format == BinaryFormat::COFF &&
+          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+          x86UsesMsvcIntrinsicHeader(Ex.IntrinsicId))
+        NeedsMsvcIntrinsics = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1217,6 +1223,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
+  if (NeedsMsvcIntrinsics)
+    Headers.insert("intrin.h");
 
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";

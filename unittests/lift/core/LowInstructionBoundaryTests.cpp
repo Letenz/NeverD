@@ -3478,6 +3478,67 @@ TEST(LowInstructionBoundary,
   EXPECT_FALSE(verifyMedFunc(BadMedIntrinsic, "bad-segment-intrinsic"));
 }
 
+TEST(LowInstructionBoundary, WindowsStringAndTableOpsUseIntrinH) {
+  // A Windows target has <intrin.h>: a forward REP STOS and a flat LIDT
+  // print as __stosq and __lidt. Other targets keep the assembly forms.
+  auto Render = [](BinaryFormat Format) {
+    LowFunc Low = buildFunction(Arch::X64, InstructionMode::Default,
+                                {0xf3, 0x48, 0xab, // rep stosq
+                                 0x0f, 0x01, 0x18, // lidt [rax]
+                                 0xc3});
+    MedFunc Med = LowToMedConverter().convert(Low, Arch::X64, Format);
+    HighFunc High = MedToHighConverter().convert(Med, Arch::X64);
+    std::string HighC;
+    llvm::raw_string_ostream OS(HighC);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = Format;
+    EXPECT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    OS.flush();
+    return HighC;
+  };
+  const std::string Windows = Render(BinaryFormat::COFF);
+  EXPECT_NE(Windows.find("#include <intrin.h>"), std::string::npos) << Windows;
+  EXPECT_NE(Windows.find("__stosq((unsigned long long *)neverd_di, "),
+            std::string::npos)
+      << Windows;
+  EXPECT_NE(Windows.find("__lidt((void *)"), std::string::npos) << Windows;
+  EXPECT_EQ(Windows.find("__asm__"), std::string::npos) << Windows;
+  const std::string Elf = Render(BinaryFormat::ELF);
+  EXPECT_EQ(Elf.find("<intrin.h>"), std::string::npos) << Elf;
+  EXPECT_NE(Elf.find("rep stosq"), std::string::npos) << Elf;
+  EXPECT_NE(Elf.find("lidt (%[address])"), std::string::npos) << Elf;
+}
+
+TEST(LowInstructionBoundary, FlatPrefetchAndMxcsrUseIntrinsics) {
+  // Without a segment override these instructions have compiler intrinsics,
+  // which keep the same effects and read better than inline assembly.
+  LowFunc Low = buildFunction(Arch::X64, InstructionMode::Default,
+                              {0x0f, 0x18, 0x00,       // prefetchnta [rax]
+                               0x0f, 0x0d, 0x48, 0x40, // prefetchw [rax+40h]
+                               0x0f, 0xae, 0x50, 0x20, // ldmxcsr [rax+20h]
+                               0x0f, 0xae, 0x58, 0x24, // stmxcsr [rax+24h]
+                               0xc3});
+  MedFunc Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(verifyMedFunc(Med, "flat-memory-state"));
+  HighFunc High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string HighC;
+  llvm::raw_string_ostream OS(HighC);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  OS.flush();
+  EXPECT_NE(HighC.find("#include <immintrin.h>"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_prefetch((const char *)"), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_MM_HINT_NTA"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_m_prefetchw((void *)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_setcsr(neverd_csr)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_getcsr()"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("__asm__"), std::string::npos) << HighC;
+  EXPECT_TRUE(validHighC(HighC));
+}
+
 std::string errorText(llvm::Error Error) {
   return llvm::toString(std::move(Error));
 }

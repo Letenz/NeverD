@@ -115,7 +115,7 @@ TEST_F(HardwareBackend, NativeFlagsExcludeSingleStepMachinery) {
             "");
 }
 
-TEST_F(HardwareBackend, CrossPageStoreIsRejectedBeforeAnyEffect) {
+TEST_F(HardwareBackend, CrossPageStoreUsesBothMappedPages) {
   ASSERT_EQ(llvm::toString(CPU->write(Code, Store)), "");
   ASSERT_EQ(llvm::toString(
                 CPU->map(Data + x64::PageSize, x64::PageSize, Read | Write)),
@@ -123,12 +123,9 @@ TEST_F(HardwareBackend, CrossPageStoreIsRejectedBeforeAnyEffect) {
   const uint64_t Address = Data + x64::PageSize - 1;
   ASSERT_EQ(llvm::toString(CPU->setReg(X64Register::CX, Address)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(X64Register::AX, Value)), "");
-  EXPECT_NE(llvm::toString(CPU->run(Code, Timeout)), "");
-  ASSERT_TRUE(CPU->fault());
-  EXPECT_EQ(CPU->fault()->Kind, BackendFaultKind::InvalidInstruction);
-  std::array<uint8_t, x64::WordBytes> Bytes{};
-  ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Address, Bytes)), "");
-  EXPECT_EQ(Bytes, (std::array<uint8_t, x64::WordBytes>{}));
+  ASSERT_EQ(llvm::toString(steps(1)), "");
+  EXPECT_FALSE(CPU->fault());
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, x64::WordBytes)), Value);
 }
 
 TEST_F(HardwareBackend, FailedAliasReplacementPreservesOriginalMapping) {
