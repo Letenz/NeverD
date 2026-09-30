@@ -64,6 +64,12 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `LowIRLoopInference.*` und `BinaryLowIRLoopInference.*` verwenden unabhängig geschriebene Zähler, Stack-Ablagen, frühe Rückgaben, native Aufrufe und gepackte Flags. Sie prüfen schmale arithmetische Erweiterung und semantisch gleiche Flags mit unterschiedlichen Ausdrücken. Fehlerhafte Graphen, fehlende oder gefälschte Ursprünge, endlose oder umlaufende Schleifen und erschöpfte Budgets dürfen kein Zertifikat erzeugen.
 
+Zwischengespeicherte Gleichheitsbedingungen in zwei- und dreifach verschachtelten Schleifen prüfen korrelierte Operanden, veränderliche Grenzen, Zählerrücksetzungen und beschädigte Kopien.
+
+Regressionen für Vergleichscaches prüfen Gleichheit und Ungleichheit, Guards und konstante Initialisierung, erst nach Erweiterung entdeckte Felder sowie Bits 7/31/63 in 1/4/8-Byte-Caches. Auch ein geändertes Nachbarbit bei unverändertem Prüfbit muss am vollständigen Zustandsvergleich scheitern. Nullschritte, bewegliche Grenzen, Rücksetzungen und erschöpfte Budgets müssen abgewiesen werden.
+
+Regressionen prüfen zusammengeführte Eingänge, erste Zeugen ohne Iteration, verborgene Register-/Frame-Unterschiede, nichtkanonische boolesche Prädikate, native Trap-Bedingungen, korrelierte Spills sowie ungültige oder ausgeschöpfte Pläne. Unabhängige zwei-/dreistufige Gleichheitszähler und native Bytes prüfen vorzeichenlose Grenzen, Null-/Maximalbereiche, andere Schrittweiten und falsche Originalbefehle. Inferenz und Abschlussbeweis müssen unvollständige Ergebnisse ablehnen.
+
 Unabhängige Regressionen für alternative Schleifen prüfen beide Verzweigungsrichtungen, falsche Schleifenrümpfe, einen nicht terminierenden Nachbarzweig sowie erschöpfte gemeinsame Such-/Beweisbudgets. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Die Regressionen prüfen zwei und drei verschachtelte Ebenen, auf- und absteigende Zähler, abgeleitete Phasen und Schnittpunkte in echten nativen Schleifenrümpfen. Unerreichbare oder disjunkte Präfixbereiche, falsche Rümpfe, endlose oder überlaufende Übergänge und erschöpfte gemeinsame Such-/Beweisbudgets müssen abgelehnt werden. Präfixzeugen ersetzen keine vollständige Segmentabdeckung.

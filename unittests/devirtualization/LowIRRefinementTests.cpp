@@ -737,6 +737,167 @@ TEST(LowIRLoopRefinement, EntryPrefixIsCheckedRatherThanAssumed) {
   loopRefused(loopCheck(A, A, Plan), Status::Different);
 }
 
+Program joinedEntryLoop(bool DifferentRegister = false,
+                        bool DifferentFrame = false, unsigned Step = 1,
+                        bool SplitCount = false, bool ZeroSecondArm = false) {
+  Program P;
+  P.frame();
+  P.Function.Blocks[0].Succs = {1, 2};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)}),
+                 op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(24), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x300), NdVar::tmp(0, 1)})});
+  for (unsigned Arm = 0; Arm != 2; ++Arm) {
+    P.block(Arm + 1, 0x200 + 0x100 * Arm, {3});
+    if (SplitCount && Arm == unsigned(ZeroSecondArm))
+      P.instruction({op(NdOp::COPY, r(8), {n(0)})});
+    P.instruction({op(NdOp::COPY, r(40), {n(5 + (DifferentRegister && Arm))}),
+                   op(NdOp::STORE, {}, {r(32), n(9 + (DifferentFrame && Arm))}),
+                   op(NdOp::BRANCH, {}, {n(0x400)})});
+  }
+  P.block(3, 0x400, {4, 5});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x600), NdVar::tmp(0, 1)})});
+  P.block(4, 0x500, {3});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(Step)}),
+                 op(NdOp::BRANCH, {}, {n(0x400)})});
+  P.block(5, 0x600);
+  P.finish();
+  return P;
+}
+
+LowIRLoopRefinementPlan joinedEntryPlan(bool Generalize) {
+  auto Plan = wordLoopPlan();
+  auto &Cut = Plan.Cutpoints.front();
+  Cut.OriginalAddress = Cut.CandidateAddress = 0x400;
+  Cut.UseEntryPrefix = true;
+  Cut.GeneralizeEntryPrefix = Generalize;
+  return Plan;
+}
+
+TEST(LowIRLoopRefinement, GeneralizedPrefixChecksAllEntryArmsAndFullState) {
+  const auto P = joinedEntryLoop();
+  loopRefused(loopCheck(P, P, joinedEntryPlan(false)), Status::Different);
+  const auto Plan = joinedEntryPlan(true);
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  EXPECT_TRUE(Good.Certificate->LoopPlan->Cutpoints[0].GeneralizeEntryPrefix);
+  EXPECT_GT(Good.LoopInitiations, 1U);
+  EXPECT_EQ(Good.RankingChecks, 1U);
+  // Registers not returned to the caller and every frame byte are still
+  // checked at arrivals. A single captured arm cannot invent their values.
+  for (bool Frame : {false, true}) {
+    const auto Different = joinedEntryLoop(!Frame, Frame);
+    loopRefused(loopCheck(Different, Different, Plan), Status::Different);
+    loopRefused(loopCheck(P, Different, Plan), Status::Different);
+  }
+  for (unsigned Step : {0, 2}) {
+    const auto Infinite = joinedEntryLoop(false, false, Step);
+    loopRefused(loopCheck(Infinite, Infinite, Plan), Status::Different);
+  }
+}
+
+TEST(LowIRLoopRefinement, GeneralizationPolicyIsExplicitAndDigestBound) {
+  auto P = joinedEntryLoop();
+  P.Contract.EntryConstants.push_back({r(24), 0});
+  const auto Guarded = loopCheck(P, P, joinedEntryPlan(false));
+  const auto General = loopCheck(P, P, joinedEntryPlan(true));
+  ASSERT_TRUE(Guarded.proved()) << Guarded.Diagnostic;
+  ASSERT_TRUE(General.proved()) << General.Diagnostic;
+  EXPECT_NE(Guarded.Certificate->InputDigest, General.Certificate->InputDigest);
+  auto Invalid = joinedEntryPlan(true);
+  Invalid.Cutpoints[0].UseEntryPrefix = false;
+  loopRefused(loopCheck(P, P, Invalid), Status::Invalid);
+  // An unrelated induction parameter must not reset the rank.
+  Invalid = joinedEntryPlan(true);
+  Invalid.Cutpoints[0].OriginalState[1].Value = n(0);
+  Invalid.Cutpoints[0].CandidateState[1].Value = n(0);
+  P.Contract.EntryConstants.push_back({r(16), 0});
+  loopRefused(loopCheck(P, P, Invalid), Status::Different);
+}
+
+TEST(LowIRLoopRefinement, GeneralizedPrefixRetainsSharedProofBudgets) {
+  const auto P = joinedEntryLoop();
+  const auto Plan = joinedEntryPlan(true);
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  for (bool Zero : {false, true})
+    for (unsigned Kind = 0; Kind != 4; ++Kind) {
+      LowIRRefinementLimits Limits;
+      if (Kind == 0)
+        Limits.Execution.MaxOperations = Zero ? 0 : Good.Operations - 1;
+      if (Kind == 1)
+        Limits.Execution.MaxSolverQueries = Zero ? 0 : Good.SolverQueries - 1;
+      if (Kind == 2)
+        Limits.Execution.MaxPaths =
+            Zero ? 0 : Good.OriginalPaths + Good.CandidatePaths - 1;
+      if (Kind == 3)
+        Limits.MaxTerminalPairs = Zero ? 0 : Good.TerminalPairs - 1;
+      loopRefused(loopCheck(P, P, Plan, Limits), Status::BudgetExceeded);
+    }
+}
+
+TEST(LowIRLoopRefinement, PrefixFeasibilityDoesNotCanonicalizePredicate) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1, 3};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)}),
+                 op(NdOp::INT_NOTEQUAL, NdVar::tmp(0, 1), {r(24), n(1)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {1});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(3, 0x400);
+  P.finish();
+  auto Plan = wordLoopPlan();
+  auto &Cut = Plan.Cutpoints.front();
+  Cut.UseEntryPrefix = Cut.GeneralizeEntryPrefix = true;
+  Cut.Inputs.push_back(
+      {LowIRLoopSide::Entry, regLocation(24, 1), NdVar::tmp(16, 1)});
+  // Every real arrival has entry r24 == 1, but the untrusted template must
+  // validate its Boolean on the entire entry domain, including r24 == 2.
+  Cut.Predicate = NdVar::tmp(16, 1);
+  const auto Bad = loopCheck(P, P, Plan);
+  loopRefused(Bad, Status::Invalid);
+  EXPECT_NE(Bad.Diagnostic.find("canonical Boolean"), std::string::npos);
+  Cut.Predicate = n(1, 1);
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+}
+
+TEST(LowIRLoopInference, JoinedEntryArmsUseRecheckedGeneralizedTemplate) {
+  const auto P = joinedEntryLoop();
+  const auto Inferred = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  ASSERT_EQ(Inferred.Plan->Cutpoints.size(), 1U);
+  EXPECT_TRUE(Inferred.Plan->Cutpoints[0].GeneralizeEntryPrefix);
+  const auto Proof = loopCheck(P, P, *Inferred.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  auto Wrong = P;
+  Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
+  loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+}
+
+TEST(LowIRLoopInference, ZeroIterationWitnessDoesNotHideAnotherEntryLoop) {
+  for (bool ZeroSecondArm : {false, true}) {
+    const auto P = joinedEntryLoop(false, false, 1, true, ZeroSecondArm);
+    const auto Inferred =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, {0x400});
+    ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+    ASSERT_EQ(Inferred.Plan->Cutpoints.size(), 1U);
+    EXPECT_EQ(Inferred.Plan->Cutpoints[0].CandidateAddress, 0x400U);
+    EXPECT_TRUE(Inferred.Plan->Cutpoints[0].GeneralizeEntryPrefix);
+    const auto Good = loopCheck(P, P, *Inferred.Plan);
+    ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+    auto Wrong = P;
+    Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
+    loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+  }
+}
+
 Program nestedWordLoops() {
   Program A;
   A.Function.Blocks[0].Succs = {1};
@@ -898,39 +1059,126 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
   }
 }
 
-Program deeperWordLoops(unsigned Depth, bool Ascending, unsigned Step = 1) {
+struct CachedComparisonOptions {
+  unsigned Bit = 0;
+  uint16_t Bytes = 1;
+  bool Invert = false;
+  bool GuardEntry = false;
+  bool FoldInitialization = false;
+  bool FrameCache = false;
+};
+
+Program deeperWordLoops(unsigned Depth, bool Ascending, unsigned Step = 1,
+                        bool EqualityExit = false, bool CachedExit = false,
+                        unsigned BoundStep = 0, bool ResetCounter = false,
+                        bool CachedComparison = false,
+                        CachedComparisonOptions Comparison = {}) {
   Program P;
   const auto Address = [](unsigned Id) { return n(0x100 + 0x100 * Id); };
   const auto Counter = [](unsigned Level) { return r(8 + 8 * Level); };
   const auto Bound = [](unsigned Level) { return r(64 + 8 * Level); };
+  const auto Cache = [](unsigned Level) { return r(128 + 8 * Level); };
+  const auto ExitFlag = [&](unsigned Level) {
+    return r(128 + 8 * Level, Comparison.Bytes);
+  };
+  if (Comparison.FrameCache) {
+    P.Contract.Frame = LowIRIndependenceFrame{{32, 8}, -9, 1};
+    P.Contract.EntryConstants.push_back({r(32), 0x10000});
+  }
+  const auto FrameOffset = [](unsigned Level) {
+    return n(static_cast<uint64_t>(Level ? 0 : -9));
+  };
+  const auto CacheComparison = [&](unsigned Level, bool Initialize = false) {
+    const bool Fold = Initialize && Comparison.FoldInitialization;
+    P.instruction(
+        {Fold ? op(NdOp::COPY, NdVar::tmp(0, 1), {n(Comparison.Invert, 1)})
+              : op(Comparison.Invert ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL,
+                   NdVar::tmp(0, 1), {Counter(Level), Bound(Level)}),
+         op(Comparison.Bytes == 1 ? NdOp::COPY : NdOp::INT_ZEXT,
+            ExitFlag(Level), {NdVar::tmp(0, 1)}),
+         op(NdOp::INT_LEFT, ExitFlag(Level),
+            {ExitFlag(Level), n(Comparison.Bit, Comparison.Bytes)})});
+    if (Comparison.FrameCache)
+      P.instruction(
+          {op(NdOp::INT_ADD, NdVar::tmp(0, 8), {r(32), FrameOffset(Level)}),
+           op(NdOp::STORE, {}, {NdVar::tmp(0, 8), ExitFlag(Level)})});
+  };
   const unsigned Exit = 1 + 3 * Depth;
   P.Function.Blocks[0].Succs = {1};
   P.instruction({op(NdOp::COPY, r(0), {n(0)}),
-                 op(NdOp::COPY, Counter(0), {Ascending ? n(0) : Bound(0)}),
-                 op(NdOp::BRANCH, {}, {Address(1)})});
+                 op(NdOp::COPY, Counter(0), {Ascending ? n(0) : Bound(0)})});
+  if (Comparison.GuardEntry) {
+    const unsigned Initialize = Exit + 1;
+    P.Function.Blocks[0].Succs = {static_cast<int>(Initialize),
+                                  static_cast<int>(Exit)};
+    P.instruction(
+        {op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {Bound(0), n(0)}),
+         op(NdOp::INT_EQUAL, NdVar::tmp(8, 1), {Bound(Depth - 1), n(0)}),
+         op(NdOp::BOOL_OR, NdVar::tmp(16, 1),
+            {NdVar::tmp(0, 1), NdVar::tmp(8, 1)}),
+         op(NdOp::COND_BR, {}, {Address(Exit), NdVar::tmp(16, 1)})});
+    P.block(Initialize, Address(Initialize).Offset, {1});
+  }
+  if (CachedComparison)
+    CacheComparison(0, true);
+  else if (CachedExit)
+    P.instruction({op(NdOp::COPY, Cache(0), {Counter(0)})});
+  P.instruction({op(NdOp::BRANCH, {}, {Address(1)})});
   for (unsigned Level = 0; Level != Depth; ++Level) {
     const unsigned Header = 1 + 3 * Level, Body = Header + 1, Tail = Header + 2;
     const unsigned Done = Level ? 3 * Level : Exit;
+    const auto Compared = CachedExit ? Cache(Level) : Counter(Level);
     P.block(Header, Address(Header).Offset,
             {static_cast<int>(Body), static_cast<int>(Done)});
-    P.instruction(
-        {op(Ascending ? NdOp::INT_LESSEQUAL : NdOp::INT_EQUAL, NdVar::tmp(0, 1),
-            {Ascending ? Bound(Level) : Counter(Level),
-             Ascending ? Counter(Level) : n(0)}),
-         op(NdOp::COND_BR, {}, {Address(Done), NdVar::tmp(0, 1)})});
+    if (CachedComparison && Comparison.FrameCache)
+      P.instruction(
+          {op(NdOp::INT_ADD, NdVar::tmp(0, 8), {r(32), FrameOffset(Level)}),
+           op(NdOp::LOAD, ExitFlag(Level), {NdVar::tmp(0, 8)})});
+    if (CachedComparison)
+      P.instruction(
+          {op(NdOp::INT_RIGHT, NdVar::tmp(0, Comparison.Bytes),
+              {ExitFlag(Level), n(Comparison.Bit, Comparison.Bytes)}),
+           op(NdOp::INT_AND, NdVar::tmp(0, Comparison.Bytes),
+              {NdVar::tmp(0, Comparison.Bytes), n(1, Comparison.Bytes)}),
+           op(Comparison.Invert ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL,
+              NdVar::tmp(8, 1),
+              {NdVar::tmp(0, Comparison.Bytes), n(0, Comparison.Bytes)}),
+           op(NdOp::COND_BR, {}, {Address(Done), NdVar::tmp(8, 1)})});
+    else
+      P.instruction({op(Ascending && !EqualityExit ? NdOp::INT_LESSEQUAL
+                                                   : NdOp::INT_EQUAL,
+                        NdVar::tmp(0, 1),
+                        {Ascending ? Bound(Level) : Compared,
+                         Ascending ? Compared : n(0)}),
+                     op(NdOp::COND_BR, {}, {Address(Done), NdVar::tmp(0, 1)})});
     const unsigned Next = Level + 1 == Depth ? Tail : Header + 3;
     P.block(Body, Address(Body).Offset, {static_cast<int>(Next)});
     if (Level + 1 == Depth)
       P.instruction({op(NdOp::INT_ADD, r(0), {r(0), Counter(Level)}),
                      op(NdOp::BRANCH, {}, {Address(Next)})});
-    else
+    else {
       P.instruction({op(NdOp::COPY, Counter(Level + 1),
-                        {Ascending ? n(0) : Bound(Level + 1)}),
-                     op(NdOp::BRANCH, {}, {Address(Next)})});
+                        {Ascending ? n(0) : Bound(Level + 1)})});
+      if (CachedComparison)
+        CacheComparison(Level + 1, true);
+      else if (CachedExit)
+        P.instruction({op(NdOp::COPY, Cache(Level + 1), {Counter(Level + 1)})});
+      P.instruction({op(NdOp::BRANCH, {}, {Address(Next)})});
+    }
     P.block(Tail, Address(Tail).Offset, {static_cast<int>(Header)});
-    P.instruction({op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, Counter(Level),
-                      {Counter(Level), n(Step)}),
-                   op(NdOp::BRANCH, {}, {Address(Header)})});
+    if (ResetCounter)
+      P.instruction({op(NdOp::COPY, Counter(Level), {n(0)})});
+    else
+      P.instruction({op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB,
+                        Counter(Level), {Counter(Level), n(Step)})});
+    if (BoundStep)
+      P.instruction(
+          {op(NdOp::INT_ADD, Bound(Level), {Bound(Level), n(BoundStep)})});
+    if (CachedComparison)
+      CacheComparison(Level);
+    else if (CachedExit)
+      P.instruction({op(NdOp::COPY, Cache(Level), {Counter(Level)})});
+    P.instruction({op(NdOp::BRANCH, {}, {Address(Header)})});
   }
   P.block(Exit, Address(Exit).Offset);
   P.finish();
@@ -949,6 +1197,143 @@ TEST(LowIRLoopInference, ThreeLevelsAndOppositeCounterDirections) {
   }
 }
 
+TEST(LowIRLoopInference, EqualityExitCountersNeedInductiveInputBounds) {
+  for (unsigned Depth : {2, 3}) {
+    const auto P = deeperWordLoops(Depth, true, 1, true);
+    const auto Inferred = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+    const auto Good = loopCheck(P, P, *Inferred.Plan);
+    ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+    EXPECT_GE(Good.RankingChecks, Depth);
+    for (unsigned Step : {0, 2}) {
+      const auto Bad = deeperWordLoops(Depth, true, Step, true);
+      const auto Search =
+          inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract);
+      EXPECT_FALSE(Search.inferred());
+      EXPECT_FALSE(Search.Plan);
+      loopRefused(loopCheck(Bad, Bad, *Inferred.Plan), Status::Different);
+    }
+  }
+}
+
+TEST(LowIRLoopInference, CachedEqualityExitsNeedCorrelatedOperandCopies) {
+  for (unsigned Depth : {2, 3}) {
+    const auto P = deeperWordLoops(Depth, true, 1, true, true);
+    const auto Inferred = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+    const auto Proof = loopCheck(P, P, *Inferred.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    for (unsigned Kind = 0; Kind != 4; ++Kind) {
+      const auto Bad = deeperWordLoops(Depth, true, Kind == 0 ? 0 : 1, true,
+                                       true, Kind == 1 ? 1 : 0, Kind == 2);
+      if (Kind == 3) {
+        auto Wrong = P;
+        for (auto &B : Wrong.Function.Blocks)
+          for (auto &O : B.Ops)
+            if (O.Opcode == NdOp::COPY && O.Output == r(128))
+              O.Inputs[0] = n(0);
+        loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+        continue;
+      }
+      const auto Refused =
+          inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract);
+      EXPECT_FALSE(Refused.inferred()) << Refused.Diagnostic;
+      EXPECT_FALSE(Refused.Plan);
+      loopRefused(loopCheck(Bad, Bad, *Inferred.Plan), Status::Different);
+    }
+  }
+}
+
+TEST(LowIRLoopInference, CachedComparisonsNeedCounterBitRelations) {
+  const auto P = deeperWordLoops(2, true, 1, true, false, 0, false, true);
+  const std::vector<va_t> Headers{0x200, 0x500};
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Headers);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  const auto Proof = loopCheck(P, P, *Inferred.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  auto Wrong = P;
+  for (auto &B : Wrong.Function.Blocks)
+    for (auto &O : B.Ops)
+      if (B.Id == 6 && O.Opcode == NdOp::INT_EQUAL)
+        O.Opcode = NdOp::INT_NOTEQUAL;
+  loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+  const auto Infinite =
+      deeperWordLoops(2, true, 1, true, false, 1, false, true);
+  const auto Refused = inferLowIRLoopRefinementPlan(
+      Infinite.Function, Infinite.Contract, {}, Headers);
+  EXPECT_FALSE(Refused.inferred());
+  EXPECT_FALSE(Refused.Plan);
+  for (bool Nodes : {false, true}) {
+    LowIRLoopInferenceLimits Limits;
+    if (Nodes)
+      Limits.Execution.MaxSymbolicNodes = Inferred.PredicateNodes - 1;
+    else
+      Limits.Execution.MaxSolverQueries = Inferred.SolverQueries - 1;
+    const auto Exhausted =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Headers);
+    EXPECT_EQ(Exhausted.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(Exhausted.Plan);
+  }
+}
+
+TEST(LowIRLoopInference, GuardedComparisonCachesAndPackedHighBits) {
+  const std::vector<va_t> Headers{0x200, 0x500};
+  for (const auto Options :
+       {CachedComparisonOptions{7, 1, false, true},
+        CachedComparisonOptions{7, 1, false, true, true},
+        CachedComparisonOptions{7, 1, false, true, true, true},
+        CachedComparisonOptions{31, 4, true, true, true},
+        CachedComparisonOptions{31, 4, true, false},
+        CachedComparisonOptions{63, 8, false, false}}) {
+    const auto P =
+        deeperWordLoops(2, true, 1, true, false, 0, false, true, Options);
+    const auto Inferred =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Headers);
+    ASSERT_TRUE(Inferred.inferred())
+        << "bit=" << Options.Bit << ": " << Inferred.Diagnostic;
+    ASSERT_TRUE(loopCheck(P, P, *Inferred.Plan).proved());
+    auto Wrong = P;
+    for (auto &B : Wrong.Function.Blocks)
+      for (auto &O : B.Ops)
+        if (B.Id == 6 && O.Opcode == NdOp::INT_LEFT)
+          O.Inputs[1] = n(Options.Bit - 1, Options.Bytes);
+    loopRefused(loopCheck(P, Wrong, *Inferred.Plan), Status::Different);
+    auto Neighbor = P;
+    for (auto &B : Neighbor.Function.Blocks)
+      for (auto &O : B.Ops)
+        if (B.Id == 6 && O.Opcode == NdOp::INT_LEFT) {
+          O.Opcode = NdOp::INT_MULT;
+          O.Inputs[1] = n((uint64_t{1} << Options.Bit) |
+                              (uint64_t{1} << (Options.Bit - 1)),
+                          Options.Bytes);
+        }
+    loopRefused(loopCheck(P, Neighbor, *Inferred.Plan), Status::Different);
+    for (unsigned Kind = 0; Kind != 3; ++Kind) {
+      const auto Bad =
+          deeperWordLoops(2, true, Kind == 0 ? 0 : 1, true, false,
+                          Kind == 1 ? 1 : 0, Kind == 2, true, Options);
+      loopRefused(loopCheck(Bad, Bad, *Inferred.Plan), Status::Different);
+    }
+  }
+}
+
+TEST(LowIRLoopInference, GuardedOperandCopiesFindDelayedOuterCounters) {
+  CachedComparisonOptions Options;
+  Options.GuardEntry = true;
+  const auto P =
+      deeperWordLoops(2, true, 1, true, true, 0, false, false, Options);
+  const std::vector<va_t> Headers{0x200, 0x500};
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Headers);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  const auto Proof = loopCheck(P, P, *Inferred.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  const auto Infinite =
+      deeperWordLoops(2, true, 0, true, true, 0, false, false, Options);
+  loopRefused(loopCheck(Infinite, Infinite, *Inferred.Plan), Status::Different);
+}
+
 TEST(LowIRLoopRefinement, UnreachableNestedPrefixCannotSeedInduction) {
   auto A = wordLoop();
   A.Contract.EntryConstants.push_back({r(16), 0});
@@ -957,9 +1342,13 @@ TEST(LowIRLoopRefinement, UnreachableNestedPrefixCannotSeedInduction) {
   Body.OriginalAddress = Body.CandidateAddress = 0x300;
   Body.UseEntryPrefix = true;
   Plan.Cutpoints.push_back(Body);
-  const auto Proof = loopCheck(A, A, Plan);
-  loopRefused(Proof, Status::Unsupported);
-  EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"), std::string::npos);
+  for (bool Generalize : {false, true}) {
+    Plan.Cutpoints.back().GeneralizeEntryPrefix = Generalize;
+    const auto Proof = loopCheck(A, A, Plan);
+    loopRefused(Proof, Status::Unsupported);
+    EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"),
+              std::string::npos);
+  }
 }
 
 TEST(LowIRLoopInference, NestedInfinitePathsAndSharedBudgetsRefuse) {
@@ -1008,9 +1397,13 @@ TEST(LowIRLoopRefinement, DisjointPrefixDomainsCannotBePaired) {
   Body.OriginalAddress = Body.CandidateAddress = 0x300;
   Body.UseEntryPrefix = true;
   Plan.Cutpoints.push_back(Body);
-  const auto Proof = loopCheck(A, B, Plan);
-  loopRefused(Proof, Status::Unsupported);
-  EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"), std::string::npos);
+  for (bool Generalize : {false, true}) {
+    Plan.Cutpoints.back().GeneralizeEntryPrefix = Generalize;
+    const auto Proof = loopCheck(A, B, Plan);
+    loopRefused(Proof, Status::Unsupported);
+    EXPECT_NE(Proof.Diagnostic.find("reachable entry prefix"),
+              std::string::npos);
+  }
 }
 
 TEST(LowIRLoopRefinement, SelectedUndefinedBitsRemainCorrelatedAcrossSpills) {
@@ -1044,12 +1437,16 @@ TEST(LowIRLoopRefinement, SelectedUndefinedBitsRemainCorrelatedAcrossSpills) {
       {LowIRLoopSide::Original, Slot, NdVar::tmp(16, 8)});
   Plan.Cutpoints[0].OriginalState.push_back({Slot, NdVar::tmp(16, 8)});
   Plan.Cutpoints[0].CandidateState.push_back({Slot, NdVar::tmp(16, 8)});
-  const auto R = loopCheck(A, B, Plan);
-  ASSERT_TRUE(R.proved()) << R.Diagnostic;
-  EXPECT_FALSE(R.Certificate->Producers.empty());
-  const auto WrongWitness = checkLowIRLoopRefinement(
-      A.Function, A.Records, B.Function, A.Contract, Plan, Witness::ZeroBits);
-  loopRefused(WrongWitness, Status::Different);
+  for (bool Generalize : {false, true}) {
+    Plan.Cutpoints[0].UseEntryPrefix = true;
+    Plan.Cutpoints[0].GeneralizeEntryPrefix = Generalize;
+    const auto R = loopCheck(A, B, Plan);
+    ASSERT_TRUE(R.proved()) << R.Diagnostic;
+    EXPECT_FALSE(R.Certificate->Producers.empty());
+    const auto WrongWitness = checkLowIRLoopRefinement(
+        A.Function, A.Records, B.Function, A.Contract, Plan, Witness::ZeroBits);
+    loopRefused(WrongWitness, Status::Different);
+  }
   Plan.Cutpoints[0].CandidateState.back().Value = n(0);
   loopRefused(loopCheck(A, B, Plan), Status::Different);
 }

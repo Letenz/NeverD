@@ -63,6 +63,12 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopInference.*` y `BinaryLowIRLoopInference.*` usan contadores, guardados en pila, retornos anticipados, llamadas nativas y banderas empaquetadas escritos independientemente. Cubren ampliación aritmética estrecha y banderas semánticamente iguales con expresiones distintas. Grafos malformados, orígenes ausentes o falsificados, bucles infinitos o con desbordamiento modular y presupuestos agotados no deben producir certificados.
 
+Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
+
+Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.
+
+Las regresiones cubren entradas unidas, el primer testigo sin iteraciones, diferencias ocultas de registros/marco, predicados booleanos no canónicos, condiciones de trap nativas, copias a pila correlacionadas y planes inválidos o sin presupuesto. Contadores independientes de dos/tres niveles con salida por igualdad y bytes nativos comprueban límites sin signo, dominios cero/máximo, pasos no unitarios e instrucciones originales incorrectas. La inferencia y la prueba final rechazan resultados incompletos.
+
 Las regresiones independientes con bucles alternativos cubren ambas orientaciones de rama, cuerpos incorrectos, una rama hermana no terminante y el agotamiento de los presupuestos compartidos de búsqueda/prueba. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Las regresiones cubren dos y tres niveles anidados, contadores ascendentes y descendentes, fases inferidas y cortes en cuerpos nativos reales. Deben rechazarse dominios de prefijo inaccesibles o disjuntos, cuerpos incorrectos, transiciones infinitas o con desbordamiento circular y presupuestos compartidos agotados. Un testigo de prefijo nunca sustituye la cobertura completa de segmentos.

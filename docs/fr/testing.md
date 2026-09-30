@@ -64,6 +64,12 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 `LowIRLoopInference.*` et `BinaryLowIRLoopInference.*` utilisent des compteurs, sauvegardes sur pile, retours anticipés, appels natifs et drapeaux compactés écrits indépendamment. Ils couvrent l’élargissement arithmétique étroit et les drapeaux égaux malgré des expressions différentes. Graphes malformés, origines absentes ou falsifiées, boucles infinies ou avec rebouclage et budgets épuisés ne doivent produire aucun certificat.
 
+Les sorties par égalité mises en cache dans des boucles à deux et trois niveaux couvrent les opérandes corrélés, les bornes mobiles, les compteurs réinitialisés et les copies altérées.
+
+Les régressions des comparaisons en cache couvrent égalité et inégalité, gardes et initialisations constantes, champs découverts après élargissement et bits 7/31/63 des caches de 1/4/8 octets. Modifier seulement un bit voisin tout en conservant le bit testé doit échouer à la comparaison de tout l’état. Pas nul, bornes mobiles, remises à zéro et budgets épuisés doivent être refusés.
+
+Les régressions de généralisation couvrent les entrées jointes, le premier témoin sans itération, les différences cachées de registres/cadre, les prédicats booléens non canoniques, les conditions de trap natives, les sauvegardes corrélées et les plans invalides ou hors budget. Des compteurs indépendants à deux/trois niveaux et des octets natifs vérifient les bornes non signées, les domaines zéro/maximal, les pas non unitaires et les instructions originales incorrectes. Inférence et preuve finale doivent refuser tout résultat incomplet.
+
 Des régressions indépendantes avec des boucles alternatives couvrent les deux orientations de branchement, les corps incorrects, une branche sœur non terminante et l’épuisement des budgets partagés de recherche/preuve. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Les régressions couvrent deux et trois niveaux imbriqués, les compteurs croissants et décroissants, les phases inférées et les coupures dans des corps natifs réels. Les domaines de préfixe inaccessibles ou disjoints, les corps incorrects, les transitions infinies ou avec rebouclage arithmétique et les budgets partagés épuisés doivent être refusés. Un témoin de préfixe ne remplace jamais la couverture complète des segments.

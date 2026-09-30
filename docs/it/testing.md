@@ -63,6 +63,12 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 `LowIRLoopInference.*` e `BinaryLowIRLoopInference.*` usano contatori, salvataggi sullo stack, ritorni anticipati, chiamate native e flag impacchettati scritti indipendentemente. Coprono ampliamento aritmetico a larghezza ridotta e flag semanticamente uguali con espressioni diverse. Grafi malformati, origini mancanti o falsificate, cicli infiniti o con riavvolgimento e budget esauriti non devono produrre certificati.
 
+Le uscite per uguaglianza memorizzate nei cicli a due e tre livelli verificano operandi correlati, limiti variabili, azzeramenti dei contatori e copie alterate.
+
+Le regressioni dei confronti in cache coprono uguaglianza e disuguaglianza, guardie e inizializzazione costante, campi scoperti dopo l’ampliamento e bit 7/31/63 in cache da 1/4/8 byte. Cambiare solo un bit vicino conservando quello verificato deve fallire nel confronto dell’intero stato. Passi nulli, limiti mobili, azzeramenti e budget esauriti devono essere rifiutati.
+
+Le regressioni coprono ingressi uniti, primo testimone senza iterazioni, differenze nascoste di registri/frame, predicati booleani non canonici, condizioni native di trap, spill correlati e piani invalidi o con budget esaurito. Contatori indipendenti a due/tre livelli con uscita per uguaglianza e byte nativi verificano limiti senza segno, domini zero/massimo, passi non unitari e istruzioni originali errate. Inferenza e prova finale devono rifiutare risultati incompleti.
+
 Regressioni indipendenti con cicli alternativi coprono entrambi gli orientamenti dei rami, corpi errati, un ramo fratello non terminante e l’esaurimento dei budget condivisi di ricerca/prova. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Le regressioni coprono due e tre livelli annidati, contatori crescenti e decrescenti, fasi inferite e tagli in corpi nativi reali. Domini di prefisso irraggiungibili o disgiunti, corpi errati, transizioni infinite o con riavvolgimento aritmetico e budget condivisi esauriti devono essere rifiutati. Un testimone di prefisso non sostituisce la copertura completa dei segmenti.
