@@ -389,15 +389,7 @@ la política no proporciona un backend de traducción ejecutable.
 
 ## Emulación de controladores de Windows
 
-`lib/emulation` es un componente opcional de ejecución, activado mediante
-`NEVERD_ENABLE_DRIVER_EMULATION`. La CLI `emulate-driver` accede a él a través
-de la API C pública. `DriverSession` controla la inicialización WDM x64 acotada
-y las invocaciones seriales opcionales create/IOCTL/read/write/cleanup/close/unload;
-el mapeo de imágenes Windows utiliza el `BinaryImage` completo del cargador
-existente, y el modelo de Windows controla los objetos del invitado y la
-semántica de las API. El adaptador Unicorn controla la ejecución de CPU y la
-memoria del invitado que actúa como fuente de verdad. Esta vía no utiliza
-el pipeline experimental de traducción nativa ni modifica su perfil compatible.
+`lib/emulation` es un componente opcional de ejecución, activado mediante `NEVERD_ENABLE_DRIVER_EMULATION`. La CLI `emulate-driver` accede mediante la API C pública. `DriverSession` gestiona la inicialización WDM x64 acotada y las invocaciones seriales opcionales create/IOCTL/read/write/cleanup/close/unload; el mapeo Windows usa el `BinaryImage` completo del cargador existente, y el modelo de Windows controla los objetos invitados y la semántica de las API. Con `driver-strict`, el adaptador Unicorn, KVM o WHP seleccionado utiliza la misma autoridad de memoria física compartida y espacio de direcciones. Las capacidades específicas del backend distinguen los callbacks del motor portable de la validación arquitectónica nativa previa a la entrada. Esta vía no usa el pipeline experimental de traducción nativa ni modifica su perfil compatible.
 
 Unicorn se configura una sola vez mediante `cmake/NeverDUnicorn.cmake`, compartido
 con las pruebas semánticas y disponible con `BUILD_TESTING=OFF`. Las API
@@ -594,6 +586,12 @@ La ejecución CPU es independiente del SO invitado y de la imagen. La política 
 La fábrica CPU y la consulta de capacidades comparten `ExecutionConfiguration`; validan arquitectura, privilegio, ancho de dirección y funciones antes de asignar recursos. `ExecutionBudget` posee una sola cuenta de instrucciones/eventos y un plazo monotónico absoluto por carga; reanudar no repone el presupuesto. `ExecutionSession` posee la CPU, hooks y continuaciones pendientes de servicio/fallo. Las sesiones pueden compartir memoria y presupuesto, pero la planificación es cooperativa, no SMP paralelo. Cada solicitud pendiente debe consumirse exactamente una vez antes de reanudar. Los fallos CPU prevalecen sobre la parada por recursos; una parada inexplicada del motor no significa éxito de la carga.
 
 `ImageMappingPlan` consume segmentos ya proporcionados por el cargador: no vuelve a analizar cabeceras ni resuelve imports. Comprueba extensiones completas y solapamientos antes de publicar el espacio. El perfil explícito `linux-elf64-v1` inicia ELF freestanding `ET_EXEC` y PIE estático `ET_DYN` x64/AArch64 con pila inicial, solicitudes explícitas de servicio y salida acotada. Enlace dinámico, TLS dinámico, señales, hilos del SO y servicios no admitidos fallan; se admiten TLS estático y SSE/SSE2 acotado en x64; Linux no se infiere de KVM ni Windows de WHP. Consulta [ejecución CPU](cpu-execution.md) y [emulación de procesos invitados](process-emulation.md). Esto no implica entorno Windows de usuario ni compatibilidad con apps Android/Darwin.
+
+`driver-strict` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
+
+Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` describe la ejecución nativa de controladores x64. `NeverDNativeDriverTests` valida el corpus existente y también puede ejecutarse en una compilación sin Unicorn.
+
+KVM x64 lee los registros especiales reales antes de cada entrada y compara solo los campos de protocolo definidos en `KvmX64State.def`. Reescribe la proyección cuando cambia CR3, CPL, TLS, CR8 u otro campo. Solo una salida de depuración de paso único cuyo estado se haya capturado por completo permite reutilizar el estado ejecutable; las excepciones, cancelaciones y entradas fallidas lo restablecen. `X64StateTransition` verifica cambios de TLS, privilegio y CR8, fallos repetidos y cancelación mediante lecturas de la CPU real. Los registros generales, el estado FP/SSE y el paso único siguen instalándose en cada instrucción.
 
 ## Contrato de lifting estricto
 
@@ -886,7 +884,3 @@ Los `DIV`/`IDIV` checked x64 usan resultados reales del procesador y `#DE`. KVM 
 `NeverDEmulationArch` posee los contratos ISA, las tablas de páginas y el formato FP compartido por los transportes nativos y Unicorn. Los contextos x64 conservan control, estado, TOP, etiquetas físicas, código de operación, punteros de instrucciones/datos y ocho registros de 80 bits. `FP0`–`FP7` usan `RegisterValue`; el acceso escalar rechaza el truncamiento. `FPTag` es la máscara física de registros no vacíos. `NeverDX64FPTests` comprueba todos los TOP, operaciones exactas frente a FXSAVE/FXRSTOR del host y restauración. Esto no admite instrucciones x87 en checked ni prueba todos los redondeos. Los hosts nativos no disponibles se omiten explícitamente.
 
 El x64 comprobado admite también las formas heredadas enmascaradas `SS`, `SD`, `PS`, `PD` de `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` centraliza anchuras, alineación y admisión. `MaskedSSEArithmeticMatchesIndependentHostExecution` compara registros/RAM con un oráculo CPU anfitrión independiente: cuatro redondeos, FTZ, ceros con signo, subnormales y NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` comprueba la parada antes de los efectos. DAZ, excepciones sin máscara, x87 y AVX siguen excluidos.
-
-`driver-strict` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
-
-Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` describe la ejecución nativa de controladores x64. `NeverDNativeDriverTests` valida el corpus existente y también puede ejecutarse en una compilación sin Unicorn.
