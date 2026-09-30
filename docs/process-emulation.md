@@ -114,7 +114,8 @@ execution; this is explicitly a deterministic model policy, not cryptographic
 entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 [Linux ELF loader](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c).
 
-Implemented calls are `write`, `exit`, `exit_group`, `getpid` and `gettid`, with
+Implemented calls are `write`, `exit`, `exit_group`, `getpid`, `gettid`,
+`mmap`, `mprotect`, `munmap` and `brk`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
 and [asm-generic ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)
 numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
@@ -149,6 +150,35 @@ comparison agrees on ordinary output and on partial writes to regular files;
 Linux pipes can reject that same small cross-page write completely. Output
 limits stop before publishing an over-budget write.
 
+Anonymous memory services use the same process address space and physical
+memory budget as the loaded image and stack. `mmap` accepts exactly
+`MAP_PRIVATE | MAP_ANONYMOUS`, with ordinary `PROT_NONE`, `PROT_READ`,
+`PROT_READ | PROT_WRITE`, `PROT_READ | PROT_EXEC` and readable RWX permissions.
+Free, page-aligned hints are honored; otherwise placement searches gaps from
+`0x100000000`, then from the minimum user address, reserving the stack guards.
+This deterministic policy does not emulate Linux ASLR. New anonymous pages
+are zero-filled and independently owned, so partial unmapping can reclaim
+unpinned page allocations. A CPU projection or retained backing view may keep
+a retired allocation alive until its own lifetime ends.
+
+Lengths round to pages. `munmap` tolerates holes and repeated removal;
+`mprotect` changes the mapped prefix before returning `ENOMEM` at a hole.
+`PROT_NONE` preserves the allocation and bytes while denying guest access.
+The raw `brk` call returns the requested byte boundary on success and the old
+boundary on failure; it is not the libc wrapper's zero/minus-one convention.
+The initial break is the page-aligned image end. Growth respects other mappings
+and the memory budget; shrinking preserves bytes in its remaining partial page.
+Rules and error precedence for the supported subset follow the Linux
+[mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) and
+[protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c) services.
+
+File/shared/fixed mappings, grow-down, huge pages, memory locking, protection
+keys, execute-only/write-only policy and other flags remain explicit unsupported
+service contracts. They stop before publishing effects or inventing a syscall
+return. Ordinary range/length/alignment errors within the admitted subset return
+guest errors and allow execution to continue. No memory service forwards a
+guest pointer or mapping request to the host OS.
+
 ## Verification
 
 ```bash
@@ -171,4 +201,11 @@ The static PIE fixtures check relocated auxiliary values and raw zero RELA
 slots before performing their own data/function-pointer relocations. Mapping
 tests separately retain analysis fixups when that byte source is selected;
 dynamic-table tests cover sections being absent and malformed/dependent input.
+Anonymous-memory fixtures execute allocation, protection, holes, remapping,
+heap growth/shrink and handled syscall errors on both ISAs. Separate actual
+guest stores fault after ordinary and partial protection changes. The x64
+fixture also rewrites code between RW and RX transitions and calls both
+versions at the same address. The same x64 ELF runs natively on Linux as an
+independent result/fault oracle. Pure memory tests cover budget exhaustion,
+reclamation and authoritative mapping snapshots without retaining RAM.
 Cross-compilation and Unicorn ARM64 results are not native ARM64 KVM/WHP evidence.

@@ -12,6 +12,11 @@
 #include <memory>
 
 namespace neverd::emulation {
+struct AddressMapping {
+  uint64_t Address, Size;
+  unsigned Permissions;
+  bool Device;
+};
 /// One guest virtual-address namespace over a shared physical owner.
 /// Permissions and alias budgets belong to this space. Physical allocation
 /// handles can outlive their original mapping and can be mapped into siblings.
@@ -33,6 +38,10 @@ public:
   std::shared_ptr<PhysicalMemory> physicalMemory() const;
   uint64_t mappedBytes() const;
   uint64_t mappingGeneration() const;
+  /// Point-in-time virtual layout, sorted and coalesced by permissions and
+  /// RAM/device kind. This query does not pin allocations or preserve mapping
+  /// identities. Callers must synchronize later mutations independently.
+  llvm::Expected<std::vector<AddressMapping>> mappings() const;
 
   /// Map part of an existing allocation from this space's physical owner.
   llvm::Error mapRegion(uint64_t Address, std::shared_ptr<MemoryRegion> Region,

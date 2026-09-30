@@ -21,6 +21,14 @@ NEVERD_LINUX_VALUE(StandardError, 2)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
+NEVERD_LINUX_VALUE(InvalidArgument, 22)
+NEVERD_LINUX_VALUE(NoMemory, 12)
+NEVERD_LINUX_VALUE(MmapBase, 0x100000000ULL)
+NEVERD_LINUX_VALUE(MapPrivate, 0x02)
+NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
+NEVERD_LINUX_VALUE(ProtRead, 0x01)
+NEVERD_LINUX_VALUE(ProtWrite, 0x02)
+NEVERD_LINUX_VALUE(ProtExecute, 0x04)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
@@ -60,6 +68,10 @@ NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
 NEVERD_LINUX_SERVICE(GetTID, 186, 178, 0)
+NEVERD_LINUX_SERVICE(Mmap, 9, 222, 6)
+NEVERD_LINUX_SERVICE(Mprotect, 10, 226, 3)
+NEVERD_LINUX_SERVICE(Munmap, 11, 215, 2)
+NEVERD_LINUX_SERVICE(Brk, 12, 214, 1)
 #endif
 #ifdef NEVERD_LINUX_ABI
 NEVERD_LINUX_ABI(X64, X64Syscall, X64AX, X64AX, X64SP, X64PC, X64DI, X64SI,
@@ -94,6 +106,10 @@ NEVERD_LINUX_DIAGNOSTIC(
     TLS, "ELF TLS template has an invalid, duplicate or unreadable layout")
 NEVERD_LINUX_DIAGNOSTIC(ThreadOperation,
                         "unsupported Linux arch_prctl operation {0}")
+NEVERD_LINUX_DIAGNOSTIC(MemoryOperation,
+                        "unsupported Linux memory operation {0}: protection={1:x}, flags={2:x}")
+NEVERD_LINUX_DIAGNOSTIC(MemoryState,
+                        "Linux process memory operation encountered invalid internal state")
 NEVERD_LINUX_DIAGNOSTIC(
     ProgramHeaders,
     "ELF program headers have an invalid or unmapped process layout")

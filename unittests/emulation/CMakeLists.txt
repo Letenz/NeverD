@@ -18,6 +18,7 @@ add_neverd_unittest(NeverDThreadPointerTests
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp
+  LinuxMemoryTests.cpp
   ProcessReportTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationProcess)

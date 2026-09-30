@@ -90,6 +90,44 @@ TEST(MemoryLifecycle, CanonicalUnmapLeavesAliasesAndReclaimsOnlyTheFinalOwner) {
   ASSERT_EQ(llvm::toString(A->map(Data, PageSize, Read | Write)), "");
   EXPECT_EQ(*A->readInteger(Data, sizeof(uint64_t)), 0u);
 }
+TEST(MemoryLifecycle,
+     MappingSnapshotsDescribeRightsAndDevicesWithoutPinningRAM) {
+  auto RAM = ram();
+  auto A = space(RAM);
+  ASSERT_EQ(llvm::toString(A->map(Data, 2 * PageSize, Read | Write)), "");
+  ASSERT_EQ(llvm::toString(A->mapAlias(Alias, Data, PageSize, Read)), "");
+  GuestMMIOCallbacks IO;
+  IO.Validate = [](uint64_t, uint64_t, bool) { return llvm::Error::success(); };
+  IO.Read = [](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+    return Value;
+  };
+  IO.Write = [](uint64_t, unsigned, uint64_t) {
+    return llvm::Error::success();
+  };
+  ASSERT_EQ(llvm::toString(A->mapMMIO(Other, PageSize, std::move(IO))), "");
+  const auto Snapshot = llvm::cantFail(A->mappings());
+  ASSERT_EQ(Snapshot.size(), 3u);
+  EXPECT_EQ(Snapshot[0].Address, Data);
+  EXPECT_EQ(Snapshot[0].Size, 2 * PageSize);
+  EXPECT_EQ(Snapshot[0].Permissions, Read | Write);
+  EXPECT_FALSE(Snapshot[0].Device);
+  EXPECT_EQ(Snapshot[1].Address, Alias);
+  EXPECT_EQ(Snapshot[1].Permissions, Read);
+  EXPECT_EQ(Snapshot[2].Address, Other);
+  EXPECT_TRUE(Snapshot[2].Device);
+  ASSERT_EQ(llvm::toString(A->protect(Data + PageSize, PageSize, Read)), "");
+  const auto Split = llvm::cantFail(A->mappings());
+  ASSERT_EQ(Split.size(), 4u);
+  EXPECT_EQ(Split[0].Size, PageSize);
+  EXPECT_EQ(Split[1].Address, Data + PageSize);
+  EXPECT_EQ(Split[1].Permissions, Read);
+  EXPECT_EQ(Snapshot[0].Size, 2 * PageSize);
+  ASSERT_EQ(llvm::toString(A->unmap(Data, 2 * PageSize)), "");
+  ASSERT_EQ(llvm::toString(A->unmapAlias(Alias, PageSize)), "");
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  ASSERT_EQ(llvm::toString(A->unmapMMIO(Other, PageSize)), "");
+  EXPECT_TRUE(llvm::cantFail(A->mappings()).empty());
+}
 TEST(MemoryLifecycle, FailedTransactionsPreserveMappingGenerationAndBudgets) {
   auto RAM = ram();
   auto A = space(RAM, 2 * PageSize);

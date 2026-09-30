@@ -483,7 +483,16 @@ cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --
 ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
 ```
 
-## Driver emulation checks
+## Process emulation checks
+
+`LinuxMemory.*` in `NeverDLinuxProcessTests` checks raw anonymous-memory syscall
+rules, partial protection before a hole, page reclamation, transactional budget
+failure and program-break preservation. Original x64/ARM64 ELF fixtures verify
+those services through actual instructions and repeated process continuations;
+the x64 fixture additionally calls rewritten executable memory. Protection
+failures use real guest stores. `MemoryLifecycle` also verifies that virtual
+layout snapshots expose RAM/device rights without pinning retired allocations.
+`NeverDProcessPublicTests` runs the memory fixture through the shared SDK/CLI.
 
 The independent [process emulation suites](process-emulation.md#verification)
 compile real x64/AArch64 ELF process fixtures. `NeverDLinuxProcessTests` verifies
@@ -505,6 +514,8 @@ REP restart boundaries and device-read preparation/commit failures. It exercises
 Unicorn, KVM and WHP separately at supported privileges, with explicit unavailable
 backend skips. The public Python wrapper also participates in
 the ordinary Python SDK tests and declaration audit.
+
+## Driver emulation checks
 
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context

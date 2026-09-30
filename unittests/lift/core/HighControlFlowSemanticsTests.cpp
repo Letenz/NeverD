@@ -4934,3 +4934,104 @@ TEST(HighControlFlowSemantics, JoinDefaultKeepsValuesOfAnArmWithTwoJumps) {
   EXPECT_EQ(execute(Late, 1), std::optional<uint64_t>(11));
   EXPECT_EQ(execute(Late, 2), std::optional<uint64_t>(10));
 }
+
+TEST(HighControlFlowSemantics, IndirectCallTargetKeepsItsConditionTemporary) {
+  // t1 = *slot; if (t1) return t1(); return 0;
+  // The call target reads t1 as well, so t1 cannot fold into the condition.
+  auto Load = assign(0x1000, 1, 0);
+  Load.Val =
+      HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
+  auto Call = HighExpr::makeCall("", 0, {});
+  Call->IndirectTarget = local(1);
+  Call->Type = NdType::makeInt(8);
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Addr = 0x1004;
+  Test.Cond = local(1);
+  Test.Body = {result(0x1008, Call)};
+  std::vector<HighStmt> Body = {Load, Test,
+                                result(0x100c, HighExpr::makeConst(0, 8))};
+  reduceSingleUseGotos(Body);
+  bool Assigned = false;
+  walkStmts(Body, [&](const HighStmt &S) {
+    Assigned |= S.Kind == StmtKind::Assign && S.Dst && S.Dst->Var.Id == 1;
+  });
+  EXPECT_TRUE(Assigned);
+}
+
+TEST(HighControlFlowSemantics, NestedIfMergeKeepsAnEnteredPrefix) {
+  // if (t0) { t1 = *slot; if (t1) { *out = 7; if (t3) goto reload; } }
+  // The back edge re-enters the load, so folding it into `t0 && *slot`
+  // would drop the label and skip the inner test on re-entry.
+  const auto Slot = HighExpr::makeConst(0x100, 8);
+  auto Reload = assign(0x1008, 1, 0);
+  Reload.Val = HighExpr::makeLoad(Slot, NdType::makeInt(8));
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.Addr = 0x1010;
+  Keep.StoreAddr = HighExpr::makeConst(0x200, 8);
+  Keep.StoreVal = HighExpr::makeConst(7, 8);
+  HighStmt Again;
+  Again.Kind = StmtKind::If;
+  Again.Addr = 0x1014;
+  Again.Cond = local(3);
+  Again.Body = {jump(0, 0x1008)};
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x100c;
+  Inner.Cond = local(1);
+  Inner.Body = {Keep, Again};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = local(0);
+  Outer.Body = {Reload, Inner};
+  HighFunc F;
+  F.Body = {Outer, result(0x1020, HighExpr::makeConst(0, 8))};
+  structureIfElse(F, 10);
+  size_t Entries = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) { Entries += S.Addr == 0x1008; });
+  EXPECT_EQ(Entries, 1u);
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultStaysWhereAnEarlierJumpEntersIt) {
+  // if (c & 1) goto pad; if (c & 2) { v = c + 5; goto join; } pad: ; v = 7;
+  // join: return v. The first jump lands on the empty statement before the
+  // default and runs into it, so the default cannot move into an else arm.
+  auto Low = assign(0x0ff8, 3, 0);
+  Low.Val =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  HighStmt ToPad;
+  ToPad.Kind = StmtKind::If;
+  ToPad.Addr = 0x1000;
+  ToPad.Cond = local(3);
+  ToPad.Body = {jump(0, 0x1010)};
+  auto High = assign(0x1002, 4, 0);
+  High.Val =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+  auto Early = assign(0x1004, 2, 0);
+  Early.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(5, 8));
+  Early.IsPhiCopy = true;
+  HighStmt ToJoin;
+  ToJoin.Kind = StmtKind::If;
+  ToJoin.Addr = 0x1004;
+  ToJoin.Cond = local(4);
+  ToJoin.Body = {Early, jump(0, 0x1018)};
+  HighStmt Pad;
+  Pad.Kind = StmtKind::Block;
+  Pad.Addr = 0x1010;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = 0x1018;
+  auto Default = assign(0x1014, 2, 7);
+  Default.IsPhiCopy = true;
+  HighFunc F;
+  F.Body = {Low, ToPad,   High, ToJoin,
+            Pad, Default, Join, result(0x101c, local(2))};
+  sinkJoinDefaultsLate(F);
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(7));
+  EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(7));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(7));
+  EXPECT_EQ(execute(F, 6), std::optional<uint64_t>(11));
+}

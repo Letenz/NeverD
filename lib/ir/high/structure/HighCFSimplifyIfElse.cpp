@@ -2840,7 +2840,7 @@ static bool exprUsesJoinDest(const HighExpr *E, const MedVar &Dest) {
   for (const auto &Op : E->Operands)
     if (exprUsesJoinDest(Op.get(), Dest))
       return true;
-  return false;
+  return exprUsesJoinDest(E->IndirectTarget.get(), Dest);
 }
 
 static bool stmtUsesJoinDest(const HighStmt &S, const MedVar &Dest) {
@@ -3634,9 +3634,16 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     if (MovesAcrossUse)
       continue;
     // Only an `if` gives the default a new home for its label. Erasing an
-    // entered default under an if/else would lose the jump's target.
-    if (Prev.Kind == StmtKind::IfElse &&
-        isFunctionJumpTarget(Body[DefI].Addr, Body))
+    // entered default under an if/else would lose the jump's target. A jump
+    // to anything between the if and the default runs into the default
+    // there, which a default moved into an arm no longer does.
+    bool EnteredBefore = false;
+    for (size_t K = P + 1; K < DefI && !EnteredBefore; ++K)
+      walkStatementTree(Body[K], [&](const HighStmt &N) {
+        EnteredBefore |= isFunctionJumpTarget(N.Addr, Body);
+      });
+    if (EnteredBefore || (Prev.Kind == StmtKind::IfElse &&
+                          isFunctionJumpTarget(Body[DefI].Addr, Body)))
       continue;
     // The join edges become fallthrough; a jump that skips later work in its
     // arm cannot.
@@ -4638,9 +4645,19 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       // If d already starts with c, drop those conjuncts (or flatten when
       // the inner cond is implied). Do not pull an inner IfElse into the
       // else (that would run the else when `!c`).
+      // A jump into the prefix or onto the inner test would lose its label,
+      // or run the inner body without that test.
+      auto EntersPrefix = [&](size_t InnerI) {
+        bool Entered = isFunctionJumpTarget(Stmt.Body[InnerI].Addr, Body);
+        for (size_t K = 0; K < InnerI && !Entered; ++K)
+          walkStatementTree(Stmt.Body[K], [&](const HighStmt &N) {
+            Entered |= isFunctionJumpTarget(N.Addr, Body);
+          });
+        return Entered;
+      };
       if (Stmt.Kind == StmtKind::If && Stmt.Cond && Stmt.ElseBody.empty()) {
         size_t InnerI = SIZE_MAX;
-        if (bodyIsNestedIf(Stmt.Body, InnerI)) {
+        if (bodyIsNestedIf(Stmt.Body, InnerI) && !EntersPrefix(InnerI)) {
           HighStmt Inner = std::move(Stmt.Body[InnerI]);
           const ExprPtr OriginalInnerCond = Inner.Cond;
           bool FoldPrefix = InnerI > 0;

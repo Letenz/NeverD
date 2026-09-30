@@ -1247,6 +1247,15 @@ dependencies, signals and thread creation. Those OS semantics remain in
 `os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
+`LinuxMemory` owns anonymous placement, syscall errors and the process break.
+It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
+it does not maintain another mapping table. The pure snapshot is sorted and
+coalesced, distinguishes RAM/devices and retains no allocation ownership.
+Anonymous mappings use page-sized physical owners for partial retirement.
+`mmap`, `mprotect`, `munmap` and raw `brk` run only at stopped service boundaries;
+next-entry projection/invalidation follows the ordinary mapping generation.
+File/shared/fixed mappings and other unimplemented policies fail explicitly.
+
 ```mermaid
 flowchart TD
   Windows[Windows guest environment] --> Runtime[Runtime CPU factory]

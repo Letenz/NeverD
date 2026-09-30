@@ -27,6 +27,7 @@ struct ObjCSynchronizedSourceProof {
   va_t ResumeTarget = 0;
   uint8_t UnprotectedReleases = 0;
   bool ReceiverIsSavedLocal = false;
+  uint8_t UnprotectedRetains = 0;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -97,6 +98,29 @@ inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
   return Target && llvm::StringRef(Image.getFunctionNameAt(Target)) == Name;
 }
 
+inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
+                                          va_t LastTarget) {
+  if (!Instruction.Raw || !Instruction.Raw->detail)
+    return false;
+  switch (Instruction.Id) {
+  case ARM64_INS_B:
+  case ARM64_INS_CBZ:
+  case ARM64_INS_CBNZ:
+  case ARM64_INS_TBZ:
+  case ARM64_INS_TBNZ:
+    break;
+  default:
+    return false;
+  }
+  const auto &Operands = Instruction.Raw->detail->aarch64;
+  if (!Operands.op_count)
+    return false;
+  const auto &Target = Operands.operands[Operands.op_count - 1];
+  return Target.type == AARCH64_OP_IMM && Target.imm >= 0 &&
+         static_cast<va_t>(Target.imm) > Instruction.Addr &&
+         static_cast<va_t>(Target.imm) <= LastTarget && Target.imm % 4 == 0;
+}
+
 // A narrowly recognized clang @synchronized cleanup: the Itanium call-site
 // table names one unconditional pad, and that pad does nothing except unlock
 // the saved receiver and resume the original exception. Its source equivalent
@@ -151,17 +175,20 @@ proveObjCSynchronizedStackReceiverCleanup(const BinaryImage &Image,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
 }
 
-// A second clang shape keeps objc_self in callee-saved x19. Its protected
-// body is straight-line and the first instruction after the LSDA range loads
-// that same receiver for the normal unlock. There can be no intervening call
-// which the C cleanup would incorrectly cover.
+// A second clang shape keeps the receiver in callee-saved x19. Forward
+// branches in the prefix must join before loading the enter argument; forward
+// branches in the protected body must join by its end. No path may bypass the
+// lock, reach its pad normally, or skip the first unprotected call. The C guard
+// is cleared before that call, preserving the original LSDA boundary.
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
                                              const HighFunc &Function) {
   const auto Region = objcSynchronizedSourceRegion(Image, Function);
   if (!Region || Function.Entry > InvalidVA - 8 ||
       Region->Begin < Function.Entry + 8 || Region->Landing < 20 ||
-      Region->End > Region->Landing - 20 || Region->Begin > Region->End)
+      Region->End > Region->Landing - 20 || Region->Begin > Region->End ||
+      (Function.Entry | Region->Begin | Region->End | Region->Landing) % 4 ||
+      Region->End - Function.Entry > 16384)
     return std::nullopt;
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
@@ -169,7 +196,19 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   const auto HasCall = [&](va_t Address, llvm::StringRef Name) {
     return objcSynchronizedCallIs(Image, Address, Name);
   };
-  const va_t EnterCall = Region->Begin - 4;
+  // LSDA ranges begin at potentially throwing instructions. Clang may put
+  // straight-line non-call preparation between the enter and that range.
+  va_t EnterCall = 0;
+  for (va_t Address = Region->Begin - 4;
+       Address >= Function.Entry + 4 && Region->Begin - Address <= 32;
+       Address -= 4) {
+    if (HasCall(Address, "_objc_sync_enter")) {
+      EnterCall = Address;
+      break;
+    }
+  }
+  if (!EnterCall)
+    return std::nullopt;
   const va_t Landing = Region->Landing;
   const bool ReceiverFromRetainResult =
       EnterCall >= Function.Entry + 8 && Word(EnterCall - 4) == 0xaa0003f3U &&
@@ -178,6 +217,15 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   va_t Normal = Region->End;
   if (Word(Normal) == 0xaa0003f4U || Word(Normal) == 0xaa0003f5U)
     Normal += 4; // retain an already computed result across ARC releases
+  va_t FirstRetain = 0;
+  uint8_t UnprotectedRetains = 0;
+  if ((Word(Normal) == 0xaa1403e0U || Word(Normal) == 0xaa1503e0U ||
+       Word(Normal) == 0xaa1603e0U) &&
+      HasCall(Normal + 4, "_objc_retain")) {
+    FirstRetain = Normal + 4;
+    UnprotectedRetains = 1;
+    Normal += 8;
+  }
   va_t FirstRelease = 0;
   uint8_t UnprotectedReleases = 0;
   while (UnprotectedReleases < 2 && Normal < Landing - 8 &&
@@ -234,29 +282,48 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
           (Writes[I] == ARM64_REG_X19 || Writes[I] == ARM64_REG_W19))
         return std::nullopt;
     }
-    // The lock and normal unlock must be reached in one straight-line path.
-    if (Address < EnterCall &&
-        (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) ||
-         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
-         (ReceiverFromSelf && Address < SavedReceiver &&
-          cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL))))
+    const bool IsJump =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP);
+    const bool IsCall =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL);
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT))
       return std::nullopt;
-    if (Address > EnterCall &&
-        (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) ||
-         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET)))
+    if (ReceiverFromSelf && Address < SavedReceiver && (IsJump || IsCall))
+      return std::nullopt;
+    if (IsJump) {
+      if (Address < EnterCall) {
+        const va_t Join = ReceiverFromSelf ? EnterCall - 4 : EnterCall - 8;
+        if (!objcSynchronizedForwardBranch(Instruction, Join))
+          return std::nullopt;
+      } else if (Address < Region->Begin || Address >= Region->End ||
+                 !objcSynchronizedForwardBranch(Instruction, Region->End))
+        return std::nullopt;
+    }
+    if (Address > EnterCall && Address < Region->Begin && IsCall)
+      return std::nullopt;
+    if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
+        HasCall(Address, "_objc_sync_exit"))
       return std::nullopt;
     if (UnprotectedReleases && Address > EnterCall && Address < Region->End &&
         HasCall(Address, "_objc_release"))
       return std::nullopt;
+    if (UnprotectedRetains && Address > EnterCall && Address < Region->End &&
+        HasCall(Address, "_objc_retain"))
+      return std::nullopt;
   }
   return ObjCSynchronizedSourceProof{
       EnterCall,
-      UnprotectedReleases ? FirstRelease : ExitCall,
+      UnprotectedRetains    ? FirstRetain
+      : UnprotectedReleases ? FirstRelease
+                            : ExitCall,
       ExitCall,
       Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16),
       UnprotectedReleases,
-      ReceiverFromRetainResult};
+      ReceiverFromRetainResult,
+      UnprotectedRetains};
 }
 
 // The token mutators skip the lock entirely for a null argument. On the
@@ -510,6 +577,7 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const std::string DispatchName = "neverd_darwin_dispatch_group_enter(";
   const std::string ExitName = "neverd_darwin_objc_sync_exit(";
   const std::string ReleaseName = "objc_release(";
+  const std::string RetainName = "objc_retain(";
   const size_t Method = Source.find("neverd_objc_imp_");
   const size_t Open = Method == std::string::npos ? std::string::npos
                                                   : Source.find('{', Method);
@@ -520,9 +588,13 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const size_t Exit = Source.find(ExitName, Open);
   const bool StopAtExit = Proof.GuardStopCall == Proof.ExitCall;
   const size_t Release = Proof.UnprotectedReleases
-                             ? Source.find(ReleaseName, Open)
+                             ? Source.find(ReleaseName, Enter)
                              : std::string::npos;
+  const size_t Retain = Proof.UnprotectedRetains
+                            ? Source.find(RetainName, Enter)
+                            : std::string::npos;
   const size_t Stop = StopAtExit                  ? Exit
+                      : Proof.UnprotectedRetains  ? Retain
                       : Proof.UnprotectedReleases ? Release
                                                   : Dispatch;
   if (Enter == std::string::npos || Stop == std::string::npos ||
@@ -530,7 +602,11 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
       Source.find(EnterName, Enter + 1) != std::string::npos ||
       Source.find(ExitName, Exit + 1) != std::string::npos ||
       (Proof.UnprotectedReleases && (Release <= Enter || Release >= Exit)) ||
-      (!StopAtExit &&
+      (Proof.UnprotectedRetains &&
+       (Proof.UnprotectedRetains != 1 || Retain <= Enter || Retain >= Exit ||
+        (Proof.UnprotectedReleases && Retain >= Release) ||
+        Source.find(RetainName, Retain + 1) < Exit)) ||
+      (!StopAtExit && !Proof.UnprotectedReleases && !Proof.UnprotectedRetains &&
        Source.find(DispatchName, Dispatch + 1) != std::string::npos) ||
       Enter >= Stop || Stop > Exit)
     return std::nullopt;
@@ -567,7 +643,12 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
       ExitLine == std::string::npos || EnterEnd >= StopLine ||
       (!StopAtExit && StopLine >= ExitLine) ||
       (!StopAtExit &&
-       Source.substr(StopLine + 1, Stop - StopLine - 1).trim() != "") ||
+       Source.substr(StopLine + 1, Stop - StopLine - 1).trim() != "" &&
+       (!Proof.UnprotectedRetains ||
+        (Source.substr(StopLine + 1, Stop - StopLine - 1).trim() !=
+             "(uint64_t)(" &&
+         Source.substr(StopLine + 1, Stop - StopLine - 1).trim() !=
+             "(uint64_t)(uintptr_t)("))) ||
       Source.substr(ExitLine + 1, Exit - ExitLine - 1).trim() != "(uint32_t)(")
     return std::nullopt;
   std::string Result = Source.str();
