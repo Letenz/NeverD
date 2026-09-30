@@ -8,6 +8,8 @@ NeverD は Python ファイルを第一級のプラグインとして読み込�
 
 ## ビルドと実行環境の要件
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` はロード済み image とは独立した [CPU 構成レポート](cpu-execution.md)を公開します。任意の JSON 構成は native API が解析します。静的 support と live host availability は区別され、probe が確認するのは初期化だけです。host build では CPU または driver emulation を有効にする必要があります。
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` の既定値は `ON` です。有効なビルドでは、CMake から検出可能な CPython 3.10 以降のインタープリターと埋め込み用開発ライブラリが必要です。
 
 ```bash

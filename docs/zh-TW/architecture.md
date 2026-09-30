@@ -408,6 +408,24 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 的一部分：穩定的外部操作應放在純 C 標頭及職責明確的
 `lib/sdk/NeverDCAPI*.cpp` 檔案中。
 
+## CPU 執行與工作負載邊界
+
+CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、ISA 分離。
+
+| 元件 | 職責 |
+|---|---|
+| `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 傳輸與可攜式 Unicorn 執行 |
+| `NeverDEmulationCPU` | 契約准入、ISA 狀態與後端選擇 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整數 ABI、CPU 工作階段與工作負載預算 |
+| `NeverDEmulationImage` | 載入器區段對映計畫 |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 啟動、Linux 服務政策與程序報告 |
+| `NeverDEmulation` | Windows 模型與驅動程式生命週期 |
+
+CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗證架構、權限、位址寬度及功能。`ExecutionBudget` 為每個工作負載擁有共用指令／事件計數與絕對單調 deadline；恢復執行不會補回預算。`ExecutionSession` 擁有 CPU、hooks 與待處理的服務／錯誤續接。工作階段可共用記憶體與預算，但採合作式排程，並非平行 SMP。恢復前必須恰好消耗一次待處理要求。CPU 錯誤優先於資源停止；無法解釋的引擎停止不代表工作負載成功。
+
+`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF。動態連結、TLS、訊號、執行緒、FP/SIMD 與不支援服務都會失敗；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。這不代表支援 Windows user-mode、Android 或 Darwin 應用程式。
+
 ## 嚴格提升契約
 
 `Decoder` 與每個架構 lifter 預設以嚴格模式啟動。如果 Capstone 能解碼指令，

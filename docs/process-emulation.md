@@ -1,3 +1,5 @@
+**Languages**: [English](process-emulation.md) | [简体中文](zh-CN/process-emulation.md) | [繁體中文](zh-TW/process-emulation.md) | [日本語](ja/process-emulation.md) | [한국어](ko/process-emulation.md) | [Français](fr/process-emulation.md) | [Deutsch](de/process-emulation.md) | [Español](es/process-emulation.md) | [Italiano](it/process-emulation.md) | [Русский](ru/process-emulation.md) | [العربية](ar/process-emulation.md)
+
 # Guest process emulation
 
 `neverd emulate` executes an image under an explicit guest OS profile. CPU

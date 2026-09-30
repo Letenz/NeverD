@@ -1,3 +1,5 @@
+**Languages**: [English](cpu-execution.md) | [简体中文](zh-CN/cpu-execution.md) | [繁體中文](zh-TW/cpu-execution.md) | [日本語](ja/cpu-execution.md) | [한국어](ko/cpu-execution.md) | [Français](fr/cpu-execution.md) | [Deutsch](de/cpu-execution.md) | [Español](es/cpu-execution.md) | [Italiano](it/cpu-execution.md) | [Русский](ru/cpu-execution.md) | [العربية](ar/cpu-execution.md)
+
 # CPU configuration and capability queries
 
 CPU execution is independent of the guest OS, image loader and calling

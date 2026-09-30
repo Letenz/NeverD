@@ -1,0 +1,61 @@
+**Idiomas**: [English](../cpu-execution.md) | [简体中文](../zh-CN/cpu-execution.md) | [繁體中文](../zh-TW/cpu-execution.md) | [日本語](../ja/cpu-execution.md) | [한국어](../ko/cpu-execution.md) | [Français](../fr/cpu-execution.md) | [Deutsch](../de/cpu-execution.md) | [Español](cpu-execution.md) | [Italiano](../it/cpu-execution.md) | [Русский](../ru/cpu-execution.md) | [العربية](../ar/cpu-execution.md)
+
+[← Índice de documentación](README.md)
+
+# Ejecución de CPU y consultas de capacidades
+
+La ejecución de CPU es independiente del sistema operativo invitado, del cargador de imágenes y de la convención de llamada. `NEVERD_ENABLE_CPU_EMULATION` permite compilarla por separado; `NEVERD_ENABLE_DRIVER_EMULATION` también incluye el modelo de controladores de Windows. La [guía de arquitectura](architecture.md) describe la propiedad, la selección del backend y las limitaciones actuales.
+
+## Configuración
+
+La interfaz pública [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h) es compartida por la fábrica de CPU y el informe de capacidades. Los requisitos se validan antes de asignar una CPU o adjuntar un espacio de direcciones. Los valores omitidos usan el perfil fijo del contrato; los valores explícitos no admitidos fallan.
+
+| Campo JSON | Predeterminado | Significado |
+|---|---|---|
+| `backend` | `auto` | `auto`, `unicorn`, `kvm` o `whp` |
+| `contract` | `software-cpu-v1` | Semántica de ejecución versionada |
+| `architecture` | `x86_64` | `x86_64` o `aarch64` |
+| `privilege` | Perfil del contrato | `flat`, `supervisor` o `user`; debe coincidir con el contrato |
+| `virtual_address_bits` | Perfil del contrato | Los perfiles comprobados usan 48 bits; los planos, un espacio de mapeo directo de 64 bits |
+| `page_size` | 4096 | Granularidad de mapeo invitado; se rechazan otros valores |
+| `required_features` | `[]` | Nombres requeridos de [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) |
+
+`driver-strict` acepta x64; `software-cpu-v1`, x64 y ARM64. `checked-x64-v1` y `checked-aarch64-v1` exigen la arquitectura indicada y ejecutan en modo supervisor. `checked-user-x64-v1` y `checked-user-aarch64-v1` ejecutan el mismo inventario escalar acotado en CPL3 y EL0, respectivamente, con aislamiento MMU y salidas explícitas de solicitud de servicio. Admiten Unicorn y KVM/WHP compatibles con el host; `auto` sigue la selección del host. Los perfiles planos no garantizan aislamiento arquitectónico usuario/supervisor. Todos los perfiles comprobados rechazan FP/SIMD, MMIO, E/S de puertos y requisitos de CPU paralelos. Solo los perfiles de usuario anuncian `service_traps`.
+
+La ejecución de usuario necesita `UserAccessible` y el permiso apropiado `Read`, `Write` o `Execute` en **cada** página mapeada. Los mapeos existentes son de supervisor por defecto; los alias tienen permisos independientes aunque compartan bytes físicos. `UserAccessible` por sí solo no concede acceso. Las operaciones confiables del host y las CPU supervisoras usan RWX. Ejemplo:
+
+```cpp
+Configuration.Contract = ExecutionContract::CheckedUserX64;
+Configuration.Privilege = ExecutionPrivilege::User;
+auto CPU = llvm::cantFail(createExecutionBackend(Configuration, Space)).CPU;
+llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
+```
+
+El contrato fija el privilegio. Restaurar contexto o enlazar otro espacio no lo cambia y los selectores de segmento x64 no pueden elevarlo. Un fallo de datos recuperable conserva la instrucción y los registros originales hasta que lo resuelva su propietario. `canAccess` comprueba exactamente los permisos solicitados; incluye `UserAccessible` para consultar visibilidad de usuario. Las tablas de páginas son proyecciones privadas de CPU: no se exponen tablas invitadas mutables ni una API de cambio de privilegio. En ARM64, las páginas de usuario tampoco son ejecutables en EL1.
+
+Los campos desconocidos o nulos, nombres/anchos numéricos inválidos, funciones requeridas duplicadas y combinaciones no admitidas fallan. La entrada se limita a 64 KiB y las fábricas CPU antiguas y opciones C de controladores conservan compatibilidad.
+
+## Consultar sin ejecutar una carga
+
+```bash
+neverd cpu-capabilities
+neverd cpu-capabilities \
+  --configuration='{"contract":"checked-aarch64-v1","architecture":"aarch64"}' \
+  --probe-host
+```
+
+El esquema es versión 1. El informe separa `requested_configuration` (antes de completar valores del perfil), `configuration` normalizada, `capabilities` semánticas estáticas, `build` (adaptador y compatibilidad ABI) y `host` (null salvo que se pida `--probe-host`). La consulta prueba la inicialización de una CPU temporal sobre RAM privada; no certifica una carga ni ejecución nativa ARM64. La disponibilidad puede cambiar y nunca se sustituye silenciosamente un backend no disponible. El CLI devuelve 0 para un informe válido, incluso si el backend no está disponible, y 1 para configuración o consulta inválida.
+
+## Límites del SDK y C++
+
+[`neverd_cpu_capabilities_json`](../../include/neverd/sdk/NeverDCAPICPU.h) acepta una sesión, JSON de configuración opcional y `ProbeHost` con valor 0 o 1; no requiere una imagen cargada. Libera el resultado con `neverd_free_string`; NULL indica un error descrito por `neverd_last_error`. Las compilaciones sin CPU exportan la misma función e informan de la desactivación. Los plugins Python consultan `session.cpu_capabilities(...)`. En C++ se pueden usar por separado `executionCapabilities`, `resolveExecutionConfiguration`, `queryExecutionBackendBuild` y `probeExecutionBackend`; `createExecutionBackend` conecta una CPU a un espacio existente o crea RAM y un espacio predeterminados.
+
+## Resultados de CPU y presupuestos
+
+`CPU.runUntilExit(PC, TimeoutMicroseconds)` devuelve un [`ExecutionExit`](../../include/neverd/emulation/ExecutionExit.h) tipado. Los errores de configuración devuelven `llvm::Error`; una ejecución iniciada informa de parada, plazo, solicitud de servicio, fallo recuperable, fallo/trampa invitada, operación no admitida o error de dispositivo/backend/parada inexplicada. Fallos de CPU/dispositivo/backend prevalecen sobre una parada o plazo simultáneos, conservando los hechos y detalles independientes. El plazo debe ser positivo y representable como duración y deadline absoluto; si no, falla antes de modificar la CPU. Cada invocación requiere un presupuesto finito; cero no significa ilimitado ni un timeout inmediato válido. El control es cooperativo, no un límite de reloj estricto. El resultado no consume un fallo recuperable: el propietario del SO debe recogerlo e instalar un salto de excepción validado antes de reanudar. Se mantienen `run`, `fault` y `timedOut`; las implementaciones externas que solo sobrescriben `run` rechazan el nuevo límite tipado.
+
+## Solicitudes de servicio
+
+El perfil user-x64 intercepta solo la codificación exacta de `SYSCALL` sin prefijo; user-ARM64 intercepta `SVC #imm16`. `SYSENTER`, `INT`, `HVC`, `BRK` y otros mecanismos siguen sin admitirse. Primero se ejecuta el observador de instrucciones. Si no detiene ni falla, la CPU devuelve `ExecutionExitKind::ServiceRequest` **antes** de ejecutar la instrucción o entrar al backend, con tipo, `PC` original, `NextPC` secuencial e inmediato SVC. No cambian registros, flags, stack ni privilegio: RCX/R11 aún no reciben los clobbers de SYSCALL y ARM64 no entra en un vector de excepción. El inmediato SVC no es un número de servicio universal.
+
+La solicitud queda pendiente y bloquea ejecución, mutaciones, cambios de espacio y captura/restauración de contexto hasta que el propietario del SO la consuma exactamente una vez mediante `takeServiceRequest()` con la CPU detenida. El propietario interpreta la ABI del SO, gestiona el servicio y establece explícitamente registros de resultado y el PC/salto de excepción. Un servicio no admitido falla en esa capa; volver a intentar el PC original produce otra solicitud, nunca un NOP o un resultado exitoso inventado. El evento de servicio prevalece sobre stop/plazo simultáneos, pero los fallos de invitado/backend prevalecen sobre él. Una CPU detenida, HLT, deadline o trampa no demuestra que la carga haya terminado correctamente. El [perfil de procesos Linux](process-emulation.md) tiene su propio modelo de SO y no demuestra compatibilidad con Windows, Android o Darwin. La ejecución nativa en Windows y ARM64 aún necesita validación real.

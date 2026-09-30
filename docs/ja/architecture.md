@@ -471,6 +471,24 @@ Capstone ライブラリは網羅しません。
 誤って SDK の一部にしないでください。安定した外部操作は純粋 C ヘッダーと、
 責務を絞った `lib/sdk/NeverDCAPI*.cpp` のいずれかに置きます。
 
+## CPU 実行と workload の境界
+
+CPU 実行はゲスト OS と image から独立しています。OS policy と process の入口は transport や ISA と分離されています。
+
+| コンポーネント | 責務 |
+|---|---|
+| `NeverDEmulationCore` | memory、fault、register、共有実行ループ |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP transport と portable な Unicorn 実行 |
+| `NeverDEmulationCPU` | contract admission、ISA state、backend 選択 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | integer ABI、CPU session、workload budget |
+| `NeverDEmulationImage` | loader segment の mapping plan |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 起動、Linux service policy、process report |
+| `NeverDEmulation` | Windows model と driver lifecycle |
+
+CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
+
+`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF を開始します。dynamic linking、TLS、signal、thread、FP/SIMD、未対応 service は失敗します。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
+
 ## strict lifting の契約
 
 `Decoder` と各アーキテクチャ lifter は strict モードで開始します。Capstone が

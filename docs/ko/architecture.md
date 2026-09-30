@@ -453,6 +453,24 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 실수로 SDK의 일부가 되지 않게 하세요. 안정적인 외부 작업은 순수 C 헤더와 책임이
 분명한 `lib/sdk/NeverDCAPI*.cpp` 파일 중 하나에 두어야 합니다.
 
+## CPU 실행과 워크로드 경계
+
+CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프로세스 진입은 전송 계층 및 ISA와 분리됩니다.
+
+| 구성 요소 | 책임 |
+|---|---|
+| `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 네이티브 KVM/WHP 전송 및 이식 가능한 Unicorn 실행 |
+| `NeverDEmulationCPU` | 계약 admission, ISA 상태, 백엔드 선택 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | 정수 ABI, CPU 세션, 워크로드 예산 |
+| `NeverDEmulationImage` | 로더 세그먼트 매핑 계획 |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 시작, Linux 서비스 정책, 프로세스 보고서 |
+| `NeverDEmulation` | Windows 모델 및 드라이버 수명 주기 |
+
+CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 할당 전에 아키텍처, 권한, 주소 폭, 기능을 검증합니다. `ExecutionBudget`은 워크로드별 공유 명령/이벤트 계정과 절대 monotonic deadline을 소유하며 재개해도 예산이 초기화되지 않습니다. `ExecutionSession`은 CPU, hook, 대기 중 서비스/fault continuation을 소유합니다. 세션은 메모리와 예산을 공유할 수 있지만 실행은 협력식이며 병렬 SMP가 아닙니다. 대기 중 요청은 재개 전 정확히 한 번 소비해야 합니다. CPU 오류는 자원 정지보다 우선하며 설명되지 않은 엔진 정지는 성공이 아닙니다.
+
+`ImageMappingPlan`은 기존 로더 세그먼트를 사용하고 header 재분석이나 import 해결을 하지 않습니다. 주소 공간을 게시하기 전에 전체 범위와 겹침을 검사합니다. 명시적 `linux-elf64-v1` 프로필은 초기 스택, 명시적 서비스 요청, 제한된 바이트 출력을 갖춘 x64/AArch64 freestanding ELF를 시작합니다. 동적 링크, TLS, 시그널, 스레드, FP/SIMD, 미지원 서비스는 실패합니다. KVM만으로 Linux를, WHP만으로 Windows를 추론하지 않습니다. [CPU 실행](cpu-execution.md) 및 [게스트 프로세스 에뮬레이션](process-emulation.md)을 참조하세요. 이는 Windows user-mode나 Android/Darwin 앱 지원을 뜻하지 않습니다.
+
 ## strict lifting 계약
 
 `Decoder`와 각 아키텍처 lifter는 strict 모드로 시작합니다. Capstone이 명령어를

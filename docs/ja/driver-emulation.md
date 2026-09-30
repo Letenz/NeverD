@@ -10,7 +10,7 @@ NeverD のオプションのドライバーエミュレーターは、対応す�
 
 既定の `driver-strict` 契約は引き続き Unicorn を使用します。実験的な整数専用契約 `checked-x64-v1` では、`--backend auto` が Linux x86_64 で KVM、Windows x64 で WHP を選択します。明示的な選択はフォールバックせず、利用不可や契約の不一致は実行前にエラーになります。
 
-命令とメモリアクセスを検査してから単一ステップで実行し、Windows オブジェクトの検査、書き込みの観測、共有エイリアスを維持します。SIMD/x87、REP、ロック、メモリの読み取り変更書き込み、ページ境界をまたぐデータアクセス、MMIO、他の OS やユーザープロセスは未対応です。タイムアウトとキャンセルは有界命令の間で確認し、実行開始後のバックエンド切り替えは行いません。以下のドライバー互換性全体を保証するものではありません。
+ARM64 host では `checked-x64-v1` profile が x64 guest に Unicorn を使います。各命令と memory access を単一ステップ前に検証し、Windows object check、write observer、共有 RAM alias、CPU-only context を維持します。SIMD/x87、REP、lock operation、一般的な memory RMW、page 跨ぎ data access、MMIO、未モデル化 CPU effect は拒否します。prefix なし memory INC/DEC は read/write permission と observer を個別に確認して許可し、flag は native execution が管理します。この supervisor contract は user-process environment を提供しません。timeout と cancellation は許可済みの有界命令間で確認し、一般的な非同期 preemption や実行開始後の backend 再起動はありません。
 
 ビルド設定は `NEVERD_EMULATION_BACKEND_KVM` と `NEVERD_EMULATION_BACKEND_WHP` です。KVM には `/dev/kvm` へのアクセスが必要です。WHP はシステム DLL を動的にロードし、Windows 上での実行検証が別途必要です。新 C API は `neverd_emulate_driver_backend_json` で、v1 ABI は維持されます。レポートにはバックエンド、契約、選択理由が含まれます。
 

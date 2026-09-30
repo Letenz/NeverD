@@ -568,6 +568,24 @@ keine interne C++-Klasse versehentlich Teil des SDK werden: Stabile externe
 Operationen gehören in den reinen C-Header und eine der fokussierten Dateien
 `lib/sdk/NeverDCAPI*.cpp`.
 
+## CPU-Ausführung und Workload-Grenzen
+
+CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und Prozesseinstieg bleiben von Transport und Architektur getrennt.
+
+| Komponente | Zuständigkeit |
+|---|---|
+| `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP-Transporte und portable Unicorn-Ausführung |
+| `NeverDEmulationCPU` | Vertragszulassung, ISA-Zustand und Backend-Auswahl |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | Integer-Aufrufkonventionen, CPU-Sitzungen und Workload-Budgets |
+| `NeverDEmulationImage` | Mapping-Pläne für Loader-Segmente |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF-Start, Linux-Dienstpolicy und Prozessberichte |
+| `NeverDEmulation` | Windows-Modell und Treiberlebenszyklus |
+
+CPU-Fabrik und Fähigkeitsabfrage verwenden dieselbe `ExecutionConfiguration`; Architektur, Privileg, Adressbreite und Features werden vor Allokation geprüft. `ExecutionBudget` besitzt ein gemeinsames Instruktions-/Eventbudget und eine absolute Deadline pro Workload; Fortsetzungen setzen das Budget nicht zurück. `ExecutionSession` besitzt CPU, Hooks sowie offene Service-/Fehlerfortsetzungen. Sessions dürfen Speicher und Budget teilen, laufen aber kooperativ, nicht als paralleles SMP. Ein ausstehender Request muss genau einmal vor dem Fortsetzen verbraucht werden. CPU-Fehler haben Vorrang vor Ressourcenstopps; ein unerklärter Engine-Stopp bedeutet keinen Workload-Erfolg.
+
+`ImageMappingPlan` übernimmt vorhandene Loader-Segmente, parst Header nicht erneut und löst keine Importe auf. Vollständige Bereiche und Überlappungen werden vor Veröffentlichung des Adressraums geprüft. Das explizite Profil `linux-elf64-v1` startet freestanding ELF für x64/AArch64 mit Initial-Stack, expliziten Service-Requests und begrenzter Byteausgabe. Dynamisches Linken, TLS, Signale, Threads, FP/SIMD und nicht unterstützte Dienste schlagen fehl. Das Modell leitet Linux nicht aus KVM und Windows nicht aus WHP ab. Siehe [CPU-Ausführung](cpu-execution.md) und [Gastprozess-Emulation](process-emulation.md). Daraus folgt keine Windows-Usermode- oder Android-/Darwin-App-Unterstützung.
+
 ## Vertrag des strikten Liftings
 
 `Decoder` und jeder Architektur-Lifter starten im strikten Modus. Kann

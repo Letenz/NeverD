@@ -572,6 +572,24 @@ d’une classe C++ interne une partie accidentelle du SDK : les opérations
 externes stables appartiennent à l’en-tête C pur et à l’un des fichiers ciblés
 `lib/sdk/NeverDCAPI*.cpp`.
 
+## Exécution CPU et frontières des charges
+
+L’exécution CPU est indépendante de l’OS invité et de l’image. La politique OS et l’entrée de processus restent séparées du transport et de l’ISA.
+
+| Composant | Responsabilité |
+|---|---|
+| `NeverDEmulationCore` | Mémoire, défauts, registres et boucle d’exécution partagée |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transports natifs KVM/WHP et exécution portable Unicorn |
+| `NeverDEmulationCPU` | Admission du contrat, état ISA et sélection du backend |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI entiers, sessions CPU et budgets de charge |
+| `NeverDEmulationImage` | Plans de mappage des segments du chargeur |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | Démarrage ELF, politique des services Linux et rapports de processus |
+| `NeverDEmulation` | Modèle Windows et cycle de vie du pilote |
+
+La fabrique CPU et la requête de capacités partagent `ExecutionConfiguration` ; elles valident architecture, privilège, largeur d’adresse et fonctionnalités avant allocation. `ExecutionBudget` possède un compte commun d’instructions/événements et une échéance monotone absolue par charge ; reprendre ne recharge pas le budget. `ExecutionSession` possède le CPU, ses hooks et les continuations service/défaut en attente. Les sessions peuvent partager mémoire et budget, mais l’exécution est coopérative, sans SMP parallèle. Chaque requête en attente doit être consommée exactement une fois avant reprise. Les erreurs CPU priment sur les arrêts de ressources ; un arrêt inexpliqué du moteur ne signifie pas réussite.
+
+`ImageMappingPlan` consomme les segments existants du chargeur, sans reparsing des headers ni résolution d’imports. Il vérifie étendues complètes et chevauchements avant publication de l’espace. Le profil explicite `linux-elf64-v1` démarre des ELF freestanding x64/AArch64 avec pile initiale, requêtes de service explicites et sortie bornée. Liaison dynamique, TLS, signaux, threads, FP/SIMD et services non pris en charge échouent ; Linux n’est pas déduit de KVM, ni Windows de WHP. Voir [exécution CPU](cpu-execution.md) et [émulation de processus invités](process-emulation.md). Cela n’implique ni environnement Windows utilisateur ni prise en charge d’applications Android/Darwin.
+
 ## Contrat du lifting strict
 
 `Decoder` et chaque lifter d’architecture démarrent en mode strict. Si Capstone

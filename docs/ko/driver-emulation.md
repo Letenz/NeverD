@@ -10,7 +10,7 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 기본 `driver-strict` 계약은 Unicorn을 유지합니다. 실험적인 정수 전용 `checked-x64-v1` 계약에서는 `--backend auto`가 Linux x86_64에서 KVM, Windows x64에서 WHP를 선택합니다. 명시적 선택은 대체 백엔드로 전환하지 않으며, 하드웨어나 계약이 맞지 않으면 실행 전에 실패합니다.
 
-명령과 메모리 접근을 검사한 후 단일 단계로 실행하며 Windows 객체 검사, 쓰기 관찰, 공유 별칭을 유지합니다. SIMD/x87, REP, 잠금, 메모리 읽기-수정-쓰기, 페이지 경계를 넘는 데이터 접근, MMIO, 다른 OS 및 사용자 프로세스는 지원하지 않습니다. 제한된 명령 사이에서 시간 제한과 취소를 확인하며 실행 시작 후 백엔드를 바꿔 재실행하지 않습니다. 아래의 전체 드라이버 호환성을 뜻하지 않습니다.
+ARM64 호스트에서는 `checked-x64-v1` 프로필이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검증하며 Windows 객체 검사, 쓰기 observer, 공유 RAM alias, CPU 전용 context를 보존합니다. SIMD/x87, REP, 잠금 명령, 일반 메모리 RMW, 페이지 간 데이터 접근, MMIO, 모델링되지 않은 CPU 효과는 거부합니다. prefix 없는 메모리 INC/DEC는 읽기/쓰기 권한과 observer를 각각 검사해 허용하며 flag는 네이티브 실행이 담당합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. 시간 제한과 취소는 허용된 유한 명령 사이에서 확인하며 일반 비동기 선점이나 시작 후 backend 재시작은 제공하지 않습니다.
 
 빌드 옵션은 `NEVERD_EMULATION_BACKEND_KVM`, `NEVERD_EMULATION_BACKEND_WHP`입니다. KVM은 `/dev/kvm` 접근 권한이 필요합니다. WHP는 시스템 DLL을 동적으로 로드하며 Windows 실기 실행 검증이 필요합니다. 새 C API는 `neverd_emulate_driver_backend_json`이며 v1 ABI는 유지됩니다. 보고서는 백엔드, 계약과 선택 이유를 기록합니다.
 

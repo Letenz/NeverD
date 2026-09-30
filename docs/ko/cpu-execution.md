@@ -1,0 +1,61 @@
+**언어**: [English](../cpu-execution.md) | [简体中文](../zh-CN/cpu-execution.md) | [繁體中文](../zh-TW/cpu-execution.md) | [日本語](../ja/cpu-execution.md) | [한국어](cpu-execution.md) | [Français](../fr/cpu-execution.md) | [Deutsch](../de/cpu-execution.md) | [Español](../es/cpu-execution.md) | [Italiano](../it/cpu-execution.md) | [Русский](../ru/cpu-execution.md) | [العربية](../ar/cpu-execution.md)
+
+[← 문서 색인](README.md)
+
+# CPU 실행 및 기능 조회
+
+CPU 실행은 게스트 OS, 이미지 로더, 호출 규약과 독립적입니다. `NEVERD_ENABLE_CPU_EMULATION`으로 단독 빌드할 수 있고, `NEVERD_ENABLE_DRIVER_EMULATION`은 Windows 드라이버 모델도 포함합니다. [아키텍처 안내서](architecture.md)는 소유권, 백엔드 선택, 플랫폼 제한을 설명합니다.
+
+## 구성
+
+공개 [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h)은 CPU 팩토리와 기능 보고서에서 함께 사용됩니다. CPU 할당이나 주소 공간 연결 전에 요구사항을 검증합니다. 생략한 값은 계약의 고정 프로필을 사용하고, 명시한 미지원 값은 실패합니다.
+
+| JSON 필드 | 기본값 | 의미 |
+|---|---|---|
+| `backend` | `auto` | `auto`, `unicorn`, `kvm`, `whp` |
+| `contract` | `software-cpu-v1` | 버전이 지정된 실행 의미론 |
+| `architecture` | `x86_64` | `x86_64` 또는 `aarch64` |
+| `privilege` | 계약 프로필 | `flat`, `supervisor`, `user`; 계약과 일치해야 함 |
+| `virtual_address_bits` | 계약 프로필 | checked 프로필은 48비트, flat 프로필은 64비트 직접 매핑 이름공간 |
+| `page_size` | 4096 | 게스트 매핑 단위. 다른 값은 거부 |
+| `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def)의 필수 기능 이름 |
+
+`driver-strict`는 x64, `software-cpu-v1`은 x64와 ARM64를 허용합니다. `checked-x64-v1` 및 `checked-aarch64-v1`은 지정된 아키텍처와 supervisor 권한을 요구합니다. `checked-user-x64-v1`과 `checked-user-aarch64-v1`은 동일하게 제한된 스칼라 명령 목록을 각각 CPL3/EL0에서 실행하며 MMU 격리와 명시적 서비스 요청 종료를 사용합니다. Unicorn 및 호스트와 일치하는 KVM/WHP를 지원하고, `auto`는 기존 호스트 선택을 따릅니다. flat 프로필은 아키텍처 수준 사용자/supervisor MMU 격리를 보장하지 않습니다. 모든 checked 프로필은 FP/SIMD, MMIO, 포트 I/O 및 병렬 CPU 요구사항을 거부합니다. `service_traps`는 user 프로필만 알립니다.
+
+사용자 실행은 매핑된 **모든** 페이지에 `UserAccessible`과 적절한 `Read`, `Write`, `Execute` 권한을 요구합니다. 기존 매핑은 기본적으로 supervisor용이며, 물리 바이트를 공유하는 별칭도 권한은 독립적입니다. `UserAccessible`만으로는 접근할 수 없습니다. 신뢰된 호스트 연산과 supervisor CPU는 RWX를 사용합니다. 예:
+
+```cpp
+Configuration.Contract = ExecutionContract::CheckedUserX64;
+Configuration.Privilege = ExecutionPrivilege::User;
+auto CPU = llvm::cantFail(createExecutionBackend(Configuration, Space)).CPU;
+llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
+```
+
+권한은 계약으로 고정됩니다. 컨텍스트 복원이나 주소 공간 연결로 바뀌지 않으며 x64 세그먼트 선택자로 승격할 수 없습니다. 복구 가능한 데이터 접근 fault는 소유자가 처리할 때까지 원래 명령과 레지스터를 보존합니다. `canAccess`는 요청한 권한만 정확히 검사하며 사용자 가시성 조회에는 `UserAccessible`을 포함합니다. 페이지 테이블은 CPU 전용 투영이며 변경 가능한 게스트 페이지 테이블이나 권한 변경 API를 노출하지 않습니다. ARM64에서는 사용자 페이지가 EL1에서 실행 불가합니다.
+
+알 수 없는 필드/null 값, 잘못된 이름·숫자 폭, 중복된 필수 기능, 미지원 조합은 실패합니다. 입력은 64 KiB로 제한되고 기존 CPU 팩토리 및 드라이버 C 옵션은 호환성을 유지합니다.
+
+## 워크로드를 실행하지 않고 조회
+
+```bash
+neverd cpu-capabilities
+neverd cpu-capabilities \
+  --configuration='{"contract":"checked-aarch64-v1","architecture":"aarch64"}' \
+  --probe-host
+```
+
+스키마 버전은 1입니다. 보고서는 프로필 기본값 적용 전 `requested_configuration`, 정규화된 `configuration`, 정적 의미 지원 `capabilities`, 어댑터 빌드/ABI 지원 `build`, 그리고 `--probe-host` 요청 때만 설정되는 `host`(미요청 시 null)를 구분합니다. 호스트 probe는 전용 RAM에서 임시 CPU를 초기화할 뿐이며 워크로드 적합성이나 native ARM64 실행을 증명하지 않습니다. 사용 가능성은 변할 수 있고 미지원 백엔드로 조용히 대체하지 않습니다. 유효한 보고서(백엔드 미사용 가능 포함)는 CLI 0, 잘못된 설정/질의는 1을 반환합니다.
+
+## SDK 및 C++ 경계
+
+[`neverd_cpu_capabilities_json`](../../include/neverd/sdk/NeverDCAPICPU.h)은 기존 세션, 선택적 설정 JSON, 값이 0 또는 1인 `ProbeHost`를 받으며 로드된 바이너리는 필요하지 않습니다. 결과는 `neverd_free_string`으로 해제하고, NULL이면 `neverd_last_error`를 확인합니다. CPU 비활성화 빌드도 동일 함수를 내보내고 비활성 상태를 명시합니다. Python 플러그인은 `session.cpu_capabilities(...)`를 사용합니다. C++은 `executionCapabilities`, `resolveExecutionConfiguration`, `queryExecutionBackendBuild`, `probeExecutionBackend`를 분리해 사용할 수 있습니다. `createExecutionBackend`는 기존 공간에 CPU를 연결하거나 전용 RAM과 기본 공간을 생성합니다.
+
+## CPU 결과와 예산
+
+`CPU.runUntilExit(PC, TimeoutMicroseconds)`는 형식화된 [`ExecutionExit`](../../include/neverd/emulation/ExecutionExit.h)를 반환합니다. 실행 전 설정 오류는 `llvm::Error`이고 실행이 시작되면 중지, deadline, 서비스 요청, 복구 가능한 fault, 게스트 fault/trap, 미지원 연산, 장치/백엔드 오류, 설명되지 않은 엔진 중지를 명시합니다. CPU/장치/백엔드 fault는 동시 중지/deadline보다 우선하며 독립 사실과 세부 정보를 보존합니다. 타임아웃은 양수이고 기간 및 절대 deadline으로 표현 가능해야 합니다. 아니면 CPU 상태를 바꾸기 전에 실패합니다. 모든 실행에는 유한 예산이 필요하며 0은 무제한도 유효한 즉시 timeout도 아닙니다. 제어는 협력적이며 hard wall-clock 제한이 아닙니다. 결과가 복구 가능한 fault를 소비하지 않습니다. OS 소유자가 fault를 가져와 검증된 예외 전송을 설정한 뒤 재개해야 합니다. 기존 `run`, `fault`, `timedOut`은 유지되지만 `run`만 재정의한 외부 CPU 구현은 새 형식 경계를 거부합니다.
+
+## 서비스 요청
+
+checked user x64는 접두사 없는 정확한 `SYSCALL` 인코딩만 가로채고 checked user ARM64는 `SVC #imm16`을 가로챕니다. `SYSENTER`, `INT`, `HVC`, `BRK` 및 다른 메커니즘은 미지원입니다. 명령 관찰자가 먼저 실행됩니다. 중지나 fault가 없으면 CPU는 명령 실행이나 백엔드 진입 **전에** `ExecutionExitKind::ServiceRequest`를 반환하고 종류, 원래 `PC`, 순차 `NextPC`, SVC immediate를 제공합니다. 레지스터, 플래그, 스택, 권한은 바뀌지 않습니다. x64 RCX/R11 SYSCALL clobber와 ARM64 예외 벡터 진입도 아직 발생하지 않습니다. SVC immediate는 범용 서비스 번호가 아닙니다.
+
+요청이 보류된 동안 실행, CPU 변경, 주소 공간 연결, 컨텍스트 저장/복원을 막습니다. CPU가 정지한 상태에서 OS 소유자가 `takeServiceRequest()`로 정확히 한 번 가져갑니다. OS 소유자는 ABI 해석, 서비스 처리, 결과 레지스터 및 다음 PC/예외 전송을 명시적으로 수행해야 합니다. 미지원 서비스는 이 경계에서 실패합니다. 원래 PC를 다시 실행하면 새 요청이 생성되며 NOP나 성공 결과를 암묵적으로 만들지 않습니다. 서비스 이벤트는 동시 중지/deadline보다 우선하지만 게스트/백엔드 오류는 더 높은 우선순위입니다. CPU 중지, 소프트웨어 HLT, deadline, trap은 워크로드 성공을 뜻하지 않습니다. 별도의 [Linux 프로세스 프로필](process-emulation.md)은 OS 서비스를 직접 모델링하며 Windows, Android, Darwin 동작을 입증하지 않습니다. Windows 및 ARM64 native 실행은 실기 런타임 검증이 필요합니다.

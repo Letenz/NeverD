@@ -14,6 +14,9 @@ NeverD supporta Android e iOS tramite la CLI sperimentale `neverd mobile`: APK (
 | [Contribuire](CONTRIBUTING.md) | Ambiente, profili di build, workflow, stile e requisiti PR |
 | [Architettura](architecture.md) | Percorsi IR, confini dei componenti, lifting strict, profondità del supporto e punti di modifica |
 | [Test](testing.md) | Suite, fixture generate, roundtrip Unicorn e comandi incrementali |
+| [Esecuzione CPU](cpu-execution.md) | Configurazione, capacità, disponibilità dei backend ed esiti tipizzati |
+| [Emulazione dei processi guest](process-emulation.md) | Profilo Linux ELF, avvio, servizi, limiti e test |
+| [Prove bitvector](solver.md) | Prove Z3 opzionali, sintesi verificata, test indipendenti ed export |
 | [Recupero del sorgente da interpreti](interpreter-recovery.md) | Specializzazione sperimentale `--devirtualize`, controlli CLI, contratto di esecuzione, evidenze e limiti; proposte di prova per cicli annidati; budget di scoperta espliciti e API C versionata |
 | [Emulazione dei driver Windows](driver-emulation.md) | Inizializzazione WDM x64 limitata, richieste seriali buffered/direct, lavoro, timer, DPC, eventi e attese, report e limiti; durata di driver/oggetti KMDF 1.33 non PnP e CFG x64 validato |
 | [Ricostruzione delle eccezioni Windows](windows-exception-reconstruction.md) | Matrice di supporto SEH/C++, contratto IR, regole di patch nativo e validazione PE |

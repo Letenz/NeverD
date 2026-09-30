@@ -102,6 +102,30 @@ e gli operandi malformati devono fallire esplicitamente.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` verifica che gli argomenti di registro obbligatori dedotti mantengano le posizioni finali sconosciute. La valutazione di un argomento obbligatorio o di una condizione sconosciuta deve causare una trap esplicita; gli operandi omessi, nulli o annidati non devono diventare silenziosamente zero. I valori noti e gli operandi aggiuntivi di cui è dimostrata la mancata lettura restano eseguibili. Una trap è un limite diagnostico, non una prova di equivalenza del comportamento ricostruito.
 
+## Test di esecuzione CPU
+
+`NeverDIntegerABITests` compila fixture Clang originali per Windows x64, Linux x64 e Linux ARM64. Funzioni reali a dieci argomenti verificano registri, stack e frame di chiamata. La matrice Unicorn/KVM/WHP indica come skip espliciti le coppie host/ISA non disponibili; uno skip non è un pass. `NeverDExecutionBudgetTests` controlla budget condivisi di continuazione, prenotazioni e deadline assolute senza attese basate sul tempo.
+
+`NeverDCPUEmulationTests` copre istruzioni ARM64, controllo, load, contesti, alias, invalidazione cache e cicli limitati; il profilo software esegue anche FP/SIMD e TLS. `NeverDUserExecutionTests` verifica permessi CPL3/EL0, alias, fault di protezione, contesti e cambio spazio. `NeverDServiceRequestTests` dimostra che SYSCALL/SVC viene intercettato prima del trasporto e mantiene lo stato fino al consumo singolo; è un protocollo di handoff, non un modello completo dei servizi OS. `NeverDExecutionConfigurationTests` verifica risoluzione condivisa, distingue supporto build da probe live e rifiuta chiuso opzioni non supportate. I test pubblici SDK/CLI non richiedono il modello Windows.
+
+```bash
+cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|UserExecution|ServiceRequest|ExecutionConfiguration)Tests$' --output-on-failure
+```
+
+L’assenza di hardware ARM64 o hypervisor è copertura nativa omessa, non un pass. Unicorn e cross-compilazione non provano KVM/WHP nativo.
+
+## Test del profilo processi Linux
+
+Le [suite indipendenti dei processi](process-emulation.md#verifica) compilano vere fixture ELF x64/AArch64. `NeverDLinuxProcessTests` verifica avvio, policy degli header, service request, output binario, fault e limiti. `NeverDProcessPublicTests` controlla C API/CLI senza modificare l’immagine di analisi. `NeverDExecutionSessionTests` copre due CPU con memoria/budget condivisi e consumo exactly-once di richieste/fault. `NeverDX64MemoryUpdateTests` controlla larghezze, flag, permessi e observer per INC/DEC in memoria.
+
+```bash
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+```
+
+I backend non disponibili sono skip espliciti. Cross-compilazione e Unicorn ARM64 non provano KVM/WHP ARM64 nativo.
+
 ## Verifiche dell’emulazione dei driver
 
 Abilitare `NEVERD_ENABLE_DRIVER_EMULATION=ON` insieme a `BUILD_TESTING=ON` per

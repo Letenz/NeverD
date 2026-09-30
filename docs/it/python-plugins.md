@@ -8,6 +8,8 @@ NeverD può caricare un file Python come plugin di prima classe. I plugin Python
 
 ## Requisiti di build e runtime
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` espone il [report della configurazione CPU](cpu-execution.md) indipendentemente dall’immagine caricata. L’API nativa analizza la configurazione JSON facoltativa. Il supporto statico e la disponibilità reale dell’host restano distinti; il probe verifica solo l’inizializzazione. La build host deve abilitare l’emulazione CPU o dei driver.
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` è `ON` per impostazione predefinita. Una build abilitata richiede un interprete CPython 3.10 o successivo e la relativa libreria di sviluppo per l’embedding, rilevabili da CMake:
 
 ```bash

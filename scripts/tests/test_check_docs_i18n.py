@@ -70,6 +70,9 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/python-plugins.md"),
                 Path("docs/roadmap.md"),
                 Path("docs/testing.md"),
+                Path("docs/cpu-execution.md"),
+                Path("docs/process-emulation.md"),
+                Path("docs/solver.md"),
                 Path("docs/windows-exception-reconstruction.md"),
                 Path("docs/evm.md"),
                 Path("docs/sbf.md"),
@@ -79,6 +82,23 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/interpreter-recovery.md"),
             },
         )
+
+    def test_cpu_process_and_solver_guides_are_in_every_localized_matrix(self) -> None:
+        for stem in ("cpu-execution", "process-emulation", "solver"):
+            self.assertIn(Path(f"docs/{stem}.md"), i18n.ENGLISH_DOCS)
+            for locale in i18n.LOCALES:
+                self.assertIn(Path(f"docs/{locale}/{stem}.md"), i18n.localized_paths(locale))
+
+    def test_language_selector_requires_exact_localized_self_link(self) -> None:
+        path = Path("docs/ar/cpu-execution.md")
+        original = i18n.RepositoryView(use_index=False).read_text(path)
+        changed = original.replace("](cpu-execution.md)", "](../ar/cpu-execution.md)", 1)
+        self.assertNotEqual(original, changed)
+        errors: list[str] = []
+        i18n.validate_language_selector(
+            path, "cpu-execution", "ar", errors, _OverlayView({path: changed})
+        )
+        self.assertTrue(any("cpu-execution.md" in error for error in errors), errors)
 
     def test_driver_guide_rejects_changed_executable_example(self) -> None:
         path = Path("docs/zh-CN/driver-emulation.md")

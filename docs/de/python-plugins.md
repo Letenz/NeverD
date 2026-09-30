@@ -8,6 +8,8 @@ NeverD kann eine Python-Datei als vollwertiges Plugin laden. Python-Plugins verw
 
 ## Build- und Laufzeitanforderungen
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` stellt den [CPU-Konfigurationsbericht](cpu-execution.md) unabhängig von einem geladenen Image bereit. Die optionale JSON-Konfiguration wird von der nativen API geparst. Statische Unterstützung und Live-Verfügbarkeit des Hosts bleiben getrennt; der Probe prüft nur die Initialisierung. Im Host-Build muss CPU- oder Treiberemulation aktiviert sein.
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` ist standardmäßig `ON`. Ein aktivierter Build benötigt einen von CMake auffindbaren CPython-Interpreter ab Version 3.10 sowie dessen Entwicklungsbibliothek zum Einbetten:
 
 ```bash
