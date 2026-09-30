@@ -348,6 +348,56 @@ countI386AdjacentTwoTableIndirectBranches(const neverd::LowFunc &Low) {
   return Count;
 }
 
+TEST_F(JTE_X86_32, ScalarLaneThroughPointerTableSeesThroughWidenedAddress) {
+  // i386 loads `tp[k]` through a zero-extended 32-bit address.  The loaded
+  // integer feeds the next `tabs[acc % 3]` index, so the index is an offset
+  // only once every array that `tabs` names is proven immutable scalar data.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("pointer_table_lane.c");
+  const fs::path Object = tmpFile("pointer_table_lane.o");
+  {
+    std::ofstream File(Source);
+    File << R"(
+int pointer_table_lane(int input) {
+  static const int a[8] = {11, 22, 33, 44, 55, 66, 77, 88};
+  static const int b[8] = {2, 3, 5, 7, 11, 13, 17, 19};
+  static const int c[8] = {101, 202, 303, 404, 505, 606, 707, 808};
+  static const int *const tabs[3] = {a, b, c};
+  unsigned acc = (unsigned)input;
+  for (int i = 0; i < 96; ++i) {
+    const int *tp = tabs[acc % 3u];
+    acc = acc * 131u + (unsigned)tp[(acc >> 2) & 7u] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)";
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.DataPtrRelocSlots.size(), 3u);
+  auto Valid = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Valid.Result.Success) << Valid.Result.Error;
+
+  const uint64_t MissingSlot = *Image.DataPtrRelocSlots.begin();
+  Image.DataPtrRelocSlots.erase(MissingSlot);
+  auto Incomplete = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Incomplete.Result.Success)
+      << "an array without a data-pointer relocation is unproved";
+  Image.DataPtrRelocSlots.insert(MissingSlot);
+
+  Image.CodePtrRelocSlots.insert(MissingSlot);
+  auto Conflicting = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Conflicting.Result.Success)
+      << "a conflicting code/data slot cannot certify scalar array data";
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(
       fs::path(TEST_OBJ_DIR) / "test_i386_three_switch_loops.o");

@@ -2929,6 +2929,13 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         // Audit every authenticated relocation target using the same index
         // constraint; one bad or unbounded candidate invalidates the domain.
         const MedOp *Address = lookupDef(Def->Inputs[0]);
+        // i386 addresses memory through a zero-extended pointer-width sum.
+        // The lane audit below computes slots in pointer-width arithmetic
+        // with explicit no-wrap checks, which is exactly that sum.
+        if (Address && Address->Opcode == NdOp::INT_ZEXT &&
+            Address->NumInputs == 1 && Address->Inputs[0].Size == PointerSize &&
+            Address->Output.Size > PointerSize)
+          Address = lookupDef(Address->Inputs[0]);
         if (Address && Address->Opcode == NdOp::INT_ADD &&
             Address->NumInputs == 2)
           for (unsigned Side = 0; Side < 2 && !ScalarLane.Complete; ++Side) {
