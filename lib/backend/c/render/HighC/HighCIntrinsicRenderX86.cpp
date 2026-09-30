@@ -814,6 +814,51 @@ renderStateSnapshot(const HighExpr &Call,
   return Result;
 }
 
+/// The <immintrin.h> locality hint of a prefetch, or null for any other
+/// intrinsic.
+const char *prefetchHint(Intrinsic Id) {
+  using I = Intrinsic;
+  switch (Id) {
+  case I::Prefetch:
+  case I::PrefetchT0:
+    return "_MM_HINT_T0";
+  case I::PrefetchT1:
+    return "_MM_HINT_T1";
+  case I::PrefetchT2:
+    return "_MM_HINT_T2";
+  case I::PrefetchNta:
+    return "_MM_HINT_NTA";
+  default:
+    return nullptr;
+  }
+}
+
+/// A flat prefetch or MXCSR transfer through its <immintrin.h> intrinsic, or
+/// empty when the intrinsic has none. The MXCSR image moves as four bytes.
+std::string renderFlatMemoryIntrinsic(
+    const HighExpr &Call,
+    std::function<std::string(const HighExpr &)> &ExprFn) {
+  const std::string Address = "(uintptr_t)(" + ExprFn(*Call.Operands[0]) + ")";
+  if (const char *Hint = prefetchHint(Call.IntrinsicId))
+    return "_mm_prefetch((const char *)" + Address + ", " + Hint + ");\n";
+  switch (Call.IntrinsicId) {
+  case Intrinsic::PrefetchW:
+    return "_m_prefetchw((void *)" + Address + ");\n";
+  case Intrinsic::Ldmxcsr:
+    return "do {\n    uint32_t neverd_csr;\n"
+           "    __builtin_memcpy(&neverd_csr, (const void *)" +
+           Address +
+           ", sizeof(neverd_csr));\n"
+           "    _mm_setcsr(neverd_csr);\n} while (0);\n";
+  case Intrinsic::Stmxcsr:
+    return "do {\n    uint32_t neverd_csr = _mm_getcsr();\n"
+           "    __builtin_memcpy((void *)" +
+           Address + ", &neverd_csr, sizeof(neverd_csr));\n} while (0);\n";
+  default:
+    return {};
+  }
+}
+
 std::string
 renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
                       std::function<std::string(const HighExpr &)> ExprFn) {
@@ -828,6 +873,13 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
        Call.IntrinsicId == Intrinsic::Clflushopt ||
        Call.IntrinsicId == Intrinsic::Clwb))
     return {};
+  // A flat prefetch or MXCSR transfer has an intrinsic too; an FS/GS override
+  // keeps the assembly form, which carries the segment.
+  if (Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+      !Call.Operands.empty() && Call.Operands[0])
+    if (auto Rendered = renderFlatMemoryIntrinsic(Call, ExprFn);
+        !Rendered.empty())
+      return Rendered;
 
   const char *Mnemonic = memoryIntrinsicMnemonic(Call.IntrinsicId);
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
@@ -961,6 +1013,11 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 }
 
 } // anonymous namespace
+
+bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
+  return prefetchHint(Id) || Id == Intrinsic::PrefetchW ||
+         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr;
+}
 
 bool isX86FastFailCall(const HighExpr &E) {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::IntN ||

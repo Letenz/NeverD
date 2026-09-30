@@ -3478,6 +3478,35 @@ TEST(LowInstructionBoundary,
   EXPECT_FALSE(verifyMedFunc(BadMedIntrinsic, "bad-segment-intrinsic"));
 }
 
+TEST(LowInstructionBoundary, FlatPrefetchAndMxcsrUseIntrinsics) {
+  // Without a segment override these instructions have compiler intrinsics,
+  // which keep the same effects and read better than inline assembly.
+  LowFunc Low = buildFunction(Arch::X64, InstructionMode::Default,
+                              {0x0f, 0x18, 0x00,       // prefetchnta [rax]
+                               0x0f, 0x0d, 0x48, 0x40, // prefetchw [rax+40h]
+                               0x0f, 0xae, 0x50, 0x20, // ldmxcsr [rax+20h]
+                               0x0f, 0xae, 0x58, 0x24, // stmxcsr [rax+24h]
+                               0xc3});
+  MedFunc Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(verifyMedFunc(Med, "flat-memory-state"));
+  HighFunc High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string HighC;
+  llvm::raw_string_ostream OS(HighC);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  OS.flush();
+  EXPECT_NE(HighC.find("#include <immintrin.h>"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_prefetch((const char *)"), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_MM_HINT_NTA"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_m_prefetchw((void *)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_setcsr(neverd_csr)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_mm_getcsr()"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("__asm__"), std::string::npos) << HighC;
+  EXPECT_TRUE(validHighC(HighC));
+}
+
 std::string errorText(llvm::Error Error) {
   return llvm::toString(std::move(Error));
 }

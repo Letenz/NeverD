@@ -19,6 +19,7 @@
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/Common.h"
+#include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
@@ -1038,7 +1039,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId != Intrinsic::None &&
-               intrinsicCName(Ex.IntrinsicId))
+               (intrinsicCName(Ex.IntrinsicId) ||
+                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;

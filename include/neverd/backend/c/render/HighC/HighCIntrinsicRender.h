@@ -73,6 +73,10 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
 /// may proceed. renderX86IntrinsicCall uses this same policy.
 const char *x86HighCIntrinsicFatalReason(Intrinsic Id);
 
+/// Whether a flat x86 memory intrinsic renders through an <immintrin.h>
+/// intrinsic rather than inline assembly.
+bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
+
 /// Render an x86 intrinsic that needs full typed-statement context, including
 /// architectural preconditions and implicit memory relative to FS/GS. Returns
 /// an empty string for an unsupported intrinsic. Recognized intrinsics with
