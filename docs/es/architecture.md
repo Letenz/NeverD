@@ -593,6 +593,8 @@ Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backen
 
 KVM x64 lee los registros especiales reales antes de cada entrada y compara solo los campos de protocolo definidos en `KvmX64State.def`. Reescribe la proyección cuando cambia CR3, CPL, TLS, CR8 u otro campo. Solo una salida de depuración de paso único cuyo estado se haya capturado por completo permite reutilizar el estado ejecutable; las excepciones, cancelaciones y entradas fallidas lo restablecen. `X64StateTransition` verifica cambios de TLS, privilegio y CR8, fallos repetidos y cancelación mediante lecturas de la CPU real. Los registros generales, el estado FP/SSE y el paso único siguen instalándose en cada instrucción.
 
+KVM x64 utiliza `KvmRunControl` para preparar el estado, entrar en `KVM_RUN` y recoger el estado en el mismo hilo vCPU privado. La preparación se realiza una sola vez antes de los reintentos por `EINTR`; la recogida solo ocurre tras el retorno correcto de una entrada del host. Los callbacks de transferencia prestados siguen vigentes hasta la confirmación del fin de la entrada. La decodificación ISA, las transacciones RAM, la política del SO y los observadores de ejecución permanecen en el hilo llamador. Un fallo de preparación omite la entrada y la recogida; un fallo de recogida o una cancelación impide publicar el estado invitado.
+
 ## Contrato de lifting estricto
 
 `Decoder` y cada lifter de arquitectura arrancan en modo estricto. Si Capstone

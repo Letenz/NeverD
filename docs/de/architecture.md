@@ -595,6 +595,8 @@ Das ausgewählte Profil lässt sich mit `executionCapabilities(Contract, ISA, Ba
 
 KVM x64 liest vor jedem Eintritt die tatsächlichen Spezialregister und vergleicht nur die in `KvmX64State.def` definierten Protokollfelder. Ändert sich CR3, CPL, TLS, CR8 oder ein anderes Feld, wird die Projektion erneut geschrieben. Nur ein vollständig erfasster Einzelschritt-Debug-Austritt erlaubt die Wiederverwendung des ausführbaren Zustands; nach Ausnahmen, Abbruch oder fehlgeschlagenem Eintritt wird er erneut hergestellt. `X64StateTransition` prüft TLS-, Privileg- und CR8-Wechsel, wiederholte Fehler und Abbruch durch echte CPU-Lesezugriffe. Allgemeine Register, FP/SSE-Zustand und Einzelschrittsteuerung werden weiterhin für jede Instruktion gesetzt.
 
+KVM x64 nutzt `KvmRunControl`, um Zustand, `KVM_RUN`-Eintritt und Zustandserfassung auf demselben privaten vCPU-Thread auszuführen. Die Vorbereitung erfolgt genau einmal vor den Wiederholungen nach `EINTR`; die Erfassung erfolgt nur nach erfolgreicher Rückkehr aus dem Host-Eintritt. Ausgeliehene Übertragungs-Callbacks bleiben bis zur Bestätigung des Eintritts gültig. ISA-Dekodierung, RAM-Transaktionen, OS-Richtlinien und Ausführungsbeobachter bleiben auf dem aufrufenden Thread. Eine fehlgeschlagene Vorbereitung verhindert Eintritt und Erfassung; fehlgeschlagene Erfassung oder Abbruch verhindert die Veröffentlichung des Gastzustands.
+
 ## Vertrag des strikten Liftings
 
 `Decoder` und jeder Architektur-Lifter starten im strikten Modus. Kann
