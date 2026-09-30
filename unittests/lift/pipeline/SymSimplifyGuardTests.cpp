@@ -148,6 +148,34 @@ llvm::Function *buildSplitWordCarrySave(llvm::Module &M, bool SignedNoWrap) {
   return F;
 }
 
+/// Two 128-bit words assembled from 64-bit halves, as a lifted vector
+/// instruction's operands are: the widened \p A is the low half of the first
+/// and, shifted up, the high half of the second.  Each word feeds a store, so
+/// each is its own root, and the widening they share is opaque to both.
+llvm::Function *buildSharedHalfWords(llvm::Module &M) {
+  llvm::LLVMContext &C = M.getContext();
+  auto *I64 = llvm::Type::getInt64Ty(C);
+  auto *I128 = llvm::Type::getInt128Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(llvm::Type::getVoidTy(C),
+                                     {I64, I64, Ptr, Ptr}, false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "shared_half_words", &M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  llvm::Value *A = F->getArg(0);
+  llvm::Value *Bv = F->getArg(1);
+  llvm::Value *WideA = B.CreateZExt(A, I128);
+  llvm::Value *HighB = B.CreateShl(B.CreateZExt(Bv, I128), B.getIntN(128, 64),
+                                   "", /*HasNUW=*/true);
+  B.CreateStore(B.CreateDisjointOr(HighB, WideA), F->getArg(2));
+  llvm::Value *HighA = B.CreateShl(WideA, B.getIntN(128, 64), "",
+                                   /*HasNUW=*/true);
+  llvm::Value *LowX = B.CreateZExt(B.CreateXor(Bv, B.getInt64(85)), I128);
+  B.CreateStore(B.CreateDisjointOr(HighA, LowX), F->getArg(3));
+  B.CreateRetVoid();
+  return F;
+}
+
 /// The smallest expression for which semantic measurement can improve on the
 /// canonical builders: `~x + 1 == -x`.
 llvm::Function *buildComplementPlusOne(llvm::Module &M) {
@@ -339,6 +367,22 @@ TEST(SymSimplifyGuard, ProvesPackedDisjointOrAndUnsignedWidenedShift) {
   EXPECT_NE(After.find("add i64"), std::string::npos) << After;
   EXPECT_EQ(After.find("@llvm.fshl"), std::string::npos) << After;
   EXPECT_EQ(After.find("or disjoint"), std::string::npos) << After;
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, SplitWordBehindASharedWideningStaysAnOrdinaryOr) {
+  // Neither word can see the 64-bit value inside the widening it shares with
+  // the other, so it must be read as an OR of that opaque leaf, not as a
+  // concatenation of a half it has no reading for.
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSharedHalfWords(M);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+
+  const SymSimplifyResult Result = SymSimplifyPass::simplifyWithResult(*F);
+  EXPECT_NE(Result.Proof, solver::ProofStatus::Different);
+  const std::string After = printFunction(*F);
+  EXPECT_EQ(llvm::StringRef(After).count("store i128"), 2u) << After;
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 

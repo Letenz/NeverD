@@ -283,8 +283,15 @@ sym::SymRef Translator::build(const llvm::Instruction &I) {
   case OpTag::And:
     return Ctx.mkAnd(M(A), M(B));
   case OpTag::Or:
-    if (auto Pair = splitWordAssembly(I))
-      return Ctx.mkConcat(M(Pair->High), M(Pair->Low));
+    // A split word reads as the concatenation of its halves only when both
+    // were translated.  A half behind a widening that another root shares is
+    // an opaque leaf with no reading of its own, and the OR of that leaf is
+    // still exact: the halves are disjoint, so the flag cannot be poison.
+    if (auto Pair = splitWordAssembly(I)) {
+      const sym::SymRef High = M(Pair->High), Low = M(Pair->Low);
+      if (High.isValid() && Low.isValid())
+        return Ctx.mkConcat(High, Low);
+    }
     return Ctx.mkOr(M(A), M(B));
   case OpTag::Xor:
     // `x ^ -1` is complement, a generator of the bitwise algebra the solver
