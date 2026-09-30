@@ -126,6 +126,8 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 تجمع مجموعة [محاكاة العمليات](process-emulation.md#التحقق) ملفات ELF حقيقية لـx64/AArch64. يتحقق `NeverDLinuxProcessTests` من البدء وسياسة program headers وطلبات الخدمة والمخرجات الثنائية والأعطال والموارد. يختبر `NeverDProcessPublicTests` C API وCLI دون تغيير صورة التحليل. ويغطي `NeverDExecutionSessionTests` CPUين يشتركان في الذاكرة والميزانية واستهلاك الطلب/العطل مرة واحدة؛ أما `NeverDX64MemoryUpdateTests` فيتحقق من حسابات الذاكرة وSETcc وBT وXMM/MXCSR ومراقبي الكتابة وحدود REP والقراءة المحضرة للأجهزة. وتعيد `DriverBackendParityTests.cpp` تشغيل صور WDK الأصلية والمعاد تموضعها وتقارن التقرير المرصود بالكامل بـUnicorn؛ الحالات والأجهزة غير المتاحة تُتخطى صراحة.
 
+يقبل x64 المفحوص أيضاً الأشكال القديمة المقنّعة `SS` و`SD` و`PS` و`PD` للتعليمات `ADD` و`SUB` و`MUL` و`DIV` و`SQRT` و`MIN` و`MAX`. يوحّد `X64SSEInstructions.def` عروض المعاملات والمحاذاة وقواعد القبول. يقارن `MaskedSSEArithmeticMatchesIndependentHostExecution` أشكال السجلات وRAM بمرجع مستقل على CPU المضيف، شاملاً أوضاع التقريب الأربعة وFTZ والأصفار الموقّعة والمدخلات دون الطبيعية وNaN. ويتحقق `SSEMemoryObserverStopsBeforeResultAndStatusChanges` من التوقف قبل الآثار. تبقى DAZ والاستثناءات غير المقنّعة وx87 وAVX غير مقبولة.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

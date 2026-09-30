@@ -14,6 +14,8 @@ ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용�
 
 supervisor x64는 정렬된 1/2/4바이트 스칼라 MMIO 트랜잭션을 허용하며 장치 페이지는 네이티브 RAM mapping에 들어가지 않습니다. MOVS/REP MOVS는 재시작 경계마다 한 요소씩 실행합니다. destination observer가 device read commit 전에 중지할 수 있도록 device source는 부작용 없는 prepared read를 제공해야 합니다. Windows register bank는 이를 지원하고, 다른 장치는 string read를 효과 발생 전에 거부합니다. device RMW, 넓은 MMIO, 포트 I/O는 미지원입니다. 요청 바이트, 장치 상태, 쓰기 event는 Unicorn의 zero-count REP 종료 hook 차이와 별도로 비교합니다. KVM은 표준 XSAVE interface와 FP/SSE presence bit로 XMM/MXCSR를 전달합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. timeout/cancel은 허용된 유한 명령 사이에서 검사하며 일반 비동기 선점이나 시작 후 backend 재시작은 없습니다. 내장 corpus와 사용 가능한 WDK 시나리오는 일반/CFG/재배치 image에서 Unicorn과 비교하지만 corpus 일치가 임의 드라이버 호환성을 보장하지는 않습니다.
 
+checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
+
 빌드 옵션은 `NEVERD_EMULATION_BACKEND_KVM`, `NEVERD_EMULATION_BACKEND_WHP`입니다. KVM은 `/dev/kvm` 접근 권한이 필요합니다. WHP는 시스템 DLL을 동적으로 로드하며 Windows 실기 실행 검증이 필요합니다. 새 C API는 `neverd_emulate_driver_backend_json`이며 v1 ABI는 유지됩니다. 보고서는 백엔드, 계약과 선택 이유를 기록합니다.
 
 ```bash

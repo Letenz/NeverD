@@ -14,6 +14,8 @@ ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指
 
 supervisor x64 支持一次对齐的 1/2/4 字节标量 MMIO 事务；设备页不会进入原生 RAM 映射。MOVS/REP MOVS 在每个重启边界只执行一个元素。设备源必须提供无副作用的 prepared read，以便目标写观察器能在设备读取提交前停止。Windows 寄存器组实现该准备流程；其他设备会在产生效果前拒绝字符串读取。设备 RMW、宽 MMIO、端口 I/O 仍不支持。请求字节、设备状态和写事件分别比较，不依赖 Unicorn 对零计数 REP 额外触发的终止 hook。KVM 使用标准 XSAVE 接口传送 XMM/MXCSR 与 FP/SSE presence bits。该 supervisor 契约不提供用户进程环境；timeout/取消在准入的有界指令间检查，不提供通用异步抢占，也不会在 guest 开始后更换后端。内置样例及可用 WDK 场景会对 normal/CFG 和重定位映像与 Unicorn 比对；语料一致不代表支持任意驱动。
 
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+
 构建选项为 `NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。Windows API 从系统 DLL 动态加载；KVM 要求当前用户能访问 `/dev/kvm`，模拟器不修改宿主权限。WHP 仍需 Windows 实机运行验证，交叉编译不能代替。新增 C 入口 `neverd_emulate_driver_backend_json`，现有 v1 结构和入口不变；新报告包含请求/实际后端、执行契约及选择原因。
 
 ```bash

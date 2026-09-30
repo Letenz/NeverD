@@ -4,8 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 // Name, memory width, alignment, move/store, permits a general register.
-// Data operations do not observe MXCSR; the bounded scalar FP entries below
-// retain its status/control. MMX, VEX/EVEX and other FP families are rejected.
+// Floating-point operations retain masked MXCSR status/control.
+// MMX, VEX/EVEX and unmasked FP exceptions remain outside this contract.
 // String MOVSD has separate operand admission and restart semantics.
 NEVERD_X64_VECTOR_INSTRUCTION(MOVD, 4, 1, true, true)
 NEVERD_X64_VECTOR_INSTRUCTION(MOVQ, 8, 1, true, true)
@@ -31,8 +31,9 @@ NEVERD_X64_VECTOR_INSTRUCTION(POR, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(ANDNPS, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(ANDNPD, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(PANDN, 16, 16, false, false)
-// Masked scalar FP operations; the machine preserves MXCSR status/control.
-NEVERD_X64_VECTOR_INSTRUCTION(SUBSS, 4, 1, false, false)
-NEVERD_X64_VECTOR_INSTRUCTION(SUBSD, 8, 1, false, false)
+#define NEVERD_X64_SSE_INSTRUCTION(Name, Width, Alignment, Double, ...)        \
+  NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, false, false)
+#include "X64SSEInstructions.def"
+#undef NEVERD_X64_SSE_INSTRUCTION
 NEVERD_X64_VECTOR_INSTRUCTION(CVTTSS2SI, 4, 1, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTTSD2SI, 8, 1, false, false)
