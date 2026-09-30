@@ -6,6 +6,8 @@
 
 Per impostazione predefinita NeverD usa il solver bitvector integrato. La derivazione MBA esatta resta indipendente da un solver generale. La sintesi di espressioni accetta un candidato solo dopo una prova di equivalenza; controesempi o query inconclusive mantengono l’espressione originale.
 
+<!-- i18n-section: z3-build -->
+
 ## Build Z3 facoltativa
 
 Attivando Z3, CMake scarica tramite `FetchContent` la revisione sorgente fissata 4.13.3 e crea una libreria statica con NeverD; non serve installare Z3 nel sistema:
@@ -17,9 +19,11 @@ cmake --build build-release --target neverd NeverDSolverTests \
   NeverDSymbolicTests neverd-solver-bench --parallel 4
 ```
 
-Il default è `NEVERD_Z3_PROVIDER=FETCH`. La prima configurazione scarica i sorgenti; le build successive riusano `_deps`. Non vengono buildati CLI, test, esempi, documentazione né binding di Z3. I generatori Python usano l’interprete già richiesto da NeverD. Per una libreria installata scegliere `-DNEVERD_Z3_PROVIDER=SYSTEM` e, facoltativamente, `-DZ3_ROOT=...`; se mancano i file di sviluppo fallisce senza cambiare provider in silenzio. Per build offline fornire una copia locale con `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=...`.
+Il default è `NEVERD_Z3_PROVIDER=FETCH`. La prima configurazione scarica i sorgenti; le build successive riusano `_deps`. Non vengono buildati CLI, test, esempi, documentazione né binding di Z3. I generatori Python usano l’interprete già richiesto da NeverD. Per una libreria installata scegliere `-DNEVERD_Z3_PROVIDER=SYSTEM` e, facoltativamente, `-DZ3_ROOT=/path/to/prefix`; se mancano i file di sviluppo fallisce senza cambiare provider in silenzio. Per build offline fornire una copia locale con `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=/path/to/z3`.
 
 Con `NEVERD_ENABLE_Z3=OFF` (default), NeverD non scarica, cerca o linka Z3. Una richiesta runtime esplicita di un backend non disponibile fallisce senza fallback.
+
+<!-- i18n-section: synthesis -->
 
 ## Sintesi di espressioni con prova
 
@@ -32,15 +36,26 @@ build-release/bin/neverd simplify --synthesize --solver=z3 \
 
 La C API aggiunge `solver_backend` e `solver_timeout_ms` a `neverd_synthesize_options`. I reader limitati per dimensione mantengono il backend integrato per i vecchi client. `neverd_solver_backend_available()` indica la capacità della build; Python espone la scelta tramite `synthesize_expression(..., solver='z3', solver_timeout_ms=1000)`. Attualmente vale solo per la sintesi di espressioni. Esecuzione concolic, analisi di sicurezza e default dell’ottimizzazione IR mantengono le policy esistenti. Gli utenti interni possono fornire il verifier Z3 attraverso il proof callback del semplificatore semantico.
 
+```python
+from neverd_plugin import synthesize_expression
+
+result = synthesize_expression(
+    '(x >> 4) + ((x >> 2) >> 2)', solver='z3', solver_timeout_ms=1000
+)
+```
+
+<!-- i18n-section: checks -->
+
 ## Controlli indipendenti ed esportazione query
 
 Con Z3 abilitato, `NeverDSolverTests` include valutazione indipendente delle espressioni e confronti tra backend. Le espressioni di riferimento sono costruite direttamente, così un bug nei builder di NeverD non può semplificare entrambi i lati del test. Le build senza Z3 saltano esplicitamente gli oracle ma verificano ancora il contratto del backend indisponibile.
 
 ```sh
 build-release/bin/NeverDSolverTests --gtest_brief=1
-build-release/bin/neverd-solver-bench tools/neverd-bench/solver-corpus.txt \
-  --width=32 --repeat=5 --backend=both --timeout-ms=1000 \
-  --max-conflicts=10000 --dump-dir=/tmp/neverd-queries
+build-release/bin/neverd-solver-bench \
+  tools/neverd-bench/solver-corpus.txt --width=32 --repeat=5 \
+  --backend=both --timeout-ms=1000 --max-conflicts=10000 \
+  --dump-dir=/tmp/neverd-queries > /tmp/neverd-solver-results.json
 ```
 
 Ogni riga non commentata è `original ; candidate`; senza punto e virgola il candidato è il risultato del semplificatore MBA. Lo strumento riporta verdetti, replay del modello e tempi (include creazione sessione, traduzione e soluzione; esclude parsing, semplificazione MBA, export e teardown). Ogni ripetizione usa un solver nuovo. I modelli SAT devono riprodurre la differenza nell’evaluator. Verdetti decisivi opposti o query/modelli non validi fanno fallire il run; `unknown` viene registrato ma non prova equivalenza.

@@ -24,6 +24,8 @@ Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts 
 | [Contributing](../CONTRIBUTING.md) | Development setup, build profiles, workflow, style, and PR expectations |
 | [Architecture](architecture.md) | IR routes, component boundaries, strict lifting, support depth, and where to edit |
 | [Testing](testing.md) | Test suites, generated fixtures, Unicorn roundtrips, and incremental commands |
+| [Desktop workbench](gui.md) | Qt Quick views, worker separation, localization, annotations and MCP connections |
+| [Desktop qualification](gui-qualification.md) | Supported workflows, verification evidence and platform release requirements |
 | [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; nested loop proof proposals; explicit discovery budgets and versioned C API |
 | [Windows exception reconstruction](windows-exception-reconstruction.md) | SEH/C++ unwind support matrix, IR contract, native patch rules, and PE validation |
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |

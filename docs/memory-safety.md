@@ -20,6 +20,8 @@ dependency.
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## Core invariant: fail closed
 
 An unlifted operation, an unsummarised call, a call whose arguments the ABI pass
@@ -34,6 +36,8 @@ summary that is only partially applicable keeps the result UNKNOWN; the
 analysis never fills the gap with an assumed no-op or successful call.
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## Identity contract per format
 
@@ -56,6 +60,8 @@ from `void` release functions. Rich PDB local/stack type recovery remains
 limited; when it cannot establish an exact object size, Hunt falls through to
 the frame/allocation model and reports UNKNOWN rather than inventing a size.
 
+<!-- i18n-section: name-precedence -->
+
 ### Name-source precedence
 
 Every finding carries a `name_source` describing where its callee name was
@@ -76,6 +82,8 @@ different non-placeholder name already stated by the image, and a signature
 match never displaces any stated identity.
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## Sink & source catalog
 
@@ -142,6 +150,8 @@ transactionally.
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## Hunt: copy-overflow verdicts
 
 For each copy sink the hunt resolves the destination capacity — a debug-declared
@@ -173,6 +183,8 @@ spill/reload through stack slots):
 Every recovered capacity is an **upper bound** on the true object size, so a
 proven overflow is never a false positive.
 
+<!-- i18n-section: formatted-input -->
+
 ### Formatted input
 
 For `scanf`/`fscanf` and their versioned spellings, a readable constant format
@@ -185,6 +197,8 @@ taint together with a `MaxBytes` extent that includes the terminator;
 wide-character variants compute that byte extent using the platform's
 `wchar_t` width. Suppressed conversions, excess arguments, position-dependent
 or unsupported formats, and `%n` remain UNKNOWN instead of being guessed.
+
+<!-- i18n-section: formatted-output -->
 
 ### Formatted output
 
@@ -202,6 +216,8 @@ attacker-controlled format string is reported separately as `format_string`,
 regardless of destination truncation.
 
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## Audit: heap-lifetime verdicts
 
@@ -228,6 +244,8 @@ frame stores do not invalidate otherwise exact reachability evidence.
 
 ---
 
+<!-- i18n-section: stack-initialization -->
+
 ## Audit: local stack initialization
 
 The audit also follows full-width stores reaching loads from local frame slots
@@ -239,6 +257,8 @@ uncertain definitions remain UNKNOWN. Caller-owned argument slots at or above
 the entry stack pointer are excluded from this check.
 
 ---
+
+<!-- i18n-section: reachability -->
 
 ## Known-entry interprocedural reachability
 
@@ -288,6 +308,8 @@ and `unknown`, which tally verdicts.
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## Budgets, output, and bindings
 
 Hunt exploration and the solver are bounded (`--max-paths`, `--max-steps`,
@@ -321,6 +343,8 @@ The same analyses are available through the C API
 (`neverd_session_audit_json` / `neverd_session_hunt_json` with a versioned
 `neverd_safety_options`) and the Python SDK (`Session.audit()` /
 `Session.hunt()`).
+
+<!-- i18n-section: finding-schema -->
 
 ### Finding schema
 
@@ -385,6 +409,8 @@ understand.
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
 ## Strict runtime guards and authenticated publication
 
 `binary-sanitizer-v1` is a separate experimental mutation transaction; it does
@@ -445,6 +471,8 @@ the kernel, VFS, and mounted filesystem honor their reported semantics.
 
 ---
 
+<!-- i18n-section: native-replay -->
+
 ## Native process replay: phase 0 only
 
 The platform-neutral `process-replay-v1` plan and executor coordinator define
@@ -471,6 +499,8 @@ process-tree containment. Other platforms are unsupported. Unit-test operation t
 exercise the coordinator contract but are not evidence of native availability.
 
 ---
+
+<!-- i18n-section: scope -->
 
 ## False-positive bounds & scope
 

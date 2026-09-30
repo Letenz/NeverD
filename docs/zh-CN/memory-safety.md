@@ -15,6 +15,8 @@ NeverD 对已加载二进制做两类内存安全分析，并以结构化 JSON �
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## 核心不变量：失败即闭合
 
 未提升的操作、缺少摘要的调用、ABI 未能恢复参数的调用、未解析的间接目标，或预算耗尽，一律给出 **UNKNOWN**，从不给出 SAFE。无法恢复容量的目的缓冲区也是 UNKNOWN。严格提升保持原样；安全层只在其上叠加保守裁决。
@@ -22,6 +24,8 @@ NeverD 对已加载二进制做两类内存安全分析，并以结构化 JSON �
 调用效果采用闭世界语义：只有前置条件与所有相关效果均已知时才应用摘要。未知效果或只能部分适用的摘要保持 UNKNOWN；分析不会把缺口假定为无效果或调用成功。
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## 按格式的身份契约
 
@@ -37,6 +41,8 @@ NeverD 对已加载二进制做两类内存安全分析，并以结构化 JSON �
 
 PDB 过程签名用于区分有返回值的分配函数与 `void` 释放函数。PDB 局部变量和栈类型的丰富恢复仍有限；无法确认精确对象大小时，猎取会回退到帧布局／分配点模型，并给出 UNKNOWN，而不会虚构容量。
 
+<!-- i18n-section: name-precedence -->
+
 ### 名称来源优先级
 
 每条发现都带 `name_source`，说明被调名来自何处，按以下优先级选择：
@@ -51,6 +57,8 @@ PDB 过程签名用于区分有返回值的分配函数与 `void` 释放函数�
 仅由 DWARF 命名的静态链接 `memcpy` 报告 `dwarf`；导入的 `memcpy` 在所有格式上都报告 `import`。伴生文件不会覆盖镜像已经陈述的不同非占位名，签名匹配也不会覆盖任何已陈述身份。
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## Sink 与 source 目录
 
@@ -87,6 +95,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## 猎取：拷贝越界裁决
 
 对每个拷贝 sink，猎取按此顺序恢复目的容量——调试声明的数组大小，然后是已知大小的堆分配点，然后是可靠的栈帧上界——并通过反向 SSA 行走（跟随栈槽 spill/reload）对决定写入长度的参数分类：
@@ -99,11 +109,21 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 每一项恢复出的容量都是真实对象大小的 **上界**，因此被证明的越界不会是误报。
 
+<!-- i18n-section: formatted-input -->
+
 ### 格式化输入
 
 对于 `scanf`/`fscanf` 及其带版本拼写，可读的常量格式会把每个未抑制转换映射到其实际的可变参数输出参数。无界 `%s`/`%[` 输出会把 taint 传播到后续字符串使用；数值与字符输出会污染从被写对象加载的值，但不污染输出指针值本身。`sscanf` 仅在其输入字符串已经受攻击者影响时传播这些 effect。`%Ns`/`%N[` 等有界文本输出会连同包含终止符的 `MaxBytes` extent 一起传播 taint；宽字符变体使用平台的 `wchar_t` 宽度计算该字节 extent。被抑制的转换、多余参数、位置依赖或不受支持的格式以及 `%n` 保持 UNKNOWN，不作猜测。
 
+<!-- i18n-section: formatted-output -->
+
+### 格式化输出
+
+`snprintf`/`vsnprintf` 的最大写入长度与强化 `_chk` 形式的编译器目标对象大小是两个独立边界。仅含字面字节和 `%%` 的可信常量格式有精确输出长度（包含结尾 NUL），按与拷贝 sink 相同的堆／栈目标模型检查。最大写入不超过精确目标容量时为 SAFE；字面输出超出目标时为 UNSAFE。包含值转换的格式，在参数输出长度未证明前保持 UNKNOWN。高置信度 UNSAFE 还须经 LowIR 路径重放证明调用可达。攻击者控制的格式串单独报告为 `format_string`，不受目标截断影响。
+
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## 审计：堆生命周期裁决
 
@@ -118,6 +138,16 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 堆状态机先生成候选事件序列（分配、释放、使用或返回出口）；只有第二遍在符号 LowIR 路径上按序重放这些事件，并由求解器证明路径谓词可满足后，发现才会成为高置信度 UNSAFE。缺失 LowIR、不透明操作、无摘要调用、求解器不确定或探索预算耗尽都会把候选降为 UNKNOWN。可能别名导致的内存 havoc 单独计数，因此普通栈帧写入不会无差别否决本来精确的可达性证据。
 
 ---
+
+<!-- i18n-section: stack-initialization -->
+
+## 审计：局部栈初始化
+
+审计追踪函数入口栈指针以下局部槽位的全宽写入与后续读取。没有任何可能的先前初始化时报告 `uninitialized_read`；仍须 LowIR 路径重放确认读取可达，才成为高置信度 UNSAFE。条件初始化、部分写入、槽位地址逃逸及其他不确定定义保持 UNKNOWN。入口栈指针及以上由调用方拥有的参数槽不在此检查范围内。
+
+---
+
+<!-- i18n-section: reachability -->
 
 ## 从已知入口出发的过程间可达性
 
@@ -156,6 +186,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## 预算、输出与绑定
 
 猎取探索与求解器受预算约束（`--max-paths`、`--max-steps`、`--max-loop`、`--solver-conflicts`）。过程间分析有两个独立限制：`max_call_depth` 限制从已知入口出发的内部调用边数，`max_summary_iterations` 限制攻击者控制不动点轮数。默认值分别为 64 条边，以及有效深度上限加一轮。预算耗尽按上文所述闭合失败。耗尽 `max_call_depth` 可使尚未到达的函数保持 `status=UNKNOWN`；耗尽 `max_summary_iterations` 不会抹去结构见证，因此 `status=REACHABLE` 可以与 `attacker_control=UNKNOWN`、`budget_hit=true` 同时存在。两条命令都打印 JSON，并尊重 `-o`。退出码：SAFE 为 `0`，UNSAFE 为 `2`，UNKNOWN 或出错为 `1`。
@@ -173,6 +205,8 @@ C 调用方应将 `neverd_safety_options` 清零，并设置
 C API 前将两项都校验为无符号 32 位整数。
 
 同一分析也可通过 C API（`neverd_session_audit_json` / `neverd_session_hunt_json`，带版本化 `neverd_safety_options`）和 Python SDK（`Session.audit()` / `Session.hunt()`）使用。
+
+<!-- i18n-section: finding-schema -->
 
 ### 发现 schema
 
@@ -192,8 +226,32 @@ C API 前将两项都校验为无符号 32 位整数。
   "capacity": 16,
   "capacity_kind": "exact",
   "corroboration": "path predicate and overflow are jointly satisfiable",
-  "reachability": { "status": "REACHABLE", "attacker_control": "TAINTED", "budget_hit": false, "entry": { "va": "0x1000", "name": "main", "kind": "application" }, "call_chain": [{ "caller_va": "0x1000", "call_va": "0x1080", "callee_va": "0x1100", "kind": "direct" }] },
-  "evidence": { "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" }, "candidate_values": [{ "name": "copy_length", "value": "17" }, { "name": "argv[1]", "value": "16 bytes" }], "replayable": false, "replay": { "adapter": "process-input-v1", "reason": "argv input is not supported by process-input-v1" }, "symbolic_model": [{ "id": 0, "name": "copy_len", "width": 64, "value_hex": "0x11", "origin": "input" }] }
+  "reachability": {
+    "status": "REACHABLE",
+    "attacker_control": "TAINTED",
+    "budget_hit": false,
+    "entry": { "va": "0x1000", "name": "main", "kind": "application" },
+    "call_chain": [
+      { "caller_va": "0x1000", "call_va": "0x1080",
+        "callee_va": "0x1100", "kind": "direct" }
+    ]
+  },
+  "evidence": {
+    "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" },
+    "candidate_values": [
+      { "name": "copy_length", "value": "17" },
+      { "name": "argv[1]", "value": "16 bytes" }
+    ],
+    "replayable": false,
+    "replay": {
+      "adapter": "process-input-v1",
+      "reason": "argv input is not supported by process-input-v1"
+    },
+    "symbolic_model": [
+      { "id": 0, "name": "copy_len", "width": 64,
+        "value_hex": "0x11", "origin": "input" }
+    ]
+  }
 }
 ```
 
@@ -201,11 +259,39 @@ C API 前将两项都校验为无符号 32 位整数。
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
+## 严格运行时防护与认证发布
+
+`binary-sanitizer-v1` 是独立的实验性修改事务，不改变 audit/hunt 裁决。完整的严格 hunt 必须把每个发现映射到一个精确的计数写入发生位置，具有精确剩余容量和匹配的编译器调用点元数据。不支持的发现、过期或歧义身份、不完整提升、预算耗尽、防护生成错误及目标／签名限制都会拒绝整个事务，没有部分成功。可重定位对象、动态库、通用 Mach-O 和受防护的 Mach-O bundle 成员均属于明确拒绝的输入。
+
+公开入口为 C `neverd_session_sanitize`、CLI `neverd patch --sanitize=strict` 和 Python `Session.sanitize`。需要认证发布的 C 调用方必须先探测 `neverd_sanitize_publication_abi_version()`。三个接口均只有在 publication receipt v1 完整且内部一致后才接受成功。非 Darwin 主机完成输入认证与规范化后返回 `UNSUPPORTED_TARGET`，早于提升、防护生成、候选创建或命名空间修改。
+
+Darwin 仅有两种成功结果：`CREATE_EXCLUSIVE` 以一次原子的禁止覆盖操作，把同目录新候选发布到不存在的目标；receipt 证明命名空间原子性、目标独占创建和实际操作数绑定，不证明替换 CAS 或崩溃持久性。`NO_CHANGE` 只读：空防护计划重新认证已持有的加载源对象，报告 `NOT_PUBLISHED`，不声明发布保证或操作数绑定。非空防护计划不能把加载源当输出；另一个已存在目标也绝不替换，调用方须选择新路径。发布结果不确定或缺少完整最终 receipt 均为失败；目标可能已经存在，使用、重试或删除前必须检查。
+
+源字节与 session 的外部摘要匹配，再通过持有的描述符观察；源对象和目标目录对象在事务中保持锚定。元数据与稳定身份只是事务期间的观察，不证明从最初加载起未改变。已打开的目录可能被改名；receipt 只认证在该持有目录对象内发布，不证明原目标路径在事务期间或返回后持续指向该对象。它不是独立、持久的路径绑定；随后重新打开路径时须保留外部锚点并重新认证。Darwin rename 通过候选路径而非持有的候选描述符操作，因此目录必须属于有效 uid，无扩展 ACL、无组／其他用户写权限，且卷确认普通 POSIX 所有权；创建候选和发布前均重新认证这些条件。绑定保证不涵盖相同权限进程、root/DAC 绕过能力或恶意文件系统／服务端，并假定内核、VFS 和挂载文件系统遵守所报告语义。
+
+---
+
+<!-- i18n-section: native-replay -->
+
+## 原生进程重放：仅 Phase 0
+
+平台无关的 `process-replay-v1` 计划和执行协调器定义未来认证运行所需的证明；目前没有主机能执行该原生重放。`NativeProcessReplayAdapter` 只是 C++ 的可用性查询／工厂边界，不是 C、Python、CLI 或 JSON 执行接口。
+
+查询不修改状态：验证完整计划、执行限制、绝对可执行文件定位符和唯一物理调用点映射，不打开目标、不调用后端回调、不启动进程。定位符只是未来的对象查找信息，绝不能在认证后变成按路径执行的授权。隔离、身份、输入拦截、发生位置认证、限制、清理任一保证不具备时，`Available` 和所有能力均为 false，工厂返回错误且不给出操作表。
+
+目前所有主机均如此。Linux 仍缺可信静态 ELF 插桩、持久监督程序、完整隔离、限制和运行时认证。macOS 的受支持公开机制无法同时提供基于持有对象的执行、目标代码运行前安装的任意目标沙箱以及无竞争的进程树隔离，因此不支持；其他平台也不支持。单元测试操作表只验证协调器契约，不证明原生可用性。
+
+---
+
+<!-- i18n-section: scope -->
+
 ## 误报边界与范围
 
 - 容量要么精确、要么是真实对象大小的上界，因此 UNSAFE 反映真实越界。若精确声明大小不可用，而包含区域上界又不足以证明安全，则结果为 UNKNOWN。
 - 长度受限的拷贝在求解前退出并计入 `skipped`；精确容量可证明 SAFE，只有上界时仍保持 UNKNOWN。
 - 已入目录的宽字符与追加拷贝，在元素字节宽度或目的字符串现有长度未恢复时保持 UNKNOWN。出参分配器与条件 `realloc` 的所有权转移无法证明时也保持 UNKNOWN。
-- **P0**（本发布，三种格式）：sink 目录、参数预过滤、拷贝越界猎取、堆生命周期审计。每个测试主机都必须运行六个已检入样例，覆盖 PE、ELF、Mach-O × x86-64、AArch64。
-- **P1**：栈/全局越界、未初始化局部读取与格式串检查已提供；更丰富的 PDB 栈类型和更多平台分配器仍是增量覆盖项，缺少精确摘要时保持 UNKNOWN。
+- **Phase 1**: 本发布在三种格式上提供 sink 目录、参数预过滤、栈／全局拷贝越界猎取、堆生命周期审计、局部栈未初始化读取和格式串检查。每个测试主机必须运行 PE、ELF、Mach-O × x86-64、AArch64 的已检入样例。
+- 更丰富的 PDB 栈类型及更多平台分配器仍属增量覆盖；没有精确摘要时保持 UNKNOWN。
 - 当前切片已覆盖已知入口、结构化过程间可达性和攻击者参数的单调传播。独立的实验性 `lowir-concolic-v1` 适配器现可在强制要求的原生格式／架构矩阵上，提供由寄存器种子驱动、经重放验证的分支翻转；它始终不穷举，也不改变安全裁决。实验性 `binary-sanitizer-v1` 现可在 Darwin 上提供全点位或拒绝的计数写入防护与经认证的发布；receipt 只认证事务期间持有的目录对象，而不是可持续复核的原路径绑定。更广的 `process-replay-v1` 仍只有故障关闭的 Phase 0 计划／协调器与可用性边界，当前没有主机执行原生重放。

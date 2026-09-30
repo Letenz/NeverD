@@ -26,6 +26,8 @@ PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64
 
 > GitHub always shows this English `README.md` on the repository homepage. Use the language links above for localized versions.
 
+<!-- i18n-section: overview -->
+
 ## Overview
 
 NeverD is a native and smart-contract analysis/decompilation engine built around **1:1 instruction-level lifting**. It loads **PE**, **ELF**, **Mach-O**, legacy **EVM** bytecode, and Solana **SBF ELF** programs. Native targets decode with [Capstone](https://www.capstone-engine.org/); EVM and SBF use dedicated version-aware decoders and staged IR. Every path uses hand-written semantics rather than approximate translation. Supported instructions preserve their observable behavior in **LLVM IR**, **C**, **Rust for SBF**, **Solidity-oriented EVM reconstruction**, or—on native targets—a **rewritten binary**.
@@ -51,6 +53,8 @@ Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--
 
 The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
 
+<!-- i18n-section: why-neverd -->
+
 ## Why NeverD?
 
 - **1:1 semantics** — hand-written lifters; unsupported opcodes throw under default strict mode
@@ -58,6 +62,8 @@ The separate C++ loop-proof API infers bounded invariants and lexicographic rank
 - **One pipeline, multiple exits** — `lift` → LLVM IR · `decompile` → C/Solidity/Rust · `patch` → rewritten native binary
 - **Binary rewrite** — PE / ELF / Mach-O with section trampolines or in-place overwrite
 - **Analysis toolkit** — CLI, debug info, signatures, plugins, and optional obfuscation passes
+
+<!-- i18n-section: supported-targets -->
 
 ## Supported targets
 
@@ -75,6 +81,8 @@ Solana SBF v0-v4 ELF programs use a dedicated strict loader, complete
 versioned ISA metadata, Low/Med/High IR, verified LLVM, portable C11, and safe
 stable Rust. See [Solana SBF decompilation](docs/sbf.md).
 
+<!-- i18n-section: mobile-source-recovery -->
+
 ### Mobile source recovery
 
 The experimental **`neverd mobile` CLI supports Android and iOS**:
@@ -86,11 +94,15 @@ The experimental **`neverd mobile` CLI supports Android and iOS**:
 
 Recovery depends on supported code patterns; see the [mobile overview](docs/mobile.md) and platform guides for coverage and limitations.
 
+<!-- i18n-section: cpu-workloads -->
+
 ### CPU execution and guest workloads
 
 CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](docs/cpu-execution.md), [Guest process emulation](docs/process-emulation.md) and [Windows driver emulation](docs/driver-emulation.md).
 
 Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts and Unicorn across ISAs. Native ARM64/WHP runtime coverage is still pending. `driver-strict` currently uses Unicorn; the driver KVM/WHP path requires `checked-x64-v1`. Explicit backend selections fail clearly when unavailable. Shared RAM, aliases, staged writes, scalar atomics, typed exceptions and full x64 FP/SSE context state are implemented within the documented instruction and OS contracts. This does not claim arbitrary-driver compatibility or implemented Android/Darwin environments.
+
+<!-- i18n-section: how-it-works -->
 
 ## How it works
 
@@ -125,6 +137,8 @@ Solana SBF ELF (v0-v4)
 | **MedIR** | Types, calling conventions, memory model, SSA |
 | **HighIR** | Structured control flow (`if` / `while` / `for`) |
 | **LLVM** | Optimize, emit C, or codegen machine code |
+
+<!-- i18n-section: quick-start -->
 
 ## Quick start
 
@@ -163,6 +177,8 @@ cmake --build build
 ```
 
 Signature libraries are installed to `build/bin/signatures/` at build time. `sigs --auto` selects the matching set from format, architecture, and bitness. For a PE file whose Rich header names its linker's Visual Studio release, it loads only that release's `vs<year>.pat` beside the files that belong to no release. `--sig-base <dir>` selects the same way from another signature tree. A pattern file of 1 MiB or more is parsed once: its modules are kept in `neverd/signatures` under the user's cache directory and mapped on later loads. `NEVERD_SIGNATURE_CACHE` names another directory, or `off` turns the cache off.
+
+<!-- i18n-section: building -->
 
 ## Building
 
@@ -238,7 +254,7 @@ gh workflow run neverd-release.yml \
 
 After the workflow succeeds, update the default tag, pinned commit, and all
 three digests in `cmake/NeverDLLVMPrebuilt.cmake` together. A fresh package is
-then cached below `.cache/neverd-llvm/neverd-llvm-v23.0.0-r3`, while a stale or
+then cached below `.cache/neverd-llvm/<tag>`, while a stale or
 republished archive fails before extraction. `overwrite_existing_assets`
 exists only for legacy recovery; the normal revision workflow leaves it off.
 
@@ -280,6 +296,8 @@ See [Testing NeverD](docs/testing.md) for focused targets, CTest labels, fixture
 
 </details>
 
+<!-- i18n-section: desktop-workbench -->
+
 ## Desktop workbench
 
 The optional [Qt Quick desktop workbench](docs/gui.md) provides dockable
@@ -288,11 +306,15 @@ MCP connections. Analysis runs in a separate Qt-free worker; CLI-only builds
 remain independent. See the [qualification record](docs/gui-qualification.md)
 for supported workflows and platform validation still required before release.
 
+<!-- i18n-section: cli -->
+
 ## CLI
 
 ```text
 neverd <command> [options] <binary>
 ```
+
+<!-- i18n-section: pipeline -->
 
 ### Pipeline
 
@@ -356,6 +378,8 @@ Most analysis commands accept `--json`.
 
 </details>
 
+<!-- i18n-section: sdk-and-plugins -->
+
 ## SDK and plugins
 
 Integrators use the **pure C API** from `libneverd`:
@@ -389,6 +413,8 @@ is on by default and can be removed completely with
 workflow. Both kinds use `<neverd-dir>/plugins`, `~/.neverd/plugins`, and
 `$NEVERD_PLUGIN_PATH`.
 
+<!-- i18n-section: dependencies -->
+
 ## Dependencies
 
 | Component | Role | Source |
@@ -398,6 +424,8 @@ workflow. Both kinds use `<neverd-dir>/plugins`, `~/.neverd/plugins`, and
 
 Third-party components keep their own licenses.
 
+<!-- i18n-section: contributing -->
+
 ## Contributing
 
 Development is integrated on the **`dev`** branch. See
@@ -405,6 +433,8 @@ Development is integrated on the **`dev`** branch. See
 style, targeted tests, and pull-request expectations. The
 [architecture](docs/architecture.md) and [testing](docs/testing.md) guides map
 common changes to their owning code and verification suites.
+
+<!-- i18n-section: license -->
 
 ## License
 
