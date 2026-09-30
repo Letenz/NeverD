@@ -36,6 +36,8 @@ struct KvmRunControl::State {
   std::condition_variable Changed;
   std::thread Worker;
   MachineRunControl Control{};
+  StateTransfer Prepare, Capture;
+  llvm::Error TransferError = llvm::Error::success();
   std::atomic<bool> Cancel{false};
   bool Ready = false, Initialized = false, Shutdown = false, Running = false;
   bool Requested = false, Completed = false, PendingKick = false;
@@ -110,17 +112,26 @@ struct KvmRunControl::State {
         return;
       Requested = false;
       Lock.unlock();
-      int Result;
-      do {
-        if (Cancel.load() || Control.stopRequested() ||
-            Clock::now() >= Control.Deadline) {
-          Result = -1;
-          break;
-        }
-        Result = ioctl(VCPU, KVM_RUN, 0);
-      } while (Result < 0 && errno == EINTR);
+      int Result = -1;
+      llvm::Error Error = llvm::Error::success();
+      if (Prepare && !Cancel.load() && !Control.stopRequested() &&
+          Clock::now() < Control.Deadline)
+        Error = Prepare();
+      if (!Error) {
+        do {
+          if (Cancel.load() || Control.stopRequested() ||
+              Clock::now() >= Control.Deadline) {
+            Result = -1;
+            break;
+          }
+          Result = ioctl(VCPU, KVM_RUN, 0);
+        } while (Result < 0 && errno == EINTR);
+        if (Result >= 0 && Capture)
+          Error = Capture();
+      }
       Lock.lock();
       Status = Result;
+      TransferError = std::move(Error);
       Completed = true;
       Changed.notify_all();
       // Retiring the private thread discards its pending kick without ever
@@ -147,6 +158,11 @@ llvm::Expected<std::unique_ptr<KvmRunControl>> KvmRunControl::create(int VCPU) {
 }
 
 llvm::Error KvmRunControl::run(MachineRunControl Control) {
+  return run(Control, {}, {});
+}
+
+llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
+                               StateTransfer Capture) {
   auto &S = *Impl;
   std::unique_lock Lock(S.Mutex);
   if (S.Running)
@@ -164,6 +180,8 @@ llvm::Error KvmRunControl::run(MachineRunControl Control) {
     return diagnostic::error(diagnostic::KvmRunSignal);
   }
   S.Control = Control;
+  S.Prepare = Prepare;
+  S.Capture = Capture;
   S.Cancel = false;
   S.PendingKick = false;
   S.Completed = false;
@@ -190,7 +208,10 @@ llvm::Error KvmRunControl::run(MachineRunControl Control) {
     Lock.lock();
   }
   S.Control.Stop = nullptr;
+  S.Prepare = S.Capture = {};
   S.Running = false;
+  if (S.TransferError)
+    return std::move(S.TransferError);
   // A cancellation racing a successful exit leaves native progress uncertain.
   // Acknowledge it, but never publish a successful register transfer.
   if (S.Cancel || S.Status < 0)

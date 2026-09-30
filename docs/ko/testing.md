@@ -854,3 +854,6 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 Linux의 `NeverDUnicornDeadlineTests`는 pthread 스케줄링을 제어해 실제 타이머 스레드가 게스트 진입 전에 완료되도록 합니다. x64, ARM32 및 ARM64에서 진입 전 취소가 게스트에 영향을 주지 않고 다음 실행이 독립된 예산을 사용하는지 검증합니다. 공개 엔진 API를 사용하며 엔진 내부 상태는 변경하지 않습니다.
 
 `NeverDX64ExceptionTests`의 `X64StateTransition`은 네이티브 CPU에서 독립적인 RAM 읽기와 CR8 읽기를 수행합니다. TLS 기준 주소와 권한 수준을 번갈아 변경하고, 반복되는 나눗셈 예외 후 재개하며, 취소된 진입 후 TLS를 변경합니다. 네이티브 상태 전송을 바꾸면 해당 CTest 레이블과 별칭 재매핑, CPU 컨텍스트, FP 상태, 원본 드라이버 결과 비교를 함께 실행해야 합니다. KVM/WHP를 사용할 수 없으면 명시적으로 건너뜁니다.
+
+
+`NeverDKvmRunTests`는 `/dev/kvm` 없이 `KvmRunControl`의 빌린 전송 콜백을 검증합니다. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries`는 준비, 수집과 가로챈 호스트 진입이 같은 스레드를 사용하며 중단 후 재시도 중에도 준비를 한 번만 수행하는지 확인합니다. 다른 사례는 진입 없는 준비 실패, 수집 실패, 준비 중 정지와 활성 진입 취소를 검증한 뒤 새 실행이 이전 콜백을 재사용하지 않는지 확인합니다. 실제 취소, RAM 롤백, 예외와 기존 드라이버 테스트도 계속 포함해야 합니다.

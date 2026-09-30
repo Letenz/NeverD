@@ -4,6 +4,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCObjC.h"
+#include "neverd/loader/MachO/CFunctionParameterCalls.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -131,6 +132,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("incompatible operation effects");
   if (Hint.BooleanResult && Hint.CallKind != Kind::SwiftBooleanProjection)
     return bad("Boolean projection belongs to another binding kind");
+  if (Hint.FunctionParameterCall &&
+      Hint.CallKind != Kind::CFunctionParameterCall)
+    return bad("function parameter evidence belongs to another binding kind");
   if (Hint.CallKind == Kind::SwiftBooleanProjection) {
     if (!isSwiftBooleanSourceBinding(Hint) || Opts.TheArch != Arch::AArch64 ||
         !CurrentFunc ||
@@ -166,6 +170,34 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return Call + "))";
   }
   const auto &Signature = Hint.Signature;
+  if (Hint.CallKind == Kind::CFunctionParameterCall) {
+    if (!CurrentFunc ||
+        !isCFunctionParameterSourceCall(E, *CurrentFunc, Opts.TheArch))
+      return bad("invalid C function parameter binding");
+    const auto Parameter = Hint.FunctionParameterCall->Parameter;
+    const auto Target =
+        sourceValue(exprStr(*E.IndirectTarget), E.IndirectTarget->Type,
+                    CurrentFunc->SourceTypeHint->Parameters[Parameter].Type);
+    if (!Target)
+      return bad("C callback target carrier disagrees with its declaration");
+    std::string Call = "(*(" + *Target + "))(";
+    for (unsigned I = 0; I < E.Operands.size(); ++I) {
+      const auto Argument =
+          sourceValue(exprStr(*E.Operands[I]), E.Operands[I]->Type,
+                      Signature.Parameters[I].Type);
+      if (!Argument)
+        return bad("C callback argument carrier disagrees with ABI");
+      if (I)
+        Call += ", ";
+      Call += *Argument;
+    }
+    Call += ")";
+    if (Signature.ReturnType->Kind == NdTypeKind::Void)
+      return Call;
+    const auto Result = sourceValue(Call, Signature.ReturnType, E.Type);
+    return Result ? *Result
+                  : bad("C callback result carrier disagrees with ABI");
+  }
   if (Hint.CallKind == Kind::DarwinRuntimeCall &&
       (Hint.ByteCount || Hint.TargetName == "CGContextConcatCTM" ||
        Hint.TargetName == "CGAffineTransformTranslate" ||

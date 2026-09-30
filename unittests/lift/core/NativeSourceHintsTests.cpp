@@ -3,6 +3,7 @@
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
 #include "../../../lib/sdk/capi/SwiftMangledSourceABI.h"
+#include "CFunctionParameterCallFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -29,6 +30,161 @@
 #include <functional>
 
 using namespace neverd;
+
+TEST(NativeSourceHints, CFunctionParameterCallKeepsTheCompleteVoidCallback) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  const auto Hints =
+      buildCFunctionParameterCallHints(F.Image, *F.low(), F.Signature);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Call);
+  ASSERT_TRUE(Hint.FunctionParameterCall);
+  EXPECT_EQ(Hint.FunctionParameterCall->Parameter, 1U);
+  EXPECT_EQ(Hint.FunctionParameterCall->FunctionEntry, Entry);
+  EXPECT_EQ(Hint.FunctionParameterCall->Site.Instruction, Call);
+  EXPECT_EQ(Hint.FunctionParameterCall->Site.Sequence, 1);
+  EXPECT_EQ(Hint.Signature.Convention,
+            SourceFunctionTypeHint::ConventionKind::C);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_TRUE(F.high());
+  unsigned Calls = 0;
+  walkStmts(F.high()->Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Expression) {
+      if (Expression && Expression->SourceCallHint &&
+          Expression->SourceCallHint->FunctionParameterCall) {
+        ++Calls;
+        EXPECT_EQ(Statement.Kind, StmtKind::Call);
+        EXPECT_EQ(Expression->Type->Kind, NdTypeKind::Void);
+        EXPECT_TRUE(isCFunctionParameterSourceCall(*Expression, *F.high(),
+                                                   Arch::AArch64));
+      }
+    });
+  });
+  EXPECT_EQ(Calls, 1U);
+}
+
+TEST(NativeSourceHints,
+     CFunctionParameterCallRejectsIncompleteOrChangedEvidence) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  for (unsigned Case = 0; Case < 21; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Signature = F.Signature;
+    auto &Block = Low.Blocks.front();
+    auto OpAt = [&](va_t Address, int Sequence) -> LowOp & {
+      for (auto &Op : Block.Ops)
+        if (Op.Addr == Address && Op.Seq == Sequence)
+          return Op;
+      throw std::runtime_error("missing fixture operation");
+    };
+    const auto Word = [&](unsigned Index, uint32_t Value) {
+      llvm::support::endian::write32le(
+          Image.Segments[0].Data.data() + Index * 4, Value);
+    };
+    switch (Case) {
+    case 0:
+      Word(3, 0xaa0003f3);
+      break;
+    case 1:
+      Word(7, 0xd63f0280);
+      break;
+    case 2:
+      OpAt(Call, 0).Inputs[0] = NdVar::cst(Call + 8, 8);
+      break;
+    case 3:
+      OpAt(Call, 1).Inputs[0].Size = 4;
+      break;
+    case 4:
+      Block.InstructionBoundaries.clear();
+      break;
+    case 5:
+      --Low.DecodedInstructionCount;
+      break;
+    case 6:
+      Low.TruncatedPathAddresses.push_back(Entry);
+      break;
+    case 7:
+      Low.UnsupportedInstructionAddresses.push_back(Entry);
+      break;
+    case 8:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).WeakImport =
+          true;
+      break;
+    case 9:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).Module =
+          "/untrusted/libswiftCore.dylib";
+      break;
+    case 10:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).Addend = 8;
+      break;
+    case 11:
+      Signature.Parameters[1].Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 12:
+      Signature.Parameters[1].Type = NdType::makePtr(NdType::makeFunc(
+          NdType::makeStruct({NdType::makeInt(8), NdType::makeInt(8)}),
+          {Signature.Parameters[0].Type}));
+      break;
+    case 13:
+      OpAt(Entry + 12, 0).Output.Offset = a64reg::X20;
+      break;
+    case 14:
+      OpAt(Entry + 16, 0).Opcode = NdOp::INTRINSIC;
+      break;
+    case 15:
+      Block.Preds.push_back(Block.Id);
+      Block.Succs.push_back(Block.Id);
+      break;
+    case 16:
+      Image.Segments[0].Flags = Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 17:
+      Signature.Parameters[1].Location.ExtendTo32Bits = true;
+      break;
+    case 18:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 19:
+      OpAt(Entry + 20, 1).Inputs[0] = NdVar::cst(0x9999, 8);
+      break;
+    case 20:
+      Image.DyldBindSlots.erase(runtime_function_address_test::Slot);
+      break;
+    }
+    EXPECT_TRUE(
+        buildCFunctionParameterCallHints(Image, Low, Signature).empty());
+  }
+}
+
+TEST(NativeSourceHints, CFunctionParameterCallRequiresAgreementAtTheCFGJoin) {
+  using namespace c_function_parameter_test;
+  Fixture Same(true, true);
+  ASSERT_TRUE(Same.Result.Success) << Same.Result.Error;
+  ASSERT_TRUE(Same.low());
+  const auto Valid =
+      buildCFunctionParameterCallHints(Same.Image, *Same.low(), Same.Signature);
+  ASSERT_EQ(Valid.size(), 1U);
+  EXPECT_EQ(Valid.begin()->first, Same.CallAddress);
+  Fixture Different(true, false);
+  ASSERT_TRUE(Different.Result.Success) << Different.Result.Error;
+  ASSERT_TRUE(Different.low());
+  EXPECT_TRUE(buildCFunctionParameterCallHints(
+                  Different.Image, *Different.low(), Different.Signature)
+                  .empty());
+  auto Cyclic = *Same.low();
+  auto &Last = Cyclic.Blocks.back();
+  Last.Succs.push_back(Last.Id);
+  Last.Preds.push_back(Last.Id);
+  EXPECT_TRUE(
+      buildCFunctionParameterCallHints(Same.Image, Cyclic, Same.Signature)
+          .empty());
+}
 
 TEST(NativeSourceHints, SpecializedURLArrayForceCastHasNoHiddenArguments) {
   BinaryImage Image;

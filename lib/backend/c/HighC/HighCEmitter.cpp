@@ -770,6 +770,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::SwiftVirtual) {
           // The proven target is a local value loaded before the call.
         } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::CFunctionParameterCall) {
+          // This invokes the original C function-pointer parameter. It has
+          // neither an external symbol nor Objective-C dispatch machinery.
+        } else if (Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeCFunctionAddress ||
                    Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
