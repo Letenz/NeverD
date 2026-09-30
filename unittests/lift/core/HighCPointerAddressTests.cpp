@@ -41074,7 +41074,8 @@ TEST(HighCPointerAddresses, InterruptFlagChangesDoNotClobberRax) {
 }
 
 TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
-  // Both x86 ABIs enter with DF clear, so REP MOVSB copies forward only.
+  // Both x86 ABIs enter with DF clear, so REP MOVSB copies forward only; on
+  // Windows that is the <intrin.h> forward copy.
   constexpr va_t Entry = 0x140001000;
   const std::vector<uint8_t> Code = {0x48, 0x8b, 0xf9, // mov rdi, rcx
                                      0x48, 0x8b, 0xf2, // mov rsi, rdx
@@ -41083,7 +41084,10 @@ TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
                                      0xc3};
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("rep movsb"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__movsb((unsigned char *)neverd_di, "
+                       "(const unsigned char *)neverd_si, neverd_cx)"),
+            std::string::npos)
+      << HighC;
   EXPECT_EQ(HighC.find("std"), std::string::npos) << HighC;
 }
 

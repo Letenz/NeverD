@@ -131,6 +131,8 @@ C(Intrinsic::Pushf,            "__readeflags");
 C(Intrinsic::Popf,             "__writeeflags");
 C(Intrinsic::Wrmsr,            "__writemsr");
 C(Intrinsic::Invlpg,           "__invlpg");
+C(Intrinsic::Lidt, "__lidt");
+C(Intrinsic::Sidt, "__sidt");
 C(Intrinsic::Cli,              "_disable");
 C(Intrinsic::Sti,              "_enable");
 C(Intrinsic::Vmcall,           "__vmx_vmcall");

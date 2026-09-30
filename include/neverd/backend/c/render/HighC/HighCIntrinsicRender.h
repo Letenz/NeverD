@@ -77,6 +77,10 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id);
 /// intrinsic rather than inline assembly.
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
 
+/// Whether an x86 intrinsic may render through an <intrin.h> declaration on
+/// a Windows target: REP MOVS/STOS and the flat LIDT/SIDT/INVLPG forms.
+bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
+
 /// Render an x86 intrinsic that needs full typed-statement context, including
 /// architectural preconditions and implicit memory relative to FS/GS. Returns
 /// an empty string for an unsupported intrinsic. Recognized intrinsics with
@@ -85,7 +89,7 @@ std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive = {},
-    SameWidthUnsignedFn SameWidthUnsigned = {});
+    SameWidthUnsignedFn SameWidthUnsigned = {}, bool MsvcIntrinsics = false);
 
 /// Windows `int 0x29` / `__fastfail`.  True when \p E is that intrinsic.
 bool isX86FastFailCall(const HighExpr &E);

@@ -177,6 +177,27 @@ bool isStos(Intrinsic Id) {
          Id == Intrinsic::Stosd || Id == Intrinsic::Stosq;
 }
 
+/// The <intrin.h> element type a MOVS/STOS intrinsic copies or stores.
+const char *stringElementType(Intrinsic Id) {
+  using I = Intrinsic;
+  switch (Id) {
+  case I::Movsb:
+  case I::Stosb:
+    return "unsigned char";
+  case I::Movsw:
+  case I::Stosw:
+    return "unsigned short";
+  case I::Movsd:
+  case I::Stosd:
+    return "unsigned long";
+  case I::Movsq:
+  case I::Stosq:
+    return "unsigned long long";
+  default:
+    return nullptr;
+  }
+}
+
 bool isLods(Intrinsic Id) {
   return Id == Intrinsic::Lodsb || Id == Intrinsic::Lodsw ||
          Id == Intrinsic::Lodsd || Id == Intrinsic::Lodsq;
@@ -216,7 +237,7 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
                       const HighExpr *PrimaryDst,
                       std::function<std::string(const HighExpr &)> ExprFn,
                       std::function<std::string(const MedVar &)> VarFn,
-                      const IsAliveFn &IsAlive) {
+                      const IsAliveFn &IsAlive, bool MsvcIntrinsics) {
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
   const char *Mnemonic = stringMnemonic(Call.IntrinsicId);
   if (!Mnemonic)
@@ -264,6 +285,17 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
       llvm::report_fatal_error("unsupported x86 string address size");
   }
 
+  // Windows code clears DF across calls. A flat forward MOVS/STOS is the
+  // <intrin.h> copy or fill of the same elements; the register results are
+  // separate IR values, so nothing below reads the updated pointers.
+  const bool Forward = Call.Operands[3]->Kind == ExprKind::Const &&
+                       Call.Operands[3]->ConstVal == 0;
+  const char *ElementType = stringElementType(Call.IntrinsicId);
+  const char *Builtin = intrinsicCName(Call.IntrinsicId);
+  const bool UseBuiltin = MsvcIntrinsics && (IsMovs || IsStos) && Forward &&
+                          *Segment == '\0' && AddressPrefix.empty() &&
+                          ElementType && Builtin;
+
   std::string Result = "do {\n";
   if (IsMovs || IsLods || IsCmps || IsOuts)
     Result += "    uintptr_t neverd_si = (uintptr_t)(" +
@@ -287,6 +319,14 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
   if (IsOuts || IsIns)
     Result += "    uint16_t neverd_dx = (uint16_t)(" +
               ExprFn(*Call.Operands[2]) + ");\n";
+  if (UseBuiltin) {
+    const std::string Type = ElementType;
+    Result += "    " + std::string(Builtin) + "((" + Type + " *)neverd_di, " +
+              (IsMovs ? "(const " + Type + " *)neverd_si"
+                      : "(" + Type + ")neverd_ax") +
+              ", neverd_cx);\n} while (0);\n";
+    return Result;
+  }
 
   auto EmitAsm = [&](const char *Repeat, bool Backward) {
     Result += "        __asm__ volatile(\"";
@@ -835,10 +875,18 @@ const char *prefetchHint(Intrinsic Id) {
 
 /// A flat prefetch or MXCSR transfer through its <immintrin.h> intrinsic, or
 /// empty when the intrinsic has none. The MXCSR image moves as four bytes.
-std::string renderFlatMemoryIntrinsic(
-    const HighExpr &Call,
-    std::function<std::string(const HighExpr &)> &ExprFn) {
+std::string
+renderFlatMemoryIntrinsic(const HighExpr &Call,
+                          std::function<std::string(const HighExpr &)> &ExprFn,
+                          bool MsvcIntrinsics) {
   const std::string Address = "(uintptr_t)(" + ExprFn(*Call.Operands[0]) + ")";
+  // <intrin.h> declares these for Windows targets; LGDT/SGDT have no
+  // declaration there and keep their assembly form.
+  if (MsvcIntrinsics && (Call.IntrinsicId == Intrinsic::Lidt ||
+                         Call.IntrinsicId == Intrinsic::Sidt ||
+                         Call.IntrinsicId == Intrinsic::Invlpg))
+    if (const char *Builtin = intrinsicCName(Call.IntrinsicId))
+      return std::string(Builtin) + "((void *)" + Address + ");\n";
   if (const char *Hint = prefetchHint(Call.IntrinsicId))
     return "_mm_prefetch((const char *)" + Address + ", " + Hint + ");\n";
   switch (Call.IntrinsicId) {
@@ -861,7 +909,8 @@ std::string renderFlatMemoryIntrinsic(
 
 std::string
 renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
-                      std::function<std::string(const HighExpr &)> ExprFn) {
+                      std::function<std::string(const HighExpr &)> ExprFn,
+                      bool MsvcIntrinsics) {
   if (isStateSnapshotMemoryIntrinsic(Call.IntrinsicId))
     return renderStateSnapshot(Call, ExprFn);
 
@@ -877,7 +926,7 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
   // keeps the assembly form, which carries the segment.
   if (Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
       !Call.Operands.empty() && Call.Operands[0])
-    if (auto Rendered = renderFlatMemoryIntrinsic(Call, ExprFn);
+    if (auto Rendered = renderFlatMemoryIntrinsic(Call, ExprFn, MsvcIntrinsics);
         !Rendered.empty())
       return Rendered;
 
@@ -1013,6 +1062,11 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 }
 
 } // anonymous namespace
+
+bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
+  return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
+         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg;
+}
 
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
   return prefetchHint(Id) || Id == Intrinsic::PrefetchW ||
@@ -1205,14 +1259,15 @@ std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive,
-    SameWidthUnsignedFn SameWidthUnsigned) {
+    SameWidthUnsignedFn SameWidthUnsigned, bool MsvcIntrinsics) {
   if (Call.Kind != ExprKind::Call ||
       (TheArch != Arch::X86 && TheArch != Arch::X64))
     return {};
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
     return renderDivPrecondition(TheArch, Call, std::move(ExprFn),
                                  std::move(SameWidthUnsigned));
-  if (auto Rendered = renderMemoryIntrinsic(TheArch, Call, ExprFn);
+  if (auto Rendered =
+          renderMemoryIntrinsic(TheArch, Call, ExprFn, MsvcIntrinsics);
       !Rendered.empty())
     return Rendered;
   if (isMovs(Call.IntrinsicId) || isStos(Call.IntrinsicId) ||
@@ -1220,7 +1275,7 @@ std::string renderX86SegmentedIntrinsicStatement(
       isScas(Call.IntrinsicId) || isOuts(Call.IntrinsicId) ||
       isIns(Call.IntrinsicId))
     return renderSegmentedString(TheArch, Call, PrimaryDst, std::move(ExprFn),
-                                 std::move(VarFn), IsAlive);
+                                 std::move(VarFn), IsAlive, MsvcIntrinsics);
   if (Call.IntrinsicId == Intrinsic::MaskedStoreB)
     return renderMaskedByteStore(Call, std::move(ExprFn));
   return renderSegmentedMaskedMemory(Call, PrimaryDst, std::move(ExprFn),

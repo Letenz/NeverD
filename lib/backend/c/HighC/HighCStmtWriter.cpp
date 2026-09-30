@@ -320,7 +320,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           },
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
-          });
+          },
+          Opts.Format == BinaryFormat::COFF);
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
@@ -809,7 +810,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           },
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
-          });
+          },
+          Opts.Format == BinaryFormat::COFF);
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
