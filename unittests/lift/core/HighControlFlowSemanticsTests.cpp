@@ -5422,3 +5422,33 @@ TEST(HighControlFlowSemantics,
   ASSERT_EQ(Found->Operands[0]->Kind, ExprKind::Const);
   EXPECT_EQ(Found->Operands[0]->ConstVal, 7u);
 }
+
+TEST(HighControlFlowSemantics, RenameCleanupKeepsLabelsOfRemovedStatements) {
+  // v = 7; if (c) goto X; v = 3; X: v = v; return v; -- the self copy goes,
+  // but the jump still needs its label.
+  auto Self = assign(0x1010, 1, 0);
+  Self.Val = local(1);
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 7), conditional(0x1000, 0x1010),
+            assign(0x1004, 1, 3), Self, result(0x1014, local(1))};
+  postRenameCleanup(F.Body);
+  auto Labeled = [&](va_t Addr) {
+    bool Found = false;
+    walkStmts(F.Body, [&](const HighStmt &S) { Found |= S.Addr == Addr; });
+    return Found;
+  };
+  EXPECT_TRUE(Labeled(0x1010));
+  EXPECT_EQ(execute(F, 1, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(7));
+  EXPECT_EQ(execute(F, 0, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(3));
+
+  // X: v = 1; v = 2; -- the overwritten assignment goes, its label stays.
+  F.Body = {conditional(0x1000, 0x1010), assign(0x1004, 1, 3),
+            assign(0x1010, 1, 1), assign(0x1012, 1, 2),
+            result(0x1014, local(1))};
+  postRenameCleanup(F.Body);
+  EXPECT_TRUE(Labeled(0x1010));
+  EXPECT_EQ(execute(F, 1, /*RequireExactTargets=*/true),
+            std::optional<uint64_t>(2));
+}
