@@ -10,7 +10,7 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 기본 `driver-strict` 계약은 Unicorn을 유지합니다. 실험적인 제한 명령 `checked-x64-v1` 계약에서는 `--backend auto`가 Linux x86_64에서 KVM, Windows x64에서 WHP를 선택합니다. 명시적 선택은 대체 백엔드로 전환하지 않으며, 하드웨어나 계약이 맞지 않으면 실행 전에 실패합니다.
 
-ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식과 페이지 간 개별 접근은 미지원입니다.
+ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식은 지원되지 않습니다. 일반 RAM 피연산자는 독립 할당 또는 별칭 페이지를 넘을 수 있습니다. 전체 범위의 권한을 확인한 뒤 쓰며 첫 접근 불가 바이트에서 실패를 보고합니다. MOVS는 완료된 요소와 오류 요소의 재시작 레지스터를 보존하고 요소 일부를 커밋하지 않습니다.
 
 supervisor x64는 정렬된 1/2/4바이트 스칼라 MMIO 트랜잭션을 허용하며 장치 페이지는 네이티브 RAM mapping에 들어가지 않습니다. MOVS/REP MOVS는 재시작 경계마다 한 요소씩 실행합니다. destination observer가 device read commit 전에 중지할 수 있도록 device source는 부작용 없는 prepared read를 제공해야 합니다. Windows register bank는 이를 지원하고, 다른 장치는 string read를 효과 발생 전에 거부합니다. device RMW, 넓은 MMIO, 포트 I/O는 미지원입니다. 요청 바이트, 장치 상태, 쓰기 event는 Unicorn의 zero-count REP 종료 hook 차이와 별도로 비교합니다. KVM은 표준 XSAVE interface와 FP/SSE presence bit로 XMM/MXCSR를 전달합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. timeout/cancel은 허용된 유한 명령 사이에서 검사하며 일반 비동기 선점이나 시작 후 backend 재시작은 없습니다. 내장 corpus와 사용 가능한 WDK 시나리오는 일반/CFG/재배치 image에서 Unicorn과 비교하지만 corpus 일치가 임의 드라이버 호환성을 보장하지는 않습니다.
 
@@ -504,3 +504,7 @@ CREATE 요청만 불리언 `asynchronous_file: true`를 지정할 수 있습니�
 ## x64 네이티브 동기 예외
 
 checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 WHP/ARM64 호스트는 명시적으로 건너뜁니다.
+
+## 전체 x87 상태
+
+`NeverDEmulationArch`는 ISA, 페이지 테이블과 FP 상태 배치를 소유하며 네이티브 및 Unicorn 전송이 공유합니다. x64 컨텍스트는 x87 제어, 상태, TOP, 물리 태그, 연산 코드, 명령/데이터 포인터와 8개의 80비트 레지스터를 보존합니다. `FP0`–`FP7`은 `RegisterValue`를 사용하고 스칼라 접근은 잘림을 거부합니다. `FPTag`는 물리 비어 있지 않음 비트맵입니다. `NeverDX64FPTests`는 모든 TOP, 정확한 연산의 호스트 FXSAVE/FXRSTOR 비교와 복원을 검사합니다. checked x87 명령 또는 모든 반올림 의미를 입증하지 않으며 없는 네이티브 호스트는 명시적으로 건너뜁니다.

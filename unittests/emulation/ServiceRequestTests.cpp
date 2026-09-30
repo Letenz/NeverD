@@ -144,8 +144,18 @@ protected:
   }
   std::vector<RegisterValue> registers() const {
     std::vector<RegisterValue> Values;
-    for (unsigned I = 0; I < unsigned(CPURegister::Invalid); ++I) {
-      const auto R = CPURegister(I);
+    const CPURegister Registers[] = {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  CPURegister::Arch##Name,
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
+  CPURegister::Arch##V##Index,
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+    };
+    for (auto R : Registers) {
       if (registerMatches(R, CPU->architecture()))
         Values.push_back(llvm::cantFail(CPU->readRegister(R)));
     }

@@ -1145,9 +1145,10 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
-| `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
+| `NeverDEmulationArch` | ISA admission, architecture state, x64/ARM64 page tables and x64 FP state layout |
+| `NeverDEmulationNative` | KVM/WHP machine transports |
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
-| `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
+| `NeverDEmulationCPU` | CPU configuration and backend composition |
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
@@ -1155,7 +1156,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
-The four CPU components declare LLVM Support as their LLVM dependency.
+The five CPU components declare LLVM Support as their LLVM dependency.
 Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
 transports. Compiler pipelines and guest image loaders belong to their owning
 components and are not required by a CPU-only client.
@@ -1175,6 +1176,16 @@ lib/emulation/
   os/windows/            Windows driver workload, ABI policy and kernel model
   os/linux/              Linux ELF process startup and system-call ABI/services
 ```
+
+The architecture library depends only on core memory/register ownership and
+LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
+Unicorn does not depend on KVM/WHP. KVM transfers the legacy FP/SSE components
+through standard XSAVE; WHP transfers the complete 80-bit physical lanes and
+FP/XMM control structures; Unicorn converts its full tag word at its boundary.
+CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
+TOP, opcode,
+instruction/data pointers and all eight 80-bit payloads. This state contract
+does not add x87 opcodes to the checked instruction inventory.
 
 `core` has no implementation dependency on an architecture, backend or guest
 OS. Architecture code accepts an already-created machine and authoritative

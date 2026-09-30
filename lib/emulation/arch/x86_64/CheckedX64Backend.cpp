@@ -144,14 +144,18 @@ llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
     return RegisterValue{CPU.MXCSR, 0};
   if (R >= CPURegister::X64V0 && R <= CPURegister::X64V15)
     return CPU.Xmm[unsigned(R) - unsigned(CPURegister::X64V0)];
+  if (isX64FPRegister(R))
+    return readX64FPRegister(CPU.FP, R);
   return RegisterValue{CPU.Registers[unsigned(R)], 0};
 }
 llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
                                              const RegisterValue &V) {
   if (auto E = mutableMemory())
     return E;
-  if (!registerMatches(R, architecture()))
+  if (!registerMatches(R, architecture()) || !registerValueFits(R, V))
     return error(diagnostic::Register);
+  if (isX64FPRegister(R))
+    return writeX64FPRegister(CPU.FP, R, V);
   if (R == CPURegister::X64MXCSR) {
     // The current profile has no SIMD exception-delivery gateway or DAZ
     // capability negotiation. Preserve rounding, FTZ and sticky status while

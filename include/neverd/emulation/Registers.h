@@ -17,9 +17,13 @@ enum class CPURegister {
 #include "neverd/emulation/Registers.def"
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_VECTOR_REGISTER
-  Invalid
+  Invalid,
+#define NEVERD_EXTENDED_REGISTER(Arch, Name, Width, Backend) Arch##Name,
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
 };
 enum class X64Register {
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
   NEVERD_REGISTER_##Arch(Name)
 #define NEVERD_REGISTER_X64(Name) Name,
@@ -28,6 +32,7 @@ enum class X64Register {
 #undef NEVERD_REGISTER_AArch64
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_SCALAR_REGISTER
+#undef NEVERD_EXTENDED_REGISTER
 };
 enum class AArch64Register {
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
@@ -44,5 +49,6 @@ CPURegister cpuRegister(AArch64Register Register);
 CPURegister vectorRegister(GuestArchitecture Architecture, unsigned Index);
 bool registerMatches(CPURegister Register, GuestArchitecture Architecture);
 unsigned registerWidth(CPURegister Register);
+bool registerValueFits(CPURegister Register, const RegisterValue &Value);
 } // namespace neverd::emulation
 #endif

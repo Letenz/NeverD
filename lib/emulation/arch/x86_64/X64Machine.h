@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_ARCH_X64MACHINE_H
 #include "../../core/MachineRunControl.h"
 #include "../../core/MemoryLayout.h"
+#include "X64FPState.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -38,6 +39,7 @@ struct X64MachineState {
   uint64_t GSBase = 0;
   uint64_t FSBase = 0;
   uint32_t MXCSR = x64::InitialMXCSR;
+  X64FPState FP;
   std::array<ExecutionBackend::XmmValue, x64::XmmCount> Xmm{};
   uint64_t &reg(X64Register R) { return Registers[unsigned(R)]; }
   uint64_t reg(X64Register R) const { return Registers[unsigned(R)]; }

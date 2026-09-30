@@ -21,6 +21,8 @@ class WhpMachine final : public X64Machine, public WhpPartition {
 public:
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
+    if (auto E = validateX64FPState(State.FP))
+      return E;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
@@ -42,7 +44,23 @@ public:
       Names.push_back(static_cast<WHV_REGISTER_NAME>(WHvX64RegisterXmm0 + I));
       Values.push_back(V);
     }
+    for (unsigned I = 0; I < State.FP.Registers.size(); ++I) {
+      WHV_REGISTER_VALUE V{};
+      V.Fp.AsUINT128.Low64 = State.FP.Registers[I][0];
+      V.Fp.AsUINT128.High64 = State.FP.Registers[I][1];
+      Names.push_back(static_cast<WHV_REGISTER_NAME>(WHvX64RegisterFpMmx0 + I));
+      Values.push_back(V);
+    }
+    WHV_REGISTER_VALUE FP{};
+    FP.FpControlStatus.FpControl = State.FP.Control;
+    FP.FpControlStatus.FpStatus = State.FP.Status;
+    FP.FpControlStatus.FpTag = State.FP.Tag;
+    FP.FpControlStatus.LastFpOp = State.FP.Opcode;
+    FP.FpControlStatus.LastFpRip = State.FP.Instruction;
+    Names.push_back(WHvX64RegisterFpControlStatus);
+    Values.push_back(FP);
     WHV_REGISTER_VALUE MXCSR{};
+    MXCSR.XmmControlStatus.LastFpRdp = State.FP.Data;
     MXCSR.XmmControlStatus.XmmStatusControl = State.MXCSR;
     Names.push_back(WHvX64RegisterXmmControlStatus);
     Values.push_back(MXCSR);
@@ -96,6 +114,18 @@ public:
       Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
       ++I;
     }
+    for (auto &Register : Next.FP.Registers) {
+      Register = {Values[I].Fp.AsUINT128.Low64,
+                  Values[I].Fp.AsUINT128.High64 & x64::fp::RegisterHighMask};
+      ++I;
+    }
+    const auto &FPNext = Values[I++].FpControlStatus;
+    Next.FP.Control = FPNext.FpControl;
+    Next.FP.Status = FPNext.FpStatus;
+    Next.FP.Tag = FPNext.FpTag;
+    Next.FP.Opcode = FPNext.LastFpOp;
+    Next.FP.Instruction = FPNext.LastFpRip;
+    Next.FP.Data = Values[I].XmmControlStatus.LastFpRdp;
     Next.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
     Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
     const unsigned Vector = Exit.VpException.ExceptionType;

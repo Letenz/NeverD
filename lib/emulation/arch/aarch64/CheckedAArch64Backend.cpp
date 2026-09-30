@@ -65,14 +65,13 @@ llvm::Error CheckedAArch64Backend::writeRegister(CPURegister R,
                                                  const RegisterValue &V) {
   if (auto E = mutableMemory())
     return E;
-  if (!registerMatches(R, architecture()))
+  if (!registerMatches(R, architecture()) || !registerValueFits(R, V))
     return error(diagnostic::Register);
   if (R >= CPURegister::AArch64V0 && R <= CPURegister::AArch64V31) {
     CPU.Vectors[unsigned(R) - unsigned(CPURegister::AArch64V0)] = V;
     return llvm::Error::success();
   }
-  if (V[1] || (registerWidth(R) == 32 && V[0] > UINT32_MAX) ||
-      (R == CPURegister::AArch64NZCV && (V[0] & ~aarch64::NZCVMask)) ||
+  if ((R == CPURegister::AArch64NZCV && (V[0] & ~aarch64::NZCVMask)) ||
       (R == CPURegister::AArch64PC &&
        (!aarch64::canonical(V[0]) || V[0] % aarch64::InstructionBytes)))
     return error(diagnostic::Register);

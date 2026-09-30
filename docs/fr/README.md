@@ -8,6 +8,10 @@ L’aperçu du projet, la compilation et le CLI se trouvent dans le README du d�
 
 NeverD prend en charge Android et iOS via la CLI expérimentale `neverd mobile` : APK (y compris multidex), DEX et fichiers ou répertoires smali vers Java avec un rapport JSON ; IPA, `.app` et Mach-O (arm64/x86_64) vers du C natif et des sources Objective-C/Swift prises en charge, avec un rapport de couverture JSON. L’étendue dépend des motifs de code pris en charge ; consultez les guides pour les limites.
 
+L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
+
+Les profils checked utilisent KVM sur Linux et WHP sur Windows lorsque l’ISA correspond, et Unicorn entre ISA différentes. La validation native ARM64/WHP reste à réaliser. `driver-strict` utilise actuellement Unicorn ; le chemin pilote KVM/WHP exige `checked-x64-v1`. Un moteur explicitement demandé et indisponible échoue clairement. RAM partagée, alias, écritures par étapes, opérations atomiques scalaires, exceptions typées et état complet FP/SSE x64 sont implémentés dans les contrats ISA/OS documentés. Cela ne garantit ni les pilotes arbitraires ni des environnements Android/Darwin implémentés.
+
 | Document | Description |
 |----------|-------------|
 | [README (français)](project.md) | Aperçu, démarrage rapide, compilation, SDK, CLI |
@@ -18,7 +22,7 @@ NeverD prend en charge Android et iOS via la CLI expérimentale `neverd mobile` 
 | [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
 | [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
 | [Récupération de sources à partir d’un interpréteur](interpreter-recovery.md) | Spécialisation expérimentale `--devirtualize`, contrôles CLI, contrat d’exécution, preuves et limites; propositions de preuve pour boucles imbriquées; budgets de découverte explicites et API C versionnée |
-| [Émulation des pilotes Windows](driver-emulation.md) | Initialisation WDM x64 bornée, requêtes sérielles buffered/direct, travail, timers, DPC, événements et attentes, rapports et limites; durée de vie des pilotes/objets KMDF 1.33 non-PnP et CFG x64 validé |
+| [Émulation des pilotes Windows](driver-emulation.md) | Cycle WDM/KMDF x64 borné, requêtes, scénarios matériels, SEH, sous-ensembles PnP, choix du moteur et limites |
 | [Reconstruction des exceptions Windows](windows-exception-reconstruction.md) | Matrice de support SEH/C++, contrat IR, règles de patch natif et validation PE |
 | [Audit et chasse de sûreté mémoire](memory-safety.md) | Analyse de durée de vie du tas et de débordement de copie : contrat d’identité par format, catalogue puits/sources, verdicts, budgets et schéma JSON |
 | [Plugins natifs](plugins.md) | ABI de descripteur en C pur, callbacks et événements, procédure de compilation/liaison, découverte et règles de compatibilité |
