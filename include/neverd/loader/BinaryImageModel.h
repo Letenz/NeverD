@@ -290,6 +290,10 @@ struct BinaryImage {
   /// contain relative 32-bit fields whose adjacent bytes can resemble a
   /// mapped 64-bit code address.
   bool MachOHasFunctionStarts = false;
+  /// The Mach-O file header identifies an MH_DYLIB. A zero-based dylib must
+  /// be loaded away from address zero, so unrelocated absolute instruction
+  /// immediates cannot denote its own link-time image addresses.
+  bool MachOIsDylib = false;
   /// Exact slots decoded by the supported chained-fixup reader. A raw nonzero
   /// slot in a chained image is not a pointer merely because it looks mapped.
   bool MachOHasChainedFixups = false;

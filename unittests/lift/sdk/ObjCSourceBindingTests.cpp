@@ -509,6 +509,111 @@ struct Fixture {
   }
 };
 
+TEST(ObjCSourceBindings, ZeroBasedDylibWideScalarRequiresExactOccurrence) {
+  using P = ConstantAddressProvenance;
+  for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Fixture F;
+    F.Image.MachOIsDylib = true;
+    Segment Code;
+    Code.VA = 0x2000;
+    Code.Size = Code.FileSz = 8;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data.resize(8);
+    const uint32_t Low = 0x52800000u | (0x1040u << 5) | 9u;
+    const uint32_t High = 0x72800000u | (1u << 21) | 9u;
+    llvm::support::endian::write32le(Code.Data.data(), Low);
+    llvm::support::endian::write32le(Code.Data.data() + 4, High);
+    F.Image.Segments.push_back(Code);
+    Section Text;
+    Text.VA = 0x2000;
+    Text.Size = Text.FileSz = 8;
+    Text.Flags = Code.Flags;
+    F.Image.Sections.push_back(Text);
+
+    F.Function.Entry = 0x2000;
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Addr = 0x2004;
+    MedVar Temp;
+    Temp.Kind = MedVar::Temp;
+    Temp.Id = 1;
+    Temp.Size = 8;
+    Assign.Dst = HighExpr::makeVar(Temp, NdType::makeInt(8));
+    Assign.Val = HighExpr::makeConst(0x1040, 8);
+    F.Function.Body = {Assign};
+
+    switch (Mutation) {
+    case 1:
+      F.Image.MachOIsDylib = false;
+      break;
+    case 2:
+      F.Image.Base = 0x1000;
+      break;
+    case 3:
+      F.Image.Segments.back().Data[4] ^= 0x80;
+      break;
+    case 4:
+      F.Image.Segments.back().Data[4] ^= 1;
+      break;
+    case 5:
+      F.Image.Segments.back().Data[6] ^= 0x20;
+      break;
+    case 6:
+      F.Function.Body[0].Val->ConstVal = 0x1041;
+      break;
+    case 7:
+      F.Function.Body[0].Val->ConstProvenance = P::DataAddress;
+      break;
+    case 8:
+      F.Function.Body[0].Val->AddressOwnerVA = 0x1000;
+      break;
+    case 9:
+      F.Image.ObjectRelocationWriteBytes.emplace();
+      F.Image.ObjectRelocationWriteBytes->insert(0x2001);
+      break;
+    case 10:
+      F.Image.Sections.back().Flags = SegmentFlags::Readable;
+      break;
+    case 11:
+      F.Function.Entry = 0x2004;
+      break;
+    case 12:
+      F.Function.Body[0].Val->Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 13:
+      F.Image.Segments.back().Data[3] |= 0x80;
+      F.Image.Segments.back().Data[7] |= 0x80;
+      break;
+    case 14:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 15:
+      F.Image.Segments.back().Flags = SegmentFlags::Readable;
+      break;
+    case 16:
+      F.Image.MachOResolvedChainedPointerSlots.insert(0x1ffc);
+      break;
+    case 17:
+      F.Function.Body[0].Dst = HighExpr::makeConst(1, 8);
+      break;
+    case 18:
+      F.Function.Body[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    default:
+      break;
+    }
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+    if (Mutation == 0) {
+      ASSERT_EQ(Bound.Function.Body[0].Val->Kind, ExprKind::Const);
+      EXPECT_EQ(Bound.Function.Body[0].Val->ConstVal, 0x1040u);
+      EXPECT_EQ(Bound.Function.Body[0].Val->ConstProvenance, P::Scalar);
+      EXPECT_EQ(F.Function.Body[0].Val->ConstProvenance, P::Unknown);
+    }
+  }
+}
+
 TEST(ObjCSourceBindings,
      AuthenticatedSwiftIntegerCallKeepsAddressShapedScalarLiteral) {
   for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
@@ -4209,6 +4314,48 @@ TEST(ObjCSourceBindings,
 }
 
 TEST(ObjCSourceBindings,
+     FoundationURLInitializerRebuildsExactSwiftStringStorage) {
+  SwiftLiteralFixture F(Arch::AArch64);
+  const std::string Name = "_$s10Foundation3URLV6stringACSgSSh_tcfC";
+  F.Image.ImportPtrSlots[F.ImportSlot] = Name;
+  F.Image.ImportStorageSlots[F.ImportSlot].Name = Name;
+  F.Image.DyldBindSlots[F.ImportSlot].Name = Name;
+  F.Call->CallTarget = Name;
+  const auto Hint = swiftRuntimeSourceCallHint(F.Image, F.ImportSlot);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->SwiftStringInputs,
+            (std::vector<std::pair<uint32_t, uint32_t>>{{1, 2}}));
+  MedVar Result;
+  Result.Kind = MedVar::Param;
+  Result.Id = 0;
+  Result.Size = 8;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  F.Function.Params.push_back({"result", Pointer});
+  F.Call->Operands.insert(F.Call->Operands.begin(),
+                          HighExpr::makeVar(Result, Pointer));
+  F.Call->Type = Hint->Signature.ReturnType;
+  F.Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  F.Function.ReturnType = NdType::makeVoid();
+  F.Function.Body[0].Kind = StmtKind::Call;
+  F.Function.Body[0].CallExpr = F.Call;
+  F.Function.Body[0].RetVal.reset();
+  const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.BorrowedBytes,
+            (std::set<BorrowedByteRange>{{F.Contents, F.Text.size() + 1}}));
+  ASSERT_TRUE(objc_binding_detail::swiftLiteralStorageHelper(
+      Bound.Function.Body[0].CallExpr->Operands[2]));
+  EXPECT_TRUE(
+      objcSourceCallBound(*Bound.Function.Body[0].CallExpr, F.Image, {}));
+
+  F.Image.DyldBindSlots[F.ImportSlot].Module = "/tmp/Foundation";
+  EXPECT_FALSE(
+      objcSourceCallBound(*Bound.Function.Body[0].CallExpr, F.Image, {}));
+  EXPECT_TRUE(
+      bindObjCSourceReferences(F.Function, F.Image).BorrowedBytes.empty());
+}
+
+TEST(ObjCSourceBindings,
      SwiftLiteralStorageRejectsChangedWordsStorageAndImports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Mutation = 0; Mutation < 17; ++Mutation) {
@@ -6791,6 +6938,258 @@ TEST(ObjCSourceBindings, ImmutableSwiftSmallStringKeepsSharedAddress) {
                      Changed, Result.SwiftSmallStrings, Helpers),
                  std::runtime_error)
         << Mutation;
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftOptionalSelfStaticUsesWitnessBoundedZeroStorage) {
+  constexpr va_t Address = 0x3010;
+  constexpr va_t Witness = 0x4000;
+  constexpr uint64_t Width = 0x400;
+  constexpr const char *StorageName = "_$s4Test5ValueV7currentACSgvpZ";
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.MachOTwoLevelNamespace = true;
+  Segment Code;
+  Code.VA = 0x2000;
+  Code.Size = Code.FileSz = 0x100;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.resize(Code.Size);
+  Image.Segments.push_back(std::move(Code));
+  Section Text;
+  Text.VA = 0x2000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Image.Sections.push_back(Text);
+  Segment Common;
+  Common.VA = 0x3000;
+  Common.Size = 0x800;
+  Common.FileSz = 0;
+  Common.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Common.Data.resize(Common.Size);
+  Image.Segments.push_back(std::move(Common));
+  Section CommonSection;
+  CommonSection.VA = 0x3000;
+  CommonSection.Size = 0x800;
+  CommonSection.FileSz = 0;
+  CommonSection.Type = llvm::MachO::S_ZEROFILL;
+  CommonSection.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Sections.push_back(CommonSection);
+  Segment Constants;
+  Constants.VA = Witness;
+  Constants.Size = Constants.FileSz = 0x100;
+  Constants.Flags = SegmentFlags::Readable;
+  Constants.Data.resize(Constants.Size);
+  llvm::support::endian::write64le(Constants.Data.data() + 64, Width);
+  llvm::support::endian::write64le(Constants.Data.data() + 72, Width);
+  Image.Segments.push_back(std::move(Constants));
+  Section ConstantSection;
+  ConstantSection.VA = Witness;
+  ConstantSection.Size = ConstantSection.FileSz = 0x100;
+  ConstantSection.Flags = SegmentFlags::Readable;
+  Image.Sections.push_back(ConstantSection);
+  Image.Symbols.push_back({StorageName, Address, 0, false});
+  Image.Symbols.push_back({"_nextStorage", Address + Width, 0, false});
+  Image.Symbols.push_back({"_$s4Test5ValueVWV", Witness, 88, false});
+  Image.Symbols.push_back({"_$s4Test5ValueV7currentACSgvau", 0x2000, 0, true});
+  HighFunc Function;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+  Function.Body = {Return};
+
+  const auto Bound = bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Address, Width}}));
+  const auto Helper = Bound.Function.Body[0].RetVal;
+  ASSERT_TRUE(Helper->SourceCallHint);
+  EXPECT_EQ(Helper->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeLocalStorageAddress);
+  EXPECT_EQ(Helper->SourceCallHint->ByteCount, Width);
+  EXPECT_TRUE(objcSourceCallBound(*Helper, Image, {}));
+  std::set<std::string> Helpers;
+  EXPECT_NE(
+      renderObjCLocalStorageHelpers(Image, Bound.LocalStorageExtents, Helpers)
+          .find("storage[1024]"),
+      std::string::npos);
+  EXPECT_NE(renderObjCLocalStorageHelpers(Image, {{Address, 8}}, Helpers)
+                .find("storage[1024]"),
+            std::string::npos);
+
+  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Image;
+    switch (Mutation) {
+    case 0:
+      Changed.Symbols[0].Name = "_untypedStorage";
+      break;
+    case 1:
+      Changed.Symbols[1].Addr += 16;
+      break;
+    case 2:
+      Changed.Symbols[2].Name = "_wrongWitness";
+      break;
+    case 3:
+      llvm::support::endian::write64le(Changed.Segments[2].Data.data() + 64,
+                                       Width - 16);
+      break;
+    case 4:
+      llvm::support::endian::write64le(Changed.Segments[2].Data.data() + 72,
+                                       Width + 16);
+      break;
+    case 5:
+      Changed.Symbols[3].Name = "_wrongAddressor";
+      break;
+    case 6:
+      Changed.Sections[1].Type = llvm::MachO::S_REGULAR;
+      break;
+    case 7:
+      Changed.Segments[1].Data[Address - 0x3000 + 24] = 1;
+      break;
+    case 8:
+      Changed.DataPtrRelocSlots.insert(Address + 16);
+      break;
+    case 9:
+      Changed.Symbols.push_back({"_interior", Address + 32, 0, false});
+      break;
+    case 10:
+      Changed.Symbols[0].Size = Width + 16;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftStaticOptionalSelfStorageHint(
+        Changed, Address));
+    EXPECT_FALSE(objcSourceCallBound(*Helper, Changed, {}));
+    if (Mutation != 0) {
+      EXPECT_THROW(renderObjCLocalStorageHelpers(
+                       Changed, Bound.LocalStorageExtents, Helpers),
+                   std::runtime_error);
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftOptionalURLStaticUsesExactValueBuffer) {
+  constexpr va_t Address = 0x3018;
+  constexpr uint64_t Width = 3 * sizeof(uint64_t);
+  constexpr const char *StorageName =
+      "_$s4Test5StoreC3url10Foundation3URLVSgvpZ";
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.MachOTwoLevelNamespace = true;
+  Segment Code;
+  Code.VA = 0x2000;
+  Code.Size = Code.FileSz = 0x100;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.resize(Code.Size);
+  Image.Segments.push_back(std::move(Code));
+  Section Text;
+  Text.VA = 0x2000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Image.Sections.push_back(Text);
+  Segment Common;
+  Common.VA = 0x3000;
+  Common.Size = 0x100;
+  Common.FileSz = 0;
+  Common.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Common.Data.resize(Common.Size);
+  Image.Segments.push_back(std::move(Common));
+  Section CommonSection;
+  CommonSection.VA = 0x3000;
+  CommonSection.Size = 0x100;
+  CommonSection.FileSz = 0;
+  CommonSection.Type = llvm::MachO::S_ZEROFILL;
+  CommonSection.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Sections.push_back(CommonSection);
+  Image.Symbols.push_back({StorageName, Address, 0, false});
+  Image.Symbols.push_back({"_nextStorage", Address + Width, 0, false});
+  Image.Symbols.push_back(
+      {"_$s4Test5StoreC3url10Foundation3URLVSgvau", 0x2000, 0, true});
+  HighFunc Function;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+  Function.Body = {Return};
+
+  EXPECT_TRUE(
+      objc_binding_detail::swiftStaticOptionalURLBufferSymbol(StorageName));
+  EXPECT_TRUE(objc_binding_detail::swiftStaticOptionalURLBufferSymbol(
+      "_$s3WMF8LicensesC10CCBYSA4URL10Foundation0D0VSgvpZ"));
+  EXPECT_FALSE(objc_binding_detail::swiftStaticOptionalURLBufferSymbol(
+      "_$s4Test5StoreC3url10Foundation4DateVSgvpZ"));
+  const auto Bound = bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Address, Width}}));
+  const auto Helper = Bound.Function.Body[0].RetVal;
+  ASSERT_TRUE(Helper->SourceCallHint);
+  EXPECT_EQ(Helper->SourceCallHint->ByteCount, Width);
+  EXPECT_TRUE(objcSourceCallBound(*Helper, Image, {}));
+  std::set<std::string> Helpers;
+  EXPECT_NE(
+      renderObjCLocalStorageHelpers(Image, Bound.LocalStorageExtents, Helpers)
+          .find("storage[24]"),
+      std::string::npos);
+  auto Prefix = std::make_shared<HighExpr>(*Helper);
+  auto PrefixHint =
+      std::make_shared<SourceCallTypeHint>(*Helper->SourceCallHint);
+  PrefixHint->ByteCount = 8;
+  Prefix->SourceCallHint = std::move(PrefixHint);
+  EXPECT_TRUE(objcSourceCallBound(*Prefix, Image, {}));
+  EXPECT_NE(renderObjCLocalStorageHelpers(Image, {{Address, 8}}, Helpers)
+                .find("storage[24]"),
+            std::string::npos);
+
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Image;
+    switch (Mutation) {
+    case 0:
+      Changed.Symbols[0].Name = "_untypedStorage";
+      break;
+    case 1:
+      Changed.Symbols[1].Addr += 8;
+      break;
+    case 2:
+      Changed.Symbols[2].Name = "_wrongAddressor";
+      break;
+    case 3:
+      Changed.Sections[1].Type = llvm::MachO::S_REGULAR;
+      break;
+    case 4:
+      Changed.Segments[1].Data[Address - 0x3000] = 1;
+      break;
+    case 5:
+      Changed.DataPtrRelocSlots.insert(Address + 8);
+      break;
+    case 6:
+      Changed.Symbols.push_back({"_interior", Address + 8, 0, false});
+      break;
+    case 7:
+      Changed.Symbols[0].Size = Width + 8;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftStaticOptionalURLBufferHint(
+        Changed, Address));
+    EXPECT_FALSE(objcSourceCallBound(*Prefix, Changed, {}));
+    if (Mutation != 0) {
+      EXPECT_FALSE(objcSourceCallBound(*Helper, Changed, {}));
+      EXPECT_THROW(renderObjCLocalStorageHelpers(
+                       Changed, Bound.LocalStorageExtents, Helpers),
+                   std::runtime_error);
+      EXPECT_THROW(
+          renderObjCLocalStorageHelpers(Changed, {{Address, 8}}, Helpers),
+          std::runtime_error);
+    }
   }
 }
 

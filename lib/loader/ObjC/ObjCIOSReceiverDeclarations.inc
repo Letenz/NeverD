@@ -1,9 +1,10 @@
 // clang-format off
-// Bounded public UIKit receiver facts, observed in both Xcode 26.5 arm64
-// iPhoneOS and iPhoneSimulator Clang ASTs. These are receiver declarations,
-// not globally unique selector signatures. The UIImage interface declares
-// NSObject as superclass and adopts NSSecureCoding. Both ASTs agree on the
-// method declarations below and their non-variadic canonical types. Enum
+// Bounded public UIKit receiver facts. The UIImage and renderer declarations
+// were observed in both Xcode 26.5 arm64 iPhoneOS and iPhoneSimulator Clang
+// ASTs; other owners carry their own evidence below. These are receiver
+// declarations, not globally unique selector signatures. The UIImage
+// interface declares NSObject as superclass and adopts NSSecureCoding. Both
+// ASTs agree on its methods and their non-variadic canonical types. Enum
 // UIImageOrientation has underlying type long; CGRect contains CGPoint and
 // CGSize, each holding two doubles, in that order. Renderer format ownership
 // and NSCopying adoption also agree in the device and simulator artifacts.
@@ -24,6 +25,19 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", true, "imageWithCGImage:scale:orientation:", "@40@0:8^{CGImage=}16d24q32", "UIImage", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "initWithCGImage:scale:orientation:", "@40@0:8^{CGImage=}16d24q32", "", true, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "drawInRect:", "v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16", "", false, nullptr, "", false)
+// Apple's public Objective-C UIBezierPath/UIColor declarations name these
+// receiver owners, result identity, and drawing methods. Apple Clang's arm64
+// iOS encoding of the rounded-rectangle factory places CGRect, UIRectCorner,
+// and CGSize at runtime offsets 16, 48, and 56, respectively.
+// https://developer.apple.com/documentation/uikit/uibezierpath/init%28roundedrect%3Abyroundingcorners%3Acornerradii%3A%29?language=objc
+// https://developer.apple.com/documentation/uikit/uicolor/setstroke%28%29
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", "C:NSObject|P:NSCopying|P:NSSecureCoding", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", true, "bezierPathWithRoundedRect:byRoundingCorners:cornerRadii:", "@72@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16Q48{CGSize=dd}56", "", true, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", false, "closePath", "v16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", false, "addClip", "v16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", false, "stroke", "v16@0:8", "", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIColor", "", "C:NSObject|P:NSCopying", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIColor", "", false, "setStroke", "v16@0:8", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScreen", "", "C:NSObject", nullptr)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScreen", "", true, "mainScreen", "@16@0:8", "UIScreen", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScreen", "", false, "scale", "d16@0:8", "", false, nullptr, "", false)

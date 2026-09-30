@@ -177,7 +177,10 @@ struct Value {
     CopiedBlock,
     BlockInvoke,
     BlockContext,
-    SourceParameter
+    SourceParameter,
+    FastEnumItems,
+    FastEnumScaledIndex,
+    FastEnumElementAddress
   };
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
@@ -467,6 +470,10 @@ struct CallFacts {
   // frame word a stable Objective-C source type after the call. The value may
   // change through the escaped pointer, but every conforming write retains T.
   std::map<std::pair<int64_t, unsigned>, Value> DeclaredObjectFrameSlots;
+  // countByEnumeratingWithState: writes its items pointer into the caller's
+  // NSFastEnumerationState. Only an authenticated, typed enumerator can add
+  // an element declaration; arbitrary frame loads never acquire one.
+  std::map<std::pair<int64_t, unsigned>, ObjCReceiverTypeHint> FastEnumItems;
   // A direct nil store after the frame has escaped remains exact until the
   // next call boundary. This lets a following typed out call re-establish its
   // declared object class without reviving general escaped frame contents.
@@ -514,6 +521,12 @@ struct CallFacts {
   }
 
   void invalidateTypedFrameRange(int64_t Offset, unsigned Size) {
+    for (auto It = FastEnumItems.begin(); It != FastEnumItems.end();)
+      if (It->first.first < Offset + Size &&
+          Offset < It->first.first + It->first.second)
+        It = FastEnumItems.erase(It);
+      else
+        ++It;
     for (auto It = TypedFrameSlots.begin(); It != TypedFrameSlots.end();)
       if (It->first.first < Offset + Size &&
           Offset < It->first.first + It->first.second)
@@ -540,6 +553,7 @@ struct CallFacts {
     TypedFrameSlots.clear();
     DeclaredObjectFrameSlots.clear();
     FreshNilFrameSlots.clear();
+    FastEnumItems.clear();
   }
 
   void escapeTypedFrameFrom(const std::optional<Value> &Address) {
@@ -622,6 +636,13 @@ struct CallFacts {
         ++It;
     }
     FrameBytes.insert(Other.FrameBytes.begin(), Other.FrameBytes.end());
+    for (auto It = FastEnumItems.begin(); It != FastEnumItems.end();) {
+      const auto Found = Other.FastEnumItems.find(It->first);
+      if (Found == Other.FastEnumItems.end() || !(Found->second == It->second))
+        It = FastEnumItems.erase(It);
+      else
+        ++It;
+    }
     for (auto It = FreshNilFrameSlots.begin(); It != FreshNilFrameSlots.end();)
       if (!Other.FreshNilFrameSlots.count(*It))
         It = FreshNilFrameSlots.erase(It);
@@ -828,6 +849,14 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Canonical == "objc_enumerationMutation") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_exception_throw") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/libobjc.A.dylib")
+      return std::nullopt;
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"exception", Object}};
+    Result.DoesNotReturn = true;
   } else if (Canonical == "objc_getProperty") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     if (Bind == Image.DyldBindSlots.end() ||
@@ -1032,7 +1061,6 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr);
         if ((!isObjCSelectorArgumentEvidenceType(Type, true) &&
              !CompleteForwardedScalar) ||
-            Location.Kind != SourceABICarrierKind::IntegerRegister ||
             Location.ValueBytes != 8)
           continue;
         Value V;
@@ -1041,8 +1069,16 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         V.SourceLocation = Location;
         V.Object = objcMethodParameterReceiverTypeHint(Image, Function.Entry,
                                                        unsigned(Index));
-        EntryFacts.Values.emplace(key(NdVar::reg(Location.RegisterOffset, 8)),
-                                  std::move(V));
+        if (Location.Kind == SourceABICarrierKind::IntegerRegister)
+          EntryFacts.Values.emplace(key(NdVar::reg(Location.RegisterOffset, 8)),
+                                    std::move(V));
+        else if (Image.Arch == Arch::AArch64 && V.Object &&
+                 Location.Kind == SourceABICarrierKind::Stack &&
+                 Location.EntryStackOffset >= 0 &&
+                 Location.EntryStackOffset <= 4096 - 8 &&
+                 Location.EntryStackOffset % 8 == 0)
+          EntryFacts.FrameSlots.emplace(
+              std::pair{Location.EntryStackOffset, 8U}, std::move(V));
       }
     if (BlockParameters)
       for (const auto &[Parameter, Root] : *BlockParameters) {
@@ -1063,8 +1099,10 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             const auto &[Offset, Root] = Capture;
             return Offset >= 32 && Offset <= (1u << 20) - 8 &&
                    Offset % 8 == 0 &&
-                   Root.Origin ==
-                       ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                   (Root.Origin ==
+                        ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+                    Root.Origin ==
+                        ObjCReceiverTypeHint::OriginKind::MethodParameter) &&
                    Root.Address != Function.Entry && Root.Steps.empty() &&
                    objcReceiverTypeHintValid(Image, Root);
           });
@@ -1170,6 +1208,7 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
       State.FreshNilFrameSlots.clear();
       const bool KnownABI = Signature && Signature->HasExplicitABI;
       if (!KnownABI) {
+        State.FastEnumItems.clear();
         for (const auto &[K, V] : Values) {
           const auto &[Space, Offset, Size] = K;
           if (Space != VnodeSpace::REG ||
@@ -1205,7 +1244,19 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             const auto Argument =
                 NdVar::reg(Location.RegisterOffset, Location.ValueBytes);
             if (State.mayBeFrame(Argument)) {
-              State.escapeTypedFrameFrom(Read(Argument));
+              const auto Address = Read(Argument);
+              if (!Address || Address->TheKind != Value::Kind::Frame)
+                State.FastEnumItems.clear();
+              else {
+                const auto Base = static_cast<int64_t>(Address->Number);
+                for (auto It = State.FastEnumItems.begin();
+                     It != State.FastEnumItems.end();)
+                  if (It->first.first >= Base && It->first.first - Base <= 32)
+                    It = State.FastEnumItems.erase(It);
+                  else
+                    ++It;
+              }
+              State.escapeTypedFrameFrom(Address);
               State.escapeFrame();
             }
             if (CopiedBlockInput(
@@ -1979,6 +2030,37 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             Bound->second.Signature.ReturnType &&
             Bound->second.Signature.ReturnType->Kind == NdTypeKind::Ptr)
           ReturnedReceiver = std::move(SuperInitReceiver);
+        std::optional<std::pair<int64_t, ObjCReceiverTypeHint>> EnumeratedItems;
+        if (Bound != BlockHints.end() &&
+            Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+            Bound->second.Selector ==
+                "countByEnumeratingWithState:objects:count:" &&
+            Bound->second.Receiver &&
+            Bound->second.Receiver->Origin ==
+                ObjCReceiverTypeHint::OriginKind::MethodParameter &&
+            Bound->second.Receiver->Steps.empty() &&
+            Bound->second.Receiver->ClassName == "NSEnumerator") {
+          const auto StateAddress = Read(NdVar::reg(TRI.IntParamRegs[2], 8));
+          const auto BufferAddress = Read(NdVar::reg(TRI.IntParamRegs[3], 8));
+          const auto Count = Read(NdVar::reg(TRI.IntParamRegs[4], 8));
+          if (StateAddress && BufferAddress && Count &&
+              StateAddress->TheKind == Value::Kind::Frame &&
+              BufferAddress->TheKind == Value::Kind::Frame &&
+              Count->TheKind == Value::Kind::Number && Count->Number == 16) {
+            const auto Base = static_cast<int64_t>(StateAddress->Number);
+            const auto Buffer = static_cast<int64_t>(BufferAddress->Number);
+            if (Base >= -FrameOffsetLimit && Base <= FrameOffsetLimit - 40 &&
+                Buffer >= Base + 40 && Buffer <= FrameOffsetLimit - 16 * 8) {
+              auto Element = *Bound->second.Receiver;
+              ObjCReceiverTypeHint::TypeStep Step;
+              Step.TheKind =
+                  ObjCReceiverTypeHint::TypeStep::Kind::FastEnumerationElement;
+              Element.Steps.push_back(std::move(Step));
+              if (objcReceiverTypeHintValid(Image, Element))
+                EnumeratedItems.emplace(Base + 8, std::move(Element));
+            }
+          }
+        }
         if (Bound != BlockHints.end() &&
             Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
             Bound->second.SelectorReferenceAddress) {
@@ -2058,6 +2140,9 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         }
         Clobber(Bound != BlockHints.end() ? &Bound->second.Signature : nullptr,
                 AuthenticatedMessageDispatch || AuthenticatedLocalCall);
+        if (EnumeratedItems)
+          State.FastEnumItems[{EnumeratedItems->first, 8}] =
+              std::move(EnumeratedItems->second);
         for (auto &[Slot, Fact] : OutParameterReceivers)
           State.DeclaredObjectFrameSlots[Slot] = std::move(Fact);
         if (State.DeclaredObjectFrameSlots.size() > 4096)
@@ -2207,6 +2292,12 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           if (Ref != Image.ObjCSourceReferences.end() && Ref->second.Size == 4)
             Out = Input;
         }
+      } else if (Op.Opcode == NdOp::INT_LEFT && Op.NumInputs == 2 &&
+                 Op.Output.Size == 8 && Op.Inputs[0].Size == 8) {
+        const auto Shift = Read(Op.Inputs[1]);
+        if (Shift && Shift->TheKind == Value::Kind::Number &&
+            Shift->Number == 3)
+          Out = Value{Value::Kind::FastEnumScaledIndex};
       } else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
                  Op.NumInputs == 2) {
         auto A = Read(Op.Inputs[0]);
@@ -2225,6 +2316,16 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           if (B->TheKind == Value::Kind::Frame)
             std::swap(A, B);
           Out = adjustedFrame(*A, B->Number, Op.Opcode == NdOp::INT_SUB);
+        } else if (A && B && Op.Opcode == NdOp::INT_ADD &&
+                   Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
+                   Op.Inputs[1].Size == 8 &&
+                   ((A->TheKind == Value::Kind::FastEnumItems && A->Object &&
+                     B->TheKind == Value::Kind::FastEnumScaledIndex) ||
+                    (B->TheKind == Value::Kind::FastEnumItems && B->Object &&
+                     A->TheKind == Value::Kind::FastEnumScaledIndex))) {
+          if (B->TheKind == Value::Kind::FastEnumItems)
+            std::swap(A, B);
+          Out = Value{Value::Kind::FastEnumElementAddress, 0, {}, A->Object};
         } else if (A && B && A->TheKind == Value::Kind::Number &&
                    B->TheKind == Value::Kind::Number)
           Out = Value{Value::Kind::Number,
@@ -2278,13 +2379,20 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             Root.BlockCaptureOffset = Address->Number;
             Out = Value{Value::Kind::Receiver, 0, {}, std::move(Root)};
           }
+        } else if (Address &&
+                   Address->TheKind == Value::Kind::FastEnumElementAddress &&
+                   Address->Object && PlainMemory && Op.Output.Size == 8) {
+          Out = Value{Value::Kind::Receiver, 0, {}, Address->Object};
         } else if (Address && Address->TheKind == Value::Kind::Frame &&
                    PlainMemory) {
           const auto Slot = std::pair{static_cast<int64_t>(Address->Number),
                                       unsigned(Op.Output.Size)};
+          const auto Element = State.FastEnumItems.find(Slot);
           const auto Declared = State.DeclaredObjectFrameSlots.find(Slot);
           const auto Typed = State.TypedFrameSlots.find(Slot);
-          if (Declared != State.DeclaredObjectFrameSlots.end())
+          if (Element != State.FastEnumItems.end())
+            Out = Value{Value::Kind::FastEnumItems, 0, {}, Element->second};
+          else if (Declared != State.DeclaredObjectFrameSlots.end())
             Out = Declared->second;
           else if (Typed != State.TypedFrameSlots.end() &&
                    State.typedFrameRangePrivate(Slot.first, Slot.second))

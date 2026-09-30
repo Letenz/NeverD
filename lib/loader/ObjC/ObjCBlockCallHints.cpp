@@ -3,6 +3,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
@@ -27,6 +28,37 @@ bool scalar(const TypeRef &T) {
   return T && width(T->Size) &&
          (T->Kind == NdTypeKind::Int ||
           (T->Kind == NdTypeKind::Ptr && T->Size == 8));
+}
+bool writablePointerSlot(const BinaryImage &Image, va_t Address) {
+  // A zero-filled writable symbol supplies storage identity, not a constant
+  // pointer value. The invoke proof below must still use this exact load.
+  if (!Address || Address % 8 || Address > InvalidVA - 8 ||
+      Image.MachOChainedFixupsAmbiguous || Image.DyldBindSlots.count(Address) ||
+      Image.MachOResolvedChainedPointerSlots.count(Address))
+    return false;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  const auto *Bytes = Image.readVA(Address, 8);
+  if (!Section || !Segment || !Bytes ||
+      Image.getSectionFor(Address + 7) != Section ||
+      Image.getSegmentFor(Address + 7) != Segment || !Section->isReadable() ||
+      !Section->isWritable() || Section->isExecutable() ||
+      !Segment->isReadable() || !Segment->isWritable() ||
+      Segment->isExecutable() ||
+      !std::all_of(Bytes, Bytes + 8, [](uint8_t Byte) { return Byte == 0; }))
+    return false;
+  const Symbol *Slot = nullptr;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Addr > Address && Symbol.Addr < Address + 8)
+      return false;
+    if (Symbol.Addr != Address)
+      continue;
+    if (Slot || Symbol.IsFunc || Symbol.Name.empty() ||
+        (Symbol.Size && Symbol.Size < 8))
+      return false;
+    Slot = &Symbol;
+  }
+  return Slot != nullptr;
 }
 struct Value {
   enum class Kind { Scalar, CallInteger, Frame, Number, ImageBits, Invoke };
@@ -242,6 +274,27 @@ bool boundIntegerResultObjCMessage(
   return true;
 }
 
+const SourceCallTypeHint *
+validatedDarwinCall(const std::map<va_t, SourceCallTypeHint> *BoundCalls,
+                    va_t Address, Arch Architecture) {
+  if (!BoundCalls)
+    return nullptr;
+  const auto It = BoundCalls->find(Address);
+  if (It == BoundCalls->end())
+    return nullptr;
+  const auto Kind = It->second.CallKind;
+  if (Kind != SourceCallTypeHint::Kind::ObjCMessage &&
+      Kind != SourceCallTypeHint::Kind::ObjCSuper2 &&
+      Kind != SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+      Kind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
+    return nullptr;
+  std::string Error;
+  return It->second.Signature.Architecture == Architecture &&
+                 validateSourceABI(It->second.Signature, Error)
+             ? &It->second
+             : nullptr;
+}
+
 bool boundRetainBlock(const BinaryImage &Image,
                       const SourceCallTypeHint &Bound) {
   if (Bound.CallKind != SourceCallTypeHint::Kind::ObjCRuntimeCall ||
@@ -431,6 +484,14 @@ bool discardedResultAcrossCFG(
       TRI.IntReturnRegs.size() < 2 || TRI.FPReturnRegs.empty() ||
       Function.Blocks.size() > 64)
     return false;
+  std::string EntryError;
+  const bool VoidBlockEntry =
+      EntrySignature &&
+      EntrySignature->Origin ==
+          SourceFunctionTypeHint::OriginKind::BlockRuntime &&
+      EntrySignature->HasExplicitABI && EntrySignature->ReturnType &&
+      EntrySignature->ReturnType->Kind == NdTypeKind::Void &&
+      validateSourceABI(*EntrySignature, EntryError);
   std::map<int, const LowBlock *> ById;
   const LowBlock *CallBlock = nullptr;
   size_t CallIndex = 0;
@@ -467,9 +528,22 @@ bool discardedResultAcrossCFG(
       if (!Budget--)
         return false;
       const auto &Op = State.Block->Ops[I];
-      if (Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
-          Op.Opcode == NdOp::RETURN)
+      if (Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR)
         return false;
+      if (Op.Opcode == NdOp::RETURN) {
+        // An AArch64 return can carry the stale X0 machine value even when a
+        // descriptor proves this enclosing block has no source result. The
+        // preceding path still must not have read any invoke-result carrier.
+        if (!VoidBlockEntry || Op.NumInputs > 1 ||
+            (Op.NumInputs == 1 && (!Op.Inputs[0].isReg() ||
+                                   !((Op.Inputs[0].Offset == TRI.IntReturnReg &&
+                                      width(Op.Inputs[0].Size)) ||
+                                     (Op.Inputs[0].Offset == TRI.LinkRegister &&
+                                      Op.Inputs[0].Size == 8)))))
+          return false;
+        Released = true;
+        break;
+      }
       for (unsigned J = 0; J < Op.NumInputs; ++J) {
         const auto &Input = Op.Inputs[J];
         if ((State.Integer0Live && overlaps(Input, TRI.IntReturnReg, 8)) ||
@@ -480,6 +554,23 @@ bool discardedResultAcrossCFG(
             return false;
       }
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+        if (Op.Opcode == NdOp::CALL && State.Block->Succs.empty() &&
+            State.Block->ExceptionalSuccs.empty() &&
+            I + 1 == State.Block->Ops.size() && Op.NumInputs == 1 &&
+            Op.Inputs[0].isConst() &&
+            libc::isNoReturnTarget(Image, Op.Inputs[0].Offset)) {
+          const auto *Bound =
+              validatedDarwinCall(BoundCalls, Op.Addr, Image.Arch);
+          if (Bound && Bound->DoesNotReturn &&
+              libc::isNoReturnFunction(Bound->TargetName) &&
+              Bound->Signature.HasExplicitABI && Bound->Signature.ReturnType &&
+              Bound->Signature.ReturnType->Kind == NdTypeKind::Void &&
+              Bound->Signature.Parameters.empty()) {
+            // A no-argument terminating call cannot observe the block result.
+            Released = true;
+            break;
+          }
+        }
         if (!State.Integer0Live && State.Block->Succs.empty() &&
             I + 2 == State.Block->Ops.size() &&
             State.Block->Ops[I + 1].Opcode == NdOp::RETURN &&
@@ -491,6 +582,12 @@ bool discardedResultAcrossCFG(
         }
         if (Op.Opcode == NdOp::CALL &&
             boundReleaseAwayFromResult(BoundCalls, Op.Addr, Image.Arch, TRI))
+          continue;
+        if (VoidBlockEntry && Op.Opcode == NdOp::CALL && !State.Integer1Live &&
+            boundReleaseRegister(BoundCalls, Op.Addr, Image.Arch) ==
+                TRI.IntReturnRegs[1])
+          // X1 was overwritten after the invoke. An authenticated release_x1
+          // therefore consumes the new object, not a second result carrier.
           continue;
         if (Op.Opcode == NdOp::CALL && !State.Integer0Live &&
             (boundVoidObjCMessage(BoundCalls, Op.Addr, Image.Arch) ||
@@ -545,13 +642,158 @@ bool discardedResultAcrossCFG(
   return true;
 }
 
+std::vector<uint64_t> preservedEntryContextRegisters(
+    const LowFunc &Function, const LowBlock &Entry, const LowBlock &Candidate,
+    const TargetRegInfo &TRI,
+    const std::map<va_t, SourceCallTypeHint> *BoundCalls, Arch Architecture) {
+  if (!BoundCalls || Function.Blocks.size() > 64 || !Entry.Preds.empty() ||
+      !Entry.ExceptionalPreds.empty() || !Candidate.ExceptionalPreds.empty() ||
+      &Entry == &Candidate)
+    return {};
+  std::map<int, const LowBlock *> ById;
+  for (const auto &Block : Function.Blocks)
+    if (Block.Id < 0 || !ById.emplace(Block.Id, &Block).second)
+      return {};
+  std::set<int> Ancestors{Candidate.Id};
+  std::vector<int> Pending{Candidate.Id};
+  while (!Pending.empty()) {
+    const auto Id = Pending.back();
+    Pending.pop_back();
+    const auto *Block = ById.at(Id);
+    if (Block != &Entry && Block->Preds.empty())
+      return {};
+    if (!Block->ExceptionalPreds.empty())
+      return {};
+    for (const auto ParentId : Block->Preds) {
+      const auto Parent = ById.find(ParentId);
+      if (Parent == ById.end() ||
+          std::find(Parent->second->Succs.begin(), Parent->second->Succs.end(),
+                    Id) == Parent->second->Succs.end())
+        return {};
+      if (Ancestors.insert(ParentId).second)
+        Pending.push_back(ParentId);
+    }
+  }
+  if (!Ancestors.count(Entry.Id))
+    return {};
+  std::set<int> Reached{Entry.Id};
+  Pending = {Entry.Id};
+  while (!Pending.empty()) {
+    const auto Id = Pending.back();
+    Pending.pop_back();
+    for (const auto NextId : ById.at(Id)->Succs)
+      if (Ancestors.count(NextId) && Reached.insert(NextId).second)
+        Pending.push_back(NextId);
+  }
+  if (Reached != Ancestors)
+    return {};
+  // The candidate must not run a second time with its context register
+  // already overwritten by its first invocation.
+  std::set<int> AfterCandidate;
+  Pending = Candidate.Succs;
+  while (!Pending.empty()) {
+    const auto Id = Pending.back();
+    Pending.pop_back();
+    if (Id == Candidate.Id)
+      return {};
+    const auto Found = ById.find(Id);
+    if (Found == ById.end())
+      return {};
+    if (AfterCandidate.insert(Id).second)
+      Pending.insert(Pending.end(), Found->second->Succs.begin(),
+                     Found->second->Succs.end());
+  }
+
+  std::vector<uint64_t> Result;
+  for (size_t SeedIndex = 0; SeedIndex < Entry.Ops.size(); ++SeedIndex) {
+    const auto &Seed = Entry.Ops[SeedIndex];
+    if (Seed.Opcode != NdOp::COPY || !Seed.Output.isReg() ||
+        Seed.Output.Size != 8 || Seed.NumInputs != 1 ||
+        !Seed.Inputs[0].isReg() ||
+        Seed.Inputs[0].Offset != TRI.IntParamRegs[0] ||
+        Seed.Inputs[0].Size != 8 || Seed.Output.Offset < a64reg::X19 ||
+        Seed.Output.Offset > a64reg::X28 ||
+        (Seed.Output.Offset - a64reg::X19) % 8 != 0 ||
+        !TRI.isCallPreserved(Seed.Output.Offset, 8))
+      continue;
+    bool Valid = true;
+    for (size_t I = 0; I < SeedIndex; ++I) {
+      const auto &Op = Entry.Ops[I];
+      if (overlaps(Op.Output, TRI.IntParamRegs[0], 8) ||
+          Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          Op.Opcode == NdOp::RETURN || branchTerminator(Op.Opcode))
+        Valid = false;
+    }
+    if (!Valid)
+      continue;
+    for (const auto Id : Ancestors) {
+      const auto *Block = ById.at(Id);
+      if (Block == &Candidate)
+        continue;
+      const size_t Begin = Block == &Entry ? SeedIndex + 1 : 0;
+      for (size_t I = Begin; I < Block->Ops.size(); ++I) {
+        const auto &Op = Block->Ops[I];
+        if (overlaps(Op.Output, Seed.Output.Offset, 8) ||
+            Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN ||
+            (branchTerminator(Op.Opcode) && I + 1 != Block->Ops.size())) {
+          Valid = false;
+          break;
+        }
+        if (Op.Opcode == NdOp::CALL) {
+          const auto *Bound =
+              validatedDarwinCall(BoundCalls, Op.Addr, Architecture);
+          if (!Bound || Bound->DoesNotReturn) {
+            Valid = false;
+            break;
+          }
+        }
+      }
+      if (!Valid)
+        break;
+    }
+    if (Valid)
+      Result.push_back(Seed.Output.Offset);
+  }
+  std::sort(Result.begin(), Result.end());
+  Result.erase(std::unique(Result.begin(), Result.end()), Result.end());
+  return Result;
+}
+
+bool clearedFloatingArgumentsBeforeCall(
+    const LowBlock &Block, size_t CallIndex, const TargetRegInfo &TRI,
+    const std::map<va_t, SourceCallTypeHint> *BoundCalls, Arch Architecture) {
+  bool Cleared = false;
+  for (size_t I = 0; I < CallIndex; ++I) {
+    const auto &Op = Block.Ops[I];
+    if (Op.Opcode == NdOp::CALL) {
+      const auto *Bound =
+          validatedDarwinCall(BoundCalls, Op.Addr, Architecture);
+      Cleared = Bound && Bound->Signature.ReturnType &&
+                (Bound->Signature.ReturnType->Kind == NdTypeKind::Void ||
+                 Bound->Signature.ReturnType->Kind == NdTypeKind::Int ||
+                 Bound->Signature.ReturnType->Kind == NdTypeKind::Ptr) &&
+                Bound->Signature.ReturnComponents.empty() &&
+                Bound->Signature.ReturnLocation.Kind !=
+                    SourceABICarrierKind::FloatingRegister;
+    } else if (Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INTRINSIC)
+      Cleared = false;
+    for (const auto FPRegister : TRI.FPParamRegs)
+      if (overlaps(Op.Output, FPRegister, 16))
+        Cleared = false;
+  }
+  return Cleared;
+}
+
 std::map<va_t, SourceCallTypeHint>
 analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
              const SourceFunctionTypeHint *EntrySignature,
              const std::map<va_t, SourceCallTypeHint> *BoundCalls,
              const ObjCBlockCaptureCallFields *Captures,
              const LowFunc *WholeFunction, bool FollowValidatedBranches,
-             std::map<va_t, std::set<size_t>> *NullArguments = nullptr) {
+             std::map<va_t, std::set<size_t>> *NullArguments = nullptr,
+             std::optional<uint64_t> CarriedEntryContext = std::nullopt) {
   std::map<va_t, SourceCallTypeHint> Result;
   if (Block.Ops.size() > 65536)
     return Result;
@@ -581,6 +823,8 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
   Values.emplace(key(NdVar::reg(TRI.StackPointer, 8)),
                  Value{Value::Kind::Frame, 0, 0, Pointer});
   for (auto Register : TRI.IntParamRegs) {
+    if (CarriedEntryContext)
+      continue;
     TypeRef Type = NdType::makeInt(8, false);
     if (EntrySignature)
       for (const auto &P : EntrySignature->Parameters)
@@ -590,6 +834,11 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
     Values.emplace(key(NdVar::reg(Register, 8)),
                    Value{Value::Kind::Scalar, Register + 1, 0, Type});
   }
+  if (CarriedEntryContext && ProvenCaptureContext &&
+      TRI.isCallPreserved(*CarriedEntryContext, 8))
+    Values.emplace(key(NdVar::reg(*CarriedEntryContext, 8)),
+                   Value{Value::Kind::Scalar, TRI.IntParamRegs[0] + 1, 0,
+                         EntrySignature->Parameters[0].Type});
   auto Read = [&](const NdVar &V) -> std::optional<Value> {
     if (!width(V.Size))
       return std::nullopt;
@@ -609,6 +858,25 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
       return Value;
     }
     return std::nullopt;
+  };
+  auto AuthenticatedEntryArgument = [&](uint64_t Register,
+                                        const Value &Argument) {
+    // Only a single-block invoke proves an unchanged entry carrier along the
+    // whole path to this call. Multi-block path replay does not yet preserve
+    // that extra argument provenance across its control-flow alternatives.
+    if (!WholeFunction || WholeFunction->Blocks.size() != 1 ||
+        !EntrySignature ||
+        EntrySignature->Origin !=
+            SourceFunctionTypeHint::OriginKind::BlockRuntime ||
+        Argument.K != Value::Kind::Scalar || Argument.Base != Register + 1 ||
+        Argument.Offset != 0)
+      return false;
+    for (const auto &Parameter : EntrySignature->Parameters)
+      if (Parameter.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+          Parameter.Location.RegisterOffset == Register &&
+          sameScalarType(Parameter.Type, Argument.Type))
+        return true;
+    return false;
   };
   va_t PreviousAddress = InvalidVA;
   uint64_t NextCallResultBase = 1ULL << 32;
@@ -636,6 +904,7 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
       PreviousAddress = Op.Addr;
     }
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+      bool ProvenBlockCall = false;
       auto Target = Op.NumInputs == 1 ? Read(Op.Inputs[0]) : std::nullopt;
       auto Receiver = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
       if (Op.Opcode == NdOp::INDIR_CALL && Target &&
@@ -698,11 +967,12 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
             bool Gap = false, Valid = true;
             for (size_t I = 0; I < TRI.IntParamRegs.size(); ++I) {
               const auto Reg = TRI.IntParamRegs[I];
-              if (!WrittenArguments.count(Reg)) {
+              auto Argument = Read(NdVar::reg(Reg, 8));
+              if (!WrittenArguments.count(Reg) &&
+                  (!Argument || !AuthenticatedEntryArgument(Reg, *Argument))) {
                 Gap = true;
                 continue;
               }
-              auto Argument = Read(NdVar::reg(Reg, 8));
               // The register holding the indirect branch target is not also
               // evidence for an explicit callback argument. A real later
               // argument would leave a carrier gap and remain unbound.
@@ -735,12 +1005,17 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         if (Signature && !Signature->Parameters.empty()) {
           bool Valid = true;
           for (const auto &P : Signature->Parameters) {
-            if (P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
-                !WrittenArguments.count(P.Location.RegisterOffset)) {
+            if (P.Location.Kind != SourceABICarrierKind::IntegerRegister) {
               Valid = false;
               break;
             }
             auto Argument = Read(NdVar::reg(P.Location.RegisterOffset, 8));
+            if (!WrittenArguments.count(P.Location.RegisterOffset) &&
+                (!Argument || !AuthenticatedEntryArgument(
+                                  P.Location.RegisterOffset, *Argument))) {
+              Valid = false;
+              break;
+            }
             if (!Argument || !scalar(P.Type) || !Argument->Type ||
                 Argument->Type->Size < P.Type->Size) {
               Valid = false;
@@ -751,7 +1026,13 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
             SourceCallTypeHint Hint;
             Hint.CallKind = SourceCallTypeHint::Kind::BlockInvoke;
             Hint.Signature = std::move(*Signature);
-            Result.emplace(Op.Addr, std::move(Hint));
+            auto [It, Inserted] = Result.emplace(Op.Addr, std::move(Hint));
+            if (Inserted) {
+              std::string Error;
+              ProvenBlockCall =
+                  It->second.Signature.Architecture == Image.Arch &&
+                  validateSourceABI(It->second.Signature, Error);
+            }
             if (NullArguments)
               NullArguments->emplace(Op.Addr, std::move(NullIndices));
           }
@@ -762,23 +1043,10 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
       // frame spill is invalidated. The ARC result is a fresh opaque pointer:
       // the later invoke-slot proof must still show the same block receiver.
       std::map<Key, Value> Preserved;
-      const SourceCallTypeHint *Bound = nullptr;
-      if (BoundCalls) {
-        const auto It = BoundCalls->find(Op.Addr);
-        if (It != BoundCalls->end()) {
-          std::string Error;
-          const auto Kind = It->second.CallKind;
-          const bool DarwinCall =
-              Kind == SourceCallTypeHint::Kind::ObjCMessage ||
-              Kind == SourceCallTypeHint::Kind::ObjCSuper2 ||
-              Kind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
-              Kind == SourceCallTypeHint::Kind::DarwinRuntimeCall;
-          if (DarwinCall && It->second.Signature.Architecture == Image.Arch &&
-              validateSourceABI(It->second.Signature, Error))
-            Bound = &It->second;
-        }
-      }
-      if (Bound)
+      const auto *Bound = validatedDarwinCall(BoundCalls, Op.Addr, Image.Arch);
+      // A locally proven block invoke also uses the Darwin C calling
+      // convention, so its callee-saved registers retain their identities.
+      if (Bound || ProvenBlockCall)
         for (const auto &[K, V] : Values)
           if (std::get<0>(K) == VnodeSpace::REG && V.K != Value::Kind::Invoke &&
               (TRI.isCallPreserved(std::get<1>(K), std::get<2>(K)) ||
@@ -865,6 +1133,37 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         Values.emplace(key(Op.Output),
                        Value{Value::Kind::CallInteger, NextCallResultBase++, 0,
                              Bound->Signature.ReturnType});
+      } else if (Op.Opcode == NdOp::CALL && Bound &&
+                 Image.Arch == Arch::AArch64 &&
+                 Bound->CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+                 Bound->Signature.HasExplicitABI &&
+                 Bound->Signature.Convention ==
+                     SourceFunctionTypeHint::ConventionKind::C &&
+                 Bound->Signature.ReturnType &&
+                 Bound->Signature.ReturnType->Kind == NdTypeKind::Struct &&
+                 Bound->Signature.ReturnType->Size == 16 &&
+                 Bound->Signature.ReturnComponents.size() == 2 &&
+                 TRI.IntReturnRegs.size() >= 2 && Op.Output.isReg() &&
+                 Op.Output.Offset == TRI.IntReturnReg && Op.Output.Size == 8) {
+        const auto Members =
+            sourceAggregateMembers(Bound->Signature.ReturnType);
+        bool IntegerPair = Members.size() == 2;
+        for (size_t I = 0; IntegerPair && I < 2; ++I)
+          IntegerPair =
+              Members[I].Type && Members[I].Type->Kind == NdTypeKind::Int &&
+              Members[I].Type->Size == 8 && Members[I].ByteOffset == I * 8 &&
+              Bound->Signature.ReturnComponents[I].Kind ==
+                  SourceABICarrierKind::IntegerRegister &&
+              Bound->Signature.ReturnComponents[I].RegisterOffset ==
+                  TRI.IntReturnRegs[I] &&
+              Bound->Signature.ReturnComponents[I].ValueBytes == 8;
+        if (IntegerPair)
+          for (size_t I = 0; I < 2; ++I)
+            // Each declared member is a distinct integer value, never a
+            // recovered block receiver or an invented aggregate pointer.
+            Values.emplace(key(NdVar::reg(TRI.IntReturnRegs[I], 8)),
+                           Value{Value::Kind::CallInteger, NextCallResultBase++,
+                                 0, Members[I].Type});
       }
       continue;
     }
@@ -925,6 +1224,12 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
         // Immutable scalar bytes carry no pointer identity.
         Out = Value{Value::Kind::ImageBits,
                     uint64_t(Address->Base + Address->Offset), 0,
+                    NdType::makeInt(8, false)};
+      if (Address && Address->K == Value::Kind::Number && Op.Output.Size == 8 &&
+          writablePointerSlot(Image, uint64_t(Address->Base + Address->Offset)))
+        // Each load is a distinct value: a second read of mutable storage
+        // cannot be equated with the receiver used to load its invoke slot.
+        Out = Value{Value::Kind::Scalar, NextCallResultBase++, 0,
                     NdType::makeInt(8, false)};
       if (Address && Address->K == Value::Kind::Number && Op.Output.Size == 8) {
         const auto Effective = Address->Base + uint64_t(Address->Offset);
@@ -1214,6 +1519,52 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
     }
     if (Complete)
       Result.insert(Common.begin(), Common.end());
+  }
+  if (Image.Arch == Arch::AArch64 && Captures &&
+      !Captures->BlockWords.empty() && EntrySignature &&
+      EntrySignature->Origin ==
+          SourceFunctionTypeHint::OriginKind::BlockRuntime) {
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    // A loop can defeat bounded path enumeration even when a callee-save
+    // register holds the same descriptor-authenticated block context on every
+    // incoming edge. Replay only the final block with that one proven value;
+    // all volatile argument carriers start unknown.
+    for (const auto &Candidate : Function.Blocks) {
+      const LowOp *Invoke = nullptr;
+      size_t InvokeIndex = 0;
+      for (size_t I = 0; I < Candidate.Ops.size(); ++I)
+        if (Candidate.Ops[I].Opcode == NdOp::INDIR_CALL) {
+          if (Invoke) {
+            Invoke = nullptr;
+            break;
+          }
+          Invoke = &Candidate.Ops[I];
+          InvokeIndex = I;
+        }
+      if (!Invoke || Result.count(Invoke->Addr) ||
+          !clearedFloatingArgumentsBeforeCall(Candidate, InvokeIndex, TRI,
+                                              BoundCalls, Image.Arch))
+        continue;
+      const auto Registers = preservedEntryContextRegisters(
+          Function, *Entry, Candidate, TRI, BoundCalls, Image.Arch);
+      std::optional<SourceCallTypeHint> Unique;
+      bool Ambiguous = false;
+      for (const auto Register : Registers) {
+        const auto Hints =
+            analyzeBlock(Image, Candidate, EntrySignature, BoundCalls, Captures,
+                         &Function, false, nullptr, Register);
+        const auto Found = Hints.find(Invoke->Addr);
+        if (Found == Hints.end())
+          continue;
+        if (Unique) {
+          Ambiguous = true;
+          break;
+        }
+        Unique = Found->second;
+      }
+      if (Unique && !Ambiguous)
+        Result.emplace(Invoke->Addr, std::move(*Unique));
+    }
   }
   return Result;
 }

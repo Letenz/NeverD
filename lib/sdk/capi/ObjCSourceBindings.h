@@ -17,6 +17,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSentinelCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
@@ -483,6 +484,35 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
       return State && Buffer && Disjoint(*State, 64) &&
              Disjoint(*Buffer, *Count * 8);
     };
+    // NSFormatter's SDK declaration writes an Objective-C object through its
+    // first out parameter. The other out slot must be a separate private
+    // frame range, and the destination must already contain null or a proven
+    // pointer because the formatter is permitted to leave it untouched.
+    const auto SafeFormatterObjectOut = [&](const HighExpr &E) {
+      const auto *B = E.SourceCallHint.get();
+      if (E.Kind != ExprKind::Call || !B ||
+          B->CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          B->Selector != "getObjectValue:forString:errorDescription:" ||
+          B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          E.Operands.size() != 5 || B->Signature.Parameters.size() != 5 ||
+          !objcSourceCallBound(E, Image, {}))
+        return false;
+      const auto &Out = B->Signature.Parameters[2].Type;
+      const auto &DescriptionOut = B->Signature.Parameters[4].Type;
+      if (!Out || Out->Kind != NdTypeKind::Ptr || !Out->Pointee ||
+          Out->Pointee->Kind != NdTypeKind::Ptr || Out->Size != 8 ||
+          Out->Pointee->Size != 8 || !DescriptionOut ||
+          DescriptionOut->Kind != NdTypeKind::Ptr || !DescriptionOut->Pointee ||
+          DescriptionOut->Pointee->Kind != NdTypeKind::Ptr ||
+          DescriptionOut->Size != 8 || DescriptionOut->Pointee->Size != 8 ||
+          Derived(E.Operands[0]) || Derived(E.Operands[1]) ||
+          Derived(E.Operands[3]))
+        return false;
+      const auto Destination = Offset(E.Operands[2]);
+      const auto OtherOut = Offset(E.Operands[4]);
+      return Destination && *Destination == Slot && OtherOut &&
+             Disjoint(*OtherOut, 8);
+    };
     const auto Evaluate = [&](Fact &F, const HighSourceFlowNode &Node) {
       const auto Check = [&](auto &&Self, const ExprPtr &E) -> void {
         if (!E || !Budget)
@@ -492,7 +522,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
           bool Exposes = E->IndirectTarget && Derived(E->IndirectTarget);
           for (const auto &Arg : E->Operands)
             Exposes |= Derived(Arg);
-          if (Exposes && !SafeEnumeration(*E))
+          if (Exposes && !SafeEnumeration(*E) && !SafeFormatterObjectOut(*E))
             F.Escaped = true;
         } else if (E->Kind == ExprKind::Store) {
           F.Pointer = false;
@@ -534,7 +564,14 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
               S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
             size_t PointerBudget = 4096;
             std::set<VarKey> PointerActive;
-            F.Pointer = provenSourcePointerValue(Value, Definitions, Image,
+            const bool Null =
+                Value->Kind == ExprKind::Const && !Value->ConstVal &&
+                Value->AddressOwnerVA == InvalidVA &&
+                Value->ConstProvenance != ConstantAddressProvenance::Address &&
+                Value->ConstProvenance !=
+                    ConstantAddressProvenance::DataAddress;
+            F.Pointer =
+                Null || provenSourcePointerValue(Value, Definitions, Image,
                                                  PointerBudget, PointerActive);
           } else {
             F.Pointer = false;
@@ -574,6 +611,759 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
       const auto *S = Graph.Nodes[I].Statement;
       if (S && S->Kind == StmtKind::Assign && S->Val &&
           Loads.count(S->Val.get()))
+        Proven.insert(S->Val.get());
+    }
+  }
+  return Proven;
+}
+
+/// NSFastEnumeration writes an `id *` into state.itemsPtr. Recover an object
+/// carrier only for an exact 8-byte item load after a bound NSArray SDK call,
+/// while its private state and fallback buffer remain unmodified on every
+/// reaching source path. An unknown frame escape ends the proof.
+inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
+    const HighFunc &Function, const BinaryImage &Image,
+    const VarKeyMap<std::vector<ExprPtr>> &Definitions, const HighExpr &Call,
+    size_t FixedCount) {
+  std::set<const HighExpr *> Proven;
+  if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
+      Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
+    return Proven;
+  size_t Budget = 1000000;
+  VarKeyMap<unsigned> Counts;
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      ++Counts[varKey(S.Dst->Var)];
+  });
+  VarKeyMap<ExprPtr> Aliases;
+  for (const auto &S : Function.Body) {
+    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+        S.Dst->Kind != ExprKind::Var || !S.Dst->Type ||
+        S.Dst->Type->Size != 8 || S.Dst->Var.Size != 8 ||
+        Counts[varKey(S.Dst->Var)] != 1 ||
+        !high_detail::frameAddressOffset(S.Val, Function, Image.Arch, Budget, 0,
+                                         &Aliases))
+      break;
+    Aliases.emplace(varKey(S.Dst->Var), S.Val);
+  }
+  const auto Offset = [&](const ExprPtr &Address) -> std::optional<int64_t> {
+    if (!Budget)
+      return std::nullopt;
+    return high_detail::frameAddressOffset(Address, Function, Image.Arch,
+                                           Budget, 0, &Aliases);
+  };
+  const auto InFrame = [&](int64_t At, uint64_t Bytes) {
+    return Bytes && Bytes <= uint64_t(Function.FrameSize) &&
+           At >= -Function.FrameSize && At <= -int64_t(Bytes);
+  };
+  const auto Overlaps = [](int64_t A, uint64_t ASize, int64_t B,
+                           uint64_t BSize) {
+    return A < B + int64_t(BSize) && B < A + int64_t(ASize);
+  };
+  const auto PlainLoad = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Load && E->Type && E->Type->Size == 8 &&
+           E->Operands.size() == 1 &&
+           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           E->IntrinsicId == Intrinsic::None;
+  };
+  struct ItemSource {
+    int64_t State = 0;
+    std::optional<VarKey> PointerVar;
+    const HighExpr *PointerDefinition = nullptr;
+  };
+  const auto ItemOrigin = [&](const ExprPtr &E) -> std::optional<ItemSource> {
+    if (!PlainLoad(E))
+      return std::nullopt;
+    const auto &Address = E->Operands[0];
+    if (!Address || Address->Kind != ExprKind::BinOp ||
+        Address->Op != NdOp::INT_ADD || Address->Operands.size() != 2)
+      return std::nullopt;
+    const auto &Shift = Address->Operands[1];
+    if (!Shift || Shift->Kind != ExprKind::BinOp ||
+        Shift->Op != NdOp::INT_LEFT || Shift->Operands.size() != 2 ||
+        !Shift->Operands[0] || Shift->Operands[0]->Kind != ExprKind::Var ||
+        Shift->Operands[0]->Var.Size != 8 || !Shift->Operands[0]->Type ||
+        Shift->Operands[0]->Type->Size != 8 || !Shift->Operands[1] ||
+        Shift->Operands[1]->Kind != ExprKind::Const ||
+        Shift->Operands[1]->ConstVal != 3)
+      return std::nullopt;
+    auto Pointer = Address->Operands[0];
+    while (Pointer &&
+           (Pointer->Kind == ExprKind::Cast ||
+            Pointer->Kind == ExprKind::BitCast) &&
+           Pointer->Type && Pointer->Type->Size == 8 &&
+           Pointer->Operands.size() == 1 && Pointer->Operands[0] &&
+           Pointer->Operands[0]->Type && Pointer->Operands[0]->Type->Size == 8)
+      Pointer = Pointer->Operands[0];
+    ItemSource Source;
+    if (Pointer && Pointer->Kind == ExprKind::Var && Pointer->Var.Size == 8 &&
+        (Pointer->Var.Kind == MedVar::Reg ||
+         Pointer->Var.Kind == MedVar::Temp)) {
+      Source.PointerVar = varKey(Pointer->Var);
+      const auto It = Definitions.find(*Source.PointerVar);
+      if (It == Definitions.end() || It->second.size() != 1)
+        return std::nullopt;
+      Pointer = It->second.front();
+      Source.PointerDefinition = Pointer.get();
+    }
+    if (!PlainLoad(Pointer))
+      return std::nullopt;
+    const auto At = Offset(Pointer->Operands[0]);
+    if (!At || !InFrame(*At - 8, 64))
+      return std::nullopt;
+    Source.State = *At - 8;
+    return Source;
+  };
+  struct CandidateGroup {
+    std::set<const HighExpr *> Loads;
+    std::optional<VarKey> PointerVar;
+    const HighExpr *PointerDefinition = nullptr;
+    bool Initialized = false;
+    bool Conflict = false;
+  };
+  std::map<int64_t, CandidateGroup> Candidates;
+  std::set<VarKey> Active;
+  std::set<const HighExpr *> Seen;
+  const auto Collect = [&](auto &&Self, const ExprPtr &E,
+                           unsigned Depth) -> void {
+    if (!E || !Budget || Depth > 64 || !Seen.insert(E.get()).second)
+      return;
+    --Budget;
+    if (E->Kind == ExprKind::Load) {
+      if (const auto Source = ItemOrigin(E)) {
+        auto &Group = Candidates[Source->State];
+        if (Group.Initialized &&
+            (Group.PointerVar != Source->PointerVar ||
+             Group.PointerDefinition != Source->PointerDefinition))
+          Group.Conflict = true;
+        Group.Initialized = true;
+        Group.PointerVar = Source->PointerVar;
+        Group.PointerDefinition = Source->PointerDefinition;
+        Group.Loads.insert(E.get());
+      }
+      return;
+    }
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (E->Var.Kind != MedVar::Reg && E->Var.Kind != MedVar::Temp)
+        return;
+      const auto Key = varKey(E->Var);
+      if (!Active.insert(Key).second)
+        return;
+      if (const auto It = Definitions.find(Key); It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Self(Self, Definition, Depth + 1);
+      Active.erase(Key);
+    }
+    for (const auto &Child : E->Operands)
+      Self(Self, Child, Depth + 1);
+  };
+  for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
+    Collect(Collect, Call.Operands[I], 0);
+  if (!Budget || Candidates.empty() || Candidates.size() > 8)
+    return {};
+  const auto Graph = buildHighSourceFlowGraph(Function);
+  if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
+      Graph.Nodes.size() > 100000)
+    return {};
+
+  const auto FrameDerived = [&](auto &&Self, const ExprPtr &E,
+                                std::set<VarKey> &Visiting,
+                                unsigned Depth) -> bool {
+    if (!E)
+      return false;
+    if (!Budget || Depth > 64)
+      return true;
+    --Budget;
+    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
+      return false;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (highSourceFrameBase(Function, E->Var))
+        return true;
+      const auto Key = varKey(E->Var);
+      if (!Visiting.insert(Key).second)
+        return true;
+      bool Derived = false;
+      if (const auto It = Definitions.find(Key); It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Derived |= Self(Self, Definition, Visiting, Depth + 1);
+      Visiting.erase(Key);
+      return Derived;
+    }
+    for (const auto &Child : E->Operands)
+      if (Self(Self, Child, Visiting, Depth + 1))
+        return true;
+    return false;
+  };
+  const auto Derived = [&](const ExprPtr &E) {
+    std::set<VarKey> Visiting;
+    return FrameDerived(FrameDerived, E, Visiting, 0);
+  };
+  const auto LiteralCount = [](const ExprPtr &E) -> std::optional<uint64_t> {
+    if (!E || E->IntrinsicId != Intrinsic::None ||
+        !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    const auto Scalar = [](const ExprPtr &Value) {
+      return Value &&
+             (Value->ConstProvenance == ConstantAddressProvenance::Unknown ||
+              Value->ConstProvenance == ConstantAddressProvenance::Scalar) &&
+             Value->AddressOwnerVA == InvalidVA;
+    };
+    if (E && E->Kind == ExprKind::Const && E->Type &&
+        E->Type->Kind == NdTypeKind::Int && E->Type->Size == 8 && Scalar(E))
+      return E->ConstVal;
+    if (E && E->Kind == ExprKind::UnaryOp && E->Type &&
+        E->Type->Kind == NdTypeKind::Int && E->Type->Size == 8 &&
+        (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT) &&
+        E->Operands.size() == 1 && E->Operands[0] &&
+        E->Operands[0]->Kind == ExprKind::Const && E->Operands[0]->Type &&
+        E->Operands[0]->Type->Size <= 4 &&
+        E->Operands[0]->ConstVal <= INT32_MAX && Scalar(E->Operands[0]))
+      return E->Operands[0]->ConstVal;
+    return std::nullopt;
+  };
+  for (const auto &[State, Group] : Candidates) {
+    if (Group.Conflict)
+      continue;
+    using Buffer = std::pair<int64_t, uint64_t>;
+    const auto ValidEnumeration =
+        [&](const HighExpr &E) -> std::optional<Buffer> {
+      const auto *B = E.SourceCallHint.get();
+      if (E.Kind != ExprKind::Call || !B ||
+          B->CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          B->Selector != "countByEnumeratingWithState:objects:count:" ||
+          B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          !B->Receiver || B->Receiver->ClassName != "NSArray" ||
+          objcReceiverInstanceClassName(Image, *B->Receiver) != "NSArray" ||
+          E.Operands.size() != 5 || !objcSourceCallBound(E, Image, {}))
+        return std::nullopt;
+      const auto At = Offset(E.Operands[2]);
+      const auto Data = Offset(E.Operands[3]);
+      const auto Count = LiteralCount(E.Operands[4]);
+      if (!At || *At != State || !Data || !Count || !*Count ||
+          *Count > (1u << 16) || !InFrame(*Data, *Count * 8) ||
+          Overlaps(State, 64, *Data, *Count * 8))
+        return std::nullopt;
+      return Buffer{*Data, *Count * 8};
+    };
+    std::optional<Buffer> BufferRange;
+    bool ConflictingBuffer = false;
+    walkStmts(Function.Body, [&](const HighStmt &S) {
+      forEachRhsExpr(S, [&](const ExprPtr &Root) {
+        const auto Scan = [&](auto &&Self, const ExprPtr &E) -> void {
+          if (!E || ConflictingBuffer || !Budget)
+            return;
+          --Budget;
+          if (const auto Current = ValidEnumeration(*E)) {
+            if (BufferRange && BufferRange != Current)
+              ConflictingBuffer = true;
+            BufferRange = Current;
+          }
+          E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+        };
+        Scan(Scan, Root);
+      });
+    });
+    if (!Budget || ConflictingBuffer || !BufferRange)
+      continue;
+    const auto SafeDictionary = [&](const HighExpr &E) {
+      const auto *B = E.SourceCallHint.get();
+      if (E.Kind != ExprKind::Call || !B ||
+          B->CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          B->Selector != "dictionaryWithObjects:forKeys:count:" ||
+          B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          !B->Receiver || B->Receiver->ClassName != "NSDictionary" ||
+          E.Operands.size() != 5 || !objcSourceCallBound(E, Image, {}))
+        return false;
+      const auto Count = LiteralCount(E.Operands[4]);
+      const auto Objects = Offset(E.Operands[2]);
+      const auto Keys = Offset(E.Operands[3]);
+      if (!Count || !*Count || *Count > (1u << 16) || !Objects || !Keys ||
+          !InFrame(*Objects, *Count * 8) || !InFrame(*Keys, *Count * 8))
+        return false;
+      for (const auto At : {*Objects, *Keys})
+        if (Overlaps(At, *Count * 8, State, 64) ||
+            Overlaps(At, *Count * 8, BufferRange->first, BufferRange->second))
+          return false;
+      return true;
+    };
+    struct Fact {
+      bool Active = false;
+      bool Escaped = false;
+      bool PointerReady = false;
+      bool PositiveCount = false;
+      std::optional<VarKey> CountVar;
+      bool operator==(const Fact &Other) const {
+        return Active == Other.Active && Escaped == Other.Escaped &&
+               PointerReady == Other.PointerReady &&
+               PositiveCount == Other.PositiveCount &&
+               CountVar == Other.CountVar;
+      }
+    };
+    std::vector<std::optional<Fact>> Incoming(Graph.Nodes.size());
+    std::vector<size_t> Pending{Graph.Entry};
+    Incoming[Graph.Entry] = Fact{};
+    size_t Work = 0;
+    const auto Evaluate = [&](Fact &F, const HighSourceFlowNode &Node) {
+      const auto Check = [&](auto &&Self, const ExprPtr &E) -> void {
+        if (!E || !Budget)
+          return;
+        --Budget;
+        if (E->Kind == ExprKind::Call) {
+          if (ValidEnumeration(*E)) {
+            F.Active = !F.Escaped;
+            F.PointerReady = false;
+            F.PositiveCount = false;
+            F.CountVar.reset();
+            const auto *S = Node.Statement;
+            if (S && S->Kind == StmtKind::Assign && S->Val == E && S->Dst &&
+                S->Dst->Kind == ExprKind::Var && S->Dst->Var.Size == 8 &&
+                (S->Dst->Var.Kind == MedVar::Reg ||
+                 S->Dst->Var.Kind == MedVar::Temp))
+              F.CountVar = varKey(S->Dst->Var);
+          } else if (!SafeDictionary(*E)) {
+            bool Exposes = E->IndirectTarget && Derived(E->IndirectTarget);
+            for (const auto &Arg : E->Operands)
+              Exposes |= Derived(Arg);
+            if (Exposes) {
+              F.Active = false;
+              F.Escaped = true;
+              F.PointerReady = false;
+              F.PositiveCount = false;
+            }
+          }
+        } else if (E->Kind == ExprKind::Store) {
+          F.Active = false;
+          F.Escaped = true;
+          F.PointerReady = false;
+          F.PositiveCount = false;
+        }
+        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+      };
+      if (Node.Test)
+        Check(Check, Node.Test);
+      if (!Node.Statement)
+        return;
+      const auto &S = *Node.Statement;
+      forEachRhsExpr(S, [&](const ExprPtr &E) { Check(Check, E); });
+      ExprPtr Address, Value;
+      if (S.Kind == StmtKind::Store) {
+        Address = S.StoreAddr;
+        Value = S.StoreVal;
+      } else if (S.Kind == StmtKind::Assign && S.Dst &&
+                 S.Dst->Kind == ExprKind::Load && S.Dst->Operands.size() == 1) {
+        Address = S.Dst->Operands[0];
+        Value = S.Val;
+      }
+      if (Address) {
+        if (Derived(Value)) {
+          F.Active = false;
+          F.Escaped = true;
+          F.PointerReady = false;
+          F.PositiveCount = false;
+        }
+        const auto At = Offset(Address);
+        const uint64_t Bytes = Value && Value->Type ? Value->Type->Size : 0;
+        if (!At) {
+          if (Derived(Address)) {
+            F.Active = false;
+            F.PointerReady = false;
+            F.PositiveCount = false;
+          }
+        } else if (!Bytes || !InFrame(*At, Bytes) ||
+                   Overlaps(*At, Bytes, State, 64) ||
+                   Overlaps(*At, Bytes, BufferRange->first,
+                            BufferRange->second)) {
+          F.Active = false;
+          F.PointerReady = false;
+          F.PositiveCount = false;
+        }
+      }
+      if (F.CountVar && S.Kind == StmtKind::Assign && S.Dst &&
+          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+          varKey(S.Dst->Var) == *F.CountVar &&
+          !(S.Val && ValidEnumeration(*S.Val))) {
+        F.Active = false;
+        F.PointerReady = false;
+        F.PositiveCount = false;
+        F.CountVar.reset();
+      }
+      if (Group.PointerVar && S.Kind == StmtKind::Assign && S.Dst &&
+          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+          varKey(S.Dst->Var) == *Group.PointerVar)
+        F.PointerReady =
+            F.Active && !F.Escaped && S.Val.get() == Group.PointerDefinition;
+      if (S.Kind == StmtKind::Return && Derived(S.RetVal)) {
+        F.Active = false;
+        F.Escaped = true;
+        F.PointerReady = false;
+        F.PositiveCount = false;
+      }
+    };
+    const auto CountTest = [&](const ExprPtr &Condition,
+                               VarKey Key) -> std::optional<bool> {
+      auto Value = Condition;
+      while (
+          Value &&
+          (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+          Value->Type && Value->Type->Size == 8 &&
+          Value->Operands.size() == 1 && Value->Operands[0] &&
+          Value->Operands[0]->Type && Value->Operands[0]->Type->Size == 8)
+        Value = Value->Operands[0];
+      if (Value && Value->Kind == ExprKind::Var && varKey(Value->Var) == Key)
+        return true;
+      if (!Value || Value->Kind != ExprKind::BinOp ||
+          (Value->Op != NdOp::INT_NOTEQUAL && Value->Op != NdOp::INT_EQUAL) ||
+          Value->Operands.size() != 2)
+        return std::nullopt;
+      for (unsigned I = 0; I < 2; ++I) {
+        const auto &Variable = Value->Operands[I];
+        const auto &Zero = Value->Operands[1 - I];
+        if (Variable && Variable->Kind == ExprKind::Var &&
+            varKey(Variable->Var) == Key && Zero &&
+            Zero->Kind == ExprKind::Const && Zero->ConstVal == 0)
+          return Value->Op == NdOp::INT_NOTEQUAL;
+      }
+      return std::nullopt;
+    };
+    while (!Pending.empty() && Budget && ++Work <= 100000) {
+      const size_t Index = Pending.back();
+      Pending.pop_back();
+      Fact Out = *Incoming[Index];
+      Evaluate(Out, Graph.Nodes[Index]);
+      const auto &Node = Graph.Nodes[Index];
+      if (Node.Successors.size() != Node.SuccessorTruth.size())
+        return {};
+      for (size_t Edge = 0; Edge < Node.Successors.size(); ++Edge) {
+        const auto Next = Node.Successors[Edge];
+        Fact EdgeOut = Out;
+        if (EdgeOut.CountVar && Node.Test && Node.SuccessorTruth[Edge]) {
+          const auto NonzeroWhenTrue = CountTest(Node.Test, *EdgeOut.CountVar);
+          if (NonzeroWhenTrue) {
+            EdgeOut.PositiveCount =
+                *Node.SuccessorTruth[Edge] == *NonzeroWhenTrue;
+            if (!EdgeOut.PositiveCount) {
+              EdgeOut.Active = false;
+              EdgeOut.PointerReady = false;
+            }
+          }
+        }
+        auto &In = Incoming[Next];
+        const Fact Merged =
+            In ? Fact{In->Active && EdgeOut.Active,
+                      In->Escaped || EdgeOut.Escaped,
+                      In->PointerReady && EdgeOut.PointerReady,
+                      In->PositiveCount && EdgeOut.PositiveCount,
+                      In->CountVar == EdgeOut.CountVar ? In->CountVar
+                                                       : std::nullopt}
+               : EdgeOut;
+        if (!In || !(*In == Merged)) {
+          In = Merged;
+          Pending.push_back(Next);
+        }
+      }
+    }
+    if (!Budget || Work > 100000)
+      return {};
+    for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
+      if (!Incoming[I] || !Incoming[I]->Active || Incoming[I]->Escaped ||
+          !Incoming[I]->PositiveCount ||
+          (Group.PointerVar && !Incoming[I]->PointerReady))
+        continue;
+      const auto *S = Graph.Nodes[I].Statement;
+      if (S && S->Kind == StmtKind::Assign && S->Val &&
+          Group.Loads.count(S->Val.get()))
+        Proven.insert(S->Val.get());
+    }
+  }
+  return Proven;
+}
+
+/// A block invoke can use one captured word as a Class argument and in a
+/// dynamic Objective-C format. The bound runtime call supplies an independent
+/// pointer declaration. Its position need not dominate the format call when
+/// the block context and its field remain private and unchanged on every
+/// reachable source path.
+inline std::set<const HighExpr *>
+provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
+                             const VarKeyMap<std::vector<ExprPtr>> &Definitions,
+                             const HighExpr &Call, size_t FixedCount) {
+  std::set<const HighExpr *> Proven;
+  if (!Function.SourceTypeHint ||
+      Function.SourceTypeHint->Origin !=
+          SourceFunctionTypeHint::OriginKind::BlockRuntime ||
+      Function.Params.empty() || !Function.Params[0].Type ||
+      Function.Params[0].Type->Kind != NdTypeKind::Ptr ||
+      Function.FrameSize > (1u << 24) || Function.FrameHeadroom > (1u << 24) ||
+      Call.Operands.size() <= FixedCount)
+    return Proven;
+  size_t Budget = 100000;
+  const auto Context = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param &&
+           E->Var.Id == 0 && E->Var.SSAVer == 0 && E->Var.RenameTag < 0 &&
+           E->Var.Size == 8;
+  };
+  const auto Capture = [&](const ExprPtr &E) -> std::optional<uint64_t> {
+    if (!E || E->Kind != ExprKind::Load || !E->Type || E->Type->Size != 8 ||
+        E->IntrinsicId != Intrinsic::None ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        E->Operands.size() != 1)
+      return std::nullopt;
+    auto Address = E->Operands[0];
+    if (!Address || Address->Kind != ExprKind::BinOp ||
+        Address->Op != NdOp::INT_ADD || Address->Operands.size() != 2 ||
+        Address->IntrinsicId != Intrinsic::None ||
+        !Address->IntrinsicOutputs.empty() ||
+        Address->MemoryOrdering != NdMemoryOrdering::None ||
+        Address->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto &Offset = Address->Operands[I];
+      if (Context(Address->Operands[1 - I]) && Offset &&
+          Offset->Kind == ExprKind::Const && Offset->Type &&
+          Offset->Type->Kind == NdTypeKind::Int && Offset->Type->Size <= 8 &&
+          Offset->ConstProvenance != ConstantAddressProvenance::Address &&
+          Offset->ConstProvenance != ConstantAddressProvenance::DataAddress &&
+          Offset->AddressOwnerVA == InvalidVA && Offset->ConstVal >= 32 &&
+          Offset->ConstVal <= (1u << 20) - 8 && !(Offset->ConstVal % 8))
+        return Offset->ConstVal;
+    }
+    return std::nullopt;
+  };
+  const auto FromCapture = [&](auto &&Self, const ExprPtr &E,
+                               std::set<VarKey> &Active,
+                               unsigned Depth) -> std::optional<uint64_t> {
+    if (!E || !Budget || Depth > 64)
+      return std::nullopt;
+    --Budget;
+    if (const auto At = Capture(E))
+      return At;
+    if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Type && E->Type->Size == 8 && E->Operands.size() == 1 &&
+        E->Operands[0] && E->Operands[0]->Type &&
+        E->Operands[0]->Type->Size == 8)
+      return Self(Self, E->Operands[0], Active, Depth + 1);
+    if (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)
+      return std::nullopt;
+    const auto Key = varKey(E->Var);
+    if (!Active.insert(Key).second)
+      return std::nullopt;
+    std::optional<uint64_t> Result;
+    const auto Found = Definitions.find(Key);
+    if (Found != Definitions.end() && !Found->second.empty()) {
+      for (const auto &Definition : Found->second) {
+        const auto At = Self(Self, Definition, Active, Depth + 1);
+        if (!At || (Result && Result != At)) {
+          Result.reset();
+          break;
+        }
+        Result = At;
+      }
+    }
+    Active.erase(Key);
+    return Result;
+  };
+  std::map<uint64_t, std::set<const HighExpr *>> Candidates;
+  std::set<const HighExpr *> Visited;
+  const auto Collect = [&](auto &&Self, const ExprPtr &E,
+                           unsigned Depth) -> void {
+    if (!E || !Budget || Depth > 64 || !Visited.insert(E.get()).second)
+      return;
+    --Budget;
+    if (const auto At = Capture(E))
+      Candidates[*At].insert(E.get());
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto Found = Definitions.find(varKey(E->Var));
+      if (Found != Definitions.end())
+        for (const auto &Definition : Found->second)
+          Self(Self, Definition, Depth + 1);
+    }
+    E->forEachChildExpr(
+        [&](const ExprPtr &Child) { Self(Self, Child, Depth + 1); });
+  };
+  for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
+    Collect(Collect, Call.Operands[I], 0);
+  if (!Budget || Candidates.empty() || Candidates.size() > 16)
+    return {};
+  const auto Graph = buildHighSourceFlowGraph(Function);
+  if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
+      Graph.Nodes.size() > 100000)
+    return {};
+  VarKeyMap<ExprPtr> FrameAliases;
+  VarKeyMap<unsigned> DefinitionCounts;
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      ++DefinitionCounts[varKey(S.Dst->Var)];
+  });
+  for (const auto &S : Function.Body) {
+    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+        S.Dst->Kind != ExprKind::Var || S.Dst->Var.Size != 8 ||
+        DefinitionCounts[varKey(S.Dst->Var)] != 1 ||
+        !high_detail::frameAddressOffset(S.Val, Function, Image.Arch, Budget, 0,
+                                         &FrameAliases))
+      break;
+    FrameAliases.emplace(varKey(S.Dst->Var), S.Val);
+  }
+  const auto ContextDerived = [&](auto &&Self, const ExprPtr &E,
+                                  std::set<VarKey> &Active,
+                                  unsigned Depth) -> bool {
+    if (!E)
+      return false;
+    if (!Budget || Depth > 64)
+      return true;
+    --Budget;
+    if (Context(E))
+      return true;
+    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
+      return false;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto Key = varKey(E->Var);
+      if (!Active.insert(Key).second)
+        return true;
+      bool Derived = false;
+      if (const auto It = Definitions.find(Key); It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Derived |= Self(Self, Definition, Active, Depth + 1);
+      Active.erase(Key);
+      return Derived;
+    }
+    bool Derived = false;
+    for (const auto &Child : E->Operands)
+      Derived |= Self(Self, Child, Active, Depth + 1);
+    return Derived;
+  };
+  const auto Derived = [&](const ExprPtr &E) {
+    std::set<VarKey> Active;
+    return ContextDerived(ContextDerived, E, Active, 0);
+  };
+  for (const auto &[At, Loads] : Candidates) {
+    struct Fact {
+      bool Observed = false;
+      bool Escaped = false;
+      bool operator==(const Fact &) const = default;
+    };
+    std::vector<std::optional<Fact>> Incoming(Graph.Nodes.size());
+    std::vector<size_t> Pending{Graph.Entry};
+    Incoming[Graph.Entry] = Fact{};
+    size_t Work = 0;
+    bool AnyObservation = false;
+    bool AnyEscape = false;
+    const auto IndependentOutStore = [&](const ExprPtr &Address, size_t Bytes) {
+      if (!Address || Address->Kind != ExprKind::Var ||
+          Address->Var.Kind != MedVar::Param || Address->Var.Id <= 0 ||
+          Address->Var.SSAVer != 0 || Address->Var.RenameTag >= 0 ||
+          Address->Var.Size != 8 || !Function.SourceTypeHint ||
+          Function.Params.size() !=
+              Function.SourceTypeHint->Parameters.size() ||
+          static_cast<size_t>(Address->Var.Id) >= Function.Params.size())
+        return false;
+      const auto &Formal = Function.Params[Address->Var.Id].Type;
+      const auto &Declared =
+          Function.SourceTypeHint->Parameters[Address->Var.Id].Type;
+      return Formal && Declared && Address->Type &&
+             equalSourceTypes(Address->Type, Declared) &&
+             Formal->Kind == NdTypeKind::Ptr &&
+             Declared->Kind == NdTypeKind::Ptr && Declared->Pointee &&
+             Formal->Size == 8 && equalSourceTypes(Formal, Declared) && Bytes &&
+             Bytes <= Declared->Pointee->Size;
+    };
+    while (!Pending.empty() && Budget && ++Work <= 100000) {
+      const size_t Index = Pending.back();
+      Pending.pop_back();
+      Fact Out = *Incoming[Index];
+      const auto &Node = Graph.Nodes[Index];
+      const auto *S = Node.Statement;
+      if (S) {
+        ExprPtr Address, Value;
+        if (S->Kind == StmtKind::Store) {
+          Address = S->StoreAddr;
+          Value = S->StoreVal;
+        } else if (S->Kind == StmtKind::Assign && S->Dst &&
+                   S->Dst->Kind == ExprKind::Load &&
+                   S->Dst->Operands.size() == 1) {
+          Address = S->Dst->Operands[0];
+          Value = S->Val;
+        }
+        if (Address) {
+          const auto Frame = high_detail::frameAddressOffset(
+              Address, Function, Image.Arch, Budget, 0, &FrameAliases);
+          const auto Bytes = Value && Value->Type ? Value->Type->Size : 0;
+          const bool PrivateFrame =
+              Frame && Bytes && Bytes <= (1u << 24) &&
+              *Frame >= -static_cast<int64_t>(Function.FrameSize) &&
+              *Frame <= static_cast<int64_t>(Function.FrameHeadroom) -
+                            static_cast<int64_t>(Bytes);
+          if ((!PrivateFrame && !IndependentOutStore(Address, Bytes)) ||
+              Derived(Value)) {
+            Out.Observed = false;
+            Out.Escaped = true;
+          }
+        }
+        if (S->Kind == StmtKind::Assign && S->Val &&
+            S->Val->Kind == ExprKind::Call) {
+          const auto &E = *S->Val;
+          if (E.SourceCallHint &&
+              E.SourceCallHint->CallKind ==
+                  SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+              E.SourceCallHint->TargetName == "objc_opt_isKindOfClass" &&
+              E.Operands.size() == 2 && objcSourceCallBound(E, Image, {})) {
+            std::set<VarKey> Active;
+            if (FromCapture(FromCapture, E.Operands[1], Active, 0) == At &&
+                !Out.Escaped) {
+              Out.Observed = true;
+              AnyObservation = true;
+            }
+          }
+        }
+      }
+      const auto Check = [&](auto &&Self, const ExprPtr &E) -> void {
+        if (!E || !Budget)
+          return;
+        --Budget;
+        if (E->Kind == ExprKind::Store) {
+          Out.Observed = false;
+          Out.Escaped = true;
+        } else if (E->Kind == ExprKind::Call) {
+          bool Exposes = Derived(E->IndirectTarget);
+          for (const auto &Arg : E->Operands)
+            Exposes |= Derived(Arg);
+          if (Exposes) {
+            Out.Observed = false;
+            Out.Escaped = true;
+          }
+        }
+        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+      };
+      Check(Check, Node.Test);
+      if (S)
+        forEachRhsExpr(*S, [&](const ExprPtr &Root) { Check(Check, Root); });
+      AnyEscape |= Out.Escaped;
+      for (const auto Next : Node.Successors) {
+        auto &In = Incoming[Next];
+        const Fact Merged =
+            In ? Fact{In->Observed && Out.Observed, In->Escaped || Out.Escaped}
+               : Out;
+        if (!In || !(*In == Merged)) {
+          In = Merged;
+          Pending.push_back(Next);
+        }
+      }
+    }
+    if (!Budget || Work > 100000)
+      return {};
+    for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
+      if (!Incoming[I])
+        continue;
+      const auto *S = Graph.Nodes[I].Statement;
+      if (S && S->Kind == StmtKind::Assign && S->Val &&
+          Loads.count(S->Val.get()) &&
+          ((Incoming[I]->Observed && !Incoming[I]->Escaped) ||
+           (AnyObservation && !AnyEscape)))
         Proven.insert(S->Val.get());
     }
   }
@@ -698,6 +1488,138 @@ provenSourceInteger64Value(const ExprPtr &Value,
     }
   Active.erase(Key);
   return Result;
+}
+
+/// A localized NSString format has a dynamic result, but its immutable source
+/// key still declares the argument carrier used by the caller. Require the
+/// exact bound NSBundle lookup, an empty fallback, and one signed 64-bit
+/// conversion. Merged format values must agree on the complete key type.
+inline TypeRef provenLocalizedFormatInteger64Type(
+    const ExprPtr &Value, const VarKeyMap<std::vector<ExprPtr>> &Definitions,
+    const BinaryImage &Image) {
+  if (Image.Arch != Arch::AArch64)
+    return {};
+  size_t Budget = 4096;
+  std::set<VarKey> ActiveValues, ActiveAddresses;
+  const auto LiteralAddress = [&](auto &&Self, const ExprPtr &E,
+                                  unsigned Depth) -> std::optional<va_t> {
+    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+        (E->Type->Kind != NdTypeKind::Int &&
+         E->Type->Kind != NdTypeKind::Ptr) ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    if (E->Kind == ExprKind::Const) {
+      if (!E->ConstVal || (isExactAddressProvenance(E->ConstProvenance) &&
+                           !isCodeAddressProvenance(E->ConstProvenance) &&
+                           (E->AddressOwnerVA == InvalidVA ||
+                            E->AddressOwnerVA == E->ConstVal) &&
+                           readObjCConstantString(Image, E->ConstVal)))
+        return E->ConstVal;
+      return std::nullopt;
+    }
+    if (E->Kind == ExprKind::Call && E->SourceCallHint &&
+        E->SourceCallHint->CallKind ==
+            SourceCallTypeHint::Kind::RuntimeConstantString &&
+        E->Operands.empty() && objcSourceCallBound(*E, Image, {}) &&
+        readObjCConstantString(Image, E->SourceCallHint->TargetAddress))
+      return E->SourceCallHint->TargetAddress;
+    if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Operands.size() == 1 &&
+        (E->Kind != ExprKind::Cast ||
+         (E->CastTo && equalSourceTypes(E->Type, E->CastTo))))
+      return Self(Self, E->Operands[0], Depth + 1);
+    if (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)
+      return std::nullopt;
+    const auto Key = varKey(E->Var);
+    if (!ActiveAddresses.insert(Key).second)
+      return std::nullopt;
+    const auto Found = Definitions.find(Key);
+    std::optional<va_t> Address;
+    bool Valid = Found != Definitions.end() && !Found->second.empty();
+    if (Valid)
+      for (const auto &Definition : Found->second) {
+        const auto Candidate = Self(Self, Definition, Depth + 1);
+        if (!Candidate || (Address && *Candidate != *Address)) {
+          Valid = false;
+          break;
+        }
+        Address = *Candidate;
+      }
+    ActiveAddresses.erase(Key);
+    return Valid ? Address : std::nullopt;
+  };
+  const auto Resolve = [&](auto &&Self, const ExprPtr &E,
+                           unsigned Depth) -> TypeRef {
+    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+        (E->Type->Kind != NdTypeKind::Int &&
+         E->Type->Kind != NdTypeKind::Ptr) ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return {};
+    if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Operands.size() == 1 &&
+        (E->Kind != ExprKind::Cast ||
+         (E->CastTo && equalSourceTypes(E->Type, E->CastTo))))
+      return Self(Self, E->Operands[0], Depth + 1);
+    if (E->Kind == ExprKind::Call && E->SourceCallHint) {
+      const auto &Binding = *E->SourceCallHint;
+      if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+          Binding.TargetName == "objc_retainAutoreleasedReturnValue" &&
+          E->Operands.size() == 1 && objcSourceCallBound(*E, Image, {}))
+        return Self(Self, E->Operands[0], Depth + 1);
+      if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+          Binding.Selector != "localizedStringForKey:value:table:" ||
+          Binding.Signature.Origin !=
+              SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          !Binding.Receiver || Binding.Receiver->ClassName != "NSBundle" ||
+          E->Operands.size() != 5 ||
+          !objcSelectorStubMatches(Image, Binding.TargetAddress,
+                                   Binding.SelectorReferenceAddress,
+                                   Binding.Selector) ||
+          !objcSourceCallBound(*E, Image, {}))
+        return {};
+      const auto Key = LiteralAddress(LiteralAddress, E->Operands[2], 0);
+      const auto Fallback = LiteralAddress(LiteralAddress, E->Operands[3], 0);
+      const auto Table = LiteralAddress(LiteralAddress, E->Operands[4], 0);
+      if (!Key || !*Key || !Fallback || !Table || *Table)
+        return {};
+      const auto KeyString = readObjCConstantString(Image, *Key);
+      const auto FallbackString =
+          *Fallback ? readObjCConstantString(Image, *Fallback) : std::nullopt;
+      if (!KeyString ||
+          (*Fallback && (!FallbackString || !FallbackString->Units.empty())))
+        return {};
+      const auto Types = objcFormatArgumentTypes(
+          KeyString->Units, SourceCallTypeHint::FormatSyntax::NSString);
+      return Types && Types->size() == 1 && (*Types)[0] &&
+                     (*Types)[0]->Kind == NdTypeKind::Int &&
+                     (*Types)[0]->Size == 8 && (*Types)[0]->IsSigned
+                 ? (*Types)[0]
+                 : TypeRef{};
+    }
+    if (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)
+      return {};
+    const auto Key = varKey(E->Var);
+    if (!ActiveValues.insert(Key).second)
+      return {};
+    const auto Found = Definitions.find(Key);
+    TypeRef Type;
+    if (Found != Definitions.end())
+      for (const auto &Definition : Found->second) {
+        const auto Candidate = Self(Self, Definition, Depth + 1);
+        if (!Candidate || (Type && !equalSourceTypes(Type, Candidate))) {
+          Type.reset();
+          break;
+        }
+        Type = Candidate;
+      }
+    ActiveValues.erase(Key);
+    return Type;
+  };
+  return Resolve(Resolve, Value, 0);
 }
 
 inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
@@ -2329,6 +3251,194 @@ localStorageHint(const BinaryImage &Image, va_t Address, uint64_t Width) {
   return Hint;
 }
 
+// A Swift static Optional<Self> may be emitted as a zero-filled global whose
+// nlist entry has no size. Its nominal value-witness table supplies an exact
+// size only when the complete zero-filled interval ends at the next named
+// object. This is deliberately narrower than using an arbitrary symbol gap
+// as an object extent: the optional's actual storage is not inferred from the
+// type name or the gap alone.
+inline std::optional<SourceCallTypeHint>
+swiftStaticOptionalSelfStorageHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      Address % 16)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Address, 1);
+  const auto *Section = Image.getSectionFor(Address);
+  if (!Storage || !Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_ZEROFILL)
+    return std::nullopt;
+  llvm::StringRef Name(Storage->Name);
+  if (!Name.consume_front("_$s"))
+    return std::nullopt;
+  auto Component = [](llvm::StringRef &Text) -> std::optional<llvm::StringRef> {
+    size_t Digits = 0;
+    unsigned Length = 0;
+    while (Digits < Text.size() && Digits < 4 && Text[Digits] >= '0' &&
+           Text[Digits] <= '9') {
+      Length = Length * 10 + (Text[Digits] - '0');
+      ++Digits;
+    }
+    if (!Digits || !Length || Length > 1024 ||
+        (Digits < Text.size() && Text[Digits] >= '0' && Text[Digits] <= '9') ||
+        Text.size() - Digits < Length)
+      return std::nullopt;
+    const auto Value = Text.substr(Digits, Length);
+    Text = Text.drop_front(Digits + Length);
+    return Value;
+  };
+  if (!Component(Name) || !Component(Name) || !Name.consume_front("V"))
+    return std::nullopt;
+  const std::string Nominal =
+      Storage->Name.substr(0, Storage->Name.size() - Name.size());
+  if (!Component(Name) || Name != "ACSgvpZ")
+    return std::nullopt;
+  const std::string WitnessName = Nominal + "WV";
+  const std::string AddressorName =
+      llvm::StringRef(Storage->Name).drop_back(3).str() + "vau";
+  const Symbol *Witness = nullptr;
+  size_t Addressors = 0;
+  for (const auto &Candidate : Image.Symbols) {
+    if (Candidate.Name == WitnessName) {
+      if (Witness || Candidate.IsFunc)
+        return std::nullopt;
+      Witness = &Candidate;
+    }
+    if (Candidate.Name == AddressorName) {
+      if (!Candidate.IsFunc || !Image.isCodeAddress(Candidate.Addr))
+        return std::nullopt;
+      ++Addressors;
+    }
+  }
+  if (!Witness || Addressors != 1 || Witness->Addr > InvalidVA - 88 ||
+      (Witness->Size && Witness->Size < 88) ||
+      overlapsPointerStorage(Image, Witness->Addr + 64, 16))
+    return std::nullopt;
+  const auto *WitnessSection = Image.getSectionFor(Witness->Addr);
+  const auto *Layout = Image.readVA(Witness->Addr + 64, 16);
+  if (!WitnessSection || !WitnessSection->isReadable() ||
+      WitnessSection->isExecutable() || !Layout ||
+      Image.getSectionFor(Witness->Addr + 79) != WitnessSection)
+    return std::nullopt;
+  const uint64_t Width = llvm::support::endian::read64le(Layout);
+  const uint64_t Stride = llvm::support::endian::read64le(Layout + 8);
+  if (!Width || Width != Stride || Width % 16 || Width > 1024 * 1024 ||
+      Width > InvalidVA - Address ||
+      (Storage->Size && Storage->Size != Width) ||
+      Image.getSectionFor(Address + Width - 1) != Section ||
+      Image.getSectionFor(Address + Width) != Section)
+    return std::nullopt;
+  size_t BoundarySymbols = 0;
+  for (const auto &Candidate : Image.Symbols)
+    if (!Candidate.IsFunc && Candidate.Addr == Address + Width)
+      ++BoundarySymbols;
+  if (BoundarySymbols != 1)
+    return std::nullopt;
+  const auto *Bytes = Image.readVA(Address, Width);
+  if (!Bytes ||
+      !std::all_of(Bytes, Bytes + Width, [](uint8_t Byte) { return !Byte; }))
+    return std::nullopt;
+  return localStorageHint(Image, Address, Width);
+}
+
+// A static Optional<Foundation.URL> is kept in Swift's three-word value
+// buffer. The allocation helper may replace its first word with a heap
+// pointer when the resilient value does not fit inline. Require the exact
+// demangled type, its addressor, the fixed buffer boundary, and zero-filled
+// storage; neither URL's runtime size nor a symbol gap alone proves this.
+inline bool swiftStaticOptionalURLBufferSymbol(llvm::StringRef Name) {
+  Name.consume_front("_");
+  if (!Name.ends_with("VSgvpZ"))
+    return false;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(Name, Options);
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  const auto Named = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, llvm::StringRef Text) {
+    return Node.Kind == Kind && Node.Text && *Node.Text == Text &&
+           !Node.Index && Node.Children.empty();
+  };
+  const auto NamedAny = [](const llvm::SwiftDemangleNode &Node,
+                           llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "Static", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Variable", 3))
+    return false;
+  const auto &Variable = Parsed.Root->Children[0].Children[0];
+  const auto &Owner = Variable.Children[0];
+  const auto &Property = Variable.Children[1];
+  const auto &Type = Variable.Children[2];
+  if (!Shape(Owner, "Class", 2) || !NamedAny(Owner.Children[0], "Module") ||
+      !NamedAny(Owner.Children[1], "Identifier") ||
+      !NamedAny(Property, "Identifier") || !Shape(Type, "Type", 1))
+    return false;
+  const auto &Optional = Type.Children[0];
+  if (!Shape(Optional, "BoundGenericEnum", 2) ||
+      !Shape(Optional.Children[0], "Type", 1) ||
+      !Shape(Optional.Children[0].Children[0], "Enum", 2) ||
+      !Named(Optional.Children[0].Children[0].Children[0], "Module", "Swift") ||
+      !Named(Optional.Children[0].Children[0].Children[1], "Identifier",
+             "Optional") ||
+      !Shape(Optional.Children[1], "TypeList", 1) ||
+      !Shape(Optional.Children[1].Children[0], "Type", 1) ||
+      !Shape(Optional.Children[1].Children[0].Children[0], "Structure", 2))
+    return false;
+  const auto &URL = Optional.Children[1].Children[0].Children[0];
+  return Named(URL.Children[0], "Module", "Foundation") &&
+         Named(URL.Children[1], "Identifier", "URL");
+}
+
+inline std::optional<SourceCallTypeHint>
+swiftStaticOptionalURLBufferHint(const BinaryImage &Image, va_t Address) {
+  constexpr uint64_t Width = 3 * sizeof(uint64_t);
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      !Address || Address % 8 || Address > InvalidVA - Width)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Address, Width);
+  const auto *Section = Image.getSectionFor(Address);
+  if (!Storage || !Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_ZEROFILL ||
+      !swiftStaticOptionalURLBufferSymbol(Storage->Name) ||
+      (Storage->Size && Storage->Size != Width) ||
+      Image.getSectionFor(Address + Width - 1) != Section ||
+      Image.getSectionFor(Address + Width) != Section)
+    return std::nullopt;
+  const std::string AddressorName =
+      llvm::StringRef(Storage->Name).drop_back(3).str() + "vau";
+  size_t Addressors = 0;
+  size_t BoundarySymbols = 0;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Name == AddressorName) {
+      if (!Symbol.IsFunc || !Image.isCodeAddress(Symbol.Addr))
+        return std::nullopt;
+      ++Addressors;
+    }
+    if (!Symbol.IsFunc && Symbol.Addr == Address + Width)
+      ++BoundarySymbols;
+  }
+  const auto *Bytes = Image.readVA(Address, Width);
+  if (Addressors != 1 || BoundarySymbols != 1 || !Bytes ||
+      !std::all_of(Bytes, Bytes + Width, [](uint8_t Byte) { return !Byte; }))
+    return std::nullopt;
+  return localStorageHint(Image, Address, Width);
+}
+
 inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
@@ -2420,6 +3530,68 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
   return assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason)
              ? std::optional<SourceCallTypeHint>(std::move(Hint))
              : std::nullopt;
+}
+
+// A W-register MOVZ/MOVK pair in a zero-based dylib constructs an absolute
+// 32-bit value. Neither instruction has a relocation, and the dylib cannot be
+// loaded at its zero link-time base. When the folded HighIR assignment still
+// names the MOVK occurrence, its value is a literal even if those bits happen
+// to fall inside the link-time image. Do not infer this from the value alone.
+inline bool linkedMachOWideScalarAssignment(const HighStmt &Statement,
+                                            const HighFunc &Function,
+                                            const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOIsDylib || Image.MachOChainedFixupsAmbiguous ||
+      Image.Base != 0 || Statement.Kind != StmtKind::Assign || !Statement.Val ||
+      !Statement.Dst ||
+      (Statement.Dst->Kind != ExprKind::Var &&
+       Statement.Dst->Kind != ExprKind::Phi) ||
+      !Statement.Dst->Operands.empty() ||
+      Statement.Val->Kind != ExprKind::Const || !Statement.Val->Type ||
+      Statement.Val->Type->Kind != NdTypeKind::Int ||
+      Statement.Val->Type->Size != 8 || !Statement.Val->Operands.empty() ||
+      Statement.Val->IntrinsicId != Intrinsic::None ||
+      !Statement.Val->IntrinsicOutputs.empty() ||
+      Statement.Val->IndirectTarget || Statement.Val->SourceCallHint ||
+      Statement.Val->MemoryOrdering != NdMemoryOrdering::None ||
+      Statement.Val->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Statement.Val->AddressOwnerVA != InvalidVA ||
+      (Statement.Val->ConstProvenance != ConstantAddressProvenance::Unknown &&
+       Statement.Val->ConstProvenance != ConstantAddressProvenance::Scalar) ||
+      !Image.getSectionFor(Statement.Val->ConstVal) ||
+      Statement.Addr < Function.Entry || Statement.Addr - Function.Entry < 4 ||
+      Statement.Addr > InvalidVA - 4)
+    return false;
+  const va_t First = Statement.Addr - 4;
+  const auto *Section = Image.getSectionFor(First);
+  const auto *Segment = Image.getSegmentFor(First);
+  if (!Section || !Section->isExecutable() ||
+      Image.getSectionFor(Statement.Addr + 3) != Section || !Segment ||
+      !Segment->isExecutable() ||
+      Image.getSegmentFor(Statement.Addr + 3) != Segment ||
+      overlapsPointerStorage(Image, First, 8))
+    return false;
+  for (va_t Byte = First; Byte < Statement.Addr + 4; ++Byte)
+    if (Image.hasRelocationProvenanceAt(Byte) ||
+        Image.DataAddressRelocOperands.count(Byte) ||
+        Image.CodeAddressRelocOperands.count(Byte) ||
+        (Image.ObjectRelocationWriteBytes &&
+         Image.ObjectRelocationWriteBytes->count(Byte)))
+      return false;
+  const auto *Code = Image.readVA(First, 8);
+  if (!Code)
+    return false;
+  const uint32_t Low = llvm::support::endian::read32le(Code);
+  const uint32_t High = llvm::support::endian::read32le(Code + 4);
+  const unsigned Register = Low & 31;
+  if ((Low & 0xff800000) != 0x52800000 || (High & 0xff800000) != 0x72800000 ||
+      ((Low >> 21) & 3) != 0 || ((High >> 21) & 3) != 1 || Register == 31 ||
+      (High & 31) != Register)
+    return false;
+  const uint64_t Literal =
+      ((Low >> 5) & 0xffff) | (uint64_t((High >> 5) & 0xffff) << 16);
+  return Statement.Val->ConstVal == Literal;
 }
 
 // An inline Swift String is two value words, not a pointer to its bytes.
@@ -4263,6 +5435,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         return Expression;
       }
       if (auto Storage =
+              swiftStaticOptionalSelfStorageHint(Image, Original->ConstVal)) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+        Result.LocalStorageExtents[Original->ConstVal] =
+            Expression->SourceCallHint->ByteCount;
+        return Expression;
+      }
+      if (auto Storage =
+              swiftStaticOptionalURLBufferHint(Image, Original->ConstVal)) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+        Result.LocalStorageExtents[Original->ConstVal] =
+            Expression->SourceCallHint->ByteCount;
+        return Expression;
+      }
+      if (auto Storage =
               swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
         *Expression = *HighExpr::makeCall({}, 0, {});
         Expression->Type = Original->Type;
@@ -4670,18 +5862,29 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                                               PointerBudget, ActivePointers);
             });
         if (!PointerTail) {
-          const auto FrameLoads = provenPrivateFramePointerLoads(
-              Function, Image, FormatDefinitions, *Expression, Fixed);
+          // Each accepted load has its own complete proof. A single format
+          // may mix private-frame objects and captured Classes, so check the
+          // whole tail against the union rather than requiring one proof kind
+          // to account for every argument.
+          std::set<const HighExpr *> ProvenLoads;
+          for (const auto &Group :
+               {provenPrivateFramePointerLoads(
+                    Function, Image, FormatDefinitions, *Expression, Fixed),
+                provenFastEnumerationObjectLoads(
+                    Function, Image, FormatDefinitions, *Expression, Fixed),
+                provenBlockClassCaptureLoads(Function, Image, FormatDefinitions,
+                                             *Expression, Fixed)})
+            ProvenLoads.insert(Group.begin(), Group.end());
           PointerBudget = 4096;
           ActivePointers.clear();
           PointerTail =
-              !FrameLoads.empty() &&
+              !ProvenLoads.empty() &&
               std::all_of(Expression->Operands.begin() + Fixed,
                           Expression->Operands.end(),
                           [&](const ExprPtr &Operand) {
                             return provenSourcePointerValue(
                                 Operand, FormatDefinitions, Image,
-                                PointerBudget, ActivePointers, 0, &FrameLoads);
+                                PointerBudget, ActivePointers, 0, &ProvenLoads);
                           });
         }
         if (PointerTail) {
@@ -4701,6 +5904,14 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             auto Type = provenSourceInteger64Value(
                 Expression->Operands[I], FormatDefinitions, Image,
                 IntegerBudget, ActiveIntegers);
+            if (!Type && I == Fixed &&
+                Expression->Operands.size() == Fixed + 1 &&
+                Expression->Operands[I] && Expression->Operands[I]->Type &&
+                Expression->Operands[I]->Type->Kind == NdTypeKind::Int &&
+                Expression->Operands[I]->Type->Size == 8)
+              Type = provenLocalizedFormatInteger64Type(
+                  Expression->Operands[Stub->Format->FormatParameter],
+                  FormatDefinitions, Image);
             if (!Type) {
               Types.clear();
               break;
@@ -5421,6 +6632,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     for (size_t Index = 0; Index < Body.size(); ++Index) {
       auto &Statement = Body[Index];
       StatementAddress = Statement.Addr;
+      const bool WideScalarAssignment =
+          linkedMachOWideScalarAssignment(Statement, Function, Image);
       const bool InlineSmallStringPayload =
           Index + 1 < Body.size() &&
           swiftInlineSmallStringStorePair(Statement, Body[Index + 1], Function,
@@ -5431,6 +6644,10 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                             Statement.MemoryOrdering,
                             Statement.MemoryAddressSpace);
       forEachExpr(Statement, [&](ExprPtr &Expression) {
+        if (WideScalarAssignment && Expression == Statement.Val) {
+          Expression = std::make_shared<HighExpr>(*Expression);
+          Expression->ConstProvenance = ConstantAddressProvenance::Scalar;
+        }
         if (Statement.Kind == StmtKind::Assign && Expression == Statement.Val &&
             Statement.Dst &&
             (Statement.Dst->Kind == ExprKind::Var ||
@@ -5483,7 +6700,9 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                   ConstantAddressProvenance::Scalar &&
               Expression->AddressOwnerVA == InvalidVA;
           Expression =
-              Copy(Expression, 0, NumericStoreValue,
+              Copy(Expression, 0,
+                   NumericStoreValue ||
+                       (WideScalarAssignment && Expression == Statement.Val),
                    Expression == Statement.StoreAddr ||
                        (Expression == Statement.RetVal && Function.ReturnType &&
                         Function.ReturnType->Kind == NdTypeKind::Ptr),
@@ -5973,7 +7192,23 @@ inline bool objcSourceCallBound(
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
     auto Expected =
         localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
-    if (!Expected && Binding.ByteCount == 8)
+    const bool OptionalURL =
+        swiftStaticOptionalURLBufferSymbol(Binding.TargetName) ||
+        (Expected && swiftStaticOptionalURLBufferSymbol(Expected->TargetName));
+    if (OptionalURL) {
+      auto Static =
+          swiftStaticOptionalURLBufferHint(Image, Binding.TargetAddress);
+      if (!Static || Static->ByteCount < Binding.ByteCount)
+        Expected.reset();
+    }
+    if (Expected && Binding.ByteCount > 8 &&
+        llvm::StringRef(Expected->TargetName).ends_with("ACSgvpZ")) {
+      auto Static =
+          swiftStaticOptionalSelfStorageHint(Image, Binding.TargetAddress);
+      if (!Static || Static->ByteCount != Binding.ByteCount)
+        Expected.reset();
+    }
+    if (!Expected && Binding.ByteCount == 8 && !OptionalURL)
       Expected = oncePredicateStorageHint(Image, Binding.TargetAddress);
     if (!Expected) {
       auto Array = swiftInlineStringPairArrayHint(Image, Binding.TargetAddress);
@@ -6337,11 +7572,20 @@ inline bool objcSourceCallBound(
             size_t Budget = 4096;
             std::set<VarKey> Active;
             std::optional<std::set<const HighExpr *>> FrameLoads;
+            std::optional<std::set<const HighExpr *>> EnumLoads;
+            std::optional<std::set<const HighExpr *>> ClassLoads;
             for (size_t I = Format.FixedCount; I < Expression.Operands.size();
                  ++I) {
               if (Format.DynamicInteger64Arguments) {
-                const auto Type = provenSourceInteger64Value(
+                auto Type = provenSourceInteger64Value(
                     Expression.Operands[I], Definitions, Image, Budget, Active);
+                if (!Type && I == Format.FixedCount && TailArguments == 1 &&
+                    Expression.Operands[I] && Expression.Operands[I]->Type &&
+                    Expression.Operands[I]->Type->Kind == NdTypeKind::Int &&
+                    Expression.Operands[I]->Type->Size == 8)
+                  Type = provenLocalizedFormatInteger64Type(
+                      Expression.Operands[Format.FormatParameter], Definitions,
+                      Image);
                 if (!Type || !equalSourceTypes(Type, Hint.Parameters[I].Type))
                   return false;
               } else if (!provenSourcePointerValue(Expression.Operands[I],
@@ -6356,8 +7600,30 @@ inline bool objcSourceCallBound(
                 if (FrameLoads->empty() ||
                     !provenSourcePointerValue(Expression.Operands[I],
                                               Definitions, Image, Budget,
-                                              Active, 0, &*FrameLoads))
-                  return false;
+                                              Active, 0, &*FrameLoads)) {
+                  if (!EnumLoads)
+                    EnumLoads = provenFastEnumerationObjectLoads(
+                        *ContainingFunction, Image, Definitions, Expression,
+                        Format.FixedCount);
+                  Budget = 4096;
+                  Active.clear();
+                  if (EnumLoads->empty() ||
+                      !provenSourcePointerValue(Expression.Operands[I],
+                                                Definitions, Image, Budget,
+                                                Active, 0, &*EnumLoads)) {
+                    if (!ClassLoads)
+                      ClassLoads = provenBlockClassCaptureLoads(
+                          *ContainingFunction, Image, Definitions, Expression,
+                          Format.FixedCount);
+                    Budget = 4096;
+                    Active.clear();
+                    if (ClassLoads->empty() ||
+                        !provenSourcePointerValue(Expression.Operands[I],
+                                                  Definitions, Image, Budget,
+                                                  Active, 0, &*ClassLoads))
+                      return false;
+                  }
+                }
               }
             }
             return true;
@@ -7099,8 +8365,29 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
                               std::set<std::string> &SharedFunctions) {
   std::string Source;
   for (const auto &[Address, Width] : Storage) {
+    uint64_t BackingWidth = Width;
     auto Hint = objc_binding_detail::localStorageHint(Image, Address, Width);
-    if (!Hint && Width == 8)
+    const bool OptionalURL =
+        Hint && objc_binding_detail::swiftStaticOptionalURLBufferSymbol(
+                    Hint->TargetName);
+    if (Hint) {
+      auto Static = objc_binding_detail::swiftStaticOptionalSelfStorageHint(
+          Image, Address);
+      if (!Static)
+        Static = objc_binding_detail::swiftStaticOptionalURLBufferHint(Image,
+                                                                       Address);
+      if (Static) {
+        if (Width > Static->ByteCount)
+          throw std::runtime_error("Swift static storage extent was exceeded");
+        BackingWidth = Static->ByteCount;
+        Hint = std::move(Static);
+      } else if ((Width > 8 &&
+                  llvm::StringRef(Hint->TargetName).ends_with("ACSgvpZ")) ||
+                 OptionalURL) {
+        Hint.reset();
+      }
+    }
+    if (!Hint && Width == 8 && !OptionalURL)
       Hint = objc_binding_detail::oncePredicateStorageHint(Image, Address);
     if (!Hint) {
       auto Array =
@@ -7110,14 +8397,14 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
     }
     if (!Hint)
       throw std::runtime_error("local-storage initializer is no longer valid");
-    const auto *Bytes = Image.readVA(Address, Width);
+    const auto *Bytes = Image.readVA(Address, BackingWidth);
     if (!Bytes)
       continue;
     const std::string Name =
         "neverd_local_storage_" + llvm::utohexstr(Address, true) + "_address";
     SharedFunctions.insert(Name);
     if (const auto Target = objc_binding_detail::localStringPointerInitializer(
-            Image, Address, Width)) {
+            Image, Address, BackingWidth)) {
       const auto ObjectName = "neverd_objc_constant_string_" +
                               llvm::utohexstr(*Target, true) + "_address";
       // The shared cell is initialized before its address is exposed. After
@@ -7147,9 +8434,9 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
     Source += "\nuintptr_t " + Name +
               "(void) {\n"
               "  static _Alignas(16) unsigned char storage[" +
-              std::to_string(Width) + "] = { ";
+              std::to_string(BackingWidth) + "] = { ";
     bool Any = false;
-    for (uint64_t I = 0; I < Width; ++I) {
+    for (uint64_t I = 0; I < BackingWidth; ++I) {
       if (!Bytes[I])
         continue;
       if (Any)

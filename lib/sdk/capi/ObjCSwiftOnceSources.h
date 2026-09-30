@@ -17,6 +17,7 @@ struct SwiftOnceGetterContract {
   std::optional<size_t> SecondStorage;
   size_t Initializer = 0;
   size_t ParameterCount = 0;
+  bool UndefinedContext = false;
 
   size_t parameterCount() const { return ParameterCount; }
   uint64_t storageWidth() const { return SecondStorage ? 16 : 8; }
@@ -84,6 +85,7 @@ struct SwiftOnceSourcePlan {
       ObjCClassMetadataAccessors;
   std::map<va_t, SourceFunctionTypeHint> AddressorHints;
   std::map<va_t, SourceFunctionTypeHint> CallbackHints;
+  std::set<va_t> UnobservedContextGetters;
   std::set<va_t> DispatchOnceCallbacks;
 };
 
@@ -605,6 +607,65 @@ getterContract(const HighFunc &F, const BinaryImage &Image) {
                                  F.Params.size()};
 }
 
+// A shared Swift property thunk may do substantial work after its once gate.
+// Its body is not a simple storage load, so preserve every other operation and
+// prove only the roles of the three inputs needed for source binding. The
+// unknown context is erased later, after every direct caller has supplied a
+// callback that independently ignores it.
+inline std::optional<SwiftOnceGetterContract>
+sharedObjCOnceGetterContract(const HighFunc &F, const BinaryImage &Image) {
+  if (Image.Arch != Arch::AArch64 || !F.SourceTypeHint ||
+      F.SourceTypeHint->Origin !=
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      F.SourceTypeHint->Convention !=
+          SourceFunctionTypeHint::ConventionKind::C ||
+      F.Params.size() != 5 ||
+      F.SourceTypeHint->Parameters.size() != F.Params.size() ||
+      !llvm::StringRef(F.Name).starts_with("_$s") ||
+      !llvm::StringRef(F.Name).ends_with("vgZToTm") || !F.ReturnType ||
+      F.ReturnType->Size != 8 ||
+      (F.ReturnType->Kind != NdTypeKind::Ptr &&
+       F.ReturnType->Kind != NdTypeKind::Int) ||
+      !projectedOnceContextUnused(F, 0) || !projectedOnceContextUnused(F, 1))
+    return std::nullopt;
+  for (const auto &P : F.Params)
+    if (!P.Type || P.Type->Size != 8 ||
+        (P.Type->Kind != NdTypeKind::Ptr && P.Type->Kind != NdTypeKind::Int))
+      return std::nullopt;
+  const auto Flow = buildHighSourceFlowGraph(F);
+  if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
+    return std::nullopt;
+  size_t OnceCalls = 0;
+  size_t Budget = 100000;
+  bool StorageUsed = false;
+  bool Valid = true;
+  std::function<void(const ExprPtr &)> Scan = [&](const ExprPtr &E) {
+    if (!Valid || !E || !Budget--) {
+      Valid = false;
+      return;
+    }
+    if (onceCall(*E, Image)) {
+      if (++OnceCalls != 1 || parameter(E->Operands[0]) != 2 ||
+          parameter(E->Operands[1]) != 4 || !unknownScalarView(E->Operands[2]))
+        Valid = false;
+      return;
+    }
+    if (const auto P = parameter(E)) {
+      if (*P == 4)
+        Valid = false;
+      if (*P == 3)
+        StorageUsed = true;
+    }
+    E->forEachChildExpr([&](const ExprPtr &Child) { Scan(Child); });
+  };
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) { Scan(Root); });
+  });
+  if (!Valid || OnceCalls != 1 || !StorageUsed)
+    return std::nullopt;
+  return SwiftOnceGetterContract{2, 3, std::nullopt, 4, 5, true};
+}
+
 // A shared ObjC getter can retain two unused incoming registers before its
 // three or four Swift inputs. Its native source hint may be absent on the
 // first pass, because ordinary entry-demand inference cannot establish those
@@ -639,7 +700,9 @@ untypedObjectiveCGetter(const HighFunc &F, const BinaryImage &Image) {
     return std::nullopt;
   HighFunc Typed = F;
   Typed.SourceTypeHint = Hint;
-  const auto Contract = getterContract(Typed, Image);
+  auto Contract = getterContract(Typed, Image);
+  if (!Contract)
+    Contract = sharedObjCOnceGetterContract(Typed, Image);
   if (!Contract || Contract->Predicate != 2 || Contract->Storage != 3 ||
       (F.Params.size() == 5
            ? Contract->SecondStorage || Contract->Initializer != 4
@@ -1897,18 +1960,25 @@ discoverSwiftOnceSources(const BinaryImage &Image,
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return Plan;
   std::set<va_t> DirectTargets;
+  std::map<va_t, std::map<va_t, size_t>> DirectCalls;
+  std::map<va_t, std::map<va_t, size_t>> ObservedGetterCalls;
+  std::map<va_t, std::map<va_t, size_t>> VerifiedGetterCalls;
   std::map<va_t, const HighFunc *> Functions;
   for (const auto &F : Result.HighFuncs)
     Functions.emplace(F.Entry, &F);
   for (const auto &F : Result.LowFuncs)
     for (const auto &B : F.Blocks)
       for (const auto &Op : B.Ops)
-        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst()) {
           DirectTargets.insert(Op.Inputs[0].Offset);
+          ++DirectCalls[Op.Inputs[0].Offset][F.Entry];
+        }
   for (const auto &F : Result.HighFuncs)
     if (auto Contract = objcClassMetadataAccessorContract(F, Image))
       Plan.ObjCClassMetadataAccessors.emplace(F.Entry, *Contract);
     else if (auto Contract = getterContract(F, Image))
+      Plan.Getters.emplace(F.Entry, *Contract);
+    else if (auto Contract = sharedObjCOnceGetterContract(F, Image))
       Plan.Getters.emplace(F.Entry, *Contract);
     else if (auto Candidate = untypedObjectiveCGetter(F, Image)) {
       Plan.Getters.emplace(F.Entry, Candidate->first);
@@ -1945,6 +2015,11 @@ discoverSwiftOnceSources(const BinaryImage &Image,
           Pending.pop_back();
           if (!E)
             continue;
+          if (E->Kind == ExprKind::Call && !E->IsIndirectCall) {
+            const auto Getter = Plan.Getters.find(E->CallAddr);
+            if (Getter != Plan.Getters.end() && Getter->second.UndefinedContext)
+              ++ObservedGetterCalls[E->CallAddr][F.Entry];
+          }
           if (onceCall(*E, Image)) {
             const auto Predicate =
                 objc_binding_detail::constantAddress(*E->Operands[0]);
@@ -2015,8 +2090,12 @@ discoverSwiftOnceSources(const BinaryImage &Image,
                                 Leaf != Functions.end() && Leaf->second &&
                                 ignoresContext(*Leaf->second);
                 }
-                if (Independent)
+                if (Independent) {
                   Plan.CallbackHints.emplace(*Target, callbackHint(Image.Arch));
+                  if (Getter->second.UndefinedContext &&
+                      ignoresContext(Callback))
+                    ++VerifiedGetterCalls[E->CallAddr][F.Entry];
+                }
               }
             }
           }
@@ -2025,6 +2104,14 @@ discoverSwiftOnceSources(const BinaryImage &Image,
       });
     });
   }
+  // The shared getter is emitted once for all its callers. Erasing an unknown
+  // swift_once context is sound only when every direct machine call has a
+  // matching, source-bound call with a callback proved to ignore it.
+  for (const auto &[Address, Contract] : Plan.Getters)
+    if (Contract.UndefinedContext && !VerifiedGetterCalls[Address].empty() &&
+        VerifiedGetterCalls[Address] == ObservedGetterCalls[Address] &&
+        VerifiedGetterCalls[Address] == DirectCalls[Address])
+      Plan.UnobservedContextGetters.insert(Address);
   const auto RootCallbacks = Plan.CallbackHints;
   for (const auto &[Address, Hint] : RootCallbacks) {
     if (Plan.DispatchOnceCallbacks.count(Address) ||
@@ -2253,6 +2340,29 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
           Zero->Type = Parameters[Index].Type;
           E->Operands[Index] = std::move(Zero);
         }
+      }
+    }
+    if (Plan.UnobservedContextGetters.count(Function.Entry) &&
+        swift_once_source_detail::onceCall(*E, Image)) {
+      const auto Planned = Plan.Getters.find(Function.Entry);
+      auto Current = swift_once_source_detail::getterContract(Function, Image);
+      if (!Current)
+        Current = swift_once_source_detail::sharedObjCOnceGetterContract(
+            Function, Image);
+      if (Planned != Plan.Getters.end() && Current &&
+          Planned->second.UndefinedContext &&
+          Current->Predicate == Planned->second.Predicate &&
+          Current->Initializer == Planned->second.Initializer &&
+          Current->UndefinedContext &&
+          swift_once_source_detail::parameter(E->Operands[0]) ==
+              Current->Predicate &&
+          swift_once_source_detail::parameter(E->Operands[1]) ==
+              Current->Initializer &&
+          swift_once_source_detail::unknownScalarView(E->Operands[2])) {
+        auto Null =
+            HighExpr::makeConst(0, 8, ConstantAddressProvenance::Scalar);
+        Null->Type = NdType::makePtr(NdType::makeVoid());
+        E->Operands[2] = std::move(Null);
       }
     }
     if (swift_once_source_detail::onceCall(*E, Image)) {

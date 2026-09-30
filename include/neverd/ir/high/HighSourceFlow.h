@@ -9,6 +9,7 @@
 
 #include "neverd/ir/high/HighIR.h"
 
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -47,6 +48,8 @@ struct HighSourceFlowNode {
   const HighStmt *Statement = nullptr;
   ExprPtr Test;
   std::vector<size_t> Successors;
+  /// Branch truth for each successor; nullopt denotes an unconditional edge.
+  std::vector<std::optional<bool>> SuccessorTruth;
 };
 struct HighSourceFlowGraph {
   std::vector<HighSourceFlowNode> Nodes;
