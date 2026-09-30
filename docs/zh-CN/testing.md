@@ -792,3 +792,5 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 现有 CI 工作流在通用测试配置前运行完整模拟测试目录，并在 `emulation-focused` 保存发现清单、JUnit 结果和 CTest 日志。其他模块的失败不会阻止这组测试执行。硬件不可用及可选驱动样例缺失仍明确记录为跳过；软件运行或编译通过不能作为原生执行证据。
 
 在 Linux 上，`NeverDUnicornDeadlineTests` 通过受控的 pthread 调度，让实际计时线程在客体入口前完成。测试覆盖 x64、ARM32 和 ARM64，要求入口前取消不产生客体效果，并验证下一次运行使用独立预算。测试调用公开引擎 API，不修改引擎私有状态。
+
+`NeverDX64ExceptionTests` 中的 `X64StateTransition` 在原生 CPU 上执行独立 RAM 读取和 CR8 读取，交替改变 TLS 基址与权限级，在重复除法异常后恢复，并在取消进入后更改 TLS。修改原生状态传输时，应运行所属 CTest 标签，同时覆盖别名重映射、CPU 上下文、FP 状态和原始驱动结果对比。KVM/WHP 不可用仍显式跳过。

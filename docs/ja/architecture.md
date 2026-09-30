@@ -340,7 +340,7 @@ simplification を LLVM 最適化との共同 fixed point まで実行しなけ�
 
 ## Windows ドライバーエミュレーション
 
-`lib/emulation` は `NEVERD_ENABLE_DRIVER_EMULATION` で有効にするオプションの実行コンポーネントです。`emulate-driver` CLI は公開 C API 経由でアクセスします。`DriverSession` は、範囲を限定した x64 WDM の初期化と、任意の逐次 create／IOCTL／read／write／cleanup／close／unload 呼び出しを担当します。Windows イメージのマッピングは既存ローダーの完全な `BinaryImage` を使用し、Windows モデルはゲストオブジェクトと API セマンティクスを担当します。Unicorn アダプターは CPU 実行と、ゲストメモリの唯一の正規状態を管理します。この経路は実験的なネイティブ変換パイプラインを使わず、その対応プロファイルも変更しません。
+`lib/emulation` は `NEVERD_ENABLE_DRIVER_EMULATION` で有効にする任意の実行コンポーネントです。`emulate-driver` CLI は公開 C API を通じて利用します。`DriverSession` は制限付き x64 WDM 初期化と、任意の逐次 create/IOCTL/read/write/cleanup/close/unload 呼び出しを担当します。Windows イメージのマッピングには既存ローダーの完全な `BinaryImage` を使い、Windows モデルがゲストオブジェクトと API の意味を管理します。`driver-strict` では、選択した Unicorn、KVM、WHP アダプターが共通の物理メモリとアドレス空間の管理主体を使用します。バックエンド別の能力は、移植可能なエンジンのコールバックとネイティブなアーキテクチャ事前検証を区別します。この経路は実験的なネイティブ変換パイプラインを利用せず、その対応範囲も変更しません。
 
 Unicorn は `cmake/NeverDUnicorn.cmake` で一度だけ構成し、セマンティックテストと共有します。`BUILD_TESTING=OFF` でも使用できます。未知の API や CPU 環境動作では明示的に停止し、ドライバーが返した失敗と、未完了のエミュレーションを区別します。上限、レポート、未対応のライフサイクル操作については[ドライバーエミュレーション](driver-emulation.md)を参照してください。
 
@@ -499,6 +499,12 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
 
 `ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
+
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
+
+KVM x64 は各エントリの前に実際の特殊レジスタを読み、`KvmX64State.def` で定義したプロトコルのフィールドだけを比較します。CR3、CPL、TLS、CR8 などが変われば投影を再設定します。実行可能状態を再利用できるのは、状態を完全に取得した単一ステップのデバッグ終了後だけです。例外、キャンセル、エントリ失敗後は再設定します。`X64StateTransition` は実 CPU の読み取りで TLS、特権レベル、CR8 の変更、反復例外とキャンセルを検証します。汎用レジスタ、FP/SSE 状態とステップ設定は各命令で設定します。
 
 ## strict lifting の契約
 
@@ -785,7 +791,3 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
-
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
-
-選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。

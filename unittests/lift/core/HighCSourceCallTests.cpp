@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -1227,6 +1228,57 @@ int main(void) {
     return 0;
 }
 )");
+}
+
+TEST(HighCSourceCalls,
+     RuntimeCFunctionAddressExecutesWithItsDeclaredPrototype) {
+  using namespace runtime_function_address_test;
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    const auto Hint = runtimeCFunctionAddressHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    auto Address = HighExpr::makeCall({}, 0, {});
+    Address->Type = Hint->Signature.ReturnType;
+    Address->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    auto Factory = returning("runtime_callback", Address, {});
+    const auto Source = emit({Factory}, true, Architecture);
+    EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("&swift_release"), std::string::npos) << Source;
+    for (const char *Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + R"(
+static int observed;
+void swift_release(void *value) {
+  if (value != (void *)(uintptr_t)0x31) __builtin_trap();
+  ++observed;
+}
+int main(void) {
+  void (*callback)(void *) = runtime_callback();
+  if (callback != &swift_release) return 1;
+  callback((void *)(uintptr_t)0x31);
+  return observed != 1;
+}
+)",
+                    {Optimization});
+    auto Broken = std::make_shared<SourceCallTypeHint>(*Hint);
+    Broken->AddressedFunctionABI->Convention =
+        SourceFunctionTypeHint::ConventionKind::Swift;
+    Address->SourceCallHint = Broken;
+    EXPECT_NE(emit({Factory}, true, Architecture).find("bad source call"),
+              std::string::npos);
+
+    Image.ImportPtrSlots[Slot] = Image.DyldBindSlots[Slot].Name = "_malloc";
+    Image.DyldBindSlots[Slot].Module = "/usr/lib/libSystem.B.dylib";
+    const auto Allocate = runtimeCFunctionAddressHint(Image, Slot);
+    ASSERT_TRUE(Allocate);
+    Address->Type = Allocate->Signature.ReturnType;
+    Address->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Allocate);
+    const auto Allocator = returning("runtime_allocator", Address, {});
+    const auto AllocateSource = emit({Allocator}, true, Architecture);
+    EXPECT_EQ(AllocateSource.find("bad source call"), std::string::npos)
+        << AllocateSource;
+    EXPECT_NE(AllocateSource.find("&neverd_darwin_malloc"), std::string::npos)
+        << AllocateSource;
+  }
 }
 
 TEST(HighCSourceCalls, CallbackDeclaratorsPreserveArgumentsAndReturnTypes) {
