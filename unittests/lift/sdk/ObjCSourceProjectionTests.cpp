@@ -2818,6 +2818,148 @@ int main() {
 }
 
 namespace {
+struct SynchronizedSharedSuffixFixture : SynchronizedSingleRangeBypassFixture {
+  SynchronizedSharedSuffixFixture() {
+    put(0x3018, 0xb4000354U); // cbz x20, 0x3080: bypass block after return
+    put(0x307c, 0xd65f03c0U);
+    put(0x3088, 0x17fffffcU); // b 0x3078: join the normal cleanup
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSuffixAllowsAcyclicBackwardJoins) {
+  SynchronizedSharedSuffixFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->ExitCall, 0x3070U);
+  EXPECT_EQ(Proof->SuspendARC, 0U);
+  for (uint32_t Branch :
+       {0x54000040U, 0xb4000054U, 0xb5000054U, 0x36000054U, 0x37000054U}) {
+    F.put(0x3074, Branch); // conditional forward join to the return
+    EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Branch);
+  }
+  F.put(0x3074, 0xd503201fU);
+  F.put(0x307c, 0x140003e1U); // external tail at 0x4000 before bypass block
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedSuffixRejectsCyclesAndLockEdges) {
+  for (uint32_t Branch : {
+           0x17fffff9U, // normal unlock argument load
+           0x17ffffe7U, // protected body
+           0x17fffffaU, // normal unlock call
+           0x14000001U, // exceptional pad
+           0x17fffffeU, // cycle through the bypass block
+           0x14000000U, // self-loop
+           0xd61f0280U, // indirect branch
+           0xd503201fU  // fall through into the exceptional pad
+       }) {
+    SynchronizedSharedSuffixFixture F;
+    F.put(0x3088, Branch);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Branch);
+  }
+  for (va_t Target : {0x4200U, 0x4210U, 0x4220U}) {
+    SynchronizedSharedSuffixFixture F;
+    F.call(0x3074, Target); // relock, extra unlock or resume in normal suffix
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+  SynchronizedSharedSuffixFixture F;
+  F.put(0x307c, 0xd503201fU); // fallthrough makes a cycle across the join
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.put(0x307c, 0xd65f03c0U);
+  F.put(0x3074, 0x54000060U); // both paths reach the shared suffix
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.put(0x3074, 0xb4000114U); // conditional edge into the exceptional pad
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedSharedSuffixKeepsARCExceptionBoundary) {
+  SynchronizedSharedSuffixFixture F;
+  auto &EH = *F.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[1].GuardedRange.End = 0x305c;
+  EH.Itanium->CallSites[2].GuardedRange.Begin = 0x305c;
+  EH.ObjC->LandingPads[0].GuardedRange.End = 0x305c;
+  F.call(0x303c, 0x4000); // only the release after the protected range is ARC
+  F.put(0x3068, 0xd503201fU);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->SuspendARC, 1U);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*);
+extern void objc_release(void*);
+extern void after(void);
+extern void *finish(void*);
+uint64_t neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    uint64_t result = (uint64_t)(uintptr_t)value;
+    if (!path) goto cleanup;
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value);
+    objc_release(value);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+cleanup:
+    objc_release(value);
+    after();
+    return (uint64_t)(uintptr_t)finish((void*)(uintptr_t)result);
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static int failure, order, bad, exits, releases, path;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 4); return 0;
+}
+extern "C" void work(void *object) { step(object, value, 2); }
+extern "C" void objc_release(void *object) {
+    step(object, value, path && ++releases == 1 ? 3 : 5);
+}
+extern "C" void after(void) { step(value, value, 6); }
+extern "C" void *finish(void *object) {
+    step(object, value, 7); return object;
+}
+extern "C" uint64_t neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    const int wanted[] = {1234567, 1, 124, 123, 1234, 12345, 123456, 1234567};
+    const int bypass[] = {567, 567, 567, 567, 567, 5, 56, 567};
+    for (path = 0; path < 2; ++path)
+        for (failure = 0; failure <= 7; ++failure) {
+            order = bad = exits = releases = 0;
+            int caught = 0;
+            uint64_t result = 0;
+            try { result = neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            const int thrown = path || failure >= 5 ? failure : 0;
+            const int unlocks = path && thrown != 1 && thrown != 3;
+            if (caught != thrown || order != (path ? wanted[failure] : bypass[failure]) ||
+                exits != unlocks || bad ||
+                (!thrown && result != (uint64_t)(uintptr_t)value))
+                return 10 + failure + path * 8;
+        }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
+namespace {
 struct SynchronizedInterleavedLocalFixture : SynchronizedInterleavedFixture {
   SynchronizedInterleavedLocalFixture() {
     put(0x3010, 0xaa0003f4U); // save self separately from the lock

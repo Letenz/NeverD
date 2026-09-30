@@ -157,11 +157,10 @@ inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
   return Target && llvm::StringRef(Image.getFunctionNameAt(Target)) == Name;
 }
 
-inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
-                                          va_t LastTarget,
-                                          va_t FirstTarget = 0) {
+inline std::optional<va_t>
+objcSynchronizedDirectBranchTarget(const DecodedInsn &Instruction) {
   if (!Instruction.Raw || !Instruction.Raw->detail)
-    return false;
+    return std::nullopt;
   switch (Instruction.Id) {
   case ARM64_INS_B:
   case ARM64_INS_CBZ:
@@ -170,16 +169,23 @@ inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
   case ARM64_INS_TBNZ:
     break;
   default:
-    return false;
+    return std::nullopt;
   }
   const auto &Operands = Instruction.Raw->detail->aarch64;
   if (!Operands.op_count)
-    return false;
+    return std::nullopt;
   const auto &Target = Operands.operands[Operands.op_count - 1];
-  return Target.type == AARCH64_OP_IMM && Target.imm >= 0 &&
-         static_cast<va_t>(Target.imm) > Instruction.Addr &&
-         static_cast<va_t>(Target.imm) >= FirstTarget &&
-         static_cast<va_t>(Target.imm) <= LastTarget && Target.imm % 4 == 0;
+  if (Target.type != AARCH64_OP_IMM || Target.imm < 0 || Target.imm % 4)
+    return std::nullopt;
+  return static_cast<va_t>(Target.imm);
+}
+
+inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
+                                          va_t LastTarget,
+                                          va_t FirstTarget = 0) {
+  const auto Target = objcSynchronizedDirectBranchTarget(Instruction);
+  return Target && *Target > Instruction.Addr && *Target >= FirstTarget &&
+         *Target <= LastTarget;
 }
 
 // A narrowly recognized clang @synchronized cleanup: the Itanium call-site
@@ -622,6 +628,72 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
       true};
 }
 
+// Normal cleanup tails can have a shared epilogue before a bypass block in
+// address order. Prove the complete suffix graph is acyclic and every edge
+// stays after the normal unlock or terminates with a return/external tail.
+// This permits backward joins without permitting a loop, pad entry or relock.
+inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
+                                              va_t Entry, va_t Begin,
+                                              va_t Landing) {
+  if (Begin < Entry || Begin >= Landing || Landing - Entry > 16384 ||
+      Landing > InvalidVA - 20 || (Begin | Landing) % 4)
+    return false;
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return false;
+  const size_t Count = (Landing - Begin) / 4;
+  std::vector<std::vector<size_t>> Edges(Count);
+  std::vector<unsigned> Incoming(Count, 0);
+  const auto AddEdge = [&](va_t Address, va_t Target) {
+    if (Target < Begin || Target >= Landing || Target % 4)
+      return false;
+    const size_t Next = (Target - Begin) / 4;
+    Edges[(Address - Begin) / 4].push_back(Next);
+    ++Incoming[Next];
+    return true;
+  };
+  for (va_t Address = Begin; Address < Landing; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        objcSynchronizedCallIs(Image, Address, "_objc_sync_enter") ||
+        objcSynchronizedCallIs(Image, Address, "_objc_sync_exit") ||
+        objcSynchronizedCallIs(Image, Address, "__Unwind_Resume"))
+      return false;
+    const auto Word = objcSynchronizedWord(Image, Address);
+    if (Word == 0xd65f03c0U)
+      continue;
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT))
+      return false;
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP)) {
+      const auto Target = objcSynchronizedDirectBranchTarget(Instruction);
+      if (!Target)
+        return false;
+      const bool Unconditional = Word && branch::A64Branch.matches(*Word);
+      if (Unconditional && (*Target < Entry || *Target >= Landing + 20))
+        continue;
+      if (!AddEdge(Address, *Target))
+        return false;
+      if (Unconditional)
+        continue;
+    }
+    if (!AddEdge(Address, Address + 4))
+      return false;
+  }
+  std::vector<size_t> Ready;
+  for (size_t I = 0; I < Count; ++I)
+    if (!Incoming[I])
+      Ready.push_back(I);
+  for (size_t I = 0; I < Ready.size(); ++I)
+    for (size_t Next : Edges[Ready[I]])
+      if (!--Incoming[Next])
+        Ready.push_back(Next);
+  return Ready.size() == Count;
+}
+
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
                                         const HighFunc &Function) {
@@ -779,40 +851,9 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       (Regions->size() > 1 && !UnprotectedARC) ||
       (UnprotectedARC & ProtectedARC))
     return std::nullopt;
-  // The normal unlock must be followed by a straight-line return tail. No
-  // normal path may enter the exceptional pad or reenter the locked body.
-  for (va_t Address = ExitCall + 4; Address < Landing; Address += 4) {
-    const uint8_t *Bytes = Image.readVA(Address, 4);
-    DecodedInsn Instruction{};
-    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
-        !Instruction.Raw)
-      return std::nullopt;
-    const auto InstructionWord = Word(Address);
-    const bool Return = InstructionWord == 0xd65f03c0U;
-    const bool Tail =
-        InstructionWord && branch::A64Branch.matches(*InstructionWord) &&
-        branch::a64BranchTarget(*InstructionWord, Address).has_value();
-    if (Address + 4 == Landing) {
-      if (Return)
-        continue;
-      if (!Tail)
-        return std::nullopt;
-      const va_t Target = *branch::a64BranchTarget(*InstructionWord, Address);
-      if (Target >= Function.Entry && Target < Landing + 20)
-        return std::nullopt;
-    } else if (cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_JUMP) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_RET) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_IRET) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT))
-      return std::nullopt;
-    if (HasCall(Address, "_objc_sync_enter") ||
-        HasCall(Address, "_objc_sync_exit") ||
-        HasCall(Address, "__Unwind_Resume"))
-      return std::nullopt;
-  }
+  if (!objcSynchronizedNormalSuffixValid(Image, Function.Entry, ExitCall + 4,
+                                         Landing))
+    return std::nullopt;
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
