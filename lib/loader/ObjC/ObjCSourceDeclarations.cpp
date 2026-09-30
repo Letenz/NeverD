@@ -9,6 +9,8 @@
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include <algorithm>
+#include <array>
+#include <iterator>
 #include <map>
 #include <set>
 
@@ -320,6 +322,71 @@ bool hasEmbeddedDDLogFileInfoElement(const BinaryImage &Image,
       ++Property;
     }
   return Entry == 1 && Getter == 1 && FileSize == 1 && Property == 1;
+}
+
+bool hasEmbeddedSDImageCacheEnumerator(const BinaryImage &Image, va_t Entry,
+                                       unsigned Parameter) {
+  // SDWebImage 5.21.3 declares these arguments as
+  // NSEnumerator<id<SDImageCache>> *. The Objective-C encoding erases both
+  // the enumerator class and its element protocol. Authenticate the complete
+  // family before carrying either source declaration into fast enumeration.
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64)
+    return false;
+  static constexpr struct {
+    const char *Selector;
+    const char *Encoding;
+    unsigned Parameter;
+  } Methods[] = {
+      {"concurrentQueryImageForKey:options:context:cacheType:completion:"
+       "enumerator:operation:",
+       "v72@0:8@16Q24@32q40@?48@56@64", 7},
+      {"concurrentStoreImage:imageData:forKey:options:context:cacheType:"
+       "completion:enumerator:operation:",
+       "v88@0:8@16@24@32Q40@48q56@?64@72@80", 9},
+      {"concurrentRemoveImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentContainsImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentClearWithCacheType:completion:enumerator:operation:",
+       "v48@0:8q16@?24@32@40", 4},
+  };
+  const ObjCClass *Owner = nullptr;
+  for (const auto &Class : Image.ObjCClasses)
+    if (Class.Name == "SDImageCachesManager") {
+      if (Owner)
+        return false;
+      Owner = &Class;
+    }
+  if (!Owner || !Owner->Address || Owner->RootClass ||
+      Owner->InheritanceStatus != "resolved" ||
+      Owner->SuperclassName != "NSObject")
+    return false;
+  std::array<unsigned, std::size(Methods)> Counts{};
+  bool MatchedEntry = false;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.ClassName != Owner->Name)
+      continue;
+    for (size_t I = 0; I < std::size(Methods); ++I) {
+      const auto &Expected = Methods[I];
+      if (Method.Selector != Expected.Selector)
+        continue;
+      if (Method.ClassAddress != Owner->Address || Method.IsClassMethod ||
+          Method.CategoryAddress || !Method.CategoryName.empty() ||
+          !Method.MetadataAddress || !Method.TypeHint ||
+          Method.TypeEncoding != Expected.Encoding ||
+          !objcMethodHasSourceBody(Method) ||
+          !Image.isCodeAddress(Method.Implementation))
+        return false;
+      ++Counts[I];
+      if (Method.Implementation == Entry && Parameter == Expected.Parameter)
+        MatchedEntry = true;
+    }
+  }
+  return MatchedEntry &&
+         llvm::all_of(Counts, [](unsigned Count) { return Count == 1; });
 }
 
 bool hasEmbeddedWMFCalendarMethod(const BinaryImage &Image,
@@ -947,6 +1014,38 @@ objcMethodParameterReceiverTypeHint(const BinaryImage &Image, va_t Entry,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry)
     return std::nullopt;
+  if (Parameter >= 4 &&
+      std::any_of(Image.ObjCMethods.begin(), Image.ObjCMethods.end(),
+                  [&](const ObjCMethod &Method) {
+                    return Method.Implementation == Entry &&
+                           Method.ClassName == "SDImageCachesManager";
+                  }) &&
+      hasEmbeddedSDImageCacheEnumerator(Image, Entry, Parameter)) {
+    const auto SDK =
+        objc::sdkReceiverDeclarations(Image, "NSEnumerator", false, false, {});
+    const auto Signature = objcMethodSourceTypeHint(Image, Entry);
+    if (!SDK.Present || !SDK.Complete || !Signature ||
+        Parameter >= Signature->Parameters.size())
+      return std::nullopt;
+    const auto &Argument = Signature->Parameters[Parameter];
+    if (!Argument.Type || Argument.Type->Kind != NdTypeKind::Ptr ||
+        Argument.Type->Size != 8 || Argument.Location.ValueBytes != 8)
+      return std::nullopt;
+    const auto &Registers = getTargetRegInfo(Arch::AArch64).IntParamRegs;
+    if (Parameter < Registers.size()
+            ? Argument.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+                  Argument.Location.RegisterOffset != Registers[Parameter]
+            : Argument.Location.Kind != SourceABICarrierKind::Stack ||
+                  Argument.Location.EntryStackOffset !=
+                      int64_t(Parameter - Registers.size()) * 8)
+      return std::nullopt;
+    ObjCReceiverTypeHint Result;
+    Result.Origin = ObjCReceiverTypeHint::OriginKind::MethodParameter;
+    Result.Address = Entry;
+    Result.ClassName = "NSEnumerator";
+    Result.SourceParameter = Parameter;
+    return Result;
+  }
   // SDWebImage 5.21.3 declares decodedImageWithImage:policy:'s image input
   // as UIImage *. Objective-C's runtime encoding retains only id here.
   // Authenticate the exact embedded method before applying UIKit's drawing
@@ -1589,6 +1688,21 @@ std::optional<ReceiverType> receiverType(const BinaryImage &Image,
                           ObjCReceiverTypeHint::OriginKind::ClassReference,
                       false};
   for (const auto &Access : Receiver.Steps) {
+    if (Access.TheKind ==
+        ObjCReceiverTypeHint::TypeStep::Kind::FastEnumerationElement) {
+      if (&Access != &Receiver.Steps.front() || Access.OffsetSlot ||
+          Access.ByteOffset || Access.OffsetWidth || !Access.Selector.empty() ||
+          Receiver.Origin !=
+              ObjCReceiverTypeHint::OriginKind::MethodParameter ||
+          Result.ClassName != "NSEnumerator" || Result.IsClassMethod ||
+          Result.IsProtocol ||
+          !hasEmbeddedSDImageCacheEnumerator(Image, Receiver.Address,
+                                             Receiver.SourceParameter) ||
+          !receiverProtocolKnown(Image, "SDImageCache"))
+        return std::nullopt;
+      Result = {"SDImageCache", false, false, true};
+      continue;
+    }
     if (Access.TheKind == ObjCReceiverTypeHint::TypeStep::Kind::MessageResult) {
       if (Access.Selector.empty() || Access.OffsetSlot || Access.ByteOffset ||
           Access.OffsetWidth)
@@ -2095,6 +2209,65 @@ objcBlockParameterContract(const BinaryImage &Image,
       return std::nullopt;
     return ObjCBlockParameterContract{
         std::move(*Callback), ObjCBlockParameterContract::Lifetime::Copied};
+  }
+
+  // SDImageCache's source protocol allows these completions to run after
+  // disk work, while memory-only paths may invoke them synchronously. A
+  // conforming cache therefore owns an escaping callback. Require the exact
+  // embedded protocol declarations and an element-qualified receiver.
+  if (Image.Arch == Arch::AArch64 && Type && Type->IsProtocol &&
+      !Type->IsClassMethod && Type->ClassName == "SDImageCache") {
+    static constexpr struct {
+      const char *Selector;
+      const char *Parent;
+      const char *Callback;
+      unsigned Parameter;
+    } Methods[] = {
+        {"queryImageForKey:options:context:cacheType:completion:",
+         "@56@0:8@16Q24@32q40@?48", "v32@?0@\"UIImage\"8@\"NSData\"16q24", 6},
+        {"storeImage:imageData:forKey:options:context:cacheType:completion:",
+         "v72@0:8@16@24@32Q40@48q56@?64", "v8@?0", 8},
+        {"removeImageForKey:cacheType:completion:", "v40@0:8@16q24@?32",
+         "v8@?0", 4},
+        {"containsImageForKey:cacheType:completion:", "v40@0:8@16q24@?32",
+         "v16@?0q8", 4},
+        {"clearWithCacheType:completion:", "v32@0:8q16@?24", "v8@?0", 3},
+    };
+    const ObjCProtocol *Protocol = nullptr;
+    for (const auto &Candidate : Image.ObjCProtocols)
+      if (Candidate.Name == "SDImageCache") {
+        if (Protocol)
+          return std::nullopt;
+        Protocol = &Candidate;
+      }
+    if (!Protocol || !Protocol->Address || Protocol->Status != "recovered")
+      return std::nullopt;
+    std::array<unsigned, std::size(Methods)> Counts{};
+    for (const auto &Method : Protocol->Methods)
+      for (size_t I = 0; I < std::size(Methods); ++I)
+        if (Method.Selector == Methods[I].Selector) {
+          if (!Method.MetadataAddress || !Method.IsOptional ||
+              Method.IsClassMethod || Method.Status != "supported" ||
+              Method.TypeEncoding != Methods[I].Parent || !Method.TypeHint)
+            return std::nullopt;
+          ++Counts[I];
+        }
+    if (!llvm::all_of(Counts, [](unsigned Count) { return Count == 1; }))
+      return std::nullopt;
+    for (const auto &Method : Methods) {
+      if (Call.Selector != Method.Selector || Parameter != Method.Parameter)
+        continue;
+      auto Parent = parseObjCMethodEncoding(Method.Selector, Method.Parent);
+      std::string Error;
+      auto Callback =
+          parseObjCBlockSignature(Method.Callback, Image.Arch, Error);
+      if (!Parent || !Callback ||
+          !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
+          !SameDeclaration(*Expected, *Parent))
+        return std::nullopt;
+      return ObjCBlockParameterContract{
+          std::move(*Callback), ObjCBlockParameterContract::Lifetime::Copied};
+    }
   }
 
   // FLAnimatedImage's logging implementation invokes the supplied string

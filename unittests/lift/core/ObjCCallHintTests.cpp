@@ -20,6 +20,8 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <iterator>
+
 using namespace neverd;
 
 namespace {
@@ -13477,4 +13479,225 @@ TEST(ObjCCallHints, LocalizedFormatIntegerTailRequiresBoundImmutableKey) {
   Changed.DynInfo.NeededLibs.clear();
   EXPECT_FALSE(sdk::objc_binding_detail::provenLocalizedFormatInteger64Type(
       Retained, Definitions, Changed));
+}
+
+TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  ObjCClass Owner;
+  Owner.Name = "SDImageCachesManager";
+  Owner.Address = 0x2300;
+  Owner.InheritanceStatus = "resolved";
+  Owner.SuperclassName = "NSObject";
+  Image.ObjCClasses.push_back(Owner);
+  static constexpr struct {
+    const char *Selector;
+    const char *Encoding;
+    unsigned Enumerator;
+  } Methods[] = {
+      {"concurrentQueryImageForKey:options:context:cacheType:completion:"
+       "enumerator:operation:",
+       "v72@0:8@16Q24@32q40@?48@56@64", 7},
+      {"concurrentStoreImage:imageData:forKey:options:context:cacheType:"
+       "completion:enumerator:operation:",
+       "v88@0:8@16@24@32Q40@48q56@?64@72@80", 9},
+      {"concurrentRemoveImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentContainsImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentClearWithCacheType:completion:enumerator:operation:",
+       "v48@0:8q16@?24@32@40", 4},
+  };
+  for (size_t I = 0; I < std::size(Methods); ++I) {
+    ObjCMethod Method;
+    Method.ClassName = Owner.Name;
+    Method.ClassAddress = Owner.Address;
+    Method.MetadataAddress = 0x2400 + 8 * I;
+    Method.Implementation = I == 4 ? 0x1200 : 0x1400 + 16 * I;
+    Method.Selector = Methods[I].Selector;
+    Method.TypeEncoding = Methods[I].Encoding;
+    Method.Status = "supported";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Method));
+  }
+  ObjCProtocol Protocol;
+  Protocol.Address = 0x2500;
+  Protocol.Name = "SDImageCache";
+  Protocol.Status = "recovered";
+  static constexpr struct {
+    const char *Selector;
+    const char *Encoding;
+  } Declarations[] = {
+      {"queryImageForKey:options:context:cacheType:completion:",
+       "@56@0:8@16Q24@32q40@?48"},
+      {"storeImage:imageData:forKey:options:context:cacheType:completion:",
+       "v72@0:8@16@24@32Q40@48q56@?64"},
+      {"removeImageForKey:cacheType:completion:", "v40@0:8@16q24@?32"},
+      {"containsImageForKey:cacheType:completion:", "v40@0:8@16q24@?32"},
+      {"clearWithCacheType:completion:", "v32@0:8q16@?24"},
+  };
+  for (size_t I = 0; I < std::size(Declarations); ++I) {
+    ObjCProtocolMethod Method;
+    Method.MetadataAddress = 0x2600 + 8 * I;
+    Method.Selector = Declarations[I].Selector;
+    Method.TypeEncoding = Declarations[I].Encoding;
+    Method.Status = "supported";
+    Method.IsOptional = true;
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Protocol.Methods.push_back(std::move(Method));
+  }
+  Image.ObjCProtocols.push_back(std::move(Protocol));
+  for (size_t I = 0; I < std::size(Methods); ++I) {
+    const va_t Entry = I == 4 ? 0x1200 : 0x1400 + 16 * I;
+    const auto Root = objcMethodParameterReceiverTypeHint(
+        Image, Entry, Methods[I].Enumerator);
+    ASSERT_TRUE(Root) << I;
+    EXPECT_EQ(Root->ClassName, "NSEnumerator");
+    auto Element = *Root;
+    ObjCReceiverTypeHint::TypeStep Step;
+    Step.TheKind = ObjCReceiverTypeHint::TypeStep::Kind::FastEnumerationElement;
+    Element.Steps.push_back(Step);
+    EXPECT_TRUE(objcReceiverTypeHintValid(Image, Element));
+  }
+
+  Image.ObjCSourceReferences.at(0x2100).Name =
+      "countByEnumeratingWithState:objects:count:";
+  auto Clear = Image.ObjCSourceReferences.at(0x2100);
+  Clear.Address = 0x2110;
+  Clear.Name = "clearWithCacheType:completion:";
+  Image.ObjCSourceReferences.emplace(Clear.Address, Clear);
+  std::copy_n(Image.Segments[0].Data.data() + 0x100, 20,
+              Image.Segments[0].Data.data() + 0x120);
+  llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x124,
+                                   0xf9408821); // selector slot 0x2110
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Function = caller();
+  auto &Block = Function.Blocks.front();
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(TRI.StackPointer, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(256, 4)}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X4, 8)}, 0x1204),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(64, 4)}, 0x1208),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X3, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(128, 4)}, 0x120c),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X4, 8), {NdVar::cst(16, 8)},
+                0x1210),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x1214),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(72, 4)}, 0x1218),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x121c),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X9, 8), {NdVar::cst(0, 8)},
+                0x1220),
+      operation(NdOp::INT_LEFT, NdVar::reg(a64reg::X9, 8),
+                {NdVar::reg(a64reg::X9, 8), NdVar::cst(3, 4)}, 0x1224),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X8, 8), NdVar::reg(a64reg::X9, 8)}, 0x1228),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x122c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1120, 8)},
+                0x1230),
+      operation(NdOp::RETURN, {}, {}, 0x1234)};
+  Block.EndAddr = 0x1238;
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1230));
+  ASSERT_TRUE(Hints.at(0x1230).Receiver);
+  EXPECT_EQ(Hints.at(0x1230).Receiver->ClassName, "NSEnumerator");
+  EXPECT_EQ(Hints.at(0x1230).Receiver->Steps.size(), 1U);
+  const auto Contract = objcBlockParameterContract(Image, Hints.at(0x1230), 3);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
+
+  // The store variant receives its generic enumerator in the ninth source
+  // parameter, at entry-stack offset eight rather than in an argument register.
+  auto StoreReference = Image.ObjCSourceReferences.at(0x2100);
+  StoreReference.Address = 0x2120;
+  StoreReference.Name =
+      "storeImage:imageData:forKey:options:context:cacheType:completion:";
+  Image.ObjCSourceReferences.emplace(StoreReference.Address, StoreReference);
+  std::copy_n(Image.Segments[0].Data.data() + 0x100, 20,
+              Image.Segments[0].Data.data() + 0x140);
+  llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x144,
+                                   0xf9409021); // selector slot 0x2120
+  auto StackParameter = caller();
+  StackParameter.Entry = 0x1410;
+  auto &StackBlock = StackParameter.Blocks.front();
+  StackBlock.StartAddr = 0x1410;
+  StackBlock.Ops = {
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(8, 4)}, 0x1410),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x1414),
+      operation(NdOp::INT_SUB, NdVar::reg(TRI.StackPointer, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(256, 4)}, 0x1418),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(64, 4)}, 0x141c),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X3, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(128, 4)}, 0x1420),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X4, 8), {NdVar::cst(16, 8)},
+                0x1424),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x1428),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(72, 4)}, 0x142c),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x1430),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X9, 8), {NdVar::cst(0, 8)},
+                0x1434),
+      operation(NdOp::INT_LEFT, NdVar::reg(a64reg::X9, 8),
+                {NdVar::reg(a64reg::X9, 8), NdVar::cst(3, 4)}, 0x1438),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X8, 8), NdVar::reg(a64reg::X9, 8)}, 0x143c),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x1440),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1140, 8)},
+                0x1444),
+      operation(NdOp::RETURN, {}, {}, 0x1448)};
+  StackBlock.EndAddr = 0x144c;
+  const auto StoreHints = buildObjCSourceCallHints(Image, StackParameter);
+  ASSERT_TRUE(StoreHints.count(0x1444));
+  ASSERT_TRUE(StoreHints.at(0x1444).Receiver);
+  EXPECT_EQ(StoreHints.at(0x1444).Receiver->Steps.size(), 1U);
+  EXPECT_TRUE(objcBlockParameterContract(Image, StoreHints.at(0x1444), 8));
+
+  auto Changed = Image;
+  Changed.ObjCProtocols.front().Status = "unresolved";
+  EXPECT_FALSE(objcBlockParameterContract(Changed, Hints.at(0x1230), 3));
+  Changed = Image;
+  Changed.ObjCMethods[4].TypeEncoding = "v40@0:8q16@?24@32";
+  EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Hints.at(0x1230).Receiver));
+  Changed = Image;
+  Changed.ObjCProtocols.front().Methods.back().TypeEncoding = "v24@0:8q16";
+  EXPECT_FALSE(objcBlockParameterContract(Changed, Hints.at(0x1230), 3));
+
+  auto WrongScale = Function;
+  WrongScale.Blocks.front().Ops[9].Inputs[1] = NdVar::cst(2, 4);
+  const auto WrongScaleHints = buildObjCSourceCallHints(Image, WrongScale);
+  EXPECT_FALSE(WrongScaleHints.count(0x1230) &&
+               WrongScaleHints.at(0x1230).Receiver);
+  auto WrongCount = Function;
+  WrongCount.Blocks.front().Ops[4].Inputs[0] = NdVar::cst(15, 8);
+  const auto WrongCountHints = buildObjCSourceCallHints(Image, WrongCount);
+  EXPECT_FALSE(WrongCountHints.count(0x1230) &&
+               WrongCountHints.at(0x1230).Receiver);
+  auto OverwrittenState = Function;
+  OverwrittenState.Blocks.front().Ops.insert(
+      OverwrittenState.Blocks.front().Ops.begin() + 7,
+      operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X8, 8), NdVar::cst(0, 8)},
+                0x121a));
+  const auto OverwrittenHints =
+      buildObjCSourceCallHints(Image, OverwrittenState);
+  EXPECT_FALSE(OverwrittenHints.count(0x1230) &&
+               OverwrittenHints.at(0x1230).Receiver);
 }

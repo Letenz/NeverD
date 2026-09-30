@@ -28,7 +28,7 @@ struct ObjCReceiverTypeHint {
   std::string ClassName;
   bool IsClassMethod = false;
   struct TypeStep {
-    enum class Kind { IvarLoad, MessageResult };
+    enum class Kind { IvarLoad, MessageResult, FastEnumerationElement };
     va_t OffsetSlot = 0;
     /// Present only for a literal byte offset in the machine access. A
     /// runtime offset load may follow layout changes; a literal cannot.
