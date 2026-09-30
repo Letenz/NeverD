@@ -268,18 +268,17 @@ static ExprPtr narrowTruncatedOp(const ExprPtr &Val, const TypeRef &Ty) {
 // the mask.  Keep any high expression whose evaluation could be observable.
 static bool discardMaskedConcatHigh(const ExprPtr &E) {
   if (!E || E->Kind != ExprKind::BinOp || E->Op != NdOp::INT_AND ||
-      E->Operands.size() != 2 || !E->Type ||
-      E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
-      E->Type->Size > 8 || E->IntrinsicId != Intrinsic::None ||
-      !E->IntrinsicOutputs.empty() ||
+      E->Operands.size() != 2 || !E->Type || E->Type->Kind != NdTypeKind::Int ||
+      !E->Type->Size || E->Type->Size > 8 ||
+      E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
       E->MemoryOrdering != NdMemoryOrdering::None ||
       E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
 
   const auto &Mask = E->Operands[1];
   if (!Mask || Mask->Kind != ExprKind::Const || !Mask->Operands.empty() ||
-      !Mask->Type || Mask->Type->Kind != NdTypeKind::Int ||
-      !Mask->Type->Size || Mask->Type->Size > 8)
+      !Mask->Type || Mask->Type->Kind != NdTypeKind::Int || !Mask->Type->Size ||
+      Mask->Type->Size > 8)
     return false;
 
   auto Joined = E->Operands[0];
@@ -341,9 +340,8 @@ static bool discardMaskedConcatHigh(const ExprPtr &E) {
     return false;
 
   const unsigned LowBits = Low->Type->Size * 8;
-  const uint64_t LowMask = LowBits == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << LowBits) - uint64_t{1};
+  const uint64_t LowMask =
+      LowBits == 64 ? UINT64_MAX : (uint64_t{1} << LowBits) - uint64_t{1};
   size_t Budget = 128;
   if ((Mask->ConstVal & ~LowMask) != 0 ||
       !discardableIntegerValue(High, Budget))

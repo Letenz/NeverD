@@ -1472,8 +1472,7 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
           X86.operands[0].type != X86_OP_IMM)
         return Reject("v1 JMPABS must be the final absolute instruction");
       if (InstructionBytes.size() != 11 || InstructionBytes[0] != 0xd5 ||
-          (InstructionBytes[1] & 0x88) != 0 ||
-          InstructionBytes[2] != 0xa1)
+          (InstructionBytes[1] & 0x88) != 0 || InstructionBytes[2] != 0xa1)
         return Reject("v1 JMPABS requires canonical REX2 A1 iq encoding");
       if (InstructionOps.size() != 1 ||
           InstructionOps.front().Opcode != NdOp::BRANCH ||

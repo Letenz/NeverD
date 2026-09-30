@@ -2765,8 +2765,8 @@ TEST(HighControlFlowSemantics, NestedCallRetainsItsPrecedingMemorySnapshot) {
       {HighExpr::makeConst(0, 8), HighExpr::makeConst(0x4000, 8)});
   Observe->Type = NdType::makeInt(8);
   auto Snapshot = assign(0x1004, 2, 0);
-  Snapshot.Val = HighExpr::makeBinop(NdOp::INT_ADD, Observe,
-                                    HighExpr::makeConst(1, 8));
+  Snapshot.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, Observe, HighExpr::makeConst(1, 8));
   F.Body = {Store(0x1000, 5), Snapshot, Store(0x1008, 7),
             result(0x100c, local(2))};
   ASSERT_EQ(execute(F, 0), 6u);
