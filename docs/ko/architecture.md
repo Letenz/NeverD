@@ -486,6 +486,8 @@ CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 
 
 `executionCapabilities(Contract, ISA, Backend)`로 선택한 백엔드의 기능을 조회합니다. `NativeLegacyX64`는 네이티브 x64 드라이버 실행을 나타내며, `NeverDNativeDriverTests`는 기존 드라이버 모음을 검증합니다. 이 테스트는 Unicorn을 비활성화한 빌드에서도 실행할 수 있습니다.
 
+ARM64 네이티브 정수 상태 수집은 ISA 계층에서 통일합니다. `AArch64GeneralState.def`는 X0–X30, SP, PC, NZCV, TPIDR_EL0를 열거하며 `captureAArch64GeneralState`는 모든 읽기를 임시 저장한 뒤 NZCV를 정규화하고 완전한 결과를 한 번에 게시합니다. KVM과 WHP는 이 함수를 공유합니다. 읽기 실패 시 전체 입력 상태를 유지하며 권한, 벡터와 전송하지 않는 레지스터는 변경하지 않습니다. 네이티브 FP/SIMD 명령 허용은 추가하지 않습니다.
+
 KVM x64는 진입 전마다 실제 특수 레지스터를 읽고 `KvmX64State.def`에 정의된 프로토콜 필드만 비교합니다. CR3, CPL, TLS, CR8 등의 값이 바뀌면 투영을 다시 설정합니다. 상태를 완전히 수집한 단일 단계 디버그 종료 후에만 실행 가능 상태를 재사용하며, 예외·취소·진입 실패 후에는 다시 설정합니다. `X64StateTransition`은 실제 CPU 읽기로 TLS, 권한 수준, CR8 변경과 반복 예외 및 취소를 검증합니다. KVM은 `X64HostRegisters.def`와 `X64FPState.def`에 따라 일반 레지스터와 전체 FP/SSE 상태를 마지막으로 완료 확인한 디버그 종료 상태와 비교하고 변경된 입력을 다시 설치합니다. 호스트 쓰기와 컨텍스트 복원도 비교에 포함되며 예외, 취소와 실패는 재사용을 무효화합니다. 단일 단계 설정과 실제 일반/FP 상태 읽기는 명령마다 수행합니다.
 
 KVM x64는 `KvmRunControl`을 통해 상태 준비, `KVM_RUN` 진입, 종료 상태 수집을 같은 전용 vCPU 스레드에서 수행합니다. 준비는 `EINTR` 재시도 루프 전에 한 번만 수행하며, 수집은 호스트 진입이 성공적으로 반환된 뒤에만 수행합니다. 빌린 전송 콜백은 진입 완료가 확인될 때까지 유효합니다. ISA 디코딩, RAM 트랜잭션, OS 정책과 실행 관찰자는 호출 스레드에서 실행합니다. 준비 실패 시 진입과 수집을 생략하며, 수집 실패나 취소 시 게스트 상태를 게시하지 않습니다.

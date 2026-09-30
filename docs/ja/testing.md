@@ -871,3 +871,7 @@ Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリング�
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` は、ホスト側で汎用レジスタ、先頭・末尾 XMM レジスタ、MXCSR、x87 制御語を変更した後の継続実行と実 CPU のストアを検証します。停止したエントリ後の実際の `FXSAVE64` バイトで、全物理 80 ビットレジスタ、TOP、タグ、オペコード、ポインタを確認します。反復する除算例外も再利用を無効にします。これらの機械境界テストは checked プロファイルに追加の x87 命令を許可しません。
 
 `NeverDKvmStateTransferTests` は実際の KVM 実行後にレジスタまたは XSAVE の読み取り失敗を注入し、変更前の入力で再試行します。独立した整数とパックドバイトの結果で、取得失敗後に進行済みのネイティブ状態が再利用されないことを確認します。このテスト実行ファイルだけが `ioctl` をラップし、ネイティブホストが利用できなければ明示的にスキップします。
+
+ARM64 のネイティブ整数状態の取得は ISA 層で統一します。`AArch64GeneralState.def` は X0–X30、SP、PC、NZCV、TPIDR_EL0 を列挙し、`captureAArch64GeneralState` は全読み取りを一時保存してから NZCV を正規化し、完全な結果を一度に公開します。KVM と WHP がこの関数を共有します。読み取り失敗時は全入力状態を保持し、特権、ベクトル、未転送のレジスタは変更しません。ネイティブ FP/SIMD 命令の許可は追加しません。
+
+`NeverDAArch64GeneralStateTests` は Unicorn やハイパーバイザーなしで、完全な取得、NZCV マスク、35 箇所それぞれの読み取り失敗、コールバック欠落、両特権レベルでの再試行成功を検証します。この移植可能な状態検証とクロスコンパイルは ARM64 KVM/WHP の実機実行を代替しません。
