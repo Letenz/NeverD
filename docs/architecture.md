@@ -1568,6 +1568,8 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 KVM x64 reads actual special registers before every entry and compares only the defined protocol fields in `KvmX64State.def`. It writes the projection again when CR3, CPL, TLS, CR8 or another defined field differs. Only a fully captured single-step debug exit permits reuse of runnable state; exceptions, cancellation and failed entries reestablish it. `X64StateTransition` checks actual CPU loads across TLS, privilege and CR8 changes, repeated faults and cancellation. General registers, FP/SSE state and stepping are still installed for every instruction.
 
+KVM x64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture state on the same private vCPU thread. Preparation runs once before any `EINTR` retries; capture runs only after a successful host entry. Borrowed transfers remain live until entry acknowledgement. ISA decoding, RAM transactions, OS policy and execution observers remain on the caller thread. Failed preparation skips entry and capture; failed capture or cancellation prevents publication of guest state.
+
 ## Windows driver emulation
 
 Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not

@@ -13,7 +13,9 @@
 
 namespace {
 #define NEVERD_KVM_TEST_VALUE(Name, Value) constexpr unsigned Name = Value;
+#define NEVERD_KVM_TEST_TEXT(Name, Value) constexpr char Name[] = Value;
 #include "KvmRunCases.def"
+#undef NEVERD_KVM_TEST_TEXT
 #undef NEVERD_KVM_TEST_VALUE
 enum class RunResult { Interrupted, Transient, Fatal, UntilKick };
 RunResult Result;
@@ -23,6 +25,7 @@ bool StopOnEntry;
 bool RejectMask;
 int KickSignal;
 std::atomic<bool> Entered;
+std::thread::id EntryThread;
 } // namespace
 
 // Only this test executable wraps ioctl. KvmVM has no live descriptors here,
@@ -47,6 +50,7 @@ extern "C" int __wrap_ioctl(int, unsigned long Request, ...) {
     return 0;
   }
   EXPECT_EQ(Request, KVM_RUN);
+  EntryThread = std::this_thread::get_id();
   ++Calls;
   Entered = true;
   if (Result == RunResult::UntilKick) {
@@ -190,6 +194,118 @@ TEST_F(KvmRun, IgnoredCancellationSignalRejectsEntryWithoutChangingItsHandler) {
   EXPECT_EQ(Actual.sa_handler, SIG_IGN);
   ASSERT_EQ(sigaction(KickSignal, &Previous, nullptr), 0);
   EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+}
+
+TEST_F(KvmRun, StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries) {
+  std::thread::id PrepareThread, CaptureThread;
+  unsigned Prepared = 0, Captured = 0;
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      [&] {
+        PrepareThread = std::this_thread::get_id();
+        ++Prepared;
+        return llvm::Error::success();
+      },
+      [&] {
+        CaptureThread = std::this_thread::get_id();
+        ++Captured;
+        return llvm::Error::success();
+      });
+  EXPECT_EQ(llvm::toString(std::move(E)), "");
+  EXPECT_EQ(Prepared, 1u);
+  EXPECT_EQ(Captured, 1u);
+  EXPECT_EQ(Calls, TransientInterruptions + 1);
+  EXPECT_EQ(PrepareThread, EntryThread);
+  EXPECT_EQ(CaptureThread, EntryThread);
+  EXPECT_NE(EntryThread, std::this_thread::get_id());
+}
+
+TEST_F(KvmRun, FailedPreparationDoesNotEnterOrCaptureOrPoisonTheNextRun) {
+  unsigned Prepared = 0, Captured = 0;
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      [&] {
+        ++Prepared;
+        return diagnostic::error(PrepareFailure);
+      },
+      [&] {
+        ++Captured;
+        return llvm::Error::success();
+      });
+  EXPECT_EQ(llvm::toString(std::move(E)), PrepareFailure);
+  EXPECT_EQ(Calls, 0u);
+  EXPECT_EQ(Captured, 0u);
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Prepared, 1u);
+  EXPECT_EQ(Captured, 0u);
+}
+
+TEST_F(KvmRun, FailedCaptureReturnsItsErrorAndReleasesBorrowedTransfers) {
+  unsigned Captured = 0;
+  auto E = VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(TimeoutMicroseconds),
+                            &Stop},
+                           {}, [&] {
+                             ++Captured;
+                             return diagnostic::error(CaptureFailure);
+                           });
+  EXPECT_EQ(llvm::toString(std::move(E)), CaptureFailure);
+  EXPECT_EQ(Calls, TransientInterruptions + 1);
+  EXPECT_EQ(Captured, 1u);
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Captured, 1u);
+}
+
+TEST_F(KvmRun, StopDuringPreparationSkipsEntryAndCapture) {
+  unsigned Captured = 0;
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      [&] {
+        Stop = true;
+        return llvm::Error::success();
+      },
+      [&] {
+        ++Captured;
+        return llvm::Error::success();
+      });
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_EQ(Calls, 0u);
+  EXPECT_EQ(Captured, 0u);
+  Stop = false;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Captured, 0u);
+}
+
+TEST_F(KvmRun, CancelledActiveEntryRetiresTransfersWithoutCapture) {
+  Result = RunResult::UntilKick;
+  unsigned Prepared = 0, Captured = 0;
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      [&] {
+        ++Prepared;
+        return llvm::Error::success();
+      },
+      [&] {
+        ++Captured;
+        return llvm::Error::success();
+      });
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_EQ(Prepared, 1u);
+  EXPECT_EQ(Captured, 0u);
+  Result = RunResult::Transient;
+  Calls = 0;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Prepared, 1u);
+  EXPECT_EQ(Captured, 0u);
 }
 } // namespace
 } // namespace neverd::emulation

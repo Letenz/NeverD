@@ -1118,4 +1118,6 @@ instructions or certify all software rounding semantics.
 
 Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
 
+KVM x64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture state on the same private vCPU thread. Preparation runs once before any `EINTR` retries; capture runs only after a successful host entry. Borrowed transfers remain live until entry acknowledgement. ISA decoding, RAM transactions, OS policy and execution observers remain on the caller thread. Failed preparation skips entry and capture; failed capture or cancellation prevents publication of guest state.
+
 Hardware execution alone does not guarantee lower end-to-end latency. Current native execution performs instruction admission, observation, state transfer and a VM exit for each step. Compare the same original images and scenarios with identical instruction/event budgets and report outcome parity alongside timings; include CLI startup and loading when measuring CLI latency.
