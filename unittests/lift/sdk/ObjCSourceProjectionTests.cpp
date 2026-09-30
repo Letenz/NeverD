@@ -2045,6 +2045,285 @@ int main() {
   executeSynchronizedSource(*Result, Harness);
 }
 
+namespace {
+struct SynchronizedRetainedStackFixture {
+  BinaryImage Image;
+  HighFunc Function;
+
+  void put(va_t Address, uint32_t Word) {
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + Address - 0x3000, Word);
+  }
+  void call(va_t Address, va_t Target) {
+    put(Address, 0x94000000U | ((Target - Address) / 4));
+  }
+  SynchronizedRetainedStackFixture() {
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::MachO;
+    Segment Code;
+    Code.VA = 0x3000;
+    Code.Size = Code.FileSz = 0x3000;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data.assign(Code.Size, 0);
+    Image.Segments.push_back(std::move(Code));
+    for (const auto &[Address, Name] :
+         {std::pair<va_t, const char *>{0x3000, "__text"},
+          {0x4000, "__objc_stubs"},
+          {0x5000, "__const"}}) {
+      Section S;
+      S.VA = Address;
+      S.FileOff = Address - 0x3000;
+      S.Size = S.FileSz = 0x1000;
+      S.Name = Name;
+      S.Flags = Address == 0x5000
+                    ? SegmentFlags::Readable
+                    : SegmentFlags::Readable | SegmentFlags::Executable;
+      if (Address != 0x5000)
+        S.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+      Image.Sections.push_back(std::move(S));
+    }
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+    for (const auto &[Slot, Name] :
+         {std::pair<va_t, const char *>{0x5100, "_objc_msgSend"},
+          {0x5108, "_objc_retainAutoreleasedReturnValue"},
+          {0x5110, "_objc_release_x19"},
+          {0x5118, "_objc_release"}}) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, "/usr/lib/libobjc.A.dylib", false};
+    }
+    const auto RuntimeStub = [&](va_t Address, va_t Slot) {
+      put(Address, 0xb0000010U); // adrp x16, 0x5000
+      put(Address + 4, 0xf9400210U | ((Slot - 0x5000) / 8 << 10));
+      put(Address + 8, 0xd61f0200U);
+    };
+    for (const auto &[Address, Slot] :
+         {std::pair<va_t, va_t>{0x4000, 0x5200}, {0x4040, 0x5210}}) {
+      ObjCSourceReference R;
+      R.Address = Slot;
+      R.Size = 8;
+      R.TheKind = ObjCSourceReference::Kind::Selector;
+      R.Name = Slot == 0x5200 ? "cache" : "clear";
+      Image.ObjCSourceReferences[Slot] = R;
+      put(Address, 0xb0000001U); // adrp x1, 0x5000
+      put(Address + 4, 0xf9400021U | ((Slot - 0x5000) / 8 << 10));
+      RuntimeStub(Address + 8, 0x5100);
+    }
+    RuntimeStub(0x4100, 0x5108);
+    RuntimeStub(0x4110, 0x5110);
+    RuntimeStub(0x4120, 0x5118);
+    for (const auto &[Address, Name] :
+         {std::pair<va_t, const char *>{0x4200, "_objc_sync_enter"},
+          {0x4210, "_objc_sync_exit"},
+          {0x4220, "__Unwind_Resume"}}) {
+      auto S = Symbol::makeFunc(Address);
+      S.Name = Name;
+      Image.Symbols.push_back(std::move(S));
+    }
+    for (const auto &[Offset, Word] :
+         {std::pair<unsigned, uint32_t>{0x00, 0xd100c3ffU},
+          {0x04, 0xa9014ff4U},
+          {0x08, 0xa9027bfdU},
+          {0x0c, 0x910083fdU},
+          {0x10, 0xaa0003f3U},
+          {0x18, 0xaa1d03fdU},
+          {0x20, 0xf90007e0U},
+          {0x28, 0xaa1303e0U},
+          {0x30, 0xaa1d03fdU},
+          {0x38, 0xaa0003f3U},
+          {0x44, 0xf94007e0U},
+          {0x4c, 0xf94007e0U},
+          {0x50, 0xa9427bfdU},
+          {0x54, 0xa9414ff4U},
+          {0x58, 0x9100c3ffU},
+          {0x60, 0xaa0003f3U},
+          {0x64, 0xf94007e0U},
+          {0x6c, 0xaa1303e0U}})
+      put(0x3000 + Offset, Word);
+    call(0x3014, 0x4000);
+    call(0x301c, 0x4100);
+    call(0x3024, 0x4200);
+    call(0x302c, 0x4000);
+    call(0x3034, 0x4100);
+    call(0x303c, 0x4040);
+    call(0x3040, 0x4110);
+    call(0x3048, 0x4210);
+    put(0x305c, 0x14000000U | ((0x4120 - 0x305c) / 4));
+    call(0x3068, 0x4210);
+    call(0x3070, 0x4220);
+    Function.Entry = 0x3000;
+    Function.Params = {{"objc_self", NdType::makePtr(NdType::makeVoid())},
+                       {"objc_cmd", NdType::makePtr(NdType::makeVoid())}};
+    auto &EH = Function.ExceptionMetadata.emplace();
+    EH.CodeRange = {0x3000, 0x3074};
+    EH.Personality = ExceptionPersonality::ObjCPersonalityV0;
+    auto &Sites = EH.Itanium.emplace().CallSites;
+    Sites.resize(3);
+    Sites[0].GuardedRange = {0x3000, 0x3028};
+    Sites[1].GuardedRange = {0x3028, 0x3040};
+    Sites[1].LandingPadVA = 0x3060;
+    Sites[2].GuardedRange = {0x3040, 0x3074};
+    EH.ObjC.emplace().LandingPads.push_back(
+        {{0x3028, 0x3040}, 0x3060, ObjCPadKind::SynchronizedExit, {}});
+  }
+};
+
+const char *SynchronizedRetainedStackSource = R"C(
+#include <stdint.h>
+extern void *cache(void*);
+extern void *objc_retainAutoreleasedReturnValue(void*);
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void clear(void*);
+extern void objc_release(void*);
+void neverd_objc_imp_3000(void* objc_self, void* objc_cmd) {
+    uint64_t var_m28, v1, v2, v3, v4;
+    v1 = (uint64_t)(uintptr_t)cache(objc_self);
+    v2 = (uint64_t)(uintptr_t)objc_retainAutoreleasedReturnValue((void*)(uintptr_t)v1);
+    var_m28 = v2;
+    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(v2)));
+    v3 = (uint64_t)(uintptr_t)cache(objc_self);
+    v4 = (uint64_t)(uintptr_t)objc_retainAutoreleasedReturnValue((void*)(uintptr_t)v3);
+    clear((void*)(uintptr_t)v4);
+    objc_release((void*)(uintptr_t)(v4));
+    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(var_m28)));
+    objc_release((void*)(uintptr_t)(var_m28));
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedRetainedStackLockKeepsItsOwnIdentity) {
+  SynchronizedRetainedStackFixture F;
+  EXPECT_TRUE(objcSynchronizedSourceRegion(F.Image, F.Function));
+  EXPECT_TRUE(objcSelectorStubPreservesNonvolatileRegisters(F.Image, 0x4000));
+  EXPECT_TRUE(objcSelectorStubPreservesNonvolatileRegisters(F.Image, 0x4040));
+  const auto Slot = darwinImportVeneerSlot(F.Image, 0x4100);
+  ASSERT_TRUE(Slot);
+  EXPECT_EQ(*Slot, 0x5108U);
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, *Slot);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Signature.Parameters.front().Location.ValueBytes, 8U);
+  EXPECT_EQ(Hint->Signature.Parameters.front().Location.Kind,
+            SourceABICarrierKind::IntegerRegister);
+  EXPECT_EQ(Hint->Signature.Parameters.front().Location.RegisterOffset,
+            a64reg::X0);
+  EXPECT_TRUE(objcSynchronizedRuntimeTargetIs(
+      F.Image, 0x4100, "objc_retainAutoreleasedReturnValue", a64reg::X0));
+  EXPECT_TRUE(objcSynchronizedRuntimeTargetIs(F.Image, 0x4110, "objc_release",
+                                              a64reg::X19));
+  EXPECT_TRUE(objcSynchronizedRuntimeTargetIs(F.Image, 0x4120, "objc_release",
+                                              a64reg::X0));
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  EXPECT_EQ(Proof->EnterCall, 0x3024U);
+  EXPECT_EQ(Proof->GuardStopCall, 0x3040U);
+  EXPECT_EQ(Proof->ExitCall, 0x3048U);
+  for (const va_t Address : {0x3000, 0x3010, 0x3020, 0x3028, 0x3030, 0x3038,
+                             0x3044, 0x3054, 0x3058, 0x3060, 0x3064, 0x306c}) {
+    const auto Word = *objcSynchronizedWord(F.Image, Address);
+    F.put(Address, Word ^ 1);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.put(Address, Word);
+  }
+  F.Image.DyldBindSlots[0x5110].WeakImport = true;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.Image.DyldBindSlots[0x5110].WeakImport = false;
+  F.Image.DyldBindSlots[0x5110].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.Image.DyldBindSlots[0x5110].Module = "/usr/lib/libobjc.A.dylib";
+  F.Image.ImportPtrSlots[0x5110] = "_objc_release_x20";
+  F.Image.DyldBindSlots[0x5110].Name = "_objc_release_x20";
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedStackCopyMustBeDefinedAndUnchanged) {
+  SynchronizedRetainedStackFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = SynchronizedRetainedStackSource;
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  EXPECT_NE(Result->find("neverd_objc_sync_guard = (void*)(uintptr_t)(v2);"),
+            std::string::npos);
+  EXPECT_LT(Result->find("neverd_objc_sync_guard = 0;"),
+            Result->find("objc_release((void*)(uintptr_t)(v4))"));
+  for (const char *Copy : {"var_m28 = v1;", "var_m28 = factory();", ""}) {
+    auto Changed = Source;
+    const auto At = Changed.find("var_m28 = v2;");
+    Changed.replace(At, std::string("var_m28 = v2;").size(), Copy);
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+  for (const char *Write : {"v2 = 0;", "var_m28 = 0;"}) {
+    auto Changed = Source;
+    Changed.insert(Changed.find("    clear("),
+                   "    " + std::string(Write) + "\n");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+    Changed = Source;
+    Changed.insert(Changed.find("    (uint32_t)(neverd_darwin_objc_sync_enter"),
+                   "    " + std::string(Write) + "\n");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+}
+
+TEST(ObjCSourceProjection, SynchronizedStackLockExecutesOriginalARCAndUnlocks) {
+  SynchronizedRetainedStackFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(
+      SynchronizedRetainedStackSource, *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *self = (void*)(uintptr_t)0x1111;
+static void *lock = (void*)(uintptr_t)0x2222;
+static void *value = (void*)(uintptr_t)0x3333;
+static int failure, order, bad, exits, queries;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" void *cache(void *object) {
+    step(object, self, ++queries == 1 ? 1 : 4);
+    return queries == 1 ? lock : value;
+}
+extern "C" void *objc_retainAutoreleasedReturnValue(void *object) {
+    step(object, queries == 1 ? lock : value, queries == 1 ? 2 : 5);
+    return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 3); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 8); return 0;
+}
+extern "C" void clear(void *object) { step(object, value, 6); }
+extern "C" void objc_release(void *object) {
+    step(object, object == lock ? lock : value, object == lock ? 9 : 7);
+}
+extern "C" void neverd_objc_imp_3000(void*, void*);
+int main() {
+    const int wanted[] = {123456789, 1, 12, 123, 12348, 123458,
+                          1234568, 1234567, 12345678, 123456789};
+    for (failure = 0; failure <= 9; ++failure) {
+        order = bad = exits = queries = 0;
+        int caught = 0;
+        try { neverd_objc_imp_3000(self, 0); }
+        catch (int exception) { caught = exception; }
+        const int unlocks = failure == 0 || (failure >= 4 && failure != 7);
+        if (caught != failure || order != wanted[failure] || bad ||
+            exits != unlocks)
+            return 10 + failure;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
 TEST(ObjCSourceProjection, BranchedSynchronizedTokenMutationNeedsStableLock) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;

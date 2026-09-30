@@ -3,7 +3,10 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
+#include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -28,6 +31,7 @@ struct ObjCSynchronizedSourceProof {
   uint8_t UnprotectedReleases = 0;
   bool ReceiverIsSavedLocal = false;
   uint8_t UnprotectedRetains = 0;
+  bool ReceiverHasStackCopy = false;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -173,6 +177,100 @@ proveObjCSynchronizedStackReceiverCleanup(const BinaryImage &Image,
   return ObjCSynchronizedSourceProof{
       EnterCall, DispatchCall, ExitCall, Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
+}
+
+// Reuse the loader's ARC ABI catalog, including register-specific veneers.
+// A matching symbol spelling alone cannot establish the runtime operation.
+inline bool objcSynchronizedRuntimeTargetIs(const BinaryImage &Image,
+                                            va_t Target, llvm::StringRef Name,
+                                            uint64_t ArgumentRegister) {
+  const auto Slot = darwinImportVeneerSlot(Image, Target);
+  const auto Hint =
+      Slot ? objcRuntimeSourceCallHint(Image, *Slot) : std::nullopt;
+  if (!Hint || Hint->TargetName != Name ||
+      Hint->Signature.Parameters.size() != 1)
+    return false;
+  const auto Bind = Image.DyldBindSlots.find(*Slot);
+  if (Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/libobjc.A.dylib" ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+    return false;
+  const auto &Location = Hint->Signature.Parameters.front().Location;
+  return Location.Kind == SourceABICarrierKind::IntegerRegister &&
+         Location.RegisterOffset == ArgumentRegister &&
+         Location.ValueBytes == 8;
+}
+
+// Clang may synchronize on a retained getter result kept in a private stack
+// slot, then call the getter again for the mutation. These objects need not
+// be equal. Check the entire small frame so neither a stack alias nor a
+// different result can replace the lock used by either exit.
+inline std::optional<ObjCSynchronizedSourceProof>
+proveObjCSynchronizedRetainedStackReceiverCleanup(const BinaryImage &Image,
+                                                  const HighFunc &Function) {
+  const auto Region = objcSynchronizedSourceRegion(Image, Function);
+  const va_t Entry = Function.Entry;
+  if (!Region || Function.Params.size() != 2 || Entry > InvalidVA - 0x74 ||
+      Entry % 4 || Region->Begin != Entry + 0x28 ||
+      Region->End != Entry + 0x40 || Region->Landing != Entry + 0x60)
+    return std::nullopt;
+  const auto Word = [&](unsigned Offset) {
+    return objcSynchronizedWord(Image, Entry + Offset);
+  };
+  for (const auto &[Offset, Expected] :
+       {std::pair<unsigned, uint32_t>{0x00, 0xd100c3ffU}, // sub sp, #0x30
+        {0x04, 0xa9014ff4U},
+        {0x08, 0xa9027bfdU},
+        {0x0c, 0x910083fdU},
+        {0x10, 0xaa0003f3U}, // save incoming self
+        {0x18, 0xaa1d03fdU},
+        {0x20, 0xf90007e0U}, // save retained lock
+        {0x28, 0xaa1303e0U},
+        {0x30, 0xaa1d03fdU},
+        {0x38, 0xaa0003f3U}, // preserve the second getter's retained result
+        {0x44, 0xf94007e0U},
+        {0x4c, 0xf94007e0U}, // reload original lock
+        {0x50, 0xa9427bfdU},
+        {0x54, 0xa9414ff4U},
+        {0x58, 0x9100c3ffU},
+        {0x60, 0xaa0003f3U}, // save exception
+        {0x64, 0xf94007e0U},
+        {0x6c, 0xaa1303e0U}})
+    if (Word(Offset) != Expected)
+      return std::nullopt;
+  const auto Target = [&](unsigned Offset) {
+    return objcSynchronizedBranchTarget(Image, Entry + Offset);
+  };
+  const auto RuntimeCall = [&](unsigned Offset, llvm::StringRef Name,
+                               uint64_t Argument) {
+    return objcSynchronizedRuntimeTargetIs(Image, Target(Offset), Name,
+                                           Argument);
+  };
+  const va_t Getter = Target(0x14);
+  const va_t Mutation = Target(0x3c);
+  const auto Tail = Word(0x5c);
+  if (!Getter || Getter != Target(0x2c) || !Mutation ||
+      !objcSelectorStubPreservesNonvolatileRegisters(Image, Getter) ||
+      !objcSelectorStubPreservesNonvolatileRegisters(Image, Mutation) ||
+      !RuntimeCall(0x1c, "objc_retainAutoreleasedReturnValue", a64reg::X0) ||
+      !RuntimeCall(0x34, "objc_retainAutoreleasedReturnValue", a64reg::X0) ||
+      !RuntimeCall(0x40, "objc_release", a64reg::X19) ||
+      !objcSynchronizedCallIs(Image, Entry + 0x24, "_objc_sync_enter") ||
+      !objcSynchronizedCallIs(Image, Entry + 0x48, "_objc_sync_exit") ||
+      !objcSynchronizedCallIs(Image, Entry + 0x68, "_objc_sync_exit") ||
+      !objcSynchronizedCallIs(Image, Entry + 0x70, "__Unwind_Resume") ||
+      !Tail || !branch::A64Branch.matches(*Tail) ||
+      !objcSynchronizedRuntimeTargetIs(
+          Image, branch::a64BranchTarget(*Tail, Entry + 0x5c).value_or(0),
+          "objc_release", a64reg::X0))
+    return std::nullopt;
+  return ObjCSynchronizedSourceProof{Entry + 0x24, Entry + 0x40,
+                                     Entry + 0x48, Entry + 0x60,
+                                     Target(0x70), 1,
+                                     true,         0,
+                                     true};
 }
 
 // A second clang shape keeps the receiver in a callee-saved register. Forward
@@ -462,6 +560,9 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
                                      const HighFunc &Function) {
+  if (auto Proof =
+          proveObjCSynchronizedRetainedStackReceiverCleanup(Image, Function))
+    return Proof;
   if (auto Proof = proveObjCSynchronizedStackReceiverCleanup(Image, Function))
     return Proof;
   if (auto Proof =
@@ -751,13 +852,32 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
         objcSynchronizedSavedLocalArgument(Source, Enter, EnterName);
     const auto ExitArg =
         objcSynchronizedSavedLocalArgument(Source, Exit, ExitName);
-    if (!EnterArg || !ExitArg || *EnterArg != *ExitArg)
+    if (!EnterArg || !ExitArg)
       return std::nullopt;
-    const llvm::StringRef Local =
-        llvm::StringRef(*EnterArg)
-            .drop_front(llvm::StringRef("(void*)(uintptr_t)(").size())
-            .drop_back();
-    if (Source.slice(EnterEnd + 1, Exit).contains(Local))
+    const auto LocalName = [](llvm::StringRef Argument) {
+      return Argument.drop_front(llvm::StringRef("(void*)(uintptr_t)(").size())
+          .drop_back();
+    };
+    const auto EnterLocal = LocalName(*EnterArg);
+    const auto ExitLocal = LocalName(*ExitArg);
+    if (*EnterArg != *ExitArg) {
+      if (!Proof.ReceiverHasStackCopy)
+        return std::nullopt;
+      const std::string Copy = (ExitLocal + " = " + EnterLocal + ";").str();
+      const size_t At = Scoped.find(Copy, Open);
+      const size_t Line =
+          At == std::string::npos ? std::string::npos : Scoped.rfind('\n', At);
+      const size_t LineEnd =
+          At == std::string::npos ? std::string::npos : Scoped.find('\n', At);
+      if (At == std::string::npos || Line == std::string::npos ||
+          LineEnd == std::string::npos || LineEnd >= Enter ||
+          Scoped.slice(Line + 1, LineEnd).trim() != Copy ||
+          Scoped.slice(At + Copy.size(), Enter).contains(EnterLocal) ||
+          Scoped.slice(At + Copy.size(), Enter).contains(ExitLocal))
+        return std::nullopt;
+    }
+    if (Source.slice(EnterEnd + 1, Exit).contains(EnterLocal) ||
+        Source.slice(EnterEnd + 1, Exit).contains(ExitLocal))
       return std::nullopt;
     Receiver = *EnterArg;
   }
