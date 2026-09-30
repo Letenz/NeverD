@@ -651,9 +651,18 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
     return 0xaa0003e0U | (Register << 16);
   };
   unsigned ReceiverRegister = 0, ExceptionRegister = 0;
+  bool ReceiverFromRetainResult = false;
   for (unsigned Register = 19; Register <= 22; ++Register)
     if (Word(EnterCall - 4) == LoadX0(Register))
       ReceiverRegister = Register;
+    else if (EnterCall >= Function.Entry + 8 &&
+             Word(EnterCall - 4) == SaveX0(Register) &&
+             objcSynchronizedRuntimeTargetIs(
+                 Image, objcSynchronizedBranchTarget(Image, EnterCall - 8),
+                 "objc_retainAutoreleasedReturnValue", a64reg::X0)) {
+      ReceiverRegister = Register;
+      ReceiverFromRetainResult = true;
+    }
   for (unsigned Register = 19; Register <= 22; ++Register)
     if (Register != ReceiverRegister && Word(Landing) == SaveX0(Register))
       ExceptionRegister = Register;
@@ -663,9 +672,11 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       Word(Landing + 12) != LoadX0(ExceptionRegister) ||
       !HasCall(Landing + 16, "__Unwind_Resume"))
     return std::nullopt;
-  va_t SavedReceiver = 0, ExitCall = 0;
+  va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
+  va_t ExitCall = 0;
   for (va_t Address = Function.Entry; Address < Landing; Address += 4) {
-    if (Address + 4 < EnterCall && Word(Address) == SaveX0(ReceiverRegister)) {
+    if (!ReceiverFromRetainResult && Address + 4 < EnterCall &&
+        Word(Address) == SaveX0(ReceiverRegister)) {
       if (SavedReceiver || Address > Function.Entry + 32)
         return std::nullopt;
       SavedReceiver = Address;
@@ -700,7 +711,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
                        Writes, &WriteCount) != CS_ERR_OK)
       return std::nullopt;
     for (uint8_t I = 0; I < WriteCount; ++I)
-      if ((Address < SavedReceiver &&
+      if ((!ReceiverFromRetainResult && Address < SavedReceiver &&
            (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0)) ||
           (Address > SavedReceiver &&
            (Writes[I] == ReceiverXRegisters[ReceiverRegister - 19] ||
@@ -713,11 +724,14 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
     if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET) ||
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
-        (Address < SavedReceiver && (IsJump || IsCall)))
+        (!ReceiverFromRetainResult && Address < SavedReceiver &&
+         (IsJump || IsCall)))
       return std::nullopt;
     if (IsJump &&
         !objcSynchronizedForwardBranch(
-            Instruction, Address < EnterCall ? EnterCall - 4 : ExitCall - 4))
+            Instruction, Address < EnterCall
+                             ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
+                             : ExitCall - 4))
       return std::nullopt;
     if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
         HasCall(Address, "_objc_sync_exit"))
@@ -784,6 +798,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
+  Proof.ReceiverIsSavedLocal = ReceiverFromRetainResult;
   Proof.SuspendARC = UnprotectedARC;
   return Proof;
 }
@@ -1035,7 +1050,7 @@ inline bool objcSynchronizedSelfArgument(llvm::StringRef Source, size_t At,
 
 inline std::optional<std::string>
 objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
-                           uint8_t Operations) {
+                           uint8_t Operations, llvm::StringRef Receiver) {
   if (!Operations || Operations > 3 || Begin >= End || End > Source.size())
     return std::nullopt;
   std::vector<std::pair<size_t, std::string>> Calls;
@@ -1074,7 +1089,7 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
           return std::nullopt;
       }
       Calls.emplace_back(At, ("neverd_objc_sync_" + Name.drop_front(5) +
-                              "(&neverd_objc_sync_guard, objc_self, ")
+                              "(&neverd_objc_sync_guard, " + Receiver + ", ")
                                  .str());
     }
     if (!Count)
@@ -1168,18 +1183,12 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   if (EnterEnd == std::string::npos)
     return std::nullopt;
   if (Proof.SuspendARC) {
-    if (!StopAtExit || Exits.size() != 1 || Proof.ReceiverIsSavedLocal ||
-        Proof.UnprotectedReleases || Proof.UnprotectedRetains ||
-        !objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
-        !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))
+    if (!StopAtExit || Exits.size() != 1 || Proof.UnprotectedReleases ||
+        Proof.UnprotectedRetains ||
+        (!Proof.ReceiverIsSavedLocal &&
+         (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
+          !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))))
       return std::nullopt;
-    const auto Suspended = objcSynchronizedSuspendARC(Source, EnterEnd + 1,
-                                                      Exit, Proof.SuspendARC);
-    if (!Suspended)
-      return std::nullopt;
-    auto Ordinary = Proof;
-    Ordinary.SuspendARC = 0;
-    return addObjCSynchronizedReceiverCleanup(*Suspended, Ordinary);
   }
   std::string Receiver = "objc_self";
   if (Proof.ReceiverIsSavedLocal) {
@@ -1268,6 +1277,16 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
                 "static void neverd_objc_sync_cleanup(void **guard) {\n"
                 "    if (*guard) (void)neverd_darwin_objc_sync_exit(*guard);\n"
                 "}\n");
+  if (Proof.SuspendARC) {
+    const auto RenderedBody = objcSynchronizedSourceBody(Result);
+    if (!RenderedBody)
+      return std::nullopt;
+    const size_t RenderedEnter = Result.find(EnterName, RenderedBody->first);
+    const size_t RenderedExit = Result.find(ExitName, RenderedBody->first);
+    const size_t RenderedEnterEnd = Result.find(';', RenderedEnter);
+    return objcSynchronizedSuspendARC(Result, RenderedEnterEnd + 1,
+                                      RenderedExit, Proof.SuspendARC, Receiver);
+  }
   return Result;
 }
 

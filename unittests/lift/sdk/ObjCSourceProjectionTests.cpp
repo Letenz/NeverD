@@ -2578,6 +2578,157 @@ int main() {
   executeSynchronizedSource(*Result, Harness);
 }
 
+namespace {
+struct SynchronizedInterleavedLocalFixture : SynchronizedInterleavedFixture {
+  SynchronizedInterleavedLocalFixture() {
+    put(0x3010, 0xaa0003f4U); // save self separately from the lock
+    call(0x3014, 0x4000);
+    call(0x3018, 0x4100);
+    put(0x301c, 0xaa0003f3U); // lock is the retained return value
+  }
+};
+
+const char *SynchronizedInterleavedLocalSource = R"C(
+#include <stdint.h>
+extern void *cache(void*);
+extern void *objc_retainAutoreleasedReturnValue(void*);
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void after(void);
+uint64_t neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    uint64_t saved, result;
+    saved = (uint64_t)(uintptr_t)cache(objc_self);
+    saved = (uint64_t)(uintptr_t)objc_retainAutoreleasedReturnValue((void*)(uintptr_t)saved);
+    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(saved)));
+    work(value, 4);
+    objc_release(value);
+    if (path) {
+        work(value, 6);
+        objc_release(value);
+    }
+    result = (uint64_t)(uintptr_t)objc_retain(value);
+    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(saved)));
+    after();
+    return result;
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection,
+     SynchronizedInterleavedLocalKeepsRetainedLockIdentity) {
+  SynchronizedInterleavedLocalFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+  const std::string Source = SynchronizedInterleavedLocalSource;
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  EXPECT_NE(Result->find("neverd_objc_sync_guard = (void*)(uintptr_t)(saved);"),
+            std::string::npos);
+  EXPECT_NE(Result->find("neverd_objc_sync_release(&neverd_objc_sync_guard, "
+                         "(void*)(uintptr_t)(saved), value)"),
+            std::string::npos);
+  for (const char *Write : {"saved = 0;", "escape(&saved);"}) {
+    auto Changed = Source;
+    Changed.insert(Changed.find("    work(value, 4);"),
+                   "    " + std::string(Write) + "\n");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3010, 0x14000003U}, // skip retained origin
+        {0x301c, 0xaa0003f4U},                          // wrong saved register
+        {0x3044, 0xaa0003f3U}}) { // replace lock during protected work
+    const auto Original = *objcSynchronizedWord(F.Image, Address);
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.put(Address, Original);
+  }
+  F.Image.DyldBindSlots[0x5108].WeakImport = true;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.Image.DyldBindSlots[0x5108].WeakImport = false;
+  F.Image.DyldBindSlots[0x5108].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedInterleavedLocalExecutesOriginalLock) {
+  SynchronizedInterleavedLocalFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Result = addObjCSynchronizedReceiverCleanup(
+      SynchronizedInterleavedLocalSource, *Proof);
+  ASSERT_TRUE(Result);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+#include <algorithm>
+#include <vector>
+static void *self = (void*)(uintptr_t)0x1111;
+static void *lock = (void*)(uintptr_t)0x2222;
+static void *value = (void*)(uintptr_t)0x3333;
+static void *retained = (void*)(uintptr_t)0x4444;
+static int failure, bad, exits, releases;
+static std::vector<int> events;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    events.push_back(tag);
+    if (tag == failure) throw tag;
+}
+extern "C" void *cache(void *object) {
+    step(object, self, 1); return lock;
+}
+extern "C" void *objc_retainAutoreleasedReturnValue(void *object) {
+    step(object, lock, 2); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 3); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 9); return 0;
+}
+extern "C" void work(void *object, int tag) { step(object, value, tag); }
+extern "C" void objc_release(void *object) {
+    step(object, value, ++releases == 1 ? 5 : 7);
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, value, 8); return retained;
+}
+extern "C" void after(void) { step(value, value, 10); }
+extern "C" uint64_t neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        for (failure = 0; failure <= 10; ++failure) {
+            std::vector<int> wanted = path ? std::vector<int>{1,2,3,4,5,6,7,8,9,10}
+                                          : std::vector<int>{1,2,3,4,5,8,9,10};
+            const auto fail = std::find(wanted.begin(), wanted.end(), failure);
+            const int thrown = fail != wanted.end() ? failure : 0;
+            if (thrown) {
+                wanted.erase(fail + 1, wanted.end());
+                if (thrown == 4 || thrown == 6) wanted.push_back(9);
+            }
+            bad = exits = releases = 0;
+            events.clear();
+            int caught = 0;
+            uint64_t result = 0;
+            try { result = neverd_objc_imp_3000(self, value, path); }
+            catch (int exception) { caught = exception; }
+            const int unlocks = thrown == 0 || thrown == 4 || thrown == 6 ||
+                                thrown == 9 || thrown == 10;
+            if (caught != thrown || events != wanted || exits != unlocks || bad ||
+                (!thrown && result != (uint64_t)(uintptr_t)retained))
+                return 10 + failure + path * 11;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+}
+
 TEST(ObjCSourceProjection, BranchedSynchronizedTokenMutationNeedsStableLock) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
