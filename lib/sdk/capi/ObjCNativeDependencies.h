@@ -2,6 +2,7 @@
 #define NEVERD_SDK_CAPI_OBJCNATIVEDEPENDENCIES_H
 
 #include "SwiftMangledSourceABI.h"
+#include "SwiftMergedArrayBufferSourceABI.h"
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/pipeline/NativeSourceHints.h"
@@ -224,6 +225,12 @@ inline size_t inferObjCNativeDependencies(
         A->second->UnsupportedInstructions.empty() &&
         A->second->TruncatedPaths.empty();
     if (CompleteMangledAudit) {
+      if (auto Mangled =
+              swiftMergedURLArrayBufferSourceABI(Image, Target, Result)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
       if (auto Mangled = swiftMangledURLArrayBufferSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
