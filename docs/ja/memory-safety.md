@@ -15,6 +15,8 @@ NeverD は読み込んだバイナリに対して二系統のメモリ安全性�
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## 核心不変条件：失敗は閉じる
 
 リフトされていない操作、ABI が引数を復元できなかった呼び出し、未解決の間接対象、または予算切れはすべて **UNKNOWN** であり、SAFE にはしません。容量を復元できない書き込み先も UNKNOWN です。strict lifting はそのままです。安全性層は、その上に保守的な判定だけを足します。
@@ -22,6 +24,8 @@ NeverD は読み込んだバイナリに対して二系統のメモリ安全性�
 呼び出し効果は閉世界の意味論に従います。要約は前提条件と関連するすべての効果が既知の場合だけ適用されます。未知の効果や部分的にしか適用できない要約は UNKNOWN のままで、隙間を「効果なし」または「呼び出し成功」と仮定しません。
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## 形式ごとの識別契約
 
@@ -37,6 +41,8 @@ NeverD は読み込んだバイナリに対して二系統のメモリ安全性�
 
 PDB のプロシージャ署名は、値を返す確保関数と `void` の解放関数を区別するために使います。PDB のローカル変数とスタック型の本格的な復元は今も限定的です。正確なオブジェクトサイズを確定できない場合、ハントはフレーム／確保点のモデルへ落ち、サイズを捏造せず UNKNOWN を返します。
 
+<!-- i18n-section: name-precedence -->
+
 ### 名前出所の優先順位
 
 各発見は `name_source` を持ち、被呼び出し名の出所を次の優先順位で選びます。
@@ -51,6 +57,8 @@ PDB のプロシージャ署名は、値を返す確保関数と `void` の解�
 DWARF が付けた静的リンクの `memcpy` は `dwarf`、インポートされた `memcpy` はどの形式でも `import` です。シグネチャ照合が、デバッガやインポート表が既に述べた名前を上書きすることはありません。
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## シンクとソースのカタログ
 
@@ -87,6 +95,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## ハント：コピー越境の判定
 
 各コピーシンクについて、ハントは宛先容量を次の順で復元します。デバッグ宣言の配列サイズ、既知サイズのヒープ確保点、健全なスタックフレーム上界。書き込み長を決める引数は、スタックスロットの spill/reload を辿る後方 SSA 走査で分類します。
@@ -99,11 +109,21 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 復元された容量は常に実オブジェクトサイズの **上界** なので、証明された越境は偽陽性になりません。
 
+<!-- i18n-section: formatted-input -->
+
 ### 書式付き入力
 
 `scanf`/`fscanf` とそのバージョン付き表記では、読み取り可能な定数書式が、抑制されていない各変換を実際の可変引数出力引数へ対応付けます。境界なしの `%s`/`%[` 出力は後続の文字列使用へ taint を伝播し、数値および文字出力は、出力ポインタ値そのものではなく、書き込まれたオブジェクトからロードされる値へ taint を伝播します。`sscanf` がこれらの effect を伝播するのは、入力文字列がすでに攻撃者の影響を受けている場合だけです。`%Ns`/`%N[` のような有界テキスト出力は、終端文字を含む `MaxBytes` extent とともに taint を伝播し、ワイド文字の変種はプラットフォームの `wchar_t` 幅を使ってそのバイト extent を計算します。抑制された変換、余分な引数、位置依存または未対応の書式、および `%n` は、推測せず UNKNOWN のままにします。
 
+<!-- i18n-section: formatted-output -->
+
+### 書式付き出力
+
+`snprintf`/`vsnprintf` の最大書き込み長と、強化版 `_chk` のコンパイラ由来の宛先オブジェクトサイズは別の境界です。リテラルと `%%` のみの信頼できる定数書式では、終端 NUL を含む出力長が正確に分かり、コピー sink と同じヒープ／スタックモデルで検査します。最大書き込みが正確な容量内なら SAFE、リテラル出力が宛先を超えるなら UNSAFE です。値変換は引数の出力長を証明するまで UNKNOWN です。高信頼度 UNSAFE には LowIR パス再生による到達可能性の証明も必要です。攻撃者が制御する書式は切り詰めとは別に `format_string` として報告します。
+
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## 監査：ヒープ寿命の判定
 
@@ -118,6 +138,16 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 ヒープ状態機械はまず候補イベント列（確保、解放、使用、または返却による出口）を出します。二回目の走査がその列を記号 LowIR 経路上で順に再生し、経路述語の充足可能性を証明して初めて、発見は高信頼度の UNSAFE になります。LowIR の欠落、不透明な操作、要約のない呼び出し、ソルバの不確定、探索上限は、いずれも候補を UNKNOWN へ格下げします。保守的な may-alias によるメモリ havoc は別に追跡するため、通常のスタックフレームへの格納が、本来正確な到達可能性の根拠を無効にすることはありません。
 
 ---
+
+<!-- i18n-section: stack-initialization -->
+
+## 監査：ローカルスタックの初期化
+
+関数入口のスタックポインタより下にあるローカルスロットへの全幅書き込みと後続ロードを追跡します。先行する初期化があり得ないロードは `uninitialized_read` です。高信頼度 UNSAFE には LowIR パス再生でロードの到達可能性を確認します。条件付き初期化、部分書き込み、スロットアドレスのエスケープなど不確実な定義は UNKNOWN のままです。入口スタックポインタ以上の呼び出し元所有引数スロットは対象外です。
+
+---
+
+<!-- i18n-section: reachability -->
 
 ## 既知エントリからの手続き間到達可能性
 
@@ -159,6 +189,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## 予算、出力、バインディング
 
 ハントの探索とソルバは予算で制限します（`--max-paths`、`--max-steps`、`--max-loop`、`--solver-conflicts`）。手続き間解析では、`max_call_depth` が既知エントリからの内部呼び出しエッジ数を、`max_summary_iterations` が攻撃者制御の固定点反復数を制限します。既定値はそれぞれ 64 エッジと、有効な深さ制限に 1 を加えた反復数です。予算切れは上記のとおり fail closed です。`max_call_depth` の枯渇では未到達関数が `status=UNKNOWN` になり得ます。`max_summary_iterations` の枯渇は構造的な証人を消さないため、`status=REACHABLE` と `attacker_control=UNKNOWN`、`budget_hit=true` が共存できます。両コマンドは JSON を出力し、`-o` を尊重します。終了コードは SAFE が `0`、UNSAFE が `2`、UNKNOWN またはエラーが `1` です。
@@ -176,6 +208,8 @@ C の呼び出し側は `neverd_safety_options` をゼロ初期化し、
 維持します。Python は両値を符号なし 32-bit 整数として検証します。
 
 同じ解析は C API（`neverd_session_audit_json` / `neverd_session_hunt_json`、版付き `neverd_safety_options`）と Python SDK（`Session.audit()` / `Session.hunt()`）でも使えます。
+
+<!-- i18n-section: finding-schema -->
 
 ### 発見スキーマ
 
@@ -195,8 +229,32 @@ C の呼び出し側は `neverd_safety_options` をゼロ初期化し、
   "capacity": 16,
   "capacity_kind": "exact",
   "corroboration": "path predicate and overflow are jointly satisfiable",
-  "reachability": { "status": "REACHABLE", "attacker_control": "TAINTED", "budget_hit": false, "entry": { "va": "0x1000", "name": "main", "kind": "application" }, "call_chain": [{ "caller_va": "0x1000", "call_va": "0x1080", "callee_va": "0x1100", "kind": "direct" }] },
-  "evidence": { "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" }, "candidate_values": [{ "name": "copy_length", "value": "17" }, { "name": "argv[1]", "value": "16 bytes" }], "replayable": false, "replay": { "adapter": "process-input-v1", "reason": "argv input is not supported by process-input-v1" }, "symbolic_model": [{ "id": 0, "name": "copy_len", "width": 64, "value_hex": "0x11", "origin": "input" }] }
+  "reachability": {
+    "status": "REACHABLE",
+    "attacker_control": "TAINTED",
+    "budget_hit": false,
+    "entry": { "va": "0x1000", "name": "main", "kind": "application" },
+    "call_chain": [
+      { "caller_va": "0x1000", "call_va": "0x1080",
+        "callee_va": "0x1100", "kind": "direct" }
+    ]
+  },
+  "evidence": {
+    "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" },
+    "candidate_values": [
+      { "name": "copy_length", "value": "17" },
+      { "name": "argv[1]", "value": "16 bytes" }
+    ],
+    "replayable": false,
+    "replay": {
+      "adapter": "process-input-v1",
+      "reason": "argv input is not supported by process-input-v1"
+    },
+    "symbolic_model": [
+      { "id": 0, "name": "copy_len", "width": 64,
+        "value_hex": "0x11", "origin": "input" }
+    ]
+  }
 }
 ```
 
@@ -204,11 +262,39 @@ C の呼び出し側は `neverd_safety_options` をゼロ初期化し、
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
+## 厳密な実行時ガードと認証済み公開
+
+`binary-sanitizer-v1` は audit/hunt 判定を変えない独立した実験的変更トランザクションです。完了した厳密 hunt は全検出を、正確な残容量と一致するコンパイラ呼び出し点情報を持つ、一意なカウント付き書き込みの発生に対応させる必要があります。未対応検出、古い／曖昧な識別、不完全なリフト、予算枯渇、ガード生成エラー、対象／署名制約は全体を拒否し、部分成功はありません。再配置可能オブジェクト、動的ライブラリ、ユニバーサル Mach-O、ガード対象の Mach-O bundle メンバーなども拒否します。
+
+公開 API は C の `neverd_session_sanitize`、CLI の `neverd patch --sanitize=strict`、Python の `Session.sanitize` です。認証済み公開が必要な C 呼び出し元は先に `neverd_sanitize_publication_abi_version()` を確認します。全 API が完全で整合した publication receipt v1 を成功条件とします。非 Darwin では入力の認証と正規化後、リフト・ガード生成・候補作成・名前空間変更の前に `UNSUPPORTED_TARGET` を返します。
+
+Darwin の成功形態は二つです。`CREATE_EXCLUSIVE` は同じディレクトリの新候補を、存在しない宛先へ一回の原子的な上書き禁止操作で公開します。receipt は名前空間の原子性、排他的作成、実際のオペランドの結び付きを証明しますが、置換 CAS やクラッシュ耐久性は保証しません。読み取り専用の `NO_CHANGE` は空のガード計画で保持中のロード元オブジェクトを再認証し、`NOT_PUBLISHED` を報告します。公開保証やオペランドの結び付きは主張しません。ガード付き計画はロード元を出力にできず、別の既存宛先も置換しないため、新しいパスが必要です。不確定な公開や不完全な最終 receipt は失敗です。宛先が存在する可能性があるので、使用・再試行・削除の前に確認します。
+
+ソースのバイト列を session の外部ダイジェストと照合し、保持した記述子で観測します。ソースと宛先ディレクトリのオブジェクトは処理中に保持しますが、メタデータ／識別の観測は最初のロード以降の不変性を証明しません。開いたディレクトリは改名され得るため、receipt は保持したオブジェクト内の公開のみを認証し、元のパスが処理中や返却後も同じ対象を指すことは証明しません。永続的で独立検証可能なパスの結び付きではなく、後で開き直す側は外部アンカーを保ち再認証する必要があります。Darwin rename は候補記述子でなくパスを使うため、宛先ディレクトリは実効 uid 所有、拡張 ACL なし、グループ／他者書き込みなし、通常の POSIX 所有権を保証するボリューム上である必要があります。候補作成と公開前に再確認します。同権限プロセス、root/DAC 回避、敵対的ファイルシステム／サーバーは保証外で、カーネル・VFS・ファイルシステムの申告した意味に依存します。
+
+---
+
+<!-- i18n-section: native-replay -->
+
+## ネイティブプロセス再生：Phase 0 のみ
+
+プラットフォーム中立の `process-replay-v1` 計画と実行調整器は将来の認証済み実行の要件を定めますが、現在それを実行できるホストはありません。`NativeProcessReplayAdapter` は C++ の可用性／ファクトリ境界であり、C、Python、CLI、JSON の実行 API ではありません。
+
+問い合わせは完全な計画、実行制限、絶対実行ファイルロケーター、一意な物理呼び出し点マップを検証するだけです。対象を開かず、バックエンドを呼ばず、プロセスも開始しません。ロケーターは将来の検索情報であり、認証後のパス実行権限に変えてはなりません。隔離、識別、入力仲介、発生の認証、制限、後始末のいずれかが欠ければ `Available` と全能力は false、ファクトリは操作表なしでエラーを返します。
+
+全ホストが現在この状態です。Linux は信頼できる静的 ELF 計装、永続監督、完全な隔離・制限・実行時認証が未完成です。macOS の対応公開機構では保持オブジェクト実行、対象コード前の任意対象サンドボックス、競合のないプロセスツリー隔離を揃えられません。他プラットフォームも未対応です。単体テストの操作表は調整器の契約を試すだけで、ネイティブ可用性の証拠にはなりません。
+
+---
+
+<!-- i18n-section: scope -->
+
 ## 偽陽性の境界と範囲
 
 - 容量は正確値または実オブジェクトサイズの上界なので、UNSAFE は実際の越境を表します。正確な宣言サイズがなく、包含領域の上界だけでは安全性を証明できない場合は UNKNOWN です。
 - 長さ制限付きコピーは解法前に退き `skipped` に数えられます。正確な容量なら SAFE を証明でき、上界だけなら UNKNOWN のままです。
 - カタログ済みのワイド文字コピーと追加コピーは、要素幅と既存の宛先長を復元できるまで UNKNOWN です。出力引数型アロケータと条件付き `realloc` の所有権も、ハンドル遷移を証明できなければ UNKNOWN のままです。
-- **P0**（本リリース、三形式すべて）：シンクカタログ、引数事前フィルタ、コピー越境ハント、ヒープ寿命監査。全テストホストで PE、ELF、Mach-O × x86-64、AArch64 の 6 fixture を実行します。
-- **P1**：スタック/グローバル越境、未初期化ローカル読み、書式文字列検査は利用可能です。より豊かな PDB スタック型と追加のプラットフォーム確保 API は段階的なカバレッジであり、正確な要約がなければ UNKNOWN のままです。
+- **Phase 1**: 本リリースは三形式で sink カタログ、引数事前フィルタ、スタック／グローバルのコピー越境探索、ヒープ寿命監査、ローカルスタック未初期化読み取り、書式文字列検査を提供します。全テストホストで PE、ELF、Mach-O × x86-64、AArch64 の登録済み fixture が必須です。
+- より豊富な PDB スタック型と追加のプラットフォームアロケータは今後の追加範囲です。正確な要約がなければ UNKNOWN を維持します。
 - 現在のスライスは既知エントリ、構造的な手続き間到達可能性、攻撃者パラメータの単調伝播を対象にします。独立した実験的アダプタ `lowir-concolic-v1` は、必須のネイティブ形式／アーキテクチャ行列で、レジスタ seed によるリプレイ検証済みのブランチ反転を提供します。これは常に非網羅的であり、安全性 verdict を変更しません。実験的 `binary-sanitizer-v1` は Darwin で全サイトを保護できなければ拒否する counted-write ガードと認証済み公開を提供しますが、receipt が認証するのはトランザクション中に保持したディレクトリ object であり、元の pathname の永続的かつ再検証可能な binding ではありません。より広い `process-replay-v1` は引き続き plan、coordinator、可用性の fail-closed な Phase 0 境界だけで、ネイティブ replay を実行するホストはありません。

@@ -621,6 +621,8 @@ ambientales; `_evmTrace` es virtual y emite `EVMTrace` por defecto.
 solc --bin contract.sol
 ```
 
+<a id="c-api"></a>
+
 ## API C
 
 ```c

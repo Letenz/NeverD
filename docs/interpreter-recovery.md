@@ -31,6 +31,8 @@ modifying the session's ordinary decompilation cache. Failure returns no source
 and can still return a JSON diagnostic. Both owned strings use
 `neverd_free_string()`.
 
+<!-- i18n-section: control-discovery -->
+
 ## Automatic control-state discovery
 
 The CLI and all source-recovery C API versions enable automatic discovery by
@@ -186,6 +188,8 @@ The JSON report adds `discoverControlState`, `maxControlRefinements`,
 limits, and analysis work; field discovery alone does not establish successful
 recovery.
 
+<!-- i18n-section: execution-contract -->
+
 ## Default execution contract
 
 The binary adapter currently accepts linked x64 ELF and PE images at their
@@ -239,6 +243,8 @@ The exact x64 `PUSHFQ`/`POPFQ` forms remain in the residual program. Analysis tr
 Before a full flag snapshot, every modelled arithmetic or direction flag must have a definition within the recovered function. Any direct flag read also needs a definition on every reachable predecessor, even when symbolic simplification cancels its value. Otherwise recovery refuses instead of emitting an unknown-register trap in C.
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
+
+<!-- i18n-section: machine-state -->
 
 ## Explicit machine-state recovery
 
@@ -318,6 +324,8 @@ its stricter call, entry-flag and exception rejection. The machine-state wrapper
 remaps guest registers and uses the existing LowIR/MedIR/HighC/LLVMC scalar
 pipeline. It does not introduce a second instruction evaluator.
 
+<!-- i18n-section: limits -->
+
 ## Current limits
 
 Input-dependent bytecode addresses and decoder-state relationships are supported
@@ -329,6 +337,8 @@ schemes. Unresolved control and exhausted required proof budgets are failures,
 with no recovered source or partial replacement published. External calls, exception/reentry execution, mutable code, and other
 architectures remain unsupported. The default source ABI also refuses native
 helper calls; the explicit machine-state profile covers only the forms above.
+
+<!-- i18n-section: implementation -->
 
 ## Shared implementation
 
@@ -387,6 +397,8 @@ conflicts, propagations and watched-literal visits bound proof work;
 symbolic-node limits bound expression growth. The JSON report includes these
 budgets together with `solverQueries` and `relationalWidenings`.
 
+<!-- i18n-section: evidence -->
+
 ## Evidence and tests
 
 The optional local JSON report includes the input hash, selected controls,
@@ -444,6 +456,8 @@ memory canaries unchanged. Rebinding to a generated global object cannot satisfy
 this oracle. These local checks do not establish arbitrary VM support.
 
 See [testing.md](testing.md) for the focused targets.
+
+<!-- i18n-section: loop-proposals -->
 
 ## Automatic loop proof proposals
 

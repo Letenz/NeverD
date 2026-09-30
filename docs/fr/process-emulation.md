@@ -8,6 +8,8 @@
 
 Le premier profil `linux-elf64-v1` exécute des ELF `ET_EXEC` x64/AArch64 et des PIE statiques `ET_DYN` auto-relocatifs à CPL3 ou EL0. Il charge de vrais segments ELF, construit la pile initiale, reprend par quanta et traite les requêtes explicites d’appels système Linux. C’est un modèle de processus autonome, pas une distribution Linux complète ni une promesse d’exécuter n’importe quel binaire libc. Liaison dynamique, signaux, threads, systèmes de fichiers et services non pris en charge échouent explicitement. Le profil x64 admet quelques formes SSE/SSE2 bornées ; AArch64 reste entier. Windows, Android, Darwin et les autres charges noyau restent séparés.
 
+<!-- i18n-section: cli-sdk -->
+
 ## CLI et SDK
 
 ```bash
@@ -26,6 +28,8 @@ report = session.emulate_process(
 )
 output = bytes.fromhex(report["stdout_hex"])
 ```
+
+<!-- i18n-section: options-results -->
 
 ## Options et résultats
 
@@ -46,15 +50,31 @@ Les options sont un objet JSON de 64 KiB maximum. Champs inconnus/null, types in
 
 `schema_version` vaut 1. Le rapport inclut profil, architecture, backend sélectionné et motif, `stop_reason`, `exit_status` nullable, diagnostic, PC d’entrée/courant, compteurs, enregistrements de services et dernière sortie CPU typée. Adresses, numéros syscall, registres d’arguments et bits de retour sont des chaînes hexadécimales **sans** `0x` ; `stdout_hex`/`stderr_hex` préservent NUL et UTF-8 invalide. Un résultat syscall null signifie aucun retour modélisé (exit ou requête non prise en charge, par exemple), et non un zéro réussi.
 
+<!-- i18n-section: linux-semantics -->
+
 ## Sémantique du profil Linux
 
 La politique OS réutilise les en-têtes de programme déjà décodés par le chargeur ELF. Elle vérifie tags ABI, alignement des segments, tables d’en-têtes mappées et limites d’adresses utilisateur. Un plan générique vérifie étendues, permissions, chevauchements et budget avant allocation, et ne publie qu’un espace privé entièrement préparé. Il conserve préfixes/restes des pages de fichier, met BSS à zéro, respecte les droits de segment et réserve des pages de garde de pile. Les dispositions à pages chevauchantes et en-têtes contradictoires sont rejetés sans supposition.
 
+Le PIE statique utilise un load bias déterministe d’au moins `0x40000000`, augmenté pour respecter les alignements `PT_LOAD` supérieurs. Segments, PC d’entrée et `AT_PHDR`/`AT_ENTRY` partagent ce biais ; les valeurs originales des en-têtes restent inchangées et `AT_BASE` vaut zéro sans interpréteur. Le mappage utilise les octets du fichier original, jamais les fixups d’analyse ; le guest réalise ses propres relocations et initialisation. Le loader décode `PT_DYNAMIC` depuis des enregistrements bornés du fichier original, indépendamment des sections. Présente, la table doit être lisible, terminée et contenir au plus 4096 entrées. `PT_INTERP` et les tags externes de dépendance/filter/audit sont rejetés ; aucun linker dynamique, résolveur de symboles ou constructeur n’est fourni.
+
 La pile initiale contient argc/argv/envp/auxv alignés, PHDR/PHENT/PHNUM, entry, taille de page et identités. PID/TID/UID/GID modélisés valent 1000. `AT_RANDOM` contient les 16 premiers octets du SHA-256 d’entrée pour la reproductibilité ; c’est une politique déterministe du modèle, pas une entropie cryptographique. HWCAP/HWCAP2 sont nuls ; aucun vDSO n’est fourni.
 
-Les appels implémentés sont `write`, `exit`, `exit_group`, `getpid` et `gettid`, avec des numéros distincts pour [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) et [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h). Le retour d’un SYSCALL x64 applique les clobbers RCX/R11, RAX et le PC suivant. ARM64 utilise x8 pour le numéro et x0 pour le résultat. Les appels inconnus arrêtent l’exécution avec `unsupported_service` ; aucun syscall hôte n’est exécuté.
+Les appels implémentés sont `write`, `exit`, `exit_group`, `getpid` et `gettid`, `mmap`, `mprotect`, `munmap`, `brk`, avec des numéros distincts pour [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) et [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h). Le retour d’un SYSCALL x64 applique les clobbers RCX/R11, RAX et le PC suivant. ARM64 utilise x8 pour le numéro et x0 pour le résultat. Les appels inconnus arrêtent l’exécution avec `unsupported_service` ; aucun syscall hôte n’est exécuté.
+
+Les modèles TLS statiques `PT_TLS` sont validés comme faits du loader : un seul modèle, étendues fichier/mémoire bornées, alignement congruent et octets initialisés lisibles. Le démarrage guest alloue/initialise les blocs TLS et installe le pointeur de thread ; le modèle Linux n’invente ni TCB ni DTV propre à libc. Cela permet le TLS local-exec généré par compilateur dans les programmes freestanding. TLS dynamique et threads OS restent hors périmètre.
+
+Sur x64, `arch_prctl` prend en charge `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS` et `ARCH_GET_GS`. Set accepte une base d’espace utilisateur même non mappée ; les déréférencements ultérieurs vérifient toujours les droits. Une base noyau renvoie `EPERM` invité ; une destination Get invalide renvoie `EFAULT` sans défaut CPU. Les autres opérations échouent explicitement. ARM64 installe `TPIDR_EL0` par `MSR` ; `MRS`, accès mémoire FS/GS et restauration de contexte préservent le pointeur entre quanta et entrées backend. Cela n’implémente pas d’ordonnanceur.
 
 Les descripteurs 1 et 2 sont des puits d’octets virtuels. `write` valide les pages utilisateur lisibles, renvoie le préfixe lisible si une page suivante est inaccessible et `EFAULT` si aucun octet ne l’est. Un descripteur invalide donne `EBADF` ; une écriture de longueur nulle avec descripteur valide ne lit pas le pointeur. L’atomicité des pipes Linux et les fichiers ne sont pas modélisés. La limite de sortie arrête avant publication d’une écriture trop grande.
+
+Les services de mémoire anonyme partagent l'espace d'adressage et le budget physique de l'image et de la pile. `mmap` accepte exactement `MAP_PRIVATE | MAP_ANONYMOUS`, avec `PROT_NONE`, `PROT_READ`, `PROT_READ | PROT_WRITE`, `PROT_READ | PROT_EXEC` ou RWX lisible. Les adresses suggérées libres et alignées sont respectées ; sinon, la recherche part de `0x100000000`, puis de l'adresse utilisateur minimale, en réservant les gardes de pile. Ce placement déterministe ne simule pas l'ASLR Linux. Les nouvelles pages sont indépendantes et remplies de zéros ; une suppression partielle peut libérer les pages non épinglées. Une projection CPU ou une vue du stockage conservée peut prolonger la vie d'une allocation retirée.
+
+Les longueurs sont arrondies aux pages. `munmap` tolère les trous et suppressions répétées ; `mprotect` modifie le préfixe mappé avant de retourner `ENOMEM` au premier trou. `PROT_NONE` conserve l'allocation et les octets sans autoriser l'accès invité. L'appel brut `brk` retourne la limite demandée en cas de succès et l'ancienne en cas d'échec, contrairement au zéro/moins un du wrapper libc. La limite initiale est la fin d'image alignée sur une page. L'extension respecte les autres mappings et le budget ; la réduction conserve les octets de la page partielle restante. Les règles et priorités d'erreur suivent les services Linux de [mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) et de [protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
+
+Les mappings de fichiers, partagés ou fixes, la croissance descendante, les grandes pages, le verrouillage, les clés de protection, les politiques exécution seule/écriture seule et les autres drapeaux restent explicitement non pris en charge : arrêt avant tout effet publié ou retour inventé. Les erreurs ordinaires de plage, longueur et alignement du sous-ensemble admis retournent une erreur invitée et permettent de poursuivre. Aucun pointeur ni demande de mapping invité n'est transmis à l'OS hôte.
+
+<!-- i18n-section: verification -->
 
 ## Vérification
 
@@ -66,14 +86,4 @@ cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
-Les tests compilent de vrais fichiers ELF d’entrée en assembleur et C pour les deux ISA. Ils couvrent données/BSS, métadonnées initiales, erreurs syscall, sortie binaire, permissions, écritures partielles, services non pris en charge et budgets maintenus entre quanta. Les backends indisponibles sont explicitement marqués comme ignorés. La suite publique traverse ABI C/CLI et vérifie la cohérence rapport/code de sortie. Compilation croisée et Unicorn ARM64 ne prouvent pas l’exécution ARM64 native KVM/WHP.
-
-## PIE statique, TLS et vérification
-
-Le PIE statique utilise un load bias déterministe d’au moins `0x40000000`, augmenté pour respecter les alignements `PT_LOAD` supérieurs. Segments, PC d’entrée et `AT_PHDR`/`AT_ENTRY` partagent ce biais ; les valeurs originales des en-têtes restent inchangées et `AT_BASE` vaut zéro sans interpréteur. Le mappage utilise les octets du fichier original, jamais les fixups d’analyse ; le guest réalise ses propres relocations et initialisation. Le loader décode `PT_DYNAMIC` depuis des enregistrements bornés du fichier original, indépendamment des sections. Présente, la table doit être lisible, terminée et contenir au plus 4096 entrées. `PT_INTERP` et les tags externes de dépendance/filter/audit sont rejetés ; aucun linker dynamique, résolveur de symboles ou constructeur n’est fourni.
-
-Les modèles TLS statiques `PT_TLS` sont validés comme faits du loader : un seul modèle, étendues fichier/mémoire bornées, alignement congruent et octets initialisés lisibles. Le démarrage guest alloue/initialise les blocs TLS et installe le pointeur de thread ; le modèle Linux n’invente ni TCB ni DTV propre à libc. Cela permet le TLS local-exec généré par compilateur dans les programmes freestanding. TLS dynamique et threads OS restent hors périmètre.
-
-Sur x64, `arch_prctl` prend en charge `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS` et `ARCH_GET_GS`. Set accepte une base d’espace utilisateur même non mappée ; les déréférencements ultérieurs vérifient toujours les droits. Une base noyau renvoie `EPERM` invité ; une destination Get invalide renvoie `EFAULT` sans défaut CPU. Les autres opérations échouent explicitement. ARM64 installe `TPIDR_EL0` par `MSR` ; `MRS`, accès mémoire FS/GS et restauration de contexte préservent le pointeur entre quanta et entrées backend. Cela n’implémente pas d’ordonnanceur.
-
-Les fixtures PIE/TLS vérifient blocs indépendants alignés, BSS TLS, valeurs auxv relocalisées et slots RELA originaux nuls avant les relocations du guest. Les tests x64 vérifient les erreurs `arch_prctl` sans perdre la base précédente. Ajouter `NeverDThreadPointerTests` à la commande build/CTest ci-dessus ; les backends absents restent des skips explicites.
+Les tests compilent des entrées ELF autonomes en assembleur et C pour les deux ISA : data/BSS, démarrage réel, erreurs système, sortie binaire, permissions, écritures partielles, services non pris en charge et budgets entre quanta. Les fixtures TLS initialisent des blocs alignés indépendants, leur BSS et les pointeurs de thread, puis vérifient leur conservation ; x64 vérifie aussi les erreurs `arch_prctl` sans perte de la base antérieure. Les backends indisponibles sont explicitement ignorés. La suite publique traverse l'ABI C partagée et la CLI et compare rapports et codes de sortie. Les PIE vérifient auxv et les slots RELA initialement nuls avant leurs propres relocations de données et de fonctions. Les tests de mapping conservent les fixups quand la source d'analyse est choisie ; ceux des tables dynamiques couvrent l'absence de sections et les entrées malformées ou dépendantes. Les deux ISA exercent allocation, protection, trous, remapping, extension/réduction du tas et erreurs traitées. De vraies écritures invitées vérifient les fautes après protection totale ou partielle. x64 réécrit du code à la même adresse entre RW et RX et appelle les deux versions ; le même ELF exécuté nativement sous Linux sert d'oracle indépendant. Les tests mémoire couvrent épuisement, récupération et instantanés de mapping faisant autorité sans retenir la RAM. La compilation croisée et Unicorn ARM64 ne prouvent pas le fonctionnement natif ARM64 KVM/WHP.

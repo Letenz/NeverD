@@ -1,5 +1,7 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+
 <div align="center">
 
 <picture>
@@ -11,12 +13,12 @@
 
 **AI 友好的二進位分析與反編譯引擎 — 1:1 提升，基於 LLVM**
 
-PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; 純 C SDK
+PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; C + Python SDK
 
 [![AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](../../LICENSE)
 [![C++20](https://img.shields.io/badge/Standard-C%2B%2B20-brightgreen.svg)](#建置)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-informational.svg)
-[![SDK](https://img.shields.io/badge/SDK-Pure%20C%20API-orange.svg)](#sdk-與外掛)
+[![SDK](https://img.shields.io/badge/SDK-C%20%2B%20Python-orange.svg)](#sdk-與外掛)
 
 [文件](README.md) · [Android](android.md) · [iOS](ios.md) · [路線圖](roadmap.md) · [貢獻](CONTRIBUTING.md)
 
@@ -25,6 +27,8 @@ PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64
 ---
 
 > GitHub 倉庫首頁固定展示英文 `README.md`。請使用上方語言連結查看在地化版本。
+
+<!-- i18n-section: overview -->
 
 ## 概覽
 
@@ -36,6 +40,18 @@ CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`lib
 
 輸入格式、host contract 與限制詳見 [EVM 指南](evm.md)及 [Solana SBF 指南](sbf.md)。
 
+實驗性 CLI `neverd mobile app.apk -o recovered-app` 可從 APK、DEX 與 smali 還原 Java，並產生 `report.json`。預設引擎以 C++20 實作，執行時不需要 Python、Java 或 JADX。`NEVERD_JADX` 與 PATH 中的 `jadx` 不會選用外部引擎；只有明確指定 `--jadx PATH` 才會啟用外部轉接器。沒有自動後備機制。包含空格的路徑必須加上引號。支援的輸入、報告與還原限制請見 [Android 指南](android.md)。
+
+實驗性 iOS 流程 `neverd mobile App.ipa -o recovered-ios` 從 IPA、`.app` 或 Mach-O 輸出原生 C 和受支援的 Objective-C/Swift 原始碼，保留執行階段配置、原始碼單元和逐方法省略原因；生成程式碼不透過橋接呼叫原始二進位檔。環境、覆蓋率與獨立編譯驗證請見 [iOS 指南](ios.md)。
+
+實驗性的[直譯器原始碼還原](interpreter-recovery.md)使用 `neverd decompile --devirtualize --func ENTRY`，透過共用 LowIR/MedIR 管線，將支援的已連結 x64 ELF/PE 直譯器特化為 HighC 或 LLVMC。控制提示用來區分解碼器情境，不固定執行時輸入。未解析控制流程、不支援的語義與預算耗盡都會明確失敗；此模式不證明二進位替換或例外等價性。
+
+恢復預算可明確設定：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的預設值仍為 16、16、4096。相容的 v3 C API 與失敗規則見恢復指南。
+
+獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
+
+<!-- i18n-section: why-neverd -->
+
 ## 為什麼選 NeverD？
 
 - **1:1 語意** — 手寫 lifter；預設 strict 下未支援指令拋出例外
@@ -43,6 +59,8 @@ CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`lib
 - **一條管線，多種出口** — `lift` → LLVM IR · `decompile` → C/Solidity/Rust · `patch` → 重寫原生二進位
 - **二進位重寫** — PE / ELF / Mach-O，section 跳板或 inplace 覆蓋
 - **分析工具集** — CLI、除錯資訊、簽名、外掛，以及可選混淆通路
+
+<!-- i18n-section: supported-targets -->
 
 ## 支援的目標
 
@@ -62,7 +80,9 @@ Solana SBF v0-v4 ELF 程式使用專用 strict loader、完整版本化 ISA meta
 Low/Med/High IR、已驗證 LLVM、可攜式 C11 與安全 stable Rust。詳見
 [Solana SBF 反編譯](sbf.md)。
 
-### Android / iOS 原始碼還原
+<!-- i18n-section: mobile-source-recovery -->
+
+### 行動平台原始碼還原
 
 實驗性 `neverd mobile` CLI 支援以下行動平台輸入與原始碼輸出。
 
@@ -71,28 +91,17 @@ Low/Med/High IR、已驗證 LLVM、可攜式 C11 與安全 stable Rust。詳見
 | [Android](android.md) | APK（含 multidex）、DEX、smali 檔案／目錄 | Java 與 JSON 報告 |
 | [iOS](ios.md) | IPA、`.app`、Mach-O（arm64 / x86_64） | 原生 C、受支援的 Objective-C / Swift 原始碼與 JSON 覆蓋率報告 |
 
-還原範圍取決於受支援的程式碼模式，限制詳見各平台指南。
+還原取決於支援的程式碼模式；覆蓋範圍與限制見[行動平台總覽（英文）](../mobile.md)及各平台指南。
 
-### 直譯器原始碼還原（實驗性）
-
-`neverd decompile --devirtualize` 可對單一已連結 x64 ELF/PE 函式進行受預算限制的直譯器特化，消除有充分證據解析的派發，並沿用 HighC 或 LLVMC 原始碼輸出。控制提示不提供執行期輸入值；未解析控制流程或預算耗盡都會導致失敗，不輸出部分替代程式碼。
-
-```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
-  --recovery-report recovery.json -o recovered.c
-```
-
-映像內容與權限必須固定，且所有外部來源寫入的目標範圍都不得與入口返回位址槽重疊。這是呼叫端／環境前提；此功能不證明二進位 patch 或例外展開安全。輸入相關的位元碼定址與解碼器狀態關聯尚未普遍支援。完整契約、`--llvm` 路徑及限制請見[直譯器原始碼還原指南](interpreter-recovery.md)。
-
-恢復預算可明確設定：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的預設值仍為 16、16、4096。相容的 v3 C API 與失敗規則見恢復指南。
-
-獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
+<!-- i18n-section: cpu-workloads -->
 
 ### CPU 執行與客體環境
 
 CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 啟用 x64/ARM64 CPU 層；`NEVERD_ENABLE_DRIVER_EMULATION` 加入有界 x64 Windows WDM/KMDF 環境。`linux-elf64-v1` 設定檔執行受支援的 Linux ELF 程序。參見[CPU 執行](cpu-execution.md)、[客體程序模擬](process-emulation.md)及[Windows 驅動程式模擬](driver-emulation.md)。
 
 checked 設定在 ISA 相符的 Linux 主機上使用 KVM，在相符的 Windows 主機上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 執行涵蓋仍待實機驗證。`driver-strict` 目前使用 Unicorn；驅動程式的 KVM/WHP 路徑需選擇 `checked-x64-v1`。明確指定的後端不可用時會明確失敗。共享 RAM、別名、分階段寫入、純量原子操作、型別化例外與完整 x64 FP/SSE 上下文已在文件指定的指令及 OS 契約內實作。這不表示相容任意驅動程式或已實作 Android/Darwin 環境。
+
+<!-- i18n-section: how-it-works -->
 
 ## 工作原理
 
@@ -127,6 +136,8 @@ Solana SBF ELF (v0-v4)
 | **MedIR** | 型別、呼叫慣例、記憶體模型、SSA |
 | **HighIR** | 結構化控制流（`if` / `while` / `for`） |
 | **LLVM** | 最佳化、輸出 C，或產生機器碼 |
+
+<!-- i18n-section: quick-start -->
 
 ## 快速開始
 
@@ -166,6 +177,8 @@ cmake --build build
 
 建置時簽名庫安裝到 `build/bin/signatures/`。`sigs --auto` 依格式、架構、位寬選擇匹配庫集。若 PE 檔的 Rich 標頭指出其連結器所屬的 Visual Studio 版本，則只載入該版本的 `vs<year>.pat`，以及不屬於任何版本的庫。`--sig-base <dir>` 以相同方式從另一個簽名目錄樹選擇。 1 MiB 以上的模式檔只解析一次：其模組保存在使用者快取目錄下的 `neverd/signatures`，之後載入時直接對映。`NEVERD_SIGNATURE_CACHE` 可指定其他目錄，設為 `off` 則關閉快取。
 
+<!-- i18n-section: building -->
+
 ## 建置
 
 **需求：** CMake ≥ 3.20 · Ninja · C++20 編譯器 · Git submodule（LLVM fork + Capstone）
@@ -202,13 +215,11 @@ NeverD 常規的 push 與 pull request CI 刻意從原始碼編譯 LLVM submodul
 | Linux x86_64 | `neverd-llvm-linux-x86_64.tar.xz` |
 | Windows x64 | `neverd-llvm-windows-x64.zip` |
 
-每個壓縮檔在解壓到 `~/.cache/neverd-llvm/<tag>/<arch>/`（或 `NEVERD_LLVM_PREBUILT_CACHE_DIR` 指定的路徑）之前，都會與 `cmake/NeverDLLVMPrebuilt.cmake` 中釘住的摘要核對；若 tag 不在這些 pin 的描述範圍內，則與隨套件發布的 `.sha256` 核對。發布建置在 macOS 與 Linux 上使用 ccache，Windows clang-cl 使用 sccache 搭配 GitHub Actions 快取後端；編譯器快取只加速重建，從不作為發布產物上傳。
+每個封存檔解壓縮至 `~/.cache/neverd-llvm/<tag>/<arch>/`（或 `NEVERD_LLVM_PREBUILT_CACHE_DIR` 指定的目錄）前，都會核對 `cmake/NeverDLLVMPrebuilt.cmake` 中固定的摘要；未被這些固定值描述的 tag 則核對隨包發布的 `.sha256`。預設固定版本的 `BUILDINFO.txt` 也必須記錄完全一致的 LLVM 子模組提交。發布建置在 macOS 與 Linux 使用 ccache，Windows clang-cl 使用 sccache 與 GitHub Actions 快取後端；編譯器快取只加速重建，不作為發布產物上傳。
 
-預設套件修訂版為 `neverd-llvm-v23.0.0-r3`。既有建置目錄若仍快取舊的無修訂號 tag、`neverd-llvm-v23.0.0-r1` 或 `neverd-llvm-v23.0.0-r2`，會自動遷移至 `r3`；明確提供 `NEVERD_LLVM_PREBUILT_SHA256` 時則保留原 tag。
+預設套件修訂版為 `neverd-llvm-v23.0.0-r3`。其 Git tag、發布目標、原始碼提交與三個封存檔摘要共同構成不可變的版本化原始碼固定值。若現有建置目錄快取舊基礎 tag、`neverd-llvm-v23.0.0-r1` 或 `neverd-llvm-v23.0.0-r2`，會自動遷移至 `r3`，除非明確設定 `NEVERD_LLVM_PREBUILT_SHA256`。`Prebuilt LLVM Audit` 工作流程於 push、pull request 及每六小時執行，呼叫 `scripts/audit_prebuilt_llvm_release.py`，核對 GitHub 目前發布及各校驗和附屬檔案。
 
-發布 tag 標識 NeverD 套件的版本，`BUILDINFO.txt` 記錄確切的 LLVM fork commit。若 LLVM 仍回報 `23.0.0` 但 fork 原始碼已變，常規的不可變做法是發布套件修訂版，例如 `neverd-llvm-v23.0.0-r4`（再 `-r5`），而不是 `23.0.1`——除非 LLVM 自身的 patch 版本變了。把 `NEVERD_LLVM_PREBUILT_TAG` 指向該新修訂版即可。
-
-要發布下一個不可變套件修訂版，從 llvm-project 的 `main` 分支執行 `NeverD LLVM Release` 工作流程，並保持 `overwrite_existing_assets` 關閉：
+若 LLVM fork 原始碼改變而 LLVM 仍回報 `23.0.0`，應發布下一個套件修訂版——`neverd-llvm-v23.0.0-r4`，之後為 `-r5`——不要覆寫既有發布，也不要虛構 LLVM 版本 `23.0.1`：
 
 ```bash
 gh workflow run neverd-release.yml \
@@ -218,7 +229,7 @@ gh workflow run neverd-release.yml \
   -f overwrite_existing_assets=false
 ```
 
-工作流程成功後，同時更新 `cmake/NeverDLLVMPrebuilt.cmake` 中的預設 tag、鎖定 commit 和三個封存檔摘要。不要替換現有 release；`overwrite_existing_assets` 僅用於舊版復原。
+工作流程成功後，同時更新 `cmake/NeverDLLVMPrebuilt.cmake` 中的預設 tag、固定提交與三個摘要。新套件快取於 `.cache/neverd-llvm/<tag>`；過期或重新發布的封存檔會在解壓縮前失敗。`overwrite_existing_assets` 僅用於舊版復原，正常的修訂版發布保持關閉。
 
 **產物**
 
@@ -229,6 +240,7 @@ gh workflow run neverd-release.yml \
 | `build/bin/neverd-sigmaker` | 從靜態庫產生 `.pat` |
 | `build/bin/libneverd.*` | 引擎共用函式庫 |
 | `build/bin/sdk/` | C SDK 的 canonical include root；使用保留 `neverd/sdk/` 階層的 `<neverd/sdk/NeverDCAPI.h>` 或 `<neverd/sdk/NeverDPlugin.h>` |
+| `build/bin/sdk/python/` | 具型別資訊的 Python 外掛套件與範例 |
 | `build/bin/signatures/` | 內建簽名庫 |
 
 **測試**
@@ -251,20 +263,27 @@ cmake --build build --target check-neverd
 |------|------|------|
 | `NEVERD_LLVM_PREBUILT` | `OFF` | CI 預編譯 LLVM |
 | `NEVERD_BUILD_SHARED` | `ON` | 建置 `libneverd` |
+| `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | 內嵌 CPython 3.10+ 外掛支援 |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | 範例外掛 |
 | `BUILD_TESTING` | `OFF` | 單元測試 |
 
 </details>
 
+<!-- i18n-section: desktop-workbench -->
+
+## 桌面工作台
+
+選用的 [Qt Quick 桌面工作台 (英文)](../gui.md)提供可停駐的指令、CFG、十六進位、C 與 IR 檢視，支援全部 11 種介面語言、持久化註記與 MCP 連線。分析在不依賴 Qt 的獨立工作程序中執行，純 CLI 建置保持獨立。支援的工作流程及發布前仍需完成的平台驗證見[驗收紀錄 (英文)](../gui-qualification.md)。
+
+<!-- i18n-section: cli -->
+
 ## CLI
-
-實驗性 CLI `neverd mobile app.apk -o recovered-app` 可從 APK、DEX 與 smali 還原 Java，並產生 `report.json`。預設引擎以 C++20 實作，執行時不需要 Python、Java 或 JADX。`NEVERD_JADX` 與 PATH 中的 `jadx` 不會選用外部引擎；只有明確指定 `--jadx PATH` 才會啟用外部轉接器。沒有自動後備機制。包含空格的路徑必須加上引號。支援的輸入、報告與還原限制請見 [Android 指南](android.md)。
-
-實驗性 iOS 流程 `neverd mobile App.ipa -o recovered-ios` 從 IPA、`.app` 或 Mach-O 輸出原生 C 和受支援的 Objective-C/Swift 原始碼，保留執行階段配置、原始碼單元和逐方法省略原因；生成程式碼不透過橋接呼叫原始二進位檔。環境、覆蓋率與獨立編譯驗證請見 [iOS 指南](ios.md)。
 
 ```text
 neverd <command> [options] <binary>
 ```
+
+<!-- i18n-section: pipeline -->
 
 ### 管線命令
 
@@ -273,16 +292,27 @@ neverd <command> [options] <binary>
 | `lift` | `.ll` | 提升到 LLVM IR |
 | `decompile` | `.c` / `.sol` / `.rs` | 透過 `--language` 選擇 C、EVM Solidity 或 SBF Rust |
 | `decompile -llvm` | `.c` | 經 LLVM IR + 最佳化器 |
+| `decompile --devirtualize` | `.c` + 選用 JSON | 實驗性 x64 直譯器還原；需要 `--func`；[契約與範例](interpreter-recovery.md) |
 | `mobile` | `.java` / `.c` / `.m` / `.swift` + JSON | 實驗性: [Android](android.md), [iOS](ios.md) |
 | `patch` | 二進位 | 重寫機器碼 |
 
 ```bash
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
 neverd patch --from-c repl.c --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+若 32 位元 ARM 二進位檔缺少函式的 ARM/Thumb 模式中繼資料，請在反編譯前宣告入口模式：
+
+```bash
+neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
+```
+
+可重複使用此選項指定其他有歧義的入口，必要時使用 `:arm`。與已驗證二進位中繼資料衝突的宣告會使載入失敗；有效宣告只影響指定入口。C API 透過 `neverd_session_set_arm_function_mode()` 提供相同的載入前設定。
 
 <details>
 <summary><strong>分析命令</strong></summary>
@@ -295,8 +325,8 @@ neverd patch --subst --flatten --mba -o patched binary
 | `funcs` | 發現的函式 |
 | `disasm` | 反組譯（`--func` 名稱或十六進位） |
 | `sym-explore` | 有界原生 LowIR 路徑探索（`--func`；JSON 輸出） |
-| `audit` | 堆積生命週期缺陷：洩漏、重複釋放、釋放後使用（JSON） |
-| `hunt` | 危險拷貝越界，附符號證據與候選值（JSON） |
+| `audit` | 堆積物件生命週期缺陷及未初始化的區域堆疊讀取（JSON） |
+| `hunt` | 危險複製越界與符號見證；存在完整方案時附加 `process-input-v1` 重播證據（JSON schema v1） |
 | `hex` | 依位址十六進位傾印 |
 | `cfg` / `callgraph` | CFG / 呼叫圖（JSON；可選 DOT/SVG） |
 | `xrefs` | 交叉參照 |
@@ -312,6 +342,8 @@ neverd patch --subst --flatten --mba -o patched binary
 大多數分析命令支援 `--json`。
 
 </details>
+
+<!-- i18n-section: sdk-and-plugins -->
 
 ## SDK 與外掛
 
@@ -343,6 +375,8 @@ Solidity；舊 `neverd_decompile_all` 仍輸出 C。參見
 package 工作流程見 [Python 外掛指南](python-plugins.md)。兩者都使用
 `<neverd-dir>/plugins`、`~/.neverd/plugins` 和 `$NEVERD_PLUGIN_PATH`。
 
+<!-- i18n-section: dependencies -->
+
 ## 相依元件
 
 | 元件 | 作用 | 來源 |
@@ -352,14 +386,18 @@ package 工作流程見 [Python 外掛指南](python-plugins.md)。兩者都使�
 
 第三方保留各自授權條款。
 
+<!-- i18n-section: contributing -->
+
 ## 貢獻
 
 開發成果合入 **`dev`** 分支。環境設定、Release/Debug 指引、風格、聚焦測試與拉取請求要求見[貢獻指南](CONTRIBUTING.md)。[架構](architecture.md)與[測試](testing.md)指南將常見變更映射到對應程式碼與驗證套件。
 
+<!-- i18n-section: license -->
+
 ## 授權條款
 
-[AGPL-3.0](../../LICENSE)
+[GNU AGPL 僅第 3 版](../../LICENSE)。重新散布受其約束的 NeverD 程式碼或改作時，應保留著作權、授權與免責聲明，包括 [NOTICE](../../NOTICE) 中的專案署名與來源。這也適用於 AI/LLM 輔助重用及基於 LLVM 的程式碼轉換。
 
-再散布受 AGPL 規範的 NeverD 程式碼副本或改作版本時，必須依照 AGPL 保留著作權與授權聲明；這同樣適用於藉助 AI/LLM 重用程式碼或透過 LLVM 轉換程式碼的情況。為方便追溯來源，我們也建議註明儲存庫、檔案和使用的版本。詳見[署名與來源引用指南](ATTRIBUTION.md)、[NOTICE](../../NOTICE) 和 [CITATION.cff](../../CITATION.cff)。
+要求、適用範圍與範例見[署名與來源引用](ATTRIBUTION.md)。為方便追溯，建議引用原始碼檔案及確切版本或提交。[CITATION.cff](../../CITATION.cff) 提供軟體引用中繼資料；引用本身不能取代授權合規要求。
 
 LLVM 元件保留 Apache-2.0 WITH LLVM-exception 授權條款。Capstone 保留其自身授權條款。

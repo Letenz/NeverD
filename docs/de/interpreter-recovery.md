@@ -35,6 +35,8 @@ verändern. Bei einem Fehler wird kein Quelltext zurückgegeben; eine
 JSON-Diagnose kann dennoch vorliegen. Beide zugewiesenen Zeichenketten werden
 mit `neverd_free_string()` freigegeben.
 
+<!-- i18n-section: control-discovery -->
+
 ## Automatische Erkennung des Steuerzustands
 
 Die CLI und alle Versionen der C-APIs zur Quelltextwiederherstellung aktivieren die automatische Erkennung standardmäßig. In der anbieterunabhängigen C++-API gilt weiterhin `SpecializationOptions::DiscoverControlState = false`; Aufrufer können `true` setzen. Manuelle Hinweise mit `--vm-control` und `--vm-control-stack` bleiben optionale Kontextschlüssel. Gewöhnliche automatisch erkannte Felder bewahren begrenzte gemeinsame endliche Werterelationen, ohne Kontextschlüssel anzulegen oder Laufzeiteingaben auf Stichprobenwerte festzulegen. Zähler bleiben dynamisch, sofern die folgende selektive Speicherverfeinerung ihre bewiesenen Konstanten nicht benötigt.
@@ -76,6 +78,8 @@ Die CLI-Option `--vm-max-refinements=N` verlangt eine positive ganze Zahl und ha
 C-Aufrufer verwenden `neverd_devirtualize_source_v3()` oder `neverd_devirtualize_machine_source_v3()`. `neverd_devirtualize_options_v3` vollständig mit null initialisieren und `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` setzen. `max_control_fields`, `max_solver_queries` und optional `base.max_control_refinements` angeben; null wählt den unveränderten Standardwert. Alle drei reserved-Felder müssen null bleiben. v1/v2 ignorieren den v3-Anhang einschließlich reserved, v3 ignoriert künftige Anhänge. Der Bericht enthält tatsächliche Arbeit und wirksame Grenzen `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
 Der JSON-Bericht ergänzt `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` und `discoveryVisits` für Aktivierung, Grenzen und Analyseaufwand. Die Erkennung von Feldern allein beweist keine erfolgreiche Wiederherstellung.
+
+<!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag
 
@@ -120,9 +124,36 @@ Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetisch
 
 LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
 
+<!-- i18n-section: machine-state -->
+
+## Wiederherstellung mit explizitem Maschinenzustand
+
+```sh
+neverd decompile program --func entry --devirtualize --vm-machine-state \
+  --recovery-report machine-report.json -o machine.c
+```
+
+`--devirtualize --vm-machine-state` oder `neverd_devirtualize_machine_source_v1()` wählt eine eigene Quell-ABI: einen Zeiger auf 17 ausgerichtete `uint64_t`-Wörter (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 bis R15, RFLAGS). Nur der vorzeichenlose 64-Bit-Status null bedeutet Erfolg. Ein anderer Status macht Speicherzugriffe nicht rückgängig. Der Zustand gilt unmittelbar vor dem Adress-Pop des letzten RET. Sein Speicher darf Gastspeicher nicht überlappen; erforderlich sind ursprüngliche Abbildungen und ein 64-Bit-Little-Endian-Host.
+
+Ursprüngliche Gastcode- und Datenadressen behalten ihre exakten numerischen Werte, auch wenn sie in Ausgaberegistern beobachtet werden. Die Quelltexterzeugung darf sie nicht durch Adressen globaler Objekte des erzeugten Programms ersetzen. Der Aufrufer stellt die erforderlichen ursprünglichen Gastabbildungen bereit; die C-Erzeugung verschiebt den Gastadressraum nicht. Beweise und Wiederherstellungsberichte beziehen sich weiterhin auf das ursprüngliche Eingangsabbild.
+
+Das Profil setzt CPL3/IOPL0, deaktivierten Schattenstack, keine asynchronen Ereignisse und normale fehlerfreie Ausführung voraus. Eingangsflags müssen kanonisch mit TF/RF/VM/AC/VIF/VIP null sein; POPFQ muss TF/AC null lassen. Der erzeugte Code prüft dies. PUSHFQ/POPFQ verwenden den expliziten Zustand; RDSSP erhält das Zielregister, erreichtes INCSSP wird abgelehnt. Vollständig gespeicherte Rahmenzeiger bleiben erhalten; Teilzugriffe oder mögliche Aliase verwerfen Fakten. Ausnahmemetadaten erlauben nur den normalen Pfad, keine Ausnahme- oder Unwind-Äquivalenz. Der Bericht enthält `sourceABI` und `executionProfile`; die Standard-ABI bleibt streng.
+
+Diese Maschinenzustands-ABI unterstützt direkte Near-CALL und registerindirekte Near-CALL mit vollständig bewiesener endlicher Zielmenge. Ein registerindirekter Aufruf erfasst das ursprüngliche Zielregister vor der Änderung von RSP und speichert die tatsächliche Folgeadresse genau einmal. Interne Near-RET dürfen aus einer vollständig bewiesenen endlichen Zielmenge wählen. Der Restcode liest den Gaststack einmal, erfasst den Wert vor der Stackpointer-Erhöhung und verzweigt anhand dieses Wertes. Der erhaltene Eingangs-Rücksprungslot bleibt ein äußerer Ausgang, auch nach dem Verwerfen interner Rahmen. Unbekannte Ziele, Mengen mit fehlenden oder nicht ausführbaren Zielen, Rücksprünge mit zusätzlicher Stackbereinigung und beliebige Stackwechsel bleiben abgelehnt.
+
+Speicherindirekte Near-CALL werden ebenfalls nur unter dieser expliziten Maschinenzustands-ABI mit deaktiviertem Schattenstack und normaler fehlerfreier Ausführung unterstützt. Der Speicheroperand muss eine kanonische `r/m64`-Kodierung ohne Segmentüberschreibung verwenden, optional mit Adressgrößenpräfix (`addr32`) und REX. Die gemeinsame x64-Semantik für effektive Adressen und LOAD liest das Ziel vor der RSP-Änderung und dem Push der tatsächlichen Folgeadresse. Das gilt auch, wenn der Push den Zielslot überschreibt; seine Adresse ersetzt niemals den geladenen Aufrufwert. Schreibgeschützte Zeigerslots oder endliche Tabellen benötigen einen Nachweis unveränderlicher Lesezugriffe; nachweislich initialisierte Gaststackwerte benötigen weiterhin einen vollständigen Beweis ihrer endlichen Zielmenge. Anfangsbytes oder Laufzeitschnappschüsse beschreibbarer Slots sind kein Unveränderlichkeitsnachweis. Unbewiesene externe Lesezugriffe, verworfene Stackfakten, ungültige Ziele, FS/GS- oder andere Segmentpräfixe, Far-Aufrufe sowie zusätzliche oder nichtkanonische Präfixe bleiben abgelehnt. Die Standard-Quell-ABI lehnt native Aufrufe weiterhin ab.
+
+Die normale Quell-ABI rekonstruiert einen aufrufprivaten Rahmen. Alle extern abgeleiteten LOAD/STORE-Bereiche einschließlich berechneter Adressen müssen vom nativen privaten Rahmen und seinem rekonstruierten Quellspeicher getrennt sein; dies ist eine ausdrückliche Vorbedingung. Der gemeinsame Beweis lehnt entweichende Rahmenadressen, davon abhängige Ergebnisse oder Verzweigungen und uninitialisierte private Lesezugriffe ab. Die Maschinenzustands-ABI behält ursprüngliche Gastadressen und verwendet diese Rahmenvorbedingung nicht.
+
+Wenn undefinierte Flags den Kontrollfluss, Adressen oder definierte Ausgaben beeinflussen, ist ein separater Nichtinterferenznachweis erforderlich. Der aktuelle Bericht liefert diesen Nachweis nicht und bestätigt kein solches prozessorabhängiges Verhalten.
+
+<!-- i18n-section: limits -->
+
 ## Aktuelle Grenzen
 
 Eingabeabhängige Bytecode-Adressen und Beziehungen zwischen Decoder-Zuständen werden nur unterstützt, wenn die erforderlichen endlichen Wertebereiche und Korrelationen innerhalb der konfigurierten Grenzen nachweisbar sind. Daraus folgt keine Unterstützung beliebiger indirekter Decodierschemata. Dynamische Verzweigungen und Schleifen können rekonstruiert werden, wenn jedes Dispatch-Ziel bewiesen ist; gewöhnliche Zweigabdeckung genügt dafür nicht. Nicht aufgelöster Kontrollfluss und ausgeschöpfte erforderliche Beweisbudgets sind Fehler: Es wird weder rekonstruierter Quelltext noch ein teilweiser Ersatz veröffentlicht. Native Hilfsaufrufe, Ausnahme- und Wiedereintrittsgrenzen, veränderlicher Code und andere Architekturen bleiben außerhalb des Ausführungsvertrags.
+
+<!-- i18n-section: implementation -->
 
 ## Gemeinsame Implementierung
 
@@ -162,6 +193,8 @@ die öffentliche API prüft beide Ergebnisse und meldet sie getrennt.
 
 Endliche Leseadressmengen, gemeinsame Kontrolltupel und die Anzahl der Kontrollfelder haben eigene Grenzen. Ein globales Limit für Solver-Abfragen sowie Limits pro Abfrage für Gatter, Konflikte, Propagationen und Besuche überwachter Literale begrenzen den Beweisaufwand; ein Limit für symbolische Knoten begrenzt das Ausdruckswachstum. Der JSON-Bericht enthält diese Budgets sowie `solverQueries` und `relationalWidenings`.
 
+<!-- i18n-section: evidence -->
+
 ## Nachweise und Tests
 
 Der optionale lokale JSON-Bericht enthält den Eingabehash, gewählte
@@ -191,21 +224,7 @@ Eine separate Laufzeitregression mit festen Adressen stellt beschreibbaren Gasts
 
 Gezielte Testziele stehen in [testing.md](testing.md).
 
-## Wiederherstellung mit explizitem Maschinenzustand
-
-`--devirtualize --vm-machine-state` oder `neverd_devirtualize_machine_source_v1()` wählt eine eigene Quell-ABI: einen Zeiger auf 17 ausgerichtete `uint64_t`-Wörter (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 bis R15, RFLAGS). Nur der vorzeichenlose 64-Bit-Status null bedeutet Erfolg. Ein anderer Status macht Speicherzugriffe nicht rückgängig. Der Zustand gilt unmittelbar vor dem Adress-Pop des letzten RET. Sein Speicher darf Gastspeicher nicht überlappen; erforderlich sind ursprüngliche Abbildungen und ein 64-Bit-Little-Endian-Host.
-
-Ursprüngliche Gastcode- und Datenadressen behalten ihre exakten numerischen Werte, auch wenn sie in Ausgaberegistern beobachtet werden. Die Quelltexterzeugung darf sie nicht durch Adressen globaler Objekte des erzeugten Programms ersetzen. Der Aufrufer stellt die erforderlichen ursprünglichen Gastabbildungen bereit; die C-Erzeugung verschiebt den Gastadressraum nicht. Beweise und Wiederherstellungsberichte beziehen sich weiterhin auf das ursprüngliche Eingangsabbild.
-
-Das Profil setzt CPL3/IOPL0, deaktivierten Schattenstack, keine asynchronen Ereignisse und normale fehlerfreie Ausführung voraus. Eingangsflags müssen kanonisch mit TF/RF/VM/AC/VIF/VIP null sein; POPFQ muss TF/AC null lassen. Der erzeugte Code prüft dies. PUSHFQ/POPFQ verwenden den expliziten Zustand; RDSSP erhält das Zielregister, erreichtes INCSSP wird abgelehnt. Vollständig gespeicherte Rahmenzeiger bleiben erhalten; Teilzugriffe oder mögliche Aliase verwerfen Fakten. Ausnahmemetadaten erlauben nur den normalen Pfad, keine Ausnahme- oder Unwind-Äquivalenz. Der Bericht enthält `sourceABI` und `executionProfile`; die Standard-ABI bleibt streng.
-
-Diese Maschinenzustands-ABI unterstützt direkte Near-CALL und registerindirekte Near-CALL mit vollständig bewiesener endlicher Zielmenge. Ein registerindirekter Aufruf erfasst das ursprüngliche Zielregister vor der Änderung von RSP und speichert die tatsächliche Folgeadresse genau einmal. Interne Near-RET dürfen aus einer vollständig bewiesenen endlichen Zielmenge wählen. Der Restcode liest den Gaststack einmal, erfasst den Wert vor der Stackpointer-Erhöhung und verzweigt anhand dieses Wertes. Der erhaltene Eingangs-Rücksprungslot bleibt ein äußerer Ausgang, auch nach dem Verwerfen interner Rahmen. Unbekannte Ziele, Mengen mit fehlenden oder nicht ausführbaren Zielen, Rücksprünge mit zusätzlicher Stackbereinigung und beliebige Stackwechsel bleiben abgelehnt.
-
-Speicherindirekte Near-CALL werden ebenfalls nur unter dieser expliziten Maschinenzustands-ABI mit deaktiviertem Schattenstack und normaler fehlerfreier Ausführung unterstützt. Der Speicheroperand muss eine kanonische `r/m64`-Kodierung ohne Segmentüberschreibung verwenden, optional mit Adressgrößenpräfix (`addr32`) und REX. Die gemeinsame x64-Semantik für effektive Adressen und LOAD liest das Ziel vor der RSP-Änderung und dem Push der tatsächlichen Folgeadresse. Das gilt auch, wenn der Push den Zielslot überschreibt; seine Adresse ersetzt niemals den geladenen Aufrufwert. Schreibgeschützte Zeigerslots oder endliche Tabellen benötigen einen Nachweis unveränderlicher Lesezugriffe; nachweislich initialisierte Gaststackwerte benötigen weiterhin einen vollständigen Beweis ihrer endlichen Zielmenge. Anfangsbytes oder Laufzeitschnappschüsse beschreibbarer Slots sind kein Unveränderlichkeitsnachweis. Unbewiesene externe Lesezugriffe, verworfene Stackfakten, ungültige Ziele, FS/GS- oder andere Segmentpräfixe, Far-Aufrufe sowie zusätzliche oder nichtkanonische Präfixe bleiben abgelehnt. Die Standard-Quell-ABI lehnt native Aufrufe weiterhin ab.
-
-Die normale Quell-ABI rekonstruiert einen aufrufprivaten Rahmen. Alle extern abgeleiteten LOAD/STORE-Bereiche einschließlich berechneter Adressen müssen vom nativen privaten Rahmen und seinem rekonstruierten Quellspeicher getrennt sein; dies ist eine ausdrückliche Vorbedingung. Der gemeinsame Beweis lehnt entweichende Rahmenadressen, davon abhängige Ergebnisse oder Verzweigungen und uninitialisierte private Lesezugriffe ab. Die Maschinenzustands-ABI behält ursprüngliche Gastadressen und verwendet diese Rahmenvorbedingung nicht.
-
-Wenn undefinierte Flags den Kontrollfluss, Adressen oder definierte Ausgaben beeinflussen, ist ein separater Nichtinterferenznachweis erforderlich. Der aktuelle Bericht liefert diesen Nachweis nicht und bestätigt kein solches prozessorabhängiges Verhalten.
+<!-- i18n-section: loop-proposals -->
 
 ## Automatische Vorschläge für Schleifenbeweise
 

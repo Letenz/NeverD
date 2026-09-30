@@ -56,6 +56,109 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
             raise AssertionError(errors)
         return guide, testing
 
+    def assert_readme_rejected(self, path: Path, changed: str, diagnostic: str) -> None:
+        errors: list[str] = []
+        i18n.validate_readme_parity(errors, _OverlayView({path: changed}))
+        self.assertTrue(any(diagnostic in error for error in errors), errors)
+
+    def test_readme_structure_examples_and_links_match_english(self) -> None:
+        errors: list[str] = []
+        i18n.validate_readme_parity(errors, i18n.RepositoryView(use_index=False))
+        self.assertEqual(errors, [])
+
+    def test_readme_missing_desktop_section_is_rejected(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        text = path.read_text()
+        start = text.index("<!-- i18n-section: desktop-workbench -->")
+        end = text.index("<!-- i18n-section: cli -->", start)
+        self.assert_readme_rejected(path, text[:start] + text[end:], "section order")
+
+    def test_readme_wrong_build_directory_is_rejected(self) -> None:
+        path = Path("docs/fr/project.md")
+        text = path.read_text().replace("cmake --build build", "cmake --build missing", 1)
+        self.assert_readme_rejected(path, text, "examples differ")
+
+    def test_readme_table_row_requires_the_command_in_its_section(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        text = path.read_text()
+        row = next(line for line in text.splitlines() if line.startswith("| `decompile --devirtualize`"))
+        self.assert_readme_rejected(path, text.replace(row, ""), "table rows differ")
+
+    def test_readme_api_hidden_in_comment_does_not_satisfy_prose(self) -> None:
+        path = Path("docs/de/project.md")
+        token = "`neverd_session_set_arm_function_mode()`"
+        text = path.read_text().replace(token, "<!-- " + token + " -->")
+        self.assert_readme_rejected(path, text, "API/options missing")
+
+    def test_readme_index_order_matches_english(self) -> None:
+        path = Path("docs/zh-CN/README.md")
+        text = path.read_text()
+        first = next(line for line in text.splitlines() if "](architecture.md)" in line)
+        second = next(line for line in text.splitlines() if "](testing.md)" in line)
+        self.assert_readme_rejected(path, text.replace(first + "\n" + second, second + "\n" + first), "link order")
+
+    def test_readme_body_cannot_link_another_locale(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        text = path.read_text().replace("](architecture.md)", "](../ja/architecture.md)")
+        self.assert_readme_rejected(path, text, "another locale")
+
+    def test_readme_html_image_target_must_exist(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        text = path.read_text().replace("../assets/neverd-logo-light.svg", "../assets/missing-logo.svg")
+        self.assert_readme_rejected(path, text, "missing README HTML asset")
+
+    def test_readme_reference_link_target_must_exist(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        text = path.read_text() + "\n[Details][missing]\n\n[missing]: missing-guide.md\n"
+        self.assert_readme_rejected(path, text, "missing README link target")
+
+    def test_readme_undefined_reference_link_is_rejected(self) -> None:
+        path = Path("docs/zh-CN/project.md")
+        self.assert_readme_rejected(path, path.read_text() + "\n[Details][missing]\n", "link order")
+
+    def test_readme_prose_change_requires_translation_review(self) -> None:
+        path = Path("README.md")
+        self.assert_readme_rejected(
+            path, path.read_text() + "\nA new public behavior is now supported.\n",
+            "source revision differs",
+        )
+
+    def test_readme_section_reordering_is_rejected(self) -> None:
+        path = Path("docs/ja/project.md")
+        text = path.read_text()
+        start = text.index("<!-- i18n-section: desktop-workbench -->")
+        end = text.index("<!-- i18n-section: cli -->", start)
+        self.assert_readme_rejected(
+            path, text[:start] + text[end:] + text[start:end], "section order",
+        )
+
+    def test_synced_guide_examples_match_in_their_sections(self) -> None:
+        errors: list[str] = []
+        i18n.validate_synced_guide_examples(errors, i18n.RepositoryView(use_index=False))
+        self.assertEqual(errors, [])
+
+    def test_guide_json_examples_cannot_replace_each_other(self) -> None:
+        import re
+
+        path = Path("docs/zh-CN/memory-safety.md")
+        text = path.read_text()
+        examples = re.findall(r"```json\n.*?\n```", text, re.DOTALL)
+        self.assertEqual(len(examples), 2)
+        errors: list[str] = []
+        i18n.validate_synced_guide_examples(
+            errors, _OverlayView({path: text.replace(examples[1], examples[0])}),
+        )
+        self.assertTrue(any("examples differ in finding-schema" in error for error in errors), errors)
+
+    def test_guide_contract_cannot_be_hidden_in_comment(self) -> None:
+        path = Path("docs/zh-TW/memory-safety.md")
+        text = path.read_text().replace(
+            "`neverd_session_sanitize`", "<!-- `neverd_session_sanitize` -->",
+        )
+        errors: list[str] = []
+        i18n.validate_synced_guide_examples(errors, _OverlayView({path: text}))
+        self.assertTrue(any("contract missing in strict-publication" in error for error in errors), errors)
+
     def test_every_public_document_family_is_registered(self) -> None:
         self.assertEqual(
             set(i18n.ENGLISH_DOCS),
