@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDEmulationArch
   arch/x86_64/X64PageTables.cpp
   arch/x86_64/X64ExceptionMonitor.cpp
   arch/aarch64/AArch64PageTables.cpp
+  arch/aarch64/AArch64GeneralState.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
