@@ -152,6 +152,14 @@ public:
     Emitter.CurMedFunc = &Func;
   }
 
+  static bool frameReloadIsInitializedOnAllPaths(MedLLVMEmitter &Emitter,
+                                                 const MedFunc &Func,
+                                                 const BinaryImage &Image,
+                                                 const MedOp &Load) {
+    prepareFreshAnalysis(Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
+    return Emitter.frameReloadHasAllPathInitializer(Load);
+  }
+
   static bool recoversAbsoluteDataPointerIdentity(MedLLVMEmitter &Emitter,
                                                   const MedVar &Value) {
     std::set<MedLLVMEmitter::DataAddressIdentity> Identities;
@@ -503,6 +511,73 @@ struct AuthenticatedTargetLoadFixture {
     Plan.ResultSize = Recipe.ResultSize;
   }
 };
+
+TEST(MedLLVMFrameReloadInitialization, NarrowStoresCoverAPointerWidthReload) {
+  // `mov [esp-8], bl; mov [esp-7], cl; mov [esp-6], dl; mov [esp-5], al;
+  // mov eax, [esp-8]`: bytes written one at a time and moved as a word.  The
+  // dword reload is initialized only when every one of its bytes is.
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (unsigned Stored : {4u, 3u}) {
+    auto value = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = Kind;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = Kind == MedVar::Reg ? 0 : 1;
+      V.Size = Size;
+      return V;
+    };
+    MedFunc Func;
+    Func.Entry = CallerVA;
+    Func.Name = "byte_initialized_dword";
+    Func.FrameSize = 16;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = CallerVA;
+    MedVar SP = value(MedVar::Reg, 100, TRI.PointerSize);
+    SP.RegOff = TRI.StackPointer;
+    auto slot = [&](int Id, int64_t Offset) {
+      MedVar Address = value(MedVar::Temp, Id, TRI.PointerSize);
+      MedOp Form;
+      Form.Opcode = NdOp::INT_ADD;
+      Form.Output = Address;
+      Form.addInput(SP);
+      Form.addInput(
+          MedVar::makeConst(static_cast<uint64_t>(Offset), TRI.PointerSize));
+      Block.Ops.push_back(Form);
+      return Address;
+    };
+    for (unsigned Byte = 0; Byte < Stored; ++Byte) {
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(slot(static_cast<int>(Byte) + 1, -8 + Byte));
+      Store.addInput(MedVar::makeConst(Byte + 1, 1));
+      Block.Ops.push_back(Store);
+    }
+    MedOp Reload;
+    Reload.Opcode = NdOp::LOAD;
+    Reload.Output = value(MedVar::Temp, 10, TRI.PointerSize);
+    Reload.addInput(slot(9, -8));
+    Block.Ops.push_back(Reload);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Reload.Output);
+    Block.Ops.push_back(Return);
+    Block.EndAddr = CallerVA + 0x20;
+    Func.Blocks.push_back(std::move(Block));
+
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    const MedOp &Load =
+        Func.Blocks.front().Ops[Func.Blocks.front().Ops.size() - 2];
+    ASSERT_EQ(Load.Opcode, NdOp::LOAD);
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::frameReloadIsInitializedOnAllPaths(
+                  Emitter, Func, Image, Load),
+              Stored == 4)
+        << Stored << " of 4 bytes stored";
+  }
+}
 
 TEST(MedLLVMRecoveredTargetLoadBoundary,
      RequiresExactOccurrenceAndRejectsObservableSideUses) {
