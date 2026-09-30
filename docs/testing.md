@@ -1728,3 +1728,7 @@ On Linux, `NeverDUnicornDeadlineTests` completes the actual timer thread before 
 
 
 `NeverDKvmRunTests` verifies the borrowed transfers in `KvmRunControl` without requiring `/dev/kvm`. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` checks that preparation, capture and the intercepted host entry share a thread, with one preparation across interrupted retries. Further cases cover preparation failure without entry, capture failure, stop during preparation and cancelled active entry, followed by a fresh run that cannot reuse the old callbacks. Keep the real cancellation, RAM rollback, exception and original-driver suites in the validation set.
+
+`ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` checks continued execution and independent CPU stores after host changes to general registers, both edge XMM lanes, MXCSR and x87 control. Actual `FXSAVE64` bytes verify all physical 80-bit registers, TOP, tags, opcode and pointers after a stopped entry; repeated divide faults also invalidate reuse. These machine-boundary tests do not admit additional x87 instructions into checked profiles.
+
+`NeverDKvmStateTransferTests` injects a failed register or XSAVE read after real KVM execution, then retries the unchanged input. Independent integer and packed-byte results prove that failed captures cannot reuse advanced native state. Only this executable wraps `ioctl`; unavailable native hosts skip explicitly.

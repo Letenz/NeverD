@@ -533,7 +533,7 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
-KVM x64 在每次进入前读取实际特殊寄存器，只比较 `KvmX64State.def` 中定义的协议字段。CR3、CPL、TLS、CR8 或其他字段变化时重新写入投影。仅完整捕获的单步调试退出允许复用可运行状态；异常、取消或进入失败后都重新建立该状态。`X64StateTransition` 通过真实 CPU 读取验证 TLS、权限级和 CR8 变化、重复异常及取消。每条指令仍重新安装通用寄存器、FP/SSE 状态和单步配置。
+KVM x64 在每次进入前读取实际特殊寄存器，只比较 `KvmX64State.def` 中定义的协议字段。CR3、CPL、TLS、CR8 或其他字段变化时重新写入投影。仅完整捕获的单步调试退出允许复用可运行状态；异常、取消或进入失败后都重新建立该状态。`X64StateTransition` 通过真实 CPU 读取验证 TLS、权限级和 CR8 变化、重复异常及取消。KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
 
 KVM x64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。
 
