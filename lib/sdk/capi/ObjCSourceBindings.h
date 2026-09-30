@@ -183,7 +183,8 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
          !Binding.ObjCIndirectResultStorage && !Binding.ByteCount &&
-         !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI;
+         !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI &&
+         !Binding.FunctionParameterCall;
 }
 
 inline std::optional<SourceCallTypeHint>
@@ -218,6 +219,7 @@ runtimeSourceCallHint(const BinaryImage &Image,
 inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                                   const SourceCallTypeHint &Expected) {
   return Binding.CallKind == Expected.CallKind &&
+         Binding.FunctionParameterCall == Expected.FunctionParameterCall &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
          Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
@@ -6820,7 +6822,8 @@ inline bool objcSourceCallBound(
            Expression.IntrinsicOutputs.empty() &&
            equalSourceTypes(Expression.Type, Expected->Signature.ReturnType);
   }
-  if (Binding.AddressedFunctionABI)
+  if (Binding.AddressedFunctionABI || Binding.FunctionParameterCall ||
+      Binding.CallKind == SourceCallTypeHint::Kind::CFunctionParameterCall)
     return false;
   if (Binding.BooleanResult ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftBooleanProjection)

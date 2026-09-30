@@ -8,6 +8,7 @@
 #include "JSONText.h"
 #include "NativePhaseTrace.h"
 #include "ObjCBlockSources.h"
+#include "ObjCCFunctionParameterSources.h"
 #include "ObjCForwardedInitializerSources.h"
 #include "ObjCImmutableStringCallbackSources.h"
 #include "ObjCMetadataFactorySources.h"
@@ -378,6 +379,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                          &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
+                     objCCFunctionParameterSourceCallBound(
+                         Expression, S->Img, Result, Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
@@ -485,6 +488,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                          &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
+                     objCCFunctionParameterSourceCallBound(
+                         Expression, S->Img, Result, Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
@@ -583,6 +588,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                      &BlockPlan.CaptureReceivers) ||
                  objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                  Projection.Function) ||
+                 objCCFunctionParameterSourceCallBound(
+                     Expression, S->Img, Result, Projection.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
                      Projection.Function, Functions) ||

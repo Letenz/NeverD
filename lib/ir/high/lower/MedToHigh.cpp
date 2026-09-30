@@ -316,10 +316,10 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
   if (Op.SourceCallHint) {
     const auto &Signature = Op.SourceCallHint->Signature;
     std::string Error;
-    if (Signature.ReturnType &&
-        Signature.ReturnType->Kind == NdTypeKind::Struct &&
-        Signature.ReturnType->Size == Op.Output.Size &&
-        validateSourceABI(Signature, Error))
+    if (Signature.ReturnType && validateSourceABI(Signature, Error) &&
+        ((Signature.ReturnType->Kind == NdTypeKind::Void && !Op.Output.Size) ||
+         (Signature.ReturnType->Kind == NdTypeKind::Struct &&
+          Signature.ReturnType->Size == Op.Output.Size)))
       return Signature.ReturnType;
   }
   return NdType::makeInt(Op.Output.Size, false);

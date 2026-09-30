@@ -197,19 +197,18 @@ TEST(ObjCSwiftBooleanSources,
   Audit.DecodedInstructions = Audit.LiftedInstructions = 2;
   F.Result.FunctionAudits.push_back(Audit);
 
-  EXPECT_EQ(nativeBooleanPublicationCallees(F.Result, Caller).count(Target),
-            1U);
+  EXPECT_EQ(nativePublicationCallees(F.Result, Caller).count(Target), 1U);
   F.Result.FunctionAudits.back().MedIRVerified = false;
-  EXPECT_TRUE(nativeBooleanPublicationCallees(F.Result, Caller).empty());
+  EXPECT_TRUE(nativePublicationCallees(F.Result, Caller).empty());
   F.Result.FunctionAudits.back().MedIRVerified = true;
   F.Result.HighFuncs.back().SourceTypeHint->ReturnType = NdType::makeVoid();
-  EXPECT_TRUE(nativeBooleanPublicationCallees(F.Result, Caller).empty());
+  EXPECT_TRUE(nativePublicationCallees(F.Result, Caller).empty());
   F.Result.HighFuncs.back().SourceTypeHint = Signature;
   Caller.Blocks.front().Ops.push_back(Call);
   auto Conflicting = std::make_shared<SourceCallTypeHint>(*Binding);
   Conflicting->Signature.ReturnType = NdType::makeVoid();
   Caller.Blocks.front().Ops.back().SourceCallHint = Conflicting;
-  EXPECT_TRUE(nativeBooleanPublicationCallees(F.Result, Caller).empty());
+  EXPECT_TRUE(nativePublicationCallees(F.Result, Caller).empty());
 }
 
 TEST(ObjCSwiftBooleanSources,

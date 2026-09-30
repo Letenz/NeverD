@@ -37,6 +37,8 @@ boundNativeBooleanCallees(const MedFunc &Caller) {
       if (!Op.SourceCallHint || Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
           !Op.Inputs[0].isConst() ||
           Op.SourceCallHint->CallKind != SourceCallTypeHint::Kind::Native ||
+          Op.SourceCallHint->FunctionParameterCall ||
+          Op.SourceCallHint->AddressedFunctionABI ||
           Op.SourceCallHint->TargetAddress != Op.Inputs[0].ConstVal ||
           Op.DoesNotReturn ||
           ConflictingNativeCallees.count(Op.Inputs[0].ConstVal))

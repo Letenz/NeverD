@@ -1,5 +1,7 @@
+#include "../../../lib/sdk/capi/ObjCCFunctionParameterSources.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../core/CFunctionParameterCallFixture.h"
 #include "../core/RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
 
@@ -20,6 +22,94 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
+
+TEST(ObjCSourceBindings, CFunctionParameterCallRepeatsTheCurrentMachineProof) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.high());
+  ExprPtr CallExpr;
+  size_t StatementIndex = 0;
+  for (size_t I = 0; I < F.high()->Body.size(); ++I) {
+    const auto &Statement = F.high()->Body[I];
+    if (Statement.CallExpr && Statement.CallExpr->SourceCallHint &&
+        Statement.CallExpr->SourceCallHint->FunctionParameterCall) {
+      CallExpr = Statement.CallExpr;
+      StatementIndex = I;
+    }
+  }
+  ASSERT_TRUE(CallExpr);
+  EXPECT_FALSE(objcSourceCallBound(*CallExpr, F.Image, {}));
+  EXPECT_TRUE(objCCFunctionParameterSourceCallBound(*CallExpr, F.Image,
+                                                    F.Result, *F.high()));
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    PipelineResult Result;
+    Result.Success = F.Result.Success;
+    Result.SourceImage = F.Result.SourceImage;
+    Result.LowFuncs = F.Result.LowFuncs;
+    Result.MedFuncs = F.Result.MedFuncs;
+    Result.HighFuncs = F.Result.HighFuncs;
+    Result.FunctionAudits = F.Result.FunctionAudits;
+    auto Function = *F.high();
+    auto Expression = std::make_shared<HighExpr>(*CallExpr);
+    auto Hint = *CallExpr->SourceCallHint;
+    Function.Body[StatementIndex].CallExpr = Expression;
+    switch (Case) {
+    case 0:
+      Result.SourceImage = nullptr;
+      break;
+    case 1:
+      Result.LowFuncs.push_back(*F.low());
+      break;
+    case 2:
+      for (auto &Audit : Result.FunctionAudits)
+        if (Audit.Entry == Entry)
+          ++Audit.DecodedInstructions;
+      break;
+    case 3:
+      for (auto &Low : Result.LowFuncs)
+        if (Low.Entry == Entry)
+          for (auto &Block : Low.Blocks)
+            for (auto &Op : Block.Ops)
+              if (Op.Addr == Entry + 12)
+                Op.Output.Offset = a64reg::X20;
+      break;
+    case 4:
+      Hint.FunctionParameterCall->Site.Instruction += 4;
+      break;
+    case 5:
+      Hint.FunctionParameterCall->Parameter = 0;
+      break;
+    case 6:
+      Expression->IndirectTarget =
+          std::make_shared<HighExpr>(*Expression->IndirectTarget);
+      Expression->IndirectTarget->Var.Id = 0;
+      break;
+    case 7:
+      Hint.DoesNotReturn = true;
+      break;
+    case 8:
+      Function.Body.push_back(Function.Body[StatementIndex]);
+      break;
+    case 9:
+      for (auto &Med : Result.MedFuncs)
+        if (Med.Entry == Entry)
+          Med.SourceParametersBound = false;
+      break;
+    case 10:
+      Hint.Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+      break;
+    case 11:
+      Hint.Signature.Parameters[0].Type = NdType::makeInt(8, false);
+      break;
+    }
+    Expression->SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(std::move(Hint));
+    EXPECT_FALSE(objCCFunctionParameterSourceCallBound(*Expression, F.Image,
+                                                       Result, Function));
+  }
+}
 
 TEST(ObjCSourceBindings, RuntimeCFunctionAddressRetainsImportIdentityAndType) {
   using namespace runtime_function_address_test;

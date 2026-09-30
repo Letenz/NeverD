@@ -255,7 +255,10 @@ struct SourceCallTypeHint {
     /// Value loaded from an immutable, strong runtime C-function import.
     /// Signature describes the zero-argument address expression; the separate
     /// addressed declaration retains the function's actual ordinary C ABI.
-    RuntimeCFunctionAddress
+    RuntimeCFunctionAddress,
+    /// A real indirect call through an explicitly typed ordinary C function
+    /// pointer parameter, unchanged on every reaching machine path.
+    CFunctionParameterCall
   };
   Kind CallKind = Kind::Native;
   struct BooleanResultProjection {
@@ -264,6 +267,14 @@ struct SourceCallTypeHint {
   };
   /// Identity only; publication must repeat the current caller proof.
   std::optional<BooleanResultProjection> BooleanResult;
+  struct FunctionParameterCallEvidence {
+    va_t FunctionEntry = 0;
+    unsigned Parameter = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const FunctionParameterCallEvidence &) const = default;
+  };
+  /// Identity only; source publication repeats the complete current proof.
+  std::optional<FunctionParameterCallEvidence> FunctionParameterCall;
   enum class SwiftValueWitnessKind {
     Destroy,
     InitializeWithCopy,

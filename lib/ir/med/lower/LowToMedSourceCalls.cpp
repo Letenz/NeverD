@@ -5,6 +5,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/CFunctionParameterCalls.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
@@ -98,6 +99,15 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     auto BlockHints =
         buildObjCBlockCallHints(*Image, Low, EntrySignature, &Hints, Captures);
     Hints.insert(BlockHints.begin(), BlockHints.end());
+  }
+  if (Image && EntrySignature) {
+    auto FunctionPointers = buildCFunctionParameterCallHints(
+        *Image, Low, *EntrySignature, SourceCalleeTypeHints);
+    for (auto &[Address, Hint] : FunctionPointers) {
+      const auto [It, Inserted] = Hints.emplace(Address, std::move(Hint));
+      if (!Inserted)
+        Hints.erase(It);
+    }
   }
   std::optional<SourceFunctionTypeHint> ProvisionalBooleanEntry;
   if (Image && !EntrySignature) {

@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "CFunctionParameterCallFixture.h"
 #include "RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
 
@@ -138,6 +139,59 @@ void compileAndRun(const std::string &Source,
                                       : "")
                     << "\n"
                     << Source;
+}
+
+TEST(HighCSourceCalls, CFunctionParameterCallPreservesDispatchAndEffects) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.high());
+  const auto Source = emit({*F.high()}, true, Arch::AArch64);
+  ASSERT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("objc/message.h"), std::string::npos);
+  const auto Program = Source + R"(
+struct Input { int value; unsigned released, observed; };
+static unsigned calls, order;
+void swift_release(void *p) {
+  struct Input *input = p;
+  ++input->released;
+  input->value += 5;
+  order = order * 10 + 1;
+}
+static void callback_a(void *p) {
+  struct Input *input = p;
+  input->observed = input->value + 7;
+  ++calls;
+  order = order * 10 + 2;
+}
+static void callback_b(void *p) {
+  struct Input *input = p;
+  input->observed = input->value - 3;
+  ++calls;
+  order = order * 10 + 3;
+}
+int main(void) {
+  struct Input a = {13, 0, 0}, b = {20, 0, 0};
+  invoke_callback(&a, callback_a);
+  invoke_callback(&b, callback_b);
+  return a.released != 1 || b.released != 1 || a.observed != 25 ||
+         b.observed != 22 || calls != 2 || order != 1213;
+}
+)";
+  compileAndRun(Program, {"-O0", "-Werror"});
+  compileAndRun(Program, {"-O2", "-Werror"});
+  auto Forged = *F.high();
+  for (auto &Statement : Forged.Body)
+    if (Statement.CallExpr && Statement.CallExpr->SourceCallHint &&
+        Statement.CallExpr->SourceCallHint->FunctionParameterCall) {
+      Statement.CallExpr = std::make_shared<HighExpr>(*Statement.CallExpr);
+      auto Hint = *Statement.CallExpr->SourceCallHint;
+      Hint.Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+      Statement.CallExpr->SourceCallHint =
+          std::make_shared<const SourceCallTypeHint>(std::move(Hint));
+    }
+  EXPECT_NE(emit({Forged}, true, Arch::AArch64).find("bad source call"),
+            std::string::npos);
 }
 
 TEST(HighCSourceCalls, DeclaresOpaqueBlockObjectPointerUsedByHelpers) {

@@ -63,7 +63,8 @@ inline bool isSwiftBooleanSourceBinding(const SourceCallTypeHint &Binding) {
          !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
          !Binding.ObjCIndirectResultStorage && !Binding.ByteCount &&
-         !Binding.ImmutablePointerSlot;
+         !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI &&
+         !Binding.FunctionParameterCall;
 }
 } // namespace neverd
 #endif
