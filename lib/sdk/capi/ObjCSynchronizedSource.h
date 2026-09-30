@@ -90,9 +90,9 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
-// Several LSDA ranges may share one cleanup, with unprotected instructions
-// between them. Preserve those holes rather than treating their union as one
-// protected interval. Every table entry and pad record must agree exactly.
+// LSDA ranges may share one cleanup, with unprotected instructions between
+// them. Preserve those holes rather than treating their union as one protected
+// interval. Every table entry and pad record must agree exactly.
 inline std::optional<std::vector<ObjCSynchronizedSourceRegion>>
 objcSynchronizedInterleavedRanges(const BinaryImage &Image,
                                   const HighFunc &Function) {
@@ -100,7 +100,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
     return std::nullopt;
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
-  if (Sites.size() < 5 || Sites.size() > 129 || Sites.front().LandingPadVA ||
+  if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
       Sites.back().LandingPadVA)
     return std::nullopt;
   std::vector<ObjCSynchronizedSourceRegion> Regions;
@@ -128,7 +128,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
       return std::nullopt;
     Regions.push_back({Range.Begin, Range.End, Landing});
   }
-  if (Regions.size() < 2 || Regions.size() != EH.ObjC->LandingPads.size() ||
+  if (Regions.empty() || Regions.size() != EH.ObjC->LandingPads.size() ||
       Next != EH.CodeRange.End || !Landing || Landing > InvalidVA - 20 ||
       EH.CodeRange.End != Landing + 20)
     return std::nullopt;
@@ -158,7 +158,8 @@ inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
 }
 
 inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
-                                          va_t LastTarget) {
+                                          va_t LastTarget,
+                                          va_t FirstTarget = 0) {
   if (!Instruction.Raw || !Instruction.Raw->detail)
     return false;
   switch (Instruction.Id) {
@@ -177,6 +178,7 @@ inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
   const auto &Target = Operands.operands[Operands.op_count - 1];
   return Target.type == AARCH64_OP_IMM && Target.imm >= 0 &&
          static_cast<va_t>(Target.imm) > Instruction.Addr &&
+         static_cast<va_t>(Target.imm) >= FirstTarget &&
          static_cast<va_t>(Target.imm) <= LastTarget && Target.imm % 4 == 0;
 }
 
@@ -651,9 +653,18 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
     return 0xaa0003e0U | (Register << 16);
   };
   unsigned ReceiverRegister = 0, ExceptionRegister = 0;
+  bool ReceiverFromRetainResult = false;
   for (unsigned Register = 19; Register <= 22; ++Register)
     if (Word(EnterCall - 4) == LoadX0(Register))
       ReceiverRegister = Register;
+    else if (EnterCall >= Function.Entry + 8 &&
+             Word(EnterCall - 4) == SaveX0(Register) &&
+             objcSynchronizedRuntimeTargetIs(
+                 Image, objcSynchronizedBranchTarget(Image, EnterCall - 8),
+                 "objc_retainAutoreleasedReturnValue", a64reg::X0)) {
+      ReceiverRegister = Register;
+      ReceiverFromRetainResult = true;
+    }
   for (unsigned Register = 19; Register <= 22; ++Register)
     if (Register != ReceiverRegister && Word(Landing) == SaveX0(Register))
       ExceptionRegister = Register;
@@ -663,9 +674,11 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       Word(Landing + 12) != LoadX0(ExceptionRegister) ||
       !HasCall(Landing + 16, "__Unwind_Resume"))
     return std::nullopt;
-  va_t SavedReceiver = 0, ExitCall = 0;
+  va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
+  va_t ExitCall = 0;
   for (va_t Address = Function.Entry; Address < Landing; Address += 4) {
-    if (Address + 4 < EnterCall && Word(Address) == SaveX0(ReceiverRegister)) {
+    if (!ReceiverFromRetainResult && Address + 4 < EnterCall &&
+        Word(Address) == SaveX0(ReceiverRegister)) {
       if (SavedReceiver || Address > Function.Entry + 32)
         return std::nullopt;
       SavedReceiver = Address;
@@ -688,6 +701,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   const unsigned ReceiverWRegisters[] = {ARM64_REG_W19, ARM64_REG_W20,
                                          ARM64_REG_W21, ARM64_REG_W22};
   uint8_t UnprotectedARC = 0, ProtectedARC = 0;
+  bool BypassesLock = false;
   for (va_t Address = Function.Entry; Address < ExitCall; Address += 4) {
     const uint8_t *Bytes = Image.readVA(Address, 4);
     DecodedInsn Instruction{};
@@ -700,7 +714,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
                        Writes, &WriteCount) != CS_ERR_OK)
       return std::nullopt;
     for (uint8_t I = 0; I < WriteCount; ++I)
-      if ((Address < SavedReceiver &&
+      if ((!ReceiverFromRetainResult && Address < SavedReceiver &&
            (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0)) ||
           (Address > SavedReceiver &&
            (Writes[I] == ReceiverXRegisters[ReceiverRegister - 19] ||
@@ -713,12 +727,25 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
     if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET) ||
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
-        (Address < SavedReceiver && (IsJump || IsCall)))
+        (!ReceiverFromRetainResult && Address < SavedReceiver &&
+         (IsJump || IsCall)))
       return std::nullopt;
-    if (IsJump &&
-        !objcSynchronizedForwardBranch(
-            Instruction, Address < EnterCall ? EnterCall - 4 : ExitCall - 4))
-      return std::nullopt;
+    if (IsJump) {
+      const bool BeforeEnter = Address < EnterCall;
+      const bool JoinsLockedPath = objcSynchronizedForwardBranch(
+          Instruction, BeforeEnter
+                           ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
+                           : ExitCall - 4);
+      // A pre-acquisition branch can skip the whole lock lifetime and join
+      // the verified normal suffix. The source guard remains zero on that
+      // path; entering the body, unlock or exceptional pad is still rejected.
+      const bool SkipsLock =
+          BeforeEnter &&
+          objcSynchronizedForwardBranch(Instruction, Landing - 4, ExitCall + 4);
+      if (!JoinsLockedPath && !SkipsLock)
+        return std::nullopt;
+      BypassesLock |= SkipsLock;
+    }
     if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
         HasCall(Address, "_objc_sync_exit"))
       return std::nullopt;
@@ -745,7 +772,12 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   // The rendered calls have canonical ARC names, even for register veneers.
   // Only suspend an operation when every occurrence in the locked body is
   // outside the LSDA ranges. Otherwise its source identity is insufficient.
-  if (!UnprotectedARC || (UnprotectedARC & ProtectedARC))
+  // The legacy proofs own ordinary single-range lifetimes. This proof also
+  // handles a single range when a verified prefix path bypasses the lock;
+  // no ARC suspension is needed if every locked-body call is protected.
+  if ((Regions->size() == 1 && !BypassesLock) ||
+      (Regions->size() > 1 && !UnprotectedARC) ||
+      (UnprotectedARC & ProtectedARC))
     return std::nullopt;
   // The normal unlock must be followed by a straight-line return tail. No
   // normal path may enter the exceptional pad or reenter the locked body.
@@ -784,6 +816,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
+  Proof.ReceiverIsSavedLocal = ReceiverFromRetainResult;
   Proof.SuspendARC = UnprotectedARC;
   return Proof;
 }
@@ -791,8 +824,6 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
                                      const HighFunc &Function) {
-  if (auto Proof = proveObjCSynchronizedInterleavedCleanup(Image, Function))
-    return Proof;
   if (auto Proof =
           proveObjCSynchronizedRetainedStackReceiverCleanup(Image, Function))
     return Proof;
@@ -801,7 +832,10 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
   if (auto Proof =
           proveObjCSynchronizedRegisterReceiverCleanup(Image, Function))
     return Proof;
-  return proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function);
+  if (auto Proof =
+          proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function))
+    return Proof;
+  return proveObjCSynchronizedInterleavedCleanup(Image, Function);
 }
 
 // The proved pad is an exceptional entry, not a normal source path. A full
@@ -1035,7 +1069,7 @@ inline bool objcSynchronizedSelfArgument(llvm::StringRef Source, size_t At,
 
 inline std::optional<std::string>
 objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
-                           uint8_t Operations) {
+                           uint8_t Operations, llvm::StringRef Receiver) {
   if (!Operations || Operations > 3 || Begin >= End || End > Source.size())
     return std::nullopt;
   std::vector<std::pair<size_t, std::string>> Calls;
@@ -1074,7 +1108,7 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
           return std::nullopt;
       }
       Calls.emplace_back(At, ("neverd_objc_sync_" + Name.drop_front(5) +
-                              "(&neverd_objc_sync_guard, objc_self, ")
+                              "(&neverd_objc_sync_guard, " + Receiver + ", ")
                                  .str());
     }
     if (!Count)
@@ -1168,18 +1202,12 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   if (EnterEnd == std::string::npos)
     return std::nullopt;
   if (Proof.SuspendARC) {
-    if (!StopAtExit || Exits.size() != 1 || Proof.ReceiverIsSavedLocal ||
-        Proof.UnprotectedReleases || Proof.UnprotectedRetains ||
-        !objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
-        !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))
+    if (!StopAtExit || Exits.size() != 1 || Proof.UnprotectedReleases ||
+        Proof.UnprotectedRetains ||
+        (!Proof.ReceiverIsSavedLocal &&
+         (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
+          !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))))
       return std::nullopt;
-    const auto Suspended = objcSynchronizedSuspendARC(Source, EnterEnd + 1,
-                                                      Exit, Proof.SuspendARC);
-    if (!Suspended)
-      return std::nullopt;
-    auto Ordinary = Proof;
-    Ordinary.SuspendARC = 0;
-    return addObjCSynchronizedReceiverCleanup(*Suspended, Ordinary);
   }
   std::string Receiver = "objc_self";
   if (Proof.ReceiverIsSavedLocal) {
@@ -1268,6 +1296,16 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
                 "static void neverd_objc_sync_cleanup(void **guard) {\n"
                 "    if (*guard) (void)neverd_darwin_objc_sync_exit(*guard);\n"
                 "}\n");
+  if (Proof.SuspendARC) {
+    const auto RenderedBody = objcSynchronizedSourceBody(Result);
+    if (!RenderedBody)
+      return std::nullopt;
+    const size_t RenderedEnter = Result.find(EnterName, RenderedBody->first);
+    const size_t RenderedExit = Result.find(ExitName, RenderedBody->first);
+    const size_t RenderedEnterEnd = Result.find(';', RenderedEnter);
+    return objcSynchronizedSuspendARC(Result, RenderedEnterEnd + 1,
+                                      RenderedExit, Proof.SuspendARC, Receiver);
+  }
   return Result;
 }
 

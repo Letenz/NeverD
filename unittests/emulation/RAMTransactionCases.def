@@ -1,0 +1,32 @@
+//===- RAMTransactionCases.def - RAM effect boundary fixtures -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RAM_TEST_VALUE
+NEVERD_RAM_TEST_VALUE(Limit, 1024 * 1024)
+NEVERD_RAM_TEST_VALUE(Code, 0x10000)
+NEVERD_RAM_TEST_VALUE(Data, 0x4000)
+NEVERD_RAM_TEST_VALUE(Alias, 0x9000)
+NEVERD_RAM_TEST_VALUE(Device, 0xc000)
+NEVERD_RAM_TEST_VALUE(Unmapped, 0xf000)
+NEVERD_RAM_TEST_VALUE(Timeout, 1000000)
+NEVERD_RAM_TEST_VALUE(BeforeByte, 0x5a)
+NEVERD_RAM_TEST_VALUE(AfterByte, 0xa5)
+NEVERD_RAM_TEST_VALUE(BeforeWord, 0x5a5a5a5a5a5a5a5aULL)
+NEVERD_RAM_TEST_VALUE(AfterWord, 0xa5a5a5a5a5a5a5a5ULL)
+NEVERD_RAM_TEST_VALUE(WordBytes, 8)
+NEVERD_RAM_TEST_VALUE(PairBytes, 16)
+NEVERD_RAM_TEST_VALUE(InitialFlags, 0x202)
+NEVERD_RAM_TEST_VALUE(InitialAccumulator, 0x35)
+NEVERD_RAM_TEST_VALUE(EditedAccumulator, 0x79)
+NEVERD_RAM_TEST_VALUE(FPInvalidStatus, 1)
+NEVERD_RAM_TEST_VALUE(StoreARM, 0xf9000001)
+NEVERD_RAM_TEST_VALUE(PairStoreARM, 0xa9000c02)
+NEVERD_RAM_TEST_VALUE(NopARM, 0xd503201f)
+NEVERD_RAM_TEST_VALUE(NopX64, 0x90)
+#endif
+#ifdef NEVERD_RAM_TEST_BYTES
+NEVERD_RAM_TEST_BYTES(StoreX64, 0x48, 0x89, 0x01)
+NEVERD_RAM_TEST_BYTES(AddExchangeX64, 0x48, 0x0f, 0xc1, 0x01)
+#endif

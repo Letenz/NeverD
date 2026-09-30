@@ -8,6 +8,10 @@ Panoramica, build e CLI sono nel README del repository. I riferimenti di design 
 
 NeverD supporta Android e iOS tramite la CLI sperimentale `neverd mobile`: APK (incluso multidex), DEX e file o directory smali diventano Java con un report JSON; IPA, `.app` e Mach-O (arm64/x86_64) diventano C nativo e sorgenti Objective-C/Swift supportati con un report di copertura JSON. L’estensione dipende dai modelli di codice supportati; le guide ne descrivono i limiti.
 
+L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
+
+I profili checked usano KVM su Linux e WHP su Windows con ISA corrispondente, e Unicorn tra ISA diverse. La validazione nativa ARM64/WHP resta da eseguire. `driver-strict` usa attualmente Unicorn; il percorso driver KVM/WHP richiede `checked-x64-v1`. Un backend esplicito non disponibile fallisce chiaramente. RAM condivisa, alias, scritture per fasi, operazioni atomiche scalari, eccezioni tipizzate e stato FP/SSE x64 completo sono implementati nei contratti ISA/OS documentati. Ciò non garantisce driver arbitrari o ambienti Android/Darwin implementati.
+
 | Documento | Descrizione |
 |-----------|-------------|
 | [README (italiano)](project.md) | Panoramica, avvio rapido, build, SDK, CLI |
@@ -18,7 +22,7 @@ NeverD supporta Android e iOS tramite la CLI sperimentale `neverd mobile`: APK (
 | [Emulazione dei processi guest](process-emulation.md) | Profilo Linux ELF, avvio, servizi, limiti e test |
 | [Prove bitvector](solver.md) | Prove Z3 opzionali, sintesi verificata, test indipendenti ed export |
 | [Recupero del sorgente da interpreti](interpreter-recovery.md) | Specializzazione sperimentale `--devirtualize`, controlli CLI, contratto di esecuzione, evidenze e limiti; proposte di prova per cicli annidati; budget di scoperta espliciti e API C versionata |
-| [Emulazione dei driver Windows](driver-emulation.md) | Inizializzazione WDM x64 limitata, richieste seriali buffered/direct, lavoro, timer, DPC, eventi e attese, report e limiti; durata di driver/oggetti KMDF 1.33 non PnP e CFG x64 validato |
+| [Emulazione dei driver Windows](driver-emulation.md) | Ciclo WDM/KMDF x64 limitato, richieste, scenari hardware, SEH, sottoinsiemi PnP, selezione backend e limiti |
 | [Ricostruzione delle eccezioni Windows](windows-exception-reconstruction.md) | Matrice di supporto SEH/C++, contratto IR, regole di patch nativo e validazione PE |
 | [Audit e hunt di sicurezza della memoria](memory-safety.md) | Analisi di vita dell’heap e overflow di copia: contratto di identità per formato, catalogo sink/source, verdetti, budget e schema JSON |
 | [Plugin nativi](plugins.md) | ABI del descrittore C puro, callback ed eventi, flusso di build/link, rilevamento e regole di compatibilità |

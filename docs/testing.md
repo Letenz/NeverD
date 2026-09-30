@@ -217,6 +217,12 @@ Recovery API tests cover v1/v2/v3 defaults, explicit budgets, truncated structur
 
 `LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
 
+Cached equality exits in two- and three-level loops check correlated operands, moving bounds, counter resets and corrupted copies.
+
+Cached comparison regressions cover equality and inequality, guarded and constant-folded starts, fields first discovered after widening, and bits 7/31/63 in byte/dword/qword caches. Changing only an adjacent bit while preserving the tested bit must fail full state comparison. Zero steps, moving bounds, resets and exhausted shared budgets must refuse.
+
+Generalized-prefix regressions cover joined entry arms, a zero-iteration first witness, hidden register/frame differences, noncanonical predicates, native trap guards, correlated spills and malformed or exhausted plans. Independent two/three-level equality-exit counters and native bytes check unsigned input bounds, zero/max input domains, non-unit increments and incorrect original instructions. Both inference and the final proof must refuse incomplete results.
+
 Independent alternative-loop regressions cover both branch orientations, wrong loop bodies, a nonterminating sibling and exhausted shared search/proof budgets. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Nested inference regressions include two and three levels, ascending and descending counters, inferred phase constants and actual native body cutpoints. Unreachable or disjoint prefix domains, incorrect bodies, infinite or wrapping transitions, and exhausted shared search/proof budgets must refuse. Prefix witnesses never replace complete segment coverage.
@@ -321,6 +327,35 @@ and malformed operands must fail explicitly.
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
 ## CPU execution checks
+
+`NeverDX64FPTests` checks all physical x87 lanes and tags at every TOP, exact
+80-bit push/pop and arithmetic state against independent host FXSAVE/FXRSTOR,
+FP/SSE reset, register-width rejection and complete CPU-context restoration.
+It exercises explicit KVM/WHP/Unicorn transports without ISA preflight for the
+state tests; unavailable native hosts are explicit skips. Exact arithmetic in
+this suite proves state transport, not admission or all x87 rounding semantics.
+
+`NeverDRAMTransactionTests` checks physical-alias deduplication, independent
+cross-page owners, bounded footprints, complete staged reads, write-only RAM,
+lease and phase errors, rejected devices/permissions, and cross-thread access.
+Injected x64/ARM64 transports modify RAM and CPU before reporting failure,
+cancellation or throwing; no speculative state may escape. An injected CPU
+exception separately verifies restored RAM and retained architectural status
+before OS delivery. These injections test ownership, not native ISA behavior.
+
+Its `X64Atomic` matrix executes original 8/16/32/64-bit `XCHG`/`XADD`/`CMPXCHG`
+encodings with and without LOCK at supervisor/user privilege. On an x64 host,
+an independent native instruction oracle supplies exact RAM, accumulator,
+source-register and flags results, including successful/failed comparisons.
+Observers must see original CPU/aliases and staged results; read stops, result
+stops, callback exceptions and missing write permissions cannot publish effects.
+Unavailable transports and non-x64 oracle hosts are explicit skips. The target
+builds with Unicorn disabled; native WHP and ARM64 still require those hosts.
+
+```bash
+cmake --build build-cpu --target NeverDRAMTransactionTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDRAMTransactionTests$' --output-on-failure
+```
 
 `NeverDIntegerABITests` builds three original Clang fixtures for Windows x64,
 Linux x64 and Linux ARM64. The compiled ten-argument functions exercise real

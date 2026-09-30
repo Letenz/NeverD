@@ -6,6 +6,7 @@
 #include "CheckedAArch64Backend.h"
 
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/RAMTransaction.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -64,14 +65,13 @@ llvm::Error CheckedAArch64Backend::writeRegister(CPURegister R,
                                                  const RegisterValue &V) {
   if (auto E = mutableMemory())
     return E;
-  if (!registerMatches(R, architecture()))
+  if (!registerMatches(R, architecture()) || !registerValueFits(R, V))
     return error(diagnostic::Register);
   if (R >= CPURegister::AArch64V0 && R <= CPURegister::AArch64V31) {
     CPU.Vectors[unsigned(R) - unsigned(CPURegister::AArch64V0)] = V;
     return llvm::Error::success();
   }
-  if (V[1] || (registerWidth(R) == 32 && V[0] > UINT32_MAX) ||
-      (R == CPURegister::AArch64NZCV && (V[0] & ~aarch64::NZCVMask)) ||
+  if ((R == CPURegister::AArch64NZCV && (V[0] & ~aarch64::NZCVMask)) ||
       (R == CPURegister::AArch64PC &&
        (!aarch64::canonical(V[0]) || V[0] % aarch64::InstructionBytes)))
     return error(diagnostic::Register);
@@ -260,6 +260,25 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   }
   if (auto E = buildAArch64PageTables(*this->Memory, UserMode))
     return E;
-  return Machine->step(CPU, {Deadline, &StopRequested});
+  std::vector<RAMWriteRange> Writes;
+  for (const auto &M : Accesses)
+    if (M.Permission == Write)
+      Writes.push_back({M.Address, M.Size});
+  auto Transaction = RAMTransaction::create(
+      *this->Memory, Writes, execution_limits::InstructionRAMWriteBytes,
+      executionPermissions(Write));
+  if (!Transaction)
+    return Transaction.takeError();
+  auto Next = CPU;
+  if (auto E = Machine->step(Next, {Deadline, &StopRequested}))
+    return E;
+  if (auto E = (*Transaction)->stage())
+    return E;
+  if (StopRequested || FirstFault)
+    return llvm::Error::success();
+  if (auto E = (*Transaction)->commit())
+    return E;
+  CPU = Next;
+  return llvm::Error::success();
 }
 } // namespace neverd::emulation

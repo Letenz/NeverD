@@ -57,8 +57,8 @@ void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 
 /// Replace `goto L` with a copy of L's tail when L is at most three pure
-/// assignments followed by a return.  The original stays for other paths.
-/// Returns true when a goto was replaced.
+/// assignments followed by a return, or ending in a call that never returns.
+/// The original stays for other paths. Returns true when a goto was replaced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
 
 /// Late goto reduction: merge conditional jumps to one target, move a block
@@ -71,6 +71,13 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
+/// Remove a goto whose target is exactly the next statement in its list,
+/// when no other statement starts at that address. Returns true when a goto
+/// was removed.
+bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
+/// A goto at loop level whose target is what runs after the loop, exactly
+/// as falling out of it would, becomes `break`. Returns true when one did.
+bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
 /// `X: S...` whose every jump to X comes from inside S becomes
 /// `while (1) { S...; break; }` with those jumps as `continue`.
 bool loopifyBackwardGotos(std::vector<HighStmt> &Body);

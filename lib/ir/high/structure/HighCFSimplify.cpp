@@ -45,28 +45,90 @@ namespace neverd {
 // Trivial goto removal (goto to next statement)
 //===----------------------------------------------------------------------===//
 
-static void removeTrivialGotos(std::vector<HighStmt> &Stmts,
-                               const std::set<va_t> &Targets) {
+namespace {
+/// Every address a jump or handler enters, and how many statements begin an
+/// address group at each address. C labels the first statement printed at an
+/// address, so a jump lands on a given statement only when that statement is
+/// the one start there. A first child sharing its parent's address prints
+/// under the parent's label.
+class LabelStarts {
+  std::set<va_t> Entered;
+  std::map<va_t, unsigned> Starts;
+
+  void count(const std::vector<HighStmt> &L, va_t Parent) {
+    for (size_t I = 0; I < L.size(); ++I) {
+      const HighStmt &S = L[I];
+      if (S.Addr != 0 && S.Addr != InvalidVA &&
+          S.Addr != (I == 0 ? Parent : L[I - 1].Addr))
+        ++Starts[S.Addr];
+      if (S.Kind == StmtKind::Goto)
+        Entered.insert(S.GotoTarget);
+      for (const HighEHClause &Clause : S.EHClauses)
+        Entered.insert(Clause.HandlerVA);
+      count(S.Body, S.Addr);
+      count(S.ElseBody, 0);
+      for (const auto &C : S.Cases)
+        count(C.Body, 0);
+      count(S.DefaultBody, 0);
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        count(ClauseBody, 0);
+    }
+  }
+
+public:
+  explicit LabelStarts(const std::vector<HighStmt> &Body) { count(Body, 0); }
+
+  const std::set<va_t> &entered() const { return Entered; }
+
+  /// True when a jump to \p Addr reaches the one statement starting there.
+  bool unique(va_t Addr) const {
+    auto It = Starts.find(Addr);
+    return It != Starts.end() && It->second == 1;
+  }
+};
+} // namespace
+
+/// Remove each goto whose target is the statement right after it in the same
+/// list. \p Entered holds every address a jump or handler reaches. With
+/// \p Late, statements may have moved, so the target must be the next
+/// statement's own address and no other statement may start there. The early
+/// form still runs in address order and also accepts padding between the
+/// jump and the next statement.
+static bool removeTrivialGotos(std::vector<HighStmt> &Stmts,
+                               const std::set<va_t> &Entered,
+                               const LabelStarts *Late) {
+  bool Changed = false;
   for (int I = static_cast<int>(Stmts.size()) - 2; I >= 0; --I) {
     if (Stmts[I].Kind != StmtKind::Goto)
       continue;
     va_t Target = Stmts[I].GotoTarget;
     if (Target == 0 || Target == InvalidVA)
       continue;
-    va_t NextAddr = Stmts[static_cast<size_t>(I) + 1].Addr;
-    if (NextAddr == 0)
+    // A removed statement without an address prints nothing.
+    size_t Next = static_cast<size_t>(I) + 1;
+    while (Next < Stmts.size() && Stmts[Next].Kind == StmtKind::Nop &&
+           (Stmts[Next].Addr == 0 || Stmts[Next].Addr == InvalidVA))
+      ++Next;
+    if (Next == Stmts.size())
+      continue;
+    va_t NextAddr = Stmts[Next].Addr;
+    // The next statement starts a label only when it begins its address
+    // group; otherwise a goto to that address lands at or before this one.
+    if (NextAddr == 0 || NextAddr == Stmts[I].Addr)
       continue;
     // A target short of the next statement is fall-through only when it lies
     // past the goto itself (padding between them); a target at or before the
     // goto, such as the `jmp $` self-loop, is a real backward jump.
     const va_t Own = Stmts[I].Addr;
     const bool OwnKnown = Own != 0 && Own != InvalidVA;
-    if (!(Target == NextAddr || (OwnKnown && Target > Own &&
-                                 Target < NextAddr && NextAddr - Target <= 16)))
+    if (Late ? Target != NextAddr || !Late->unique(Target)
+             : !(Target == NextAddr ||
+                 (OwnKnown && Target > Own && Target < NextAddr &&
+                  NextAddr - Target <= 16)))
       continue;
     // A goto that is itself a branch target (a lone `jmp` block) keeps its
     // address as an empty anchor, so gotos to it still have a label.
-    if (OwnKnown && Targets.count(Own)) {
+    if (OwnKnown && Entered.count(Own)) {
       HighStmt Anchor;
       Anchor.Kind = StmtKind::Block;
       Anchor.Addr = Own;
@@ -74,13 +136,23 @@ static void removeTrivialGotos(std::vector<HighStmt> &Stmts,
     } else {
       Stmts.erase(Stmts.begin() + I);
     }
+    Changed = true;
   }
   for (auto &S : Stmts) {
-    if (!S.Body.empty())
-      removeTrivialGotos(S.Body, Targets);
-    if (!S.ElseBody.empty())
-      removeTrivialGotos(S.ElseBody, Targets);
+    Changed |= removeTrivialGotos(S.Body, Entered, Late);
+    Changed |= removeTrivialGotos(S.ElseBody, Entered, Late);
+    for (auto &C : S.Cases)
+      Changed |= removeTrivialGotos(C.Body, Entered, Late);
+    Changed |= removeTrivialGotos(S.DefaultBody, Entered, Late);
+    for (auto &ClauseBody : S.EHClauseBodies)
+      Changed |= removeTrivialGotos(ClauseBody, Entered, Late);
   }
+  return Changed;
+}
+
+bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body) {
+  const LabelStarts Labels(Body);
+  return removeTrivialGotos(Body, Labels.entered(), &Labels);
 }
 
 //===----------------------------------------------------------------------===//
@@ -533,10 +605,13 @@ static std::optional<size_t> pureAssignCount(const HighStmt &S,
   return Count;
 }
 
+static bool endsItsBlock(const HighStmt &S);
+
 /// `goto L` where L starts a few pure assignments and a return (typically
-/// `result = 1; return result;` shared through an epilogue) becomes a copy
-/// of those statements.  The labelled original stays for any other path, so
-/// no code is removed; only the jump is.
+/// `result = 1; return result;` shared through an epilogue), or a call that
+/// never returns such as the fail-fast trap, becomes a copy of those
+/// statements.  The labelled original stays for any other path, so no code
+/// is removed; only the jump is.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
   constexpr size_t kMaxTailAssigns = 3;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
@@ -566,6 +641,10 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
       if (!Count || Assigns + *Count > kMaxTailAssigns)
         break;
       Assigns += *Count;
+      // Nothing runs after a call that never returns.
+      if (endsItsBlock(Stmts[J]))
+        return std::vector<HighStmt>(Stmts.begin() + First,
+                                     Stmts.begin() + J + 1);
       ++J;
     }
     if (J < Stmts.size() && Stmts[J].Kind == StmtKind::Return &&
@@ -1200,6 +1279,46 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+/// The one break of a loop body that code can move to, or null when there
+/// are none or several. \p Count accumulates the breaks seen.
+static HighStmt *findOnlyLoopBreak(std::vector<HighStmt> &Stmts,
+                                   unsigned &Count) {
+  HighStmt *Found = nullptr;
+  for (HighStmt &S : Stmts) {
+    switch (S.Kind) {
+    case StmtKind::Break:
+      ++Count;
+      Found = &S;
+      break;
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      break;
+    case StmtKind::SEHTry:
+    case StmtKind::CxxTry:
+    case StmtKind::ItaniumTry: {
+      // Code moved to a break inside a try would become protected.
+      bool Inside = hasLooseBreak(S.Body);
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        Inside |= hasLooseBreak(ClauseBody);
+      if (Inside)
+        Count += 2;
+      break;
+    }
+    default:
+      for (auto *Arm : {&S.Body, &S.ElseBody})
+        if (HighStmt *B = findOnlyLoopBreak(*Arm, Count))
+          Found = B;
+      for (auto &ClauseBody : S.EHClauseBodies)
+        if (HighStmt *B = findOnlyLoopBreak(ClauseBody, Count))
+          Found = B;
+      break;
+    }
+  }
+  return Count == 1 ? Found : nullptr;
+}
+
 bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
   std::set<va_t> Targets;
   walkStmts(Body, [&](const HighStmt &S) {
@@ -1207,44 +1326,6 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
         S.GotoTarget != InvalidVA)
       Targets.insert(S.GotoTarget);
   });
-  // The one break of a loop body, or null when there are none or several.
-  std::function<HighStmt *(std::vector<HighStmt> &, unsigned &)> FindBreak =
-      [&](std::vector<HighStmt> &Stmts, unsigned &Count) -> HighStmt * {
-    HighStmt *Found = nullptr;
-    for (HighStmt &S : Stmts) {
-      switch (S.Kind) {
-      case StmtKind::Break:
-        ++Count;
-        Found = &S;
-        break;
-      case StmtKind::While:
-      case StmtKind::DoWhile:
-      case StmtKind::For:
-      case StmtKind::Switch:
-        break;
-      case StmtKind::SEHTry:
-      case StmtKind::CxxTry:
-      case StmtKind::ItaniumTry: {
-        // Code moved to a break inside a try would become protected.
-        bool Inside = hasLooseBreak(S.Body);
-        for (const auto &ClauseBody : S.EHClauseBodies)
-          Inside |= hasLooseBreak(ClauseBody);
-        if (Inside)
-          Count += 2;
-        break;
-      }
-      default:
-        for (auto *Arm : {&S.Body, &S.ElseBody})
-          if (HighStmt *B = FindBreak(*Arm, Count))
-            Found = B;
-        for (auto &ClauseBody : S.EHClauseBodies)
-          if (HighStmt *B = FindBreak(ClauseBody, Count))
-            Found = B;
-        break;
-      }
-    }
-    return Count == 1 ? Found : nullptr;
-  };
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &)> Visit =
       [&](std::vector<HighStmt> &L) {
@@ -1280,7 +1361,7 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
           if (!JumpsBack)
             continue;
           unsigned Breaks = 0;
-          HighStmt *Break = FindBreak(Loop.Body, Breaks);
+          HighStmt *Break = findOnlyLoopBreak(Loop.Body, Breaks);
           if (!Break)
             continue;
           // Replace the break with a block of the tail; it never falls through.
@@ -1306,6 +1387,146 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
         }
       };
   Visit(Body);
+  return Changed;
+}
+
+bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
+  const LabelStarts Labels(Body);
+  const std::set<va_t> None;
+  // The addresses a jump can name to reach what runs after L[N - 1]: the
+  // next statement, through removed statements, empty anchors and the start
+  // of a block, or \p After past the end of the list.
+  std::function<bool(const std::vector<HighStmt> &, size_t, std::set<va_t> &)>
+      Collect = [&](const std::vector<HighStmt> &L, size_t N,
+                    std::set<va_t> &Follow) {
+        for (; N < L.size(); ++N) {
+          const HighStmt &T = L[N];
+          if (T.Addr != 0 && T.Addr != InvalidVA && Labels.unique(T.Addr))
+            Follow.insert(T.Addr);
+          if (isEmptyAnchor(T)) {
+            walkStmts(T.Body, [&](const HighStmt &C) {
+              if (C.Addr != 0 && C.Addr != InvalidVA && Labels.unique(C.Addr))
+                Follow.insert(C.Addr);
+            });
+            continue;
+          }
+          if (T.Kind == StmtKind::Block)
+            Collect(T.Body, 0, Follow);
+          return true;
+        }
+        return false;
+      };
+  auto FollowAt = [&](const std::vector<HighStmt> &L, size_t N,
+                      const std::set<va_t> &After) {
+    std::set<va_t> Follow;
+    if (!Collect(L, N, Follow))
+      Follow.insert(After.begin(), After.end());
+    return Follow;
+  };
+  bool Changed = false;
+  // A break at loop level leaves the loop for its follow. A nested loop or
+  // switch owns its breaks, and a jump out of a try stays a jump.
+  std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> ToBreak =
+      [&](std::vector<HighStmt> &L, const std::set<va_t> &Follow) {
+        for (HighStmt &S : L) {
+          if (S.Kind == StmtKind::Goto && Follow.count(S.GotoTarget)) {
+            S.Kind = StmtKind::Break;
+            S.GotoTarget = 0;
+            Changed = true;
+          } else if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+                     S.Kind == StmtKind::Block) {
+            ToBreak(S.Body, Follow);
+            ToBreak(S.ElseBody, Follow);
+          }
+        }
+      };
+  std::function<void(const std::vector<HighStmt> &, std::set<va_t> &)> Jumps =
+      [&](const std::vector<HighStmt> &L, std::set<va_t> &Targets) {
+        for (const HighStmt &S : L) {
+          if (S.Kind == StmtKind::Goto)
+            Targets.insert(S.GotoTarget);
+          else if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+                   S.Kind == StmtKind::Block) {
+            Jumps(S.Body, Targets);
+            Jumps(S.ElseBody, Targets);
+          }
+        }
+      };
+  auto Entered = [&](va_t Addr) { return Labels.entered().count(Addr) != 0; };
+  // `while (1) { ..break..; goto X; } P...; X:` where nothing enters P: P
+  // runs only after the break, so it can run at the break instead, leaving X
+  // as what follows the loop.
+  auto MoveFollowToBreak = [&](std::vector<HighStmt> &L, size_t K) {
+    HighStmt &Loop = L[K];
+    const bool Forever = !Loop.Cond || (Loop.Cond->Kind == ExprKind::Const &&
+                                        Loop.Cond->ConstVal != 0);
+    if (Loop.Kind != StmtKind::While || !Forever)
+      return;
+    std::set<va_t> Targets;
+    Jumps(Loop.Body, Targets);
+    size_t M = K + 1;
+    for (; M < L.size(); ++M) {
+      const va_t X = L[M].Addr;
+      if (M > K + 1 && Targets.count(X) && Labels.unique(X))
+        break;
+      if (anyAddressEntered(L[M], Entered))
+        return;
+    }
+    if (M == L.size())
+      return;
+    // Empty anchors alone already let a jump past them count as the follow.
+    if (std::all_of(L.begin() + K + 1, L.begin() + M, isEmptyAnchor))
+      return;
+    std::vector<HighStmt> Follow(std::make_move_iterator(L.begin() + K + 1),
+                                 std::make_move_iterator(L.begin() + M));
+    unsigned Breaks = 0;
+    HighStmt *Break = hasLooseBreakOrContinue(Follow)
+                          ? nullptr
+                          : findOnlyLoopBreak(Loop.Body, Breaks);
+    if (!Break) {
+      std::move(Follow.begin(), Follow.end(), L.begin() + K + 1);
+      return;
+    }
+    HighStmt Exit;
+    Exit.Kind = StmtKind::Break;
+    Follow.push_back(std::move(Exit));
+    HighStmt Moved;
+    Moved.Kind = StmtKind::Block;
+    // A jump to the break still runs the moved code first.
+    Moved.Addr = Break->Addr;
+    Moved.Body = std::move(Follow);
+    *Break = std::move(Moved);
+    L.erase(L.begin() + K + 1, L.begin() + M);
+    Changed = true;
+  };
+  std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> Visit =
+      [&](std::vector<HighStmt> &L, const std::set<va_t> &After) {
+        for (size_t K = 0; K < L.size(); ++K) {
+          MoveFollowToBreak(L, K);
+          HighStmt &S = L[K];
+          const bool Loop = S.Kind == StmtKind::While ||
+                            S.Kind == StmtKind::DoWhile ||
+                            S.Kind == StmtKind::For;
+          // Falling off an if/else arm or a block continues after it.
+          const bool Arms = S.Kind == StmtKind::If ||
+                            S.Kind == StmtKind::IfElse ||
+                            S.Kind == StmtKind::Block;
+          std::set<va_t> Follow;
+          if (Loop || Arms)
+            Follow = FollowAt(L, K + 1, After);
+          if (Loop && !Follow.empty())
+            ToBreak(S.Body, Follow);
+          const std::set<va_t> &Inner = Arms ? Follow : None;
+          Visit(S.Body, Inner);
+          Visit(S.ElseBody, Inner);
+          for (auto &C : S.Cases)
+            Visit(C.Body, None);
+          Visit(S.DefaultBody, None);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody, None);
+        }
+      };
+  Visit(Body, None);
   return Changed;
 }
 
@@ -2300,6 +2521,41 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       break;
   }
 
+  // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }
+  // B...` where B never falls through and nothing enters it: that is
+  // `if (!c) { B... } A...; goto F;`. With \p Apply the rewrite is made, so
+  // the list then ends in the jump itself.
+  auto Entered = [&](va_t Addr) { return usesOf(Addr) != 0; };
+  std::function<bool(std::vector<HighStmt> &, va_t, bool)> EndsInJumpTo =
+      [&](std::vector<HighStmt> &L, va_t F, bool Apply) -> bool {
+    if (L.empty())
+      return false;
+    if (L.back().Kind == StmtKind::Goto && L.back().GotoTarget == F)
+      return true;
+    if (!isTerminator(L.back()))
+      return false;
+    for (size_t I = L.size() - 1; I-- > 0;) {
+      if (anyAddressEntered(L[I + 1], Entered))
+        return false;
+      HighStmt &S = L[I];
+      if (S.Kind != StmtKind::If || !S.Cond || !S.ElseBody.empty() ||
+          !EndsInJumpTo(S.Body, F, false))
+        continue;
+      if (!Apply)
+        return true;
+      EndsInJumpTo(S.Body, F, true);
+      std::vector<HighStmt> Taken = std::move(S.Body);
+      S.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, S.Cond);
+      S.Body.assign(std::make_move_iterator(L.begin() + I + 1),
+                    std::make_move_iterator(L.end()));
+      L.erase(L.begin() + I + 1, L.end());
+      L.insert(L.end(), std::make_move_iterator(Taken.begin()),
+               std::make_move_iterator(Taken.end()));
+      return true;
+    }
+    return false;
+  };
+
   // T5: a goto ending an if/else/block body whose target is exactly the
   // statement that runs next after that construct is a fall-through.
   // T6: `if (c) { ...; goto F; } rest...` where F follows the whole list
@@ -2310,8 +2566,8 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           for (size_t I = 0; I + 1 < L.size(); ++I)
             if (L[I].Kind == StmtKind::If && L[I].Cond &&
                 L[I].ElseBody.empty() && !L[I].Body.empty() &&
-                L[I].Body.back().Kind == StmtKind::Goto &&
-                L[I].Body.back().GotoTarget == Follow) {
+                EndsInJumpTo(L[I].Body, Follow, false)) {
+              EndsInJumpTo(L[I].Body, Follow, true);
               popGoto(L[I].Body);
               --Uses[Follow];
               L[I].Kind = StmtKind::IfElse;
@@ -2418,7 +2674,7 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   structureIfElse(Func, IfElseMaxPasses, &Med);
   auto TPost = Now();
 
-  removeTrivialGotos(Func.Body, gotoTargets(Func.Body));
+  removeTrivialGotos(Func.Body, gotoTargets(Func.Body), nullptr);
   simplifyNestedGotos(Func.Body);
 
   mergeConsecutiveCondBlocks(Func.Body);

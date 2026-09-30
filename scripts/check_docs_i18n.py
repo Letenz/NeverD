@@ -2641,6 +2641,21 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
 
 
 def validate_matrix(errors: list[str], view: RepositoryView) -> None:
+    # Execution contracts and document paths stay in the .def inventory, so
+    # every locale is checked against one set of semantic entry points.
+    inventory = view.read_text(Path("scripts/EmulationDocumentation.def"))
+    doc_tokens: dict[str, list[str]] = defaultdict(list)
+    for group, token in re.findall(
+        r'NEVERD_EMULATION_DOC_TOKEN\((\w+), "([^\"]+)"\)', inventory
+    ):
+        doc_tokens[group].append(token)
+    for group, pattern in re.findall(
+        r'NEVERD_EMULATION_DOC_PATH\((\w+), "([^\"]+)"\)', inventory
+    ):
+        paths = [pattern.format(locale=locale) for locale in LOCALES]
+        for path in dict.fromkeys(paths):
+            require_tokens(Path(path), tuple(doc_tokens[group]), errors, view)
+
     for path in MARKDOWN_DOCS:
         if not view.exists(path):
             report(

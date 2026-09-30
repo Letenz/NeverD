@@ -825,9 +825,19 @@ Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1`
 
 `checkLowIRRefinement` and `checkBinaryLowIRRefinement` provide a separate constructive relation against a deterministic LowIR candidate. `LiftedBits` chooses the original lifter’s computed bits at each undefined producer; `ZeroBits` chooses zero only where its audited guard activates. Each dynamic occurrence is recorded, and copies and spills retain that choice. Both programs share the existing scalar, physical-stack, memory and flags executor and one entry snapshot. They must terminate on every feasible path, cover the entire admitted entry domain, and agree on RETURN operands, requested registers, mandatory native system flags and the union of written frame bytes. Both preserve the declared entry locations. Execution and relation checks share budgets, with an additional `MaxTerminalPairs` limit. Certificates separately bind the candidate, original evidence, witness policy and limits. A failed witness does not exclude other witnesses. Finite unrolling does not prove a loop invariant; this relation establishes neither CPU-specific equality nor C-backend equivalence and never replaces undefined-state independence. Input temporaries overlapping the proof-memory scratch range are rejected by both relation APIs. The binary refinement API requires matching `UserX64NoFaultV1` profiles in its options and observation contract.
 
-`checkLowIRLoopRefinement` and `checkBinaryLowIRLoopRefinement` add separately typed inductive certificates. Explicit paired cutpoints and pure scalar LowIR state templates are proof candidates: the shared executor checks real-entry initiation, complete segment coverage, every feasible successor, invariant preservation and terminal observations. All cut-to-cut edges must strictly decrease a finite unsigned lexicographic rank; parameter projections prevent a template from resetting that rank without machine progress. Templates start from the common entry state or, with `UseEntryPrefix`, an actually reached paired prefix whose predicate must also be preserved. They check every modified register and the entire frame at cuts, and retain earlier-iteration memory effects in final observations. Each side currently requires a unique address per cutpoint; automatic invariant/rank discovery and arbitrary control alignment are outside this API. Missing cuts, false invariants, wraparound, unproved termination, unsupported semantics or any exhausted shared budget refuse a certificate. The plan, every native segment and original evidence are digest-bound. Finite refinement and strict independence keep their existing meanings; inductive refinement still does not certify a C backend or a physical CPU's undefined-bit choices.
+`checkLowIRLoopRefinement` and `checkBinaryLowIRLoopRefinement` add separately typed inductive certificates. Explicit paired cutpoints and pure scalar LowIR state templates are proof candidates: the shared executor checks real-entry initiation, complete segment coverage, every feasible successor, invariant preservation and terminal observations. All cut-to-cut edges must strictly decrease a finite unsigned lexicographic rank; parameter projections prevent a template from resetting that rank without machine progress. Templates start from the common entry state or, with `UseEntryPrefix` (`GeneralizeEntryPrefix = false`), an actually reached paired prefix whose predicate must also be preserved. They check every modified register and the entire frame at cuts, and retain earlier-iteration memory effects in final observations. Each side currently requires a unique address per cutpoint; automatic invariant/rank discovery and arbitrary control alignment are outside this API. Missing cuts, false invariants, wraparound, unproved termination, unsupported semantics or any exhausted shared budget refuse a certificate. The plan, every native segment and original evidence are digest-bound. Finite refinement and strict independence keep their existing meanings; inductive refinement still does not certify a C backend or a physical CPU's undefined-bit choices.
+
+The prefix-predicate preservation requirement below applies when `GeneralizeEntryPrefix = false`.
 
 `inferLowIRLoopRefinementPlan` proposes bounded templates using the shared symbolic executor. Feedback cutpoints cover every CFG cycle; widening retains proved fixed bits and prunes unsigned prefix bounds. Observed unit counters and inferred phases form lexicographic ranks for nested ascending or descending loops. `OriginalPrefix` and `CandidatePrefix` require `UseEntryPrefix`. A cut behind earlier cuts can use a separate bounded replay from the real entry to establish a feasible paired prefix witness. This witness does not cover the entry domain: every actual arrival must imply its predicate, and complete entry and transition coverage remain mandatory. `inferAndCheckBinaryLowIRLoopRefinement` requires complete recovery and unique native origins, then independently reruns the full original/candidate checker. Proposals and origin mappings are untrusted; only `Refinement` can contain a certificate. Inference and proof keep separate explicit budgets. This C++ API does not run automatically with `--devirtualize`. Unreachable prefixes, arbitrary control alignment, rank families outside the search, C-backend equivalence and physical CPU choices for undefined bits remain unsupported.
+
+`GeneralizeEntryPrefix` defaults to `false` and requires `UseEntryPrefix`. In the default mode, every arrival must preserve the captured path predicate. The explicit generalized mode instead treats the prefix state expressions as total, untrusted template functions outside that path. It still requires a feasible paired witness, complete real-entry and segment coverage, full register/frame equality, input projections, native guards and strict rank decrease over the expanded induction domain. Inference expands a cut only when an incoming state exceeds the witness domain, then rebuilds and rechecks every general transition. A zero-iteration first witness cannot hide another entry arm that loops. The policy is bound to the inductive certificate digest.
+
+Nested inference may seed strict and non-strict unsigned bounds between observed unit counters and unchanged prefix values referenced in control predicates, including equality exits. It checks concrete entry/incoming states first and monotonically prunes these candidate relations on general incoming transitions. All predicate traversal and solver work uses the existing explicit inference limits; the final original/candidate checker independently proves the resulting templates.
+
+Nested inference also proposes equality between a cached operand and a counter or unchanged control input when their prefix expressions match. It checks every concrete incoming state, retains candidates for caches discovered during later widening, and removes a relation when any general incoming state violates it. Each represented word keeps its own recoverable parameter; the equality is a checked predicate. Copy recurrences may discard spurious fixed bits faster, but never supply assumed semantics.
+
+Nested inference also searches fields with at most 16 varying bits for cached counter equality or inequality. Each relation uses current counter and bound values, with a separate recoverable state parameter for the cache. A guard or constant-folded initializer may hide the comparison until later widening; new tuples can then be proposed, but rejected or pruned tuples are never reseeded. Candidates must hold on all saved concrete arrivals and current incoming transitions. Variable DAG scans are cached per cut and charged to the shared predicate budget. Complete native coverage, full state equality and strict rank checks remain independent requirements. Counter discovery continues after general transitions: an outer counter hidden by the initial inner-loop witness still receives checked bounds and operand-copy candidates. No rejected relation is restored, and unit-step probes obey the symbolic-node budget.
 
 Entry-prefix replays visit queued branches before extending an earlier loop again. This lets a short reachable witness be found when another branch admits an arbitrary number of iterations. Inference and the original/candidate checker share this scheduling rule. All work still consumes the existing budgets; a prefix witness does not replace complete entry coverage, invariant preservation or termination checks.
 
@@ -1135,9 +1145,10 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
-| `NeverDEmulationNative` | x64/ARM64 page-table projections and KVM/WHP machine transports |
+| `NeverDEmulationArch` | ISA admission, architecture state, x64/ARM64 page tables and x64 FP state layout |
+| `NeverDEmulationNative` | KVM/WHP machine transports |
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
-| `NeverDEmulationCPU` | Contract admission, architecture state and backend selection |
+| `NeverDEmulationCPU` | CPU configuration and backend composition |
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
@@ -1145,7 +1156,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
-The four CPU components declare LLVM Support as their LLVM dependency.
+The five CPU components declare LLVM Support as their LLVM dependency.
 Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
 transports. Compiler pipelines and guest image loaders belong to their owning
 components and are not required by a CPU-only client.
@@ -1165,6 +1176,16 @@ lib/emulation/
   os/windows/            Windows driver workload, ABI policy and kernel model
   os/linux/              Linux ELF process startup and system-call ABI/services
 ```
+
+The architecture library depends only on core memory/register ownership and
+LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
+Unicorn does not depend on KVM/WHP. KVM transfers the legacy FP/SSE components
+through standard XSAVE; WHP transfers the complete 80-bit physical lanes and
+FP/XMM control structures; Unicorn converts its full tag word at its boundary.
+CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
+TOP, opcode,
+instruction/data pointers and all eight 80-bit payloads. This state contract
+does not add x87 opcodes to the checked instruction inventory.
 
 `core` has no implementation dependency on an architecture, backend or guest
 OS. Architecture code accepts an already-created machine and authoritative
@@ -1405,6 +1426,22 @@ checked Unicorn captures corresponding engine exception events. The shared
 checked lifecycle owns recoverable-versus-terminal delivery, and the guest OS
 alone translates supported vectors into its exception ABI. Integer division
 uses real processor effects and `#DE`, including quotient overflow.
+
+`RAMTransaction` owns the bounded physical union of an instruction's declared
+ordinary RAM writes. The ISA supplies exact footprints; devices and unknown
+effects cannot enter this transaction. Execution holds the physical lease and
+uses a private next CPU state. Staging restores original bytes before result
+observers run; permission failure, stop, callback exception or transport failure
+cannot publish speculative RAM or registers. Architectural CPU exception status
+remains available to the OS after RAM rollback. CPU snapshots still leave
+previously committed memory unchanged.
+
+Scalar `XCHG`, `XADD` and `CMPXCHG` use actual processor results at all four
+integer widths. Their result observers see original CPU/RAM and the staged exact
+write value, including a failed comparison. Locked and implicit-lock memory
+forms require natural alignment. Physical aliases share one write footprint and
+budget. This preserves the existing cooperative execution model; it does not
+introduce parallel hardware SMP or atomic device transactions.
 
 `CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
 boundary. It validates every access before effects; device pages remain outside

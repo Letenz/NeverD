@@ -1224,6 +1224,112 @@ TEST(NativeSourceHints, CoderClassInitializerUsesSwiftSelf) {
   EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, DeadCoderSpecializationKeepsOnlySwiftSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Base = "_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfc";
+  Image.Symbols.push_back({Base + "Tf4dn_n", 0x1000, 0, true});
+  const auto Hint =
+      sdk::swiftMangledCoderClassInitializerSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  ASSERT_EQ(Hint->Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Parameters[0].Name, "self");
+  EXPECT_EQ(Hint->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Plain = Image;
+  Plain.Symbols[0].Name =
+      "_$s4main16NonfailableCoderC5coderACSo7NSCoderC_tcfcTf4dn_n";
+  const auto Nonfailable =
+      sdk::swiftMangledCoderClassInitializerSourceABI(Plain, 0x1000);
+  ASSERT_TRUE(Nonfailable);
+  ASSERT_EQ(Nonfailable->Parameters.size(), 1U);
+  EXPECT_EQ(Nonfailable->Parameters[0].Location.RegisterOffset, a64reg::X20);
+  EXPECT_TRUE(validateSourceABI(*Nonfailable, Error)) << Error;
+
+  for (llvm::StringRef Suffix : {"Tf4nd_n", "Tf4dd_n", "Tf4nn_n", "Tf4gn_n",
+                                 "Tf4dg_n", "Tf4d_n", "Tf3dn_n", "Tf4dn_nTo"}) {
+    SCOPED_TRACE(Suffix.str());
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Base + Suffix.str();
+    EXPECT_FALSE(
+        sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+  }
+  for (llvm::StringRef Name :
+       {"_$s4main13TestCoderViewC5coderACSgSo7NSCoderC_tcfCTf4dn_n",
+        "_$s4main13TestCoderViewC5coderSSSo7NSCoderC_tcfcTf4dn_n",
+        "_$s4main13TestCoderViewC5coderACSgSo8NSObjectC_tcfcTf4dn_n"}) {
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Name.str();
+    EXPECT_FALSE(
+        sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+  }
+  auto Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.IsRelocatable = true;
+  EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+
+  // Re-lifting must bind the receiver's physical x20 carrier. A body that
+  // instead consumes the deleted coder's x0 live-in still fails source flow.
+  for (const bool UsesDeletedCoder : {false, true}) {
+    SCOPED_TRACE(UsesDeletedCoder);
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = Image.Symbols[0].Name;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1008;
+    LowOp Copy;
+    Copy.Opcode = NdOp::COPY;
+    Copy.Addr = 0x1000;
+    Copy.Output = NdVar::reg(a64reg::X0, 8);
+    Copy.addInput(NdVar::reg(UsesDeletedCoder ? a64reg::X0 : a64reg::X20, 8));
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1004;
+    Return.addInput(NdVar::reg(a64reg::X0, 8));
+    Block.Ops = {Copy, Return};
+    Low.Blocks.push_back(Block);
+    const std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, *Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceEntryTypeHints(&Hints);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    Med.SourceTypeHint = *Hint;
+    inferMedTypes(Med, Arch::AArch64);
+    if (UsesDeletedCoder) {
+      EXPECT_FALSE(Med.SourceParametersBound);
+      continue;
+    }
+    ASSERT_TRUE(Med.SourceParametersBound);
+    const auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+    ASSERT_EQ(High.Params.size(), 1U);
+    EXPECT_EQ(High.Params[0].Name, "self");
+    const auto Flow = analyzeHighSourceFlow(High, true);
+    EXPECT_TRUE(Flow.Items.empty());
+  }
+}
+
 TEST(NativeSourceHints, NibBundleClassInitializerUsesSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;

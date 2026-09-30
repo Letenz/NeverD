@@ -5,3 +5,4 @@
 //===----------------------------------------------------------------------===//
 NEVERD_EXECUTION_LIMIT(NativeStepGraceMicroseconds, 100000)
 NEVERD_EXECUTION_LIMIT(CancelRetryMicroseconds, 1000)
+NEVERD_EXECUTION_LIMIT(InstructionRAMWriteBytes, 4096)

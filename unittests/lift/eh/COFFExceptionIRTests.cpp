@@ -3826,11 +3826,18 @@ TEST(COFFExceptionIR, SharedHandlerAndColdEntryKeepTheirPaths) {
   Stream.flush();
   const size_t Try = Source.find("__try");
   ASSERT_NE(Try, std::string::npos) << Source;
+  // The cold block's jump to the protected start is the fall-through into
+  // the try once the cold block moves ahead of it. A jump that remains needs
+  // its one label before `__try`.
   const size_t Label = Source.find("L_140001010:");
-  ASSERT_NE(Label, std::string::npos) << Source;
-  EXPECT_LT(Label, Try) << Source;
-  EXPECT_EQ(Source.find("L_140001010:", Label + 1), std::string::npos)
-      << Source;
+  if (Source.find("goto L_140001010;") != std::string::npos) {
+    ASSERT_NE(Label, std::string::npos) << Source;
+    EXPECT_LT(Label, Try) << Source;
+    EXPECT_EQ(Source.find("L_140001010:", Label + 1), std::string::npos)
+        << Source;
+  } else {
+    EXPECT_EQ(Label, std::string::npos) << Source;
+  }
   // The shared block is printed once, outside the __except body.  Search the
   // body only; the file also declares the callee.
   const size_t Body = Source.find("neverd.entry");

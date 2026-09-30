@@ -1814,8 +1814,10 @@ swiftMangledCGRectClassInitializerSourceABI(const BinaryImage &Image,
 // Swift class init(coder:) takes NSCoder in x0 and the allocated receiver in
 // swiftself, then returns a class pointer (optionally null when failable) in
 // x0.
-// Match the entire initializing-constructor type so ObjC thunks, allocating
-// entries, and specializations cannot borrow this entry contract.
+// Match the entire initializing-constructor type. The observed dead-coder
+// specialization removes only that argument; its unchanged receiver remains
+// in swiftself. Other specializations, ObjC thunks and allocating entries
+// cannot borrow either entry contract.
 inline std::optional<SourceFunctionTypeHint>
 swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
                                            va_t Entry) {
@@ -1852,11 +1854,34 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
     return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
            N.Children.empty();
   };
-  if (!Parsed.Root || !Parsed.Error.empty() ||
-      !Shape(*Parsed.Root, "Global", 1) ||
-      !Shape(Parsed.Root->Children[0], "Constructor", 3))
+  if (!Parsed.Root || !Parsed.Error.empty())
     return std::nullopt;
-  const auto &Constructor = Parsed.Root->Children[0];
+  bool DeadCoder = false;
+  const Node *ConstructorNode = nullptr;
+  if (Shape(*Parsed.Root, "Global", 1))
+    ConstructorNode = &Parsed.Root->Children[0];
+  else if (Shape(*Parsed.Root, "Global", 2)) {
+    const auto &Specialization = Parsed.Root->Children[0];
+    if (!Shape(Specialization, "FunctionSignatureSpecialization", 3) ||
+        Specialization.Children[0].Kind != "SpecializationPassID" ||
+        Specialization.Children[0].Text ||
+        Specialization.Children[0].Index != 4 ||
+        !Specialization.Children[0].Children.empty() ||
+        !Shape(Specialization.Children[1],
+               "FunctionSignatureSpecializationParam", 1) ||
+        !Shape(Specialization.Children[2],
+               "FunctionSignatureSpecializationParam", 0))
+      return std::nullopt;
+    const auto &Kind = Specialization.Children[1].Children[0];
+    if (Kind.Kind != "FunctionSignatureSpecializationParamKind" || Kind.Text ||
+        Kind.Index != 64 || !Kind.Children.empty())
+      return std::nullopt;
+    DeadCoder = true;
+    ConstructorNode = &Parsed.Root->Children[1];
+  }
+  if (!ConstructorNode || !Shape(*ConstructorNode, "Constructor", 3))
+    return std::nullopt;
+  const auto &Constructor = *ConstructorNode;
   const auto &Class = Constructor.Children[0];
   const auto &Labels = Constructor.Children[1];
   const auto &Type = Constructor.Children[2];
@@ -1907,9 +1932,10 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
   Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
-  Hint.Parameters = {{"coder", NdType::makePtr(NdType::makeVoid())},
-                     {"self", NdType::makePtr(NdType::makeVoid())}};
-  Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  if (!DeadCoder)
+    Hint.Parameters.push_back({"coder", NdType::makePtr(NdType::makeVoid())});
+  Hint.Parameters.push_back({"self", NdType::makePtr(NdType::makeVoid())});
+  Hint.Parameters.back().TheRole = SourceParameterTypeHint::Role::SwiftContext;
   std::string Error;
   return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
              ? std::optional<SourceFunctionTypeHint>(std::move(Hint))

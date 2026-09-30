@@ -264,6 +264,77 @@ TEST(BinaryLowIRLoopRefinement, PhysicalCallsAndEarlierStackWrites) {
   refused(Check(), Status::Different);
 }
 
+TEST(BinaryLowIRLoopInference, JoinedNativeEntryArmsUseCheckedGeneralization) {
+  // Both arms initialize eax to 7. The joined loop adds the unsigned count
+  // using LEA, keeping the TEST flags unchanged across every iteration.
+  // test rdx,rdx; jz alternate; mov eax,7; jmp loop;
+  // alternate: mov eax,7; loop: jrcxz done; lea rax,[rax+rcx];
+  // lea rcx,[rcx-1]; jmp loop; done: ret.
+  Program P({0x48, 0x85, 0xd2, 0x74, 7,    0xb8, 7,    0,    0,    0,
+             0xeb, 5,    0xb8, 7,    0,    0,    0,    0xe3, 10,   0x48,
+             0x8d, 0x04, 0x08, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf4, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Check = [&] {
+    return inferAndCheckBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                  Recovery, P.Contract);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+  ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+  bool Generalized = false;
+  for (const auto &Cut : Good.Inference.Plan->Cutpoints)
+    Generalized |= Cut.GeneralizeEntryPrefix;
+  EXPECT_TRUE(Generalized);
+  // Changing the other original arm must fail even when the candidate and
+  // its inferred plan still describe the old initialization.
+  P.Image.Segments[0].Data[13] = 8;
+  const auto Bad = Check();
+  EXPECT_TRUE(Bad.Inference.inferred()) << Bad.Inference.Diagnostic;
+  refused(Bad.Refinement, Status::Different);
+}
+
+TEST(BinaryLowIRLoopRefinement, GeneralizedDomainRechecksNativeTrapGuards) {
+  // Entry excludes rdx == 0 from the loop. Removing that witness domain
+  // admits a trap to the proposed invariant even though every real run is
+  // safe. Generalization must reject the proposal, not assume the old guard.
+  // test rdx,rdx; jz done; loop: test rdx,rdx; jz fault;
+  // jrcxz done; lea rcx,[rcx-1]; jmp loop; done: ret; fault: ud2.
+  Program P({0x48, 0x85, 0xd2, 0x74, 13,   0x48, 0x85, 0xd2, 0x74, 9,   0xe3,
+             6,    0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf3, 0xc3, 0x0f, 0x0b});
+  // Ordinary recovery refuses an opaque trap. Construct the candidate from
+  // a separate image with a return on that arm; only the native checker may
+  // establish that this difference is unreachable under a proposed domain.
+  auto Candidate = P;
+  Candidate.Image.Segments[0].Data[19] = 0xc3;
+  Candidate.Image.Segments[0].Data[20] = 0x90;
+  const auto Recovery = Candidate.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRLoopCutpoint Cut;
+  Cut.OriginalAddress = Entry + 5;
+  unsigned Matches = 0;
+  for (const auto &Origin : Recovery.Origins)
+    if (Origin.NativeInstruction.Address == Cut.OriginalAddress) {
+      Cut.CandidateAddress = Origin.ResidualAddress;
+      ++Matches;
+    }
+  ASSERT_EQ(Matches, 1U);
+  Cut.UseEntryPrefix = true;
+  const LowIRLoopLocation Count{LowIRLoopSpace::Register, x86reg::RCX, 8};
+  Cut.Inputs = {{LowIRLoopSide::Original, Count, NdVar::tmp(0, 8)}};
+  Cut.OriginalState = Cut.CandidateState = {{Count, NdVar::tmp(0, 8)}};
+  Cut.Rank = {NdVar::tmp(0, 8)};
+  LowIRLoopRefinementPlan Plan{{Cut}};
+  const auto Check = [&] {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                          Recovery.Residual, P.Contract, Plan);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  Plan.Cutpoints[0].GeneralizeEntryPrefix = true;
+  refused(Check(), Status::ContractViolation);
+}
+
 TEST(BinaryLowIRLoopInference, CounterAndCallsUseInferredCheckedPlans) {
   for (bool Calls : {false, true}) {
     Program P(Calls ? std::initializer_list<uint8_t>{0xe3, 11, 0xe8, 7, 0, 0, 0,
@@ -399,6 +470,36 @@ TEST(BinaryLowIRLoopInference, PackedFlagsStayConstrainedAcrossWidening) {
   ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
   EXPECT_GT(R.Inference.WideningRounds, 1U);
   EXPECT_GT(R.Refinement.Proof.RankingChecks, 0U);
+}
+
+TEST(BinaryLowIRLoopInference, NativeEqualityExitsUseInductiveCounterBounds) {
+  // Two independent unsigned loops, both exiting on equality with an input.
+  // xor eax,eax; xor ecx,ecx; outer: cmp rcx,r8; je done; xor edx,edx;
+  // inner: cmp rdx,r9; je next; lea rax,[rax+rdx]; inc rdx; jmp inner;
+  // next: inc rcx; jmp outer; done: ret.
+  Program P({0x31, 0xc0, 0x31, 0xc9, 0x4c, 0x39, 0xc1, 0x74, 0x15, 0x31, 0xd2,
+             0x4c, 0x39, 0xca, 0x74, 0x09, 0x48, 0x8d, 0x04, 0x10, 0x48, 0xff,
+             0xc2, 0xeb, 0xf2, 0x48, 0xff, 0xc1, 0xeb, 0xe6, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Check = [&] {
+    return inferAndCheckBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                  Recovery, P.Contract);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+  ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+  EXPECT_GT(Good.Inference.PredicateNodes, 0U);
+  EXPECT_GE(Good.Refinement.Proof.RankingChecks, 2U);
+  // A recovered plan must not certify the original after changing either
+  // increasing counter to a decreasing one.
+  for (unsigned Offset : {22, 27}) {
+    P.Image.Segments[0].Data[Offset] += 8;
+    const auto Bad = Check();
+    ASSERT_TRUE(Bad.Inference.inferred()) << Bad.Inference.Diagnostic;
+    refused(Bad.Refinement, Status::Different);
+    P.Image.Segments[0].Data[Offset] -= 8;
+  }
 }
 
 TEST(BinaryLowIRLoopInference, OriginHintsAndRecoveryStatusAreUntrusted) {

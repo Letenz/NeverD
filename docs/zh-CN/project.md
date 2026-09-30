@@ -92,6 +92,12 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
 
 独立的 C++ 循环证明 API 可在预算内推导嵌套循环不变量和字典序排名，再检查原生代码到 LowIR 的精化关系，详见[恢复指南](interpreter-recovery.md)；它不证明输出 C 的等价性。
 
+### CPU 执行与来宾环境
+
+CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
+
+checked 配置在 ISA 匹配的 Linux 主机上使用 KVM，在匹配的 Windows 主机上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 运行覆盖仍待实机验证。`driver-strict` 当前使用 Unicorn；驱动的 KVM/WHP 路径需选择 `checked-x64-v1`。显式后端不可用时明确失败。共享 RAM、别名、分阶段写入、标量原子操作、类型化异常和完整 x64 FP/SSE 上下文已在文档规定的指令及 OS 契约内实现。这不表示兼容任意驱动或已实现 Android/Darwin 环境。
+
 ## 工作原理
 
 ```text

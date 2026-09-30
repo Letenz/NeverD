@@ -89,6 +89,12 @@ La CLI sperimentale `neverd mobile` supporta i seguenti input e output:
 
 L’estensione del recupero dipende dai modelli di codice supportati; i limiti sono descritti nelle rispettive guide.
 
+### Esecuzione CPU e ambienti guest
+
+L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
+
+I profili checked usano KVM su Linux e WHP su Windows con ISA corrispondente, e Unicorn tra ISA diverse. La validazione nativa ARM64/WHP resta da eseguire. `driver-strict` usa attualmente Unicorn; il percorso driver KVM/WHP richiede `checked-x64-v1`. Un backend esplicito non disponibile fallisce chiaramente. RAM condivisa, alias, scritture per fasi, operazioni atomiche scalari, eccezioni tipizzate e stato FP/SSE x64 completo sono implementati nei contratti ISA/OS documentati. Ciò non garantisce driver arbitrari o ambienti Android/Darwin implementati.
+
 ## Come funziona
 
 ```text

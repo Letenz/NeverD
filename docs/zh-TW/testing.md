@@ -58,6 +58,12 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` 和 `BinaryLowIRLoopInference.*` 使用獨立編寫的計數器、堆疊儲存、提前返回、原生呼叫和封裝旗標案例，涵蓋窄位元算術拓寬，以及運算式不同但語意相等的旗標狀態。格式錯誤的圖、缺失或偽造的來源、不終止／回繞迴圈，以及推導或證明預算耗盡均不得產生憑證。
 
+兩層和三層迴圈的快取相等退出測試涵蓋運算元相關性、變動邊界、計數器重設及損壞的複製。
+
+比較快取回歸涵蓋相等與不等、帶守衛和常數摺疊的初始化、擴寬後才出現的欄位，以及位元組、雙字與四字快取中的第 7/31/63 位元。保留受檢查位元而只改變相鄰位元，也必須由完整狀態比較拒絕。零步長、移動邊界、計數器重設與共用預算耗盡必須拒絕。
+
+泛化前綴回歸涵蓋匯合入口、首個零次迭代見證、隱藏暫存器／堆疊框架差異、非標準布林述詞、原生陷阱約束、相關聯的堆疊保存，以及錯誤或預算耗盡的計畫。獨立兩層／三層等值退出計數器與原生位元組檢查無號輸入界限、零值／最大值輸入域、非單位步長和錯誤原始指令。推導及最終證明均必須拒絕不完整結果。
+
 獨立編寫的分支迴圈迴歸涵蓋兩種分支方向、錯誤迴圈本體、不終止的相鄰分支，以及共用搜尋／證明預算耗盡。 `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 巢狀推導回歸涵蓋兩層與三層迴圈、遞增與遞減計數器、自動階段常數及實際原生迴圈本體切點。不可達或互斥的前綴域、錯誤本體、不終止或回繞轉換，以及共用搜尋／證明預算耗盡均必須拒絕。前綴證據不能取代完整區段涵蓋。
@@ -787,3 +793,11 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 ## x64 原生同步例外
 
 checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 supervisor IDT/IST 接收例外，WHP 使用明確的例外攔截位圖；原始上下文與可用錯誤碼和傳輸錯誤分開保留。OS 模型先消費可恢復事件，再安裝明確的繼續執行上下文。Windows 驅動將零除與商溢位映射為 `STATUS_INTEGER_DIVIDE_BY_ZERO`，執行實際 SEH filter、`__finally` 與重試。`NeverDX64ExceptionTests` 可停用 Unicorn 建置，`DriverWDMCPUException` 驗證原始 WDK 用例；缺少 WHP/ARM64 主機時明確跳過。
+
+## 分階段提交 RAM 效果
+
+`RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置交易與平行 SMP 仍不在此契約內；CPU 快照不會撤銷已提交的 RAM。
+
+## 完整 x87 狀態
+
+`NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
