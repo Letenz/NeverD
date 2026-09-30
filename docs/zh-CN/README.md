@@ -1,12 +1,16 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
+<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+
 [← NeverD 项目](project.md)
 
 # NeverD 文档
 
 项目概览、构建与 CLI 说明见仓库 README。面向贡献者的设计与测试资料统一收录于此。
 
-**移动端支持（实验性 CLI）：** `neverd mobile` 已支持从 [Android](android.md) APK、DEX、smali 恢复 Java，以及从 [iOS](ios.md) IPA、`.app`、Mach-O 恢复原生 C 和受支持的 Objective-C/Swift 源码，并通过 JSON 报告记录恢复结果与覆盖情况。从[移动端总览](mobile.md)开始查看，各平台指南提供命令示例与恢复限制。
+**移动端支持（实验性 CLI）：** `neverd mobile` 支持从 [Android](android.md) APK、DEX、smali 恢复 Java，以及从 [iOS](ios.md) IPA、`.app`、Mach-O 恢复原生 C 和受支持的 Objective-C/Swift 源码。JSON 报告记录恢复结果与覆盖范围。从[移动端总览](mobile.md)开始查看，各平台指南提供命令与限制。
+
+英文指南直接位于 `docs/`。译文按语言分布在 `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/` 和 `zh-TW/` 目录中。各语言目录包含文档索引 `README.md`、项目概览 `project.md`、专题指南、`CONTRIBUTING.md`、`ATTRIBUTION.md` 和 `roadmap.md`。共享图片保存在 `assets/`。
 
 | 文档 | 说明 |
 |------|------|
@@ -14,12 +18,14 @@
 | [贡献指南](CONTRIBUTING.md) | 开发环境、构建配置、工作流、风格与 PR 要求 |
 | [架构](architecture.md) | IR 路径、组件边界、严格提升、支持深度与修改位置 |
 | [测试](testing.md) | 测试套件、生成 fixture、Unicorn 往返与增量命令 |
-| [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
-| [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
-| [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
+| [桌面工作台 (英文)](../gui.md) | 可选 Qt Quick 界面、独立工作进程、C ABI、标注和 MCP 工作流 |
+| [桌面验收记录 (英文)](../gui-qualification.md) | 已测量的 GUI 证据、打包边界及尚未完成的平台验收 |
 | [解释器源码恢复](interpreter-recovery.md) | 实验性 x64 解释器特化、HighC/LLVMC 输出、执行前提、证据与限制; 嵌套循环证明候选; 显式发现预算和版本化 C API |
-| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM 初始化、串行缓冲／直接请求、工作项、定时器、DPC、事件与等待，以及行为报告和限制; KMDF 1.33 非 PnP 驱动／对象生命周期和经过验证的 x64 CFG |
 | [Windows 异常重建](windows-exception-reconstruction.md) | SEH/C++ 展开支持矩阵、IR 契约、原生 patch 规则与 PE 验证 |
+| [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
+| [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
+| [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
+| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM 初始化、串行缓冲／直接请求、工作项、定时器、DPC、事件与等待，以及行为报告和限制; KMDF 1.33 非 PnP 驱动／对象生命周期和经过验证的 x64 CFG |
 | [内存安全审计与猎取](memory-safety.md) | 堆对象生命周期与拷贝越界分析：各格式身份契约、汇/源目录、判定、预算与 JSON 模式 |
 | [原生插件](plugins.md) | 纯 C 描述符 ABI、回调与事件、构建/链接流程、发现顺序及兼容性规则 |
 | [Python 插件](python-plugins.md) | 插件编写、会话与事件 API、隔离、测试及发布 |
@@ -29,5 +35,4 @@
 | [EVM 反编译](evm.md) | EVM 输入、硬分叉、分级 IR、C/LLVM host ABI、Solidity 重建与限制 |
 | [Solana SBF 反编译](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 输出、验证与已知限制 |
 | [路线图](roadmap.md) | 状态：原生格式、EVM 与 Solana SBF 均已实现 |
-| [English README](../../README.md) | 英文版主文档 |
-| [其他语言 README](../README.md) | 其余本地化版本 |
+| 本地化文档 | 使用上方语言链接打开各语言的文档索引和项目概览 |

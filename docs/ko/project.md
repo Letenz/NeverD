@@ -1,5 +1,7 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
+<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+
 <div align="center">
 
 <picture>
@@ -11,12 +13,12 @@
 
 **AI 친화적인 바이너리 분석·디컴파일 엔진 — 1:1 리프트, LLVM 기반**
 
-PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; 순수 C SDK
+PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; C + Python SDK
 
 [![AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](../../LICENSE)
 [![C++20](https://img.shields.io/badge/Standard-C%2B%2B20-brightgreen.svg)](#빌드)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-informational.svg)
-[![SDK](https://img.shields.io/badge/SDK-Pure%20C%20API-orange.svg)](#sdk와-플러그인)
+[![SDK](https://img.shields.io/badge/SDK-C%20%2B%20Python-orange.svg)](#sdk와-플러그인)
 
 [문서](README.md) · [Android](android.md) · [iOS](ios.md) · [로드맵](roadmap.md) · [기여](CONTRIBUTING.md)
 
@@ -25,6 +27,8 @@ PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64
 ---
 
 > GitHub 저장소 홈은 항상 영어 `README.md`를 표시합니다. 위 언어 링크로 지역화 버전을 보세요.
+
+<!-- i18n-section: overview -->
 
 ## 개요
 
@@ -36,6 +40,18 @@ CLI, 통합, AI 에이전트는 **순수 C API**로 동일한 엔진 **`libnever
 
 input format, host contract와 제한은 [EVM 가이드](evm.md)와 [Solana SBF 가이드](sbf.md)를 참고하세요.
 
+실험적 CLI `neverd mobile app.apk -o recovered-app`는 APK, DEX, smali에서 Java와 `report.json`을 생성합니다. 기본 엔진은 C++20으로 구현되며 실행 시 Python, Java 또는 JADX가 필요하지 않습니다. `NEVERD_JADX`와 PATH의 `jadx`는 외부 엔진을 선택하지 않습니다. 명시적인 `--jadx PATH`만 호환 어댑터를 선택하며 자동 전환은 없습니다. 공백이 있는 경로는 따옴표로 감싸세요. 지원 입력, 보고서 및 복구 제한은 [Android 가이드](android.md)를 참조하세요.
+
+실험적 iOS 흐름 `neverd mobile App.ipa -o recovered-ios`는 IPA, `.app`, Mach-O에서 네이티브 C와 지원되는 Objective-C/Swift 소스를 출력합니다. 런타임 배치, 소스 단위, 메서드별 생략 이유를 유지하며 원래 바이너리를 호출하는 브리지를 사용하지 않습니다. 설정, 범위 계산, 독립 컴파일 검증은 [iOS 가이드](ios.md)를 참조하세요.
+
+실험적인 [인터프리터 소스 복원](interpreter-recovery.md)은 `neverd decompile --devirtualize --func ENTRY`를 사용하여 지원하는 링크된 x64 ELF/PE 인터프리터를 공통 LowIR/MedIR 파이프라인을 거쳐 HighC 또는 LLVMC로 특수화합니다. 제어 힌트는 디코더 컨텍스트를 구분하며 실행 시 입력을 고정하지 않습니다. 미해결 제어 흐름, 미지원 의미론, 예산 소진은 명시적으로 실패합니다. 이 모드는 바이너리 교체나 예외 동등성을 증명하지 않습니다.
+
+복구 예산은 `--vm-max-fields`, `--vm-max-refinements`, `--vm-max-queries`로 명시하며 기본값은 16, 16, 4096으로 유지됩니다. 호환되는 v3 C API와 실패 규칙은 복구 가이드를 참고하세요.
+
+별도의 C++ 루프 증명 API는 예산 내에서 중첩 루프 불변식과 사전식 순위를 추론한 후 네이티브 코드와 LowIR의 정제 관계를 다시 검사합니다. [복원 가이드](interpreter-recovery.md)를 참조하세요. 출력 C의 동등성은 증명하지 않습니다.
+
+<!-- i18n-section: why-neverd -->
+
 ## 왜 NeverD인가?
 
 - **1:1 의미론** — 손수 작성 lifter; 기본 strict에서 미지원 명령어는 예외
@@ -43,6 +59,8 @@ input format, host contract와 제한은 [EVM 가이드](evm.md)와 [Solana SBF 
 - **하나의 파이프라인, 여러 출구** — `lift` → LLVM IR · `decompile` → C/Solidity/Rust · `patch` → 네이티브 바이너리 재작성
 - **바이너리 재작성** — PE / ELF / Mach-O, section 트램폴린 또는 inplace
 - **분석 도구 모음** — CLI, 디버그 정보, 시그니처, 플러그인, 선택적 난독화 패스
+
+<!-- i18n-section: supported-targets -->
 
 ## 지원 대상
 
@@ -62,7 +80,9 @@ Solana SBF v0-v4 ELF 프로그램은 전용 strict loader, 완전한 버전별 I
 Low/Med/High IR, 검증된 LLVM, portable C11, 안전한 stable Rust를 사용합니다.
 [Solana SBF 디컴파일](sbf.md)을 참고하세요.
 
-### Android / iOS 소스 복원
+<!-- i18n-section: mobile-source-recovery -->
+
+### 모바일 소스 복원
 
 실험적 `neverd mobile` CLI는 다음 모바일 입력과 소스 출력을 지원합니다.
 
@@ -71,22 +91,9 @@ Low/Med/High IR, 검증된 LLVM, portable C11, 안전한 stable Rust를 사용�
 | [Android](android.md) | APK(multidex 포함), DEX, smali 파일/디렉터리 | Java 및 JSON 보고서 |
 | [iOS](ios.md) | IPA, `.app`, Mach-O(arm64 / x86_64) | 네이티브 C, 지원되는 Objective-C / Swift 소스 및 JSON 커버리지 보고서 |
 
-복원 범위는 지원되는 코드 패턴에 따라 달라집니다. 제한 사항은 각 가이드를 참조하세요.
+복원은 지원하는 코드 패턴에 따라 달라집니다. 범위와 제한은 [모바일 개요(영어)](../mobile.md) 및 플랫폼별 가이드를 참고하세요.
 
-### 인터프리터 소스 복원(실험적)
-
-`neverd decompile --devirtualize`는 링크된 x64 ELF/PE의 단일 함수를 예산 안에서 특수화합니다. 충분한 근거로 해석한 디스패치를 제거하고 HighC 또는 LLVMC 소스 출력 경로를 사용합니다. 제어 힌트는 런타임 입력값을 제공하지 않습니다. 미해결 제어 흐름이나 예산 소진은 실패이며 부분 교체 코드를 출력하지 않습니다.
-
-```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
-  --recovery-report recovery.json -o recovered.c
-```
-
-이미지 내용과 권한은 고정되어야 하며 외부에서 유래한 모든 저장 대상 범위가 진입 시 반환 주소 슬롯과 겹치지 않아야 합니다. 이는 호출자／환경의 전제입니다. 바이너리 patch나 예외 스택 풀기의 안전성을 증명하는 기능은 아닙니다. 입력 의존 바이트코드 주소와 디코더 상태 관계는 아직 일반적으로 지원하지 않습니다. 전체 계약, `--llvm` 경로 및 제한은 [인터프리터 소스 복원 가이드](interpreter-recovery.md)를 참조하세요.
-
-복구 예산은 `--vm-max-fields`, `--vm-max-refinements`, `--vm-max-queries`로 명시하며 기본값은 16, 16, 4096으로 유지됩니다. 호환되는 v3 C API와 실패 규칙은 복구 가이드를 참고하세요.
-
-별도의 C++ 루프 증명 API는 예산 내에서 중첩 루프 불변식과 사전식 순위를 추론한 후 네이티브 코드와 LowIR의 정제 관계를 다시 검사합니다. [복원 가이드](interpreter-recovery.md)를 참조하세요. 출력 C의 동등성은 증명하지 않습니다.
+<!-- i18n-section: how-it-works -->
 
 ## 동작 방식
 
@@ -121,6 +128,8 @@ Solana SBF ELF (v0-v4)
 | **MedIR** | 타입, 호출 규약, 메모리 모델, SSA |
 | **HighIR** | 구조화 제어 흐름(`if` / `while` / `for`) |
 | **LLVM** | 최적화, C 출력, 또는 기계어 생성 |
+
+<!-- i18n-section: quick-start -->
 
 ## 빠른 시작
 
@@ -160,6 +169,8 @@ cmake --build build
 
 빌드 시 시그니처 라이브러리는 `build/bin/signatures/`에 설치됩니다. `sigs --auto`는 포맷·아키텍처·비트 너비로 세트를 고릅니다. PE 파일의 Rich 헤더가 링커의 Visual Studio 릴리스를 알려 주면 그 릴리스의 `vs<year>.pat`와 어느 릴리스에도 속하지 않는 파일만 불러옵니다. `--sig-base <dir>`는 다른 시그니처 트리에서 같은 방식으로 고릅니다. 1 MiB 이상인 패턴 파일은 한 번만 파싱됩니다. 그 모듈은 사용자 캐시 디렉터리의 `neverd/signatures`에 보관되고 이후 로드에서는 매핑됩니다. `NEVERD_SIGNATURE_CACHE`로 다른 디렉터리를 지정하거나 `off`로 캐시를 끌 수 있습니다.
 
+<!-- i18n-section: building -->
+
 ## 빌드
 
 **요구 사항:** CMake ≥ 3.20 · Ninja · C++20 컴파일러 · Git submodule(LLVM fork + Capstone)
@@ -196,13 +207,11 @@ NeverD의 일반 push 및 pull request CI는 의도적으로 LLVM submodule을 �
 | Linux x86_64 | `neverd-llvm-linux-x86_64.tar.xz` |
 | Windows x64 | `neverd-llvm-windows-x64.zip` |
 
-각 아카이브는 `~/.cache/neverd-llvm/<tag>/<arch>/`(또는 `NEVERD_LLVM_PREBUILT_CACHE_DIR`가 가리키는 경로)에 풀리기 전에 `cmake/NeverDLLVMPrebuilt.cmake`에 고정된 다이제스트와 대조됩니다. 그 pin이 설명하지 않는 tag라면 아카이브와 함께 공개된 `.sha256`과 대조합니다. 릴리스 빌드는 macOS와 Linux에서 ccache를, Windows clang-cl에서는 GitHub Actions 캐시를 백엔드로 하는 sccache를 사용합니다. 컴파일러 캐시는 재빌드를 빠르게 할 뿐 릴리스 자산으로 공개되지 않습니다.
+각 아카이브는 `~/.cache/neverd-llvm/<tag>/<arch>/` 또는 `NEVERD_LLVM_PREBUILT_CACHE_DIR` 경로에 압축을 풀기 전에 `cmake/NeverDLLVMPrebuilt.cmake`에 고정된 다이제스트로 검증됩니다. 고정 정보에 없는 태그는 게시된 `.sha256`을 사용합니다. 기본 고정 버전은 `BUILDINFO.txt`의 LLVM 서브모듈 커밋도 정확히 일치해야 합니다. 릴리스 빌드는 macOS/Linux에서 ccache, Windows clang-cl에서 sccache와 GitHub Actions 캐시를 사용합니다. 컴파일러 캐시는 재빌드만 가속하며 릴리스 자산으로 게시하지 않습니다.
 
-기본 패키지 리비전은 `neverd-llvm-v23.0.0-r3`입니다. 기존 빌드 디렉터리에 리비전 번호 없는 이전 tag나 `neverd-llvm-v23.0.0-r1`, `neverd-llvm-v23.0.0-r2`가 캐시되어 있으면 자동으로 `r3`로 이전합니다. `NEVERD_LLVM_PREBUILT_SHA256`을 명시적으로 제공한 경우에는 원래 tag를 유지합니다.
+기본 패키지 리비전은 `neverd-llvm-v23.0.0-r3`입니다. Git 태그, 릴리스 대상, 소스 커밋, 아카이브 세 개의 다이제스트를 하나의 변경 불가 소스 리비전으로 고정합니다. 이전 기본 태그, `neverd-llvm-v23.0.0-r1`, `neverd-llvm-v23.0.0-r2`를 캐시한 빌드 디렉터리는 명시적인 `NEVERD_LLVM_PREBUILT_SHA256`이 없으면 자동으로 `r3`로 이동합니다. `Prebuilt LLVM Audit`는 push, pull request 및 6시간마다 실행되고, `scripts/audit_prebuilt_llvm_release.py`가 고정 정보와 현재 GitHub 릴리스 및 각 체크섬 파일을 비교합니다.
 
-릴리스 tag는 NeverD 패키지의 버전을 나타내고, `BUILDINFO.txt`는 정확한 LLVM fork commit을 기록합니다. LLVM이 여전히 `23.0.0`을 보고하더라도 fork 소스가 바뀌었다면, 통상적인 불변 선택은 `neverd-llvm-v23.0.0-r4`(다음은 `-r5`) 같은 패키지 리비전이며, LLVM 자체의 patch 버전이 바뀌지 않는 한 `23.0.1`이 아닙니다. `NEVERD_LLVM_PREBUILT_TAG`를 그 새 리비전으로 지정하십시오.
-
-다음 불변 package revision을 게시하려면 llvm-project의 `main` 브랜치에서 `NeverD LLVM Release` 워크플로를 실행하고 `overwrite_existing_assets`는 비활성화로 둡니다:
+LLVM fork가 변경되었지만 LLVM 버전이 여전히 `23.0.0`이면 다음 패키지 리비전인 `neverd-llvm-v23.0.0-r4`, 이후 `-r5`를 게시합니다. 기존 릴리스를 덮어쓰거나 LLVM 버전 `23.0.1`을 임의로 만들지 않습니다.
 
 ```bash
 gh workflow run neverd-release.yml \
@@ -212,7 +221,7 @@ gh workflow run neverd-release.yml \
   -f overwrite_existing_assets=false
 ```
 
-워크플로가 성공하면 `cmake/NeverDLLVMPrebuilt.cmake`의 기본 tag, 고정 commit, 세 archive digest를 함께 갱신합니다. 기존 release를 교체하지 말고, `overwrite_existing_assets`는 legacy recovery에만 사용합니다.
+워크플로 성공 후 `cmake/NeverDLLVMPrebuilt.cmake`의 기본 태그, 고정 커밋, 다이제스트 세 개를 함께 갱신합니다. 새 패키지는 `.cache/neverd-llvm/<tag>` 아래에 캐시되며 오래되거나 다시 게시된 아카이브는 압축 해제 전에 실패합니다. `overwrite_existing_assets`는 이전 릴리스 복구 전용이며 일반 리비전 게시에서는 끕니다.
 
 **산출물**
 
@@ -223,6 +232,7 @@ gh workflow run neverd-release.yml \
 | `build/bin/neverd-sigmaker` | 정적 라이브러리에서 `.pat` 생성 |
 | `build/bin/libneverd.*` | 엔진 공유 라이브러리 |
 | `build/bin/sdk/` | C SDK의 canonical include root. `neverd/sdk/` 계층을 유지한 `<neverd/sdk/NeverDCAPI.h>` 또는 `<neverd/sdk/NeverDPlugin.h>` 사용 |
+| `build/bin/sdk/python/` | 타입 정보를 제공하는 Python 플러그인 패키지와 예제 |
 | `build/bin/signatures/` | 번들 시그니처 |
 
 **테스트**
@@ -245,20 +255,27 @@ cmake --build build --target check-neverd
 |------|------|------|
 | `NEVERD_LLVM_PREBUILT` | `OFF` | CI 사전 빌드 LLVM |
 | `NEVERD_BUILD_SHARED` | `ON` | `libneverd` 빌드 |
+| `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | CPython 3.10+ 플러그인 지원 내장 |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | 예제 플러그인 |
 | `BUILD_TESTING` | `OFF` | 단위 테스트 |
 
 </details>
 
+<!-- i18n-section: desktop-workbench -->
+
+## 데스크톱 워크벤치
+
+선택적인 [Qt Quick 데스크톱 워크벤치 (영문)](../gui.md)는 도킹 가능한 명령어·CFG·16진수·C·IR 보기, 11개 UI 언어, 주석 저장, MCP 연결을 제공합니다. 분석은 Qt에 의존하지 않는 별도 작업 프로세스에서 실행되며 CLI 전용 빌드는 독립적으로 유지됩니다. 지원하는 작업 흐름과 출시 전에 남아 있는 플랫폼 검증은 [검증 기록 (영문)](../gui-qualification.md)을 참고하세요.
+
+<!-- i18n-section: cli -->
+
 ## CLI
-
-실험적 CLI `neverd mobile app.apk -o recovered-app`는 APK, DEX, smali에서 Java와 `report.json`을 생성합니다. 기본 엔진은 C++20으로 구현되며 실행 시 Python, Java 또는 JADX가 필요하지 않습니다. `NEVERD_JADX`와 PATH의 `jadx`는 외부 엔진을 선택하지 않습니다. 명시적인 `--jadx PATH`만 호환 어댑터를 선택하며 자동 전환은 없습니다. 공백이 있는 경로는 따옴표로 감싸세요. 지원 입력, 보고서 및 복구 제한은 [Android 가이드](android.md)를 참조하세요.
-
-실험적 iOS 흐름 `neverd mobile App.ipa -o recovered-ios`는 IPA, `.app`, Mach-O에서 네이티브 C와 지원되는 Objective-C/Swift 소스를 출력합니다. 런타임 배치, 소스 단위, 메서드별 생략 이유를 유지하며 원래 바이너리를 호출하는 브리지를 사용하지 않습니다. 설정, 범위 계산, 독립 컴파일 검증은 [iOS 가이드](ios.md)를 참조하세요.
 
 ```text
 neverd <command> [options] <binary>
 ```
+
+<!-- i18n-section: pipeline -->
 
 ### 파이프라인
 
@@ -267,16 +284,27 @@ neverd <command> [options] <binary>
 | `lift` | `.ll` | LLVM IR로 리프트 |
 | `decompile` | `.c` / `.sol` / `.rs` | `--language`로 C, EVM Solidity 또는 SBF Rust 선택 |
 | `decompile -llvm` | `.c` | LLVM IR + 최적화 경로 |
+| `decompile --devirtualize` | `.c` + 선택적 JSON | 실험적 x64 인터프리터 복원. `--func` 필수. [계약과 예제](interpreter-recovery.md) |
 | `mobile` | `.java` / `.c` / `.m` / `.swift` + JSON | 실험적: [Android](android.md), [iOS](ios.md) |
 | `patch` | 바이너리 | 기계어 재작성 |
 
 ```bash
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
 neverd patch --from-c repl.c --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+32비트 ARM 바이너리에 함수의 ARM/Thumb 모드 메타데이터가 없다면 디컴파일 전에 진입 모드를 지정합니다.
+
+```bash
+neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
+```
+
+모호한 다른 진입점에는 옵션을 반복해서 사용하고 필요하면 `:arm`을 지정합니다. 검증된 바이너리 메타데이터와 충돌하는 지정은 로드를 실패시키며, 유효한 지정은 해당 진입점에만 적용됩니다. C API는 `neverd_session_set_arm_function_mode()`로 같은 로드 전 설정을 제공합니다.
 
 <details>
 <summary><strong>분석 명령</strong></summary>
@@ -289,8 +317,8 @@ neverd patch --subst --flatten --mba -o patched binary
 | `funcs` | 발견된 함수 |
 | `disasm` | 디스어셈블(`--func` 이름 또는 hex) |
 | `sym-explore` | 제한된 네이티브 LowIR 경로 탐색(`--func`, JSON 출력) |
-| `audit` | 힙 수명 결함: 누수, 이중 해제, 해제 후 사용(JSON) |
-| `hunt` | 위험한 복사 오버플로의 기호 증거와 후보 값(JSON) |
+| `audit` | 힙 객체 수명 결함 및 초기화되지 않은 로컬 스택 읽기（JSON） |
+| `hunt` | 위험한 복사 범위 초과와 기호 증거. 완전한 계획이 있으면 `process-input-v1` 재생 증거 추가（JSON schema v1） |
 | `hex` | 주소의 hex dump |
 | `cfg` / `callgraph` | CFG / 호출 그래프(JSON; DOT/SVG 선택) |
 | `xrefs` | 교차 참조 |
@@ -306,6 +334,8 @@ neverd patch --subst --flatten --mba -o patched binary
 대부분의 분석 명령은 `--json`을 받습니다.
 
 </details>
+
+<!-- i18n-section: sdk-and-plugins -->
 
 ## SDK와 플러그인
 
@@ -339,6 +369,8 @@ typed SDK와 package workflow는 [Python 플러그인 가이드](python-plugins.
 설명되어 있습니다. 두 종류 모두 `<neverd-dir>/plugins`, `~/.neverd/plugins`,
 `$NEVERD_PLUGIN_PATH`를 사용합니다.
 
+<!-- i18n-section: dependencies -->
+
 ## 의존성
 
 | 구성 요소 | 역할 | 소스 |
@@ -348,14 +380,18 @@ typed SDK와 package workflow는 [Python 플러그인 가이드](python-plugins.
 
 서드파티 구성 요소는 자체 라이선스를 유지합니다.
 
+<!-- i18n-section: contributing -->
+
 ## 기여
 
 개발 결과는 **`dev`** 브랜치에 통합합니다. 환경 설정, Release/Debug 지침, 스타일, 집중 테스트, 풀 리퀘스트 요구사항은 [기여 가이드](CONTRIBUTING.md)를 참고하세요. [아키텍처](architecture.md)와 [테스트](testing.md) 가이드는 일반적인 변경을 관련 코드 및 검증 스위트에 연결합니다.
 
+<!-- i18n-section: license -->
+
 ## 라이선스
 
-[AGPL-3.0](../../LICENSE)
+[GNU AGPL 버전 3 전용](../../LICENSE). 해당 NeverD 코드나 파생물을 재배포할 때 저작권, 라이선스, 보증 부인 고지와 [NOTICE](../../NOTICE)의 프로젝트 귀속 및 출처를 유지해야 합니다. AI/LLM을 이용한 재사용 및 LLVM 기반 코드 변환에도 적용됩니다.
 
-AGPL이 적용되는 NeverD 코드의 복제본이나 수정본을 재배포할 때는 AGPL에 따라 저작권 및 라이선스 고지를 유지해야 합니다. 이는 AI/LLM을 활용한 재사용과 LLVM을 통한 변환에도 적용됩니다. 출처를 추적할 수 있도록 저장소, 파일, 사용한 버전도 명시할 것을 권장합니다. [저작자 표시 및 출처 인용 안내](ATTRIBUTION.md), [NOTICE](../../NOTICE), [CITATION.cff](../../CITATION.cff)를 참고하세요.
+요구 사항, 범위, 예시는 [귀속 및 인용](ATTRIBUTION.md)을 참고하세요. 추적 가능한 참조에는 소스 파일과 정확한 버전 또는 커밋을 인용하는 것을 권장합니다. [CITATION.cff](../../CITATION.cff)는 소프트웨어 인용 메타데이터를 제공하지만 인용만으로 라이선스 준수를 대체할 수는 없습니다.
 
 LLVM 구성 요소는 Apache-2.0 WITH LLVM-exception 라이선스를 유지합니다. Capstone은 자체 라이선스를 유지합니다.

@@ -16,6 +16,8 @@ signals, threads, file systems and unsupported services fail
 explicitly. Windows user processes, Android, Darwin and other kernel workloads
 remain separate implementation work.
 
+<!-- i18n-section: cli-sdk -->
+
 ## CLI and SDK
 
 ```bash
@@ -54,6 +56,8 @@ report = session.emulate_process(
 output = bytes.fromhex(report["stdout_hex"])
 ```
 
+<!-- i18n-section: options-results -->
+
 ## Options and results
 
 Options are a JSON object of at most 64 KiB. Unknown fields, null field values,
@@ -81,6 +85,8 @@ through a JSON floating-point consumer. `stdout_hex` and `stderr_hex` are
 lowercase byte encodings, preserving NUL and invalid UTF-8. A null syscall
 result denotes no modeled return, including process exit or an unsupported
 request; it is distinct from a successful zero return.
+
+<!-- i18n-section: linux-semantics -->
 
 ## Linux profile semantics
 
@@ -178,6 +184,8 @@ service contracts. They stop before publishing effects or inventing a syscall
 return. Ordinary range/length/alignment errors within the admitted subset return
 guest errors and allow execution to continue. No memory service forwards a
 guest pointer or mapping request to the host OS.
+
+<!-- i18n-section: verification -->
 
 ## Verification
 

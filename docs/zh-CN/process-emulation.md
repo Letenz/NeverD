@@ -8,6 +8,8 @@
 
 首个配置 `linux-elf64-v1` 在 CPL3 或 EL0 运行 x64/AArch64 ELF `ET_EXEC` 与可自重定位的静态 PIE `ET_DYN`。它加载真实 ELF 分段，构造初始栈，按指令量恢复执行，并处理显式 Linux 系统调用请求。这是独立进程模型，不是完整 Linux 发行版，也不承诺运行任意 libc 二进制。动态链接、信号、线程、文件系统和不支持的服务都会明确失败。x64 配置允许少量受限 SSE/SSE2 形式；AArch64 仍为整数指令配置。Windows、Android、Darwin 和其他内核工作负载属于独立工作。
 
+<!-- i18n-section: cli-sdk -->
+
 ## CLI 与 SDK
 
 ```bash
@@ -26,6 +28,8 @@ report = session.emulate_process(
 )
 output = bytes.fromhex(report["stdout_hex"])
 ```
+
+<!-- i18n-section: options-results -->
 
 ## 选项与结果
 
@@ -46,15 +50,31 @@ output = bytes.fromhex(report["stdout_hex"])
 
 `schema_version` 为 1。结果含 profile、架构、所选后端与原因、`stop_reason`、可空的 `exit_status`、诊断、入口／当前 PC、计数器、服务记录和最后一个类型化 CPU 退出。地址、syscall 编号、参数寄存器及原始返回位均为**不带** `0x` 的十六进制字符串；`stdout_hex`／`stderr_hex` 保留 NUL 和无效 UTF-8。syscall 结果为 null 表示没有建模返回值（例如退出或不支持的请求），不表示成功返回 0。
 
+<!-- i18n-section: linux-semantics -->
+
 ## Linux 配置语义
 
 OS 策略复用现有 ELF 加载器解析出的 program headers。它验证 ABI 标签、segment 对齐、已映射的 program-header 表及用户地址边界。通用映射计划会在分配前检查范围、权限、重叠和预算，只发布完全准备好的私有地址空间。保留文件页前缀／尾部字节，将 BSS 清零，遵循 segment 权限并为栈保留 guard gaps。页重叠布局和矛盾 header 会被拒绝，不会猜测。
 
+静态 PIE 使用不低于 `0x40000000` 的确定性 load bias，并按较大的 `PT_LOAD` 对齐要求递增。所有映射段、入口 PC、`AT_PHDR`/`AT_ENTRY` 共用该 bias；原始 program header 值不变，没有 interpreter 时 `AT_BASE` 为零。映射来源明确为原始文件字节，不使用分析阶段的 pointer fixup；来宾启动代码必须自行完成 relocation 和初始化。Loader 从有界的原始文件记录中解码 `PT_DYNAMIC`，不依赖 section header。若存在，该表必须可读、正确终止且最多 4096 项。拒绝 `PT_INTERP` 和外部 dependency/filter/audit 标签；不会提供 dynamic linker、符号解析器或 constructor runner。
+
 初始栈含对齐的 argc/argv/envp/auxv、PHDR/PHENT/PHNUM、entry、页大小和身份值。模型 PID/TID/UID/GID 均为 1000。为保证可复现，`AT_RANDOM` 是输入 SHA-256 的前 16 字节；这是确定性的模型策略，不是加密熵。HWCAP/HWCAP2 均为 0，没有 vDSO。
 
-已实现的调用为 `write`、`exit`、`exit_group`、`getpid`、`gettid`，其编号分别遵循 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) 与 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)。x64 SYSCALL 返回时会应用 RCX/R11 clobber，同时设置 RAX 与下一 PC；ARM64 使用 x8 作为编号、x0 作为结果。未知调用会以 `unsupported_service` 停止，不会执行宿主 syscall。
+已实现的调用为 `write`、`exit`、`exit_group`、`getpid`、`gettid`, `mmap`, `mprotect`, `munmap`, `brk`，其编号分别遵循 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) 与 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)。x64 SYSCALL 返回时会应用 RCX/R11 clobber，同时设置 RAX 与下一 PC；ARM64 使用 x8 作为编号、x0 作为结果。未知调用会以 `unsupported_service` 停止，不会执行宿主 syscall。
+
+静态 `PT_TLS` 模板作为 loader 提供的事实进行验证：仅一个模板，文件／内存范围有界、对齐一致且初始字节可读。来宾启动时分配并初始化 TLS 块，安装 thread pointer；Linux 模型不会虚构 libc 专用 TCB/DTV。这样支持 freestanding 程序中的编译器生成 local-exec TLS。Dynamic TLS 和 OS 线程仍属独立工作。
+
+x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `ARCH_GET_GS`。Set 可接受尚未映射的 user-range 基址，后续解引用仍检查权限。kernel-range 基址返回来宾 `EPERM`；无效 Get 目标返回来宾 `EFAULT`，不会触发 CPU fault。其他操作明确失败。ARM64 启动用 `MSR` 安装 `TPIDR_EL0`；`MRS`、FS/GS 内存访问和上下文恢复会跨执行量与后端入口保留 thread pointer。这本身不实现线程调度器。
 
 文件描述符 1 和 2 是虚拟字节 sink。`write` 验证可读 user pages；后续页不可读时返回已读前缀，没有任何字节可读时返回来宾 `EFAULT`。无效描述符返回 `EBADF`；对有效描述符写入零字节不会访问指针。这不模拟 Linux pipe 原子性或文件对象。若输出超过限制，会在发布写入前停止。
+
+匿名内存服务与映像、栈共用进程地址空间和物理内存预算。`mmap` 仅接受 `MAP_PRIVATE | MAP_ANONYMOUS`，权限为普通 `PROT_NONE`、`PROT_READ`、`PROT_READ | PROT_WRITE`、`PROT_READ | PROT_EXEC` 或可读的 RWX。空闲且页对齐的提示地址会被采用；否则从 `0x100000000` 起、再从最低用户地址起查找空隙，并保留栈保护区。这是确定性布局，不模拟 Linux ASLR。新页独立分配并清零；部分解除映射能回收未被固定的页。CPU 投影或仍持有的 backing view 可以将已退役分配的生命周期延长到自身释放时。
+
+长度向上取整到页。`munmap` 允许空洞和重复移除；`mprotect` 遇到空洞前会修改已映射前缀，然后返回 `ENOMEM`。`PROT_NONE` 保留分配和字节，但禁止来宾访问。原始 `brk` 成功时返回请求的字节边界，失败时返回旧边界，不采用 libc 包装器的零／负一约定。初始 break 是页对齐的映像末尾。增长受其他映射与内存预算限制；收缩保留剩余部分页中的字节。受支持子集的规则与错误优先级遵循 Linux 的[映射](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)和[保护](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)服务。
+
+文件、共享、固定映射，向下增长、大页、内存锁定、保护键、仅执行／仅写策略及其他标志都属于明确不支持的服务：在发布效果或构造返回值前停止。已支持子集内的一般范围、长度和对齐错误会返回来宾错误，并允许继续执行。任何内存服务都不会向宿主 OS 转发来宾指针或映射请求。
+
+<!-- i18n-section: verification -->
 
 ## 验证
 
@@ -66,14 +86,4 @@ cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
-测试为两种 ISA 编译原始 ELF 入口 assembly 和 C，检查 data/BSS、启动元数据、syscall 错误、二进制输出、权限故障、部分写入、不支持的服务及跨执行量预算保持。不可用后端会明确标记为跳过。公开套件通过 C ABI/CLI 并核对报告与退出码。交叉编译和 Unicorn ARM64 不构成原生 ARM64 KVM/WHP 证据。
-
-## 静态 PIE、TLS 与验证
-
-静态 PIE 使用不低于 `0x40000000` 的确定性 load bias，并按较大的 `PT_LOAD` 对齐要求递增。所有映射段、入口 PC、`AT_PHDR`/`AT_ENTRY` 共用该 bias；原始 program header 值不变，没有 interpreter 时 `AT_BASE` 为零。映射来源明确为原始文件字节，不使用分析阶段的 pointer fixup；来宾启动代码必须自行完成 relocation 和初始化。Loader 从有界的原始文件记录中解码 `PT_DYNAMIC`，不依赖 section header。若存在，该表必须可读、正确终止且最多 4096 项。拒绝 `PT_INTERP` 和外部 dependency/filter/audit 标签；不会提供 dynamic linker、符号解析器或 constructor runner。
-
-静态 `PT_TLS` 模板作为 loader 提供的事实进行验证：仅一个模板，文件／内存范围有界、对齐一致且初始字节可读。来宾启动时分配并初始化 TLS 块，安装 thread pointer；Linux 模型不会虚构 libc 专用 TCB/DTV。这样支持 freestanding 程序中的编译器生成 local-exec TLS。Dynamic TLS 和 OS 线程仍属独立工作。
-
-x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `ARCH_GET_GS`。Set 可接受尚未映射的 user-range 基址，后续解引用仍检查权限。kernel-range 基址返回来宾 `EPERM`；无效 Get 目标返回来宾 `EFAULT`，不会触发 CPU fault。其他操作明确失败。ARM64 启动用 `MSR` 安装 `TPIDR_EL0`；`MRS`、FS/GS 内存访问和上下文恢复会跨执行量与后端入口保留 thread pointer。这本身不实现线程调度器。
-
-PIE/TLS fixture 检查独立对齐的 TLS 块、TLS BSS、重定位后的 auxv，以及来宾自行 relocation 前原始为零的 RELA 槽。x64 测试验证 `arch_prctl` 错误不会丢失先前基址。请在上述 build/CTest 命令中加入 `NeverDThreadPointerTests`；不可用后端仍明确跳过。
+测试为两种 ISA 编译独立 ELF 入口汇编和 C，验证 data/BSS、真实启动元数据、系统调用错误、二进制输出、权限故障、部分写入、不支持的服务和跨执行量预算。TLS 用例初始化独立对齐的块、清零 TLS BSS、安装线程指针并检查切换后保留；x64 还检查 `arch_prctl` 错误不会丢失先前基址。不可用后端明确跳过。公开测试经过共享 C ABI 和 CLI，核对报告与退出码。静态 PIE 用例在自行重定位数据和函数指针前验证 auxv 和原始为零的 RELA 槽。映射测试单独检查选择分析字节源时保留 fixup；动态表测试覆盖缺失 section 及畸形／依赖输入。匿名内存用例覆盖两种 ISA 的分配、保护、空洞、重新映射、堆增长／收缩和可处理的系统调用错误；真实来宾写入验证普通和部分保护更改后的故障。x64 还在 RW/RX 切换之间重写同址代码并调用两版；同一 ELF 在 Linux 原生运行，作为独立结果／故障参照。纯内存测试覆盖预算耗尽、回收和不持有 RAM 的权威映射快照。交叉编译与 Unicorn ARM64 结果不构成原生 ARM64 KVM/WHP 证据。

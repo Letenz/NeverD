@@ -1,12 +1,16 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
+<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+
 [← Projet NeverD](project.md)
 
 # Documentation NeverD
 
 L’aperçu du projet, la compilation et le CLI se trouvent dans le README du dépôt. Les références de conception et de test destinées aux contributeurs sont regroupées ici.
 
-NeverD prend en charge Android et iOS via la CLI expérimentale `neverd mobile` : APK (y compris multidex), DEX et fichiers ou répertoires smali vers Java avec un rapport JSON ; IPA, `.app` et Mach-O (arm64/x86_64) vers du C natif et des sources Objective-C/Swift prises en charge, avec un rapport de couverture JSON. L’étendue dépend des motifs de code pris en charge ; consultez les guides pour les limites.
+**Mobile (CLI expérimentale) :** `neverd mobile` récupère Java depuis les APK, DEX et smali [Android](android.md), et le C natif ainsi que les sources Objective-C/Swift prises en charge depuis les IPA, `.app` et Mach-O [iOS](ios.md). Les rapports JSON décrivent résultats et couverture. Commencez par la [vue d’ensemble mobile (anglais)](../mobile.md), puis consultez les commandes et limites des guides de plateforme.
+
+Les guides anglais se trouvent directement dans `docs/`. Les traductions sont regroupées dans `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/` et `zh-TW/`. Chaque répertoire contient l’index `README.md`, la présentation `project.md`, les guides thématiques, `CONTRIBUTING.md`, `ATTRIBUTION.md` et `roadmap.md`. Les images partagées restent dans `assets/`.
 
 | Document | Description |
 |----------|-------------|
@@ -14,20 +18,21 @@ NeverD prend en charge Android et iOS via la CLI expérimentale `neverd mobile` 
 | [Contribution](CONTRIBUTING.md) | Environnement, profils de compilation, workflow, style et exigences de PR |
 | [Architecture](architecture.md) | Parcours IR, frontières, lifting strict, profondeur de support et points de modification |
 | [Tests](testing.md) | Suites, fixtures générées, allers-retours Unicorn et commandes incrémentales |
-| [Exécution CPU](cpu-execution.md) | Configuration, capacités, disponibilité des backends et résultats typés |
-| [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
-| [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
+| [Atelier de bureau (anglais)](../gui.md) | Interface Qt Quick facultative, worker séparé, ABI C, annotations et workflows MCP |
+| [Validation du bureau (anglais)](../gui-qualification.md) | Mesures GUI, limites du packaging et validations de plateforme restantes |
 | [Récupération de sources à partir d’un interpréteur](interpreter-recovery.md) | Spécialisation expérimentale `--devirtualize`, contrôles CLI, contrat d’exécution, preuves et limites; propositions de preuve pour boucles imbriquées; budgets de découverte explicites et API C versionnée |
-| [Émulation des pilotes Windows](driver-emulation.md) | Initialisation WDM x64 bornée, requêtes sérielles buffered/direct, travail, timers, DPC, événements et attentes, rapports et limites; durée de vie des pilotes/objets KMDF 1.33 non-PnP et CFG x64 validé |
 | [Reconstruction des exceptions Windows](windows-exception-reconstruction.md) | Matrice de support SEH/C++, contrat IR, règles de patch natif et validation PE |
+| [Exécution CPU](cpu-execution.md) | Configuration, capacités, disponibilité des backends et résultats typés |
+| [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
+| [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
+| [Émulation des pilotes Windows](driver-emulation.md) | Initialisation WDM x64 bornée, requêtes sérielles buffered/direct, travail, timers, DPC, événements et attentes, rapports et limites; durée de vie des pilotes/objets KMDF 1.33 non-PnP et CFG x64 validé |
 | [Audit et chasse de sûreté mémoire](memory-safety.md) | Analyse de durée de vie du tas et de débordement de copie : contrat d’identité par format, catalogue puits/sources, verdicts, budgets et schéma JSON |
 | [Plugins natifs](plugins.md) | ABI de descripteur en C pur, callbacks et événements, procédure de compilation/liaison, découverte et règles de compatibilité |
 | [Plugins Python](python-plugins.md) | Création, API de session et d’événements, isolation, tests et publication |
-| [Décompilation EVM](evm.md) | Entrées, hardforks, IR par étapes, ABI host C/LLVM, reconstruction Solidity et limites |
-| [Décompilation Solana SBF](sbf.md) | SBF v0-v4, LLVM IR, sorties C/Rust, vérification et limites connues |
-| [Vue d’ensemble mobile (English)](../mobile.md) | CLI expérimentale Android/iOS, entrées, sorties, rapports et limites |
+| [Vue d’ensemble mobile (anglais)](../mobile.md) | CLI expérimentale Android/iOS, entrées, sorties, rapports et limites |
 | [Reconstruction Java pour Android](android.md) | APK (y compris multidex), DEX, fichiers/répertoires smali → Java ; CLI, rapport JSON, dépannage, limites et vérification |
 | [Récupération des sources iOS](ios.md) | IPA/.app/Mach-O (arm64/x86_64) → C natif et sources Objective-C/Swift prises en charge ; dispositions, CLI/export, couverture JSON, limites et tests exécutés |
+| [Décompilation EVM](evm.md) | Entrées, hardforks, IR par étapes, ABI host C/LLVM, reconstruction Solidity et limites |
+| [Décompilation Solana SBF](sbf.md) | SBF v0-v4, LLVM IR, sorties C/Rust, vérification et limites connues |
 | [Feuille de route](roadmap.md) | État : formats natifs, EVM et Solana SBF implémentés |
-| [English README](../../README.md) | Version anglaise |
-| [Autres langues](../README.md) | Autres versions localisées |
+| Documentation traduite | Les liens de langue ci-dessus ouvrent l’index et la présentation de chaque langue |

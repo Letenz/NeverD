@@ -8,6 +8,8 @@
 
 첫 프로필 `linux-elf64-v1`은 CPL3 또는 EL0에서 x64/AArch64 ELF `ET_EXEC`와 자체 재배치 static PIE `ET_DYN`을 실행합니다. 실제 ELF 세그먼트를 적재하고 초기 스택을 만들며 명령 quantum으로 재개하고 명시적 Linux 시스템 호출 요청을 처리합니다. 이는 완전한 Linux 배포판이나 임의 libc 바이너리 실행을 보장하지 않는 독립 프로세스 모델입니다. 동적 링크, 시그널, 스레드, 파일 시스템, 미지원 서비스는 명시적으로 실패합니다. x64 프로필은 제한된 SSE/SSE2 형식을 일부 허용하고 AArch64는 integer-only입니다. Windows, Android, Darwin 및 기타 커널 작업은 별도입니다.
 
+<!-- i18n-section: cli-sdk -->
+
 ## CLI 및 SDK
 
 ```bash
@@ -26,6 +28,8 @@ report = session.emulate_process(
 )
 output = bytes.fromhex(report["stdout_hex"])
 ```
+
+<!-- i18n-section: options-results -->
 
 ## 옵션과 결과
 
@@ -46,15 +50,31 @@ output = bytes.fromhex(report["stdout_hex"])
 
 `schema_version`은 1입니다. 보고서에는 프로필, 아키텍처, 선택 백엔드와 이유, `stop_reason`, nullable `exit_status`, 진단, 진입/현재 PC, 카운터, 서비스 기록, 마지막 typed CPU exit가 포함됩니다. 주소, syscall 번호, 인자 레지스터, raw 반환 비트는 `0x` 없는 16진수 문자열입니다. `stdout_hex`/`stderr_hex`는 NUL과 잘못된 UTF-8을 보존합니다. syscall 결과 null은 모델링된 반환이 없다는 뜻(exit 또는 미지원 요청 등)이지 성공한 0이 아닙니다.
 
+<!-- i18n-section: linux-semantics -->
+
 ## Linux 프로필 의미론
 
 OS 정책은 기존 ELF 로더가 디코딩한 프로그램 헤더를 사용합니다. ABI 태그, 세그먼트 정렬, 매핑된 프로그램 헤더 테이블, user 주소 범위를 검증합니다. 매핑 계획은 할당 전에 범위, 권한, 겹침, 예산을 확인하고 완전히 준비한 전용 주소 공간만 공개합니다. 파일 페이지 앞/뒤 바이트를 보존하고 BSS를 0으로 채우며 세그먼트 권한을 지키고 스택 guard gap을 예약합니다. 페이지가 겹치는 레이아웃과 모순 헤더는 추측하지 않고 거부합니다.
 
+Static PIE는 최소 `0x40000000`의 결정적 load bias를 사용하고 더 큰 `PT_LOAD` 정렬 요구에 따라 높입니다. 모든 매핑 세그먼트, entry PC, `AT_PHDR`/`AT_ENTRY`가 같은 bias를 사용하며 원래 program-header 값은 유지되고 interpreter가 없으므로 `AT_BASE`는 0입니다. 매핑 원본은 분석 fixup이 적용되지 않은 파일 바이트입니다. guest 시작 코드가 직접 relocation과 초기화를 수행해야 합니다. loader는 section header 없이 원본 파일의 제한된 record에서 `PT_DYNAMIC`을 decode합니다. 존재 시 readable/terminated 상태이며 최대 4096개 항목이어야 합니다. `PT_INTERP`와 외부 dependency/filter/audit tag는 거부합니다. dynamic linker, symbol resolver, constructor runner는 제공하지 않습니다.
+
 초기 스택은 정렬된 argc/argv/envp/auxv, PHDR/PHENT/PHNUM, entry, 페이지 크기 및 identity 값을 포함합니다. 모델 PID/TID/UID/GID는 1000입니다. 재현성을 위해 `AT_RANDOM`은 입력 SHA-256의 첫 16바이트입니다. 이는 암호학적 엔트로피가 아닌 결정적 모델 정책입니다. HWCAP/HWCAP2는 0이며 vDSO는 없습니다.
 
-`write`, `exit`, `exit_group`, `getpid`, `gettid`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
+`write`, `exit`, `exit_group`, `getpid`, `gettid`, `mmap`, `mprotect`, `munmap`, `brk`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
+
+Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. template 하나, 제한된 file/memory 범위, 일치하는 정렬, 읽을 수 있는 초기화 바이트가 필요합니다. guest startup이 TLS block을 할당·초기화하고 thread pointer를 설치합니다. Linux 모델은 libc별 TCB/DTV를 만들지 않습니다. 이에 따라 freestanding 프로그램의 컴파일러 생성 local-exec TLS를 지원합니다. dynamic TLS와 OS 스레드는 별도 작업입니다.
+
+x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`를 지원합니다. Set은 매핑되지 않은 user 범위 base도 받아들이지만 이후 역참조는 권한을 검사합니다. kernel 범위 base는 guest `EPERM`, 잘못된 Get 대상은 CPU fault 없이 `EFAULT`를 반환합니다. 나머지 operation은 명시적으로 실패합니다. ARM64 시작은 `MSR`로 `TPIDR_EL0`를 설정합니다. `MRS`, FS/GS 메모리 접근, context 복원은 quantum 및 backend 진입 사이에서 thread pointer를 보존합니다. 이는 thread scheduler를 구현하지 않습니다.
 
 파일 디스크립터 1과 2는 가상 바이트 sink입니다. `write`는 읽기 가능한 user 페이지를 검증하고, 뒤쪽 페이지 접근이 막히면 읽을 수 있는 prefix를 반환하며 한 바이트도 읽지 못하면 게스트 `EFAULT`를 반환합니다. 잘못된 디스크립터는 `EBADF`; 유효한 디스크립터에 0바이트 write는 포인터를 읽지 않습니다. Linux pipe 원자성이나 파일 객체는 모델링하지 않습니다. 출력 한도를 넘을 쓰기는 게시 전에 중단됩니다.
+
+익명 메모리 서비스는 이미지 및 스택과 같은 프로세스 주소 공간과 물리 메모리 예산을 사용합니다. `mmap`은 정확히 `MAP_PRIVATE | MAP_ANONYMOUS`와 일반 `PROT_NONE`, `PROT_READ`, `PROT_READ | PROT_WRITE`, `PROT_READ | PROT_EXEC` 또는 읽기 가능한 RWX 권한을 허용합니다. 비어 있고 페이지 정렬된 힌트를 우선하며, 그렇지 않으면 `0x100000000`부터, 이어 최소 사용자 주소부터 빈 영역을 찾고 스택 보호 영역을 보존합니다. 이 결정적 배치는 Linux ASLR을 모방하지 않습니다. 새 페이지는 개별 소유하며 0으로 채우므로 부분 해제로 고정되지 않은 페이지를 회수할 수 있습니다. CPU 투영이나 유지된 backing view는 자신의 수명이 끝날 때까지 폐기된 할당을 유지할 수 있습니다.
+
+길이는 페이지 단위로 올림합니다. `munmap`은 빈 영역과 반복 해제를 허용하며, `mprotect`는 빈 영역 앞의 매핑을 변경한 후 `ENOMEM`을 반환합니다. `PROT_NONE`은 할당과 바이트를 보존하면서 게스트 접근을 거부합니다. 원시 `brk`는 성공 시 요청한 바이트 경계, 실패 시 이전 경계를 반환하며 libc의 0/-1 규약을 사용하지 않습니다. 초기 break는 페이지 정렬된 이미지 끝입니다. 확장은 다른 매핑과 예산을 준수하며 축소는 남은 부분 페이지의 바이트를 보존합니다. 지원 범위의 규칙과 오류 우선순위는 Linux [매핑](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) 및 [보호](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)를 따릅니다.
+
+파일/공유/고정 매핑, 아래 방향 확장, 대형 페이지, 메모리 잠금, 보호 키, 실행 전용/쓰기 전용 정책 및 다른 플래그는 명시적으로 지원하지 않습니다. 효과를 게시하거나 반환값을 만들기 전에 중단합니다. 지원 범위 안의 일반 범위/길이/정렬 오류는 게스트 오류를 반환하고 실행을 계속합니다. 게스트 포인터나 매핑 요청을 호스트 OS에 전달하지 않습니다.
+
+<!-- i18n-section: verification -->
 
 ## 검증
 
@@ -66,14 +86,4 @@ cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
-두 ISA의 원본 ELF entry assembly/C를 컴파일합니다. 데이터/BSS, 시작 메타데이터, syscall 오류, 바이너리 출력, 권한 fault, 부분 쓰기, 미지원 서비스, quantum 간 예산 보존을 검사합니다. 사용할 수 없는 백엔드는 명시적 skip입니다. 공개 테스트는 C ABI/CLI와 보고서/종료 코드 일치를 확인합니다. 크로스 컴파일과 Unicorn ARM64는 네이티브 ARM64 KVM/WHP 증거가 아닙니다.
-
-## Static PIE, TLS 및 검증
-
-Static PIE는 최소 `0x40000000`의 결정적 load bias를 사용하고 더 큰 `PT_LOAD` 정렬 요구에 따라 높입니다. 모든 매핑 세그먼트, entry PC, `AT_PHDR`/`AT_ENTRY`가 같은 bias를 사용하며 원래 program-header 값은 유지되고 interpreter가 없으므로 `AT_BASE`는 0입니다. 매핑 원본은 분석 fixup이 적용되지 않은 파일 바이트입니다. guest 시작 코드가 직접 relocation과 초기화를 수행해야 합니다. loader는 section header 없이 원본 파일의 제한된 record에서 `PT_DYNAMIC`을 decode합니다. 존재 시 readable/terminated 상태이며 최대 4096개 항목이어야 합니다. `PT_INTERP`와 외부 dependency/filter/audit tag는 거부합니다. dynamic linker, symbol resolver, constructor runner는 제공하지 않습니다.
-
-Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. template 하나, 제한된 file/memory 범위, 일치하는 정렬, 읽을 수 있는 초기화 바이트가 필요합니다. guest startup이 TLS block을 할당·초기화하고 thread pointer를 설치합니다. Linux 모델은 libc별 TCB/DTV를 만들지 않습니다. 이에 따라 freestanding 프로그램의 컴파일러 생성 local-exec TLS를 지원합니다. dynamic TLS와 OS 스레드는 별도 작업입니다.
-
-x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`를 지원합니다. Set은 매핑되지 않은 user 범위 base도 받아들이지만 이후 역참조는 권한을 검사합니다. kernel 범위 base는 guest `EPERM`, 잘못된 Get 대상은 CPU fault 없이 `EFAULT`를 반환합니다. 나머지 operation은 명시적으로 실패합니다. ARM64 시작은 `MSR`로 `TPIDR_EL0`를 설정합니다. `MRS`, FS/GS 메모리 접근, context 복원은 quantum 및 backend 진입 사이에서 thread pointer를 보존합니다. 이는 thread scheduler를 구현하지 않습니다.
-
-PIE/TLS fixture는 독립 정렬 block, TLS BSS, 재배치된 auxv와 guest relocation 전 원본 zero RELA slot을 검사합니다. x64 테스트는 이전 base를 잃지 않은 채 `arch_prctl` 오류를 확인합니다. 위 build/CTest 명령에 `NeverDThreadPointerTests`를 추가합니다. 사용할 수 없는 backend는 명시적 skip입니다.
+테스트는 두 ISA의 독립 ELF 진입 어셈블리와 C를 컴파일해 data/BSS, 실제 시작 메타데이터, 시스템 호출 오류, 이진 출력, 권한 오류, 부분 쓰기, 미지원 서비스와 실행 구간 간 예산을 확인합니다. TLS는 독립 정렬 블록, BSS 초기화, 스레드 포인터 설치와 전환 후 보존을 검사하며 x64는 `arch_prctl` 오류 후 이전 베이스 보존도 검사합니다. 사용할 수 없는 백엔드는 건너뜀을 명시합니다. 공개 테스트는 공유 C ABI/CLI의 보고서와 종료 코드를 비교합니다. 정적 PIE는 자체 데이터/함수 포인터 재배치 전에 auxv와 원래 0인 RELA 슬롯을 검사합니다. 매핑 테스트는 분석 바이트를 선택할 때의 fixup 보존을, 동적 테이블은 section 부재 및 잘못된/의존 입력을 검사합니다. 익명 메모리 테스트는 두 ISA의 할당, 보호, 빈 영역, 재매핑, 힙 확장/축소 및 처리 가능한 호출 오류를 다룹니다. 실제 게스트 쓰기로 일반/부분 보호 변경 후 오류를 검사합니다. x64는 RW/RX 전환 사이에 같은 주소의 코드를 다시 쓰고 두 버전을 호출하며, 같은 ELF의 Linux 네이티브 실행을 독립 결과/오류 기준으로 사용합니다. 순수 메모리 테스트는 예산 소진, 회수, RAM을 유지하지 않는 권위 있는 매핑 스냅샷을 검사합니다. 교차 컴파일과 Unicorn ARM64 결과는 네이티브 ARM64 KVM/WHP 증거가 아닙니다.

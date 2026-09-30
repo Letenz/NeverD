@@ -15,6 +15,8 @@ Il motore riutilizza l’esecuzione simbolica e il solver bitvector interni di N
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## Invariante centrale: fallire chiuso
 
 Un’operazione non sollevata, una chiamata i cui argomenti il passo ABI non ha recuperato, un bersaglio indiretto non risolto o un budget esaurito producono **UNKNOWN**, mai SAFE. Una destinazione la cui capacità non è recuperabile è UNKNOWN. Il lifting strict resta invariato; lo strato di sicurezza aggiunge solo verdetti conservativi sopra di esso.
@@ -22,6 +24,8 @@ Un’operazione non sollevata, una chiamata i cui argomenti il passo ABI non ha 
 Gli effetti delle chiamate usano semantica closed-world: un riepilogo si applica solo quando sono note le sue precondizioni e tutti gli effetti pertinenti. Un effetto sconosciuto o un riepilogo applicabile solo in parte resta UNKNOWN; la lacuna non viene mai trattata come nessun effetto o come una chiamata riuscita.
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## Contratto di identità per formato
 
@@ -37,6 +41,8 @@ Entrambe le piste richiedono la pipeline di lift (recupera gli argomenti per chi
 
 Le firme di procedura del PDB servono a distinguere gli allocatori che restituiscono un valore dalle funzioni di rilascio `void`. Il recupero ricco dei tipi locali e di stack da un PDB resta limitato; quando non riesce a stabilire una dimensione esatta dell’oggetto, la caccia ripiega sul modello di frame o di allocazione e riporta UNKNOWN invece di inventare una dimensione.
 
+<!-- i18n-section: name-precedence -->
+
 ### Precedenza di `name_source`
 
 Ogni reperto porta un `name_source` che descrive da dove proviene il nome del callee, con questa precedenza:
@@ -51,6 +57,8 @@ Ogni reperto porta un `name_source` che descrive da dove proviene il nome del ca
 Un `memcpy` linkato staticamente nominato da DWARF riporta `dwarf`; un `memcpy` importato riporta `import` su ogni formato. Una corrispondenza di firme non sposta mai un nome già stabilito dal debugger o dalla tabella degli import.
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## Catalogo di sink e source
 
@@ -87,6 +95,8 @@ Un sink personalizzato non limitato con il solo argomento di destinazione non vi
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## Hunt: verdetti di overflow di copia
 
 Per ogni sink di copia il hunt recupera la capacità di destinazione — dimensione di array dichiarata dal debug, poi un sito di allocazione heap di dimensione nota, poi un bound sano del frame di stack — e classifica l’argomento che decide la lunghezza di scrittura con una camminata SSA all’indietro (seguendo spill/reload tramite slot di stack):
@@ -99,11 +109,21 @@ Per ogni sink di copia il hunt recupera la capacità di destinazione — dimensi
 
 Ogni capacità recuperata è un **upper bound** sulla dimensione reale, quindi un overflow dimostrato non è mai un falso positivo.
 
+<!-- i18n-section: formatted-input -->
+
 ### Input formattato
 
 Per `scanf`/`fscanf` e le relative grafie versionate, un formato costante leggibile associa ogni conversione non soppressa al suo effettivo argomento di output variadico. Gli output `%s`/`%[` non limitati propagano il taint agli usi successivi della stringa; gli output numerici e di carattere propagano il taint ai valori caricati dall’oggetto scritto, ma non al valore del puntatore di output stesso. `sscanf` propaga tali effetti solo quando la stringa di input è già influenzata dall’attaccante. Gli output di testo limitati come `%Ns`/`%N[` propagano il taint insieme a un’estensione `MaxBytes` che include il terminatore; le varianti wide-character calcolano tale estensione in byte usando la larghezza di `wchar_t` della piattaforma. Le conversioni soppresse, gli argomenti in eccesso, i formati dipendenti dalla posizione o non supportati e `%n` restano UNKNOWN invece di essere ipotizzati.
 
+<!-- i18n-section: formatted-output -->
+
+### Output formattato
+
+`snprintf`/`vsnprintf` conservano la lunghezza massima di scrittura; le varianti rafforzate `_chk` aggiungono la dimensione dell'oggetto destinazione fornita dal compilatore. Sono limiti indipendenti. Un formato costante affidabile con soli byte letterali e `%%` ha estensione esatta, NUL incluso, verificata con il modello heap/stack delle copie. Una scrittura massima entro una capacità esatta è SAFE; un output letterale troppo grande è UNSAFE. Le conversioni restano UNKNOWN finché le estensioni degli argomenti non sono provate. UNSAFE ad alta confidenza richiede anche un replay LowIR che provi la raggiungibilità della chiamata. Un formato controllato dall'attaccante è segnalato separatamente come `format_string`, indipendentemente dal troncamento.
+
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## Audit: verdetti di vita dell’heap
 
@@ -118,6 +138,16 @@ I **wrapper** di allocazione e rilascio sono riconosciuti tramite riassunti di e
 La macchina a stati dell’heap emette dapprima una sequenza di eventi candidata (allocazione, rilascio, uso o uscita per ritorno). Una seconda passata deve rieseguire quella sequenza su un percorso LowIR simbolico e dimostrare che il suo predicato di percorso è soddisfacibile prima che il risultato diventi un UNSAFE ad ALTA confidenza. LowIR mancante, operazioni opache, chiamate senza riassunto, incertezza del solutore e limiti di esplorazione declassano il candidato a UNKNOWN. L’havoc di memoria may-alias conservativo è tracciato a parte, così le normali scritture nel frame di stack non invalidano una prova di raggiungibilità per il resto esatta.
 
 ---
+
+<!-- i18n-section: stack-initialization -->
+
+## Audit: inizializzazione dello stack locale
+
+L'audit segue le scritture a larghezza intera che raggiungono letture di slot locali sotto il puntatore stack d'ingresso. Una lettura senza possibile inizializzazione precedente produce `uninitialized_read`; il replay LowIR deve confermarne la raggiungibilità prima di UNSAFE ad alta confidenza. Inizializzazione condizionale, scritture parziali, indirizzi sfuggiti e definizioni incerte restano UNKNOWN. Sono esclusi gli slot argomento del chiamante al puntatore d'ingresso o sopra di esso.
+
+---
+
+<!-- i18n-section: reachability -->
 
 ## Raggiungibilità interprocedurale da entry note
 
@@ -161,6 +191,8 @@ sottoinsieme con anche `attacker_control=TAINTED`. `reachability_unknown` e
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## Budget, output e binding
 
 L’esplorazione del hunt e il solver sono limitati (`--max-paths`, `--max-steps`, `--max-loop`, `--solver-conflicts`). Nel lavoro interprocedurale, `max_call_depth` limita il numero di archi di chiamata interni da una entry nota e `max_summary_iterations` limita i round del punto fisso del controllo dell’attaccante. I default sono 64 archi e la profondità effettiva più un round. L’esaurimento fallisce chiuso come descritto sopra. Esaurire `max_call_depth` può lasciare `status=UNKNOWN` per una funzione non ancora raggiunta; esaurire `max_summary_iterations` non cancella il testimone strutturale, quindi `status=REACHABLE` può coesistere con `attacker_control=UNKNOWN` e `budget_hit=true`. Entrambi i comandi stampano JSON e onorano `-o`. Il codice di uscita è `0` per SAFE, `2` per UNSAFE e `1` per UNKNOWN o un errore.
@@ -178,6 +210,8 @@ Il chiamante C inizializza `neverd_safety_options` a zero e imposta
 i default. Python valida entrambi come interi unsigned a 32 bit.
 
 Le stesse analisi sono disponibili tramite l’API C (`neverd_session_audit_json` / `neverd_session_hunt_json` con `neverd_safety_options` versionato) e l’SDK Python (`Session.audit()` / `Session.hunt()`).
+
+<!-- i18n-section: finding-schema -->
 
 ### Schema di un reperto
 
@@ -197,8 +231,32 @@ Le stesse analisi sono disponibili tramite l’API C (`neverd_session_audit_json
   "capacity": 16,
   "capacity_kind": "exact",
   "corroboration": "path predicate and overflow are jointly satisfiable",
-  "reachability": { "status": "REACHABLE", "attacker_control": "TAINTED", "budget_hit": false, "entry": { "va": "0x1000", "name": "main", "kind": "application" }, "call_chain": [{ "caller_va": "0x1000", "call_va": "0x1080", "callee_va": "0x1100", "kind": "direct" }] },
-  "evidence": { "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" }, "candidate_values": [{ "name": "copy_length", "value": "17" }, { "name": "argv[1]", "value": "16 bytes" }], "replayable": false, "replay": { "adapter": "process-input-v1", "reason": "argv input is not supported by process-input-v1" }, "symbolic_model": [{ "id": 0, "name": "copy_len", "width": 64, "value_hex": "0x11", "origin": "input" }] }
+  "reachability": {
+    "status": "REACHABLE",
+    "attacker_control": "TAINTED",
+    "budget_hit": false,
+    "entry": { "va": "0x1000", "name": "main", "kind": "application" },
+    "call_chain": [
+      { "caller_va": "0x1000", "call_va": "0x1080",
+        "callee_va": "0x1100", "kind": "direct" }
+    ]
+  },
+  "evidence": {
+    "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" },
+    "candidate_values": [
+      { "name": "copy_length", "value": "17" },
+      { "name": "argv[1]", "value": "16 bytes" }
+    ],
+    "replayable": false,
+    "replay": {
+      "adapter": "process-input-v1",
+      "reason": "argv input is not supported by process-input-v1"
+    },
+    "symbolic_model": [
+      { "id": 0, "name": "copy_len", "width": 64,
+        "value_hex": "0x11", "origin": "input" }
+    ]
+  }
 }
 ```
 
@@ -206,11 +264,39 @@ Le stesse analisi sono disponibili tramite l’API C (`neverd_session_audit_json
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
+## Guardie rigorose e pubblicazione autenticata
+
+`binary-sanitizer-v1` è una transazione sperimentale separata, senza effetti sul verdetto audit/hunt. Un hunt rigoroso completo deve associare ogni risultato a un'occorrenza esatta di scrittura conteggiata, con capacità residua esatta e metadati del sito di chiamata del compilatore corrispondenti. Risultati non supportati, identità obsolete/ambigue, lifting incompleto, budget esauriti, errori di generazione o limiti di destinazione/firma respingono l'intera transazione. Non esiste successo parziale. Sono rifiutati anche oggetti rilocabili, librerie dinamiche, Mach-O universali e membri di bundle Mach-O protetti.
+
+Gli ingressi pubblici sono C `neverd_session_sanitize`, CLI `neverd patch --sanitize=strict` e Python `Session.sanitize`. C deve prima interrogare `neverd_sanitize_publication_abi_version()` se richiede pubblicazione autenticata. Tutti richiedono un publication receipt v1 completo e coerente. Fuori da Darwin, dopo autenticazione e normalizzazione dell'input, viene restituito `UNSUPPORTED_TARGET` prima di lifting, generazione guardie, creazione candidato o modifica dello spazio dei nomi.
+
+Darwin ammette due successi. `CREATE_EXCLUSIVE` pubblica un nuovo candidato della stessa directory verso una destinazione assente mediante una sola operazione atomica senza sostituzione. La ricevuta attesta atomicità, creazione esclusiva e legame degli operandi effettivi, non CAS di sostituzione o durabilità dopo crash. `NO_CHANGE` è di sola lettura: un piano vuoto riautentica l'oggetto sorgente caricato e trattenuto, segnala `NOT_PUBLISHED` e non promette pubblicazione o legame degli operandi. Un piano con guardie non può scrivere sulla sorgente caricata. Un'altra destinazione esistente non viene mai sostituita: occorre un percorso nuovo. Pubblicazione indeterminata o ricevuta finale incompleta significa errore; la destinazione potrebbe esistere e va controllata prima di uso, ripetizione o cancellazione.
+
+I byte sorgente sono confrontati con il digest esterno della sessione, poi osservati tramite un descrittore trattenuto. Sorgente e directory destinazione restano ancorate durante la transazione. Metadati e identità stabile sono osservazioni del momento, non prova di immutabilità dal caricamento. La directory aperta può essere rinominata: la ricevuta autentica l'oggetto trattenuto, non la continuità del percorso iniziale durante o dopo l'operazione. Non è un legame di percorso durevole e autonomo; una riapertura successiva richiede ancora esterno e nuova autenticazione. Poiché rename Darwin usa il percorso del candidato, non il descrittore, la directory deve appartenere all'uid effettivo, senza ACL estesa o scrittura per gruppo/altri, su un volume con proprietà POSIX normale attestata. Queste condizioni sono riautenticate prima di creazione e pubblicazione. Sono esclusi processi con identici privilegi, root/aggiramento DAC e filesystem/server ostili; si assume che kernel, VFS e filesystem rispettino la semantica dichiarata.
+
+---
+
+<!-- i18n-section: native-replay -->
+
+## Replay nativo dei processi: solo fase 0
+
+Il piano indipendente dalla piattaforma `process-replay-v1` e il coordinatore definiscono le prove di una futura esecuzione autenticata; nessun host la esegue attualmente. `NativeProcessReplayAdapter` è solo un confine C++ di disponibilità/factory, non un'interfaccia di esecuzione C, Python, CLI o JSON.
+
+La query senza modifiche valida piano completo, limiti, localizzatore assoluto dell'eseguibile e mappa unica dei siti fisici, senza aprire il target, invocare callback o avviare processi. Il localizzatore serve alla futura ricerca dell'oggetto, mai ad autorizzare l'esecuzione per percorso dopo l'autenticazione. Se manca una garanzia di confinamento, identità, interposizione input, attestazione dell'occorrenza, limiti o pulizia, `Available` e tutte le capacità restano false; la factory fallisce senza tabella operazioni.
+
+Vale per ogni host. Linux richiede ancora strumentazione affidabile di ELF statico, supervisore persistente, confinamento completo, limiti e attestazione runtime. Le primitive pubbliche supportate di macOS non offrono insieme esecuzione dell'oggetto trattenuto, sandbox arbitraria prima del codice target e contenimento dell'albero processi senza race. Anche le altre piattaforme non sono supportate. Le tabelle dei test unitari provano il coordinatore, non la disponibilità nativa.
+
+---
+
+<!-- i18n-section: scope -->
+
 ## Limiti dei falsi positivi e ambito
 
 - La capacità è esatta o un upper bound della dimensione reale, quindi UNSAFE riflette un overflow reale. Senza una dimensione esatta, un bound di regione insufficiente a provare sicurezza produce UNKNOWN.
 - Una copia limitata è ritirata prima del solver e conta in `skipped`; una capacità esatta può provare SAFE, mentre un solo upper bound resta UNKNOWN.
 - Le copie catalogate wide-character e append restano UNKNOWN finché non sono recuperati la larghezza dell’elemento e l’estensione esistente della destinazione. Gli allocator con parametro di uscita e la proprietà condizionale di `realloc` restano UNKNOWN quando la transizione dell’handle non può essere provata.
-- **P0** (questa versione, tutti e tre i formati): catalogo di sink, prefiltro degli argomenti, hunt di overflow di copia, audit di vita dell’heap. Ogni host esegue sei fixture PE, ELF e Mach-O per x86-64 e AArch64.
-- **P1**: overflow di stack/globale, letture locali non inizializzate e controlli delle stringhe di formato sono disponibili; tipi di stack PDB più ricchi e ulteriori allocator di piattaforma restano copertura incrementale, mentre l’assenza di un sommario esatto resta UNKNOWN.
+- **Phase 1**: Questa versione offre, nei tre formati, catalogo sink, prefiltro argomenti, ricerca overflow delle copie stack/globali, audit della vita heap, letture locali non inizializzate e formati. Ogni host di test deve eseguire le fixture registrate PE, ELF e Mach-O su x86-64 e AArch64.
+- Tipi stack PDB più ricchi e altri allocatori restano estensioni; in assenza di un riepilogo esatto il risultato resta UNKNOWN.
 - Lo slice attuale copre entry note, raggiungibilità interprocedurale strutturale e propagazione monotona dei parametri controllati dall’attaccante. L’adapter sperimentale separato `lowir-concolic-v1` ora fornisce flip di branch con seed di registro verificati tramite replay sulla matrice nativa obbligatoria di formati e architetture; resta non esaustivo e non modifica i verdetti di sicurezza. Il `binary-sanitizer-v1` sperimentale offre ora su Darwin guardie counted-write tutto-o-rifiuta e pubblicazione autenticata; il suo receipt autentica l’oggetto directory mantenuto durante la transazione, non un binding durevole e riverificabile del pathname originale. Il più ampio `process-replay-v1` resta limitato a un confine fail-closed Phase 0 per piano, coordinatore e disponibilità; nessun host esegue oggi replay nativo.

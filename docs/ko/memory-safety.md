@@ -15,6 +15,8 @@ NeverD는 적재된 바이너리에 대해 두 계열의 메모리 안전성 분
 
 ---
 
+<!-- i18n-section: core-invariant -->
+
 ## 핵심 불변식: 실패는 닫힘
 
 리프트되지 않은 연산, ABI가 인수를 복구하지 못한 호출, 미해석 간접 대상, 또는 예산 소진은 모두 **UNKNOWN**이며 SAFE가 아닙니다. 용량을 복구할 수 없는 목적지 버퍼도 UNKNOWN입니다. 엄격한 리프팅은 그대로입니다. 안전성 계층은 그 위에 보수적 판정만 더합니다.
@@ -22,6 +24,8 @@ NeverD는 적재된 바이너리에 대해 두 계열의 메모리 안전성 분
 호출 효과는 폐쇄 세계 의미론을 사용합니다. 요약은 전제 조건과 관련 효과가 모두 알려진 경우에만 적용됩니다. 알 수 없는 효과나 일부만 적용 가능한 요약은 UNKNOWN으로 남으며, 빈 부분을 효과 없음이나 호출 성공으로 가정하지 않습니다.
 
 ---
+
+<!-- i18n-section: identity -->
 
 ## 형식별 신원 계약
 
@@ -37,6 +41,8 @@ NeverD는 적재된 바이너리에 대해 두 계열의 메모리 안전성 분
 
 PDB 프로시저 시그니처는 값을 반환하는 할당 함수와 `void` 해제 함수를 구분하는 데 사용합니다. PDB의 지역 변수·스택 타입에 대한 풍부한 복원은 여전히 제한적입니다. 정확한 객체 크기를 확정할 수 없으면 헌트는 프레임/할당 지점 모델로 물러나 크기를 지어내지 않고 UNKNOWN을 보고합니다.
 
+<!-- i18n-section: name-precedence -->
+
 ### 이름 출처 우선순위
 
 각 발견은 `name_source`를 가지며 피호출 이름 출처를 다음 우선순위로 고릅니다.
@@ -51,6 +57,8 @@ PDB 프로시저 시그니처는 값을 반환하는 할당 함수와 `void` 해
 DWARF가 붙인 정적 링크 `memcpy`는 `dwarf`, 가져온 `memcpy`는 모든 형식에서 `import`입니다. 시그니처 일치는 디버거나 가져오기 표가 이미 밝힌 이름을 대체하지 않습니다.
 
 ---
+
+<!-- i18n-section: catalog -->
 
 ## 싱크와 소스 카탈로그
 
@@ -87,6 +95,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: copy-overflow -->
+
 ## 헌트: 복사 오버플로 판정
 
 각 복사 싱크에 대해 헌트는 목적지 용량을 다음 순서로 복구합니다. 디버그가 선언한 배열 크기, 알려진 크기의 힙 할당 지점, 건전한 스택 프레임 상한. 쓰기 길이를 결정하는 인수는 스택 슬롯 spill/reload를 따라가는 역방향 SSA 보행으로 분류합니다.
@@ -99,11 +109,21 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 복구된 용량은 항상 실제 객체 크기의 **상한**이므로 증명된 오버플로는 거짓 양성이 아닙니다.
 
+<!-- i18n-section: formatted-input -->
+
 ### 서식 입력
 
 `scanf`/`fscanf`와 버전이 붙은 표기에서 읽을 수 있는 상수 서식은 억제되지 않은 각 변환을 실제 가변 인수 출력 인수에 대응시킵니다. 무제한 `%s`/`%[` 출력은 이후 문자열 사용에 taint를 전파하고, 숫자 및 문자 출력은 출력 포인터 값 자체가 아니라 쓰인 객체에서 로드한 값에 taint를 전파합니다. `sscanf`는 입력 문자열이 이미 공격자 영향을 받는 경우에만 이러한 effect를 전파합니다. `%Ns`/`%N[` 같은 유계 텍스트 출력은 종결 문자를 포함한 `MaxBytes` extent와 함께 taint를 전파하며, 와이드 문자 변형은 플랫폼의 `wchar_t` 너비를 사용해 그 바이트 extent를 계산합니다. 억제된 변환, 초과 인수, 위치 의존 또는 미지원 서식, `%n`은 추측하지 않고 UNKNOWN으로 남깁니다.
 
+<!-- i18n-section: formatted-output -->
+
+### 서식 출력
+
+`snprintf`/`vsnprintf`의 최대 쓰기 길이와 강화된 `_chk` 형식의 컴파일러 제공 대상 객체 크기는 서로 다른 경계입니다. 리터럴과 `%%`만 있는 신뢰 가능한 상수 서식은 종료 NUL을 포함한 정확한 출력 길이를 가지며 복사 sink와 같은 힙/스택 모델로 검사합니다. 최대 쓰기가 정확한 용량 안이면 SAFE, 리터럴 출력이 대상을 넘으면 UNSAFE입니다. 값 변환은 인수 출력 크기가 증명되기 전까지 UNKNOWN입니다. 높은 신뢰도의 UNSAFE에는 LowIR 경로 재생으로 호출 도달 가능성도 증명해야 합니다. 공격자가 제어하는 서식은 잘림 여부와 별도로 `format_string`으로 보고합니다.
+
 ---
+
+<!-- i18n-section: heap-lifetime -->
 
 ## 감사: 힙 수명 판정
 
@@ -118,6 +138,16 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 힙 상태 기계는 먼저 후보 이벤트 시퀀스(할당, 해제, 사용 또는 반환 종료)를 내놓습니다. 두 번째 패스가 그 시퀀스를 기호 LowIR 경로에서 순서대로 재생하고 경로 술어의 충족 가능성을 증명해야만 발견이 높은 신뢰도의 UNSAFE가 됩니다. LowIR 부재, 불투명 연산, 요약 없는 호출, 솔버 불확실성, 탐색 한도는 모두 후보를 UNKNOWN으로 낮춥니다. 보수적 may-alias 메모리 havoc은 따로 추적하므로 평범한 스택 프레임 저장이 본래 정확한 도달 가능성 증거를 무효화하지 않습니다.
 
 ---
+
+<!-- i18n-section: stack-initialization -->
+
+## 감사: 지역 스택 초기화
+
+함수 진입 스택 포인터 아래의 지역 슬롯에 대한 전체 폭 쓰기와 후속 읽기를 추적합니다. 선행 초기화가 전혀 가능하지 않은 읽기는 `uninitialized_read`입니다. 높은 신뢰도의 UNSAFE에는 LowIR 경로 재생으로 읽기에 도달함을 확인해야 합니다. 조건부 초기화, 부분 쓰기, 슬롯 주소 이탈 등 불확실한 정의는 UNKNOWN으로 남습니다. 진입 스택 포인터 이상에 있는 호출자 소유 인수 슬롯은 제외합니다.
+
+---
+
+<!-- i18n-section: reachability -->
 
 ## 알려진 진입점 기반 프로시저 간 도달 가능성
 
@@ -158,6 +188,8 @@ neverd hunt --sinks extra_sinks.json --sources extra_sources.json app
 
 ---
 
+<!-- i18n-section: budgets -->
+
 ## 예산, 출력, 바인딩
 
 헌트 탐색과 솔버는 예산으로 제한됩니다(`--max-paths`, `--max-steps`, `--max-loop`, `--solver-conflicts`). 프로시저 간 분석에서는 `max_call_depth`가 알려진 진입점부터의 내부 호출 에지 수를 제한하고 `max_summary_iterations`가 공격자 제어 고정점 라운드를 제한합니다. 기본값은 각각 64개 에지와 유효 깊이 한도에 1을 더한 라운드 수입니다. 예산 소진은 위 설명처럼 fail closed입니다. `max_call_depth` 소진은 아직 도달하지 못한 함수에 `status=UNKNOWN`을 남길 수 있습니다. `max_summary_iterations` 소진은 구조적 증거를 지우지 않으므로 `status=REACHABLE`, `attacker_control=UNKNOWN`, `budget_hit=true`가 함께 존재할 수 있습니다. 두 명령은 JSON을 출력하고 `-o`를 존중합니다. 종료 코드는 SAFE가 `0`, UNSAFE가 `2`, UNKNOWN 또는 오류가 `1`입니다.
@@ -175,6 +207,8 @@ C 호출자는 `neverd_safety_options`를 0으로 초기화하고
 유지합니다. Python은 두 값을 부호 없는 32비트 정수로 검증합니다.
 
 같은 분석은 C API(`neverd_session_audit_json` / `neverd_session_hunt_json`, 버전 있는 `neverd_safety_options`)와 Python SDK(`Session.audit()` / `Session.hunt()`)로도 사용할 수 있습니다.
+
+<!-- i18n-section: finding-schema -->
 
 ### 발견 스키마
 
@@ -194,8 +228,32 @@ C 호출자는 `neverd_safety_options`를 0으로 초기화하고
   "capacity": 16,
   "capacity_kind": "exact",
   "corroboration": "path predicate and overflow are jointly satisfiable",
-  "reachability": { "status": "REACHABLE", "attacker_control": "TAINTED", "budget_hit": false, "entry": { "va": "0x1000", "name": "main", "kind": "application" }, "call_chain": [{ "caller_va": "0x1000", "call_va": "0x1080", "callee_va": "0x1100", "kind": "direct" }] },
-  "evidence": { "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" }, "candidate_values": [{ "name": "copy_length", "value": "17" }, { "name": "argv[1]", "value": "16 bytes" }], "replayable": false, "replay": { "adapter": "process-input-v1", "reason": "argv input is not supported by process-input-v1" }, "symbolic_model": [{ "id": 0, "name": "copy_len", "width": 64, "value_hex": "0x11", "origin": "input" }] }
+  "reachability": {
+    "status": "REACHABLE",
+    "attacker_control": "TAINTED",
+    "budget_hit": false,
+    "entry": { "va": "0x1000", "name": "main", "kind": "application" },
+    "call_chain": [
+      { "caller_va": "0x1000", "call_va": "0x1080",
+        "callee_va": "0x1100", "kind": "direct" }
+    ]
+  },
+  "evidence": {
+    "concrete_input": { "copy_length": "17", "argv[1]": "16 bytes" },
+    "candidate_values": [
+      { "name": "copy_length", "value": "17" },
+      { "name": "argv[1]", "value": "16 bytes" }
+    ],
+    "replayable": false,
+    "replay": {
+      "adapter": "process-input-v1",
+      "reason": "argv input is not supported by process-input-v1"
+    },
+    "symbolic_model": [
+      { "id": 0, "name": "copy_len", "width": 64,
+        "value_hex": "0x11", "origin": "input" }
+    ]
+  }
 }
 ```
 
@@ -203,11 +261,39 @@ C 호출자는 `neverd_safety_options`를 0으로 초기화하고
 
 ---
 
+<!-- i18n-section: strict-publication -->
+
+## 엄격한 실행 가드와 인증된 게시
+
+`binary-sanitizer-v1`은 audit/hunt 판정을 바꾸지 않는 별도의 실험적 변경 트랜잭션입니다. 완료된 엄격 hunt는 모든 발견을 정확한 잔여 용량과 일치하는 컴파일러 호출 지점 메타데이터를 갖춘 하나의 정확한 횟수 기반 쓰기 발생에 대응시켜야 합니다. 미지원 발견, 오래되거나 모호한 신원, 불완전한 리프트, 예산 소진, 가드 생성 오류 및 대상/서명 제한은 전체를 거부합니다. 부분 성공은 없습니다. 재배치 객체, 동적 라이브러리, 범용 Mach-O 및 가드 대상 Mach-O bundle 멤버도 거부합니다.
+
+공개 진입점은 C `neverd_session_sanitize`, CLI `neverd patch --sanitize=strict`, Python `Session.sanitize`입니다. 인증 게시가 필요한 C 호출자는 먼저 `neverd_sanitize_publication_abi_version()`을 조회해야 합니다. 세 인터페이스 모두 완전하고 내부적으로 일관된 publication receipt v1이 있어야 성공합니다. 비 Darwin 호스트는 입력 인증/정규화 후, 리프트·가드 생성·후보 생성·네임스페이스 변경 전에 `UNSUPPORTED_TARGET`을 반환합니다.
+
+Darwin에는 두 성공 형태가 있습니다. `CREATE_EXCLUSIVE`는 같은 디렉터리의 새 후보를 존재하지 않는 대상에 단 한 번의 원자적 덮어쓰기 금지 연산으로 게시합니다. receipt는 네임스페이스 원자성, 배타적 생성, 실제 피연산자 결합을 증명하지만 교체 CAS나 충돌 후 내구성은 보장하지 않습니다. 읽기 전용 `NO_CHANGE`는 빈 가드 계획에서 유지된 로드 원본 객체를 재인증하고 `NOT_PUBLISHED`를 보고합니다. 게시 보장이나 피연산자 결합은 주장하지 않습니다. 가드 계획은 원본을 출력으로 쓸 수 없고 다른 기존 대상도 교체하지 않으므로 새 경로가 필요합니다. 불확정 게시 또는 불완전한 최종 receipt는 실패입니다. 대상이 존재할 수 있으므로 사용·재시도·삭제 전에 확인해야 합니다.
+
+원본 바이트는 session의 외부 다이제스트와 일치시킨 뒤 유지된 기술자로 관찰합니다. 원본과 대상 디렉터리 객체는 트랜잭션 동안 고정하지만, 메타데이터와 신원은 관찰 시점의 사실일 뿐 최초 로드부터 불변임을 증명하지 않습니다. 열린 디렉터리는 이름이 바뀔 수 있습니다. receipt는 해당 객체 안의 게시를 인증할 뿐 원래 경로가 실행 중이나 반환 후 계속 그 객체를 가리킨다고 증명하지 않습니다. 독립 검증 가능한 영속 경로 결합이 아니며, 나중에 경로를 다시 열 때는 외부 기준을 유지하고 재인증해야 합니다. Darwin rename은 후보 기술자 대신 경로를 쓰므로 디렉터리는 유효 uid 소유, 확장 ACL 없음, 그룹/기타 쓰기 권한 없음, 일반 POSIX 소유권을 확인하는 볼륨이라는 조건을 만족해야 합니다. 후보 생성과 게시 전에 다시 검사합니다. 동일 권한 프로세스, root/DAC 우회, 악성 파일 시스템/서버는 보장 범위 밖이며 커널·VFS·파일 시스템이 보고한 의미를 따른다고 가정합니다.
+
+---
+
+<!-- i18n-section: native-replay -->
+
+## 네이티브 프로세스 재생: Phase 0만 제공
+
+플랫폼 중립 `process-replay-v1` 계획과 실행 조정기는 향후 인증 실행의 증명 요건을 정의하지만 현재 이를 실행할 호스트는 없습니다. `NativeProcessReplayAdapter`는 C++ 가용성/팩터리 경계이며 C, Python, CLI 또는 JSON 실행 인터페이스가 아닙니다.
+
+조회는 변경 없이 전체 계획, 실행 제한, 절대 실행 파일 위치와 유일한 물리 호출 지점 맵을 검증합니다. 대상을 열거나 백엔드를 호출하거나 프로세스를 실행하지 않습니다. 위치 정보는 향후 객체 탐색용일 뿐 인증 후 경로 실행 권한이 될 수 없습니다. 격리, 신원, 입력 중재, 발생 인증, 제한, 정리 보장 중 하나라도 없으면 `Available`과 모든 기능이 false이고 팩터리는 연산 테이블 없이 오류를 반환합니다.
+
+현재 모든 호스트가 이 상태입니다. Linux에는 신뢰 가능한 정적 ELF 계측, 지속 감독기, 완전한 격리·제한·실행 인증이 더 필요합니다. macOS의 지원 공개 기능은 유지된 객체 실행, 대상 코드 전 임의 대상 샌드박스 설치, 경쟁 없는 프로세스 트리 격리를 모두 제공하지 못합니다. 다른 플랫폼도 미지원입니다. 단위 테스트 연산 테이블은 조정기 계약만 검증하며 네이티브 가용성 증거가 아닙니다.
+
+---
+
+<!-- i18n-section: scope -->
+
 ## 거짓 양성 경계와 범위
 
 - 용량은 정확하거나 실제 객체 크기의 상한이므로 UNSAFE는 실제 오버플로를 반영합니다. 정확한 선언 크기가 없고 포함 영역 상한만으로 안전을 증명할 수 없으면 UNKNOWN입니다.
 - 길이 제한 복사는 풀이 전에 제외되어 `skipped`에 집계됩니다. 정확한 용량은 SAFE를 증명할 수 있지만 상한만 있으면 UNKNOWN을 유지합니다.
 - 카탈로그에 등록된 와이드 문자 및 이어붙이기 복사는 요소 너비와 기존 목적지 길이를 복구할 때까지 UNKNOWN입니다. 출력 매개변수 할당자와 조건부 `realloc` 소유권도 핸들 전이를 증명할 수 없으면 UNKNOWN입니다.
-- **P0**(이번 릴리스, 세 형식 모두): 싱크 카탈로그, 인수 사전 필터, 복사 오버플로 헌트, 힙 수명 감사. 모든 테스트 호스트에서 PE, ELF, Mach-O × x86-64, AArch64의 체크인된 6개 fixture를 실행합니다.
-- **P1**: 스택/전역 오버플로, 초기화되지 않은 로컬 읽기, 형식 문자열 검사가 제공됩니다. 더 풍부한 PDB 스택 형과 추가 플랫폼 할당자는 점진적 커버리지로 남고 정확한 요약이 없으면 UNKNOWN을 유지합니다.
+- **Phase 1**: 이번 릴리스는 세 형식의 sink 목록, 인수 사전 필터, 스택/전역 복사 오버플로 탐색, 힙 수명 감사, 지역 스택 미초기화 읽기 및 서식 문자열 검사를 제공합니다. 모든 테스트 호스트에서 PE, ELF, Mach-O × x86-64, AArch64의 등록된 fixture가 필수입니다.
+- 더 풍부한 PDB 스택 형식과 추가 플랫폼 할당기는 점진적 확장 범위입니다. 정확한 요약이 없으면 UNKNOWN을 유지합니다.
 - 현재 슬라이스는 알려진 진입점, 구조적 프로시저 간 도달 가능성, 공격자 매개변수의 단조 전파를 다룹니다. 별도의 실험적 `lowir-concolic-v1` 어댑터는 이제 필수 네이티브 포맷/아키텍처 매트릭스에서 레지스터 seed로 재생 검증된 브랜치 flip을 제공합니다. 이는 항상 비포괄적이며 안전성 verdict를 변경하지 않습니다. 실험적 `binary-sanitizer-v1`은 이제 Darwin에서 모든 지점을 보호하지 못하면 거부하는 counted-write 가드와 인증된 게시를 제공하지만, receipt는 트랜잭션 동안 보유한 디렉터리 object만 인증하며 원래 pathname의 영구적이고 재검증 가능한 binding은 아닙니다. 더 넓은 `process-replay-v1`은 계속해서 plan, coordinator, 가용성의 fail-closed Phase 0 경계만 제공하며 네이티브 replay를 실행하는 호스트는 없습니다.

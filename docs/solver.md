@@ -7,6 +7,8 @@ remains independent of a general solver. Expression synthesis accepts a
 candidate only after an equivalence proof; a counterexample or inconclusive
 query retains the original expression.
 
+<!-- i18n-section: z3-build -->
+
 ## Optional Z3 build
 
 Enabling Z3 downloads the pinned 4.13.3 source revision through CMake
@@ -33,6 +35,8 @@ checkout with `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=/path/to/z3`.
 With `NEVERD_ENABLE_Z3=OFF` (the default), NeverD neither downloads, searches for,
 nor links Z3. An explicit runtime request for an unavailable backend fails
 without falling back.
+
+<!-- i18n-section: synthesis -->
 
 ## Proof-gated expression synthesis
 
@@ -66,6 +70,8 @@ This selection currently covers expression synthesis. Concolic execution,
 safety analysis, and existing IR optimization defaults retain their existing
 solver policies. Internal users can supply the Z3 verifier through the
 semantic simplifier's proof callback.
+
+<!-- i18n-section: checks -->
 
 ## Independent checks and query export
 

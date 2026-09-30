@@ -6,6 +6,8 @@
 
 По умолчанию NeverD использует встроенный bitvector solver. Точное выведение MBA не зависит от общего решателя. Синтез выражений принимает кандидата только после доказательства эквивалентности; контрпример или неопределённый запрос сохраняет исходное выражение.
 
+<!-- i18n-section: z3-build -->
+
 ## Необязательная сборка Z3
 
 При включении Z3 CMake через `FetchContent` загружает закреплённую ревизию исходников 4.13.3 и собирает статическую библиотеку вместе с NeverD. Системная установка Z3 не нужна:
@@ -17,9 +19,11 @@ cmake --build build-release --target neverd NeverDSolverTests \
   NeverDSymbolicTests neverd-solver-bench --parallel 4
 ```
 
-По умолчанию используется `NEVERD_Z3_PROVIDER=FETCH`. Первая конфигурация скачивает исходники, последующие сборки используют `_deps`. CLI Z3, тесты, примеры, документация и языковые привязки не собираются. Python-генераторы Z3 используют уже требуемый NeverD интерпретатор. Для установленной библиотеки задайте `-DNEVERD_Z3_PROVIDER=SYSTEM` и при необходимости `-DZ3_ROOT=...`; отсутствие файлов разработки приводит к ошибке без скрытого переключения provider. Для автономной сборки можно передать локальный checkout через `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=...`.
+По умолчанию используется `NEVERD_Z3_PROVIDER=FETCH`. Первая конфигурация скачивает исходники, последующие сборки используют `_deps`. CLI Z3, тесты, примеры, документация и языковые привязки не собираются. Python-генераторы Z3 используют уже требуемый NeverD интерпретатор. Для установленной библиотеки задайте `-DNEVERD_Z3_PROVIDER=SYSTEM` и при необходимости `-DZ3_ROOT=/path/to/prefix`; отсутствие файлов разработки приводит к ошибке без скрытого переключения provider. Для автономной сборки можно передать локальный checkout через `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=/path/to/z3`.
 
 При `NEVERD_ENABLE_Z3=OFF` (значение по умолчанию) NeverD не загружает, не ищет и не подключает Z3. Явный запрос недоступного бэкенда завершается ошибкой без fallback.
+
+<!-- i18n-section: synthesis -->
 
 ## Синтез выражений с доказательным шлюзом
 
@@ -32,15 +36,26 @@ build-release/bin/neverd simplify --synthesize --solver=z3 \
 
 C API добавляет `solver_backend` и `solver_timeout_ms` в `neverd_synthesize_options`. Читатели с ограничением размера сохраняют встроенный backend для старых клиентов. `neverd_solver_backend_available()` сообщает возможности сборки; Python предоставляет тот же выбор через `synthesize_expression(..., solver='z3', solver_timeout_ms=1000)`. Сейчас это относится только к синтезу выражений. Политики concolic-выполнения, анализа безопасности и существующей IR-оптимизации не меняются. Внутренние пользователи могут передать Z3 verifier через callback доказательства семантического упрощателя.
 
+```python
+from neverd_plugin import synthesize_expression
+
+result = synthesize_expression(
+    '(x >> 4) + ((x >> 2) >> 2)', solver='z3', solver_timeout_ms=1000
+)
+```
+
+<!-- i18n-section: checks -->
+
 ## Независимые проверки и экспорт запросов
 
 При включённом Z3 `NeverDSolverTests` включает независимую оценку выражений и межбэкендовые проверки. Эталонные выражения создаются напрямую, чтобы ошибка в построителях NeverD не упростила обе стороны теста одинаково. В отключённых сборках oracle-кейсы явно пропускаются, но контракт недоступного backend всё равно проверяется.
 
 ```sh
 build-release/bin/NeverDSolverTests --gtest_brief=1
-build-release/bin/neverd-solver-bench tools/neverd-bench/solver-corpus.txt \
-  --width=32 --repeat=5 --backend=both --timeout-ms=1000 \
-  --max-conflicts=10000 --dump-dir=/tmp/neverd-queries
+build-release/bin/neverd-solver-bench \
+  tools/neverd-bench/solver-corpus.txt --width=32 --repeat=5 \
+  --backend=both --timeout-ms=1000 --max-conflicts=10000 \
+  --dump-dir=/tmp/neverd-queries > /tmp/neverd-solver-results.json
 ```
 
 Каждая строка, кроме комментария, имеет вид `original ; candidate`; без точки с запятой результат MBA simplifier становится кандидатом. Утилита сообщает verdict, воспроизведение модели и время (включая создание сессии, перевод и решение, но без разбора, MBA-упрощения, экспорта и teardown). Каждое повторение использует новый solver. SAT-модель должна воспроизвести различие в evaluator выражений. Противоречивые решающие verdict и неверные запросы/модели приводят к ошибке; `unknown` записывается, но не является доказательством эквивалентности.

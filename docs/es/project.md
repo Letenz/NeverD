@@ -1,5 +1,7 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
+<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+
 <div align="center">
 
 <picture>
@@ -11,12 +13,12 @@
 
 **El motor de análisis y descompilación AI-friendly — lift 1:1, basado en LLVM**
 
-PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; SDK C puro
+PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64 · ARM32 · EVM256 · SBF &nbsp;|&nbsp; SDK de C + Python
 
 [![AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](../../LICENSE)
 [![C++20](https://img.shields.io/badge/Standard-C%2B%2B20-brightgreen.svg)](#compilación)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-informational.svg)
-[![SDK](https://img.shields.io/badge/SDK-Pure%20C%20API-orange.svg)](#sdk-y-plugins)
+[![SDK](https://img.shields.io/badge/SDK-C%20%2B%20Python-orange.svg)](#sdk-y-plugins)
 
 [Documentación](README.md) · [Android](android.md) · [iOS](ios.md) · [Hoja de ruta](roadmap.md) · [Contribuir](CONTRIBUTING.md)
 
@@ -25,6 +27,8 @@ PE · ELF · Mach-O · EVM · Solana SBF &nbsp;|&nbsp; x86-64 · i386 · AArch64
 ---
 
 > GitHub siempre muestra el `README.md` en inglés en la página del repositorio. Use los enlaces de idioma de arriba para las versiones localizadas.
+
+<!-- i18n-section: overview -->
 
 ## Resumen
 
@@ -36,21 +40,17 @@ CLI, integradores y agentes de IA usan un solo motor — **`libneverd`** — med
 
 Los formatos de entrada, contratos host y límites se documentan en las guías de [EVM](evm.md) y [Solana SBF](sbf.md).
 
-La CLI experimental `neverd mobile app.apk -o recovered-app` recupera Java de APK, DEX y smali y genera `report.json`. El motor predeterminado está implementado en C++20 y no necesita Python, Java ni JADX en tiempo de ejecución. Ni `NEVERD_JADX` ni un ejecutable `jadx` en PATH seleccionan el motor externo: solo lo hace un `--jadx PATH` explícito. No hay cambio automático a otro motor. Ponga entre comillas las rutas con espacios. Las entradas admitidas, los informes y los límites se describen en la [guía de Android](android.md).
+La CLI experimental `neverd mobile app.apk -o recovered-app` recupera Java de APK (multidex), DEX y smali y genera `report.json`. El motor predeterminado está implementado en C++20 y no necesita Python, Java ni JADX en tiempo de ejecución. Ni `NEVERD_JADX` ni un ejecutable `jadx` en PATH seleccionan el motor externo: solo lo hace un `--jadx PATH` explícito. No hay cambio automático a otro motor. Ponga entre comillas las rutas con espacios. Las entradas admitidas, los informes y los límites se describen en la [guía de Android](android.md).
 
 El flujo iOS experimental `neverd mobile App.ipa -o recovered-ios` exporta C nativo y fuentes Objective-C/Swift compatibles desde IPA, `.app` o Mach-O. Conserva disposiciones runtime, unidades fuente y omisiones por método; el código generado no usa puentes al binario original. Consulte la [guía iOS](ios.md) para configuración, cobertura y recompilación independiente.
 
-La recuperación experimental `neverd decompile --devirtualize` especializa
-intérpretes en imágenes x64 ELF/PE enlazadas y genera C mediante HighC o LLVMC.
-Exige una imagen fija y precondiciones explícitas sobre el espacio de retorno
-ABI; los destinos desconocidos y presupuestos agotados provocan un fallo. El
-resultado sirve para análisis y no demuestra seguridad para aplicar parches
-ni manejar excepciones. La [guía de recuperación](interpreter-recovery.md)
-describe los controles, informes y límites.
+La [recuperación experimental de fuentes de intérpretes](interpreter-recovery.md) utiliza `neverd decompile --devirtualize --func ENTRY` para especializar intérpretes x64 ELF/PE enlazados compatibles en HighC o LLVMC mediante el pipeline LowIR/MedIR compartido. Las indicaciones de control separan contextos del decodificador sin fijar entradas de ejecución. El control sin resolver, la semántica no compatible y los presupuestos agotados fallan explícitamente; este modo no certifica el reemplazo binario ni la equivalencia de excepciones.
 
 Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-refinements` y `--vm-max-queries` mantienen los valores predeterminados 16, 16 y 4096. La guía describe la API C v3 compatible y las reglas de fallo.
 
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
+
+<!-- i18n-section: why-neverd -->
 
 ## ¿Por qué NeverD?
 
@@ -59,6 +59,8 @@ La API C++ independiente para pruebas de bucles infiere invariantes acotados y r
 - **Un pipeline, varias salidas** — `lift` → LLVM IR · `decompile` → C/Solidity/Rust · `patch` → binario nativo reescrito
 - **Reescritura binaria** — PE / ELF / Mach-O con trampolines de sección o sobrescritura inplace
 - **Kit de análisis** — CLI, info de depuración, firmas, plugins y pases de ofuscación opcionales
+
+<!-- i18n-section: supported-targets -->
 
 ## Objetivos soportados
 
@@ -78,7 +80,9 @@ Los programas Solana SBF v0-v4 ELF usan un loader strict dedicado, metadatos
 ISA versionados completos, Low/Med/High IR, LLVM verificado, C11 portable y
 Rust estable y seguro. Consulte [descompilación Solana SBF](sbf.md).
 
-### Android e iOS
+<!-- i18n-section: mobile-source-recovery -->
+
+### Recuperación de código móvil
 
 La CLI experimental `neverd mobile` admite las siguientes entradas y salidas:
 
@@ -87,7 +91,9 @@ La CLI experimental `neverd mobile` admite las siguientes entradas y salidas:
 | [Android](android.md) | APK, incluido multidex, DEX, archivos o directorios smali | Código Java e informe JSON |
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64/x86_64) | C nativo, código Objective-C/Swift compatible e informe de cobertura JSON |
 
-El alcance de la recuperación depende de los patrones de código admitidos; consulte los límites en las guías correspondientes.
+La recuperación depende de los patrones de código compatibles; consulte la [introducción móvil (inglés)](../mobile.md) y las guías de plataforma para conocer la cobertura y los límites.
+
+<!-- i18n-section: how-it-works -->
 
 ## Cómo funciona
 
@@ -123,6 +129,8 @@ Solana SBF ELF (v0-v4)
 | **HighIR** | Control estructurado (`if` / `while` / `for`) |
 | **LLVM** | Optimizar, emitir C o generar código máquina |
 
+<!-- i18n-section: quick-start -->
+
 ## Inicio rápido
 
 ```bash
@@ -134,10 +142,6 @@ cmake --build build
 ./build/bin/neverd lift -o out.ll binary
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
-
-# Recuperación experimental de código fuente de intérpretes
-./build/bin/neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
-  --recovery-report recovery.json -o recovered.c
 
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
@@ -152,7 +156,6 @@ cmake --build build
 
 # Android: de APK a Java (experimental)
 ./build/bin/neverd mobile app.apk -o recovered-android
-# iOS: de IPA al código fuente compatible (experimental)
 ./build/bin/neverd mobile App.ipa -o recovered-ios
 
 # Análisis
@@ -165,6 +168,8 @@ cmake --build build
 ```
 
 Las bibliotecas de firmas se instalan en `build/bin/signatures/` en tiempo de compilación. `sigs --auto` elige el conjunto según formato, arquitectura y bitness. Si la cabecera Rich de un archivo PE indica la versión de Visual Studio de su enlazador, solo carga el `vs<year>.pat` de esa versión, además de los archivos que no pertenecen a ninguna versión. `--sig-base <dir>` elige de la misma forma desde otro árbol de firmas. Un archivo de patrones de 1 MiB o más se analiza una sola vez: sus módulos se guardan en `neverd/signatures`, dentro del directorio de caché del usuario, y se mapean en las cargas siguientes. `NEVERD_SIGNATURE_CACHE` indica otro directorio, y `off` desactiva la caché.
+
+<!-- i18n-section: building -->
 
 ## Compilación
 
@@ -202,13 +207,11 @@ El paquete publicado se elige según el host que ejecuta CMake:
 | Linux x86_64 | `neverd-llvm-linux-x86_64.tar.xz` |
 | Windows x64 | `neverd-llvm-windows-x64.zip` |
 
-Cada archivo se coteja con el resumen fijado en `cmake/NeverDLLVMPrebuilt.cmake` —o con el `.sha256` publicado junto a él, para una etiqueta que esos anclajes no describan— antes de extraerlo en `~/.cache/neverd-llvm/<tag>/<arch>/` (o en la ruta que indique `NEVERD_LLVM_PREBUILT_CACHE_DIR`). La compilación de release usa ccache en macOS y Linux; las compilaciones clang-cl de Windows usan sccache con la caché de GitHub Actions como backend. Las cachés del compilador solo aceleran recompilaciones y nunca se publican como artefactos.
+Cada archivo se verifica con el resumen fijado en `cmake/NeverDLLVMPrebuilt.cmake`, o con su `.sha256` publicado para etiquetas no descritas allí, antes de extraerlo en `~/.cache/neverd-llvm/<tag>/<arch>/` o `NEVERD_LLVM_PREBUILT_CACHE_DIR`. Para la versión predeterminada, `BUILDINFO.txt` también debe identificar el commit exacto del submódulo LLVM. La publicación usa ccache en macOS/Linux y sccache con la caché de GitHub Actions para clang-cl en Windows. Las cachés solo aceleran recompilaciones y nunca se publican como artefactos.
 
-La revisión de paquete predeterminada es `neverd-llvm-v23.0.0-r3`. Los directorios de compilación que aún guardan el antiguo tag sin revisión, `neverd-llvm-v23.0.0-r1` o `neverd-llvm-v23.0.0-r2` migran automáticamente a `r3`, salvo que se proporcione explícitamente `NEVERD_LLVM_PREBUILT_SHA256`; en ese caso se conserva el tag original.
+La revisión predeterminada es `neverd-llvm-v23.0.0-r3`. La etiqueta Git, el destino de publicación, el commit de origen y los tres resúmenes de archivo forman una referencia de origen versionada e inmutable. Los directorios que conservan la etiqueta base antigua, `neverd-llvm-v23.0.0-r1` o `neverd-llvm-v23.0.0-r2` migran automáticamente a `r3`, salvo que se configure `NEVERD_LLVM_PREBUILT_SHA256`. `Prebuilt LLVM Audit` se ejecuta en pushes, pull requests y cada seis horas; llama a `scripts/audit_prebuilt_llvm_release.py` para comparar la referencia con la publicación actual de GitHub y cada archivo de suma de comprobación.
 
-La etiqueta de release versiona el paquete de NeverD, mientras que `BUILDINFO.txt` registra el commit exacto del fork de LLVM. Si LLVM sigue informando `23.0.0` pero las fuentes del fork cambiaron, la elección inmutable habitual es una revisión de paquete como `neverd-llvm-v23.0.0-r4` (luego `-r5`), no `23.0.1`, salvo que haya cambiado la propia versión de parche de LLVM. Apunte `NEVERD_LLVM_PREBUILT_TAG` a esa nueva revisión.
-
-Para publicar la siguiente revisión inmutable, ejecute el workflow `NeverD LLVM Release` desde la rama `main` de llvm-project y deje desactivado `overwrite_existing_assets`:
+Si cambia el fork de LLVM pero LLVM sigue indicando `23.0.0`, publique la siguiente revisión de paquete, `neverd-llvm-v23.0.0-r4` y luego `-r5`, sin sobrescribir publicaciones ni inventar la versión LLVM `23.0.1`:
 
 ```bash
 gh workflow run neverd-release.yml \
@@ -218,7 +221,7 @@ gh workflow run neverd-release.yml \
   -f overwrite_existing_assets=false
 ```
 
-Cuando el workflow termine correctamente, actualice juntos en `cmake/NeverDLLVMPrebuilt.cmake` la etiqueta predeterminada, el commit fijado y los tres resúmenes de archivo. No reemplace una release existente; `overwrite_existing_assets` queda reservado para recuperación heredada.
+Tras completarse el flujo, actualice juntos la etiqueta predeterminada, el commit fijado y los tres resúmenes en `cmake/NeverDLLVMPrebuilt.cmake`. El paquete nuevo se guarda en `.cache/neverd-llvm/<tag>`; un archivo obsoleto o republicado falla antes de extraerse. `overwrite_existing_assets` solo sirve para recuperación histórica y permanece desactivado en el flujo normal.
 
 **Artefactos**
 
@@ -229,6 +232,7 @@ Cuando el workflow termine correctamente, actualice juntos en `cmake/NeverDLLVMP
 | `build/bin/neverd-sigmaker` | Generador `.pat` desde bibliotecas estáticas |
 | `build/bin/libneverd.*` | Biblioteca compartida del motor |
 | `build/bin/sdk/` | Raíz de includes canónica del C SDK; use `<neverd/sdk/NeverDCAPI.h>` o `<neverd/sdk/NeverDPlugin.h>` conservando la jerarquía `neverd/sdk/` |
+| `build/bin/sdk/python/` | Paquete tipado de plugins Python y ejemplos |
 | `build/bin/signatures/` | Bibliotecas de firmas |
 
 **Pruebas**
@@ -251,16 +255,27 @@ Para conocer los objetivos específicos, las etiquetas CTest, los requisitos de 
 |--------|----------------|-------------|
 | `NEVERD_LLVM_PREBUILT` | `OFF` | LLVM precompilado CI |
 | `NEVERD_BUILD_SHARED` | `ON` | Construir `libneverd` |
+| `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | Integrar compatibilidad con plugins CPython 3.10+ |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | Plugins de ejemplo |
 | `BUILD_TESTING` | `OFF` | Pruebas unitarias |
 
 </details>
+
+<!-- i18n-section: desktop-workbench -->
+
+## Entorno de escritorio
+
+El [entorno Qt Quick (inglés)](../gui.md) opcional ofrece vistas acoplables de instrucciones, CFG, hexadecimal, C e IR, los 11 idiomas de interfaz, anotaciones guardadas y conexiones MCP. El análisis se ejecuta en un proceso separado sin Qt; las compilaciones solo de CLI siguen siendo independientes. Consulte el [registro de validación (inglés)](../gui-qualification.md) para los flujos compatibles y las verificaciones de plataforma pendientes antes de publicar.
+
+<!-- i18n-section: cli -->
 
 ## CLI
 
 ```text
 neverd <command> [options] <binary>
 ```
+
+<!-- i18n-section: pipeline -->
 
 ### Pipeline
 
@@ -269,16 +284,27 @@ neverd <command> [options] <binary>
 | `lift` | `.ll` | Elevar a LLVM IR |
 | `decompile` | `.c` / `.sol` / `.rs` | C, Solidity EVM o Rust SBF elegido con `--language` |
 | `decompile -llvm` | `.c` | Vía LLVM IR + optimizador |
-| `patch` | binario | Reescribir código máquina |
+| `decompile --devirtualize` | `.c` + JSON opcional | Recuperación experimental de intérpretes x64; requiere `--func`; [contrato y ejemplos](interpreter-recovery.md) |
 | `mobile` | `.java` / `.c` / `.m` / `.swift` + JSON | Experimental: [Android](android.md), [iOS](ios.md) |
+| `patch` | binario | Reescribir código máquina |
 
 ```bash
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
 neverd patch --from-c repl.c --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+Si un binario ARM de 32 bits omite los metadatos del modo ARM/Thumb de una función, declare el modo de entrada antes de descompilar:
+
+```bash
+neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
+```
+
+Repita la opción para otras entradas ambiguas, usando `:arm` cuando corresponda. Una declaración incompatible con metadatos binarios verificados impide la carga; las declaraciones válidas solo afectan a la entrada exacta. La API C expone el mismo ajuste previo con `neverd_session_set_arm_function_mode()`.
 
 <details>
 <summary><strong>Comandos de análisis</strong></summary>
@@ -291,8 +317,8 @@ neverd patch --subst --flatten --mba -o patched binary
 | `funcs` | Funciones descubiertas |
 | `disasm` | Desensamblar (`--func` nombre o hex) |
 | `sym-explore` | Exploración acotada de rutas LowIR nativas (`--func`; salida JSON) |
-| `audit` | Defectos de vida del montón: fuga, doble liberación, uso después de liberar (JSON) |
-| `hunt` | Desbordamientos de copias peligrosas con evidencia simbólica y valores candidatos (JSON) |
+| `audit` | Defectos del ciclo de vida del heap y lecturas de pila local sin inicializar (JSON) |
+| `hunt` | Desbordamientos de copias peligrosas con testigos simbólicos y pruebas adicionales de reproducción `process-input-v1` cuando existe un plan completo (esquema JSON v1) |
 | `hex` | Volcado hex en una dirección |
 | `cfg` / `callgraph` | CFG / grafo de llamadas (JSON; DOT/SVG opcional) |
 | `xrefs` | Referencias cruzadas |
@@ -308,6 +334,8 @@ neverd patch --subst --flatten --mba -o patched binary
 La mayoría de comandos de análisis aceptan `--json`.
 
 </details>
+
+<!-- i18n-section: sdk-and-plugins -->
 
 ## SDK y plugins
 
@@ -330,7 +358,7 @@ neverd_session_destroy(s);
 
 Para EVM, `neverd_decompile_all_ex(..., NEVERD_OUTPUT_SOLIDITY, ...)` selecciona
 Solidity explícitamente; `neverd_decompile_all` sigue emitiendo C. Consulte los
-[ejemplos de API C EVM](evm.md#api-c).
+[ejemplos de API C EVM](evm.md#c-api).
 
 Las bibliotecas compartidas nativas y los archivos `.py` de Python usan el
 mismo ciclo de vida de plugins. Compile el ejemplo nativo con
@@ -344,6 +372,8 @@ predeterminada y puede eliminarse por completo con
 flujo de empaquetado. Ambos tipos usan `<neverd-dir>/plugins`,
 `~/.neverd/plugins` y `$NEVERD_PLUGIN_PATH`.
 
+<!-- i18n-section: dependencies -->
+
 ## Dependencias
 
 | Componente | Rol | Fuente |
@@ -353,14 +383,18 @@ flujo de empaquetado. Ambos tipos usan `<neverd-dir>/plugins`,
 
 Los componentes de terceros conservan sus propias licencias.
 
+<!-- i18n-section: contributing -->
+
 ## Contribuir
 
 Las contribuciones se integran en la rama **`dev`**. Consulte la [guía de contribución](CONTRIBUTING.md) para la configuración, las instrucciones de Release/Debug, el estilo, las pruebas específicas y los requisitos de los pull requests. Las guías de [arquitectura](architecture.md) y [pruebas](testing.md) relacionan los cambios habituales con el código y las suites de validación correspondientes.
 
+<!-- i18n-section: license -->
+
 ## Licencia
 
-[AGPL-3.0](../../LICENSE)
+[GNU AGPL solo versión 3](../../LICENSE). Al redistribuir código NeverD cubierto o adaptaciones, conserve los avisos de derechos de autor, licencia y exención de garantía, incluida la atribución y procedencia del proyecto en [NOTICE](../../NOTICE). También se aplica a la reutilización asistida por IA/LLM y a las transformaciones basadas en LLVM.
 
-Al redistribuir copias o adaptaciones del código de NeverD cubierto por la AGPL, deben conservarse los avisos de derechos de autor y de licencia conforme a la AGPL; esto incluye la reutilización asistida por IA/LLM y las transformaciones mediante LLVM. Para que se pueda rastrear la procedencia, recomendamos citar también el repositorio, los archivos y la versión utilizada. Consulta la [guía de atribución y fuentes](ATTRIBUTION.md), [NOTICE](../../NOTICE) y [CITATION.cff](../../CITATION.cff).
+Consulte [Atribución y citas](ATTRIBUTION.md) para requisitos, alcance y ejemplos. Para facilitar la trazabilidad, recomendamos citar el archivo fuente y la versión o commit exactos. [CITATION.cff](../../CITATION.cff) contiene metadatos de cita del software; citar no sustituye el cumplimiento de la licencia.
 
 Los componentes LLVM conservan su licencia Apache-2.0 WITH LLVM-exception. Capstone conserva su propia licencia.

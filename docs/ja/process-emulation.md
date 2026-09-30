@@ -8,6 +8,8 @@
 
 最初の `linux-elf64-v1` profile は、x64/AArch64 の ELF `ET_EXEC` と自己再配置する static PIE `ET_DYN` を CPL3/EL0 で実行します。実際の ELF segment をロードし、初期 stack を構築し、命令 quantum ごとに再開し、明示的な Linux system call request を処理します。これは独立したプロセスモデルであり、完全な Linux distribution や任意の libc binary の実行保証ではありません。dynamic linking、signal、thread、filesystem、未対応 service は明示的に失敗します。x64 profile は限定された SSE/SSE2 形式を一部許可し、AArch64 は integer-only です。Windows、Android、Darwin などの kernel workload は別途です。
 
+<!-- i18n-section: cli-sdk -->
+
 ## CLI と SDK
 
 ```bash
@@ -26,6 +28,8 @@ report = session.emulate_process(
 )
 output = bytes.fromhex(report["stdout_hex"])
 ```
+
+<!-- i18n-section: options-results -->
 
 ## オプションと結果
 
@@ -46,15 +50,31 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 
 `schema_version` は 1 です。report には profile、architecture、選択 backend と理由、`stop_reason`、nullable `exit_status`、診断、入口/現在 PC、counter、service record、最後の型付き CPU exit が含まれます。address、syscall number、引数 register、raw return bit は `0x` なしの hex string です。`stdout_hex`/`stderr_hex` は NUL と不正 UTF-8 を保持します。syscall 結果 null は model が戻り値を定義しないこと（exit や未対応 request など）を示し、成功値 0 とは異なります。
 
+<!-- i18n-section: linux-semantics -->
+
 ## Linux profile の意味
 
 OS policy は既存 ELF loader のデコード済み program header を使用します。ABI tag、segment alignment、map 済み PHDR table、user address 範囲を検証します。mapping plan は allocation 前に範囲、権限、重なり、budget を確認し、完全に準備できた private address space だけを公開します。file page の prefix/tail を保持し、BSS を zero 化し、segment 権限を守り、stack guard gap を予約します。ページが重なる layout や矛盾 header は推測せず拒否します。
 
+Static PIE は少なくとも `0x40000000` の決定的 load bias を使い、大きな `PT_LOAD` alignment に応じて増加します。各 segment、entry PC、`AT_PHDR`/`AT_ENTRY` に同じ bias を使い、元の program header 値は変更せず、interpreter がないため `AT_BASE` は0です。mapping source は元の file bytes であり、analysis pointer fixup は混入しません。guest startup が relocation と初期化を実行します。loader は section header に依存せず、元ファイルの範囲検証済み record から `PT_DYNAMIC` を decode します。存在する場合、table は readable/terminated で最大4096 entries。`PT_INTERP`、外部 dependency/filter/audit tag は拒否し、dynamic linker、symbol resolver、constructor runner は提供しません。
+
 初期 stack には aligned argc/argv/envp/auxv、PHDR/PHENT/PHNUM、entry、page size、identity value が入ります。model PID/TID/UID/GID は 1000 です。再現可能な実行のため `AT_RANDOM` は入力 SHA-256 の先頭16 byte です。暗号学的 entropy ではなくモデルの決定的 policy です。HWCAP/HWCAP2 は 0、vDSO はありません。
 
-実装済み syscall は `write`、`exit`、`exit_group`、`getpid`、`gettid` で、番号は [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) と [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h) で別です。戻る x64 SYSCALL は RCX/R11 clobber、RAX、次 PC を反映します。ARM64 は番号に x8、結果に x0 を使います。未知の呼び出しは `unsupported_service` で停止し、host syscall は実行しません。
+実装済み syscall は `write`、`exit`、`exit_group`、`getpid`、`gettid`, `mmap`, `mprotect`, `munmap`, `brk` で、番号は [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) と [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h) で別です。戻る x64 SYSCALL は RCX/R11 clobber、RAX、次 PC を反映します。ARM64 は番号に x8、結果に x0 を使います。未知の呼び出しは `unsupported_service` で停止し、host syscall は実行しません。
+
+Static TLS template `PT_TLS` は loader fact として検証されます。template は1つ、file/memory extent は bounded、alignment は congruent、初期 byte は readable でなければなりません。guest startup が各 TLS block を allocate/init し thread pointer を設定します。Linux model は libc 固有の TCB/DTV を作りません。これにより freestanding program の compiler-generated local-exec TLS を許可します。dynamic TLS と OS thread は別の範囲です。
+
+x64 の `arch_prctl` は `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS` をサポートします。Set は未mapの user-range base も受け入れますが、後の dereference では権限を検査します。kernel-range base は guest `EPERM`、無効な Get destination は CPU fault なしで guest `EFAULT`。その他の操作は明示的に失敗します。ARM64 startup は `MSR` で `TPIDR_EL0` を設定します。`MRS`、FS/GS memory access、context restore は quantum/backend entry 間で thread pointer を維持します。thread scheduler は実装しません。
 
 descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user page を検証し、後続 page にアクセスできなければ読取済み prefix を返し、1 byte も読めなければ guest `EFAULT` を返します。不正 descriptor は `EBADF`。有効 descriptor への length 0 write は pointer を参照しません。Linux pipe atomicity や file object はモデル化しません。出力上限を超える write は公開前に停止します。
+
+匿名メモリサービスは、イメージやスタックと同じプロセスアドレス空間と物理メモリ予算を使います。`mmap` が受け付けるのは `MAP_PRIVATE | MAP_ANONYMOUS` と、通常の `PROT_NONE`、`PROT_READ`、`PROT_READ | PROT_WRITE`、`PROT_READ | PROT_EXEC`、読み取り可能な RWX です。空いているページ境界のヒントを優先し、それ以外は `0x100000000`、次いで最小ユーザーアドレスから空きを探し、スタックガードを確保します。これは決定的配置であり Linux ASLR ではありません。新しいページは独立所有されゼロ初期化されるため、部分的な解除でも固定されていないページを回収できます。CPU 投影や保持中の backing view は、退役した割り当てを自身の寿命まで保持する場合があります。
+
+長さはページ単位に切り上げます。`munmap` は穴や重複解除を許容し、`mprotect` は穴までのマッピングを変更してから `ENOMEM` を返します。`PROT_NONE` は割り当てと内容を保持しつつゲストアクセスを禁止します。生の `brk` は成功時に要求したバイト境界、失敗時に旧境界を返し、libc のゼロ／負一の規約とは異なります。初期 break はページ境界に揃えたイメージ終端です。拡張は他のマッピングと予算に従い、縮小は残る部分ページの内容を保持します。対象範囲の規則とエラー優先順位は Linux の[マッピング](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)および[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)に従います。
+
+ファイル／共有／固定マッピング、下方拡張、巨大ページ、メモリ固定、保護キー、実行専用／書き込み専用方針、その他のフラグは明示的に未対応です。効果の公開や戻り値の生成前に停止します。対応範囲内の通常の範囲・長さ・整列エラーはゲストエラーを返して実行を続けます。ゲストポインタやマッピング要求をホスト OS に転送することはありません。
+
+<!-- i18n-section: verification -->
 
 ## 検証
 
@@ -66,14 +86,4 @@ cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
-両 ISA の original ELF entry assembly/C をコンパイルし、data/BSS、startup metadata、syscall error、binary output、permission fault、partial write、未対応 service、quantum 間の予算保持を検証します。利用不可 backend は明示的に skip します。公開 suite は C ABI/CLI と report/exit code の一致を検査します。cross compile や Unicorn ARM64 は native ARM64 KVM/WHP の証拠ではありません。
-
-## Static PIE、TLS、検証
-
-Static PIE は少なくとも `0x40000000` の決定的 load bias を使い、大きな `PT_LOAD` alignment に応じて増加します。各 segment、entry PC、`AT_PHDR`/`AT_ENTRY` に同じ bias を使い、元の program header 値は変更せず、interpreter がないため `AT_BASE` は0です。mapping source は元の file bytes であり、analysis pointer fixup は混入しません。guest startup が relocation と初期化を実行します。loader は section header に依存せず、元ファイルの範囲検証済み record から `PT_DYNAMIC` を decode します。存在する場合、table は readable/terminated で最大4096 entries。`PT_INTERP`、外部 dependency/filter/audit tag は拒否し、dynamic linker、symbol resolver、constructor runner は提供しません。
-
-Static TLS template `PT_TLS` は loader fact として検証されます。template は1つ、file/memory extent は bounded、alignment は congruent、初期 byte は readable でなければなりません。guest startup が各 TLS block を allocate/init し thread pointer を設定します。Linux model は libc 固有の TCB/DTV を作りません。これにより freestanding program の compiler-generated local-exec TLS を許可します。dynamic TLS と OS thread は別の範囲です。
-
-x64 の `arch_prctl` は `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS` をサポートします。Set は未mapの user-range base も受け入れますが、後の dereference では権限を検査します。kernel-range base は guest `EPERM`、無効な Get destination は CPU fault なしで guest `EFAULT`。その他の操作は明示的に失敗します。ARM64 startup は `MSR` で `TPIDR_EL0` を設定します。`MRS`、FS/GS memory access、context restore は quantum/backend entry 間で thread pointer を維持します。thread scheduler は実装しません。
-
-PIE/TLS fixture は独立した aligned block、TLS BSS、relocated auxv と guest relocation 前の zero RELA slot を検証します。x64 では `arch_prctl` error 後も前の base が保たれることを確認します。上記 build/CTest に `NeverDThreadPointerTests` を加えます。利用不能 backend は明示的に skip します。
+テストは両 ISA の独立した ELF エントリアセンブリと C をコンパイルし、data/BSS、起動情報、システムコールエラー、バイナリ出力、権限障害、部分書き込み、未対応サービス、実行量をまたぐ予算を確認します。TLS は独立整列ブロック、ゼロ化 BSS、スレッドポインタと切り替え後の保持を検証し、x64 は `arch_prctl` エラー後も旧ベースが残ることを確認します。利用できないバックエンドはスキップを明示します。公開テストは共有 C ABI と CLI の報告／終了コードを照合します。静的 PIE は自前のデータ／関数ポインタ再配置前に auxv とゼロの RELA スロットを確認します。マッピングテストは分析用バイトを選んだ場合の fixup 保持、動的表はセクションなし・不正・依存入力を検証します。匿名メモリは割り当て、保護、穴、再マッピング、ヒープ伸縮、処理可能なエラーを両 ISA で検証し、実際のゲスト書き込みで通常／部分保護後の障害を確認します。x64 は RW/RX 切り替えで同一アドレスのコードを更新し両版を呼び出します。同じ ELF の Linux ネイティブ実行を独立した結果／障害の参照とします。メモリ単体テストは予算枯渇、回収、RAM を保持しない正本マッピングのスナップショットを検証します。クロスコンパイルや Unicorn ARM64 はネイティブ ARM64 KVM/WHP の証拠ではありません。
