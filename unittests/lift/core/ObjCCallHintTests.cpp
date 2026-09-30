@@ -12,6 +12,7 @@
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
@@ -10179,6 +10180,88 @@ TEST(ObjCCallHints, SDWebImageOptionsResultNeedsEmbeddedClassEvidence) {
   Changed = Image;
   Changed.Arch = Arch::X64;
   Rejected(Changed);
+}
+
+TEST(ObjCCallHints, SDGraphicsRendererInitAndBlockRequireEmbeddedEvidence) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Root;
+  Root.Name = "NSObject";
+  Root.Address = 0x2200;
+  Root.RootClass = true;
+  Root.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(Root);
+  ObjCClass Renderer;
+  Renderer.Name = "SDGraphicsImageRenderer";
+  Renderer.Address = 0x2220;
+  Renderer.SuperclassName = "NSObject";
+  Renderer.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Renderer);
+  auto Add = [&](llvm::StringRef Selector, llvm::StringRef Encoding, va_t Entry,
+                 va_t Metadata) {
+    ObjCMethod Method;
+    Method.ClassName = Renderer.Name;
+    Method.ClassAddress = Renderer.Address;
+    Method.Selector = Selector.str();
+    Method.TypeEncoding = Encoding.str();
+    Method.Implementation = Entry;
+    Method.MetadataAddress = Metadata;
+    Method.Status = "supported";
+    Method.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Method));
+  };
+  Add("initWithSize:format:", "@40@0:8{CGSize=dd}16@32", 0x1400, 0x2300);
+  Add("imageWithActions:", "@24@0:8@?16", 0x1500, 0x2310);
+  Image.ObjCSourceReferences[0x2120] = {ObjCSourceReference::Kind::Class,
+                                        0x2120, 8, Renderer.Name};
+  const ObjCReceiverTypeHint ClassReference{
+      ObjCReceiverTypeHint::OriginKind::ClassReference, 0x2120, Renderer.Name,
+      true};
+  const auto Allocated =
+      objcReceiverCallResultTypeHint(Image, ClassReference, "alloc");
+  ASSERT_TRUE(Allocated);
+  const auto Initialized =
+      objcReceiverCallResultTypeHint(Image, *Allocated, "initWithSize:format:");
+  ASSERT_TRUE(Initialized);
+  const auto Declaration =
+      objcReceiverSourceTypeHint(Image, "imageWithActions:", *Initialized);
+  ASSERT_TRUE(Declaration.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "imageWithActions:";
+  Call.Receiver = *Initialized;
+  Call.Signature = *Declaration.Signature;
+  std::string CallbackError;
+  const auto ParsedCallback = parseObjCBlockSignature(
+      "v16@?0^{CGContext=}8", Arch::AArch64, CallbackError);
+  ASSERT_TRUE(ParsedCallback) << CallbackError;
+  const auto Contract = objcBlockParameterContract(Image, Call, 2);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(Contract->Storage,
+            ObjCBlockParameterContract::Lifetime::NonEscaping);
+  ASSERT_EQ(Contract->Signature.Parameters.size(), 2U);
+  EXPECT_EQ(Contract->Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_TRUE(equalSourceABIs(*ParsedCallback, Contract->Signature));
+
+  auto CheckRejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Initialized));
+    EXPECT_FALSE(objcBlockParameterContract(Changed, Call, 2));
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "@32@0:8{CGSize=dd}16";
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Changed.ObjCMethods[1]);
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCClasses[1].SuperclassName = "Unknown";
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  CheckRejected(Changed);
 }
 
 TEST(ObjCCallHints, WMFCalendarComponentsNeedsEmbeddedCategoryEvidence) {

@@ -206,6 +206,46 @@ bool hasEmbeddedSDWebImageOptionsResult(const BinaryImage &Image) {
   return Factory == 1 && Initializer == 1 && Getter == 1 && Property == 1;
 }
 
+// SDWebImage declares initWithSize:format: as instancetype and
+// imageWithActions: with an NS_NOESCAPE CGContextRef callback. The runtime
+// encodings erase both facts. Require the complete embedded class and exact
+// method records before carrying either declaration into source recovery.
+bool hasEmbeddedSDGraphicsImageRenderer(const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64)
+    return false;
+  const ObjCClass *Owner = nullptr;
+  for (const auto &Class : Image.ObjCClasses)
+    if (Class.Name == "SDGraphicsImageRenderer") {
+      if (Owner)
+        return false;
+      Owner = &Class;
+    }
+  if (!Owner || !Owner->Address || Owner->RootClass ||
+      Owner->InheritanceStatus != "resolved" ||
+      Owner->SuperclassName != "NSObject")
+    return false;
+  unsigned Initializers = 0, Renderers = 0;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.ClassName != Owner->Name)
+      continue;
+    const bool Initializer = Method.Selector == "initWithSize:format:";
+    const bool Renderer = Method.Selector == "imageWithActions:";
+    if (!Initializer && !Renderer)
+      continue;
+    if (Method.ClassAddress != Owner->Address || Method.IsClassMethod ||
+        Method.CategoryAddress || !Method.CategoryName.empty() ||
+        !Method.MetadataAddress || !Method.TypeHint ||
+        !objcMethodHasSourceBody(Method) ||
+        !Image.isCodeAddress(Method.Implementation) ||
+        Method.TypeEncoding !=
+            (Initializer ? "@40@0:8{CGSize=dd}16@32" : "@24@0:8@?16"))
+      return false;
+    ++(Initializer ? Initializers : Renderers);
+  }
+  return Initializers == 1 && Renderers == 1;
+}
+
 bool hasEmbeddedDDLogFileInfoElement(const BinaryImage &Image,
                                      const ObjCReceiverTypeHint &Receiver) {
   // DDLogFileManager.sortedLogFileInfos is declared as
@@ -1725,6 +1765,10 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
               Selector == "processedResultForURL:options:context:" &&
               Method.TypeEncoding == "@40@0:8@16Q24@32" &&
               hasEmbeddedSDWebImageOptionsResult(Image);
+          const bool SDGraphicsRendererInit =
+              Name == "SDGraphicsImageRenderer" && !Type.IsClassMethod &&
+              Selector == "initWithSize:format:" &&
+              hasEmbeddedSDGraphicsImageRenderer(Image);
           const bool WMFCalendarResult =
               Name == "NSCalendar" && !Type.IsClassMethod &&
               Selector == "wmf_components:fromDate:toDate:" &&
@@ -1746,19 +1790,20 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
           const bool WMFContentGroupArrayResult =
               Name == "NSManagedObjectContext" && !Type.IsClassMethod &&
               hasEmbeddedWMFContentGroupArrayResult(Image, Selector);
-          Include(Method.TypeHint,
-                  SDWebImageResult
-                      ? std::optional<std::string>("SDWebImageOptionsResult")
-                  : WMFCalendarResult
-                      ? std::optional<std::string>("NSDateComponents")
-                  : WMFCalendarFactory
-                      ? std::optional<std::string>("NSCalendar")
-                  : MWKLanguageArrayResult
-                      ? std::optional<std::string>("NSArray")
-                  : WMFContentGroupArrayResult
-                      ? std::optional<std::string>("NSArray")
-                      : declaredReturnClass(Method.TypeEncoding),
-                  declaredReturnProtocol(Method.TypeEncoding));
+          Include(
+              Method.TypeHint,
+              SDWebImageResult
+                  ? std::optional<std::string>("SDWebImageOptionsResult")
+              : SDGraphicsRendererInit
+                  ? std::optional<std::string>("SDGraphicsImageRenderer")
+              : WMFCalendarResult
+                  ? std::optional<std::string>("NSDateComponents")
+              : WMFCalendarFactory ? std::optional<std::string>("NSCalendar")
+              : MWKLanguageArrayResult ? std::optional<std::string>("NSArray")
+              : WMFContentGroupArrayResult
+                  ? std::optional<std::string>("NSArray")
+                  : declaredReturnClass(Method.TypeEncoding),
+              declaredReturnProtocol(Method.TypeEncoding));
         }
       if (!Superclass)
         KnownScope = false;
@@ -2512,10 +2557,17 @@ objcBlockParameterContract(const BinaryImage &Image,
        5, "v32@?0@8Q16^B24", nullptr, "NSRegularExpression"},
       {"imageWithActions:", "@24@0:8@?16", "@24@0:8@?16", 2, "v16@?0@8",
        "v16@?0@8", "UIGraphicsImageRenderer"},
+      {"imageWithActions:", "@24@0:8@?16", nullptr, 2, "v16@?0^{CGContext=}8",
+       nullptr, "SDGraphicsImageRenderer"},
   };
   std::optional<ObjCBlockParameterContract> Result;
   for (const auto &D : Declarations) {
     if (Call.Selector != D.Selector || Parameter != D.Parameter)
+      continue;
+    if (llvm::StringRef(D.Owner) == "SDGraphicsImageRenderer" &&
+        (!Type || !hasEmbeddedSDGraphicsImageRenderer(Image)))
+      continue;
+    if (Type && !DerivesFrom(Type->ClassName, D.Owner))
       continue;
     if (D.Copied && !Type)
       continue;
@@ -2530,13 +2582,13 @@ objcBlockParameterContract(const BinaryImage &Image,
     auto Callback =
         parseObjCBlockSignature(CallbackEncoding, Image.Arch, Error);
     if (Parent)
-      Parent->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+      Parent->Origin = llvm::StringRef(D.Owner) == "SDGraphicsImageRenderer"
+                           ? SourceFunctionTypeHint::OriginKind::ObjCRuntime
+                           : SourceFunctionTypeHint::OriginKind::ObjCSDK;
     if (!Parent || !Callback ||
         !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
         !SameDeclaration(*Expected, *Parent))
       return std::nullopt;
-    if (Type && !DerivesFrom(Type->ClassName, D.Owner))
-      continue;
     const auto Lifetime =
         D.Copied ? ObjCBlockParameterContract::Lifetime::Copied
                  : ObjCBlockParameterContract::Lifetime::NonEscaping;
