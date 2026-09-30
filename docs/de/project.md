@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -94,6 +94,14 @@ Die experimentelle CLI `neverd mobile` unterstützt folgende Eingaben und Ausgab
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64/x86_64) | Natives C, unterstützte Objective-C-/Swift-Quelltexte und JSON-Abdeckungsbericht |
 
 Die Rekonstruktion hängt von unterstützten Codemustern ab; Umfang und Grenzen beschreiben die [Mobile-Übersicht (Englisch)](../mobile.md) und die Plattformanleitungen.
+
+<!-- i18n-section: cpu-workloads -->
+
+### CPU-Ausführung und Gastumgebungen
+
+Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Gast-OS-Richtlinien. `NEVERD_ENABLE_CPU_EMULATION` aktiviert die x64/ARM64-CPU-Schicht; `NEVERD_ENABLE_DRIVER_EMULATION` ergänzt die begrenzte x64-Windows-WDM/KMDF-Umgebung. `linux-elf64-v1` führt unterstützte Linux-ELF-Prozesse aus. Siehe [CPU-Ausführung](cpu-execution.md), [Gastprozess-Emulation](process-emulation.md) und [Emulation von Windows-Treibern](driver-emulation.md).
+
+Checked-Profile verwenden KVM auf Linux und WHP auf Windows bei gleicher ISA sowie Unicorn bei unterschiedlicher ISA. Native ARM64/WHP-Ausführung bleibt unvalidiert. `driver-strict` verwendet derzeit Unicorn; der KVM/WHP-Treiberpfad benötigt `checked-x64-v1`. Ein ausdrücklich gewähltes, nicht verfügbares Backend schlägt klar fehl. Gemeinsamer RAM, Aliase, gestufte Schreibvorgänge, skalare Atomoperationen, typisierte Ausnahmen und vollständige x64-FP/SSE-Kontexte sind innerhalb der dokumentierten ISA/OS-Verträge implementiert. Dies verspricht weder beliebige Treiberkompatibilität noch implementierte Android/Darwin-Umgebungen.
 
 <!-- i18n-section: how-it-works -->
 

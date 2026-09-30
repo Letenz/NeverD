@@ -117,3 +117,11 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The original x64 FP-state transport and test implementations were checked
+against the [Intel architecture manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html),
+[Linux KVM API](https://docs.kernel.org/virt/kvm/api.html),
+[WHP register ABI](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes),
+and the pinned Unicorn register ABI. The implementation retains full 80-bit
+lanes, physical abridged tags and FXSAVE64 logical stack rotation. No code from
+QEMU or Wine was copied into this implementation.

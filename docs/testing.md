@@ -328,6 +328,13 @@ and malformed operands must fail explicitly.
 
 ## CPU execution checks
 
+`NeverDX64FPTests` checks all physical x87 lanes and tags at every TOP, exact
+80-bit push/pop and arithmetic state against independent host FXSAVE/FXRSTOR,
+FP/SSE reset, register-width rejection and complete CPU-context restoration.
+It exercises explicit KVM/WHP/Unicorn transports without ISA preflight for the
+state tests; unavailable native hosts are explicit skips. Exact arithmetic in
+this suite proves state transport, not admission or all x87 rounding semantics.
+
 `NeverDRAMTransactionTests` checks physical-alias deduplication, independent
 cross-page owners, bounded footprints, complete staged reads, write-only RAM,
 lease and phase errors, rejected devices/permissions, and cross-thread access.

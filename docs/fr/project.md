@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -93,6 +93,14 @@ La CLI expérimentale `neverd mobile` prend en charge les entrées et sorties su
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64/x86_64) | C natif, sources Objective-C/Swift prises en charge et rapport de couverture JSON |
 
 La récupération dépend des motifs de code pris en charge ; consultez la [vue d’ensemble mobile (anglais)](../mobile.md) et les guides de plateforme pour la couverture et les limites.
+
+<!-- i18n-section: cpu-workloads -->
+
+### Exécution CPU et environnements invités
+
+L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
+
+Les profils checked utilisent KVM sur Linux et WHP sur Windows lorsque l’ISA correspond, et Unicorn entre ISA différentes. La validation native ARM64/WHP reste à réaliser. `driver-strict` utilise actuellement Unicorn ; le chemin pilote KVM/WHP exige `checked-x64-v1`. Un moteur explicitement demandé et indisponible échoue clairement. RAM partagée, alias, écritures par étapes, opérations atomiques scalaires, exceptions typées et état complet FP/SSE x64 sont implémentés dans les contrats ISA/OS documentés. Cela ne garantit ni les pilotes arbitraires ni des environnements Android/Darwin implémentés.
 
 <!-- i18n-section: how-it-works -->
 

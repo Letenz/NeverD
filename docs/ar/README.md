@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
 
 [← مشروع NeverD](project.md)
 
@@ -11,6 +11,10 @@
 **دعم المحمول (CLI تجريبية):** يستعيد `neverd mobile` لغة Java من APK وDEX وsmali الخاصة بـ[Android](android.md)، وC الأصلية ومصادر Objective-C/Swift المدعومة من IPA و`.app` وMach-O الخاصة بـ[iOS](ios.md). تصف تقارير JSON النتائج والتغطية. ابدأ [بنظرة المحمول العامة (الإنجليزية)](../mobile.md)، ثم راجع أوامر المنصات وحدودها في الأدلة.
 
 توجد الأدلة الإنجليزية مباشرة داخل `docs/`. تُجمع الترجمات في `ar/` و`de/` و`es/` و`fr/` و`it/` و`ja/` و`ko/` و`ru/` و`zh-CN/` و`zh-TW/`. يحتوي كل دليل لغة على فهرس `README.md` ونظرة المشروع `project.md` والأدلة المتخصصة و`CONTRIBUTING.md` و`ATTRIBUTION.md` و`roadmap.md`. تبقى الصور المشتركة في `assets/`.
+
+يفصل تنفيذ المعالج بين قبول ISA وذاكرة الضيف ونقل المحرك وسياسة نظام الضيف. يتيح `NEVERD_ENABLE_CPU_EMULATION` طبقة x64/ARM64، ويضيف `NEVERD_ENABLE_DRIVER_EMULATION` بيئة Windows WDM/KMDF x64 المحدودة. يشغّل `linux-elf64-v1` عمليات Linux ELF المدعومة. انظر [تنفيذ المعالج](cpu-execution.md) و[محاكاة عمليات الضيف](process-emulation.md) و[محاكاة برامج تشغيل Windows](driver-emulation.md).
+
+تستخدم ملفات checked محرك KVM على Linux وWHP على Windows عند تطابق ISA، وUnicorn عند اختلافها. ما زال التحقق من التشغيل الأصلي ARM64/WHP مطلوباً. يستخدم `driver-strict` حالياً Unicorn؛ ويتطلب مسار برامج التشغيل KVM/WHP عقد `checked-x64-v1`. يفشل المحرك المحدد صراحةً بوضوح عند عدم توفره. نُفذت RAM المشتركة والأسماء المستعارة والكتابات المرحلية والعمليات الذرية العددية والاستثناءات المعرّفة وحالة x64 FP/SSE الكاملة ضمن عقود ISA/نظام التشغيل الموثقة. لا يعني ذلك توافق برامج تشغيل اعتباطية أو تنفيذ بيئات Android/Darwin.
 
 | المستند | الوصف |
 |---------|--------|
@@ -25,7 +29,7 @@
 | [تنفيذ CPU](cpu-execution.md) | إعدادات CPU واستعلامات القدرات ونتائج التنفيذ وحدودها |
 | [براهين bitvector](solver.md) | Z3 الاختياري، وتوليف مشروط بالإثبات، وفحوص مستقلة وتصدير الاستعلامات |
 | [محاكاة عمليات الضيف](process-emulation.md) | ملف Linux ELF، وتهيئة العملية والخدمات والحدود والاختبارات |
-| [محاكاة برامج تشغيل Windows](driver-emulation.md) | تهيئة x64 WDM محدودة وطلبات buffered/direct متسلسلة وعناصر عمل ومؤقتات وDPC وأحداث وانتظار وتقارير وحدود; أعمار برامج/كائنات KMDF 1.33 غير PnP والتحقق من x64 CFG |
+| [محاكاة برامج تشغيل Windows](driver-emulation.md) | دورة WDM/KMDF x64 محدودة وطلبات وسيناريوهات عتاد وSEH ومجموعات PnP جزئية واختيار المحرك والحدود |
 | [تدقيق وصيد أمان الذاكرة](memory-safety.md) | تحليل عمر الكومة وفيضان النسخ: عقد الهوية حسب الصيغة، وكتالوج المصارف/المصادر، والأحكام، والميزانيات، ومخطط JSON |
 | [الإضافات الأصلية](plugins.md) | ABI واصف بلغة C الخالصة، والاستدعاءات والأحداث، ومسار البناء/الربط، والاكتشاف، وقواعد التوافق |
 | [إضافات Python](python-plugins.md) | تأليف الإضافات، وواجهة الجلسة والأحداث، والعزل، والاختبارات، والنشر |

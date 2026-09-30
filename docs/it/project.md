@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -93,6 +93,14 @@ La CLI sperimentale `neverd mobile` supporta i seguenti input e output:
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64/x86_64) | C nativo, sorgenti Objective-C/Swift supportati e report di copertura JSON |
 
 Il recupero dipende dai modelli di codice supportati; per copertura e limiti consultare la [panoramica mobile (inglese)](../mobile.md) e le guide di piattaforma.
+
+<!-- i18n-section: cpu-workloads -->
+
+### Esecuzione CPU e ambienti guest
+
+L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
+
+I profili checked usano KVM su Linux e WHP su Windows con ISA corrispondente, e Unicorn tra ISA diverse. La validazione nativa ARM64/WHP resta da eseguire. `driver-strict` usa attualmente Unicorn; il percorso driver KVM/WHP richiede `checked-x64-v1`. Un backend esplicito non disponibile fallisce chiaramente. RAM condivisa, alias, scritture per fasi, operazioni atomiche scalari, eccezioni tipizzate e stato FP/SSE x64 completo sono implementati nei contratti ISA/OS documentati. Ciò non garantisce driver arbitrari o ambienti Android/Darwin implementati.
 
 <!-- i18n-section: how-it-works -->
 

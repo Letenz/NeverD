@@ -1,0 +1,66 @@
+//===- X64FPState.def - x87 and FXSAVE64 state layout ----------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_FP_VALUE
+NEVERD_X64_FP_VALUE(RegisterCount, 8)
+NEVERD_X64_FP_VALUE(RegisterBytes, 10)
+NEVERD_X64_FP_VALUE(RegisterSlotBytes, 16)
+NEVERD_X64_FP_VALUE(RegisterHighMask, 0xffff)
+NEVERD_X64_FP_VALUE(ExponentMask, 0x7fff)
+NEVERD_X64_FP_VALUE(IntegerBit, 1ULL << 63)
+NEVERD_X64_FP_VALUE(InitialControl, 0x37f)
+NEVERD_X64_FP_VALUE(ExceptionMask, 0x3f)
+NEVERD_X64_FP_VALUE(AllowedControl, 0x1f7f)
+NEVERD_X64_FP_VALUE(ReservedControlBit, 0x40)
+NEVERD_X64_FP_VALUE(PrecisionMask, 0x300)
+NEVERD_X64_FP_VALUE(ReservedPrecision, 0x100)
+NEVERD_X64_FP_VALUE(OpcodeMask, 0x7ff)
+NEVERD_X64_FP_VALUE(TopShift, 11)
+NEVERD_X64_FP_VALUE(TopMask, 7)
+NEVERD_X64_FP_VALUE(TagBits, 2)
+NEVERD_X64_FP_VALUE(ValidTag, 0)
+NEVERD_X64_FP_VALUE(ZeroTag, 1)
+NEVERD_X64_FP_VALUE(SpecialTag, 2)
+NEVERD_X64_FP_VALUE(EmptyTag, 3)
+NEVERD_X64_FP_VALUE(EmptyFullTag, 0xffff)
+NEVERD_X64_FP_VALUE(LegacyBytes, 512)
+NEVERD_X64_FP_VALUE(ControlOffset, 0)
+NEVERD_X64_FP_VALUE(StatusOffset, 2)
+NEVERD_X64_FP_VALUE(TagOffset, 4)
+NEVERD_X64_FP_VALUE(OpcodeOffset, 6)
+NEVERD_X64_FP_VALUE(InstructionOffset, 8)
+NEVERD_X64_FP_VALUE(DataOffset, 16)
+NEVERD_X64_FP_VALUE(MXCSROffset, 24)
+NEVERD_X64_FP_VALUE(MXCSRMaskOffset, 28)
+NEVERD_X64_FP_VALUE(RegistersOffset, 32)
+NEVERD_X64_FP_VALUE(XmmOffset, 160)
+NEVERD_X64_FP_VALUE(XsaveHeaderBytes, 64)
+NEVERD_X64_FP_VALUE(XStateOffset, LegacyBytes)
+NEVERD_X64_FP_VALUE(XCompOffset, XStateOffset + 8)
+NEVERD_X64_FP_VALUE(XsaveBytes, LegacyBytes + XsaveHeaderBytes)
+NEVERD_X64_FP_VALUE(X87Present, 1)
+NEVERD_X64_FP_VALUE(SSEPresent, 2)
+NEVERD_X64_FP_VALUE(FPAndSSE, X87Present | SSEPresent)
+NEVERD_X64_FP_VALUE(Compacted, 1ULL << 63)
+NEVERD_X64_FP_VALUE(MaxXsaveBytes, 64 * 1024)
+#endif
+#ifdef NEVERD_X64_FP_CONTROL
+// Public identity, state member, native scalar type, Unicorn identity, offset.
+NEVERD_X64_FP_CONTROL(FPCW, Control, uint16_t, FPCW, ControlOffset)
+NEVERD_X64_FP_CONTROL(FPSW, Status, uint16_t, FPSW, StatusOffset)
+NEVERD_X64_FP_CONTROL(FPOP, Opcode, uint16_t, FOP, OpcodeOffset)
+NEVERD_X64_FP_CONTROL(FPIP, Instruction, uint64_t, FIP, InstructionOffset)
+NEVERD_X64_FP_CONTROL(FPDP, Data, uint64_t, FDP, DataOffset)
+#endif
+#ifdef NEVERD_X64_FP_REGISTER
+NEVERD_X64_FP_REGISTER(0)
+NEVERD_X64_FP_REGISTER(1)
+NEVERD_X64_FP_REGISTER(2)
+NEVERD_X64_FP_REGISTER(3)
+NEVERD_X64_FP_REGISTER(4)
+NEVERD_X64_FP_REGISTER(5)
+NEVERD_X64_FP_REGISTER(6)
+NEVERD_X64_FP_REGISTER(7)
+#endif

@@ -11,16 +11,24 @@ add_neverd_component_library(NeverDEmulationCore
   core/MemoryView.cpp
   LLVM_COMPONENTS Support)
 
-add_neverd_component_library(NeverDEmulationNative
+add_neverd_component_library(NeverDEmulationArch
+  arch/x86_64/X64FPState.cpp
   arch/x86_64/X64PageTables.cpp
   arch/x86_64/X64ExceptionMonitor.cpp
   arch/aarch64/AArch64PageTables.cpp
+  arch/x86_64/CheckedX64Backend.cpp
+  arch/x86_64/CheckedX64Memory.cpp
+  arch/aarch64/CheckedAArch64Backend.cpp
+  LINK_COMPONENTS EmulationCore
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationNative
   backends/kvm/KvmMachine.cpp
   backends/kvm/KvmAArch64Machine.cpp
   backends/kvm/KvmRunControl.cpp
   backends/whp/WhpMachine.cpp
   backends/whp/WhpAArch64Machine.cpp
-  LINK_COMPONENTS EmulationCore
+  LINK_COMPONENTS EmulationArch
   LLVM_COMPONENTS Support)
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
@@ -28,13 +36,13 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     backends/unicorn/UnicornBackend.cpp
     backends/unicorn/UnicornMachine.cpp
     backends/unicorn/UnicornArchitecture.cpp
-    LINK_COMPONENTS EmulationCore
+    LINK_COMPONENTS EmulationArch
     LLVM_COMPONENTS Support
     LINK_LIBS unicorn)
 else()
   add_neverd_component_library(NeverDEmulationUnicorn
     backends/unicorn/UnicornUnavailable.cpp
-    LINK_COMPONENTS EmulationCore
+    LINK_COMPONENTS EmulationArch
     LLVM_COMPONENTS Support)
 endif()
 
@@ -42,10 +50,7 @@ add_neverd_component_library(NeverDEmulationCPU
   runtime/BackendRegistry.cpp
   runtime/ExecutionConfiguration.cpp
   runtime/ExecutionConfigurationJSON.cpp
-  arch/x86_64/CheckedX64Backend.cpp
-  arch/x86_64/CheckedX64Memory.cpp
-  arch/aarch64/CheckedAArch64Backend.cpp
-  LINK_COMPONENTS EmulationCore EmulationNative EmulationUnicorn
+  LINK_COMPONENTS EmulationArch EmulationNative EmulationUnicorn
   LLVM_COMPONENTS Support)
 
 add_neverd_component_library(NeverDEmulationABI
@@ -76,7 +81,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
 endif()
 
 if(WIN32)
-  foreach(_component Core Native Unicorn CPU ABI Runtime Image Process)
+  foreach(_component Core Arch Native Unicorn CPU ABI Runtime Image Process)
     target_compile_definitions(NeverDEmulation${_component} PRIVATE NOMINMAX)
   endforeach()
 endif()

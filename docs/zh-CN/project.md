@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -92,6 +92,14 @@ Low/Med/High IR、已验证 LLVM、可移植 C11 与安全 stable Rust。详见
 | [iOS](ios.md) | IPA、`.app`、Mach-O（arm64 / x86_64） | 原生 C 和受支持的 Objective-C / Swift 源码 + JSON 覆盖报告 |
 
 恢复取决于受支持的代码模式；覆盖范围与限制见[移动端总览](mobile.md)及各平台指南。
+
+<!-- i18n-section: cpu-workloads -->
+
+### CPU 执行与来宾环境
+
+CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
+
+checked 配置在 ISA 匹配的 Linux 主机上使用 KVM，在匹配的 Windows 主机上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 运行覆盖仍待实机验证。`driver-strict` 当前使用 Unicorn；驱动的 KVM/WHP 路径需选择 `checked-x64-v1`。显式后端不可用时明确失败。共享 RAM、别名、分阶段写入、标量原子操作、类型化异常和完整 x64 FP/SSE 上下文已在文档规定的指令及 OS 契约内实现。这不表示兼容任意驱动或已实现 Android/Darwin 环境。
 
 <!-- i18n-section: how-it-works -->
 

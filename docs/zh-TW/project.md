@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -92,6 +92,14 @@ Low/Med/High IR、已驗證 LLVM、可攜式 C11 與安全 stable Rust。詳見
 | [iOS](ios.md) | IPA、`.app`、Mach-O（arm64 / x86_64） | 原生 C、受支援的 Objective-C / Swift 原始碼與 JSON 覆蓋率報告 |
 
 還原取決於支援的程式碼模式；覆蓋範圍與限制見[行動平台總覽（英文）](../mobile.md)及各平台指南。
+
+<!-- i18n-section: cpu-workloads -->
+
+### CPU 執行與客體環境
+
+CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 啟用 x64/ARM64 CPU 層；`NEVERD_ENABLE_DRIVER_EMULATION` 加入有界 x64 Windows WDM/KMDF 環境。`linux-elf64-v1` 設定檔執行受支援的 Linux ELF 程序。參見[CPU 執行](cpu-execution.md)、[客體程序模擬](process-emulation.md)及[Windows 驅動程式模擬](driver-emulation.md)。
+
+checked 設定在 ISA 相符的 Linux 主機上使用 KVM，在相符的 Windows 主機上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 執行涵蓋仍待實機驗證。`driver-strict` 目前使用 Unicorn；驅動程式的 KVM/WHP 路徑需選擇 `checked-x64-v1`。明確指定的後端不可用時會明確失敗。共享 RAM、別名、分階段寫入、純量原子操作、型別化例外與完整 x64 FP/SSE 上下文已在文件指定的指令及 OS 契約內實作。這不表示相容任意驅動程式或已實作 Android/Darwin 環境。
 
 <!-- i18n-section: how-it-works -->
 

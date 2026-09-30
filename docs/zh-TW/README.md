@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
 
 [← NeverD 專案](project.md)
 
@@ -11,6 +11,10 @@
 **行動平台支援（實驗性 CLI）：** `neverd mobile` 支援從 [Android](android.md) APK、DEX、smali 恢復 Java，以及從 [iOS](ios.md) IPA、`.app`、Mach-O 恢復原生 C 與受支援的 Objective-C/Swift 原始碼。JSON 報告記錄恢復結果及涵蓋範圍。先閱讀[行動平台總覽（英文）](../mobile.md)，再參考平台指南的命令與限制。
 
 英文指南直接位於 `docs/`。譯文按語言分布於 `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/` 與 `zh-TW/` 目錄。各語言目錄包含文件索引 `README.md`、專案概覽 `project.md`、主題指南、`CONTRIBUTING.md`、`ATTRIBUTION.md` 與 `roadmap.md`。共用圖片位於 `assets/`。
+
+CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 啟用 x64/ARM64 CPU 層；`NEVERD_ENABLE_DRIVER_EMULATION` 加入有界 x64 Windows WDM/KMDF 環境。`linux-elf64-v1` 設定檔執行受支援的 Linux ELF 程序。參見[CPU 執行](cpu-execution.md)、[客體程序模擬](process-emulation.md)及[Windows 驅動程式模擬](driver-emulation.md)。
+
+checked 設定在 ISA 相符的 Linux 主機上使用 KVM，在相符的 Windows 主機上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 執行涵蓋仍待實機驗證。`driver-strict` 目前使用 Unicorn；驅動程式的 KVM/WHP 路徑需選擇 `checked-x64-v1`。明確指定的後端不可用時會明確失敗。共享 RAM、別名、分階段寫入、純量原子操作、型別化例外與完整 x64 FP/SSE 上下文已在文件指定的指令及 OS 契約內實作。這不表示相容任意驅動程式或已實作 Android/Darwin 環境。
 
 | 文件 | 說明 |
 |------|------|
@@ -25,7 +29,7 @@
 | [CPU 執行](cpu-execution.md) | 組態、能力查詢、後端可用性與型別化結果 |
 | [Bitvector 證明後端](solver.md) | 選用 Z3 證明、門控合成、獨立檢查與查詢匯出 |
 | [客體程序模擬](process-emulation.md) | Linux ELF 設定檔、程序啟動、服務、限制與測試 |
-| [Windows 驅動程式模擬](driver-emulation.md) | 有界 x64 WDM 初始化、循序緩衝／直接請求、工作項目、計時器、DPC、事件與等待，以及行為報告和限制; KMDF 1.33 非 PnP 驅動程式／物件生命週期與經驗證的 x64 CFG |
+| [Windows 驅動程式模擬](driver-emulation.md) | 有界 x64 WDM/KMDF 生命週期、請求、硬體情境、SEH、PnP 子集、後端選擇及限制 |
 | [記憶體安全稽核與獵取](memory-safety.md) | 堆積生命週期與拷貝越界分析：各格式身分契約、匯/源目錄、判定、預算與 JSON 模式 |
 | [原生外掛](plugins.md) | 純 C 描述元 ABI、回呼與事件、建置/連結流程、探索順序及相容性規則 |
 | [Python 外掛](python-plugins.md) | 外掛撰寫、工作階段與事件 API、隔離、測試及發佈 |

@@ -10,7 +10,7 @@ NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动的 PE 入口点
 
 默认 `driver-strict` 契约继续使用 Unicorn。新增实验性有限指令 `checked-x64-v1` 执行配置：`--backend auto` 在 Linux x86_64 选择 KVM，在 Windows x64 选择 WHP。显式选择 `kvm` 或 `whp` 不会回退；硬件不可用或契约不匹配在执行前报错。
 
-ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和寄存器 BT，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 会跨入口和上下文恢复保存；拒绝未屏蔽 SIMD 异常、DAZ、x87、AVX 和未列出操作。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式和跨页单次访问仍不支持。
+ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和寄存器 BT，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 会跨入口和上下文恢复保存；拒绝未屏蔽 SIMD 异常、DAZ、x87、AVX 和未列出操作。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式仍不支持。普通 RAM 操作数可以跨越独立分配或别名映射的页面；整段权限验证通过后才写入，失败定位到第一个不可访问的字节。MOVS 保留已完成元素及故障元素的重启寄存器，不提交部分元素。
 
 supervisor x64 支持一次对齐的 1/2/4 字节标量 MMIO 事务；设备页不会进入原生 RAM 映射。MOVS/REP MOVS 在每个重启边界只执行一个元素。设备源必须提供无副作用的 prepared read，以便目标写观察器能在设备读取提交前停止。Windows 寄存器组实现该准备流程；其他设备会在产生效果前拒绝字符串读取。设备 RMW、宽 MMIO、端口 I/O 仍不支持。请求字节、设备状态和写事件分别比较，不依赖 Unicorn 对零计数 REP 额外触发的终止 hook。KVM 使用标准 XSAVE 接口传送 XMM/MXCSR 与 FP/SSE presence bits。该 supervisor 契约不提供用户进程环境；timeout/取消在准入的有界指令间检查，不提供通用异步抢占，也不会在 guest 开始后更换后端。内置样例及可用 WDK 场景会对 normal/CFG 和重定位映像与 Unicorn 比对；语料一致不代表支持任意驱动。
 
@@ -509,3 +509,7 @@ WDM READ/WRITE/IOCTL 请求或无限并行 KMDF 默认队列中的请求可设 `
 ## x64 原生同步异常
 
 checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通过私有 supervisor IDT/IST 接收异常，WHP 使用明确的异常拦截位图；异常保留原始上下文和可用的错误码，与后端传输错误分开。OS 模型必须先消费可恢复事件，再安装明确的继续执行上下文。Windows 驱动将零除及商溢出映射为 `STATUS_INTEGER_DIVIDE_BY_ZERO`，并执行实际 SEH filter、`__finally` 和重试。`NeverDX64ExceptionTests` 可在禁用 Unicorn 时构建；原始 WDK 用例由 `DriverWDMCPUException` 验证。缺少的 WHP/ARM64 主机覆盖会明确跳过。
+
+## 完整 x87 状态
+
+`NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。

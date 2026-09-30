@@ -24,9 +24,6 @@
 
 namespace neverd::emulation {
 namespace {
-#define NEVERD_KVM_X64_STATE(Name, Value) constexpr uint64_t Name = Value;
-#include "KvmX64State.def"
-#undef NEVERD_KVM_X64_STATE
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
@@ -75,16 +72,13 @@ public:
     S.tr.limit = x64::gateway::TSSBytes - 1;
     S.tr.type = x64::gateway::TSSDescriptorType;
     S.tr.present = 1;
-    // x87 is unobservable in this profile and has a fixed reset value. Every
-    // admitted XMM and MXCSR bit belongs to the architecture-owned State.
-    // SET_FPU does not establish XSTATE_BV or transfer MXCSR on x86. Use the
-    // standard XSAVE ABI so XRSTOR retains seeded XMM values on the first run.
+    // The ISA owns the legacy FP/SSE layout; KVM owns the XSAVE header.
     kvm_xsave F{};
     auto *Bytes = reinterpret_cast<uint8_t *>(F.region);
-    llvm::support::endian::write16le(Bytes + FCWOffset, x64::InitialFCW);
-    llvm::support::endian::write32le(Bytes + MXCSROffset, State.MXCSR);
-    llvm::support::endian::write64le(Bytes + XStateBVOffset, FPAndSSE);
-    std::memcpy(Bytes + XmmOffset, State.Xmm.data(), sizeof(State.Xmm));
+    if (auto E = encodeX64FXState(State, {Bytes, sizeof(F.region)}))
+      return E;
+    llvm::support::endian::write64le(Bytes + x64::fp::XStateOffset,
+                                     x64::fp::FPAndSSE);
     kvm_mp_state MP{};
     MP.mp_state = KVM_MP_STATE_RUNNABLE;
     if (ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0 ||
@@ -126,8 +120,16 @@ public:
         (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0))
       return diagnostic::error(diagnostic::KvmState);
     auto Next = State;
-    std::memcpy(Next.Xmm.data(), Bytes + XmmOffset, sizeof(Next.Xmm));
-    Next.MXCSR = llvm::support::endian::read32le(Bytes + MXCSROffset);
+    if (auto E = decodeX64FXState(Next, {Bytes, sizeof(F.region)}))
+      return E;
+    const auto Present =
+        llvm::support::endian::read64le(Bytes + x64::fp::XStateOffset);
+    if (!(Present & x64::fp::X87Present))
+      Next.FP = {};
+    if (!(Present & x64::fp::SSEPresent)) {
+      Next.MXCSR = x64::InitialMXCSR;
+      Next.Xmm = {};
+    }
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"

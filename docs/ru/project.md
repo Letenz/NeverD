@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -93,6 +93,14 @@ C11 и безопасный стабильный Rust. См. [декомпиля
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64 / x86_64) | Нативный C, поддерживаемые исходники Objective-C / Swift и отчёт о покрытии JSON |
 
 Восстановление зависит от поддерживаемых шаблонов кода; охват и ограничения описаны в [обзоре мобильных платформ (английский)](../mobile.md) и руководствах платформ.
+
+<!-- i18n-section: cpu-workloads -->
+
+### Выполнение CPU и гостевые среды
+
+Выполнение CPU разделяет допуск ISA, гостевую память, транспорт бэкенда и политику гостевой ОС. `NEVERD_ENABLE_CPU_EMULATION` включает слой CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` добавляет ограниченную среду Windows WDM/KMDF x64. `linux-elf64-v1` выполняет поддерживаемые процессы Linux ELF. См. [Выполнение CPU](cpu-execution.md), [Эмуляция гостевых процессов](process-emulation.md) и [Эмуляция драйверов Windows](driver-emulation.md).
+
+Профили checked используют KVM на Linux и WHP на Windows при совпадении ISA, а Unicorn — при разных ISA. Нативная проверка ARM64/WHP ещё требуется. `driver-strict` сейчас использует Unicorn; путь драйверов KVM/WHP требует `checked-x64-v1`. Явно выбранный недоступный бэкенд завершается понятной ошибкой. Общая RAM, алиасы, поэтапные записи, скалярные атомарные операции, типизированные исключения и полное состояние x64 FP/SSE реализованы в документированных контрактах ISA/ОС. Это не гарантирует произвольные драйверы или реализованные среды Android/Darwin.
 
 <!-- i18n-section: how-it-works -->
 

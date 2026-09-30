@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
 
 [← NeverD 项目](project.md)
 
@@ -11,6 +11,10 @@
 **移动端支持（实验性 CLI）：** `neverd mobile` 支持从 [Android](android.md) APK、DEX、smali 恢复 Java，以及从 [iOS](ios.md) IPA、`.app`、Mach-O 恢复原生 C 和受支持的 Objective-C/Swift 源码。JSON 报告记录恢复结果与覆盖范围。从[移动端总览](mobile.md)开始查看，各平台指南提供命令与限制。
 
 英文指南直接位于 `docs/`。译文按语言分布在 `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/` 和 `zh-TW/` 目录中。各语言目录包含文档索引 `README.md`、项目概览 `project.md`、专题指南、`CONTRIBUTING.md`、`ATTRIBUTION.md` 和 `roadmap.md`。共享图片保存在 `assets/`。
+
+CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
+
+checked 配置在 ISA 匹配的 Linux 主机上使用 KVM，在匹配的 Windows 主机上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 运行覆盖仍待实机验证。`driver-strict` 当前使用 Unicorn；驱动的 KVM/WHP 路径需选择 `checked-x64-v1`。显式后端不可用时明确失败。共享 RAM、别名、分阶段写入、标量原子操作、类型化异常和完整 x64 FP/SSE 上下文已在文档规定的指令及 OS 契约内实现。这不表示兼容任意驱动或已实现 Android/Darwin 环境。
 
 | 文档 | 说明 |
 |------|------|
@@ -25,7 +29,7 @@
 | [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
 | [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
 | [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
-| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM 初始化、串行缓冲／直接请求、工作项、定时器、DPC、事件与等待，以及行为报告和限制; KMDF 1.33 非 PnP 驱动／对象生命周期和经过验证的 x64 CFG |
+| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM/KMDF 生命周期、请求、硬件场景、SEH、PnP 子集、后端选择及限制 |
 | [内存安全审计与猎取](memory-safety.md) | 堆对象生命周期与拷贝越界分析：各格式身份契约、汇/源目录、判定、预算与 JSON 模式 |
 | [原生插件](plugins.md) | 纯 C 描述符 ABI、回调与事件、构建/链接流程、发现顺序及兼容性规则 |
 | [Python 插件](python-plugins.md) | 插件编写、会话与事件 API、隔离、测试及发布 |

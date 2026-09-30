@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center" dir="rtl">
 
@@ -92,6 +92,14 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 | [iOS](ios.md) | IPA و`.app` وMach-O ‏(arm64/x86_64) | شيفرة C أصلية ومصادر Objective-C/Swift المدعومة وتقرير تغطية JSON |
 
 تعتمد الاستعادة على أنماط الشيفرة المدعومة؛ راجع [نظرة الهاتف العامة (بالإنجليزية)](../mobile.md) وأدلة المنصات لمعرفة التغطية والحدود.
+
+<!-- i18n-section: cpu-workloads -->
+
+### تنفيذ المعالج وبيئات الضيف
+
+يفصل تنفيذ المعالج بين قبول ISA وذاكرة الضيف ونقل المحرك وسياسة نظام الضيف. يتيح `NEVERD_ENABLE_CPU_EMULATION` طبقة x64/ARM64، ويضيف `NEVERD_ENABLE_DRIVER_EMULATION` بيئة Windows WDM/KMDF x64 المحدودة. يشغّل `linux-elf64-v1` عمليات Linux ELF المدعومة. انظر [تنفيذ المعالج](cpu-execution.md) و[محاكاة عمليات الضيف](process-emulation.md) و[محاكاة برامج تشغيل Windows](driver-emulation.md).
+
+تستخدم ملفات checked محرك KVM على Linux وWHP على Windows عند تطابق ISA، وUnicorn عند اختلافها. ما زال التحقق من التشغيل الأصلي ARM64/WHP مطلوباً. يستخدم `driver-strict` حالياً Unicorn؛ ويتطلب مسار برامج التشغيل KVM/WHP عقد `checked-x64-v1`. يفشل المحرك المحدد صراحةً بوضوح عند عدم توفره. نُفذت RAM المشتركة والأسماء المستعارة والكتابات المرحلية والعمليات الذرية العددية والاستثناءات المعرّفة وحالة x64 FP/SSE الكاملة ضمن عقود ISA/نظام التشغيل الموثقة. لا يعني ذلك توافق برامج تشغيل اعتباطية أو تنفيذ بيئات Android/Darwin.
 
 <!-- i18n-section: how-it-works -->
 

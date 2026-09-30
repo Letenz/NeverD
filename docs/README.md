@@ -14,6 +14,10 @@ and `zh-TW/`. Each language directory contains a `README.md` documentation index
 a `project.md` project overview, topic guides, `CONTRIBUTING.md`, `ATTRIBUTION.md`,
 and `roadmap.md`. Shared images remain in `assets/`.
 
+CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](cpu-execution.md), [Guest process emulation](process-emulation.md) and [Windows driver emulation](driver-emulation.md).
+
+Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts and Unicorn across ISAs. Native ARM64/WHP runtime coverage is still pending. `driver-strict` currently uses Unicorn; the driver KVM/WHP path requires `checked-x64-v1`. Explicit backend selections fail clearly when unavailable. Shared RAM, aliases, staged writes, scalar atomics, typed exceptions and full x64 FP/SSE context state are implemented within the documented instruction and OS contracts. This does not claim arbitrary-driver compatibility or implemented Android/Darwin environments.
+
 | Document | Description |
 |----------|-------------|
 | [README (English)](../README.md) | Overview, quick start, build, SDK, CLI |
@@ -27,7 +31,7 @@ and `roadmap.md`. Shared images remain in `assets/`.
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
 | [Bitvector proof backends](solver.md) | Optional Z3 proofs, fail-closed synthesis, independent solver tests and query export |
 | [Guest process emulation](process-emulation.md) | Explicit Linux ELF64 process profile, startup stack, system calls, bounded output, CLI/C/Python and current limits |
-| [Windows driver emulation](driver-emulation.md) | Bounded x64 WDM initialization, serial buffered/direct requests, work items, timers, DPCs, events and waits, with behavior reports and limits; KMDF 1.33 non-PnP driver/object lifetimes and validated x64 CFG |
+| [Windows driver emulation](driver-emulation.md) | Bounded x64 WDM/KMDF lifecycle, requests, hardware scenarios, SEH, PnP subsets, backend selection and limits |
 | [Memory-safety audit & hunt](memory-safety.md) | Heap-lifetime and copy-overflow analysis: identity contract per format, sink/source catalog, verdicts, budgets, and JSON schema |
 | [Native plugins](plugins.md) | Pure-C descriptor ABI, callbacks and events, build/link workflow, discovery, and compatibility rules |
 | [Python plugins](python-plugins.md) | Typed authoring SDK, embedded host, lifecycle, loading, safety, tests, and publishing |

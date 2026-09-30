@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -92,6 +92,14 @@ La CLI experimental `neverd mobile` admite las siguientes entradas y salidas:
 | [iOS](ios.md) | IPA, `.app`, Mach-O (arm64/x86_64) | C nativo, código Objective-C/Swift compatible e informe de cobertura JSON |
 
 La recuperación depende de los patrones de código compatibles; consulte la [introducción móvil (inglés)](../mobile.md) y las guías de plataforma para conocer la cobertura y los límites.
+
+<!-- i18n-section: cpu-workloads -->
+
+### Ejecución CPU y entornos invitados
+
+La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
+
+Los perfiles checked usan KVM en Linux y WHP en Windows cuando coincide la ISA, y Unicorn entre ISA distintas. Sigue pendiente la validación nativa ARM64/WHP. `driver-strict` usa actualmente Unicorn; la ruta de controladores KVM/WHP requiere `checked-x64-v1`. Un motor explícito no disponible falla claramente. RAM compartida, alias, escrituras por etapas, operaciones atómicas escalares, excepciones tipadas y estado FP/SSE x64 completo están implementados dentro de los contratos ISA/SO documentados. Esto no garantiza controladores arbitrarios ni entornos Android/Darwin implementados.
 
 <!-- i18n-section: how-it-works -->
 

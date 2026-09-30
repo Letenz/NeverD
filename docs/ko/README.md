@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: ca9503837987b49f4237fc47501b098aa43bb3e4fcdda4fe38c64eae4aad6b50 -->
+<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -11,6 +11,10 @@
 **모바일 지원(실험적 CLI):** `neverd mobile`은 [Android](android.md) APK, DEX, smali에서 Java를, [iOS](ios.md) IPA, `.app`, Mach-O에서 네이티브 C 및 지원되는 Objective-C/Swift 소스를 복원합니다. JSON 보고서는 복원 결과와 범위를 설명합니다. [모바일 개요(영문)](../mobile.md)부터 읽고 플랫폼 가이드에서 명령과 제한을 확인하세요.
 
 영어 가이드는 `docs/` 바로 아래에 있습니다. 번역은 `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/`, `zh-TW/`로 나뉩니다. 각 언어 디렉터리는 문서 색인 `README.md`, 프로젝트 개요 `project.md`, 주제별 가이드, `CONTRIBUTING.md`, `ATTRIBUTION.md`, `roadmap.md`를 포함합니다. 공용 이미지는 `assets/`에 있습니다.
+
+CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
+
+checked 프로필은 ISA가 일치하는 Linux 호스트에서 KVM, Windows 호스트에서 WHP, 다른 ISA 사이에서는 Unicorn을 사용합니다. 네이티브 ARM64/WHP 실행 검증은 아직 필요합니다. 현재 `driver-strict`는 Unicorn을 사용하며 드라이버의 KVM/WHP 경로에는 `checked-x64-v1`이 필요합니다. 지정된 백엔드를 사용할 수 없으면 명확히 실패합니다. 공유 RAM, 별칭, 단계적 쓰기, 스칼라 원자 연산, 형식화된 예외와 전체 x64 FP/SSE 컨텍스트는 문서의 명령 및 OS 계약 범위에서 구현되어 있습니다. 임의의 드라이버 호환성이나 Android/Darwin 환경 구현을 뜻하지 않습니다.
 
 | 문서 | 설명 |
 |------|------|
@@ -25,7 +29,7 @@
 | [CPU 실행](cpu-execution.md) | 구성, 기능 조회, 백엔드 가용성, 형식화된 결과 |
 | [비트벡터 증명 백엔드](solver.md) | 선택적 Z3 증명, 증명 게이트 합성, 독립 검사, query 내보내기 |
 | [게스트 프로세스 에뮬레이션](process-emulation.md) | Linux ELF 프로필, 시작, 서비스, 제한, 테스트 |
-| [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM 초기화, 순차 buffered/direct 요청, 작업 항목, 타이머, DPC, 이벤트와 대기, 동작 보고서 및 한도; KMDF 1.33 비 PnP 드라이버/객체 수명 및 검증된 x64 CFG |
+| [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM/KMDF 수명 주기, 요청, 하드웨어 시나리오, SEH, PnP 하위 집합, 백엔드 선택 및 제한 |
 | [메모리 안전성 감사와 헌트](memory-safety.md) | 힙 수명과 복사 오버플로 분석: 형식별 신원 계약, 싱크/소스 카탈로그, 판정, 예산, JSON 스키마 |
 | [네이티브 플러그인](plugins.md) | 순수 C descriptor ABI, callback과 event, build/link workflow, discovery 및 호환성 규칙 |
 | [Python 플러그인](python-plugins.md) | 플러그인 작성, 세션·이벤트 API, 격리, 테스트 및 배포 |

@@ -22,6 +22,7 @@ NEVERD_EXECUTION_DIAGNOSTIC(ContextOwner,
                             "CPU context belongs to another backend instance")
 NEVERD_EXECUTION_DIAGNOSTIC(Register,
                             "invalid or unsupported guest register state")
+NEVERD_EXECUTION_DIAGNOSTIC(FPState, "invalid x64 floating-point state buffer")
 NEVERD_EXECUTION_DIAGNOSTIC(Decode,
                             "cannot initialize guest instruction decoder")
 NEVERD_EXECUTION_DIAGNOSTIC(

@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: e0bc7cc2f93b828c566fbff64c8c52e2eb0823cce6e006690b016b2e1715ea51 -->
+<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
 
 <div align="center">
 
@@ -92,6 +92,14 @@ Low/Med/High IR, 검증된 LLVM, portable C11, 안전한 stable Rust를 사용�
 | [iOS](ios.md) | IPA, `.app`, Mach-O(arm64 / x86_64) | 네이티브 C, 지원되는 Objective-C / Swift 소스 및 JSON 커버리지 보고서 |
 
 복원은 지원하는 코드 패턴에 따라 달라집니다. 범위와 제한은 [모바일 개요(영어)](../mobile.md) 및 플랫폼별 가이드를 참고하세요.
+
+<!-- i18n-section: cpu-workloads -->
+
+### CPU 실행과 게스트 환경
+
+CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
+
+checked 프로필은 ISA가 일치하는 Linux 호스트에서 KVM, Windows 호스트에서 WHP, 다른 ISA 사이에서는 Unicorn을 사용합니다. 네이티브 ARM64/WHP 실행 검증은 아직 필요합니다. 현재 `driver-strict`는 Unicorn을 사용하며 드라이버의 KVM/WHP 경로에는 `checked-x64-v1`이 필요합니다. 지정된 백엔드를 사용할 수 없으면 명확히 실패합니다. 공유 RAM, 별칭, 단계적 쓰기, 스칼라 원자 연산, 형식화된 예외와 전체 x64 FP/SSE 컨텍스트는 문서의 명령 및 OS 계약 범위에서 구현되어 있습니다. 임의의 드라이버 호환성이나 Android/Darwin 환경 구현을 뜻하지 않습니다.
 
 <!-- i18n-section: how-it-works -->
 

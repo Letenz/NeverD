@@ -90,9 +90,9 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
-// Several LSDA ranges may share one cleanup, with unprotected instructions
-// between them. Preserve those holes rather than treating their union as one
-// protected interval. Every table entry and pad record must agree exactly.
+// LSDA ranges may share one cleanup, with unprotected instructions between
+// them. Preserve those holes rather than treating their union as one protected
+// interval. Every table entry and pad record must agree exactly.
 inline std::optional<std::vector<ObjCSynchronizedSourceRegion>>
 objcSynchronizedInterleavedRanges(const BinaryImage &Image,
                                   const HighFunc &Function) {
@@ -100,7 +100,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
     return std::nullopt;
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
-  if (Sites.size() < 5 || Sites.size() > 129 || Sites.front().LandingPadVA ||
+  if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
       Sites.back().LandingPadVA)
     return std::nullopt;
   std::vector<ObjCSynchronizedSourceRegion> Regions;
@@ -128,7 +128,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
       return std::nullopt;
     Regions.push_back({Range.Begin, Range.End, Landing});
   }
-  if (Regions.size() < 2 || Regions.size() != EH.ObjC->LandingPads.size() ||
+  if (Regions.empty() || Regions.size() != EH.ObjC->LandingPads.size() ||
       Next != EH.CodeRange.End || !Landing || Landing > InvalidVA - 20 ||
       EH.CodeRange.End != Landing + 20)
     return std::nullopt;
@@ -701,6 +701,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   const unsigned ReceiverWRegisters[] = {ARM64_REG_W19, ARM64_REG_W20,
                                          ARM64_REG_W21, ARM64_REG_W22};
   uint8_t UnprotectedARC = 0, ProtectedARC = 0;
+  bool BypassesLock = false;
   for (va_t Address = Function.Entry; Address < ExitCall; Address += 4) {
     const uint8_t *Bytes = Image.readVA(Address, 4);
     DecodedInsn Instruction{};
@@ -743,6 +744,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
           objcSynchronizedForwardBranch(Instruction, Landing - 4, ExitCall + 4);
       if (!JoinsLockedPath && !SkipsLock)
         return std::nullopt;
+      BypassesLock |= SkipsLock;
     }
     if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
         HasCall(Address, "_objc_sync_exit"))
@@ -770,7 +772,12 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   // The rendered calls have canonical ARC names, even for register veneers.
   // Only suspend an operation when every occurrence in the locked body is
   // outside the LSDA ranges. Otherwise its source identity is insufficient.
-  if (!UnprotectedARC || (UnprotectedARC & ProtectedARC))
+  // The legacy proofs own ordinary single-range lifetimes. This proof also
+  // handles a single range when a verified prefix path bypasses the lock;
+  // no ARC suspension is needed if every locked-body call is protected.
+  if ((Regions->size() == 1 && !BypassesLock) ||
+      (Regions->size() > 1 && !UnprotectedARC) ||
+      (UnprotectedARC & ProtectedARC))
     return std::nullopt;
   // The normal unlock must be followed by a straight-line return tail. No
   // normal path may enter the exceptional pad or reenter the locked body.
@@ -817,8 +824,6 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
                                      const HighFunc &Function) {
-  if (auto Proof = proveObjCSynchronizedInterleavedCleanup(Image, Function))
-    return Proof;
   if (auto Proof =
           proveObjCSynchronizedRetainedStackReceiverCleanup(Image, Function))
     return Proof;
@@ -827,7 +832,10 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
   if (auto Proof =
           proveObjCSynchronizedRegisterReceiverCleanup(Image, Function))
     return Proof;
-  return proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function);
+  if (auto Proof =
+          proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function))
+    return Proof;
+  return proveObjCSynchronizedInterleavedCleanup(Image, Function);
 }
 
 // The proved pad is an exceptional entry, not a normal source path. A full
