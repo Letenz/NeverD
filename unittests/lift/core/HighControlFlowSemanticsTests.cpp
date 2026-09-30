@@ -5227,3 +5227,69 @@ TEST(HighControlFlowSemantics, CodeAfterALoopMovesToItsOnlyBreak) {
   EXPECT_FALSE(breakToTheLoopFollow(F.Body));
   EXPECT_EQ(countKind(F, StmtKind::Goto), 2u);
 }
+
+namespace {
+class CalleeSignatures : public DebugContext {
+public:
+  std::vector<FunctionSym> Functions;
+
+  std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+    for (const FunctionSym &F : Functions)
+      if (F.Addr == Addr)
+        return F;
+    return std::nullopt;
+  }
+  std::optional<VariableSym> resolveVariable(va_t, int64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<TypeSym> resolveType(uint64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<SourceLoc> sourceLocation(va_t) const override {
+    return std::nullopt;
+  }
+  std::vector<FunctionSym> allFunctions() const override { return Functions; }
+  bool hasInfo() const override { return true; }
+};
+} // namespace
+
+TEST(HighControlFlowSemantics, DebugDeclaredNoReturnCalleeKeepsNoreturn) {
+  // if (c) KeBugCheckEx(1, 2, 3, 4, 5); return 0; -- the statement writer
+  // ends the path at the call, so the declaration from the debug signature
+  // must not let C fall through it.
+  FunctionSym Callee;
+  Callee.Name = "KeBugCheckEx";
+  Callee.Addr = 0x5000;
+  Callee.ReturnType = NdType::makeInt(4);
+  CalleeSignatures Dbg;
+  Dbg.Functions = {Callee};
+  std::vector<ExprPtr> Arguments;
+  for (uint64_t I = 1; I <= 5; ++I)
+    Arguments.push_back(HighExpr::makeConst(I, 8));
+  HighStmt Check;
+  Check.Kind = StmtKind::Call;
+  Check.Addr = 0x1004;
+  Check.CallExpr = HighExpr::makeCall("KeBugCheckEx", 0x5000, Arguments);
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Addr = 0x1000;
+  Test.Cond = local(0);
+  Test.Body = {Check};
+  HighFunc F;
+  F.Name = "checked";
+  F.Entry = 0x1000;
+  F.ReturnType = NdType::makeInt(8);
+  F.Body = {Test, result(0x1008, HighExpr::makeConst(0, 8))};
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}, &Dbg));
+  Stream.flush();
+  const size_t Declaration = Source.find("KeBugCheckEx(");
+  ASSERT_NE(Declaration, std::string::npos) << Source;
+  const size_t End = Source.find(";\n", Declaration);
+  ASSERT_NE(End, std::string::npos) << Source;
+  EXPECT_NE(Source.substr(Declaration, End - Declaration)
+                .find("__attribute__((noreturn))"),
+            std::string::npos)
+      << Source;
+}

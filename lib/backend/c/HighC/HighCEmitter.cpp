@@ -1451,6 +1451,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             : Existing->second;
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
+    // The statement writer ends a path at a call to a known noreturn function
+    // (isNoreturnCallExpr); its declaration must say so, or C falls through.
+    const bool NoReturn =
+        libc::isNoReturnFunction(Name) || libc::isNoReturnFunction(Identifier);
     if (auto Sources = ExternalCallSources.find(Name);
         Sources != ExternalCallSources.end())
       for (const std::string &SourceName : Sources->second)
@@ -1547,8 +1551,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
                !ConflictingDebugExternSigs.count(Name) &&
                DebugExternSigs.count(Name)) {
       DeclareSyntheticThis(Identifier);
-      OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name)
-         << ";\n";
+      OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name);
+      if (NoReturn)
+        OS << " __attribute__((noreturn))";
+      OS << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name) &&
                msvcAtlCallee(Identifier)) {
       DeclareSyntheticThis(Identifier);
@@ -1568,8 +1574,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         }
       }
       OS << ")";
-      if (libc::isNoReturnFunction(Name) ||
-          libc::isNoReturnFunction(Identifier))
+      if (NoReturn)
         OS << " __attribute__((noreturn))";
       OS << ";\n";
     }
