@@ -12414,6 +12414,89 @@ TEST(ObjCCallHints, UIKitImageConstructionKeepsScalarRecordAndResultTypes) {
   }
 }
 
+TEST(ObjCCallHints, UIKitBezierDrawingKeepsExactReceiverAndAggregateABI) {
+  const struct {
+    const char *Owner, *Selector;
+    bool ClassMethod;
+    NdTypeKind ReturnKind;
+    unsigned Parameters;
+    const char *ReturnClass;
+  } Cases[] = {
+      {"UIBezierPath",
+       "bezierPathWithRoundedRect:byRoundingCorners:cornerRadii:", true,
+       NdTypeKind::Ptr, 5, "First"},
+      {"UIBezierPath", "closePath", false, NdTypeKind::Void, 2, ""},
+      {"UIBezierPath", "addClip", false, NdTypeKind::Void, 2, ""},
+      {"UIBezierPath", "stroke", false, NdTypeKind::Void, 2, ""},
+      {"UIColor", "setStroke", false, NdTypeKind::Void, 2, ""},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Selector);
+    auto Image = receiverImage(Arch::AArch64, Case.ClassMethod);
+    Image.ObjCMethods.front().Selector = "useDrawingAPI";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = Case.Owner;
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    const auto Hint =
+        objcReceiverSourceTypeHint(Image, Case.Selector, *Receiver);
+    ASSERT_TRUE(Hint.Signature);
+    ASSERT_TRUE(Hint.Signature->ReturnType);
+    EXPECT_EQ(Hint.Signature->ReturnType->Kind, Case.ReturnKind);
+    ASSERT_EQ(Hint.Signature->Parameters.size(), Case.Parameters);
+    EXPECT_EQ(Hint.ReturnClass.value_or(""), Case.ReturnClass);
+    if (Case.ClassMethod) {
+      const auto &TRI = getTargetRegInfo(Arch::AArch64);
+      const auto &Rect = Hint.Signature->Parameters[2];
+      EXPECT_EQ(Rect.Type->Size, 32U);
+      ASSERT_EQ(Rect.Components.size(), 4U);
+      for (unsigned I = 0; I < 4; ++I)
+        EXPECT_EQ(Rect.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+      const auto &Corners = Hint.Signature->Parameters[3];
+      EXPECT_EQ(Corners.Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Corners.Type->Size, 8U);
+      EXPECT_EQ(Corners.Location.RegisterOffset, TRI.IntParamRegs[2]);
+      const auto &Radii = Hint.Signature->Parameters[4];
+      EXPECT_EQ(Radii.Type->Size, 16U);
+      ASSERT_EQ(Radii.Components.size(), 2U);
+      for (unsigned I = 0; I < 2; ++I)
+        EXPECT_EQ(Radii.Components[I].RegisterOffset, TRI.FPParamRegs[I + 4]);
+    }
+    if (llvm::StringRef(Case.Selector) == "setStroke") {
+      const auto Unqualified = objcSelectorSourceTypeHint(Image, Case.Selector);
+      ASSERT_TRUE(Unqualified);
+      EXPECT_EQ(Unqualified->Parameters.size(), 2U);
+      EXPECT_EQ(Unqualified->ReturnType->Kind, NdTypeKind::Void);
+      auto Conflicting = Image;
+      auto OtherMethod = Conflicting.ObjCMethods.front();
+      OtherMethod.Selector = "setStroke";
+      OtherMethod.TypeEncoding = "@16@0:8";
+      OtherMethod.TypeHint = parseObjCMethodEncoding(OtherMethod.Selector,
+                                                     OtherMethod.TypeEncoding);
+      ASSERT_TRUE(OtherMethod.TypeHint);
+      Conflicting.ObjCMethods.push_back(OtherMethod);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Conflicting, "setStroke"));
+    }
+    auto Changed = Image;
+    Changed.Arch = Arch::X64;
+    EXPECT_FALSE(objcReceiverSourceTypeHint(Changed, Case.Selector, *Receiver)
+                     .Signature);
+    Changed = Image;
+    Changed.DynInfo.NeededLibs.clear();
+    EXPECT_FALSE(objcReceiverSourceTypeHint(Changed, Case.Selector, *Receiver)
+                     .Signature);
+    auto WrongReceiver = *Receiver;
+    WrongReceiver.IsClassMethod = !Case.ClassMethod;
+    EXPECT_FALSE(objcReceiverSourceTypeHint(Image, Case.Selector, WrongReceiver)
+                     .Signature);
+  }
+}
+
 TEST(ObjCCallHints, UIKitScreenResultSurvivesExactArcReturnIdentity) {
   auto Image = image(Arch::AArch64);
   Image.ObjCMethods.clear();
