@@ -20,7 +20,7 @@ CPU 실행은 게스트 OS, 이미지 로더, 호출 규약과 독립적입니�
 | `page_size` | 4096 | 게스트 매핑 단위. 다른 값은 거부 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def)의 필수 기능 이름 |
 
-`driver-strict`는 x64, `software-cpu-v1`은 x64와 ARM64를 허용합니다. `checked-x64-v1` 및 `checked-aarch64-v1`은 지정된 아키텍처와 supervisor 권한을 요구합니다. `checked-user-x64-v1`과 `checked-user-aarch64-v1`은 동일하게 제한된 스칼라 명령 목록을 각각 CPL3/EL0에서 실행하며 MMU 격리와 명시적 서비스 요청 종료를 사용합니다. Unicorn 및 호스트와 일치하는 KVM/WHP를 지원하고, `auto`는 기존 호스트 선택을 따릅니다. flat 프로필은 아키텍처 수준 사용자/supervisor MMU 격리를 보장하지 않습니다. 모든 checked 프로필은 FP/SIMD, MMIO, 포트 I/O 및 병렬 CPU 요구사항을 거부합니다. `service_traps`는 user 프로필만 알립니다.
+`driver-strict`는 x64, `software-cpu-v1`은 x64와 ARM64를 허용합니다. `checked-x64-v1` 및 `checked-aarch64-v1`은 지정된 아키텍처와 supervisor 권한을 요구합니다. `checked-user-x64-v1`과 `checked-user-aarch64-v1`은 계약에 맞는 제한 명령 목록을 각각 CPL3/EL0에서 실행하며 MMU 격리와 명시적 서비스 요청 종료를 사용합니다. Unicorn 및 호스트와 일치하는 KVM/WHP를 지원하고, `auto`는 기존 호스트 선택을 따릅니다. flat 프로필은 아키텍처 수준 사용자/supervisor MMU 격리를 보장하지 않습니다. checked ARM64 프로필은 FP/SIMD를 거부하지만 x64는 아래의 제한된 명령군을 허용합니다. supervisor x64는 제한된 MMIO와 prepared-read 문자열 전송을 추가하고, user 프로필은 장치 매핑을 거부합니다. 모든 checked 프로필에서 포트 I/O와 병렬 CPU 요구사항은 계속 거부됩니다. `service_traps`는 user 프로필만 알립니다.
 
 사용자 실행은 매핑된 **모든** 페이지에 `UserAccessible`과 적절한 `Read`, `Write`, `Execute` 권한을 요구합니다. 기존 매핑은 기본적으로 supervisor용이며, 물리 바이트를 공유하는 별칭도 권한은 독립적입니다. `UserAccessible`만으로는 접근할 수 없습니다. 신뢰된 호스트 연산과 supervisor CPU는 RWX를 사용합니다. 예:
 
@@ -59,3 +59,11 @@ neverd cpu-capabilities \
 checked user x64는 접두사 없는 정확한 `SYSCALL` 인코딩만 가로채고 checked user ARM64는 `SVC #imm16`을 가로챕니다. `SYSENTER`, `INT`, `HVC`, `BRK` 및 다른 메커니즘은 미지원입니다. 명령 관찰자가 먼저 실행됩니다. 중지나 fault가 없으면 CPU는 명령 실행이나 백엔드 진입 **전에** `ExecutionExitKind::ServiceRequest`를 반환하고 종류, 원래 `PC`, 순차 `NextPC`, SVC immediate를 제공합니다. 레지스터, 플래그, 스택, 권한은 바뀌지 않습니다. x64 RCX/R11 SYSCALL clobber와 ARM64 예외 벡터 진입도 아직 발생하지 않습니다. SVC immediate는 범용 서비스 번호가 아닙니다.
 
 요청이 보류된 동안 실행, CPU 변경, 주소 공간 연결, 컨텍스트 저장/복원을 막습니다. CPU가 정지한 상태에서 OS 소유자가 `takeServiceRequest()`로 정확히 한 번 가져갑니다. OS 소유자는 ABI 해석, 서비스 처리, 결과 레지스터 및 다음 PC/예외 전송을 명시적으로 수행해야 합니다. 미지원 서비스는 이 경계에서 실패합니다. 원래 PC를 다시 실행하면 새 요청이 생성되며 NOP나 성공 결과를 암묵적으로 만들지 않습니다. 서비스 이벤트는 동시 중지/deadline보다 우선하지만 게스트/백엔드 오류는 더 높은 우선순위입니다. CPU 중지, 소프트웨어 HLT, deadline, trap은 워크로드 성공을 뜻하지 않습니다. 별도의 [Linux 프로세스 프로필](process-emulation.md)은 OS 서비스를 직접 모델링하며 Windows, Android, Darwin 동작을 입증하지 않습니다. Windows 및 ARM64 native 실행은 실기 런타임 검증이 필요합니다.
+
+## x64 확장과 네이티브 CPU 상태
+
+checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 DAZ와 마스크되지 않은 예외는 거부합니다. checked ARM64는 계속 FP/SIMD를 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
+
+thread pointer는 x64 FS/GS base와 ARM64 `TPIDR_EL0`의 정확한 `MRS`/`MSR` 인코딩을 포함합니다. 네이티브 전송 계층과 CPU snapshot은 메모리와 독립적으로 상태를 보존하지만 OS 스레드나 TLS 블록을 만들지는 않습니다. supervisor x64는 1/2/4바이트 정렬 scalar MMIO와 재시작 경계마다 MOVS 한 요소를 지원합니다. 장치 읽기는 부작용 없는 준비 preview 후 최대 한 번 commit해야 합니다. user 프로필은 장치 매핑을 거부하며 RMW, 넓은 MMIO, 포트 I/O도 계속 미지원입니다.
+
+KVM/WHP는 활성 네이티브 진입을 취소하고 실행 자원을 회수하기 전에 취소 완료를 확인합니다. KVM은 전용 실행 스레드와 일시적으로 차단 해제하는 realtime signal을 사용하며 진입 중 해당 signal을 무시 상태로 두면 안 됩니다. 호출자의 signal mask/handler는 바꾸지 않습니다. 게스트 진행 상태가 불확실한 취소는 terminal failure이고 엄격한 wall-clock deadline은 보장하지 않습니다.

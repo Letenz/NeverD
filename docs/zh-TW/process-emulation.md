@@ -6,7 +6,7 @@
 
 `neverd emulate` 會在明確指定的客體 OS 設定檔下執行映像。CPU 傳輸、映像解析、程序進入點與 OS 服務由不同邊界負責。啟用 `NEVERD_ENABLE_CPU_EMULATION=ON`；驅動程式模擬也會包含它。
 
-首個設定檔 `linux-elf64-v1` 會在 CPL3 或 EL0 執行 x64 與 AArch64 freestanding ELF `ET_EXEC`。它載入真實 ELF 區段、建構初始堆疊、依指令量恢復執行，並處理明確的 Linux 系統呼叫要求。這是獨立程序模型，不是完整 Linux 發行版，也不保證任意 libc 二進位檔都能執行。動態連結、`PT_TLS`、訊號、執行緒、FP/SIMD 及不支援的服務都會明確失敗。Windows、Android、Darwin 和其他核心工作負載另行處理。
+首個設定檔 `linux-elf64-v1` 會在 CPL3 或 EL0 執行 x64/AArch64 ELF `ET_EXEC` 與可自行重定位的靜態 PIE `ET_DYN`。它載入真實 ELF 區段、建構初始堆疊、依指令量恢復執行，並處理明確的 Linux 系統呼叫要求。這是獨立程序模型，不是完整 Linux 發行版，也不保證任意 libc 二進位檔都能執行。動態連結、訊號、執行緒、檔案系統及不支援的服務都會明確失敗。x64 設定檔允許少數受限 SSE/SSE2 形式；AArch64 仍為整數指令設定檔。Windows、Android、Darwin 和其他核心工作負載另行處理。
 
 ## CLI 與 SDK
 
@@ -59,11 +59,21 @@ OS 政策重用既有 ELF 載入器解碼的 program headers。它驗證 ABI 標
 ## 驗證
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # shared-library/CLI 建置：
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
 測試為兩種 ISA 編譯原始 ELF entry assembly 與 C，檢查資料/BSS、啟動中繼資料、syscall 錯誤、二進位輸出、權限故障、部分寫入、不支援服務及跨量子預算保留。不可用後端會明確標示為 skip。公開測試會經過 C ABI/CLI，並核對報告與退出碼。交叉編譯和 Unicorn ARM64 都不是原生 ARM64 KVM/WHP 的執行證據。
+
+## 靜態 PIE、TLS 與驗證
+
+靜態 PIE 使用至少 `0x40000000` 的確定性 load bias，並依較大的 `PT_LOAD` 對齊需求提高。所有對映區段、入口 PC、`AT_PHDR`/`AT_ENTRY` 使用相同 bias；原始 program header 值不變，且無 interpreter 時 `AT_BASE` 為 0。對映來源明確採用原始檔案位元組，不包含分析階段 pointer fixup；客體啟動必須自行執行 relocation 與初始化。Loader 從有界的原始檔案記錄解碼 `PT_DYNAMIC`，不依賴 section header。若存在，table 必須可讀、正確終止且最多 4096 筆。拒絕 `PT_INTERP` 與外部 dependency/filter/audit 標籤；不提供 dynamic linker、symbol resolver 或 constructor runner。
+
+靜態 `PT_TLS` 樣板會視為 loader 提供的事實加以驗證：單一樣板、有限的檔案／記憶體範圍、相符對齊及可讀的初始化位元組。客體啟動會配置並初始化 TLS 區塊、安裝 thread pointer；Linux 模型不會虛構 libc 專用 TCB/DTV。這讓 freestanding 程式支援 compiler-generated local-exec TLS。Dynamic TLS 與 OS 執行緒仍是獨立工作。
+
+x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS`。Set 可接受尚未對映的 user-range 基底，後續解參照仍會檢查權限。kernel-range 基底回傳客體 `EPERM`；無效 Get 目標回傳 `EFAULT`，不觸發 CPU fault。其他操作明確失敗。ARM64 啟動以 `MSR` 安裝 `TPIDR_EL0`；`MRS`、FS/GS 記憶體存取與內容還原會跨執行量和 backend 入口保留 thread pointer。這本身不實作 thread scheduler。
+
+PIE/TLS fixture 檢查獨立對齊區塊、TLS BSS、重定位後的 auxv，以及客體自行 relocation 前原始為零的 RELA slot。x64 測試確認 `arch_prctl` 錯誤不會遺失先前基底。請在上述 build/CTest 命令加入 `NeverDThreadPointerTests`；不可用 backend 仍明確 skip。

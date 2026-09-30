@@ -95,7 +95,12 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDIntegerABITests` 为 Windows x64、Linux x64 和 Linux ARM64 构建原始 Clang fixture，通过真实的十参数函数检查寄存器／栈参数与调用帧。Unicorn/KVM/WHP 矩阵会明确跳过不可用的主机／ISA 组合；跳过不代表通过。`NeverDExecutionBudgetTests` 不依赖定时 sleep，检查共享续接预算、预留失败和绝对 deadline。
 
-`NeverDCPUEmulationTests` 覆盖 ARM64 指令、控制流、加载、CPU 上下文、别名、缓存失效和有界循环；软件配置还执行 FP/SIMD 与 TLS。`NeverDUserExecutionTests` 检查 CPL3/EL0 页权限、别名、保护故障、上下文和地址空间切换。`NeverDServiceRequestTests` 验证 SYSCALL/SVC 在进入传输前被拦截、保留状态并恰好消费一次请求；这是交接协议，不代表完整 OS 服务实现。`NeverDExecutionConfigurationTests` 验证工厂与报告共用配置解析、区分构建支持与实时探测，并在修改前拒绝不支持的要求。公开 SDK/CLI 测试不需要 Windows 模型。
+`NeverDCPUEmulationTests` 覆盖 ARM64 指令、控制流、加载、CPU 上下文、别名、缓存失效和有界循环；软件配置还执行 FP/SIMD 与 TLS。`NeverDUserExecutionTests` 检查 CPL3/EL0 页权限、别名、保护故障、上下文和地址空间切换。`NeverDServiceRequestTests` 验证 SYSCALL/SVC 在进入传输前被拦截、保留状态并恰好消费一次请求；这是交接协议，不代表完整 OS 服务实现。`NeverDExecutionConfigurationTests` 验证工厂与报告共用配置解析、区分构建支持与实时探测，并在修改前拒绝不支持的要求。公开 SDK/CLI 测试不需要 Windows 模型。`NeverDThreadPointerTests` 检查 FS 基址、`TPIDR_EL0`、上下文恢复和权限。`NeverDKvmCancellationTests` 使用不会退出的 x64 来宾验证活动 KVM 中断、恢复及调用方信号状态不变；没有 KVM 时明确跳过。
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
 
 ```bash
 cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
@@ -106,11 +111,11 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ## Linux 进程配置测试
 
-独立的[进程测试套件](process-emulation.md#验证)编译真实 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 检查启动、program-header 策略、服务续接、二进制输出、来宾故障和资源停止。`NeverDProcessPublicTests` 通过 C API/CLI 验证且不修改分析映像。`NeverDExecutionSessionTests` 检查两个 CPU 共享内存／预算以及请求／故障恰好消费一次。`NeverDX64MemoryUpdateTests` 检查内存 INC/DEC 的宽度、flags、权限和写入观察器。
+独立的[进程测试套件](process-emulation.md#验证)编译真实 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 检查启动、program-header 策略、服务续接、二进制输出、来宾故障和资源停止。`NeverDProcessPublicTests` 通过 C API/CLI 验证且不修改分析映像。`NeverDExecutionSessionTests` 检查两个 CPU 共享内存／预算以及请求／故障恰好消费一次。`NeverDX64MemoryUpdateTests` 检查内存算术、SETcc、BT、XMM/MXCSR、写入观察器、REP 边界和预备设备读取。`DriverBackendParityTests.cpp` 运行原始与重定位 WDK fixture，并将完整可观察报告与 Unicorn 比较；缺失镜像／后端会明确跳过。
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 ```
 
 不可用后端会明确跳过。交叉编译与 Unicorn ARM64 不构成原生 KVM/WHP 证据。

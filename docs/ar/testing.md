@@ -102,7 +102,12 @@ build-release/bin/NeverDLowIRRefinementTests
 
 تبني `NeverDIntegerABITests` عينات أصلية من Clang لـWindows x64 وLinux x64 وLinux ARM64، وتختبر دوالاً ذات عشرة وسائط حقيقية عبر السجلات والمكدس وإطارات الاستدعاء. تغطي مصفوفة Unicorn/KVM/WHP؛ وتُسجّل تركيبات المضيف/ISA غير المتاحة كتخطٍ صريح، لا كنجاح. يفحص `NeverDExecutionBudgetTests` ميزانية الاستمرار المشتركة والموعد المطلق من دون نوم معتمد على التوقيت.
 
-تغطي `NeverDCPUEmulationTests` تعليمات ARM64 والتحكم والتحميلات والسياقات والاسماء المستعارة وإبطال cache والحلقات المحدودة؛ ينفذ الملف البرمجي كذلك FP/SIMD وTLS. تختبر `NeverDUserExecutionTests` صلاحيات صفحات CPL3/EL0 والاسماء المستعارة واسترداد أخطاء الحماية والسياقات وتبديل فضاء العناوين. تثبت `NeverDServiceRequestTests` أن SYSCALL/SVC يعترضان قبل دخول النقل، ويحفظان الحالة ويمنعان التعديل حتى استهلاك الطلب مرة واحدة؛ هذا بروتوكول تسليم وليس نظام خدمات OS كاملاً. وتفحص `NeverDExecutionConfigurationTests` التحقق المشترك بين المصنع والتقرير، والتمييز بين دعم البناء وفحص المضيف المباشر، وفشل التركيبات غير المدعومة قبل التعديل. الاختبارات العامة لـSDK/CLI لا تتطلب نموذج Windows.
+تغطي `NeverDCPUEmulationTests` تعليمات ARM64 والتحكم والتحميلات والسياقات والاسماء المستعارة وإبطال cache والحلقات المحدودة؛ ينفذ الملف البرمجي كذلك FP/SIMD وTLS. تختبر `NeverDUserExecutionTests` صلاحيات صفحات CPL3/EL0 والاسماء المستعارة واسترداد أخطاء الحماية والسياقات وتبديل فضاء العناوين. تثبت `NeverDServiceRequestTests` أن SYSCALL/SVC يعترضان قبل دخول النقل، ويحفظان الحالة ويمنعان التعديل حتى استهلاك الطلب مرة واحدة؛ هذا بروتوكول تسليم وليس نظام خدمات OS كاملاً. وتفحص `NeverDExecutionConfigurationTests` التحقق المشترك بين المصنع والتقرير، والتمييز بين دعم البناء وفحص المضيف المباشر، وفشل التركيبات غير المدعومة قبل التعديل. الاختبارات العامة لـSDK/CLI لا تتطلب نموذج Windows. تختبر `NeverDThreadPointerTests` FS-base و`TPIDR_EL0` واستعادة السياق والصلاحيات. تستخدم `NeverDKvmCancellationTests` ضيف x64 لا ينتهي للتحقق من إيقاف KVM النشط واستئنافه وحالة إشارات التطبيق؛ تُتخطى صراحةً عند غياب KVM.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
 
 ```bash
 cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
@@ -113,11 +118,11 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ## اختبارات ملف عمليات Linux
 
-تجمع مجموعة [محاكاة العمليات](process-emulation.md#التحقق) ملفات ELF حقيقية لـx64/AArch64. يتحقق `NeverDLinuxProcessTests` من البدء وسياسة program headers وطلبات الخدمة والمخرجات الثنائية والأعطال والموارد. يختبر `NeverDProcessPublicTests` C API وCLI دون تغيير صورة التحليل. ويغطي `NeverDExecutionSessionTests` CPUين يشتركان في الذاكرة والميزانية واستهلاك الطلب/العطل مرة واحدة؛ أما `NeverDX64MemoryUpdateTests` فيتحقق من عروض ورايات وصلاحيات INC/DEC ومراقبي الكتابة.
+تجمع مجموعة [محاكاة العمليات](process-emulation.md#التحقق) ملفات ELF حقيقية لـx64/AArch64. يتحقق `NeverDLinuxProcessTests` من البدء وسياسة program headers وطلبات الخدمة والمخرجات الثنائية والأعطال والموارد. يختبر `NeverDProcessPublicTests` C API وCLI دون تغيير صورة التحليل. ويغطي `NeverDExecutionSessionTests` CPUين يشتركان في الذاكرة والميزانية واستهلاك الطلب/العطل مرة واحدة؛ أما `NeverDX64MemoryUpdateTests` فيتحقق من حسابات الذاكرة وSETcc وBT وXMM/MXCSR ومراقبي الكتابة وحدود REP والقراءة المحضرة للأجهزة. وتعيد `DriverBackendParityTests.cpp` تشغيل صور WDK الأصلية والمعاد تموضعها وتقارن التقرير المرصود بالكامل بـUnicorn؛ الحالات والأجهزة غير المتاحة تُتخطى صراحة.
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 ```
 
 عدم توفر المحرك يسجّل كتخطٍ. اجتياز Unicorn ARM64 أو التجميع المتقاطع لا يمثل دليلاً على KVM/WHP أصلي.

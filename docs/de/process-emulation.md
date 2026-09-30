@@ -6,7 +6,7 @@
 
 `neverd emulate` führt ein Image unter einem expliziten Gastbetriebssystemprofil aus. CPU-Transport, Image-Parsing, Prozesseinstieg und OS-Dienste haben getrennte Zuständigkeiten. `NEVERD_ENABLE_CPU_EMULATION=ON` aktiviert die Funktion; Treiberemulation schließt sie ebenfalls ein.
 
-Das erste Profil `linux-elf64-v1` führt kleine x64- und AArch64-ELF-`ET_EXEC`-Programme auf CPL3 beziehungsweise EL0 aus. Es lädt echte ELF-Segmente, erstellt den initialen Stack, setzt die Ausführung in begrenzten Quanten fort und verarbeitet explizite Linux-Systemaufrufe. Dies ist ein freistehendes Prozessmodell, keine vollständige Linux-Distribution und keine Zusage für beliebige libc-Binaries. Dynamisches Linken, `PT_TLS`, Signale, Threads, FP/SIMD und nicht unterstützte Dienste schlagen ausdrücklich fehl. Windows-, Android-, Darwin- und andere Kernel-Workloads sind separat.
+Das erste Profil `linux-elf64-v1` führt x64-/AArch64-ELF-`ET_EXEC` sowie selbstrelokierende statische PIE-`ET_DYN` auf CPL3 beziehungsweise EL0 aus. Es lädt echte ELF-Segmente, erstellt den initialen Stack, setzt die Ausführung in begrenzten Quanten fort und verarbeitet explizite Linux-Systemaufrufe. Dies ist ein freistehendes Prozessmodell, keine vollständige Linux-Distribution und keine Zusage für beliebige libc-Binaries. Dynamisches Linken, Signale, Threads, Dateisysteme und nicht unterstützte Dienste schlagen ausdrücklich fehl. Der begrenzte x64-Umfang enthält einige SSE/SSE2-Formen; AArch64 bleibt ein Integer-Profil. Windows-, Android-, Darwin- und andere Kernel-Workloads sind separat.
 
 ## CLI und SDK
 
@@ -59,11 +59,21 @@ Deskriptor 1 und 2 sind virtuelle Byte-Senken. `write` prüft lesbare User-Seite
 ## Verifikation
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # In einem Shared-Library-/CLI-Build:
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
 Tests kompilieren Original-ELF-Entry-Assembly und C für beide ISAs und prüfen Daten/BSS, Startup-Metadaten, syscall-Fehler, Binärausgabe, Rechte, Teil-Schreibvorgänge, nicht unterstützte Dienste und über Quanten erhaltene Budgets. Nicht verfügbare Backends werden ausdrücklich übersprungen. Die öffentliche Suite prüft C-ABI/CLI und Bericht-/Exit-Code-Übereinstimmung. Cross-Compilation und Unicorn-ARM64 sind kein Nachweis für natives ARM64-KVM/WHP.
+
+## Statische PIEs, TLS und Verifikation
+
+Statische PIEs erhalten einen deterministischen Load Bias von mindestens `0x40000000`, erhöht für größere `PT_LOAD`-Ausrichtung. Gemappte Segmente, Eintritts-PC und `AT_PHDR`/`AT_ENTRY` verwenden denselben Bias; ursprüngliche Program-Header-Werte bleiben unverändert und `AT_BASE` bleibt ohne Interpreter null. Gemappt werden Originaldateibytes, keine Analyse-Pointer-Fixups; der Gast muss Relokationen und Initialisierung selbst ausführen. Der Loader dekodiert `PT_DYNAMIC` aus begrenzten Originaldatei-Datensätzen, unabhängig von Section-Headers. Falls vorhanden, muss die Tabelle lesbar, terminiert und höchstens 4096 Einträge lang sein. `PT_INTERP` sowie externe Abhängigkeits-, Filter- und Audit-Tags werden abgelehnt; es gibt keinen dynamischen Linker, Symbolauflöser oder Konstruktorlauf.
+
+Statische `PT_TLS`-Vorlagen werden als Loader-Fakten validiert: genau eine Vorlage, begrenzte Datei-/Speicherbereiche, passende Ausrichtung und lesbare initialisierte Bytes. Der Gaststart allokiert und initialisiert TLS-Blöcke und setzt den Thread-Pointer; das Linux-Modell erfindet kein libc-spezifisches TCB oder DTV. Compiler-erzeugtes local-exec TLS in freestanding Programmen wird damit unterstützt. Dynamisches TLS und OS-Threads bleiben außerhalb des Umfangs.
+
+Auf x64 unterstützt `arch_prctl` `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS` und `ARCH_GET_GS`. Set akzeptiert eine User-Basis auch ohne Mapping; spätere Dereferenzierungen prüfen weiterhin Rechte. Kernel-Basen liefern Gast-`EPERM`, ungültige Get-Ziele Gast-`EFAULT`, ohne CPU-Fault. Andere Operationen schlagen ausdrücklich fehl. ARM64 installiert `TPIDR_EL0` mit `MSR`; `MRS`, FS/GS-Speicherzugriffe und Kontextwiederherstellung erhalten Thread-Pointer über Quanten und Backend-Eintritte. Das implementiert keinen Scheduler.
+
+TLS-/PIE-Fixtures prüfen unabhängige ausgerichtete Blöcke, TLS-BSS, verlagerte Auxv-Werte und ursprüngliche Null-RELA-Slots vor den eigenen Relokationen des Gasts. x64-Tests prüfen `arch_prctl`-Fehler ohne Verlust der bisherigen Basis. `NeverDThreadPointerTests` gehört zum Build-/CTest-Aufruf oben; nicht verfügbare Backends bleiben explizite Skips.

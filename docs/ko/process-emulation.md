@@ -6,7 +6,7 @@
 
 `neverd emulate`는 명시적 게스트 OS 프로필로 이미지를 실행합니다. CPU 전송, 이미지 파싱, 프로세스 진입, OS 서비스는 각각 별도 소유 경계입니다. `NEVERD_ENABLE_CPU_EMULATION=ON`으로 활성화합니다. 드라이버 에뮬레이션에도 포함됩니다.
 
-첫 프로필 `linux-elf64-v1`은 CPL3 또는 EL0에서 x64/AArch64 freestanding ELF `ET_EXEC`를 실행합니다. 실제 ELF 세그먼트를 적재하고 초기 스택을 만들며 명령 quantum으로 재개하고 명시적 Linux 시스템 호출 요청을 처리합니다. 이는 완전한 Linux 배포판이나 임의 libc 바이너리 실행을 보장하지 않는 독립 프로세스 모델입니다. 동적 링크, `PT_TLS`, 시그널, 스레드, FP/SIMD, 미지원 서비스는 명시적으로 실패합니다. Windows, Android, Darwin 및 기타 커널 작업은 별도입니다.
+첫 프로필 `linux-elf64-v1`은 CPL3 또는 EL0에서 x64/AArch64 ELF `ET_EXEC`와 자체 재배치 static PIE `ET_DYN`을 실행합니다. 실제 ELF 세그먼트를 적재하고 초기 스택을 만들며 명령 quantum으로 재개하고 명시적 Linux 시스템 호출 요청을 처리합니다. 이는 완전한 Linux 배포판이나 임의 libc 바이너리 실행을 보장하지 않는 독립 프로세스 모델입니다. 동적 링크, 시그널, 스레드, 파일 시스템, 미지원 서비스는 명시적으로 실패합니다. x64 프로필은 제한된 SSE/SSE2 형식을 일부 허용하고 AArch64는 integer-only입니다. Windows, Android, Darwin 및 기타 커널 작업은 별도입니다.
 
 ## CLI 및 SDK
 
@@ -59,11 +59,21 @@ OS 정책은 기존 ELF 로더가 디코딩한 프로그램 헤더를 사용합�
 ## 검증
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # shared-library/CLI 빌드:
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
 두 ISA의 원본 ELF entry assembly/C를 컴파일합니다. 데이터/BSS, 시작 메타데이터, syscall 오류, 바이너리 출력, 권한 fault, 부분 쓰기, 미지원 서비스, quantum 간 예산 보존을 검사합니다. 사용할 수 없는 백엔드는 명시적 skip입니다. 공개 테스트는 C ABI/CLI와 보고서/종료 코드 일치를 확인합니다. 크로스 컴파일과 Unicorn ARM64는 네이티브 ARM64 KVM/WHP 증거가 아닙니다.
+
+## Static PIE, TLS 및 검증
+
+Static PIE는 최소 `0x40000000`의 결정적 load bias를 사용하고 더 큰 `PT_LOAD` 정렬 요구에 따라 높입니다. 모든 매핑 세그먼트, entry PC, `AT_PHDR`/`AT_ENTRY`가 같은 bias를 사용하며 원래 program-header 값은 유지되고 interpreter가 없으므로 `AT_BASE`는 0입니다. 매핑 원본은 분석 fixup이 적용되지 않은 파일 바이트입니다. guest 시작 코드가 직접 relocation과 초기화를 수행해야 합니다. loader는 section header 없이 원본 파일의 제한된 record에서 `PT_DYNAMIC`을 decode합니다. 존재 시 readable/terminated 상태이며 최대 4096개 항목이어야 합니다. `PT_INTERP`와 외부 dependency/filter/audit tag는 거부합니다. dynamic linker, symbol resolver, constructor runner는 제공하지 않습니다.
+
+Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. template 하나, 제한된 file/memory 범위, 일치하는 정렬, 읽을 수 있는 초기화 바이트가 필요합니다. guest startup이 TLS block을 할당·초기화하고 thread pointer를 설치합니다. Linux 모델은 libc별 TCB/DTV를 만들지 않습니다. 이에 따라 freestanding 프로그램의 컴파일러 생성 local-exec TLS를 지원합니다. dynamic TLS와 OS 스레드는 별도 작업입니다.
+
+x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`를 지원합니다. Set은 매핑되지 않은 user 범위 base도 받아들이지만 이후 역참조는 권한을 검사합니다. kernel 범위 base는 guest `EPERM`, 잘못된 Get 대상은 CPU fault 없이 `EFAULT`를 반환합니다. 나머지 operation은 명시적으로 실패합니다. ARM64 시작은 `MSR`로 `TPIDR_EL0`를 설정합니다. `MRS`, FS/GS 메모리 접근, context 복원은 quantum 및 backend 진입 사이에서 thread pointer를 보존합니다. 이는 thread scheduler를 구현하지 않습니다.
+
+PIE/TLS fixture는 독립 정렬 block, TLS BSS, 재배치된 auxv와 guest relocation 전 원본 zero RELA slot을 검사합니다. x64 테스트는 이전 base를 잃지 않은 채 `arch_prctl` 오류를 확인합니다. 위 build/CTest 명령에 `NeverDThreadPointerTests`를 추가합니다. 사용할 수 없는 backend는 명시적 skip입니다.

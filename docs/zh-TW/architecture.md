@@ -424,7 +424,7 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 
 CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗證架構、權限、位址寬度及功能。`ExecutionBudget` 為每個工作負載擁有共用指令／事件計數與絕對單調 deadline；恢復執行不會補回預算。`ExecutionSession` 擁有 CPU、hooks 與待處理的服務／錯誤續接。工作階段可共用記憶體與預算，但採合作式排程，並非平行 SMP。恢復前必須恰好消耗一次待處理要求。CPU 錯誤優先於資源停止；無法解釋的引擎停止不代表工作負載成功。
 
-`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF。動態連結、TLS、訊號、執行緒、FP/SIMD 與不支援服務都會失敗；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。這不代表支援 Windows user-mode、Android 或 Darwin 應用程式。
+`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF `ET_EXEC` 與靜態 PIE `ET_DYN`。動態連結、dynamic TLS、訊號、OS 執行緒與不支援服務都會失敗；靜態 TLS 與有限的 x64 SSE/SSE2 可用；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。這不代表支援 Windows user-mode、Android 或 Darwin 應用程式。
 
 ## 嚴格提升契約
 

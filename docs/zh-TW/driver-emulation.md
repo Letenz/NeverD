@@ -8,9 +8,11 @@ NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 
 
 ## 執行後端
 
-預設 `driver-strict` 契約繼續使用 Unicorn。實驗性 `checked-x64-v1` 整數設定以 `--backend auto` 在 Linux x86_64 選擇 KVM，在 Windows x64 選擇 WHP；明確選擇不會降級。硬體不可用或契約不符會在執行前失敗。
+預設 `driver-strict` 契約繼續使用 Unicorn。實驗性有限指令 `checked-x64-v1` 設定以 `--backend auto` 在 Linux x86_64 選擇 KVM，在 Windows x64 選擇 WHP；明確選擇不會降級。硬體不可用或契約不符會在執行前失敗。
 
-ARM64 主機上的 `checked-x64-v1` 設定使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、共享 RAM 別名及僅保存 CPU 的內容。拒絕 SIMD/x87、REP、鎖定操作、一般記憶體讀改寫、跨頁資料存取、MMIO 與未建模 CPU 效果。允許無前綴記憶體 INC/DEC，但分別檢查讀寫權限及 observer；旗標由原生執行處理。此 supervisor 契約不提供使用者程序環境。逾時與取消在已准入的有界指令之間檢查；它不是通用非同步搶佔器，客體開始執行後也不會切換後端重跑。
+ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與暫存器 BT，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 都會跨入口和內容還原保存；拒絕未遮罩 SIMD 例外、DAZ、x87、AVX 與未列出的操作。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式和跨頁單次存取仍不支援。
+
+supervisor x64 支援單次對齊的 1/2/4 位元組純量 MMIO 交易；裝置頁不會映射進原生 RAM。MOVS/REP MOVS 每個重新啟動邊界只執行一個元素。裝置來源必須提供無副作用的 prepared read，讓目的地 observer 可在裝置讀取提交前停止。Windows register bank 實作此準備流程；其他裝置會在產生效果前拒絕字串讀取。裝置 RMW、寬 MMIO、連接埠 I/O 仍不支援。要求位元組、裝置狀態及寫入事件分別比較，不依賴 Unicorn 對零計數 REP 額外觸發的終止 hook。KVM 使用標準 XSAVE 介面傳送 XMM/MXCSR 與 FP/SSE presence bits。此 supervisor 契約不提供使用者程序環境；逾時／取消在已准入的有界指令間檢查，不提供通用非同步搶佔，也不會在客體開始後切換後端。內建樣例與可用 WDK 情境會以 normal/CFG 及重定位映像和 Unicorn 比對；語料一致不代表支援任意驅動程式。
 
 開關：`NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。KVM 需要 `/dev/kvm` 權限；WHP 動態載入系統 DLL，仍需 Windows 實機驗證。新 C 入口為 `neverd_emulate_driver_backend_json`，v1 ABI 不變。報告記錄後端、契約與選擇原因。
 

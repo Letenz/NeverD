@@ -6,7 +6,7 @@
 
 `neverd emulate` は明示したゲスト OS プロファイルでイメージを実行します。CPU transport、イメージ解析、プロセス入口、OS サービスはそれぞれ別の責任範囲です。`NEVERD_ENABLE_CPU_EMULATION=ON` で有効にします。ドライバーエミュレーションにも含まれます。
 
-最初のプロファイル `linux-elf64-v1` は、x64/AArch64 の freestanding ELF `ET_EXEC` を CPL3/EL0 で実行します。実際の ELF segment をロードし、初期 stack を構築し、命令 quantum ごとに再開し、明示的な Linux system call request を処理します。これは独立したプロセスモデルであり、完全な Linux distribution や任意の libc binary の実行保証ではありません。dynamic linking、`PT_TLS`、signal、thread、FP/SIMD、未対応 service は明示的に失敗します。Windows、Android、Darwin などの kernel workload は別途です。
+最初の `linux-elf64-v1` profile は、x64/AArch64 の ELF `ET_EXEC` と自己再配置する static PIE `ET_DYN` を CPL3/EL0 で実行します。実際の ELF segment をロードし、初期 stack を構築し、命令 quantum ごとに再開し、明示的な Linux system call request を処理します。これは独立したプロセスモデルであり、完全な Linux distribution や任意の libc binary の実行保証ではありません。dynamic linking、signal、thread、filesystem、未対応 service は明示的に失敗します。x64 profile は限定された SSE/SSE2 形式を一部許可し、AArch64 は integer-only です。Windows、Android、Darwin などの kernel workload は別途です。
 
 ## CLI と SDK
 
@@ -59,11 +59,21 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 ## 検証
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # shared-library/CLI build の場合:
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
 両 ISA の original ELF entry assembly/C をコンパイルし、data/BSS、startup metadata、syscall error、binary output、permission fault、partial write、未対応 service、quantum 間の予算保持を検証します。利用不可 backend は明示的に skip します。公開 suite は C ABI/CLI と report/exit code の一致を検査します。cross compile や Unicorn ARM64 は native ARM64 KVM/WHP の証拠ではありません。
+
+## Static PIE、TLS、検証
+
+Static PIE は少なくとも `0x40000000` の決定的 load bias を使い、大きな `PT_LOAD` alignment に応じて増加します。各 segment、entry PC、`AT_PHDR`/`AT_ENTRY` に同じ bias を使い、元の program header 値は変更せず、interpreter がないため `AT_BASE` は0です。mapping source は元の file bytes であり、analysis pointer fixup は混入しません。guest startup が relocation と初期化を実行します。loader は section header に依存せず、元ファイルの範囲検証済み record から `PT_DYNAMIC` を decode します。存在する場合、table は readable/terminated で最大4096 entries。`PT_INTERP`、外部 dependency/filter/audit tag は拒否し、dynamic linker、symbol resolver、constructor runner は提供しません。
+
+Static TLS template `PT_TLS` は loader fact として検証されます。template は1つ、file/memory extent は bounded、alignment は congruent、初期 byte は readable でなければなりません。guest startup が各 TLS block を allocate/init し thread pointer を設定します。Linux model は libc 固有の TCB/DTV を作りません。これにより freestanding program の compiler-generated local-exec TLS を許可します。dynamic TLS と OS thread は別の範囲です。
+
+x64 の `arch_prctl` は `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS` をサポートします。Set は未mapの user-range base も受け入れますが、後の dereference では権限を検査します。kernel-range base は guest `EPERM`、無効な Get destination は CPU fault なしで guest `EFAULT`。その他の操作は明示的に失敗します。ARM64 startup は `MSR` で `TPIDR_EL0` を設定します。`MRS`、FS/GS memory access、context restore は quantum/backend entry 間で thread pointer を維持します。thread scheduler は実装しません。
+
+PIE/TLS fixture は独立した aligned block、TLS BSS、relocated auxv と guest relocation 前の zero RELA slot を検証します。x64 では `arch_prctl` error 後も前の base が保たれることを確認します。上記 build/CTest に `NeverDThreadPointerTests` を加えます。利用不能 backend は明示的に skip します。

@@ -487,7 +487,7 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 
 CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
 
-`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF を開始します。dynamic linking、TLS、signal、thread、FP/SIMD、未対応 service は失敗します。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
+`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
 
 ## strict lifting の契約
 

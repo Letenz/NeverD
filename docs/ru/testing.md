@@ -105,7 +105,12 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDIntegerABITests` собирает оригинальные Clang-fixture для Windows x64, Linux x64 и Linux ARM64. Реальные функции с десятью аргументами проверяют регистры, стек и кадры вызовов. В матрице Unicorn/KVM/WHP недоступные сочетания хост/ISA явно пропускаются; пропуск не является успехом. `NeverDExecutionBudgetTests` проверяет общие бюджеты продолжений, резервирования и абсолютный deadline без временных задержек.
 
-`NeverDCPUEmulationTests` охватывает инструкции ARM64, управление, загрузки, контексты, алиасы, инвалидацию кэша и ограниченные циклы; software-профиль также исполняет FP/SIMD и TLS. `NeverDUserExecutionTests` проверяет права CPL3/EL0, алиасы, ошибки защиты, контексты и смену пространства. `NeverDServiceRequestTests` подтверждает перехват SYSCALL/SVC до транспорта, сохранение состояния и однократное потребление запроса. Это протокол передачи управления, не полная модель служб ОС. `NeverDExecutionConfigurationTests` проверяет общий resolver, отделение поддержки сборки от live probe и fail-closed отклонение неподдерживаемых настроек. Публичные тесты SDK/CLI не требуют модели Windows.
+`NeverDCPUEmulationTests` охватывает инструкции ARM64, управление, загрузки, контексты, алиасы, инвалидацию кэша и ограниченные циклы; software-профиль также исполняет FP/SIMD и TLS. `NeverDUserExecutionTests` проверяет права CPL3/EL0, алиасы, ошибки защиты, контексты и смену пространства. `NeverDServiceRequestTests` подтверждает перехват SYSCALL/SVC до транспорта, сохранение состояния и однократное потребление запроса. Это протокол передачи управления, не полная модель служб ОС. `NeverDExecutionConfigurationTests` проверяет общий resolver, отделение поддержки сборки от live probe и fail-closed отклонение неподдерживаемых настроек. Публичные тесты SDK/CLI не требуют модели Windows. `NeverDThreadPointerTests` проверяет FS-base, `TPIDR_EL0`, восстановление контекста и права. `NeverDKvmCancellationTests` использует не завершающегося x64-гостя для проверки прерывания активного KVM-входа, возобновления и неизменности сигналов вызывающего процесса; без KVM тест явно пропускается.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
 
 ```bash
 cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
@@ -116,11 +121,11 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ## Тесты профиля Linux-процессов
 
-Независимые [тесты процессов](process-emulation.md#проверка) собирают реальные ELF-fixture x64/AArch64. `NeverDLinuxProcessTests` проверяет запуск, политику program headers, продолжение служб, двоичный вывод, гостевые ошибки и ресурсные остановки. `NeverDProcessPublicTests` проверяет C API/CLI без изменения образа анализа. `NeverDExecutionSessionTests` проверяет два CPU с общей памятью/бюджетом и однократное потребление запросов/ошибок. `NeverDX64MemoryUpdateTests` проверяет ширины, флаги, права и наблюдатели для INC/DEC памяти.
+Независимые [тесты процессов](process-emulation.md#проверка) собирают реальные ELF-fixture x64/AArch64. `NeverDLinuxProcessTests` проверяет запуск, политику program headers, продолжение служб, двоичный вывод, гостевые ошибки и ресурсные остановки. `NeverDProcessPublicTests` проверяет C API/CLI без изменения образа анализа. `NeverDExecutionSessionTests` проверяет два CPU с общей памятью/бюджетом и однократное потребление запросов/ошибок. `NeverDX64MemoryUpdateTests` проверяет арифметику памяти, SETcc, BT, XMM/MXCSR, наблюдатели записи, границы REP и подготовленные чтения устройств. `DriverBackendParityTests.cpp` запускает исходные и перемещённые WDK-fixture и сравнивает полный наблюдаемый отчёт с Unicorn; отсутствующие образы/backend явно пропускаются.
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 ```
 
 Недоступные бэкенды явно пропускаются. Кросс-компиляция и Unicorn ARM64 не доказывают нативное KVM/WHP.

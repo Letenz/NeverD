@@ -6,7 +6,7 @@
 
 ينفذ `neverd emulate` صورة ضمن ملف صريح لنظام الضيف. لمحرك CPU وتحليل الصورة ودخول العملية وخدمات نظام التشغيل ملاك منفصلون. فعّل `NEVERD_ENABLE_CPU_EMULATION=ON`؛ وتمكين محاكاة برامج التشغيل يتضمنه أيضاً.
 
-أول ملف هو `linux-elf64-v1`: يشغّل برامج ELF `ET_EXEC` صغيرة الطرف x64 وAArch64 عند CPL3 أو EL0، مع تحميل المقاطع الحقيقية وبناء المكدس الابتدائي واستئناف التنفيذ على دفعات ومعالجة طلبات Linux الصريحة. هذا نموذج عملية مستقل، لا توزيعة Linux كاملة ولا وعداً بتشغيل ملفات libc عشوائية. الربط الديناميكي و`PT_TLS` والإشارات والخيوط وأنظمة FP/SIMD والخدمات غير المدعومة تفشل صراحةً. عمليات Windows وAndroid وDarwin وأنظمة النواة الأخرى خارج هذا الملف.
+أول ملف هو `linux-elf64-v1`: يشغّل برامج ELF `ET_EXEC` وبرامج static PIE ذاتية الترحيل من نوع `ET_DYN` لـx64 وAArch64 عند CPL3 أو EL0. يحمّل المقاطع الحقيقية ويبني المكدس الابتدائي ويستأنف التنفيذ على دفعات ويعالج طلبات Linux الصريحة. هذا نموذج عملية مستقل، لا توزيعة Linux كاملة ولا وعد بتشغيل ملفات libc عشوائية. الربط الديناميكي والإشارات والخيوط وأنظمة الملفات والخدمات غير المدعومة تفشل صراحةً. تشمل مجموعة x64 المحدودة بعض SSE/SSE2؛ أما AArch64 فيبقى ملفاً صحيحاً عددياً. عمليات Windows وAndroid وDarwin وأنظمة النواة الأخرى خارج هذا الملف.
 
 ## CLI وSDK
 
@@ -59,11 +59,21 @@ output = bytes.fromhex(report["stdout_hex"])
 ## التحقق
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 # In a shared-library/CLI build:
 cmake --build build-cpu --target NeverDProcessPublicTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverDProcessPublicTests$' --output-on-failure
 ```
 
 تجمع الاختبارات ملفات ELF أصلية لـISAين، وتفحص بيانات/BSS وبيانات البدء وsyscalls والأخطاء والمخرجات الثنائية والصلاحيات والعطل والميزانيات عبر الدفعات. غياب الخلفية يُسجّل كتخطٍ صريح. الاختبارات العامة تمر عبر C API وCLI وتطابق التقرير ورمز الخروج. التجميع المتقاطع وUnicorn على ARM64 ليسا دليلاً على KVM/WHP أصلي لـARM64.
+
+## static PIE وTLS والتحقق
+
+يستخدم static PIE قيمة load bias حتمية لا تقل عن `0x40000000` وتزداد لمراعاة محاذاة `PT_LOAD`. تستخدم المقاطع وPC الدخول و`AT_PHDR`/`AT_ENTRY` القيمة نفسها، وتبقى قيم ترويسات الملف الأصلية بلا تغيير؛ يظل `AT_BASE` صفراً لعدم وجود مفسر. مصدر الربط هو بايتات الملف الأصلية، لا مقاطع التحليل المعدلة، وعلى بدء الضيف تنفيذ relocation والتهيئة بنفسه. يفك المحمّل `PT_DYNAMIC` من سجلات الملف الأصلية المحدودة دون الاعتماد على section headers؛ ويشترط النموذج جدولاً مقروءاً ومنتهياً لا يتجاوز 4096 إدخالاً. يُرفض `PT_INTERP` وتبعيات الربط الخارجية ووسوم filter/audit؛ لا يوفر النموذج dynamic linker أو حل الرموز أو تشغيل المنشئات.
+
+تُتحقق قوالب TLS الساكنة `PT_TLS` كحقائق من المحمّل: قالب واحد، وحدود ملفات/ذاكرة محدودة، وتوافق المحاذاة وبايتات أولية مقروءة. يخصص بدء الضيف كتل TLS ويهيئها ويركب مؤشر الخيط؛ لا يخترع نموذج Linux بنية TCB أو DTV خاصة بـlibc. هذا يدعم local-exec TLS المولد من المترجم في البرامج المستقلة. TLS الديناميكي وجدولة خيوط OS خارج النطاق.
+
+على x64 تدعم `arch_prctl` عمليات `ARCH_SET_FS` و`ARCH_GET_FS` و`ARCH_SET_GS` و`ARCH_GET_GS`. يقبل Set قاعدة ضمن نطاق المستخدم حتى إن لم تكن مربوطة؛ ويظل الوصول اللاحق خاضعاً للصلاحيات. قاعدة نطاق النواة تعيد `EPERM`، ومؤشر Get غير الصالح يعيد `EFAULT` دون fault للـCPU. العمليات الأخرى غير مدعومة وتفشل صراحة. يثبت ARM64 `TPIDR_EL0` بتعليمة `MSR`؛ وتحافظ `MRS` ومراجع FS/GS واستعادة السياق على مؤشر كل خيط بين الدفعات ومداخل المحرك. هذا لا ينشئ مجدولاً للخيوط.
+
+تتحقق fixtures TLS وstatic PIE من كتل مستقلة ومحاذاة، وصفر BSS، وقيم auxv المترحلة وخانات RELA الأصلية الصفرية قبل أن ينفذ الضيف relocations للبيانات والمؤشرات بنفسه. تختبر حالات x64 أخطاء `arch_prctl` دون إفساد القاعدة السابقة. أضف `NeverDThreadPointerTests` لأوامر البناء والاختبار أعلاه؛ غياب الخلفية يظل تخطياً صريحاً.

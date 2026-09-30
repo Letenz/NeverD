@@ -106,7 +106,12 @@ escalares no admitidos y los operandos mal formados deben fallar explícitamente
 
 `NeverDIntegerABITests` compila fixtures originales de Clang para Windows x64, Linux x64 y Linux ARM64. Sus funciones reales de diez argumentos comprueban registros, pila y marcos de llamada. La matriz Unicorn/KVM/WHP marca explícitamente como omitidos los pares host/ISA no disponibles; un skip no es un aprobado. `NeverDExecutionBudgetTests` verifica presupuestos compartidos de continuación, reservas y deadlines absolutos sin depender de pausas temporizadas.
 
-`NeverDCPUEmulationTests` cubre instrucciones ARM64, control, cargas, contextos, alias, invalidación de caché y bucles acotados; el perfil software también ejecuta FP/SIMD y TLS. `NeverDUserExecutionTests` comprueba permisos CPL3/EL0, alias, fallos de protección, contextos y cambio de espacio. `NeverDServiceRequestTests` demuestra que SYSCALL/SVC se interceptan antes del transporte y conservan el estado hasta consumir la solicitud una sola vez; esto prueba el protocolo de transferencia, no un modelo completo de servicios del SO. `NeverDExecutionConfigurationTests` valida resolución compartida, diferencia entre soporte de compilación y sondeo real y rechazo cerrado de opciones. Las pruebas públicas SDK/CLI no requieren el modelo Windows.
+`NeverDCPUEmulationTests` cubre instrucciones ARM64, control, cargas, contextos, alias, invalidación de caché y bucles acotados; el perfil software también ejecuta FP/SIMD y TLS. `NeverDUserExecutionTests` comprueba permisos CPL3/EL0, alias, fallos de protección, contextos y cambio de espacio. `NeverDServiceRequestTests` demuestra que SYSCALL/SVC se interceptan antes del transporte y conservan el estado hasta consumir la solicitud una sola vez; esto prueba el protocolo de transferencia, no un modelo completo de servicios del SO. `NeverDExecutionConfigurationTests` valida resolución compartida, diferencia entre soporte de compilación y sondeo real y rechazo cerrado de opciones. Las pruebas públicas SDK/CLI no requieren el modelo Windows. `NeverDThreadPointerTests` verifica FS-base, `TPIDR_EL0`, restauración de contexto y permisos. `NeverDKvmCancellationTests` usa un invitado x64 no terminante para comprobar interrupción KVM activa, reanudación y estado de señales sin cambios; se omite explícitamente si no hay KVM.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
 
 ```bash
 cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
@@ -117,11 +122,11 @@ La falta de CPU ARM64 o hipervisor es cobertura nativa omitida, no un aprobado. 
 
 ## Pruebas del perfil de procesos Linux
 
-Las [suites independientes de procesos](process-emulation.md) compilan fixtures ELF reales x64/AArch64. `NeverDLinuxProcessTests` verifica inicio, política de cabeceras, solicitudes de servicio, salida binaria, fallos y límites. `NeverDProcessPublicTests` comprueba C API/CLI sin modificar la imagen de análisis. `NeverDExecutionSessionTests` cubre dos CPU que comparten memoria/presupuesto y consumo exactamente una vez de solicitudes/fallos. `NeverDX64MemoryUpdateTests` revisa tamaños, flags, permisos y observadores para INC/DEC de memoria.
+Las [suites independientes de procesos](process-emulation.md) compilan fixtures ELF reales x64/AArch64. `NeverDLinuxProcessTests` verifica inicio, política de cabeceras, solicitudes de servicio, salida binaria, fallos y límites. `NeverDProcessPublicTests` comprueba C API/CLI sin modificar la imagen de análisis. `NeverDExecutionSessionTests` cubre dos CPU que comparten memoria/presupuesto y consumo exactamente una vez de solicitudes/fallos. `NeverDX64MemoryUpdateTests` comprueba aritmética de memoria, SETcc, BT, XMM/MXCSR, observadores de escritura, límites REP y lecturas preparadas de dispositivos. `DriverBackendParityTests.cpp` ejecuta fixtures WDK originales y reubicadas y compara todo el informe observable con Unicorn; las imágenes/backends ausentes se omiten.
 
 ```bash
-cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests --parallel 4
-ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate)Tests$' --output-on-failure
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
 ```
 
 Los backends no disponibles se omiten explícitamente. La compilación cruzada y Unicorn ARM64 no prueban KVM/WHP ARM64 nativo.

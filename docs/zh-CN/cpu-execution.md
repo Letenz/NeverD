@@ -20,7 +20,7 @@ CPU 执行独立于来宾 OS、映像加载器和调用约定。启用 `NEVERD_E
 | `page_size` | 4096 | 来宾映射粒度；其他值会被拒绝 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) 中的必需功能名 |
 
-`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行同一有界标量指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。所有 checked 配置均拒绝 FP/SIMD、MMIO、端口 I/O 和并行 CPU 要求。只有 user 配置会报告 `service_traps`。
+`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 配置仍拒绝 FP/SIMD；x64 则支持下文列出的有限指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。所有 checked 配置仍拒绝端口 I/O 和并行 CPU 要求。只有 user 配置会报告 `service_traps`。
 
 用户态执行要求**每个**映射页同时具有 `UserAccessible` 和相应的 `Read`、`Write` 或 `Execute` 权限。已有映射默认仅 supervisor 可访问；即使别名共享物理字节，其权限仍彼此独立。仅有 `UserAccessible` 不会授权访问。可信宿主操作和 supervisor CPU 使用 RWX。例如：
 
@@ -59,3 +59,11 @@ schema 版本为 1。报告分别给出补全配置前的 `requested_configurati
 checked user x64 只拦截精确的无前缀 `SYSCALL` 编码；checked user ARM64 拦截 `SVC #imm16`。`SYSENTER`、`INT`、`HVC`、`BRK` 等机制仍不支持。先运行指令观察器；若它未停止或产生故障，CPU 会在执行服务指令或进入后端**之前**返回 `ExecutionExitKind::ServiceRequest`，并携带指令类型、原始 `PC`、顺序 `NextPC` 和 SVC immediate。寄存器、flags、栈和特权均不改变：x64 尚未发生 SYSCALL 对 RCX/R11 的改写，ARM64 也尚未进入异常向量。SVC immediate 不是通用服务编号。
 
 请求会保持 pending，并阻止后续执行、CPU 修改、地址空间绑定及上下文捕获／恢复；CPU 停止时由 OS 所属模型通过 `takeServiceRequest()` 恰好消费一次。该模型负责解码 OS ABI、处理服务，并显式选择结果寄存器和下一 PC／异常转移。不支持的服务必须在该边界明确失败；重试原始 PC 会产生新请求，不会隐式变成 NOP 或成功返回。服务事件优先于同时发生的 stop/deadline，但来宾或后端故障优先级更高。CPU 停止、软件 HLT、deadline 或 trap 均不能证明工作负载成功。单独的 [Linux 进程配置](process-emulation.md)使用自己的 OS 模型，不证明 Windows、Android 或 Darwin 可运行。Windows 与 ARM64 原生执行仍需要实际运行验证。
+
+## x64 扩展与原生 CPU 状态
+
+checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 DAZ 与未屏蔽异常。checked ARM64 仍不支持 FP/SIMD。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
+
+线程指针包括 x64 FS/GS 基址以及 ARM64 `TPIDR_EL0` 的精确 `MRS`/`MSR` 编码。原生传输和 CPU 快照独立于内存保存这些状态，但不会创建 OS 线程或分配 TLS 块。supervisor x64 支持对齐的 1/2/4 字节标量 MMIO 事务，以及每个重启边界一个 MOVS 元素。设备读取需先提供无副作用的预览，再至多提交一次。user 配置拒绝设备映射；RMW、宽 MMIO 和端口 I/O 仍不支持。
+
+KVM/WHP 会取消正在运行的原生入口，并在释放执行资源前确认取消。KVM 使用专用执行线程和临时解除屏蔽的 realtime 信号；入口执行期间所选信号不得被忽略。不会修改调用方的 signal mask 或 handler。若来宾进度不确定，取消会成为终止性后端错误；不保证硬性墙钟期限。
