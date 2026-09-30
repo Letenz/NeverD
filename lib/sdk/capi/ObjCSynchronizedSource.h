@@ -9,8 +9,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
-#include <capstone/arm64.h>
 #include <algorithm>
+#include <capstone/arm64.h>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -172,8 +172,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   const va_t EnterCall = Region->Begin - 4;
   const va_t Landing = Region->Landing;
   const bool ReceiverFromRetainResult =
-      EnterCall >= Function.Entry + 8 &&
-      Word(EnterCall - 4) == 0xaa0003f3U &&
+      EnterCall >= Function.Entry + 8 && Word(EnterCall - 4) == 0xaa0003f3U &&
       HasCall(EnterCall - 8, "_objc_retainAutoreleasedReturnValue");
   const bool ReceiverFromSelf = Word(EnterCall - 4) == 0xaa1303e0U;
   va_t Normal = Region->End;
@@ -182,8 +181,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   va_t FirstRelease = 0;
   uint8_t UnprotectedReleases = 0;
   while (UnprotectedReleases < 2 && Normal < Landing - 8 &&
-         (Word(Normal) == 0xaa1403e0U ||
-          Word(Normal) == 0xaa1503e0U ||
+         (Word(Normal) == 0xaa1403e0U || Word(Normal) == 0xaa1503e0U ||
           Word(Normal) == 0xaa1603e0U) &&
          HasCall(Normal + 4, "_objc_release")) {
     if (!FirstRelease)
@@ -193,11 +191,9 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   }
   const va_t ExitCall = Normal + 4;
   if ((!ReceiverFromSelf && !ReceiverFromRetainResult) ||
-      !HasCall(EnterCall, "_objc_sync_enter") ||
-      Normal >= Landing - 4 || Word(Normal) != 0xaa1303e0U ||
-      !HasCall(ExitCall, "_objc_sync_exit") ||
-      Word(Landing) != 0xaa0003f4U ||
-      Word(Landing + 4) != 0xaa1303e0U ||
+      !HasCall(EnterCall, "_objc_sync_enter") || Normal >= Landing - 4 ||
+      Word(Normal) != 0xaa1303e0U || !HasCall(ExitCall, "_objc_sync_exit") ||
+      Word(Landing) != 0xaa0003f4U || Word(Landing + 4) != 0xaa1303e0U ||
       !HasCall(Landing + 8, "_objc_sync_exit") ||
       Word(Landing + 12) != 0xaa1403e0U ||
       !HasCall(Landing + 16, "__Unwind_Resume"))
@@ -205,8 +201,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
 
   va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
   if (ReceiverFromSelf) {
-    for (va_t Address = Function.Entry; Address + 4 < EnterCall;
-         Address += 4) {
+    for (va_t Address = Function.Entry; Address + 4 < EnterCall; Address += 4) {
       if (Word(Address) != 0xaa0003f3U)
         continue;
       if (SavedReceiver || Address > Function.Entry + 32)
@@ -250,15 +245,18 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
         (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) ||
          cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET)))
       return std::nullopt;
-    if (UnprotectedReleases && Address > EnterCall &&
-        Address < Region->End &&
+    if (UnprotectedReleases && Address > EnterCall && Address < Region->End &&
         HasCall(Address, "_objc_release"))
       return std::nullopt;
   }
   return ObjCSynchronizedSourceProof{
-      EnterCall, UnprotectedReleases ? FirstRelease : ExitCall, ExitCall,
-      Landing, objcSynchronizedBranchTarget(Image, Landing + 16),
-      UnprotectedReleases, ReceiverFromRetainResult};
+      EnterCall,
+      UnprotectedReleases ? FirstRelease : ExitCall,
+      ExitCall,
+      Landing,
+      objcSynchronizedBranchTarget(Image, Landing + 16),
+      UnprotectedReleases,
+      ReceiverFromRetainResult};
 }
 
 // The token mutators skip the lock entirely for a null argument. On the
@@ -382,11 +380,11 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
 // return. Remove that suffix only when its label and statement addresses
 // match the five proved machine instructions, with no source edge into it.
 // The cleanup variable below supplies the same exceptional unlock.
-inline bool omitProvenObjCSynchronizedLandingPad(
-    HighFunc &Function, const ObjCSynchronizedSourceProof &Proof) {
+inline bool
+omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
+                                     const ObjCSynchronizedSourceProof &Proof) {
   if (!Proof.LandingPad || !Proof.ResumeTarget ||
-      Proof.LandingPad > InvalidVA - 20 ||
-      Function.Body.empty())
+      Proof.LandingPad > InvalidVA - 20 || Function.Body.empty())
     return false;
   const va_t Landing = Proof.LandingPad;
   const auto InPad = [&](va_t Address) {
@@ -419,9 +417,8 @@ inline bool omitProvenObjCSynchronizedLandingPad(
         Pending.emplace_back(&Child, true);
   }
   auto &Body = Function.Body;
-  const auto Marker = std::find_if(Body.begin(), Body.end(), [&](const auto &S) {
-    return InPad(S.Addr);
-  });
+  const auto Marker = std::find_if(
+      Body.begin(), Body.end(), [&](const auto &S) { return InPad(S.Addr); });
   if (Marker == Body.end())
     return Body.back().Kind == StmtKind::Return;
   if (Marker == Body.begin() || (Marker - 1)->Kind != StmtKind::Return ||
@@ -431,15 +428,15 @@ inline bool omitProvenObjCSynchronizedLandingPad(
       Marker->StoreVal || Marker->CallExpr || Marker->SwitchExpr ||
       !Marker->Cases.empty() || !Marker->DefaultBody.empty() ||
       Marker->GotoTarget || !Marker->EHClauseBodies.empty() ||
-      !Marker->EHClauses.empty() || Marker->MemoryOrdering !=
-                                        NdMemoryOrdering::None ||
+      !Marker->EHClauses.empty() ||
+      Marker->MemoryOrdering != NdMemoryOrdering::None ||
       Marker->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       Marker->EHRange.Begin || Marker->EHRange.End)
     return false;
   bool SawResume = false;
   for (auto It = Marker + 1; It != Body.end(); ++It) {
-    if (It->Addr == Landing + 16 && It->Kind == StmtKind::Assign &&
-        It->Val && It->Val->Kind == ExprKind::Call &&
+    if (It->Addr == Landing + 16 && It->Kind == StmtKind::Assign && It->Val &&
+        It->Val->Kind == ExprKind::Call &&
         It->Val->CallAddr == Proof.ResumeTarget)
       SawResume = true;
     else if (InPad(It->Addr) && It->Kind == StmtKind::Assign &&
@@ -447,10 +444,9 @@ inline bool omitProvenObjCSynchronizedLandingPad(
       continue;
     else if (It + 1 == Body.end() && It->Addr == 0 &&
              It->Kind == StmtKind::Return &&
-             (!It->RetVal ||
-              (It->RetVal->Operands.empty() &&
-               (It->RetVal->Kind == ExprKind::Var ||
-                It->RetVal->Kind == ExprKind::Undef))))
+             (!It->RetVal || (It->RetVal->Operands.empty() &&
+                              (It->RetVal->Kind == ExprKind::Var ||
+                               It->RetVal->Kind == ExprKind::Undef))))
       continue;
     else
       return false;
@@ -464,8 +460,9 @@ inline bool omitProvenObjCSynchronizedLandingPad(
   return true;
 }
 
-inline std::optional<std::string> objcSynchronizedSavedLocalArgument(
-    llvm::StringRef Source, size_t Call, llvm::StringRef Name) {
+inline std::optional<std::string>
+objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
+                                   llvm::StringRef Name) {
   if (Call == std::string::npos)
     return std::nullopt;
   const size_t Begin = Call + Name.size();
@@ -495,8 +492,7 @@ inline std::optional<std::string> objcSynchronizedSavedLocalArgument(
     return (C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || C == '_';
   };
   const auto Digit = [](char C) { return C >= '0' && C <= '9'; };
-  if (NameOnly.empty() || NameOnly == "objc_self" ||
-      !Alpha(NameOnly.front()))
+  if (NameOnly.empty() || NameOnly == "objc_self" || !Alpha(NameOnly.front()))
     return std::nullopt;
   for (char Character : NameOnly)
     if (!Alpha(Character) && !Digit(Character))
@@ -526,15 +522,14 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const size_t Release = Proof.UnprotectedReleases
                              ? Source.find(ReleaseName, Open)
                              : std::string::npos;
-  const size_t Stop = StopAtExit ? Exit
+  const size_t Stop = StopAtExit                  ? Exit
                       : Proof.UnprotectedReleases ? Release
-                                                   : Dispatch;
+                                                  : Dispatch;
   if (Enter == std::string::npos || Stop == std::string::npos ||
       Exit == std::string::npos ||
       Source.find(EnterName, Enter + 1) != std::string::npos ||
       Source.find(ExitName, Exit + 1) != std::string::npos ||
-      (Proof.UnprotectedReleases &&
-       (Release <= Enter || Release >= Exit)) ||
+      (Proof.UnprotectedReleases && (Release <= Enter || Release >= Exit)) ||
       (!StopAtExit &&
        Source.find(DispatchName, Dispatch + 1) != std::string::npos) ||
       Enter >= Stop || Stop > Exit)

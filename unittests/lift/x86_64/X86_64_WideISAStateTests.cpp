@@ -2965,7 +2965,6 @@ TEST(X86WideISAState, EvexCompressExpandRegistersHonorTopologyAndTailPolicy) {
                             [](uint8_t Byte) { return Byte == 0; }));
     EXPECT_FALSE(Emulator.skips().any());
   }
-
 }
 
 TEST(X86WideISAState, EvexVnniDotProductsUseExactSignednessAndSaturation) {

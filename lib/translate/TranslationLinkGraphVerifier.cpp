@@ -1,10 +1,11 @@
 //===- TranslationLinkGraphVerifier.cpp - Preallocation graph audit ------===//
 
-#include "neverd/support/BranchEncoding.h"
 #include "neverd/translate/TranslationLinkGraphVerifier.h"
 
-#include "neverd/translate/RuntimeSymbolRegistry.h"
 #include "TranslationLinkGraphVerifierInternal.h"
+
+#include "neverd/support/BranchEncoding.h"
+#include "neverd/translate/RuntimeSymbolRegistry.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
