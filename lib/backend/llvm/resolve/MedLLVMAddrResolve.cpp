@@ -3215,6 +3215,24 @@ MedLLVMEmitter::pureReadOnlyBaseIdentity(
     if (auto Identity = zeroExtendedNarrowConstantIdentity(*Def))
       return Identity;
     auto Forwarded = pointerPreservingInput(*Def);
+    // i386 forms an address in a zero-extended i64 temporary and reads the
+    // pointer back as its low bytes.  Truncating a zero extension of a
+    // pointer-width value returns that value.
+    if (Forwarded && !Forwarded->isConst() && Forwarded->Size > PointerSize &&
+        Def->Output.Size == PointerSize)
+      if (const MedOp *Wide = lookupDef(*Forwarded);
+          Wide && Wide->Opcode == NdOp::INT_ZEXT && Wide->NumInputs >= 1 &&
+          Wide->Inputs[0].Size == PointerSize)
+        Forwarded = Wide->Inputs[0];
+    // Emission replaces a certified i386 GOT base with numeric zero, so
+    // adding it transports the other operand unchanged.
+    if (!Forwarded && Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2 &&
+        Def->Output.Size == PointerSize) {
+      if (valueIsAuthenticatedModelZero(Def->Inputs[0]))
+        Forwarded = Def->Inputs[1];
+      else if (valueIsAuthenticatedModelZero(Def->Inputs[1]))
+        Forwarded = Def->Inputs[0];
+    }
     if (!Forwarded || Forwarded->Size != PointerSize)
       return std::nullopt;
     Cur = *Forwarded;

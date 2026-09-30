@@ -139,6 +139,7 @@ public:
     return Emitter.phiIncomingIsRecurrent(Phi, PredId, Arg);
   }
 
+
   static bool selfRecurrent(MedLLVMEmitter &Emitter, const PhiNode &Phi) {
     return Emitter.phiIsSelfRecurrent(Phi);
   }
@@ -12705,6 +12706,142 @@ TEST(LLVMDataPointerInvariantBoundary,
         Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
     EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(Emitter, Loaded, nullptr),
               Kind == Case::Exact);
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     I386GOTRelativeResetArmsRematerializeTheOuterBase) {
+  // `p = cond ? GOT+table : p+1` merged per switch arm: each arm PHI resets
+  // to the GOT-relative table base or continues the shared recurrence.  The
+  // certified GOT base is emitted as zero and the i64 address temporary is
+  // read back through its low bytes, so both resets name the same base.
+  enum class Case { Exact, MissingModel, OtherBase, SignExtended };
+  for (Case Kind :
+       {Case::Exact, Case::MissingModel, Case::OtherBase, Case::SignExtended}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    constexpr uint64_t Table = 0x1000;
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::ELF;
+    Image.Bits = Bitness::Bits32;
+    Segment Data;
+    Data.Name = ".rodata";
+    Data.VA = Table;
+    Data.Size = 32;
+    Data.FileSz = Data.Size;
+    Data.Data.resize(Data.Size, 3);
+    Data.Flags = SegmentFlags::Readable;
+    Image.Segments.push_back(std::move(Data));
+
+    auto temp = [](int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = Size;
+      return V;
+    };
+    MedVar Selector;
+    Selector.Kind = MedVar::Param;
+    Selector.TheArch = Arch::X86;
+    Selector.Id = 0;
+    Selector.Size = 4;
+    const MedVar Input = temp(1, 4);
+    const MedVar GOT = temp(2, 4);
+    auto op = [](NdOp Opcode, const MedVar &Output,
+                 std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const MedVar &Value : Inputs)
+        Op.addInput(Value);
+      return Op;
+    };
+    auto branch = [&](NdOp Opcode, va_t Target) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.addInput(MedVar::makeConst(Target, 4));
+      if (Opcode == NdOp::COND_BR)
+        Op.addInput(Selector);
+      return Op;
+    };
+    auto block = [](int Id, va_t Start, std::vector<int> Preds,
+                    std::vector<int> Succs) {
+      MedBlock Block;
+      Block.Id = Id;
+      Block.StartAddr = Start;
+      Block.EndAddr = Start + 0x10;
+      Block.Preds = std::move(Preds);
+      Block.Succs = std::move(Succs);
+      return Block;
+    };
+
+    MedFunc Func;
+    Func.Name = "got_relative_reset_recurrence";
+    Func.Entry = 0x100;
+    Func.ReturnType = NdType::makeVoid();
+    Func.DoesNotReturn = true;
+    Func.Params.push_back(Selector);
+    MedBlock Entry = block(0, 0x100, {}, {2, 3});
+    MedBlock Latch = block(1, 0x120, {2, 3}, {2, 3});
+    MedBlock ArmA = block(2, 0x140, {0, 1}, {1});
+    MedBlock ArmB = block(3, 0x150, {0, 1}, {1});
+
+    // Materialize `GOT + Offset` through the i64 address temporary.
+    int NextId = 10;
+    auto gotRelative = [&](uint64_t Offset, NdOp Widen) {
+      const MedVar Sum = temp(NextId++, 4);
+      const MedVar Wide = temp(NextId++, 8);
+      const MedVar Pointer = temp(NextId++, 4);
+      Entry.Ops.push_back(
+          op(NdOp::INT_ADD, Sum,
+             {GOT, MedVar::makeConst(Offset, 4,
+                                     ConstantAddressProvenance::DataAddress)}));
+      Entry.Ops.push_back(op(Widen, Wide, {Sum}));
+      Entry.Ops.push_back(
+          op(NdOp::SUBBYTES, Pointer, {Wide, MedVar::makeConst(0, 4)}));
+      return Pointer;
+    };
+    Entry.Ops.push_back(op(
+        NdOp::INT_ADD, GOT,
+        {Input, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)}));
+    const MedVar Init = gotRelative(Table, NdOp::INT_ZEXT);
+    MedVar Reset = Init;
+    if (Kind == Case::OtherBase)
+      Reset = gotRelative(Table + 8, NdOp::INT_ZEXT);
+    if (Kind == Case::SignExtended)
+      Reset = gotRelative(Table, NdOp::INT_SEXT);
+    Entry.Ops.push_back(branch(NdOp::COND_BR, ArmB.StartAddr));
+
+    const MedVar Outer = temp(40, 4);
+    const MedVar Next = temp(41, 4);
+    const MedVar CarriedA = temp(42, 4);
+    const MedVar CarriedB = temp(43, 4);
+    Latch.Phis.push_back({Outer, {{2, CarriedA}, {3, CarriedB}}});
+    Latch.Ops.push_back(op(
+        NdOp::INT_ADD, Next,
+        {Outer, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)}));
+    Latch.Ops.push_back(branch(NdOp::COND_BR, ArmB.StartAddr));
+    ArmA.Phis.push_back({CarriedA, {{0, Init}, {1, Next}}});
+    ArmA.Ops.push_back(branch(NdOp::BRANCH, Latch.StartAddr));
+    ArmB.Phis.push_back({CarriedB, {{0, Reset}, {1, Next}}});
+    ArmB.Ops.push_back(branch(NdOp::BRANCH, Latch.StartAddr));
+    Func.Blocks = {std::move(Entry), std::move(Latch), std::move(ArmA),
+                   std::move(ArmB)};
+    if (Kind != Case::MissingModel)
+      Func.ScalarAddressModels.push_back(
+          {RelocatedInstructionScalarModelOccurrence::ModelKind::
+               I386ELFGOTBaseZero,
+           GOT});
+
+    MedLLVMEmitter Emitter;
+    MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
+        Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
+    const PhiNode &Phi = Func.Blocks[2].Phis.front();
+    EXPECT_EQ(
+        MedLLVMProvenanceTestPeer::incomingIsRecurrent(Emitter, Phi, 1, Next),
+        Kind == Case::Exact);
   }
 }
 
