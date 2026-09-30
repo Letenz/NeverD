@@ -24,6 +24,17 @@ namespace call_args_detail {
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
   collectSpilledStackArgs(Scan, Found);
+  // A summarized callee reads no stack slot past the last one its body, or
+  // a tail call it makes, reads: an outgoing-area store beyond that belongs
+  // to another call or is a local.
+  if (isWin64(Scan) && Scan.CalleeRegisterArgs >= 0 &&
+      Scan.CalleeStackArgs >= 0) {
+    const int FirstStackArg = static_cast<int>(
+        Scan.TRI->integerArgumentLayout(true).Registers.size());
+    for (size_t K = std::max(FirstStackArg, Scan.CalleeStackArgs);
+         K < Found.size(); ++K)
+      Found[K] = nullptr;
+  }
   // A stack argument means all four register arguments are passed, even the
   // ones this block did not write (a pass-through of the caller's own).
   if (isWin64(Scan) && Scan.ReachingRegArg &&

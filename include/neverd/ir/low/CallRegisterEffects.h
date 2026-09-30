@@ -103,6 +103,17 @@ struct LocalRegisterEffect {
   bool UnknownEntryReads = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
+  /// Positional arguments implied by the incoming stack-argument slots the
+  /// body reads (0 when it reads none). Meaningful only without
+  /// UnknownStackReads.
+  int StackArgs = 0;
+  /// The body may read incoming stack arguments that this summary cannot
+  /// bound: the stack pointer is lost, a pointer into the incoming arguments
+  /// escapes, or control leaves for code no summary describes.
+  bool UnknownStackReads = false;
+  /// Callees entered by a tail call at the entry stack pointer; they read
+  /// this function's incoming stack arguments as their own.
+  std::set<va_t> StackTailCallees;
 };
 
 /// Summarize \p F.  A call into a function \p NoReturnTargets names as
@@ -120,6 +131,10 @@ struct CallRegisterSummaries {
   /// entry, including through callees.  A pass-through argument counts; a
   /// register a nested call merely receives does not.
   std::map<va_t, GPRReadWidths> EntryReads;
+  /// Positional arguments implied by the incoming stack slots a function
+  /// reads, including through tail calls (0 when none), for functions whose
+  /// stack reads are bounded.
+  std::map<va_t, int> EntryStackArgs;
 };
 
 /// Solve may-write and entry-read GPR sets over \p Funcs (entry -> local

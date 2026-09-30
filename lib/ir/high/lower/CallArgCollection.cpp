@@ -928,6 +928,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   Scan.Image = Image;
   Scan.TheArch = TargetArch;
   Scan.MaxArgs = MaxArgs;
+  if (CallIdx < Ops.size() && !Ops[CallIdx].SourceCallHint) {
+    Scan.CalleeRegisterArgs = Ops[CallIdx].CalleeRegisterArgs;
+    Scan.CalleeStackArgs = Ops[CallIdx].CalleeStackArgs;
+  }
   Scan.FirstStackSlot = FirstStackSlot;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;
   Scan.ExtraWindows = ExtraWindows;

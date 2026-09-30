@@ -969,7 +969,11 @@ BinaryImage makeWin64ForwarderImage() {
                           0x38,  // add
                           0xc3}; // ret
   std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
-  Text.Data[Callee - Entry] = 0xc3;
+  // The callee reads its fifth argument, so the forwarder's outgoing slot is
+  // a real stack argument: mov rax, [rsp+28h]; ret.
+  const uint8_t CalleeCode[] = {0x48, 0x8b, 0x44, 0x24, 0x28, 0xc3};
+  std::copy(std::begin(CalleeCode), std::end(CalleeCode),
+            Text.Data.begin() + (Callee - Entry));
   Img.Segments.push_back(std::move(Text));
   Section Section;
   Section.Name = ".text";
@@ -978,7 +982,7 @@ BinaryImage makeWin64ForwarderImage() {
   Section.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Img.Sections.push_back(std::move(Section));
   Img.Symbols.push_back(Symbol::makeFunc(Entry, 0x20));
-  Img.Symbols.push_back(Symbol::makeFunc(Callee, 1));
+  Img.Symbols.push_back(Symbol::makeFunc(Callee, sizeof(CalleeCode)));
   return Img;
 }
 

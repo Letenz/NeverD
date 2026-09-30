@@ -5352,3 +5352,73 @@ TEST(HighControlFlowSemantics, GuardWithAnEarlyExitStillJoinsTheElseArm) {
   reduceSingleUseGotos(F.Body);
   EXPECT_EQ(countKind(F, StmtKind::Goto), 2u);
 }
+
+TEST(HighControlFlowSemantics,
+     SummarizedCallTakesNoStackSlotsPastItsRegisters) {
+  // The callee reads only RCX and no incoming stack slot. A store to the
+  // first outgoing stack slot before the call belongs to something else, so
+  // it neither becomes a fifth argument nor turns RDX, R8 and R9 into
+  // arguments.
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "one_register_callee";
+  F.ReturnType = NdType::makeInt(8, false);
+  F.CC = CallingConv::Win64;
+  MedVar Sp;
+  Sp.Kind = MedVar::Reg;
+  Sp.TheArch = Arch::X64;
+  Sp.Id = 30;
+  Sp.SSAVer = 1;
+  Sp.Size = 8;
+  Sp.RegOff = TRI.StackPointer;
+  MedVar Slot;
+  Slot.Kind = MedVar::Temp;
+  Slot.Id = 40;
+  Slot.SSAVer = 1;
+  Slot.Size = 8;
+  MedVar Result;
+  Result.Kind = MedVar::Reg;
+  Result.TheArch = Arch::X64;
+  Result.Id = 20;
+  Result.SSAVer = 1;
+  Result.Size = 8;
+  Result.RegOff = TRI.IntReturnReg;
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1040;
+  MedOp Address =
+      operation(NdOp::INT_ADD, 0x1000, Slot, {Sp, MedVar::makeConst(0x20, 8)});
+  MedOp Store =
+      operation(NdOp::STORE, 0x1004, {}, {Slot, MedVar::makeConst(5, 8)});
+  MedOp Call =
+      operation(NdOp::CALL, 0x1010, Result,
+                {MedVar::makeConst(0x3000, 8), MedVar::makeConst(7, 8)});
+  Call.CalleeRegisterArgs = 1;
+  Call.CalleeStackArgs = 0;
+  F.Blocks[0].Ops = {Address, Store, Call,
+                     operation(NdOp::RETURN, 0x1020, {}, {Result})};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Img);
+  const auto High = Converter.convert(F, Arch::X64);
+  const HighExpr *Found = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Found = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Found, nullptr);
+  ASSERT_EQ(Found->Operands.size(), 1u);
+  ASSERT_EQ(Found->Operands[0]->Kind, ExprKind::Const);
+  EXPECT_EQ(Found->Operands[0]->ConstVal, 7u);
+}

@@ -2917,6 +2917,7 @@ void computeCallRegisterEffects(
   Result.CallDispatchThunks = std::move(DispatchThunks);
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
+  Result.CallEntryStackArgs = std::move(Summaries.EntryStackArgs);
 }
 } // namespace
 

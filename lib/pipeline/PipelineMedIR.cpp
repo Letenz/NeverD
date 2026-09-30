@@ -119,6 +119,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCalleePopMap(&CalleePop);
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+    Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setStackProbeSlots(&StackProbeSlots);
     for (size_t I; (I = Claim()) < N;) {

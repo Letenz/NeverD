@@ -5295,3 +5295,95 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
 }
+
+namespace {
+BinaryImage win64Image() {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  return Img;
+}
+
+const NdVar Rsp = NdVar::reg(x86reg::RSP, 8);
+
+/// `sub rsp, 18h; mov rax, [rsp+Displacement]`.
+LowFunc stackLoad(va_t Entry, uint64_t Displacement) {
+  return makeOneBlockLow(Entry, "stack_load", [&](auto Push) {
+    Push(NdOp::INT_SUB, Rsp, {Rsp, NdVar::cst(0x18, 8)});
+    Push(NdOp::COPY, NdVar::tmp(1, 8), {Rsp});
+    Push(NdOp::INT_ADD, NdVar::tmp(1, 8),
+         {NdVar::tmp(1, 8), NdVar::cst(Displacement, 8)});
+    Push(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8), {NdVar::tmp(1, 8)});
+  });
+}
+} // namespace
+
+TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {
+  const BinaryImage Img = win64Image();
+  // [rsp+40h] after `sub rsp, 18h` is the first stack argument.
+  const LocalRegisterEffect Fifth =
+      localRegisterEffect(Img, stackLoad(0x1000, 0x40));
+  EXPECT_FALSE(Fifth.UnknownStackReads);
+  EXPECT_EQ(Fifth.StackArgs, 5);
+  // The home area holds register arguments, not stack arguments.
+  const LocalRegisterEffect Home =
+      localRegisterEffect(Img, stackLoad(0x1000, 0x20));
+  EXPECT_FALSE(Home.UnknownStackReads);
+  EXPECT_EQ(Home.StackArgs, 0);
+
+  // An atomic update reads its slot as a load does.
+  const LowFunc Atomic = makeOneBlockLow(0x1000, "atomic", [&](auto Push) {
+    Push(NdOp::INT_SUB, Rsp, {Rsp, NdVar::cst(0x18, 8)});
+    Push(NdOp::INT_ADD, NdVar::tmp(1, 8), {Rsp, NdVar::cst(0x40, 8)});
+    Push(NdOp::ATOMIC_ADD, NdVar::reg(x86reg::RAX, 8),
+         {NdVar::tmp(1, 8), NdVar::cst(1, 8)});
+  });
+  EXPECT_EQ(localRegisterEffect(Img, Atomic).StackArgs, 5);
+
+  // A pointer into the incoming arguments handed to a call may be read there.
+  const LowFunc Escaping = makeOneBlockLow(0x1000, "escape", [&](auto Push) {
+    Push(NdOp::INT_SUB, Rsp, {Rsp, NdVar::cst(0x18, 8)});
+    Push(NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 8), {Rsp, NdVar::cst(0x48, 8)});
+    Push(NdOp::CALL, NdVar{}, {NdVar::cst(0x2000, 8)});
+  });
+  EXPECT_TRUE(localRegisterEffect(Img, Escaping).UnknownStackReads);
+
+  // An aligned stack pointer no longer has a known offset from entry.
+  const LowFunc Aligned = makeOneBlockLow(0x1000, "aligned", [&](auto Push) {
+    Push(NdOp::INT_AND, Rsp, {Rsp, NdVar::cst(~uint64_t{15}, 8)});
+    Push(NdOp::COPY, NdVar::tmp(1, 8), {Rsp});
+    Push(NdOp::INT_ADD, NdVar::tmp(1, 8),
+         {NdVar::tmp(1, 8), NdVar::cst(0x30, 8)});
+    Push(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8), {NdVar::tmp(1, 8)});
+  });
+  EXPECT_TRUE(localRegisterEffect(Img, Aligned).UnknownStackReads);
+}
+
+TEST(CallRegisterEffects, TailCallAtEntryStackPassesTheStackArguments) {
+  const BinaryImage Img = win64Image();
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RCX / 8)) | (1u << (x86reg::RDX / 8)) |
+      (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+  // The target reads the second stack argument ([rsp+30h] at its entry,
+  // [rsp+48h] after its own `sub rsp, 18h`).
+  const LocalRegisterEffect Target =
+      localRegisterEffect(Img, stackLoad(0x2000, 0x48));
+  ASSERT_EQ(Target.StackArgs, 6);
+  auto Forwarder = [&](bool MovesStack) {
+    return localRegisterEffect(
+        Img, makeOneBlockLow(0x1000, "forward", [&](auto Push) {
+          if (MovesStack)
+            Push(NdOp::INT_SUB, Rsp, {Rsp, NdVar::cst(8, 8)});
+          Push(NdOp::BRANCH, NdVar{}, {NdVar::cst(0x2000, 8)});
+        }));
+  };
+  const auto Passed = solveCallRegisterEffects(
+      {{0x1000, Forwarder(false)}, {0x2000, Target}}, Args, Args);
+  ASSERT_TRUE(Passed.EntryStackArgs.count(0x1000));
+  EXPECT_EQ(Passed.EntryStackArgs.at(0x1000), 6);
+  // Past a push the target's slots are no longer this function's.
+  const auto Moved = solveCallRegisterEffects(
+      {{0x1000, Forwarder(true)}, {0x2000, Target}}, Args, Args);
+  EXPECT_FALSE(Moved.EntryStackArgs.count(0x1000));
+  EXPECT_TRUE(Moved.EntryStackArgs.count(0x2000));
+}

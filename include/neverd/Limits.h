@@ -342,6 +342,9 @@ constexpr uint64_t kMaxOverlapDistance = 0x10000;
 /// the ABI clobber set.
 constexpr int kMaxCallEffectCalleeDepth = 4;
 constexpr size_t kMaxCallEffectExtraLifts = 256;
+/// Revisits of one block before a callee's incoming-stack-read summary widens
+/// a still-changing stack offset (a pointer stepped around a loop) to unknown.
+constexpr unsigned kMaxStackOffsetJoinVisits = 8;
 
 /// `--func` may attach out-of-line catch/unwind pdata, but a malformed or
 /// merged runtime-function range must not import that owner's entire EH

@@ -187,6 +187,10 @@ struct PipelineResult {
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// Positional arguments implied by the incoming stack slots a lifted callee
+  /// reads, including through tail calls (0 when none), keyed by callee
+  /// entry. Absent entries leave the stack arguments to the call-site scan.
+  std::map<va_t, int> CallEntryStackArgs;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;

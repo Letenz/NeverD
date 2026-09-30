@@ -17,8 +17,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
-#include "neverd/lift/X86Regs.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -253,6 +254,11 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
         MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], Size)));
       }
       MOp.CalleeRegisterArgs = Count;
+      if (CallEntryStackArgs)
+        if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
+            S != CallEntryStackArgs->end())
+          MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
+              S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
     }
   if (!CallMayWriteGPRs)
     return;
