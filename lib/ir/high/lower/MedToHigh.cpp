@@ -883,9 +883,11 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
         Rewritten = breakToTheLoopFollow(Func.Body);
       else
         Rewritten = duplicateSmallReturnTails(Func.Body);
-      if (!Rewritten)
+      // The last phase always runs its rounds: the dead-code cleanup above
+      // can leave a jump that now just falls through.
+      if (!Rewritten && Phase != 5)
         continue;
-      Dirty = true;
+      Dirty |= Rewritten;
     }
     for (int Round = 0; Round < 8; ++Round) {
       const bool Grouped =

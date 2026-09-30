@@ -2521,6 +2521,41 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       break;
   }
 
+  // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }
+  // B...` where B never falls through and nothing enters it: that is
+  // `if (!c) { B... } A...; goto F;`. With \p Apply the rewrite is made, so
+  // the list then ends in the jump itself.
+  auto Entered = [&](va_t Addr) { return usesOf(Addr) != 0; };
+  std::function<bool(std::vector<HighStmt> &, va_t, bool)> EndsInJumpTo =
+      [&](std::vector<HighStmt> &L, va_t F, bool Apply) -> bool {
+    if (L.empty())
+      return false;
+    if (L.back().Kind == StmtKind::Goto && L.back().GotoTarget == F)
+      return true;
+    if (!isTerminator(L.back()))
+      return false;
+    for (size_t I = L.size() - 1; I-- > 0;) {
+      if (anyAddressEntered(L[I + 1], Entered))
+        return false;
+      HighStmt &S = L[I];
+      if (S.Kind != StmtKind::If || !S.Cond || !S.ElseBody.empty() ||
+          !EndsInJumpTo(S.Body, F, false))
+        continue;
+      if (!Apply)
+        return true;
+      EndsInJumpTo(S.Body, F, true);
+      std::vector<HighStmt> Taken = std::move(S.Body);
+      S.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, S.Cond);
+      S.Body.assign(std::make_move_iterator(L.begin() + I + 1),
+                    std::make_move_iterator(L.end()));
+      L.erase(L.begin() + I + 1, L.end());
+      L.insert(L.end(), std::make_move_iterator(Taken.begin()),
+               std::make_move_iterator(Taken.end()));
+      return true;
+    }
+    return false;
+  };
+
   // T5: a goto ending an if/else/block body whose target is exactly the
   // statement that runs next after that construct is a fall-through.
   // T6: `if (c) { ...; goto F; } rest...` where F follows the whole list
@@ -2531,8 +2566,8 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           for (size_t I = 0; I + 1 < L.size(); ++I)
             if (L[I].Kind == StmtKind::If && L[I].Cond &&
                 L[I].ElseBody.empty() && !L[I].Body.empty() &&
-                L[I].Body.back().Kind == StmtKind::Goto &&
-                L[I].Body.back().GotoTarget == Follow) {
+                EndsInJumpTo(L[I].Body, Follow, false)) {
+              EndsInJumpTo(L[I].Body, Follow, true);
               popGoto(L[I].Body);
               --Uses[Follow];
               L[I].Kind = StmtKind::IfElse;

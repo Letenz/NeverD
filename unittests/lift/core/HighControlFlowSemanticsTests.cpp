@@ -5293,3 +5293,62 @@ TEST(HighControlFlowSemantics, DebugDeclaredNoReturnCalleeKeepsNoreturn) {
             std::string::npos)
       << Source;
 }
+
+TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAJump) {
+  // v = 1; goto X; v = 2; X: return v; -- nothing enters `v = 2`.
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 1), jump(0x1004, 0x1010), assign(0x1008, 1, 2),
+            result(0x1010, local(1))};
+  removeUnreachableCode(F.Body);
+  ASSERT_EQ(F.Body.size(), 3u);
+  EXPECT_EQ(F.Body[2].Kind, StmtKind::Return);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
+
+  // A branch into the statement after the jump keeps it.
+  auto Enter = conditional(0xffc, 0x1008);
+  F.Body = {Enter, assign(0x1000, 1, 1), jump(0x1004, 0x1010),
+            assign(0x1008, 1, 2), result(0x1010, local(1))};
+  removeUnreachableCode(F.Body);
+  EXPECT_EQ(F.Body.size(), 5u);
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(2));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
+}
+
+TEST(HighControlFlowSemantics, GuardWithAnEarlyExitStillJoinsTheElseArm) {
+  // { if (c & 1) { if (c & 2) { v = 1; goto F; } return 7; } v = 2; }
+  // F: return v; -- the early return turns inside out, so the jump ends the
+  // outer arm and the join becomes an else arm.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1004;
+  Inner.Cond = Bit(2);
+  Inner.Body = {assign(0x1008, 1, 1), jump(0x100c, 0x1020)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1000;
+  Outer.Cond = Bit(1);
+  Outer.Body = {Inner, result(0x1010, HighExpr::makeConst(7, 8))};
+  HighStmt Region;
+  Region.Kind = StmtKind::Block;
+  Region.Body = {Outer, assign(0x1018, 1, 2)};
+  HighFunc F;
+  F.Body = {Region, result(0x1020, local(1))};
+  const uint64_t Inputs[] = {0, 1, 2, 3};
+  const uint64_t Results[] = {2, 7, 2, 1};
+  for (size_t I = 0; I < 4; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  EXPECT_TRUE(reduceSingleUseGotos(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (size_t I = 0; I < 4; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+
+  // Another way into the early exit keeps its position.
+  F.Body = {Region, result(0x1020, local(1))};
+  F.Body.push_back(jump(0x1030, 0x1010));
+  reduceSingleUseGotos(F.Body);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 2u);
+}
