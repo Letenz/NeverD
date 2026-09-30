@@ -12,7 +12,7 @@ import subprocess
 import sys
 import unicodedata
 from collections import Counter, defaultdict
-from pathlib import Path
+from pathlib import Path, PurePath
 from urllib.parse import unquote
 
 
@@ -2741,11 +2741,11 @@ def readme_urls(text: str) -> list[str]:
     return urls
 
 
-def canonical_readme_url(url: str, path: Path, section_slugs: dict[str, str]) -> str:
+def canonical_readme_url(url: str, path: PurePath, section_slugs: dict[str, str]) -> str:
     if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', url) or url.startswith('//'):
         return url
     target, sep, fragment = url.partition('#')
-    resolved = Path(posixpath.normpath(str(path.parent / unquote(target)))) if target else path
+    resolved = Path(posixpath.normpath((path.parent / unquote(target)).as_posix())) if target else path
     parts = resolved.parts
     if len(parts) >= 3 and parts[0] == 'docs' and parts[1] in LOCALES:
         name = '/'.join(parts[2:])
@@ -2753,7 +2753,7 @@ def canonical_readme_url(url: str, path: Path, section_slugs: dict[str, str]) ->
                          'ATTRIBUTION.md': 'ATTRIBUTION.md'}.get(name, 'docs/' + name))
     if not target:
         fragment = section_slugs.get(unquote(fragment), fragment)
-    return str(resolved) + (sep + fragment if sep else '')
+    return resolved.as_posix() + (sep + fragment if sep else '')
 
 
 def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
@@ -2807,7 +2807,7 @@ def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
                     if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', target) or target.startswith(('#', '//')):
                         continue
                     raw = target.partition('#')[0]
-                    resolved = Path(posixpath.normpath(str(path.parent / unquote(raw))))
+                    resolved = Path(posixpath.normpath((path.parent / unquote(raw)).as_posix()))
                     if resolved.parts and resolved.parts[0] == '..':
                         report(errors, f'{path}: README link escapes the repository: {target}')
                     elif not view.exists(resolved):
@@ -2819,7 +2819,7 @@ def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
                     report(errors, f'{path}: README HTML assets differ in {key}')
                 for asset in html_assets(actual_visible):
                     if not re.match(r'https?://', asset):
-                        asset_path = Path(posixpath.normpath(str(path.parent / asset)))
+                        asset_path = Path(posixpath.normpath((path.parent / asset).as_posix()))
                         if not view.exists(asset_path):
                             report(errors, f'{path}: missing README HTML asset: {asset}')
             expected_selector = [('../../README.md' if filename == 'project.md' else '../README.md')]

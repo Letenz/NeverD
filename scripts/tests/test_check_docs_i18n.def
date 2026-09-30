@@ -1,0 +1,10 @@
+//===- test_check_docs_i18n.def - Independent Windows README URL cases ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_README_WINDOWS_PATH_CASES(
+    "docs/zh-CN/project.md", "本地构建", "build",
+    ("../../README.md", "README.md"), ("../ja/testing.md", "docs/testing.md"),
+    ("../../docs/images/logo.svg", "docs/images/logo.svg"),
+    ("../../../outside.md", "../outside.md"), ("#本地构建", "README.md#build"))
