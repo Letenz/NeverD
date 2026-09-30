@@ -9,6 +9,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
+#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -832,7 +833,7 @@ TEST(LLVMCIntrinsicSemantics, X87FpremKeepsTenByteOperandsAndC2) {
   llvm::Value *StatusOut = &*Arg;
   auto *Init = llvm::InlineAsm::get(
       llvm::FunctionType::get(B.getVoidTy(), {}, false), "fninit",
-      "~{memory}", true);
+      x87StateConstraints(X87StateEffect::Reset), true);
   B.CreateCall(Init);
   auto *LargeBits = B.CreateLoad(I80, Large, "large_bits");
   LargeBits->setVolatile(true);
@@ -901,7 +902,7 @@ TEST(LLVMCIntrinsicSemantics, X87FusedFpremStatusKeepsTop) {
   llvm::Value *StatusOut = &*Arg;
   auto *Init = llvm::InlineAsm::get(
       llvm::FunctionType::get(B.getVoidTy(), {}, false), "fninit",
-      "~{memory}", true);
+      x87StateConstraints(X87StateEffect::Reset), true);
   B.CreateCall(Init);
   auto *LargeBits = B.CreateLoad(I80, Large, "large_bits");
   LargeBits->setVolatile(true);

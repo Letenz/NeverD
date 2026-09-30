@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-sideeffect"
@@ -784,8 +785,6 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
   case I::Wbinvd:
   case I::Vmcall:
   case I::Vmmcall:
-  case I::X87Fninit:
-  case I::X87Fnclex:
   case I::Syscall: {
     const char *Mn = intrinsicAsmMnemonic(IC);
     if (Mn)
@@ -803,8 +802,9 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
                                        llvm::IRBuilder<> &Builder) {
-  if (IC == Intrinsic::X87Wait || IC == Intrinsic::X87Ffree ||
-      IC == Intrinsic::X87Fincstp) {
+  if (IC == Intrinsic::X87Wait || IC == Intrinsic::X87Fnclex ||
+      IC == Intrinsic::X87Ffree || IC == Intrinsic::X87Fincstp ||
+      IC == Intrinsic::X87Fninit) {
     if (Op.Output.Size != 0 ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       llvm::report_fatal_error(
@@ -820,12 +820,18 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
       if (Op.NumInputs != 1)
         llvm::report_fatal_error(
             "invalid x87 state intrinsic operand contract");
-      Mnemonic = IC == Intrinsic::X87Wait ? "fwait" : "fincstp";
+      Mnemonic = intrinsicAsmMnemonic(IC);
     }
+    // Emptying a register or moving TOP invalidates every x87 value LLVM
+    // might keep in the register stack; the constraints say so.
+    const X87StateEffect Effect =
+        IC == Intrinsic::X87Fninit ? X87StateEffect::Reset
+        : IC == Intrinsic::X87Ffree || IC == Intrinsic::X87Fincstp
+            ? X87StateEffect::Stack
+            : X87StateEffect::Status;
     auto *FnTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), {}, false);
-    auto *IA = llvm::InlineAsm::get(FnTy, Mnemonic,
-                                    "~{memory},~{dirflag},~{fpsr},~{flags}",
+    auto *IA = llvm::InlineAsm::get(FnTy, Mnemonic, x87StateConstraints(Effect),
                                     /*hasSideEffects=*/true);
     Builder.CreateCall(IA, {});
     return true;

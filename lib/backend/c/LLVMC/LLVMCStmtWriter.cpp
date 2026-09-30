@@ -16,6 +16,8 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -3540,19 +3542,30 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
               "\"cc\");\n";
       return true;
     }
-    if (Call.getType()->isVoidTy() && Call.arg_size() == 0 &&
-        ((AsmStr == "fninit" && Constraints == "~{memory}") ||
-         ((AsmStr == "fwait" || AsmStr == "fincstp" ||
-           (AsmStr.size() == 12 &&
-            llvm::StringRef(AsmStr).starts_with("ffree %st(") &&
-            AsmStr[10] >= '0' && AsmStr[10] <= '7' && AsmStr[11] == ')')) &&
-          Constraints == "~{memory},~{dirflag},~{fpsr},~{flags}"))) {
-      std::string Template = AsmStr;
-      if (llvm::StringRef(AsmStr).starts_with("ffree %st("))
-        Template.insert(6, "%");
-      emitIndent(Indent);
-      OS << "__asm__ volatile(\"" << Template << "\" ::: \"memory\");\n";
-      return true;
+    if (Call.getType()->isVoidTy() && Call.arg_size() == 0) {
+      // x87 state instructions keep their register-stack clobbers in C, so
+      // the C compiler holds no x87 value in a register across them either.
+      const bool IsFfree = AsmStr.size() == 12 &&
+                           llvm::StringRef(AsmStr).starts_with("ffree %st(") &&
+                           AsmStr[10] >= '0' && AsmStr[10] <= '7' &&
+                           AsmStr[11] == ')';
+      std::optional<X87StateEffect> Effect;
+      if (AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fninit))
+        Effect = X87StateEffect::Reset;
+      else if (IsFfree || AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fincstp))
+        Effect = X87StateEffect::Stack;
+      else if (AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Wait) ||
+               AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fnclex))
+        Effect = X87StateEffect::Status;
+      if (Effect && x87StateEffectOf(Constraints) == Effect) {
+        std::string Template = AsmStr;
+        if (IsFfree)
+          Template.insert(6, "%");
+        emitIndent(Indent);
+        OS << "__asm__ volatile(\"" << Template
+           << "\" ::: " << x87StateCClobbers(*Effect) << ");\n";
+        return true;
+      }
     }
   }
 
