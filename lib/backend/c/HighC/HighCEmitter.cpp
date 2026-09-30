@@ -1467,15 +1467,26 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           const auto Original = "neverd_" + AffineName.str() + "_original";
           OS << "extern " << Record << " " << Original << "(" << Record;
           for (size_t I = 1; I < Signature.Parameters.size(); ++I)
-            OS << ", double";
+            OS << ", "
+               << (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr
+                       ? Record
+                       : "double");
           OS << ") __asm__(\"_" << AffineName << "\");\n"
              << "static inline " << Record << " " << Identifier
              << "(const void *transform";
           for (size_t I = 1; I < Signature.Parameters.size(); ++I)
-            OS << ", double value_" << I;
+            if (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr)
+              OS << ", const void *input_" << I;
+            else
+              OS << ", double value_" << I;
           OS << ") {\n  " << Record << " value;\n"
-             << "  memcpy(&value, transform, sizeof(value));\n"
-             << "  return " << Original << "(value";
+             << "  memcpy(&value, transform, sizeof(value));\n";
+          for (size_t I = 1; I < Signature.Parameters.size(); ++I)
+            if (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr)
+              OS << "  " << Record << " value_" << I << ";\n"
+                 << "  memcpy(&value_" << I << ", input_" << I
+                 << ", sizeof(value_" << I << "));\n";
+          OS << "  return " << Original << "(value";
           for (size_t I = 1; I < Signature.Parameters.size(); ++I)
             OS << ", value_" << I;
           OS << ");\n}\n";

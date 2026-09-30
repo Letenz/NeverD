@@ -15,7 +15,8 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
                                        const std::string &Name) {
   if (Architecture != Arch::AArch64 ||
       (Name != "CGContextConcatCTM" && Name != "CGAffineTransformTranslate" &&
-       Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate"))
+       Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate" &&
+       Name != "CGAffineTransformConcat"))
     return std::nullopt;
   SourceFunctionTypeHint Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
@@ -31,9 +32,14 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
     const auto Double = NdType::makeFloat(8);
     Signature.ReturnType =
         NdType::makeStruct({Double, Double, Double, Double, Double, Double});
-    Signature.Parameters = {{"transform", Pointer}, {"first", Double}};
-    if (Name != "CGAffineTransformRotate")
-      Signature.Parameters.push_back({"second", Double});
+    Signature.Parameters = {{"transform", Pointer}};
+    if (Name == "CGAffineTransformConcat") {
+      Signature.Parameters.push_back({"second_transform", Pointer});
+    } else {
+      Signature.Parameters.push_back({"first", Double});
+      if (Name != "CGAffineTransformRotate")
+        Signature.Parameters.push_back({"second", Double});
+    }
   }
   std::string Diagnostic;
   if (!assignDarwinFixedSourceABI(Signature, Architecture, Diagnostic))
@@ -118,7 +124,8 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   // the 48 bytes into a genuine by-value argument before calling CoreGraphics.
   // Other record imports continue through the ordinary declaration catalog.
   if (Name == "CGContextConcatCTM" || Name == "CGAffineTransformTranslate" ||
-      Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate") {
+      Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate" ||
+      Name == "CGAffineTransformConcat") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     const auto Signature =
         darwinIndirectAffineTransformSignature(Image.Arch, Name.str());

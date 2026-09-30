@@ -170,7 +170,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       (Hint.ByteCount || Hint.TargetName == "CGContextConcatCTM" ||
        Hint.TargetName == "CGAffineTransformTranslate" ||
        Hint.TargetName == "CGAffineTransformScale" ||
-       Hint.TargetName == "CGAffineTransformRotate")) {
+       Hint.TargetName == "CGAffineTransformRotate" ||
+       Hint.TargetName == "CGAffineTransformConcat")) {
     const auto Expected =
         darwinIndirectAffineTransformSignature(Opts.TheArch, Hint.TargetName);
     if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != 48 || !Expected ||
