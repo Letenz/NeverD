@@ -2975,6 +2975,145 @@ TEST(LowToMedCallReturnFP, DoesNotCrossCallClobber) {
   EXPECT_EQ(Calls[1]->Output.RegOff, TRI.FPReturnReg);
 }
 
+TEST(LowToMedCallReturnStruct, SubRegisterViewIsNotAReturnField) {
+  // `call fd; ucomisd xmm0,xmm1`: the lowering narrows the RAX the call
+  // defines into its EAX view, but nothing reads that view.  XMM0 is the only
+  // consumed return register, so the call returns a double in XMM0, not a
+  // {RAX, XMM0} aggregate that would put the result's upper half in XMM0.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "fp_return_with_integer_view";
+
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = 0x1010;
+
+  const NdVar WideFP = NdVar::reg(x86reg::XMM0, 16);
+  LowOp Seed;
+  Seed.Opcode = NdOp::COPY;
+  Seed.Addr = 0x1000;
+  Seed.Output = WideFP;
+  Seed.addInput(WideFP);
+  Block.Ops.push_back(Seed);
+
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1004;
+  Call.Output = NdVar::reg(x86reg::RAX, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Block.Ops.push_back(Call);
+
+  LowOp View;
+  View.Opcode = NdOp::SUBBYTES;
+  View.Addr = 0x1004;
+  View.Output = NdVar::reg(x86reg::RAX, 4);
+  View.addInput(NdVar::reg(x86reg::RAX, 8));
+  View.addInput(NdVar::cst(0, 4));
+  Block.Ops.push_back(View);
+
+  LowOp ReadResult;
+  ReadResult.Opcode = NdOp::COPY;
+  ReadResult.Addr = 0x1008;
+  ReadResult.Output = NdVar::tmp(0x4000, 8);
+  ReadResult.addInput(NdVar::reg(x86reg::XMM0, 8));
+  Block.Ops.push_back(ReadResult);
+
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x100c;
+  Return.addInput(ReadResult.Output);
+  Block.Ops.push_back(Return);
+  Low.Blocks.push_back(std::move(Block));
+
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch);
+  ASSERT_EQ(Med.Blocks.size(), 1u);
+  const MedOp *CallOp = nullptr;
+  for (const MedOp &Op : Med.Blocks.front().Ops)
+    if (Op.Opcode == NdOp::CALL)
+      CallOp = &Op;
+  ASSERT_NE(CallOp, nullptr);
+  EXPECT_EQ(CallOp->Output.Kind, MedVar::Reg);
+  EXPECT_EQ(CallOp->Output.RegOff, TRI.FPReturnReg);
+}
+
+TEST(LowToMedCallReturnStruct, FieldCoversEveryByteTheCallerReads) {
+  // `call mk3; mov ecx, eax; shr rax, 32; lea edx, [rdx+rdx*4]`: a
+  // struct{int a,b,c} returned in RAX:RDX.  The first read of RAX takes only
+  // its EAX view, but `shr rax, 32` reads field b from the upper half, so the
+  // RAX field must stay eight bytes wide.
+  constexpr Arch TheArch = Arch::X64;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "struct_return_with_narrow_first_read";
+
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = 0x1020;
+
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1000;
+  Call.Output = NdVar::reg(x86reg::RAX, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Block.Ops.push_back(Call);
+
+  LowOp View;
+  View.Opcode = NdOp::SUBBYTES;
+  View.Addr = 0x1000;
+  View.Output = NdVar::reg(x86reg::RAX, 4);
+  View.addInput(NdVar::reg(x86reg::RAX, 8));
+  View.addInput(NdVar::cst(0, 4));
+  Block.Ops.push_back(View);
+
+  LowOp ReadA;
+  ReadA.Opcode = NdOp::COPY;
+  ReadA.Addr = 0x1004;
+  ReadA.Output = NdVar::reg(x86reg::RCX, 4);
+  ReadA.addInput(NdVar::reg(x86reg::RAX, 4));
+  Block.Ops.push_back(ReadA);
+
+  LowOp ReadB;
+  ReadB.Opcode = NdOp::INT_RIGHT;
+  ReadB.Addr = 0x1008;
+  ReadB.Output = NdVar::tmp(0x4000, 8);
+  ReadB.addInput(NdVar::reg(x86reg::RAX, 8));
+  ReadB.addInput(NdVar::cst(32, 8));
+  Block.Ops.push_back(ReadB);
+
+  LowOp ReadC;
+  ReadC.Opcode = NdOp::INT_ADD;
+  ReadC.Addr = 0x100c;
+  ReadC.Output = NdVar::tmp(0x4008, 4);
+  ReadC.addInput(NdVar::reg(x86reg::RDX, 4));
+  ReadC.addInput(NdVar::reg(x86reg::RCX, 4));
+  Block.Ops.push_back(ReadC);
+
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1010;
+  Return.addInput(ReadC.Output);
+  Block.Ops.push_back(Return);
+  Low.Blocks.push_back(std::move(Block));
+
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch);
+  ASSERT_EQ(Med.Blocks.size(), 1u);
+  const auto &Ops = Med.Blocks.front().Ops;
+  const auto CallIt = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+    return Op.Opcode == NdOp::CALL;
+  });
+  ASSERT_NE(CallIt, Ops.end());
+  ASSERT_EQ(CallIt->Output.Kind, MedVar::Temp);
+  ASSERT_NE(std::next(CallIt), Ops.end());
+  const MedOp &First = *std::next(CallIt);
+  EXPECT_EQ(First.Opcode, NdOp::SUBBYTES);
+  EXPECT_EQ(First.Output.RegOff, x86reg::RAX);
+  EXPECT_EQ(First.Output.Size, 8u);
+}
+
 TEST(MedCallAbi, ExactVectorReturnFeedsFollowingFPCall) {
   constexpr Arch TheArch = Arch::X64;
   constexpr va_t Callee = 0x2000;
