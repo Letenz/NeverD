@@ -1048,6 +1048,75 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
             enqueue(Op.Output, Item.MayReachTerminal);
             break;
           }
+          case NdOp::STORE: {
+            // A register-pressure spill carries the target to the reloads of
+            // its frame slot (`mov [esp+8], eax` ... `jmp [esp+8]`).  Those
+            // reloads continue this closure.  Every other frame reader that
+            // may overlap the slot, an escaping slot address, or an
+            // intrinsic that takes a frame address could observe the stored
+            // target, and is an escape.
+            const bool SpillsTarget =
+                Op.NumInputs == 2 &&
+                Op.MemoryOrdering == NdMemoryOrdering::None &&
+                Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+                addressProvenanceVarKey(Op.Inputs[1]) == CurrentKey &&
+                addressProvenanceVarKey(Op.Inputs[0]) != CurrentKey;
+            const auto Slot = SpillsTarget ? canonicalFrameSlotKey(Op.Inputs[0])
+                                           : std::nullopt;
+            if (!Slot || stackSlotAddressEscapes(Op.Inputs[0])) {
+              EscapesSwitch = true;
+              break;
+            }
+            for (const MedBlock &ReadBlock : CurMedFunc->Blocks) {
+              for (const MedOp &Read : ReadBlock.Ops) {
+                if (!consumeEvidence(1 + uint64_t(Read.NumInputs)))
+                  break;
+                if (Read.Opcode == NdOp::INTRINSIC) {
+                  if (std::any_of(Read.Inputs.begin(),
+                                  Read.Inputs.begin() + Read.NumInputs,
+                                  [&](const MedVar &Input) {
+                                    return varMayBeFrameAddress(Input);
+                                  })) {
+                    EscapesSwitch = true;
+                    break;
+                  }
+                  continue;
+                }
+                const bool ReadsMemory = Read.Opcode == NdOp::LOAD ||
+                                         Read.Opcode == NdOp::ATOMIC_XCHG ||
+                                         Read.Opcode == NdOp::ATOMIC_ADD ||
+                                         Read.Opcode == NdOp::ATOMIC_CMPXCHG;
+                if (!ReadsMemory || Read.NumInputs < 1 ||
+                    Read.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+                    !varMayBeFrameAddress(Read.Inputs[0]) ||
+                    frameAccessesProvenDisjoint(Read.Inputs[0],
+                                                Read.Output.Size, Op.Inputs[0],
+                                                Current.Size))
+                  continue;
+                std::vector<MedVar> Sources;
+                const bool ExactReload =
+                    Read.Opcode == NdOp::LOAD &&
+                    Read.MemoryOrdering == NdMemoryOrdering::None &&
+                    Read.Output.Size == Current.Size &&
+                    canonicalFrameSlotKey(Read.Inputs[0]) == Slot &&
+                    collectFrameReloadSources(Read, Sources) &&
+                    !Sources.empty() &&
+                    std::all_of(Sources.begin(), Sources.end(),
+                                [&](const MedVar &Source) {
+                                  return addressProvenanceVarKey(Source) ==
+                                         CurrentKey;
+                                });
+                if (!ExactReload) {
+                  EscapesSwitch = true;
+                  break;
+                }
+                enqueue(Read.Output, Item.MayReachTerminal);
+              }
+              if (EscapesSwitch)
+                break;
+            }
+            break;
+          }
           default:
             if (operationUsesRelocatableCodeIdentity(Op.Opcode) &&
                 Op.Output.Size != 0 && !Op.Output.isConst())

@@ -759,6 +759,96 @@ TEST(MedLLVMRecoveredTargetLoadBoundary,
 }
 
 TEST(MedLLVMRecoveredTargetLoadBoundary,
+     SpilledTargetReachesTheSwitchOnlyThroughExactReloads) {
+  // `mov [rsp-16], rax` ... `jmp [rsp-16]`: register pressure spills the
+  // loaded target and the dispatch reloads it.  The exact reload continues
+  // the switch-only closure; any other observer of the slot vetoes it.
+  enum class Observer { None, EscapingSlot, OverlappingRead, FrameIntrinsic };
+  for (Observer Kind : {Observer::None, Observer::EscapingSlot,
+                        Observer::OverlappingRead, Observer::FrameIntrinsic}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    AuthenticatedTargetLoadFixture Fixture;
+    const auto &TRI = getTargetRegInfo(Arch::X64);
+    int NextId = 10;
+    auto temp = [&](uint16_t Size) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.TheArch = Arch::X64;
+      V.Id = NextId++;
+      V.SSAVer = 1;
+      V.Size = Size;
+      return V;
+    };
+    MedVar SP;
+    SP.Kind = MedVar::Reg;
+    SP.TheArch = Arch::X64;
+    SP.Id = 100;
+    SP.Size = TRI.PointerSize;
+    SP.RegOff = TRI.StackPointer;
+    std::vector<MedOp> Ops;
+    auto slot = [&](int64_t Offset) {
+      MedOp Form;
+      Form.Opcode = NdOp::INT_ADD;
+      Form.Output = temp(TRI.PointerSize);
+      Form.addInput(SP);
+      Form.addInput(
+          MedVar::makeConst(static_cast<uint64_t>(Offset), TRI.PointerSize));
+      Ops.push_back(Form);
+      return Form.Output;
+    };
+
+    const MedVar Target = Fixture.load().Output;
+    MedOp Spill;
+    Spill.Opcode = NdOp::STORE;
+    Spill.addInput(slot(-16));
+    Spill.addInput(Target);
+    Ops.push_back(Spill);
+    MedVar BranchTarget = Target;
+    if (Kind == Observer::EscapingSlot) {
+      // The dispatch uses the register, but the slot's address reaches
+      // memory, so something other than the switch can read the target.
+      MedOp Leak;
+      Leak.Opcode = NdOp::STORE;
+      Leak.addInput(MedVar::makeConst(0x4000, 8));
+      Leak.addInput(slot(-16));
+      Ops.push_back(Leak);
+    } else {
+      if (Kind == Observer::OverlappingRead) {
+        MedOp Peek;
+        Peek.Opcode = NdOp::LOAD;
+        Peek.Output = temp(4);
+        Peek.addInput(slot(-12));
+        Ops.push_back(Peek);
+      } else if (Kind == Observer::FrameIntrinsic) {
+        MedOp Probe;
+        Probe.Opcode = NdOp::INTRINSIC;
+        Probe.Output = temp(1);
+        Probe.addInput(
+            MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Lodsb), 2,
+                              ConstantAddressProvenance::Scalar));
+        Probe.addInput(slot(-32));
+        Ops.push_back(Probe);
+      }
+      MedOp Reload;
+      Reload.Opcode = NdOp::LOAD;
+      Reload.Output = temp(8);
+      Reload.addInput(slot(-16));
+      Ops.push_back(Reload);
+      BranchTarget = Reload.Output;
+    }
+    std::vector<MedOp> &BlockOps = Fixture.Func.Blocks.front().Ops;
+    BlockOps.insert(std::next(BlockOps.begin()), Ops.begin(), Ops.end());
+    ASSERT_EQ(BlockOps.back().Opcode, NdOp::INDIR_BR);
+    BlockOps.back().Inputs[0] = BranchTarget;
+
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+                  Emitter, Fixture.Func, Fixture.Image, Fixture.load()),
+              Kind == Observer::None);
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
      ObservableSideUseVetoesModuleRelocationSuppression) {
   {
     AuthenticatedTargetLoadFixture Fixture;
