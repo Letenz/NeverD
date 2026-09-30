@@ -28,6 +28,73 @@
 
 using namespace neverd;
 
+TEST(NativeSourceHints, SpecializedURLArrayForceCastHasNoHiddenArguments) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  constexpr const char *Name =
+      "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_AFSgTg5";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  const auto Hint = sdk::swiftMangledURLArrayForceCastSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  ASSERT_EQ(Hint->Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::Ordinary);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, 8U);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->ReturnLocation.ValueBytes, 8U);
+  EXPECT_TRUE(Hint->ReturnComponents.empty());
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  for (const char *Other :
+       {"_$ss15_arrayForceCastySayq_GSayxGr0_lF",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_AFTg5",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLVSg_AFTg5",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lFSi_SiSgTg5",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_AFSgTg0",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_AFSgTg5To",
+        "_$ss15_arrayForceCastySayq_GSayxGKr0_lF10Foundation3URLV_AFSgTg5",
+        "_$ss15_arrayForceCastySayq_GSayxGr0_lF10Foundation3URLV_"
+        "AFSgTg5junk"}) {
+    SCOPED_TRACE(Other);
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Other;
+    EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  }
+  auto Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].IsFunc = false;
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.IsRelocatable = true;
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Format = BinaryFormat::ELF;
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Bits = Bitness::Bits32;
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
+  EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Image, 0x1100));
+}
+
 TEST(NativeSourceHints, ExactMangledStringBundleFunctionKeepsPairResult) {
   constexpr llvm::StringLiteral Name =
       "_$s4main9localized_12languageCode6bundle5value7commentS2S_SSSgSo8"

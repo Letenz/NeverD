@@ -18,6 +18,130 @@
 
 namespace neverd::sdk {
 
+// Swift's fully specialized [URL] -> [URL?] force cast carries each Array as
+// one object pointer. An -O Swift compilation of _arrayForceCast on these
+// exact types emits swiftcc ptr (ptr), without metadata or witness arguments.
+// Require the complete specialization and generic declaration, not just its
+// function name. Body, runtime-call and frame proofs remain separate gates.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledURLArrayForceCastSourceABI(const BinaryImage &Image, va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
+    return N.Kind == Kind && !N.Text && !N.Index &&
+           N.Children.size() == Children;
+  };
+  const auto Text = [](const Node &N, llvm::StringRef Kind,
+                       llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  const auto Index = [](const Node &N, llvm::StringRef Kind, uint64_t Value) {
+    return N.Kind == Kind && !N.Text && N.Index == Value && N.Children.empty();
+  };
+  const auto URL = [&](const Node &N) {
+    return Shape(N, "Type", 1) && Shape(N.Children[0], "Structure", 2) &&
+           Text(N.Children[0].Children[0], "Module", "Foundation") &&
+           Text(N.Children[0].Children[1], "Identifier", "URL");
+  };
+  const auto OptionalURL = [&](const Node &N) {
+    if (!Shape(N, "Type", 1) || !Shape(N.Children[0], "BoundGenericEnum", 2))
+      return false;
+    const auto &Optional = N.Children[0];
+    return Shape(Optional.Children[0], "Type", 1) &&
+           Shape(Optional.Children[0].Children[0], "Enum", 2) &&
+           Text(Optional.Children[0].Children[0].Children[0], "Module",
+                "Swift") &&
+           Text(Optional.Children[0].Children[0].Children[1], "Identifier",
+                "Optional") &&
+           Shape(Optional.Children[1], "TypeList", 1) &&
+           URL(Optional.Children[1].Children[0]);
+  };
+  const auto ArrayParameter = [&](const Node &N, uint64_t Parameter) {
+    if (!Shape(N, "Type", 1) ||
+        !Shape(N.Children[0], "BoundGenericStructure", 2))
+      return false;
+    const auto &Array = N.Children[0];
+    if (!Shape(Array.Children[0], "Type", 1) ||
+        !Shape(Array.Children[0].Children[0], "Structure", 2) ||
+        !Text(Array.Children[0].Children[0].Children[0], "Module", "Swift") ||
+        !Text(Array.Children[0].Children[0].Children[1], "Identifier",
+              "Array") ||
+        !Shape(Array.Children[1], "TypeList", 1) ||
+        !Shape(Array.Children[1].Children[0], "Type", 1) ||
+        !Shape(Array.Children[1].Children[0].Children[0],
+               "DependentGenericParamType", 2))
+      return false;
+    const auto &Generic = Array.Children[1].Children[0].Children[0];
+    return Index(Generic.Children[0], "Index", 0) &&
+           Index(Generic.Children[1], "Index", Parameter);
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 2) ||
+      !Shape(Parsed.Root->Children[0], "GenericSpecialization", 3) ||
+      !Shape(Parsed.Root->Children[1], "Function", 4))
+    return std::nullopt;
+  const auto &Specialization = Parsed.Root->Children[0];
+  if (!Index(Specialization.Children[0], "SpecializationPassID", 5) ||
+      !Shape(Specialization.Children[1], "GenericSpecializationParam", 1) ||
+      !Shape(Specialization.Children[2], "GenericSpecializationParam", 1) ||
+      !URL(Specialization.Children[1].Children[0]) ||
+      !OptionalURL(Specialization.Children[2].Children[0]))
+    return std::nullopt;
+  const auto &Function = Parsed.Root->Children[1];
+  if (!Text(Function.Children[0], "Module", "Swift") ||
+      !Text(Function.Children[1], "Identifier", "_arrayForceCast") ||
+      !Shape(Function.Children[2], "LabelList", 0) ||
+      !Shape(Function.Children[3], "Type", 1) ||
+      !Shape(Function.Children[3].Children[0], "DependentGenericType", 2))
+    return std::nullopt;
+  const auto &Generic = Function.Children[3].Children[0];
+  if (!Shape(Generic.Children[0], "DependentGenericSignature", 1) ||
+      !Index(Generic.Children[0].Children[0], "DependentGenericParamCount",
+             2) ||
+      !Shape(Generic.Children[1], "Type", 1) ||
+      !Shape(Generic.Children[1].Children[0], "FunctionType", 2))
+    return std::nullopt;
+  const auto &Type = Generic.Children[1].Children[0];
+  if (!Shape(Type.Children[0], "ArgumentTuple", 1) ||
+      !ArrayParameter(Type.Children[0].Children[0], 0) ||
+      !Shape(Type.Children[1], "ReturnType", 1) ||
+      !ArrayParameter(Type.Children[1].Children[0], 1))
+    return std::nullopt;
+
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
+  Hint.Parameters = {{"array", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // A Swift value initializer may return its Array<String> argument unchanged
 // in x0 while still performing observable side effects. The mangled type
 // gives the nominal and argument shape; the complete single-block
