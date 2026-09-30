@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, integratori e agent AI usano un solo motore — **`libneverd`** — tramite
 
 Formati di input, contratti host e limiti sono documentati nelle guide [EVM](evm.md) e [Solana SBF](sbf.md).
 
-La CLI sperimentale `neverd mobile app.apk -o recovered-app` recupera Java da APK (multidex), DEX e smali e genera `report.json`. Il motore predefinito è implementato in C++20 e non richiede Python, Java o JADX durante l’esecuzione. Né `NEVERD_JADX` né un eseguibile `jadx` nel PATH selezionano il motore esterno: serve un `--jadx PATH` esplicito. Non è previsto alcun ripiego automatico. Racchiudere tra virgolette i percorsi con spazi. La [guida Android](android.md) descrive input supportati, report e limiti di recupero.
+La CLI sperimentale `neverd mobile app.apk -o recovered-app` recupera Java da APK (multidex), DEX e smali e genera `report.json`. Il recupero Android usa esclusivamente il motore integrato di NeverD in C++20 e non richiede runtime Python o Java. Racchiudere tra virgolette i percorsi con spazi. La [guida Android](android.md) descrive input supportati, report e limiti di recupero.
 
 Il flusso iOS sperimentale `neverd mobile App.ipa -o recovered-ios` esporta C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` o Mach-O. Layout runtime, unità sorgente e omissioni per metodo rimangono espliciti; il codice generato non usa ponti verso il binario originale. Configurazione, copertura e ricompilazione indipendente sono nella [guida iOS](ios.md).
 

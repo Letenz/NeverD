@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, intégrateurs et agents IA utilisent un seul moteur — **`libneverd`** —
 
 Les formats d’entrée, contrats host et limites sont documentés dans les guides [EVM](evm.md) et [Solana SBF](sbf.md).
 
-La CLI expérimentale `neverd mobile app.apk -o recovered-app` restaure Java depuis APK (multidex), DEX et smali et produit `report.json`. Le moteur par défaut est implémenté en C++20 et ne nécessite aucun environnement Python, Java ou JADX à l’exécution. Ni `NEVERD_JADX` ni un exécutable `jadx` dans PATH ne sélectionnent le moteur externe : seul `--jadx PATH` explicite le fait. Aucun repli automatique n’est effectué. Entourez de guillemets les chemins contenant des espaces. Les entrées prises en charge, les rapports et les limites sont décrits dans le [guide Android](android.md).
+La CLI expérimentale `neverd mobile app.apk -o recovered-app` restaure Java depuis APK (multidex), DEX et smali et produit `report.json`. La restauration Android utilise uniquement le moteur intégré de NeverD en C++20 et ne nécessite aucun environnement Python ou Java à l’exécution. Entourez de guillemets les chemins contenant des espaces. Les entrées prises en charge, les rapports et les limites sont décrits dans le [guide Android](android.md).
 
 Le traitement iOS expérimental `neverd mobile App.ipa -o recovered-ios` exporte du C natif et des sources Objective-C/Swift prises en charge depuis IPA, `.app` ou Mach-O. Dispositions runtime, unités source et omissions par méthode restent explicites ; le code généré n’utilise aucun pont vers le binaire original. Voir le [guide iOS](ios.md) pour la configuration, la couverture et la recompilation indépendante.
 

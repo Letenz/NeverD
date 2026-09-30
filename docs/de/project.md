@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, Integratoren und KI-Agenten nutzen eine Engine — **`libneverd`** — übe
 
 Eingabeformate, Host-Verträge und Grenzen stehen in den Leitfäden für [EVM](evm.md) und [Solana SBF](sbf.md).
 
-Die experimentelle CLI `neverd mobile app.apk -o recovered-app` stellt Java aus APK (multidex), DEX und smali wieder her und erzeugt `report.json`. Die Standard-Engine ist in C++20 implementiert und benötigt zur Ausführung weder Python noch Java oder JADX. Weder `NEVERD_JADX` noch ein `jadx` im PATH wählen die externe Engine aus; dies geschieht ausschließlich durch ein explizites `--jadx PATH`. Es gibt keinen automatischen Rückgriff. Pfade mit Leerzeichen müssen in Anführungszeichen stehen. Unterstützte Eingaben, Berichte und Grenzen erläutert der [Android-Leitfaden](android.md).
+Die experimentelle CLI `neverd mobile app.apk -o recovered-app` stellt Java aus APK (multidex), DEX und smali wieder her und erzeugt `report.json`. Die Android-Wiederherstellung verwendet ausschließlich die integrierte C++20-Engine von NeverD und benötigt keine Python- oder Java-Laufzeit. Pfade mit Leerzeichen müssen in Anführungszeichen stehen. Unterstützte Eingaben, Berichte und Grenzen erläutert der [Android-Leitfaden](android.md).
 
 Der experimentelle iOS-Ablauf `neverd mobile App.ipa -o recovered-ios` exportiert natives C und unterstützte Objective-C-/Swift-Quellen aus IPA, `.app` oder Mach-O. Laufzeitlayouts, Quelltexteinheiten und Auslassungen pro Methode bleiben sichtbar; generierter Code verwendet keine Brücke zur Originalbinärdatei. Einrichtung, Abdeckung und unabhängige Kompilierprüfungen stehen im [iOS-Leitfaden](ios.md).
 

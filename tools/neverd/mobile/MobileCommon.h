@@ -45,7 +45,6 @@ struct Options {
   std::string platform = "auto";
   std::string architecture = "auto";
   std::optional<std::string> artifact;
-  std::optional<std::string> jadx;
   std::string executable;
   bool metadata_only = false;
   uint64_t max_functions = 0;

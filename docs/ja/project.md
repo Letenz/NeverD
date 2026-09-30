@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI・統合側・AI エージェントは **純粋 C API** 経由で同じエ�
 
 input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF ガイド](sbf.md)を参照してください。
 
-実験的な CLI `neverd mobile app.apk -o recovered-app` は APK、DEX、smali から Java と `report.json` を生成します。既定のエンジンは C++20 で実装されており、実行時に Python、Java、JADX は不要です。`NEVERD_JADX` や PATH 上の `jadx` は外部エンジンを選択しません。明示的な `--jadx PATH` のみが互換アダプターを選びます。自動切り替えはありません。空白を含むパスは引用符で囲んでください。対応入力、レポート、復元の制限は [Android ガイド](android.md)を参照してください。
+実験的な CLI `neverd mobile app.apk -o recovered-app` は APK、DEX、smali から Java と `report.json` を生成します。Android の復元には NeverD の C++20 内蔵エンジンのみを使用し、Python や Java のランタイムは不要です。空白を含むパスは引用符で囲んでください。対応入力、レポート、復元の制限は [Android ガイド](android.md)を参照してください。
 
 実験的な iOS フロー `neverd mobile App.ipa -o recovered-ios` は IPA、`.app`、Mach-O からネイティブ C と対応する Objective-C/Swift ソースを出力します。ランタイム配置、ソース単位、省略理由を保持し、生成コードは元バイナリへのブリッジを使いません。設定、カバレッジ、独立した再コンパイル検証は [iOS ガイド](ios.md)を参照してください。
 

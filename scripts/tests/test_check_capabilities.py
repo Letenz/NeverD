@@ -3282,7 +3282,6 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd mobile",
                     "neverd mobile --arch",
                     "neverd mobile --artifact",
-                    "neverd mobile --jadx",
                     "neverd mobile --json",
                     "neverd mobile --max-bytes",
                     "neverd mobile --max-files",

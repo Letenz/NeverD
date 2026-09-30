@@ -10,7 +10,7 @@ Build the `neverd` target with C++20 support. The mobile workflow is compiled in
 
 Native ZIP handling uses zlib for CRC-32 and DEFLATE. CMake prefers an installed library via `find_package`; otherwise it downloads zlib 1.3.2 with a pinned SHA256 and builds it statically. This mobile ZIP implementation needs no Python helper tools on Windows. Preserve the dependency notices in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
-The default engine is implemented in C++20 and needs no Python, Java, or JADX runtime. Only an explicit `--jadx PATH` selects the separately installed compatibility adapter; `NEVERD_JADX` and PATH do not select it automatically, and there is no automatic fallback. The optional adapter requires JADX 1.5.6+ with standard DEX/smali input plugins and Java 11+. Its report names the actual `jadx` engine and version. Installation and dependency licenses remain documented in the [Android guide](android.md#optional-jadx-compatibility-adapter).
+Android recovery uses only NeverD’s built-in C++20 engine and needs no Python or Java runtime.
 
 ## Android
 
@@ -23,9 +23,9 @@ neverd mobile decoded/smali -o recovered-java
 
 All root `classes.dex`, `classes2.dex`, and subsequent numbered DEX files in an APK are analyzed together. A smali directory is searched recursively and all its classes are analyzed in one invocation, including nested and sibling classes. Use a directory when recovering classes that reference each other. A single smali file only supplies that class.
 
-Built-in output contains `sources/`, `metadata/android-methods.json`, and `report.json`, with `backend: {"name": "neverd", "version": "1", "execution": "builtin"}`. The report embeds `android_method_recovery`: `method_count = recovered_method_count + declaration_only_method_count`, and `unrecovered_method_count` must be zero before publication. Original `native`/`abstract` declarations are counted separately from recovered bodies. The explicit external adapter retains its own backend logs. APK resources, manifests, native libraries, and dynamically loaded code are outside this Java path; native libraries can be analyzed separately with `neverd decompile`.
+Built-in output contains `sources/`, `metadata/android-methods.json`, and `report.json`, with `backend: {"name": "neverd", "version": "1", "execution": "builtin"}`. The report embeds `android_method_recovery`: `method_count = recovered_method_count + declaration_only_method_count`, and `unrecovered_method_count` must be zero before publication. Original `native`/`abstract` declarations are counted separately from recovered bodies. APK resources, manifests, native libraries, and dynamically loaded code are outside this Java path; native libraries can be analyzed separately with `neverd decompile`.
 
-The built-in readers share an independently implemented typed Dalvik model and bounded Java emitter for representable ordinary DEX 035/037–040 and smali code. DEX 041, dynamic calls such as `invoke-custom`, some initialization paths, unknown operations, and identifiers unrepresentable in Java fail explicitly. Generated Java may use a dispatch loop; it does not execute the original DEX or call it through a runtime bridge. Original comments, formatting, and removed names cannot be restored. The experimental engine does not promise JADX feature parity, semantic equivalence, or complete recovery of arbitrary APKs.
+The built-in readers share an independently implemented typed Dalvik model and bounded Java emitter for representable ordinary DEX 035/037–040 and smali code. DEX 041, dynamic calls such as `invoke-custom`, some initialization paths, unknown operations, and identifiers unrepresentable in Java fail explicitly. Generated Java may use a dispatch loop; it does not execute the original DEX or call it through a runtime bridge. Original comments, formatting, and removed names cannot be restored. The experimental engine does not promise semantic equivalence or complete recovery of arbitrary APKs.
 
 ## iOS
 
@@ -52,11 +52,11 @@ Original comments, formatting, removed identifiers, and compilation-lost source 
 
 `-o` must name a new directory outside any directory input. Existing output is never overwritten. Work is staged and published only after successful recovery and output validation. Successful native CLI runs return zero. Recovery failures return nonzero; `--json` reports handled failures with `schema_version`, `status: "error"`, and `error`. Argument parsing, native executable or library startup failures, and interruptions can instead report on stderr. Consumers must inspect the exit status first.
 
-The defaults are 20,000 entries, 2 GiB of input/extracted or final output data, and 300 seconds for built-in Android/iOS analysis or each explicit JADX process. iOS child processes receive the remaining total analysis budget. The built-in reader and emitter also enforce a bounded work budget. Set `--max-files`, `--max-bytes`, and `--timeout` to adjust these positive limits. The temporary work area is monitored while backends run, with up to three times the entry/byte limits to allow staged input and intermediate output to coexist. Diagnostics are capped at 16 MiB per process.
+The defaults are 20,000 entries, 2 GiB of input/extracted or final output data, and 300 seconds for built-in Android/iOS analysis. iOS child processes receive the remaining total analysis budget. The built-in reader and emitter also enforce a bounded work budget. Set `--max-files`, `--max-bytes`, and `--timeout` to adjust these positive limits. The temporary work area is monitored while iOS child processes run, with up to three times the entry/byte limits to allow staged input and intermediate output to coexist. Diagnostics are capped at 16 MiB per process.
 
 APK staging writes only root `classes.dex`, `classes2.dex`, and subsequent numbered DEX files. Every ZIP member still undergoes header/range checks, decompression, length and CRC validation, and counts toward archive entry and uncompressed-byte limits. Unwritten resources may have distinct case-sensitive names such as `res/-A.xml` and `res/-a.xml`. Exact duplicate ZIP names and file/directory identity conflicts remain errors; portable filesystem case-collision checks apply to members actually written. Full extraction, including IPA input, still rejects such output collisions. Traversal paths, links, special files, and encrypted ZIP entries remain rejected throughout the archive. Directory inputs also reject symbolic links and special files.
 
-These limits are robustness controls, not a sandbox for third-party backend code. Explicit JADX and native source-export commands run as local child processes. Failed staging output is removed. Nonzero backend exits include a bounded diagnostic tail. Backend timeouts preserve the timeout message and append a bounded tail when captured log text is available. Launch failures and budget violations retain their own error messages.
+The iOS native source exporter runs as a local child process. Failed staging output is removed. Nonzero backend exits include a bounded diagnostic tail. Backend timeouts preserve the timeout message and append a bounded tail when captured log text is available. Launch failures and budget violations retain their own error messages.
 
 ## Validation
 
@@ -66,10 +66,9 @@ Python is used only by the development test harnesses below; built-in mobile rec
 cmake --build build --target check-neverd-mobile
 ctest --test-dir build -L NeverDMobileTests --output-on-failure
 python3 scripts/test_mobile_android_internal.py --d8 PATH --neverd build/bin/neverd
-python3 scripts/test_mobile_android_backend.py --jadx /opt/jadx/bin/jadx --neverd build/bin/neverd
 ```
 
-The component tests cover parsing, unsafe containers, backend failures, output cleanup, architecture selection, and output preservation. Tests that invoke the built CLI use `NEVERD_BUILD_DIR`. The internal Android runner uses a JDK (`java` and `javac`) and D8 to build independent DEX/APK fixtures, then compile and execute recovered Java. These are verification dependencies, not built-in recovery requirements. Run against the current build and inspect the result before treating a case as verified. The separate compatibility runner additionally requires JADX; fixture success does not prove arbitrary application recovery.
+The component tests cover parsing, unsafe containers, backend failures, output cleanup, architecture selection, and output preservation. Tests that invoke the built CLI use `NEVERD_BUILD_DIR`. The internal Android runner uses a JDK (`java` and `javac`) and D8 to build independent DEX/APK fixtures, then compile and execute recovered Java. These are verification dependencies, not built-in recovery requirements. Run against the current build and inspect the result before treating a case as verified. Fixture success does not prove arbitrary application recovery.
 
 On macOS with Apple Clang, its SDK and a built NeverD, run the actual Objective-C execution comparison:
 
