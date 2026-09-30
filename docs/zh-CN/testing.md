@@ -762,3 +762,11 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 ```
 
 栈帧溢出测试矩阵通过两套 C 后端覆盖 x86-32（ELF/COFF/Mach-O）、ARM32（ARM 与 Thumb ELF）和 AArch64（ELF/COFF/Mach-O）。重复的私有栈帧读取必须化简为加减法，并在两个优化级别正确执行字节对、跨字边界对和确定性随机字。Clang AST 检查完整函数中的残留 MBA 运算，同时区分合法地址表达式。HighFrameStoreForwarding 覆盖精确访问位宽、局部变量变更、内存写入、前缀别名、部分重叠、有序内存、畸形或循环图，以及渲染展开预算；其窄位取补回归在语义化简后执行。HighCStoreForwarding 在四种架构上保持转发值所依赖的定义存活，包括浮点重新解释与额外直接使用。SymSimplifyGuard 检查加载身份和顺序、volatile/atomic 状态及 poison 边界。ELFARM32ModeTest 验证 ARM/Thumb 选择、地址规范化、纯映射符号对象、混合模式元数据保留及同一地址矛盾证据的拒绝。ELFARM32ModeCAPITest 在同一 SDK 会话中以混合元数据替换 Thumb 映像，验证反汇编、HighC、LLVMC 的明确错误，再重载 Thumb 验证解码器恢复。InstructionMode 覆盖相应的解码、代码指针、直接分支与代码生成边界。缺少跨目标 Clang 应标记为跳过，不能当作格式通过的证据。
+
+## x64 原生同步异常
+
+checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通过私有 supervisor IDT/IST 接收异常，WHP 使用明确的异常拦截位图；异常保留原始上下文和可用的错误码，与后端传输错误分开。OS 模型必须先消费可恢复事件，再安装明确的继续执行上下文。Windows 驱动将零除及商溢出映射为 `STATUS_INTEGER_DIVIDE_BY_ZERO`，并执行实际 SEH filter、`__finally` 和重试。`NeverDX64ExceptionTests` 可在禁用 Unicorn 时构建；原始 WDK 用例由 `DriverWDMCPUException` 验证。缺少的 WHP/ARM64 主机覆盖会明确跳过。
+
+## 分阶段提交 RAM 效果
+
+`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。

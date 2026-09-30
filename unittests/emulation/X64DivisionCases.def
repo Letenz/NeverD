@@ -1,0 +1,35 @@
+//===- X64DivisionCases.def - Integer division results and encodings
+//-------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_DIVISION_CASE
+// Name, width, input AX/DX, divisor, expected AX/DX, register encoding.
+NEVERD_X64_DIVISION_CASE(Div8, 1, 0x123456789abc0145ULL, 0x5555555555555555ULL,
+                         5, 0x123456789abc0041ULL, 0x5555555555555555ULL, 0xf6,
+                         0xf1)
+NEVERD_X64_DIVISION_CASE(IDiv8, 1, 0x123456789abcff9cULL, 0x5555555555555555ULL,
+                         7, 0x123456789abcfef2ULL, 0x5555555555555555ULL, 0xf6,
+                         0xf9)
+NEVERD_X64_DIVISION_CASE(Div16, 2, 0x123456789abc03e8ULL, 0x5555555555550000ULL,
+                         17, 0x123456789abc003aULL, 0x555555555555000eULL, 0x66,
+                         0xf7, 0xf1)
+NEVERD_X64_DIVISION_CASE(IDiv16, 2, 0x123456789abcfc18ULL,
+                         0x555555555555ffffULL, 17, 0x123456789abcffc6ULL,
+                         0x555555555555fff2ULL, 0x66, 0xf7, 0xf9)
+NEVERD_X64_DIVISION_CASE(Div32, 4, 0x12345678000003e8ULL, 0x5555555500000000ULL,
+                         17, 58, 14, 0xf7, 0xf1)
+NEVERD_X64_DIVISION_CASE(IDiv32, 4, 0x12345678fffffc18ULL,
+                         0x55555555ffffffffULL, 17, 0xffffffc6, 0xfffffff2,
+                         0xf7, 0xf9)
+NEVERD_X64_DIVISION_CASE(Div64, 8, 1000, 0, 17, 58, 14, 0x48, 0xf7, 0xf1)
+NEVERD_X64_DIVISION_CASE(IDiv64, 8, 0xfffffffffffffc18ULL, UINT64_MAX, 17,
+                         0xffffffffffffffc6ULL, 0xfffffffffffffff2ULL, 0x48,
+                         0xf7, 0xf9)
+#endif
+#ifdef NEVERD_X64_DIVISION_VALUE
+NEVERD_X64_DIVISION_VALUE(MemoryRM, 0x01)
+NEVERD_X64_DIVISION_VALUE(OpcodeExtensionMask, 0x38)
+NEVERD_X64_DIVISION_VALUE(DivideVector, 0)
+#endif

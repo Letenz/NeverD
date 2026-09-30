@@ -1028,7 +1028,11 @@ Filter callbacks receive stable `EXCEPTION_POINTERS`, exception-record and
 original full CPU state, including floating-point/SIMD registers and flags.
 The exposed `CONTEXT` supports integer/control fields; a negative filter may
 change supported GPRs, RIP/RSP and arithmetic/direction flags to resume an
-in-context user read/write CPU exception. Invalid context changes fail before
+in-context user read/write CPU exception or integer division exception.
+Processor `#DE` maps to `STATUS_INTEGER_DIVIDE_BY_ZERO`, including quotient
+overflow; it enters the same image-owned SEH search and unwind path on explicit
+KVM/WHP and Unicorn transports. A negative filter may repair the divisor and
+retry the original instruction. Invalid context changes fail before
 resume. Exception pointers, exception-record fields and unsupported context
 fields are validated after every filter; mutating them remains unsupported.
 Continuing a modeled API raise remains unsupported. Callback identity
@@ -1042,7 +1046,7 @@ XMM6–XMM15 values, checks chained V1 records, and unwinds partial prologues.
 Canonical epilogues are decoded from current executable guest bytes: only
 remaining stack adjustments, nonvolatile pops and the return are simulated.
 C++ personalities and incomplete metadata still fail explicitly. An uncaught API or supported user-memory
-exception stops with `model_error`; other CPU memory, interrupt and
+exception or integer division exception stops with `model_error`; other CPU memory, interrupt and
 invalid-instruction faults remain terminal.
 
 `__GSHandlerCheck_SEH` checks the live image security cookie before language

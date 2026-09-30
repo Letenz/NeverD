@@ -46,7 +46,7 @@ std::vector<LowOp> liftX64(const std::vector<uint8_t> &Bytes) {
 
 template <typename Mutator>
 std::vector<LowOp> liftMutatedX64(const std::vector<uint8_t> &Bytes,
-                                 Mutator Mutate) {
+                                  Mutator Mutate) {
   Decoder Dec;
   if (!Dec.init(Arch::X64)) {
     ADD_FAILURE() << "x86-64 decoder initialization failed";
@@ -104,17 +104,15 @@ BinaryImage makeMemoryImage(uint64_t Address,
 }
 
 constexpr std::array<uint8_t, 32> kRelationResults = {
-    0x2, 0x1, 0x3, 0x8, 0xd, 0xe, 0xc, 0x7,
-    0xa, 0x9, 0xb, 0x0, 0x5, 0x6, 0x4, 0xf,
-    0x2, 0x1, 0x3, 0x8, 0xd, 0xe, 0xc, 0x7,
-    0xa, 0x9, 0xb, 0x0, 0x5, 0x6, 0x4, 0xf,
+    0x2, 0x1, 0x3, 0x8, 0xd, 0xe, 0xc, 0x7, 0xa, 0x9, 0xb,
+    0x0, 0x5, 0x6, 0x4, 0xf, 0x2, 0x1, 0x3, 0x8, 0xd, 0xe,
+    0xc, 0x7, 0xa, 0x9, 0xb, 0x0, 0x5, 0x6, 0x4, 0xf,
 };
 
 constexpr std::array<bool, 32> kSignalsOnQuietNaN = {
-    false, true,  true,  false, false, true,  true,  false,
-    false, true,  true,  false, false, true,  true,  false,
-    true,  false, false, true,  true,  false, false, true,
-    true,  false, false, true,  true,  false, false, true,
+    false, true,  true, false, false, true, true,  false, false, true, true,
+    false, false, true, true,  false, true, false, false, true,  true, false,
+    false, true,  true, false, false, true, true,  false, false, true,
 };
 
 MedVar temporary(int Id, uint16_t Size) {
@@ -190,10 +188,8 @@ TEST(X86EVEXFPCompare, EveryPackedSinglePredicateHasExactTruthAndNaNMode) {
 
     ASSERT_EQ(Emulator.run(Ops), Ops.size());
     ASSERT_TRUE(Emulator.getRegister(x86reg::K1));
-    EXPECT_EQ(*Emulator.getRegister(x86reg::K1),
-              kRelationResults[Predicate]);
-    EXPECT_EQ((Emulator.getMXCSR() & 1U) != 0,
-              kSignalsOnQuietNaN[Predicate]);
+    EXPECT_EQ(*Emulator.getRegister(x86reg::K1), kRelationResults[Predicate]);
+    EXPECT_EQ((Emulator.getMXCSR() & 1U) != 0, kSignalsOnQuietNaN[Predicate]);
     EXPECT_FALSE(Emulator.skips().any());
   }
 }
@@ -237,9 +233,8 @@ TEST(X86EVEXFPCompare, PackedDoubleWidthsWriteOnlyArchitecturalKBits) {
     size_t VectorSize;
     uint64_t Expected;
   };
-  const std::array<WidthCase, 3> Cases = {{{0x08, 16, 0x03},
-                                           {0x28, 32, 0x0f},
-                                           {0x48, 64, 0xff}}};
+  const std::array<WidthCase, 3> Cases = {
+      {{0x08, 16, 0x03}, {0x28, 32, 0x0f}, {0x48, 64, 0xff}}};
 
   for (const WidthCase &Case : Cases) {
     SCOPED_TRACE(Case.VectorSize);
@@ -255,7 +250,8 @@ TEST(X86EVEXFPCompare, PackedDoubleWidthsWriteOnlyArchitecturalKBits) {
     Image.Bits = Bitness::Bits64;
     NdOpEmulator Emulator(Image);
     Emulator.setStrictMode(true);
-    Emulator.setRegisterBytes(registerOffsetForVector(Case.VectorSize, 2), Left);
+    Emulator.setRegisterBytes(registerOffsetForVector(Case.VectorSize, 2),
+                              Left);
     Emulator.setRegisterBytes(registerOffsetForVector(Case.VectorSize, 3),
                               Right);
     Emulator.setRegister(x86reg::K1, UINT64_MAX);
@@ -276,10 +272,8 @@ TEST(X86EVEXFPCompare, HighImmediateBitsAreIgnored) {
     uint8_t Immediate;
     uint64_t Expected;
   };
-  const std::array<ImmediateCase, 4> Cases = {{{0x00, 0},
-                                               {0x20, 0},
-                                               {0x1f, 1},
-                                               {0xff, 1}}};
+  const std::array<ImmediateCase, 4> Cases = {
+      {{0x00, 0}, {0x20, 0}, {0x1f, 1}, {0xff, 1}}};
   for (const ImmediateCase &Case : Cases) {
     SCOPED_TRACE(testing::Message()
                  << "immediate=" << static_cast<unsigned>(Case.Immediate));
@@ -314,21 +308,21 @@ TEST(X86EVEXFPCompare, HighImmediateBitsAreIgnored) {
 TEST(X86EVEXFPCompare, PackedSaeIgnoresLengthAndReadsOldDestinationMask) {
   const std::vector<uint8_t> Zeroes(64, 0);
   const uint64_t OldDestination = UINT64_C(0xffffffffffff8421);
-  for (uint8_t Length : {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40),
-                         UINT8_C(0x60)}) {
+  for (uint8_t Length :
+       {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40), UINT8_C(0x60)}) {
     SCOPED_TRACE(testing::Message()
                  << "encoded_length=" << static_cast<unsigned>(Length));
     // EVEX.b fixes packed register-source SAE at 512 bits.  aaa=1 makes K1
     // both destination and writemask, so the old K1 value must be consumed
     // before the zero-extended result is committed.
-    const std::vector<LowOp> Ops = liftMutatedX64(
-        {0x62, 0xf1, 0x6c, 0x59, 0xc2, 0xcb, 0x0f},
-        [&](cs_insn &Insn, cs_x86 &X86) {
-          const uint8_t P2 = static_cast<uint8_t>(0x19 | Length);
-          Insn.bytes[3] = P2;
-          X86.opcode[3] = P2;
-          return true;
-        });
+    const std::vector<LowOp> Ops =
+        liftMutatedX64({0x62, 0xf1, 0x6c, 0x59, 0xc2, 0xcb, 0x0f},
+                       [&](cs_insn &Insn, cs_x86 &X86) {
+                         const uint8_t P2 = static_cast<uint8_t>(0x19 | Length);
+                         Insn.bytes[3] = P2;
+                         X86.opcode[3] = P2;
+                         return true;
+                       });
     ASSERT_FALSE(Ops.empty());
 
     BinaryImage Image;
@@ -366,14 +360,24 @@ TEST(X86EVEXFPCompare, ScalarFormsIgnoreEncodedLength) {
   }};
 
   for (const ScalarCase &Case : Cases) {
-    for (uint8_t Length : {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40),
-                           UINT8_C(0x60)}) {
+    // The reserved L'L=11 is #UD even for these LIG forms, as in XED.
+    {
+      const std::vector<uint8_t> Reserved = {0x62, 0xf1, Case.P1, 0x68,
+                                             0xc2, 0xcb, 0x00};
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::X64));
+      DecodedInsn Insn{};
+      EXPECT_EQ(Dec.decodeOneForLift(Reserved.data(), Reserved.size(), kAddress,
+                                     Insn),
+                0);
+    }
+    for (uint8_t Length : {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40)}) {
       SCOPED_TRACE(testing::Message()
                    << "p1=" << static_cast<unsigned>(Case.P1)
                    << " encoded_length=" << static_cast<unsigned>(Length));
-      const std::vector<LowOp> Ops = liftX64(
-          {0x62, 0xf1, Case.P1, static_cast<uint8_t>(0x08 | Length), 0xc2,
-           0xcb, 0x00});
+      const std::vector<LowOp> Ops =
+          liftX64({0x62, 0xf1, Case.P1, static_cast<uint8_t>(0x08 | Length),
+                   0xc2, 0xcb, 0x00});
       ASSERT_FALSE(Ops.empty());
 
       BinaryImage Image;
@@ -399,8 +403,7 @@ TEST(X86EVEXFPCompare, ScalarFormsUseOnlyLaneZeroAndMaskBitZero) {
   };
   const std::array<ScalarCase, 2> Cases = {{
       {0x6e, 4, UINT64_C(0x7f800001), UINT64_C(0x3f800000)},
-      {0xef, 8, UINT64_C(0x7ff0000000000001),
-       UINT64_C(0x3ff0000000000000)},
+      {0xef, 8, UINT64_C(0x7ff0000000000001), UINT64_C(0x3ff0000000000000)},
   }};
 
   for (const ScalarCase &Case : Cases) {

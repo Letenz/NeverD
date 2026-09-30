@@ -11,10 +11,26 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
+add_neverd_unittest(NeverDRAMTransactionTests
+  RAMTransactionTests.cpp
+  X64AtomicTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDRAMTransactionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDThreadPointerTests
   ThreadPointerTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
+
+add_neverd_unittest(NeverDX64ExceptionTests
+  X64ExceptionTests.cpp
+  X64DivisionTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDX64ExceptionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp

@@ -132,8 +132,16 @@ TEST(X86FourFMAExact, PackedPositiveAndHighGroupNegativeAreSequentiallyFused) {
 }
 
 TEST(X86FourFMAExact, ScalarMaskPreservesUpperAndSuppressesMemory) {
-  for (uint8_t Length :
-       {uint8_t{0x00}, uint8_t{0x20}, uint8_t{0x40}, uint8_t{0x60}}) {
+  // The scalar forms ignore L'L, except that the reserved L'L=11 is #UD.
+  {
+    const std::vector<uint8_t> Reserved = {0x62, 0xe2, 0x5f, 0x62, 0xab, 0x08};
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::X64));
+    DecodedInsn I{};
+    EXPECT_EQ(D.decodeOneForLift(Reserved.data(), Reserved.size(), 0x1000, I),
+              0);
+  }
+  for (uint8_t Length : {uint8_t{0x00}, uint8_t{0x20}, uint8_t{0x40}}) {
     SCOPED_TRACE(static_cast<unsigned>(Length));
     const auto Ops = lift(
         {0x62, 0xe2, 0x5f, static_cast<uint8_t>(Length | 0x02), 0xab, 0x08});

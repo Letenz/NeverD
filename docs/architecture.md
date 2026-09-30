@@ -1395,6 +1395,33 @@ The `.def` inventory excludes unmodeled floating-point and vector families.
 Naturally aligned locked scalar updates hold the same physical execution lease;
 this does not introduce parallel-CPU execution.
 
+The x64 machine boundary returns typed synchronous processor exceptions,
+separately from transport errors. KVM projects private supervisor descriptor,
+code and IST pages into an unclaimed canonical range; it authenticates the
+completed gateway and saved frame before publishing fault state. Those pages
+cannot shadow a guest allocation or acquire user access. Projection caching
+includes the monitor variant. WHP intercepts an explicit exception bitmap;
+checked Unicorn captures corresponding engine exception events. The shared
+checked lifecycle owns recoverable-versus-terminal delivery, and the guest OS
+alone translates supported vectors into its exception ABI. Integer division
+uses real processor effects and `#DE`, including quotient overflow.
+
+`RAMTransaction` owns the bounded physical union of an instruction's declared
+ordinary RAM writes. The ISA supplies exact footprints; devices and unknown
+effects cannot enter this transaction. Execution holds the physical lease and
+uses a private next CPU state. Staging restores original bytes before result
+observers run; permission failure, stop, callback exception or transport failure
+cannot publish speculative RAM or registers. Architectural CPU exception status
+remains available to the OS after RAM rollback. CPU snapshots still leave
+previously committed memory unchanged.
+
+Scalar `XCHG`, `XADD` and `CMPXCHG` use actual processor results at all four
+integer widths. Their result observers see original CPU/RAM and the staged exact
+write value, including a failed comparison. Locked and implicit-lock memory
+forms require natural alignment. Physical aliases share one write footprint and
+budget. This preserves the existing cooperative execution model; it does not
+introduce parallel hardware SMP or atomic device transactions.
+
 `CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
 boundary. It validates every access before effects; device pages remain outside
 native RAM mappings. `GuestMMIOPreparedRead` is an optional pure value preview

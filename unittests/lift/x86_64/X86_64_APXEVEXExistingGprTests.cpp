@@ -4042,10 +4042,28 @@ TEST(X86APXEVEXExistingGpr,
   EXPECT_FALSE(Emulator.skips().any());
 }
 
+TEST(X86APXEVEXExistingGpr, RegisterFormsRejectAClearU) {
+  // EVEX.U (X4) extends only a memory index; a register r/m has none, so
+  // a clear U is #UD there, as in XED.  B4 is ignored instead.
+  const std::vector<std::vector<uint8_t>> Encodings = {
+      {0x62, 0x6a, 0x7a, 0x48, 0x38, 0xef},
+      {0x62, 0xfa, 0x69, 0xc9, 0x50, 0xc3},
+      {0x62, 0xba, 0x69, 0x4b, 0x98, 0xc3},
+  };
+  for (const std::vector<uint8_t> &Encoding : Encodings) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    DecodedInsn Insn{};
+    EXPECT_EQ(Dec.decodeOneForLift(Encoding.data(), Encoding.size(),
+                                   kInstructionAddress, Insn),
+              0);
+  }
+}
+
 TEST(X86APXEVEXExistingGpr,
      UnusedAddressExtensionsDoNotChangeMaskConversionOperands) {
-  // vpmovm2d zmm29, k7, with the otherwise-unused B4 and U bits set.
-  const std::vector<uint8_t> Encoding = {0x62, 0x6a, 0x7a, 0x48, 0x38, 0xef};
+  // vpmovm2d zmm29, k7, with the otherwise-unused B4 bit set.
+  const std::vector<uint8_t> Encoding = {0x62, 0x6a, 0x7e, 0x48, 0x38, 0xef};
   constexpr uint64_t Mask = UINT64_C(0xa55a);
   std::vector<uint32_t> Expected(16);
   for (unsigned Lane = 0; Lane < Expected.size(); ++Lane)
@@ -4065,8 +4083,8 @@ TEST(X86APXEVEXExistingGpr,
 
 TEST(X86APXEVEXExistingGpr,
      UnusedAddressExtensionsDoNotChangeVnniVectorOperands) {
-  // vpdpbusd zmm0 {k1}{z}, zmm2, zmm3, with unused B4 and U set.
-  const std::vector<uint8_t> Encoding = {0x62, 0xfa, 0x69, 0xc9, 0x50, 0xc3};
+  // vpdpbusd zmm0 {k1}{z}, zmm2, zmm3, with the unused B4 bit set.
+  const std::vector<uint8_t> Encoding = {0x62, 0xfa, 0x6d, 0xc9, 0x50, 0xc3};
   std::vector<uint32_t> OldDestination(16), Expected(16);
   for (unsigned Lane = 0; Lane < Expected.size(); ++Lane) {
     OldDestination[Lane] = UINT32_C(0x1000) + Lane;
@@ -4250,8 +4268,8 @@ TEST(X86APXEVEXExistingGpr,
 
 TEST(X86APXEVEXExistingGpr,
      UnusedAddressExtensionsDoNotChangeFusedVectorOperands) {
-  // vfmadd132ps zmm0 {k3}, zmm2, zmm19, with unused B4 and U set.
-  const std::vector<uint8_t> Encoding = {0x62, 0xba, 0x69, 0x4b, 0x98, 0xc3};
+  // vfmadd132ps zmm0 {k3}, zmm2, zmm19, with the unused B4 bit set.
+  const std::vector<uint8_t> Encoding = {0x62, 0xba, 0x6d, 0x4b, 0x98, 0xc3};
   constexpr uint64_t Mask = UINT64_C(0xa55a);
   std::vector<float> OldDestination(16), FirstSource(16), SecondSource(16);
   std::vector<float> Expected(16);
@@ -4777,7 +4795,7 @@ TEST(X86APXEVEXExistingGpr,
     return false;
   });
 
-  const std::vector<uint8_t> MaskConversionEncoding = {0x62, 0x6a, 0x7a,
+  const std::vector<uint8_t> MaskConversionEncoding = {0x62, 0x6a, 0x7e,
                                                        0x48, 0x38, 0xef};
   expectMutatedLiftFailsClosed(MaskConversionEncoding,
                                [](cs_insn &, cs_x86 &X86) {
@@ -4787,7 +4805,7 @@ TEST(X86APXEVEXExistingGpr,
                                  return true;
                                });
 
-  const std::vector<uint8_t> VnniEncoding = {0x62, 0xfa, 0x69,
+  const std::vector<uint8_t> VnniEncoding = {0x62, 0xfa, 0x6d,
                                              0xc9, 0x50, 0xc3};
   expectMutatedLiftFailsClosed(VnniEncoding, [](cs_insn &, cs_x86 &X86) {
     if (X86.op_count != 4)
@@ -4826,7 +4844,7 @@ TEST(X86APXEVEXExistingGpr,
     return false;
   });
 
-  const std::vector<uint8_t> FmaRegisterEncoding = {0x62, 0xba, 0x69,
+  const std::vector<uint8_t> FmaRegisterEncoding = {0x62, 0xba, 0x6d,
                                                     0x4b, 0x98, 0xc3};
   expectMutatedLiftFailsClosed(FmaRegisterEncoding, [](cs_insn &, cs_x86 &X86) {
     if (X86.op_count != 4)
@@ -5389,7 +5407,8 @@ void expectExplicitMsrInvalidateAndHighCFailClosed() {
          std::to_string(static_cast<unsigned>(X86InvalidateKind::Invpcid)),
          "type"},
         HasCIntrinsics);
-    EXPECT_EQ(Invpcid, "_invpcid((unsigned int)(type), (void *)(uintptr_t)(desc))");
+    EXPECT_EQ(Invpcid,
+              "_invpcid((unsigned int)(type), (void *)(uintptr_t)(desc))");
     EXPECT_TRUE(HasCIntrinsics);
   }
   EXPECT_STREQ(

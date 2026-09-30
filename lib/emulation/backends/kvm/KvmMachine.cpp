@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../arch/x86_64/X64ExceptionMonitor.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MemoryProjection.h"
@@ -28,6 +29,8 @@ namespace {
 #undef NEVERD_KVM_X64_STATE
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
+  explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
+  bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     kvm_regs R{};
@@ -58,6 +61,20 @@ public:
     S.ds = S.es = S.ss = S.fs = S.gs = Data;
     S.gs.base = State.GSBase;
     S.fs.base = State.FSBase;
+    const uint64_t Monitor = x64ExceptionMonitorBase(Memory);
+    if (Monitor < x64::KernelMin ||
+        !x64::canonicalRange(Monitor, x64::gateway::Bytes))
+      return diagnostic::error(x64::exceptiontext::Gateway);
+    S.gdt.base = Monitor + x64::gateway::GDTOffset;
+    S.gdt.limit = x64::gateway::GDTEntries * x64::WordBytes - 1;
+    S.idt.base = Monitor + x64::gateway::IDTOffset;
+    S.idt.limit = x64::gateway::VectorCount * x64::gateway::GateBytes - 1;
+    S.tr = {};
+    S.tr.selector = x64::gateway::TSSSelector;
+    S.tr.base = Monitor + x64::gateway::TSSOffset;
+    S.tr.limit = x64::gateway::TSSBytes - 1;
+    S.tr.type = x64::gateway::TSSDescriptorType;
+    S.tr.present = 1;
     // x87 is unobservable in this profile and has a fixed reset value. Every
     // admitted XMM and MXCSR bit belongs to the architecture-owned State.
     // SET_FPU does not establish XSTATE_BV or transfer MXCSR on x86. Use the
@@ -68,7 +85,10 @@ public:
     llvm::support::endian::write32le(Bytes + MXCSROffset, State.MXCSR);
     llvm::support::endian::write64le(Bytes + XStateBVOffset, FPAndSSE);
     std::memcpy(Bytes + XmmOffset, State.Xmm.data(), sizeof(State.Xmm));
-    if (ioctl(CPU, KVM_SET_SREGS, &S) < 0 || ioctl(CPU, KVM_SET_REGS, &R) < 0 ||
+    kvm_mp_state MP{};
+    MP.mp_state = KVM_MP_STATE_RUNNABLE;
+    if (ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0 ||
+        ioctl(CPU, KVM_SET_SREGS, &S) < 0 || ioctl(CPU, KVM_SET_REGS, &R) < 0 ||
         ioctl(CPU, KVM_SET_XSAVE, &F) < 0)
       return diagnostic::error(diagnostic::KvmState);
     // KVM associates software single stepping with the current linear RIP.
@@ -81,12 +101,14 @@ public:
                                      BackendAvailability::MissingCapability);
     if (auto E = runUntilExit(Control.forNativeStep()))
       return E;
-    // There is no generic KVM userspace exception bitmap. An unexpected exit
-    // is terminal; this checked profile admits no instruction that should
-    // require exception delivery or an unfinished IO/MMIO completion.
-    if (Run->exit_reason != KVM_EXIT_DEBUG ||
-        Run->debug.arch.exception != x64::DebugVector ||
-        !(Run->debug.arch.dr6 & x64::DebugSingleStep)) {
+    const bool Stepped = Run->exit_reason == KVM_EXIT_DEBUG &&
+                         Run->debug.arch.exception == x64::DebugVector &&
+                         (Run->debug.arch.dr6 & x64::DebugSingleStep);
+    const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
+    // Synchronous exceptions enter a private IDT/IST and complete one HLT.
+    // There is no unfinished KVM IO/MMIO operation to carry into a new entry.
+    // Authenticate that gateway before publishing any architectural state.
+    if (!Stepped && !Exception) {
       (void)ioctl(CPU, KVM_GET_REGS, &R);
       (void)ioctl(CPU, KVM_GET_SREGS, &S);
       return llvm::createStringError(
@@ -100,24 +122,40 @@ public:
                         R.rip, S.cr2)
               .str());
     }
-    if (ioctl(CPU, KVM_GET_REGS, &R) < 0 || ioctl(CPU, KVM_GET_XSAVE, &F) < 0)
+    if (ioctl(CPU, KVM_GET_REGS, &R) < 0 || ioctl(CPU, KVM_GET_XSAVE, &F) < 0 ||
+        (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0))
       return diagnostic::error(diagnostic::KvmState);
-    std::memcpy(State.Xmm.data(), Bytes + XmmOffset, sizeof(State.Xmm));
-    State.MXCSR = llvm::support::endian::read32le(Bytes + MXCSROffset);
+    auto Next = State;
+    std::memcpy(Next.Xmm.data(), Bytes + XmmOffset, sizeof(Next.Xmm));
+    Next.MXCSR = llvm::support::endian::read32le(Bytes + MXCSROffset);
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  State.reg(X64Register::Name) = R.Field;
+  Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+    if (Exception) {
+      if (S.cs.selector != x64::CodeSelector)
+        return diagnostic::error(x64::exceptiontext::Gateway);
+      auto Trap = consumeX64ExceptionMonitor(Memory, Next, State, S.cr2);
+      if (!Trap)
+        return Trap.takeError();
+      State = Next;
+      return llvm::make_error<X64ExceptionError>(*Trap);
+    }
+    State = Next;
     return llvm::Error::success();
   }
+
+private:
+  MemoryProjection &Memory;
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>
 createKvmMachine(MemoryProjection &Memory) {
-  auto M = std::make_unique<KvmMachine>();
+  auto M = std::make_unique<KvmMachine>(Memory);
   if (auto E = M->initialize(Memory.registrations()))
     return E;
-  if (ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_XSAVE) <= 0)
+  if (ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_XSAVE) <= 0 ||
+      ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_MP_STATE) <= 0)
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
   kvm_guest_debug Debug{};

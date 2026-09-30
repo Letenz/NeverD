@@ -402,6 +402,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                             std::to_string(Size) + " bytes)");
   };
   Hooks.RecoverableFault = [&](const BackendFault &Fault) {
+    if (!Stopped && Fault.Kind == BackendFaultKind::Interrupt &&
+        Fault.Interrupt &&
+        exceptions::kernelX64ExceptionStatus(*Fault.Interrupt))
+      return true;
     return !Stopped && Fault.Address && Fault.Size && Fault.Access &&
            (*Fault.Access == BackendAccessKind::Read ||
             *Fault.Access == BackendAccessKind::Write) &&
@@ -739,18 +743,25 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (Stopped)
         break;
       if (auto Fault = CPU.takeRecoverableFault()) {
-        if (!Fault->Address || !Fault->Access || CPU.fault())
-          return failure("recoverable user fault lost its CPU context");
+        auto Status =
+            Fault->Kind == BackendFaultKind::Interrupt && Fault->Interrupt
+                ? exceptions::kernelX64ExceptionStatus(*Fault->Interrupt)
+                : std::nullopt;
+        if (CPU.fault() || (!Status && (!Fault->Address || !Fault->Access)))
+          return failure(exceptions::LostRecoverableContext);
         auto Registers = CaptureRegisters(Fault->PC);
         if (!Registers)
           return Registers.takeError();
         KernelSEH::Exception Raised{
             *Registers,
-            exceptions::StatusAccessViolation,
+            Status.value_or(exceptions::StatusAccessViolation),
             0,
             Fault->PC,
-            {*Fault->Access == BackendAccessKind::Write ? 1ULL : 0ULL,
-             *Fault->Address}};
+            {}};
+        if (!Status)
+          Raised.Parameters = {
+              *Fault->Access == BackendAccessKind::Write ? 1ULL : 0ULL,
+              *Fault->Address};
         auto Resume = BeginException(Frame, std::move(Raised), Fault->PC, true);
         if (!Resume)
           return Resume.takeError();

@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -109,8 +110,8 @@ std::optional<bool> liftSystemRegisterMove(X86Lifter::LiftState &S,
 namespace {
 
 int movrsGprIndex(x86_reg Reg, unsigned Width) {
-  static const x86_reg Low8[] = {X86_REG_AL, X86_REG_CL, X86_REG_DL,
-                                 X86_REG_BL, X86_REG_SPL, X86_REG_BPL,
+  static const x86_reg Low8[] = {X86_REG_AL,  X86_REG_CL,  X86_REG_DL,
+                                 X86_REG_BL,  X86_REG_SPL, X86_REG_BPL,
                                  X86_REG_SIL, X86_REG_DIL};
   static const x86_reg Low16[] = {X86_REG_AX, X86_REG_CX, X86_REG_DX,
                                   X86_REG_BX, X86_REG_SP, X86_REG_BP,
@@ -121,9 +122,10 @@ int movrsGprIndex(x86_reg Reg, unsigned Width) {
   static const x86_reg Low64[] = {X86_REG_RAX, X86_REG_RCX, X86_REG_RDX,
                                   X86_REG_RBX, X86_REG_RSP, X86_REG_RBP,
                                   X86_REG_RSI, X86_REG_RDI};
-  const x86_reg *Low = Width == 1 ? Low8 : Width == 2 ? Low16
-                                      : Width == 4   ? Low32
-                                                     : Low64;
+  const x86_reg *Low = Width == 1   ? Low8
+                       : Width == 2 ? Low16
+                       : Width == 4 ? Low32
+                                    : Low64;
   for (unsigned I = 0; I != 8; ++I)
     if (Reg == Low[I])
       return static_cast<int>(I);
@@ -153,13 +155,20 @@ int movrsGprIndex(x86_reg Reg, unsigned Width) {
 
 x86_reg movrsSegment(uint8_t Prefix) {
   switch (Prefix) {
-  case 0x26: return X86_REG_ES;
-  case 0x2e: return X86_REG_CS;
-  case 0x36: return X86_REG_SS;
-  case 0x3e: return X86_REG_DS;
-  case 0x64: return X86_REG_FS;
-  case 0x65: return X86_REG_GS;
-  default: return X86_REG_INVALID;
+  case 0x26:
+    return X86_REG_ES;
+  case 0x2e:
+    return X86_REG_CS;
+  case 0x36:
+    return X86_REG_SS;
+  case 0x3e:
+    return X86_REG_DS;
+  case 0x64:
+    return X86_REG_FS;
+  case 0x65:
+    return X86_REG_GS;
+  default:
+    return X86_REG_INVALID;
   }
 }
 
@@ -178,27 +187,15 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   if (Width != 1 && Width != 2 && Width != 4 && Width != 8)
     return false;
 
-  size_t E = 0;
-  uint8_t SegmentPrefix = 0;
-  bool Address32 = false;
-  while (E < Insn->size && Insn->bytes[E] != 0x62) {
-    const uint8_t P = Insn->bytes[E++];
-    if (P == 0x67) {
-      if (Address32)
-        return false;
-      Address32 = true;
-    } else if (movrsSegment(P) != X86_REG_INVALID) {
-      if (SegmentPrefix != 0)
-        return false;
-      SegmentPrefix = P;
-    } else {
-      return false;
-    }
-  }
-  if (E + 6 > Insn->size || Insn->bytes[E] != 0x62 ||
-      X86.encoding.modrm_offset != E + 5 || X86.encoding.imm_size != 0 ||
-      X86.modrm != Insn->bytes[E + 5] || (X86.modrm & 0xc0) == 0xc0 ||
-      X86.addr_size != (Address32 ? 4 : 8) ||
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes))
+    return false;
+  const size_t E = Prefixes.EvexOffset;
+  const uint8_t SegmentPrefix = Prefixes.SegmentPrefix;
+  const bool Address32 = Prefixes.Address32;
+  if (E + 6 > Insn->size || X86.encoding.modrm_offset != E + 5 ||
+      X86.encoding.imm_size != 0 || X86.modrm != Insn->bytes[E + 5] ||
+      (X86.modrm & 0xc0) == 0xc0 || X86.addr_size != (Address32 ? 4 : 8) ||
       X86.prefix[1] != SegmentPrefix ||
       X86.prefix[3] != (Address32 ? 0x67 : 0) ||
       X86.operands[1].mem.segment != movrsSegment(SegmentPrefix))
@@ -208,25 +205,24 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   if ((P0 & 7) != 4 || (P1 & 0x78) != 0x78 || P2 != 8 ||
       (Opcode != 0x8a && Opcode != 0x8b))
     return false;
+  // The byte form is W0; otherwise W selects 64-bit operands over a 66
+  // prefix, as in the other promoted forms.
   unsigned EncodedWidth = 0;
   if (Opcode == 0x8a && (P1 & 0x83) == 0)
     EncodedWidth = 1;
-  else if (Opcode == 0x8b && (P1 & 3) == 1 && !(P1 & 0x80))
-    EncodedWidth = 2;
-  else if (Opcode == 0x8b && (P1 & 3) == 0)
-    EncodedWidth = (P1 & 0x80) ? 8 : 4;
+  else if (Opcode == 0x8b && (P1 & 3) <= 1)
+    EncodedWidth = (P1 & 0x80) ? 8 : (P1 & 3) == 1 ? 2 : 4;
   if (EncodedWidth != Width)
     return false;
-  const unsigned EncodedReg = ((~P0 & 0x80) >> 4) | (~P0 & 0x10) |
-                              ((X86.modrm >> 3) & 7);
+  const unsigned EncodedReg =
+      ((~P0 & 0x80) >> 4) | (~P0 & 0x10) | ((X86.modrm >> 3) & 7);
   if (movrsGprIndex(static_cast<x86_reg>(X86.operands[0].reg), Width) !=
       static_cast<int>(EncodedReg))
     return false;
 
   const unsigned AddressWidth = Address32 ? 4 : 8;
   const unsigned BaseExtension = ((~P0 & 0x20) >> 2) | ((P0 & 0x08) << 1);
-  const unsigned IndexExtension = ((~P0 & 0x40) >> 3) |
-                                  ((~P1 & 0x04) << 2);
+  const unsigned IndexExtension = ((~P0 & 0x40) >> 3) | ((~P1 & 0x04) << 2);
   const unsigned Mod = X86.modrm >> 6, Rm = X86.modrm & 7;
   size_t Cursor = E + 6;
   x86_reg ExpectedBase = X86_REG_INVALID;
@@ -258,8 +254,7 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
     DispSize = 4;
   } else {
     ExpectedBase = static_cast<x86_reg>(X86.operands[1].mem.base);
-    if (!movrsAddressRegMatches(ExpectedBase, Rm + BaseExtension,
-                                AddressWidth))
+    if (!movrsAddressRegMatches(ExpectedBase, Rm + BaseExtension, AddressWidth))
       return false;
   }
   if (Mod == 1)
@@ -282,8 +277,9 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   }
   const auto &Mem = X86.operands[1].mem;
   if (Cursor != Insn->size || Mem.base != ExpectedBase ||
-      Mem.index != ExpectedIndex || Mem.scale != static_cast<int>(ExpectedScale) ||
-      Mem.disp != Disp || X86.encoding.disp_size != DispSize ||
+      Mem.index != ExpectedIndex ||
+      Mem.scale != static_cast<int>(ExpectedScale) || Mem.disp != Disp ||
+      X86.encoding.disp_size != DispSize ||
       X86.encoding.disp_offset != (DispSize ? DispOffset : 0))
     return false;
   return true;

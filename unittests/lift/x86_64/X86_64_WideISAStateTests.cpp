@@ -54,6 +54,16 @@ void expectStrictlyUnlifted(const std::vector<uint8_t> &Bytes) {
   EXPECT_TRUE(Ops.empty());
 }
 
+// The decoder itself rejects an encoding that is #UD.
+void expectUndecodable(const std::vector<uint8_t> &Bytes) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+
+  DecodedInsn Insn{};
+  EXPECT_EQ(Dec.decodeOneForLift(Bytes.data(), Bytes.size(), kAddress, Insn),
+            0);
+}
+
 testing::AssertionResult hasOnlyMappedRegisters(const std::vector<LowOp> &Ops) {
   auto Check = [](const NdVar &Var) {
     return !Var.isReg() ||
@@ -338,8 +348,8 @@ TEST(X86WideISAState, EvexAlignUsesBothSourcesAndImmediate) {
     EXPECT_EQ(Emulator.getLoadRecords()[0].Size, VectorSize);
   }
 
-  // EVEX.aaa=0 means no writemask, so setting EVEX.z in that form is invalid.
-  expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0xa8, 0x03, 0xcb, 0x01});
+  // EVEX.aaa=0 means no writemask, so setting EVEX.z in that form is #UD.
+  expectUndecodable({0x62, 0xf3, 0x6d, 0xa8, 0x03, 0xcb, 0x01});
   // Broadcast and masked-memory forms remain fail-closed until their memory
   // access and fault-suppression contracts are modeled and tested directly.
   expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0x38, 0x03, 0x08, 0x01});
@@ -640,8 +650,8 @@ TEST(X86WideISAState, EvexShuffleQuartersUseBothSourcesAndImmediate) {
     EXPECT_FALSE(Emulator.skips().any());
   }
 
-  // EVEX.z without a nonzero mask selector is invalid.
-  expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0xc8, 0x23, 0xcb, 0x1b});
+  // EVEX.z without a nonzero mask selector is #UD.
+  expectUndecodable({0x62, 0xf3, 0x6d, 0xc8, 0x23, 0xcb, 0x1b});
   // Broadcast forms remain fail-closed until their tuple semantics are
   // modeled directly.
   expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0x38, 0x23, 0x08, 0x1b});
@@ -653,11 +663,11 @@ TEST(X86WideISAState, EvexShuffleQuartersUseBothSourcesAndImmediate) {
   expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0x58, 0x43, 0x08, 0x1b});
   expectStrictlyUnlifted({0x62, 0xf3, 0xed, 0x58, 0x43, 0x08, 0x1b});
 
-  // EVEX.L'L=11 is reserved even though the decoder accepts it as ZMM.
-  expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0x68, 0x23, 0xcb, 0x1b});
-  expectStrictlyUnlifted({0x62, 0xf3, 0xed, 0x68, 0x23, 0xcb, 0x1b});
-  expectStrictlyUnlifted({0x62, 0xf3, 0x6d, 0x68, 0x43, 0xcb, 0x1b});
-  expectStrictlyUnlifted({0x62, 0xf3, 0xed, 0x68, 0x43, 0xcb, 0x1b});
+  // EVEX.L'L=11 is reserved, and the decoder rejects it.
+  expectUndecodable({0x62, 0xf3, 0x6d, 0x68, 0x23, 0xcb, 0x1b});
+  expectUndecodable({0x62, 0xf3, 0xed, 0x68, 0x23, 0xcb, 0x1b});
+  expectUndecodable({0x62, 0xf3, 0x6d, 0x68, 0x43, 0xcb, 0x1b});
+  expectUndecodable({0x62, 0xf3, 0xed, 0x68, 0x43, 0xcb, 0x1b});
 
   const std::array<std::array<uint8_t, 7>, 4> InvalidLl00 = {{
       {{0x62, 0xf3, 0x6d, 0x08, 0x23, 0xcb, 0x1b}},

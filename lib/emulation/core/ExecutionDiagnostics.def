@@ -45,9 +45,12 @@ NEVERD_EXECUTION_DIAGNOSTIC(KvmMap,
                             "cannot register KVM backing or map vCPU state")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmState, "KVM CPU state transfer failed")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmRun, "KVM single-step execution failed")
-NEVERD_EXECUTION_DIAGNOSTIC(KvmRunControl, "KVM cancellation worker initialization failed")
-NEVERD_EXECUTION_DIAGNOSTIC(KvmRunActive, "KVM vCPU already has an active entry")
-NEVERD_EXECUTION_DIAGNOSTIC(KvmRunSignal, "KVM cancellation signal is no longer available")
+NEVERD_EXECUTION_DIAGNOSTIC(KvmRunControl,
+                            "KVM cancellation worker initialization failed")
+NEVERD_EXECUTION_DIAGNOSTIC(KvmRunActive,
+                            "KVM vCPU already has an active entry")
+NEVERD_EXECUTION_DIAGNOSTIC(KvmRunSignal,
+                            "KVM cancellation signal is no longer available")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmExit,
                             "unexpected KVM exit reason={0}, detail={1}, "
                             "pc={2:x}, cr2={3:x}; CPU state is terminal")
@@ -138,3 +141,11 @@ NEVERD_EXECUTION_DIAGNOSTIC(TypedExecutionUnsupported,
 NEVERD_EXECUTION_DIAGNOSTIC(
     MissingExecutionStart,
     "CPU returned without starting execution or reporting a setup failure")
+NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionLease,
+                            "RAM effects require the current execution lease")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    RAMTransactionRange, "RAM effects require a complete permitted RAM range")
+NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionBudget,
+                            "RAM effects exceed the instruction staging budget")
+NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionPhase,
+                            "RAM effect transaction is in the wrong phase")

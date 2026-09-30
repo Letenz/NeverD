@@ -67,3 +67,11 @@ checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MO
 线程指针包括 x64 FS/GS 基址以及 ARM64 `TPIDR_EL0` 的精确 `MRS`/`MSR` 编码。原生传输和 CPU 快照独立于内存保存这些状态，但不会创建 OS 线程或分配 TLS 块。supervisor x64 支持对齐的 1/2/4 字节标量 MMIO 事务，以及每个重启边界一个 MOVS 元素。设备读取需先提供无副作用的预览，再至多提交一次。user 配置拒绝设备映射；RMW、宽 MMIO 和端口 I/O 仍不支持。
 
 KVM/WHP 会取消正在运行的原生入口，并在释放执行资源前确认取消。KVM 使用专用执行线程和临时解除屏蔽的 realtime 信号；入口执行期间所选信号不得被忽略。不会修改调用方的 signal mask 或 handler。若来宾进度不确定，取消会成为终止性后端错误；不保证硬性墙钟期限。
+
+## x64 原生同步异常
+
+checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通过私有 supervisor IDT/IST 接收异常，WHP 使用明确的异常拦截位图；异常保留原始上下文和可用的错误码，与后端传输错误分开。OS 模型必须先消费可恢复事件，再安装明确的继续执行上下文。Windows 驱动将零除及商溢出映射为 `STATUS_INTEGER_DIVIDE_BY_ZERO`，并执行实际 SEH filter、`__finally` 和重试。`NeverDX64ExceptionTests` 可在禁用 Unicorn 时构建；原始 WDK 用例由 `DriverWDMCPUException` 验证。缺少的 WHP/ARM64 主机覆盖会明确跳过。
+
+## 分阶段提交 RAM 效果
+
+`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。

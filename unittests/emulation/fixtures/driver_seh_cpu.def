@@ -1,0 +1,31 @@
+//===- driver_seh_cpu.def - Native processor exception fixture contract ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_SEH_CPU_DIVIDE_ASM
+#define NEVERD_SEH_CPU_DIVIDE_ASM "divq %%rcx"
+#endif
+#ifdef NEVERD_SEH_CPU_VALUE
+NEVERD_SEH_CPU_VALUE(SehDivideZero, 'h')
+NEVERD_SEH_CPU_VALUE(SehDivideOverflow, 'n')
+NEVERD_SEH_CPU_VALUE(SehDivideContinue, 'r')
+NEVERD_SEH_CPU_VALUE(SehDivideModeMarker, '_')
+NEVERD_SEH_CPU_VALUE(SehDivideModeCharacters, 2)
+NEVERD_SEH_CPU_VALUE(SehDivideIterations, 3)
+NEVERD_SEH_CPU_VALUE(SehDivideDividend, 9)
+NEVERD_SEH_CPU_VALUE(SehDivideRecoveryDivisor, 3)
+NEVERD_SEH_CPU_VALUE(SehDivideBefore, 1)
+NEVERD_SEH_CPU_VALUE(SehDivideFinally, 2)
+NEVERD_SEH_CPU_VALUE(SehDivideHandler, 3)
+NEVERD_SEH_CPU_VALUE(SehDivideBad, 0xbad)
+NEVERD_SEH_CPU_VALUE(SehDivideTrapFlag, 0x100)
+#endif
+#ifdef NEVERD_SEH_CPU_TEXT
+NEVERD_SEH_CPU_TEXT(SehDivideFilterMessage,
+                    "WDM SEH: CPU divide filter code=%08lx mode=%c\n")
+NEVERD_SEH_CPU_TEXT(SehDivideFinallyMessage,
+                    "WDM SEH: CPU divide finally abnormal=%u\n")
+NEVERD_SEH_CPU_TEXT(SehDivideCompleteMessage,
+                    "WDM SEH: CPU divide verified iteration=%lu\n")
+#endif

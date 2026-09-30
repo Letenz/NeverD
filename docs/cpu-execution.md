@@ -46,6 +46,18 @@ admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
 supervisor and flat profiles do not advertise that boundary.
 
+Checked x64 also admits scalar `XCHG`, `XADD` and `CMPXCHG` at 8/16/32/64 bits,
+with natural alignment for locked or implicit-lock memory forms. An ISA-owned
+footprint describes every ordinary RAM write. The physical execution lease and
+bounded `RAMTransaction` keep the actual next CPU/RAM state private until the
+observers accept it; result callbacks see original state and exact processor
+write values. Cancellation, callback failure or a transport error discards
+speculative effects. On a processor exception, RAM rolls back before OS
+delivery while architectural exception status is retained. ARM64 scalar/pair
+stores use the same RAM authority. Devices, unknown footprints and parallel
+hardware SMP remain outside this transaction. CPU snapshots do not undo already
+committed RAM.
+
 User execution requires `UserAccessible` as well as the appropriate `Read`,
 `Write` or `Execute` bit on **every** mapped page. Existing mappings default to
 supervisor access. Aliases have independent rights even when sharing physical
@@ -75,6 +87,16 @@ REP MOVS commits one complete element per restart boundary, so earlier
 completed elements survive a later fault. Mixed RAM/device operands remain
 unsupported before observers or device callbacks. Independent native x64
 fault probes check these ordinary and REP store boundaries.
+
+Checked x64 admits `DIV` and `IDIV` with register or ordinary RAM operands at
+all four integer widths. The processor computes the quotient and remainder;
+zero divisors and quotient overflow report the actual `#DE`, preserving the
+faulting context. An admitted `RecoverableFault` callback leaves the event
+pending until its OS owner consumes it and explicitly installs a continuation.
+Otherwise it remains a terminal guest trap. Native synchronous exceptions are
+distinct from transport failures; this does not admit unlisted instructions.
+KVM uses a private supervisor IDT/IST gateway chosen outside guest mappings,
+while WHP intercepts an explicit architectural exception bitmap.
 
 Page tables are private CPU projections. A supervisor projection preserves its
 existing supervisor-only translation semantics; a user projection marks only

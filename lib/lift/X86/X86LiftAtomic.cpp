@@ -10,6 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
+
 #include "neverd/lift/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
@@ -199,26 +201,15 @@ std::optional<ApxAtomicEncoding> decodeApxAtomicEncoding(const cs_insn *Insn,
   if (!IsRao && !IsCmpccXadd)
     return std::nullopt;
 
-  size_t EvexOffset = 0;
-  uint8_t SegmentPrefix = 0;
-  bool Address32 = false;
-  while (EvexOffset < Insn->size && Insn->bytes[EvexOffset] != 0x62) {
-    const uint8_t Prefix = Insn->bytes[EvexOffset++];
-    if (Prefix == 0x67) {
-      if (Address32)
-        return std::nullopt;
-      Address32 = true;
-    } else if (apxAtomicSegment(Prefix) != X86_REG_INVALID) {
-      if (SegmentPrefix != 0)
-        return std::nullopt;
-      SegmentPrefix = Prefix;
-    } else {
-      // This rejects an explicit LOCK prefix as well as legacy mandatory and
-      // REX prefixes.  RAO/CMPccXADD already carry implicit atomicity.
-      return std::nullopt;
-    }
-  }
-  if (EvexOffset + 6 > Insn->size || Insn->bytes[EvexOffset] != 0x62)
+  // The scan rejects an explicit LOCK prefix as well as legacy mandatory and
+  // effective REX prefixes.  RAO/CMPccXADD already carry implicit atomicity.
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes))
+    return std::nullopt;
+  const size_t EvexOffset = Prefixes.EvexOffset;
+  const uint8_t SegmentPrefix = Prefixes.SegmentPrefix;
+  const bool Address32 = Prefixes.Address32;
+  if (EvexOffset + 6 > Insn->size)
     return std::nullopt;
 
   const uint8_t P0 = Insn->bytes[EvexOffset + 1];

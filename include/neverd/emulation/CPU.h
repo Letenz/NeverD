@@ -25,7 +25,7 @@ struct BackendHooks {
   std::function<void(uint64_t, uint32_t)> Read;
   std::function<void(uint64_t, uint32_t, uint64_t)> Write;
   std::function<void(uint64_t, uint32_t, const char *)> Fault;
-  /// Admit only a modeled, synchronous guest memory exception. The faulting
+  /// Admit only a modeled, synchronous guest exception. The faulting
   /// instruction is abandoned; the caller must consume the fault and install
   /// a validated guest exception transfer before running again.
   std::function<bool(const BackendFault &)> RecoverableFault;

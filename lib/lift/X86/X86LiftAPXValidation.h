@@ -65,6 +65,45 @@ inline bool isPotentialPrefix(uint8_t Prefix) {
          (Prefix >= 0x40 && Prefix <= 0x4f);
 }
 
+struct EvexPrefixes {
+  size_t EvexOffset = 0;
+  uint8_t SegmentPrefix = 0;
+  bool Address32 = false;
+};
+
+/// Scans the legacy prefixes before an EVEX escape.  A segment and an
+/// address-size prefix may each appear once.  In 64-bit mode a REX prefix
+/// that another prefix follows is ignored, as it is for any instruction; a
+/// REX right before EVEX, like every other prefix, makes the encoding #UD.
+inline bool scanEvexPrefixes(const cs_insn *Insn, EvexPrefixes &Result,
+                             bool Is64Bit = true) {
+  Result = {};
+  if (!Insn)
+    return false;
+  size_t Offset = 0;
+  while (Offset < Insn->size && Insn->bytes[Offset] != 0x62) {
+    const uint8_t Prefix = Insn->bytes[Offset];
+    if (isSegmentPrefix(Prefix)) {
+      if (Result.SegmentPrefix != 0)
+        return false;
+      Result.SegmentPrefix = Prefix;
+    } else if (Prefix == 0x67) {
+      if (Result.Address32)
+        return false;
+      Result.Address32 = true;
+    } else if (!Is64Bit || Prefix < 0x40 || Prefix > 0x4f ||
+               Offset + 1 >= Insn->size ||
+               !isPotentialPrefix(Insn->bytes[Offset + 1])) {
+      return false;
+    }
+    ++Offset;
+  }
+  if (Offset >= Insn->size)
+    return false;
+  Result.EvexOffset = Offset;
+  return true;
+}
+
 inline bool isPresent(const cs_insn *Insn, const cs_x86 &X86) {
   if (!Insn)
     return false;
@@ -83,23 +122,13 @@ inline bool decodeHeader(const cs_insn *Insn, const cs_x86 &X86, Header &Result,
       TrailingImmediateBytes > Insn->size)
     return false;
 
-  size_t Offset = 0;
-  while (Offset < Insn->size && Insn->bytes[Offset] != 0x62) {
-    const uint8_t Prefix = Insn->bytes[Offset];
-    if (isSegmentPrefix(Prefix)) {
-      if (Result.SegmentPrefix != 0)
-        return false;
-      Result.SegmentPrefix = Prefix;
-    } else if (Prefix == 0x67) {
-      if (Result.Address32)
-        return false;
-      Result.Address32 = true;
-    } else {
-      return false;
-    }
-    ++Offset;
-  }
-  if (Offset + 6 > Insn->size || Insn->bytes[Offset] != 0x62)
+  EvexPrefixes Prefixes;
+  if (!scanEvexPrefixes(Insn, Prefixes))
+    return false;
+  const size_t Offset = Prefixes.EvexOffset;
+  Result.SegmentPrefix = Prefixes.SegmentPrefix;
+  Result.Address32 = Prefixes.Address32;
+  if (Offset + 6 > Insn->size)
     return false;
 
   Result.EvexOffset = Offset;

@@ -10,6 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
+
 #include "neverd/lift/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
@@ -117,25 +119,13 @@ decodeApxConditionalEncoding(const cs_insn *Insn, const cs_x86 &X86,
   if (!Insn || Insn->size < 6 || Insn->size > 15 || X86.op_count != 2)
     return std::nullopt;
 
-  size_t EvexOffset = 0;
-  bool Address32 = false;
-  uint8_t SegmentPrefix = 0;
-  while (EvexOffset < Insn->size && Insn->bytes[EvexOffset] != 0x62) {
-    const uint8_t Prefix = Insn->bytes[EvexOffset];
-    if (Prefix == 0x67) {
-      if (Address32)
-        return std::nullopt;
-      Address32 = true;
-    } else if (apxConditionalSegment(Prefix) != X86_REG_INVALID) {
-      if (SegmentPrefix != 0)
-        return std::nullopt;
-      SegmentPrefix = Prefix;
-    } else {
-      return std::nullopt;
-    }
-    ++EvexOffset;
-  }
-  if (EvexOffset + 6 > Insn->size || Insn->bytes[EvexOffset] != 0x62)
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes))
+    return std::nullopt;
+  const size_t EvexOffset = Prefixes.EvexOffset;
+  const bool Address32 = Prefixes.Address32;
+  const uint8_t SegmentPrefix = Prefixes.SegmentPrefix;
+  if (EvexOffset + 6 > Insn->size)
     return std::nullopt;
 
   const uint8_t P0 = Insn->bytes[EvexOffset + 1];
@@ -167,16 +157,18 @@ decodeApxConditionalEncoding(const cs_insn *Insn, const cs_x86 &X86,
     ByteForm = Opcode == 0x38 || Opcode == 0x3a || Opcode == 0x80;
   }
 
+  // As in the other promoted ALU forms, byte forms ignore EVEX.W, and W
+  // selects 64-bit operands over a 66 prefix.
   uint8_t Width = 0;
   if (ByteForm) {
-    if ((P1 & 0x83) != 0)
+    if ((P1 & 0x03) != 0)
       return std::nullopt;
     Width = 1;
   } else {
     const uint8_t PP = P1 & 0x03;
-    if (PP > 1 || (PP == 1 && (P1 & 0x80) != 0))
+    if (PP > 1)
       return std::nullopt;
-    Width = PP == 1 ? 2 : (P1 & 0x80) != 0 ? 8 : 4;
+    Width = (P1 & 0x80) != 0 ? 8 : PP == 1 ? 2 : 4;
   }
 
   const bool Memory = (ModRM & 0xc0) != 0xc0;
@@ -295,20 +287,28 @@ decodeApxConditionalEncoding(const cs_insn *Insn, const cs_x86 &X86,
         : Width == 1                                          ? 1
         : Width == 2                                          ? 2
                                                               : 4;
-    if (X86.operands[OtherIndex].size != ImmediateSize ||
+    if (X86.operands[OtherIndex].size != Width ||
         X86.encoding.imm_offset != Cursor ||
         X86.encoding.imm_size != ImmediateSize ||
         Cursor + ImmediateSize != Insn->size)
       return std::nullopt;
 
+    // The immediate follows CMP and TEST: a byte or word immediate of the
+    // same width is zero-extended, an imm8 of a wider operand and an imm32
+    // of a 64-bit operand are sign-extended.
     uint32_t RawImmediate = 0;
     for (unsigned I = 0; I < ImmediateSize; ++I)
       RawImmediate |= static_cast<uint32_t>(Insn->bytes[Cursor + I]) << (I * 8);
-    const int64_t SignedImmediate =
-        ImmediateSize == 1   ? static_cast<int8_t>(RawImmediate)
-        : ImmediateSize == 2 ? static_cast<int16_t>(RawImmediate)
-                             : static_cast<int32_t>(RawImmediate);
-    if (X86.operands[OtherIndex].imm != SignedImmediate)
+    int64_t ExpectedImmediate = 0;
+    if (ImmediateSize == 1)
+      ExpectedImmediate = Width == 1 ? static_cast<int64_t>(RawImmediate)
+                                     : static_cast<int8_t>(RawImmediate);
+    else if (ImmediateSize == 2)
+      ExpectedImmediate = static_cast<uint16_t>(RawImmediate);
+    else
+      ExpectedImmediate = Width == 8 ? static_cast<int32_t>(RawImmediate)
+                                     : static_cast<int64_t>(RawImmediate);
+    if (X86.operands[OtherIndex].imm != ExpectedImmediate)
       return std::nullopt;
   } else if (X86.operands[OtherIndex].size != Width ||
              X86.encoding.imm_size != 0 || Cursor != Insn->size) {

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 
 #include <algorithm>
@@ -233,21 +234,13 @@ bool parseCanonicalEvexEncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
       (TargetArch != Arch::X64 && TargetArch != Arch::X86))
     return false;
   Encoding.Is64Bit = TargetArch == Arch::X64;
-  while (Encoding.Offset < Insn->size && Insn->bytes[Encoding.Offset] != 0x62) {
-    const uint8_t Prefix = Insn->bytes[Encoding.Offset++];
-    if (isSegmentPrefix(Prefix)) {
-      if (Encoding.SegmentPrefix != 0)
-        return false;
-      Encoding.SegmentPrefix = Prefix;
-    } else if (Prefix == 0x67) {
-      if (Encoding.AddressOverride)
-        return false;
-      Encoding.AddressOverride = true;
-    } else {
-      return false;
-    }
-  }
-  if (Encoding.Offset + 6 > Insn->size || Insn->bytes[Encoding.Offset] != 0x62)
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes, Encoding.Is64Bit))
+    return false;
+  Encoding.Offset = Prefixes.EvexOffset;
+  Encoding.SegmentPrefix = Prefixes.SegmentPrefix;
+  Encoding.AddressOverride = Prefixes.Address32;
+  if (Encoding.Offset + 6 > Insn->size)
     return false;
   Encoding.P0 = Insn->bytes[Encoding.Offset + 1];
   Encoding.P1 = Insn->bytes[Encoding.Offset + 2];

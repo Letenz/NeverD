@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -120,24 +121,12 @@ bool decodeApxHeader(const cs_insn *Insn, const cs_x86 &X86,
                      unsigned TrailingImmediateBytes = 0) {
   if (!Insn || Insn->size == 0 || Insn->size > 15)
     return false;
-  size_t Offset = 0;
-  while (Offset < Insn->size && Insn->bytes[Offset] != 0x62) {
-    const uint8_t Prefix = Insn->bytes[Offset];
-    if (isApxSegmentPrefix(Prefix)) {
-      if (Header.SegmentPrefix != 0)
-        return false;
-      Header.SegmentPrefix = Prefix;
-    } else if (Prefix == 0x67) {
-      if (Header.Address32)
-        return false;
-      Header.Address32 = true;
-    } else {
-      return false;
-    }
-    ++Offset;
-  }
-  if (Offset == Insn->size)
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes))
     return false;
+  const size_t Offset = Prefixes.EvexOffset;
+  Header.SegmentPrefix = Prefixes.SegmentPrefix;
+  Header.Address32 = Prefixes.Address32;
 
   Result.Present = true;
   Header.EvexOffset = Offset;
@@ -418,17 +407,20 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
         X86.op_count != 3 ||
         !validateApxDetail(Insn, X86, ExpectedFlags, X86_REG_INVALID,
                            NF ? X86_REG_INVALID : X86_REG_EFLAGS) ||
-        !apxRegisterOperand(X86.operands[0], ModRMReg, Width, CS_AC_WRITE) ||
-        !apxRegisterOperand(X86.operands[1], Vvvvv, Width, CS_AC_READ) ||
-        !validateApxRM(Insn, X86, H, X86.operands[2], Width))
+        !apxRegisterOperand(X86.operands[0], ModRMReg, Width, CS_AC_WRITE))
+      return Result;
+    // ANDN reads VVVVV and then ModRM.r/m.  BZHI masks its ModRM.r/m source
+    // with the index in VVVVV, and Capstone lists them in that order.
+    const unsigned VvvvvIndex = Id == X86_INS_BZHI ? 2 : 1;
+    const unsigned RMIndex = Id == X86_INS_BZHI ? 1 : 2;
+    if (!apxRegisterOperand(X86.operands[VvvvvIndex], Vvvvv, Width,
+                            CS_AC_READ) ||
+        !validateApxRM(Insn, X86, H, X86.operands[RMIndex], Width))
       return Result;
     Result.NF = NF;
     Result.Destination = 0;
-    // The architectural BZHI source is ModRM.r/m and its index is VVVVV.
-    // The current decoder detail presents the encoded VVVVV role first, so
-    // consume the raw roles rather than silently reversing the operation.
-    Result.Source = Id == X86_INS_BZHI ? 2 : 1;
-    Result.Source2 = Id == X86_INS_BZHI ? 1 : 2;
+    Result.Source = 1;
+    Result.Source2 = 2;
     Result.Valid = true;
     return Result;
   }
