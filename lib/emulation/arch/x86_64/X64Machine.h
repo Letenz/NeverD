@@ -47,11 +47,12 @@ struct X64MachineState {
 /// Native execution of one already admitted instruction. No OS models,
 /// instruction decoding, memory ownership or lifecycle decisions belong here.
 /// The v1 contract admits scalar integer and bounded SSE/SSE2 data operations.
-/// Masked scalar FP conversions/subtraction retain MXCSR in the CPU context.
+/// Admitted masked legacy SSE arithmetic and conversions retain MXCSR and the
+/// complete legacy FP/SSE state in the CPU context.
 /// Synchronous processor faults return X64ExceptionError with their original
 /// architectural context. Transport failures do not publish partial CPU state.
-/// It excludes other floating-point arithmetic, privileged instructions,
-/// debug/flag manipulation and any instruction with unbounded execution.
+/// The architecture excludes unlisted floating-point/vector families,
+/// privileged instructions, debug/flag manipulation and unbounded execution.
 class X64Machine {
 public:
   virtual ~X64Machine() = default;

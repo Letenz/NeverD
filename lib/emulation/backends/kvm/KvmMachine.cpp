@@ -9,6 +9,7 @@
 #include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 #if defined(__linux__) && defined(__x86_64__) && defined(NEVERD_EMULATION_KVM)
@@ -24,12 +25,52 @@
 
 namespace neverd::emulation {
 namespace {
+bool sameState(const kvm_segment &L, const kvm_segment &R) {
+#define NEVERD_KVM_X64_SEGMENT_FIELD(Field)                                    \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_SEGMENT_FIELD
+  return true;
+}
+bool sameState(const kvm_dtable &L, const kvm_dtable &R) {
+#define NEVERD_KVM_X64_DTABLE_FIELD(Field)                                     \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_DTABLE_FIELD
+  return true;
+}
+bool sameState(const kvm_sregs &L, const kvm_sregs &R) {
+#define NEVERD_KVM_X64_SPECIAL_SEGMENT(Field)                                  \
+  if (!sameState(L.Field, R.Field))                                            \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_DTABLE(Field)                                   \
+  if (!sameState(L.Field, R.Field))                                            \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_VALUE(Field)                                    \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_ARRAY(Field)                                    \
+  if (!llvm::equal(L.Field, R.Field))                                          \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_SPECIAL_ARRAY
+#undef NEVERD_KVM_X64_SPECIAL_VALUE
+#undef NEVERD_KVM_X64_SPECIAL_DTABLE
+#undef NEVERD_KVM_X64_SPECIAL_SEGMENT
+  return true;
+}
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
   bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
+    // Only a completely captured debug exit proves the next entry runnable.
+    // Failed, cancelled and exception entries must reestablish it explicitly.
+    const bool WasRunnable = Runnable;
+    Runnable = false;
     kvm_regs R{};
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   R.Field = State.reg(X64Register::Name);
@@ -38,6 +79,7 @@ public:
     kvm_sregs S{};
     if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
       return diagnostic::error(diagnostic::KvmState);
+    const auto PreviousSpecial = S;
     S.cr0 = x64::CR0;
     S.cr3 = Root;
     S.cr4 = x64::CR4;
@@ -81,9 +123,12 @@ public:
                                      x64::fp::FPAndSSE);
     kvm_mp_state MP{};
     MP.mp_state = KVM_MP_STATE_RUNNABLE;
-    if (ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0 ||
-        ioctl(CPU, KVM_SET_SREGS, &S) < 0 || ioctl(CPU, KVM_SET_REGS, &R) < 0 ||
-        ioctl(CPU, KVM_SET_XSAVE, &F) < 0)
+    // Read actual special registers on every entry. Reapply the projection
+    // only when a defined field changed, including CR3, CPL, TLS or CR8.
+    // Comparing protocol fields excludes kernel-owned structure padding.
+    if ((!WasRunnable && ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0) ||
+        (!sameState(PreviousSpecial, S) && ioctl(CPU, KVM_SET_SREGS, &S) < 0) ||
+        ioctl(CPU, KVM_SET_REGS, &R) < 0 || ioctl(CPU, KVM_SET_XSAVE, &F) < 0)
       return diagnostic::error(diagnostic::KvmState);
     // KVM associates software single stepping with the current linear RIP.
     // Arm it after installing this invocation's registers, including on resume.
@@ -93,6 +138,9 @@ public:
     if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                      BackendAvailability::MissingCapability);
+    // Without an in-kernel APIC, KVM_RUN takes CR8 from the shared run area,
+    // even when KVM_SET_SREGS already installed that register.
+    Run->cr8 = State.reg(X64Register::CR8);
     if (auto E = runUntilExit(Control.forNativeStep()))
       return E;
     const bool Stepped = Run->exit_reason == KVM_EXIT_DEBUG &&
@@ -144,11 +192,13 @@ public:
       return llvm::make_error<X64ExceptionError>(*Trap);
     }
     State = Next;
+    Runnable = true;
     return llvm::Error::success();
   }
 
 private:
   MemoryProjection &Memory;
+  bool Runnable = false;
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>

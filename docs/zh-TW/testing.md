@@ -813,3 +813,5 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 現有 CI 工作流程在通用測試設定前執行完整模擬測試目錄，並在 `emulation-focused` 儲存探索清單、JUnit 結果和 CTest 日誌。其他模組的失敗不會阻止這組測試執行。硬體不可用及選用驅動程式範例缺失仍明確記錄為略過；軟體執行或編譯通過不能作為原生執行證據。
 
 在 Linux 上，`NeverDUnicornDeadlineTests` 透過受控 pthread 排程，讓實際計時執行緒在客體入口前完成。測試涵蓋 x64、ARM32 和 ARM64，要求入口前取消不產生客體效果，並驗證下一次執行使用獨立預算。測試呼叫公開引擎 API，不修改引擎私有狀態。
+
+`NeverDX64ExceptionTests` 中的 `X64StateTransition` 在原生 CPU 上執行獨立 RAM 讀取和 CR8 讀取，交替改變 TLS 基址與權限級，在重複除法例外後恢復，並在取消進入後更改 TLS。修改原生狀態傳輸時，應執行所屬 CTest 標籤，同時涵蓋別名重新映射、CPU 上下文、FP 狀態和原始驅動結果對比。KVM/WHP 不可用仍明確跳過。
