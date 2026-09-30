@@ -1228,6 +1228,14 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
           }
         }
     }
+    // The role proof below admits an address only inside a run that the
+    // lockstep mirror predicate owns, or through the callable load domain.
+    // A run whose only code slots belong to recovered switches, which dispatch
+    // without the mirror, owns no address here.  Its accesses are ordinary
+    // read-only data and belong to the read-only resolver, which still fails
+    // closed on its own provenance proof.
+    if (!HasCompleteCallableLoadDomain && !addrInCodePtrMirrorRun(SelSeg))
+      return nullptr;
     auto belongsToClaimedCodeTableRun = [&](uint64_t Address) {
       if (addrInCodePtrMirrorRun(Address))
         return true;
