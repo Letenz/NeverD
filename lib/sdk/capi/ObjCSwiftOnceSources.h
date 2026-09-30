@@ -74,17 +74,33 @@ struct SwiftObjCClassMetadataAccessorContract {
   }
 };
 
+struct SwiftOnceNestedCallbackContract {
+  std::vector<SwiftOnceObjCThunkContract> Initializers;
+  SourceFunctionTypeHint Signature;
+
+  bool sameIdentity(const SwiftOnceNestedCallbackContract &Other) const {
+    if (Initializers.size() != Other.Initializers.size() ||
+        !objc_projection_detail::sameHint(Signature, Other.Signature))
+      return false;
+    for (size_t I = 0; I < Initializers.size(); ++I)
+      if (!Initializers[I].sameIdentity(Other.Initializers[I]))
+        return false;
+    return true;
+  }
+};
+
 struct SwiftOnceSourcePlan {
   std::map<va_t, SwiftOnceGetterContract> Getters;
   std::map<va_t, SourceFunctionTypeHint> GetterHints;
   std::map<va_t, SwiftOnceCopyContract> Copies;
   std::map<va_t, SwiftOnceAddressorContract> Addressors;
   std::map<va_t, SwiftOnceObjCThunkContract> ObjCThunks;
-  std::map<va_t, SwiftOnceObjCThunkContract> NestedCallbacks;
+  std::map<va_t, SwiftOnceNestedCallbackContract> NestedCallbacks;
   std::map<va_t, SwiftObjCClassMetadataAccessorContract>
       ObjCClassMetadataAccessors;
   std::map<va_t, SourceFunctionTypeHint> AddressorHints;
   std::map<va_t, SourceFunctionTypeHint> CallbackHints;
+  std::set<va_t> CallbackAnalysisRoots;
   std::set<va_t> UnobservedContextGetters;
   std::set<va_t> DispatchOnceCallbacks;
 };
@@ -743,31 +759,27 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   const HighStmt *Assignment = HasSeparateLoad ? Body[0] : nullptr;
   const HighStmt &Conditional = *Body[HasSeparateLoad ? 1 : 0];
   const HighStmt &FinalReturn = *Body.back();
-  if ((Assignment &&
-       (Assignment->Kind != StmtKind::Assign || !Assignment->Dst ||
-        !Assignment->Val)) ||
+  if ((Assignment && (Assignment->Kind != StmtKind::Assign ||
+                      !Assignment->Dst || !Assignment->Val)) ||
       (Conditional.Kind != StmtKind::If &&
        Conditional.Kind != StmtKind::IfElse) ||
       !Conditional.Cond || FinalReturn.Kind != StmtKind::Return ||
       !FinalReturn.RetVal)
     return std::nullopt;
-  const bool BranchReturn =
-      Assignment && Conditional.ElseBody.empty() &&
-      Conditional.Body.size() == 2 &&
-      Conditional.Body[0].Kind == StmtKind::Call &&
-      Conditional.Body[0].CallExpr &&
-      Conditional.Body[1].Kind == StmtKind::Return &&
-      Conditional.Body[1].RetVal;
-  const bool SharedReturn =
-      Assignment && Conditional.Body.empty() &&
-      Conditional.ElseBody.size() == 1 &&
-      Conditional.ElseBody[0].Kind == StmtKind::Call &&
-      Conditional.ElseBody[0].CallExpr;
-  const bool InlinedLoad =
-      !Assignment && Conditional.ElseBody.empty() &&
-      Conditional.Body.size() == 1 &&
-      Conditional.Body[0].Kind == StmtKind::Call &&
-      Conditional.Body[0].CallExpr;
+  const bool BranchReturn = Assignment && Conditional.ElseBody.empty() &&
+                            Conditional.Body.size() == 2 &&
+                            Conditional.Body[0].Kind == StmtKind::Call &&
+                            Conditional.Body[0].CallExpr &&
+                            Conditional.Body[1].Kind == StmtKind::Return &&
+                            Conditional.Body[1].RetVal;
+  const bool SharedReturn = Assignment && Conditional.Body.empty() &&
+                            Conditional.ElseBody.size() == 1 &&
+                            Conditional.ElseBody[0].Kind == StmtKind::Call &&
+                            Conditional.ElseBody[0].CallExpr;
+  const bool InlinedLoad = !Assignment && Conditional.ElseBody.empty() &&
+                           Conditional.Body.size() == 1 &&
+                           Conditional.Body[0].Kind == StmtKind::Call &&
+                           Conditional.Body[0].CallExpr;
   if (!BranchReturn && !SharedReturn && !InlinedLoad)
     return std::nullopt;
   for (const auto &Parameter : F.Params)
@@ -793,8 +805,7 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
        Assignment->Dst->IntrinsicId != Intrinsic::None ||
        !Assignment->Dst->IntrinsicOutputs.empty() ||
        Assignment->Dst->MemoryOrdering != NdMemoryOrdering::None ||
-       Assignment->Dst->MemoryAddressSpace !=
-           NdMemoryAddressSpace::Default))
+       Assignment->Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default))
     return std::nullopt;
   ExprPtr Loaded = Assignment ? Plain(Assignment->Val) : nullptr;
 
@@ -813,8 +824,7 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   };
   auto Condition = Plain(Conditional.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
-      Condition->Op !=
-          (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
+      Condition->Op != (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
       Condition->Operands.size() != 2)
     return std::nullopt;
   ExprPtr Added;
@@ -846,7 +856,7 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
       objc_binding_detail::constantAddress(*Loaded->Operands.front());
 
   const auto &Once = *(SharedReturn ? Conditional.ElseBody[0].CallExpr
-                                   : Conditional.Body[0].CallExpr);
+                                    : Conditional.Body[0].CallExpr);
   if (!onceCall(Once, Image))
     return std::nullopt;
   const auto OncePredicate =
@@ -854,11 +864,11 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   const auto Initializer =
       objc_binding_detail::constantAddress(*Once.Operands[1]);
   const auto Context = parameter(Once.Operands[2]);
-  const auto FirstStorage = objc_binding_detail::constantAddress(
-      *ResolveAssigned(BranchReturn ? Conditional.Body[1].RetVal
-                                    : FinalReturn.RetVal));
-  const auto SecondStorage =
-      objc_binding_detail::constantAddress(*ResolveAssigned(FinalReturn.RetVal));
+  const auto FirstStorage =
+      objc_binding_detail::constantAddress(*ResolveAssigned(
+          BranchReturn ? Conditional.Body[1].RetVal : FinalReturn.RetVal));
+  const auto SecondStorage = objc_binding_detail::constantAddress(
+      *ResolveAssigned(FinalReturn.RetVal));
   if (!Predicate || !OncePredicate || *Predicate != *OncePredicate ||
       !Initializer || !Context || *Context != 2 || !FirstStorage ||
       !SecondStorage || *FirstStorage != *SecondStorage ||
@@ -910,9 +920,8 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     Method = &Candidate;
   }
   const bool InlinedPredicate =
-      !F.Body.empty() &&
-      (F.Body.front().Kind == StmtKind::If ||
-       F.Body.front().Kind == StmtKind::IfElse);
+      !F.Body.empty() && (F.Body.front().Kind == StmtKind::If ||
+                          F.Body.front().Kind == StmtKind::IfElse);
   const size_t Offset = InlinedPredicate ? 0 : 1;
   const bool SeparateRetain = F.Body.size() == Offset + 6;
   if (!Method || F.Params.size() != 3 || !F.ReturnType ||
@@ -986,22 +995,20 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
   const auto *PredicateAssignment = InlinedPredicate ? nullptr : Assignment(0);
   const auto *StorageAssignment = Assignment(Offset + 2);
   const auto *RetainAssignment = Assignment(Offset + 3);
-  const auto *ResultAssignment =
-      Assignment(Offset + (SeparateRetain ? 4 : 3));
+  const auto *ResultAssignment = Assignment(Offset + (SeparateRetain ? 4 : 3));
   const auto &Branch = F.Body[Offset];
   const auto &Label = F.Body[Offset + 1];
   const auto &Return = F.Body[Offset + (SeparateRetain ? 5 : 4)];
   const size_t OnceIndex = Branch.Body.size() == 3 ? 1 : 0;
-  const bool BranchGoto =
-      Branch.ElseBody.empty() && Branch.Body.size() == OnceIndex + 2 &&
-      Branch.Body[OnceIndex].Kind == StmtKind::Call &&
-      Branch.Body[OnceIndex].CallExpr &&
-      Branch.Body[OnceIndex + 1].Kind == StmtKind::Goto &&
-      Branch.Body[OnceIndex + 1].GotoTarget;
+  const bool BranchGoto = Branch.ElseBody.empty() &&
+                          Branch.Body.size() == OnceIndex + 2 &&
+                          Branch.Body[OnceIndex].Kind == StmtKind::Call &&
+                          Branch.Body[OnceIndex].CallExpr &&
+                          Branch.Body[OnceIndex + 1].Kind == StmtKind::Goto &&
+                          Branch.Body[OnceIndex + 1].GotoTarget;
   const bool SharedReturn =
       Branch.Body.empty() && Branch.ElseBody.size() == 1 &&
-      Branch.ElseBody[0].Kind == StmtKind::Call &&
-      Branch.ElseBody[0].CallExpr;
+      Branch.ElseBody[0].Kind == StmtKind::Call && Branch.ElseBody[0].CallExpr;
   const bool InlinedBranchCall =
       InlinedPredicate && Branch.Kind == StmtKind::If &&
       Branch.ElseBody.empty() && Branch.Body.size() == 1 &&
@@ -1026,22 +1033,18 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
            Label.Body.empty() && Label.ElseBody.empty() &&
            Label.Cases.empty() && Label.DefaultBody.empty() &&
            Label.EHClauses.empty() && Label.EHClauseBodies.empty() &&
-           !Label.GotoTarget && !Label.LoopHeaderAddr &&
-           !Label.EHRange.Begin && !Label.EHRange.End &&
-           !Label.EHIsReducible && !Label.IsPhiCopy &&
+           !Label.GotoTarget && !Label.LoopHeaderAddr && !Label.EHRange.Begin &&
+           !Label.EHRange.End && !Label.EHIsReducible && !Label.IsPhiCopy &&
            Label.MemoryOrdering == NdMemoryOrdering::None &&
            Label.MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
   if ((!InlinedPredicate && !PredicateAssignment) || !StorageAssignment ||
-      !RetainAssignment ||
-      !ResultAssignment ||
+      !RetainAssignment || !ResultAssignment ||
       (Branch.Kind != StmtKind::If &&
        !(SharedReturn && Branch.Kind == StmtKind::IfElse)) ||
-      !Branch.Cond ||
-      (!BranchGoto && !SharedReturn && !InlinedBranchCall) ||
+      !Branch.Cond || (!BranchGoto && !SharedReturn && !InlinedBranchCall) ||
       !InertContinuationLabel() ||
-      (BranchGoto &&
-       Label.Addr != Branch.Body[OnceIndex + 1].GotoTarget) ||
+      (BranchGoto && Label.Addr != Branch.Body[OnceIndex + 1].GotoTarget) ||
       Return.Kind != StmtKind::Return || !Return.RetVal ||
       !SameLocal(Return.RetVal, ResultAssignment->Dst))
     return std::nullopt;
@@ -1051,8 +1054,7 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     return std::nullopt;
   auto Condition = Plain(Branch.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
-      Condition->Op !=
-          (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
+      Condition->Op != (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
       Condition->Operands.size() != 2)
     return std::nullopt;
   ExprPtr Added;
@@ -1071,14 +1073,14 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
   if (InlinedPredicate ? !LoadAddress(Loaded)
                        : !SameLocal(Loaded, PredicateAssignment->Dst))
     return std::nullopt;
-  const auto Predicate =
-      InlinedPredicate ? LoadAddress(Loaded)
-                       : LoadAddress(PredicateAssignment->Val);
+  const auto Predicate = InlinedPredicate
+                             ? LoadAddress(Loaded)
+                             : LoadAddress(PredicateAssignment->Val);
   if (!Predicate || *Predicate == *Storage)
     return std::nullopt;
 
   const auto &Once = *(SharedReturn ? Branch.ElseBody[0].CallExpr
-                                   : Branch.Body[OnceIndex].CallExpr);
+                                    : Branch.Body[OnceIndex].CallExpr);
   if (!onceCall(Once, Image))
     return std::nullopt;
   const auto OncePredicate =
@@ -1398,11 +1400,27 @@ inline ExprPtr retainedCallbackReturn(ExprPtr Value, const BinaryImage &Image) {
   return Value;
 }
 
-/// A callback already rooted by an authenticated once call can itself forward
-/// an undeclared x2 to one nested once initializer. Its only entry use must be
-/// that context; the independent leaf callback proof owns whether it is
-/// ignored.
-inline std::optional<SwiftOnceObjCThunkContract>
+inline bool nestedOnceContext(const ExprPtr &Value) {
+  if (parameter(Value) == std::optional<size_t>{2} || unknownScalarView(Value))
+    return true;
+  // An unspecified caller-saved register may survive as a scalar local view
+  // after previous calls. Reading that view has no independent effect; the
+  // descendant proof still owns whether its value can be discarded.
+  return Value && Value->Kind == ExprKind::Var && Value->Operands.empty() &&
+         (Value->Var.Kind == MedVar::Reg || Value->Var.Kind == MedVar::Temp) &&
+         Value->Var.Size == 8 && Value->Type && Value->Type->Size == 8 &&
+         (Value->Type->Kind == NdTypeKind::Int ||
+          Value->Type->Kind == NdTypeKind::Ptr) &&
+         Value->IntrinsicId == Intrinsic::None &&
+         Value->IntrinsicOutputs.empty() &&
+         Value->MemoryOrdering == NdMemoryOrdering::None &&
+         Value->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+}
+
+/// Each otherwise undeclared input must be used only as the context of an
+/// authenticated nested once call. A separate, bounded dependency proof must
+/// establish that every descendant initializer ignores that context.
+inline std::optional<SwiftOnceNestedCallbackContract>
 nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   if (Image.Arch != Arch::AArch64 || F.SourceTypeHint || F.Params.size() != 3 ||
       !F.ReturnType ||
@@ -1427,8 +1445,8 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
     return std::nullopt;
   size_t Budget = 100000;
-  size_t ContextUses = 0;
-  const HighExpr *Once = nullptr;
+  SwiftOnceNestedCallbackContract Contract;
+  Contract.Signature = callbackHint(Image.Arch);
   bool Valid = true;
   const HighStmt *RetainedReturn =
       !F.Body.empty() && F.Body.back().Kind == StmtKind::Return &&
@@ -1443,18 +1461,48 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
       Valid = false;
       return;
     }
-    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
-        E->Var.Kind == MedVar::Param) {
-      if (E->Var.Id == 2)
-        ++ContextUses;
-      else
-        Valid = false;
-    }
     if (onceCall(*E, Image)) {
-      if (Once || parameter(E->Operands[2]) != std::optional<size_t>{2})
+      if (!nestedOnceContext(E->Operands[2]) ||
+          Contract.Initializers.size() == 32) {
         Valid = false;
-      Once = E.get();
+        return;
+      }
+      const auto Predicate =
+          objc_binding_detail::constantAddress(*E->Operands[0]);
+      const auto Initializer =
+          objc_binding_detail::constantAddress(*E->Operands[1]);
+      const auto PredicateHint =
+          Predicate
+              ? objc_binding_detail::oncePredicateStorageHint(Image, *Predicate)
+              : std::nullopt;
+      if (!PredicateHint || !Initializer ||
+          !Image.isCodeAddress(*Initializer) ||
+          !llvm::StringRef(PredicateHint->TargetName).ends_with("_Wz")) {
+        Valid = false;
+        return;
+      }
+      const auto InitializerName =
+          llvm::StringRef(PredicateHint->TargetName).drop_back(3).str() + "_WZ";
+      size_t InitializerSymbols = 0;
+      for (const auto &Symbol : Image.Symbols)
+        if (Symbol.IsFunc && Symbol.Addr == *Initializer &&
+            Symbol.Name == InitializerName)
+          ++InitializerSymbols;
+      if (InitializerSymbols != 1) {
+        Valid = false;
+        return;
+      }
+      Contract.Initializers.push_back(
+          {*Predicate, std::nullopt, *Initializer, Contract.Signature});
+      // Do not interpret the independently proved, ignored context as an
+      // ordinary entry read. All other operands still receive the full check.
+      Visit(E->Operands[0], Depth + 1);
+      Visit(E->Operands[1], Depth + 1);
+      return;
     }
+    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+        E->Var.Kind == MedVar::Param)
+      Valid = false;
     for (const auto &Operand : E->Operands)
       Visit(Operand, Depth + 1);
   };
@@ -1465,30 +1513,9 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
       Valid = false;
     forEachExpr(Statement, [&](const ExprPtr &E) { Visit(E, 0); });
   });
-  if (!Valid || !Once || ContextUses != 1)
+  if (!Valid || Contract.Initializers.empty())
     return std::nullopt;
-  const auto Predicate =
-      objc_binding_detail::constantAddress(*Once->Operands[0]);
-  const auto Initializer =
-      objc_binding_detail::constantAddress(*Once->Operands[1]);
-  const auto PredicateHint =
-      Predicate
-          ? objc_binding_detail::oncePredicateStorageHint(Image, *Predicate)
-          : std::nullopt;
-  if (!PredicateHint || !Initializer || !Image.isCodeAddress(*Initializer) ||
-      !llvm::StringRef(PredicateHint->TargetName).ends_with("_Wz"))
-    return std::nullopt;
-  const auto InitializerName =
-      llvm::StringRef(PredicateHint->TargetName).drop_back(3).str() + "_WZ";
-  size_t InitializerSymbols = 0;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.IsFunc && Symbol.Addr == *Initializer &&
-        Symbol.Name == InitializerName)
-      ++InitializerSymbols;
-  if (InitializerSymbols != 1)
-    return std::nullopt;
-  return SwiftOnceObjCThunkContract{*Predicate, std::nullopt, *Initializer,
-                                    callbackHint(Image.Arch)};
+  return Contract;
 }
 
 inline bool ignoresContext(const HighFunc &F) {
@@ -1518,6 +1545,45 @@ inline bool ignoresContext(const HighFunc &F) {
   }
   return true;
 }
+
+inline std::optional<std::map<va_t, SwiftOnceNestedCallbackContract>>
+independentCallbackChain(va_t Root, const BinaryImage &Image,
+                         const std::map<va_t, const HighFunc *> &Functions,
+                         const std::set<va_t> &DirectTargets) {
+  std::map<va_t, SwiftOnceNestedCallbackContract> Nested;
+  std::set<va_t> Active, Verified;
+  size_t Budget = 256;
+  std::function<bool(va_t, unsigned)> Verify = [&](va_t Address,
+                                                   unsigned Depth) {
+    if (!Budget-- || Depth > 16 || DirectTargets.count(Address) ||
+        Active.count(Address))
+      return false;
+    if (Verified.count(Address))
+      return true;
+    const auto Function = Functions.find(Address);
+    if (Function == Functions.end() || !Function->second)
+      return false;
+    if (ignoresContext(*Function->second)) {
+      Verified.insert(Address);
+      return true;
+    }
+    const auto Contract = nestedCallbackContract(*Function->second, Image);
+    if (!Contract)
+      return false;
+    Active.insert(Address);
+    for (const auto &Initializer : Contract->Initializers)
+      if (!Verify(Initializer.Initializer, Depth + 1))
+        return false;
+    Active.erase(Address);
+    Nested.emplace(Address, *Contract);
+    Verified.insert(Address);
+    return true;
+  };
+  if (!Verify(Root, 0))
+    return std::nullopt;
+  return Nested;
+}
+
 // This separate use contract never changes a helper's inferred native ABI.
 // Four parameters supply the roles below; an optional fifth parameter must
 // have no use. Native inference alone owns removing that unused entry input.
@@ -2035,6 +2101,12 @@ discoverSwiftOnceSources(const BinaryImage &Image,
                 ignoresContext(*Callback->second))
               Plan.CallbackHints.emplace(*Initializer,
                                          callbackHint(Image.Arch));
+            if (Predicate && Initializer && Callback != Functions.end() &&
+                Callback->second && Image.isCodeAddress(*Initializer) &&
+                !DirectTargets.count(*Initializer) &&
+                objc_binding_detail::oncePredicateStorageHint(Image,
+                                                              *Predicate))
+              Plan.CallbackAnalysisRoots.insert(*Initializer);
           }
           if (dispatchOnceCall(*E, Image)) {
             const auto Predicate =
@@ -2078,18 +2150,18 @@ discoverSwiftOnceSources(const BinaryImage &Image,
               if (Target && Functions.count(*Target) &&
                   Image.isCodeAddress(*Target) &&
                   !DirectTargets.count(*Target)) {
+                const auto Predicate = objc_binding_detail::constantAddress(
+                    *E->Operands[Getter->second.Predicate]);
+                if (Predicate && objc_binding_detail::oncePredicateStorageHint(
+                                     Image, *Predicate))
+                  Plan.CallbackAnalysisRoots.insert(*Target);
                 const auto &Callback = *Functions.at(*Target);
                 bool Independent = Getter->second.parameterCount() != 5 ||
                                    ignoresContext(Callback);
-                if (!Independent) {
-                  const auto Nested = nestedCallbackContract(Callback, Image);
-                  const auto Leaf = Nested ? Functions.find(Nested->Initializer)
-                                           : Functions.end();
-                  Independent = Nested && Nested->Initializer != *Target &&
-                                !DirectTargets.count(Nested->Initializer) &&
-                                Leaf != Functions.end() && Leaf->second &&
-                                ignoresContext(*Leaf->second);
-                }
+                if (!Independent)
+                  Independent = independentCallbackChain(
+                                    *Target, Image, Functions, DirectTargets)
+                                    .has_value();
                 if (Independent) {
                   Plan.CallbackHints.emplace(*Target, callbackHint(Image.Arch));
                   if (Getter->second.UndefinedContext &&
@@ -2112,24 +2184,60 @@ discoverSwiftOnceSources(const BinaryImage &Image,
         VerifiedGetterCalls[Address] == ObservedGetterCalls[Address] &&
         VerifiedGetterCalls[Address] == DirectCalls[Address])
       Plan.UnobservedContextGetters.insert(Address);
+  // A callback may call helpers whose signatures must be inferred before its
+  // complete context-use proof is possible. These roots authorize analysis
+  // only: neither a callback ABI nor a publishable body follows from them.
+  std::vector<va_t> Analysis(Plan.CallbackAnalysisRoots.begin(),
+                             Plan.CallbackAnalysisRoots.end());
+  const size_t AnalysisLimit = Analysis.size() + 4096;
+  for (size_t I = 0; I < Analysis.size(); ++I) {
+    const auto Function = Functions.find(Analysis[I]);
+    if (Function == Functions.end() || !Function->second)
+      continue;
+    size_t Budget = 100000;
+    walkStmts(Function->second->Body, [&](const HighStmt &S) {
+      forEachRhsExpr(S, [&](const ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty() && Budget) {
+          --Budget;
+          auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (onceCall(*E, Image)) {
+            const auto Predicate =
+                objc_binding_detail::constantAddress(*E->Operands[0]);
+            const auto Initializer =
+                objc_binding_detail::constantAddress(*E->Operands[1]);
+            if (Predicate && Initializer && Functions.count(*Initializer) &&
+                Image.isCodeAddress(*Initializer) &&
+                !DirectTargets.count(*Initializer) &&
+                objc_binding_detail::oncePredicateStorageHint(Image,
+                                                              *Predicate) &&
+                Plan.CallbackAnalysisRoots.size() < AnalysisLimit &&
+                Plan.CallbackAnalysisRoots.insert(*Initializer).second)
+              Analysis.push_back(*Initializer);
+          }
+          Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());
+        }
+      });
+    });
+  }
   const auto RootCallbacks = Plan.CallbackHints;
   for (const auto &[Address, Hint] : RootCallbacks) {
     if (Plan.DispatchOnceCallbacks.count(Address) ||
         DirectTargets.count(Address))
       continue;
-    const auto Outer = Functions.find(Address);
-    const auto Contract = Outer == Functions.end() || !Outer->second
-                              ? std::nullopt
-                              : nestedCallbackContract(*Outer->second, Image);
-    if (!Contract || Contract->Initializer == Address ||
-        DirectTargets.count(Contract->Initializer))
+    const auto Chain =
+        independentCallbackChain(Address, Image, Functions, DirectTargets);
+    if (!Chain)
       continue;
-    const auto Inner = Functions.find(Contract->Initializer);
-    if (Inner == Functions.end() || !Inner->second ||
-        !ignoresContext(*Inner->second))
-      continue;
-    Plan.NestedCallbacks.emplace(Address, *Contract);
-    Plan.CallbackHints.emplace(Contract->Initializer, callbackHint(Image.Arch));
+    for (const auto &[Entry, Contract] : *Chain) {
+      Plan.NestedCallbacks.emplace(Entry, Contract);
+      Plan.CallbackHints.emplace(Entry, Contract.Signature);
+      for (const auto &Initializer : Contract.Initializers)
+        Plan.CallbackHints.emplace(Initializer.Initializer, Contract.Signature);
+    }
   }
   return Plan;
 }
@@ -2142,7 +2250,8 @@ inline size_t applySwiftOnceSourceHints(const SwiftOnceSourcePlan &Plan,
   for (const auto &[Address, Hint] : Plan.AddressorHints)
     Added += Options.SourceCalleeTypeHints.emplace(Address, Hint).second;
   for (const auto &[Address, Hint] : Plan.CallbackHints)
-    Added += Options.SourceTypeHints.emplace(Address, Hint).second;
+    if (!Plan.NestedCallbacks.count(Address))
+      Added += Options.SourceTypeHints.emplace(Address, Hint).second;
   return Added;
 }
 
@@ -2367,27 +2476,42 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
     }
     if (swift_once_source_detail::onceCall(*E, Image)) {
       const bool Nested = Plan.NestedCallbacks.count(Function.Entry) != 0;
-      const auto &Contracts = Nested ? Plan.NestedCallbacks : Plan.ObjCThunks;
-      const auto Planned = Contracts.find(Function.Entry);
-      const auto Current =
-          Nested ? swift_once_source_detail::nestedCallbackContract(Function,
-                                                                    Image)
-                 : swift_once_source_detail::objcThunkContract(Function, Image);
-      if (Planned != Contracts.end() && Current &&
-          Current->sameIdentity(Planned->second)) {
-        const auto Predicate =
-            objc_binding_detail::constantAddress(*E->Operands[0]);
-        const auto Initializer =
-            objc_binding_detail::constantAddress(*E->Operands[1]);
+      const auto Predicate =
+          objc_binding_detail::constantAddress(*E->Operands[0]);
+      const auto Initializer =
+          objc_binding_detail::constantAddress(*E->Operands[1]);
+      const SwiftOnceObjCThunkContract *Planned = nullptr;
+      if (Nested) {
+        const auto Current =
+            swift_once_source_detail::nestedCallbackContract(Function, Image);
+        const auto &Expected = Plan.NestedCallbacks.at(Function.Entry);
+        if (Current && Current->sameIdentity(Expected))
+          for (const auto &Contract : Expected.Initializers)
+            if (Predicate == Contract.Predicate &&
+                Initializer == Contract.Initializer) {
+              Planned = &Contract;
+              break;
+            }
+      } else {
+        const auto Expected = Plan.ObjCThunks.find(Function.Entry);
+        const auto Current =
+            swift_once_source_detail::objcThunkContract(Function, Image);
+        if (Expected != Plan.ObjCThunks.end() && Current &&
+            Current->sameIdentity(Expected->second))
+          Planned = &Expected->second;
+      }
+      if (Planned) {
         const auto Context =
             swift_once_source_detail::parameter(E->Operands[2]);
         auto PredicateHint =
             Predicate ? objc_binding_detail::oncePredicateStorageHint(
                             Image, *Predicate)
                       : std::nullopt;
-        if (Predicate && *Predicate == Planned->second.Predicate &&
-            Initializer && *Initializer == Planned->second.Initializer &&
-            Context && *Context == 2 && PredicateHint) {
+        if (Predicate && *Predicate == Planned->Predicate && Initializer &&
+            *Initializer == Planned->Initializer && PredicateHint &&
+            (Nested
+                 ? swift_once_source_detail::nestedOnceContext(E->Operands[2])
+                 : Context && *Context == 2)) {
           auto Address = HighExpr::makeCall({}, 0, {});
           auto AddressHint = std::make_shared<SourceCallTypeHint>();
           AddressHint->CallKind = SourceCallTypeHint::Kind::NativeAddress;
@@ -2410,10 +2534,10 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
               E->Operands[0] = std::move(Storage);
               E->Operands[1] = std::move(Address);
               E->Operands[2] = std::move(Null);
-              Result.LocalStorageExtents[Planned->second.Predicate] = 8;
-              if (Planned->second.Storage)
-                Result.LocalStorageExtents[*Planned->second.Storage] = 8;
-              Result.Dependencies.insert(Planned->second.Initializer);
+              Result.LocalStorageExtents[Planned->Predicate] = 8;
+              if (Planned->Storage)
+                Result.LocalStorageExtents[*Planned->Storage] = 8;
+              Result.Dependencies.insert(Planned->Initializer);
               if (!Nested)
                 Result.SwiftOnceObjCThunks.insert(Function.Entry);
               return E;
@@ -2421,10 +2545,6 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
           }
         }
       }
-      const auto Predicate =
-          objc_binding_detail::constantAddress(*E->Operands[0]);
-      const auto Initializer =
-          objc_binding_detail::constantAddress(*E->Operands[1]);
       auto PredicateHint =
           Predicate
               ? objc_binding_detail::oncePredicateStorageHint(Image, *Predicate)
@@ -2743,10 +2863,12 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
       !objc_projection_detail::sameHint(Callback->second, Current->Signature))
     return std::nullopt;
   auto Result = bindSwiftOnceSourceReferences(Function, Image, Plan, Functions);
-  if (!Result.Dependencies.count(Current->Initializer) ||
-      !Result.LocalStorageExtents.count(Current->Predicate) ||
-      !swift_once_source_detail::ignoresContext(Result.Function))
+  if (!swift_once_source_detail::ignoresContext(Result.Function))
     return std::nullopt;
+  for (const auto &Initializer : Current->Initializers)
+    if (!Result.Dependencies.count(Initializer.Initializer) ||
+        !Result.LocalStorageExtents.count(Initializer.Predicate))
+      return std::nullopt;
   // The once callback ABI returns void. Preserve a verified objc_retain in
   // the final return as a call statement; its ownership effect is observable
   // even though the return register is ignored by the once runtime.
@@ -2782,6 +2904,34 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
   Result.Function.ReturnType = Current->Signature.ReturnType;
   Result.Function.SourceTypeHint = Current->Signature;
   return Result;
+}
+
+inline std::map<va_t, ObjCSourceBindingResult>
+projectSwiftOnceNestedCallbacks(const BinaryImage &Image,
+                                const SwiftOnceSourcePlan &Plan,
+                                std::map<va_t, const HighFunc *> Functions) {
+  std::map<va_t, ObjCSourceBindingResult> Results;
+  // Project leaves before their callers, independent of address order. Each
+  // success has revalidated every child against its published source body.
+  for (unsigned Depth = 0; Depth <= 16; ++Depth) {
+    const size_t Before = Results.size();
+    for (const auto &[Entry, Contract] : Plan.NestedCallbacks) {
+      const auto Found = Functions.find(Entry);
+      if (Results.count(Entry) || Found == Functions.end() || !Found->second)
+        continue;
+      auto Projection = projectSwiftOnceNestedCallback(*Found->second, Image,
+                                                       Plan, Functions);
+      if (Projection) {
+        const auto [Inserted, Added] =
+            Results.emplace(Entry, std::move(*Projection));
+        Functions[Entry] = &Inserted->second.Function;
+      }
+    }
+    if (Results.size() == Before ||
+        Results.size() == Plan.NestedCallbacks.size())
+      break;
+  }
+  return Results;
 }
 
 inline bool
