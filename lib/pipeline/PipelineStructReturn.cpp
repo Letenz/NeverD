@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace neverd {
@@ -185,9 +186,91 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
     for (const auto &LF : Result.LowFuncs)
       LowByEntry.emplace(LF.Entry, &LF);
 
+    // A direct caller that reads V1.. after the call reads registers that only
+    // the callee can have defined, so it has observed a homogeneous
+    // floating-point aggregate returned in V0..Vn, not one vector in V0.
+    // modelCallStructReturn left that evidence as a candidate because a field
+    // is an implicit call clobber.  Keep a shape only when every such caller
+    // agrees on it and it names consecutive FP return registers of one width.
+    std::map<va_t, std::vector<MedReturnReg>> CallerHFAShapes;
+    std::set<va_t> ConflictingCallerShapes;
+    for (const auto &Caller : Result.MedFuncs)
+      for (const MedStructReturnCandidate &Candidate :
+           Caller.StructReturnCandidates) {
+        const MedOp *Call = nullptr;
+        for (const auto &Blk : Caller.Blocks)
+          for (const auto &Op : Blk.Ops)
+            if (Op.CallSiteId == Candidate.CallSiteId &&
+                (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL))
+              Call = &Op;
+        if (!Call || Call->Opcode != NdOp::CALL || Call->NumInputs < 1 ||
+            !Call->Inputs[0].isConst())
+          continue;
+        std::vector<MedReturnReg> Shape;
+        bool Complete = Candidate.Fields.size() >= 2 &&
+                        Candidate.Fields.size() <= TRI.FPReturnRegs.size();
+        for (size_t I = 0; Complete && I < Candidate.Fields.size(); ++I) {
+          const MedVar &Field = Candidate.Fields[I];
+          Complete = Field.RegOff == TRI.FPReturnRegs[I] &&
+                     (Field.Size == 4 || Field.Size == 8) &&
+                     Field.Size == Candidate.Fields.front().Size;
+          Shape.push_back({Field.RegOff, Field.Size, /*IsFP=*/true});
+        }
+        if (!Complete)
+          continue;
+        const va_t Target = Call->Inputs[0].ConstVal;
+        auto [It, Inserted] = CallerHFAShapes.emplace(Target, Shape);
+        if (!Inserted &&
+            !std::equal(It->second.begin(), It->second.end(), Shape.begin(),
+                        Shape.end(),
+                        [](const MedReturnReg &A, const MedReturnReg &B) {
+                          return A.RegOff == B.RegOff && A.Size == B.Size;
+                        }))
+          ConflictingCallerShapes.insert(Target);
+      }
+    for (va_t Target : ConflictingCallerShapes)
+      CallerHFAShapes.erase(Target);
+    // The callee must itself leave every field: each field register has its
+    // own write, after the last call, before every RETURN.
+    auto writesEveryField = [](const MedFunc &MF,
+                               const std::vector<MedReturnReg> &Shape) {
+      bool SawReturn = false;
+      for (const auto &Blk : MF.Blocks) {
+        for (size_t RetIdx = 0; RetIdx < Blk.Ops.size(); ++RetIdx) {
+          if (Blk.Ops[RetIdx].Opcode != NdOp::RETURN)
+            continue;
+          SawReturn = true;
+          for (const MedReturnReg &Field : Shape) {
+            bool Written = false;
+            for (size_t J = RetIdx; J-- > 0 && !Written;) {
+              const MedOp &O = Blk.Ops[J];
+              if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL)
+                break;
+              const bool SelfCopy = O.Opcode == NdOp::COPY &&
+                                    O.NumInputs >= 1 &&
+                                    O.Inputs[0].Kind == MedVar::Reg &&
+                                    O.Inputs[0].RegOff == O.Output.RegOff;
+              Written = O.Output.Kind == MedVar::Reg &&
+                        O.Output.RegOff == Field.RegOff &&
+                        O.Output.Size >= Field.Size && !SelfCopy;
+            }
+            if (!Written)
+              return false;
+          }
+        }
+      }
+      return SawReturn;
+    };
+
     for (auto &MF : Result.MedFuncs) {
       if (!MF.MultiReturn.empty())
         continue;
+      if (auto Shape = CallerHFAShapes.find(MF.Entry);
+          Shape != CallerHFAShapes.end() &&
+          writesEveryField(MF, Shape->second)) {
+        MF.MultiReturn = Shape->second;
+        continue;
+      }
       const LowFunc *LF = nullptr;
       if (auto It = LowByEntry.find(MF.Entry); It != LowByEntry.end())
         LF = It->second;

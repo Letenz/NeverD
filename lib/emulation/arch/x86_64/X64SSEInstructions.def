@@ -1,0 +1,35 @@
+//===- X64SSEInstructions.def - Legacy masked SSE arithmetic ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Name, memory width/alignment, binary64 lanes and original XMM0,XMM1 encoding.
+// Memory forms replace the register ModRM with XMM0,[RCX].
+NEVERD_X64_SSE_INSTRUCTION(ADDSS, 4, 1, false, 0xf3, 0x0f, 0x58, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(ADDSD, 8, 1, true, 0xf2, 0x0f, 0x58, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(ADDPS, 16, 16, false, 0x0f, 0x58, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(ADDPD, 16, 16, true, 0x66, 0x0f, 0x58, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SUBSS, 4, 1, false, 0xf3, 0x0f, 0x5c, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SUBSD, 8, 1, true, 0xf2, 0x0f, 0x5c, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SUBPS, 16, 16, false, 0x0f, 0x5c, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SUBPD, 16, 16, true, 0x66, 0x0f, 0x5c, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MULSS, 4, 1, false, 0xf3, 0x0f, 0x59, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MULSD, 8, 1, true, 0xf2, 0x0f, 0x59, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MULPS, 16, 16, false, 0x0f, 0x59, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MULPD, 16, 16, true, 0x66, 0x0f, 0x59, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(DIVSS, 4, 1, false, 0xf3, 0x0f, 0x5e, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(DIVSD, 8, 1, true, 0xf2, 0x0f, 0x5e, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(DIVPS, 16, 16, false, 0x0f, 0x5e, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(DIVPD, 16, 16, true, 0x66, 0x0f, 0x5e, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SQRTSS, 4, 1, false, 0xf3, 0x0f, 0x51, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SQRTSD, 8, 1, true, 0xf2, 0x0f, 0x51, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SQRTPS, 16, 16, false, 0x0f, 0x51, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(SQRTPD, 16, 16, true, 0x66, 0x0f, 0x51, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MINSS, 4, 1, false, 0xf3, 0x0f, 0x5d, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MINSD, 8, 1, true, 0xf2, 0x0f, 0x5d, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MINPS, 16, 16, false, 0x0f, 0x5d, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MINPD, 16, 16, true, 0x66, 0x0f, 0x5d, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MAXSS, 4, 1, false, 0xf3, 0x0f, 0x5f, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MAXSD, 8, 1, true, 0xf2, 0x0f, 0x5f, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MAXPS, 16, 16, false, 0x0f, 0x5f, 0xc1)
+NEVERD_X64_SSE_INSTRUCTION(MAXPD, 16, 16, true, 0x66, 0x0f, 0x5f, 0xc1)

@@ -55,6 +55,15 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
         return static_cast<int>(K);
     return 1000;
   };
+  // A SUBBYTES narrowing a register's own value (input and output share the
+  // register offset) is a sub-register VIEW, such as the EAX the lowering
+  // derives from every RAX a call defines.  It forwards the value unchanged:
+  // it neither consumes nor redefines the register.
+  auto isSelfView = [](const MedOp &Op) {
+    return Op.Opcode == NdOp::SUBBYTES && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Kind == MedVar::Reg &&
+           Op.Inputs[0].RegOff == Op.Output.RegOff;
+  };
 
   int MaxVer = 0, MaxId = 0;
   auto bump = [&](const MedVar &V) {
@@ -105,16 +114,14 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       };
       std::vector<FieldRead> Fields;
       std::set<uint64_t> Redefined;
-      auto already = [&](uint64_t R) {
-        for (auto &F : Fields)
-          if (F.RegOff == R)
-            return true;
-        return false;
-      };
       for (size_t J = OI + 1; J < Blk.Ops.size(); ++J) {
         auto &Nx = Blk.Ops[J];
         if (Nx.Opcode == NdOp::CALL || Nx.Opcode == NdOp::INDIR_CALL)
           break;
+        // Only a later read of a view consumes the value it forwards, and that
+        // read names the same register.
+        if (isSelfView(Nx))
+          continue;
         // A self-zeroing idiom (`xorps x,x` / `sub x,x`) reads its register
         // only to discard it — the result is 0, independent of the value — so
         // it redefines the register rather than consuming the call's result. An
@@ -133,7 +140,16 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
             if (In.Kind != MedVar::Reg)
               continue;
             int CI = candIdx(In.RegOff);
-            if (CI < 1000 && !Redefined.count(In.RegOff) && !already(In.RegOff))
+            if (CI >= 1000 || Redefined.count(In.RegOff))
+              continue;
+            // The field holds every byte the caller reads from it: `mov ecx,
+            // eax` followed by `shr rax, 32` needs all of RAX.
+            auto Known = std::find_if(
+                Fields.begin(), Fields.end(),
+                [&](const FieldRead &F) { return F.RegOff == In.RegOff; });
+            if (Known != Fields.end())
+              Known->Size = std::max(Known->Size, In.Size);
+            else
               Fields.push_back({In.RegOff, Cands[CI].IsFP, In.Size, In});
           }
         if (Nx.Output.Kind == MedVar::Reg && candIdx(Nx.Output.RegOff) < 1000)
@@ -314,17 +330,12 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
               In.SSAVer = NV.second.second;
             }
         }
-        // A SUBBYTES narrowing the field register's own value (input and output
-        // share the register offset) is a sub-register VIEW of the extract, not
-        // a redefinition; marking it Done would strand a later full-width read
-        // of the same field (e.g. a pointer field reused as a load base after
-        // its low half is viewed) — the base would keep its stale pre-call
-        // version
-        // (#470-style sub-register view handling).
-        bool SelfView = Nx.Opcode == NdOp::SUBBYTES && Nx.NumInputs >= 1 &&
-                        Nx.Inputs[0].Kind == MedVar::Reg &&
-                        Nx.Inputs[0].RegOff == Nx.Output.RegOff;
-        if (Nx.Output.Kind == MedVar::Reg && !SelfView)
+        // A view of the extract is not a redefinition; marking it Done would
+        // strand a later full-width read of the same field (e.g. a pointer
+        // field reused as a load base after its low half is viewed) — the base
+        // would keep its stale pre-call version (#470-style sub-register view
+        // handling).
+        if (Nx.Output.Kind == MedVar::Reg && !isSelfView(Nx))
           for (auto &NV : NewVers)
             if (Nx.Output.RegOff == NV.first)
               Done.insert(NV.first);
@@ -371,11 +382,8 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
                 Nx.Inputs[I].Id = NV.second.first;
                 Nx.Inputs[I].SSAVer = NV.second.second;
               }
-            bool SelfView = Nx.Opcode == NdOp::SUBBYTES && Nx.NumInputs >= 1 &&
-                            Nx.Inputs[0].Kind == MedVar::Reg &&
-                            Nx.Inputs[0].RegOff == Nx.Output.RegOff;
             if (Nx.Output.Kind == MedVar::Reg && Nx.Output.RegOff == NV.first &&
-                !SelfView) {
+                !isSelfView(Nx)) {
               Redef = true;
               break;
             }

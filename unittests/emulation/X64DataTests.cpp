@@ -3,12 +3,17 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "arch/x86_64/X64Machine.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Memory.h"
+
 #include <algorithm>
 #include <climits>
+#include <cstring>
 #include <stdexcept>
 #include <tuple>
 
@@ -297,6 +302,147 @@ TEST_P(X64Data, VectorStorePermissionFaultPreservesBothWords) {
     EXPECT_EQ(Bytes[N + WordBytes], uint8_t(High >> (N * CHAR_BIT)));
   }
   EXPECT_EQ(llvm::cantFail(CPU->xmm(0)), (RegisterValue{Low, High}));
+}
+
+TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
+#if defined(__x86_64__) || defined(_M_X64)
+#define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
+#include "X64FPCases.def"
+#undef NEVERD_FP_BYTES
+  struct Input {
+    uint64_t DoubleA, DoubleB;
+    uint32_t FloatA, FloatB;
+  };
+  const Input Inputs[] = {
+#define NEVERD_SSE_INPUT(Name, DA, DB, FA, FB) {DA, DB, FA, FB},
+#include "X64DataCases.def"
+#undef NEVERD_SSE_INPUT
+  };
+  auto Check = [&](unsigned Width, bool Double,
+                   llvm::ArrayRef<uint8_t> Instruction) {
+#ifdef _WIN32
+    std::vector<uint8_t> Oracle(std::begin(Win64Before), std::end(Win64Before));
+    const auto After = llvm::ArrayRef<uint8_t>(Win64After);
+#else
+    std::vector<uint8_t> Oracle(std::begin(SysVBefore), std::end(SysVBefore));
+    const auto After = llvm::ArrayRef<uint8_t>(SysVAfter);
+#endif
+    Oracle.insert(Oracle.end(), Instruction.begin(), Instruction.end());
+    Oracle.insert(Oracle.end(), After.begin(), After.end());
+    std::error_code EC;
+    auto Block = llvm::sys::Memory::allocateMappedMemory(
+        PageSize, nullptr,
+        llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE, EC);
+    ASSERT_FALSE(bool(EC)) << EC.message();
+    auto Release = llvm::scope_exit(
+        [&] { (void)llvm::sys::Memory::releaseMappedMemory(Block); });
+    std::memcpy(Block.base(), Oracle.data(), Oracle.size());
+    EC = llvm::sys::Memory::protectMappedMemory(
+        Block, llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_EXEC);
+    ASSERT_FALSE(bool(EC)) << EC.message();
+    llvm::sys::Memory::InvalidateInstructionCache(Block.base(), Oracle.size());
+    auto Execute = reinterpret_cast<void (*)(void *, void *, void *, void *)>(
+        Block.base());
+    for (const auto &I : Inputs) {
+      RegisterValue A, B;
+      if (Double) {
+        A = {I.DoubleA, I.DoubleA};
+        B = {I.DoubleB, I.DoubleB};
+      } else {
+        const uint64_t FA = I.FloatA | (uint64_t(I.FloatA) << FloatLaneShift);
+        const uint64_t FB = I.FloatB | (uint64_t(I.FloatB) << FloatLaneShift);
+        A = {FA, FA};
+        B = {FB, FB};
+      }
+      for (uint64_t Rounding :
+           {uint64_t(0), RoundingDown, RoundingUp, RoundingTruncate}) {
+        for (uint64_t Flush : {uint64_t(0), FlushToZero}) {
+          X64MachineState Seed;
+          Seed.Xmm[0] = A;
+          Seed.Xmm[1] = B;
+          Seed.MXCSR = InitialMXCSR | Rounding | Flush;
+          alignas(x64::fp::RegisterSlotBytes)
+              std::array<uint8_t, x64::fp::LegacyBytes>
+                  Input{}, Output{}, Host{};
+          llvm::cantFail(encodeX64FXState(Seed, Input));
+          Execute(Input.data(), Output.data(), Host.data(), nullptr);
+          X64MachineState Expected;
+          llvm::cantFail(decodeX64FXState(Expected, Output));
+          for (bool Memory : {false, true}) {
+            std::vector<uint8_t> Bytes(Instruction.begin(), Instruction.end());
+            if (Memory)
+              Bytes.back() = MemoryModRM;
+            llvm::cantFail(CPU->setXmm(0, A));
+            llvm::cantFail(CPU->setXmm(1, B));
+            llvm::cantFail(CPU->setReg(X64Register::MXCSR, Seed.MXCSR));
+            llvm::cantFail(CPU->setReg(X64Register::FLAGS, InitialFlags));
+            llvm::cantFail(CPU->writeInteger(Data, B[0], WordBytes));
+            llvm::cantFail(
+                CPU->writeInteger(Data + WordBytes, B[1], WordBytes));
+            unsigned Reads = 0;
+            BackendHooks Hooks;
+            Hooks.Read = [&](uint64_t Address, uint32_t Size) {
+              EXPECT_EQ(Address, Data);
+              EXPECT_EQ(Size, Width);
+              ++Reads;
+            };
+            expectStopped(run(Bytes, std::move(Hooks)));
+            ASSERT_FALSE(HasFatalFailure());
+            EXPECT_EQ(Reads, unsigned(Memory));
+            EXPECT_EQ(llvm::cantFail(CPU->xmm(0)), Expected.Xmm[0]);
+            EXPECT_EQ(llvm::cantFail(CPU->xmm(1)), B);
+            EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)),
+                      Expected.MXCSR);
+            EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)),
+                      InitialFlags);
+          }
+        }
+      }
+    }
+  };
+#define NEVERD_X64_SSE_INSTRUCTION(Name, Width, Alignment, Double, ...)        \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    Check(Width, Double, Bytes);                                               \
+    ASSERT_FALSE(HasFatalFailure());                                           \
+  }
+#include "arch/x86_64/X64SSEInstructions.def"
+#undef NEVERD_X64_SSE_INSTRUCTION
+#else
+  GTEST_SKIP();
+#endif
+}
+
+TEST_P(X64Data, SSEMemoryObserverStopsBeforeResultAndStatusChanges) {
+  auto Check = [&](unsigned Width, llvm::ArrayRef<uint8_t> Instruction) {
+    std::vector<uint8_t> Bytes(Instruction.begin(), Instruction.end());
+    Bytes.back() = MemoryModRM;
+    seedVector();
+    llvm::cantFail(CPU->setReg(X64Register::MXCSR, InitialMXCSR));
+    unsigned Reads = 0;
+    BackendHooks Hooks;
+    Hooks.Read = [&](uint64_t Address, uint32_t Size) {
+      EXPECT_EQ(Address, Data);
+      EXPECT_EQ(Size, Width);
+      ++Reads;
+      CPU->stop();
+    };
+    expectStopped(run(Bytes, std::move(Hooks)));
+    EXPECT_EQ(Reads, 1u);
+    EXPECT_EQ(llvm::cantFail(CPU->xmm(0)), (RegisterValue{Low, High}));
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)), InitialMXCSR);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+  };
+#define NEVERD_X64_SSE_INSTRUCTION(Name, Width, Alignment, Double, ...)        \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    Check(Width, Bytes);                                                       \
+    ASSERT_FALSE(HasFatalFailure());                                           \
+  }
+#include "arch/x86_64/X64SSEInstructions.def"
+#undef NEVERD_X64_SSE_INSTRUCTION
 }
 
 TEST_P(X64Data, ScalarConversionPreservesStickyStatusAndIgnoresRoundingMode) {
@@ -635,7 +781,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(X64Data, UnmodeledFormsRemainExplicitlyUnsupported) {
   // An unsupported exit is terminal, so each independent form uses a fresh CPU.
-  for (auto Bytes : {llvm::ArrayRef(ScalarFloatAdd), llvm::ArrayRef(StringMove),
+  for (auto Bytes : {llvm::ArrayRef(X87LoadZero), llvm::ArrayRef(StringMove),
                      llvm::ArrayRef(AVXMove), llvm::ArrayRef(MMXMove),
                      llvm::ArrayRef(BitMemory)}) {
     SetUp();

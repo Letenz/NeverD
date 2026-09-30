@@ -64,6 +64,8 @@ checked user x64 僅攔截精確、無前綴的 `SYSCALL` 編碼；checked user 
 
 checked x64 允許有限的舊式 SSE/SSE2 移動與邏輯指令、`MOVLHPS`/`MOVHLPS`，以及帶遮罩的純量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留黏滯狀態、捨入與 FTZ；拒絕 DAZ 及未遮罩例外。checked ARM64 仍不支援 FP/SIMD。KVM/WHP 同步全部 16 個 XMM 暫存器及 MXCSR；未列出的編碼和運算元組合仍會拒絕。
 
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+
 thread pointer 包含 x64 FS/GS 基底及 ARM64 `TPIDR_EL0` 的精確 `MRS`/`MSR` 編碼。原生傳輸與 CPU snapshot 會獨立於記憶體保存狀態，但不會建立 OS 執行緒或配置 TLS 區塊。supervisor x64 支援對齊的 1/2/4 位元組純量 MMIO 交易，以及每個重新啟動邊界一個 MOVS 元素。裝置讀取必須先提供無副作用預覽，再至多提交一次。user 設定拒絕裝置對映；RMW、寬 MMIO、連接埠 I/O 也仍不支援。
 
 KVM/WHP 會取消進行中的原生入口，並在釋放執行資源前確認取消。KVM 使用專用執行緒與暫時解除封鎖的 realtime signal；入口期間選定的 signal 不得被忽略。呼叫端的 signal mask/handler 不會變更。若客體進度不明，取消會成為終止性後端錯誤；不保證硬性 wall-clock 期限。

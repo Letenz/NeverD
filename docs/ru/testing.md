@@ -129,6 +129,8 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 Независимые [тесты процессов](process-emulation.md#проверка) собирают реальные ELF-fixture x64/AArch64. `NeverDLinuxProcessTests` проверяет запуск, политику program headers, продолжение служб, двоичный вывод, гостевые ошибки и ресурсные остановки. `NeverDProcessPublicTests` проверяет C API/CLI без изменения образа анализа. `NeverDExecutionSessionTests` проверяет два CPU с общей памятью/бюджетом и однократное потребление запросов/ошибок. `NeverDX64MemoryUpdateTests` проверяет арифметику памяти, SETcc, BT, XMM/MXCSR, наблюдатели записи, границы REP и подготовленные чтения устройств. `DriverBackendParityTests.cpp` запускает исходные и перемещённые WDK-fixture и сравнивает полный наблюдаемый отчёт с Unicorn; отсутствующие образы/backend явно пропускаются.
 
+Проверенный x64 также допускает маскированные legacy-формы `SS`, `SD`, `PS`, `PD` инструкций `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` централизует ширины, выравнивание и допуск. `MaskedSSEArithmeticMatchesIndependentHostExecution` сравнивает регистры/RAM с независимым эталоном CPU хоста: четыре режима округления, FTZ, знаковые нули, субнормальные числа и NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` проверяет остановку до эффектов. DAZ, немаскированные исключения, x87 и AVX остаются исключёнными.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

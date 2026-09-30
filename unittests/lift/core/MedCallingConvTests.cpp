@@ -2449,6 +2449,79 @@ TEST(MedDCE, X86KeepsTheX87ReturnForReturnTyping) {
   EXPECT_TRUE(Func.FPReturnViaX87);
 }
 
+TEST(MedDCE, X86KeepsTheStackPointerWriteThatCommitsARuntimeAllocation) {
+  // `push ebp; mov ebp,esp; mov esi,esp; sub esi,edx; mov esp,esi; ...;
+  // mov esp,ebp; pop ebp; ret`: an i386 VLA whose array is addressed through
+  // ESI.  Nothing reads the lowered ESP before the epilogue restores it from
+  // EBP, but that write reserves the array's memory, and the emitter lowers it
+  // to an alloca.  A constant stack adjustment that nothing reads stays dead.
+  constexpr Arch TheArch = Arch::X86;
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "vla_without_later_stack_reads";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  const uint16_t Width = TRI.PointerSize;
+  auto sp = [&](int SSAVer) {
+    return reg(30, SSAVer, Width, TRI.StackPointer, TheArch);
+  };
+  auto store = [&](const MedVar &Address, const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(Address);
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+
+  const MedVar EntryEBP = reg(31, 0, Width, x86reg::RBP, TheArch);
+  const MedVar EntryEDX = reg(32, 0, Width, x86reg::RDX, TheArch);
+  addLiveIn(Block, sp(0));
+  addLiveIn(Block, EntryEBP);
+  addLiveIn(Block, EntryEDX);
+
+  Block.Ops.push_back(
+      binary(NdOp::INT_SUB, sp(1), sp(0), MedVar::makeConst(4, Width)));
+  store(sp(1), EntryEBP);
+  const MedVar FrameEBP = reg(31, 1, Width, x86reg::RBP, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, FrameEBP, sp(1)));
+  const MedVar Size = temp(40, 0, Width, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_AND, Size, EntryEDX,
+                             MedVar::makeConst(0xFFFFFFF0, Width)));
+  const MedVar ArrayESI = reg(33, 0, Width, x86reg::RSI, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, ArrayESI, sp(1), Size));
+  const MedVar Commit = sp(2);
+  Block.Ops.push_back(unary(NdOp::COPY, Commit, ArrayESI));
+  store(ArrayESI, MedVar::makeConst(7, Width));
+  const MedVar Unread = sp(3);
+  Block.Ops.push_back(
+      binary(NdOp::INT_SUB, Unread, Commit, MedVar::makeConst(16, Width)));
+  Block.Ops.push_back(unary(NdOp::COPY, sp(4), FrameEBP));
+  const MedVar RestoredEBP = reg(31, 2, Width, x86reg::RBP, TheArch);
+  Block.Ops.push_back(unary(NdOp::LOAD, RestoredEBP, sp(4)));
+  Block.Ops.push_back(
+      binary(NdOp::INT_ADD, sp(5), sp(4), MedVar::makeConst(4, Width)));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Block.Ops.push_back(Return);
+
+  LowToMedConverter().runRegisterDce(Func, TheArch);
+
+  auto defines = [&](const MedVar &V) {
+    return std::any_of(
+        Block.Ops.begin(), Block.Ops.end(), [&](const MedOp &Op) {
+          return Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer;
+        });
+  };
+  EXPECT_TRUE(defines(Commit));
+  EXPECT_TRUE(defines(Size));
+  EXPECT_TRUE(defines(sp(5)));
+  EXPECT_FALSE(defines(Unread));
+}
+
 namespace {
 
 /// The calling convention's view of a register argument \p LiveIn.
@@ -2902,6 +2975,145 @@ TEST(LowToMedCallReturnFP, DoesNotCrossCallClobber) {
   EXPECT_EQ(Calls[1]->Output.RegOff, TRI.FPReturnReg);
 }
 
+TEST(LowToMedCallReturnStruct, SubRegisterViewIsNotAReturnField) {
+  // `call fd; ucomisd xmm0,xmm1`: the lowering narrows the RAX the call
+  // defines into its EAX view, but nothing reads that view.  XMM0 is the only
+  // consumed return register, so the call returns a double in XMM0, not a
+  // {RAX, XMM0} aggregate that would put the result's upper half in XMM0.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "fp_return_with_integer_view";
+
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = 0x1010;
+
+  const NdVar WideFP = NdVar::reg(x86reg::XMM0, 16);
+  LowOp Seed;
+  Seed.Opcode = NdOp::COPY;
+  Seed.Addr = 0x1000;
+  Seed.Output = WideFP;
+  Seed.addInput(WideFP);
+  Block.Ops.push_back(Seed);
+
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1004;
+  Call.Output = NdVar::reg(x86reg::RAX, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Block.Ops.push_back(Call);
+
+  LowOp View;
+  View.Opcode = NdOp::SUBBYTES;
+  View.Addr = 0x1004;
+  View.Output = NdVar::reg(x86reg::RAX, 4);
+  View.addInput(NdVar::reg(x86reg::RAX, 8));
+  View.addInput(NdVar::cst(0, 4));
+  Block.Ops.push_back(View);
+
+  LowOp ReadResult;
+  ReadResult.Opcode = NdOp::COPY;
+  ReadResult.Addr = 0x1008;
+  ReadResult.Output = NdVar::tmp(0x4000, 8);
+  ReadResult.addInput(NdVar::reg(x86reg::XMM0, 8));
+  Block.Ops.push_back(ReadResult);
+
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x100c;
+  Return.addInput(ReadResult.Output);
+  Block.Ops.push_back(Return);
+  Low.Blocks.push_back(std::move(Block));
+
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch);
+  ASSERT_EQ(Med.Blocks.size(), 1u);
+  const MedOp *CallOp = nullptr;
+  for (const MedOp &Op : Med.Blocks.front().Ops)
+    if (Op.Opcode == NdOp::CALL)
+      CallOp = &Op;
+  ASSERT_NE(CallOp, nullptr);
+  EXPECT_EQ(CallOp->Output.Kind, MedVar::Reg);
+  EXPECT_EQ(CallOp->Output.RegOff, TRI.FPReturnReg);
+}
+
+TEST(LowToMedCallReturnStruct, FieldCoversEveryByteTheCallerReads) {
+  // `call mk3; mov ecx, eax; shr rax, 32; lea edx, [rdx+rdx*4]`: a
+  // struct{int a,b,c} returned in RAX:RDX.  The first read of RAX takes only
+  // its EAX view, but `shr rax, 32` reads field b from the upper half, so the
+  // RAX field must stay eight bytes wide.
+  constexpr Arch TheArch = Arch::X64;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "struct_return_with_narrow_first_read";
+
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = 0x1020;
+
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1000;
+  Call.Output = NdVar::reg(x86reg::RAX, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Block.Ops.push_back(Call);
+
+  LowOp View;
+  View.Opcode = NdOp::SUBBYTES;
+  View.Addr = 0x1000;
+  View.Output = NdVar::reg(x86reg::RAX, 4);
+  View.addInput(NdVar::reg(x86reg::RAX, 8));
+  View.addInput(NdVar::cst(0, 4));
+  Block.Ops.push_back(View);
+
+  LowOp ReadA;
+  ReadA.Opcode = NdOp::COPY;
+  ReadA.Addr = 0x1004;
+  ReadA.Output = NdVar::reg(x86reg::RCX, 4);
+  ReadA.addInput(NdVar::reg(x86reg::RAX, 4));
+  Block.Ops.push_back(ReadA);
+
+  LowOp ReadB;
+  ReadB.Opcode = NdOp::INT_RIGHT;
+  ReadB.Addr = 0x1008;
+  ReadB.Output = NdVar::tmp(0x4000, 8);
+  ReadB.addInput(NdVar::reg(x86reg::RAX, 8));
+  ReadB.addInput(NdVar::cst(32, 8));
+  Block.Ops.push_back(ReadB);
+
+  LowOp ReadC;
+  ReadC.Opcode = NdOp::INT_ADD;
+  ReadC.Addr = 0x100c;
+  ReadC.Output = NdVar::tmp(0x4008, 4);
+  ReadC.addInput(NdVar::reg(x86reg::RDX, 4));
+  ReadC.addInput(NdVar::reg(x86reg::RCX, 4));
+  Block.Ops.push_back(ReadC);
+
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1010;
+  Return.addInput(ReadC.Output);
+  Block.Ops.push_back(Return);
+  Low.Blocks.push_back(std::move(Block));
+
+  MedFunc Med = LowToMedConverter().convert(Low, TheArch);
+  ASSERT_EQ(Med.Blocks.size(), 1u);
+  const auto &Ops = Med.Blocks.front().Ops;
+  const auto CallIt = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+    return Op.Opcode == NdOp::CALL;
+  });
+  ASSERT_NE(CallIt, Ops.end());
+  ASSERT_EQ(CallIt->Output.Kind, MedVar::Temp);
+  ASSERT_NE(std::next(CallIt), Ops.end());
+  const MedOp &First = *std::next(CallIt);
+  EXPECT_EQ(First.Opcode, NdOp::SUBBYTES);
+  EXPECT_EQ(First.Output.RegOff, x86reg::RAX);
+  EXPECT_EQ(First.Output.Size, 8u);
+}
+
 TEST(MedCallAbi, ExactVectorReturnFeedsFollowingFPCall) {
   constexpr Arch TheArch = Arch::X64;
   constexpr va_t Callee = 0x2000;
@@ -3018,6 +3230,105 @@ TEST(MedCallAbi, ExactVectorReturnReplacesFalseWideIntegerPair) {
   EXPECT_EQ(Block.Ops[0].Output, FPResult);
   EXPECT_TRUE(Func.CallClobbers.empty());
   EXPECT_TRUE(verifyMedFunc(Func, "test-exact-vector-over-false-wide-pair"));
+}
+
+namespace {
+
+/// An i386 call to \p Callee whose result LowToMed split into a false EDX:EAX
+/// pair.  Register DCE already removed the unread EAX half; the EDX half
+/// survives because the following internal call may take EDX as a regparm
+/// argument, and \p ReadsHigh stores it to keep a reader.  \p ReadsWhole adds
+/// a reader of the whole 64-bit temp.
+MedFunc falseWideHalfCall(va_t Callee, bool ReadsHigh, bool ReadsWhole) {
+  constexpr Arch TheArch = Arch::X86;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "fp_return_over_partial_false_wide_pair";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const MedVar FalseWide = temp(20, 1, 8, TheArch);
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = 0x1004;
+  Call.CallSiteId = 1;
+  Call.Output = FalseWide;
+  Call.addInput(MedVar::makeConst(Callee, TRI.PointerSize));
+  Block.Ops.push_back(Call);
+
+  const MedVar HighHalf =
+      reg(22, 1, TRI.PointerSize, TRI.IntReturnReg2, TheArch);
+  MedOp High = binary(NdOp::SUBBYTES, HighHalf, FalseWide,
+                      MedVar::makeConst(TRI.PointerSize, TRI.PointerSize));
+  High.Addr = Call.Addr;
+  Block.Ops.push_back(High);
+
+  auto store = [&](const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = 0x1008;
+    Store.addInput(MedVar::makeConst(0x5000, TRI.PointerSize));
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+  if (ReadsHigh)
+    store(HighHalf);
+  if (ReadsWhole)
+    store(FalseWide);
+
+  Func.CallClobbers.push_back(
+      {reg(10, 1, 16, TRI.FPReturnReg, TheArch), Call.CallSiteId});
+  return Func;
+}
+
+} // namespace
+
+TEST(MedCallAbi, ExactVectorReturnReplacesAPartialFalseWideIntegerPair) {
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func = falseWideHalfCall(Callee, /*ReadsHigh=*/true,
+                                   /*ReadsWhole=*/false);
+  const MedVar FPResult = Func.CallClobbers.front().Value;
+  const MedVar HighHalf = Func.Blocks[0].Ops[1].Output;
+
+  const std::map<va_t, std::string> Names{{Callee, "fp_callee"}};
+  const std::map<va_t, uint16_t> FPReturnSize{{Callee, 8}};
+  recoverCallAbi(Func, TheArch, Names, nullptr, nullptr, nullptr, nullptr,
+                 &FPReturnSize);
+
+  const MedBlock &Block = Func.Blocks[0];
+  ASSERT_EQ(Block.Ops.size(), 2u);
+  EXPECT_EQ(Block.Ops[0].Output, FPResult);
+  EXPECT_EQ(Block.Ops[1].Opcode, NdOp::STORE);
+  // The surviving reader now sees EDX as the call leaves it: clobbered.
+  ASSERT_EQ(Func.CallClobbers.size(), 1u);
+  EXPECT_EQ(Func.CallClobbers[0].Value, HighHalf);
+  EXPECT_EQ(Func.CallClobbers[0].Value.RegOff, TRI.IntReturnReg2);
+  EXPECT_EQ(Func.CallClobbers[0].CallSiteId, Block.Ops[0].CallSiteId);
+  EXPECT_TRUE(verifyMedFunc(Func, "test-exact-vector-over-partial-wide-pair"));
+}
+
+TEST(MedCallAbi, ExactVectorReturnKeepsAWideResultWithAnotherReader) {
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  MedFunc Func = falseWideHalfCall(Callee, /*ReadsHigh=*/false,
+                                   /*ReadsWhole=*/true);
+  const MedVar FalseWide = Func.Blocks[0].Ops[0].Output;
+
+  const std::map<va_t, std::string> Names{{Callee, "fp_callee"}};
+  const std::map<va_t, uint16_t> FPReturnSize{{Callee, 8}};
+  recoverCallAbi(Func, TheArch, Names, nullptr, nullptr, nullptr, nullptr,
+                 &FPReturnSize);
+
+  const MedBlock &Block = Func.Blocks[0];
+  ASSERT_EQ(Block.Ops.size(), 3u);
+  EXPECT_EQ(Block.Ops[0].Output, FalseWide);
+  EXPECT_EQ(Block.Ops[1].Opcode, NdOp::SUBBYTES);
+  ASSERT_EQ(Func.CallClobbers.size(), 1u);
 }
 
 TEST(MedCallAbi, IntegerReturnKeepsFPCallClobber) {
