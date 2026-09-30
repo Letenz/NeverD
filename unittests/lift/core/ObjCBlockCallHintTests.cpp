@@ -300,6 +300,174 @@ TEST(ObjCBlockCallHints, CapturedVoidBlockTailBranchUsesItsEntryABI) {
           .empty());
 }
 
+static void capturedIntegerTailJoin(Fixture &F) {
+  const auto Saved = F.Image.Arch == Arch::AArch64 ? a64reg::X19 : x86reg::R12;
+  const auto Return = getTargetRegInfo(F.Image.Arch).IntReturnReg;
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+  F.Entry.ReturnType = NdType::makeVoid();
+  F.Entry.Parameters = {{"block", NdType::makePtr(NdType::makeVoid())},
+                        {"value", NdType::makeInt(8, true)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Entry, F.Image.Arch, Error))
+      << Error;
+  LowBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = F.Low.Entry;
+  Entry.Succs = {1, 2};
+  Entry.Ops = {
+      op(NdOp::COPY, NdVar::reg(Saved, 8), {NdVar::reg(F.R0, 8)}, 0x1000),
+      op(NdOp::COND_BR, {}, {NdVar::cst(0x1200, 8), NdVar::reg(F.R1, 1)},
+         0x1004)};
+  LowBlock Left;
+  Left.Id = 1;
+  Left.StartAddr = 0x1100;
+  Left.Preds = {0};
+  Left.Succs = {3};
+  Left.Ops = {
+      op(NdOp::COPY, NdVar::reg(F.R1, 8), {NdVar::reg(F.R1, 8)}, 0x1100),
+      op(NdOp::BRANCH, {}, {NdVar::cst(0x1300, 8)}, 0x1104)};
+  auto Right = Left;
+  Right.Id = 2;
+  Right.StartAddr = 0x1200;
+  Right.Ops[0].Inputs[0] = NdVar::cst(0, 8);
+  for (auto &Op : Right.Ops)
+    Op.Addr += 0x100;
+  LowBlock Join;
+  Join.Id = 3;
+  Join.StartAddr = 0x1300;
+  Join.Preds = {1, 2};
+  Join.Ops = {op(NdOp::INT_ADD, NdVar::tmp(0, 8),
+                 {NdVar::reg(Saved, 8), NdVar::cst(32, 8)}, 0x1300),
+              op(NdOp::LOAD, NdVar::reg(F.R0, 8), {NdVar::tmp(0, 8)}, 0x1300),
+              op(NdOp::INT_ADD, NdVar::tmp(1, 8),
+                 {NdVar::reg(F.R0, 8), NdVar::cst(16, 8)}, 0x1304),
+              op(NdOp::LOAD, NdVar::reg(F.R2, 8), {NdVar::tmp(1, 8)}, 0x1304),
+              op(NdOp::INDIR_CALL, NdVar::reg(Return, 8), {NdVar::reg(F.R2, 8)},
+                 0x1308),
+              op(NdOp::RETURN, {}, {NdVar::reg(Return, 8)}, 0x1308)};
+  LowInstructionBoundary Boundary;
+  Boundary.Address = 0x1308;
+  Boundary.FirstOp = 4;
+  Boundary.OpCount = 2;
+  Boundary.Control = LowInstructionControl::TailCall;
+  Boundary.ControlFlags = LowInstructionControlFlag::Call |
+                          LowInstructionControlFlag::Return |
+                          LowInstructionControlFlag::Indirect;
+  Join.InstructionBoundaries.push_back(Boundary);
+  F.Low.Blocks = {Entry, Left, Right, Join};
+}
+
+TEST(ObjCBlockCallHints, ExactIntegerZeroJoinKeepsTheOtherArgumentType) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    Fixture F(Architecture);
+    capturedIntegerTailJoin(F);
+    ObjCBlockCaptureCallFields Captures;
+    Captures.ScalarWords = {32};
+    Captures.BlockWords = {32};
+    // Isolate argument agreement from the independent tail-boundary proof.
+    F.Low.Blocks[3].InstructionBoundaries.clear();
+    const auto Blocks = F.Low.Blocks;
+    std::vector<unsigned> Order{0, 1, 2, 3};
+    do {
+      F.Low.Blocks.clear();
+      for (auto Index : Order)
+        F.Low.Blocks.push_back(Blocks[Index]);
+      for (auto &Block : F.Low.Blocks)
+        std::reverse(Block.Preds.begin(), Block.Preds.end());
+      const auto Hints =
+          buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures);
+      ASSERT_EQ(Hints.count(0x1308), 1U);
+      const auto &Signature = Hints.at(0x1308).Signature;
+      ASSERT_EQ(Signature.Parameters.size(), 2U);
+      EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Signature.Parameters[1].Type->Size, 8U);
+      EXPECT_TRUE(Signature.Parameters[1].Type->IsSigned);
+    } while (std::next_permutation(Order.begin(), Order.end()));
+    F.Low.Blocks = Blocks;
+    F.Low.Blocks[2].Ops[0].Inputs[0] = NdVar::cst(7, 8);
+    EXPECT_TRUE(
+        buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures)
+            .empty());
+    F.Low.Blocks[2].Ops[0].Inputs[0] = NdVar::cst(0, 4);
+    EXPECT_TRUE(
+        buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures)
+            .empty());
+    // A zero on the first replayed path cannot authorize a later disagreement
+    // between two nonzero signed/unsigned paths. Keep only zeros shared by all
+    // paths that have already contributed to the common call ABI.
+    F.Low.Blocks = Blocks;
+    F.Low.Blocks[2].Succs = {4, 5};
+    F.Low.Blocks[2].Ops = {op(NdOp::COND_BR, {},
+                              {NdVar::cst(0x1500, 8), NdVar::reg(F.R1, 1)},
+                              0x1200)};
+    auto Zero = Blocks[2];
+    Zero.Id = 4;
+    Zero.StartAddr = 0x1400;
+    Zero.Preds = {2};
+    for (auto &Op : Zero.Ops)
+      Op.Addr += 0x200;
+    auto Nonzero = Zero;
+    Nonzero.Id = 5;
+    Nonzero.StartAddr = 0x1500;
+    Nonzero.Ops[0].Inputs[0] = NdVar::cst(7, 8);
+    for (auto &Op : Nonzero.Ops)
+      Op.Addr += 0x100;
+    F.Low.Blocks.push_back(Zero);
+    F.Low.Blocks.push_back(Nonzero);
+    auto &Predecessors = F.Low.Blocks[3].Preds;
+    Predecessors = {1, 4, 5};
+    do {
+      EXPECT_TRUE(
+          buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures)
+              .empty());
+    } while (std::next_permutation(Predecessors.begin(), Predecessors.end()));
+    F.Low.Blocks = Blocks;
+    F.Low.Blocks[2].Ops[0].Inputs[0] = NdVar::cst(0, 8);
+    Captures.BlockWords.clear();
+    EXPECT_TRUE(
+        buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures)
+            .empty());
+  }
+}
+
+TEST(ObjCBlockCallHints,
+     CapturedVoidTailRevalidatesItsPhysicalBoundaryAtJoins) {
+  Fixture F(Arch::AArch64);
+  capturedIntegerTailJoin(F);
+  // Both paths already agree on the argument; only the original instruction
+  // boundary can authorize discarding CFGBuilder's synthetic X0 return read.
+  F.Low.Blocks[2].Ops[0].Inputs[0] = NdVar::reg(F.R1, 8);
+  ObjCBlockCaptureCallFields Captures;
+  Captures.ScalarWords = {32};
+  Captures.BlockWords = {32};
+  const auto Hints =
+      buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures);
+  ASSERT_EQ(Hints.count(0x1308), 1U);
+  EXPECT_EQ(Hints.at(0x1308).Signature.ReturnType->Kind, NdTypeKind::Void);
+
+  const auto Original = F.Low;
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    F.Low = Original;
+    auto &Join = F.Low.Blocks[3];
+    auto &Boundary = Join.InstructionBoundaries[0];
+    if (Mutation == 0)
+      Boundary.Control = LowInstructionControl::Call;
+    else if (Mutation == 1)
+      Boundary.ControlFlags = LowInstructionControlFlag::Call;
+    else if (Mutation == 2)
+      Boundary.FirstOp = 5;
+    else if (Mutation == 3)
+      Join.InstructionBoundaries.push_back(Boundary);
+    else
+      Join.Ops.back().Addr += 4;
+    const auto Changed =
+        buildObjCBlockCallHints(F.Image, F.Low, &F.Entry, nullptr, &Captures);
+    ASSERT_EQ(Changed.count(0x1308), 1U) << Mutation;
+    EXPECT_EQ(Changed.at(0x1308).Signature.ReturnType->Kind, NdTypeKind::Int)
+        << Mutation;
+  }
+}
+
 TEST(ObjCBlockCallHints, ForwardsAuthenticatedEntryArgumentToCapturedBlock) {
   Fixture F(Arch::AArch64);
   auto Pointer = NdType::makePtr(NdType::makeVoid());
