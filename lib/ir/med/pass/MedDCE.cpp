@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 
@@ -289,6 +290,91 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       for (uint64_t Slot : X87ReturnSlots)
         seedReachingDef(Blk, Before, Slot);
     }
+
+  // A stack-pointer write whose value is the stack pointer less a runtime byte
+  // count commits a dynamic allocation (`sub esp,eax`, or i386 `sub esi,edx;
+  // mov esp,esi`).  From then on the memory between the new and the old stack
+  // pointer belongs to this frame, even when nothing reads the stack pointer
+  // again because the epilogue restores it from the frame pointer.  The
+  // emitter lowers such a write to an alloca, so keep it and its size live.
+  std::map<std::pair<int, int>, const MedOp *> ValueDefs;
+  std::map<std::pair<int, int>, const PhiNode *> ValuePhis;
+  for (const MedBlock &Blk : Func.Blocks) {
+    for (const PhiNode &Phi : Blk.Phis)
+      if (Phi.Output.Id >= 0)
+        ValuePhis.emplace(std::make_pair(Phi.Output.Id, Phi.Output.SSAVer),
+                          &Phi);
+    for (const MedOp &Op : Blk.Ops)
+      if (Op.Output.Id >= 0 && !(Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                                 Op.Inputs[0].Id == Op.Output.Id &&
+                                 Op.Inputs[0].SSAVer == Op.Output.SSAVer))
+        ValueDefs.emplace(std::make_pair(Op.Output.Id, Op.Output.SSAVer), &Op);
+  }
+  auto defOf = [&](const MedVar &V) -> const MedOp * {
+    const auto It = ValueDefs.find({V.Id, V.SSAVer});
+    return It == ValueDefs.end() ? nullptr : It->second;
+  };
+  auto isStackPointerDerived = [&](const MedVar &Start) {
+    std::vector<std::pair<MedVar, int>> Pending{{Start, 0}};
+    std::set<std::pair<int, int>> Visited;
+    while (!Pending.empty()) {
+      const auto [V, Depth] = Pending.back();
+      Pending.pop_back();
+      if (V.isConst() || V.Id < 0 || Depth > limits::kMaxStackPtrTraceDepth ||
+          !Visited.insert({V.Id, V.SSAVer}).second)
+        continue;
+      if (V.Kind == MedVar::Reg && TRI.isStackPointer(V.RegOff))
+        return true;
+      if (const auto Phi = ValuePhis.find({V.Id, V.SSAVer});
+          Phi != ValuePhis.end()) {
+        for (const auto &[PredId, Arg] : Phi->second->Args)
+          Pending.push_back({Arg, Depth + 1});
+        continue;
+      }
+      const MedOp *Def = defOf(V);
+      if (!Def || Def->NumInputs < 1)
+        continue;
+      switch (Def->Opcode) {
+      case NdOp::COPY:
+      case NdOp::SUBBYTES:
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+      case NdOp::INT_AND:
+      case NdOp::INT_ADD:
+      case NdOp::INT_SUB:
+        Pending.push_back({Def->Inputs[0], Depth + 1});
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  };
+  auto commitsRuntimeAllocation = [&](const MedOp &Write) {
+    const MedOp *Def = &Write;
+    for (int Depth = 0; Depth <= limits::kMaxStackPtrTraceDepth; ++Depth) {
+      if (Def->Opcode == NdOp::INT_SUB && Def->NumInputs == 2)
+        return !Def->Inputs[1].isConst() &&
+               isStackPointerDerived(Def->Inputs[0]) &&
+               !isStackPointerDerived(Def->Inputs[1]);
+      const bool Transport =
+          Def->NumInputs >= 1 &&
+          (Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT ||
+           (Def->Opcode == NdOp::SUBBYTES && Def->NumInputs == 2 &&
+            Def->Inputs[1].isConst() && Def->Inputs[1].ConstVal == 0));
+      if (!Transport)
+        return false;
+      Def = defOf(Def->Inputs[0]);
+      if (!Def)
+        return false;
+    }
+    return false;
+  };
+  for (const MedBlock &Blk : Func.Blocks)
+    for (const MedOp &Op : Blk.Ops)
+      if (Op.Output.Kind == MedVar::Reg && Op.Output.Size > 0 &&
+          TRI.isStackPointer(Op.Output.RegOff) && commitsRuntimeAllocation(Op))
+        MarkLive(Op.Output);
 
   auto isFlagVar = [&](const MedVar &V) {
     if (V.Kind == MedVar::Flag)

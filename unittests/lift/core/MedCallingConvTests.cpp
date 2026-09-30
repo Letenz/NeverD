@@ -2449,6 +2449,79 @@ TEST(MedDCE, X86KeepsTheX87ReturnForReturnTyping) {
   EXPECT_TRUE(Func.FPReturnViaX87);
 }
 
+TEST(MedDCE, X86KeepsTheStackPointerWriteThatCommitsARuntimeAllocation) {
+  // `push ebp; mov ebp,esp; mov esi,esp; sub esi,edx; mov esp,esi; ...;
+  // mov esp,ebp; pop ebp; ret`: an i386 VLA whose array is addressed through
+  // ESI.  Nothing reads the lowered ESP before the epilogue restores it from
+  // EBP, but that write reserves the array's memory, and the emitter lowers it
+  // to an alloca.  A constant stack adjustment that nothing reads stays dead.
+  constexpr Arch TheArch = Arch::X86;
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "vla_without_later_stack_reads";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  const uint16_t Width = TRI.PointerSize;
+  auto sp = [&](int SSAVer) {
+    return reg(30, SSAVer, Width, TRI.StackPointer, TheArch);
+  };
+  auto store = [&](const MedVar &Address, const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(Address);
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+
+  const MedVar EntryEBP = reg(31, 0, Width, x86reg::RBP, TheArch);
+  const MedVar EntryEDX = reg(32, 0, Width, x86reg::RDX, TheArch);
+  addLiveIn(Block, sp(0));
+  addLiveIn(Block, EntryEBP);
+  addLiveIn(Block, EntryEDX);
+
+  Block.Ops.push_back(
+      binary(NdOp::INT_SUB, sp(1), sp(0), MedVar::makeConst(4, Width)));
+  store(sp(1), EntryEBP);
+  const MedVar FrameEBP = reg(31, 1, Width, x86reg::RBP, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, FrameEBP, sp(1)));
+  const MedVar Size = temp(40, 0, Width, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_AND, Size, EntryEDX,
+                             MedVar::makeConst(0xFFFFFFF0, Width)));
+  const MedVar ArrayESI = reg(33, 0, Width, x86reg::RSI, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, ArrayESI, sp(1), Size));
+  const MedVar Commit = sp(2);
+  Block.Ops.push_back(unary(NdOp::COPY, Commit, ArrayESI));
+  store(ArrayESI, MedVar::makeConst(7, Width));
+  const MedVar Unread = sp(3);
+  Block.Ops.push_back(
+      binary(NdOp::INT_SUB, Unread, Commit, MedVar::makeConst(16, Width)));
+  Block.Ops.push_back(unary(NdOp::COPY, sp(4), FrameEBP));
+  const MedVar RestoredEBP = reg(31, 2, Width, x86reg::RBP, TheArch);
+  Block.Ops.push_back(unary(NdOp::LOAD, RestoredEBP, sp(4)));
+  Block.Ops.push_back(
+      binary(NdOp::INT_ADD, sp(5), sp(4), MedVar::makeConst(4, Width)));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Block.Ops.push_back(Return);
+
+  LowToMedConverter().runRegisterDce(Func, TheArch);
+
+  auto defines = [&](const MedVar &V) {
+    return std::any_of(
+        Block.Ops.begin(), Block.Ops.end(), [&](const MedOp &Op) {
+          return Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer;
+        });
+  };
+  EXPECT_TRUE(defines(Commit));
+  EXPECT_TRUE(defines(Size));
+  EXPECT_TRUE(defines(sp(5)));
+  EXPECT_FALSE(defines(Unread));
+}
+
 namespace {
 
 /// The calling convention's view of a register argument \p LiveIn.
