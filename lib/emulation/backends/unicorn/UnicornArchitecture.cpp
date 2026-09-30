@@ -15,6 +15,17 @@ namespace neverd::emulation {
 llvm::Error initializeUnicornArchitecture(uc_engine *CPU,
                                           GuestArchitecture Architecture) {
   if (Architecture == GuestArchitecture::X64) {
+    X64FPState FP;
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  if (uc_reg_write(CPU, UC_X86_REG_##UC, &FP.Member) != UC_ERR_OK)             \
+    return diagnostic::error(diagnostic::FPState);
+#include "../../arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+    const uint16_t Tag = FP.fullTag();
+    const uint32_t MXCSR = x64::InitialMXCSR;
+    if (uc_reg_write(CPU, UC_X86_REG_FPTAG, &Tag) != UC_ERR_OK ||
+        uc_reg_write(CPU, UC_X86_REG_MXCSR, &MXCSR) != UC_ERR_OK)
+      return diagnostic::error(diagnostic::FPState);
     uint64_t Flags = x64::InitialFlags;
     if (uc_reg_write(CPU, UC_X86_REG_RFLAGS, &Flags) != UC_ERR_OK)
       return diagnostic::error(diagnostic::UnicornFlags);

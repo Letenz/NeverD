@@ -584,7 +584,8 @@ La ejecución CPU es independiente del SO invitado y de la imagen. La política 
 |---|---|
 | `NeverDEmulationCore` | Memoria, fallos, registros y bucle común de ejecución |
 | `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transportes nativos KVM/WHP y ejecución portable Unicorn |
-| `NeverDEmulationCPU` | Admisión del contrato, estado ISA y selección de backend |
+| `NeverDEmulationArch` | Admisión ISA, estado arquitectónico, tablas de páginas y formato FP |
+| `NeverDEmulationCPU` | Configuración CPU y composición de motores |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI enteras, sesiones CPU y presupuestos de carga |
 | `NeverDEmulationImage` | Planes de mapeo para segmentos del cargador |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | Inicio ELF, política de servicios Linux e informes del proceso |
@@ -879,3 +880,7 @@ Los `DIV`/`IDIV` checked x64 usan resultados reales del procesador y `#DE`. KVM 
 ## Efectos de RAM preparados
 
 `RAMTransaction` conserva únicamente la unión física de las escrituras declaradas de una instrucción, bajo el bloqueo de ejecución. Restaura la RAM original antes de los observadores de resultados; una cancelación, un error de transporte o una excepción del observador no publica RAM ni registros parciales. Tras revertir la RAM, los fallos de CPU conservan el estado arquitectónico de excepción. Las escrituras simples y dobles de ARM64 usan la misma autoridad. x64 ejecuta `XCHG`, `XADD` y `CMPXCHG` de 8/16/32/64 bits, con alineación natural para formas bloqueadas o con bloqueo implícito. `NeverDRAMTransactionTests` compara resultados con la CPU del host y verifica reversión, alias y permisos; omite explícitamente plataformas no disponibles. Los dispositivos y SMP paralelo siguen fuera del contrato; las instantáneas de CPU no revierten RAM ya confirmada.
+
+## Estado x87 completo
+
+`NeverDEmulationArch` posee los contratos ISA, las tablas de páginas y el formato FP compartido por los transportes nativos y Unicorn. Los contextos x64 conservan control, estado, TOP, etiquetas físicas, código de operación, punteros de instrucciones/datos y ocho registros de 80 bits. `FP0`–`FP7` usan `RegisterValue`; el acceso escalar rechaza el truncamiento. `FPTag` es la máscara física de registros no vacíos. `NeverDX64FPTests` comprueba todos los TOP, operaciones exactas frente a FXSAVE/FXRSTOR del host y restauración. Esto no admite instrucciones x87 en checked ni prueba todos los redondeos. Los hosts nativos no disponibles se omiten explícitamente.

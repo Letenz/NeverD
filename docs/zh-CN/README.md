@@ -8,6 +8,10 @@
 
 **移动端支持（实验性 CLI）：** `neverd mobile` 已支持从 [Android](android.md) APK、DEX、smali 恢复 Java，以及从 [iOS](ios.md) IPA、`.app`、Mach-O 恢复原生 C 和受支持的 Objective-C/Swift 源码，并通过 JSON 报告记录恢复结果与覆盖情况。从[移动端总览](mobile.md)开始查看，各平台指南提供命令示例与恢复限制。
 
+CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
+
+checked 配置在 ISA 匹配的 Linux 主机上使用 KVM，在匹配的 Windows 主机上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 运行覆盖仍待实机验证。`driver-strict` 当前使用 Unicorn；驱动的 KVM/WHP 路径需选择 `checked-x64-v1`。显式后端不可用时明确失败。共享 RAM、别名、分阶段写入、标量原子操作、类型化异常和完整 x64 FP/SSE 上下文已在文档规定的指令及 OS 契约内实现。这不表示兼容任意驱动或已实现 Android/Darwin 环境。
+
 | 文档 | 说明 |
 |------|------|
 | [项目说明（简体中文）](project.md) | 概览、快速开始、构建、SDK、CLI |
@@ -18,7 +22,7 @@
 | [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
 | [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
 | [解释器源码恢复](interpreter-recovery.md) | 实验性 x64 解释器特化、HighC/LLVMC 输出、执行前提、证据与限制; 嵌套循环证明候选; 显式发现预算和版本化 C API |
-| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM 初始化、串行缓冲／直接请求、工作项、定时器、DPC、事件与等待，以及行为报告和限制; KMDF 1.33 非 PnP 驱动／对象生命周期和经过验证的 x64 CFG |
+| [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM/KMDF 生命周期、请求、硬件场景、SEH、PnP 子集、后端选择及限制 |
 | [Windows 异常重建](windows-exception-reconstruction.md) | SEH/C++ 展开支持矩阵、IR 契约、原生 patch 规则与 PE 验证 |
 | [内存安全审计与猎取](memory-safety.md) | 堆对象生命周期与拷贝越界分析：各格式身份契约、汇/源目录、判定、预算与 JSON 模式 |
 | [原生插件](plugins.md) | 纯 C 描述符 ABI、回调与事件、构建/链接流程、发现顺序及兼容性规则 |

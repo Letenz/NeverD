@@ -86,6 +86,12 @@ The experimental **`neverd mobile` CLI supports Android and iOS**:
 
 Recovery depends on supported code patterns; see the [mobile overview](docs/mobile.md) and platform guides for coverage and limitations.
 
+### CPU execution and guest workloads
+
+CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](docs/cpu-execution.md), [Guest process emulation](docs/process-emulation.md) and [Windows driver emulation](docs/driver-emulation.md).
+
+Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts and Unicorn across ISAs. Native ARM64/WHP runtime coverage is still pending. `driver-strict` currently uses Unicorn; the driver KVM/WHP path requires `checked-x64-v1`. Explicit backend selections fail clearly when unavailable. Shared RAM, aliases, staged writes, scalar atomics, typed exceptions and full x64 FP/SSE context state are implemented within the documented instruction and OS contracts. This does not claim arbitrary-driver compatibility or implemented Android/Darwin environments.
+
 ## How it works
 
 ```text

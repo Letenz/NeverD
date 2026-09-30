@@ -1,3 +1,10 @@
+add_neverd_unittest(NeverDX64FPTests
+  X64FPStateTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDX64FPTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDExecutionSessionTests
   ExecutionSessionTests.cpp
   ImageMappingTests.cpp

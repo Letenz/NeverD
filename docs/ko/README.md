@@ -8,6 +8,10 @@
 
 실험적 `neverd mobile` CLI는 Android와 iOS 소스 복원을 지원합니다. Android에서는 APK(multidex 포함), DEX, smali 파일/디렉터리에서 Java와 JSON 보고서를 생성합니다. iOS에서는 IPA, `.app`, Mach-O(arm64 / x86_64)에서 네이티브 C, 지원되는 Objective-C / Swift 소스와 JSON 커버리지 보고서를 생성합니다. 복원 범위와 제한 사항은 각 가이드를 참조하세요.
 
+CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
+
+checked 프로필은 ISA가 일치하는 Linux 호스트에서 KVM, Windows 호스트에서 WHP, 다른 ISA 사이에서는 Unicorn을 사용합니다. 네이티브 ARM64/WHP 실행 검증은 아직 필요합니다. 현재 `driver-strict`는 Unicorn을 사용하며 드라이버의 KVM/WHP 경로에는 `checked-x64-v1`이 필요합니다. 지정된 백엔드를 사용할 수 없으면 명확히 실패합니다. 공유 RAM, 별칭, 단계적 쓰기, 스칼라 원자 연산, 형식화된 예외와 전체 x64 FP/SSE 컨텍스트는 문서의 명령 및 OS 계약 범위에서 구현되어 있습니다. 임의의 드라이버 호환성이나 Android/Darwin 환경 구현을 뜻하지 않습니다.
+
 | 문서 | 설명 |
 |------|------|
 | [프로젝트 설명（한국어）](project.md) | 개요, 빠른 시작, 빌드, SDK, CLI |
@@ -18,7 +22,7 @@
 | [게스트 프로세스 에뮬레이션](process-emulation.md) | Linux ELF 프로필, 시작, 서비스, 제한, 테스트 |
 | [비트벡터 증명 백엔드](solver.md) | 선택적 Z3 증명, 증명 게이트 합성, 독립 검사, query 내보내기 |
 | [인터프리터 소스 복원](interpreter-recovery.md) | 실험적 x64 인터프리터 특수화, HighC/LLVMC 출력, 실행 전제, 근거와 제한; 중첩 루프 증명 후보; 명시적 탐색 예산과 버전별 C API |
-| [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM 초기화, 순차 buffered/direct 요청, 작업 항목, 타이머, DPC, 이벤트와 대기, 동작 보고서 및 한도; KMDF 1.33 비 PnP 드라이버/객체 수명 및 검증된 x64 CFG |
+| [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM/KMDF 수명 주기, 요청, 하드웨어 시나리오, SEH, PnP 하위 집합, 백엔드 선택 및 제한 |
 | [Windows 예외 재구성](windows-exception-reconstruction.md) | SEH/C++ 지원 표, IR 계약, 네이티브 patch 규칙 및 PE 검증 |
 | [메모리 안전성 감사와 헌트](memory-safety.md) | 힙 수명과 복사 오버플로 분석: 형식별 신원 계약, 싱크/소스 카탈로그, 판정, 예산, JSON 스키마 |
 | [네이티브 플러그인](plugins.md) | 순수 C descriptor ABI, callback과 event, build/link workflow, discovery 및 호환성 규칙 |

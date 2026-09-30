@@ -426,7 +426,8 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 |---|---|
 | `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
 | `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 傳輸與可攜式 Unicorn 執行 |
-| `NeverDEmulationCPU` | 契約准入、ISA 狀態與後端選擇 |
+| `NeverDEmulationArch` | ISA 准入、架構狀態、頁表及 FP 狀態配置 |
+| `NeverDEmulationCPU` | CPU 設定及後端組合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整數 ABI、CPU 工作階段與工作負載預算 |
 | `NeverDEmulationImage` | 載入器區段對映計畫 |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 啟動、Linux 服務政策與程序報告 |
@@ -708,3 +709,7 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 ## 分階段提交 RAM 效果
 
 `RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置交易與平行 SMP 仍不在此契約內；CPU 快照不會撤銷已提交的 RAM。
+
+## 完整 x87 狀態
+
+`NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。

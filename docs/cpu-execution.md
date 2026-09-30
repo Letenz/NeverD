@@ -58,6 +58,14 @@ stores use the same RAM authority. Devices, unknown footprints and parallel
 hardware SMP remain outside this transaction. CPU snapshots do not undo already
 committed RAM.
 
+x64 contexts also preserve the complete x87 state: control/status, TOP,
+physical nonempty tags, opcode, instruction/data pointers and eight physical
+80-bit payloads. `FP0`–`FP7` use `RegisterValue`; scalar access rejects them
+instead of truncating their high 16 bits. `FPTag` is the physical abridged mask.
+All existing register identities, including `Invalid`, remain unchanged.
+KVM/WHP and both Unicorn paths share the same reset and state model. This
+transport coverage does not admit x87 instructions into checked profiles.
+
 User execution requires `UserAccessible` as well as the appropriate `Read`,
 `Write` or `Execute` bit on **every** mapped page. Existing mappings default to
 supervisor access. Aliases have independent rights even when sharing physical

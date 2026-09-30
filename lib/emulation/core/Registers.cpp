@@ -7,6 +7,8 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include <limits>
+
 namespace neverd::emulation {
 CPURegister cpuRegister(X64Register R) {
   switch (R) {
@@ -16,7 +18,9 @@ CPURegister cpuRegister(X64Register R) {
   case X64Register::Name:                                                      \
     return CPURegister::X64##Name;
 #define NEVERD_REGISTER_AArch64(Name)
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
 #include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_REGISTER_AArch64
@@ -54,7 +58,9 @@ bool registerMatches(CPURegister R, GuestArchitecture Architecture) {
 #define NEVERD_VECTOR_REGISTER(Arch, Number, Backend)                          \
   case CPURegister::Arch##V##Number:                                           \
     return Architecture == GuestArchitecture::Arch;
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
 #include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_VECTOR_REGISTER
   case CPURegister::Invalid:
@@ -70,7 +76,9 @@ unsigned registerWidth(CPURegister R) {
 #define NEVERD_VECTOR_REGISTER(Arch, Number, Backend)                          \
   case CPURegister::Arch##V##Number:                                           \
     return 128;
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
 #include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_VECTOR_REGISTER
   case CPURegister::Invalid:
@@ -78,13 +86,26 @@ unsigned registerWidth(CPURegister R) {
   }
   return 0;
 }
+bool registerValueFits(CPURegister R, const RegisterValue &V) {
+  constexpr unsigned WordBits = std::numeric_limits<uint64_t>::digits;
+  const unsigned Width = registerWidth(R);
+  if (!Width || Width > WordBits * V.size())
+    return false;
+  if (Width <= WordBits)
+    return !V[1] && (Width == WordBits || !(V[0] >> Width));
+  return Width == WordBits * V.size() || !(V[1] >> (Width - WordBits));
+}
 llvm::Expected<uint64_t> ExecutionBackend::reg(X64Register R) {
+  if (registerWidth(cpuRegister(R)) > std::numeric_limits<uint64_t>::digits)
+    return diagnostic::error(diagnostic::Register);
   auto V = readRegister(cpuRegister(R));
   if (!V)
     return V.takeError();
   return (*V)[0];
 }
 llvm::Error ExecutionBackend::setReg(X64Register R, uint64_t V) {
+  if (registerWidth(cpuRegister(R)) > std::numeric_limits<uint64_t>::digits)
+    return diagnostic::error(diagnostic::Register);
   return writeRegister(cpuRegister(R), {V, 0});
 }
 llvm::Expected<uint64_t> ExecutionBackend::reg(AArch64Register R) {

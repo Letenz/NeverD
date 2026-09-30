@@ -586,7 +586,8 @@ CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und 
 |---|---|
 | `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |
 | `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP-Transporte und portable Unicorn-Ausführung |
-| `NeverDEmulationCPU` | Vertragszulassung, ISA-Zustand und Backend-Auswahl |
+| `NeverDEmulationArch` | ISA-Zulassung, Architekturzustand, Seitentabellen und FP-Layout |
+| `NeverDEmulationCPU` | CPU-Konfiguration und Backend-Komposition |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | Integer-Aufrufkonventionen, CPU-Sitzungen und Workload-Budgets |
 | `NeverDEmulationImage` | Mapping-Pläne für Loader-Segmente |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF-Start, Linux-Dienstpolicy und Prozessberichte |
@@ -883,3 +884,7 @@ Checked x64 führt `DIV`/`IDIV` mit echten Prozessorergebnissen und `#DE` aus. K
 ## Gestufte RAM-Effekte
 
 `RAMTransaction` erfasst unter der physischen Ausführungslease nur die vereinigten deklarierten Schreibbereiche einer Instruktion. Vor Ergebnisbeobachtern wird der ursprüngliche RAM wiederhergestellt; Abbruch, Transportfehler und Beobachterausnahmen veröffentlichen weder Teilwrites noch Register. Prozessorfehler behalten nach RAM-Rollback ihren architektonischen Ausnahmestatus. ARM64-Einzel- und Paarstores verwenden dieselbe Instanz. x64 führt `XCHG`, `XADD` und `CMPXCHG` mit 8/16/32/64 Bit aus; gesperrte und implizit gesperrte Formen erfordern natürliche Ausrichtung. `NeverDRAMTransactionTests` vergleicht Ergebnisse mit der Host-CPU und prüft Rollback, Aliase und Rechte; fehlende Plattformen werden ausdrücklich übersprungen. Geräte und paralleles SMP bleiben ausgeschlossen. CPU-Snapshots setzen bereits bestätigten RAM nicht zurück.
+
+## Vollständiger x87-Zustand
+
+`NeverDEmulationArch` besitzt ISA-Verträge, Seitentabellen und das FP-Layout, das native Transporte und Unicorn gemeinsam nutzen. x64-Kontexte erhalten Steuerung, Status, TOP, physische Tags, Opcode, Befehls-/Datenzeiger und acht 80-Bit-Register. `FP0`–`FP7` verwenden `RegisterValue`; skalare Zugriffe lehnen eine Kürzung ab. `FPTag` ist die physische Maske nicht leerer Register. `NeverDX64FPTests` prüft alle TOP-Werte, exakte Operationen gegen Host-FXSAVE/FXRSTOR und die Wiederherstellung. Dies lässt keine x87-Befehle im checked-Vertrag zu und beweist nicht sämtliche Rundungssemantik. Fehlende native Hosts werden ausdrücklich übersprungen.

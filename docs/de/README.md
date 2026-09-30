@@ -8,6 +8,10 @@ Projektüberblick, Build und CLI stehen in der Repository-README. Architektur- u
 
 NeverD unterstützt Android und iOS über die experimentelle CLI `neverd mobile`: APK (einschließlich Multidex), DEX sowie smali-Dateien und -Verzeichnisse werden zu Java mit JSON-Bericht; IPA, `.app` und Mach-O (arm64/x86_64) zu nativem C und unterstützten Objective-C-/Swift-Quelltexten mit JSON-Abdeckungsbericht. Der Umfang hängt von den unterstützten Codemustern ab; Einzelheiten stehen in den Leitfäden.
 
+Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Gast-OS-Richtlinien. `NEVERD_ENABLE_CPU_EMULATION` aktiviert die x64/ARM64-CPU-Schicht; `NEVERD_ENABLE_DRIVER_EMULATION` ergänzt die begrenzte x64-Windows-WDM/KMDF-Umgebung. `linux-elf64-v1` führt unterstützte Linux-ELF-Prozesse aus. Siehe [CPU-Ausführung](cpu-execution.md), [Gastprozess-Emulation](process-emulation.md) und [Emulation von Windows-Treibern](driver-emulation.md).
+
+Checked-Profile verwenden KVM auf Linux und WHP auf Windows bei gleicher ISA sowie Unicorn bei unterschiedlicher ISA. Native ARM64/WHP-Ausführung bleibt unvalidiert. `driver-strict` verwendet derzeit Unicorn; der KVM/WHP-Treiberpfad benötigt `checked-x64-v1`. Ein ausdrücklich gewähltes, nicht verfügbares Backend schlägt klar fehl. Gemeinsamer RAM, Aliase, gestufte Schreibvorgänge, skalare Atomoperationen, typisierte Ausnahmen und vollständige x64-FP/SSE-Kontexte sind innerhalb der dokumentierten ISA/OS-Verträge implementiert. Dies verspricht weder beliebige Treiberkompatibilität noch implementierte Android/Darwin-Umgebungen.
+
 | Dokument | Beschreibung |
 |----------|--------------|
 | [README (Deutsch)](project.md) | Überblick, Schnellstart, Build, SDK, CLI |
@@ -18,7 +22,7 @@ NeverD unterstützt Android und iOS über die experimentelle CLI `neverd mobile`
 | [Gastprozess-Emulation](process-emulation.md) | Linux-ELF-Profil, Prozessstart, Dienste, Grenzen und Tests |
 | [Bitvektor-Beweisbackends](solver.md) | Optionale Z3-Beweise, abgesicherte Synthese, unabhängige Tests und Query-Export |
 | [Quelltextrekonstruktion aus Interpretern](interpreter-recovery.md) | Experimentelle Spezialisierung mit `--devirtualize`, CLI-Kontrollgrößen, Ausführungsvertrag, Nachweise und Grenzen; Beweisvorschläge für verschachtelte Schleifen; explizite Erkennungsbudgets und versionierte C-API |
-| [Emulation von Windows-Treibern](driver-emulation.md) | Begrenzte x64-WDM-Initialisierung, serielle buffered/direct Anforderungen, Work Items, Timer, DPCs, Ereignisse und Warten, Berichte und Grenzen; KMDF-1.33-Nicht-PnP-Treiber-/Objektlebenszeiten und validiertes x64-CFG |
+| [Emulation von Windows-Treibern](driver-emulation.md) | Begrenzter x64-WDM/KMDF-Lebenszyklus, Anforderungen, Hardwareszenarien, SEH, PnP-Teilmengen, Backend-Auswahl und Grenzen |
 | [Windows-Ausnahmerekonstruktion](windows-exception-reconstruction.md) | SEH/C++-Supportmatrix, IR-Vertrag, native Patch-Regeln und PE-Validierung |
 | [Speicher-Audit und Hunt](memory-safety.md) | Heap-Lebensdauer- und Copy-Überlaufanalyse: Identitätsvertrag je Format, Senken-/Quellenkatalog, Urteile, Budgets und JSON-Schema |
 | [Native Plugins](plugins.md) | Reine C-Deskriptor-ABI, Callbacks und Ereignisse, Build-/Link-Ablauf, Erkennung und Kompatibilitätsregeln |
