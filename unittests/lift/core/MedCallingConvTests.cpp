@@ -5187,6 +5187,94 @@ TEST(LowToMedX64CallingConv, ByteWriteRebuildIsNotAParameter) {
   EXPECT_TRUE(HasR8) << Full.Params.size();
 }
 
+namespace {
+
+/// One-block LowIR function whose ops \p Build appends at \p Entry.
+template <typename BuildFn>
+LowFunc makeOneBlockLow(va_t Entry, const char *Name, BuildFn Build) {
+  LowFunc Low;
+  Low.Entry = Entry;
+  Low.Name = Name;
+  Low.Blocks.resize(1);
+  LowBlock &Block = Low.Blocks[0];
+  Block.Id = 0;
+  Block.StartAddr = Entry;
+  Block.EndAddr = Entry + 0x10;
+  auto Push = [&](NdOp Opcode, NdVar Out, std::initializer_list<NdVar> In) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Addr = Entry;
+    Op.Output = Out;
+    for (const NdVar &V : In)
+      Op.addInput(V);
+    Block.Ops.push_back(Op);
+  };
+  Build(Push);
+  LowOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  Ret.Addr = Entry + 0xc;
+  Block.Ops.push_back(Ret);
+  return Low;
+}
+
+bool hasParameterIn(const MedFunc &Med, uint64_t RegOff) {
+  return std::any_of(Med.Params.begin(), Med.Params.end(),
+                     [&](const MedVar &P) { return P.RegOff == RegOff; });
+}
+
+} // namespace
+
+TEST(LowToMedX86CallingConv, ScalarSSEMergeIsNotAParameterUntilALaneIsRead) {
+  // `cvtsi2ss xmm2, eax; movss [esp+4], xmm2` keeps xmm2's upper lanes, so
+  // its incoming value flows on there unread.  A phantom XMM parameter would
+  // shift every i386 stack argument, so xmm2 is not one -- until a consumer
+  // reads one of those incoming lanes.
+  auto Convert = [](bool ReadUpperLane) {
+    const NdVar ESP = NdVar::reg(x86reg::RSP, 4);
+    const NdVar XMM2 = NdVar::reg(x86reg::XMM2, 16);
+    LowFunc Low = makeOneBlockLow(0x1000, "sse_merge", [&](auto Push) {
+      Push(NdOp::INT_ADD, NdVar::tmp(1, 4), {ESP, NdVar::cst(4, 4)});
+      Push(NdOp::LOAD, NdVar::tmp(2, 4), {NdVar::tmp(1, 4)});
+      Push(NdOp::FLOAT_INT2FLOAT, NdVar::tmp(3, 4), {NdVar::tmp(2, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(4, 12), {XMM2, NdVar::cst(4, 4)});
+      Push(NdOp::CONCAT, XMM2, {NdVar::tmp(4, 12), NdVar::tmp(3, 4)});
+      Push(NdOp::SUBBYTES, NdVar::tmp(5, 4), {XMM2, NdVar::cst(0, 4)});
+      Push(NdOp::STORE, NdVar(), {NdVar::tmp(1, 4), NdVar::tmp(5, 4)});
+      if (ReadUpperLane) {
+        Push(NdOp::SUBBYTES, NdVar::tmp(6, 4), {XMM2, NdVar::cst(4, 4)});
+        Push(NdOp::STORE, NdVar(), {NdVar::tmp(1, 4), NdVar::tmp(6, 4)});
+      }
+    });
+    return LowToMedConverter().convert(Low, Arch::X86);
+  };
+  const MedFunc Merged = Convert(false);
+  EXPECT_FALSE(hasParameterIn(Merged, x86reg::XMM2));
+  EXPECT_TRUE(hasParameterIn(Merged, kNoParamReg));
+  EXPECT_TRUE(hasParameterIn(Convert(true), x86reg::XMM2));
+}
+
+TEST(LowToMedCallingConv, LaneInsertIntoXMM0IsReturnedOnlyOnX64) {
+  // `movss xmm0, [p]` into an incoming xmm0 whose upper lanes reach the
+  // return register.  x86-64 returns a vector there, so those lanes may be
+  // returned and xmm0 stays a parameter.  i386 returns floating point in x87
+  // st0 and records in memory, so a merge into xmm0 is not returned.
+  auto Convert = [](Arch TheArch) {
+    const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+    const NdVar Pointer = NdVar::reg(
+        TRI.IntParamRegs.empty() ? x86reg::RAX : TRI.IntParamRegs.front(),
+        TRI.PointerSize);
+    const NdVar XMM0 = NdVar::reg(x86reg::XMM0, 16);
+    LowFunc Low = makeOneBlockLow(0x1000, "lane_insert", [&](auto Push) {
+      Push(NdOp::LOAD, NdVar::tmp(1, 4), {Pointer});
+      Push(NdOp::SUBBYTES, NdVar::tmp(2, 12), {XMM0, NdVar::cst(4, 4)});
+      Push(NdOp::CONCAT, XMM0, {NdVar::tmp(2, 12), NdVar::tmp(1, 4)});
+    });
+    return LowToMedConverter().convert(Low, TheArch);
+  };
+  EXPECT_TRUE(hasParameterIn(Convert(Arch::X64), x86reg::XMM0));
+  EXPECT_FALSE(hasParameterIn(Convert(Arch::X86), x86reg::XMM0));
+}
+
 TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   // `mov dl, r8b; ...; neg dl` reads DL only after writing it: DL is not an
   // argument. `mov cl, r8b; ...; mov eax, ecx` still reads the upper ECX.
