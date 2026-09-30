@@ -4,6 +4,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCObjC.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -166,18 +167,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   }
   const auto &Signature = Hint.Signature;
   if (Hint.CallKind == Kind::DarwinRuntimeCall &&
-      (Hint.ByteCount || Hint.TargetName == "CGContextConcatCTM")) {
-    SourceFunctionTypeHint Expected;
-    Expected.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
-    Expected.ReturnType = NdType::makeVoid();
-    const auto Pointer = NdType::makePtr(NdType::makeVoid());
-    Expected.Parameters = {{"context", Pointer}, {"transform", Pointer}};
-    std::string Diagnostic;
-    if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != 48 ||
-        Hint.TargetName != "CGContextConcatCTM" || Hint.WeakImport ||
-        Hint.DoesNotReturn || Hint.Format ||
-        !assignDarwinScalarSourceABI(Expected, Opts.TheArch, Diagnostic) ||
-        !equalSourceABIs(Signature, Expected))
+      (Hint.ByteCount || Hint.TargetName == "CGContextConcatCTM" ||
+       Hint.TargetName == "CGAffineTransformTranslate" ||
+       Hint.TargetName == "CGAffineTransformScale" ||
+       Hint.TargetName == "CGAffineTransformRotate")) {
+    const auto Expected =
+        darwinIndirectAffineTransformSignature(Opts.TheArch, Hint.TargetName);
+    if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != 48 || !Expected ||
+        Hint.WeakImport || Hint.DoesNotReturn || Hint.Format ||
+        !equalSourceABIs(Signature, *Expected))
       return bad("invalid indirect CGAffineTransform source binding");
   }
   if (Hint.NilTerminated &&

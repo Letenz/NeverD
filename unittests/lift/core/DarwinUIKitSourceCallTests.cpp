@@ -684,4 +684,156 @@ int main(void) {
 )";
   executeSource(Source);
 }
+
+TEST(DarwinIndirectRecordCalls,
+     AffineOperationsKeepTheInputPointerAndEveryIndirectResultField) {
+  constexpr auto CoreGraphics =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  for (const auto *Name :
+       {"CGAffineTransformTranslate", "CGAffineTransformScale",
+        "CGAffineTransformRotate"}) {
+    SCOPED_TRACE(Name);
+    const std::string Import = "_" + std::string(Name);
+    auto I = image(Import.c_str());
+    I.DynInfo.NeededLibs = {CoreGraphics};
+    I.DyldBindSlots.at(0x2180).Module = CoreGraphics;
+    const auto Hint = darwinRuntimeSourceCallHint(I, 0x2180);
+    ASSERT_TRUE(Hint);
+    const bool Rotate = std::string(Name) == "CGAffineTransformRotate";
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Hint->ByteCount, 48U);
+    ASSERT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+    EXPECT_EQ(Signature.ReturnType->Size, 48U);
+    ASSERT_EQ(Signature.Parameters.size(), Rotate ? 2U : 3U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset, a64reg::X0);
+    EXPECT_EQ(Signature.ReturnLocation.Kind,
+              SourceABICarrierKind::IndirectResultPointer);
+    EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, a64reg::X8);
+    const auto &TRI = getTargetRegInfo(Arch::AArch64);
+    for (unsigned J = 1; J < Signature.Parameters.size(); ++J) {
+      EXPECT_EQ(Signature.Parameters[J].Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(Signature.Parameters[J].Type->Size, 8U);
+      EXPECT_EQ(Signature.Parameters[J].Location.RegisterOffset,
+                TRI.FPParamRegs[J - 1]);
+    }
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Changed = I;
+      if (Mutation == 0)
+        Changed.Arch = Arch::X64;
+      else if (Mutation == 1)
+        Changed.DyldBindSlots.at(0x2180).Module =
+            "/System/Library/Frameworks/UIKit.framework/UIKit";
+      else if (Mutation == 2)
+        Changed.DyldBindSlots.at(0x2180).WeakImport = true;
+      else if (Mutation == 3)
+        Changed.DyldBindSlots.at(0x2180).Addend = 8;
+      else
+        Changed.IsRelocatable = true;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto Double = NdType::makeFloat(8);
+    SourceFunctionTypeHint Entry;
+    Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Entry.ReturnType = NdType::makeInt(8, false);
+    Entry.Parameters = {{"input", Pointer},
+                        {"output", Pointer},
+                        {"tx", Double},
+                        {"ty", Double}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error));
+    LowFunc F;
+    F.Entry = 0x1200;
+    F.Name = "apply_affine";
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = F.Entry;
+    B.EndAddr = 0x1218;
+    B.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                       {NdVar::reg(a64reg::X1, 8)}, 0x1200),
+             operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8),
+                       {NdVar::reg(a64reg::X19, 8)}, 0x1204),
+             operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1208),
+             operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8),
+                       {NdVar::cst(0, 8)}, 0x120c),
+             operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                       {NdVar::cst(0, 8)}, 0x1210),
+             operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1214)};
+    F.Blocks = {B};
+    const std::map<va_t, SourceFunctionTypeHint> Entries{{F.Entry, Entry}};
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&I);
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Entries);
+    auto Med = Converter.convert(F, Arch::AArch64, BinaryFormat::MachO);
+    Med.SourceTypeHint = Entry;
+    recoverCallAbi(Med, Arch::AArch64, {}, &I);
+    inferMedTypes(Med, Arch::AArch64);
+    unsigned ResultStores = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &O : Block.Ops)
+        if (O.Opcode == NdOp::STORE && O.Addr == 0x1208)
+          ++ResultStores;
+    EXPECT_EQ(ResultStores, 6U);
+    auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+    unsigned Calls = 0;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        ASSERT_FALSE(E && E->Kind == ExprKind::Undef);
+        if (!E || E->Kind != ExprKind::Call)
+          return;
+        ++Calls;
+        ASSERT_TRUE(E->SourceCallHint);
+        EXPECT_EQ(E->Operands.size(), Rotate ? 2U : 3U);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*E, I, {}));
+        for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+          auto Wrong = std::make_shared<SourceCallTypeHint>(*Hint);
+          if (Mutation == 0)
+            Wrong->ByteCount = 47;
+          else if (Mutation == 1)
+            Wrong->Signature.Parameters[1].Type = NdType::makeInt(8);
+          else if (Mutation == 2)
+            Wrong->Signature.ReturnLocation.RegisterOffset = a64reg::X9;
+          else
+            Wrong->Signature.Parameters[0].Location.RegisterOffset = a64reg::X1;
+          auto Changed = *E;
+          Changed.SourceCallHint = Wrong;
+          EXPECT_FALSE(sdk::objcSourceCallBound(Changed, I, {})) << Mutation;
+        }
+      });
+    });
+    ASSERT_EQ(Calls, 1U);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    ASSERT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    const auto Record = typeToC(Signature.ReturnType);
+    Source += "\nstatic unsigned calls; static int mismatch;\n" + Record +
+              " affine_probe(" + Record + ", double" +
+              (Rotate ? "" : ", double") + ") __asm__(\"_" + Name + "\");\n" +
+              Record + " affine_probe(" + Record + " input, double tx" +
+              (Rotate ? "" : ", double ty") +
+              ") {\n  ++calls; double values[6]; memcpy(values, &input, 48);\n"
+              "  for (unsigned j = 0; j != 6; ++j) mismatch |= values[j] != "
+              "(double)(j + 1);\n  mismatch |= tx != 2.5" +
+              (Rotate ? "" : " || ty != -3.5") +
+              ";\n  for (unsigned j = 0; j != 6; ++j) values[j] += tx * "
+              "(j + 1)" +
+              (Rotate ? "" : " + ty") + ";\n  " + Record +
+              " result; memcpy(&result, values, 48); return result;\n}\n"
+              "int main(void) {\n  double input[6] = {1, 2, 3, 4, 5, 6};\n"
+              "  double output[7] = {-99, -99, -99, -99, -99, -99, 123};\n"
+              "  if (apply_affine(input, output, 2.5, -3.5) != 0) return 1;\n"
+              "  for (unsigned j = 0; j != 6; ++j) if (output[j] != "
+              "(double)(j + 1) * 3.5" +
+              (Rotate ? "" : " - 3.5") +
+              ") return 2;\n  return calls != 1 || mismatch || "
+              "output[6] != 123;\n}\n";
+    executeSource(Source);
+  }
+}
 } // namespace
