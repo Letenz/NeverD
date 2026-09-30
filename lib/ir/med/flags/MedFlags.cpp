@@ -391,8 +391,8 @@ std::vector<uint64_t> flagsForCond(CondCode CC, const TargetRegInfo &TRI) {
 
 /// Whether the flag value defined at \p DefIdx originates from an FP compare.
 /// UCOMISS/COMISD/FUCOMI write ZF/CF/PF as BOOL_OR/BOOL_NOT/COPY chains over
-/// FLOAT_EQUAL/FLOAT_LESS/FLOAT_ISNAN temps; trace those temp producers back so a
-/// flag set by an FP compare is recognised even when later partial-register
+/// FLOAT_EQUAL/FLOAT_LESS/FLOAT_ISNAN temps; trace those temp producers back so
+/// a flag set by an FP compare is recognised even when later partial-register
 /// merges (a preceding SETcc's `reg & 0xFF..00`) sit between it and the
 /// consumer.
 bool flagDefTracesToFP(const std::vector<MedOp> &Ops, int DefIdx) {
