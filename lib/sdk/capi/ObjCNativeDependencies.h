@@ -236,6 +236,11 @@ inline size_t inferObjCNativeDependencies(
         ++Added;
         continue;
       }
+      if (auto Mangled = swiftMangledURLArrayAppendSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
       if (auto Mangled =
               swiftMangledURLArrayForceCastSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));

@@ -344,6 +344,95 @@ TEST(NativeSourceHints, SpecializedURLArrayBufferKeepsInoutSwiftSelf) {
 }
 
 namespace {
+TEST(NativeSourceHints, SpecializedURLArrayAppendKeepsOwnedValueAndInoutSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Name =
+      "_$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lF"
+      "10Foundation3URLVSg_SayAHGTg5";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  const auto Hint = sdk::swiftMangledURLArrayAppendSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint->Parameters.size(), 2U);
+  for (const auto &Parameter : Hint->Parameters) {
+    EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Parameter.Location.ValueBytes, 8U);
+  }
+  EXPECT_EQ(Hint->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::Ordinary);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[1].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+  std::vector<std::string> Invalid;
+  for (const auto &[From, To] :
+       {std::pair<const char *, const char *>{"6append", "6appenz"},
+        {"10contentsOf", "10contentzOf"},
+        {"yqd__n_t", "yqd___t"},
+        {"STRd__", "SHRd__"},
+        {"Rsz", "RszRlz"},
+        {"10Foundation", "10Foundatiox"},
+        {"3URLV", "3URLC"},
+        {"URLVSg_", "URLV_"},
+        {"URLVSg_", "URLVSgSg_"},
+        {"_SayAHG", "_SaySiG"},
+        {"Tg5", "Tg0"}}) {
+    auto Changed = Name;
+    Changed.replace(Changed.find(From), std::string(From).size(), To);
+    Invalid.push_back(Changed);
+  }
+  for (const char *Suffix : {"Tm", "To", "TA", "junk"})
+    Invalid.push_back(Name + Suffix);
+  Invalid.push_back(Name.substr(0, Name.find("10Foundation")));
+  for (const auto &Changed : Invalid) {
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Changed;
+    EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Wrong, 0x1000))
+        << Changed;
+  }
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    auto Wrong = Image;
+    switch (Mutation) {
+    case 0:
+      Wrong.Symbols.push_back(Wrong.Symbols[0]);
+      break;
+    case 1:
+      Wrong.Symbols[0].IsFunc = false;
+      break;
+    case 2:
+      Wrong.IsRelocatable = true;
+      break;
+    case 3:
+      Wrong.Format = BinaryFormat::ELF;
+      break;
+    case 4:
+      Wrong.Arch = Arch::X64;
+      break;
+    case 5:
+      Wrong.Bits = Bitness::Bits32;
+      break;
+    case 6:
+      Wrong.Segments[0].Flags = SegmentFlags::Readable;
+      break;
+    }
+    EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Wrong, 0x1000));
+  }
+  EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Image, 0x1100));
+}
+
 struct MergedURLBufferFixture {
   static constexpr va_t Wrapper = 0x1000, Helper = 0x1100, Slot = 0x2000;
   static constexpr const char *HelperName =
