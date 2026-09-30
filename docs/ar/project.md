@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center" dir="rtl">
 
@@ -40,7 +40,7 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 
 توثق أدلة [EVM](evm.md) و[Solana SBF](sbf.md) صيغ الإدخال وعقود host والحدود.
 
-تستعيد واجهة CLI التجريبية `neverd mobile app.apk -o recovered-app` شيفرة Java من APK وDEX وsmali وتنتج `report.json`. المحرك الافتراضي مكتوب بلغة C++20 ولا يحتاج إلى Python أو Java أو JADX وقت التشغيل. لا يختار `NEVERD_JADX` ولا وجود `jadx` في PATH المحرك الخارجي؛ يلزم تحديد `--jadx PATH` صراحةً. لا يوجد انتقال تلقائي إلى محرك آخر. ضع المسارات التي تحتوي على مسافات بين علامتي اقتباس. راجع [دليل Android](android.md) للمدخلات المدعومة والتقارير وحدود الاستعادة.
+تستعيد واجهة CLI التجريبية `neverd mobile app.apk -o recovered-app` شيفرة Java من APK وDEX وsmali وتنتج `report.json`. تستخدم استعادة Android محرك NeverD المدمج بلغة C++20 فقط، ولا تحتاج إلى Python أو Java وقت التشغيل. ضع المسارات التي تحتوي على مسافات بين علامتي اقتباس. راجع [دليل Android](android.md) للمدخلات المدعومة والتقارير وحدود الاستعادة.
 
 يصدر مسار iOS التجريبي `neverd mobile App.ipa -o recovered-ios` شيفرة C أصلية ومصادر Objective-C/Swift مدعومة من IPA أو `.app` أو Mach-O. يحفظ تخطيطات وقت التشغيل ووحدات المصدر وأسباب حذف الطرائق صراحة، ولا يستخدم جسراً إلى الملف الثنائي الأصلي. راجع [دليل iOS](ios.md) للإعداد والتغطية وإعادة التجميع المستقلة.
 

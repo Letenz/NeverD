@@ -154,19 +154,6 @@ jobs:
             --neverd build-mobile/bin/neverd --d8 "$NEVERD_D8" \
             --android-jar "$ANDROID_HOME/platforms/android-35/android.jar" \
             --work-dir "$RUNNER_TEMP/android-suppress-lint"
-      - name: Prepare the pinned optional Android compatibility backend
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          curl --fail --location --retry 3 https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip --output "$RUNNER_TEMP/jadx.zip"
-          printf '%s  %s\n' "$JADX_SHA256" "$RUNNER_TEMP/jadx.zip" | sha256sum --check -
-          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
-        env:
-          JADX_SHA256: '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974'
-      - name: Verify explicit external compatibility through C++ CLI
-        if: runner.os == 'Linux'
-        shell: bash
-        run: python scripts/test_mobile_android_backend.py --neverd build-mobile/bin/neverd --jadx "$RUNNER_TEMP/jadx/bin/jadx"
       # Attempt every suite even when an earlier test fails. No failure is
       # ignored; separate steps retain diagnostics for all requested corpora.
       - name: Recover and independently execute Objective-C scalar sources

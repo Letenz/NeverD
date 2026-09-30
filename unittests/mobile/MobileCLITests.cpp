@@ -150,7 +150,6 @@ protected:
         // Python plugin host has no native runtime dependency.
         runTool(command(Executable, Source, Output, Extra), Log, 30, {}, {},
                 {{"NEVERD_PYTHON", pathText(Root / "missing interpreter")},
-                 {"NEVERD_JADX", pathText(Root / "missing compatibility tool")},
                  {"NEVERD_NATIVE_PHASES", "1"}});
       } catch (const Error &E) {
         Rejected = true;
@@ -249,6 +248,27 @@ TEST_F(MobileCLITest, ExistingOutputSurvivesNativeJSONFailure) {
       std::distance(fs::directory_iterator(Output), fs::directory_iterator()),
       1);
   noStaging();
+}
+
+TEST_F(MobileCLITest, RemovedJadxOptionIsRejectedBeforeRecovery) {
+  const auto Output = Root / "removed backend output";
+  const auto Original = readFile(Input, 1024 * 1024);
+  const auto Log = Root / "removed-option.log";
+  EXPECT_THROW(runTool(command(Binary, Input, Output,
+                               {"--jadx=missing compatibility tool"}),
+                       Log, 30),
+               Error);
+  const auto Diagnostic = readFile(Log, 1024 * 1024);
+  EXPECT_NE(Diagnostic.find("Unknown command line argument"),
+            std::string::npos);
+  EXPECT_NE(Diagnostic.find("--jadx"), std::string::npos);
+  EXPECT_FALSE(fs::exists(Output));
+  EXPECT_EQ(readFile(Input, 1024 * 1024), Original);
+  noStaging();
+
+  const auto HelpLog = Root / "mobile-help.log";
+  runTool({pathText(Binary), "mobile", "--help"}, HelpLog, 30);
+  EXPECT_EQ(readFile(HelpLog, 1024 * 1024).find("--jadx"), std::string::npos);
 }
 
 TEST_F(MobileCLITest, InvalidRegisterFlowFailsWithoutPublishingPartialJava) {

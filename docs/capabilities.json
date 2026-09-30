@@ -3400,7 +3400,7 @@
         "docs/zh-CN/ios.md"
       ],
       "limitations": [
-        "Mobile recovery runs in the C++ CLI, with no Python interpreter or deployed helper directory. Android defaults to NeverD builtin DEX/smali readers, register verification and Java emission; it needs no external decompiler or JVM at runtime. Only explicit --jadx selects the separately installed compatibility backend. ZIP decompression uses zlib.",
+        "Mobile recovery runs in the C++ CLI, with no Python interpreter or deployed helper directory. Android uses only NeverD builtin DEX/smali readers, register verification and Java emission; it needs no external decompiler or JVM at runtime. ZIP decompression uses zlib.",
         "Builtin Android emits verified Java dispatch bodies for its supported DEX/smali subset, with complete per-input method accounting and separate native/abstract declarations. Unsupported bodies reject the transaction; no backend fallback or placeholder body is used. Resources and native libraries are excluded.",
         "Builtin Android is experimental, not a guarantee for arbitrary APKs or all bytecode. Generic/dynamic invocation, monitor operations, unproven initialization, unsupported annotations, unavailable local member bindings, and non-representable Java declarations are rejected. Original source text and compilation-lost information cannot be recovered. Generation uses conservative byte, work and time budgets.",
         "Android acceptance recompiles generated source without original classes and compares behavior against independently compiled owned fixtures. JDK and D8 are test tools only. iOS retains LLVM/Capstone dependencies and uses LLVMSwiftDemangle from the NeverD LLVM fork for in-process structured Swift signature demangling. Fork source builds and matching LLVM packages include this component; NeverD does not fetch a separate Swift source dependency or require an installed Swift compiler/toolchain to build or run. Independent Swift behavior tests require swiftc.",
@@ -3513,7 +3513,6 @@
           "neverd mobile",
           "neverd mobile --arch",
           "neverd mobile --artifact",
-          "neverd mobile --jadx",
           "neverd mobile --json",
           "neverd mobile --max-bytes",
           "neverd mobile --max-files",

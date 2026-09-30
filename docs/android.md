@@ -4,13 +4,13 @@
 
 [← Documentation index](README.md)
 
-`neverd mobile` recovers readable Java from APK, DEX, and smali using NeverD’s built-in engine by default. Independently implemented readers share a typed Dalvik model and a bounded Java emitter. This experimental CLI feature does not claim feature parity with JADX or complete recovery of arbitrary APKs. APK containers and Java output are not exposed through the native C SDK, Python plugin SDK, GUI loader, or `neverd decompile --language`.
+`neverd mobile` recovers readable Java from APK, DEX, and smali using only NeverD’s built-in engine. Independently implemented readers share a typed Dalvik model and a bounded Java emitter. This experimental CLI feature does not claim complete recovery of arbitrary APKs. APK containers and Java output are not exposed through the native C SDK, Python plugin SDK, GUI loader, or `neverd decompile --language`.
 
 Recovered Java is a reconstruction of bytecode. Original comments, formatting, source-language choices, and removed identifiers are unavailable; Kotlin bytecode also produces Java. A successful run does not prove semantic equivalence or guarantee that every method recompiles. No analyzed application is launched by this workflow.
 
 ## Quick start
 
-After preparing the runtimes below, choose a new output directory:
+After building NeverD, choose a new output directory:
 
 ```sh
 neverd mobile app.apk -o recovered-app
@@ -27,7 +27,7 @@ Open `recovered-app/sources/` to read the Java files and `recovered-app/report.j
 |-----------|-------------|-----------|
 | NeverD | Build the `neverd` target with C++20 support. The mobile workflow is compiled into the native CLI and does not use a Python interpreter. Distribute the executable with the native libraries required by your build. | `build/bin/neverd` / PATH |
 
-The default engine is implemented in C++20 and needs no Python, Java, or JADX runtime. It accepts representable ordinary declarations and operations from DEX 035 and 037–040 and from smali. DEX 041, dynamic calls such as `invoke-custom`, some initialization paths, unknown semantic annotations or operations, and identifiers that Java cannot represent fail explicitly. File-format acceptance does not mean every instruction or declaration in that format is supported.
+Android recovery uses only NeverD’s built-in C++20 engine and needs no Python or Java runtime. It accepts representable ordinary declarations and operations from DEX 035 and 037–040 and from smali. DEX 041, dynamic calls such as `invoke-custom`, some initialization paths, unknown semantic annotations or operations, and identifiers that Java cannot represent fail explicitly. File-format acceptance does not mean every instruction or declaration in that format is supported.
 
 Java name binding distinguishes class headers from class bodies and can resolve known same-package shadowing; it explicitly rejects cases where missing external superclass or interface declarations prevent it from establishing type or generated Java helper bindings, and only `java.lang.Object` is assumed to contribute no inherited member types without a supplied declaration. Smali floating-point literals are rounded directly to their target single or double precision, preserving the resulting bit patterns.
 
@@ -53,7 +53,7 @@ cmake --build build --target neverd
 ./build/bin/neverd mobile app.apk -o recovered-app
 ```
 
-`NEVERD_JADX` and a `jadx` executable on PATH do not select the external engine; only an explicit `--jadx PATH` does. There is no automatic fallback. Quote paths containing spaces.
+Quote paths containing spaces.
 
 ### Windows PowerShell
 
@@ -74,7 +74,7 @@ Multi-configuration builds may put the executable under `build/bin/Release/`. Fo
 
 To analyze an APK decode tree containing `smali/` and `smali_classes2/`, pass their common directory. Only `.smali` files reach the backend, but the entire supplied tree is validated and copied first; unrelated large assets still count against input limits. A compact directory containing only the relevant smali roots reduces work.
 
-Split APKs are separate inputs. Each APK containing DEX can be processed independently, but this command does not merge an APK set; resource-only splits fail because they contain no root DEX. `.aab`, `.apks`, `.xapk`, `.odex`, `.oat`, and `.vdex` are not accepted mobile inputs. Backend support for some of these formats does not make them supported by this NeverD command.
+Split APKs are separate inputs. Each APK containing DEX can be processed independently, but this command does not merge an APK set; resource-only splits fail because they contain no root DEX. `.aab`, `.apks`, `.xapk`, `.odex`, `.oat`, and `.vdex` are not accepted mobile inputs.
 
 APK resources, `AndroidManifest.xml`, assets, JNI/native libraries, and code downloaded at runtime are not recovered as Java. Extract a native `.so` separately and use `neverd decompile library.so -o library.c`. Encrypted or packed payloads must already be available as ordinary DEX/smali for this static workflow; no unpacking, device attachment, or protection bypass is performed.
 
@@ -89,15 +89,14 @@ neverd mobile app.apk -o recovered-app --platform=android \
 |--------|---------|---------|
 | `-o DIRECTORY` | Required | New output directory outside any directory input; never overwrite existing output |
 | `--platform=auto\|android` | `auto` | Select Android explicitly or infer the platform from the input |
-| `--jadx PATH` | Not set: built-in engine | Explicitly select the separately installed JADX compatibility adapter; no environment-based selection or automatic fallback |
-| `--timeout N` | `300` | Positive analysis-time budget for the built-in engine; positive seconds per external backend process, including version probing |
+| `--timeout N` | `300` | Positive analysis-time budget in seconds |
 | `--max-files N` | `20000` | Positive entry limit, including materialized directories |
 | `--max-bytes N` | `2147483648` | Positive input, extracted-data, and final-output byte limit |
 | `--json` | Off | Print the report as JSON rather than a human summary |
 
-Non-default `--arch` selection, `--artifact`, `--metadata-only`, and a nonzero `--max-func` belong to iOS and are rejected for Android; explicit `--arch=auto` is accepted. There is no arbitrary backend-option passthrough. The explicit JADX adapter isolates config/cache/temp directories and does not import ambient backend settings or plugin configuration.
+Non-default `--arch` selection, `--artifact`, `--metadata-only`, and a nonzero `--max-func` belong to iOS and are rejected for Android; explicit `--arch=auto` is accepted.
 
-Input, extraction, and final output retain the configured file and byte budgets. The built-in reader and emitter also enforce bounded work and elapsed-time checks. External backend work areas allow up to three times the configured entry/byte budgets for staged inputs and intermediate output; logs are capped at 16 MiB per process. These are resource controls, not a sandbox. Raising one limit does not disable the others.
+Input, extraction, and final output retain the configured file and byte budgets. The built-in reader and emitter also enforce bounded work and elapsed-time checks. Raising one limit does not disable the others.
 
 ## Output layout and JSON report
 
@@ -166,25 +165,14 @@ Successful native CLI runs return zero. Recovery failures return nonzero; `--jso
 
 ## Failure handling and troubleshooting
 
-Publication is transactional: existing output is preserved, and failed staging output is removed. Unsupported operations, unresolved register flows, unrepresentable declarations, malformed exception handling, and exhausted budgets fail the built-in run instead of publishing missing method bodies. The external adapter also rejects nonzero exits, logged assembly/decompilation errors, duplicate-class omissions, incomplete-code markers, empty Java files, and missing Java output. Recovery success is not a proof of semantic equivalence.
+Publication is transactional: existing output is preserved, and failed staging output is removed. Unsupported operations, unresolved register flows, unrepresentable declarations, malformed exception handling, and exhausted budgets fail the built-in run instead of publishing missing method bodies. Recovery success is not a proof of semantic equivalence.
 
 | Symptom | Action |
 |---------|--------|
-| Unsupported DEX, instruction, declaration, or initialization | Read the explicit diagnostic; check the supported subset. Use `--jadx PATH` only if you deliberately choose the separate compatibility adapter |
+| Unsupported DEX, instruction, declaration, or initialization | Read the explicit diagnostic; check the supported subset |
 | Invalid input or duplicate class | Correct the supplied bytecode/class set; unsupported bodies are not silently omitted |
 | Timeout or budget exceeded | Narrow the input or adjust `--timeout`, `--max-files`, and `--max-bytes` within available resources |
 | Output already exists | Choose a new output directory |
-
-## Optional JADX compatibility adapter
-
-`--jadx PATH` selects external JADX, not the built-in implementation. Install JADX 1.5.6 or newer with standard DEX/smali input plugins and Java 11 or newer. Obtain the complete [JADX distribution](https://github.com/skylot/jadx/releases/tag/v1.5.6), retain its `bin/` and `lib/` layout and included dependency licenses when redistributing it. Nothing is downloaded automatically. The adapter report identifies the actual `jadx` engine and detected version; it does not claim built-in method coverage.
-
-On Windows, pass the distribution’s `.bat`/`.cmd` launcher or `lib/jadx-*-all.jar`. NeverD resolves the distribution JAR and invokes Java directly; application paths do not enter a command shell. `JAVA_HOME` or PATH selects Java. Successful adapter runs keep `logs/jadx-version.log` and `logs/jadx.log`; failed staging directories and logs are removed. Nonzero backend exits include a bounded log tail. Backend timeouts preserve the timeout message and append a bounded tail when captured log text is available. Launch failures and budget violations retain their own diagnostics.
-
-```sh
-neverd mobile app.apk -o recovered-jadx --jadx /opt/jadx/bin/jadx
-python3 scripts/test_mobile_android_backend.py --jadx /opt/jadx/bin/jadx --neverd build/bin/neverd
-```
 
 ## Verification and support depth
 
@@ -196,6 +184,6 @@ ctest --test-dir build -L NeverDMobileTests --output-on-failure
 python3 scripts/test_mobile_android_internal.py --d8 PATH --neverd build/bin/neverd
 ```
 
-The component and CLI tests check parsing, output contracts, and failure cleanup. The internal execution runner uses a JDK (`java` and `javac`) and D8 to build independent DEX/APK fixtures and compile/run recovered Java; these are test dependencies, not requirements for built-in recovery. Run it against the current build and inspect its results before claiming a case is verified. The separate compatibility runner additionally requires JADX and exercises that adapter. Fixture success does not establish complete recovery of arbitrary applications.
+The component and CLI tests check parsing, output contracts, and failure cleanup. The internal execution runner uses a JDK (`java` and `javac`) and D8 to build independent DEX/APK fixtures and compile/run recovered Java; these are test dependencies, not requirements for built-in recovery. Run it against the current build and inspect its results before claiming a case is verified. Fixture success does not establish complete recovery of arbitrary applications.
 
 See the [mobile overview](mobile.md) for the related iOS workflow.

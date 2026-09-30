@@ -506,12 +506,12 @@ GUIDE_REQUIRED_TOKENS = {
         "@synchronized", "required_cflags", "-fexceptions",
     ),
     "android": (
-        "neverd mobile", ".apk", ".dex", ".smali", "JADX", "1.5.6", "C++20",
-        "NeverDMobileTests", "--jadx", "NEVERD_JADX", "JAVA_HOME",
+        "neverd mobile", ".apk", ".dex", ".smali", "C++20",
+        "NeverDMobileTests",
         "--platform=android", "--timeout", "--max-files", "--max-bytes", "--json",
         "report.json", "schema_version", "input_code_files", "dex_count",
-        "smali_count", "java_source_count", "java_sources", "logs/jadx.log",
-        "--metadata-only", "check-neverd-mobile", "test_mobile_android_backend.py",
+        "smali_count", "java_source_count", "java_sources",
+        "--metadata-only", "check-neverd-mobile",
         "test_mobile_android_internal.py", "metadata/android-methods.json",
         "android_method_recovery", "declaration_only_method_count",
         "2147483648", "20000", "300",
@@ -1691,6 +1691,7 @@ def validate_mobile_native_runtime(errors: list[str], view: RepositoryView) -> N
     obsolete = (
         "--python", "NEVERD_PYTHON", "`mobile/`", "--swift-demangle",
         "NEVERD_SWIFT_DEMANGLE", "xcrun --find swift-demangle",
+        "--jadx", "NEVERD_JADX", "test_mobile_android_backend.py",
     )
     for path in (*guides, *overviews, *entries):
         text = view.read_text(path)

@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, интеграторы и ИИ-агенты используют один �
 
 Форматы входа, host-контракты и ограничения описаны в руководствах [EVM](evm.md) и [Solana SBF](sbf.md).
 
-Экспериментальная команда `neverd mobile app.apk -o recovered-app` восстанавливает Java из APK (multidex), DEX и smali и создаёт `report.json`. Движок по умолчанию реализован на C++20; для его работы не нужны Python, Java или JADX. Ни `NEVERD_JADX`, ни исполняемый файл `jadx` в PATH не выбирают внешний движок: для этого нужен явный `--jadx PATH`. Автоматического перехода на другой движок нет. Пути с пробелами заключайте в кавычки. Поддерживаемые входы, отчёты и ограничения описаны в [руководстве Android](android.md).
+Экспериментальная команда `neverd mobile app.apk -o recovered-app` восстанавливает Java из APK (multidex), DEX и smali и создаёт `report.json`. Восстановление Android использует только встроенный движок NeverD на C++20 и не требует среды выполнения Python или Java. Пути с пробелами заключайте в кавычки. Поддерживаемые входы, отчёты и ограничения описаны в [руководстве Android](android.md).
 
 Экспериментальный процесс iOS `neverd mobile App.ipa -o recovered-ios` экспортирует нативный C и поддерживаемые исходники Objective-C/Swift из IPA, `.app` или Mach-O. Раскладки runtime, единицы исходников и пропуски методов сохраняются явно; код не использует мост к оригинальному бинарнику. Настройка, покрытие и независимая компиляция описаны в [руководстве iOS](ios.md).
 

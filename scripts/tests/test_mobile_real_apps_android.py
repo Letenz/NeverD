@@ -281,7 +281,7 @@ class RecoveryClaimTests(unittest.TestCase):
         def missing_reason(report, coverage): coverage["methods"][-1].pop("reason")
         def aggregate(report, coverage): coverage["method_count"] = 3
         def aggregate_bool(report, coverage): coverage["class_count"] = True
-        def alternate_backend(report, coverage): report["backend"]["name"] = "jadx"
+        def alternate_backend(report, coverage): report["backend"]["name"] = "external"
         def missing_dex(report, coverage): report["input_code_files"] = []
         def partial(report, coverage): coverage["status"] = "partial"
         def report_mismatch(report, coverage): report["android_method_recovery"] = {}

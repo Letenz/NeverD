@@ -787,6 +787,9 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
             (Path("docs/ios.md"), "\nneverd mobile App.app --swift-demangle tool\n"),
             (Path("docs/zh-CN/ios.md"), "\n`NEVERD_SWIFT_DEMANGLE`\n"),
             (Path("docs/ja/ios.md"), "\n`xcrun --find swift-demangle`\n"),
+            (Path("docs/android.md"), "\nneverd mobile app.apk --jadx tool\n"),
+            (Path("docs/zh-CN/mobile.md"), "\n`NEVERD_JADX`\n"),
+            (Path("README.md"), "\nRun scripts/test_mobile_android_backend.py.\n"),
         )
         for path, addition in examples:
             with self.subTest(path=path):
