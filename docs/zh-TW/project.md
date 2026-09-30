@@ -88,6 +88,12 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
 
 獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
 
+### CPU 執行與客體環境
+
+CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 啟用 x64/ARM64 CPU 層；`NEVERD_ENABLE_DRIVER_EMULATION` 加入有界 x64 Windows WDM/KMDF 環境。`linux-elf64-v1` 設定檔執行受支援的 Linux ELF 程序。參見[CPU 執行](cpu-execution.md)、[客體程序模擬](process-emulation.md)及[Windows 驅動程式模擬](driver-emulation.md)。
+
+checked 設定在 ISA 相符的 Linux 主機上使用 KVM，在相符的 Windows 主機上使用 WHP，跨 ISA 使用 Unicorn。原生 ARM64/WHP 執行涵蓋仍待實機驗證。`driver-strict` 目前使用 Unicorn；驅動程式的 KVM/WHP 路徑需選擇 `checked-x64-v1`。明確指定的後端不可用時會明確失敗。共享 RAM、別名、分階段寫入、純量原子操作、型別化例外與完整 x64 FP/SSE 上下文已在文件指定的指令及 OS 契約內實作。這不表示相容任意驅動程式或已實作 Android/Darwin 環境。
+
 ## 工作原理
 
 ```text

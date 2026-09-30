@@ -61,7 +61,7 @@ not runtime evidence. The C API adds `neverd_emulate_driver_backend_json`;
 the existing v1 structure and entry points remain unchanged. New selection
 reports identify the requested/selected backend, execution contract and reason.
 
-KVM transports XMM/MXCSR using the standard XSAVE state interface, including
+KVM transports complete x87 and XMM/MXCSR state using the standard XSAVE interface, including
 the FP/SSE presence bits. The older FPU register interface is insufficient for
 this state contract. See the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and [WHP register API](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes).
@@ -1114,3 +1114,13 @@ existing loader; Windows object/API behavior belongs to `lib/emulation/os/window
 CPU state and execution belong to the Unicorn adapter. The adapter and model
 use the same guest-memory interface. No Windows API behavior belongs in the
 Unicorn fork.
+
+## x64 floating-point context state
+
+The shared architecture layer retains x87 control/status, TOP, physical
+nonempty tags, opcode, instruction/data pointers and all eight 80-bit payloads
+in KVM, WHP and both Unicorn paths. `FP0`–`FP7` use `RegisterValue`; scalar
+access rejects truncation, and `FPTag` is the physical abridged mask.
+`NeverDX64FPTests` verifies every TOP, exact host FXSAVE/FXRSTOR comparisons and
+context restoration. This state coverage does not admit checked x87
+instructions or certify all software rounding semantics.

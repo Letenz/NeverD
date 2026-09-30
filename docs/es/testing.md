@@ -63,6 +63,12 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopInference.*` y `BinaryLowIRLoopInference.*` usan contadores, guardados en pila, retornos anticipados, llamadas nativas y banderas empaquetadas escritos independientemente. Cubren ampliación aritmética estrecha y banderas semánticamente iguales con expresiones distintas. Grafos malformados, orígenes ausentes o falsificados, bucles infinitos o con desbordamiento modular y presupuestos agotados no deben producir certificados.
 
+Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
+
+Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.
+
+Las regresiones cubren entradas unidas, el primer testigo sin iteraciones, diferencias ocultas de registros/marco, predicados booleanos no canónicos, condiciones de trap nativas, copias a pila correlacionadas y planes inválidos o sin presupuesto. Contadores independientes de dos/tres niveles con salida por igualdad y bytes nativos comprueban límites sin signo, dominios cero/máximo, pasos no unitarios e instrucciones originales incorrectas. La inferencia y la prueba final rechazan resultados incompletos.
+
 Las regresiones independientes con bucles alternativos cubren ambas orientaciones de rama, cuerpos incorrectos, una rama hermana no terminante y el agotamiento de los presupuestos compartidos de búsqueda/prueba. `LowIRLoopInference.AlternativeLoopsReachBothPrefixesWithinSharedBudgets`.
 
 Las regresiones cubren dos y tres niveles anidados, contadores ascendentes y descendentes, fases inferidas y cortes en cuerpos nativos reales. Deben rechazarse dominios de prefijo inaccesibles o disjuntos, cuerpos incorrectos, transiciones infinitas o con desbordamiento circular y presupuestos compartidos agotados. Un testigo de prefijo nunca sustituye la cobertura completa de segmentos.
@@ -913,3 +919,7 @@ Los `DIV`/`IDIV` checked x64 usan resultados reales del procesador y `#DE`. KVM 
 ## Efectos de RAM preparados
 
 `RAMTransaction` conserva únicamente la unión física de las escrituras declaradas de una instrucción, bajo el bloqueo de ejecución. Restaura la RAM original antes de los observadores de resultados; una cancelación, un error de transporte o una excepción del observador no publica RAM ni registros parciales. Tras revertir la RAM, los fallos de CPU conservan el estado arquitectónico de excepción. Las escrituras simples y dobles de ARM64 usan la misma autoridad. x64 ejecuta `XCHG`, `XADD` y `CMPXCHG` de 8/16/32/64 bits, con alineación natural para formas bloqueadas o con bloqueo implícito. `NeverDRAMTransactionTests` compara resultados con la CPU del host y verifica reversión, alias y permisos; omite explícitamente plataformas no disponibles. Los dispositivos y SMP paralelo siguen fuera del contrato; las instantáneas de CPU no revierten RAM ya confirmada.
+
+## Estado x87 completo
+
+`NeverDEmulationArch` posee los contratos ISA, las tablas de páginas y el formato FP compartido por los transportes nativos y Unicorn. Los contextos x64 conservan control, estado, TOP, etiquetas físicas, código de operación, punteros de instrucciones/datos y ocho registros de 80 bits. `FP0`–`FP7` usan `RegisterValue`; el acceso escalar rechaza el truncamiento. `FPTag` es la máscara física de registros no vacíos. `NeverDX64FPTests` comprueba todos los TOP, operaciones exactas frente a FXSAVE/FXRSTOR del host y restauración. Esto no admite instrucciones x87 en checked ni prueba todos los redondeos. Los hosts nativos no disponibles se omiten explícitamente.

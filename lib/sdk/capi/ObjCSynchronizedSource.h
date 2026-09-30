@@ -90,9 +90,9 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
-// Several LSDA ranges may share one cleanup, with unprotected instructions
-// between them. Preserve those holes rather than treating their union as one
-// protected interval. Every table entry and pad record must agree exactly.
+// LSDA ranges may share one cleanup, with unprotected instructions between
+// them. Preserve those holes rather than treating their union as one protected
+// interval. Every table entry and pad record must agree exactly.
 inline std::optional<std::vector<ObjCSynchronizedSourceRegion>>
 objcSynchronizedInterleavedRanges(const BinaryImage &Image,
                                   const HighFunc &Function) {
@@ -100,7 +100,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
     return std::nullopt;
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
-  if (Sites.size() < 5 || Sites.size() > 129 || Sites.front().LandingPadVA ||
+  if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
       Sites.back().LandingPadVA)
     return std::nullopt;
   std::vector<ObjCSynchronizedSourceRegion> Regions;
@@ -128,7 +128,7 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
       return std::nullopt;
     Regions.push_back({Range.Begin, Range.End, Landing});
   }
-  if (Regions.size() < 2 || Regions.size() != EH.ObjC->LandingPads.size() ||
+  if (Regions.empty() || Regions.size() != EH.ObjC->LandingPads.size() ||
       Next != EH.CodeRange.End || !Landing || Landing > InvalidVA - 20 ||
       EH.CodeRange.End != Landing + 20)
     return std::nullopt;
@@ -157,10 +157,10 @@ inline bool objcSynchronizedCallIs(const BinaryImage &Image, va_t Address,
   return Target && llvm::StringRef(Image.getFunctionNameAt(Target)) == Name;
 }
 
-inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
-                                          va_t LastTarget) {
+inline std::optional<va_t>
+objcSynchronizedDirectBranchTarget(const DecodedInsn &Instruction) {
   if (!Instruction.Raw || !Instruction.Raw->detail)
-    return false;
+    return std::nullopt;
   switch (Instruction.Id) {
   case ARM64_INS_B:
   case ARM64_INS_CBZ:
@@ -169,15 +169,23 @@ inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
   case ARM64_INS_TBNZ:
     break;
   default:
-    return false;
+    return std::nullopt;
   }
   const auto &Operands = Instruction.Raw->detail->aarch64;
   if (!Operands.op_count)
-    return false;
+    return std::nullopt;
   const auto &Target = Operands.operands[Operands.op_count - 1];
-  return Target.type == AARCH64_OP_IMM && Target.imm >= 0 &&
-         static_cast<va_t>(Target.imm) > Instruction.Addr &&
-         static_cast<va_t>(Target.imm) <= LastTarget && Target.imm % 4 == 0;
+  if (Target.type != AARCH64_OP_IMM || Target.imm < 0 || Target.imm % 4)
+    return std::nullopt;
+  return static_cast<va_t>(Target.imm);
+}
+
+inline bool objcSynchronizedForwardBranch(const DecodedInsn &Instruction,
+                                          va_t LastTarget,
+                                          va_t FirstTarget = 0) {
+  const auto Target = objcSynchronizedDirectBranchTarget(Instruction);
+  return Target && *Target > Instruction.Addr && *Target >= FirstTarget &&
+         *Target <= LastTarget;
 }
 
 // A narrowly recognized clang @synchronized cleanup: the Itanium call-site
@@ -620,6 +628,72 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
       true};
 }
 
+// Normal cleanup tails can have a shared epilogue before a bypass block in
+// address order. Prove the complete suffix graph is acyclic and every edge
+// stays after the normal unlock or terminates with a return/external tail.
+// This permits backward joins without permitting a loop, pad entry or relock.
+inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
+                                              va_t Entry, va_t Begin,
+                                              va_t Landing) {
+  if (Begin < Entry || Begin >= Landing || Landing - Entry > 16384 ||
+      Landing > InvalidVA - 20 || (Begin | Landing) % 4)
+    return false;
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return false;
+  const size_t Count = (Landing - Begin) / 4;
+  std::vector<std::vector<size_t>> Edges(Count);
+  std::vector<unsigned> Incoming(Count, 0);
+  const auto AddEdge = [&](va_t Address, va_t Target) {
+    if (Target < Begin || Target >= Landing || Target % 4)
+      return false;
+    const size_t Next = (Target - Begin) / 4;
+    Edges[(Address - Begin) / 4].push_back(Next);
+    ++Incoming[Next];
+    return true;
+  };
+  for (va_t Address = Begin; Address < Landing; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        objcSynchronizedCallIs(Image, Address, "_objc_sync_enter") ||
+        objcSynchronizedCallIs(Image, Address, "_objc_sync_exit") ||
+        objcSynchronizedCallIs(Image, Address, "__Unwind_Resume"))
+      return false;
+    const auto Word = objcSynchronizedWord(Image, Address);
+    if (Word == 0xd65f03c0U)
+      continue;
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT))
+      return false;
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP)) {
+      const auto Target = objcSynchronizedDirectBranchTarget(Instruction);
+      if (!Target)
+        return false;
+      const bool Unconditional = Word && branch::A64Branch.matches(*Word);
+      if (Unconditional && (*Target < Entry || *Target >= Landing + 20))
+        continue;
+      if (!AddEdge(Address, *Target))
+        return false;
+      if (Unconditional)
+        continue;
+    }
+    if (!AddEdge(Address, Address + 4))
+      return false;
+  }
+  std::vector<size_t> Ready;
+  for (size_t I = 0; I < Count; ++I)
+    if (!Incoming[I])
+      Ready.push_back(I);
+  for (size_t I = 0; I < Ready.size(); ++I)
+    for (size_t Next : Edges[Ready[I]])
+      if (!--Incoming[Next])
+        Ready.push_back(Next);
+  return Ready.size() == Count;
+}
+
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
                                         const HighFunc &Function) {
@@ -699,6 +773,7 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   const unsigned ReceiverWRegisters[] = {ARM64_REG_W19, ARM64_REG_W20,
                                          ARM64_REG_W21, ARM64_REG_W22};
   uint8_t UnprotectedARC = 0, ProtectedARC = 0;
+  bool BypassesLock = false;
   for (va_t Address = Function.Entry; Address < ExitCall; Address += 4) {
     const uint8_t *Bytes = Image.readVA(Address, 4);
     DecodedInsn Instruction{};
@@ -727,12 +802,22 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
         (!ReceiverFromRetainResult && Address < SavedReceiver &&
          (IsJump || IsCall)))
       return std::nullopt;
-    if (IsJump &&
-        !objcSynchronizedForwardBranch(
-            Instruction, Address < EnterCall
-                             ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
-                             : ExitCall - 4))
-      return std::nullopt;
+    if (IsJump) {
+      const bool BeforeEnter = Address < EnterCall;
+      const bool JoinsLockedPath = objcSynchronizedForwardBranch(
+          Instruction, BeforeEnter
+                           ? EnterCall - (ReceiverFromRetainResult ? 8 : 4)
+                           : ExitCall - 4);
+      // A pre-acquisition branch can skip the whole lock lifetime and join
+      // the verified normal suffix. The source guard remains zero on that
+      // path; entering the body, unlock or exceptional pad is still rejected.
+      const bool SkipsLock =
+          BeforeEnter &&
+          objcSynchronizedForwardBranch(Instruction, Landing - 4, ExitCall + 4);
+      if (!JoinsLockedPath && !SkipsLock)
+        return std::nullopt;
+      BypassesLock |= SkipsLock;
+    }
     if ((Address != EnterCall && HasCall(Address, "_objc_sync_enter")) ||
         HasCall(Address, "_objc_sync_exit"))
       return std::nullopt;
@@ -759,42 +844,16 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   // The rendered calls have canonical ARC names, even for register veneers.
   // Only suspend an operation when every occurrence in the locked body is
   // outside the LSDA ranges. Otherwise its source identity is insufficient.
-  if (!UnprotectedARC || (UnprotectedARC & ProtectedARC))
+  // The legacy proofs own ordinary single-range lifetimes. This proof also
+  // handles a single range when a verified prefix path bypasses the lock;
+  // no ARC suspension is needed if every locked-body call is protected.
+  if ((Regions->size() == 1 && !BypassesLock) ||
+      (Regions->size() > 1 && !UnprotectedARC) ||
+      (UnprotectedARC & ProtectedARC))
     return std::nullopt;
-  // The normal unlock must be followed by a straight-line return tail. No
-  // normal path may enter the exceptional pad or reenter the locked body.
-  for (va_t Address = ExitCall + 4; Address < Landing; Address += 4) {
-    const uint8_t *Bytes = Image.readVA(Address, 4);
-    DecodedInsn Instruction{};
-    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
-        !Instruction.Raw)
-      return std::nullopt;
-    const auto InstructionWord = Word(Address);
-    const bool Return = InstructionWord == 0xd65f03c0U;
-    const bool Tail =
-        InstructionWord && branch::A64Branch.matches(*InstructionWord) &&
-        branch::a64BranchTarget(*InstructionWord, Address).has_value();
-    if (Address + 4 == Landing) {
-      if (Return)
-        continue;
-      if (!Tail)
-        return std::nullopt;
-      const va_t Target = *branch::a64BranchTarget(*InstructionWord, Address);
-      if (Target >= Function.Entry && Target < Landing + 20)
-        return std::nullopt;
-    } else if (cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_JUMP) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_RET) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw,
-                             CS_GRP_IRET) ||
-               cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT))
-      return std::nullopt;
-    if (HasCall(Address, "_objc_sync_enter") ||
-        HasCall(Address, "_objc_sync_exit") ||
-        HasCall(Address, "__Unwind_Resume"))
-      return std::nullopt;
-  }
+  if (!objcSynchronizedNormalSuffixValid(Image, Function.Entry, ExitCall + 4,
+                                         Landing))
+    return std::nullopt;
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
       objcSynchronizedBranchTarget(Image, Landing + 16)};
@@ -806,8 +865,6 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
                                      const HighFunc &Function) {
-  if (auto Proof = proveObjCSynchronizedInterleavedCleanup(Image, Function))
-    return Proof;
   if (auto Proof =
           proveObjCSynchronizedRetainedStackReceiverCleanup(Image, Function))
     return Proof;
@@ -816,7 +873,10 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
   if (auto Proof =
           proveObjCSynchronizedRegisterReceiverCleanup(Image, Function))
     return Proof;
-  return proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function);
+  if (auto Proof =
+          proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function))
+    return Proof;
+  return proveObjCSynchronizedInterleavedCleanup(Image, Function);
 }
 
 // The proved pad is an exceptional entry, not a normal source path. A full

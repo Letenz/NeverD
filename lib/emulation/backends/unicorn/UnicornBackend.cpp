@@ -11,6 +11,7 @@
 
 #include "UnicornBackend.h"
 
+#include "../../arch/x86_64/X64FPState.h"
 #include "../../core/ExecutionDeadline.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/ExecutionExitBuilder.h"
@@ -59,7 +60,9 @@ int registerID(CPURegister Register) {
 #define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
   case CPURegister::Arch##V##Index:                                            \
     return Backend;
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
 #include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_VECTOR_REGISTER
   case CPURegister::Invalid:
@@ -688,15 +691,30 @@ llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
   if (auto E = check(uc_reg_read(State->Engine, registerID(R), V.data()),
                      diagnostic::UnicornReadRegister))
     return std::move(E);
+  if (R == CPURegister::X64FPTag) {
+    X64FPState FP;
+    FP.setFullTag(V[0]);
+    V = {FP.Tag, 0};
+  }
   return V;
 }
 llvm::Error UnicornBackend::writeRegister(CPURegister R,
                                           const RegisterValue &V) {
   if (auto E = State->mutableState())
     return E;
-  if (!registerMatches(R, architecture()) || (registerWidth(R) <= 64 && V[1]) ||
-      (registerWidth(R) == 32 && V[0] > UINT32_MAX))
+  if (!registerMatches(R, architecture()) || !registerValueFits(R, V))
     return diagnostic::error(diagnostic::Register);
+  if (isX64FPRegister(R))
+    if (auto E = validateX64FPRegister(R, V))
+      return E;
+  if (R == CPURegister::X64FPTag) {
+    // Unicorn takes a full tag word and retains its physical empty bits.
+    X64FPState FP;
+    FP.Tag = V[0];
+    const uint16_t Tag = FP.fullTag();
+    return check(uc_reg_write(State->Engine, UC_X86_REG_FPTAG, &Tag),
+                 diagnostic::UnicornWriteRegister);
+  }
   return check(uc_reg_write(State->Engine, registerID(R), V.data()),
                diagnostic::UnicornWriteRegister);
 }

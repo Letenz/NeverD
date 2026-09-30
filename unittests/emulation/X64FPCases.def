@@ -1,0 +1,53 @@
+//===- X64FPCases.def - Independent x87 state and transport fixtures --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_FP_VALUE
+NEVERD_FP_VALUE(Limit, 1024 * 1024)
+NEVERD_FP_VALUE(Code, 0x10000)
+NEVERD_FP_VALUE(Data, 0x20000)
+NEVERD_FP_VALUE(Timeout, 1000000)
+NEVERD_FP_VALUE(PayloadStride, 2)
+NEVERD_FP_VALUE(SeedOpcode, 0x321)
+NEVERD_FP_VALUE(SeedInstruction, 0x12345678)
+NEVERD_FP_VALUE(SeedData, 0x23456789)
+NEVERD_FP_VALUE(SeedStatus, 0x25)
+NEVERD_FP_VALUE(SeedMXCSR, 0x3f85)
+NEVERD_FP_VALUE(SeedXmm, 0x1234fedcba987654ULL)
+NEVERD_FP_VALUE(EmptySlot, 3)
+NEVERD_FP_VALUE(InvalidPadding, 1ULL << 16)
+NEVERD_FP_VALUE(InvalidControl, 0x237f)
+NEVERD_FP_VALUE(ReservedPrecisionControl, 0x17f)
+NEVERD_FP_VALUE(InvalidOpcode, 0x800)
+NEVERD_FP_VALUE(InvalidTag, 0x100)
+NEVERD_FP_VALUE(ExpectedTag, 0xe8e4)
+#endif
+#ifdef NEVERD_FP_TEXT
+NEVERD_FP_TEXT(OracleUnavailable, "the independent x87 oracle requires an x64 host")
+#endif
+#ifdef NEVERD_FP_PAYLOAD
+// Valid, signed zero, special infinity, empty; repeat with a finite negative,
+// denormal, unsupported encoding and empty. Physical payloads remain distinct.
+NEVERD_FP_PAYLOAD(0x8000000000000011ULL, 0x3fff)
+NEVERD_FP_PAYLOAD(0, 0x8000)
+NEVERD_FP_PAYLOAD(0x8000000000000000ULL, 0x7fff)
+NEVERD_FP_PAYLOAD(0xfeed123456789abcULL, 0x1234)
+NEVERD_FP_PAYLOAD(0x9000000000000022ULL, 0xbfff)
+NEVERD_FP_PAYLOAD(1, 0)
+NEVERD_FP_PAYLOAD(0x123456789abcdefULL, 0x4000)
+NEVERD_FP_PAYLOAD(0xcafe223456789abcULL, 0x4321)
+#endif
+#ifdef NEVERD_FP_BYTES
+// Save the host's FPU before installing the independent guest image, execute
+// one original instruction, save its result and restore the host's FPU.
+NEVERD_FP_BYTES(SysVBefore, 0x48, 0x0f, 0xae, 0x02, 0x48, 0x0f, 0xae, 0x0f)
+NEVERD_FP_BYTES(SysVAfter, 0x48, 0x0f, 0xae, 0x06, 0x48, 0x0f, 0xae, 0x0a, 0xc3)
+NEVERD_FP_BYTES(Win64Before, 0x49, 0x0f, 0xae, 0x00, 0x48, 0x0f, 0xae, 0x09,
+                0x4c, 0x89, 0xc9)
+NEVERD_FP_BYTES(Win64After, 0x48, 0x0f, 0xae, 0x02, 0x49, 0x0f, 0xae, 0x08, 0xc3)
+NEVERD_FP_BYTES(Nop, 0x90)
+NEVERD_FP_BYTES(Load80, 0xdb, 0x29)
+NEVERD_FP_BYTES(StorePop80, 0xdb, 0x39)
+NEVERD_FP_BYTES(AddPop, 0xde, 0xc1)
+#endif

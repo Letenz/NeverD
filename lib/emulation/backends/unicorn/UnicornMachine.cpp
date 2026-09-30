@@ -149,6 +149,8 @@ public:
   }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl) override {
+    if (auto E = validateX64FPState(State.FP))
+      return E;
     if (auto E = CPU.synchronize())
       return E;
     if (CPU.UserMode) {
@@ -177,6 +179,19 @@ public:
     if (auto E =
             check(uc_reg_write(CPU.Engine, UC_X86_REG_MXCSR, &State.MXCSR)))
       return E;
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  if (auto E =                                                                 \
+          check(uc_reg_write(CPU.Engine, UC_X86_REG_##UC, &State.FP.Member)))  \
+    return E;
+#include "../../arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+    for (unsigned I = 0; I < State.FP.Registers.size(); ++I)
+      if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_FP0 + I,
+                                      State.FP.Registers[I].data())))
+        return E;
+    const uint16_t Tag = State.FP.fullTag();
+    if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_FPTAG, &Tag)))
+      return E;
     PendingException.reset();
     auto RunError = CPU.run(State.reg(X64Register::PC));
     if (!PendingException && RunError)
@@ -195,6 +210,20 @@ public:
         return E;
     if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_MXCSR, &Next.MXCSR)))
       return E;
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  if (auto E =                                                                 \
+          check(uc_reg_read(CPU.Engine, UC_X86_REG_##UC, &Next.FP.Member)))    \
+    return E;
+#include "../../arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+    for (unsigned I = 0; I < Next.FP.Registers.size(); ++I)
+      if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_FP0 + I,
+                                     Next.FP.Registers[I].data())))
+        return E;
+    uint16_t NextTag = 0;
+    if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_FPTAG, &NextTag)))
+      return E;
+    Next.FP.setFullTag(NextTag);
     if (PendingException) {
       std::optional<uint64_t> Address;
       if (*PendingException == unsigned(x64::ExceptionVector::PageFault)) {
