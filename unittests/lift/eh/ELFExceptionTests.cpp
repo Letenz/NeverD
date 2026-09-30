@@ -630,4 +630,110 @@ TEST(ELFExceptionPatch, RejectsInsufficientTailCapacityWithoutChangingBytes) {
   EXPECT_EQ(Bin, Before);
 }
 
+/// A patch image at \p BaseVA: \p CodeSize bytes of `f` followed by in-image
+/// `.eh_frame` records whose FDE names \p DescribedVA.
+CompiledImage makeInImageEHFrame(uint64_t BaseVA, uint64_t CodeSize,
+                                 uint64_t DescribedVA) {
+  CompiledImage Image;
+  Image.Success = true;
+  Image.BaseVA = BaseVA;
+  Image.Bytes.assign(CodeSize, 0x90);
+  const std::vector<uint8_t> Records = makeEhFrameFragment(DescribedVA);
+  Image.Bytes.insert(Image.Bytes.end(), Records.begin(), Records.end());
+  CompiledSection Code;
+  Code.Name = ".text";
+  Code.VA = BaseVA;
+  Code.Size = CodeSize;
+  Code.Kind = llvm::mc_rewrite::RewriteSectionKind::Code;
+  Image.Sections.push_back(std::move(Code));
+  CompiledSection EhFrame;
+  EhFrame.Name = ".eh_frame";
+  EhFrame.Offset = CodeSize;
+  EhFrame.VA = BaseVA + CodeSize;
+  EhFrame.Size = Records.size();
+  Image.Sections.push_back(std::move(EhFrame));
+  Image.SymbolAddrs["f"] = BaseVA;
+  Image.FunctionOwnerAddrs["f"] = BaseVA;
+  Image.SourceFunctionOwners.push_back({"f", "f", BaseVA});
+  return Image;
+}
+
+TEST(ELFExceptionPatch, RelocatesTheSearchTableForInImageRecords) {
+  // With no `.eh_frame` tail to fill, the regenerated records ride in the
+  // patch image.  A relocated header after them names the original and the
+  // regenerated records, and `PT_GNU_EH_FRAME` and `.eh_frame_hdr` move to it.
+  std::vector<uint8_t> Bin = makeELF64WithEH();
+  auto Region = findELFEHFrameRegion(Bin);
+  ASSERT_TRUE(Region.has_value());
+  ELFPatcher Patcher;
+  const uint64_t BaseVA = Patcher.plannedExecSegmentVA(Bin, Arch::X64);
+  ASSERT_NE(BaseVA, 0u);
+  constexpr uint64_t CodeSize = 0x20;
+  CompiledImage Image = makeInImageEHFrame(BaseVA, CodeSize, BaseVA);
+  const uint64_t HdrVA = BaseVA + ((Image.Bytes.size() + 3) & ~uint64_t{3});
+
+  llvm::LLVMContext Context;
+  const std::vector<uint8_t> Before = Bin;
+  auto Hdr = buildRelocatedELFEHFrameHdr(
+      Bin, *Region, Image, *makeModule(Context, /*WithEH=*/true), HdrVA);
+  ASSERT_TRUE(static_cast<bool>(Hdr)) << llvm::toString(Hdr.takeError());
+  EXPECT_EQ(Bin, Before);
+
+  // The version and encodings carry over, and eh_frame_ptr still names the
+  // image's own `.eh_frame`, now relative to the relocated header.
+  ASSERT_EQ(Hdr->size(), 12u + 2 * 8);
+  EXPECT_EQ(std::vector<uint8_t>(Hdr->begin(), Hdr->begin() + 4),
+            (std::vector<uint8_t>{1, 0x1b, 0x03, 0x3b}));
+  EXPECT_EQ(HdrVA + 4 + getS32(*Hdr, 4), kEhFrameVA);
+  EXPECT_EQ(getU32(*Hdr, 8), 2u);
+  EXPECT_EQ(HdrVA + getS32(*Hdr, 12), kFunc0VA);
+  EXPECT_EQ(HdrVA + getS32(*Hdr, 16), kEhFrameVA + 17);
+  EXPECT_EQ(HdrVA + getS32(*Hdr, 20), BaseVA);
+  EXPECT_EQ(HdrVA + getS32(*Hdr, 24), BaseVA + CodeSize + 17);
+
+  Image.Bytes.resize(static_cast<size_t>(HdrVA - BaseVA), 0);
+  Image.Bytes.insert(Image.Bytes.end(), Hdr->begin(), Hdr->end());
+  ASSERT_EQ(
+      Patcher.appendExecSegment(Bin, Image.Bytes, ".neverd.text", Arch::X64),
+      BaseVA);
+  ASSERT_FALSE(hadError(retargetELFEHFrameHdr(Bin, HdrVA, Hdr->size())));
+
+  // The relocated program header table keeps PT_GNU_EH_FRAME second.
+  const uint64_t GnuOff = getU64(Bin, 32) + kPhEnt;
+  ASSERT_EQ(getU32(Bin, GnuOff), llvm::ELF::PT_GNU_EH_FRAME);
+  const uint64_t HdrFileOff = getU64(Bin, GnuOff + 8);
+  EXPECT_EQ(getU64(Bin, GnuOff + 16), HdrVA);
+  EXPECT_EQ(getU64(Bin, GnuOff + 24), HdrVA);
+  EXPECT_EQ(getU64(Bin, GnuOff + 32), Hdr->size());
+  EXPECT_EQ(getU64(Bin, GnuOff + 40), Hdr->size());
+  ASSERT_LE(HdrFileOff + Hdr->size(), Bin.size());
+  EXPECT_TRUE(std::equal(Hdr->begin(), Hdr->end(), Bin.begin() + HdrFileOff));
+  const uint64_t HdrSection = kShOff + 3 * kShEnt;
+  EXPECT_EQ(getU64(Bin, HdrSection + 16), HdrVA);
+  EXPECT_EQ(getU64(Bin, HdrSection + 24), HdrFileOff);
+  EXPECT_EQ(getU64(Bin, HdrSection + 32), Hdr->size());
+}
+
+TEST(ELFExceptionPatch, RelocatedSearchTableRequiresEveryRequiredRecord) {
+  // The regenerated records describe some other address, so `f` would be left
+  // unregistered: fail closed rather than publish the header.
+  std::vector<uint8_t> Bin = makeELF64WithEH();
+  auto Region = findELFEHFrameRegion(Bin);
+  ASSERT_TRUE(Region.has_value());
+  const uint64_t BaseVA = ELFPatcher().plannedExecSegmentVA(Bin, Arch::X64);
+  ASSERT_NE(BaseVA, 0u);
+  CompiledImage Image = makeInImageEHFrame(BaseVA, 0x20, BaseVA + 0x10);
+  llvm::LLVMContext Context;
+  auto Hdr = buildRelocatedELFEHFrameHdr(
+      Bin, *Region, Image, *makeModule(Context, /*WithEH=*/true),
+      BaseVA + ((Image.Bytes.size() + 3) & ~uint64_t{3}));
+  EXPECT_FALSE(static_cast<bool>(Hdr));
+  llvm::consumeError(Hdr.takeError());
+
+  // Nothing maps a header at an address outside every loadable segment.
+  const std::vector<uint8_t> Before = Bin;
+  EXPECT_TRUE(hadError(retargetELFEHFrameHdr(Bin, BaseVA, 20)));
+  EXPECT_EQ(Bin, Before);
+}
+
 } // namespace

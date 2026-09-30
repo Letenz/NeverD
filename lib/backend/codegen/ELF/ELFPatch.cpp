@@ -20,9 +20,12 @@
 #include "neverd/object/ELFLayout.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/DwarfEH.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Errc.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -496,7 +499,48 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
             hasGeneratedELFARMEHABI(Img)
                 ? installELFARMEHABI(Binary, EHABIRegion, Img, *CompileMod)
                 : installELFEHFrame(Binary, EHRegion, Img, *CompileMod);
-        if (Err) {
+
+        // A toolchain may place another section right after `.eh_frame`,
+        // leaving no tail for the regenerated records.  Compile them into the
+        // patch image instead, and publish a relocated `.eh_frame_hdr` after
+        // them whose search table names the original and regenerated records.
+        std::optional<uint64_t> RelocatedHdrVA;
+        uint64_t RelocatedHdrSize = 0;
+        if (Err && !hasGeneratedELFARMEHABI(Img) && EHRegion &&
+            EHRegion->HasHdr) {
+          const std::string InPlaceFailure = llvm::toString(std::move(Err));
+          Img = compileImageForPatchWithFixedSectionVAs(
+              *CompileMod, TargetArch, BinaryFormat::ELF, CodeStartVA, Resolve,
+              [](llvm::StringRef) -> std::optional<uint64_t> {
+                return std::nullopt;
+              });
+          if (!Img.Success || Img.Bytes.empty()) {
+            llvm::WithColor::error()
+                << "elf_patch: compileImageForPatch failed after "
+                << InPlaceFailure << "\n";
+            return false;
+          }
+          if (CachedImage && !repairMixedARMInterworkingCalls(Img, *CachedImage,
+                                                              SourceDetail)) {
+            llvm::WithColor::error()
+                << "elf_patch: ARM interworking validation failed: "
+                << SourceDetail << "\n";
+            return false;
+          }
+          const uint64_t HdrOffset =
+              llvm::alignTo(Img.Bytes.size(), dweh::kEhFrameHdrAlignment);
+          auto Hdr = buildRelocatedELFEHFrameHdr(
+              Binary, *EHRegion, Img, *CompileMod, Img.BaseVA + HdrOffset);
+          if (!Hdr) {
+            llvm::WithColor::error() << InPlaceFailure << "; "
+                                     << llvm::toString(Hdr.takeError()) << "\n";
+            return false;
+          }
+          Img.Bytes.resize(static_cast<size_t>(HdrOffset), 0);
+          Img.Bytes.insert(Img.Bytes.end(), Hdr->begin(), Hdr->end());
+          RelocatedHdrVA = Img.BaseVA + HdrOffset;
+          RelocatedHdrSize = Hdr->size();
+        } else if (Err) {
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
         }
@@ -507,6 +551,20 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
         if (Placed == 0) {
           llvm::WithColor::error() << "elf_patch: appendExecSegment failed\n";
           return false;
+        }
+        if (RelocatedHdrVA) {
+          llvm::Error Retarget =
+              Placed == Img.BaseVA
+                  ? retargetELFEHFrameHdr(Binary, *RelocatedHdrVA,
+                                          RelocatedHdrSize)
+                  : llvm::createStringError(
+                        llvm::errc::invalid_argument,
+                        "elf_patch: patch image moved from its compiled VA");
+          if (Retarget) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Retarget)) << "\n";
+            return false;
+          }
         }
 
         if (!Img.Unresolved.empty()) {

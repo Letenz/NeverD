@@ -148,6 +148,9 @@ constexpr size_t kEhFrameHdrMinSize = sizeof(EhFrameHdrHeader) + 8;
 /// Each FDE table entry: (initial_location, fde_pointer), both sdata4.
 constexpr size_t kFdeEntrySize = 8;
 
+/// Alignment of `.eh_frame_hdr`: every field of the table is a 4-byte word.
+constexpr size_t kEhFrameHdrAlignment = 4;
+
 } // namespace dweh
 } // namespace neverd
 

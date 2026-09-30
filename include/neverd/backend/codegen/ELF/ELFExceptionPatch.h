@@ -75,6 +75,22 @@ llvm::Error installELFEHFrame(std::vector<uint8_t> &Binary,
                               const CompiledImage &Compiled,
                               const llvm::Module &Mod);
 
+/// Build the `.eh_frame_hdr` for an image whose `.eh_frame` tail cannot hold
+/// the regenerated records.  Those records then stay in the patch image, and
+/// the header returned here is placed at \p HdrVA after them: its search table
+/// names the image's original records and the regenerated ones alike, so the
+/// unwinder reaches every FDE through it once retargetELFEHFrameHdr publishes
+/// it.  Fails closed on a table shape the rewrite does not model and when a
+/// function \p Mod needs registered has no regenerated record.
+llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
+    llvm::ArrayRef<uint8_t> Binary, const ELFEHFrameRegion &Region,
+    const CompiledImage &Compiled, const llvm::Module &Mod, uint64_t HdrVA);
+
+/// Point `PT_GNU_EH_FRAME` and the `.eh_frame_hdr` section at the \p HdrSize
+/// header bytes a loadable segment of \p Binary maps at \p HdrVA.
+llvm::Error retargetELFEHFrameHdr(std::vector<uint8_t> &Binary, uint64_t HdrVA,
+                                  uint64_t HdrSize);
+
 } // namespace neverd
 
 #endif // NEVERD_BACKEND_CODEGEN_ELF_ELFEXCEPTIONPATCH_H
