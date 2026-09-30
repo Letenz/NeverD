@@ -16,6 +16,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/MachO/RuntimeFunctionAddress.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
@@ -182,7 +183,7 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
          !Binding.ObjCIndirectResultStorage && !Binding.ByteCount &&
-         !Binding.ImmutablePointerSlot;
+         !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI;
 }
 
 inline std::optional<SourceCallTypeHint>
@@ -207,6 +208,8 @@ runtimeSourceCallHint(const BinaryImage &Image,
                : darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
   case Kind::DarwinRuntimeGlobalAddress:
     return darwinRuntimeGlobalAddressHint(Image, Binding.TargetAddress);
+  case Kind::RuntimeCFunctionAddress:
+    return runtimeCFunctionAddressHint(Image, Binding.TargetAddress);
   default:
     return std::nullopt;
   }
@@ -219,6 +222,11 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
          Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
          Binding.RuntimeObjCResultType == Expected.RuntimeObjCResultType &&
+         bool(Binding.AddressedFunctionABI) ==
+             bool(Expected.AddressedFunctionABI) &&
+         (!Binding.AddressedFunctionABI ||
+          equalSourceABIs(*Binding.AddressedFunctionABI,
+                          *Expected.AddressedFunctionABI)) &&
          Binding.TargetName == Expected.TargetName &&
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress && !Binding.SelectorResultUse &&
@@ -5378,6 +5386,22 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       return Found->second;
     auto Expression = std::make_shared<HighExpr>(*Original);
     Copies.emplace(Key, Expression);
+    if (Original->Kind == ExprKind::Load && Original->Type &&
+        Original->Type->Size == 8 && Original->Operands.size() == 1 &&
+        Original->Operands[0] &&
+        Original->MemoryOrdering == NdMemoryOrdering::None &&
+        Original->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !NumericOperand && !MemoryAddress) {
+      const auto Slot = constantAddress(*Original->Operands[0]);
+      if (auto Hint =
+              Slot ? runtimeCFunctionAddressHint(Image, *Slot) : std::nullopt) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Hint->Signature.ReturnType;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+        return Expression;
+      }
+    }
     if (const auto Found = LoopBytes.Initializers.find(Original.get());
         Found != LoopBytes.Initializers.end()) {
       *Expression = *HighExpr::makeConst(Found->second, 8,
@@ -6783,6 +6807,21 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeCFunctionAddress) {
+    auto Plain = Binding;
+    Plain.CallKind = SourceCallTypeHint::Kind::Native;
+    Plain.AddressedFunctionABI.reset();
+    const auto Expected =
+        runtimeCFunctionAddressHint(Image, Binding.TargetAddress);
+    return Expected && plainNativeBinding(Plain) &&
+           runtimeBindingMatches(Binding, *Expected) &&
+           !Expression.IsIndirectCall && !Expression.CallAddr &&
+           Expression.CallTarget.empty() && Expression.Operands.empty() &&
+           Expression.IntrinsicOutputs.empty() &&
+           equalSourceTypes(Expression.Type, Expected->Signature.ReturnType);
+  }
+  if (Binding.AddressedFunctionABI)
+    return false;
   if (Binding.BooleanResult ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftBooleanProjection)
     return false; // Requires the current pipeline and caller proof.

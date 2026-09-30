@@ -424,7 +424,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         !equalSourceABIs(Signature, Expected))
       return bad("compiler getter/factory ABI is not canonical");
   }
-  if (Hint.CallKind == Kind::NativeAddress ||
+  if (Hint.CallKind == Kind::RuntimeCFunctionAddress ||
+      Hint.CallKind == Kind::NativeAddress ||
       Hint.CallKind == Kind::RuntimeBlockIsa ||
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
@@ -459,7 +460,44 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Signature.ReturnType->Size != 8)
       return bad("invalid source address declaration");
     std::string Value;
-    if (Hint.CallKind == Kind::NativeAddress) {
+    if (Hint.CallKind == Kind::RuntimeCFunctionAddress) {
+      std::string Error;
+      if (!Hint.AddressedFunctionABI || Hint.TargetName.empty() ||
+          Hint.AddressedFunctionABI->Convention !=
+              SourceFunctionTypeHint::ConventionKind::C ||
+          !validateSourceABI(*Hint.AddressedFunctionABI, Error) ||
+          !Signature.ReturnType->Pointee ||
+          Signature.ReturnType->Pointee->Kind != NdTypeKind::Func ||
+          !equalSourceTypes(Signature.ReturnType->Pointee->RetType,
+                            Hint.AddressedFunctionABI->ReturnType) ||
+          Signature.ReturnType->Pointee->ParamTypes.size() !=
+              Hint.AddressedFunctionABI->Parameters.size())
+        return bad("runtime function address has no ordinary C declaration");
+      for (size_t I = 0; I < Hint.AddressedFunctionABI->Parameters.size(); ++I)
+        if (!equalSourceTypes(Signature.ReturnType->Pointee->ParamTypes[I],
+                              Hint.AddressedFunctionABI->Parameters[I].Type) ||
+            Hint.AddressedFunctionABI->Parameters[I].TheRole !=
+                SourceParameterTypeHint::Role::Ordinary)
+          return bad("runtime function address disagrees with its C type");
+      std::string DeclaredName;
+      if (Hint.Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::DarwinSDK ||
+          (Hint.Signature.Origin ==
+               SourceFunctionTypeHint::OriginKind::DarwinRuntime &&
+           Hint.TargetName == "__isPlatformVersionAtLeast"))
+        DeclaredName = "neverd_darwin_" + Hint.TargetName;
+      llvm::StringRef Name(DeclaredName.empty() ? Hint.TargetName
+                                                : DeclaredName);
+      Name.consume_front("_");
+      auto Canonical = *Hint.AddressedFunctionABI;
+      if (!assignDarwinScalarSourceABI(Canonical, Opts.TheArch, Error) ||
+          !equalSourceABIs(Canonical, *Hint.AddressedFunctionABI))
+        return bad("runtime function address has a non-C argument carrier");
+      if (Name.empty() || !SourceNativeSignatures.count(Name.str()) ||
+          ConflictingSourceNativeSignatures.count(Name.str()))
+        return bad("runtime function address has no unique declaration");
+      Value = "&" + Name.str();
+    } else if (Hint.CallKind == Kind::NativeAddress) {
       const auto *Definition =
           Hint.TargetAddress ? sourceCallDefinition(Hint, {}) : nullptr;
       if (!Definition)

@@ -251,7 +251,11 @@ struct SourceCallTypeHint {
     RuntimeObjCForwardedInitializer,
     /// Caller-proven normalization of a raw Swift i1 result. The logical
     /// byte signature describes the source expression, never the runtime ABI.
-    SwiftBooleanProjection
+    SwiftBooleanProjection,
+    /// Value loaded from an immutable, strong runtime C-function import.
+    /// Signature describes the zero-argument address expression; the separate
+    /// addressed declaration retains the function's actual ordinary C ABI.
+    RuntimeCFunctionAddress
   };
   Kind CallKind = Kind::Native;
   struct BooleanResultProjection {
@@ -453,6 +457,7 @@ struct SourceCallTypeHint {
   /// into it; its source helper preserves the current interior offset.
   /// Revalidate the complete slot and pool against the current image.
   va_t ImmutablePointerSlot = 0;
+  std::optional<SourceFunctionTypeHint> AddressedFunctionABI;
 };
 
 } // namespace neverd
