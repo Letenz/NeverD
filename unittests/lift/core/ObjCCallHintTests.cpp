@@ -8412,6 +8412,99 @@ TEST(ObjCCallHints,
 }
 
 TEST(ObjCCallHints,
+     AuthenticatedUnknownMessagesKeepFrameIdentityAcrossOptionalCalls) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Image = receiverImage(Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+    const auto Frame = NdVar::reg(
+        Architecture == Arch::AArch64 ? a64reg::X29 : x86reg::RBP, 8);
+    const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Slot = NdVar::reg(TRI.IntParamRegs[2], 8);
+    LowFunc Function;
+    Function.Entry = 0x1200;
+    LowBlock Entry;
+    Entry.Id = 0;
+    Entry.StartAddr = Function.Entry;
+    Entry.EndAddr = 0x1218;
+    Entry.Succs = {1, 2};
+    Entry.Ops = {
+        operation(NdOp::INT_SUB, Stack, {Stack, NdVar::cst(256, 8)}, 0x1200),
+        operation(NdOp::INT_ADD, Frame, {Stack, NdVar::cst(240, 8)}, 0x1204),
+        operation(NdOp::INT_ADD, Slot, {Stack, NdVar::cst(16, 8)}, 0x1208),
+        operation(NdOp::STORE, {}, {Slot, Self}, 0x120c),
+        operation(NdOp::COPY, Slot, {NdVar::cst(0, 8)}, 0x1210),
+        operation(NdOp::COND_BR, {}, {NdVar::cst(0x1220, 8)}, 0x1214)};
+    LowBlock Optional;
+    Optional.Id = 1;
+    Optional.StartAddr = 0x1220;
+    Optional.EndAddr = 0x1228;
+    Optional.Preds = {0};
+    Optional.Succs = {3};
+    Optional.Ops = {
+        operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1220),
+        operation(NdOp::BRANCH, {}, {NdVar::cst(0x1240, 8)}, 0x1224)};
+    LowBlock Bypass;
+    Bypass.Id = 2;
+    Bypass.StartAddr = 0x1230;
+    Bypass.EndAddr = 0x1234;
+    Bypass.Preds = {0};
+    Bypass.Succs = {3};
+    Bypass.Ops = {operation(NdOp::BRANCH, {}, {NdVar::cst(0x1240, 8)}, 0x1230)};
+    LowBlock Joined;
+    Joined.Id = 3;
+    Joined.StartAddr = 0x1240;
+    Joined.EndAddr = 0x1258;
+    Joined.Preds = {1, 2};
+    Joined.Ops = {
+        operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1240),
+        operation(NdOp::INT_ADD, Slot, {Stack, NdVar::cst(16, 8)}, 0x1244),
+        operation(NdOp::LOAD, Self, {Slot}, 0x1248),
+        operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                  {NdVar::cst(0x2100, 8)}, 0x124c),
+        operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1250),
+        operation(NdOp::RETURN, {}, {}, 0x1254)};
+    Function.Blocks = {Entry, Optional, Bypass, Joined};
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_TRUE(Hints.count(0x1250));
+    ASSERT_TRUE(Hints.at(0x1250).Receiver);
+    EXPECT_EQ(Hints.at(0x1250).Receiver->ClassName, "First");
+    EXPECT_FALSE(Hints.count(0x1220));
+    EXPECT_FALSE(Hints.count(0x1240));
+
+    auto Unauthenticated = Image;
+    Unauthenticated.ImportPtrSlots[0x2190] = "_objc_msgSend";
+    Unauthenticated.DyldBindSlots[0x2190] = {"_objc_msgSend", 0,
+                                             "/usr/lib/libobjc.A.dylib", true};
+    auto WeakCall = Function;
+    WeakCall.Blocks[1].Ops[0].Inputs[0] = NdVar::cst(0x2190, 8);
+    EXPECT_FALSE(
+        buildObjCSourceCallHints(Unauthenticated, WeakCall).count(0x1250));
+
+    // A partial overwrite loses the exact frame pointer while retaining may
+    // bytes. That ambiguous escape must invalidate the private spill.
+    auto Partial = Function;
+    auto Alias = Frame;
+    Alias.Size = 4;
+    Partial.Blocks[1].Ops.insert(
+        Partial.Blocks[1].Ops.begin(),
+        operation(NdOp::COPY, Alias, {NdVar::cst(0, 4)}, 0x121c));
+    Partial.Blocks[1].StartAddr = 0x121c;
+    EXPECT_FALSE(buildObjCSourceCallHints(Image, Partial).count(0x1250));
+
+    auto Exposed = Function;
+    Exposed.Blocks[0].Ops[1].Inputs[1] = NdVar::cst(16, 8);
+    EXPECT_FALSE(buildObjCSourceCallHints(Image, Exposed).count(0x1250));
+
+    // Predecessor processing order must not decide which frame facts survive.
+    std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+    const auto Reordered = buildObjCSourceCallHints(Image, Function);
+    ASSERT_TRUE(Reordered.count(0x1250));
+    EXPECT_EQ(Reordered.at(0x1250).Receiver, Hints.at(0x1250).Receiver);
+  }
+}
+
+TEST(ObjCCallHints,
      AuthenticatedLocalCallsPreserveCalleeSavedReceiverIdentity) {
   auto Image = receiverImage(Arch::AArch64);
   constexpr va_t Callee = 0x1500;
@@ -13590,8 +13683,10 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
                 {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(64, 4)}, 0x1208),
       operation(NdOp::INT_ADD, NdVar::reg(a64reg::X3, 8),
                 {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(128, 4)}, 0x120c),
-      operation(NdOp::COPY, NdVar::reg(a64reg::X4, 8), {NdVar::cst(16, 8)},
+      operation(NdOp::COPY, NdVar::reg(a64reg::X4, 4), {NdVar::cst(16, 4)},
                 0x1210),
+      operation(NdOp::INT_ZEXT, NdVar::reg(a64reg::X4, 8),
+                {NdVar::reg(a64reg::X4, 4)}, 0x1210),
       operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
                 0x1214),
       operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
@@ -13610,6 +13705,7 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
                 0x1230),
       operation(NdOp::RETURN, {}, {}, 0x1234)};
   Block.EndAddr = 0x1238;
+  Block.Ops[5].Seq = 1;
   const auto Hints = buildObjCSourceCallHints(Image, Function);
   ASSERT_TRUE(Hints.count(0x1230));
   ASSERT_TRUE(Hints.at(0x1230).Receiver);
@@ -13682,18 +13778,18 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
   EXPECT_FALSE(objcBlockParameterContract(Changed, Hints.at(0x1230), 3));
 
   auto WrongScale = Function;
-  WrongScale.Blocks.front().Ops[9].Inputs[1] = NdVar::cst(2, 4);
+  WrongScale.Blocks.front().Ops[10].Inputs[1] = NdVar::cst(2, 4);
   const auto WrongScaleHints = buildObjCSourceCallHints(Image, WrongScale);
   EXPECT_FALSE(WrongScaleHints.count(0x1230) &&
                WrongScaleHints.at(0x1230).Receiver);
   auto WrongCount = Function;
-  WrongCount.Blocks.front().Ops[4].Inputs[0] = NdVar::cst(15, 8);
+  WrongCount.Blocks.front().Ops[4].Inputs[0] = NdVar::cst(15, 4);
   const auto WrongCountHints = buildObjCSourceCallHints(Image, WrongCount);
   EXPECT_FALSE(WrongCountHints.count(0x1230) &&
                WrongCountHints.at(0x1230).Receiver);
   auto OverwrittenState = Function;
   OverwrittenState.Blocks.front().Ops.insert(
-      OverwrittenState.Blocks.front().Ops.begin() + 7,
+      OverwrittenState.Blocks.front().Ops.begin() + 8,
       operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X8, 8), NdVar::cst(0, 8)},
                 0x121a));
   const auto OverwrittenHints =
