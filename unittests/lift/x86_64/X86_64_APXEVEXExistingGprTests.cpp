@@ -5407,7 +5407,8 @@ void expectExplicitMsrInvalidateAndHighCFailClosed() {
          std::to_string(static_cast<unsigned>(X86InvalidateKind::Invpcid)),
          "type"},
         HasCIntrinsics);
-    EXPECT_EQ(Invpcid, "_invpcid((unsigned int)(type), (void *)(uintptr_t)(desc))");
+    EXPECT_EQ(Invpcid,
+              "_invpcid((unsigned int)(type), (void *)(uintptr_t)(desc))");
     EXPECT_TRUE(HasCIntrinsics);
   }
   EXPECT_STREQ(

@@ -404,8 +404,8 @@ TEST(X86APXCCmp, UBitSelectsR28ForAddr64AndAddr32Memory) {
         makeImage(Target, 4, SegmentFlags::Readable, UINT64_C(0x12345678));
     NdOpEmulator Emulator(Image);
     initializeStrict(Emulator, {});
-    ASSERT_TRUE(Emulator.setMemoryAddressSpaceBase(
-        NdMemoryAddressSpace::X86FS, Target - 0x30));
+    ASSERT_TRUE(Emulator.setMemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
+                                                   Target - 0x30));
     Emulator.setRegister(x86reg::R29,
                          Address32 ? UINT64_C(0xaaaaaaaa00000008) : 8);
     Emulator.setRegister(x86reg::R28,
@@ -425,13 +425,12 @@ TEST(X86APXCCmp, UBitSelectsR28ForAddr64AndAddr32Memory) {
     });
   }
 
-  const std::vector<uint8_t> RegisterU0 = {0x62, 0x6c, 0x28,
-                                           0x02, 0x39, 0xd1};
+  const std::vector<uint8_t> RegisterU0 = {0x62, 0x6c, 0x28, 0x02, 0x39, 0xd1};
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));
   DecodedInsn Invalid{};
   EXPECT_NE(Dec.decodeOneForLift(RegisterU0.data(), RegisterU0.size(),
-                                kInstructionAddress, Invalid),
+                                 kInstructionAddress, Invalid),
             static_cast<int>(RegisterU0.size()));
 }
 

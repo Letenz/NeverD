@@ -110,8 +110,8 @@ std::optional<bool> liftSystemRegisterMove(X86Lifter::LiftState &S,
 namespace {
 
 int movrsGprIndex(x86_reg Reg, unsigned Width) {
-  static const x86_reg Low8[] = {X86_REG_AL, X86_REG_CL, X86_REG_DL,
-                                 X86_REG_BL, X86_REG_SPL, X86_REG_BPL,
+  static const x86_reg Low8[] = {X86_REG_AL,  X86_REG_CL,  X86_REG_DL,
+                                 X86_REG_BL,  X86_REG_SPL, X86_REG_BPL,
                                  X86_REG_SIL, X86_REG_DIL};
   static const x86_reg Low16[] = {X86_REG_AX, X86_REG_CX, X86_REG_DX,
                                   X86_REG_BX, X86_REG_SP, X86_REG_BP,
@@ -122,9 +122,10 @@ int movrsGprIndex(x86_reg Reg, unsigned Width) {
   static const x86_reg Low64[] = {X86_REG_RAX, X86_REG_RCX, X86_REG_RDX,
                                   X86_REG_RBX, X86_REG_RSP, X86_REG_RBP,
                                   X86_REG_RSI, X86_REG_RDI};
-  const x86_reg *Low = Width == 1 ? Low8 : Width == 2 ? Low16
-                                      : Width == 4   ? Low32
-                                                     : Low64;
+  const x86_reg *Low = Width == 1   ? Low8
+                       : Width == 2 ? Low16
+                       : Width == 4 ? Low32
+                                    : Low64;
   for (unsigned I = 0; I != 8; ++I)
     if (Reg == Low[I])
       return static_cast<int>(I);
@@ -154,13 +155,20 @@ int movrsGprIndex(x86_reg Reg, unsigned Width) {
 
 x86_reg movrsSegment(uint8_t Prefix) {
   switch (Prefix) {
-  case 0x26: return X86_REG_ES;
-  case 0x2e: return X86_REG_CS;
-  case 0x36: return X86_REG_SS;
-  case 0x3e: return X86_REG_DS;
-  case 0x64: return X86_REG_FS;
-  case 0x65: return X86_REG_GS;
-  default: return X86_REG_INVALID;
+  case 0x26:
+    return X86_REG_ES;
+  case 0x2e:
+    return X86_REG_CS;
+  case 0x36:
+    return X86_REG_SS;
+  case 0x3e:
+    return X86_REG_DS;
+  case 0x64:
+    return X86_REG_FS;
+  case 0x65:
+    return X86_REG_GS;
+  default:
+    return X86_REG_INVALID;
   }
 }
 
@@ -206,16 +214,15 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
     EncodedWidth = (P1 & 0x80) ? 8 : (P1 & 3) == 1 ? 2 : 4;
   if (EncodedWidth != Width)
     return false;
-  const unsigned EncodedReg = ((~P0 & 0x80) >> 4) | (~P0 & 0x10) |
-                              ((X86.modrm >> 3) & 7);
+  const unsigned EncodedReg =
+      ((~P0 & 0x80) >> 4) | (~P0 & 0x10) | ((X86.modrm >> 3) & 7);
   if (movrsGprIndex(static_cast<x86_reg>(X86.operands[0].reg), Width) !=
       static_cast<int>(EncodedReg))
     return false;
 
   const unsigned AddressWidth = Address32 ? 4 : 8;
   const unsigned BaseExtension = ((~P0 & 0x20) >> 2) | ((P0 & 0x08) << 1);
-  const unsigned IndexExtension = ((~P0 & 0x40) >> 3) |
-                                  ((~P1 & 0x04) << 2);
+  const unsigned IndexExtension = ((~P0 & 0x40) >> 3) | ((~P1 & 0x04) << 2);
   const unsigned Mod = X86.modrm >> 6, Rm = X86.modrm & 7;
   size_t Cursor = E + 6;
   x86_reg ExpectedBase = X86_REG_INVALID;
@@ -247,8 +254,7 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
     DispSize = 4;
   } else {
     ExpectedBase = static_cast<x86_reg>(X86.operands[1].mem.base);
-    if (!movrsAddressRegMatches(ExpectedBase, Rm + BaseExtension,
-                                AddressWidth))
+    if (!movrsAddressRegMatches(ExpectedBase, Rm + BaseExtension, AddressWidth))
       return false;
   }
   if (Mod == 1)
@@ -271,8 +277,9 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   }
   const auto &Mem = X86.operands[1].mem;
   if (Cursor != Insn->size || Mem.base != ExpectedBase ||
-      Mem.index != ExpectedIndex || Mem.scale != static_cast<int>(ExpectedScale) ||
-      Mem.disp != Disp || X86.encoding.disp_size != DispSize ||
+      Mem.index != ExpectedIndex ||
+      Mem.scale != static_cast<int>(ExpectedScale) || Mem.disp != Disp ||
+      X86.encoding.disp_size != DispSize ||
       X86.encoding.disp_offset != (DispSize ? DispOffset : 0))
     return false;
   return true;
