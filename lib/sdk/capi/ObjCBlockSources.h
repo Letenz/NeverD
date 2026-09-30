@@ -10,6 +10,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
@@ -537,7 +538,54 @@ public:
     }
     FrameValues[{Address.Offset, Bytes}] = V;
   }
+  void forgetFrameRange(int64_t Offset, unsigned Bytes) {
+    if (!frameRange(Function, Offset, Bytes))
+      throw Invalid("block frame borrow exceeds its recovered frame storage");
+    for (auto It = FrameValues.begin(); It != FrameValues.end();)
+      if (It->first.first < Offset + Bytes &&
+          Offset < It->first.first + It->first.second)
+        It = FrameValues.erase(It);
+      else
+        ++It;
+    FrameIdentityBytes.erase(FrameIdentityBytes.lower_bound(Offset),
+                             FrameIdentityBytes.lower_bound(Offset + Bytes));
+  }
 };
+
+using FastEnumerationFrameBorrow = std::array<std::pair<int64_t, unsigned>, 2>;
+
+/// One bounded storage contract for both literal construction and invoke
+/// ownership. Each caller additionally checks its live block ranges. Borrowed
+/// output bytes cannot retain their pre-call scalar or identity facts.
+template <typename CallProof, typename DisjointProof>
+std::optional<FastEnumerationFrameBorrow> boundedFastEnumerationBorrow(
+    const BinaryImage &Image, const HighFunc &Function, const HighExpr &E,
+    const std::vector<Value> &Arguments, const Values &State,
+    CallProof CallBound, DisjointProof Disjoint) {
+  const auto &Binding = E.SourceCallHint;
+  if (!Binding || Binding->CallKind != CallKind::ObjCMessage ||
+      Binding->Selector != "countByEnumeratingWithState:objects:count:" ||
+      !Binding->Receiver || Arguments.size() != 5 ||
+      Arguments[2].K != Value::Frame || Arguments[3].K != Value::Frame ||
+      Arguments[4].K != Value::Number || !Arguments[4].Bits ||
+      Arguments[4].Bits > (1u << 16) || !CallBound(E))
+    return std::nullopt;
+  const auto Class = objcReceiverInstanceClassName(Image, *Binding->Receiver);
+  if (!Class || (*Class != "NSArray" && *Class != "NSEnumerator"))
+    return std::nullopt;
+  // NSFastEnumerationState has eight pointer-sized words. The output buffer
+  // is bounded by `count` object pointers, independently of the literal size.
+  const FastEnumerationFrameBorrow Ranges{
+      std::pair{Arguments[2].Offset, 64u},
+      std::pair{Arguments[3].Offset,
+                static_cast<unsigned>(Arguments[4].Bits) * 8}};
+  for (const auto &[Offset, Bytes] : Ranges)
+    if (!frameRange(Function, Offset, Bytes) ||
+        State.frameRangeContainsPointerIdentity(Offset, Bytes) ||
+        !Disjoint(Offset, Bytes))
+      return std::nullopt;
+  return Ranges;
+}
 
 /// Transfer every reachable emitted edge to a bounded fixed point. A failed
 /// transfer or join invalidates the entire proof, including earlier visits.
@@ -694,41 +742,22 @@ noEscape(const ObjCBlockSourceContext &Source,
                           "explicit argument");
         return {};
       }
-      auto BoundedFastEnumerationBorrow = [&](size_t Parameter) {
-        if ((Parameter != 2 && Parameter != 3) || !B ||
-            B->CallKind != CallKind::ObjCMessage ||
-            B->Selector != "countByEnumeratingWithState:objects:count:" ||
-            !B->Receiver || Arguments.size() != 5 || !CallBound(E) ||
-            objcReceiverInstanceClassName(Source.Image, *B->Receiver) !=
-                std::optional<std::string>{"NSArray"} ||
-            Arguments[2].K != Value::Frame || Arguments[3].K != Value::Frame ||
-            Arguments[4].K != Value::Number || !Arguments[4].Bits ||
-            Arguments[4].Bits > (1u << 16))
-          return false;
-        // NSFastEnumerationState has eight pointer-sized words. The SDK
-        // contract bounds the output buffer by `count` object pointers.
-        // Neither borrowed range may touch a private block or context word.
-        const auto Count = static_cast<unsigned>(Arguments[4].Bits);
-        const auto Disjoint = [&](int64_t Offset, unsigned Bytes) {
-          if (State.frameRangeContainsPointerIdentity(Offset, Bytes))
-            return false;
-          if (!ValidatedNestedBlocks)
-            return true;
-          const auto Blocks = ValidatedNestedBlocks->StackBlocks.find(Entry);
-          if (Blocks == ValidatedNestedBlocks->StackBlocks.end())
-            return true;
-          return std::none_of(Blocks->second.begin(), Blocks->second.end(),
-                              [&](const ObjCStackBlockSource &Block) {
-                                return Offset < Block.FrameOffset +
-                                                    Block.Descriptor.LiteralSize &&
-                                       Block.FrameOffset < Offset + Bytes;
-                              });
-        };
-        return frameRange(F, Arguments[2].Offset, 64) &&
-               frameRange(F, Arguments[3].Offset, Count * 8) &&
-               Disjoint(Arguments[2].Offset, 64) &&
-               Disjoint(Arguments[3].Offset, Count * 8);
-      };
+      const auto EnumerationBorrow = boundedFastEnumerationBorrow(
+          Source.Image, F, E, Arguments, State, CallBound,
+          [&](int64_t Offset, unsigned Bytes) {
+            if (!ValidatedNestedBlocks)
+              return true;
+            const auto Blocks = ValidatedNestedBlocks->StackBlocks.find(Entry);
+            if (Blocks == ValidatedNestedBlocks->StackBlocks.end())
+              return true;
+            return std::none_of(Blocks->second.begin(), Blocks->second.end(),
+                                [&](const ObjCStackBlockSource &Block) {
+                                  return Offset <
+                                             Block.FrameOffset +
+                                                 Block.Descriptor.LiteralSize &&
+                                         Block.FrameOffset < Offset + Bytes;
+                                });
+          });
       for (size_t I = 0; I < Arguments.size(); ++I) {
         const auto &A = Arguments[I];
         if (A.K == Value::Frame && ValidatedNestedBlocks && CallBound(E)) {
@@ -751,7 +780,7 @@ noEscape(const ObjCBlockSourceContext &Source,
         // rejected conservatively.
         if (A.K == Value::Frame && !State.frameContainsPointerIdentity())
           continue;
-        if (A.K == Value::Frame && BoundedFastEnumerationBorrow(I))
+        if (A.K == Value::Frame && EnumerationBorrow && (I == 2 || I == 3))
           continue;
         if (A.K == Value::Frame || A.K == Value::Invoke || A.K == Value::Isa ||
             A.K == Value::PointerBits || A.K == Value::UnprovenIdentity)
@@ -765,6 +794,9 @@ noEscape(const ObjCBlockSourceContext &Source,
           throw Invalid(
               "block address flows to an unproven synchronous consumer");
       }
+      if (EnumerationBorrow)
+        for (const auto &[Offset, Bytes] : *EnumerationBorrow)
+          State.forgetFrameRange(Offset, Bytes);
       return {};
     };
     auto Evaluate = [&](const HighSourceFlowNode &Node) {
@@ -1253,6 +1285,16 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             return false;
         return true;
       };
+      const auto EnumerationBorrow = boundedFastEnumerationBorrow(
+          Image, Function, E, Arguments, State, CallBound,
+          [&](int64_t Offset, unsigned Bytes) {
+            return std::none_of(
+                Blocks.begin(), Blocks.end(), [&](const auto &Entry) {
+                  const auto &[Base, Block] = Entry;
+                  return Offset < Base + Block.Descriptor.LiteralSize &&
+                         Base < Offset + Bytes;
+                });
+          });
       for (size_t I = 0; I < Arguments.size(); ++I) {
         if (Arguments[I].K != Value::Frame)
           continue;
@@ -1262,7 +1304,8 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             Header->second.Width == 8 && Header->second.V.K == Value::Isa &&
             Header->second.V.Name == "_NSConcreteStackBlock";
         if (!ExactBlockBase) {
-          if (BorrowsDisjointSuperRecord(I, Arguments[I].Offset))
+          if ((EnumerationBorrow && (I == 2 || I == 3)) ||
+              BorrowsDisjointSuperRecord(I, Arguments[I].Offset))
             continue;
           if (Blocks.count(Arguments[I].Offset) ||
               State.frameContainsPointerIdentity())
@@ -1369,6 +1412,12 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         Memory.erase(Memory.lower_bound(Offset),
                      Memory.lower_bound(Offset + Size));
       }
+      if (EnumerationBorrow)
+        for (const auto &[Offset, Bytes] : *EnumerationBorrow) {
+          State.forgetFrameRange(Offset, Bytes);
+          Memory.erase(Memory.lower_bound(Offset),
+                       Memory.lower_bound(Offset + Bytes));
+        }
       return {};
     };
     auto Evaluate = [&](const HighSourceFlowNode &Node) {

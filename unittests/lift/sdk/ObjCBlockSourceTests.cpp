@@ -2917,6 +2917,82 @@ TEST(ObjCBlockSources,
   EXPECT_FALSE(Safe());
 }
 
+TEST(ObjCBlockSources,
+     ConstructedBlocksShareTheBoundedFastEnumerationBorrowContract) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto *Class : {"NSArray", "NSEnumerator"})
+      for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+        SCOPED_TRACE(Class);
+        SCOPED_TRACE(Mutation);
+        SourceFixture F(true, Architecture);
+        F.Image.DynInfo.NeededLibs = {
+            "/System/Library/Frameworks/Foundation.framework/Foundation"};
+        ObjCMethod Method;
+        Method.Implementation = F.Caller;
+        Method.ClassName = Class;
+        Method.Selector = "test";
+        Method.TypeHint = parseObjCMethodEncoding("test", "v16@0:8");
+        ASSERT_TRUE(Method.TypeHint);
+        F.Image.ObjCMethods.push_back(Method);
+        const auto Receiver = objcMethodReceiverTypeHint(F.Image, F.Caller);
+        ASSERT_TRUE(Receiver);
+        SourceCallTypeHint Binding;
+        Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+        Binding.TargetName = "objc_msgSend";
+        Binding.Selector = "countByEnumeratingWithState:objects:count:";
+        Binding.Receiver = *Receiver;
+        const auto Declaration =
+            objcReceiverSourceTypeHint(F.Image, Binding.Selector, *Receiver);
+        ASSERT_TRUE(Declaration.Signature);
+        Binding.Signature = *Declaration.Signature;
+        auto Call = HighExpr::makeCall(
+            "objc_msgSend", 0,
+            {HighExpr::makeConst(0x3000, 8), HighExpr::makeConst(0x2600, 8),
+             frame(F.Image, Mutation == 1 ? -48 : -256), frame(F.Image, -192),
+             HighExpr::makeConst(Mutation == 2 ? 19 : 16, 8)});
+        Call->Type = Binding.Signature.ReturnType;
+        if (Mutation == 3)
+          Binding.Receiver.reset();
+        if (Mutation == 4)
+          Binding.Signature.ReturnType = NdType::makeInt(4);
+        Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+        auto &Caller = F.caller();
+        Caller.FrameSize = 256;
+        auto Consume = std::move(Caller.Body.back());
+        Caller.Body.pop_back();
+        Consume.Kind = StmtKind::Call;
+        Consume.CallExpr = Consume.RetVal;
+        Consume.RetVal.reset();
+        const auto Consumer = Consume.CallExpr;
+        Caller.Body.push_back(std::move(Consume));
+        if (Mutation == 5)
+          // Scalar header fields in the output buffer lose their evidence at
+          // the borrow. A fresh ISA write afterward cannot revive them.
+          for (unsigned Field = 1; Field < 5; ++Field)
+            Caller.Body.push_back(store(frame(F.Image, -192 + Field * 8),
+                                        Caller.Body[Field].StoreVal));
+        HighStmt Enumerate;
+        Enumerate.Kind = StmtKind::Call;
+        Enumerate.CallExpr = Call;
+        Caller.Body.push_back(std::move(Enumerate));
+        if (Mutation == 5) {
+          Caller.Body.push_back(
+              store(frame(F.Image, -192),
+                    HighExpr::makeLoad(HighExpr::makeConst(F.StackIsa, 8),
+                                       NdType::makePtr(NdType::makeVoid()))));
+          auto Reuse = std::make_shared<HighExpr>(*Consumer);
+          Reuse->Operands[0] = frame(F.Image, -192);
+          Caller.Body.push_back(ret(Reuse));
+        } else {
+          Caller.Body.push_back(ret(HighExpr::makeConst(0, 4)));
+        }
+        const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+        EXPECT_EQ(Plan.StackBlocks.count(F.Caller), Mutation == 0 ? 1U : 0U)
+            << (Plan.Rejections.count(F.Caller) ? Plan.Rejections.at(F.Caller)
+                                                : "");
+      }
+}
+
 TEST(ObjCBlockSources, PartialContextPointerInFrameRemainsPrivate) {
   SourceFixture F(true);
   auto &Function = F.Result.HighFuncs[1];
