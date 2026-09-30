@@ -37,6 +37,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &);
 void postRenameCleanup(std::vector<HighStmt> &);
 void renameVars(std::vector<HighStmt> &);
 void eliminateUnusedValues(std::vector<HighStmt> &);
+void narrowUnreadRegisterBytes(HighFunc &);
 } // namespace neverd
 using namespace neverd;
 
@@ -5451,4 +5452,53 @@ TEST(HighControlFlowSemantics, RenameCleanupKeepsLabelsOfRemovedStatements) {
   EXPECT_TRUE(Labeled(0x1010));
   EXPECT_EQ(execute(F, 1, /*RequireExactTargets=*/true),
             std::optional<uint64_t>(2));
+}
+
+TEST(HighControlFlowSemantics, ByteWriteIntoUnsetRegisterDropsUnreadBytes) {
+  // v = CONCAT(unset upper seven bytes, 1); return (uint8_t)v; -- `mov al,
+  // 1` in a function that never set RAX. Only the low byte is read, so the
+  // unset bytes are dropped instead of printing as an unknown register.
+  auto ByteWrite = [] {
+    auto Upper = HighExpr::makeBinop(NdOp::SUBBYTES, HighExpr::makeUndef(8),
+                                     HighExpr::makeConst(1, 4));
+    Upper->Type = NdType::makeInt(7, false);
+    auto Low = HighExpr::makeConst(1, 1);
+    auto Joined = HighExpr::makeBinop(NdOp::CONCAT, Upper, Low);
+    Joined->Type = NdType::makeInt(8, false);
+    auto Write = assign(0x1000, 1, 0);
+    Write.Val = Joined;
+    return Write;
+  };
+  auto LowByte =
+      HighExpr::makeBinop(NdOp::SUBBYTES, local(1), HighExpr::makeConst(0, 4));
+  LowByte->Type = NdType::makeInt(1, false);
+  auto HasUndef = [](const HighFunc &F) {
+    bool Found = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+          Found |= N.Kind == ExprKind::Undef;
+          N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+        };
+        if (E)
+          Walk(*E);
+      });
+    });
+    return Found;
+  };
+  HighFunc F;
+  F.Body = {ByteWrite(), result(0x1004, LowByte)};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_FALSE(HasUndef(F));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
+
+  // A full-width read observes the unset bytes, so they stay.
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.Addr = 0x1002;
+  Keep.StoreAddr = HighExpr::makeConst(0x9000, 8);
+  Keep.StoreVal = local(1);
+  F.Body = {ByteWrite(), Keep, result(0x1004, LowByte)};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_TRUE(HasUndef(F));
 }
