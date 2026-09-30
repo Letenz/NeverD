@@ -564,6 +564,24 @@ una classe C++ interna diventi accidentalmente parte dell’SDK: le operazioni
 esterne stabili appartengono all’header C puro e a uno dei file mirati
 `lib/sdk/NeverDCAPI*.cpp`.
 
+## Esecuzione CPU e confini dei workload
+
+L’esecuzione CPU è indipendente dal sistema operativo guest e dall’immagine. La policy OS e l’ingresso del processo restano separati dal trasporto e dall’ISA.
+
+| Componente | Responsabilità |
+|---|---|
+| `NeverDEmulationCore` | Memoria, fault, registri e ciclo di esecuzione condiviso |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Trasporti nativi KVM/WHP ed esecuzione portabile Unicorn |
+| `NeverDEmulationCPU` | Ammissione del contratto, stato ISA e selezione backend |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI intere, sessioni CPU e budget dei workload |
+| `NeverDEmulationImage` | Piani di mapping per segmenti del loader |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | Avvio ELF, policy dei servizi Linux e report del processo |
+| `NeverDEmulation` | Modello Windows e ciclo di vita dei driver |
+
+Factory CPU e query delle capacità condividono `ExecutionConfiguration`; architettura, privilegio, larghezza degli indirizzi e feature vengono validati prima dell’allocazione. `ExecutionBudget` possiede un unico budget di istruzioni/eventi e una deadline monotona assoluta per workload; la ripresa non ricarica il credito. `ExecutionSession` possiede CPU, hook e continuazioni pendenti di servizio/fault. Le sessioni possono condividere memoria e budget, ma l’esecuzione è cooperativa, non SMP parallela. Ogni richiesta pendente va consumata esattamente una volta prima di riprendere. I fault CPU prevalgono sugli stop di risorse; uno stop inspiegato del motore non prova il successo del workload.
+
+`ImageMappingPlan` usa i segmenti esistenti del loader, senza riparsare header o risolvere import. Verifica estensioni complete e sovrapposizioni prima di pubblicare lo spazio. Il profilo esplicito `linux-elf64-v1` avvia ELF freestanding `ET_EXEC` e PIE statici `ET_DYN` x64/AArch64 con stack iniziale, service request esplicite e output limitato. Linking dinamico, TLS dinamico, segnali, thread OS e servizi non supportati falliscono; TLS statico e SSE/SSE2 limitato su x64 sono supportati; Linux non si deduce da KVM né Windows da WHP. Vedi [esecuzione CPU](cpu-execution.md) ed [emulazione dei processi guest](process-emulation.md). Questo non implica un ambiente Windows user-mode né supporto per app Android/Darwin.
+
 ## Contratto di lifting strict
 
 `Decoder` e ogni lifter di architettura partono in modalità strict. Se Capstone
@@ -837,3 +855,7 @@ Il setter Swift unificato `@objc` `CGFloat`, ottimizzato sull’intero modulo e 
 I metadati privati di una struttura o enumerazione Swift usati dal codice del testimone di valore possono conservare la propria identità nell'immagine collegata tramite un accessor dei metadati esportato in modo univoco. Il binding del sorgente accetta solo un descrittore nominale privato e immutabile corrispondente e una funzione foglia AArch64 immutabile `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` che calcoli esattamente l'indirizzo dei metadati privati. Il sorgente generato chiama l'accessor e la pubblicazione ricontrolla byte, rilocazioni, simboli ed esportazioni.
 
 Un helper nativo AArch64 può associare un ingresso completo di 16 byte in `q0` o in un registro `q` successivo a un vettore C passato per valore solo quando tutti i 16 byte sono osservati, gli argomenti in virgola mobile precedenti occupano senza lacune i registri `q` anteriori e valgono le normali prove di chiamata, ritorno e frame dello stack. HighC converte i bit ai confini del sorgente; un intero a 128 bit in `x0`/`x1` usa un’ABI diversa. Le lane parziali, le lacune nella sequenza dei registri in virgola mobile e le dichiarazioni non native restano non supportate.
+
+Il rilevamento dei blocchi Objective-C annidati sullo stack trasmette la classe del ricevitore del metodo al blocco figlio solo se il risultato corrente della pipeline prova la cattura forte nel blocco padre e la copia completa, con proprietà, dello stesso campo nel figlio. Il rilevamento raggiunge un punto fisso limitato entro quel risultato; un’esecuzione successiva deve dimostrare di nuovo la catena. Un selettore, un `id` non tipizzato o un consumatore del blocco senza ricevitore qualificato non stabilisce da solo la classe del ricevitore, l’ABI della chiamata o la durata del blocco. Una copia del contesto di 16 byte conserva questa prova solo per una lane esatta di otto byte interamente contenuta in ogni letterale del blocco padre autenticato; lane parziali o riordinate non la conservano.
+
+Un descrittore di blocco verificato può fornire l’ABI di invocazione prima che il corpo sia accettato; le chiamate dei consumatori usano le catture del ricevitore dello stesso piano di blocco convalidato, e la pubblicazione richiede ancora prove indipendenti del corpo e della durata.

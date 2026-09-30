@@ -111,9 +111,17 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       OnceRoots.clear();
       for (const auto &[Address, Hint] : OncePlan.CallbackHints)
         OnceRoots.insert(Address);
+      OnceRoots.insert(OncePlan.CallbackAnalysisRoots.begin(),
+                       OncePlan.CallbackAnalysisRoots.end());
       OnceCallOnlyTargets.clear();
       for (const auto &[Address, Contract] : OncePlan.Addressors)
         OnceCallOnlyTargets.insert(Address);
+      // Nested callbacks receive their runtime ABI only after source
+      // projection proves that every forwarded context is unobserved.
+      for (const auto &[Address, Contract] : OncePlan.NestedCallbacks)
+        OnceCallOnlyTargets.insert(Address);
+      OnceCallOnlyTargets.insert(OncePlan.CallbackAnalysisRoots.begin(),
+                                 OncePlan.CallbackAnalysisRoots.end());
       std::map<va_t, const HighFunc *> RefinementInputs;
       for (const auto &Function : Result.HighFuncs)
         RefinementInputs.emplace(Function.Entry, &Function);
@@ -211,16 +219,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     // Nested once callbacks retain their machine body until the final source
     // projection. Publish only a separately proved copy to source consumers;
     // Low/Med ABI inference and ordinary native calls keep the original body.
-    std::map<va_t, ObjCSourceBindingResult> NestedOnceInputs;
-    for (const auto &[Entry, Contract] : OncePlan.NestedCallbacks) {
-      const auto Found = Functions.find(Entry);
-      if (Found == Functions.end() || !Found->second)
-        continue;
-      auto Projection = projectSwiftOnceNestedCallback(*Found->second, S->Img,
-                                                       OncePlan, Functions);
-      if (Projection)
-        NestedOnceInputs.emplace(Entry, std::move(*Projection));
-    }
+    const auto NestedOnceInputs =
+        projectSwiftOnceNestedCallbacks(S->Img, OncePlan, Functions);
     for (const auto &[Entry, Projection] : NestedOnceInputs)
       Functions[Entry] = &Projection.Function;
     std::map<va_t, ObjCSourceBindingResult> ImmutableStringInputs;

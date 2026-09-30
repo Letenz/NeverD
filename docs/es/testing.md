@@ -102,6 +102,35 @@ escalares no admitidos y los operandos mal formados deben fallar explícitamente
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` comprueba que los argumentos de registro obligatorios inferidos conserven las posiciones finales desconocidas. Evaluar un argumento obligatorio o una condición desconocida debe provocar una trampa explícita; los operandos omitidos, nulos o anidados no deben convertirse silenciosamente en cero. Los valores conocidos y los operandos adicionales cuya ausencia de lectura esté demostrada siguen siendo ejecutables. Una trampa es un límite de diagnóstico, no una prueba de equivalencia del comportamiento recuperado.
 
+## Pruebas de ejecución CPU
+
+`NeverDIntegerABITests` compila fixtures originales de Clang para Windows x64, Linux x64 y Linux ARM64. Sus funciones reales de diez argumentos comprueban registros, pila y marcos de llamada. La matriz Unicorn/KVM/WHP marca explícitamente como omitidos los pares host/ISA no disponibles; un skip no es un aprobado. `NeverDExecutionBudgetTests` verifica presupuestos compartidos de continuación, reservas y deadlines absolutos sin depender de pausas temporizadas.
+
+`NeverDCPUEmulationTests` cubre instrucciones ARM64, control, cargas, contextos, alias, invalidación de caché y bucles acotados; el perfil software también ejecuta FP/SIMD y TLS. `NeverDUserExecutionTests` comprueba permisos CPL3/EL0, alias, fallos de protección, contextos y cambio de espacio. `NeverDServiceRequestTests` demuestra que SYSCALL/SVC se interceptan antes del transporte y conservan el estado hasta consumir la solicitud una sola vez; esto prueba el protocolo de transferencia, no un modelo completo de servicios del SO. `NeverDExecutionConfigurationTests` valida resolución compartida, diferencia entre soporte de compilación y sondeo real y rechazo cerrado de opciones. Las pruebas públicas SDK/CLI no requieren el modelo Windows. `NeverDThreadPointerTests` verifica FS-base, `TPIDR_EL0`, restauración de contexto y permisos. `NeverDKvmCancellationTests` usa un invitado x64 no terminante para comprobar interrupción KVM activa, reanudación y estado de señales sin cambios; se omite explícitamente si no hay KVM.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
+
+```bash
+cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|UserExecution|ServiceRequest|ExecutionConfiguration)Tests$' --output-on-failure
+```
+
+La falta de CPU ARM64 o hipervisor es cobertura nativa omitida, no un aprobado. Unicorn y la compilación cruzada no prueban ejecución KVM/WHP nativa.
+
+## Pruebas del perfil de procesos Linux
+
+Las [suites independientes de procesos](process-emulation.md) compilan fixtures ELF reales x64/AArch64. `NeverDLinuxProcessTests` verifica inicio, política de cabeceras, solicitudes de servicio, salida binaria, fallos y límites. `NeverDProcessPublicTests` comprueba C API/CLI sin modificar la imagen de análisis. `NeverDExecutionSessionTests` cubre dos CPU que comparten memoria/presupuesto y consumo exactamente una vez de solicitudes/fallos. `NeverDX64MemoryUpdateTests` comprueba aritmética de memoria, SETcc, BT, XMM/MXCSR, observadores de escritura, límites REP y lecturas preparadas de dispositivos. `DriverBackendParityTests.cpp` ejecuta fixtures WDK originales y reubicadas y compara todo el informe observable con Unicorn; las imágenes/backends ausentes se omiten.
+
+```bash
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
+```
+
+Los backends no disponibles se omiten explícitamente. La compilación cruzada y Unicorn ARM64 no prueban KVM/WHP ARM64 nativo.
+
 ## Comprobaciones de emulación de controladores
 
 Active `NEVERD_ENABLE_DRIVER_EMULATION=ON` junto con `BUILD_TESTING=ON` para

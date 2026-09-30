@@ -568,6 +568,24 @@ keine interne C++-Klasse versehentlich Teil des SDK werden: Stabile externe
 Operationen gehören in den reinen C-Header und eine der fokussierten Dateien
 `lib/sdk/NeverDCAPI*.cpp`.
 
+## CPU-Ausführung und Workload-Grenzen
+
+CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und Prozesseinstieg bleiben von Transport und Architektur getrennt.
+
+| Komponente | Zuständigkeit |
+|---|---|
+| `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP-Transporte und portable Unicorn-Ausführung |
+| `NeverDEmulationCPU` | Vertragszulassung, ISA-Zustand und Backend-Auswahl |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | Integer-Aufrufkonventionen, CPU-Sitzungen und Workload-Budgets |
+| `NeverDEmulationImage` | Mapping-Pläne für Loader-Segmente |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF-Start, Linux-Dienstpolicy und Prozessberichte |
+| `NeverDEmulation` | Windows-Modell und Treiberlebenszyklus |
+
+CPU-Fabrik und Fähigkeitsabfrage verwenden dieselbe `ExecutionConfiguration`; Architektur, Privileg, Adressbreite und Features werden vor Allokation geprüft. `ExecutionBudget` besitzt ein gemeinsames Instruktions-/Eventbudget und eine absolute Deadline pro Workload; Fortsetzungen setzen das Budget nicht zurück. `ExecutionSession` besitzt CPU, Hooks sowie offene Service-/Fehlerfortsetzungen. Sessions dürfen Speicher und Budget teilen, laufen aber kooperativ, nicht als paralleles SMP. Ein ausstehender Request muss genau einmal vor dem Fortsetzen verbraucht werden. CPU-Fehler haben Vorrang vor Ressourcenstopps; ein unerklärter Engine-Stopp bedeutet keinen Workload-Erfolg.
+
+`ImageMappingPlan` übernimmt vorhandene Loader-Segmente, parst Header nicht erneut und löst keine Importe auf. Vollständige Bereiche und Überlappungen werden vor Veröffentlichung des Adressraums geprüft. Das explizite Profil `linux-elf64-v1` startet freestanding ELF `ET_EXEC` und statische PIE-`ET_DYN` für x64/AArch64 mit Initial-Stack, expliziten Service-Requests und begrenzter Byteausgabe. Dynamisches Linken, dynamisches TLS, Signale, OS-Threads und nicht unterstützte Dienste schlagen fehl; statisches TLS und begrenztes SSE/SSE2 auf x64 werden unterstützt. Das Modell leitet Linux nicht aus KVM und Windows nicht aus WHP ab. Siehe [CPU-Ausführung](cpu-execution.md) und [Gastprozess-Emulation](process-emulation.md). Daraus folgt keine Windows-Usermode- oder Android-/Darwin-App-Unterstützung.
+
 ## Vertrag des strikten Liftings
 
 `Decoder` und jeder Architektur-Lifter starten im strikten Modus. Kann
@@ -843,3 +861,7 @@ Der profilinstrumentierte, modulweit optimierte zusammengeführte Swift-Setter f
 Private Swift-Metadaten einer Struktur oder Enumeration, die Wertzeugen-Code verwendet, können ihre Identität im gelinkten Abbild über einen eindeutig exportierten Metadaten-Accessor bewahren. Die Quellbindung akzeptiert nur einen passenden unveränderlichen privaten Nominaltyp-Deskriptor und eine unveränderliche AArch64-Blattfunktion `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET`, die genau die private Metadatenadresse berechnet. Der erzeugte Quelltext ruft diesen Accessor auf; vor der Veröffentlichung werden Bytes, Relokationen, Symbole und Exporte erneut geprüft.
 
 Eine native AArch64-Hilfsfunktion darf eine vollständige 16-Byte-Eingabe in `q0` oder einem folgenden `q`-Register nur dann als C-Vektor per Wert binden, wenn alle 16 Eingangsbytes beobachtet werden, frühere Gleitkommaargumente die vorangehenden `q`-Register lückenlos belegen und die üblichen Aufruf-, Rückgabe- und Stack-Frame-Beweise vorliegen. HighC wandelt die Bits an den Quellcodegrenzen um; eine 128-Bit-Ganzzahl in `x0`/`x1` verwendet eine andere ABI. Teilweise Lanes, Lücken in der Gleitkommaregisterfolge und nicht native Deklarationen bleiben ununterstützt.
+
+Bei verschachtelten Objective-C-Stack-Blöcken wird die Klasse des Methodenempfängers nur dann an den Kindblock weitergegeben, wenn das aktuelle Pipeline-Ergebnis die starke Erfassung im Elternblock und die vollständige, besitzende Kopie desselben Felds im Kindblock belegt. Die Erkennung erreicht innerhalb dieses Ergebnisses einen begrenzten Fixpunkt; ein späterer Pipeline-Lauf muss die Kette erneut belegen. Ein Selektor, ein untypisiertes `id` oder ein Block-Verbraucher ohne qualifizierten Empfänger belegt weder Empfängerklasse noch Aufruf-ABI oder Block-Lebensdauer. Eine 16-Byte-Kopie des Kontexts bewahrt diesen Beweis nur für eine exakte Acht-Byte-Lane, die vollständig in jedem authentifizierten Elternblock-Literal liegt; teilweise oder umgeordnete Lanes bewahren ihn nicht.
+
+Ein verifizierter Block-Deskriptor darf die Invoke-ABI liefern, bevor der Funktionskörper akzeptiert wird; Verbraucheraufrufe verwenden Empfänger-Erfassungen aus demselben geprüften Block-Plan, und die Veröffentlichung verlangt weiterhin unabhängige Beweise für Körper und Lebensdauer.

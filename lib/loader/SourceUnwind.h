@@ -50,6 +50,33 @@ inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
   return !Metadata.Dwarf || Metadata.Dwarf->LSDAVA == 0;
 }
 
+/// A direct Objective-C throw needs no source-side landing pad when the frame
+/// has no language dispatch. Its runtime call must still receive a separate,
+/// exact noreturn source binding.
+inline bool
+isUnhandledObjCThrowSourceUnwind(const ExceptionFunction &Metadata) {
+  if (!Metadata.ObjC || Metadata.ObjC->RuntimeCalls.empty())
+    return isPlainSourceUnwind(Metadata);
+  ExceptionFunction WithoutThrows = Metadata;
+  auto &Calls = WithoutThrows.ObjC->RuntimeCalls;
+  const auto FirstThrow =
+      std::find_if(Calls.begin(), Calls.end(), [](const ObjCRuntimeCall &Call) {
+        return Call.Kind == ObjCRuntimeCallKind::Throw;
+      });
+  if (FirstThrow == Calls.end())
+    return isPlainSourceUnwind(Metadata);
+  for (const auto &Call : Calls)
+    if (Call.Kind == ObjCRuntimeCallKind::Throw &&
+        ((Call.TargetName != "objc_exception_throw" &&
+          Call.TargetName != "_objc_exception_throw") ||
+         !Metadata.CodeRange.contains(Call.CallVA)))
+      return false;
+  std::erase_if(Calls, [](const ObjCRuntimeCall &Call) {
+    return Call.Kind == ObjCRuntimeCallKind::Throw;
+  });
+  return isPlainSourceUnwind(WithoutThrows);
+}
+
 /// An unwind record can enclose several independently decoded Mach-O entries,
 /// including when the first entry begins at the record's start. Its Objective-C
 /// runtime-call inventory belongs to the whole record, not to each function.

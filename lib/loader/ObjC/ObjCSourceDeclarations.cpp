@@ -9,6 +9,8 @@
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include <algorithm>
+#include <array>
+#include <iterator>
 #include <map>
 #include <set>
 
@@ -206,6 +208,46 @@ bool hasEmbeddedSDWebImageOptionsResult(const BinaryImage &Image) {
   return Factory == 1 && Initializer == 1 && Getter == 1 && Property == 1;
 }
 
+// SDWebImage declares initWithSize:format: as instancetype and
+// imageWithActions: with an NS_NOESCAPE CGContextRef callback. The runtime
+// encodings erase both facts. Require the complete embedded class and exact
+// method records before carrying either declaration into source recovery.
+bool hasEmbeddedSDGraphicsImageRenderer(const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64)
+    return false;
+  const ObjCClass *Owner = nullptr;
+  for (const auto &Class : Image.ObjCClasses)
+    if (Class.Name == "SDGraphicsImageRenderer") {
+      if (Owner)
+        return false;
+      Owner = &Class;
+    }
+  if (!Owner || !Owner->Address || Owner->RootClass ||
+      Owner->InheritanceStatus != "resolved" ||
+      Owner->SuperclassName != "NSObject")
+    return false;
+  unsigned Initializers = 0, Renderers = 0;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.ClassName != Owner->Name)
+      continue;
+    const bool Initializer = Method.Selector == "initWithSize:format:";
+    const bool Renderer = Method.Selector == "imageWithActions:";
+    if (!Initializer && !Renderer)
+      continue;
+    if (Method.ClassAddress != Owner->Address || Method.IsClassMethod ||
+        Method.CategoryAddress || !Method.CategoryName.empty() ||
+        !Method.MetadataAddress || !Method.TypeHint ||
+        !objcMethodHasSourceBody(Method) ||
+        !Image.isCodeAddress(Method.Implementation) ||
+        Method.TypeEncoding !=
+            (Initializer ? "@40@0:8{CGSize=dd}16@32" : "@24@0:8@?16"))
+      return false;
+    ++(Initializer ? Initializers : Renderers);
+  }
+  return Initializers == 1 && Renderers == 1;
+}
+
 bool hasEmbeddedDDLogFileInfoElement(const BinaryImage &Image,
                                      const ObjCReceiverTypeHint &Receiver) {
   // DDLogFileManager.sortedLogFileInfos is declared as
@@ -280,6 +322,71 @@ bool hasEmbeddedDDLogFileInfoElement(const BinaryImage &Image,
       ++Property;
     }
   return Entry == 1 && Getter == 1 && FileSize == 1 && Property == 1;
+}
+
+bool hasEmbeddedSDImageCacheEnumerator(const BinaryImage &Image, va_t Entry,
+                                       unsigned Parameter) {
+  // SDWebImage 5.21.3 declares these arguments as
+  // NSEnumerator<id<SDImageCache>> *. The Objective-C encoding erases both
+  // the enumerator class and its element protocol. Authenticate the complete
+  // family before carrying either source declaration into fast enumeration.
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64)
+    return false;
+  static constexpr struct {
+    const char *Selector;
+    const char *Encoding;
+    unsigned Parameter;
+  } Methods[] = {
+      {"concurrentQueryImageForKey:options:context:cacheType:completion:"
+       "enumerator:operation:",
+       "v72@0:8@16Q24@32q40@?48@56@64", 7},
+      {"concurrentStoreImage:imageData:forKey:options:context:cacheType:"
+       "completion:enumerator:operation:",
+       "v88@0:8@16@24@32Q40@48q56@?64@72@80", 9},
+      {"concurrentRemoveImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentContainsImageForKey:cacheType:completion:enumerator:"
+       "operation:",
+       "v56@0:8@16q24@?32@40@48", 5},
+      {"concurrentClearWithCacheType:completion:enumerator:operation:",
+       "v48@0:8q16@?24@32@40", 4},
+  };
+  const ObjCClass *Owner = nullptr;
+  for (const auto &Class : Image.ObjCClasses)
+    if (Class.Name == "SDImageCachesManager") {
+      if (Owner)
+        return false;
+      Owner = &Class;
+    }
+  if (!Owner || !Owner->Address || Owner->RootClass ||
+      Owner->InheritanceStatus != "resolved" ||
+      Owner->SuperclassName != "NSObject")
+    return false;
+  std::array<unsigned, std::size(Methods)> Counts{};
+  bool MatchedEntry = false;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.ClassName != Owner->Name)
+      continue;
+    for (size_t I = 0; I < std::size(Methods); ++I) {
+      const auto &Expected = Methods[I];
+      if (Method.Selector != Expected.Selector)
+        continue;
+      if (Method.ClassAddress != Owner->Address || Method.IsClassMethod ||
+          Method.CategoryAddress || !Method.CategoryName.empty() ||
+          !Method.MetadataAddress || !Method.TypeHint ||
+          Method.TypeEncoding != Expected.Encoding ||
+          !objcMethodHasSourceBody(Method) ||
+          !Image.isCodeAddress(Method.Implementation))
+        return false;
+      ++Counts[I];
+      if (Method.Implementation == Entry && Parameter == Expected.Parameter)
+        MatchedEntry = true;
+    }
+  }
+  return MatchedEntry &&
+         llvm::all_of(Counts, [](unsigned Count) { return Count == 1; });
 }
 
 bool hasEmbeddedWMFCalendarMethod(const BinaryImage &Image,
@@ -907,6 +1014,105 @@ objcMethodParameterReceiverTypeHint(const BinaryImage &Image, va_t Entry,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry)
     return std::nullopt;
+  if (Parameter >= 4 &&
+      std::any_of(Image.ObjCMethods.begin(), Image.ObjCMethods.end(),
+                  [&](const ObjCMethod &Method) {
+                    return Method.Implementation == Entry &&
+                           Method.ClassName == "SDImageCachesManager";
+                  }) &&
+      hasEmbeddedSDImageCacheEnumerator(Image, Entry, Parameter)) {
+    const auto SDK =
+        objc::sdkReceiverDeclarations(Image, "NSEnumerator", false, false, {});
+    const auto Signature = objcMethodSourceTypeHint(Image, Entry);
+    if (!SDK.Present || !SDK.Complete || !Signature ||
+        Parameter >= Signature->Parameters.size())
+      return std::nullopt;
+    const auto &Argument = Signature->Parameters[Parameter];
+    if (!Argument.Type || Argument.Type->Kind != NdTypeKind::Ptr ||
+        Argument.Type->Size != 8 || Argument.Location.ValueBytes != 8)
+      return std::nullopt;
+    const auto &Registers = getTargetRegInfo(Arch::AArch64).IntParamRegs;
+    if (Parameter < Registers.size()
+            ? Argument.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+                  Argument.Location.RegisterOffset != Registers[Parameter]
+            : Argument.Location.Kind != SourceABICarrierKind::Stack ||
+                  Argument.Location.EntryStackOffset !=
+                      int64_t(Parameter - Registers.size()) * 8)
+      return std::nullopt;
+    ObjCReceiverTypeHint Result;
+    Result.Origin = ObjCReceiverTypeHint::OriginKind::MethodParameter;
+    Result.Address = Entry;
+    Result.ClassName = "NSEnumerator";
+    Result.SourceParameter = Parameter;
+    return Result;
+  }
+  // SDWebImage 5.21.3 declares decodedImageWithImage:policy:'s image input
+  // as UIImage *. Objective-C's runtime encoding retains only id here.
+  // Authenticate the exact embedded method before applying UIKit's drawing
+  // declaration to that source parameter or a block that captures it.
+  if (Parameter == 2) {
+    const bool CoderEntry =
+        std::any_of(Image.ObjCMethods.begin(), Image.ObjCMethods.end(),
+                    [&](const ObjCMethod &Method) {
+                      return Method.Implementation == Entry &&
+                             Method.ClassName == "SDImageCoderHelper" &&
+                             Method.Selector == "decodedImageWithImage:policy:";
+                    });
+    if (CoderEntry) {
+      const auto UIKit = objc::sdkReceiverDeclarations(Image, "UIImage", false,
+                                                       false, "drawInRect:");
+      if (!UIKit.Present || !UIKit.Complete || UIKit.Members.size() != 1 ||
+          !UIKit.Members.front().Signature)
+        return std::nullopt;
+      const ObjCClass *Owner = nullptr;
+      for (const auto &Class : Image.ObjCClasses)
+        if (Class.Name == "SDImageCoderHelper") {
+          if (Owner)
+            return std::nullopt;
+          Owner = &Class;
+        }
+      if (!Owner || !Owner->Address || Owner->RootClass ||
+          Owner->InheritanceStatus != "resolved" ||
+          Owner->SuperclassName != "NSObject")
+        return std::nullopt;
+      const ObjCMethod *Found = nullptr;
+      for (const auto &Method : Image.ObjCMethods) {
+        if (Method.Implementation != Entry &&
+            !(Method.ClassName == Owner->Name &&
+              Method.Selector == "decodedImageWithImage:policy:"))
+          continue;
+        if (Found || Method.Implementation != Entry ||
+            Method.ClassName != Owner->Name ||
+            Method.ClassAddress != Owner->Address ||
+            Method.Selector != "decodedImageWithImage:policy:" ||
+            Method.CategoryAddress || !Method.CategoryName.empty() ||
+            !Method.MetadataAddress || !Method.IsClassMethod ||
+            Method.TypeEncoding != "@32@0:8@16Q24" ||
+            !objcMethodHasSourceBody(Method) || !Image.isCodeAddress(Entry))
+          return std::nullopt;
+        Found = &Method;
+      }
+      if (!Found)
+        return std::nullopt;
+      const auto Signature = objcMethodSourceTypeHint(Image, Entry);
+      if (!Signature || Signature->Parameters.size() != 4 ||
+          !Signature->Parameters[Parameter].Type ||
+          Signature->Parameters[Parameter].Type->Kind != NdTypeKind::Ptr ||
+          Signature->Parameters[Parameter].Type->Size != 8 ||
+          Signature->Parameters[Parameter].Location.Kind !=
+              SourceABICarrierKind::IntegerRegister ||
+          Signature->Parameters[Parameter].Location.RegisterOffset !=
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[Parameter] ||
+          Signature->Parameters[Parameter].Location.ValueBytes != 8)
+        return std::nullopt;
+      ObjCReceiverTypeHint Result;
+      Result.Origin = ObjCReceiverTypeHint::OriginKind::MethodParameter;
+      Result.Address = Entry;
+      Result.ClassName = "UIImage";
+      Result.SourceParameter = Parameter;
+      return Result;
+    }
+  }
   // SDWebImage 5.21.3 UIView+WebCache.m declares both indicator queue inputs
   // as SDCallbackQueue *. Linker category merging can change the category
   // name, so authenticate the two embedded UIView methods together.
@@ -1313,13 +1519,42 @@ bool validReceiverRoot(const BinaryImage &Image,
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
        (Receiver.BlockDescriptorAddress || Receiver.BlockDescriptorFlags)) ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+       Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodParameter &&
        Receiver.BlockCaptureOffset) ||
+      (Receiver.BlockCaptureOffset &&
+       (Receiver.BlockCaptureOffset < 32 || Receiver.BlockCaptureOffset % 8)) ||
       Receiver.BlockCaptureOffset > (1u << 20) - 8 ||
       Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return false;
+  if (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::Merged &&
+      !Receiver.Alternatives.empty())
+    return false;
   switch (Receiver.Origin) {
+  case ObjCReceiverTypeHint::OriginKind::Merged:
+    if (!Receiver.OutParameters.empty() || Receiver.Alternatives.size() < 2 ||
+        Receiver.Alternatives.size() > 8 ||
+        Receiver.Address != Receiver.Alternatives.front().Address)
+      return false;
+    // Descriptor-to-invoke association and captured-field ownership are
+    // published separately by the block source plan. A merge cannot bypass
+    // those checks by hiding a block proof inside ordinary receiver evidence.
+    if (!llvm::all_of(Receiver.Alternatives, [&](const auto &Alternative) {
+          return Alternative.Origin !=
+                     ObjCReceiverTypeHint::OriginKind::Merged &&
+                 Alternative.Origin !=
+                     ObjCReceiverTypeHint::OriginKind::BlockParameter &&
+                 Alternative.Alternatives.empty() &&
+                 !Alternative.BlockCaptureOffset &&
+                 Alternative.Steps.size() + Receiver.Steps.size() <= 8;
+        }))
+      return false;
+    return std::is_sorted(Receiver.Alternatives.begin(),
+                          Receiver.Alternatives.end()) &&
+           std::adjacent_find(Receiver.Alternatives.begin(),
+                              Receiver.Alternatives.end()) ==
+               Receiver.Alternatives.end();
   case ObjCReceiverTypeHint::OriginKind::MethodEntry: {
     if (!Receiver.OutParameters.empty())
       return false;
@@ -1478,7 +1713,30 @@ std::optional<ReceiverType> receiverType(const BinaryImage &Image,
                       Receiver.Origin !=
                           ObjCReceiverTypeHint::OriginKind::ClassReference,
                       false};
+  if (Receiver.Origin == ObjCReceiverTypeHint::OriginKind::Merged) {
+    for (const auto &Alternative : Receiver.Alternatives) {
+      const auto Type = receiverType(Image, Alternative);
+      if (!Type || Type->IsProtocol || Type->ClassName != Receiver.ClassName ||
+          Type->IsClassMethod != Receiver.IsClassMethod)
+        return std::nullopt;
+    }
+  }
   for (const auto &Access : Receiver.Steps) {
+    if (Access.TheKind ==
+        ObjCReceiverTypeHint::TypeStep::Kind::FastEnumerationElement) {
+      if (&Access != &Receiver.Steps.front() || Access.OffsetSlot ||
+          Access.ByteOffset || Access.OffsetWidth || !Access.Selector.empty() ||
+          Receiver.Origin !=
+              ObjCReceiverTypeHint::OriginKind::MethodParameter ||
+          Result.ClassName != "NSEnumerator" || Result.IsClassMethod ||
+          Result.IsProtocol ||
+          !hasEmbeddedSDImageCacheEnumerator(Image, Receiver.Address,
+                                             Receiver.SourceParameter) ||
+          !receiverProtocolKnown(Image, "SDImageCache"))
+        return std::nullopt;
+      Result = {"SDImageCache", false, false, true};
+      continue;
+    }
     if (Access.TheKind == ObjCReceiverTypeHint::TypeStep::Kind::MessageResult) {
       if (Access.Selector.empty() || Access.OffsetSlot || Access.ByteOffset ||
           Access.OffsetWidth)
@@ -1725,6 +1983,15 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
               Selector == "processedResultForURL:options:context:" &&
               Method.TypeEncoding == "@40@0:8@16Q24@32" &&
               hasEmbeddedSDWebImageOptionsResult(Image);
+          const bool SDGraphicsRendererInit =
+              Name == "SDGraphicsImageRenderer" && !Type.IsClassMethod &&
+              Selector == "initWithSize:format:" &&
+              hasEmbeddedSDGraphicsImageRenderer(Image);
+          // SDCallbackQueue.h retains the factory's concrete return class,
+          // although its runtime encoding is just id.
+          const bool SDCallbackMainQueue =
+              Name == "SDCallbackQueue" && Type.IsClassMethod &&
+              Selector == "mainQueue" && hasEmbeddedSDCallbackQueueAsync(Image);
           const bool WMFCalendarResult =
               Name == "NSCalendar" && !Type.IsClassMethod &&
               Selector == "wmf_components:fromDate:toDate:" &&
@@ -1746,19 +2013,22 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
           const bool WMFContentGroupArrayResult =
               Name == "NSManagedObjectContext" && !Type.IsClassMethod &&
               hasEmbeddedWMFContentGroupArrayResult(Image, Selector);
-          Include(Method.TypeHint,
-                  SDWebImageResult
-                      ? std::optional<std::string>("SDWebImageOptionsResult")
-                  : WMFCalendarResult
-                      ? std::optional<std::string>("NSDateComponents")
-                  : WMFCalendarFactory
-                      ? std::optional<std::string>("NSCalendar")
-                  : MWKLanguageArrayResult
-                      ? std::optional<std::string>("NSArray")
-                  : WMFContentGroupArrayResult
-                      ? std::optional<std::string>("NSArray")
-                      : declaredReturnClass(Method.TypeEncoding),
-                  declaredReturnProtocol(Method.TypeEncoding));
+          Include(
+              Method.TypeHint,
+              SDWebImageResult
+                  ? std::optional<std::string>("SDWebImageOptionsResult")
+              : SDGraphicsRendererInit
+                  ? std::optional<std::string>("SDGraphicsImageRenderer")
+              : SDCallbackMainQueue
+                  ? std::optional<std::string>("SDCallbackQueue")
+              : WMFCalendarResult
+                  ? std::optional<std::string>("NSDateComponents")
+              : WMFCalendarFactory ? std::optional<std::string>("NSCalendar")
+              : MWKLanguageArrayResult ? std::optional<std::string>("NSArray")
+              : WMFContentGroupArrayResult
+                  ? std::optional<std::string>("NSArray")
+                  : declaredReturnClass(Method.TypeEncoding),
+              declaredReturnProtocol(Method.TypeEncoding));
         }
       if (!Superclass)
         KnownScope = false;
@@ -1831,6 +2101,52 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
 }
 
 } // namespace
+
+std::optional<ObjCReceiverTypeHint>
+objcMergeReceiverTypeHints(const BinaryImage &Image,
+                           const ObjCReceiverTypeHint &Left,
+                           const ObjCReceiverTypeHint &Right) {
+  const auto LeftType = receiverType(Image, Left);
+  const auto RightType = receiverType(Image, Right);
+  if (!LeftType || !RightType || LeftType->IsProtocol ||
+      RightType->IsProtocol || LeftType->ClassName != RightType->ClassName ||
+      LeftType->IsClassMethod != RightType->IsClassMethod)
+    return std::nullopt;
+  if (Left == Right)
+    return Left;
+  std::vector<ObjCReceiverTypeHint> Alternatives;
+  const auto Add = [&](const ObjCReceiverTypeHint &Receiver) {
+    if (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::Merged) {
+      Alternatives.push_back(Receiver);
+      return;
+    }
+    for (auto Alternative : Receiver.Alternatives) {
+      Alternative.Steps.insert(Alternative.Steps.end(), Receiver.Steps.begin(),
+                               Receiver.Steps.end());
+      Alternatives.push_back(std::move(Alternative));
+    }
+  };
+  Add(Left);
+  Add(Right);
+  llvm::sort(Alternatives);
+  Alternatives.erase(std::unique(Alternatives.begin(), Alternatives.end()),
+                     Alternatives.end());
+  if (Alternatives.empty() || Alternatives.size() > 8)
+    return std::nullopt;
+  if (Alternatives.size() == 1)
+    return objcReceiverTypeHintValid(Image, Alternatives.front())
+               ? std::optional<ObjCReceiverTypeHint>(Alternatives.front())
+               : std::nullopt;
+  ObjCReceiverTypeHint Result;
+  Result.Origin = ObjCReceiverTypeHint::OriginKind::Merged;
+  Result.Address = Alternatives.front().Address;
+  Result.ClassName = LeftType->ClassName;
+  Result.IsClassMethod = LeftType->IsClassMethod;
+  Result.Alternatives = std::move(Alternatives);
+  return objcReceiverTypeHintValid(Image, Result)
+             ? std::optional<ObjCReceiverTypeHint>(std::move(Result))
+             : std::nullopt;
+}
 
 ObjCReceiverDeclaration
 objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
@@ -1980,6 +2296,65 @@ objcBlockParameterContract(const BinaryImage &Image,
       return std::nullopt;
     return ObjCBlockParameterContract{
         std::move(*Callback), ObjCBlockParameterContract::Lifetime::Copied};
+  }
+
+  // SDImageCache's source protocol allows these completions to run after
+  // disk work, while memory-only paths may invoke them synchronously. A
+  // conforming cache therefore owns an escaping callback. Require the exact
+  // embedded protocol declarations and an element-qualified receiver.
+  if (Image.Arch == Arch::AArch64 && Type && Type->IsProtocol &&
+      !Type->IsClassMethod && Type->ClassName == "SDImageCache") {
+    static constexpr struct {
+      const char *Selector;
+      const char *Parent;
+      const char *Callback;
+      unsigned Parameter;
+    } Methods[] = {
+        {"queryImageForKey:options:context:cacheType:completion:",
+         "@56@0:8@16Q24@32q40@?48", "v32@?0@\"UIImage\"8@\"NSData\"16q24", 6},
+        {"storeImage:imageData:forKey:options:context:cacheType:completion:",
+         "v72@0:8@16@24@32Q40@48q56@?64", "v8@?0", 8},
+        {"removeImageForKey:cacheType:completion:", "v40@0:8@16q24@?32",
+         "v8@?0", 4},
+        {"containsImageForKey:cacheType:completion:", "v40@0:8@16q24@?32",
+         "v16@?0q8", 4},
+        {"clearWithCacheType:completion:", "v32@0:8q16@?24", "v8@?0", 3},
+    };
+    const ObjCProtocol *Protocol = nullptr;
+    for (const auto &Candidate : Image.ObjCProtocols)
+      if (Candidate.Name == "SDImageCache") {
+        if (Protocol)
+          return std::nullopt;
+        Protocol = &Candidate;
+      }
+    if (!Protocol || !Protocol->Address || Protocol->Status != "recovered")
+      return std::nullopt;
+    std::array<unsigned, std::size(Methods)> Counts{};
+    for (const auto &Method : Protocol->Methods)
+      for (size_t I = 0; I < std::size(Methods); ++I)
+        if (Method.Selector == Methods[I].Selector) {
+          if (!Method.MetadataAddress || !Method.IsOptional ||
+              Method.IsClassMethod || Method.Status != "supported" ||
+              Method.TypeEncoding != Methods[I].Parent || !Method.TypeHint)
+            return std::nullopt;
+          ++Counts[I];
+        }
+    if (!llvm::all_of(Counts, [](unsigned Count) { return Count == 1; }))
+      return std::nullopt;
+    for (const auto &Method : Methods) {
+      if (Call.Selector != Method.Selector || Parameter != Method.Parameter)
+        continue;
+      auto Parent = parseObjCMethodEncoding(Method.Selector, Method.Parent);
+      std::string Error;
+      auto Callback =
+          parseObjCBlockSignature(Method.Callback, Image.Arch, Error);
+      if (!Parent || !Callback ||
+          !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
+          !SameDeclaration(*Expected, *Parent))
+        return std::nullopt;
+      return ObjCBlockParameterContract{
+          std::move(*Callback), ObjCBlockParameterContract::Lifetime::Copied};
+    }
   }
 
   // FLAnimatedImage's logging implementation invokes the supplied string
@@ -2512,10 +2887,17 @@ objcBlockParameterContract(const BinaryImage &Image,
        5, "v32@?0@8Q16^B24", nullptr, "NSRegularExpression"},
       {"imageWithActions:", "@24@0:8@?16", "@24@0:8@?16", 2, "v16@?0@8",
        "v16@?0@8", "UIGraphicsImageRenderer"},
+      {"imageWithActions:", "@24@0:8@?16", nullptr, 2, "v16@?0^{CGContext=}8",
+       nullptr, "SDGraphicsImageRenderer"},
   };
   std::optional<ObjCBlockParameterContract> Result;
   for (const auto &D : Declarations) {
     if (Call.Selector != D.Selector || Parameter != D.Parameter)
+      continue;
+    if (llvm::StringRef(D.Owner) == "SDGraphicsImageRenderer" &&
+        (!Type || !hasEmbeddedSDGraphicsImageRenderer(Image)))
+      continue;
+    if (Type && !DerivesFrom(Type->ClassName, D.Owner))
       continue;
     if (D.Copied && !Type)
       continue;
@@ -2530,13 +2912,13 @@ objcBlockParameterContract(const BinaryImage &Image,
     auto Callback =
         parseObjCBlockSignature(CallbackEncoding, Image.Arch, Error);
     if (Parent)
-      Parent->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+      Parent->Origin = llvm::StringRef(D.Owner) == "SDGraphicsImageRenderer"
+                           ? SourceFunctionTypeHint::OriginKind::ObjCRuntime
+                           : SourceFunctionTypeHint::OriginKind::ObjCSDK;
     if (!Parent || !Callback ||
         !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
         !SameDeclaration(*Expected, *Parent))
       return std::nullopt;
-    if (Type && !DerivesFrom(Type->ClassName, D.Owner))
-      continue;
     const auto Lifetime =
         D.Copied ? ObjCBlockParameterContract::Lifetime::Copied
                  : ObjCBlockParameterContract::Lifetime::NonEscaping;

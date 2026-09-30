@@ -1,0 +1,48 @@
+**اللغات**: [English](../solver.md) | [简体中文](../zh-CN/solver.md) | [繁體中文](../zh-TW/solver.md) | [日本語](../ja/solver.md) | [한국어](../ko/solver.md) | [Français](../fr/solver.md) | [Deutsch](../de/solver.md) | [Español](../es/solver.md) | [Italiano](../it/solver.md) | [Русский](../ru/solver.md) | [العربية](solver.md)
+
+[← فهرس التوثيق](README.md)
+
+# محركات إثبات bitvector
+
+يستخدم NeverD محلل bitvector المضمّن افتراضياً؛ واشتقاق MBA الدقيق مستقل عن المحللات العامة. لا يقبل توليف التعابير مرشحاً إلا بعد إثبات التكافؤ. المثال المضاد أو الاستعلام غير الحاسم يبقي التعبير الأصلي.
+
+## بناء Z3 الاختياري
+
+عند التفعيل، ينزّل CMake عبر `FetchContent` مراجعة Z3 المثبتة 4.13.3 ويبني مكتبة static مع NeverD، ولا يلزم تثبيت Z3 على النظام:
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_ENABLE_Z3=ON -DNEVERD_BUILD_SOLVER_BENCH=ON
+cmake --build build-release --target neverd NeverDSolverTests \
+  NeverDSymbolicTests neverd-solver-bench --parallel 4
+```
+
+الموفر الافتراضي `NEVERD_Z3_PROVIDER=FETCH`. ينزّل التهيئة الأولى المصدر وتعيد البنايات اللاحقة استخدامه في `_deps`. لا تُبنى أداة Z3 أو اختباراتها وأمثلتها ووثائقها وروابط لغاتها؛ وتستخدم مولداته المصدرية Python الموجود لدى NeverD. لتثبيت مكتبة اختر `-DNEVERD_Z3_PROVIDER=SYSTEM` ويمكن تحديد `-DZ3_ROOT=...`؛ يفشل هذا الوضع عند غياب ملفات التطوير ولا يبدّل الموفر بصمت. للبناء دون اتصال يمكن تمرير مصدر محلي عبر `-DFETCHCONTENT_SOURCE_DIR_NEVERD_Z3=...`.
+
+عند `NEVERD_ENABLE_Z3=OFF` (الافتراضي)، لا ينزّل NeverD Z3 ولا يبحث عنه ولا يربطه. طلب backend غير متاح وقت التشغيل يفشل بلا fallback.
+
+## توليف التعابير المشروط بالإثبات
+
+```sh
+build-release/bin/neverd simplify --synthesize --solver=z3 \
+  --solver-timeout-ms=1000 --json '(x >> 4) + ((x >> 2) >> 2)'
+```
+
+`--solver=builtin` هو الافتراضي. اختيار المحلل يتطلب `--synthesize`؛ مبسّط MBA العادي لا يستدعي Z3. يطبق timeout على كل فحص دون ترجمة التعبير، والإلغاء تعاوني لا يمثل مهلة حائطية صارمة. الصفر يستخدم 1000 ms افتراضياً و`--exhaustive` يزيل الحد. حدود التعارض والنشر وزيارات watch تخص backend المضمّن وترفض مع Z3. فحوص Z3 تزيد عداد استعلامات الإثبات؛ وتظل عدادات عمل SAT المضمّن صفراً.
+
+تضيف C API الحقلين `solver_backend` و`solver_timeout_ms` إلى `neverd_synthesize_options`. تحافظ القراءات المحدودة بالحجم على backend المضمّن للمتصلين القدامى. تعرض `neverd_solver_backend_available()` قدرة البناء، وتوفر Python الاختيار نفسه عبر `synthesize_expression(..., solver='z3', solver_timeout_ms=1000)`. ينطبق الاختيار حالياً على توليف التعابير فقط؛ وتبقى سياسات التنفيذ المختلط وتحليل السلامة وتحسين IR كما هي. يمكن للمستخدم الداخلي تمرير متحقق Z3 عبر callback الإثبات للمبسّط الدلالي.
+
+## فحوص مستقلة وتصدير الاستعلامات
+
+عند تفعيل Z3، يحتوي `NeverDSolverTests` تقييماً مستقلاً للتعابير ومقارنة بين المحللين؛ تُبنى التعابير المرجعية مباشرة حتى لا يبسّط خطأ في منشئات NeverD طرفي الاختبار معاً. عند التعطيل تُتخطى حالات oracle صراحةً مع بقاء فحص عقد backend غير المتاح.
+
+```sh
+build-release/bin/NeverDSolverTests --gtest_brief=1
+build-release/bin/neverd-solver-bench tools/neverd-bench/solver-corpus.txt \
+  --width=32 --repeat=5 --backend=both --timeout-ms=1000 \
+  --max-conflicts=10000 --dump-dir=/tmp/neverd-queries
+```
+
+كل سطر غير تعليق في corpus هو `original ; candidate`؛ وإذا غاب الفاصل يستخدم المرشح نتيجة مبسّط MBA. يسجل البرنامج الأحكام وإعادة تشغيل النموذج والتوقيت، شاملاً إنشاء الجلسة والترجمة والحل ومستثنياً التحليل والتبسيط والتصدير والتنظيف. لكل تكرار محلل جديد. يجب أن يعيد SAT model إنتاج الفرق في evaluator؛ الأحكام الحاسمة المتعارضة والاستعلامات أو النماذج غير الصالحة تفشل، أما `unknown` فيسجل ولا يعد إثبات تكافؤ.
+
+يتضمن SMT-LIB المصدّر DAG الأصلي والتأكيدات الدائمة وافتراضات الاستعلام الأخير، ويمكن تشغيله بـ`z3 query-N.smt2`. سجّل حدود الموارد وإصدار المحلل؛ وحدات ميزانية backendين مختلفة، لذا المقارنة ضمن أحمال محدودة وليست عملاً متطابقاً. تستخدم براهين bitvector دلالات اللغة الكلية ذات العرض الثابت؛ تظل استثناءات الآلة وآثار الذاكرة وLLVM poison مسؤولية حدود الرفع والترجمة ولا يثبتها برهان التعبير.

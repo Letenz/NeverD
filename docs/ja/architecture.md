@@ -471,6 +471,24 @@ Capstone ライブラリは網羅しません。
 誤って SDK の一部にしないでください。安定した外部操作は純粋 C ヘッダーと、
 責務を絞った `lib/sdk/NeverDCAPI*.cpp` のいずれかに置きます。
 
+## CPU 実行と workload の境界
+
+CPU 実行はゲスト OS と image から独立しています。OS policy と process の入口は transport や ISA と分離されています。
+
+| コンポーネント | 責務 |
+|---|---|
+| `NeverDEmulationCore` | memory、fault、register、共有実行ループ |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP transport と portable な Unicorn 実行 |
+| `NeverDEmulationCPU` | contract admission、ISA state、backend 選択 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | integer ABI、CPU session、workload budget |
+| `NeverDEmulationImage` | loader segment の mapping plan |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 起動、Linux service policy、process report |
+| `NeverDEmulation` | Windows model と driver lifecycle |
+
+CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
+
+`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
+
 ## strict lifting の契約
 
 `Decoder` と各アーキテクチャ lifter は strict モードで開始します。Capstone が
@@ -738,3 +756,7 @@ AArch64 のソース束縛では、スカラーのビット列がイメージア
 値ウィットネスコードが使う非公開の Swift 構造体または列挙型メタデータは、一意にエクスポートされたメタデータアクセサーを通して、リンク済みイメージ内の同一性を保てる。ソース束縛は、一致する不変の非公開名義型記述子と、非公開メタデータのアドレスを正確に計算する不変の AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` リーフ関数だけを受理する。生成ソースはそのアクセサーを呼び、公開時にバイト列、再配置、シンボル、エクスポートを再検査する。
 
 AArch64 のネイティブ補助関数は、各ベクトル入力の 16 バイトすべてが観測され、先行する浮動小数点引数が前の `q` レジスタを欠けなく占有し、通常の呼び出し・戻り値・スタックフレームの証明が成立する場合に限り、`q0` 以降の完全な入力を値渡しの C ベクトルとして束縛する。HighC はソース境界でビット単位に変換する。`x0`/`x1` の 128 ビット整数は別の ABI である。部分レーン、浮動小数点レジスタ列の欠落、非ネイティブ宣言は対象外とする。
+
+入れ子の Objective-C スタック Block がメソッドレシーバのクラスを引き継げるのは、現在のパイプライン結果で親 Block による強参照キャプチャと、子 Block による同じフィールドの完全な所有付きコピーが証明された場合だけである。検出はその結果の中で有界の不動点まで反復し、次のパイプライン実行では証明をやり直す。セレクタ、型指定のない `id`、レシーバが限定されない Block 利用箇所だけでは、レシーバのクラス、呼び出し ABI、Block の寿命を確定できない。 16 バイトのコンテキストコピーでこの証明が保たれるのは、対応する 8 バイトのレーンが検証済みの各親 Block リテラル内に完全に収まる場合だけであり、部分的または並べ替えたレーンでは保たれない。
+
+検証済みの Block ディスクリプタは本体が受理される前に invoke ABI を与えられる。利用側の呼び出しは同じ検証済み Block 計画のレシーバキャプチャを使い、公開には本体と寿命の独立した証明が引き続き必要となる。

@@ -8,9 +8,11 @@ NeverD のオプションのドライバーエミュレーターは、対応す�
 
 ## 実行バックエンド
 
-既定の `driver-strict` 契約は引き続き Unicorn を使用します。実験的な整数専用契約 `checked-x64-v1` では、`--backend auto` が Linux x86_64 で KVM、Windows x64 で WHP を選択します。明示的な選択はフォールバックせず、利用不可や契約の不一致は実行前にエラーになります。
+既定の `driver-strict` 契約は引き続き Unicorn を使用します。実験的な限定命令契約 `checked-x64-v1` では、`--backend auto` が Linux x86_64 で KVM、Windows x64 で WHP を選択します。明示的な選択はフォールバックせず、利用不可や契約の不一致は実行前にエラーになります。
 
-命令とメモリアクセスを検査してから単一ステップで実行し、Windows オブジェクトの検査、書き込みの観測、共有エイリアスを維持します。SIMD/x87、REP、ロック、メモリの読み取り変更書き込み、ページ境界をまたぐデータアクセス、MMIO、他の OS やユーザープロセスは未対応です。タイムアウトとキャンセルは有界命令の間で確認し、実行開始後のバックエンド切り替えは行いません。以下のドライバー互換性全体を保証するものではありません。
+ARM64 host では `checked-x64-v1` が x64 guest に Unicorn を使います。各命令と memory access を単一ステップ前に検証し、Windows object check、write observer、RAM alias、CPU-only context を維持します。scalar memory arithmetic、自然境界に整列した locked arithmetic、SETcc、register BT は read/write check 付きで許可し、flag は native execution が管理します。限定 SIMD は legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、masked scalar conversion/subtraction を含みます。16個すべての XMM register と MXCSR は entry/context restore をまたいで保持され、unmasked SIMD exception、DAZ、x87、AVX、未列挙 operation は拒否されます。full-width XMM store はどちらの word も変更する前に、順序付き8-byte write observerを2つ発生させます。unaligned aligned-vector 形式と page 跨ぎ data access は未対応です。
+
+supervisor x64 は1/2/4-byte の aligned scalar MMIO transaction を許可し、device page は native RAM mapping に入りません。MOVS/REP MOVS は restart boundary ごとに1要素だけ実行します。destination observer が device read の commit 前に停止できるよう、device source は副作用のない prepared read を提供する必要があります。Windows register bank はこれを実装し、その他の device は string read を効果発生前に拒否します。device RMW、wide MMIO、port I/O は未対応です。request byte、device state、write event は Unicorn の zero-count REP 終了 hook との差を除いて個別に比較します。KVM は標準 XSAVE interface と FP/SSE presence bit で XMM/MXCSR を転送します。この supervisor contract は user-process environment ではありません。timeout/cancellation は許可済み有界命令間で確認し、一般 async preemption や実行開始後の backend 再起動はありません。組み込み corpus と利用可能な WDK scenario は通常/CFG/relocated image で Unicorn と比較されますが、corpus parity は任意 driver の互換性を保証しません。
 
 ビルド設定は `NEVERD_EMULATION_BACKEND_KVM` と `NEVERD_EMULATION_BACKEND_WHP` です。KVM には `/dev/kvm` へのアクセスが必要です。WHP はシステム DLL を動的にロードし、Windows 上での実行検証が別途必要です。新 C API は `neverd_emulate_driver_backend_json` で、v1 ABI は維持されます。レポートにはバックエンド、契約、選択理由が含まれます。
 

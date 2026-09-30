@@ -708,6 +708,9 @@ ENGLISH_DOCS = (
     Path("docs/python-plugins.md"),
     Path("docs/roadmap.md"),
     Path("docs/testing.md"),
+    Path("docs/cpu-execution.md"),
+    Path("docs/process-emulation.md"),
+    Path("docs/solver.md"),
     Path("docs/windows-exception-reconstruction.md"),
     *(Path(f"docs/{stem}.md") for stem in GUIDE_STEMS),
     Path("docs/driver-emulation.md"),
@@ -734,6 +737,9 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/ios.md"),
         Path(f"docs/{locale}/driver-emulation.md"),
         Path(f"docs/{locale}/interpreter-recovery.md"),
+        Path(f"docs/{locale}/cpu-execution.md"),
+        Path(f"docs/{locale}/process-emulation.md"),
+        Path(f"docs/{locale}/solver.md"),
     )
 
 
@@ -859,6 +865,33 @@ def require_tokens(
     for token in tokens:
         if not token_present(text, token):
             report(errors, f"{display_path(path)}: missing required token {token!r}")
+
+
+def validate_language_selector(
+    path: Path,
+    stem: str,
+    locale: str | None,
+    errors: list[str],
+    view: RepositoryView,
+) -> None:
+    """Require exact Markdown destinations for every guide language link."""
+    first_line = view.read_text(path).splitlines()[0]
+    actual = set(LINK_RE.findall(first_line))
+    if locale is None:
+        expected = {f"{stem}.md", *(f"{item}/{stem}.md" for item in LOCALES)}
+    else:
+        expected = {
+            f"../{stem}.md",
+            f"{stem}.md",
+            *(f"../{item}/{stem}.md" for item in LOCALES if item != locale),
+        }
+    missing = sorted(expected - actual)
+    if missing:
+        report(
+            errors,
+            f"{display_path(path)}: language selector is missing exact link targets: "
+            + ", ".join(missing),
+        )
 
 
 def sbf_c_status_bodies(errors: list[str], view: RepositoryView) -> tuple[str, str]:
@@ -2316,6 +2349,10 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "WdfDeviceEnqueueRequest",
         "framework_usb_idle", "DriverManagedIdleTimeout",
         "WdfDeviceConfigureRequestDispatching",
+        "MOVLHPS",
+        "MOVS/REP MOVS",
+        "MXCSR",
+        "XSAVE",
         "driver-wdm-usb-idle-scenario.json",
         "DxState", "PowerDeviceMaximum", "IdleUsbSelectiveSuspend",
         "KMDF",
@@ -2635,19 +2672,62 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     registered_evm_tests = evm_test_targets(errors, view)
 
     require_tokens(Path("README.md"), ("docs/android.md", "docs/ios.md", "neverd mobile"), errors, view)
-    require_tokens(Path("docs/README.md"), ("android.md", "ios.md"), errors, view)
+    require_tokens(
+        Path("docs/README.md"),
+        ("android.md", "ios.md", "cpu-execution.md", "process-emulation.md", "solver.md"),
+        errors,
+        view,
+    )
 
     selector_tokens = {
         stem: (f"{stem}.md", *(f"{locale}/{stem}.md" for locale in LOCALES))
-        for stem in GUIDE_STEMS
+        for stem in (*GUIDE_STEMS, "cpu-execution", "process-emulation", "solver")
     }
     for stem in GUIDE_STEMS:
+        guide = Path(f"docs/{stem}.md")
         require_tokens(
-            Path(f"docs/{stem}.md"),
-            (*selector_tokens[stem], *GUIDE_REQUIRED_TOKENS[stem]),
-            errors,
-            view,
+            guide, (*selector_tokens[stem], *GUIDE_REQUIRED_TOKENS[stem]), errors, view
         )
+        validate_language_selector(guide, stem, None, errors, view)
+
+    for stem, tokens in (
+        (
+            "cpu-execution",
+            (
+                "ExecutionConfiguration",
+                "neverd_cpu_capabilities_json",
+                "ExecutionExitKind::ServiceRequest",
+                "MXCSR",
+                "TPIDR_EL0",
+            ),
+        ),
+        (
+            "process-emulation",
+            (
+                "linux-elf64-v1",
+                "neverd emulate guest.elf",
+                "NeverDLinuxProcessTests",
+                "ExecutionSession",
+                "ET_DYN",
+                "PT_TLS",
+                "arch_prctl",
+                "NeverDThreadPointerTests",
+            ),
+        ),
+        (
+            "solver",
+            (
+                "NEVERD_ENABLE_Z3",
+                "NEVERD_Z3_PROVIDER",
+                "NeverDSolverTests",
+                "neverd-solver-bench",
+                "--synthesize",
+            ),
+        ),
+    ):
+        guide = Path(f"docs/{stem}.md")
+        require_tokens(guide, (*selector_tokens[stem], *tokens), errors, view)
+        validate_language_selector(guide, stem, None, errors, view)
 
     require_tokens(
         Path("docs/testing.md"),
@@ -2675,6 +2755,9 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             ios_guide,
             _driver_guide,
             _interpreter_guide,
+            cpu_guide,
+            process_guide,
+            solver_guide,
         ) = localized_paths(locale)
         require_tokens(
             _interpreter_guide,
@@ -2683,7 +2766,57 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             errors,
             view,
         )
-        require_tokens(index, ("interpreter-recovery.md",), errors, view)
+        require_tokens(
+            index,
+            ("interpreter-recovery.md", "cpu-execution.md", "process-emulation.md", "solver.md"),
+            errors,
+            view,
+        )
+        for stem, guide, tokens in (
+            (
+                "cpu-execution",
+                cpu_guide,
+                (
+                    "ExecutionConfiguration",
+                    "neverd_cpu_capabilities_json",
+                    "ExecutionExitKind::ServiceRequest",
+                    "MXCSR",
+                    "TPIDR_EL0",
+                ),
+            ),
+            (
+                "process-emulation",
+                process_guide,
+                (
+                    "linux-elf64-v1",
+                    "neverd emulate guest.elf",
+                    "NeverDLinuxProcessTests",
+                    "ExecutionSession",
+                    "ET_DYN",
+                    "PT_TLS",
+                    "arch_prctl",
+                    "NeverDThreadPointerTests",
+                ),
+            ),
+            (
+                "solver",
+                solver_guide,
+                (
+                    "NEVERD_ENABLE_Z3",
+                    "NEVERD_Z3_PROVIDER",
+                    "NeverDSolverTests",
+                    "neverd-solver-bench",
+                    "--synthesize",
+                ),
+            ),
+        ):
+            localized_selector_tokens = (
+                f"../{stem}.md",
+                f"{stem}.md",
+                *(f"../{other}/{stem}.md" for other in LOCALES if other != locale),
+            )
+            require_tokens(guide, (*localized_selector_tokens, *tokens), errors, view)
+            validate_language_selector(guide, stem, locale, errors, view)
         require_tokens(project_readme, ("--devirtualize", "interpreter-recovery.md"), errors, view)
         require_tokens(
             project_readme,
@@ -2727,6 +2860,9 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
                 "NeverDSBFMetadataTests",
                 "NeverDSBFSemanticTests",
                 "NeverDSBFIntegrationTests",
+                "NeverDThreadPointerTests",
+                "NeverDKvmCancellationTests",
+                "DriverBackendParityTests.cpp",
                 "-R 'EVM'",
                 *TESTING_REQUIRED_TOKENS,
             ),

@@ -8,9 +8,11 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 ## 실행 백엔드
 
-기본 `driver-strict` 계약은 Unicorn을 유지합니다. 실험적인 정수 전용 `checked-x64-v1` 계약에서는 `--backend auto`가 Linux x86_64에서 KVM, Windows x64에서 WHP를 선택합니다. 명시적 선택은 대체 백엔드로 전환하지 않으며, 하드웨어나 계약이 맞지 않으면 실행 전에 실패합니다.
+기본 `driver-strict` 계약은 Unicorn을 유지합니다. 실험적인 제한 명령 `checked-x64-v1` 계약에서는 `--backend auto`가 Linux x86_64에서 KVM, Windows x64에서 WHP를 선택합니다. 명시적 선택은 대체 백엔드로 전환하지 않으며, 하드웨어나 계약이 맞지 않으면 실행 전에 실패합니다.
 
-명령과 메모리 접근을 검사한 후 단일 단계로 실행하며 Windows 객체 검사, 쓰기 관찰, 공유 별칭을 유지합니다. SIMD/x87, REP, 잠금, 메모리 읽기-수정-쓰기, 페이지 경계를 넘는 데이터 접근, MMIO, 다른 OS 및 사용자 프로세스는 지원하지 않습니다. 제한된 명령 사이에서 시간 제한과 취소를 확인하며 실행 시작 후 백엔드를 바꿔 재실행하지 않습니다. 아래의 전체 드라이버 호환성을 뜻하지 않습니다.
+ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식과 페이지 간 개별 접근은 미지원입니다.
+
+supervisor x64는 정렬된 1/2/4바이트 스칼라 MMIO 트랜잭션을 허용하며 장치 페이지는 네이티브 RAM mapping에 들어가지 않습니다. MOVS/REP MOVS는 재시작 경계마다 한 요소씩 실행합니다. destination observer가 device read commit 전에 중지할 수 있도록 device source는 부작용 없는 prepared read를 제공해야 합니다. Windows register bank는 이를 지원하고, 다른 장치는 string read를 효과 발생 전에 거부합니다. device RMW, 넓은 MMIO, 포트 I/O는 미지원입니다. 요청 바이트, 장치 상태, 쓰기 event는 Unicorn의 zero-count REP 종료 hook 차이와 별도로 비교합니다. KVM은 표준 XSAVE interface와 FP/SSE presence bit로 XMM/MXCSR를 전달합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. timeout/cancel은 허용된 유한 명령 사이에서 검사하며 일반 비동기 선점이나 시작 후 backend 재시작은 없습니다. 내장 corpus와 사용 가능한 WDK 시나리오는 일반/CFG/재배치 image에서 Unicorn과 비교하지만 corpus 일치가 임의 드라이버 호환성을 보장하지는 않습니다.
 
 빌드 옵션은 `NEVERD_EMULATION_BACKEND_KVM`, `NEVERD_EMULATION_BACKEND_WHP`입니다. KVM은 `/dev/kvm` 접근 권한이 필요합니다. WHP는 시스템 DLL을 동적으로 로드하며 Windows 실기 실행 검증이 필요합니다. 새 C API는 `neverd_emulate_driver_backend_json`이며 v1 ABI는 유지됩니다. 보고서는 백엔드, 계약과 선택 이유를 기록합니다.
 

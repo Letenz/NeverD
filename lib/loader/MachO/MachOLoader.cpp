@@ -85,6 +85,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
   BinaryImage Img;
   Img.Format = BinaryFormat::MachO;
   Img.IsRelocatable = Obj.getHeader().filetype == MH_OBJECT;
+  Img.MachOIsDylib = Obj.getHeader().filetype == MH_DYLIB;
   llvm::StringRef ObjBytes = Obj.getData();
   Img.Raw.assign(reinterpret_cast<const uint8_t *>(ObjBytes.data()),
                  reinterpret_cast<const uint8_t *>(ObjBytes.data()) +

@@ -500,6 +500,24 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 的一部分：稳定的外部操作应放入纯 C 头文件及某个职责明确的
 `lib/sdk/NeverDCAPI*.cpp` 文件。
 
+## CPU 执行与工作负载边界
+
+CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、ISA 分离。
+
+| 组件 | 职责 |
+|---|---|
+| `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 传输与可移植 Unicorn 执行 |
+| `NeverDEmulationCPU` | 契约接纳、ISA 状态与后端选择 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整数 ABI、CPU 会话与工作负载预算 |
+| `NeverDEmulationImage` | 加载器分段映射计划 |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 启动、Linux 服务策略与进程报告 |
+| `NeverDEmulation` | Windows 模型与驱动生命周期 |
+
+CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构、特权、地址位宽和功能。`ExecutionBudget` 为每个工作负载持有共享指令／事件计数和绝对单调 deadline；恢复执行不会重置预算。`ExecutionSession` 管理 CPU、hooks 及待处理的服务／故障续接。会话可共享内存和预算，但采用协作调度，不是并行 SMP。恢复前必须恰好消费一次待处理请求。CPU 故障优先于资源停止；无法解释的引擎停止不代表工作负载成功。
+
+`ImageMappingPlan` 使用加载器已有分段，不重新解析 header，也不解析 imports；在发布地址空间前验证完整范围和重叠。明确的 `linux-elf64-v1` 配置以初始栈、显式服务请求和有界字节输出运行 x64/AArch64 freestanding ELF `ET_EXEC` 与静态 PIE `ET_DYN`。动态链接、dynamic TLS、信号、OS 线程和不支持的服务会失败；静态 TLS 与有限的 x64 SSE/SSE2 可用；不会从 KVM 推断 Linux，也不会从 WHP 推断 Windows。详见[CPU 执行](cpu-execution.md)与[来宾进程模拟](process-emulation.md)。这不表示支持 Windows 用户态、Android 或 Darwin 应用。
+
 ## 严格提升契约
 
 `Decoder` 和每个架构 lifter 默认以严格模式启动。如果 Capstone 可以解码一条
@@ -740,3 +758,7 @@ HighIR 的共享私有栈帧地址证明在目标位宽整数加法中接受两�
 值见证代码使用的私有 Swift 结构体或枚举元数据，可以通过唯一导出的元数据访问函数保留其在已链接映像中的身份。源码绑定只接受匹配的不可变私有名义类型描述符，以及精确计算该私有元数据地址的不可变 AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` 叶函数；生成的源码调用该访问函数，发布时重新检查字节、重定位、符号和导出记录。
 
 AArch64 原生辅助函数只有在完整观测每个向量输入的 16 个入口字节、较早的浮点参数连续占用前面的 `q` 寄存器，且常规调用、返回与栈帧证明成立时，才能把 `q0` 或后续 `q` 输入绑定为按值传递的 C 向量。HighC 在源码边界按位转换该载荷；`x0`/`x1` 中的 128 位整数属于不同的 ABI。部分通道、浮点寄存器序列中的空缺以及非原生声明仍不支持。
+
+嵌套 Objective-C 栈 Block 只有在当前流水线结果证明父 Block 强引用捕获方法接收者、且子 Block 完整地复制并持有同一字段时，才能继承该接收者的类。发现过程在本次结果内进行有界不动点迭代；下一次流水线运行必须重新证明整条链。选择器、裸 `id` 或未限定接收者的 Block 消费者都不能单独确立接收者类、调用 ABI 或 Block 生命周期。 16 字节上下文复制只有在对应的 8 字节通道完整落入每个已验证父 Block 实体时才保留该证明；部分或重排的通道不会保留。
+
+已验证的 Block 描述符可以在 invoke 函数体被接受之前提供调用 ABI；消费者调用只使用同一份已验证 Block 方案中的接收者捕获证明，发布仍须独立证明函数体和生命周期。

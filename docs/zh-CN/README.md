@@ -14,6 +14,9 @@
 | [贡献指南](CONTRIBUTING.md) | 开发环境、构建配置、工作流、风格与 PR 要求 |
 | [架构](architecture.md) | IR 路径、组件边界、严格提升、支持深度与修改位置 |
 | [测试](testing.md) | 测试套件、生成 fixture、Unicorn 往返与增量命令 |
+| [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
+| [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
+| [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
 | [解释器源码恢复](interpreter-recovery.md) | 实验性 x64 解释器特化、HighC/LLVMC 输出、执行前提、证据与限制; 嵌套循环证明候选; 显式发现预算和版本化 C API |
 | [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM 初始化、串行缓冲／直接请求、工作项、定时器、DPC、事件与等待，以及行为报告和限制; KMDF 1.33 非 PnP 驱动／对象生命周期和经过验证的 x64 CFG |
 | [Windows 异常重建](windows-exception-reconstruction.md) | SEH/C++ 展开支持矩阵、IR 契约、原生 patch 规则与 PE 验证 |

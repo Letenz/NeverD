@@ -1307,7 +1307,8 @@ public:
       Result.Entry = *Entry;
       Result.Nodes.reserve(Nodes.size());
       for (auto &N : Nodes)
-        Result.Nodes.push_back({N.Statement, N.Test, std::move(N.Next)});
+        Result.Nodes.push_back(
+            {N.Statement, N.Test, std::move(N.Next), std::move(N.EdgeTruth)});
     } catch (const Failure &Error) {
       Diagnostics.Complete = false;
       Diagnostics.add(Error.Issue, Error.Reason, Error.Address);

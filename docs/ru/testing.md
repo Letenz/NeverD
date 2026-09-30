@@ -101,6 +101,35 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` проверяет сохранение неизвестных конечных позиций обязательных регистровых аргументов. Вычисление неизвестного обязательного аргумента или условия должно явно вызывать trap; пропущенные, пустые и вложенные операнды нельзя молча заменять нулём. Известные значения и дополнительные операнды, отсутствие чтения которых доказано, остаются исполняемыми. Trap обозначает диагностическую границу, а не доказательство эквивалентности восстановленного поведения.
 
+## Проверки выполнения CPU
+
+`NeverDIntegerABITests` собирает оригинальные Clang-fixture для Windows x64, Linux x64 и Linux ARM64. Реальные функции с десятью аргументами проверяют регистры, стек и кадры вызовов. В матрице Unicorn/KVM/WHP недоступные сочетания хост/ISA явно пропускаются; пропуск не является успехом. `NeverDExecutionBudgetTests` проверяет общие бюджеты продолжений, резервирования и абсолютный deadline без временных задержек.
+
+`NeverDCPUEmulationTests` охватывает инструкции ARM64, управление, загрузки, контексты, алиасы, инвалидацию кэша и ограниченные циклы; software-профиль также исполняет FP/SIMD и TLS. `NeverDUserExecutionTests` проверяет права CPL3/EL0, алиасы, ошибки защиты, контексты и смену пространства. `NeverDServiceRequestTests` подтверждает перехват SYSCALL/SVC до транспорта, сохранение состояния и однократное потребление запроса. Это протокол передачи управления, не полная модель служб ОС. `NeverDExecutionConfigurationTests` проверяет общий resolver, отделение поддержки сборки от live probe и fail-closed отклонение неподдерживаемых настроек. Публичные тесты SDK/CLI не требуют модели Windows. `NeverDThreadPointerTests` проверяет FS-base, `TPIDR_EL0`, восстановление контекста и права. `NeverDKvmCancellationTests` использует не завершающегося x64-гостя для проверки прерывания активного KVM-входа, возобновления и неизменности сигналов вызывающего процесса; без KVM тест явно пропускается.
+
+```bash
+cmake --build build-cpu --target NeverDKvmRunTests NeverDKvmCancellationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverDKvm(Run|Cancellation)Tests$' --output-on-failure
+```
+
+```bash
+cmake --build build-cpu --target NeverDIntegerABITests NeverDExecutionBudgetTests NeverDCPUEmulationTests NeverDUserExecutionTests NeverDServiceRequestTests NeverDExecutionConfigurationTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|UserExecution|ServiceRequest|ExecutionConfiguration)Tests$' --output-on-failure
+```
+
+Отсутствие ARM64-оборудования или гипервизора означает пропуск нативного покрытия, а не успешную проверку. Unicorn и кросс-компиляция не подтверждают нативное KVM/WHP.
+
+## Тесты профиля Linux-процессов
+
+Независимые [тесты процессов](process-emulation.md#проверка) собирают реальные ELF-fixture x64/AArch64. `NeverDLinuxProcessTests` проверяет запуск, политику program headers, продолжение служб, двоичный вывод, гостевые ошибки и ресурсные остановки. `NeverDProcessPublicTests` проверяет C API/CLI без изменения образа анализа. `NeverDExecutionSessionTests` проверяет два CPU с общей памятью/бюджетом и однократное потребление запросов/ошибок. `NeverDX64MemoryUpdateTests` проверяет арифметику памяти, SETcc, BT, XMM/MXCSR, наблюдатели записи, границы REP и подготовленные чтения устройств. `DriverBackendParityTests.cpp` запускает исходные и перемещённые WDK-fixture и сравнивает полный наблюдаемый отчёт с Unicorn; отсутствующие образы/backend явно пропускаются.
+
+```bash
+cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
+ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
+```
+
+Недоступные бэкенды явно пропускаются. Кросс-компиляция и Unicorn ARM64 не доказывают нативное KVM/WHP.
+
 ## Проверки эмуляции драйверов
 
 Включите `NEVERD_ENABLE_DRIVER_EMULATION=ON` вместе с `BUILD_TESTING=ON`, чтобы собрать специализированный набор тестов выполнения и проверки общего C API/CLI:

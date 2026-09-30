@@ -103,6 +103,9 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "resignFirstResponder", "B16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "safeAreaLayoutGuide", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "scale", "d16@0:8", nullptr},
+// UIColor's public no-argument instance method has this exact arm64 ABI;
+// unqualified selector use is admitted only when local declarations agree.
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setStroke", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "sendActionsForControlEvents:", "v24@0:8Q16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAccessibilityIgnoresInvertColors:", "v20@0:8B16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAttributedText:", "v24@0:8@16", nullptr},

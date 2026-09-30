@@ -8,6 +8,8 @@ NeverD 可以將 Python 檔案作為第一級外掛載入。Python 外掛與原�
 
 ## 建置與執行需求
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` 可獨立於已載入映像提供 [CPU 組態報告](cpu-execution.md)。選用 JSON 組態由 native API 解析。靜態支援能力與即時主機可用性保持區分；probe 僅檢查初始化。主機建置必須啟用 CPU 或驅動程式模擬。
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` 預設為 `ON`。啟用後，CMake 必須能找到 CPython 3.10 或更新版本的直譯器及嵌入開發程式庫：
 
 ```bash

@@ -10,6 +10,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
@@ -35,6 +36,8 @@ struct ObjCStackBlockSource {
   std::map<const HighExpr *, uint64_t> HeaderConstants;
 };
 struct ObjCBlockSourcePlan {
+  const BinaryImage *SourceImage = nullptr;
+  const PipelineResult *SourceResult = nullptr;
   std::map<va_t, ObjCBlockLiteral> Globals;
   std::map<va_t, ObjCBlockDescriptor> Descriptors;
   std::map<va_t, SourceFunctionTypeHint> InvokeHints;
@@ -86,10 +89,12 @@ struct Value {
     Invoke,
     Isa,
     OpaqueBytes,
+    CapturedBytes, // exact 16-byte context range, with its source offset
     PointerBits,
     Receiver,
     CapturedWord,
-    UnprovenIdentity
+    UnprovenIdentity,
+    OutParameter // exact non-context formal pointer in a proven block invoke
   } K = Scalar;
   int64_t Offset = 0;
   uint64_t Bits = 0;
@@ -131,7 +136,11 @@ inline bool validDescriptor(const ObjCBlockDescriptor &D) {
       (D.CopyHelper && (!D.CopyTypeHint || !D.DisposeTypeHint)))
     return false;
   return std::all_of(D.Captures.begin(), D.Captures.end(), [&](const auto &R) {
+    // An authenticated unretained field is copied as raw bytes. It has no
+    // ownership helper to recover, and the rebuilt descriptor keeps that
+    // layout so Block_copy cannot acquire a retain that the source lacked.
     return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes ||
+           R.StorageKind == ObjCBlockCaptureRange::Kind::Unretained ||
            (R.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
             D.CopyHelper);
   });
@@ -276,8 +285,12 @@ public:
     if (E->Kind == ExprKind::Var) {
       const auto Found =
           Locals.find(objc_projection_detail::localIdentity(E->Var));
-      if (Found != Locals.end())
-        return established(Found->second);
+      if (Found != Locals.end()) {
+        auto V = established(Found->second);
+        return V.K == Value::OutParameter && (Bytes != 8 || E->Var.Size != 8)
+                   ? Value{}
+                   : V;
+      }
       if (E->Var.Kind == MedVar::Param && E->Var.Id == 0 &&
           E->Var.SSAVer == 0 && E->Var.RenameTag < 0 && Bytes == 8 &&
           Function.SourceTypeHint) {
@@ -287,6 +300,18 @@ public:
             objc_projection_detail::sameHint(*Function.SourceTypeHint,
                                              *Signature))
           return {Value::Receiver, 0, Function.Entry, Root->ClassName, E.get()};
+      }
+      if (E->Var.Kind == MedVar::Param && E->Var.Id >= 2 &&
+          E->Var.SSAVer == 0 && E->Var.RenameTag < 0 && Bytes == 8 &&
+          E->Var.Id < Function.Params.size() && Function.SourceTypeHint) {
+        const auto Root = objcMethodParameterReceiverTypeHint(
+            Image, Function.Entry, unsigned(E->Var.Id));
+        const auto Signature = objcMethodSourceTypeHint(Image, Function.Entry);
+        if (Root && Signature &&
+            objc_projection_detail::sameHint(*Function.SourceTypeHint,
+                                             *Signature))
+          return {Value::Receiver, int64_t(E->Var.Id), Function.Entry,
+                  Root->ClassName, E.get()};
       }
       if (E->Var.Kind == MedVar::Param && E->Var.RenameTag < 0)
         return {};
@@ -363,7 +388,8 @@ public:
         return V;
       }
       if (Bytes == E->Operands[0]->Type->Size &&
-          (Bytes == 8 || V.K == Value::OpaqueBytes))
+          (Bytes == 8 || V.K == Value::OpaqueBytes ||
+           V.K == Value::CapturedBytes))
         return V;
       // Deferred image bytes are an ordinary loaded value, not a pointer
       // identity. A width conversion loses the raw header-byte recipe while
@@ -512,7 +538,54 @@ public:
     }
     FrameValues[{Address.Offset, Bytes}] = V;
   }
+  void forgetFrameRange(int64_t Offset, unsigned Bytes) {
+    if (!frameRange(Function, Offset, Bytes))
+      throw Invalid("block frame borrow exceeds its recovered frame storage");
+    for (auto It = FrameValues.begin(); It != FrameValues.end();)
+      if (It->first.first < Offset + Bytes &&
+          Offset < It->first.first + It->first.second)
+        It = FrameValues.erase(It);
+      else
+        ++It;
+    FrameIdentityBytes.erase(FrameIdentityBytes.lower_bound(Offset),
+                             FrameIdentityBytes.lower_bound(Offset + Bytes));
+  }
 };
+
+using FastEnumerationFrameBorrow = std::array<std::pair<int64_t, unsigned>, 2>;
+
+/// One bounded storage contract for both literal construction and invoke
+/// ownership. Each caller additionally checks its live block ranges. Borrowed
+/// output bytes cannot retain their pre-call scalar or identity facts.
+template <typename CallProof, typename DisjointProof>
+std::optional<FastEnumerationFrameBorrow> boundedFastEnumerationBorrow(
+    const BinaryImage &Image, const HighFunc &Function, const HighExpr &E,
+    const std::vector<Value> &Arguments, const Values &State,
+    CallProof CallBound, DisjointProof Disjoint) {
+  const auto &Binding = E.SourceCallHint;
+  if (!Binding || Binding->CallKind != CallKind::ObjCMessage ||
+      Binding->Selector != "countByEnumeratingWithState:objects:count:" ||
+      !Binding->Receiver || Arguments.size() != 5 ||
+      Arguments[2].K != Value::Frame || Arguments[3].K != Value::Frame ||
+      Arguments[4].K != Value::Number || !Arguments[4].Bits ||
+      Arguments[4].Bits > (1u << 16) || !CallBound(E))
+    return std::nullopt;
+  const auto Class = objcReceiverInstanceClassName(Image, *Binding->Receiver);
+  if (!Class || (*Class != "NSArray" && *Class != "NSEnumerator"))
+    return std::nullopt;
+  // NSFastEnumerationState has eight pointer-sized words. The output buffer
+  // is bounded by `count` object pointers, independently of the literal size.
+  const FastEnumerationFrameBorrow Ranges{
+      std::pair{Arguments[2].Offset, 64u},
+      std::pair{Arguments[3].Offset,
+                static_cast<unsigned>(Arguments[4].Bits) * 8}};
+  for (const auto &[Offset, Bytes] : Ranges)
+    if (!frameRange(Function, Offset, Bytes) ||
+        State.frameRangeContainsPointerIdentity(Offset, Bytes) ||
+        !Disjoint(Offset, Bytes))
+      return std::nullopt;
+  return Ranges;
+}
 
 /// Transfer every reachable emitted edge to a bounded fixed point. A failed
 /// transfer or join invalidates the entire proof, including earlier visits.
@@ -570,7 +643,8 @@ noEscape(const ObjCBlockSourceContext &Source,
          std::set<std::pair<va_t, size_t>> &Active, std::string &Reason,
          const std::set<uint64_t> *WritableStrongFields = nullptr,
          std::map<uint64_t, std::set<uint64_t>> *AssignmentFlags = nullptr,
-         const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr) {
+         const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr,
+         bool AllowIndependentOutParameterStores = false) {
   try {
     if (Active.size() >= 16 || !Active.insert({Entry, Parameter}).second)
       throw Invalid("block consumer recursion is not established");
@@ -584,6 +658,33 @@ noEscape(const ObjCBlockSourceContext &Source,
       throw Invalid("block consumer has no recovered parameter binding");
     const auto &F = *Found->second;
     Values State(Source, F, Parameter);
+    if (AllowIndependentOutParameterStores && F.SourceTypeHint &&
+        F.Params.size() == F.SourceTypeHint->Parameters.size()) {
+      for (size_t I = 0; I < F.Params.size(); ++I) {
+        if (I == Parameter)
+          continue;
+        const auto &Recovered = F.Params[I].Type;
+        const auto &Declared = F.SourceTypeHint->Parameters[I].Type;
+        if (!Recovered || !Declared || Recovered->Kind != NdTypeKind::Ptr ||
+            Declared->Kind != NdTypeKind::Ptr || Recovered->Size != 8 ||
+            !equalSourceTypes(Recovered, Declared))
+          continue;
+        MedVar Formal;
+        Formal.Kind = MedVar::Param;
+        Formal.Id = static_cast<int>(I);
+        Formal.Size = 8;
+        State.Locals[objc_projection_detail::localIdentity(Formal)] = {
+            Value::OutParameter, 0, I};
+      }
+    }
+    const auto CallBound = [&](const HighExpr &E) {
+      return objcSourceCallBound(
+          E, Source.Image, Functions, nullptr, nullptr, &F,
+          ValidatedNestedBlocks ? &ValidatedNestedBlocks->ParameterReceivers
+                                : nullptr,
+          ValidatedNestedBlocks ? &ValidatedNestedBlocks->CaptureReceivers
+                                : nullptr);
+    };
     if (WritableStrongFields && Parameter == 0 && F.Params.size() > 1) {
       MedVar SourceBlock;
       SourceBlock.Kind = MedVar::Param;
@@ -620,7 +721,7 @@ noEscape(const ObjCBlockSourceContext &Source,
           Arguments[2].K == Value::Number &&
           (Arguments[2].Bits == StrongObjectFieldFlag ||
            Arguments[2].Bits == StrongBlockFieldFlag) &&
-          objcSourceCallBound(E, Source.Image, Functions)) {
+          CallBound(E)) {
         if (AssignmentFlags) {
           const bool ExactSource = Arguments[1].K == Value::CapturedWord &&
                                    Arguments[1].Offset == Arguments[0].Offset;
@@ -641,47 +742,25 @@ noEscape(const ObjCBlockSourceContext &Source,
                           "explicit argument");
         return {};
       }
-      auto BoundedFastEnumerationBorrow = [&](size_t Parameter) {
-        if ((Parameter != 2 && Parameter != 3) || !B ||
-            B->CallKind != CallKind::ObjCMessage ||
-            B->Selector != "countByEnumeratingWithState:objects:count:" ||
-            !B->Receiver || Arguments.size() != 5 ||
-            !objcSourceCallBound(E, Source.Image, Functions) ||
-            objcReceiverInstanceClassName(Source.Image, *B->Receiver) !=
-                std::optional<std::string>{"NSArray"} ||
-            Arguments[2].K != Value::Frame ||
-            Arguments[3].K != Value::Frame ||
-            Arguments[4].K != Value::Number || !Arguments[4].Bits ||
-            Arguments[4].Bits > (1u << 16))
-          return false;
-        // NSFastEnumerationState has eight pointer-sized words. The SDK
-        // contract bounds the output buffer by `count` object pointers.
-        // Neither borrowed range may touch a private block or context word.
-        const auto Count = static_cast<unsigned>(Arguments[4].Bits);
-        const auto Disjoint = [&](int64_t Offset, unsigned Bytes) {
-          if (State.frameRangeContainsPointerIdentity(Offset, Bytes))
-            return false;
-          if (!ValidatedNestedBlocks)
-            return true;
-          const auto Blocks = ValidatedNestedBlocks->StackBlocks.find(Entry);
-          if (Blocks == ValidatedNestedBlocks->StackBlocks.end())
-            return true;
-          return std::none_of(Blocks->second.begin(), Blocks->second.end(),
-                              [&](const ObjCStackBlockSource &Block) {
-                                return Offset < Block.FrameOffset +
-                                                    Block.Descriptor.LiteralSize &&
-                                       Block.FrameOffset < Offset + Bytes;
-                              });
-        };
-        return frameRange(F, Arguments[2].Offset, 64) &&
-               frameRange(F, Arguments[3].Offset, Count * 8) &&
-               Disjoint(Arguments[2].Offset, 64) &&
-               Disjoint(Arguments[3].Offset, Count * 8);
-      };
+      const auto EnumerationBorrow = boundedFastEnumerationBorrow(
+          Source.Image, F, E, Arguments, State, CallBound,
+          [&](int64_t Offset, unsigned Bytes) {
+            if (!ValidatedNestedBlocks)
+              return true;
+            const auto Blocks = ValidatedNestedBlocks->StackBlocks.find(Entry);
+            if (Blocks == ValidatedNestedBlocks->StackBlocks.end())
+              return true;
+            return std::none_of(Blocks->second.begin(), Blocks->second.end(),
+                                [&](const ObjCStackBlockSource &Block) {
+                                  return Offset <
+                                             Block.FrameOffset +
+                                                 Block.Descriptor.LiteralSize &&
+                                         Block.FrameOffset < Offset + Bytes;
+                                });
+          });
       for (size_t I = 0; I < Arguments.size(); ++I) {
         const auto &A = Arguments[I];
-        if (A.K == Value::Frame && ValidatedNestedBlocks &&
-            objcSourceCallBound(E, Source.Image, Functions)) {
+        if (A.K == Value::Frame && ValidatedNestedBlocks && CallBound(E)) {
           // The construction proof validated this exact call and frame base,
           // including every capture byte. It rejects context/frame identities
           // in captures, while the consumer owns only the nested literal.
@@ -701,7 +780,7 @@ noEscape(const ObjCBlockSourceContext &Source,
         // rejected conservatively.
         if (A.K == Value::Frame && !State.frameContainsPointerIdentity())
           continue;
-        if (A.K == Value::Frame && BoundedFastEnumerationBorrow(I))
+        if (A.K == Value::Frame && EnumerationBorrow && (I == 2 || I == 3))
           continue;
         if (A.K == Value::Frame || A.K == Value::Invoke || A.K == Value::Isa ||
             A.K == Value::PointerBits || A.K == Value::UnprovenIdentity)
@@ -715,6 +794,9 @@ noEscape(const ObjCBlockSourceContext &Source,
           throw Invalid(
               "block address flows to an unproven synchronous consumer");
       }
+      if (EnumerationBorrow)
+        for (const auto &[Offset, Bytes] : *EnumerationBorrow)
+          State.forgetFrameRange(Offset, Bytes);
       return {};
     };
     auto Evaluate = [&](const HighSourceFlowNode &Node) {
@@ -761,6 +843,21 @@ noEscape(const ObjCBlockSourceContext &Source,
           State.storeFrame(Address, Bytes, V);
           break;
         }
+        // A descriptor-bound invoke may write an explicit out parameter. Its
+        // original formal pointer is independent of the private block context;
+        // the value still must not contain any context or frame identity.
+        // Copy/dispose helpers and recursively proved native consumers do not
+        // receive this permission.
+        const auto OutIndex = Address.Bits;
+        const auto IndependentOutParameter =
+            AllowIndependentOutParameterStores &&
+            Address.K == Value::OutParameter && F.SourceTypeHint &&
+            OutIndex < F.SourceTypeHint->Parameters.size() &&
+            F.SourceTypeHint->Parameters[OutIndex].Type &&
+            F.SourceTypeHint->Parameters[OutIndex].Type->Pointee &&
+            Bytes <= F.SourceTypeHint->Parameters[OutIndex].Type->Pointee->Size;
+        if (IndependentOutParameter && !pointerIdentity(V))
+          break;
         // A complete image range is disjoint from the private frame/context.
         // It can receive ordinary values, but never a private pointer. The
         // source-data owner still has to validate and relocate the actual
@@ -867,7 +964,8 @@ inline bool publish(ObjCBlockSourcePlan &Plan,
 inline std::vector<ObjCStackBlockSource>
 stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             const std::map<va_t, const HighFunc *> &Functions,
-            std::string &Reason) {
+            const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers,
+            uint64_t ParentLiteralSize, std::string &Reason) {
   const auto &Image = Source.Image;
   // A stack literal needs a store for its ISA/header. Avoid constructing a
   // source-flow graph for the many native functions that cannot build one.
@@ -946,7 +1044,37 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
   bool SawIsa = false;
   va_t FailedAt = InvalidVA;
   try {
-    Values State(Source, Function);
+    Values State(Source, Function,
+                 ParentReceivers ? std::optional<size_t>(0) : std::nullopt);
+    if (ParentReceivers)
+      State.ContextRead = [&](const Value &Address, unsigned Bytes) -> Value {
+        if (Address.Offset < 32 ||
+            static_cast<uint64_t>(Address.Offset) + Bytes > ParentLiteralSize)
+          return {};
+        if (Bytes == 16) {
+          // The vector remains opaque except for an authenticated 8-byte
+          // receiver lane. Its other bytes acquire no object or pointer type.
+          for (unsigned Lane : {0u, 8u})
+            if (ParentReceivers->count(Address.Offset + Lane))
+              return {Value::CapturedBytes, Address.Offset};
+          return {Value::OpaqueBytes};
+        }
+        if (Bytes != 8)
+          return {};
+        const auto Root = ParentReceivers->find(Address.Offset);
+        if (Root == ParentReceivers->end())
+          return {};
+        return {Value::Receiver, Address.Offset, Root->second.Address,
+                Root->second.ClassName};
+      };
+    std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>> CaptureProof;
+    if (ParentReceivers)
+      CaptureProof.emplace(Function.Entry, *ParentReceivers);
+    const auto CallBound = [&](const HighExpr &E) {
+      return objcSourceCallBound(E, Image, Functions, nullptr, nullptr,
+                                 &Function, nullptr,
+                                 ParentReceivers ? &CaptureProof : nullptr);
+    };
     auto UntouchedEntryPointer = [&](const ExprPtr &Expr,
                                      auto &&Visit) -> bool {
       if (!Expr || !Expr->Type || Expr->Type->Size != 8)
@@ -1030,10 +1158,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       Result.InvokeEntry = Invoke.Bits;
       Result.Descriptor = *D;
       for (unsigned I = 0; I < 8; ++I) {
-        const auto &V = Memory.at(Base + 8 + I).V;
-        if (V.K == Value::ImageBits)
-          Result.HeaderConstants.emplace(V.Producer,
-                                         PooledHeaderValues.at(V.Producer));
+        const auto Byte = Memory.find(Base + 8 + I);
+        if (Byte == Memory.end())
+          throw Invalid("block flags and reserved bytes are not completely "
+                        "initialized");
+        const auto &V = Byte->second.V;
+        if (V.K == Value::ImageBits) {
+          const auto Constant = PooledHeaderValues.find(V.Producer);
+          if (Constant == PooledHeaderValues.end())
+            throw Invalid("block header load has no immutable scalar byte "
+                          "binding");
+          Result.HeaderConstants.emplace(V.Producer, Constant->second);
+        }
       }
       for (uint64_t Offset = 32; Offset < D->LiteralSize; ++Offset) {
         auto B = Memory.find(Base + static_cast<int64_t>(Offset));
@@ -1058,25 +1194,47 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         for (uint64_t Offset = Capture.Offset;
              Offset + 8 <= Capture.Offset + Capture.Size; Offset += 8) {
           const auto Begin = Memory.find(Base + static_cast<int64_t>(Offset));
-          if (Begin == Memory.end() || Begin->second.Index ||
-              Begin->second.Width != 8)
+          if (Begin == Memory.end() ||
+              (Begin->second.Index && Begin->second.Index != 8) ||
+              (Begin->second.Width != 8 && Begin->second.Width != 16))
             continue;
           const auto &Captured = Begin->second.V;
           bool Complete = true;
           for (unsigned I = 1; I < 8; ++I) {
             const auto Byte =
                 Memory.find(Base + static_cast<int64_t>(Offset) + I);
-            Complete &= Byte != Memory.end() && Byte->second.Index == I &&
-                        Byte->second.Width == 8 &&
+            Complete &= Byte != Memory.end() &&
+                        Byte->second.Index == Begin->second.Index + I &&
+                        Byte->second.Width == Begin->second.Width &&
                         Byte->second.V.Producer == Captured.Producer;
           }
           if (!Complete)
             continue;
-          if (Captured.K != Value::Receiver || Captured.Bits != Function.Entry)
+          if (Captured.K == Value::CapturedBytes && ParentReceivers) {
+            const auto Parent =
+                ParentReceivers->find(Captured.Offset + Begin->second.Index);
+            if (Parent != ParentReceivers->end())
+              Result.CapturedReceivers.emplace(Offset, Parent->second);
             continue;
-          const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
-          if (Root && Root->ClassName == Captured.Name)
-            Result.CapturedReceivers.emplace(Offset, *Root);
+          }
+          if (Captured.K != Value::Receiver)
+            continue;
+          if (Captured.Bits == Function.Entry && Captured.Offset >= 0 &&
+              Captured.Offset < 8) {
+            const auto Root =
+                Captured.Offset == 0
+                    ? objcMethodReceiverTypeHint(Image, Function.Entry)
+                    : objcMethodParameterReceiverTypeHint(
+                          Image, Function.Entry, unsigned(Captured.Offset));
+            if (Root && Root->ClassName == Captured.Name)
+              Result.CapturedReceivers.emplace(Offset, *Root);
+          } else if (ParentReceivers) {
+            const auto Parent = ParentReceivers->find(Captured.Offset);
+            if (Parent != ParentReceivers->end() &&
+                Parent->second.Address == Captured.Bits &&
+                Parent->second.ClassName == Captured.Name)
+              Result.CapturedReceivers.emplace(Offset, Parent->second);
+          }
         }
       }
       Result.References.emplace(
@@ -1101,8 +1259,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             Binding->CallKind != CallKind::ObjCSuper2 ||
             Binding->TargetName != "objc_msgSendSuper2" ||
             E.CallTarget != "objc_msgSendSuper2" ||
-            !objcSourceCallBound(E, Image, Functions, nullptr, nullptr,
-                                 &Function) ||
+            !CallBound(E) ||
             !frameRange(Function, Offset, 16))
           return false;
         const auto InBlock = [&](int64_t Byte) {
@@ -1128,6 +1285,16 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             return false;
         return true;
       };
+      const auto EnumerationBorrow = boundedFastEnumerationBorrow(
+          Image, Function, E, Arguments, State, CallBound,
+          [&](int64_t Offset, unsigned Bytes) {
+            return std::none_of(
+                Blocks.begin(), Blocks.end(), [&](const auto &Entry) {
+                  const auto &[Base, Block] = Entry;
+                  return Offset < Base + Block.Descriptor.LiteralSize &&
+                         Base < Offset + Bytes;
+                });
+          });
       for (size_t I = 0; I < Arguments.size(); ++I) {
         if (Arguments[I].K != Value::Frame)
           continue;
@@ -1137,7 +1304,8 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             Header->second.Width == 8 && Header->second.V.K == Value::Isa &&
             Header->second.V.Name == "_NSConcreteStackBlock";
         if (!ExactBlockBase) {
-          if (BorrowsDisjointSuperRecord(I, Arguments[I].Offset))
+          if ((EnumerationBorrow && (I == 2 || I == 3)) ||
+              BorrowsDisjointSuperRecord(I, Arguments[I].Offset))
             continue;
           if (Blocks.count(Arguments[I].Offset) ||
               State.frameContainsPointerIdentity())
@@ -1160,7 +1328,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
               Binding->TargetName == "objc_retainBlock") ||
              (Binding->CallKind == CallKind::DarwinRuntimeCall &&
               Binding->TargetName == "_Block_copy")) &&
-            objcSourceCallBound(E, Image, Functions);
+            CallBound(E);
         std::optional<SourceFunctionTypeHint> Consumer;
         if (Binding && Binding->CallKind == CallKind::DarwinRuntimeCall) {
           const auto Contract =
@@ -1177,7 +1345,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             objc_projection_detail::sameHint(*Block.Descriptor.InvokeTypeHint,
                                              *Consumer);
         const bool DeclaredConsumer =
-            CallbackMatches && objcSourceCallBound(E, Image, Functions);
+            CallbackMatches && CallBound(E);
         if (!Direct && !Runtime && !DeclaredConsumer &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||
@@ -1244,6 +1412,12 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         Memory.erase(Memory.lower_bound(Offset),
                      Memory.lower_bound(Offset + Size));
       }
+      if (EnumerationBorrow)
+        for (const auto &[Offset, Bytes] : *EnumerationBorrow) {
+          State.forgetFrameRange(Offset, Bytes);
+          Memory.erase(Memory.lower_bound(Offset),
+                       Memory.lower_bound(Offset + Bytes));
+        }
       return {};
     };
     auto Evaluate = [&](const HighSourceFlowNode &Node) {
@@ -1318,7 +1492,8 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         // block remains discoverable, while any header or owned capture that
         // relies on these untyped bytes still fails closed.
         const Value Stored =
-            scalarWidth(Bytes) || (Bytes == 16 && V.K == Value::OpaqueBytes)
+            scalarWidth(Bytes) || (Bytes == 16 && (V.K == Value::OpaqueBytes ||
+                                                   V.K == Value::CapturedBytes))
                 ? V
                 : Value{Value::UnprovenIdentity};
         State.storeFrame(Address, Bytes, Stored);
@@ -1408,11 +1583,14 @@ objcBlockParameterReceivers(const BinaryImage &Image,
 }
 
 inline ObjCBlockSourcePlan
-discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
-                         const PipelineResult &Result) {
+discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
+                             const PipelineResult &Result,
+                             const ObjCBlockSourcePlan *Previous = nullptr) {
   using namespace objc_block_source_detail;
   const auto &Image = Source.Image;
   ObjCBlockSourcePlan Plan;
+  Plan.SourceImage = &Image;
+  Plan.SourceResult = &Result;
   if (Result.SourceImage != &Image)
     throw std::invalid_argument(
         "block source evidence belongs to another image");
@@ -1431,9 +1609,65 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
   std::map<va_t, const HighFunc *> Functions;
   for (const auto &Function : Result.HighFuncs)
     Functions.emplace(Function.Entry, &Function);
+  // Only passes within one discovery call share this immutable HighIR result.
+  // Its stored expression identities cannot be reused across pipeline runs.
+  const bool Reuse = Previous && Previous->SourceImage == &Image &&
+                     Previous->SourceResult == &Result;
+  std::map<va_t, uint64_t> ParentLiteralSizes;
+  if (Reuse)
+    for (const auto &[Parent, Blocks] : Previous->StackBlocks) {
+      (void)Parent;
+      for (const auto &Block : Blocks) {
+        const auto [It, Inserted] = ParentLiteralSizes.try_emplace(
+            Block.InvokeEntry, Block.Descriptor.LiteralSize);
+        if (!Inserted)
+          It->second = std::min(It->second, Block.Descriptor.LiteralSize);
+      }
+    }
   for (const auto &Function : Result.HighFuncs) {
     std::string Error;
-    auto Blocks = stackBlocks(Source, Function, Functions, Error);
+    const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers = nullptr;
+    uint64_t ParentLiteralSize = 0;
+    if (Reuse && Function.SourceTypeHint) {
+      const auto Captures = Previous->CaptureReceivers.find(Function.Entry);
+      const auto Invoke = Previous->InvokeHints.find(Function.Entry);
+      if (Captures != Previous->CaptureReceivers.end() &&
+          !Captures->second.empty() &&
+          ParentLiteralSizes.count(Function.Entry) &&
+          Invoke != Previous->InvokeHints.end() &&
+          objc_projection_detail::sameHint(*Function.SourceTypeHint,
+                                           Invoke->second) &&
+          std::all_of(
+              Captures->second.begin(), Captures->second.end(),
+              [&](const auto &Capture) {
+                const auto &Root = Capture.second;
+                return Capture.first >= 32 &&
+                       (Root.Origin ==
+                            ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+                        Root.Origin == ObjCReceiverTypeHint::OriginKind::
+                                           MethodParameter) &&
+                       !Root.BlockCaptureOffset && Root.Steps.empty() &&
+                       objcReceiverTypeHintValid(Image, Root);
+              }))
+        ParentReceivers = &Captures->second;
+      if (ParentReceivers)
+        ParentLiteralSize = ParentLiteralSizes.at(Function.Entry);
+    }
+    std::vector<ObjCStackBlockSource> Blocks;
+    if (Reuse && !ParentReceivers) {
+      // A parent receiver can change only an invoke that reads its context.
+      // Reuse all other constructor proofs instead of repeating their flow
+      // analysis for each nesting depth.
+      if (auto Found = Previous->StackBlocks.find(Function.Entry);
+          Found != Previous->StackBlocks.end())
+        Blocks = Found->second;
+      if (auto Found = Previous->Rejections.find(Function.Entry);
+          Found != Previous->Rejections.end())
+        Error = Found->second;
+    } else {
+      Blocks = stackBlocks(Source, Function, Functions, ParentReceivers,
+                           ParentLiteralSize, Error);
+    }
     if (!Error.empty())
       Plan.Rejections[Function.Entry] = std::move(Error);
     for (auto &Block : Blocks)
@@ -1599,6 +1833,29 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
 }
 
 inline ObjCBlockSourcePlan
+discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
+                         const PipelineResult &Result) {
+  auto Plan = discoverObjCBlockSourcesPass(Source, Result);
+  // Every parent root comes from this exact pipeline result. A later pipeline
+  // iteration may change the block constructor or ownership helper, so its
+  // plan cannot authorize a receiver read in the current result.
+  const auto HasRoots = [](const ObjCBlockSourcePlan &Current) {
+    return std::any_of(Current.CaptureReceivers.begin(),
+                       Current.CaptureReceivers.end(),
+                       [](const auto &Entry) { return !Entry.second.empty(); });
+  };
+  for (unsigned Depth = 0; Depth < 16 && HasRoots(Plan); ++Depth) {
+    auto Next = discoverObjCBlockSourcesPass(Source, Result, &Plan);
+    if (Next.CaptureReceivers == Plan.CaptureReceivers)
+      return Next;
+    Plan = std::move(Next);
+  }
+  if (HasRoots(Plan))
+    throw std::runtime_error("nested block receiver proof did not converge");
+  return Plan;
+}
+
+inline ObjCBlockSourcePlan
 discoverObjCBlockSources(const BinaryImage &Image,
                          const PipelineResult &Result) {
   return discoverObjCBlockSources(ObjCBlockSourceContext(Image), Result);
@@ -1607,9 +1864,14 @@ discoverObjCBlockSources(const BinaryImage &Image,
 inline size_t applyObjCBlockInvokeHints(const ObjCBlockSourcePlan &Plan,
                                         PipelineOptions &Options) {
   size_t Changed = 0;
-  auto Apply = [&](const auto &Hints) {
+  auto Apply = [&](const auto &Hints, bool Invokes) {
     for (const auto &[Entry, Hint] : Hints) {
-      if (Plan.Rejections.count(Entry))
+      // A valid descriptor proves its invoke ABI independently of the invoke
+      // body. That body may need the ABI before its capture/call proof can
+      // complete on the next pipeline run. Conflicting descriptors still
+      // invalidate the hint, and a rejected body remains unpublished.
+      if (Invokes ? Plan.InvalidInvokeDescriptors.count(Entry)
+                  : Plan.Rejections.count(Entry))
         continue;
       auto Existing = Options.SourceTypeHints.find(Entry);
       if (Existing != Options.SourceTypeHints.end()) {
@@ -1624,8 +1886,8 @@ inline size_t applyObjCBlockInvokeHints(const ObjCBlockSourcePlan &Plan,
       ++Changed;
     }
   };
-  Apply(Plan.InvokeHints);
-  Apply(Plan.HelperHints);
+  Apply(Plan.InvokeHints, true);
+  Apply(Plan.HelperHints, false);
   return Changed;
 }
 
@@ -1711,7 +1973,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       std::string Reason;
       std::set<std::pair<va_t, size_t>> Active;
       if (!noEscape(Source, Functions, Entry, 0, &Initialized, Active, Reason,
-                    nullptr, nullptr, &Plan))
+                    nullptr, nullptr, &Plan, true))
         throw Invalid("block invoke capture proof failed: " + Reason);
       Result.Dependencies.insert(Entry);
     };

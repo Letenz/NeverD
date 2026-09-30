@@ -408,6 +408,24 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 的一部分：穩定的外部操作應放在純 C 標頭及職責明確的
 `lib/sdk/NeverDCAPI*.cpp` 檔案中。
 
+## CPU 執行與工作負載邊界
+
+CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、ISA 分離。
+
+| 元件 | 職責 |
+|---|---|
+| `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 傳輸與可攜式 Unicorn 執行 |
+| `NeverDEmulationCPU` | 契約准入、ISA 狀態與後端選擇 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整數 ABI、CPU 工作階段與工作負載預算 |
+| `NeverDEmulationImage` | 載入器區段對映計畫 |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 啟動、Linux 服務政策與程序報告 |
+| `NeverDEmulation` | Windows 模型與驅動程式生命週期 |
+
+CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗證架構、權限、位址寬度及功能。`ExecutionBudget` 為每個工作負載擁有共用指令／事件計數與絕對單調 deadline；恢復執行不會補回預算。`ExecutionSession` 擁有 CPU、hooks 與待處理的服務／錯誤續接。工作階段可共用記憶體與預算，但採合作式排程，並非平行 SMP。恢復前必須恰好消耗一次待處理要求。CPU 錯誤優先於資源停止；無法解釋的引擎停止不代表工作負載成功。
+
+`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF `ET_EXEC` 與靜態 PIE `ET_DYN`。動態連結、dynamic TLS、訊號、OS 執行緒與不支援服務都會失敗；靜態 TLS 與有限的 x64 SSE/SSE2 可用；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。這不代表支援 Windows user-mode、Android 或 Darwin 應用程式。
+
 ## 嚴格提升契約
 
 `Decoder` 與每個架構 lifter 預設以嚴格模式啟動。如果 Capstone 能解碼指令，
@@ -668,3 +686,7 @@ HighIR 的共用私有堆疊框架位址證明，在目標位寬整數加法中�
 值見證程式碼使用的私有 Swift 結構或列舉中繼資料，可以透過唯一匯出的中繼資料存取函式保留其在已連結映像中的身分。原始碼繫結只接受相符的不可變私有名義型別描述符，以及精確計算該私有中繼資料位址的不可變 AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` 葉函式；產生的原始碼呼叫該存取函式，發佈時重新檢查位元組、重定位、符號和匯出紀錄。
 
 AArch64 原生輔助函式只有在完整觀測每個向量輸入的 16 個入口位元組、較早的浮點參數連續占用前面的 `q` 暫存器，且一般呼叫、回傳與堆疊框架證明成立時，才能將 `q0` 或後續 `q` 輸入綁定為依值傳遞的 C 向量。HighC 在原始碼邊界逐位轉換此資料；`x0`/`x1` 中的 128 位元整數屬於不同的 ABI。部分通道、浮點暫存器序列中的空缺及非原生宣告仍不支援。
+
+巢狀 Objective-C 堆疊 Block 只有在目前管線結果證明父 Block 強參照擷取方法接收者，且子 Block 完整複製並持有同一欄位時，才能繼承該接收者的類別。探索程序在這次結果內進行有界不動點迭代；下一次管線執行必須重新證明整條鏈。選擇器、未標型的 `id` 或未限定接收者的 Block 消費者，都不能單獨確立接收者類別、呼叫 ABI 或 Block 生命週期。 16 位元組上下文複製只有在對應的 8 位元組通道完整落在每個已驗證父 Block 實體內時才保留此證明；部分或重排的通道不會保留。
+
+已驗證的 Block 描述符可在 invoke 函式主體獲接受前提供呼叫 ABI；消費者呼叫只使用同一份已驗證 Block 方案中的接收者擷取證明，發佈仍須獨立證明函式主體與生命週期。

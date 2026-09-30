@@ -322,6 +322,51 @@ TEST(ObjCSourceProjection, OrdinaryDarwinUnwindDoesNotImplyExceptionCode) {
   }
 }
 
+TEST(ObjCSourceProjection, UnhandledObjCThrowHasSourceFlowWithoutDispatch) {
+  Projection P;
+  auto &Metadata = P.Func.ExceptionMetadata.emplace();
+  Metadata.CodeRange = {0x1000, 0x1100};
+  Metadata.Encoding = ExceptionEncoding::CompactUnwind;
+  Metadata.Compact.emplace();
+  Metadata.ObjC.emplace().RuntimeCalls = {
+      {0x1004, 0x2000, "objc_exception_throw", ObjCRuntimeCallKind::Throw}};
+  EXPECT_FALSE(P.limitation().empty());
+
+  HighStmt Throw;
+  Throw.Kind = StmtKind::ExprStmt;
+  Throw.Addr = 0x1004;
+  Throw.Val = HighExpr::makeCall("objc_exception_throw", 0x2000,
+                                 {HighExpr::makeConst(1, 8)});
+  auto ThrowHint = std::make_shared<SourceCallTypeHint>();
+  ThrowHint->CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  ThrowHint->TargetName = "objc_exception_throw";
+  ThrowHint->DoesNotReturn = true;
+  Throw.Val->SourceCallHint = ThrowHint;
+  P.Func.Body.insert(P.Func.Body.begin(), Throw);
+  const auto CallAllowed = [](const HighExpr &Expression) {
+    return Expression.SourceCallHint &&
+           Expression.SourceCallHint->TargetName == "objc_exception_throw";
+  };
+  auto Limitation = [&] {
+    return objcSourceBodyLimitation(P.Func, P.Hint, &P.Audit, CallAllowed);
+  };
+  EXPECT_TRUE(Limitation().empty()) << Limitation();
+  Metadata.ObjC->RuntimeCalls[0].TargetName = "_objc_exception_throw";
+  EXPECT_TRUE(Limitation().empty()) << Limitation();
+  Throw.Val->CallAddr = 0x2004;
+  EXPECT_FALSE(Limitation().empty());
+  Throw.Val->CallAddr = 0x2000;
+  ThrowHint->DoesNotReturn = false;
+  EXPECT_FALSE(Limitation().empty());
+  ThrowHint->DoesNotReturn = true;
+
+  Metadata.Compact->HasLSDA = true;
+  EXPECT_FALSE(Limitation().empty());
+  Metadata.Compact->HasLSDA = false;
+  Metadata.ObjC->RuntimeCalls[0].TargetName = "objc_exception_rethrow";
+  EXPECT_FALSE(Limitation().empty());
+}
+
 TEST(ObjCSourceProjection,
      EnclosingUnwindRuntimeCallsBelongOnlyToDecodedSubentries) {
   Projection P;

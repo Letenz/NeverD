@@ -23,6 +23,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -720,8 +721,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 SourceCallTypeHint::Kind::RuntimeClassReferenceAddress ||
             Hint.CallKind ==
                 SourceCallTypeHint::Kind::RuntimeMetaclassReferenceAddress;
-        if (DeclaredC && Hint.TargetName == "CGContextConcatCTM" &&
-            Hint.ByteCount == 48)
+        if (DeclaredC && Hint.ByteCount == 48 &&
+            darwinIndirectAffineTransformSignature(Opts.TheArch,
+                                                   Hint.TargetName))
           NeedsDarwinAffineTransformBridge = true;
         if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
             !DeclaredC) {
@@ -1450,19 +1452,46 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         !ConflictingSourceNativeSignatures.count(Name)) {
       const auto &Declaration = SourceSignature->second;
       const auto &Signature = *Declaration.Signature;
-      if (NeedsDarwinAffineTransformBridge &&
-          Name == "neverd_darwin_CGContextConcatCTM") {
-        SourceFunctionTypeHint Expected;
-        Expected.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
-        Expected.ReturnType = NdType::makeVoid();
-        const auto Pointer = NdType::makePtr(NdType::makeVoid());
-        Expected.Parameters = {{"context", Pointer}, {"transform", Pointer}};
-        std::string Diagnostic;
+      llvm::StringRef AffineName(Name);
+      const auto AffineSignature = AffineName.consume_front("neverd_darwin_")
+                                       ? darwinIndirectAffineTransformSignature(
+                                             Opts.TheArch, AffineName.str())
+                                       : std::nullopt;
+      if (NeedsDarwinAffineTransformBridge && AffineSignature) {
         if (Declaration.WeakImport || Declaration.VariadicFixedCount ||
-            !assignDarwinScalarSourceABI(Expected, Opts.TheArch, Diagnostic) ||
-            !equalSourceABIs(Signature, Expected))
+            !equalSourceABIs(Signature, *AffineSignature))
           throw std::invalid_argument(
               "Invalid indirect CGAffineTransform source declaration");
+        if (AffineName != "CGContextConcatCTM") {
+          const auto Record = typeToC(Signature.ReturnType);
+          const auto Original = "neverd_" + AffineName.str() + "_original";
+          OS << "extern " << Record << " " << Original << "(" << Record;
+          for (size_t I = 1; I < Signature.Parameters.size(); ++I)
+            OS << ", "
+               << (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr
+                       ? Record
+                       : "double");
+          OS << ") __asm__(\"_" << AffineName << "\");\n"
+             << "static inline " << Record << " " << Identifier
+             << "(const void *transform";
+          for (size_t I = 1; I < Signature.Parameters.size(); ++I)
+            if (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr)
+              OS << ", const void *input_" << I;
+            else
+              OS << ", double value_" << I;
+          OS << ") {\n  " << Record << " value;\n"
+             << "  memcpy(&value, transform, sizeof(value));\n";
+          for (size_t I = 1; I < Signature.Parameters.size(); ++I)
+            if (Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr)
+              OS << "  " << Record << " value_" << I << ";\n"
+                 << "  memcpy(&value_" << I << ", input_" << I
+                 << ", sizeof(value_" << I << "));\n";
+          OS << "  return " << Original << "(value";
+          for (size_t I = 1; I < Signature.Parameters.size(); ++I)
+            OS << ", value_" << I;
+          OS << ");\n}\n";
+          continue;
+        }
         OS << "typedef struct { double a, b, c, d, tx, ty; } "
               "neverd_CGAffineTransform;\n"
               "extern void neverd_CGContextConcatCTM_original(void *, "

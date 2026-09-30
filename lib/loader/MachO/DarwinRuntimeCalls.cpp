@@ -10,10 +10,46 @@
 
 namespace neverd {
 
+std::optional<SourceFunctionTypeHint>
+darwinIndirectAffineTransformSignature(Arch Architecture,
+                                       const std::string &Name) {
+  if (Architecture != Arch::AArch64 ||
+      (Name != "CGContextConcatCTM" && Name != "CGAffineTransformTranslate" &&
+       Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate" &&
+       Name != "CGAffineTransformConcat"))
+    return std::nullopt;
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  if (Name == "CGContextConcatCTM") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"context", Pointer}, {"transform", Pointer}};
+  } else {
+    // CoreGraphics declares a six-double transform input and result. It is
+    // not an HFA: AAPCS64 passes the 48-byte input via x0 and the result via
+    // the hidden x8 pointer. Floating scalars use the independent d-register
+    // bank. Source emission copies the input into its genuine record value.
+    const auto Double = NdType::makeFloat(8);
+    Signature.ReturnType =
+        NdType::makeStruct({Double, Double, Double, Double, Double, Double});
+    Signature.Parameters = {{"transform", Pointer}};
+    if (Name == "CGAffineTransformConcat") {
+      Signature.Parameters.push_back({"second_transform", Pointer});
+    } else {
+      Signature.Parameters.push_back({"first", Double});
+      if (Name != "CGAffineTransformRotate")
+        Signature.Parameters.push_back({"second", Double});
+    }
+  }
+  std::string Diagnostic;
+  if (!assignDarwinFixedSourceABI(Signature, Architecture, Diagnostic))
+    return std::nullopt;
+  return Signature;
+}
+
 std::optional<SourceCallTypeHint>
 darwinCompilerRTSourceCallHint(const BinaryImage &Image, va_t TargetAddress) {
-  constexpr llvm::StringLiteral SymbolName =
-      "___isPlatformVersionAtLeast";
+  constexpr llvm::StringLiteral SymbolName = "___isPlatformVersionAtLeast";
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
@@ -87,9 +123,13 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   // Keep that physical carrier in the source call hint; the C emitter copies
   // the 48 bytes into a genuine by-value argument before calling CoreGraphics.
   // Other record imports continue through the ordinary declaration catalog.
-  if (Name == "CGContextConcatCTM") {
+  if (Name == "CGContextConcatCTM" || Name == "CGAffineTransformTranslate" ||
+      Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate" ||
+      Name == "CGAffineTransformConcat") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
-    if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
+    const auto Signature =
+        darwinIndirectAffineTransformSignature(Image.Arch, Name.str());
+    if (!Signature || Bind == Image.DyldBindSlots.end() ||
         !darwinExportModuleMatches(
             "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics|"
             "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/"
@@ -101,14 +141,7 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Result.TargetAddress = ImportSlot;
     Result.TargetName = Name.str();
     Result.ByteCount = 48;
-    auto &Signature = Result.Signature;
-    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
-    Signature.ReturnType = NdType::makeVoid();
-    const auto Pointer = NdType::makePtr(NdType::makeVoid());
-    Signature.Parameters = {{"context", Pointer}, {"transform", Pointer}};
-    std::string Diagnostic;
-    if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
-      return std::nullopt;
+    Result.Signature = *Signature;
     return Result;
   }
 
@@ -242,8 +275,8 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
     Signature.ReturnType = NdType::makeVoid();
     const auto Context = NdType::makePtr(NdType::makeVoid());
-    const auto Callback = NdType::makePtr(
-        NdType::makeFunc(NdType::makeVoid(), {Context}));
+    const auto Callback =
+        NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Context}));
     Signature.Parameters = {
         {"predicate", NdType::makePtr(NdType::makeInt(8, true))},
         {"context", Context},
@@ -363,9 +396,8 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   // external, non-TLS NSString pointer storage. Keep the original load.
   // https://developer.apple.com/documentation/uikit/uiapplication/didenterbackgroundnotification
   if (Image.Arch == Arch::AArch64)
-    MatchFrameworkData(
-        "UIApplicationDidEnterBackgroundNotification",
-        "/System/Library/Frameworks/UIKit.framework/UIKit");
+    MatchFrameworkData("UIApplicationDidEnterBackgroundNotification",
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
   // UIAccessibilityNotifications is uint32_t in both complete ARM64 SDK
   // ASTs. Bind the external const object's address and keep the native load;
   // neither the notification value nor pointer-sized contents are invented.
@@ -428,8 +460,7 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
               Bind->second.Module))
         SwiftMetadata = D.Name;
   if (FrameworkData.empty() && !SwiftEmptyStorage && !SwiftIsaMask &&
-      SwiftMetadata.empty() &&
-      *Import != "___stack_chk_guard")
+      SwiftMetadata.empty() && *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   SourceCallTypeHint Result;
@@ -440,11 +471,10 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   } else if (SwiftEmptyStorage || SwiftIsaMask || !SwiftMetadata.empty()) {
-    Result.TargetName =
-        (SwiftEmptyStorage ? SwiftEmptyCollection
-                           : SwiftIsaMask ? llvm::StringRef("swift_isaMask")
-                                          : SwiftMetadata)
-            .str();
+    Result.TargetName = (SwiftEmptyStorage ? SwiftEmptyCollection
+                         : SwiftIsaMask    ? llvm::StringRef("swift_isaMask")
+                                           : SwiftMetadata)
+                            .str();
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   } else {

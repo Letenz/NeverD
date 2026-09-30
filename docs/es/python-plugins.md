@@ -8,6 +8,8 @@ NeverD puede cargar un archivo Python como plugin de primera clase. Los plugins 
 
 ## Requisitos de compilación y ejecución
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` expone el [informe de configuración CPU](cpu-execution.md) independientemente de que haya una imagen cargada. La API nativa analiza la configuración JSON opcional. El soporte estático y la disponibilidad real del host se mantienen separados; la sonda solo comprueba la inicialización. La compilación anfitriona debe habilitar la emulación CPU o de controladores.
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` vale `ON` de forma predeterminada. Una compilación habilitada necesita que CMake encuentre un intérprete CPython 3.10 o posterior y su biblioteca de desarrollo para integración:
 
 ```bash

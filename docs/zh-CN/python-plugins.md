@@ -8,6 +8,8 @@ NeverD 可以把 Python 文件作为一等插件加载。Python 插件与原生�
 
 ## 构建与运行要求
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)` 可独立于已加载映像提供 [CPU 配置报告](cpu-execution.md)。可选 JSON 配置由 native API 解析。静态支持能力与实时主机可用性保持区分；probe 仅检查初始化。宿主构建必须启用 CPU 或驱动模拟。
+
 `NEVERD_ENABLE_PYTHON_PLUGINS` 默认为 `ON`。启用后，CMake 必须能够找到 CPython 3.10 或更高版本的解释器及其嵌入开发库：
 
 ```bash

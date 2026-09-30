@@ -453,6 +453,24 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 실수로 SDK의 일부가 되지 않게 하세요. 안정적인 외부 작업은 순수 C 헤더와 책임이
 분명한 `lib/sdk/NeverDCAPI*.cpp` 파일 중 하나에 두어야 합니다.
 
+## CPU 실행과 워크로드 경계
+
+CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프로세스 진입은 전송 계층 및 ISA와 분리됩니다.
+
+| 구성 요소 | 책임 |
+|---|---|
+| `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 네이티브 KVM/WHP 전송 및 이식 가능한 Unicorn 실행 |
+| `NeverDEmulationCPU` | 계약 admission, ISA 상태, 백엔드 선택 |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | 정수 ABI, CPU 세션, 워크로드 예산 |
+| `NeverDEmulationImage` | 로더 세그먼트 매핑 계획 |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 시작, Linux 서비스 정책, 프로세스 보고서 |
+| `NeverDEmulation` | Windows 모델 및 드라이버 수명 주기 |
+
+CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 할당 전에 아키텍처, 권한, 주소 폭, 기능을 검증합니다. `ExecutionBudget`은 워크로드별 공유 명령/이벤트 계정과 절대 monotonic deadline을 소유하며 재개해도 예산이 초기화되지 않습니다. `ExecutionSession`은 CPU, hook, 대기 중 서비스/fault continuation을 소유합니다. 세션은 메모리와 예산을 공유할 수 있지만 실행은 협력식이며 병렬 SMP가 아닙니다. 대기 중 요청은 재개 전 정확히 한 번 소비해야 합니다. CPU 오류는 자원 정지보다 우선하며 설명되지 않은 엔진 정지는 성공이 아닙니다.
+
+`ImageMappingPlan`은 기존 로더 세그먼트를 사용하고 header 재분석이나 import 해결을 하지 않습니다. 주소 공간을 게시하기 전에 전체 범위와 겹침을 검사합니다. 명시적 `linux-elf64-v1` 프로필은 초기 스택, 명시적 서비스 요청, 제한된 바이트 출력을 갖춘 x64/AArch64 freestanding ELF `ET_EXEC`와 static PIE `ET_DYN`을 시작합니다. 동적 링크, dynamic TLS, 시그널, OS 스레드, 미지원 서비스는 실패합니다. static TLS와 제한된 x64 SSE/SSE2는 지원합니다. KVM만으로 Linux를, WHP만으로 Windows를 추론하지 않습니다. [CPU 실행](cpu-execution.md) 및 [게스트 프로세스 에뮬레이션](process-emulation.md)을 참조하세요. 이는 Windows user-mode나 Android/Darwin 앱 지원을 뜻하지 않습니다.
+
 ## strict lifting 계약
 
 `Decoder`와 각 아키텍처 lifter는 strict 모드로 시작합니다. Capstone이 명령어를
@@ -716,3 +734,7 @@ AArch64 소스 바인딩에서 스칼라 비트가 이미지 주소와 일치하
 값 증인 코드가 사용하는 비공개 Swift 구조체 또는 열거형 메타데이터는 고유하게 내보낸 메타데이터 접근자를 통해 링크된 이미지의 동일성을 유지할 수 있다. 소스 바인딩은 일치하는 불변의 비공개 명목 형식 설명자와 비공개 메타데이터 주소를 정확히 계산하는 불변 AArch64 `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` 리프 함수만 허용한다. 생성된 소스는 해당 접근자를 호출하며, 게시할 때 바이트, 재배치, 심볼 및 내보내기 기록을 다시 검사한다.
 
 AArch64 네이티브 보조 함수는 각 벡터 입력의 16바이트가 모두 관측되고 앞선 부동소수점 인자가 이전 `q` 레지스터를 빠짐없이 차지하며 일반 호출, 반환, 스택 프레임 증명이 성립할 때에만 `q0` 이후의 완전한 입력을 값으로 전달하는 C 벡터로 바인딩할 수 있습니다. HighC는 소스 경계에서 비트 단위로 변환합니다. `x0`/`x1`의 128비트 정수는 다른 ABI입니다. 일부 레인, 부동소수점 레지스터 접두 구간의 빈자리, 네이티브가 아닌 선언은 지원하지 않습니다.
+
+중첩 Objective-C 스택 블록은 현재 파이프라인 결과에서 부모 블록의 메서드 수신자 강한 캡처와 자식 블록의 동일 필드에 대한 완전한 소유 복사가 증명된 경우에만 수신자 클래스를 이어받습니다. 탐색은 해당 결과 안에서 제한된 고정점까지 반복하며, 다음 파이프라인 실행에서는 전체 증명을 다시 수행합니다. 선택자, 타입 정보가 없는 `id`, 수신자가 특정되지 않은 블록 소비자만으로는 수신자 클래스, 호출 ABI 또는 블록 수명을 확정할 수 없습니다. 16바이트 컨텍스트 복사는 해당 8바이트 레인이 검증된 모든 부모 블록 리터럴 안에 완전히 들어갈 때만 이 증명을 보존하며, 일부만 복사하거나 레인 순서를 바꾸면 보존하지 않습니다.
+
+검증된 블록 디스크립터는 본문이 승인되기 전에도 invoke ABI를 제공할 수 있습니다. 소비자 호출은 같은 검증된 블록 계획의 수신자 캡처를 사용하며, 공개에는 본문과 수명에 대한 독립적인 증명이 계속 필요합니다.

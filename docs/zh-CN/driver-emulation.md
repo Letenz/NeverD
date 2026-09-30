@@ -8,9 +8,11 @@ NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动的 PE 入口点
 
 ## 执行后端
 
-默认 `driver-strict` 契约继续使用 Unicorn。新增实验性 `checked-x64-v1` 整数执行配置：`--backend auto` 在 Linux x86_64 选择 KVM，在 Windows x64 选择 WHP。显式选择 `kvm` 或 `whp` 不会回退；硬件不可用或契约不匹配在执行前报错。
+默认 `driver-strict` 契约继续使用 Unicorn。新增实验性有限指令 `checked-x64-v1` 执行配置：`--backend auto` 在 Linux x86_64 选择 KVM，在 Windows x64 选择 WHP。显式选择 `kvm` 或 `whp` 不会回退；硬件不可用或契约不匹配在执行前报错。
 
-硬件路径逐条预检指令和访存，再单步执行，保留 Windows 对象检查、写入观察、RAM 别名和仅保存 CPU 的上下文。目前拒绝 SIMD/x87、REP、加锁操作、内存读改写、跨页数据访问、MMIO 和未建模的 CPU 行为，不代表下文所有驱动场景均已兼容，也尚不支持其他系统或用户进程。超时与取消在有界指令之间检查；这不是通用的异步抢占 VM 执行器。guest 开始执行后不会换后端重跑。
+ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和寄存器 BT，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 会跨入口和上下文恢复保存；拒绝未屏蔽 SIMD 异常、DAZ、x87、AVX 和未列出操作。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式和跨页单次访问仍不支持。
+
+supervisor x64 支持一次对齐的 1/2/4 字节标量 MMIO 事务；设备页不会进入原生 RAM 映射。MOVS/REP MOVS 在每个重启边界只执行一个元素。设备源必须提供无副作用的 prepared read，以便目标写观察器能在设备读取提交前停止。Windows 寄存器组实现该准备流程；其他设备会在产生效果前拒绝字符串读取。设备 RMW、宽 MMIO、端口 I/O 仍不支持。请求字节、设备状态和写事件分别比较，不依赖 Unicorn 对零计数 REP 额外触发的终止 hook。KVM 使用标准 XSAVE 接口传送 XMM/MXCSR 与 FP/SSE presence bits。该 supervisor 契约不提供用户进程环境；timeout/取消在准入的有界指令间检查，不提供通用异步抢占，也不会在 guest 开始后更换后端。内置样例及可用 WDK 场景会对 normal/CFG 和重定位映像与 Unicorn 比对；语料一致不代表支持任意驱动。
 
 构建选项为 `NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。Windows API 从系统 DLL 动态加载；KVM 要求当前用户能访问 `/dev/kvm`，模拟器不修改宿主权限。WHP 仍需 Windows 实机运行验证，交叉编译不能代替。新增 C 入口 `neverd_emulate_driver_backend_json`，现有 v1 结构和入口不变；新报告包含请求/实际后端、执行契约及选择原因。
 

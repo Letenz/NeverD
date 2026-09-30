@@ -8,6 +8,8 @@ NeverD는 Python 파일을 일급 플러그인으로 로드할 수 있습니다.
 
 ## 빌드 및 런타임 요구 사항
 
+`Session.cpu_capabilities(configuration=None, probe_host=False)`는 로드된 이미지와 독립적인 [CPU 구성 보고서](cpu-execution.md)를 제공합니다. 선택적 JSON 구성은 native API가 파싱합니다. 정적 지원과 실제 호스트 가용성은 구분되며 probe는 초기화만 확인합니다. 호스트 빌드에서 CPU 또는 드라이버 에뮬레이션을 활성화해야 합니다.
+
 `NEVERD_ENABLE_PYTHON_PLUGINS`의 기본값은 `ON`입니다. 활성화된 빌드에는 CMake가 찾을 수 있는 CPython 3.10 이상 인터프리터와 임베딩 개발 라이브러리가 필요합니다.
 
 ```bash

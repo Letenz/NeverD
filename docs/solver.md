@@ -1,3 +1,5 @@
+**Languages**: [English](solver.md) | [简体中文](zh-CN/solver.md) | [繁體中文](zh-TW/solver.md) | [日本語](ja/solver.md) | [한국어](ko/solver.md) | [Français](fr/solver.md) | [Deutsch](de/solver.md) | [Español](es/solver.md) | [Italiano](it/solver.md) | [Русский](ru/solver.md) | [العربية](ar/solver.md)
+
 # Bitvector proof backends
 
 NeverD uses its built-in bitvector solver by default. Exact MBA derivation

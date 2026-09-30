@@ -566,6 +566,24 @@ una clase C++ interna pase a formar parte del SDK por accidente: las operaciones
 externas estables pertenecen al encabezado C puro y a uno de los archivos
 específicos `lib/sdk/NeverDCAPI*.cpp`.
 
+## Ejecución CPU y límites de las cargas
+
+La ejecución CPU es independiente del SO invitado y de la imagen. La política del SO y la entrada del proceso se separan del transporte y de la ISA.
+
+| Componente | Responsabilidad |
+|---|---|
+| `NeverDEmulationCore` | Memoria, fallos, registros y bucle común de ejecución |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transportes nativos KVM/WHP y ejecución portable Unicorn |
+| `NeverDEmulationCPU` | Admisión del contrato, estado ISA y selección de backend |
+| `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI enteras, sesiones CPU y presupuestos de carga |
+| `NeverDEmulationImage` | Planes de mapeo para segmentos del cargador |
+| `NeverDEmulationLinux` / `NeverDEmulationProcess` | Inicio ELF, política de servicios Linux e informes del proceso |
+| `NeverDEmulation` | Modelo Windows y ciclo de vida del controlador |
+
+La fábrica CPU y la consulta de capacidades comparten `ExecutionConfiguration`; validan arquitectura, privilegio, ancho de dirección y funciones antes de asignar recursos. `ExecutionBudget` posee una sola cuenta de instrucciones/eventos y un plazo monotónico absoluto por carga; reanudar no repone el presupuesto. `ExecutionSession` posee la CPU, hooks y continuaciones pendientes de servicio/fallo. Las sesiones pueden compartir memoria y presupuesto, pero la planificación es cooperativa, no SMP paralelo. Cada solicitud pendiente debe consumirse exactamente una vez antes de reanudar. Los fallos CPU prevalecen sobre la parada por recursos; una parada inexplicada del motor no significa éxito de la carga.
+
+`ImageMappingPlan` consume segmentos ya proporcionados por el cargador: no vuelve a analizar cabeceras ni resuelve imports. Comprueba extensiones completas y solapamientos antes de publicar el espacio. El perfil explícito `linux-elf64-v1` inicia ELF freestanding `ET_EXEC` y PIE estático `ET_DYN` x64/AArch64 con pila inicial, solicitudes explícitas de servicio y salida acotada. Enlace dinámico, TLS dinámico, señales, hilos del SO y servicios no admitidos fallan; se admiten TLS estático y SSE/SSE2 acotado en x64; Linux no se infiere de KVM ni Windows de WHP. Consulta [ejecución CPU](cpu-execution.md) y [emulación de procesos invitados](process-emulation.md). Esto no implica entorno Windows de usuario ni compatibilidad con apps Android/Darwin.
+
 ## Contrato de lifting estricto
 
 `Decoder` y cada lifter de arquitectura arrancan en modo estricto. Si Capstone
@@ -839,3 +857,7 @@ El setter Swift fusionado de `@objc` `CGFloat`, optimizado para todo el módulo 
 Los metadatos privados de una estructura o enumeración Swift usados por el código de testigo de valor pueden conservar su identidad en la imagen enlazada mediante un accesor de metadatos exportado de forma única. La vinculación del código fuente solo acepta un descriptor nominal privado e inmutable que coincida y una función hoja AArch64 inmutable `ADRP x0; ADD x0, x0, #offset; MOV x1, #0; RET` que calcule exactamente la dirección de esos metadatos. El código generado llama al accesor y, antes de publicarlo, se vuelven a comprobar los bytes, las reubicaciones, los símbolos y las exportaciones.
 
 Un auxiliar nativo AArch64 solo puede vincular una entrada completa de 16 bytes en `q0` o en un registro `q` posterior como vector C pasado por valor cuando se observan los 16 bytes, los argumentos de coma flotante anteriores ocupan sin huecos los registros `q` previos y se cumplen las pruebas habituales de llamada, retorno y marco de pila. HighC convierte los bits en los límites del código fuente; un entero de 128 bits en `x0`/`x1` usa otra ABI. Los carriles parciales, los huecos en la secuencia de registros de coma flotante y las declaraciones no nativas siguen sin admitirse.
+
+La detección de bloques Objective-C anidados en la pila transmite la clase del receptor del método al bloque hijo solo si el resultado actual del pipeline demuestra la captura fuerte en el bloque padre y la copia completa y con propiedad del mismo campo en el hijo. La detección alcanza un punto fijo acotado dentro de ese resultado; una ejecución posterior debe volver a demostrar la cadena. Un selector, un `id` sin tipo o un consumidor de bloque sin receptor cualificado no establece por sí solo la clase del receptor, la ABI de llamada ni la duración del bloque. Una copia de contexto de 16 bytes conserva esta prueba solo para un carril exacto de ocho bytes contenido por completo en cada literal padre autenticado; los carriles parciales o reordenados no la conservan.
+
+Un descriptor de bloque verificado puede aportar la ABI de invocación antes de que se acepte el cuerpo; las llamadas consumidoras usan capturas del receptor del mismo plan de bloque validado, y la publicación sigue exigiendo pruebas independientes del cuerpo y de la vida útil.
