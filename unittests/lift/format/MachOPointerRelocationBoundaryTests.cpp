@@ -139,6 +139,13 @@ public:
     return Emitter.phiIncomingIsRecurrent(Phi, PredId, Arg);
   }
 
+  static bool authenticatedModelZero(MedLLVMEmitter &Emitter,
+                                     const MedFunc &Func,
+                                     const BinaryImage &Image,
+                                     const MedVar &Value) {
+    prepareFreshAnalysis(Emitter, Func, Image, Image.Arch, Image.Format);
+    return Emitter.valueIsAuthenticatedModelZero(Value);
+  }
 
   static bool selfRecurrent(MedLLVMEmitter &Emitter, const PhiNode &Phi) {
     return Emitter.phiIsSelfRecurrent(Phi);
@@ -12705,6 +12712,76 @@ TEST(LLVMDataPointerInvariantBoundary,
     MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
         Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
     EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(Emitter, Loaded, nullptr),
+              Kind == Case::Exact);
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     I386GOTBaseReloadedFromItsSpillSlotIsTheModelZero) {
+  // `mov [esp-8], ebx` ... `mov ecx, [esp-8]`: emission stores the certified
+  // GOT base as zero, so the exact reload reads zero back.  A slot written
+  // with another value, or a base without the certificate, stays ordinary.
+  enum class Case { Exact, Overwritten, Uncertified };
+  for (Case Kind : {Case::Exact, Case::Overwritten, Case::Uncertified}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    const auto &TRI = getTargetRegInfo(Arch::X86);
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::ELF;
+    Image.Bits = Bitness::Bits32;
+    auto value = [](MedVar::VarKind Kind, int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = Kind;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = Kind == MedVar::Reg ? 0 : 1;
+      V.Size = Size;
+      return V;
+    };
+    MedFunc Func;
+    Func.Name = "reloaded_got_base";
+    Func.Entry = 0x100;
+    Func.ReturnType = NdType::makeVoid();
+    Func.DoesNotReturn = true;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.EndAddr = Func.Entry + 0x40;
+    MedVar SP = value(MedVar::Reg, 100, TRI.PointerSize);
+    SP.RegOff = TRI.StackPointer;
+    int NextId = 10;
+    auto append = [&](NdOp Opcode, const MedVar &Output,
+                      std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const MedVar &Input : Inputs)
+        Op.addInput(Input);
+      Block.Ops.push_back(std::move(Op));
+      return Output;
+    };
+    auto slot = [&]() {
+      return append(NdOp::INT_ADD, value(MedVar::Temp, NextId++, 4),
+                    {SP, MedVar::makeConst(static_cast<uint64_t>(-8), 4)});
+    };
+    const MedVar Input = value(MedVar::Temp, 1, 4);
+    const MedVar GOT = append(
+        NdOp::INT_ADD, value(MedVar::Temp, 2, 4),
+        {Input, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)});
+    append(NdOp::STORE, MedVar{}, {slot(), GOT});
+    if (Kind == Case::Overwritten)
+      append(NdOp::STORE, MedVar{}, {slot(), Input});
+    const MedVar Reloaded =
+        append(NdOp::LOAD, value(MedVar::Temp, 3, 4), {slot()});
+    Func.Blocks.push_back(std::move(Block));
+    Func.ScalarAddressModels.push_back(
+        {RelocatedInstructionScalarModelOccurrence::ModelKind::
+             I386ELFGOTBaseZero,
+         Kind == Case::Uncertified ? Input : GOT});
+
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::authenticatedModelZero(
+                  Emitter, Func, Image, Reloaded),
               Kind == Case::Exact);
   }
 }

@@ -1417,17 +1417,33 @@ bool MedLLVMEmitter::constantIsStableAddressOffset(const MedVar &V) const {
 }
 
 bool MedLLVMEmitter::valueIsAuthenticatedModelZero(const MedVar &V) const {
-  if (!CurMedFunc || V.isConst() || V.Size == 0)
+  if (!CurMedFunc || V.isConst() || V.Size == 0 ||
+      CurMedFunc->ScalarAddressModels.empty())
     return false;
-  const AddressProvenanceVarKey Key = addressProvenanceVarKey(V);
-  return std::any_of(CurMedFunc->ScalarAddressModels.begin(),
-                     CurMedFunc->ScalarAddressModels.end(),
-                     [&](const MedScalarAddressModel &Model) {
-                       return Model.Model ==
-                                  RelocatedInstructionScalarModelOccurrence::
-                                      ModelKind::I386ELFGOTBaseZero &&
-                              addressProvenanceVarKey(Model.Value) == Key;
-                     });
+  auto certified = [&](const MedVar &Value) {
+    const AddressProvenanceVarKey Key = addressProvenanceVarKey(Value);
+    return std::any_of(CurMedFunc->ScalarAddressModels.begin(),
+                       CurMedFunc->ScalarAddressModels.end(),
+                       [&](const MedScalarAddressModel &Model) {
+                         return Model.Model ==
+                                    RelocatedInstructionScalarModelOccurrence::
+                                        ModelKind::I386ELFGOTBaseZero &&
+                                addressProvenanceVarKey(Model.Value) == Key;
+                       });
+  };
+  if (certified(V))
+    return true;
+  // Register pressure spills the GOT base and reloads it where it is used.
+  // Emission stores the certified zero, so an exact reload whose every
+  // reaching store writes a certified base reads that zero back.
+  const MedOp *Def = lookupDef(V);
+  std::vector<MedVar> Sources;
+  if (!Def || Def->Opcode != NdOp::LOAD ||
+      !collectFrameReloadSources(*Def, Sources) || Sources.empty())
+    return false;
+  return std::all_of(Sources.begin(), Sources.end(), [&](const MedVar &Source) {
+    return !Source.isConst() && Source.Size == V.Size && certified(Source);
+  });
 }
 
 bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,
