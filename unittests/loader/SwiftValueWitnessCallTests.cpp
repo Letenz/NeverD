@@ -6,6 +6,8 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 
+#include <algorithm>
+
 using namespace neverd;
 
 namespace {
@@ -80,6 +82,186 @@ struct Fixture {
   }
 };
 } // namespace
+
+namespace {
+struct CopyLoopFixture : Fixture {
+  uint64_t SavedMetadata = 0, SavedTable = 0, CallTarget = 0;
+
+  void add(LowBlock &Block, va_t Address, NdOp Code, NdVar Output,
+           std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Addr = Address;
+    Op.Opcode = Code;
+    Op.Output = Output;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Block.Ops.push_back(std::move(Op));
+  }
+
+  explicit CopyLoopFixture(Arch Architecture) : Fixture(Architecture, true) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    if (TRI.CalleeSaveRegs.size() < 4) {
+      ADD_FAILURE() << "missing preserved pointer registers";
+      return;
+    }
+    SavedTable = TRI.CalleeSaveRegs[1];
+    CallTarget = TRI.CalleeSaveRegs[2];
+    SavedMetadata = TRI.CalleeSaveRegs[3];
+    auto &Head = Function.Blocks[0];
+    auto &Loop = Function.Blocks[1];
+    Loop.StartAddr = 0x100c;
+    auto Initial = std::move(Head.Ops);
+    add(Head, 0x1000, NdOp::COPY, NdVar::reg(SavedMetadata, 8),
+        {NdVar::reg(Metadata, 8)});
+    Head.Ops.insert(Head.Ops.end(), Initial.begin(), Initial.end());
+    auto Body = std::move(Loop.Ops);
+    Body.pop_back(); // move the ordinary return to the loop's exit
+    Body[2].Output = NdVar::reg(CallTarget, 8);
+    Body[3].Inputs[0] = NdVar::reg(CallTarget, 8);
+    add(Loop, 0x100c, NdOp::COPY, NdVar::reg(SavedTable, 8),
+        {NdVar::reg(Target, 8)});
+    add(Loop, 0x100c, NdOp::COPY, NdVar::reg(Metadata, 8),
+        {NdVar::reg(SavedMetadata, 8)});
+    Loop.Ops.insert(Loop.Ops.end(), Body.begin(), Body.end());
+    add(Loop, 0x1018, NdOp::COPY, NdVar::reg(Target, 8), {NdVar::cst(0, 8)});
+    add(Loop, 0x101c, NdOp::COPY, NdVar::reg(Target, 8),
+        {NdVar::reg(SavedTable, 8)});
+    add(Loop, 0x1020, NdOp::COND_BR, {},
+        {NdVar::cst(Loop.StartAddr, 8), NdVar::reg(TRI.IntReturnReg, 1)});
+    Loop.Preds = {0, 1};
+    Loop.Succs = {1, 2};
+    LowBlock Exit;
+    Exit.Id = 2;
+    Exit.StartAddr = 0x1024;
+    Exit.Preds = {1};
+    add(Exit, Exit.StartAddr, NdOp::RETURN, {}, {});
+    Function.Blocks.push_back(std::move(Exit));
+  }
+};
+} // namespace
+
+TEST(SwiftValueWitnessCalls, TransparentCopyLoopsRetainTheirEntrySeed) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    CopyLoopFixture F(Architecture);
+    const auto Hints = F.hints();
+    ASSERT_EQ(Hints.size(), 1U);
+    EXPECT_EQ(Hints.begin()->first, 0x1014U);
+    EXPECT_EQ(Hints.begin()->second.ValueWitness,
+              SourceCallTypeHint::SwiftValueWitnessKind::Destroy);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&F.Image);
+    Converter.setSourceCallHintsEnabled(true);
+    const auto Med =
+        Converter.convert(F.Function, Architecture, BinaryFormat::MachO);
+    size_t Calls = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.SourceCallHint &&
+            Op.SourceCallHint->CallKind ==
+                SourceCallTypeHint::Kind::SwiftValueWitness) {
+          ++Calls;
+          EXPECT_EQ(Op.Opcode, NdOp::INDIR_CALL);
+          EXPECT_EQ(Op.NumInputs, 3U);
+        }
+    EXPECT_EQ(Calls, 1U);
+    std::reverse(F.Function.Blocks.begin(), F.Function.Blocks.end());
+    EXPECT_EQ(F.hints().size(), 1U);
+  }
+}
+
+TEST(SwiftValueWitnessCalls, CopyLoopsRejectChangedValuesAndMissingSeeds) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Case = 0; Case < 8; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      CopyLoopFixture F(Architecture);
+      auto &Loop = F.Function.Blocks[1];
+      auto &Restore = Loop.Ops[7];
+      ASSERT_EQ(Restore.Addr, 0x101cU);
+      switch (Case) {
+      case 0:
+        Restore.Opcode = NdOp::INT_ADD;
+        Restore.addInput(NdVar::cst(8, 8));
+        break;
+      case 1:
+        Restore.Opcode = NdOp::LOAD;
+        break;
+      case 2:
+        Restore.Output.Size = 4;
+        break;
+      case 3:
+        Restore.Inputs[0] = NdVar::reg(F.Metadata, 8);
+        break;
+      case 4:
+        Restore.Inputs[0] =
+            NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8);
+        break;
+      case 5:
+        F.Function.Blocks[0].Ops.resize(1); // no table seed on the entry path
+        break;
+      case 6:
+        Loop.Ops[1].Inputs[0] = NdVar::reg(F.SavedTable, 8);
+        break;
+      case 7:
+        Loop.Ops[2].Inputs[1].Offset += 8;
+        break;
+      }
+      EXPECT_TRUE(F.hints().empty());
+    }
+  }
+}
+
+TEST(SwiftValueWitnessCalls, CopyLoopSeedsCannotComeFromRepeatedCallSites) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    CopyLoopFixture F(Architecture);
+    const auto ResultRegister = getTargetRegInfo(Architecture).IntReturnReg;
+    LowOp Call;
+    Call.Addr = 0x1000;
+    Call.Opcode = NdOp::CALL;
+    Call.Output = NdVar::reg(ResultRegister, 8);
+    Call.addInput(NdVar::cst(0x4000, 8));
+    LowOp Metadata;
+    Metadata.Addr = 0x1000;
+    Metadata.Opcode = NdOp::COPY;
+    Metadata.Output = NdVar::reg(F.Metadata, 8);
+    Metadata.addInput(NdVar::reg(ResultRegister, 8));
+    auto &Head = F.Function.Blocks[0];
+    Head.Ops.insert(Head.Ops.begin(), {Call, Metadata});
+    ASSERT_EQ(F.hints().size(), 1U); // one invocation's pre-loop metadata
+    // The static call address alone cannot identify a runtime value from
+    // multiple iterations. The formerly acyclic seed now belongs to a loop.
+    Head.Preds = {1};
+    F.Function.Blocks[1].Succs.push_back(0);
+    EXPECT_TRUE(F.hints().empty());
+  }
+}
+
+TEST(SwiftValueWitnessCalls, CopyLoopsRequireEqualSeedsOnEveryEntryPath) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      CopyLoopFixture F(Architecture);
+      F.Function.Blocks[0].Succs.push_back(3);
+      F.Function.Blocks[1].Preds.push_back(3);
+      LowBlock OtherEntry;
+      OtherEntry.Id = 3;
+      OtherEntry.StartAddr = 0x1030;
+      OtherEntry.Preds = {0};
+      OtherEntry.Succs = {1};
+      if (Case) {
+        const auto Changed = Case == 1 ? F.Target : F.SavedMetadata;
+        F.add(OtherEntry, 0x1030, NdOp::INT_ADD, NdVar::reg(Changed, 8),
+              {NdVar::reg(Changed, 8), NdVar::cst(8, 8)});
+      }
+      F.Function.Blocks.push_back(std::move(OtherEntry));
+      EXPECT_EQ(F.hints().size(), Case ? 0U : 1U);
+      std::reverse(F.Function.Blocks[1].Preds.begin(),
+                   F.Function.Blocks[1].Preds.end());
+      EXPECT_EQ(F.hints().size(), Case ? 0U : 1U);
+    }
+  }
+}
 
 TEST(SwiftValueWitnessCalls, OperationsUseExactMetadataAndRequiredTableSlots) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
