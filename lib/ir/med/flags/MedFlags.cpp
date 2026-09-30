@@ -726,12 +726,18 @@ void LowToMedConverter::eliminateFlags(MedFunc &Func) {
           continue;
       }
 
+      // Only the zero and sign flags compare the ALU result with zero.  x86
+      // also writes PF as INT_EQUAL(popcount(low byte) & 1, 0) after them, and
+      // taking that nearer INT_AND for a TEST would fold the select onto the
+      // parity of the result.
       CmpSource SelCmp;
       bool SelIsTst = false;
       MedVar SelAndResult;
       for (int J = static_cast<int>(I) - 1; J >= 0; --J) {
         auto &Prev = Blk.Ops[J];
         if (Prev.Output.Kind == MedVar::Flag &&
+            (Prev.Output.RegOff == TRI.FlagZF ||
+             Prev.Output.RegOff == TRI.FlagNF) &&
             (Prev.Opcode == NdOp::INT_EQUAL ||
              Prev.Opcode == NdOp::INT_SLESS) &&
             Prev.NumInputs >= 2) {
