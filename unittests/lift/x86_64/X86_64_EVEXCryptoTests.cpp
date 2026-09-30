@@ -1215,20 +1215,17 @@ TEST(X86EVEXCrypto, GfniEvexMaskedRegistersAndZmmBackendAreExact) {
     EXPECT_EQ(Emulator.getRegister(x86reg::K2), Case.Mask);
   }
 
-  // The register-only form decodes, but this memory-only instruction has no
-  // lift for it.
-  const std::vector<uint8_t> RegisterOnlyForm = {0x62, 0xf2, 0x6d,
-                                                 0x6a, 0xcf, 0xcb};
+  // The reserved vector length L'L=11 is #UD, so the decoder rejects it, as
+  // XED does.
+  const std::vector<uint8_t> ReservedLengthForm = {0x62, 0xf2, 0x6d,
+                                                   0x6a, 0xcf, 0xcb};
   {
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};
-    ASSERT_EQ(Dec.decodeOneForLift(RegisterOnlyForm.data(),
-                                   RegisterOnlyForm.size(), 0x1000, Insn),
-              static_cast<int>(RegisterOnlyForm.size()));
-    std::vector<LowOp> Ops;
-    EXPECT_THROW(Dec.liftToLow(Insn, Ops), UnliftedInstruction);
-    EXPECT_TRUE(Ops.empty());
+    EXPECT_LE(Dec.decodeOneForLift(ReservedLengthForm.data(),
+                                   ReservedLengthForm.size(), 0x1000, Insn),
+              0);
   }
   // A 66 prefix before EVEX is #UD, so the decoder already rejects the
   // prefixed form, as XED does.

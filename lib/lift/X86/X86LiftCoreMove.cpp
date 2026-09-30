@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -178,27 +179,15 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   if (Width != 1 && Width != 2 && Width != 4 && Width != 8)
     return false;
 
-  size_t E = 0;
-  uint8_t SegmentPrefix = 0;
-  bool Address32 = false;
-  while (E < Insn->size && Insn->bytes[E] != 0x62) {
-    const uint8_t P = Insn->bytes[E++];
-    if (P == 0x67) {
-      if (Address32)
-        return false;
-      Address32 = true;
-    } else if (movrsSegment(P) != X86_REG_INVALID) {
-      if (SegmentPrefix != 0)
-        return false;
-      SegmentPrefix = P;
-    } else {
-      return false;
-    }
-  }
-  if (E + 6 > Insn->size || Insn->bytes[E] != 0x62 ||
-      X86.encoding.modrm_offset != E + 5 || X86.encoding.imm_size != 0 ||
-      X86.modrm != Insn->bytes[E + 5] || (X86.modrm & 0xc0) == 0xc0 ||
-      X86.addr_size != (Address32 ? 4 : 8) ||
+  apxvalidation::EvexPrefixes Prefixes;
+  if (!apxvalidation::scanEvexPrefixes(Insn, Prefixes))
+    return false;
+  const size_t E = Prefixes.EvexOffset;
+  const uint8_t SegmentPrefix = Prefixes.SegmentPrefix;
+  const bool Address32 = Prefixes.Address32;
+  if (E + 6 > Insn->size || X86.encoding.modrm_offset != E + 5 ||
+      X86.encoding.imm_size != 0 || X86.modrm != Insn->bytes[E + 5] ||
+      (X86.modrm & 0xc0) == 0xc0 || X86.addr_size != (Address32 ? 4 : 8) ||
       X86.prefix[1] != SegmentPrefix ||
       X86.prefix[3] != (Address32 ? 0x67 : 0) ||
       X86.operands[1].mem.segment != movrsSegment(SegmentPrefix))
@@ -208,13 +197,13 @@ bool validateApxMovrs(const cs_insn *Insn, const cs_x86 &X86) {
   if ((P0 & 7) != 4 || (P1 & 0x78) != 0x78 || P2 != 8 ||
       (Opcode != 0x8a && Opcode != 0x8b))
     return false;
+  // The byte form is W0; otherwise W selects 64-bit operands over a 66
+  // prefix, as in the other promoted forms.
   unsigned EncodedWidth = 0;
   if (Opcode == 0x8a && (P1 & 0x83) == 0)
     EncodedWidth = 1;
-  else if (Opcode == 0x8b && (P1 & 3) == 1 && !(P1 & 0x80))
-    EncodedWidth = 2;
-  else if (Opcode == 0x8b && (P1 & 3) == 0)
-    EncodedWidth = (P1 & 0x80) ? 8 : 4;
+  else if (Opcode == 0x8b && (P1 & 3) <= 1)
+    EncodedWidth = (P1 & 0x80) ? 8 : (P1 & 3) == 1 ? 2 : 4;
   if (EncodedWidth != Width)
     return false;
   const unsigned EncodedReg = ((~P0 & 0x80) >> 4) | (~P0 & 0x10) |

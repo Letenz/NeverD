@@ -346,6 +346,195 @@ TEST(X86APXNddNfSemantics, SbbImmediateNddReadsAddress32MemoryAndZerosUpper) {
   EXPECT_FALSE(Emulator.skips().any());
 }
 
+TEST(X86APXNddNfSemantics, AluImmediatesComputeResultsAndFlags) {
+  // ADD, OR, SUB and XOR through the 80/81/83 group, with and without NDD
+  // and NF.  Logic results leave AF undefined, so it is compared only when
+  // the instruction defines it or NF preserves it.
+  struct Case {
+    const char *Name;
+    std::vector<uint8_t> Bytes;
+    unsigned Id;
+    uint64_t Source;
+    x86_reg Destination;
+    uint64_t Expected;
+    bool DefinesAF;
+    Flags Output;
+  };
+  constexpr Flags Input{true, false, true, false, true, true, true};
+  const std::vector<Case> Cases = {
+      // add r29b, 0xfe
+      {"add-imm8",
+       {0x62, 0xdc, 0x7c, 0x08, 0x80, 0xc5, 0xfe},
+       X86_INS_ADD,
+       UINT64_C(0xaaaaaaaaaaaaaa01),
+       X86_REG_R29,
+       UINT64_C(0xaaaaaaaaaaaaaaff),
+       true,
+       {false, true, false, false, true, false, true}},
+      // {nf} or r31, r29, 0xfffffffffffffffe
+      {"nf-or-ndd-simm32",
+       {0x62, 0xdc, 0x84, 0x14, 0x81, 0xcd, 0xfe, 0xff, 0xff, 0xff},
+       X86_INS_OR,
+       5,
+       X86_REG_R31,
+       UINT64_MAX,
+       true,
+       Input},
+      // sub r29, 0xfffffffffffffff6: W=1 wins over the 66 prefix.
+      {"sub-simm8",
+       {0x62, 0xdc, 0xfd, 0x08, 0x83, 0xed, 0xf6},
+       X86_INS_SUB,
+       0,
+       X86_REG_R29,
+       10,
+       true,
+       {true, true, true, false, false, false, true}},
+      // xor r31w, r29w, 0x1234 zeros the rest of r31.
+      {"xor-ndd-imm16",
+       {0x62, 0xdc, 0x05, 0x10, 0x81, 0xf5, 0x34, 0x12},
+       X86_INS_XOR,
+       UINT64_C(0xaaaaaaaaaaaa8081),
+       X86_REG_R31,
+       UINT64_C(0x92b5),
+       false,
+       {false, false, false, false, true, false, true}},
+  };
+
+  for (const Case &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    const LiftedInstruction Lifted = liftX64(C.Bytes);
+    ASSERT_EQ(Lifted.Id, C.Id);
+    ASSERT_FALSE(Lifted.Ops.empty());
+
+    NdOpEmulator Emulator(emptyImage());
+    Emulator.setStrictMode(true);
+    setFlags(Emulator, Input);
+    setGpr(Emulator, X86_REG_R31, UINT64_C(0x1111111111111111));
+    setGpr(Emulator, X86_REG_R29, C.Source);
+    ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+    EXPECT_EQ(getGpr(Emulator, C.Destination), C.Expected);
+    if (C.Destination != X86_REG_R29)
+      EXPECT_EQ(getGpr(Emulator, X86_REG_R29), C.Source);
+    EXPECT_EQ(Emulator.getRegister(x86reg::CF), C.Output.CF);
+    EXPECT_EQ(Emulator.getRegister(x86reg::PF), C.Output.PF);
+    if (C.DefinesAF)
+      EXPECT_EQ(Emulator.getRegister(x86reg::AF), C.Output.AF);
+    EXPECT_EQ(Emulator.getRegister(x86reg::ZF), C.Output.ZF);
+    EXPECT_EQ(Emulator.getRegister(x86reg::SF), C.Output.SF);
+    EXPECT_EQ(Emulator.getRegister(x86reg::OF), C.Output.OF);
+    EXPECT_EQ(Emulator.getRegister(x86reg::DF), C.Output.DF);
+    EXPECT_FALSE(Emulator.skips().any());
+  }
+}
+
+TEST(X86APXNddNfSemantics, AluMemoryDestinationStoresTheResult) {
+  // add qword ptr [r29 + r30*4 + 0x20], r28
+  const LiftedInstruction Lifted =
+      liftX64({0x62, 0x0c, 0xf8, 0x08, 0x01, 0x64, 0xb5, 0x20});
+  ASSERT_EQ(Lifted.Id, X86_INS_ADD);
+  ASSERT_FALSE(Lifted.Ops.empty());
+  // mov rax, qword ptr [rdx] reads the stored sum back.
+  const LiftedInstruction Load = liftX64({0x48, 0x8b, 0x02});
+  std::vector<LowOp> Ops = Lifted.Ops;
+  Ops.insert(Ops.end(), Load.Ops.begin(), Load.Ops.end());
+
+  NdOpEmulator Emulator(
+      writable(imageWithValue(UINT64_C(0x1000000000000000), 8)));
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, {true, false, false, false, false, false, true});
+  setGpr(Emulator, X86_REG_R28, UINT64_C(0x12345678));
+  setGpr(Emulator, X86_REG_R29, kDataAddress - 0x28);
+  setGpr(Emulator, X86_REG_R30, 2);
+  setGpr(Emulator, X86_REG_RDX, kDataAddress);
+  ASSERT_EQ(Emulator.run(Ops), Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_RAX), UINT64_C(0x1000000012345678));
+  expectFlags(Emulator, {false, true, false, false, false, false, true});
+  EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86APXNddNfSemantics, AluNddMemorySourceLeavesMemoryUnchanged) {
+  // sub r31, qword ptr [r29 + r30*4 + 0x20], r28
+  const LiftedInstruction Lifted =
+      liftX64({0x62, 0x0c, 0x80, 0x10, 0x29, 0x64, 0xb5, 0x20});
+  ASSERT_EQ(Lifted.Id, X86_INS_SUB);
+  ASSERT_FALSE(Lifted.Ops.empty());
+  for (const LowOp &Op : Lifted.Ops)
+    EXPECT_NE(Op.Opcode, NdOp::STORE);
+
+  NdOpEmulator Emulator(imageWithValue(UINT64_C(0x1000000000000000), 8));
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, {false, false, false, false, false, false, true});
+  setGpr(Emulator, X86_REG_R28, UINT64_C(0x12345678));
+  setGpr(Emulator, X86_REG_R29, kDataAddress - 0x28);
+  setGpr(Emulator, X86_REG_R30, 2);
+  setGpr(Emulator, X86_REG_R31, UINT64_C(0x1111111111111111));
+  ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_R31), UINT64_C(0x0fffffffedcba988));
+  EXPECT_EQ(getGpr(Emulator, X86_REG_R28), UINT64_C(0x12345678));
+  expectFlags(Emulator, {false, true, true, false, false, false, true});
+  EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86APXNddNfSemantics, AluNfImmediateToMemoryPreservesFlags) {
+  // {nf} and dword ptr [r29 + r30*4 + 0x20], 0xf0f0f0f
+  const LiftedInstruction Lifted = liftX64(
+      {0x62, 0x9c, 0x78, 0x0c, 0x81, 0x64, 0xb5, 0x20, 0x0f, 0x0f, 0x0f, 0x0f});
+  ASSERT_EQ(Lifted.Id, X86_INS_AND);
+  ASSERT_FALSE(Lifted.Ops.empty());
+  // mov eax, dword ptr [rdx] reads the stored result back.
+  const LiftedInstruction Load = liftX64({0x8b, 0x02});
+  std::vector<LowOp> Ops = Lifted.Ops;
+  Ops.insert(Ops.end(), Load.Ops.begin(), Load.Ops.end());
+
+  constexpr Flags Input{true, false, true, false, true, true, true};
+  NdOpEmulator Emulator(writable(imageWithValue(UINT64_C(0x12345678), 4)));
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, Input);
+  setGpr(Emulator, X86_REG_R29, kDataAddress - 0x28);
+  setGpr(Emulator, X86_REG_R30, 2);
+  setGpr(Emulator, X86_REG_RDX, kDataAddress);
+  ASSERT_EQ(Emulator.run(Ops), Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_RAX), UINT64_C(0x02040608));
+  expectFlags(Emulator, Input);
+  EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86APXNddNfSemantics, AluRejectsDetailThatDisagreesWithRawBytes) {
+  // add r29b, 0xfe
+  expectMutatedLiftRejected(
+      {0x62, 0xdc, 0x7c, 0x08, 0x80, 0xc5, 0xfe},
+      [](cs_insn &Insn) { Insn.detail->x86.operands[1].imm = 0x7f; });
+  // {nf} or r31, r29, 0xfffffffffffffffe must not report a flag write.
+  expectMutatedLiftRejected(
+      {0x62, 0xdc, 0x84, 0x14, 0x81, 0xcd, 0xfe, 0xff, 0xff, 0xff},
+      [](cs_insn &Insn) {
+        Insn.detail->regs_write_count = 1;
+        Insn.detail->regs_write[0] = X86_REG_EFLAGS;
+      });
+  // sub r31, qword ptr [r29 + r30*4 + 0x20], r28
+  expectMutatedLiftRejected(
+      {0x62, 0x0c, 0x80, 0x10, 0x29, 0x64, 0xb5, 0x20}, [](cs_insn &Insn) {
+        Insn.detail->x86.operands[1].mem.base = X86_REG_R28;
+      });
+}
+
+TEST(X86APXNddNfSemantics, CancelledRexBeforeEvexIsIgnored) {
+  // A REX that the FS prefix follows is ignored: add ecx, eax.
+  const LiftedInstruction Lifted =
+      liftX64({0x40, 0x64, 0x62, 0xf4, 0x7c, 0x08, 0x01, 0xc1});
+  ASSERT_EQ(Lifted.Id, X86_INS_ADD);
+  ASSERT_FALSE(Lifted.Ops.empty());
+
+  NdOpEmulator Emulator(emptyImage());
+  Emulator.setStrictMode(true);
+  setFlags(Emulator, {false, false, false, false, false, false, true});
+  setGpr(Emulator, X86_REG_RCX, UINT64_C(0xffffffff00000001));
+  setGpr(Emulator, X86_REG_RAX, 2);
+  ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+  EXPECT_EQ(getGpr(Emulator, X86_REG_RCX), 3U);
+  EXPECT_FALSE(Emulator.skips().any());
+}
+
 TEST(X86APXNddNfSemantics, ShrNddNfUsesDedicatedSourceAndPreservesFlags) {
   const LiftedInstruction Lifted =
       liftX64({0x62, 0xdc, 0x04, 0x14, 0xd3, 0xee});
@@ -554,9 +743,11 @@ TEST(X86APXNddNfSemantics, CarryRotatesHonorNddCarryInputAndRejectReservedNf) {
 
 TEST(X86APXNddNfSemantics, DoubleShiftsHonorThirdSourceAndPreserveFlags) {
   constexpr Flags Input{true, false, true, false, true, true, true};
-  {
+  // W selects 64-bit operands whether or not the pp field also encodes 66.
+  for (uint8_t P1 : {UINT8_C(0xf4), UINT8_C(0xf5)}) {
+    SCOPED_TRACE(static_cast<unsigned>(P1));
     const LiftedInstruction Lifted =
-        liftX64({0x62, 0xec, 0xf4, 0x14, 0xa5, 0xd3});
+        liftX64({0x62, 0xec, P1, 0x14, 0xa5, 0xd3});
     ASSERT_EQ(Lifted.Id, X86_INS_SHLD);
     ASSERT_FALSE(Lifted.Ops.empty());
     NdOpEmulator Emulator(emptyImage());
@@ -740,13 +931,14 @@ TEST(X86APXNddNfSemantics, ImulNddNfUsesBothSourcesAndPreservesFlags) {
 TEST(X86APXNddNfSemantics, ImulImmediateNfHonorsZeroUpperAndPreservesFlags) {
   constexpr Flags Input{true, false, true, false, true, true, true};
 
-  // IMUL 6B uses ND as ZU rather than as an NDD selector.  With a 16-bit
-  // operand, ND=1 therefore clears the complete destination container above
-  // the result while VVVVV remains the architectural zero value.
+  // IMUL 6B uses ND as ZU rather than as an NDD selector, and decodes as
+  // IMULZU.  With a 16-bit operand, ZU therefore clears the complete
+  // destination container above the result while VVVVV remains the
+  // architectural zero value.
   const std::vector<uint8_t> ZeroUpper = {0x62, 0xec, 0x7d, 0x1c,
                                           0x6b, 0xcb, 0xfd};
   const LiftedInstruction ZeroUpperLifted = liftX64(ZeroUpper);
-  ASSERT_EQ(ZeroUpperLifted.Id, X86_INS_IMUL);
+  ASSERT_EQ(ZeroUpperLifted.Id, X86_INS_IMULZU);
   ASSERT_FALSE(ZeroUpperLifted.Ops.empty());
 
   NdOpEmulator ZeroUpperEmulator(emptyImage());

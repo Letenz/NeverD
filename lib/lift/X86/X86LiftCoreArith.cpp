@@ -18,16 +18,27 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
 
+#include <iterator>
+
 #define DEBUG_TYPE "neverd-lift-x86"
 
 namespace neverd {
 
 namespace {
 
-struct ApxCarryArithmetic {
+// ADD, OR, ADC, SBB, AND, SUB and XOR share the legacy ALU rows in EVEX map 4:
+// row * 8 + 0..3 holds the rm,reg and reg,rm forms, and the 80/81/83 group
+// selects the row with ModRM.reg.  Row 7, CMP, is CCMP there.
+constexpr x86_insn ApxArithmeticRows[] = {
+    X86_INS_ADD, X86_INS_OR,  X86_INS_ADC, X86_INS_SBB,
+    X86_INS_AND, X86_INS_SUB, X86_INS_XOR,
+};
+
+struct ApxBinaryArithmetic {
   bool Present = false;
   bool Valid = false;
   bool NDD = false;
+  bool NF = false;
   unsigned FirstSource = 0;
   unsigned SecondSource = 1;
 };
@@ -50,10 +61,37 @@ struct ApxImulArithmetic {
   bool ZeroUpper = false;
 };
 
-ApxCarryArithmetic decodeApxCarryArithmetic(const cs_insn *Insn,
-                                            const cs_x86 &X86) {
-  ApxCarryArithmetic Result;
-  if (!Insn || (Insn->id != X86_INS_ADC && Insn->id != X86_INS_SBB))
+bool isApxArithmeticInstruction(unsigned Id) {
+  for (const x86_insn Row : ApxArithmeticRows)
+    if (Id == Row)
+      return true;
+  return false;
+}
+
+uint64_t apxArithmeticFlags(unsigned Id) {
+  switch (Id) {
+  case X86_INS_ADD:
+  case X86_INS_SUB:
+    return X86_EFLAGS_MODIFY_AF | X86_EFLAGS_MODIFY_CF | X86_EFLAGS_MODIFY_OF |
+           X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF;
+  case X86_INS_ADC:
+    return X86_EFLAGS_MODIFY_OF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
+           X86_EFLAGS_MODIFY_AF | X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_CF |
+           X86_EFLAGS_TEST_CF;
+  case X86_INS_SBB:
+    return X86_EFLAGS_MODIFY_OF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
+           X86_EFLAGS_UNDEFINED_AF | X86_EFLAGS_MODIFY_PF |
+           X86_EFLAGS_MODIFY_CF | X86_EFLAGS_TEST_CF;
+  default:
+    return X86_EFLAGS_UNDEFINED_AF | X86_EFLAGS_RESET_CF | X86_EFLAGS_RESET_OF |
+           X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF;
+  }
+}
+
+ApxBinaryArithmetic decodeApxBinaryArithmetic(const cs_insn *Insn,
+                                              const cs_x86 &X86) {
+  ApxBinaryArithmetic Result;
+  if (!Insn || !isApxArithmeticInstruction(Insn->id))
     return Result;
   Result.Present = apxvalidation::isPresent(Insn, X86);
   if (!Result.Present)
@@ -72,21 +110,21 @@ ApxCarryArithmetic decodeApxCarryArithmetic(const cs_insn *Insn,
   else if (RawOpcode == 0x81)
     ImmediateBytes = (RawP1 & 0x80) != 0 || (RawP1 & 3) == 0 ? 4 : 2;
 
+  // ADC and SBB consume CF, so EVEX.NF is reserved for them.
+  const bool ReadsCarry = Insn->id == X86_INS_ADC || Insn->id == X86_INS_SBB;
   apxvalidation::Header H;
   if (!apxvalidation::decodeHeader(Insn, X86, H, ImmediateBytes) ||
-      (H.P0 & 7) != 4 || (H.P2 & 0xe7) != 0 || (!H.Memory && (H.P1 & 4) == 0))
+      (H.P0 & 7) != 4 || (H.P2 & (ReadsCarry ? 0xe7 : 0xe3)) != 0 ||
+      (!H.Memory && (H.P1 & 4) == 0))
     return Result;
 
   const bool Immediate =
       H.Opcode == 0x80 || H.Opcode == 0x81 || H.Opcode == 0x83;
-  const bool Binary = (H.Opcode >= 0x10 && H.Opcode <= 0x13) ||
-                      (H.Opcode >= 0x18 && H.Opcode <= 0x1b);
+  const bool Binary = H.Opcode < 0x38 && (H.Opcode & 0x04) == 0;
   if (!Immediate && !Binary)
     return Result;
-  const bool IsAdc = Binary ? H.Opcode < 0x18 : ((H.ModRM >> 3) & 7) == 2;
-  const bool IsSbb = Binary ? H.Opcode >= 0x18 : ((H.ModRM >> 3) & 7) == 3;
-  if ((Insn->id == X86_INS_ADC && !IsAdc) ||
-      (Insn->id == X86_INS_SBB && !IsSbb) || (!IsAdc && !IsSbb))
+  const unsigned Row = Binary ? H.Opcode >> 3 : (H.ModRM >> 3) & 7;
+  if (Row >= std::size(ApxArithmeticRows) || Insn->id != ApxArithmeticRows[Row])
     return Result;
 
   unsigned Width = 0;
@@ -107,6 +145,7 @@ ApxCarryArithmetic decodeApxCarryArithmetic(const cs_insn *Insn,
   }
 
   Result.NDD = (H.P2 & 0x10) != 0;
+  Result.NF = (H.P2 & 0x04) != 0;
   if (!Result.NDD && apxvalidation::vvvvv(H) != 0)
     return Result;
   const unsigned ExpectedOperands = Result.NDD ? 3 : 2;
@@ -179,13 +218,15 @@ ApxCarryArithmetic decodeApxCarryArithmetic(const cs_insn *Insn,
     }
   }
 
-  const uint64_t ExpectedFlags =
-      X86_EFLAGS_MODIFY_OF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
-      (Insn->id == X86_INS_ADC ? X86_EFLAGS_MODIFY_AF
-                               : X86_EFLAGS_UNDEFINED_AF) |
-      X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_CF | X86_EFLAGS_TEST_CF;
-  if (!apxvalidation::implicitDetail(Insn, X86, ExpectedFlags, {X86_REG_EFLAGS},
-                                     {X86_REG_EFLAGS}))
+  const bool DetailValid =
+      Result.NF ? apxvalidation::implicitDetail(Insn, X86, 0, {}, {})
+      : ReadsCarry
+          ? apxvalidation::implicitDetail(Insn, X86,
+                                          apxArithmeticFlags(Insn->id),
+                                          {X86_REG_EFLAGS}, {X86_REG_EFLAGS})
+          : apxvalidation::implicitDetail(
+                Insn, X86, apxArithmeticFlags(Insn->id), {}, {X86_REG_EFLAGS});
+  if (!DetailValid)
     return Result;
   Result.Valid = true;
   return Result;
@@ -311,7 +352,7 @@ ApxUnaryArithmetic decodeApxUnaryArithmetic(const cs_insn *Insn,
 ApxImulArithmetic decodeApxImulArithmetic(const cs_insn *Insn,
                                           const cs_x86 &X86) {
   ApxImulArithmetic Result;
-  if (!Insn || Insn->id != X86_INS_IMUL)
+  if (!Insn || (Insn->id != X86_INS_IMUL && Insn->id != X86_INS_IMULZU))
     return Result;
   Result.Present = apxvalidation::isPresent(Insn, X86);
   if (!Result.Present)
@@ -342,6 +383,12 @@ ApxImulArithmetic decodeApxImulArithmetic(const cs_insn *Insn,
                 : X86_EFLAGS_MODIFY_OF | X86_EFLAGS_UNDEFINED_SF |
                       X86_EFLAGS_UNDEFINED_ZF | X86_EFLAGS_UNDEFINED_AF |
                       X86_EFLAGS_UNDEFINED_PF | X86_EFLAGS_MODIFY_CF;
+
+  // EVEX.ND is the ZU bit of the immediate forms, which decode as IMULZU.
+  const bool ZeroUpperEncoding =
+      (H.Opcode == 0x69 || H.Opcode == 0x6b) && (H.P2 & 0x10) != 0;
+  if (Insn->id != (ZeroUpperEncoding ? X86_INS_IMULZU : X86_INS_IMUL))
+    return Result;
 
   if (H.Opcode == 0xf6 || H.Opcode == 0xf7) {
     const bool ByteOpcode = H.Opcode == 0xf6;
@@ -439,33 +486,6 @@ ApxImulArithmetic decodeApxImulArithmetic(const cs_insn *Insn,
   return Result;
 }
 
-bool decodeApxPromotedModifiers(const cs_insn *Insn, bool &Ndd, bool &Nf) {
-  if (!Insn || Insn->size < 6)
-    return false;
-  size_t Offset = 0;
-  while (Offset < Insn->size && Insn->bytes[Offset] != 0x62) {
-    switch (Insn->bytes[Offset]) {
-    case 0x26:
-    case 0x2e:
-    case 0x36:
-    case 0x3e:
-    case 0x64:
-    case 0x65:
-    case 0x67:
-      ++Offset;
-      break;
-    default:
-      return false;
-    }
-  }
-  if (Offset + 6 != Insn->size || Insn->bytes[Offset] != 0x62 ||
-      (Insn->bytes[Offset + 1] & 0x07) != 0x04)
-    return false;
-  Ndd = (Insn->bytes[Offset + 3] & 0x10) != 0;
-  Nf = (Insn->bytes[Offset + 3] & 0x04) != 0;
-  return true;
-}
-
 } // namespace
 
 bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
@@ -483,8 +503,8 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   };
   unsigned InsnId = Insn->id;
 
-  const ApxCarryArithmetic ApxCarry = decodeApxCarryArithmetic(Insn, X86);
-  if (ApxCarry.Present && !ApxCarry.Valid)
+  const ApxBinaryArithmetic ApxBinary = decodeApxBinaryArithmetic(Insn, X86);
+  if (ApxBinary.Present && !ApxBinary.Valid)
     return false;
   const ApxUnaryArithmetic ApxUnary = decodeApxUnaryArithmetic(Insn, X86);
   if (ApxUnary.Present && !ApxUnary.Valid)
@@ -492,18 +512,21 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   const ApxImulArithmetic ApxImul = decodeApxImulArithmetic(Insn, X86);
   if (ApxImul.Present && !ApxImul.Valid)
     return false;
+  // IMULZU is the immediate IMUL whose ZU write the validator recorded.
+  if (InsnId == X86_INS_IMULZU) {
+    if (!ApxImul.Valid)
+      return false;
+    InsnId = X86_INS_IMUL;
+  }
 
-  bool ApxNdd = false;
-  bool ApxNf = false;
-  const bool IsApxPromoted = decodeApxPromotedModifiers(Insn, ApxNdd, ApxNf);
-  if (ApxCarry.Valid) {
+  if (ApxBinary.Valid && (InsnId == X86_INS_ADC || InsnId == X86_INS_SBB)) {
     const NdVar DestinationWrite = L.operandWrite(X86.operands[0]);
     NdVar A = S.makeTemp(X86.operands[0].size);
     S.emit(NdOp::COPY, A,
-           {readArithmeticOperand(X86.operands[ApxCarry.FirstSource])});
+           {readArithmeticOperand(X86.operands[ApxBinary.FirstSource])});
     NdVar B = S.makeTemp(X86.operands[0].size);
     S.emit(NdOp::COPY, B,
-           {readArithmeticOperand(X86.operands[ApxCarry.SecondSource])});
+           {readArithmeticOperand(X86.operands[ApxBinary.SecondSource])});
     const bool MemoryDestination = X86.operands[0].type == X86_OP_MEM;
     const NdVar Destination =
         MemoryDestination ? S.makeTemp(A.Size) : DestinationWrite;
@@ -548,35 +571,20 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.storeToMem(X86.operands[0], Destination);
     return true;
   }
-  if (IsApxPromoted &&
-      (InsnId == X86_INS_ADD || InsnId == X86_INS_OR || InsnId == X86_INS_AND ||
-       InsnId == X86_INS_SUB || InsnId == X86_INS_XOR)) {
-    const unsigned ExpectedOperands = ApxNdd ? 3 : 2;
-    if (X86.op_count != ExpectedOperands)
-      return false;
-    for (unsigned Index = 0; Index < ExpectedOperands; ++Index)
-      if (X86.operands[Index].type != X86_OP_REG ||
-          X86.operands[Index].size != X86.operands[0].size)
-        return false;
-    if (X86.operands[0].size != 1 && X86.operands[0].size != 2 &&
-        X86.operands[0].size != 4 && X86.operands[0].size != 8)
-      return false;
-
-    const unsigned FirstSourceIndex = ApxNdd ? 1 : 0;
-    const unsigned SecondSourceIndex = ApxNdd ? 2 : 1;
-    const NdVar FirstRead =
-        readArithmeticOperand(X86.operands[FirstSourceIndex]);
-    const NdVar SecondRead =
-        readArithmeticOperand(X86.operands[SecondSourceIndex]);
-    const NdVar Destination = L.operandWrite(X86.operands[0]);
-    if (FirstRead.Size != Destination.Size ||
-        SecondRead.Size != Destination.Size)
-      return false;
-
-    NdVar First = S.makeTemp(Destination.Size);
-    NdVar Second = S.makeTemp(Destination.Size);
-    S.emit(NdOp::COPY, First, {FirstRead});
-    S.emit(NdOp::COPY, Second, {SecondRead});
+  if (ApxBinary.Valid) {
+    // ADD, OR, AND, SUB and XOR in any promoted form: the destination is the
+    // NDD register or the first source, which may be memory.
+    const cs_x86_op &DestinationOperand = X86.operands[0];
+    NdVar First = S.makeTemp(DestinationOperand.size);
+    S.emit(NdOp::COPY, First,
+           {readArithmeticOperand(X86.operands[ApxBinary.FirstSource])});
+    NdVar Second = S.makeTemp(DestinationOperand.size);
+    S.emit(NdOp::COPY, Second,
+           {readArithmeticOperand(X86.operands[ApxBinary.SecondSource])});
+    const bool MemoryDestination = DestinationOperand.type == X86_OP_MEM;
+    const NdVar Destination = MemoryDestination
+                                  ? S.makeTemp(First.Size)
+                                  : L.operandWrite(DestinationOperand);
     NdOp Opcode = NdOp::INT_ADD;
     if (InsnId == X86_INS_OR)
       Opcode = NdOp::INT_OR;
@@ -588,12 +596,14 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       Opcode = NdOp::INT_XOR;
     S.emit(Opcode, Destination, {First, Second});
 
-    if (!ApxNf) {
+    if (!ApxBinary.NF) {
       if (InsnId == X86_INS_ADD || InsnId == X86_INS_SUB)
         L.emitFlagsArith(S, Destination, First, Second, InsnId == X86_INS_SUB);
       else
         L.emitFlagsLogic(S, Destination);
     }
+    if (MemoryDestination)
+      S.storeToMem(DestinationOperand, Destination);
     return true;
   }
 

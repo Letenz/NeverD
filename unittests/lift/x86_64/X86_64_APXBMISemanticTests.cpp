@@ -935,10 +935,14 @@ TEST(X86APXBMISemantics, RawRolesAndMemoryDetailMustAgreeExactly) {
   expectMutatedLiftRejected(Rorx,
                             [](cs_insn &Raw) { Raw.bytes[Raw.size - 1] = 8; });
 
+  // BZHI lists its ModRM.r/m source before the VVVVV index.
   const std::vector<uint8_t> Memory = {0x65, 0x67, 0x62, 0x0a, 0x74,
                                        0x04, 0xf5, 0x54, 0xb5, 0x20};
   expectMutatedLiftRejected(Memory, [](cs_insn &Raw) {
-    Raw.detail->x86.operands[2].mem.base = X86_REG_R28D;
+    Raw.detail->x86.operands[1].mem.base = X86_REG_R28D;
+  });
+  expectMutatedLiftRejected(Memory, [](cs_insn &Raw) {
+    Raw.detail->x86.operands[2].reg = X86_REG_R20D;
   });
   expectMutatedLiftRejected(
       Memory, [](cs_insn &Raw) { Raw.detail->x86.sib_base = X86_REG_R28D; });

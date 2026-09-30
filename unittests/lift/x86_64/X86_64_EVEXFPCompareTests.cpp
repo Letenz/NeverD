@@ -366,8 +366,18 @@ TEST(X86EVEXFPCompare, ScalarFormsIgnoreEncodedLength) {
   }};
 
   for (const ScalarCase &Case : Cases) {
-    for (uint8_t Length : {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40),
-                           UINT8_C(0x60)}) {
+    // The reserved L'L=11 is #UD even for these LIG forms, as in XED.
+    {
+      const std::vector<uint8_t> Reserved = {0x62, 0xf1, Case.P1, 0x68,
+                                             0xc2, 0xcb, 0x00};
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::X64));
+      DecodedInsn Insn{};
+      EXPECT_EQ(Dec.decodeOneForLift(Reserved.data(), Reserved.size(), kAddress,
+                                     Insn),
+                0);
+    }
+    for (uint8_t Length : {UINT8_C(0x00), UINT8_C(0x20), UINT8_C(0x40)}) {
       SCOPED_TRACE(testing::Message()
                    << "p1=" << static_cast<unsigned>(Case.P1)
                    << " encoded_length=" << static_cast<unsigned>(Length));

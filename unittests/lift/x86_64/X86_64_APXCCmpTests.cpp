@@ -586,6 +586,42 @@ TEST(X86APXCCmp, TrueCompareCoversWidthsOrdersAndImmediateSignExtension) {
   expectFlags(ByteEmulator, expectedFlags(10, 5, 1, 0x80, 1, Input));
 }
 
+TEST(X86APXCCmp, WidthFollowsTheOtherPromotedForms) {
+  // As in the other promoted ALU forms, a byte form ignores EVEX.W, and W
+  // selects 64-bit operands over a 66 prefix, as XED decodes them.
+  struct WidthCase {
+    std::vector<uint8_t> Bytes;
+    unsigned Width;
+  };
+  std::vector<uint8_t> ByteWithW = encodeRegister(10, 3, 1, true);
+  ByteWithW[2] |= 0x80;
+  std::vector<uint8_t> WordWithW = encodeRegister(10, 3, 2, true);
+  WordWithW[2] |= 0x80;
+  const std::array<WidthCase, 2> Cases = {{{ByteWithW, 1}, {WordWithW, 8}}};
+  const RegInfo Left = mapCapstoneReg(X86_REG_R17);
+  const RegInfo Right = mapCapstoneReg(X86_REG_R26);
+  const Flags Input{true, false, false, true, false, false, true};
+  constexpr uint64_t LeftValue = UINT64_C(0x8000000000000080);
+  constexpr uint64_t RightValue = UINT64_C(0x0000000000000001);
+
+  for (const WidthCase &Case : Cases) {
+    SCOPED_TRACE(::testing::Message() << "width=" << Case.Width);
+    const LiftedInstruction Test = liftX64(Case.Bytes);
+    ASSERT_EQ(Test.Id, X86_INS_CCMPT);
+    ASSERT_FALSE(Test.Ops.empty());
+
+    BinaryImage Image = makeImage();
+    NdOpEmulator Emulator(Image);
+    initializeStrict(Emulator, Input);
+    Emulator.setRegister(Left.Offset, LeftValue);
+    Emulator.setRegister(Right.Offset, RightValue);
+    ASSERT_EQ(Emulator.run(Test.Ops), Test.Ops.size());
+    expectFlags(Emulator,
+                expectedFlags(10, 3, Case.Width, LeftValue, RightValue, Input));
+    EXPECT_FALSE(Emulator.skips().any());
+  }
+}
+
 TEST(X86APXCCmp, TrueMemoryPreservesOperandOrderWidthAndAddressSpace) {
   constexpr uint64_t BaseValue = UINT64_C(0xabcdef0100005000);
   constexpr uint64_t IndexValue = 4;
