@@ -2972,10 +2972,10 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
     LowOp Store;
     Store.Opcode = NdOp::STORE;
     Store.Addr = Addr;
-    Store.addInput(NdVar::address(
-        RelocationFoldObservationVA +
-            static_cast<va_t>(NextObservation++) * PointerSize,
-        PointerSize));
+    Store.addInput(
+        NdVar::address(RelocationFoldObservationVA +
+                           static_cast<va_t>(NextObservation++) * PointerSize,
+                       PointerSize));
     Store.addInput(Value);
     Block.Ops.push_back(std::move(Store));
   };
@@ -18227,8 +18227,7 @@ TEST(LowToMedRelocationInvariantBoundary,
       ASSERT_NE(CompletedPageAddress, nullptr);
       ASSERT_TRUE(CompletedPageAddress->isConst());
       EXPECT_EQ(CompletedPageAddress->ConstVal, 0x248U);
-      EXPECT_TRUE(
-          isExactAddressProvenance(CompletedPageAddress->Provenance));
+      EXPECT_TRUE(isExactAddressProvenance(CompletedPageAddress->Provenance));
     }
 }
 
