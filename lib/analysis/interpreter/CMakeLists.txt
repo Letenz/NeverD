@@ -6,6 +6,7 @@ add_neverd_component_library(NeverDInterpreterSpecialization
   FiniteQueryCache.cpp
   ControlDiscovery.cpp
   LowIRUndefinedIndependence.cpp
+  LowIRLoopPlanPairing.cpp
 
   LINK_COMPONENTS
   IR
