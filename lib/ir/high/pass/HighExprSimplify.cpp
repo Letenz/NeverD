@@ -12,6 +12,7 @@
 ///   - Subtraction-to-comparison folding  ((a - b) == 0 → a == b)
 ///   - Negative constant folding  (x + (-N) → x - N)
 ///   - Sub-piece identity elimination  (SUBBYTES((u64)x, 0) → x)
+///   - Truncation narrowing  ((u32)((u64)a + (u64)b) → a + b)
 ///
 //===----------------------------------------------------------------------===//
 
@@ -114,19 +115,35 @@ static bool isZeroConst(const ExprPtr &E) {
 
 /// Rewrite \p X knowing only its low \p Bytes bytes are read (the operand
 /// of a low SUBBYTES).  A partial x86 register write keeps the stale upper
-/// bytes as `(old & ~0xFF) | new`; a byte read of that never sees `old`.
-/// Operand widths are unchanged; only subexpressions that cannot affect the
-/// demanded bytes and have no effect are removed.
+/// bytes as `(old & ~0xFF) | new`; a byte read of that never sees `old`, and
+/// the low bytes of a sum, difference, product or left shift never see the
+/// operands' upper bytes.  Operand widths are unchanged; only subexpressions
+/// that cannot affect the demanded bytes and have no effect are removed.
 static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
-  if (!X || !X->Type || Bytes == 0 || Bytes >= 8 || X->Type->Size > 8 ||
-      X->Kind != ExprKind::BinOp || X->Operands.size() != 2)
+  if (!X || !X->Type || Bytes == 0 || Bytes >= 8 || X->Type->Size > 8)
+    return X;
+  auto WithOperands = [&](std::vector<ExprPtr> Operands) {
+    auto Copy = std::make_shared<HighExpr>(*X);
+    Copy->Operands = std::move(Operands);
+    return Copy;
+  };
+  const bool Integer = X->Type->Kind == NdTypeKind::Int;
+  // An extension's low bytes are its operand's.
+  if (Integer && X->Kind == ExprKind::UnaryOp &&
+      (X->Op == NdOp::INT_ZEXT || X->Op == NdOp::INT_SEXT) &&
+      X->Operands.size() == 1 && X->Operands[0] && X->Operands[0]->Type &&
+      X->Operands[0]->Type->Size >= Bytes) {
+    ExprPtr In = demandLowBytes(X->Operands[0], Bytes);
+    return In == X->Operands[0] ? X : WithOperands({In});
+  }
+  if (X->Kind != ExprKind::BinOp || X->Operands.size() != 2)
     return X;
   const uint64_t Mask = (uint64_t(1) << (Bytes * 8)) - 1;
   const ExprPtr &L = X->Operands[0];
   const ExprPtr &R = X->Operands[1];
   auto Zero = [&] { return HighExpr::makeConst(0, X->Type->Size); };
   switch (X->Op) {
-  case NdOp::INT_AND:
+  case NdOp::INT_AND: {
     for (const auto &[C, Other] : {std::pair{R, L}, std::pair{L, R}})
       if (C && C->Kind == ExprKind::Const) {
         if ((C->ConstVal & Mask) == 0 && Other && isEffectFree(*Other))
@@ -134,7 +151,12 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
         if ((C->ConstVal & Mask) == Mask)
           return demandLowBytes(Other, Bytes);
       }
-    return X;
+    ExprPtr NL = demandLowBytes(L, Bytes);
+    ExprPtr NR = demandLowBytes(R, Bytes);
+    if (NL == L && NR == R)
+      return X;
+    return WithOperands({NL, NR});
+  }
   case NdOp::INT_OR:
   case NdOp::INT_XOR: {
     ExprPtr NL = demandLowBytes(L, Bytes);
@@ -145,13 +167,98 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
       return NL;
     if (NL == L && NR == R)
       return X;
-    auto Copy = std::make_shared<HighExpr>(*X);
-    Copy->Operands = {NL, NR};
-    return Copy;
+    return WithOperands({NL, NR});
+  }
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_MULT: {
+    if (!Integer)
+      return X;
+    ExprPtr NL = demandLowBytes(L, Bytes);
+    ExprPtr NR = demandLowBytes(R, Bytes);
+    if (NL == L && NR == R)
+      return X;
+    return WithOperands({NL, NR});
+  }
+  case NdOp::INT_LEFT: {
+    if (!Integer || !R || R->Kind != ExprKind::Const)
+      return X;
+    // Every demanded byte comes from below the shift amount: all zero.
+    if (R->ConstVal >= uint64_t{Bytes} * 8 && L && isEffectFree(*L))
+      return Zero();
+    ExprPtr NL = demandLowBytes(L, Bytes);
+    return NL == L ? X : WithOperands({NL, R});
+  }
+  case NdOp::CONCAT: {
+    // Only the low operand supplies the demanded bytes.  A high operand that
+    // cannot be observed is not read at all, even an undefined one.
+    if (!Integer || !L || !R || !R->Type || R->Type->Size < Bytes)
+      return X;
+    ExprPtr NR = demandLowBytes(R, Bytes);
+    size_t Budget = 128;
+    if (discardableIntegerValue(L, Budget)) {
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, NR);
+      Extended->Type = X->Type;
+      return Extended;
+    }
+    return NR == R ? X : WithOperands({L, NR});
   }
   default:
     return X;
   }
+}
+
+/// `x OP y` truncated to \p Ty, computed at that width instead.  The low
+/// bytes of a sum, difference, product or bitwise combination read only the
+/// low bytes of the operands, so an extension from exactly that width, or a
+/// constant, supplies them directly -- the same operation a native narrow
+/// instruction lifts to.
+static ExprPtr narrowTruncatedOp(const ExprPtr &Val, const TypeRef &Ty) {
+  if (!Val || !Ty || Ty->Kind != NdTypeKind::Int || !Ty->Size ||
+      Val->Kind != ExprKind::BinOp || Val->Operands.size() != 2 || !Val->Type ||
+      Val->Type->Kind != NdTypeKind::Int || Val->Type->Size <= Ty->Size ||
+      Val->Type->Size > 8 || Val->IntrinsicId != Intrinsic::None ||
+      !Val->IntrinsicOutputs.empty() ||
+      Val->MemoryOrdering != NdMemoryOrdering::None ||
+      Val->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return nullptr;
+  switch (Val->Op) {
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_MULT:
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+    break;
+  default:
+    return nullptr;
+  }
+  const uint64_t Mask = (uint64_t(1) << (Ty->Size * 8)) - 1;
+  auto Narrow = [&](const ExprPtr &Operand) -> ExprPtr {
+    if (!Operand)
+      return nullptr;
+    if (Operand->Kind == ExprKind::Const && Operand->Operands.empty() &&
+        (Operand->ConstProvenance == ConstantAddressProvenance::Unknown ||
+         Operand->ConstProvenance == ConstantAddressProvenance::Scalar))
+      return HighExpr::makeConst(Operand->ConstVal & Mask, Ty->Size,
+                                 Operand->ConstProvenance);
+    if (Operand->Kind == ExprKind::UnaryOp &&
+        (Operand->Op == NdOp::INT_ZEXT || Operand->Op == NdOp::INT_SEXT) &&
+        Operand->Operands.size() == 1 && Operand->Operands[0] &&
+        Operand->Operands[0]->Type &&
+        Operand->Operands[0]->Type->Kind == NdTypeKind::Int &&
+        Operand->Operands[0]->Type->Size == Ty->Size)
+      return Operand->Operands[0];
+    return nullptr;
+  };
+  ExprPtr NL = Narrow(Val->Operands[0]);
+  ExprPtr NR = Narrow(Val->Operands[1]);
+  if (!NL || !NR)
+    return nullptr;
+  auto Result = std::make_shared<HighExpr>(*Val);
+  Result->Operands = {std::move(NL), std::move(NR)};
+  Result->Type = Ty;
+  return Result;
 }
 
 // A narrow native result may leave the rest of its register undefined.  If a
@@ -378,6 +485,8 @@ static void simplifyExprRecursive(ExprPtr &E,
       Copy->Operands[0] = std::move(Demanded);
       E = std::move(Copy);
     }
+    if (ExprPtr Narrowed = narrowTruncatedOp(E->Operands[0], E->Type))
+      E = std::move(Narrowed);
     return;
   }
 
@@ -401,6 +510,10 @@ static void simplifyExprRecursive(ExprPtr &E,
       auto Copy = std::make_shared<HighExpr>(*E);
       Copy->Operands[0] = std::move(Demanded);
       E = std::move(Copy);
+    }
+    if (ExprPtr Narrowed = narrowTruncatedOp(E->Operands[0], E->Type)) {
+      E = std::move(Narrowed);
+      return;
     }
     const auto &Val = E->Operands[0];
     if (Val->Type && Val->Type->Size == E->Type->Size) {

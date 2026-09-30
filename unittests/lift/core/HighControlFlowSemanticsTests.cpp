@@ -649,6 +649,88 @@ TEST(HighControlFlowSemantics, LowSlicesIgnoreOnlyUnobservedConcatPadding) {
   }
 }
 
+TEST(HighControlFlowSemantics, TruncatedWideArithmeticDropsUnreadUpperHalves) {
+  // An x86-64 `int` parameter read through its 64-bit register has undefined
+  // upper bytes: `(u32)(concat(?, a) OP concat(?, b))`.  The low bytes of a
+  // sum, difference, product or bitwise result read only the operands' low
+  // bytes, so the undefined halves drop out and OP runs at 32 bits.
+  auto HasUndef = [](const ExprPtr &Root) {
+    std::vector<const HighExpr *> Pending{Root.get()};
+    while (!Pending.empty()) {
+      const HighExpr *E = Pending.back();
+      Pending.pop_back();
+      if (!E)
+        continue;
+      if (E->Kind == ExprKind::Undef)
+        return true;
+      for (const ExprPtr &Operand : E->Operands)
+        Pending.push_back(Operand.get());
+    }
+    return false;
+  };
+  const std::vector<uint64_t> Inputs = {0, UINT64_MAX,
+                                        UINT64_C(0x8765432101234567),
+                                        UINT64_C(0x00000001ffffffff)};
+  for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB, NdOp::INT_MULT, NdOp::INT_AND,
+                  NdOp::INT_OR, NdOp::INT_XOR})
+    for (const bool Cast : {false, true}) {
+      SCOPED_TRACE(Cast);
+      auto A = byteSlice(local(0), 0, 4);
+      auto B = byteSlice(local(0), 4, 4);
+      auto Wide =
+          HighExpr::makeBinop(Op, concatenate(HighExpr::makeUndef(4), A),
+                              concatenate(HighExpr::makeUndef(4), B));
+      Wide->Type = NdType::makeInt(8, false);
+      ExprPtr View = byteSlice(Wide, 0, 4);
+      if (Cast) {
+        View->Kind = ExprKind::Cast;
+        View->CastTo = View->Type;
+        View->Operands = {Wide};
+      }
+      HighFunc F;
+      F.Body = {result(0, View)};
+      simplifyAllExprs(F.Body);
+      const ExprPtr &Narrow = F.Body[0].RetVal;
+      ASSERT_EQ(Narrow->Kind, ExprKind::BinOp);
+      EXPECT_EQ(Narrow->Op, Op);
+      EXPECT_EQ(Narrow->Type->Size, 4u);
+      EXPECT_FALSE(HasUndef(Narrow));
+      if (Op == NdOp::INT_OR || Op == NdOp::INT_XOR)
+        continue;
+      for (uint64_t Input : Inputs) {
+        const uint64_t Lo = Input & 0xffffffff, Hi = Input >> 32;
+        const uint64_t Expected = Op == NdOp::INT_ADD    ? Lo + Hi
+                                  : Op == NdOp::INT_SUB  ? Lo - Hi
+                                  : Op == NdOp::INT_MULT ? Lo * Hi
+                                                         : Lo & Hi;
+        EXPECT_EQ(*execute(F, Input) & 0xffffffff, Expected & 0xffffffff);
+      }
+    }
+
+  // `(hi << 32) | lo` read at 32 bits is `lo`.
+  auto Lo = byteSlice(local(0), 0, 4);
+  auto Hi = HighExpr::makeUnary(NdOp::INT_ZEXT, byteSlice(local(0), 4, 4));
+  Hi->Type = NdType::makeInt(8, false);
+  auto Shifted =
+      HighExpr::makeBinop(NdOp::INT_LEFT, Hi, HighExpr::makeConst(32, 8));
+  Shifted->Type = NdType::makeInt(8, false);
+  auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Lo);
+  Extended->Type = NdType::makeInt(8, false);
+  auto Pair = HighExpr::makeBinop(NdOp::INT_OR, Shifted, Extended);
+  Pair->Type = NdType::makeInt(8, false);
+  HighFunc F;
+  F.Body = {result(0, byteSlice(Pair, 0, 4))};
+  simplifyAllExprs(F.Body);
+  EXPECT_EQ(F.Body[0].RetVal, Lo);
+
+  // All eight bytes are read: the undefined upper half stays observable.
+  auto Full = concatenate(HighExpr::makeUndef(4), byteSlice(local(0), 0, 4));
+  HighFunc Observed;
+  Observed.Body = {result(0, Full)};
+  simplifyAllExprs(Observed.Body);
+  EXPECT_TRUE(HasUndef(Observed.Body[0].RetVal));
+}
+
 TEST(HighControlFlowSemantics, VectorCarrierSlicesKeepOnlyProvenLowBytes) {
   for (unsigned LowBytes : {4U, 8U})
     for (unsigned Mutation = 0; Mutation < 9; ++Mutation)
