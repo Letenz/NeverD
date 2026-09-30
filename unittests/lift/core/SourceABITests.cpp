@@ -852,6 +852,92 @@ TEST(SourceABI, SourceReturnComponentsNeverBecomeRewriteABIEvidence) {
   }
 }
 
+TEST(SourceABI, AArch64CallerFieldReadsDistinguishAnHFAFromAVectorReturn) {
+  // `ucvtf v0.4s, v0.4s; mov s1, v0.s[1]; mov s2, v0.s[2]; mov s3, v0.s[3];
+  // ret` returns a four-float HFA in s0..s3.  Its last V0 write is a whole
+  // vector, which alone reads as a single 16-byte vector return.  A direct
+  // caller that reads s0..s3 after the call proves the aggregate.
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  ASSERT_EQ(TRI.FPReturnRegs.size(), 4U);
+  constexpr va_t CalleeEntry = 0x2000;
+  auto Reg = [](uint64_t Offset, uint16_t Size, int Version) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::AArch64;
+    V.RegOff = Offset;
+    V.Size = Size;
+    V.Id = static_cast<int>(Offset) * 4 + Size;
+    V.SSAVer = Version;
+    return V;
+  };
+  for (unsigned WrittenLanes : {4U, 3U})
+    for (bool CallerReadsFields : {true, false}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      PipelineResult Result;
+      Result.MedFuncs.resize(2);
+      MedFunc &Callee = Result.MedFuncs[0];
+      MedFunc &Caller = Result.MedFuncs[1];
+      Callee.Entry = CalleeEntry;
+      Callee.Blocks.resize(1);
+      MedBlock &Body = Callee.Blocks.front();
+      const MedVar Vector = Reg(TRI.FPReturnRegs[0], 16, 1);
+      MedOp Load;
+      Load.Opcode = NdOp::LOAD;
+      Load.Addr = CalleeEntry;
+      Load.Output = Vector;
+      Load.addInput(MedVar::makeConst(0x3000, 8));
+      Body.Ops.push_back(Load);
+      for (unsigned Lane = 1; Lane < WrittenLanes; ++Lane) {
+        MedOp Move;
+        Move.Opcode = NdOp::SUBBYTES;
+        Move.Addr = CalleeEntry + Lane * 4;
+        Move.Output = Reg(TRI.FPReturnRegs[Lane], 4, 1);
+        Move.addInput(Vector);
+        Move.addInput(MedVar::makeConst(Lane * 4, 8));
+        Body.Ops.push_back(Move);
+      }
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = CalleeEntry + 0x10;
+      Body.Ops.push_back(Return);
+
+      Caller.Entry = 0x1000;
+      Caller.Blocks.resize(1);
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Caller.Entry;
+      Call.CallSiteId = 1;
+      Call.Output = Reg(TRI.FPReturnRegs[0], 16, 2);
+      Call.addInput(MedVar::makeConst(CalleeEntry, 8));
+      Caller.Blocks.front().Ops.push_back(Call);
+      if (CallerReadsFields) {
+        MedStructReturnCandidate Candidate;
+        Candidate.CallSiteId = Call.CallSiteId;
+        for (uint64_t Field : TRI.FPReturnRegs)
+          Candidate.Fields.push_back(Reg(Field, 4, 2));
+        Caller.StructReturnCandidates.push_back(Candidate);
+      }
+
+      recoverStructReturnFromBody(Image, Result);
+      if (CallerReadsFields && WrittenLanes == 4) {
+        ASSERT_EQ(Callee.MultiReturn.size(), 4U);
+        for (size_t I = 0; I < 4; ++I) {
+          EXPECT_EQ(Callee.MultiReturn[I].RegOff, TRI.FPReturnRegs[I]);
+          EXPECT_EQ(Callee.MultiReturn[I].Size, 4U);
+          EXPECT_TRUE(Callee.MultiReturn[I].IsFP);
+        }
+      } else {
+        // Without a caller that reads every field, or when the callee leaves
+        // one of them unwritten, the whole-vector V0 return stands.
+        EXPECT_TRUE(Callee.MultiReturn.empty());
+        ASSERT_TRUE(Callee.ReturnType);
+        EXPECT_EQ(Callee.ReturnType->Kind, NdTypeKind::Float);
+        EXPECT_EQ(Callee.ReturnType->Size, 16U);
+      }
+    }
+}
+
 TEST(SourceABI, AArch64BodyReturnUsesPreDCELaterRegisterReads) {
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
   ASSERT_GE(TRI.IntReturnRegs.size(), 2U);
