@@ -1285,6 +1285,14 @@ CPU can bind another space over the same physical owner. A CPU snapshot records
 its space identity and can be restored only after binding that space; it does
 not keep obsolete virtual mappings alive or undo later memory writes.
 
+The address-space authority identifies the first failed page and its exact
+in-page extent. Checked CPU faults consume that result without inventing another
+permission model. x64 RAM operands can cross allocation and alias boundaries;
+the architecture validates the whole operand and observes it before native
+effects. String stores commit by complete restartable elements, including when
+one element crosses physical owners. Mixed device/RAM transactions cannot be
+split into a guessed sequence of callbacks.
+
 `MemoryProjection` is a private per-CPU view. Native page tables and exception
 entry storage stay private to each CPU. KVM and WHP register this storage and
 the shared RAM as separate physical ranges. Unicorn projects the same RAM bytes

@@ -2237,3 +2237,135 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
       ChangedLock, ObjCSynchronizedSourceProof{0x301c, 0x3030, 0x3038, 0x3050,
                                                0x4040, 1, true}));
 }
+
+TEST(ObjCSourceProjection, SynchronizedCleanupCoversExpandedReturnTailsOnly) {
+  const std::string Source =
+      "void neverd_objc_imp_3000(void* objc_self, int path) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));\n"
+      "    if (!path) {\n"
+      "        work();\n"
+      "        (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "        return;\n"
+      "    }\n"
+      "    alternate_work();\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "}\n"
+      "void unrelated(void) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(0));\n"
+      "}\n";
+  const ObjCSynchronizedSourceProof Proof{0x301c, 0x302c, 0x302c};
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, Proof);
+  ASSERT_TRUE(Result);
+  EXPECT_NE(Result->find("        neverd_objc_sync_guard = 0;\n"
+                         "        (uint32_t)(neverd_darwin_objc_sync_exit"),
+            std::string::npos);
+  EXPECT_NE(Result->find("    neverd_objc_sync_guard = 0;\n"
+                         "    (uint32_t)(neverd_darwin_objc_sync_exit"),
+            std::string::npos);
+  const auto Unrelated = Source.substr(Source.find("void unrelated"));
+  EXPECT_EQ(Result->substr(Result->find("void unrelated")), Unrelated);
+  auto WrongReceiver = Source;
+  WrongReceiver.replace(WrongReceiver.rfind("sync_exit(objc_self)"),
+                        std::string("sync_exit(objc_self)").size(),
+                        "sync_exit(other)");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(WrongReceiver, Proof));
+  auto EffectfulReceiver = Source;
+  EffectfulReceiver.replace(EffectfulReceiver.find("sync_exit(objc_self)"),
+                            std::string("sync_exit(objc_self)").size(),
+                            "sync_exit(factory())");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(EffectfulReceiver, Proof));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedSourceScopeIgnoresPrototypesAndLiterals) {
+  const std::string Source =
+      "const char *noise = \"neverd_objc_imp_fake(){ }\";\n"
+      "void neverd_objc_imp_3000(void*);\n"
+      "void helper(void) { /* neverd_objc_imp_fake(){} */ }\n"
+      "void neverd_objc_imp_3000(void* objc_self) {\n"
+      "    const char *message = \"}{\\\"}\"; // }\n"
+      "    /* } */ (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));\n"
+      "    work(message);\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "}\n"
+      "void after_method(void) { }\n";
+  const auto Body = objcSynchronizedSourceBody(Source);
+  ASSERT_TRUE(Body);
+  EXPECT_EQ(Body->first,
+            Source.find('{', Source.rfind("void neverd_objc_imp_")));
+  EXPECT_EQ(Source.substr(Body->second), "\nvoid after_method(void) { }\n");
+  EXPECT_TRUE(addObjCSynchronizedReceiverCleanup(
+      Source, ObjCSynchronizedSourceProof{0x301c, 0x302c, 0x302c}));
+  EXPECT_FALSE(objcSynchronizedSourceBody("void neverd_objc_imp_1(void);"));
+  EXPECT_FALSE(
+      objcSynchronizedSourceBody("void neverd_objc_imp_1(void) { /* }"));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedExpandedTailsExecuteUnlockOnceAtO0AndO2) {
+  SynchronizedBranchFixture F;
+  F.put(0x3064, 0xaa1303e0U);
+  F.call(0x3068, 0x4040);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void after(void);
+void neverd_objc_imp_3000(void* objc_self, int path) {
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    if (!path) {
+        work(objc_self, 3);
+        (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+        after();
+        return;
+    }
+    work(objc_self, 2);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    after();
+}
+)C";
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *expected;
+static int failure, order, bad, exits;
+static void step(void *lock, int tag) {
+    if (lock != expected) bad = 1;
+    order = order * 10 + tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *lock) {
+    step(lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *lock) {
+    step(lock, 6); ++exits; if (failure == 2) throw 2; return 0;
+}
+extern "C" void work(void *lock, int tag) {
+    step(lock, tag); if (failure == 1) throw 1;
+}
+extern "C" void after(void) { step(expected, 7); }
+extern "C" void neverd_objc_imp_3000(void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        expected = (void*)(uintptr_t)(0x1234 + path);
+        for (failure = 0; failure <= 2; ++failure) {
+            order = bad = exits = 0;
+            int caught = 0;
+            try { neverd_objc_imp_3000(expected, path); }
+            catch (int exception) { caught = exception; }
+            const int prefix = path ? 12 : 13;
+            const int wanted = failure ? prefix * 10 + 6 : prefix * 100 + 67;
+            if (caught != failure || order != wanted || exits != 1 || bad)
+                return 10 + failure + path * 3;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+}

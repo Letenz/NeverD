@@ -595,9 +595,98 @@ objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
   return Argument.str();
 }
 
+// Locate the first emitted method definition, ignoring prototypes, comments,
+// and braces in literals. Cleanup edits must never reach appended helpers.
+inline std::optional<std::pair<size_t, size_t>>
+objcSynchronizedSourceBody(llvm::StringRef Source) {
+  enum class Lexical { Normal, String, Character, LineComment, BlockComment };
+  Lexical State = Lexical::Normal;
+  unsigned Braces = 0, Parameters = 0;
+  bool Candidate = false;
+  size_t Open = std::string::npos;
+  const auto Identifier = [](char C) {
+    return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') ||
+           (C >= '0' && C <= '9') || C == '_';
+  };
+  const size_t Limit = std::min<size_t>(Source.size(), 16 * 1024 * 1024);
+  for (size_t I = 0; I < Limit; ++I) {
+    const char C = Source[I];
+    const char Next = I + 1 < Limit ? Source[I + 1] : 0;
+    if (State == Lexical::String || State == Lexical::Character) {
+      if (C == '\\')
+        ++I;
+      else if ((State == Lexical::String && C == '"') ||
+               (State == Lexical::Character && C == '\''))
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::LineComment) {
+      if (C == '\n')
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::BlockComment) {
+      if (C == '*' && Next == '/') {
+        State = Lexical::Normal;
+        ++I;
+      }
+      continue;
+    }
+    if (C == '"' || C == '\'') {
+      State = C == '"' ? Lexical::String : Lexical::Character;
+      continue;
+    }
+    if (C == '/' && (Next == '/' || Next == '*')) {
+      State = Next == '/' ? Lexical::LineComment : Lexical::BlockComment;
+      ++I;
+      continue;
+    }
+    if (Open == std::string::npos && !Braces && !Candidate && Identifier(C)) {
+      size_t End = I + 1;
+      while (End < Limit && Identifier(Source[End]))
+        ++End;
+      if (Source.slice(I, End).starts_with("neverd_objc_imp_")) {
+        size_t NextToken = End;
+        while (NextToken < Limit &&
+               (Source[NextToken] == ' ' || Source[NextToken] == '\t' ||
+                Source[NextToken] == '\n'))
+          ++NextToken;
+        Candidate = NextToken < Limit && Source[NextToken] == '(';
+        Parameters = 0;
+      }
+      I = End - 1;
+      continue;
+    }
+    if (Candidate) {
+      if (C == '(')
+        ++Parameters;
+      else if (C == ')') {
+        if (!Parameters)
+          Candidate = false;
+        else
+          --Parameters;
+      } else if (C == ';' && !Parameters)
+        Candidate = false;
+      else if (C == '{' && !Parameters) {
+        Open = I;
+        Candidate = false;
+      }
+    }
+    if (C == '{')
+      ++Braces;
+    else if (C == '}') {
+      if (!Braces)
+        return std::nullopt;
+      if (!--Braces && Open != std::string::npos)
+        return std::pair{Open, I + 1};
+    }
+  }
+  return std::nullopt;
+}
+
 // The emitter has already rendered and checked the method. This constrained
-// edit adds only the exceptional unlock around the two uniquely rendered
-// runtime calls; every other statement retains its existing source binding.
+// edit adds only the exceptional unlock around the rendered runtime calls;
+// every other statement retains its existing source binding.
 inline std::optional<std::string>
 addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
                                    const ObjCSynchronizedSourceProof &Proof) {
@@ -606,20 +695,27 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const std::string ExitName = "neverd_darwin_objc_sync_exit(";
   const std::string ReleaseName = "objc_release(";
   const std::string RetainName = "objc_retain(";
-  const size_t Method = Source.find("neverd_objc_imp_");
-  const size_t Open = Method == std::string::npos ? std::string::npos
-                                                  : Source.find('{', Method);
-  if (Open == std::string::npos)
+  const auto Body = objcSynchronizedSourceBody(Source);
+  if (!Body)
     return std::nullopt;
-  const size_t Enter = Source.find(EnterName, Open);
-  const size_t Dispatch = Source.find(DispatchName, Open);
-  const size_t Exit = Source.find(ExitName, Open);
+  const auto Scoped = Source.take_front(Body->second);
+  const size_t Open = Body->first;
+  const size_t Enter = Scoped.find(EnterName, Open);
+  const size_t Dispatch = Scoped.find(DispatchName, Open);
+  const size_t Exit = Scoped.find(ExitName, Open);
+  std::vector<size_t> Exits;
+  for (size_t At = Exit; At != std::string::npos;
+       At = Scoped.find(ExitName, At + 1)) {
+    if (Exits.size() == 256)
+      return std::nullopt;
+    Exits.push_back(At);
+  }
   const bool StopAtExit = Proof.GuardStopCall == Proof.ExitCall;
   const size_t Release = Proof.UnprotectedReleases
-                             ? Source.find(ReleaseName, Enter)
+                             ? Scoped.find(ReleaseName, Enter)
                              : std::string::npos;
   const size_t Retain = Proof.UnprotectedRetains
-                            ? Source.find(RetainName, Enter)
+                            ? Scoped.find(RetainName, Enter)
                             : std::string::npos;
   const size_t Stop = StopAtExit                  ? Exit
                       : Proof.UnprotectedRetains  ? Retain
@@ -627,21 +723,21 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
                                                   : Dispatch;
   if (Enter == std::string::npos || Stop == std::string::npos ||
       Exit == std::string::npos ||
-      Source.find(EnterName, Enter + 1) != std::string::npos ||
-      Source.find(ExitName, Exit + 1) != std::string::npos ||
+      Scoped.find(EnterName, Enter + 1) != std::string::npos ||
+      (Exits.size() > 1 && (!StopAtExit || Proof.ReceiverIsSavedLocal)) ||
       (Proof.UnprotectedReleases && (Release <= Enter || Release >= Exit)) ||
       (Proof.UnprotectedRetains &&
        (Proof.UnprotectedRetains != 1 || Retain <= Enter || Retain >= Exit ||
         (Proof.UnprotectedReleases && Retain >= Release) ||
-        Source.find(RetainName, Retain + 1) < Exit)) ||
+        Scoped.find(RetainName, Retain + 1) < Exit)) ||
       (!StopAtExit && !Proof.UnprotectedReleases && !Proof.UnprotectedRetains &&
-       Source.find(DispatchName, Dispatch + 1) != std::string::npos) ||
+       Scoped.find(DispatchName, Dispatch + 1) != std::string::npos) ||
       Enter >= Stop || Stop > Exit)
     return std::nullopt;
   if (Proof.UnprotectedReleases) {
     size_t Count = 0;
     for (size_t At = Release; At != std::string::npos && At < Exit;
-         At = Source.find(ReleaseName, At + 1))
+         At = Scoped.find(ReleaseName, At + 1))
       ++Count;
     if (Count != Proof.UnprotectedReleases)
       return std::nullopt;
@@ -680,7 +776,37 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
       Source.substr(ExitLine + 1, Exit - ExitLine - 1).trim() != "(uint32_t)(")
     return std::nullopt;
   std::string Result = Source.str();
-  Result.insert(StopLine + 1, "    neverd_objc_sync_guard = 0;\n");
+  if (Exits.size() > 1) {
+    // HighC can expand a shared unlock tail into mutually exclusive returns.
+    // Each occurrence must still use the proved self receiver and be a whole
+    // statement. Clear the guard on every rendered normal-unlock path.
+    const auto SelfArgument = [&](size_t At, llvm::StringRef Name) {
+      for (llvm::StringRef Argument :
+           {"objc_self)", "(void*)(uintptr_t)(objc_self))",
+            "(void*)(uintptr_t)((uintptr_t)objc_self))"}) {
+        const auto Tail = Scoped.drop_front(At + Name.size());
+        if (Tail.starts_with(Argument))
+          return true;
+      }
+      return false;
+    };
+    if (!SelfArgument(Enter, EnterName))
+      return std::nullopt;
+    for (auto It = Exits.rbegin(); It != Exits.rend(); ++It) {
+      const size_t Line = Source.rfind('\n', *It);
+      if (*It <= EnterEnd || Line == std::string::npos ||
+          Scoped.slice(Line + 1, *It).trim() != "(uint32_t)(" ||
+          !SelfArgument(*It, ExitName))
+        return std::nullopt;
+      size_t IndentEnd = Line + 1;
+      while (IndentEnd < *It &&
+             (Source[IndentEnd] == ' ' || Source[IndentEnd] == '\t'))
+        ++IndentEnd;
+      Result.insert(Line + 1, Source.slice(Line + 1, IndentEnd).str() +
+                                  "neverd_objc_sync_guard = 0;\n");
+    }
+  } else
+    Result.insert(StopLine + 1, "    neverd_objc_sync_guard = 0;\n");
   Result.insert(EnterEnd + 1,
                 "\n    neverd_objc_sync_guard = " + Receiver + ";");
   Result.insert(Open + 1,

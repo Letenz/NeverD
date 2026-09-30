@@ -26,6 +26,10 @@ struct PhysicalMemory::Impl {
   mutable std::recursive_mutex Mutex;
   bool Running = false;
 };
+struct MemoryAccessFailure {
+  BackendFaultKind Kind;
+  uint64_t Address, Size;
+};
 struct AddressSpace::Impl {
   struct Device {
     uint64_t Address, Size;
@@ -45,6 +49,9 @@ struct AddressSpace::Impl {
   std::map<uint64_t, uint64_t> Aliases;
   std::map<uint64_t, std::shared_ptr<Device>> Devices;
   bool overlapsDevice(uint64_t Address, uint64_t Size) const;
+  std::optional<MemoryAccessFailure>
+  firstAccessFailure(uint64_t Address, uint64_t Size,
+                     unsigned Permissions) const;
   std::optional<BackendFaultKind> check(uint64_t Address, uint64_t Size,
                                         unsigned Permissions) const;
 };
