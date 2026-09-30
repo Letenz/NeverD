@@ -292,6 +292,8 @@ NEVERD_PARITY_TEXT(Calls, "calls")
 NEVERD_PARITY_TEXT(ResultKey, "result")
 NEVERD_PARITY_TEXT(RebaseSuffix, "_Rebased")
 NEVERD_PARITY_TEXT(OriginalSuffix, "_Original")
+NEVERD_PARITY_TEXT(LegacySuffix, "_DriverStrict")
+NEVERD_PARITY_TEXT(CheckedSuffix, "_Checked")
 NEVERD_PARITY_TEXT(Separator, "_")
 NEVERD_PARITY_TEXT(Detail, "detail")
 #endif

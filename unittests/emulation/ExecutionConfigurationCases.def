@@ -11,6 +11,8 @@ NEVERD_CONFIGURATION_VALUE(Device, 0x20000)
 NEVERD_CONFIGURATION_VALUE(DeviceValue, 42)
 NEVERD_CONFIGURATION_VALUE(Timeout, 1000000)
 NEVERD_CONFIGURATION_VALUE(ShortTimeout, 1000)
+NEVERD_CONFIGURATION_VALUE(NativeAddressBits, 48)
+NEVERD_CONFIGURATION_VALUE(PortableAddressBits, 64)
 #endif
 #ifdef NEVERD_CONFIGURATION_INVALID_TIMEOUT
 NEVERD_CONFIGURATION_INVALID_TIMEOUT(Zero, 0)
@@ -105,4 +107,10 @@ NEVERD_CONFIGURATION_TEXT(
     "{\"contract\":\"checked-user-aarch64-v1\",\"architecture\":\"aarch64\","
     "\"privilege\":\"user\",\"required_features\":[\"user_supervisor_"
     "isolation\"]}")
+#endif
+
+#ifdef NEVERD_CONFIGURATION_TEXT
+NEVERD_CONFIGURATION_TEXT(
+    DriverAutoConfiguration,
+    "{\"backend\":\"auto\",\"contract\":\"driver-strict\"}")
 #endif

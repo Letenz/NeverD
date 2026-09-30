@@ -162,6 +162,21 @@ endif()
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(NeverDUnicornDeadlineTests
+      ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
+    target_include_directories(NeverDUnicornDeadlineTests PRIVATE
+      ${CMAKE_BINARY_DIR})
+    get_target_property(_unicorn_test_options unicorn COMPILE_OPTIONS)
+    target_compile_options(NeverDUnicornDeadlineTests PRIVATE
+      ${_unicorn_test_options})
+    target_link_libraries(NeverDUnicornDeadlineTests PRIVATE unicorn pthread)
+    target_link_options(NeverDUnicornDeadlineTests PRIVATE
+      "-Wl,--wrap=pthread_create")
+    add_test(NAME UnicornDeadline.BeforeEntry COMMAND NeverDUnicornDeadlineTests)
+    set_tests_properties(UnicornDeadline.BeforeEntry PROPERTIES
+      LABELS NeverDUnicornDeadlineTests TIMEOUT 15)
+  endif()
   add_neverd_unittest(NeverDCPUEmulationTests
     CPUArchitectureTests.cpp
     ExecutionExitTests.cpp
@@ -173,7 +188,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     ${CMAKE_SOURCE_DIR}/lib/emulation)
 endif()
 
-if(NOT NEVERD_ENABLE_DRIVER_EMULATION OR NOT NEVERD_EMULATION_BACKEND_UNICORN)
+if(NOT NEVERD_ENABLE_DRIVER_EMULATION)
   return()
 endif()
 
@@ -891,6 +906,41 @@ foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
   endif()
 endforeach()
 
+set(_driver_execution_fixture_definitions
+  NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
+  NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
+  NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
+  ${_driver_kmdf_definitions}
+  ${_driver_wdm_stack_definitions}
+  ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_wait_wake_definitions}
+  ${_driver_wdm_usb_idle_definitions}
+  ${_driver_kmdf_usb_idle_definitions}
+  ${_driver_wdm_pnp_definitions}
+  ${_driver_wdm_power_definitions}
+  ${_driver_wdm_pofx_definitions}
+  ${_driver_kmdf_pofx_definitions}
+  ${_driver_kmdf_child_wake_definitions}
+  ${_driver_wdm_remove_lock_definitions}
+  ${_driver_wdm_resource_definitions}
+  ${_driver_wdm_interrupt_definitions}
+  ${_driver_wdm_dma_definitions}
+  ${_driver_wdm_dma_channel_definitions}
+  ${_driver_wdm_seh_definitions}
+  ${_driver_wdm_neither_definitions}
+  ${_driver_wdm_user_mapping_definitions})
+add_neverd_unittest(NeverDNativeDriverTests
+  DriverNativeExecutionTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS Emulation)
+target_compile_definitions(NeverDNativeDriverTests PRIVATE
+  ${_driver_execution_fixture_definitions})
+add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
+
+if(NOT NEVERD_EMULATION_BACKEND_UNICORN)
+  return()
+endif()
+
 add_neverd_unittest(NeverDDriverEmulationTests
   HardwareBackendTests.cpp
   DriverBackendParityTests.cpp
@@ -1021,28 +1071,7 @@ target_include_directories(NeverDDriverEmulationTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation
   ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(NeverDDriverEmulationTests PRIVATE
-  NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
-  NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
-  NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
-  ${_driver_kmdf_definitions}
-  ${_driver_wdm_stack_definitions}
-  ${_driver_wdm_owned_irp_definitions}
-  ${_driver_wdm_wait_wake_definitions}
-  ${_driver_wdm_usb_idle_definitions}
-  ${_driver_kmdf_usb_idle_definitions}
-  ${_driver_wdm_pnp_definitions}
-  ${_driver_wdm_power_definitions}
-  ${_driver_wdm_pofx_definitions}
-  ${_driver_kmdf_pofx_definitions}
-  ${_driver_kmdf_child_wake_definitions}
-  ${_driver_wdm_remove_lock_definitions}
-  ${_driver_wdm_resource_definitions}
-  ${_driver_wdm_interrupt_definitions}
-  ${_driver_wdm_dma_definitions}
-  ${_driver_wdm_dma_channel_definitions}
-  ${_driver_wdm_seh_definitions}
-  ${_driver_wdm_neither_definitions}
-  ${_driver_wdm_user_mapping_definitions})
+  ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDDriverEmulationTests NeverDDriverFixtures)
 
 if(TARGET neverd_shared AND TARGET neverd)

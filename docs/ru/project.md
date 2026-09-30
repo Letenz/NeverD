@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 221f5a7dcd2c9e35cefc407d2fba768bfe893459c8c15e7ca2898494f78fa137 -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -100,7 +100,7 @@ C11 и безопасный стабильный Rust. См. [декомпиля
 
 Выполнение CPU разделяет допуск ISA, гостевую память, транспорт бэкенда и политику гостевой ОС. `NEVERD_ENABLE_CPU_EMULATION` включает слой CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` добавляет ограниченную среду Windows WDM/KMDF x64. `linux-elf64-v1` выполняет поддерживаемые процессы Linux ELF. См. [Выполнение CPU](cpu-execution.md), [Эмуляция гостевых процессов](process-emulation.md) и [Эмуляция драйверов Windows](driver-emulation.md).
 
-Профили checked используют KVM на Linux и WHP на Windows при совпадении ISA, а Unicorn — при разных ISA. Нативная проверка ARM64/WHP ещё требуется. `driver-strict` сейчас использует Unicorn; путь драйверов KVM/WHP требует `checked-x64-v1`. Явно выбранный недоступный бэкенд завершается понятной ошибкой. Общая RAM, алиасы, поэтапные записи, скалярные атомарные операции, типизированные исключения и полное состояние x64 FP/SSE реализованы в документированных контрактах ISA/ОС. Это не гарантирует произвольные драйверы или реализованные среды Android/Darwin.
+`driver-strict` / `checked-x64-v1` поддерживает KVM на совместимых хостах Linux x64 и WHP на Windows x64; `auto` выбирает этот нативный транспорт, а другая ISA использует Unicorn. Явный Unicorn и прежний API V1 сохраняют переносимый программный профиль. Нативное выполнение проверяет канонические адреса и эффекты до входа; недоступное оборудование вызывает ошибку без подмены. Неподдерживаемые инструкции и поведение OS завершаются явной ошибкой. Нативные свидетельства ARM64/WHP ещё отсутствуют; совместимость произвольных драйверов или Android/Darwin не установлена.
 
 <!-- i18n-section: how-it-works -->
 

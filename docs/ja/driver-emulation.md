@@ -4,11 +4,11 @@
 
 # Windows ドライバーエミュレーション
 
-NeverD のオプションのドライバーエミュレーターは、対応する x64 WDM ドライバーの PE エントリーポイントを実行します。必要に応じて、明示した逐次リクエストシナリオを実行してからアンロードできます。CPU の実行には Unicorn を、Windows 環境には NeverD 独自の範囲を限定したモデルを使用します。ドライバーをホストカーネルにロードしたり、ゲスト API 呼び出しをホスト OS のサービスに転送したりすることはありません。
+NeverD のオプションのドライバーエミュレーターは、対応する x64 WDM ドライバーの PE エントリーポイントを実行し、アンロード前に明示的な要求シナリオを実行できます。CLI の `auto` は一致する Linux ホストで KVM、Windows ホストで WHP を選択します。従来の C++ の既定設定と V1 API は Unicorn を使用します。すべてのバックエンドは NeverD の限定された Windows 環境モデルを共有します。ゲストの API 呼び出しはモデルで処理し、ドライバーはホストカーネルから隔離されます。
 
 ## 実行バックエンド
 
-既定の `driver-strict` 契約は引き続き Unicorn を使用します。実験的な限定命令契約 `checked-x64-v1` では、`--backend auto` が Linux x86_64 で KVM、Windows x64 で WHP を選択します。明示的な選択はフォールバックせず、利用不可や契約の不一致は実行前にエラーになります。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 ARM64 host では `checked-x64-v1` が x64 guest に Unicorn を使います。各命令と memory access を単一ステップ前に検証し、Windows object check、write observer、RAM alias、CPU-only context を維持します。scalar memory arithmetic、自然境界に整列した locked arithmetic、SETcc、register BT は read/write check 付きで許可し、flag は native execution が管理します。限定 SIMD は legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、masked scalar conversion/subtraction を含みます。16個すべての XMM register と MXCSR は entry/context restore をまたいで保持され、unmasked SIMD exception、DAZ、x87、AVX、未列挙 operation は拒否されます。full-width XMM store はどちらの word も変更する前に、順序付き8-byte write observerを2つ発生させます。unaligned aligned-vector 形式は未対応です。通常の RAM オペランドは独立割り当てまたはエイリアスのページを跨げます。範囲全体の権限を確認してから書き込み、最初のアクセス不能バイトで失敗を報告します。MOVS は完了済み要素と障害要素の再開レジスターを保ち、部分要素はコミットしません。
 
@@ -515,3 +515,5 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 ## 完全な x87 状態
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。

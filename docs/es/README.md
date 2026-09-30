@@ -1,6 +1,6 @@
 **Idiomas**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
+<!-- i18n-source: 935250779b9be103631f1cb612200e7fb175dfa74d352b939b15287e751778b8 -->
 
 [← Proyecto NeverD](project.md)
 
@@ -14,7 +14,7 @@ Las guías en inglés se encuentran directamente en `docs/`. Las traducciones se
 
 La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
 
-Los perfiles checked usan KVM en Linux y WHP en Windows cuando coincide la ISA, y Unicorn entre ISA distintas. Sigue pendiente la validación nativa ARM64/WHP. `driver-strict` usa actualmente Unicorn; la ruta de controladores KVM/WHP requiere `checked-x64-v1`. Un motor explícito no disponible falla claramente. RAM compartida, alias, escrituras por etapas, operaciones atómicas escalares, excepciones tipadas y estado FP/SSE x64 completo están implementados dentro de los contratos ISA/SO documentados. Esto no garantiza controladores arbitrarios ni entornos Android/Darwin implementados.
+`driver-strict` / `checked-x64-v1` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
 
 | Documento | Descripción |
 |-----------|-------------|

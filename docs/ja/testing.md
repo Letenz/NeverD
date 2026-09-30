@@ -854,3 +854,11 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 ## 完全な x87 状態
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
+
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
+
+既存の CI ワークフローは一般のテストプロファイルより先にエミュレーションの全テストを実行し、検出一覧、JUnit 結果、CTest ログを `emulation-focused` に保存します。他のモジュールの失敗はこの実行を妨げません。利用できないハードウェアと任意のドライバー資料は明示的なスキップとなり、ソフトウェア実行やコンパイルの成功はネイティブ実行の証拠にはなりません。
+
+Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリングを制御し、実際のタイマースレッドをゲストへの進入前に完了させます。x64、ARM32、ARM64 で、進入前の取り消しがゲストに影響せず、次の実行が独立した予算を使うことを検証します。公開エンジン API を使い、エンジン内部状態は変更しません。
