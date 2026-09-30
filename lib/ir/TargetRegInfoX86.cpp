@@ -275,6 +275,7 @@ void initX86RegInfoTables() {
   X64RegInfo.IntReturnRegs = X64IntReturnRegs;
   X64RegInfo.FPReturnRegs = X64FPReturnRegs;
   X86RegInfo.IntReturnRegs = X64IntReturnRegs;
+  X86RegInfo.ReturnsFPInX87 = true;
 
   X64RegInfo.VecRegWidth = 64;
   X64RegInfo.FPABIRegWidth = 16;

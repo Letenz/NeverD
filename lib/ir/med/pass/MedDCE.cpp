@@ -205,11 +205,11 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         return &Cand;
     return nullptr;
   };
-  auto seedReachingStackPointer = [&](const MedBlock &Start, int Before) {
-    // A call reads SP to locate outgoing stack arguments, but its implicit
-    // input is added only by later ABI recovery. Keep the reaching definition
-    // on every incoming path, including a final POP or an adjustment in a
-    // predecessor block; otherwise the call frame can shift after DCE.
+  // Keep the definition of register \p RegOff that reaches the point after
+  // op \p Before of \p Start on every incoming path: the newest write there,
+  // else the register's PHI, else what reaches the end of each predecessor.
+  auto seedReachingDef = [&](const MedBlock &Start, int Before,
+                             uint64_t RegOff) {
     std::vector<std::pair<const MedBlock *, int>> Pending{{&Start, Before}};
     std::set<std::pair<int, int>> Visited;
     while (!Pending.empty()) {
@@ -221,7 +221,7 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       for (int J = Last; J >= 0; --J) {
         const MedVar &Output = Block->Ops[static_cast<size_t>(J)].Output;
         if (Output.Kind != MedVar::Reg || Output.Size == 0 ||
-            !TRI.isStackPointer(Output.RegOff))
+            Output.RegOff != RegOff)
           continue;
         MarkLive(Output);
         Found = true;
@@ -231,7 +231,7 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         continue;
       for (const PhiNode &Phi : Block->Phis)
         if (Phi.Output.Kind == MedVar::Reg && Phi.Output.Size > 0 &&
-            TRI.isStackPointer(Phi.Output.RegOff)) {
+            Phi.Output.RegOff == RegOff) {
           MarkLive(Phi.Output);
           Found = true;
         }
@@ -241,6 +241,13 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         if (const MedBlock *Pred = blockById(PredId))
           Pending.push_back({Pred, static_cast<int>(Pred->Ops.size()) - 1});
     }
+  };
+  // A call reads SP to locate outgoing stack arguments, but its implicit input
+  // is added only by later ABI recovery.  Keep the reaching definition on every
+  // incoming path, including a final POP or an adjustment in a predecessor
+  // block; otherwise the call frame can shift after DCE.  Returns read it too.
+  auto seedReachingStackPointer = [&](const MedBlock &Start, int Before) {
+    seedReachingDef(Start, Before, TRI.StackPointer);
   };
   for (auto &Blk : Func.Blocks) {
     for (size_t I = 0; I < Blk.Ops.size(); ++I) {
@@ -261,6 +268,27 @@ void LowToMedConverter::runDce(MedFunc &Func) {
           seedParamWrites(Pred->Ops, static_cast<int>(Pred->Ops.size()) - 1);
     }
   }
+
+  // A return reads state that its operands do not name.  It pops its target
+  // through the stack pointer and hands the restored stack pointer back to the
+  // caller, and return typing proves a trailing `pop eax` a register restore
+  // by that stack advance.  An x87 floating-point return is logical st0, whose
+  // physical slot depends on TOP at the return; return typing and the RETURN
+  // emitter read the newest x87 write that reaches it, so keep the reaching
+  // definition of every slot.  LLVM drops the slots the typed return ignores.
+  std::vector<uint64_t> X87ReturnSlots;
+  for (const auto &Entry : RegOffVars)
+    if (TRI.isX87ReturnReg(Entry.first))
+      X87ReturnSlots.push_back(Entry.first);
+  for (const MedBlock &Blk : Func.Blocks)
+    for (size_t I = 0; I < Blk.Ops.size(); ++I) {
+      if (Blk.Ops[I].Opcode != NdOp::RETURN)
+        continue;
+      const int Before = static_cast<int>(I) - 1;
+      seedReachingStackPointer(Blk, Before);
+      for (uint64_t Slot : X87ReturnSlots)
+        seedReachingDef(Blk, Before, Slot);
+    }
 
   auto isFlagVar = [&](const MedVar &V) {
     if (V.Kind == MedVar::Flag)

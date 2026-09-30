@@ -23,6 +23,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace {
@@ -2338,6 +2339,109 @@ TEST(MedTypePass, X86InfersFloatReturnFromX87CarrierExtension) {
   Return.Opcode = NdOp::RETURN;
   Return.addInput(X87Top);
   Block.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Func.ReturnType->Size, 4u);
+  EXPECT_TRUE(Func.FPReturnViaX87);
+}
+
+TEST(MedDCE, X86KeepsTheX87ReturnForReturnTyping) {
+  // `push eax; call 1f; 1: pop eax; ...; fld dword [esp]; pop eax; ret`: an
+  // i386 PIC function returning `float`.  LowIR's RETURN reads only EAX.  The
+  // result is left in logical st0 (physical ST7 after the `fld`), which only
+  // return typing and the RETURN emitter read.  The final `pop eax` loads
+  // through the address the PIC thunk left, so typing proves it a register
+  // restore only by the stack advance after it.  Register DCE must keep both.
+  // An x87 write that a later write of the same slot replaces is still dead.
+  constexpr Arch TheArch = Arch::X86;
+
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "x87_float_return_after_dce";
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  Block.Id = 0;
+
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  const MedVar PointerSize =
+      MedVar::makeConst(TRI.PointerSize, TRI.PointerSize);
+  auto store = [&](const MedVar &Address, const MedVar &Value) {
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(Address);
+    Store.addInput(Value);
+    Block.Ops.push_back(Store);
+  };
+  auto load = [&](const MedVar &Output, const MedVar &Address) {
+    Block.Ops.push_back(unary(NdOp::LOAD, Output, Address));
+  };
+
+  const MedVar EntrySP = reg(30, 0, TRI.PointerSize, TRI.StackPointer, TheArch);
+  const MedVar EntryEAX =
+      reg(40, 0, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  addLiveIn(Block, EntrySP);
+  addLiveIn(Block, EntryEAX);
+
+  const MedVar PushedSP =
+      reg(30, 1, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, PushedSP, EntrySP, PointerSize));
+  store(PushedSP, EntryEAX);
+  const MedVar ThunkSP = reg(30, 2, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_SUB, ThunkSP, PushedSP, PointerSize));
+  store(ThunkSP, MedVar::makeConst(0x100C, TRI.PointerSize));
+  const MedVar PicBase = temp(31, 0, TRI.PointerSize, TheArch);
+  load(PicBase, ThunkSP);
+  const MedVar AfterThunk = temp(34, 0, TRI.PointerSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_ADD, AfterThunk, ThunkSP, PointerSize));
+
+  const MedVar Replaced = temp(12, 0, x86reg::FPURegSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Replaced,
+                             MedVar::makeConst(7, 4),
+                             MedVar::makeConst(x86reg::FPURegSize, 4)));
+  const MedVar StaleTop = reg(20, 1, x86reg::FPURegSize, x86reg::ST7, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, StaleTop, Replaced));
+
+  const MedVar Scalar = temp(10, 0, 4, TheArch);
+  Block.Ops.push_back(binary(NdOp::FLOAT_INT2FLOAT, Scalar,
+                             MedVar::makeConst(42, 4),
+                             MedVar::makeConst(4, 4)));
+  const MedVar Carrier = temp(11, 0, x86reg::FPURegSize, TheArch);
+  Block.Ops.push_back(unary(NdOp::FLOAT_FLOAT2FLOAT, Carrier, Scalar));
+  const MedVar X87Top = reg(20, 2, x86reg::FPURegSize, x86reg::ST7, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, X87Top, Carrier));
+
+  const MedVar Restored = temp(32, 0, TRI.PointerSize, TheArch);
+  load(Restored, AfterThunk);
+  const MedVar RestoredEAX =
+      reg(40, 1, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, RestoredEAX, Restored));
+  const MedVar Advanced = temp(33, 0, TRI.PointerSize, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_ADD, Advanced, AfterThunk, PointerSize));
+  const MedVar PoppedSP =
+      reg(30, 3, TRI.PointerSize, TRI.StackPointer, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, PoppedSP, Advanced));
+
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(RestoredEAX);
+  Block.Ops.push_back(Return);
+
+  LowToMedConverter().runRegisterDce(Func, TheArch);
+
+  auto defines = [&](const MedVar &V) {
+    return std::any_of(
+        Block.Ops.begin(), Block.Ops.end(), [&](const MedOp &Op) {
+          return Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer;
+        });
+  };
+  EXPECT_TRUE(defines(X87Top));
+  EXPECT_TRUE(defines(Carrier));
+  EXPECT_TRUE(defines(PoppedSP));
+  EXPECT_FALSE(defines(StaleTop));
+  EXPECT_FALSE(defines(Replaced));
 
   inferMedTypes(Func, TheArch);
 
