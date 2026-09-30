@@ -579,6 +579,21 @@ class NeverDDevirtualizeOptionsV2(ctypes.Structure):
     ]
 
 
+class NeverDDevirtualizeOptionsV3(ctypes.Structure):
+    """v2 base plus control-field and solver-query limits; zero selects the
+    defaults of 16 fields and 4096 queries.
+
+    Initialize ``base.base.struct_size`` with ``ctypes.sizeof(options)``.
+    """
+
+    _fields_ = [
+        ("base", NeverDDevirtualizeOptionsV2),
+        ("max_control_fields", ctypes.c_uint32),
+        ("max_solver_queries", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
 class NeverDSymbolicExploreOptions(ctypes.Structure):
     """Layout of ``neverd_symbolic_explore_options``."""
 
@@ -692,6 +707,9 @@ _C_TYPES: dict[str, object] = {
     ),
     "const neverd_devirtualize_options_v2 *": ctypes.POINTER(
         NeverDDevirtualizeOptionsV2
+    ),
+    "const neverd_devirtualize_options_v3 *": ctypes.POINTER(
+        NeverDDevirtualizeOptionsV3
     ),
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
@@ -1483,6 +1501,20 @@ _declare(
      "const neverd_devirtualize_options_v2 *", "const char * *"],
     ownership=Ownership.OWNED_STRING,
 )
+_declare(
+    "neverd_devirtualize_source_v3",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t",
+     "const neverd_devirtualize_options_v3 *", "const char * *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_devirtualize_machine_source_v3",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t",
+     "const neverd_devirtualize_options_v3 *", "const char * *"],
+    ownership=Ownership.OWNED_STRING,
+)
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_project_name", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_STRING)
@@ -1501,6 +1533,7 @@ __all__ = [
     "NeverDDevirtualizeFrameSlotV1",
     "NeverDDevirtualizeOptionsV1",
     "NeverDDevirtualizeOptionsV2",
+    "NeverDDevirtualizeOptionsV3",
     "NeverDPlugin",
     "NeverDOptimizeLLVMOptions",
     "NeverDOptimizeLLVMResult",

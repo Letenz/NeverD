@@ -48,7 +48,27 @@ class ABIInventoryTests(unittest.TestCase):
         self.assertEqual(options.max_control_refinements, 0)
         self.assertEqual(options.base.reserved, 0)
         self.assertEqual(options.reserved, 0)
-        for version in (1, 2):
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV3._fields_,
+            [("base", abi.NeverDDevirtualizeOptionsV2),
+             ("max_control_fields", ctypes.c_uint32),
+             ("max_solver_queries", ctypes.c_uint32),
+             ("reserved", ctypes.c_uint32)],
+        )
+        self.assertEqual(abi.NeverDDevirtualizeOptionsV3.base.offset, 0)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV3.max_control_fields.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV2),
+        )
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDDevirtualizeOptionsV3), 96)
+        options_v3 = abi.NeverDDevirtualizeOptionsV3()
+        options_v3.base.base.struct_size = ctypes.sizeof(options_v3)
+        self.assertEqual(options_v3.max_control_fields, 0)
+        self.assertEqual(options_v3.max_solver_queries, 0)
+        self.assertEqual(options_v3.base.reserved, 0)
+        self.assertEqual(options_v3.reserved, 0)
+        for version in (1, 2, 3):
             for prefix in ("source", "machine_source"):
                 spec = abi.FUNCTION_SPECS[f"neverd_devirtualize_{prefix}_v{version}"]
                 self.assertEqual(
