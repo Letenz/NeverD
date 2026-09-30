@@ -865,9 +865,10 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
-  // Backward jumps become loops last, once fall-through joins no longer need
-  // explicit jumps.
-  for (int Phase = 0; Phase < 5; ++Phase) {
+  // Backward jumps become loops late, once fall-through joins no longer need
+  // explicit jumps. Jumps from a loop to what follows it become breaks last:
+  // until then they are joins that the rewrites turn into if/else.
+  for (int Phase = 0; Phase < 6; ++Phase) {
     // Dead copies left by earlier rewrites can sit between a jump and
     // its label; clear them before the next phase looks.
     if (Phase != 0 && Dirty) {
@@ -875,18 +876,20 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       Dirty = false;
     }
     if (Phase >= 2) {
-      const bool Rewritten = Phase == 3 ? loopifyBackwardGotos(Func.Body)
-                                        : duplicateSmallReturnTails(Func.Body);
-      if (!Rewritten) {
-        if (Phase == 4)
-          break;
+      bool Rewritten;
+      if (Phase == 3)
+        Rewritten = loopifyBackwardGotos(Func.Body);
+      else if (Phase == 5)
+        Rewritten = breakToTheLoopFollow(Func.Body);
+      else
+        Rewritten = duplicateSmallReturnTails(Func.Body);
+      if (!Rewritten)
         continue;
-      }
       Dirty = true;
     }
     for (int Round = 0; Round < 8; ++Round) {
       const bool Grouped =
-          groupSwitchCases(Func.Body) |
+          groupSwitchCases(Func.Body) | dropJumpsToTheNextStatement(Func.Body) |
           (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |

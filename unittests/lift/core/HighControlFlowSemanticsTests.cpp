@@ -5035,3 +5035,195 @@ TEST(HighControlFlowSemantics, JoinDefaultStaysWhereAnEarlierJumpEntersIt) {
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(7));
   EXPECT_EQ(execute(F, 6), std::optional<uint64_t>(11));
 }
+
+namespace {
+HighStmt guardedBackedge(va_t Address, uint64_t Bit) {
+  // if (v & Bit) { v = v - Bit; goto 0x1010; }
+  auto Step = assign(Address + 4, 1, 0);
+  Step.Val =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(1), HighExpr::makeConst(Bit, 8));
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Addr = Address;
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(1), HighExpr::makeConst(Bit, 8));
+  Test.Body = {Step, jump(Address + 8, 0x1010)};
+  return Test;
+}
+
+// v = c; goto X; X: ; if (v != 0) { <odd: v -= 1, goto X> <v & 2: v -= 2,
+// goto X> return v; } return 0;
+HighFunc entryJumpBeforeItsLoopLabel() {
+  auto Copy = assign(0x1000, 1, 0);
+  Copy.Val = local(0);
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x1010;
+  HighStmt Header;
+  Header.Kind = StmtKind::If;
+  Header.Addr = 0x1014;
+  Header.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(1),
+                                    HighExpr::makeConst(0, 8));
+  Header.Body = {guardedBackedge(0x1018, 1), guardedBackedge(0x1024, 2),
+                 result(0x1030, local(1))};
+  // A region moved away leaves removed statements behind.
+  HighStmt Removed;
+  Removed.Kind = StmtKind::Nop;
+  HighFunc F;
+  F.Body = {Copy,    jump(0x1004, 0x1010),
+            Removed, Anchor,
+            Header,  result(0x1040, HighExpr::makeConst(0, 8))};
+  return F;
+}
+
+size_t countKind(const HighFunc &F, StmtKind Kind) {
+  size_t N = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) { N += S.Kind == Kind; });
+  return N;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, JumpOntoTheNextStatementLeavesTheLoopVisible) {
+  // Earlier rewrites can leave the entry jump right before its label. It
+  // is a fall-through, so the only real entries of the label are the two
+  // backedges and the region becomes one loop.
+  HighFunc F = entryJumpBeforeItsLoopLabel();
+  const uint64_t Inputs[] = {0, 3, 5, 6, 8};
+  const uint64_t Results[] = {0, 0, 4, 4, 8};
+  for (size_t I = 0; I < 5; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]);
+  EXPECT_TRUE(dropJumpsToTheNextStatement(F.Body));
+  EXPECT_TRUE(loopifyBackwardGotos(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  EXPECT_EQ(countKind(F, StmtKind::While), 1u);
+  for (size_t I = 0; I < 5; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
+  // C labels the first statement printed at an address. When the address
+  // also starts an earlier statement, the jump goes there, not to the
+  // statement after it.
+  HighFunc F = entryJumpBeforeItsLoopLabel();
+  HighStmt Earlier;
+  Earlier.Kind = StmtKind::Block;
+  Earlier.Addr = 0x1010;
+  F.Body.insert(F.Body.begin(), Earlier);
+  EXPECT_FALSE(dropJumpsToTheNextStatement(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 3u);
+
+  // A jump that is itself entered keeps its address as an empty anchor.
+  F = entryJumpBeforeItsLoopLabel();
+  F.Body[1].Addr = 0x1008;
+  F.Body.push_back(jump(0x1044, 0x1008));
+  EXPECT_TRUE(dropJumpsToTheNextStatement(F.Body));
+  ASSERT_EQ(F.Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(F.Body[1].Addr, 0x1008u);
+  EXPECT_TRUE(F.Body[1].Body.empty());
+}
+
+TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {
+  // if (c) goto fail; v = 5; return v; fail: abort(); -- the failing path
+  // ends in the call, as a return tail ends in its return.
+  HighStmt Fail;
+  Fail.Kind = StmtKind::Call;
+  Fail.Addr = 0x1010;
+  Fail.CallExpr = HighExpr::makeCall("abort", 0x5000, {});
+  HighFunc F;
+  F.Body = {conditional(0x1000, 0x1010), assign(0x1004, 1, 5),
+            result(0x1008, local(1)), Fail};
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  ASSERT_EQ(F.Body.front().Kind, StmtKind::If);
+  ASSERT_EQ(F.Body.front().Body.size(), 1u);
+  EXPECT_EQ(F.Body.front().Body[0].Kind, StmtKind::Call);
+  EXPECT_EQ(F.Body.front().Body[0].CallExpr->CallTarget, "abort");
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(5));
+
+  // A call that returns keeps the jump: its tail runs into what follows.
+  F.Body.back().CallExpr = HighExpr::makeCall("observe", 0x5000, {});
+  F.Body.front() = conditional(0x1000, 0x1010);
+  EXPECT_FALSE(duplicateSmallReturnTails(F.Body));
+}
+
+namespace {
+// v = c; while (1) { v = v - 1; if (v & 1) goto out; if (v & 2) break; }
+// out: return v; -- optionally with the exit jump inside an inner loop.
+HighFunc loopWithExitJump(bool InInnerLoop) {
+  auto Copy = assign(0x1000, 1, 0);
+  Copy.Val = local(0);
+  auto Step = assign(0x1010, 1, 0);
+  Step.Val =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(1), HighExpr::makeConst(1, 8));
+  HighStmt Odd;
+  Odd.Kind = StmtKind::If;
+  Odd.Addr = 0x1014;
+  Odd.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(1), HighExpr::makeConst(1, 8));
+  Odd.Body = {jump(0x1018, 0x1030)};
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  HighStmt Two;
+  Two.Kind = StmtKind::If;
+  Two.Addr = 0x101c;
+  Two.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(1), HighExpr::makeConst(2, 8));
+  Two.Body = {Break};
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Body = {Step, Odd, Two};
+  if (InInnerLoop) {
+    HighStmt Inner;
+    Inner.Kind = StmtKind::While;
+    Inner.Body = {Odd, Break};
+    Loop.Body[1] = std::move(Inner);
+  }
+  HighFunc F;
+  F.Body = {Copy, Loop, result(0x1030, local(1))};
+  return F;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, JumpToTheLoopFollowBecomesABreak) {
+  HighFunc F = loopWithExitJump(false);
+  const uint64_t Inputs[] = {3, 4, 8};
+  const uint64_t Results[] = {2, 3, 7};
+  EXPECT_TRUE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (size_t I = 0; I < 3; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+
+  // A break inside an inner loop would leave only that loop.
+  F = loopWithExitJump(true);
+  EXPECT_FALSE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 1u);
+  for (size_t I = 0; I < 3; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, CodeAfterALoopMovesToItsOnlyBreak) {
+  // ... if (v & 2) break; } v = v + 100; out: return v; -- the addition runs
+  // only after the break, so it can run there and let `goto out` break.
+  HighFunc F = loopWithExitJump(false);
+  auto Follow = assign(0x1020, 1, 0);
+  Follow.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(100, 8));
+  F.Body.insert(F.Body.begin() + 2, Follow);
+  const uint64_t Inputs[] = {3, 4, 8};
+  const uint64_t Results[] = {102, 3, 7};
+  for (size_t I = 0; I < 3; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  EXPECT_TRUE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  EXPECT_EQ(F.Body.size(), 3u);
+  for (size_t I = 0; I < 3; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+
+  // A label inside the code after the loop is another way in: it stays.
+  F = loopWithExitJump(false);
+  Follow.Addr = 0x1024;
+  F.Body.insert(F.Body.begin() + 2, Follow);
+  F.Body.push_back(jump(0x1040, 0x1024));
+  EXPECT_FALSE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 2u);
+}
