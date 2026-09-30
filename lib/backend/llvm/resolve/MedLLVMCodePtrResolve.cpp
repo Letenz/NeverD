@@ -114,14 +114,15 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {
   llvm::Function *Function = resolveLiftedFunctionEntry(*BestEntry);
   if (!Function)
     Function = materializeImageFunctionDeclaration(
-        *BestEntry, Img ? Img->getFunctionNameAt(*BestEntry) : llvm::StringRef());
+        *BestEntry,
+        Img ? Img->getFunctionNameAt(*BestEntry) : llvm::StringRef());
   if (!Function)
     return nullptr;
   if (Address == *BestEntry)
     return Function;
   llvm::Type *I8Ty = llvm::Type::getInt8Ty(*Ctx);
-  llvm::Constant *Offset = llvm::ConstantInt::get(
-      llvm::Type::getInt64Ty(*Ctx), Address - *BestEntry);
+  llvm::Constant *Offset = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
+                                                  Address - *BestEntry);
   return llvm::ConstantExpr::getGetElementPtr(I8Ty, Function, Offset);
 }
 
