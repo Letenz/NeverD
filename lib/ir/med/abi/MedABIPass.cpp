@@ -821,8 +821,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // the predecessor. CallRelativeStackOffset may not yet have that temp
       // in the call-SP map; walk the trailing window the same way HighIR
       // collectSpilledStackArgs does.
-      auto predTrailingStoreOff =
-          [&](const MedBlock &Pred, int StoreIdx) -> std::optional<int64_t> {
+      auto predTrailingStoreOff = [&](const MedBlock &Pred,
+                                      int StoreIdx) -> std::optional<int64_t> {
         const MedOp &Store = Pred.Ops[static_cast<size_t>(StoreIdx)];
         if (auto Rel = CallRelativeStackOffset(Store.Inputs[0]))
           return Rel;
@@ -958,10 +958,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // predecessors, `mov r8d` only at the call) is a real extra
       // argument.  Do not treat that like unused function-entry r9.
       if (!CI.IsIndirect && MaxRegArg >= 0 && !HasStackArg) {
-        while (RegPhiLimit + 1 < NumIntParamRegs &&
-               RegPhiLimit + 1 < MaxArgs &&
-               selectAuthoritativeArgPhi(Func, Blk, TRI, RegPhiLimit + 1,
-                                         IsWin64))
+        while (
+            RegPhiLimit + 1 < NumIntParamRegs && RegPhiLimit + 1 < MaxArgs &&
+            selectAuthoritativeArgPhi(Func, Blk, TRI, RegPhiLimit + 1, IsWin64))
           ++RegPhiLimit;
       }
       for (int K = 0; RegArgsApply && K < MaxArgs; ++K) {
@@ -1000,9 +999,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           // arity, or a hole below a found argN (`lea rdx` without `mov rcx`
           // still has live-in rcx as arg0 on Win64). Do not invent trailing
           // registers the callee never takes.
-          const bool AllowLiveIn =
-              (CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
-              (MaxRegArg >= 0 && K <= MaxRegArg);
+          const bool AllowLiveIn = (CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
+                                   (MaxRegArg >= 0 && K <= MaxRegArg);
           bool FromLiveIn = false;
           auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IsWin64,
                                       AllowLiveIn, &FromLiveIn);
@@ -1156,7 +1154,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // as arg0 and, when this function already has an rdx param, sret as
       // arg1.  Do not invent r8/r9.
       if (CI.IsIndirect && RegArgsApply && Op.NumInputs >= 1) {
-        if (auto Obj = vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
+        if (auto Obj =
+                vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
           Found[0] = *Obj;
           FoundMask[0] = true;
         }
@@ -1169,10 +1168,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                 P.RegOff == SretOff)
               HaveSretParam = true;
           if (HaveSretParam)
-            if (auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, 1,
-                                            IsWin64,
-                                            /*AllowUnknownLiveIn=*/false,
-                                            nullptr)) {
+            if (auto V =
+                    findReachingArgReg(Func, TRI, TheArch, Blk.Id, 1, IsWin64,
+                                       /*AllowUnknownLiveIn=*/false, nullptr)) {
               Found[1] = *V;
               FoundMask[1] = true;
             }
