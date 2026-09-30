@@ -43,8 +43,7 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
 
 std::optional<SourceCallTypeHint>
 darwinCompilerRTSourceCallHint(const BinaryImage &Image, va_t TargetAddress) {
-  constexpr llvm::StringLiteral SymbolName =
-      "___isPlatformVersionAtLeast";
+  constexpr llvm::StringLiteral SymbolName = "___isPlatformVersionAtLeast";
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
@@ -269,8 +268,8 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
     Signature.ReturnType = NdType::makeVoid();
     const auto Context = NdType::makePtr(NdType::makeVoid());
-    const auto Callback = NdType::makePtr(
-        NdType::makeFunc(NdType::makeVoid(), {Context}));
+    const auto Callback =
+        NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Context}));
     Signature.Parameters = {
         {"predicate", NdType::makePtr(NdType::makeInt(8, true))},
         {"context", Context},
@@ -390,9 +389,8 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   // external, non-TLS NSString pointer storage. Keep the original load.
   // https://developer.apple.com/documentation/uikit/uiapplication/didenterbackgroundnotification
   if (Image.Arch == Arch::AArch64)
-    MatchFrameworkData(
-        "UIApplicationDidEnterBackgroundNotification",
-        "/System/Library/Frameworks/UIKit.framework/UIKit");
+    MatchFrameworkData("UIApplicationDidEnterBackgroundNotification",
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
   // UIAccessibilityNotifications is uint32_t in both complete ARM64 SDK
   // ASTs. Bind the external const object's address and keep the native load;
   // neither the notification value nor pointer-sized contents are invented.
@@ -455,8 +453,7 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
               Bind->second.Module))
         SwiftMetadata = D.Name;
   if (FrameworkData.empty() && !SwiftEmptyStorage && !SwiftIsaMask &&
-      SwiftMetadata.empty() &&
-      *Import != "___stack_chk_guard")
+      SwiftMetadata.empty() && *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   SourceCallTypeHint Result;
@@ -467,11 +464,10 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   } else if (SwiftEmptyStorage || SwiftIsaMask || !SwiftMetadata.empty()) {
-    Result.TargetName =
-        (SwiftEmptyStorage ? SwiftEmptyCollection
-                           : SwiftIsaMask ? llvm::StringRef("swift_isaMask")
-                                          : SwiftMetadata)
-            .str();
+    Result.TargetName = (SwiftEmptyStorage ? SwiftEmptyCollection
+                         : SwiftIsaMask    ? llvm::StringRef("swift_isaMask")
+                                           : SwiftMetadata)
+                            .str();
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   } else {
