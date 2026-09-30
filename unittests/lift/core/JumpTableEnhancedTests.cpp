@@ -398,6 +398,58 @@ int pointer_table_lane(int input) {
       << "a conflicting code/data slot cannot certify scalar array data";
 }
 
+TEST_F(JTE_X86_32, IndirectCallThroughSelectedFunctionTableSeesWidenedAddress) {
+  // `T = cond ? fa : fb; T[k](x)` indexes one of two function-pointer tables
+  // through a zero-extended 32-bit address.  The call target's slot domain
+  // is complete only when both tables' relocation slots are code pointers.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("selected_function_table.c");
+  const fs::path Object = tmpFile("selected_function_table.o");
+  {
+    std::ofstream File(Source);
+    File << R"(
+static int a0(int x) { return x + 11; }
+static int a1(int x) { return x * 5; }
+static int b0(int x) { return x - 7; }
+static int b1(int x) { return x * 9 + 2; }
+static int (*const fa[2])(int) = {a0, a1};
+static int (*const fb[2])(int) = {b0, b1};
+int selected_function_table(int input) {
+  unsigned s = (unsigned)input, h = 0;
+  for (int i = 0; i < 64; ++i) {
+    s = s * 1103515245u + 12345u;
+    int (*const *table)(int) = ((s >> 4) & 1u) ? fa : fb;
+    h = h * 131u + (unsigned)table[(s >> 7) & 1u]((int)(s >> 3));
+  }
+  return (int)h;
+}
+)";
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.CodePtrRelocSlots.size(), 4u);
+  auto Valid = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Valid.Result.Success) << Valid.Result.Error;
+
+  const uint64_t MissingSlot = *Image.CodePtrRelocSlots.rbegin();
+  Image.CodePtrRelocSlots.erase(MissingSlot);
+  auto Incomplete = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Incomplete.Result.Success)
+      << "a table slot without a code-pointer relocation is unproved";
+
+  Image.DataPtrRelocSlots.insert(MissingSlot);
+  auto Mixed = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Mixed.Result.Success)
+      << "a data-pointer slot cannot supply an indirect-call target";
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
                                        "test_i386_three_switch_loops.o");

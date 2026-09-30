@@ -930,6 +930,11 @@ private:
   /// still preserves the complete target pointer payload.
   std::optional<MedVar> pointerPreservingInput(const MedOp &Op) const;
 
+  /// Definition of the address arithmetic behind a memory address.  i386
+  /// addresses memory through a pointer-width sum zero-extended into an i64
+  /// temporary; that widening is skipped so callers see the sum itself.
+  const MedOp *memoryAddressSumDef(const MedVar &Address) const;
+
   /// True when SELECT's emitted coercion and output store preserve each value
   /// arm at one complete width. A truncating/mixed-width SELECT cannot
   /// transport pointer provenance even though its control semantics are valid.

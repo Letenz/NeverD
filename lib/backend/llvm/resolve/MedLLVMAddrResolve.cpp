@@ -2944,14 +2944,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         // A pointer table may select one of several immutable integer arrays.
         // Audit every authenticated relocation target using the same index
         // constraint; one bad or unbounded candidate invalidates the domain.
-        const MedOp *Address = lookupDef(Def->Inputs[0]);
-        // i386 addresses memory through a zero-extended pointer-width sum.
         // The lane audit below computes slots in pointer-width arithmetic
-        // with explicit no-wrap checks, which is exactly that sum.
-        if (Address && Address->Opcode == NdOp::INT_ZEXT &&
-            Address->NumInputs == 1 && Address->Inputs[0].Size == PointerSize &&
-            Address->Output.Size > PointerSize)
-          Address = lookupDef(Address->Inputs[0]);
+        // with explicit no-wrap checks, which is exactly the address sum.
+        const MedOp *Address = memoryAddressSumDef(Def->Inputs[0]);
         if (Address && Address->Opcode == NdOp::INT_ADD &&
             Address->NumInputs == 2)
           for (unsigned Side = 0; Side < 2 && !ScalarLane.Complete; ++Side) {
@@ -3677,6 +3672,16 @@ bool MedLLVMEmitter::phiIsSelfRecurrent(const PhiNode &Phi) const {
   if (CurMedFunc)
     SelfRecurrenceCache.emplace(&Phi, false);
   return false;
+}
+
+const MedOp *MedLLVMEmitter::memoryAddressSumDef(const MedVar &Address) const {
+  const MedOp *Def = Address.isConst() ? nullptr : lookupDef(Address);
+  const uint16_t PointerSize = getTargetRegInfo(TargetArch).PointerSize;
+  if (Def && Def->Opcode == NdOp::INT_ZEXT && Def->NumInputs == 1 &&
+      Def->Inputs[0].Size == PointerSize && Def->Output.Size > PointerSize &&
+      !Def->Inputs[0].isConst())
+    return lookupDef(Def->Inputs[0]);
+  return Def;
 }
 
 std::optional<MedVar>
@@ -4629,7 +4634,7 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
   };
   if (!Domain.Complete || Domain.Seeds.empty()) {
     IndexedPointerLaneSummary Lane;
-    const MedOp *AddressDef = lookupDef(LoadAddress);
+    const MedOp *AddressDef = memoryAddressSumDef(LoadAddress);
     if (AddressDef && AddressDef->NumInputs >= 2 &&
         (AddressDef->Opcode == NdOp::INT_ADD ||
          AddressDef->Opcode == NdOp::INT_SUB)) {
