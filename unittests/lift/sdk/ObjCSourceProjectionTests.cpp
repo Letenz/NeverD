@@ -1892,6 +1892,77 @@ TEST(ObjCSourceProjection, SynchronizedUnprotectedRetainStopsCleanupFirst) {
   F.rejects(0x3050, 0x94000000U | ((0x4000 - 0x3050) / 4));
 }
 
+TEST(ObjCSourceProjection, SynchronizedResultMayBeSavedInX22) {
+  SynchronizedBranchFixture F;
+  F.put(0x3064, 0xaa0003f6U); // retain the result in x22 across the unlock
+  F.put(0x3068, 0xaa1303e0U);
+  F.call(0x306c, 0x4040);
+  F.put(0x3070, 0xaa1303e0U);
+  F.call(0x3074, 0x4030);
+  F.put(0x3078, 0xd65f03c0U);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->GuardStopCall, 0x306cU);
+  EXPECT_EQ(Proof->ExitCall, 0x306cU);
+  EXPECT_EQ(Proof->UnprotectedReleases, 0U);
+  F.rejects(0x3064, 0xaa0003f3U); // saving a result must not overwrite the lock
+}
+
+TEST(ObjCSourceProjection, SynchronizedRegisterAllocationKeepsOneReceiver) {
+  for (unsigned Register : {20U, 21U, 22U}) {
+    SCOPED_TRACE(Register);
+    SynchronizedBranchFixture F;
+    const uint32_t Save = 0xaa0003e0U | Register;
+    const uint32_t Argument = 0xaa0003e0U | (Register << 16);
+    F.put(0x3014, Save);
+    F.put(0x302c, 0xd503201fU);
+    for (const va_t Address :
+         {0x3024, 0x3030, 0x3038, 0x304c, 0x3058, 0x306c, 0x3074, 0x30a4})
+      F.put(Address, Argument);
+    F.put(0x3040, 0xd503201fU);
+    F.put(0x30a0,
+          0xaa0003f3U); // exception in x19, receiver in another register
+    F.put(0x30ac, 0xaa1303e0U);
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    EXPECT_FALSE(Proof->ReceiverIsSavedLocal);
+    EXPECT_EQ(Proof->EnterCall, 0x303cU);
+    EXPECT_EQ(Proof->ExitCall, 0x3070U);
+    F.rejects(0x3050, Save);
+    F.rejects(0x302c, Save);
+    F.rejects(0x3050, 0x2a0003e0U | Register); // low-half overwrite
+    F.rejects(0x30a0, Save);                   // exception overwrites the lock
+    F.rejects(0x30a4, 0xaa1803e0U);            // exceptional unlock uses x24
+    F.rejects(0x30ac, Argument); // resumes with receiver, not exception
+  }
+}
+
+TEST(ObjCSourceProjection, SynchronizedRetainedLocalKeepsItsRegisterIdentity) {
+  for (unsigned Register : {20U, 21U, 22U}) {
+    SCOPED_TRACE(Register);
+    SynchronizedBranchFixture F;
+    auto Retain = Symbol::makeFunc(0x4060);
+    Retain.Name = "_objc_retainAutoreleasedReturnValue";
+    F.Image.Symbols.push_back(std::move(Retain));
+    F.call(0x3034, 0x4060);
+    F.put(0x3038, 0xaa0003e0U | Register);
+    F.put(0x3040, 0xd503201fU);
+    const uint32_t Argument = 0xaa0003e0U | (Register << 16);
+    F.put(0x306c, Argument);
+    F.put(0x30a4, Argument);
+    F.put(0x30a0, 0xaa0003f3U);
+    F.put(0x30ac, 0xaa1303e0U);
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+    F.rejects(0x3020, F.conditional(0x3020, 0x3038, 0xb5000014U));
+    F.rejects(0x3034, 0x94000000U | ((0x4020 - 0x3034) / 4));
+    F.rejects(0x3040, 0xaa0003e0U | Register);
+  }
+}
+
 TEST(ObjCSourceProjection, SynchronizedCExecutesBranchesAndUnwindAtO0AndO2) {
   SynchronizedBranchFixture F;
   F.put(0x3064, 0xaa1403e0U);
