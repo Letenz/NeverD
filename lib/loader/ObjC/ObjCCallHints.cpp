@@ -1302,21 +1302,21 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         const auto &[Space, Offset, Size] = It->first;
         // Exact libobjc dispatch and an authenticated local BL both obey
         // Darwin's callee-saved register contract even when the call's source
-        // signature is unavailable. Keep only receiver provenance there;
-        // unknown arguments can escape the frame, and no other value fact
-        // crosses an unbound call. A declared source parameter with an
-        // authenticated object class retains that same identity in a
-        // full-width callee-saved register.
-        const bool PreservedReceiver =
+        // signature is unavailable. Frame-pointer identity follows that same
+        // physical preservation contract. Unknown arguments still escape the
+        // frame before this step; keeping the pointer does not restore any
+        // escaped storage or establish a call signature.
+        const bool PreservedIdentity =
             PreserveReceiverRegisters &&
             (It->second.TheKind == Value::Kind::Receiver ||
+             It->second.TheKind == Value::Kind::Frame ||
              (It->second.TheKind == Value::Kind::SourceParameter &&
               It->second.Object.has_value())) &&
             Space == VnodeSpace::REG && TRI.isCallPreserved(Offset, Size);
         const bool StackIdentity = Space == VnodeSpace::REG &&
                                    Offset == TRI.StackPointer && Size == 8 &&
                                    It->second.TheKind == Value::Kind::Frame;
-        if ((!KnownABI && !PreservedReceiver && !StackIdentity) ||
+        if ((!KnownABI && !PreservedIdentity && !StackIdentity) ||
             (KnownABI && (Space != VnodeSpace::REG ||
                           (!(Offset == TRI.StackPointer && Size == 8) &&
                            !TRI.isCallPreserved(Offset, Size)))))
@@ -1326,8 +1326,11 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
       }
       for (auto It = State.FrameBytes.begin(); It != State.FrameBytes.end();)
         if (It->first != VnodeSpace::REG ||
-            ((!KnownABI && !(TRI.StackPointer <= It->second &&
-                             It->second < TRI.StackPointer + 8)) ||
+            ((!KnownABI &&
+              !(TRI.StackPointer <= It->second &&
+                It->second < TRI.StackPointer + 8) &&
+              !(PreserveReceiverRegisters &&
+                PreservedBytes.count(It->second))) ||
              (KnownABI && !PreservedBytes.count(It->second))))
           It = State.FrameBytes.erase(It);
         else
@@ -2291,6 +2294,9 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           const auto Ref = Image.ObjCSourceReferences.find(Input->Number);
           if (Ref != Image.ObjCSourceReferences.end() && Ref->second.Size == 4)
             Out = Input;
+        } else if (Input && Input->TheKind == Value::Kind::Number &&
+                   Op.Opcode == NdOp::INT_ZEXT) {
+          Out = Value{Value::Kind::Number, uint32_t(Input->Number)};
         }
       } else if (Op.Opcode == NdOp::INT_LEFT && Op.NumInputs == 2 &&
                  Op.Output.Size == 8 && Op.Inputs[0].Size == 8) {
