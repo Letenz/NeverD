@@ -224,6 +224,11 @@ inline size_t inferObjCNativeDependencies(
         A->second->UnsupportedInstructions.empty() &&
         A->second->TruncatedPaths.empty();
     if (CompleteMangledAudit) {
+      if (auto Mangled = swiftMangledURLArrayBufferSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
       if (auto Mangled =
               swiftMangledURLArrayForceCastSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));

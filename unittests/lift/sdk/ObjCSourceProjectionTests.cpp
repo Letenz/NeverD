@@ -1410,6 +1410,48 @@ TEST(ObjCSourceProjection, SpecializedArrayCastInferenceRequiresCompleteAudit) {
   }
 }
 
+TEST(ObjCSourceProjection, SpecializedArrayBufferSchedulesSwiftSelfRelift) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.Image.Format = BinaryFormat::MachO;
+  F.Image.Bits = Bitness::Bits64;
+  F.Image.Symbols.push_back({"_$ss15ContiguousArrayV16_"
+                             "createNewBuffer14bufferIsUnique15minimumCapacity"
+                             "13growForAppendySb_SiSbtF10Foundation3URLVSg_Tg5",
+                             0x3000, 0, true});
+  F.call(0, 0x3000);
+  MedFunc Med;
+  Med.Entry = 0x3000;
+  F.Result.MedFuncs.push_back(Med);
+  HighFunc High;
+  High.Entry = 0x3000;
+  F.Result.HighFuncs.push_back(High);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = 0x3000;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  F.Result.FunctionAudits.push_back(Audit);
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 1U);
+  ASSERT_TRUE(Options.SourceTypeHints.count(0x3000));
+  const auto &Hint = Options.SourceTypeHints.at(0x3000);
+  ASSERT_EQ(Hint.Parameters.size(), 4U);
+  EXPECT_EQ(Hint.ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint.Parameters[3].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint.Parameters[3].Location.RegisterOffset, a64reg::X20);
+  EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+  F.Result.FunctionAudits[0].MedIRVerified = false;
+  PipelineOptions Incomplete;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Incomplete, Diagnostics),
+      0U);
+  EXPECT_TRUE(Incomplete.SourceTypeHints.empty());
+}
+
 TEST(ObjCSourceProjection, NativeInferenceUsesSourceBoundRefinementBodies) {
   NativeDependencyFixture F;
   F.Image.Arch = Arch::AArch64;
