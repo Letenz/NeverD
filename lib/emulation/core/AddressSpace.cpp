@@ -90,6 +90,26 @@ uint64_t AddressSpace::mappedBytes() const { return State->Used.load(); }
 uint64_t AddressSpace::mappingGeneration() const {
   return State->Generation.load();
 }
+llvm::Expected<std::vector<AddressMapping>> AddressSpace::mappings() const {
+  std::unique_lock Lock(State->Memory->State->Mutex, std::try_to_lock);
+  if (!Lock.owns_lock())
+    return diagnostic::error(diagnostic::Running);
+  std::vector<AddressMapping> Result;
+  for (const auto &[Address, Page] : State->Pages) {
+    if (!Result.empty()) {
+      auto &Previous = Result.back();
+      if (Address - Previous.Address == Previous.Size &&
+          Page.Permissions == Previous.Permissions &&
+          bool(Page.IO) == Previous.Device) {
+        Previous.Size += memory::PageSize;
+        continue;
+      }
+    }
+    Result.push_back(
+        {Address, memory::PageSize, Page.Permissions, bool(Page.IO)});
+  }
+  return Result;
+}
 llvm::Error AddressSpace::mapRegion(uint64_t Address,
                                     std::shared_ptr<MemoryRegion> Region,
                                     uint64_t Offset, uint64_t Size,

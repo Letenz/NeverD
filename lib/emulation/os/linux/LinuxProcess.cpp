@@ -7,6 +7,7 @@
 
 #include "../../core/ExecutionDeadline.h"
 #include "../../runtime/RuntimeValues.h"
+#include "LinuxMemory.h"
 
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/ExecutionSession.h"
@@ -17,13 +18,6 @@
 
 namespace neverd::emulation::linux_model {
 namespace {
-enum class ServiceKind {
-#define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count) Name,
-#define NEVERD_LINUX_X64_SERVICE(Name, Number, Count) Name,
-#include "LinuxValues.def"
-#undef NEVERD_LINUX_X64_SERVICE
-#undef NEVERD_LINUX_SERVICE
-};
 std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 #define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count)                \
   if (Number == (ISA == GuestArchitecture::X64 ? X64Number : ARMNumber))       \
@@ -123,10 +117,12 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Plan)
     return Plan.takeError();
   const uint64_t StackBase = StackTop - Options.StackSize;
+  uint64_t InitialBreak = MinimumAddress;
   // Setup uses a private, unpublished address space. Any failure destroys the
   // whole tentative process, so no running CPU can observe partial loading.
   for (const auto &Region : Plan->Regions) {
     const uint64_t End = Region.Address + Region.Bytes.size();
+    InitialBreak = std::max(InitialBreak, End);
     if (Region.Address < MinimumAddress || End > Layout->UserLimit ||
         (Region.Address < StackTop + Layout->PageSize &&
          End > StackBase - Layout->PageSize))
@@ -173,6 +169,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
+  LinuxMemory Memory(**Space, *Layout, InitialBreak, Options);
   ProcessResult Result{ProcessProfile::LinuxELF64, Layout->Architecture,
                        Backend->Kind, Backend->Reason};
   Result.Entry = Result.PC = Plan->Entry;
@@ -250,6 +247,18 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     case ServiceKind::GetTID:
       Value = ThreadID;
       break;
+    case ServiceKind::Mmap:
+    case ServiceKind::Mprotect:
+    case ServiceKind::Munmap:
+    case ServiceKind::Brk: {
+      auto Returned = Memory.handle(*Kind, *Event, Result);
+      if (!Returned) {
+        RuntimeFailure(Returned.takeError());
+        break;
+      }
+      Value = *Returned;
+      break;
+    }
     case ServiceKind::ArchPrctl: {
       auto Returned = archPrctl(CPU, *Event, *Layout, Result);
       if (!Returned) {

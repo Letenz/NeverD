@@ -22,6 +22,13 @@ namespace emulation::linux_model {
 inline llvm::Error failure(const char *Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }
+enum class ServiceKind {
+#define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count) Name,
+#define NEVERD_LINUX_X64_SERVICE(Name, Number, Count) Name,
+#include "LinuxValues.def"
+#undef NEVERD_LINUX_X64_SERVICE
+#undef NEVERD_LINUX_SERVICE
+};
 struct ProcessLayout {
   GuestArchitecture Architecture;
   IntegerABI Calls;
