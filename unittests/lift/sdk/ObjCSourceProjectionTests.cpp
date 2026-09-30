@@ -2324,6 +2324,260 @@ int main() {
   executeSynchronizedSource(*Source, Harness);
 }
 
+namespace {
+struct SynchronizedInterleavedFixture : SynchronizedRetainedStackFixture {
+  SynchronizedInterleavedFixture() {
+    for (va_t Address = 0x3000; Address < 0x30a0; Address += 4)
+      put(Address, 0xd503201fU);
+    Image.ImportPtrSlots[0x5120] = "_objc_retain";
+    Image.DyldBindSlots[0x5120] = {"_objc_retain", 0,
+                                   "/usr/lib/libobjc.A.dylib", false};
+    put(0x4130, 0xb0000010U);
+    put(0x4134, 0xf9400210U | (0x120 / 8 << 10));
+    put(0x4138, 0xd61f0200U);
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xa9bd57f6U},
+          {0x3004, 0xa9014ff4U},
+          {0x3008, 0xa9027bfdU},
+          {0x300c, 0x910083fdU},
+          {0x3010, 0xaa0203f4U},
+          {0x3014, 0xaa0003f3U},
+          {0x301c, 0xaa1303e0U},
+          {0x3024, 0xaa1303e0U},
+          {0x302c, 0xaa1d03fdU},
+          {0x3034, 0xaa0003f5U},
+          {0x3038, 0xaa1503e0U},
+          {0x3040, 0xb4000135U}, // cbz x21, 0x3064
+          {0x3044, 0xaa1303e0U},
+          {0x304c, 0xaa1d03fdU},
+          {0x3054, 0xaa0003f4U},
+          {0x305c, 0xaa1403e0U},
+          {0x3064, 0xaa1503e0U},
+          {0x306c, 0xaa1303e0U},
+          {0x3088, 0xd65f03c0U},
+          {0x308c, 0xaa0003f4U},
+          {0x3090, 0xaa1303e0U},
+          {0x3098, 0xaa1403e0U}})
+      put(Address, Word);
+    call(0x3020, 0x4200);
+    call(0x3028, 0x4000);
+    call(0x3030, 0x4100);
+    call(0x303c, 0x4120);
+    call(0x3048, 0x4000);
+    call(0x3050, 0x4100);
+    call(0x3058, 0x4040);
+    call(0x3060, 0x4120);
+    call(0x3068, 0x4130);
+    call(0x3070, 0x4210);
+    call(0x3094, 0x4210);
+    call(0x309c, 0x4220);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange = {0x3000, 0x30a0};
+    auto &Sites = EH.Itanium->CallSites;
+    Sites.assign(5, {});
+    Sites[0].GuardedRange = {0x3000, 0x3024};
+    Sites[1].GuardedRange = {0x3024, 0x3034};
+    Sites[1].LandingPadVA = 0x308c;
+    Sites[2].GuardedRange = {0x3034, 0x3044};
+    Sites[3].GuardedRange = {0x3044, 0x305c};
+    Sites[3].LandingPadVA = 0x308c;
+    Sites[4].GuardedRange = {0x305c, 0x30a0};
+    EH.ObjC->LandingPads = {
+        {{0x3024, 0x3034}, 0x308c, ObjCPadKind::SynchronizedExit, {}},
+        {{0x3044, 0x305c}, 0x308c, ObjCPadKind::SynchronizedExit, {}}};
+  }
+};
+
+const char *SynchronizedInterleavedSource = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void after(void);
+uint64_t neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    uint64_t result;
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 2);
+    objc_release(value);
+    if (path) {
+        work(value, 4);
+        objc_release(value);
+    }
+    result = (uint64_t)(uintptr_t)objc_retain(value);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    after();
+    return result;
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedInterleavedRangesPreserveEveryHole) {
+  SynchronizedInterleavedFixture F;
+  const auto Regions = objcSynchronizedInterleavedRanges(F.Image, F.Function);
+  ASSERT_TRUE(Regions);
+  ASSERT_EQ(Regions->size(), 2U);
+  EXPECT_EQ(Regions->front().End, 0x3034U);
+  EXPECT_EQ(Regions->back().Begin, 0x3044U);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->EnterCall, 0x3020U);
+  EXPECT_EQ(Proof->ExitCall, 0x3070U);
+  EXPECT_EQ(Proof->LandingPad, 0x308cU);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+  auto &EH = *F.Function.ExceptionMetadata;
+  const auto Sites = EH.Itanium->CallSites;
+  const auto Pads = EH.ObjC->LandingPads;
+  EH.Itanium->CallSites[2].GuardedRange.Begin += 4;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites = Sites;
+  EH.Itanium->CallSites[2].FirstActionOffset = 0;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites = Sites;
+  EH.Itanium->CallSites[3].LandingPadVA += 4;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites = Sites;
+  EH.ObjC->LandingPads.pop_back();
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.ObjC->LandingPads = Pads;
+  EH.ObjC->LandingPads[1].GuardedRange.End -= 4;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedInterleavedCleanupNeedsStableBoundaries) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3018, 0x14000003U}, // skip enter load
+        {0x3040, 0xb40001b5U},                          // skip normal unlock
+        {0x3040, 0xb4fffe15U},                          // backwards jump
+        {0x3024, 0x2a1f03f3U},    // overwrite low receiver bytes
+        {0x3024, 0xd65f03c0U},    // return before unlock
+        {0x3074, 0x17ffffecU},    // reenter protected body after unlock
+        {0x3088, 0x14000001U},    // fall into cleanup pad normally
+        {0x306c, 0xaa1403e0U},    // wrong normal receiver
+        {0x3090, 0xaa1403e0U},    // wrong exceptional receiver
+        {0x308c, 0xaa0003f3U}}) { // clobber lock with exception
+    SynchronizedInterleavedFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Address);
+  }
+  for (const auto &[Address, Target] :
+       {std::pair<va_t, va_t>{0x303c, 0x4000}, // unprotected non-ARC call
+        {0x3028, 0x4120},                      // release is also protected
+        {0x3030, 0x4130}}) {                   // retain is also protected
+    SynchronizedInterleavedFixture F;
+    F.call(Address, Target);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+  SynchronizedInterleavedFixture F;
+  F.Image.DyldBindSlots[0x5118].WeakImport = true;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  F.Image.DyldBindSlots[0x5118].WeakImport = false;
+  F.Image.DyldBindSlots[0x5118].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedInterleavedCOnlyWrapsUnprotectedARC) {
+  SynchronizedInterleavedFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = SynchronizedInterleavedSource;
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  EXPECT_NE(Result->find("neverd_objc_sync_release(&neverd_objc_sync_guard, "
+                         "objc_self, value)"),
+            std::string::npos);
+  EXPECT_NE(
+      Result->find("result = (uint64_t)(uintptr_t)neverd_objc_sync_retain("),
+      std::string::npos);
+  for (const char *Receiver : {"value", "factory()"}) {
+    auto Changed = Source;
+    const auto At = Changed.find("sync_exit(objc_self)");
+    Changed.replace(At, std::string("sync_exit(objc_self)").size(),
+                    "sync_exit(" + std::string(Receiver) + ")");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+  auto Expanded = Source;
+  Expanded.insert(Expanded.find("    after();"),
+                  "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Expanded, *Proof));
+  auto Conditional = Source;
+  Conditional.insert(Conditional.find("    objc_release(value);"),
+                     "    if (path) ");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Conditional, *Proof));
+  const std::string Helper =
+      "\nvoid helper(void *object) { objc_release(object); }\n";
+  const auto Appended =
+      addObjCSynchronizedReceiverCleanup(Source + Helper, *Proof);
+  ASSERT_TRUE(Appended);
+  EXPECT_EQ(Appended->substr(Appended->size() - Helper.size()), Helper);
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedInterleavedCExecutesProtectedAndARCErrors) {
+  SynchronizedInterleavedFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Result =
+      addObjCSynchronizedReceiverCleanup(SynchronizedInterleavedSource, *Proof);
+  ASSERT_TRUE(Result);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static void *retained = (void*)(uintptr_t)0x3333;
+static int failure, order, bad, exits, path, releases;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object, int tag) { step(object, value, tag); }
+extern "C" void objc_release(void *object) {
+    step(object, value, ++releases == 1 ? 3 : 5);
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, value, 6); return retained;
+}
+extern "C" void after(void) { step(value, value, 8); }
+extern "C" uint64_t neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (path = 0; path < 2; ++path) {
+        const int wanted[] = {12345678, 1, 127, 123, 12347, 12345,
+                              123456, 1234567, 12345678};
+        const int shortWanted[] = {123678, 1, 127, 123, 123678, 123678,
+                                   1236, 12367, 123678};
+        for (failure = 0; failure <= 8; ++failure) {
+            order = bad = exits = releases = 0;
+            int caught = 0;
+            uint64_t result = 0;
+            try { result = neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            const int thrown = !path && (failure == 4 || failure == 5) ? 0 : failure;
+            const int unlocks = thrown == 0 || thrown == 2 || thrown == 4 ||
+                                thrown == 7 || thrown == 8;
+            if (caught != thrown || order != (path ? wanted[failure] : shortWanted[failure]) ||
+                exits != unlocks || bad ||
+                (!thrown && result != (uint64_t)(uintptr_t)retained))
+                return 10 + failure + path * 9;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+}
+
 TEST(ObjCSourceProjection, BranchedSynchronizedTokenMutationNeedsStableLock) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
