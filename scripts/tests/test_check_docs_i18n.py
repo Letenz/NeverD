@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
+import ast
+from pathlib import Path, PureWindowsPath
 import unittest
 
 from scripts import check_docs_i18n as i18n
@@ -46,6 +47,19 @@ class _OverlayView:
 
 
 class LocalizedDocumentationMatrixTests(unittest.TestCase):
+    def test_readme_links_use_repository_paths_on_windows(self) -> None:
+        source = Path(__file__).with_suffix('.def').read_text(encoding='utf-8')
+        base, source_slug, canonical_slug, *cases = ast.literal_eval(
+            source[source.index('('):]
+        )
+        path = PureWindowsPath(base)
+        for url, expected in cases:
+            with self.subTest(url=url):
+                self.assertEqual(
+                    i18n.canonical_readme_url(url, path, {source_slug: canonical_slug}),
+                    expected,
+                )
+
     @staticmethod
     def _sbf_evidence_tokens() -> tuple[tuple[str, ...], tuple[str, ...]]:
         errors: list[str] = []
