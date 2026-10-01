@@ -409,6 +409,98 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
+  constexpr va_t Base = 0x1008;
+  constexpr va_t Slot = 0x2000;
+  auto Image = runtime_function_address_test::image(Arch::AArch64);
+  Image.MachOTwoLevelNamespace = true;
+  Image.ImportPtrSlots[Slot] = "_swift_initStaticObject";
+  Image.DyldBindSlots[Slot].Name = "_swift_initStaticObject";
+  Segment Data;
+  Data.VA = Data.FileOff = Base;
+  Data.Size = Data.FileSz = 72;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(72);
+  Data.Data[24] = 1;
+  Data.Data[32] = 2;
+  Data.Data[40] = 'a';
+  Data.Data[41] = 'k';
+  Data.Data[55] = 0xe2;
+  Data.Data[56] = 't';
+  Data.Data[57] = 'w';
+  Data.Data[71] = 0xe2;
+  Image.Segments.push_back(Data);
+  Section Section;
+  Section.Name = "__data";
+  Section.VA = Section.FileOff = Data.VA;
+  Section.Size = Section.FileSz = Data.Size;
+  Section.Flags = Data.Flags;
+  Image.Sections.push_back(Section);
+  Image.Symbols.push_back(
+      {"_$s14StorageFixture5pairsSaySS_SStGyFTv_", Base, 0, false});
+  Image.Symbols.push_back({"_next", Base + 72, 0, false});
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Constructor = returning(
+      "initialize_pairs",
+      call(*Hint, Pointer,
+           {parameter(0, Pointer),
+            HighExpr::makeConst(Base + 8, 8,
+                                ConstantAddressProvenance::DataAddress)}),
+      {Pointer});
+  auto Payload =
+      returning("pair_payload",
+                HighExpr::makeConst(Base + 40, 8,
+                                    ConstantAddressProvenance::DataAddress));
+  const auto BoundConstructor =
+      sdk::bindObjCSourceReferences(Constructor, Image);
+  const auto BoundPayload = sdk::bindObjCSourceReferences(Payload, Image);
+  ASSERT_TRUE(BoundConstructor.Limitation.empty())
+      << BoundConstructor.Limitation;
+  ASSERT_TRUE(BoundPayload.Limitation.empty()) << BoundPayload.Limitation;
+  ASSERT_EQ(BoundConstructor.LocalStorageExtents,
+            BoundPayload.LocalStorageExtents);
+  std::set<std::string> Shared;
+  const auto Source = emit({BoundConstructor.Function, BoundPayload.Function},
+                           true, Arch::AArch64) +
+                      sdk::renderObjCLocalStorageHelpers(
+                          Image, BoundConstructor.LocalStorageExtents, Shared) +
+                      R"(
+static unsigned initialized;
+void *initialize_oracle(void *metadata, void *object)
+  __asm__("_swift_initStaticObject");
+void *initialize_oracle(void *metadata, void *object) {
+  uintptr_t *header = object;
+  if (!header[-1]) {
+    ++initialized;
+    header[0] = (uintptr_t)metadata;
+    header[1] = 0x12345678;
+    header[-1] = 1;
+  }
+  return object;
+}
+int main(void) {
+  int first, second;
+  unsigned char *payload = (unsigned char *)(uintptr_t)pair_payload();
+  if (payload[0] != 'a' || payload[1] != 'k' || payload[15] != 0xe2 ||
+      payload[16] != 't' || payload[17] != 'w' || payload[31] != 0xe2) return 1;
+  uintptr_t *object = initialize_pairs(&first);
+  if ((unsigned char *)object + 32 != payload || object[-1] != 1 ||
+      object[0] != (uintptr_t)&first || object[1] != 0x12345678 ||
+      object[2] != 1 || object[3] != 2) return 2;
+  payload[0] = 'x';
+  if (initialize_pairs(&second) != object || initialized != 1 ||
+      object[0] != (uintptr_t)&first || ((unsigned char *)object)[32] != 'x' ||
+      pair_payload() != (uintptr_t)payload) return 3;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, {Optimization, "-fsanitize=alignment",
+                           "-fsanitize-trap=alignment"});
+}
+
 TEST(HighCSourceCalls, NamedReleaseStorageKeepsOrderingBitsAndAdjacentBytes) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
