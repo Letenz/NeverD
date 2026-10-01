@@ -69,6 +69,8 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 `NeverDLLVMInterpreterModelTests` confronta LLVM indipendente con oracoli LowIR dello stato completo: larghezze, PHI paralleli, switch, memoria ospite, stato distinto, condizioni poison, intervalli intrinseci, contratti rifiutati e quattro budget. Verifica una prova completa del conto alla rovescia su una parola arbitraria e rifiuta stati alterati. C indipendente compilato a O1/O2 deve rispettare le stesse osservazioni. I test validano il modello ammesso; scoperta automatica degli invarianti e correttezza del compilatore restano separate.
 
+I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiuto del template del corpo, una prova completa all’intestazione per parole arbitrarie, budget condivisi e rifiuto immediato di violazioni reali del contratto di ingresso.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests

@@ -68,4 +68,74 @@ TEST_F(LLVMModel, ArbitraryWordCountNeedsACompleteInductiveCheck) {
   EXPECT_EQ(Rejected.Status, Status::Different) << Rejected.Diagnostic;
   EXPECT_FALSE(Rejected.Certificate);
 }
+
+TEST_F(LLVMModel, RejectedBodyTemplateDoesNotHideAValidGuardedHeader) {
+  parse(R"(
+    %x = load i64, ptr %state, align 8
+    br label %loop
+  loop:
+    %count = phi i64 [%x, %0], [%next, %body]
+    %done = icmp eq i64 %count, 0
+    br i1 %done, label %exit, label %body
+  body:
+    %next = sub nuw i64 %count, 1
+    br label %loop
+  exit:
+    store i64 0, ptr %state, align 8
+    ret i64 0
+  )");
+  ASSERT_TRUE(Module);
+  auto M = model();
+  ASSERT_TRUE(static_cast<bool>(M)) << llvm::toString(M.takeError());
+  const auto C = llvmInterpreterMachineStateContract();
+  const auto Inferred = inferLowIRLoopRefinementPlan(M->Function, C);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  EXPECT_GT(Inferred.CutpointAttempts, 1U);
+  const auto Proof = checkLowIRLoopRefinement(
+      M->Function, M->Instructions, M->Function, C, *Inferred.Plan,
+      LowIRRefinementWitness::LiftedBits);
+  EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  for (bool QueryBudget : {false, true}) {
+    LowIRLoopInferenceLimits Limits;
+    if (QueryBudget)
+      Limits.Execution.MaxSolverQueries = Inferred.SolverQueries - 1;
+    else
+      Limits.MaxCutpointAttempts = 1;
+    const auto Limited = inferLowIRLoopRefinementPlan(M->Function, C, Limits);
+    EXPECT_EQ(Limited.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << Limited.Diagnostic;
+    EXPECT_FALSE(Limited.Plan);
+    if (QueryBudget)
+      EXPECT_LE(Limited.SolverQueries, Limits.Execution.MaxSolverQueries);
+    else
+      EXPECT_EQ(Limited.CutpointAttempts, 1U);
+  }
+}
+
+TEST_F(LLVMModel, ActualEntryContractFailureDoesNotRetryCuts) {
+  parse(R"(
+    %bad = add nuw i64 -1, 1
+    %x = load i64, ptr %state, align 8
+    br label %loop
+  loop:
+    %count = phi i64 [%x, %0], [%next, %body]
+    %done = icmp eq i64 %count, 0
+    br i1 %done, label %exit, label %body
+  body:
+    %next = sub i64 %count, 1
+    br label %loop
+  exit:
+    ret i64 0
+  )");
+  ASSERT_TRUE(Module);
+  auto M = model();
+  ASSERT_TRUE(static_cast<bool>(M)) << llvm::toString(M.takeError());
+  const auto Inferred = inferLowIRLoopRefinementPlan(
+      M->Function, llvmInterpreterMachineStateContract());
+  EXPECT_EQ(Inferred.Status, LowIRLoopInferenceStatus::Unsupported);
+  EXPECT_FALSE(Inferred.Plan);
+  EXPECT_EQ(Inferred.CutpointAttempts, 1U);
+  EXPECT_NE(Inferred.Diagnostic.find("preserve entry register"),
+            std::string::npos);
+}
 } // namespace neverd::analysis::llvm_model_test

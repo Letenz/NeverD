@@ -67,6 +67,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLLVMInterpreterModelTests` は独自 LLVM を全状態 LowIR 参照実装と比較し、ビット幅、並列 PHI、switch、ゲストメモリ、独立ステータス、poison ガード、組み込み関数の値域、拒否契約、四つの構築予算を検証します。任意ワードのカウントダウンを完全に証明し、変更されたステータスを拒否します。独自 C の O1/O2 コンパイル結果も同じ観測契約を満たす必要があります。これは対応モデルの検証であり、自動不変条件発見とコンパイラーの正しさは別の義務です。
 
+ガード付きカウントダウンの検証は、本体テンプレート拒否後の再試行、任意ワード入力に対する完全なヘッダー証明、共有カット・問い合わせ予算、実入口契約違反の即時拒否を含みます。
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
