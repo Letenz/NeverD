@@ -257,6 +257,71 @@ swiftMangledURLArrayBufferSourceABI(const BinaryImage &Image, va_t Entry) {
              : std::nullopt;
 }
 
+// The optimized compiler emits this exact specialization as a method taking
+// an owned one-word Array value in X0 and an inout Array cell in swiftself X20.
+// Compare the entire demangled declaration, including both specializations,
+// the Sequence/Element requirements, ownership, labels and void result.
+// This declares its ABI; native body and dependency proofs remain required.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledURLArrayAppendSourceABI(const BinaryImage &Image, va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  const auto Expected = llvm::swiftDemangle(
+      "$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lF"
+      "10Foundation3URLVSg_SayAHGTg5",
+      Options);
+  if (!Parsed.Root || !Parsed.Error.empty() || !Expected.Root ||
+      !Expected.Error.empty())
+    return std::nullopt;
+  size_t Budget = 128;
+  const auto Equal = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
+                         const llvm::SwiftDemangleNode &B) -> bool {
+    if (!Budget || A.Kind != B.Kind || A.Text != B.Text || A.Index != B.Index ||
+        A.Children.size() != B.Children.size())
+      return false;
+    --Budget;
+    for (size_t I = 0; I < A.Children.size(); ++I)
+      if (!Self(Self, A.Children[I], B.Children[I]))
+        return false;
+    return true;
+  };
+  if (!Equal(Equal, *Parsed.Root, *Expected.Root))
+    return std::nullopt;
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.Parameters = {
+      {"source_array", NdType::makePtr(NdType::makeVoid())},
+      {"destination_array", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters.back().TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Diagnostic)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // A Swift value initializer may return its Array<String> argument unchanged
 // in x0 while still performing observable side effects. The mangled type
 // gives the nominal and argument shape; the complete single-block

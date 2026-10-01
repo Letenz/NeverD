@@ -1,0 +1,30 @@
+//===- KvmStateTransferCases.def - Native capture failure fixtures --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_KVM_STATE_VALUE
+NEVERD_KVM_STATE_VALUE(Code, 0x100000)
+NEVERD_KVM_STATE_VALUE(Data, 0x200000)
+NEVERD_KVM_STATE_VALUE(PageSize, 4096)
+NEVERD_KVM_STATE_VALUE(Limit, 8 * 1024 * 1024)
+NEVERD_KVM_STATE_VALUE(Timeout, 1'000'000)
+NEVERD_KVM_STATE_VALUE(InitialFlags, 0x202)
+NEVERD_KVM_STATE_VALUE(InitialInteger, 0x123456789abcdef0ULL)
+NEVERD_KVM_STATE_VALUE(IntegerIncrement, 1)
+NEVERD_KVM_STATE_VALUE(IncrementVectorIndex, 1)
+NEVERD_KVM_STATE_VALUE(InitialPacked, 0x0101010101010101ULL)
+NEVERD_KVM_STATE_VALUE(IncrementedPacked, 0x0202020202020202ULL)
+NEVERD_KVM_STATE_VALUE(WordBytes, 8)
+#endif
+#ifdef NEVERD_KVM_STATE_CODE
+NEVERD_KVM_STATE_CODE(Warm, 0x90)
+// INC RAX; NOP. A failed capture must not advance the retry's input.
+NEVERD_KVM_STATE_CODE(IncrementInteger, 0x48, 0xff, 0xc0)
+// PADDB XMM0,XMM1; NOP. Two executions without FP reinstall would add twice.
+NEVERD_KVM_STATE_CODE(IncrementVector, 0x66, 0x0f, 0xfc, 0xc1)
+#endif
+#ifdef NEVERD_KVM_STATE_CAPTURE_REQUEST
+NEVERD_KVM_STATE_CAPTURE_REQUEST(KVM_GET_REGS)
+NEVERD_KVM_STATE_CAPTURE_REQUEST(KVM_GET_XSAVE)
+#endif

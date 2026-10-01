@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64Machine.h"
+#include "../../arch/aarch64/AArch64GeneralState.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
@@ -22,16 +22,20 @@ public:
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
+      const unsigned Index = Names.size();
       WHV_REGISTER_VALUE V{};
       V.Reg64 = Value;
       Names.push_back(Name);
       Values.push_back(V);
+      return Index;
     };
     for (unsigned N = 0; N < GPRCount; ++N)
       Add(WHV_REGISTER_NAME(WHvArm64RegisterX0 + N), State.Registers[N]);
-    Add(State.UserMode ? WHvArm64RegisterSpEl0 : WHvArm64RegisterSpEl1,
-        State.reg(AArch64Register::SP));
-    Add(WHvArm64RegisterTpidrEl0, State.reg(AArch64Register::TPIDR_EL0));
+    const auto Stack =
+        Add(State.UserMode ? WHvArm64RegisterSpEl0 : WHvArm64RegisterSpEl1,
+            State.reg(AArch64Register::SP));
+    const auto Thread =
+        Add(WHvArm64RegisterTpidrEl0, State.reg(AArch64Register::TPIDR_EL0));
     const uint64_t Mode = State.UserMode ? PStateEL0t : PStateEL1h;
     const unsigned GeneralCount = Names.size();
     Add(WHvArm64RegisterPc, EntryGPA);
@@ -63,24 +67,33 @@ public:
       return diagnostic::error(diagnostic::WhpExit);
     Names.resize(GeneralCount);
     Values.resize(GeneralCount);
-    Add(WHvArm64RegisterEsrEl1, 0);
-    Add(WHvArm64RegisterElrEl1, 0);
-    Add(WHvArm64RegisterSpsrEl1, 0);
+    const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
+    const auto PC = Add(WHvArm64RegisterElrEl1, 0);
+    const auto Flags = Add(WHvArm64RegisterSpsrEl1, 0);
     if (FAILED(API.WHvGetVirtualProcessorRegisters(
             Partition, 0, Names.data(), Names.size(), Values.data())))
       return diagnostic::error(diagnostic::WhpState);
-    if (((Values[GeneralCount].Reg64 >> ExceptionClassShift) &
+    if (((Values[Syndrome].Reg64 >> ExceptionClassShift) &
          ExceptionClassMask) !=
         (State.UserMode ? StepFromLowerEL : StepFromEL1))
       return diagnostic::error(diagnostic::ArmState);
-    for (unsigned N = 0; N < GPRCount; ++N)
-      State.Registers[N] = Values[N].Reg64;
-    State.reg(AArch64Register::SP) = Values[GPRCount].Reg64;
-    State.reg(AArch64Register::TPIDR_EL0) = Values[GPRCount + 1].Reg64;
-    State.reg(AArch64Register::PC) = Values[GeneralCount + 1].Reg64;
-    State.reg(AArch64Register::NZCV) =
-        Values[GeneralCount + 2].Reg64 & NZCVMask;
-    return llvm::Error::success();
+    return captureAArch64GeneralState(
+        State, [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+          if (unsigned(Register) < GPRCount)
+            return Values[unsigned(Register)].Reg64;
+          switch (Register) {
+          case AArch64Register::SP:
+            return Values[Stack].Reg64;
+          case AArch64Register::PC:
+            return Values[PC].Reg64;
+          case AArch64Register::NZCV:
+            return Values[Flags].Reg64;
+          case AArch64Register::TPIDR_EL0:
+            return Values[Thread].Reg64;
+          default:
+            return diagnostic::error(diagnostic::Register);
+          }
+        });
   }
 };
 } // namespace

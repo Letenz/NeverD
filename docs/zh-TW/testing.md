@@ -818,3 +818,11 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 
 `NeverDKvmRunTests` 無需 `/dev/kvm` 即可驗證 `KvmRunControl` 借用的傳輸回呼。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 檢查準備、讀取和被攔截的主機進入使用同一執行緒，且中斷重試期間只準備一次。其他案例涵蓋準備失敗而不進入、讀取失敗、準備期間停止及活動進入被取消；隨後重新執行，確認不會重用舊回呼。驗證仍應包含真實取消、RAM 回滾、例外和原有驅動程式測試。
+
+`ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在主機修改通用暫存器、首尾 XMM 暫存器、MXCSR 和 x87 控制字後，驗證連續執行及真實 CPU 寫入。停止進入後的實際 `FXSAVE64` 位元組驗證全部實體 80 位元暫存器、TOP、標籤、操作碼和指標；重複除法例外也會使重用失效。這些機器邊界測試不向 checked 設定開放額外的 x87 指令。
+
+`NeverDKvmStateTransferTests` 在真實 KVM 執行後注入暫存器或 XSAVE 讀取失敗，再以未變更的輸入重試。獨立的整數和封裝位元組結果證明失敗的讀取不會重用已前進的原生狀態。只有該測試程式包裝 `ioctl`；原生主機不可用時明確略過。
+
+ARM64 原生整數狀態讀取由統一的 ISA 層負責。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暫存全部讀取結果，再正規化 NZCV 並一次提交完整狀態。KVM 和 WHP 共用該函式。任一讀取失敗都保留全部輸入狀態，權限級、向量和未傳輸的暫存器保持不變。這不新增原生 FP/SIMD 指令准入。
+
+`NeverDAArch64GeneralStateTests` 無需 Unicorn 或虛擬化裝置，驗證完整讀取、NZCV 遮罩、35 個讀取位置分別失敗、缺少讀取回呼及兩種權限級下的成功重試。這些可攜式狀態驗證和交叉編譯不能取代 ARM64 KVM/WHP 實機執行證據。

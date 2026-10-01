@@ -159,6 +159,102 @@ TEST_P(X64StateTransition,
   }
 }
 
+TEST_P(X64StateTransition,
+       ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops) {
+  llvm::cantFail(Memory->write(Code, StoreState));
+  for (unsigned Round = 0; Round < Rounds; ++Round) {
+    SCOPED_TRACE(Round);
+    State.reg(X64Register::PC) = Code;
+    State.reg(X64Register::AX) = First ^ Round;
+    State.reg(X64Register::BX) = WordBytes;
+    State.reg(X64Register::CX) = Data + ResultOffset;
+    const auto Sum = State.reg(X64Register::AX) + WordBytes;
+    ASSERT_EQ(llvm::toString(step()), "");
+    EXPECT_EQ(State.reg(X64Register::AX), Sum);
+    // Continue with the complete captured state, then inspect the CPU's store.
+    ASSERT_EQ(llvm::toString(step()), "");
+    uint8_t Scalar[WordBytes];
+    llvm::cantFail(Memory->read(Data + ResultOffset, Scalar));
+    EXPECT_EQ(llvm::support::endian::read64le(Scalar), Sum);
+
+    const auto Destination = Data + OtherResultOffset;
+    const auto General = First ^ Second ^ Round;
+    State.reg(X64Register::AX) = General;
+    State.reg(X64Register::CX) = Destination;
+    State.Xmm.front() = {Second ^ Round, First ^ Round};
+    ASSERT_EQ(llvm::toString(step()), "");
+    EXPECT_EQ(State.reg(X64Register::AX), General);
+    uint8_t Vector[x64::VectorBytes];
+    llvm::cantFail(Memory->read(Destination + VectorOffset, Vector));
+    EXPECT_EQ(llvm::support::endian::read64le(Vector), Second ^ Round);
+    EXPECT_EQ(llvm::support::endian::read64le(Vector + WordBytes),
+              First ^ Round);
+    // Change only the highest XMM lane, then only MXCSR and x87 control.
+    State.Xmm.back() = {First + Round, Second - Round};
+    ASSERT_EQ(llvm::toString(step()), "");
+    llvm::cantFail(Memory->read(Destination + HighVectorOffset, Vector));
+    EXPECT_EQ(llvm::support::endian::read64le(Vector), First + Round);
+    EXPECT_EQ(llvm::support::endian::read64le(Vector + WordBytes),
+              Second - Round);
+    const auto RequestedMXCSR =
+        x64::InitialMXCSR + (Round % RoundingModes) * MXCSRRoundUnit;
+    State.MXCSR = RequestedMXCSR;
+    ASSERT_EQ(llvm::toString(step()), "");
+    EXPECT_EQ(State.MXCSR, RequestedMXCSR);
+    llvm::cantFail(Memory->read(Destination + MXCSROffset, Scalar));
+    EXPECT_EQ(llvm::support::endian::read32le(Scalar), RequestedMXCSR);
+    const auto RequestedControl =
+        x64::fp::InitialControl + (Round % RoundingModes) * ControlRoundUnit;
+    State.FP.Control = RequestedControl;
+    ASSERT_EQ(llvm::toString(step()), "");
+    EXPECT_EQ(State.FP.Control, RequestedControl);
+    llvm::cantFail(Memory->read(Destination + ControlOffset, Scalar));
+    EXPECT_EQ(llvm::support::endian::read16le(Scalar), RequestedControl);
+
+    const unsigned Top = Round % x64::fp::RegisterCount;
+    State.FP.Status = Top << x64::fp::TopShift;
+    State.FP.Tag = UINT8_MAX;
+    State.FP.Opcode = Round;
+    State.FP.Instruction = Code + Round;
+    State.FP.Data = Data + Round;
+    for (unsigned I = 0; I < State.FP.Registers.size(); ++I)
+      State.FP.Registers[I] = {FP80Base + Round + I, FP80High};
+    const auto Before = State;
+    const std::atomic<bool> Stop{true};
+    auto E = step(&Stop);
+    ASSERT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    expectUnchanged(Before);
+    ASSERT_EQ(llvm::toString(step()), "");
+    // FXSAVE64 writes hardware state; no host-side state encoder is the oracle.
+    std::array<uint8_t, x64::fp::LegacyBytes> FX;
+    llvm::cantFail(Memory->read(Destination + FXOffset, FX));
+    EXPECT_EQ(
+        llvm::support::endian::read16le(FX.data() + x64::fp::ControlOffset),
+        Before.FP.Control);
+    EXPECT_EQ(
+        llvm::support::endian::read16le(FX.data() + x64::fp::StatusOffset),
+        Top << x64::fp::TopShift);
+    EXPECT_EQ(FX[x64::fp::TagOffset], UINT8_MAX);
+    EXPECT_EQ(
+        llvm::support::endian::read16le(FX.data() + x64::fp::OpcodeOffset),
+        Round);
+    EXPECT_EQ(
+        llvm::support::endian::read64le(FX.data() + x64::fp::InstructionOffset),
+        Code + Round);
+    EXPECT_EQ(llvm::support::endian::read64le(FX.data() + x64::fp::DataOffset),
+              Data + Round);
+    for (unsigned I = 0; I < x64::fp::RegisterCount; ++I) {
+      const auto *Slot =
+          FX.data() + x64::fp::RegistersOffset + I * x64::fp::RegisterSlotBytes;
+      EXPECT_EQ(llvm::support::endian::read64le(Slot),
+                FP80Base + Round + ((Top + I) % x64::fp::RegisterCount));
+      EXPECT_EQ(llvm::support::endian::read16le(Slot + WordBytes), FP80High);
+    }
+    expectDivideFault();
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(NativeTransports, X64StateTransition,
                          testing::Values(ExecutionBackendKind::KVM,
                                          ExecutionBackendKind::WHP));

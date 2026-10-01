@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64Machine.h"
+#include "../../arch/aarch64/AArch64GeneralState.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #if defined(__linux__) && defined(__aarch64__) && defined(NEVERD_EMULATION_KVM)
@@ -107,22 +107,34 @@ public:
       return E;
     if (auto E = enter(Control))
       return E;
-    for (unsigned N = 0; N < GPRCount; ++N)
-      if (auto E =
-              get(coreRegister(offsetof(kvm_regs, regs.regs) + N * WordBytes),
-                  State.Registers[N]))
-        return E;
-    if (auto E = get(SP, State.reg(AArch64Register::SP)))
-      return E;
-    if (auto E = get(TpidrEl0, State.reg(AArch64Register::TPIDR_EL0)))
-      return E;
-    if (auto E = get(PC, State.reg(AArch64Register::PC)))
-      return E;
-    uint64_t Flags = 0;
-    if (auto E = get(PState, Flags))
-      return E;
-    State.reg(AArch64Register::NZCV) = Flags & NZCVMask;
-    return llvm::Error::success();
+    return captureAArch64GeneralState(
+        State, [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+          uint64_t Name;
+          if (unsigned(Register) < GPRCount)
+            Name = coreRegister(offsetof(kvm_regs, regs.regs) +
+                                unsigned(Register) * WordBytes);
+          else
+            switch (Register) {
+            case AArch64Register::SP:
+              Name = SP;
+              break;
+            case AArch64Register::PC:
+              Name = PC;
+              break;
+            case AArch64Register::NZCV:
+              Name = PState;
+              break;
+            case AArch64Register::TPIDR_EL0:
+              Name = TpidrEl0;
+              break;
+            default:
+              return diagnostic::error(diagnostic::Register);
+            }
+          uint64_t Value = 0;
+          if (auto E = get(Name, Value))
+            return E;
+          return Value;
+        });
   }
 };
 } // namespace

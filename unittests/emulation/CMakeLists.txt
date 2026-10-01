@@ -1,3 +1,10 @@
+add_neverd_unittest(NeverDAArch64GeneralStateTests
+  AArch64GeneralStateTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationArch)
+target_include_directories(NeverDAArch64GeneralStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDX64FPTests
   X64FPStateTests.cpp
   TIMEOUT 15
@@ -126,6 +133,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   target_include_directories(NeverDKvmRunTests PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/emulation)
   target_link_options(NeverDKvmRunTests PRIVATE "-Wl,--wrap=ioctl")
+  add_neverd_unittest(NeverDKvmStateTransferTests
+    KvmStateTransferTests.cpp
+    TIMEOUT 15
+    LINK_COMPONENTS EmulationNative)
+  target_include_directories(NeverDKvmStateTransferTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
+  target_link_options(NeverDKvmStateTransferTests PRIVATE "-Wl,--wrap=ioctl")
   add_neverd_unittest(NeverDKvmCancellationTests
     KvmCancellationTests.cpp
     TIMEOUT 10
