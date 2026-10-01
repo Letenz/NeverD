@@ -6209,3 +6209,46 @@ TEST(HighControlFlowSemantics, ThreeLevelExitCopiesEachSkippedTail) {
   for (uint64_t X : {0, 1, 2, 3, 4})
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
 }
+
+TEST(HighControlFlowSemantics, NestedExitToASharedLabelCopiesItsTail) {
+  // v = 0; if (x == 9) goto X; if (x) { if (x == 2) { v = 5; goto X; }
+  // v += 10; } v += 100; X: return v;  -- X has another jump; it lands after
+  // the copied `v += 100` as before, and only the nested exit goes away.
+  auto Add = [](va_t At, uint64_t K) {
+    HighStmt S = assign(At, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(K, 8));
+    return S;
+  };
+  HighStmt Early = conditional(0x0ff8, 0x1030);
+  Early.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(9, 8));
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1008;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {assign(0x100c, 1, 5), jump(0x1010, 0x1030)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1000;
+  Outer.Cond = local(0);
+  Outer.Body = {Inner, Add(0x1014, 10)};
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 1, 0), Early, Outer, Add(0x1020, 100),
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 9 ? 0 : X == 2 ? 5 : X == 0 ? 100 : 110;
+  };
+  for (uint64_t X : {0, 1, 2, 9})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  unsigned Exits = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Exits += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1030;
+  });
+  EXPECT_LE(Exits, 1u);
+  for (uint64_t X : {0, 1, 2, 9})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}

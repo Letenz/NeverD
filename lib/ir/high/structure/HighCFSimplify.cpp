@@ -2230,8 +2230,9 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       return V.Then ? V.If->Body : V.If->ElseBody;
     };
     const size_t D = Path.size();
+    // Other jumps to X land after R and keep their label.
     const va_t X = ArmOf(Path[D - 1]).back().GotoTarget;
-    if (usesOf(X) != 1)
+    if (usesOf(X) == 0 || usesOf(X) == ~0u)
       return false;
     size_t J = I + 1;
     while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
