@@ -453,6 +453,40 @@ inline std::set<va_t> gotoTargets(const std::vector<HighStmt> &Stmts) {
 // High-level function
 //===----------------------------------------------------------------------===//
 
+/// True when \p Stmts contains a break that would leave a loop wrapped around
+/// it. Loops and switches own the breaks inside them.
+inline bool hasLooseBreak(const std::vector<HighStmt> &Stmts) {
+  for (const HighStmt &S : Stmts) {
+    switch (S.Kind) {
+    case StmtKind::Break:
+      return true;
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      break;
+    default:
+      if (hasLooseBreak(S.Body) || hasLooseBreak(S.ElseBody))
+        return true;
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        if (hasLooseBreak(ClauseBody))
+          return true;
+      break;
+    }
+  }
+  return false;
+}
+
+/// A loop without a condition or a break of its own: it is left only by a
+/// jump or a return, so it never falls through to the next statement.
+inline bool isEndlessLoop(const HighStmt &S) {
+  if (S.Kind != StmtKind::While && S.Kind != StmtKind::DoWhile)
+    return false;
+  const bool Forever =
+      !S.Cond || (S.Cond->Kind == ExprKind::Const && S.Cond->ConstVal != 0);
+  return Forever && !hasLooseBreak(S.Body);
+}
+
 /// Prove that a switch returns on every selector value. A missing default,
 /// a switch break, or a goto can still reach the following statements.
 inline bool switchAlwaysReturns(const HighStmt &Stmt) {

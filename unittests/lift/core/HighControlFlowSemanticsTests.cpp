@@ -6070,3 +6070,24 @@ TEST(HighControlFlowSemantics, FiveAssignmentReturnTailIsCopied) {
   EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
 }
+
+TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
+  // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
+  // break of its own, so nothing reaches the trailing return.
+  HighStmt Exit = conditional(0x1000, 0);
+  Exit.Body = {result(0x1000, HighExpr::makeConst(1, 8))};
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Body = {Exit, assign(0x1004, 1, 2)};
+  HighFunc F;
+  F.Body = {Loop, result(0x1010, local(1))};
+  removeUnreachableCode(F.Body);
+  ASSERT_EQ(F.Body.size(), 1u);
+  EXPECT_EQ(F.Body.front().Kind, StmtKind::While);
+  // A break of its own lets the loop fall through: the return stays.
+  F.Body.front().Body.push_back(HighStmt());
+  F.Body.front().Body.back().Kind = StmtKind::Break;
+  F.Body.push_back(result(0x1010, local(1)));
+  removeUnreachableCode(F.Body);
+  EXPECT_EQ(F.Body.size(), 2u);
+}
