@@ -2231,8 +2231,9 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
     return V.Then ? V.If->Body : V.If->ElseBody;
   };
-  // Rewrites the exit at the end of \p Path when its label X follows L[I].
-  auto copyExit = [&](std::vector<HighStmt> &L, size_t I,
+  // Rewrites the exit at the end of \p Path when its label X follows L[I],
+  // later in L or as \p After, what runs once L ends.
+  auto copyExit = [&](std::vector<HighStmt> &L, size_t I, va_t After,
                       std::vector<Level> &Path) -> bool {
     const size_t D = Path.size();
     // Other jumps to X land after R and keep their label.
@@ -2242,7 +2243,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     size_t J = I + 1;
     while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
       ++J;
-    if (J >= L.size())
+    if (J >= L.size() && X != After)
       return false;
     // Tails[K]: the rest of level K's arm after the if one level down.
     std::vector<std::vector<HighStmt>> Tails(D - 1);
@@ -2292,10 +2293,11 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     Changed = true;
     return true;
   };
-  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I,
+                             va_t After) -> bool {
     std::vector<Level> Path;
     return FindExits(L[I], Path, [&](std::vector<Level> &Exit) {
-      return copyExit(L, I, Exit);
+      return copyExit(L, I, After, Exit);
     });
   };
 
@@ -2938,23 +2940,33 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   // `if (a) { A; if (b) { B } else { T R } } else { R }`: R runs on every
   // path but the exit, so a copy of it goes on each.
   if (SpliceRegions) {
-    std::function<void(std::vector<HighStmt> &)> CopyTails =
-        [&](std::vector<HighStmt> &L) {
+    // \p After: the label of what runs once L ends, when it is the next
+    // statement after the if/else, block or switch owning L.
+    std::function<void(std::vector<HighStmt> &, va_t)> CopyTails =
+        [&](std::vector<HighStmt> &L, va_t After) {
           for (size_t I = 0; I < L.size(); ++I)
             if ((L[I].Kind == StmtKind::If || L[I].Kind == StmtKind::IfElse) &&
                 L[I].Cond)
-              copySkippedTail(L, I);
-          for (HighStmt &S : L) {
-            CopyTails(S.Body);
-            CopyTails(S.ElseBody);
+              copySkippedTail(L, I, After);
+          for (size_t K = 0; K < L.size(); ++K) {
+            HighStmt &S = L[K];
+            va_t Next = After;
+            if (K + 1 < L.size())
+              Next = labelStart(L, K + 1) ? L[K + 1].Addr : 0;
+            const bool Arms =
+                S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+                S.Kind == StmtKind::Block || S.Kind == StmtKind::Switch;
+            const va_t Inner = Arms ? Next : 0;
+            CopyTails(S.Body, Inner);
+            CopyTails(S.ElseBody, Inner);
             for (auto &C : S.Cases)
-              CopyTails(C.Body);
-            CopyTails(S.DefaultBody);
+              CopyTails(C.Body, Inner);
+            CopyTails(S.DefaultBody, Inner);
             for (auto &ClauseBody : S.EHClauseBodies)
-              CopyTails(ClauseBody);
+              CopyTails(ClauseBody, 0);
           }
         };
-    CopyTails(Body);
+    CopyTails(Body, 0);
   }
 
   // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }
