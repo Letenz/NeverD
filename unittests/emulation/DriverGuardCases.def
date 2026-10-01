@@ -1,0 +1,22 @@
+//===- DriverGuardCases.def - Dormant CFG regression fixtures ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_GUARD_TEST_TEXT
+NEVERD_GUARD_TEST_TEXT(DormantFixture, "driver_guard_inactive.sys")
+NEVERD_GUARD_TEST_TEXT(DormantImage, "dormant.sys")
+NEVERD_GUARD_TEST_TEXT(TemporaryPrefix, "neverd-dormant-guard")
+NEVERD_GUARD_TEST_TEXT(SourceName, "dormant-guard")
+NEVERD_GUARD_TEST_TEXT(MissingFixtureRelocation, "missing fixture relocation")
+NEVERD_GUARD_TEST_TEXT(ExternalSlot, "outside image storage")
+NEVERD_GUARD_TEST_TEXT(ExternalFallback, "fallback target")
+NEVERD_GUARD_TEST_TEXT(MissingRelocation, "complete DIR64 relocations")
+#endif
+#ifdef NEVERD_GUARD_TEST_VALUE
+NEVERD_GUARD_TEST_VALUE(RebasedAddress, 0x280000000ULL)
+NEVERD_GUARD_TEST_VALUE(ExternalAddress, 0x71001000ULL)
+NEVERD_GUARD_TEST_VALUE(DormantFlags, 0)
+NEVERD_GUARD_TEST_VALUE(RelocationTypeShift, 12)
+NEVERD_GUARD_TEST_VALUE(RelocationOffsetMask, 0xfff)
+#endif

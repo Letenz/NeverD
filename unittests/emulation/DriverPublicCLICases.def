@@ -1,0 +1,8 @@
+//===- DriverPublicCLICases.def - Public driver compatibility transport ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// V1 C entry points retain Unicorn; these CLI comparisons select that same
+// transport. Explicit native and auto selection have separate public tests.
+NEVERD_DRIVER_PUBLIC_CLI_TEXT(CompatibilityBackend, " --backend unicorn")

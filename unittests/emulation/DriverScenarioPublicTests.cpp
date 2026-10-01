@@ -33,6 +33,10 @@
 #include <vector>
 
 namespace {
+#define NEVERD_DRIVER_PUBLIC_CLI_TEXT(Name, Value)                             \
+  constexpr char Name[] = Value;
+#include "DriverPublicCLICases.def"
+#undef NEVERD_DRIVER_PUBLIC_CLI_TEXT
 
 std::string takeString(const char *Text) {
   if (!Text)
@@ -85,7 +89,8 @@ protected:
     const std::string Command =
         neverd::test::shellQuote(NEVERD_DRIVER_CLI) + " emulate-driver " +
         neverd::test::shellQuote(Image ? Image : fixture(Name)) +
-        " --scenario " + neverd::test::shellQuote(Path.string()) +
+        CompatibilityBackend + " --scenario " +
+        neverd::test::shellQuote(Path.string()) +
         neverd::test::redirectOutput(Out.string(), Err.string());
     int Exit =
         neverd::test::systemExitCode(neverd::test::runShellCommand(Command));

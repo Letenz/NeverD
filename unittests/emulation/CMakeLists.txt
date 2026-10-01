@@ -957,6 +957,16 @@ target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
 
+add_neverd_unittest(NeverDDriverGuardMetadataTests
+  DriverDormantGuardTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS Emulation)
+target_include_directories(NeverDDriverGuardMetadataTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+target_compile_definitions(NeverDDriverGuardMetadataTests PRIVATE
+  ${_driver_execution_fixture_definitions})
+add_dependencies(NeverDDriverGuardMetadataTests NeverDDriverFixtures)
+
 if(NOT NEVERD_EMULATION_BACKEND_UNICORN)
   return()
 endif()

@@ -869,3 +869,5 @@ checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 
 `NeverDAArch64GeneralStateTests`는 Unicorn이나 하이퍼바이저 없이 완전한 수집, NZCV 마스크, 35개 위치 각각의 읽기 실패, 읽기 콜백 누락과 두 권한 수준에서의 재시도 성공을 검증합니다. 이 이식 가능한 상태 검증과 교차 컴파일은 ARM64 KVM/WHP 실기 실행 증거를 대신하지 않습니다.
 
 `NeverDAArch64MemoryTests`는 두 권한 수준에서 Unicorn, KVM, WHP의 스칼라/쌍 명령 18종을 확인합니다. 모든 페이지 경계 오프셋, 부호와 폭, 관찰자 순서, 두 번째 페이지의 권한 거부/누락, 명시적인 오류 소비와 재시도, 반복된 물리 별칭, 별칭 교체 후 컨텍스트 복원을 검사합니다. 변경 전에 유효한 페이지 경계 로드가 거부되는 현상을 재현했습니다. 사용할 수 없는 전송은 명시적으로 건너뜁니다. Unicorn 및 교차 컴파일은 ARM64 KVM/WHP 실기 증거를 대신하지 않습니다.
+
+`NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`)는 플래그가 0인 비활성 CFG 메타데이터, 두 로드 주소에서 유지되는 대체 포인터, 잘못된 슬롯/대상 및 누락된 재배치를 검사합니다. 실행 사례는 명시적인 Unicorn/KVM/WHP와 `driver-strict`, `checked-x64-v1`을 사용하며 사용할 수 없는 백엔드는 개별적으로 건너뜁니다. `DriverPublicCLICases.def`는 호환성을 유지하는 v1 C API와 비교하는 CLI에 `--backend unicorn`을 지정합니다. 네이티브 및 `auto` 선택은 별도의 공개 인터페이스 검증을 유지하며 호스트 API를 사용할 수 없을 때 자동으로 대체하지 않습니다.

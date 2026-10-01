@@ -830,3 +830,5 @@ checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立�
 `NeverDAArch64GeneralStateTests` 無需 Unicorn 或虛擬化裝置，驗證完整讀取、NZCV 遮罩、35 個讀取位置分別失敗、缺少讀取回呼及兩種權限級下的成功重試。這些可攜式狀態驗證和交叉編譯不能取代 ARM64 KVM/WHP 實機執行證據。
 
 `NeverDAArch64MemoryTests` 在兩種權限層級下涵蓋 Unicorn、KVM、WHP 的 18 種純量及成對指令，檢查所有跨頁偏移、符號延伸與寬度結果、觀察器順序、第二頁權限不足或缺失、明確消費故障後重試、重複實體別名，以及別名替換後的上下文還原。修改前已重現合法跨頁載入遭拒的情況。無法使用的後端明確跳過；Unicorn 驗證及交叉編譯不能取代 ARM64 KVM/WHP 實機證據。
+
+`NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 檢查零旗標的未啟用 CFG 中繼資料、兩種載入位址下不變的回退指標、無效指標槽/目標及缺失重定位。執行案例明確選擇 Unicorn/KVM/WHP，並使用 `driver-strict` 和 `checked-x64-v1`；不可用的後端分別略過。`DriverPublicCLICases.def` 為 CLI 與相容的 v1 C API 比較選擇 `--backend unicorn`。原生後端與 `auto` 選擇保留獨立的公開介面涵蓋範圍，主機 API 不可用時不會靜默回退。
