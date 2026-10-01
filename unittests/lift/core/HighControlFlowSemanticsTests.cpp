@@ -5524,3 +5524,27 @@ TEST(HighControlFlowSemantics, ExceptHandlerJumpToAReturnTailBecomesItsCopy) {
   EXPECT_EQ(Handler.back().Kind, StmtKind::Return);
   EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
 }
+
+TEST(HighControlFlowSemantics, CodeAfterALoopInAnArmMovesToItsOnlyBreak) {
+  // v = c; if (c) { while (1) { ... goto out; ... break; } v = v + 100; }
+  // out: return v; -- the jump's target is what follows the arm, which the
+  // arm reaches by falling off its end after the addition.
+  HighFunc F = loopWithExitJump(false);
+  auto Follow = assign(0x1020, 1, 0);
+  Follow.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(100, 8));
+  HighStmt Arm;
+  Arm.Kind = StmtKind::If;
+  Arm.Addr = 0x1008;
+  Arm.Cond = local(0);
+  Arm.Body = {F.Body[1], Follow};
+  F.Body = {F.Body[0], Arm, F.Body[2]};
+  const uint64_t Inputs[] = {0, 3, 4, 8};
+  const uint64_t Results[] = {0, 102, 3, 7};
+  for (size_t I = 0; I < 4; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  EXPECT_TRUE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (size_t I = 0; I < 4; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}

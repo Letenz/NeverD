@@ -1460,8 +1460,10 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   auto Entered = [&](va_t Addr) { return Labels.entered().count(Addr) != 0; };
   // `while (1) { ..break..; goto X; } P...; X:` where nothing enters P: P
   // runs only after the break, so it can run at the break instead, leaving X
-  // as what follows the loop.
-  auto MoveFollowToBreak = [&](std::vector<HighStmt> &L, size_t K) {
+  // as what follows the loop. X may also be what follows the list, \p After,
+  // when P runs to its end.
+  auto MoveFollowToBreak = [&](std::vector<HighStmt> &L, size_t K,
+                               const std::set<va_t> &After) {
     HighStmt &Loop = L[K];
     const bool Forever = !Loop.Cond || (Loop.Cond->Kind == ExprKind::Const &&
                                         Loop.Cond->ConstVal != 0);
@@ -1477,7 +1479,9 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
       if (anyAddressEntered(L[M], Entered))
         return;
     }
-    if (M == L.size())
+    if (M == L.size() && std::none_of(After.begin(), After.end(), [&](va_t X) {
+          return Targets.count(X) != 0;
+        }))
       return;
     // Empty anchors alone already let a jump past them count as the follow.
     if (std::all_of(L.begin() + K + 1, L.begin() + M, isEmptyAnchor))
@@ -1507,7 +1511,7 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> Visit =
       [&](std::vector<HighStmt> &L, const std::set<va_t> &After) {
         for (size_t K = 0; K < L.size(); ++K) {
-          MoveFollowToBreak(L, K);
+          MoveFollowToBreak(L, K, After);
           HighStmt &S = L[K];
           const bool Loop = S.Kind == StmtKind::While ||
                             S.Kind == StmtKind::DoWhile ||
