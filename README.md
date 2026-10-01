@@ -108,6 +108,8 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 
 Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native WHP/ARM64 workload evidence remains incomplete.
 
+Native x64 `FOP/FIP/FDP` follow host save/restore rules: AMD may clear inactive x87 exception metadata. Startup probes validate these fields with a pending unmasked exception.
+
 <!-- i18n-section: how-it-works -->
 
 ## How it works

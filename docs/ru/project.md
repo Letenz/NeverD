@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -107,6 +107,8 @@ C11 и безопасный стабильный Rust. См. [декомпиля
 `checked-aarch64-v1` и `checked-user-aarch64-v1` предоставляют ограниченные ARM64 FP32/FP64, SIMD фиксированной ширины и полный FPCR/FPSR/векторный контекст. Совместимые Linux ARM64 используют KVM, Windows ARM64 — WHP, другие ISA — Unicorn. Нативные свидетельства ARM64 ещё требуются; драйверы Windows загружаются только для x64.
 
 Нативные стартовые проверки x64 и ARM64 подтверждают ограниченное полное исполнение состояния с исключительным правом на память. XSAVE-пакеты и кеши таблиц с идентичностью ISA имеют единого владельца; доказательства нативных нагрузок WHP/ARM64 ещё неполны.
+
+Нативные поля x64 `FOP/FIP/FDP` следуют правилам сохранения/восстановления хоста: AMD может обнулять неактивные метаданные x87. Стартовые проверки проверяют их с ожидающим немаскированным исключением.
 
 <!-- i18n-section: how-it-works -->
 

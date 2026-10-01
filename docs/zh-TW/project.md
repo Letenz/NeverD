@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -106,6 +106,8 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 `checked-aarch64-v1` 與 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定寬 SIMD 及完整 FPCR/FPSR/向量狀態。匹配 Linux ARM64 主機使用 KVM，Windows ARM64 主機使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生執行仍待實機驗證；Windows 驅動程式載入仍限 x64。
 
 x64 與 ARM64 原生啟動自檢在獨占記憶體租約下驗證有界的完整狀態執行。XSAVE 封包和包含 ISA 身分的頁表快取由唯一權威層管理；WHP/ARM64 原生工作負載證據仍未完整。
+
+原生 x64 的 `FOP/FIP/FDP` 遵循主機儲存、還原規則：AMD 可能清零未生效的 x87 例外中繼資料。啟動自檢透過未遮罩的待處理例外驗證這些欄位。
 
 <!-- i18n-section: how-it-works -->
 

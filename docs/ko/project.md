@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -106,6 +106,8 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 `checked-aarch64-v1`와 `checked-user-aarch64-v1`는 제한된 ARM64 FP32/FP64, 고정 폭 SIMD와 전체 FPCR/FPSR/벡터 상태를 제공합니다. ISA가 일치하는 Linux ARM64는 KVM, Windows ARM64는 WHP, 다른 ISA는 Unicorn을 사용합니다. 네이티브 ARM64 실기 검증은 남아 있으며 Windows 드라이버 로딩은 x64로 제한됩니다.
 
 x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리하며 네이티브 WHP/ARM64 작업 증거는 아직 불완전합니다.
+
+네이티브 x64 `FOP/FIP/FDP`는 호스트 저장·복원 규칙을 따르며 AMD는 비활성 x87 예외 메타데이터를 0으로 만들 수 있습니다. 시작 검사는 마스크되지 않은 대기 예외로 이 필드를 검증합니다.
 
 <!-- i18n-section: how-it-works -->
 

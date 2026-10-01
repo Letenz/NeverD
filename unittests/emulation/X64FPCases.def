@@ -13,7 +13,10 @@ NEVERD_FP_VALUE(PayloadStride, 2)
 NEVERD_FP_VALUE(SeedOpcode, 0x321)
 NEVERD_FP_VALUE(SeedInstruction, 0x12345678)
 NEVERD_FP_VALUE(SeedData, 0x23456789)
-NEVERD_FP_VALUE(SeedStatus, 0x25)
+// Keep an unmasked invalid-operation exception pending so exact metadata
+// round trips are defined even on processors with conditional x87 saves.
+NEVERD_FP_VALUE(SeedControl, 0x37e)
+NEVERD_FP_VALUE(SeedStatus, 0x80a5)
 NEVERD_FP_VALUE(SeedMXCSR, 0x3f85)
 NEVERD_FP_VALUE(SeedXmm, 0x1234fedcba987654ULL)
 NEVERD_FP_VALUE(EmptySlot, 3)

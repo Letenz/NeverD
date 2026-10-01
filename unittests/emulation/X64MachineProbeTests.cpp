@@ -64,6 +64,17 @@ TEST(X64MachineProbe, DiagnosticIdentifiesStepFieldAndBothValues) {
   };
   EXPECT_EQ(llvm::toString(verifyX64Machine(Opcode, *Memory)), OpcodeMismatch);
 }
+TEST(X64MachineProbe, PendingExceptionMakesExactMetadataChecksMeaningful) {
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  CorruptingTransport Machine;
+  Machine.Corrupt = [](X64MachineState &State) {
+    EXPECT_NE(State.FP.Status & ~State.FP.Control & ExceptionMask, 0u);
+    EXPECT_EQ(State.FP.Status & PendingStatus, PendingStatus);
+    State.FP.Opcode ^= CorruptBit;
+  };
+  EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)), OpcodeMismatch);
+  EXPECT_EQ(Machine.Entries, 1u);
+}
 TEST(X64MachineProbe, EveryScalarCorruptionRejectsNativeInitialization) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   X64MachineState Inventory;

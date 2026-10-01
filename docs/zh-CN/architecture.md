@@ -563,6 +563,8 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `WhpXsaveRegisters.def` 使用具名 x87/SSE 控制寄存器补充完整 XSAVE 数据包。最后操作码及指令/数据地址会显式写入并从主机回读；可补齐数据包中的零值字段，但非零元数据冲突或共有控制字段不一致时，会在发布状态前失败。`NamedMetadataRestoresOmittedPacketFields` 验证字段缺失场景，并保留完整 FP 数据。
 
+原生 `FOP/FIP/FDP` 遵循宿主 x87 保存、恢复规则。没有未屏蔽的待处理异常时，AMD 可能清零这些字段；快照保留实际观测值。`X64MachineProbe.def` 与精确 NOP/上下文测试使用一致的待处理异常状态，确保每个字段有效并逐项比较，不屏蔽差异。宿主进程 FXRSTOR64/FXSAVE64 参考程序覆盖两种状态；后端不会用输入元数据替代宿主结果。
+
 共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。非初始扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。

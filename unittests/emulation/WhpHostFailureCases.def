@@ -86,12 +86,12 @@ NEVERD_WHP_FAILURE_TEXT(
     LegacyMalformed,
     "invalid x64 floating-point state buffer "
     "(WHvGetVirtualProcessorXsaveState; captured bytes 576; XSTATE_BV 0x10000; "
-    "XCOMP_BV 0x8000000000000003; FCW 0x37f; FOP 0x321; MXCSR 0x3f85)")
+    "XCOMP_BV 0x8000000000000003; FCW 0x37e; FOP 0x321; MXCSR 0x3f85)")
 NEVERD_WHP_FAILURE_TEXT(
     ModernMalformed,
     "invalid x64 floating-point state buffer "
     "(WHvGetVirtualProcessorState; captured bytes 576; XSTATE_BV 0x10000; "
-    "XCOMP_BV 0x8000000000000003; FCW 0x37f; FOP 0x321; MXCSR 0x3f85)")
+    "XCOMP_BV 0x8000000000000003; FCW 0x37e; FOP 0x321; MXCSR 0x3f85)")
 NEVERD_WHP_FAILURE_TEXT(
     LegacyInvalidInput,
     "invalid x64 floating-point state buffer "
@@ -120,6 +120,7 @@ NEVERD_WHP_HOST_TEXT(
     "host-process FIP {8:x}; host-process FDP {9:x}")
 NEVERD_WHP_HOST_TEXT(BoundaryGuestState, "guest FXSAVE state")
 NEVERD_WHP_HOST_TEXT(BoundaryAPIState, "host XSAVE state")
+NEVERD_WHP_HOST_TEXT(BoundaryHostState, "host-process FXSAVE state")
 #endif
 #ifdef NEVERD_WHP_BOUNDARY_BYTES
 // Win64 arguments: input, output, original host state. Preserve the host FPU.

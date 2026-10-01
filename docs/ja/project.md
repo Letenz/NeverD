@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -106,6 +106,8 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 `checked-aarch64-v1` と `checked-user-aarch64-v1` は限定された ARM64 FP32/FP64、固定幅 SIMD、完全な FPCR/FPSR/vector 状態を提供します。ISA が一致する Linux ARM64 は KVM、Windows ARM64 は WHP、異なる ISA は Unicorn を使用します。native ARM64 の実機検証は未完了で、Windows ドライバーのロードは x64 に限定されます。
 
 x64 と ARM64 のネイティブ起動検査は、排他的メモリリース下で限定された完全状態の実行を検証します。XSAVE パケットと ISA を識別するページテーブルキャッシュは単一の管理層が所有します。ネイティブ WHP/ARM64 負荷の証拠は未完了です。
+
+ネイティブ x64 の `FOP/FIP/FDP` はホストの保存・復元規則に従い、AMD は非アクティブな x87 例外メタデータをゼロにできます。起動プローブはマスクされていない保留例外でこれらを検証します。
 
 <!-- i18n-section: how-it-works -->
 

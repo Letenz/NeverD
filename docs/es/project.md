@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -106,6 +106,8 @@ La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y
 `checked-aarch64-v1` y `checked-user-aarch64-v1` ofrecen ARM64 FP32/FP64 y SIMD fijos acotados, con estado FPCR/FPSR/vectorial completo. Linux ARM64 coincidente usa KVM, Windows ARM64 usa WHP y otra ISA usa Unicorn. Siguen pendientes las pruebas nativas ARM64; la carga de controladores Windows sigue limitada a x64.
 
 Las sondas nativas x64 y ARM64 validan ejecución completa acotada con permiso exclusivo de memoria. Los paquetes XSAVE y cachés de tablas identificados por ISA tienen una autoridad única; la evidencia de cargas nativas WHP/ARM64 sigue incompleta.
+
+Los campos x64 nativos `FOP/FIP/FDP` siguen las reglas de guardado/restauración del host: AMD puede borrar metadatos x87 inactivos. Las pruebas de inicio los validan con una excepción pendiente sin máscara.
 
 <!-- i18n-section: how-it-works -->
 

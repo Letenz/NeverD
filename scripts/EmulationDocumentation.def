@@ -310,4 +310,6 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "native_driver_tests=true")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "NativeDriverTests.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverBuiltinImages.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
+NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
+NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif

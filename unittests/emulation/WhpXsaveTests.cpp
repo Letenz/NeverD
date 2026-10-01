@@ -168,6 +168,7 @@ protected:
     for (unsigned I = 0; I < State.FP.Registers.size(); ++I)
       State.FP.Registers[I] = Payloads[I];
     State.FP.Tag = UINT8_MAX;
+    State.FP.Control = SeedControl;
     State.FP.Status = SeedStatus;
     State.FP.Opcode = SeedOpcode;
     State.FP.Instruction = SeedInstruction;
@@ -330,6 +331,9 @@ TEST_P(WhpXsaveProtocol, NativeGuestRAMDistinguishesEntryFromCaptureLoss) {
             Expected.FP.Control &= ~BoundaryInvalidException;
             Expected.FP.Status |=
                 BoundaryPendingStatus | BoundaryInvalidException;
+          } else {
+            Expected.FP.Control |= x64::fp::ExceptionMask;
+            Expected.FP.Status &= ~BoundaryPendingStatus;
           }
           auto Memory =
               llvm::cantFail(MemoryProjection::create(BoundaryRAMLimit));
@@ -515,20 +519,28 @@ TEST_P(WhpXsaveProtocol, NativeGuestRAMDistinguishesEntryFromCaptureLoss) {
           ASSERT_EQ(
               llvm::toString(Native.capture(API, Host.Partition, Captured)),
               "");
-          auto Compare = [&](const X64MachineState &Actual,
-                             const char *Boundary) {
+          auto Compare = [](const X64MachineState &Actual,
+                            const X64MachineState &Reference,
+                            const char *Boundary, bool Metadata = true) {
             SCOPED_TRACE(Boundary);
-#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
-  EXPECT_EQ(Actual.FP.Member, Expected.FP.Member);
-#include "arch/x86_64/X64FPState.def"
-#undef NEVERD_X64_FP_CONTROL
-            EXPECT_EQ(Actual.FP.Tag, Expected.FP.Tag);
-            EXPECT_EQ(Actual.FP.Registers, Expected.FP.Registers);
-            EXPECT_EQ(Actual.Xmm, Expected.Xmm);
-            EXPECT_EQ(Actual.MXCSR, Expected.MXCSR);
+            EXPECT_EQ(Actual.FP.Control, Reference.FP.Control);
+            EXPECT_EQ(Actual.FP.Status, Reference.FP.Status);
+            EXPECT_EQ(Actual.FP.Tag, Reference.FP.Tag);
+            EXPECT_EQ(Actual.FP.Registers, Reference.FP.Registers);
+            EXPECT_EQ(Actual.Xmm, Reference.Xmm);
+            EXPECT_EQ(Actual.MXCSR, Reference.MXCSR);
+            if (Metadata) {
+              EXPECT_EQ(Actual.FP.Opcode, Reference.FP.Opcode);
+              EXPECT_EQ(Actual.FP.Instruction, Reference.FP.Instruction);
+              EXPECT_EQ(Actual.FP.Data, Reference.FP.Data);
+            }
           };
-          Compare(Guest, BoundaryGuestState);
-          Compare(Captured, BoundaryAPIState);
+          // Without an unmasked pending exception, AMD can clear metadata.
+          // Every guest field is still checked against independent execution;
+          // the pending case additionally proves nonzero metadata retention.
+          Compare(HostState, Expected, BoundaryHostState, Pending);
+          Compare(Guest, HostState, BoundaryGuestState);
+          Compare(Captured, HostState, BoundaryAPIState);
         }
 }
 TEST_P(WhpXsaveProtocol, NamedMetadataRestoresOmittedPacketFields) {

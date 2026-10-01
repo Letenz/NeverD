@@ -862,6 +862,8 @@ x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.de
 
 `WhpXsaveRegisters.def` 使用具名 x87/SSE 控制暫存器補充完整 XSAVE 資料封包。最後操作碼及指令/資料位址會明確寫入並從主機讀回；可補齊封包中的零值欄位，但非零中繼資料衝突或共用控制欄位不一致時，會在發布狀態前失敗。`NamedMetadataRestoresOmittedPacketFields` 驗證欄位缺失情境，並保留完整 FP 資料。
 
+原生 `FOP/FIP/FDP` 遵循主機 x87 儲存、還原規則。沒有未遮罩的待處理例外時，AMD 可能清零這些欄位；快照保留實際觀測值。`X64MachineProbe.def` 與精確 NOP/上下文測試使用一致的待處理例外狀態，確保每個欄位有效並逐項比對，不遮蔽差異。主機行程 FXRSTOR64/FXSAVE64 參考程式涵蓋兩種狀態；後端不會以輸入中繼資料取代主機結果。
+
 `NativeGuestRAMDistinguishesEntryFromCaptureLoss` 比對客體實際執行 FXSAVE64 寫入 RAM 的完整 FP/SSE 狀態與主機 XSAVE 讀回。兩種 API 都測試直接安裝與客體內 FXRSTOR64，分別使用預設指標儲存特性及明確選擇的主機支援設定，以區分進入、客體執行和擷取邊界。測試不修補傳回值；不一致仍然失敗。 邊界矩陣亦涵蓋未遮罩的待處理 x87 例外，並記錄主機行程直接執行 FXRSTOR64/FXSAVE64 的參考結果和處理器廠商，以區分條件式指標儲存語義與 WHP 狀態傳輸行為。
 
 共用的 `encodeX64XsaveState` / `decodeX64XsaveState` 編解碼層擁有標準及壓縮 FP/SSE 封包、實體 TOP 輪轉、缺失元件的初始狀態和原子驗證。WHP 使用完整 XSAVE API，優先選擇 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，舊 XSAVE API 作為相容路徑。個別的舊 x87 暫存器介面不能取代完整封包。非初始擴充元件、格式錯誤的標頭、非法控制位元和截斷擷取明確失敗。WHP 映射錯誤保留 HRESULT、GPA 和大小供診斷；仍需 Windows 原生驗證。

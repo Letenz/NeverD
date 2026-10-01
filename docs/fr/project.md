@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -107,6 +107,8 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 `checked-aarch64-v1` et `checked-user-aarch64-v1` fournissent FP32/FP64 et SIMD fixes bornés, avec état FPCR/FPSR/vectoriel complet. Les hôtes Linux ARM64 correspondants utilisent KVM, Windows ARM64 utilise WHP et une autre ISA utilise Unicorn. Les preuves natives ARM64 restent attendues ; les pilotes Windows sont chargés uniquement en x64.
 
 Les sondes natives x64 et ARM64 valident une exécution complète bornée sous bail mémoire exclusif. Les paquets XSAVE et les caches de tables identifiés par ISA ont une autorité unique ; les preuves des charges natives WHP/ARM64 restent incomplètes.
+
+Les champs x64 natifs `FOP/FIP/FDP` suivent les règles de sauvegarde/restauration hôte : AMD peut effacer les métadonnées x87 inactives. Les sondes de démarrage les valident avec une exception non masquée en attente.
 
 <!-- i18n-section: how-it-works -->
 

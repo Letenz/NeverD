@@ -33,6 +33,7 @@ const RegisterValue Payloads[] = {
 };
 X64MachineState seed(unsigned Top) {
   X64MachineState S;
+  S.FP.Control = SeedControl;
   S.FP.Status = SeedStatus | (Top << x64::fp::TopShift);
   S.FP.Opcode = SeedOpcode;
   S.FP.Instruction = SeedInstruction;
@@ -313,6 +314,7 @@ TEST_P(X64FPTransport, StackChangesMatchIndependentHostFXSaveAndRestore) {
     for (unsigned Top = 0; Top < x64::fp::RegisterCount; ++Top) {
       SCOPED_TRACE(Top);
       auto S = seed(Top);
+      S.FP.Control = x64::fp::InitialControl;
       S.FP.Status = Top << x64::fp::TopShift;
       S.FP.Tag = UINT8_MAX;
       for (unsigned I = 0; I < S.FP.Registers.size(); ++I)
