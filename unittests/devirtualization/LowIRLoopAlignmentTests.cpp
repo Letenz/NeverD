@@ -249,7 +249,7 @@ TEST(LowIRLoopAlignment, SeparateResetAndProgressDiscoverPhaseCuts) {
   EXPECT_GT(R.Refinement.RankingChecks, 0U);
 }
 
-TEST(LowIRLoopAlignment, CrossFamiliesReuseCandidateInference) {
+TEST(LowIRLoopAlignment, CrossFamiliesAlignRelocatedExitGuards) {
   const auto Shared = phasedResetLoop();
   const auto Local = phasedResetLoop(3, 1, false, true);
   const auto Default =
@@ -266,8 +266,8 @@ TEST(LowIRLoopAlignment, CrossFamiliesReuseCandidateInference) {
   ASSERT_FALSE(SharedDefault.inferred());
 
   // The default original plan and branch-arm candidate plan are the only
-  // available pair. Both candidate families must be cached: replaying either
-  // one during cross-family matching would exceed this attempt limit.
+  // available pair. Cross-family search must reach it within two candidate
+  // attempts even though same-family pairing cannot produce a certificate.
   LowIRLoopAlignmentLimits Limits;
   Limits.MaxCandidateAttempts = 2;
   const auto Forward = Local.check(Shared, Limits);
@@ -275,6 +275,58 @@ TEST(LowIRLoopAlignment, CrossFamiliesReuseCandidateInference) {
       << Forward.Diagnostic << ": " << Forward.LastCandidateDiagnostic;
   EXPECT_EQ(Forward.CandidateAttempts, 2U);
   EXPECT_TRUE(Shared.check(Local, Limits).proved());
+}
+
+TEST(LowIRLoopAlignment, CrossFamiliesReuseCachedCandidatePlans) {
+  const auto Diamond = [](uint64_t Amount) {
+    Program P;
+    P.block(0, 0x100, {1});
+    P.instruction({op(NdOp::STORE, {}, {r(32), r(8)}),
+                   op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                   op(NdOp::STORE, {}, {t(0), n(0)})});
+    P.branch(0x200);
+    P.block(1, 0x200, {2, 5});
+    P.zeroBranch(0x600);
+    P.block(2, 0x300, {3, 4});
+    P.instruction({op(NdOp::INT_EQUAL, t(0, 1), {r(16), n(0)}),
+                   op(NdOp::COND_BR, {}, {n(0x400), t(0, 1)})});
+    for (int Id : {3, 4}) {
+      P.block(Id, (Id + 1) * 0x100, {1});
+      P.add(Amount);
+      P.decrement();
+      P.branch(0x200);
+    }
+    P.block(5, 0x600, {});
+    P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                   op(NdOp::LOAD, r(0), {t(0)}), op(NdOp::RETURN, {}, {r(0)})});
+    return P;
+  };
+  const auto A = Diamond(3), B = Diamond(4);
+  for (const auto *P : {&A, &B}) {
+    const auto Default = inferLowIRLoopRefinementPlan(P->Function, P->Contract);
+    const auto Branch = detail::inferBranchArmLowIRLoopRefinementPlan(
+        P->Function, P->Contract, {});
+    ASSERT_TRUE(Default.inferred()) << Default.Diagnostic;
+    ASSERT_TRUE(Branch.inferred()) << Branch.Diagnostic;
+    ASSERT_EQ(Default.Plan->Cutpoints.size(), 1U);
+    ASSERT_EQ(Branch.Plan->Cutpoints.size(), 2U);
+    for (const auto *Plan : {&*Default.Plan, &*Branch.Plan})
+      ASSERT_TRUE(checkLowIRLoopRefinement(P->Function, P->Records, P->Function,
+                                           P->Contract, *Plan)
+                      .proved());
+  }
+  LowIRLoopAlignmentLimits Limits;
+  Limits.MaxCandidateAttempts = 2;
+  const auto R = A.check(B, Limits);
+  EXPECT_EQ(R.Status, LowIRLoopAlignmentStatus::BudgetExceeded);
+  EXPECT_FALSE(R.Refinement.Certificate);
+  EXPECT_EQ(R.CandidateAttempts, 2U);
+  EXPECT_EQ(R.PairingAttempts, 3U);
+  // Both same-family checks fail on the wrong sum. Cross-family checks then
+  // reuse the two cached candidate plans and reject their cut counts before
+  // the first singleton hits the candidate budget. Re-inference would stop
+  // before reaching this diagnostic.
+  EXPECT_EQ(R.LastCandidateDiagnostic, "loop alignment cut counts differ");
 }
 
 TEST(LowIRLoopAlignment, PhaseCutsRejectWrongResultsAndMissingProgress) {
