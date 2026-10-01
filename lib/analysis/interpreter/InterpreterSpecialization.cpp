@@ -631,7 +631,8 @@ private:
   SymRef controlPredicate(SymState &State, SymRef Root,
                           const ControlRelation &Relation);
   FiniteValues enumerate(SymContext &Ctx, SymRef Predicate,
-                         llvm::ArrayRef<SymRef> Values, uint32_t Limit);
+                         llvm::ArrayRef<SymRef> Values, uint32_t Limit,
+                         detail::FiniteValueObserver Observe = {});
   bool projectEdge(SymState &State, SymRef Root, const FrameOrigins &Origins,
                    const FrameFacts &Frame, SymRef Predicate,
                    SpecializationCursor Successor, Projection &Out,
@@ -853,17 +854,44 @@ void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
     }
     if (NewBits)
       Refinement.PendingProducerDemands[Producer] |= NewBits;
+    const auto PromoteContext = [&](const auto &Location) {
+      const auto Matches = [&](const auto &Other) {
+        return Location.Offset == Other.Offset && Location.Bytes == Other.Bytes;
+      };
+      if (std::none_of(Existing.begin(), Existing.begin() + ManualCount,
+                       Matches) &&
+          std::none_of(ContextFields.begin(), ContextFields.end(), Matches) &&
+          std::none_of(PendingContexts.begin(), PendingContexts.end(), Matches))
+        PendingContexts.push_back(Location);
+    };
+    if (Demand == ControlDemand::Memory) {
+      // A guard can make a complete relative pointer numerically narrow. Its
+      // remaining byte demand still needs the original pointer's affine
+      // context: a byte alone cannot key an entry-relative displacement.
+      // Nominate only already tracked full address carriers, retaining the
+      // narrow field and its exact producer bits independently. No fact is
+      // introduced here; enqueue still requires a proved value or offset.
+      for (const auto &Other : Existing) {
+        const uint64_t Delta = static_cast<uint64_t>(Field.Offset) -
+                               static_cast<uint64_t>(Other.Offset);
+        if (Other.Bytes == 8 && Delta < Other.Bytes &&
+            Field.Bytes <= Other.Bytes - Delta &&
+            std::any_of(
+                AddressFields.begin(), AddressFields.end(),
+                [&](const auto &Address) {
+                  return Address.Offset == Other.Offset &&
+                         Address.Bytes == Other.Bytes;
+                }))
+          PromoteContext(Other);
+      }
+    }
     if (std::any_of(Existing.begin(), Existing.end(), Same)) {
       // First try relational propagation. If an exact memory address still
       // cannot be established on a later attempt, separate only its already
-      // tracked dependencies whose incoming bytes are proven constant. This
+      // tracked dependencies by proved constants or frame displacements. This
       // is bounded context refinement, never a sample-based input binding.
-      if (Demand == ControlDemand::Memory &&
-          !std::any_of(Existing.begin(), Existing.begin() + ManualCount,
-                       Same) &&
-          !std::any_of(ContextFields.begin(), ContextFields.end(), Same) &&
-          !std::any_of(PendingContexts.begin(), PendingContexts.end(), Same))
-        PendingContexts.push_back(Field);
+      if (Demand == ControlDemand::Memory)
+        PromoteContext(Field);
       return;
     }
     if (std::any_of(Pending.begin(), Pending.end(), Same))
@@ -1033,17 +1061,24 @@ SymRef Specializer::controlPredicate(SymState &State, SymRef Root,
 
 FiniteValues Specializer::enumerate(SymContext &Ctx, SymRef Predicate,
                                     llvm::ArrayRef<SymRef> Values,
-                                    uint32_t Limit) {
+                                    uint32_t Limit,
+                                    detail::FiniteValueObserver Observe) {
   if (Ctx.numNodes() > Options.MaxSymbolicNodes) {
     fail(SpecializationStatus::BudgetExceeded,
          "specialization symbolic-node budget exhausted");
     return {FiniteValueStatus::Unknown, {}};
   }
   auto Cached = Refinement.Proofs.lookup(Ctx, Predicate, Values, Limit);
-  auto Domain =
-      Cached ? std::move(*Cached)
-             : detail::enumerateFiniteValues(Ctx, Predicate, Values, Limit,
-                                             Options, Result.SolverQueries);
+  auto Domain = Cached ? std::move(*Cached)
+                       : detail::enumerateFiniteValues(
+                             Ctx, Predicate, Values, Limit, Options,
+                             Result.SolverQueries, Observe);
+  // Cached tuples prove only the numeric domain. Revalidate every observer
+  // requirement against the current provider before consuming any evidence.
+  if (Cached && Domain.Status == FiniteValueStatus::Complete && Observe)
+    for (const auto &Tuple : Domain.Tuples)
+      if (!Observe(Tuple))
+        return {FiniteValueStatus::Unknown, {}};
   if (Ctx.numNodes() > Options.MaxSymbolicNodes) {
     fail(SpecializationStatus::BudgetExceeded,
          "specialization symbolic-node budget exhausted");
@@ -2107,65 +2142,72 @@ bool Specializer::evaluate(int Id) {
         const bool FreeFrameAddress = ExactFrameAddress &&
                                       WideFrameRootDomain.value_or(false) &&
                                       Exec.pathPredicate() == EntryPredicate;
+        struct CertifiedRead {
+          SpecializationReadWitness Witness;
+          uint64_t Value;
+        };
+        std::vector<CertifiedRead> Reads;
+        const auto ObserveRead = [&](llvm::ArrayRef<uint64_t> Tuple) {
+          const va_t VA = Tuple.front();
+          auto Read = Provider.immutableRead(VA, Memory.AccessSize);
+          if (!Read)
+            return false;
+          if (Read->Bytes.size() != Memory.AccessSize || Read->Bytes.empty() ||
+              Read->Bytes.size() > 8 ||
+              VA > InvalidVA - (Read->Bytes.size() - 1))
+            return fail(
+                SpecializationStatus::InvalidInput,
+                "immutable-read certificate has an invalid byte extent");
+          uint64_t Value = 0;
+          for (size_t B = 0; B < Read->Bytes.size(); ++B) {
+            const unsigned Shift =
+                8 * (Options.ByteOrder == llvm::endianness::little
+                         ? B
+                         : Read->Bytes.size() - B - 1);
+            Value |= uint64_t{Read->Bytes[B]} << Shift;
+          }
+          Reads.push_back({{Original.Addr, Original.Seq, VA,
+                            std::move(Read->Bytes), std::move(Read->Evidence)},
+                           Value});
+          return true;
+        };
+        // One feasible address without immutable evidence refutes replacement
+        // of this entire read. Stop the optional enumeration, retaining the
+        // runtime access. No partial witnesses or values enter the residual.
         auto Addresses =
             FreeFrameAddress
                 ? FiniteValues{FiniteValueStatus::TooManyValues, {}}
                 : enumerate(Ctx, Exec.pathPredicate(), {Address},
-                            Options.MaxImmutableReadAddresses);
+                            Options.MaxImmutableReadAddresses, ObserveRead);
         if (Failed)
           return false;
         if (Addresses.Status == FiniteValueStatus::Complete &&
             !Addresses.Tuples.empty()) {
-          std::vector<SpecializationReadWitness> Witnesses;
+          std::sort(Reads.begin(), Reads.end(),
+                    [](const auto &Left, const auto &Right) {
+                      return Left.Witness.Address < Right.Witness.Address;
+                    });
           std::vector<std::pair<uint64_t, uint64_t>> Values;
-          bool Certified = true;
-          for (const auto &Tuple : Addresses.Tuples) {
-            const va_t VA = Tuple.front();
-            auto Read = Provider.immutableRead(VA, Memory.AccessSize);
-            if (!Read) {
-              Certified = false;
-              break;
-            }
-            if (Read->Bytes.size() != Memory.AccessSize ||
-                Read->Bytes.empty() || Read->Bytes.size() > 8 ||
-                VA > InvalidVA - (Read->Bytes.size() - 1))
-              return fail(
-                  SpecializationStatus::InvalidInput,
-                  "immutable-read certificate has an invalid byte extent");
-            uint64_t Value = 0;
-            for (size_t B = 0; B < Read->Bytes.size(); ++B) {
-              const unsigned Shift =
-                  8 * (Options.ByteOrder == llvm::endianness::little
-                           ? B
-                           : Read->Bytes.size() - B - 1);
-              Value |= uint64_t{Read->Bytes[B]} << Shift;
-            }
-            Values.emplace_back(VA, Value);
-            Witnesses.push_back({Original.Addr, Original.Seq, VA,
-                                 std::move(Read->Bytes),
-                                 std::move(Read->Evidence)});
+          for (const auto &Read : Reads)
+            Values.emplace_back(Read.Witness.Address, Read.Value);
+          FiniteReadValue =
+              Ctx.mkConst(Original.Output.Size * 8, Values.back().second);
+          for (size_t J = Values.size() - 1; J > 0; --J)
+            FiniteReadValue = Ctx.mkIte(
+                Ctx.mkEq(Address,
+                         Ctx.mkConst(Ctx.width(Address), Values[J - 1].first)),
+                Ctx.mkConst(Original.Output.Size * 8, Values[J - 1].second),
+                FiniteReadValue);
+          if (!lowerImmutableRead(Original, Values, ImmutableOps))
+            return false;
+          if (ImmutableOps.size() == 1) {
+            Residual = ImmutableOps.front();
+            FoldedImmutableRead = true;
           }
-          if (Certified) {
-            FiniteReadValue =
-                Ctx.mkConst(Original.Output.Size * 8, Values.back().second);
-            for (size_t J = Values.size() - 1; J > 0; --J)
-              FiniteReadValue = Ctx.mkIte(
-                  Ctx.mkEq(Address, Ctx.mkConst(Ctx.width(Address),
-                                                Values[J - 1].first)),
-                  Ctx.mkConst(Original.Output.Size * 8, Values[J - 1].second),
-                  FiniteReadValue);
-            if (!lowerImmutableRead(Original, Values, ImmutableOps))
-              return false;
-            if (ImmutableOps.size() == 1) {
-              Residual = ImmutableOps.front();
-              FoldedImmutableRead = true;
-            }
-            // Numeric data values are not loader-authenticated host pointers,
-            // even when their bits happen to equal an image string/code VA.
-            Draft.Reads.insert(Draft.Reads.end(),
-                               std::make_move_iterator(Witnesses.begin()),
-                               std::make_move_iterator(Witnesses.end()));
-          }
+          // Numeric data values are not loader-authenticated host pointers,
+          // even when their bits happen to equal an image string/code VA.
+          for (auto &Read : Reads)
+            Draft.Reads.push_back(std::move(Read.Witness));
         }
       }
       const unsigned BeforeOpaque = Exec.opaqueOperationCount();

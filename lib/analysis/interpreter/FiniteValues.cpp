@@ -240,7 +240,8 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                    llvm::ArrayRef<SymRef> Values,
                                    uint32_t Limit,
                                    const SpecializationOptions &Options,
-                                   uint64_t &Queries) {
+                                   uint64_t &Queries,
+                                   FiniteValueObserver Observe) {
   SolverOptions Settings;
   Settings.Blast.MaxGates = Options.MaxSolverGates;
   Settings.Sat.MaxConflicts = Options.MaxSolverConflicts;
@@ -248,15 +249,15 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
   Settings.Sat.MaxWatchVisits = Options.MaxSolverWatchVisits;
   return enumerateFiniteValues(Ctx, Predicate, Values, Limit, Settings,
                                Options.MaxSolverQueries,
-                               Options.MaxSymbolicNodes, Queries);
+                               Options.MaxSymbolicNodes, Queries, Observe);
 }
 
 FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                    llvm::ArrayRef<SymRef> Values,
                                    uint32_t Limit, SolverOptions Settings,
                                    uint64_t MaxQueries,
-                                   uint64_t MaxSymbolicNodes,
-                                   uint64_t &Queries) {
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   FiniteValueObserver Observe) {
   if (!Predicate || Ctx.width(Predicate) != 1 || !Limit)
     return {FiniteValueStatus::Invalid, {}};
   for (SymRef Value : Values)
@@ -278,8 +279,11 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
         break;
       Tuple.push_back(Constant->getZExtValue());
     }
-    if (Tuple.size() == Values.size())
+    if (Tuple.size() == Values.size()) {
+      if (Observe && !Observe(Tuple))
+        return {FiniteValueStatus::Unknown, {}};
       return {FiniteValueStatus::Complete, {std::move(Tuple)}};
+    }
   }
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FiniteValueStatus::Unknown, {}};
@@ -337,6 +341,8 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
       Tuple.push_back(Value->getZExtValue());
       Different.push_back(Ctx.mkNot(Ctx.mkEq(Query, Ctx.mkConst(*Value))));
     }
+    if (Observe && !Observe(Tuple))
+      return {FiniteValueStatus::Unknown, {}};
     Result.Tuples.push_back(std::move(Tuple));
     // Empty projection has one possible tuple; blocking it proves that no
     // further tuple exists. A final UNSAT check is still required.

@@ -78,6 +78,10 @@ En C, utiliser `neverd_devirtualize_source_v3()` ou `neverd_devirtualize_machine
 
 Le rapport JSON ajoute `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` et `discoveryVisits` pour décrire l’activation, les limites et le travail effectué. Découvrir des champs ne prouve pas la réussite de la récupération.
 
+Lorsqu’une condition réduit une dépendance d’adresse à une tranche d’octets, le raffinement conserve aussi comme candidats de contexte les champs d’adresse directe de huit octets déjà suivis qui la contiennent. Le champ étroit et le masque de son producteur restent inchangés ; aucun champ large sans rapport n’est promu. Les constantes et les déplacements relatifs à l’entrée exigent toujours une preuve, et tous les contextes partagent les limites existantes.
+
+L’énumération facultative des adresses immuables s’arrête dès qu’une adresse réalisable manque de certificat. La lecture d’origine reste exécutée. Les valeurs et certificats observés ne sont utilisés qu’après preuve du domaine complet ; un résultat en cache exige encore la validation de l’étendue de lecture actuelle, et un certificat mal formé effectivement observé reste une erreur.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution

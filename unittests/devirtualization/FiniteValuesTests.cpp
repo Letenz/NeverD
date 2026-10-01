@@ -16,6 +16,91 @@ using namespace neverd::symbolic;
 
 namespace {
 
+TEST(FiniteValues, ObserverCanAbandonButCannotFilterTheDomain) {
+  for (unsigned RejectAt : {0u, 1u, 3u}) {
+    SCOPED_TRACE(RejectAt);
+    SymContext Ctx;
+    const auto Value = Ctx.mkVar("candidate", 2);
+    const auto Predicate = Ctx.mkNot(Ctx.mkEq(Value, Ctx.mkConst(2, 3)));
+    uint64_t Queries = 0;
+    unsigned Seen = 0;
+    const auto Result = enumerateFiniteValues(
+        Ctx, Predicate, {Value}, 3, SpecializationOptions{}, Queries,
+        [&](llvm::ArrayRef<uint64_t> Tuple) {
+          EXPECT_EQ(Tuple.size(), 1u);
+          EXPECT_LT(Tuple.front(), 3u);
+          return ++Seen != RejectAt;
+        });
+    if (RejectAt) {
+      EXPECT_EQ(Result.Status, FiniteValueStatus::Unknown);
+      EXPECT_TRUE(Result.Tuples.empty());
+      EXPECT_EQ(Queries, RejectAt);
+      EXPECT_EQ(Seen, RejectAt);
+    } else {
+      EXPECT_EQ(Result.Status, FiniteValueStatus::Complete);
+      EXPECT_EQ(Result.Tuples,
+                (std::vector<std::vector<uint64_t>>{{0}, {1}, {2}}));
+      EXPECT_EQ(Queries, 4u);
+      EXPECT_EQ(Seen, 3u);
+    }
+  }
+}
+
+TEST(FiniteValues, ObserverHandlesConstantsAndNeverSeesInfeasibleTuples) {
+  SymContext Ctx;
+  uint64_t Queries = 0;
+  unsigned Seen = 0;
+  const auto Reject = [&](llvm::ArrayRef<uint64_t> Tuple) {
+    EXPECT_EQ(Tuple.front(), 23u);
+    ++Seen;
+    return false;
+  };
+  const auto Constant =
+      enumerateFiniteValues(Ctx, Ctx.mkTrue(), {Ctx.mkConst(8, 23)}, 1,
+                            SpecializationOptions{}, Queries, Reject);
+  EXPECT_EQ(Constant.Status, FiniteValueStatus::Unknown);
+  EXPECT_TRUE(Constant.Tuples.empty());
+  EXPECT_EQ(Queries, 0u);
+  EXPECT_EQ(Seen, 1u);
+  const auto Infeasible =
+      enumerateFiniteValues(Ctx, Ctx.mkFalse(), {Ctx.mkConst(8, 23)}, 1,
+                            SpecializationOptions{}, Queries, Reject);
+  EXPECT_EQ(Infeasible.Status, FiniteValueStatus::Complete);
+  EXPECT_TRUE(Infeasible.Tuples.empty());
+  EXPECT_EQ(Seen, 1u);
+  const auto EmptyProjection =
+      enumerateFiniteValues(Ctx, Ctx.mkTrue(), {}, 1, SpecializationOptions{},
+                            Queries, [&](llvm::ArrayRef<uint64_t> Tuple) {
+                              EXPECT_TRUE(Tuple.empty());
+                              ++Seen;
+                              return false;
+                            });
+  EXPECT_EQ(EmptyProjection.Status, FiniteValueStatus::Unknown);
+  EXPECT_TRUE(EmptyProjection.Tuples.empty());
+  EXPECT_EQ(Queries, 0u);
+  EXPECT_EQ(Seen, 2u);
+}
+
+TEST(FiniteValues, AcceptedObservationsStillNeedFinalUnsatWithinBudget) {
+  SymContext Ctx;
+  const auto Value = Ctx.mkVar("candidate", 2);
+  const auto Predicate = Ctx.mkNot(Ctx.mkEq(Value, Ctx.mkConst(2, 3)));
+  SpecializationOptions Options;
+  Options.MaxSolverQueries = 3;
+  uint64_t Queries = 0;
+  unsigned Seen = 0;
+  const auto Result =
+      enumerateFiniteValues(Ctx, Predicate, {Value}, 3, Options, Queries,
+                            [&](llvm::ArrayRef<uint64_t>) {
+                              ++Seen;
+                              return true;
+                            });
+  EXPECT_EQ(Seen, 3u);
+  EXPECT_EQ(Queries, 3u);
+  EXPECT_EQ(Result.Status, FiniteValueStatus::QueryBudgetExceeded);
+  EXPECT_TRUE(Result.Tuples.empty());
+}
+
 TEST(FiniteValues, UnrelatedPredicateLeavesWideProjectionInputUnconstrained) {
   SymContext Ctx;
   const SymRef Value = Ctx.mkVar("projection", 64);

@@ -74,6 +74,10 @@ certificats d’occurrences natives et de patch binaire.
 
 `InterpreterSpecialization` gère la propagation arrière bornée des demandes de bits après une tentative échouée. Il réutilise l’évaluateur scalaire sans modifier les faits du graphe ni ajouter de champs de contrôle ou de contextes ; tout travail reste soumis aux budgets et la publication exige une nouvelle preuve complète.
 
+Le raffinement des contextes peut aussi proposer un support d’adresse de huit octets déjà suivi lorsqu’une demande mémoire ultérieure n’utilise qu’une tranche de ses octets. Les coordonnées étroites du producteur restent la référence ; seule la mise en file construit les clés à partir de constantes ou de déplacements de cadre prouvés.
+
+L’énumération finie peut observer des tuples réalisables sans modifier la requête de preuve. Un refus de l’observateur renvoie un résultat incomplet sans tuple. Le cache ne conserve que les preuves mathématiques du domaine ; les certificats de lecture immuable restent locaux jusqu’à la fin de l’énumération.
+
 `NeverDLoader` possède `PEFixedImageView` et partage l’analyse complète des relocations de base avec le chargement PE ordinaire. L’adaptateur d’interpréteur binaire utilise cette vue authentifiée à la base préférée pour la récupération et les preuves natives, sans analyser lui-même les tables PE. La préparation vérifie les écritures des imports, l’identité des mappages et les champs bruts complets avant de certifier les octets. La vue emprunte une image inchangée et ne prouve ni l’ASLR ni l’équivalence de l’initialisation.
 
 `FrameOffsets` possède les preuves budgétées de déplacement unique relatif à l’entrée. La récupération normalise les accès symboliques réels sans modifier les expressions d’adresse résiduelles ; les vérifications natives conservent l’égalité des adresses entre deux exécutions. La récupération gère la sélection exhaustive et les budgets de reprise partagés. L’agrégation des preuves de partitions natif/LLVM reste un travail distinct inachevé. `NativeStackControl` gère le nettoyage interne non signé sur 16 bits ; le fournisseur binaire authentifie les encodages canoniques dépilant huit octets.
