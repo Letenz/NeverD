@@ -67,6 +67,13 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `InterpreterMachineStateModel.*` en `NeverDLowIRRefinementTests` usa ejemplos LowIR independientes para comprobar indicadores de entrada sin normalizar, estado separado del RAX invitado, las 17 palabras, subregistros, indicadores empaquetados, rechazo dinámico persistente, escrituras del marco invitado, ambas ramas e inferencia de ciclos seguida de una prueba nueva. Deben fallar las salidas incorrectas, el estado perdido, la memoria modificada, los registros obsoletos, las entradas malformadas y los presupuestos agotados. Las pruebas fuente existentes también ejecutan ambas rutas C con O0/O2; las pruebas del modelo por sí solas no certifican el C compilado.
 
+`NeverDLLVMInterpreterModelTests` compara LLVM independiente con oráculos LowIR de estado completo: anchos, PHI paralelos, switch, memoria invitada, estado separado, condiciones poison, rangos intrínsecos, contratos rechazados y cuatro presupuestos. Comprueba una prueba completa de cuenta regresiva de palabra arbitraria y rechaza un estado cambiado. C independiente compilado en O1/O2 debe cumplir las mismas observaciones. Se valida el modelo admitido; descubrir invariantes automáticamente y demostrar el compilador son obligaciones separadas.
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
 
 Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.

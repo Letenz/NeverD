@@ -68,6 +68,13 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 `InterpreterMachineStateModel.*` dans `NeverDLowIRRefinementTests` utilise des exemples LowIR indépendants : drapeaux d’entrée bruts, statut distinct de RAX invité, 17 mots d’état, sous-registres, drapeaux empaquetés, rejet dynamique persistant, écritures du cadre invité, deux branches et inférence cyclique suivie d’une nouvelle preuve. Sorties erronées, statut perdu, mémoire modifiée, enregistrements périmés, entrées malformées et budgets épuisés doivent échouer. Les tests source existants exercent aussi les deux voies C à O0/O2 ; les tests du modèle seuls ne certifient pas le C compilé.
 
+`NeverDLLVMInterpreterModelTests` compare du LLVM indépendant à des oracles LowIR de tout l’état : largeurs, PHI parallèles, switch, mémoire invitée, statut distinct, gardes poison, plages intrinsèques, contrats refusés et quatre budgets. Il vérifie une preuve complète de décompte sur un mot arbitraire et rejette un statut modifié. Du C indépendant compilé à O1/O2 doit respecter les mêmes observations. Ces tests valident le modèle admis ; découverte automatique d’invariants et correction du compilateur restent séparées.
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 Les sorties par égalité mises en cache dans des boucles à deux et trois niveaux couvrent les opérandes corrélés, les bornes mobiles, les compteurs réinitialisés et les copies altérées.
 
 Les régressions des comparaisons en cache couvrent égalité et inégalité, gardes et initialisations constantes, champs découverts après élargissement et bits 7/31/63 des caches de 1/4/8 octets. Modifier seulement un bit voisin tout en conservant le bit testé doit échouer à la comparaison de tout l’état. Pas nul, bornes mobiles, remises à zéro et budgets épuisés doivent être refusés.

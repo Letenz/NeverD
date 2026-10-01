@@ -68,6 +68,13 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` prüft mit unabhängigen LowIR-Beispielen rohe Eintrittsflags, Status getrennt vom Gast-RAX, alle 17 Zustandswörter, Teilregister, gepackte Flags, bleibende dynamische Ablehnung, Gast-Rahmenschreibzugriffe, beide Zweige und Schleifeninferenz mit anschließendem neuem Beweis. Falsche Ausgaben, verlorener Status, geänderter Speicher, veraltete Instruktionsdatensätze, fehlerhafte Eingaben und erschöpfte Erzeugungsbudgets müssen scheitern. Bestehende Quelltexttests führen beide C-Wege unter O0/O2 aus; Modelltests allein zertifizieren keinen kompilierten C-Code.
 
+`NeverDLLVMInterpreterModelTests` vergleicht unabhängig geschriebenes LLVM mit LowIR-Referenzen für den gesamten Zustand: Breiten, parallele PHIs, switch, Gastspeicher, separater Status, Poison-Bedingungen, Intrinsic-Bereiche, abgelehnte Verträge und vier Budgets. Ein vollständiger Beweis für beliebige Wort-Countdowns wird geprüft, veränderter Status abgelehnt. Unabhängiges C muss nach O1/O2-Kompilierung dieselben Beobachtungen erfüllen. Die Tests prüfen das unterstützte Modell; automatische Invariantenfindung und Compilerkorrektheit bleiben separat.
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 Zwischengespeicherte Gleichheitsbedingungen in zwei- und dreifach verschachtelten Schleifen prüfen korrelierte Operanden, veränderliche Grenzen, Zählerrücksetzungen und beschädigte Kopien.
 
 Regressionen für Vergleichscaches prüfen Gleichheit und Ungleichheit, Guards und konstante Initialisierung, erst nach Erweiterung entdeckte Felder sowie Bits 7/31/63 in 1/4/8-Byte-Caches. Auch ein geändertes Nachbarbit bei unverändertem Prüfbit muss am vollständigen Zustandsvergleich scheitern. Nullschritte, bewegliche Grenzen, Rücksetzungen und erschöpfte Budgets müssen abgewiesen werden.

@@ -62,6 +62,13 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用獨立撰寫的 LowIR 案例，檢查原始入口旗標、狀態碼與客體 RAX 的區分、全部 17 個狀態字、部分暫存器分片、封裝旗標、動態拒絕狀態的持續保留、客體堆疊框架寫入、兩個分支以及循環推斷後的全新證明。錯誤輸出、遺失狀態、記憶體變更、過期指令記錄、非法輸入和產生預算耗盡必須失敗。既有機器狀態原始碼測試也涵蓋兩條 C 路徑的 O0/O2；模型測試本身不證明編譯後的 C。
 
+`NeverDLLVMInterpreterModelTests` 將獨立編寫的 LLVM 與完整狀態 LowIR 參考實作比較，涵蓋位寬、平行 PHI、switch、客體記憶體、獨立狀態碼、poison 檢查、內建函式值域、被拒絕的契約及四種建模預算。測試完成任意字長倒數迴圈的完整證明，並拒絕遭改寫的狀態碼。獨立 C 用例經 O1/O2 編譯後必須滿足相同觀察契約。這些測試驗證受支援的模型；自動不變量發現與編譯器正確性仍是獨立義務。
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 兩層和三層迴圈的快取相等退出測試涵蓋運算元相關性、變動邊界、計數器重設及損壞的複製。
 
 比較快取回歸涵蓋相等與不等、帶守衛和常數摺疊的初始化、擴寬後才出現的欄位，以及位元組、雙字與四字快取中的第 7/31/63 位元。保留受檢查位元而只改變相鄰位元，也必須由完整狀態比較拒絕。零步長、移動邊界、計數器重設與共用預算耗盡必須拒絕。
