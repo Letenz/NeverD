@@ -148,10 +148,10 @@ bool validateCanonicalEvexRegisterTail(
 /// Validate an ordinary (uncompressed) VEX3 memory tail against Capstone's
 /// structured address detail. TrailingBytes reserves family-owned bytes such
 /// as FMA4's is4 register selector.
-bool validateCanonicalVex3MemoryTail(
-    const cs_insn *Insn, const cs_x86 &X86,
-    const CanonicalVex3EncodingInfo &Encoding, const cs_x86_op &Operand,
-    size_t TrailingBytes = 0);
+bool validateCanonicalVex3MemoryTail(const cs_insn *Insn, const cs_x86 &X86,
+                                     const CanonicalVex3EncodingInfo &Encoding,
+                                     const cs_x86_op &Operand,
+                                     size_t TrailingBytes = 0);
 
 /// Register-form counterpart of validateCanonicalVex3MemoryTail.
 bool validateCanonicalVex3RegisterTail(
