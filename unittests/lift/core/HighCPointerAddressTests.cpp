@@ -32523,9 +32523,9 @@ TEST(HighCPointerAddresses,
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("void cookie"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000173C("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("t3 = sub_14000173C(arg0);"), std::string::npos)
+  EXPECT_NE(Source.find("return (int64_t)sub_14000173C(arg0)"),
+            std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("return t3;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
             std::string::npos)
       << Source;
