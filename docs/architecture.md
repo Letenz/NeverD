@@ -1418,6 +1418,8 @@ on a different backend after an effect. Software contracts always select
 Unicorn. A disabled Unicorn adapter also fails explicitly, including a
 cross-ISA `auto` selection.
 
+`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.
+
 `runUntilExit` returns a typed CPU outcome with fault details and independent
 stop/deadline facts. The compatibility `run` API derives its error from this
 result while retaining fault and timeout accessors. Recoverable faults remain

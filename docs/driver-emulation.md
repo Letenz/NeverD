@@ -10,6 +10,8 @@ NeverD's optional driver emulator executes a supported x64 WDM driver's PE entry
 
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
+`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.
+
 The checked profile validates each instruction and its memory accesses before
 single stepping. It preserves Windows object access checks and write observers,
 shared RAM aliases, and CPU-only contexts. Scalar memory arithmetic, naturally
