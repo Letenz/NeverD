@@ -176,6 +176,7 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress &&
          Binding.BorrowedByteInputs.empty() &&
+         Binding.CanonicalBooleanInputs.empty() &&
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
          !Binding.Receiver && !Binding.SelectorResultUse &&
@@ -255,6 +256,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
            Binding.Format->AlternativeFormatAddresses ==
                Expected.Format->AlternativeFormatAddresses)) &&
          Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
+         Binding.CanonicalBooleanInputs == Expected.CanonicalBooleanInputs &&
          Binding.SwiftStringInputs == Expected.SwiftStringInputs &&
          objc_projection_detail::sameHint(Binding.Signature,
                                           Expected.Signature);
@@ -6972,6 +6974,9 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  if (!Binding.CanonicalBooleanInputs.empty() &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall)
+    return false;
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeCFunctionAddress) {
     auto Plain = Binding;
     Plain.CallKind = SourceCallTypeHint::Kind::Native;
@@ -7984,6 +7989,37 @@ inline bool objcSourceCallBound(
           SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
     if (Expected && runtimeBindingMatches(Binding, *Expected)) {
+      // An LLVM i1 input does not promise the other bits of a byte. Accept
+      // the complete source carrier only when this current value is exactly
+      // zero or one; never infer normalization from its narrow type alone.
+      const auto Canonical = [](const auto &Self, const ExprPtr &Value,
+                                unsigned Depth = 0) -> bool {
+        if (!Value || Depth > 16 || !Value->Type ||
+            Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
+            Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
+            !Value->IntrinsicOutputs.empty() || Value->SourceCallHint ||
+            Value->MemoryOrdering != NdMemoryOrdering::None ||
+            Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          return false;
+        if (Value->Kind == ExprKind::Const)
+          return Value->Operands.empty() && Value->ConstVal <= 1;
+        if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SUBBYTES &&
+            Value->Operands.size() == 2 && Value->Operands[0] &&
+            Value->Operands[0]->Type &&
+            Value->Type->Size <= Value->Operands[0]->Type->Size &&
+            Value->Operands[1] && Value->Operands[1]->Kind == ExprKind::Const &&
+            Value->Operands[1]->ConstVal == 0)
+          return Self(Self, Value->Operands[0], Depth + 1) &&
+                 Self(Self, Value->Operands[1], Depth + 1);
+        return Value->Kind == ExprKind::Cast && Value->Operands.size() == 1 &&
+               (!Value->CastTo ||
+                equalSourceTypes(Value->Type, Value->CastTo)) &&
+               Self(Self, Value->Operands.front(), Depth + 1);
+      };
+      for (const auto Index : Expected->CanonicalBooleanInputs)
+        if (Index >= Expression.Operands.size() ||
+            !Canonical(Canonical, Expression.Operands[Index]))
+          return false;
       for (const auto &[WordIndex, StorageIndex] :
            Expected->SwiftStringInputs) {
         if (WordIndex >= Expression.Operands.size() ||
