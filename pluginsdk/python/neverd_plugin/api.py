@@ -905,7 +905,10 @@ class Session:
         ``options`` is the native JSON request. The native parser owns profile,
         backend and resource validation. The report distinguishes guest exit
         from faults and limits; ``stdout_hex``/``stderr_hex`` retain all bytes.
-        No host environment is inherited. Setup failures raise NeverDError.
+        Android native calls use ``android-aarch64-api28-v1`` with an
+        ``android`` options object; a normal return reports ``returned`` and
+        ``return_value``. No host environment is inherited. Setup failures
+        raise NeverDError.
         """
         value = self._owned_string(
             "neverd_emulate_process_json",

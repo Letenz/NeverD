@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_PROCESS_PROFILE
 NEVERD_PROCESS_PROFILE(LinuxELF64, "linux-elf64-v1")
+NEVERD_PROCESS_PROFILE(AndroidNativeAArch64, "android-aarch64-api28-v1")
 #endif
 #ifdef NEVERD_PROCESS_LIMIT
 NEVERD_PROCESS_LIMIT(Instructions, 100000)
@@ -18,6 +19,7 @@ NEVERD_PROCESS_LIMIT(ServiceArguments, 6)
 #endif
 #ifdef NEVERD_PROCESS_STOP
 NEVERD_PROCESS_STOP(Exited, "exited")
+NEVERD_PROCESS_STOP(Returned, "returned")
 NEVERD_PROCESS_STOP(InstructionLimit, "instruction_limit")
 NEVERD_PROCESS_STOP(EventLimit, "event_limit")
 NEVERD_PROCESS_STOP(Timeout, "timeout")

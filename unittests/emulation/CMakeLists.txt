@@ -107,6 +107,11 @@ if(TARGET neverd_shared AND TARGET neverd)
   add_dependencies(NeverDProcessPublicTests neverd)
 endif()
 include(ProcessFixtures.cmake)
+add_neverd_unittest(NeverDAndroidNativeTests
+  AndroidNativeTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationProcess)
+include(AndroidFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

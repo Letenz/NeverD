@@ -1866,3 +1866,16 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.
 
 `NeverDRunControlTests` includes portable `NativeEntryTests.cpp` and Windows WHP-enabled `WhpEntryControlTests.cpp`. In-memory host callbacks check rejected entry, retry, late cancellation, retained failures, completion priority and acknowledged callback lifetime without requiring Hyper-V. `NeverDKvmRunTests` checks caller-thread completion, error priority and reentry rejection. Real `NeverDKvmStateTransferTests` executes `KvmStateTransferCases.def` instructions; `ActualCPUExceptionOutranksStopDuringCapture` and `PublicCPUExceptionOutranksStopDuringCapture` stop after actual register/XSAVE reads and preserve divide exceptions, original context, RAM and explicit recovery. Portable tests executed with the Windows ABI under Wine are threading/control evidence only; they do not establish native WHP execution. Unavailable native transports remain explicit skips.
+
+### Android native workloads
+
+With CPU emulation enabled, build `NeverDAndroidNativeTests`,
+`NeverDLinuxProcessTests`, `NeverDExecutionSessionTests`, and
+`NeverDProcessPublicTests`. The Android fixtures are independently authored
+freestanding ARM64 C, linked with Clang/LLD as ordinary, APS2, and RELR shared
+libraries. They exercise constructors, sectionless linking, stack arguments,
+TLS/stack guards, explicit properties, memory allocation, raw versus Bionic
+error returns, output and execution limits, unsupported imports, and SDK/CLI
+report parity. No Android device, NDK sysroot, or proprietary fixture is used.
+Linux regression tests guard the shared kernel-service boundary. Native KVM
+and WHP cells may be unavailable on the host; report their skips separately.
