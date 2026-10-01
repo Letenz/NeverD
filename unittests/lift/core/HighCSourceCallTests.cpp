@@ -222,6 +222,70 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftDictionaryRemovalKeepsMetadataAndContextDistinct) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const std::string Import =
+      "_$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF";
+  Image.ImportPtrSlots[0x1000] = Import;
+  Image.DyldBindSlots[0x1000] = {Import, 0, "/usr/lib/swift/libswiftCore.dylib",
+                                 false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const unsigned Flag : {0U, 1U}) {
+    HighFunc Function;
+    Function.Name = "clear" + std::to_string(Flag);
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {{"arg0", Pointer}, {"arg1", Pointer}};
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = call(*Hint, Hint->Signature.ReturnType,
+                         {HighExpr::makeConst(Flag, 1), parameter(0, Pointer),
+                          parameter(1, Pointer)});
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+static const void *expected_metadata;
+void __attribute__((swiftcall)) remove_oracle(
+    _Bool, const void *, uintptr_t * __attribute__((swift_context)))
+    __asm__("_$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF");
+void __attribute__((swiftcall)) remove_oracle(
+    _Bool unique, const void *metadata,
+    uintptr_t *dictionary __attribute__((swift_context))) {
+  if (metadata != expected_metadata || *dictionary != 0x112233) __builtin_trap();
+  *dictionary = unique ? 0x445566 : 0x778899;
+  ++calls;
+}
+int main(void) {
+  uintptr_t dictionary = 0x112233;
+  expected_metadata = &calls;
+  clear0((void *)expected_metadata, &dictionary);
+  if (dictionary != 0x778899 || calls != 1) return 1;
+  dictionary = 0x112233;
+  clear1((void *)expected_metadata, &dictionary);
+  if (dictionary != 0x445566 || calls != 2) return 2;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, CFunctionParameterCallPreservesDispatchAndEffects) {
   using namespace c_function_parameter_test;
   Fixture F;

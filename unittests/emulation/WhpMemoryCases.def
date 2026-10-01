@@ -1,0 +1,43 @@
+//===- WhpMemoryCases.def - Independent native memory probes ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_MEMORY_TEXT
+NEVERD_WHP_MEMORY_TEXT(RequireNative, "NEVERD_REQUIRE_NATIVE_WHP")
+#endif
+#ifdef NEVERD_WHP_MEMORY_VALUE
+NEVERD_WHP_MEMORY_VALUE(RAMBytes, 16 * memory::PageSize)
+NEVERD_WHP_MEMORY_VALUE(Fill, 0xa5)
+#endif
+#ifdef NEVERD_WHP_MEMORY_CASE
+// Name, bytes, shared host backing, prefault the backing, create first VP.
+NEVERD_WHP_MEMORY_CASE(IndependentPage, memory::PageSize, false, false, false)
+NEVERD_WHP_MEMORY_CASE(SharedPage, memory::PageSize, true, false, false)
+NEVERD_WHP_MEMORY_CASE(IndependentResidentPage, memory::PageSize, false, true,
+                       false)
+NEVERD_WHP_MEMORY_CASE(SharedResidentPage, memory::PageSize, true, true, false)
+NEVERD_WHP_MEMORY_CASE(IndependentProjection, memory::ProjectionReserve, false,
+                       false, false)
+NEVERD_WHP_MEMORY_CASE(SharedProjection, memory::ProjectionReserve, true, false,
+                       false)
+NEVERD_WHP_MEMORY_CASE(IndependentResidentProjection, memory::ProjectionReserve,
+                       false, true, false)
+NEVERD_WHP_MEMORY_CASE(SharedResidentProjection, memory::ProjectionReserve,
+                       true, true, false)
+NEVERD_WHP_MEMORY_CASE(IndependentPageWithVP, memory::PageSize, false, false,
+                       true)
+NEVERD_WHP_MEMORY_CASE(SharedPageWithVP, memory::PageSize, true, false, true)
+NEVERD_WHP_MEMORY_CASE(IndependentResidentPageWithVP, memory::PageSize, false,
+                       true, true)
+NEVERD_WHP_MEMORY_CASE(SharedResidentPageWithVP, memory::PageSize, true, true,
+                       true)
+NEVERD_WHP_MEMORY_CASE(IndependentProjectionWithVP, memory::ProjectionReserve,
+                       false, false, true)
+NEVERD_WHP_MEMORY_CASE(SharedProjectionWithVP, memory::ProjectionReserve, true,
+                       false, true)
+NEVERD_WHP_MEMORY_CASE(IndependentResidentProjectionWithVP,
+                       memory::ProjectionReserve, false, true, true)
+NEVERD_WHP_MEMORY_CASE(SharedResidentProjectionWithVP,
+                       memory::ProjectionReserve, true, true, true)
+#endif

@@ -2080,6 +2080,7 @@ inline bool swiftImportedNominalDescriptor(const BinaryImage &Image, va_t Slot,
   // provider on its target runtime. Only its identity is reconstructed;
   // the storage class layout and metadata contents remain opaque.
   return Symbol == "_$ss18_DictionaryStorageCMn" ||
+         Symbol == "_$ss17_NativeDictionaryVMn" ||
          Symbol == "_$ss13ManagedBufferCMn";
 }
 
@@ -2343,12 +2344,12 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
       !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
     return std::nullopt;
   const auto &Nominal = Parsed.Root->Children[0].Children[0].Children[0];
-  const unsigned Kind = Nominal.Kind == "Class"       ? 16
-                        : Nominal.Kind == "Structure" ? 17
-                        : Nominal.Kind == "Enum"      ? 18
-                                                      : 0;
-  if (!Kind || Nominal.Text || Nominal.Index || Nominal.Children.size() != 2)
-    return std::nullopt;
+  const auto NominalKind = [](const llvm::SwiftDemangleNode &Node) {
+    return Node.Kind == "Class"       ? 16U
+           : Node.Kind == "Structure" ? 17U
+           : Node.Kind == "Enum"      ? 18U
+                                      : 0U;
+  };
   const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
                              llvm::StringRef ExpectedKind) {
     return Node.Kind == ExpectedKind && Node.Text && !Node.Index &&
@@ -2357,12 +2358,22 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
            std::all_of(Node.Text->begin(), Node.Text->end(),
                        [](char C) { return llvm::isAlnum(C) || C == '_'; });
   };
-  const auto &Module = Nominal.Children[0];
-  const auto &Name = Nominal.Children[1];
-  if (!Identifier(Module, "Module") || !Identifier(Name, "Identifier") ||
+  std::vector<std::pair<unsigned, std::string>> Contexts;
+  const auto *Context = &Nominal;
+  while (const auto ContextKind = NominalKind(*Context)) {
+    if (Contexts.size() == 8 || Context->Text || Context->Index ||
+        Context->Children.size() != 2 ||
+        !Identifier(Context->Children[1], "Identifier"))
+      return std::nullopt;
+    Contexts.emplace_back(ContextKind, *Context->Children[1].Text);
+    Context = &Context->Children[0];
+  }
+  const auto &Module = *Context;
+  if (Contexts.empty() || !Identifier(Module, "Module") ||
       *Module.Text == "__C" || *Module.Text == "__C_Synthesized" ||
       !SymbolName.starts_with("$s") || !SymbolName.ends_with("Mn"))
     return std::nullopt;
+  const unsigned Kind = Contexts.front().first;
 
   const auto MatchesText = [&](va_t Target,
                                const std::string &Text) -> std::optional<bool> {
@@ -2381,26 +2392,37 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
     return true;
   };
   const auto MatchesIdentity = [&](va_t Target) -> std::optional<bool> {
-    const auto Bytes = readImmutableImageBytes(Image, Target, 12);
-    if (!Bytes)
+    std::set<va_t> Seen;
+    bool StableContexts = true;
+    for (const auto &[ContextKind, ContextName] : Contexts) {
+      if (Target % 4 || !Seen.insert(Target).second)
+        return std::nullopt;
+      const auto Bytes = readImmutableImageBytes(Image, Target, 12);
+      if (!Bytes)
+        return std::nullopt;
+      const uint32_t Flags = llvm::support::endian::read32le(Bytes->data());
+      if ((Flags & 0x1f) != ContextKind)
+        return false;
+      const auto TypeName = swiftRelativeAddress(Image, Target + 8);
+      if (!TypeName)
+        return std::nullopt;
+      const auto NameMatches = MatchesText(*TypeName, ContextName);
+      if (!NameMatches || !*NameMatches)
+        return NameMatches;
+      // Unknown versions, import identities and indirect parents cannot prove
+      // which textual declaration the runtime will select.
+      if ((Flags & 0xff00) || (Flags & 0x40000) ||
+          (llvm::support::endian::read32le(Bytes->data() + 4) & 1))
+        return std::nullopt;
+      StableContexts &= (Flags & 0xffff) == (ContextKind | 0x40);
+      const auto Parent = swiftRelativeAddress(Image, Target + 4);
+      if (!Parent)
+        return std::nullopt;
+      Target = *Parent;
+    }
+    if (Target % 4 || !Seen.insert(Target).second)
       return std::nullopt;
-    const uint32_t Flags = llvm::support::endian::read32le(Bytes->data());
-    if ((Flags & 0x1f) != Kind)
-      return false;
-    const auto TypeName = swiftRelativeAddress(Image, Target + 8);
-    if (!TypeName)
-      return std::nullopt;
-    const auto NameMatches = MatchesText(*TypeName, *Name.Text);
-    if (!NameMatches || !*NameMatches)
-      return NameMatches;
-    // Unknown versions, import identities and indirect parents cannot prove
-    // which textual declaration the runtime will select.
-    if ((Flags & 0xff00) || (Flags & 0x40000) ||
-        (llvm::support::endian::read32le(Bytes->data() + 4) & 1))
-      return std::nullopt;
-    const auto Parent = swiftRelativeAddress(Image, Target + 4);
-    const auto ParentBytes =
-        Parent ? readImmutableImageBytes(Image, *Parent, 12) : std::nullopt;
+    const auto ParentBytes = readImmutableImageBytes(Image, Target, 12);
     if (!ParentBytes)
       return std::nullopt;
     const uint32_t ParentFlags =
@@ -2410,9 +2432,13 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
     if ((ParentFlags & ~uint32_t(0x40)) ||
         llvm::support::endian::read32le(ParentBytes->data() + 4))
       return std::nullopt;
-    const auto ModuleName = swiftRelativeAddress(Image, *Parent + 8);
-    return ModuleName ? MatchesText(*ModuleName, *Module.Text)
-                      : std::optional<bool>{};
+    const auto ModuleName = swiftRelativeAddress(Image, Target + 8);
+    const auto ModuleMatches = ModuleName
+                                   ? MatchesText(*ModuleName, *Module.Text)
+                                   : std::optional<bool>{};
+    if (!ModuleMatches || !*ModuleMatches)
+      return ModuleMatches;
+    return StableContexts ? std::optional<bool>{true} : std::nullopt;
   };
   const auto Header = readImmutableImageBytes(Image, Address, 12);
   const auto Identity = MatchesIdentity(Address);
@@ -7992,17 +8018,101 @@ inline bool objcSourceCallBound(
       // An LLVM i1 input does not promise the other bits of a byte. Accept
       // the complete source carrier only when this current value is exactly
       // zero or one; never infer normalization from its narrow type alone.
-      const auto Canonical = [](const auto &Self, const ExprPtr &Value,
-                                unsigned Depth = 0) -> bool {
-        if (!Value || Depth > 16 || !Value->Type ||
+      using BooleanDefinition = std::pair<TypeRef, ExprPtr>;
+      std::map<HighSourceLocalIdentity, std::vector<BooleanDefinition>>
+          BooleanDefinitions;
+      std::set<HighSourceLocalIdentity> AddressTaken, ActiveBooleanVariables;
+      std::optional<bool> BooleanFlowValid;
+      size_t BooleanBudget = 4096;
+      const auto PrepareBooleanFlow = [&]() {
+        if (BooleanFlowValid)
+          return *BooleanFlowValid;
+        BooleanFlowValid = false;
+        if (!ContainingFunction)
+          return false;
+        const auto Flow = analyzeHighSourceFlow(*ContainingFunction, false);
+        if (!Flow.Complete || !Flow.Items.empty())
+          return false;
+        bool OwnsCall = false;
+        std::vector<std::pair<ExprPtr, bool>> Pending;
+        walkStmts(ContainingFunction->Body, [&](const HighStmt &Statement) {
+          if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+              Statement.Dst->Kind == ExprKind::Var && Statement.Val)
+            BooleanDefinitions[highSourceLocalIdentity(Statement.Dst->Var)]
+                .emplace_back(Statement.Dst->Type, Statement.Val);
+          forEachExpr(Statement, [&](const ExprPtr &Root) {
+            Pending.emplace_back(Root, false);
+          });
+        });
+        while (!Pending.empty()) {
+          if (!BooleanBudget)
+            return false;
+          --BooleanBudget;
+          auto [Value, Address] = Pending.back();
+          Pending.pop_back();
+          if (!Value)
+            continue;
+          OwnsCall |= Value.get() == &Expression;
+          Address |= Value->Kind == ExprKind::Addr;
+          if (Address && Value->Kind == ExprKind::Var)
+            AddressTaken.insert(highSourceLocalIdentity(Value->Var));
+          for (const auto &Operand : Value->Operands)
+            Pending.emplace_back(Operand, Address);
+        }
+        BooleanFlowValid = OwnsCall;
+        return OwnsCall;
+      };
+      const auto Canonical = [&](const auto &Self, const ExprPtr &Value,
+                                 unsigned Depth = 0) -> bool {
+        if (!BooleanBudget || !Value || Depth > 16 || !Value->Type ||
             Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
             Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
-            !Value->IntrinsicOutputs.empty() || Value->SourceCallHint ||
+            !Value->IntrinsicOutputs.empty() ||
             Value->MemoryOrdering != NdMemoryOrdering::None ||
             Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
           return false;
+        --BooleanBudget;
+        if (Value->Kind == ExprKind::Call && Value->SourceCallHint) {
+          // The compiler declares this C runtime result as zeroext i1 on
+          // both Darwin architectures. Revalidate the actual import and its
+          // complete binding before using that stronger 0/1 value fact.
+          const auto &Producer = *Value->SourceCallHint;
+          const auto Bind = Image.DyldBindSlots.find(Producer.TargetAddress);
+          return Producer.CallKind ==
+                     SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+                 Producer.TargetName ==
+                     "swift_isUniquelyReferenced_nonNull_native" &&
+                 Producer.CanonicalBooleanInputs.empty() &&
+                 equalSourceTypes(Value->Type, Producer.Signature.ReturnType) &&
+                 Bind != Image.DyldBindSlots.end() &&
+                 Bind->second.Module == "/usr/lib/swift/libswiftCore.dylib" &&
+                 objcSourceCallBound(*Value, Image, Functions);
+        }
+        if (Value->SourceCallHint)
+          return false;
         if (Value->Kind == ExprKind::Const)
           return Value->Operands.empty() && Value->ConstVal <= 1;
+        if (Value->Kind == ExprKind::Var && Value->Operands.empty() &&
+            Value->Var.Kind != MedVar::Param &&
+            Value->Var.Size == Value->Type->Size) {
+          if (!PrepareBooleanFlow())
+            return false;
+          const auto Key = highSourceLocalIdentity(Value->Var);
+          const auto Definitions = BooleanDefinitions.find(Key);
+          if (AddressTaken.count(Key) ||
+              Definitions == BooleanDefinitions.end() ||
+              Definitions->second.empty() ||
+              !ActiveBooleanVariables.insert(Key).second)
+            return false;
+          const bool Valid = std::all_of(
+              Definitions->second.begin(), Definitions->second.end(),
+              [&](const BooleanDefinition &Definition) {
+                return equalSourceTypes(Definition.first, Value->Type) &&
+                       Self(Self, Definition.second, Depth + 1);
+              });
+          ActiveBooleanVariables.erase(Key);
+          return Valid;
+        }
         if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SUBBYTES &&
             Value->Operands.size() == 2 && Value->Operands[0] &&
             Value->Operands[0]->Type &&
