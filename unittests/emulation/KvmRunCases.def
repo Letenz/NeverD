@@ -7,6 +7,11 @@
 NEVERD_KVM_TEST_VALUE(TransientInterruptions, 3)
 NEVERD_KVM_TEST_VALUE(TimeoutMicroseconds, 1000000)
 NEVERD_KVM_TEST_VALUE(InterruptedTimeoutMicroseconds, 1000)
+NEVERD_KVM_TEST_VALUE(TransferEntries, 4)
+NEVERD_KVM_TEST_VALUE(TransferIncrement, 1)
+#endif
+#ifdef NEVERD_KVM_TEST_STATE_VALUE
+NEVERD_KVM_TEST_STATE_VALUE(TransferInitialValue, 0x123456789abcdef0ULL)
 #endif
 #ifdef NEVERD_KVM_TEST_TEXT
 NEVERD_KVM_TEST_TEXT(PrepareFailure, "native state preparation failed")

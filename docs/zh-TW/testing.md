@@ -817,7 +817,9 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 `NeverDX64ExceptionTests` 中的 `X64StateTransition` 在原生 CPU 上執行獨立 RAM 讀取和 CR8 讀取，交替改變 TLS 基址與權限級，在重複除法例外後恢復，並在取消進入後更改 TLS。修改原生狀態傳輸時，應執行所屬 CTest 標籤，同時涵蓋別名重新映射、CPU 上下文、FP 狀態和原始驅動結果對比。KVM/WHP 不可用仍明確跳過。
 
 
-`NeverDKvmRunTests` 無需 `/dev/kvm` 即可驗證 `KvmRunControl` 借用的傳輸回呼。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 檢查準備、讀取和被攔截的主機進入使用同一執行緒，且中斷重試期間只準備一次。其他案例涵蓋準備失敗而不進入、讀取失敗、準備期間停止及活動進入被取消；隨後重新執行，確認不會重用舊回呼。驗證仍應包含真實取消、RAM 回滾、例外和原有驅動程式測試。
+`NeverDKvmRunTests` 無需 `/dev/kvm` 即可驗證 `KvmRunControl` 借用的傳輸回呼。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 檢查準備、讀取和被攔截的主機進入使用同一執行緒，且中斷重試期間只準備一次。其他案例涵蓋準備失敗而不進入、讀取失敗、準備期間停止及活動進入被取消；隨後重新執行，確認不會重用舊回呼。驗證仍應包含真實取消、RAM 回滾、例外和原有驅動程式測試。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` 驗證同一期限內的多次進入重用該執行緒，每輪傳輸只執行一次，並保持先前狀態封包不變。
+
+`KvmAArch64Machine.cpp` 的位址轉換維護執行、客體暫存器準備、除錯設定和全部 35 項暫存器讀取也在此執行緒上完成。維護與客體執行共用一個單步期限；只有完整讀取並確認完成後，呼叫執行緒才透過 `captureAArch64GeneralState` 提交狀態。ARM64 原生執行仍缺少實機證據。
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在主機修改通用暫存器、首尾 XMM 暫存器、MXCSR 和 x87 控制字後，驗證連續執行及真實 CPU 寫入。停止進入後的實際 `FXSAVE64` 位元組驗證全部實體 80 位元暫存器、TOP、標籤、操作碼和指標；重複除法例外也會使重用失效。這些機器邊界測試不向 checked 設定開放額外的 x87 指令。
 

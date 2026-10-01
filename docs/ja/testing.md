@@ -866,7 +866,9 @@ Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリング�
 `NeverDX64ExceptionTests` の `X64StateTransition` は、ネイティブ CPU で独立した RAM 読み取りと CR8 読み取りを実行します。TLS 基底と特権レベルを交互に変え、反復する除算例外から再開し、キャンセルされたエントリ後に TLS を変更します。ネイティブ状態転送の変更後は、この CTest ラベルと、エイリアス再マッピング、CPU コンテキスト、FP 状態、元のドライバーの結果比較を実行します。KVM/WHP が利用できなければ明示的にスキップします。
 
 
-`NeverDKvmRunTests` は `/dev/kvm` を必要とせずに `KvmRunControl` の借用転送を検証します。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` は、準備、取得、インターセプトしたホストエントリが同じスレッドを使い、中断後の再試行でも準備が一度だけ行われることを確認します。他のケースは、エントリ前の準備失敗、取得失敗、準備中の停止、実行中エントリのキャンセルを検証し、その後の実行で古いコールバックが再利用されないことを確認します。実際のキャンセル、RAM ロールバック、例外、元のドライバーのテストも引き続き実行します。
+`NeverDKvmRunTests` は `/dev/kvm` を必要とせずに `KvmRunControl` の借用転送を検証します。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` は、準備、取得、インターセプトしたホストエントリが同じスレッドを使い、中断後の再試行でも準備が一度だけ行われることを確認します。他のケースは、エントリ前の準備失敗、取得失敗、準備中の停止、実行中エントリのキャンセルを検証し、その後の実行で古いコールバックが再利用されないことを確認します。実際のキャンセル、RAM ロールバック、例外、元のドライバーのテストも引き続き実行します。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` は、同一期限内の複数エントリがワーカーを再利用し、各転送を一度だけ実行して以前の状態パケットを変更しないことを検証します。
+
+`KvmAArch64Machine.cpp` のアドレス変換の保守実行、ゲストレジスターの準備、デバッグ設定、および 35 項目すべてのレジスター読み取りも、このワーカーで行います。保守とゲスト実行は一つの単一ステップ期限を共有し、呼び出し側は完全な取得の完了確認後にのみ `captureAArch64GeneralState` で状態を反映します。ARM64 のネイティブ実行の実機証拠は未取得です。
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` は、ホスト側で汎用レジスタ、先頭・末尾 XMM レジスタ、MXCSR、x87 制御語を変更した後の継続実行と実 CPU のストアを検証します。停止したエントリ後の実際の `FXSAVE64` バイトで、全物理 80 ビットレジスタ、TOP、タグ、オペコード、ポインタを確認します。反復する除算例外も再利用を無効にします。これらの機械境界テストは checked プロファイルに追加の x87 命令を許可しません。
 
