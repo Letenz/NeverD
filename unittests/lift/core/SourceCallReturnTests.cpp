@@ -293,6 +293,99 @@ int main(void) {
   }
 }
 
+TEST(SourceCallReturns, RecordPointerFieldsCompileAndPreserveAllWords) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  const auto Program = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(bool(Program));
+  const std::string Compiler = *Program;
+#endif
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Word = NdType::makeInt(8, false);
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    HighFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "forwarded_pointer_words";
+    Function.ReturnType = NdType::makeStruct({Word, Word, Pointer, Pointer});
+    std::vector<ExprPtr> Values;
+    for (unsigned I = 0; I < 4; ++I) {
+      const auto Type = I < 2 ? Word : Pointer;
+      Function.Params.push_back({"arg" + std::to_string(I), Type});
+      MedVar Parameter;
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = I;
+      Parameter.Size = 8;
+      Parameter.RegOff = getTargetRegInfo(Architecture).IntParamRegs[I];
+      Parameter.TheArch = Architecture;
+      Values.push_back(HighExpr::makeVar(Parameter, Type));
+    }
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeRecord(Function.ReturnType, Values);
+    Function.Body = {Return};
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+    OS.flush();
+    Source += R"(
+int main(void) {
+  unsigned char storage[256];
+  uint64_t bits = UINT64_C(0x8000000000000001);
+  for (unsigned i = 0; i < 512; ++i) {
+    bits ^= bits << 13; bits ^= bits >> 7; bits ^= bits << 17;
+    void *first = (i & 1) ? storage + (i & 255) : (void *)0;
+    void *second = storage + ((i + 37) & 255);
+    __auto_type result = forwarded_pointer_words(bits, ~bits, first, second);
+    if (result.field_0 != bits || result.field_1 != ~bits ||
+        result.field_2 != first || result.field_3 != second) return 1;
+  }
+  return 0;
+}
+)";
+    llvm::SmallString<128> Input, Output, Errors;
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-record-pointer",
+                                                    "c", Input));
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-record-pointer",
+                                                    "exe", Output));
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-record-pointer",
+                                                    "err", Errors));
+    llvm::FileRemover R1(Input), R2(Output), R3(Errors);
+    std::error_code EC;
+    {
+      llvm::raw_fd_ostream File(Input, EC);
+      ASSERT_FALSE(EC);
+      File << Source;
+    }
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Errors.str()};
+    for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization.str());
+      const llvm::StringRef Arguments[] = {Compiler,
+                                           "-std=c11",
+                                           Optimization,
+                                           "-Werror=int-conversion",
+                                           "-Werror=uninitialized",
+                                           Input,
+                                           "-o",
+                                           Output};
+      std::string Error;
+      const int Compiled = llvm::sys::ExecuteAndWait(
+          Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+      const auto Diagnostic = llvm::MemoryBuffer::getFile(Errors);
+      ASSERT_EQ(Compiled, 0)
+          << Error << (Diagnostic ? (*Diagnostic)->getBuffer().str() : "")
+          << Source;
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}, std::nullopt,
+                                          Redirects, 30, 0, &Error),
+                0)
+          << Error << Source;
+    }
+  }
+}
+
 TEST(SourceCallReturns, BareReturnUsesOnlyPredecessorsCarrierDefinition) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);

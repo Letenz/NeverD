@@ -2936,7 +2936,18 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
         llvm::report_fatal_error("HighC source record field type disagrees");
       if (I)
         Result += ", ";
-      Result += exprStr(*E.Operands[I]);
+      const auto Text = exprStr(*E.Operands[I]);
+      if (E.Type->Fields[I]->Kind == NdTypeKind::Ptr) {
+        // Pointer expressions retain their integer machine carrier in HighC.
+        // A record initializer needs the same source conversion as a call.
+        const auto Value =
+            sourceValue(Text, E.Operands[I]->Type, E.Type->Fields[I]);
+        if (!Value)
+          llvm::report_fatal_error("HighC source pointer field is invalid");
+        Result += *Value;
+      } else {
+        Result += Text;
+      }
     }
     return Result + "}";
   }
