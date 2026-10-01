@@ -100,7 +100,8 @@ TEST_P(VMShapeRoundTripTest, ZeroHintsPreserveIndependentArithmeticAndStores) {
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("reference");
+    const auto Executable =
+        tmpFile(std::string("reference") + neverd::test::executableSuffix());
     const auto Compiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -136,7 +137,8 @@ TEST_F(VMShapeSourceTest, NativeShapesMatchOracleAcrossCallingConventions) {
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(MSABI ? "Win64" : "SysV");
       SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("native-reference");
+      const auto Executable = tmpFile(std::string("native-reference") +
+                                      neverd::test::executableSuffix());
       std::vector<std::string> Args{"-target",      "x86_64-linux-gnu",
                                     "-fuse-ld=lld", "-std=c11",
                                     "-no-pie",      Optimization};

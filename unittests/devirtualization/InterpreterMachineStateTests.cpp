@@ -121,7 +121,8 @@ protected:
                                 << Harness.str();
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
-        const auto Program = tmpFile("machine-source-test");
+        const auto Program = tmpFile(std::string("machine-source-test") +
+                                     neverd::test::executableSuffix());
         const auto Built =
             exec(NEVERD_TEST_CLANG,
                  {"-std=c11", Optimization, "-Werror=return-type",

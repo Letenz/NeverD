@@ -125,7 +125,8 @@ TEST_P(MemoryCallRoundTripTest,
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Program = tmpFile("recovered-memory-call");
+    const auto Program = tmpFile(std::string("recovered-memory-call") +
+                                 neverd::test::executableSuffix());
     const auto Compiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -164,7 +165,8 @@ TEST_F(MachineMemoryCallSourceTest,
     GTEST_SKIP() << "native public memory-call checks require clang";
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Program = tmpFile("native-memory-calls");
+    const auto Program = tmpFile(std::string("native-memory-calls") +
+                                 neverd::test::executableSuffix());
     const auto Compiled = exec(
         NEVERD_TEST_CLANG,
         {"-target", "x86_64-linux-gnu", "-fuse-ld=lld", "-std=c11", "-no-pie",
@@ -321,7 +323,8 @@ int main(void) {
     std::ofstream(tmpFile("immintrin.h")).close();
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
-      const auto Program = tmpFile("fixed-memory-source");
+      const auto Program = tmpFile(std::string("fixed-memory-source") +
+                                   neverd::test::executableSuffix());
       const auto Compiled =
           exec(NEVERD_TEST_CLANG,
                {"-std=c11", Optimization, "-Werror=return-type",
