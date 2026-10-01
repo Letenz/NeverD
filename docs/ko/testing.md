@@ -68,9 +68,13 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 조건부 카운트다운 검증은 본문 템플릿 거부 후 재시도, 임의 워드 입력에 대한 완전한 헤더 증명, 절단점 및 쿼리 예산의 누적, 실제 진입 계약 위반의 즉시 거부를 검사합니다.
 
+`NeverDInterpreterLLVMRefinementTests`는 새로운 조합 증명, 정확한 텍스트/함수 바인딩, 독립 예산, 전체 관찰과 더 넓은 소스 영역을 검사합니다. 바이트, 잔여 코드, 결과, 플래그, 상태 코드, 프레임 쓰기, poison 및 잘못되거나 오래된 루프 계획은 조합 기록을 거부해야 합니다. 임의 워드 카운트다운에는 두 귀납 전제가 필요하며, 독립 C 예제의 O1/O2 컴파일은 실제 직렬화 LLVM 입력을 검증합니다. 상태 모델 회귀는 숨겨진 진입 역방향 간선을 거부하고 부수적인 출처 정보를 복사하지 않으면서 루트 예산을 검사합니다.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 2중 및 3중 루프의 캐시된 동등 종료 조건은 피연산자 상관관계, 변하는 경계, 카운터 재설정 및 손상된 복사를 검사합니다.

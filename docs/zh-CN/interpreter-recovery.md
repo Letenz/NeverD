@@ -108,6 +108,10 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `modelLLVMInterpreterMachineStateX64` 为已验证的标量 LLVM 函数建模，函数接收一个状态指针并返回 i64 状态码。`llvmInterpreterMachineStateContract` 观察全部 17 个状态字，并要求独立的 `LLVMInterpreterDefinednessOffset` 字节初始及最终均为零；补充入口域和客体栈帧时必须保留这些义务。PHI 赋值并行执行，整数溢出、精确移位、值域属性等条件转换为待证明的检查。每个实际执行的受支持操作都必须不产生 poison，即使死代码或 select 可按 [LLVM 语义](https://llvm.org/docs/UndefinedBehavior.html) 屏蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 和 `MaxWork` 限制建模开销。不支持的类型、指针逃逸、内存模式、调用、属性和元数据明确报错；i8/i16/i32/i64 的变量 `shl`、`lshr` 和 `ashr` 要求无符号移位量小于源码位宽，不套用指令集的移位量掩码；`nuw`、`nsw` 和 `exact` 条件仍单独检查。除法和 freeze 尚不支持。必须重新执行完整有限路径或归纳检查，证明语义有效性、内存安全、观察项和终止性；自动循环候选推断仍不完备。源码、模块与编译器输入须另行精确绑定，解析器和编译器仍是信任前提。本接口不证明 C、生成的机器码或物理 CPU 的未定义位选择。源码契约见 [LLVM 语言参考](https://llvm.org/docs/LangRef.html)。 被读取的入口字节必须已初始化，客体访问必须指向声明栈帧内仍存活的存储；平坦 LowIR 内存模型不证明 LLVM 对象生命周期或指针来源。
 
+`prepareInterpreterLLVMRefinement` 保存精确 LLVM 文本和所选函数名，验证模块，并为两侧状态模型生成只执行一次的规范标志入口投影。`checkBinaryLLVMRefinement` 重新构建这些输入，先证明实际原生映像与同一残余程序的关系，再证明残余模型与该 LLVM 产物的关系。有限路径和归纳检查都保留全部状态字、真实状态码、语义有效性及栈帧写入，并要求 RSP 和返回地址槽保持。原生入口常量不会复制到源码契约：源码关系刻意覆盖更大的任意通用寄存器／规范标志域，因此可能保守地拒绝仅在原生限制下成立的结果。循环方案是不可信候选。只有两个全新检查都成功，才生成绑定精确 IR 字节、函数名、两段证明凭据、执行配置版本和预算的组合凭据。
+
+`MaxIRBytes` 在复制或解析前限制文本和函数名大小；`MaxMachineStateOperations` 与 `MaxPreparationItems` 限制建模及准备工作。原生与 LLVM 证明预算独立，绝不自动提高。受信任的 LLVM 解析器／验证器在此没有硬性的 CPU、栈或分配上限。共享栈帧必须以原始 RSP 状态字为根并包含入口返回地址槽。仍须保证栈帧存储已初始化且存活、状态存储可访问且对齐并与客体访问分离，以及客体指针来源有效。此 C++ API 证明受支持的原生到 LLVM 关系，不证明 C 编译、生成的机器码、故障行为或物理 CPU 未定义位选择。
+
 <!-- i18n-section: limits -->
 
 ## 当前限制

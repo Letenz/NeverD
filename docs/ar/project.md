@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: b5c5e186af2bdaea4eb030c7721d692044af4102a585a6ab4f8182a3de8e2e26 -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center" dir="rtl">
 
@@ -49,6 +49,8 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 ميزانيات الاستعادة صريحة: تحتفظ `--vm-max-fields` و`--vm-max-refinements` و`--vm-max-queries` بالقيم الافتراضية 16 و16 و4096. يشرح دليل الاستعادة واجهة C المتوافقة v3 وقواعد الفشل.
 
 تستنتج واجهة C++ المنفصلة لإثبات الحلقات ثوابت محدودة ورتبًا معجمية للحلقات المتداخلة ثم تعيد فحص التنقيح من الشيفرة الأصلية إلى LowIR. راجع [دليل الاستعادة](interpreter-recovery.md)؛ فهي لا تصادق على C الناتجة.
+
+تركب واجهة C++ المستقلة `checkBinaryLLVMRefinement` فحوصاً جديدة للشيفرة الأصلية وLLVM على منتج LLVM دقيق؛ وتبقى ترجمة C خارج نطاق البرهان.
 
 <!-- i18n-section: why-neverd -->
 

@@ -53,6 +53,8 @@ Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--
 
 The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
 
+The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM checks against an exact LLVM artifact; C compilation remains outside its proof scope.
+
 <!-- i18n-section: why-neverd -->
 
 ## Why NeverD?
