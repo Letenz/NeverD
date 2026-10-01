@@ -1,10 +1,8 @@
 #ifndef NEVERD_SDK_CAPI_OBJCRESUMESOURCE_H
 #define NEVERD_SDK_CAPI_OBJCRESUMESOURCE_H
 
-#include "../../loader/MachO/DarwinRuntimeImport.h"
 #include "ObjCSynchronizedSource.h"
-
-#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "ObjCUnwindSource.h"
 
 namespace neverd::sdk {
 
@@ -13,16 +11,6 @@ struct ObjCResumeSourceProof {
   va_t LandingPad = 0;
   va_t ResumeTarget = 0;
 };
-
-inline bool objcResumeImportProvider(const BinaryImage &Image, va_t Slot,
-                                     llvm::StringRef Providers) {
-  const auto Bind = Image.DyldBindSlots.find(Slot);
-  return Bind != Image.DyldBindSlots.end() &&
-         darwinExportModuleMatches(Providers, Bind->second.Module) &&
-         std::find(Image.DynInfo.NeededLibs.begin(),
-                   Image.DynInfo.NeededLibs.end(),
-                   Bind->second.Module) != Image.DynInfo.NeededLibs.end();
-}
 
 // A one-instruction resumption pad has no cleanup or dispatch to reproduce.
 // Authenticate the actual runtime veneer, every LSDA entry, and every normal
@@ -50,7 +38,7 @@ proveObjCResumeOnlySource(const BinaryImage &Image, const HighFunc &Function) {
   const auto Import = Slot ? darwinRuntimeImport(Image, *Slot) : std::nullopt;
   if (!Import || *Import != "__Unwind_Resume")
     return std::nullopt;
-  if (!objcResumeImportProvider(
+  if (!objcUnwindImportProvider(
           Image, *Slot,
           "/usr/lib/libSystem.B.dylib|/usr/lib/system/libunwind.dylib"))
     return std::nullopt;
@@ -118,22 +106,8 @@ proveObjCResumeOnlySource(const BinaryImage &Image, const HighFunc &Function) {
     // A final stack-check failure can precede the pad in address order. A
     // spelling or a cached hint cannot certify its lack of a normal edge.
     const va_t Callee = objcSynchronizedBranchTarget(Image, Address);
-    const auto CalleeSlot =
-        Callee ? darwinImportVeneerSlot(Image, Callee) : std::nullopt;
-    if (CalleeSlot) {
-      const auto Runtime = darwinRuntimeSourceCallHint(Image, *CalleeSlot);
-      const auto ObjC = objcRuntimeSourceCallHint(Image, *CalleeSlot);
-      if ((Runtime && Runtime->DoesNotReturn &&
-           Runtime->TargetName == "__stack_chk_fail" &&
-           objcResumeImportProvider(Image, *CalleeSlot,
-                                    "/usr/lib/libSystem.B.dylib|/usr/lib/"
-                                    "system/libsystem_c.dylib")) ||
-          (ObjC && ObjC->DoesNotReturn &&
-           ObjC->TargetName == "objc_exception_throw" &&
-           objcResumeImportProvider(Image, *CalleeSlot,
-                                    "/usr/lib/libobjc.A.dylib")))
-        continue;
-    }
+    if (Callee && objcUnwindNoReturnTarget(Image, Callee))
+      continue;
     if (Address + 4 == Pad)
       return std::nullopt;
   }
