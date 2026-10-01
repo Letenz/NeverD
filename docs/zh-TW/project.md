@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 01f79c2abec607fec292571fdf1bbf6a2aa862a5bccf546c5c7ee213297d252e -->
+<!-- i18n-source: b5c5e186af2bdaea4eb030c7721d692044af4102a585a6ab4f8182a3de8e2e26 -->
 
 <div align="center">
 
@@ -102,6 +102,8 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 `driver-strict` / `checked-x64-v1` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。原生 ARM64/WHP 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
 
 `checked-aarch64-v1` 與 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定寬 SIMD 及完整 FPCR/FPSR/向量狀態。匹配 Linux ARM64 主機使用 KVM，Windows ARM64 主機使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生執行仍待實機驗證；Windows 驅動程式載入仍限 x64。
+
+ARM64 原生初始化透過私有啟動自檢拒絕錯誤的完整狀態傳輸或 FP/SIMD 結果；成功僅涵蓋這段有界初始化程式。
 
 <!-- i18n-section: how-it-works -->
 

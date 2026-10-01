@@ -838,6 +838,10 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
+ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。
+
+`NeverDAArch64StateTests` 驗證每個純量欄位、每個向量的兩個字、特權級改變、浮點指令未執行及傳輸錯誤診斷的保留。`NeverDAArch64FPTests` 在兩種特權級的真實傳輸上執行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用獨立組譯的 `AArch64ProbeCases.def` 原始指令。測試把這些與 PC 無關的指令遷到客體程式，保持監控頁僅供特權級存取。Unicorn 執行和原生後端的明確略過不能取代 ARM64 原生啟動證據。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 
 `AArch64InstructionEffects` 負責純量及 FP/SIMD 單次、成對 RAM 存取範圍，單一運算元最大 128 位元。共用位址空間在進入 CPU 前驗證每頁；`RAMTransaction` 僅提交完整宣告的實體寫入。128 位元寫入觀察器在生效前依序收到兩個 64 位元字。停止與故障保留 RAM、向量及位址寫回。Xn/Vn 編號重疊合法；位址回繞的成對存取被拒絕。`NeverDAArch64MemoryTests` 使用獨立的 `AArch64CrossPageCases.def` 與 `AArch64VectorMemoryCases.def` 編碼。

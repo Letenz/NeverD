@@ -520,6 +520,8 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
+ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
+
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
 `AArch64InstructionEffects` が最大128ビットの scalar/FP/SIMD 単一・ペア RAM 範囲を所有します。共有 address space は CPU entry 前に全ページを検証し、`RAMTransaction` は宣言された完全な物理書き込みのみを確定します。128ビット書き込みは実行前に二つの64ビット値として順序付きで観測されます。停止・fault は RAM、vector、writeback を保持します。Xn/Vn の番号重複は有効で、pair 範囲のアドレス wrap は拒否します。`NeverDAArch64MemoryTests` は独立した `AArch64CrossPageCases.def` と `AArch64VectorMemoryCases.def` を使用します。

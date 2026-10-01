@@ -1,0 +1,16 @@
+//===- AArch64ProbeCases.def - ARM64 probe fixtures ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_AARCH64_PROBE_TEST_VALUE
+NEVERD_AARCH64_PROBE_TEST_VALUE(Limit, 4 * 1024 * 1024)
+NEVERD_AARCH64_PROBE_TEST_VALUE(CorruptBit, 1)
+NEVERD_AARCH64_PROBE_TEST_VALUE(Code, 0x400000)
+NEVERD_AARCH64_PROBE_TEST_VALUE(ProbeInstructions, 3)
+#endif
+#ifdef NEVERD_AARCH64_PROBE_TEST_CODE
+// Assembled independently by Clang; verify the private program's original
+// bytes.
+NEVERD_AARCH64_PROBE_TEST_CODE(Program, 0xd503201f, 0x1e3d2bfe, 0x4efd87ff)
+#endif

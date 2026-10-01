@@ -44,7 +44,7 @@ neverd cpu-capabilities \
   --probe-host
 ```
 
-Lo schema è alla versione 1. Il report separa `requested_configuration` prima dei default di profilo, `configuration` normalizzata, `capabilities` semantiche statiche, `build` per supporto adapter/ABI e `host` (null senza `--probe-host`). Il probe inizializza una CPU temporanea su RAM privata: prova solo l’inizializzazione, non l’idoneità del workload né l’esecuzione ARM64 nativa. La disponibilità può cambiare e un backend indisponibile non viene mai sostituito in silenzio. Il CLI restituisce 0 per un report valido anche se il backend non è disponibile, 1 per configurazione/query non valida.
+Lo schema è alla versione 1. Il report separa `requested_configuration` prima dei default di profilo, `configuration` normalizzata, `capabilities` semantiche statiche, `build` per supporto adapter/ABI e `host` (null senza `--probe-host`). Il probe inizializza una CPU temporanea su RAM privata: prova solo l’inizializzazione, non la compatibilità di workload arbitrari. La disponibilità può cambiare e un backend indisponibile non viene mai sostituito in silenzio. Il CLI restituisce 0 per un report valido anche se il backend non è disponibile, 1 per configurazione/query non valida.
 
 ## Confini SDK e C++
 
@@ -87,6 +87,8 @@ Le `DIV`/`IDIV` checked x64 usano risultati reali del processore e `#DE`. KVM us
 Interrogare il profilo selezionato con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` descrive l’esecuzione nativa dei driver x64. `NeverDNativeDriverTests` verifica il corpus esistente e può essere eseguito anche in una compilazione senza Unicorn.
 
 ARM64 checked usa un unico confine per lo stato completo. `Registers.def` definisce 39 campi scalari e 32 vettori da 128 bit; `captureAArch64State` prepara tutte le letture, applica le larghezze e normalizza NZCV prima di pubblicare una sola volta. Unicorn, KVM e WHP trasferiscono lo stesso inventario, inclusi TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR e FPSR. Gli adattatori nativi abilitano FP/SIMD tramite CPACR_EL1. Letture fallite e ingressi annullati conservano tutto lo stato del chiamante.
+
+L’avvio ARM64 KVM/WHP esegue il programma privato `AArch64MachineProbe.def`: NOP, somma FP32 arrotondata verso infinito positivo e somma SIMD a due lane. Ogni passo confronta tutti i 39 campi scalari e 32 vettori, inclusi TLS, NZCV, azzeramento dei bit superiori del risultato e stato FPCR/FPSR conservato/cumulativo. Il probe usa solo memoria del monitor supervisor e una scadenza globale. Il successo verifica questo programma di inizializzazione limitato; la validazione indipendente dei workload ARM64 nativi resta necessaria.
 
 `CheckedAArch64Instructions.def` e `AArch64InstructionEffects` ammettono a EL0/EL1 aritmetica FP32/FP64 di base limitata, confronti, trasferimenti e SIMD a larghezza fissa. FPCR conserva quattro arrotondamenti, FZ e DN; FPSR conserva stato cumulativo e QC. I bit non supportati vengono rifiutati prima delle modifiche. FP16 aritmetico, SVE/SME, eccezioni non mascherate, estensioni opzionali e forme non elencate falliscono esplicitamente. Non aggiunge caricamento di driver Windows ARM64 o altri ambienti OS.
 
