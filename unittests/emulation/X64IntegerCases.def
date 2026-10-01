@@ -1,0 +1,78 @@
+//===- X64IntegerCases.def - Independent scalar integer expectations ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_INTEGER_VALUE
+NEVERD_INTEGER_VALUE(Limit, 1024 * 1024)
+NEVERD_INTEGER_VALUE(PageSize, 4096)
+NEVERD_INTEGER_VALUE(Code, 0x10000)
+NEVERD_INTEGER_VALUE(Data, 0x20000)
+NEVERD_INTEGER_VALUE(Timeout, 1'000'000)
+NEVERD_INTEGER_VALUE(Flags, 0xed7)
+NEVERD_INTEGER_VALUE(CarryOverflow, 0x801)
+NEVERD_INTEGER_VALUE(Multiplier, 3)
+NEVERD_INTEGER_VALUE(HighSeed, 0xaabbccddeeff1234ULL)
+#endif
+#ifdef NEVERD_INTEGER_BACKEND
+NEVERD_INTEGER_BACKEND(kvmSupervisor, KVM, false)
+NEVERD_INTEGER_BACKEND(kvmUser, KVM, true)
+NEVERD_INTEGER_BACKEND(whpSupervisor, WHP, false)
+NEVERD_INTEGER_BACKEND(whpUser, WHP, true)
+NEVERD_INTEGER_BACKEND(unicornSupervisor, Unicorn, false)
+NEVERD_INTEGER_BACKEND(unicornUser, Unicorn, true)
+#endif
+#ifdef NEVERD_INTEGER_MULTIPLY
+// MUL BL/BX/EBX/RBX, or the corresponding unsigned operand at [RCX].
+NEVERD_INTEGER_MULTIPLY(MulRegister8, 1, false, 0xf6, 0xe3)
+NEVERD_INTEGER_MULTIPLY(MulRegister16, 2, false, 0x66, 0xf7, 0xe3)
+NEVERD_INTEGER_MULTIPLY(MulRegister32, 4, false, 0xf7, 0xe3)
+NEVERD_INTEGER_MULTIPLY(MulRegister64, 8, false, 0x48, 0xf7, 0xe3)
+NEVERD_INTEGER_MULTIPLY(MulMemory8, 1, true, 0xf6, 0x21)
+NEVERD_INTEGER_MULTIPLY(MulMemory16, 2, true, 0x66, 0xf7, 0x21)
+NEVERD_INTEGER_MULTIPLY(MulMemory32, 4, true, 0xf7, 0x21)
+NEVERD_INTEGER_MULTIPLY(MulMemory64, 8, true, 0x48, 0xf7, 0x21)
+#endif
+#ifdef NEVERD_INTEGER_PRODUCT
+// Width, carry/overflow, input RAX, expected RAX and expected RDX.
+// The byte product overwrites AX only; the word product overwrites AX and DX.
+NEVERD_INTEGER_PRODUCT(1, false, 0x1122334455667702ULL, 0x1122334455660006ULL,
+                       HighSeed)
+NEVERD_INTEGER_PRODUCT(1, true, 0x11223344556677feULL, 0x11223344556602faULL,
+                       HighSeed)
+NEVERD_INTEGER_PRODUCT(2, false, 0x1122334455660002ULL, 0x1122334455660006ULL,
+                       0xaabbccddeeff0000ULL)
+NEVERD_INTEGER_PRODUCT(2, true, 0x112233445566fffeULL, 0x112233445566fffaULL,
+                       0xaabbccddeeff0002ULL)
+NEVERD_INTEGER_PRODUCT(4, false, 0x1122334400000002ULL, 6, 0)
+NEVERD_INTEGER_PRODUCT(4, true, 0x11223344fffffffeULL, 0xfffffffaULL, 2)
+NEVERD_INTEGER_PRODUCT(8, false, 2, 6, 0)
+NEVERD_INTEGER_PRODUCT(8, true, 0xfffffffffffffffeULL, 0xfffffffffffffffaULL, 2)
+#endif
+#ifdef NEVERD_INTEGER_EXTEND
+// Input/output RAX, output RDX, followed by original machine code.
+NEVERD_INTEGER_EXTEND(CbwPositive, 0x1122334455667f7fULL, 0x112233445566007fULL,
+                      HighSeed, 0x66, 0x98)
+NEVERD_INTEGER_EXTEND(CbwNegative, 0x1122334455667f80ULL, 0x112233445566ff80ULL,
+                      HighSeed, 0x66, 0x98)
+NEVERD_INTEGER_EXTEND(CwdePositive, 0x1122334488887fffULL, 0x7fff, HighSeed,
+                      0x98)
+NEVERD_INTEGER_EXTEND(CwdeNegative, 0x1122334488888000ULL, 0xffff8000ULL,
+                      HighSeed, 0x98)
+NEVERD_INTEGER_EXTEND(CdqePositive, 0x112233447fffffffULL, 0x7fffffff, HighSeed,
+                      0x48, 0x98)
+NEVERD_INTEGER_EXTEND(CdqeNegative, 0x1122334480000000ULL,
+                      0xffffffff80000000ULL, HighSeed, 0x48, 0x98)
+NEVERD_INTEGER_EXTEND(CwdPositive, 0x1122334455667fffULL, 0x1122334455667fffULL,
+                      0xaabbccddeeff0000ULL, 0x66, 0x99)
+NEVERD_INTEGER_EXTEND(CwdNegative, 0x1122334455668000ULL, 0x1122334455668000ULL,
+                      0xaabbccddeeffffffULL, 0x66, 0x99)
+NEVERD_INTEGER_EXTEND(CdqPositive, 0x112233447fffffffULL, 0x112233447fffffffULL,
+                      0, 0x99)
+NEVERD_INTEGER_EXTEND(CdqNegative, 0x1122334480000000ULL, 0x1122334480000000ULL,
+                      0xffffffffULL, 0x99)
+NEVERD_INTEGER_EXTEND(CqoPositive, 0x7fffffffffffffffULL, 0x7fffffffffffffffULL,
+                      0, 0x48, 0x99)
+NEVERD_INTEGER_EXTEND(CqoNegative, 0x8000000000000000ULL, 0x8000000000000000ULL,
+                      UINT64_MAX, 0x48, 0x99)
+#endif
