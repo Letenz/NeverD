@@ -831,6 +831,8 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 The control-dependency walk reports root-bit dependencies only after complete analysis. Recovery may omit optional image-address enumeration when a proved relative address retains at least 32 free high root bits; this establishes no reachability fact and never removes the memory access.
 
+The same root-dependency analysis guards full-width affine control projection. Its result is local to one edge predicate; overlarge domains produce an incomplete refusal outside the mathematical cache. Narrow masks are retried, and only ordinary feasibility proofs authorize an edge.
+
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.

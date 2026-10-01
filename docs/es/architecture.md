@@ -86,6 +86,8 @@ La enumeración finita puede observar tuplas factibles sin cambiar la consulta d
 
 El recorrido de dependencias de control solo informa de dependencias sobre los bits de la raíz tras un análisis completo. La recuperación puede omitir la enumeración opcional de direcciones de la imagen cuando una dirección relativa demostrada conserva al menos 32 bits altos libres de la raíz; esto no demuestra alcanzabilidad ni elimina el acceso a memoria.
 
+El mismo análisis de dependencias de la raíz protege la proyección afín de controles de ancho completo. Su resultado es local a un predicado de arista; los dominios demasiado grandes producen un rechazo incompleto fuera de la caché matemática. Se reintentan las máscaras estrechas y solo las pruebas normales de viabilidad autorizan una arista.
+
 `modelInterpreterMachineStateX64` y la envoltura fuente comparten un generador para subregistros invitados, indicadores empaquetados, estado del perfil y flujo de control. El modelo solo sustituye accesos al objeto de estado por bytes de registro explícitos y separa el estado de ejecución del RAX invitado. No controla la semántica del compilador ni la política de prueba; el llamador conserva el dominio de entrada, las observaciones, el contrato de marco y la comprobación completa de refinamiento.
 
 `NeverDLLVMInterpreterModel` gestiona la importación LLVM escalar independiente y acotada a la misma ABI de estado bruto. `modelLLVMInterpreterMachineStateX64` conserva el estado real y emite condiciones de definición. `llvmInterpreterMachineStateContract` aporta todas las observaciones y preservación del monitor cero; dominio, memoria y prueba completa corresponden al llamador. No altera el lifting ordinario ni la publicación de fuentes, ni demuestra el compilador.

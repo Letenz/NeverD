@@ -83,6 +83,8 @@ Verengt eine Bedingung eine Adressabhängigkeit auf einen Byteausschnitt, behäl
 
 Die optionale Aufzählung unveränderlicher Adressen endet, sobald einer möglichen Adresse ein Zertifikat fehlt. Der ursprüngliche Lesezugriff bleibt erhalten. Beobachtete Werte und Zertifikate werden erst nach dem Beweis der vollständigen Wertemenge verwendet; Cache-Treffer erfordern eine erneute Prüfung des aktuellen Lesebereichs. Ein tatsächlich beobachtetes fehlerhaftes Zertifikat bleibt ein Fehler.
 
+Ein vollständiger Abhängigkeitsbeweis kann die Aufzählung eines vollständigen 64-Bit-Steuerwerts `root + constant` auslassen, wenn das aktuelle Kantenprädikat die oberen 32 Bits der frischen Wurzelvariablen frei lässt. Dies legt weder die Wurzeladresse fest noch beweist es Erreichbarkeit. Schmale Produzentenmasken und abschließende Erfüllbarkeitsprüfungen bleiben erhalten; ein Prädikat, das die gesamte Wurzel begrenzt, verwendet weiterhin die normale endliche Projektion.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag
