@@ -22,6 +22,7 @@ namespace neverd::emulation {
 class KvmRunControl final {
 public:
   using StateTransfer = llvm::function_ref<llvm::Error()>;
+  using Completion = llvm::function_ref<llvm::Error()>;
   static llvm::Expected<std::unique_ptr<KvmRunControl>> create(int VCPU);
   ~KvmRunControl();
   llvm::Error run(MachineRunControl Control);
@@ -29,8 +30,12 @@ public:
   /// before any EINTR retries; Capture runs only after a successful entry.
   /// Both callbacks must remain live until this call returns and must not
   /// invoke guest-memory ownership, OS policy or execution observers.
+  /// Complete runs on the caller after successful capture and cancellation
+  /// acknowledgement, before classifying a concurrent stop. It may validate
+  /// the private packet and authenticate an ISA exception under the caller's
+  /// execution lease. It must not publish a successful instruction's state.
   llvm::Error run(MachineRunControl Control, StateTransfer Prepare,
-                  StateTransfer Capture);
+                  StateTransfer Capture, Completion Complete = {});
   KvmRunControl(const KvmRunControl &) = delete;
   KvmRunControl &operator=(const KvmRunControl &) = delete;
 

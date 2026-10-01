@@ -98,56 +98,59 @@ public:
             Partition, 0, Names.data(), Names.size(), Values.data())))
       return diagnostic::error(diagnostic::WhpState);
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    if (auto E = run(Exit, Control))
-      return E;
-    if (Exit.ExitReason != WHvRunVpExitReasonException)
-      return diagnostic::error(diagnostic::WhpExit);
-    if (FAILED(API.WHvGetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), ObservableCount, Values.data())))
-      return diagnostic::error(diagnostic::WhpState);
     auto Next = State;
-    size_t I = 0;
+    auto Complete = [&]() -> llvm::Error {
+      if (Exit.ExitReason != WHvRunVpExitReasonException)
+        return diagnostic::error(diagnostic::WhpExit);
+      if (FAILED(API.WHvGetVirtualProcessorRegisters(
+              Partition, 0, Names.data(), ObservableCount, Values.data())))
+        return diagnostic::error(diagnostic::WhpState);
+      size_t I = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = Values[I++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-    for (auto &Xmm : Next.Xmm) {
-      Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
-      ++I;
-    }
-    for (auto &Register : Next.FP.Registers) {
-      Register = {Values[I].Fp.AsUINT128.Low64,
-                  Values[I].Fp.AsUINT128.High64 & x64::fp::RegisterHighMask};
-      ++I;
-    }
-    const auto &FPNext = Values[I++].FpControlStatus;
-    Next.FP.Control = FPNext.FpControl;
-    Next.FP.Status = FPNext.FpStatus;
-    Next.FP.Tag = FPNext.FpTag;
-    Next.FP.Opcode = FPNext.LastFpOp;
-    Next.FP.Instruction = FPNext.LastFpRip;
-    Next.FP.Data = Values[I].XmmControlStatus.LastFpRdp;
-    Next.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
-    Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
-    const unsigned Vector = Exit.VpException.ExceptionType;
-    if (Vector != x64::DebugVector) {
-      if (!x64::isExceptionVector(Vector) ||
-          !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
-        return diagnostic::error(diagnostic::WhpExit);
-      const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
-      Next.reg(X64Register::FLAGS) =
-          (Next.reg(X64Register::FLAGS) & ~Instrumentation) |
-          (State.reg(X64Register::FLAGS) & Instrumentation);
-      State = Next;
-      return llvm::make_error<X64ExceptionError>(X64Exception{
-          Vector,
-          Exit.VpException.ExceptionInfo.ErrorCodeValid
-              ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
-              : std::nullopt,
-          Vector == unsigned(x64::ExceptionVector::PageFault)
-              ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
-              : std::nullopt});
-    }
+      for (auto &Xmm : Next.Xmm) {
+        Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
+        ++I;
+      }
+      for (auto &Register : Next.FP.Registers) {
+        Register = {Values[I].Fp.AsUINT128.Low64,
+                    Values[I].Fp.AsUINT128.High64 & x64::fp::RegisterHighMask};
+        ++I;
+      }
+      const auto &FPNext = Values[I++].FpControlStatus;
+      Next.FP.Control = FPNext.FpControl;
+      Next.FP.Status = FPNext.FpStatus;
+      Next.FP.Tag = FPNext.FpTag;
+      Next.FP.Opcode = FPNext.LastFpOp;
+      Next.FP.Instruction = FPNext.LastFpRip;
+      Next.FP.Data = Values[I].XmmControlStatus.LastFpRdp;
+      Next.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
+      Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
+      const unsigned Vector = Exit.VpException.ExceptionType;
+      if (Vector != x64::DebugVector) {
+        if (!x64::isExceptionVector(Vector) ||
+            !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
+          return diagnostic::error(diagnostic::WhpExit);
+        const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
+        Next.reg(X64Register::FLAGS) =
+            (Next.reg(X64Register::FLAGS) & ~Instrumentation) |
+            (State.reg(X64Register::FLAGS) & Instrumentation);
+        State = Next;
+        return llvm::make_error<X64ExceptionError>(X64Exception{
+            Vector,
+            Exit.VpException.ExceptionInfo.ErrorCodeValid
+                ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
+                : std::nullopt,
+            Vector == unsigned(x64::ExceptionVector::PageFault)
+                ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
+                : std::nullopt});
+      }
+      return llvm::Error::success();
+    };
+    if (auto E = run(Exit, Control, Complete))
+      return E;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;

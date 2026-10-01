@@ -8,6 +8,8 @@
 #if defined(__linux__) && defined(NEVERD_EMULATION_KVM)
 #include "../../core/ExecutionDiagnostics.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <cerrno>
 #include <climits>
 #include <condition_variable>
@@ -166,7 +168,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control) {
 }
 
 llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
-                               StateTransfer Capture) {
+                               StateTransfer Capture, Completion Complete) {
   auto &S = *Impl;
   std::unique_lock Lock(S.Mutex);
   if (S.Running)
@@ -213,16 +215,29 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   }
   S.Control.Stop = nullptr;
   S.Prepare = S.Capture = {};
-  S.Running = false;
-  if (S.TransferError)
-    return std::move(S.TransferError);
-  // A cancellation racing a successful exit leaves native progress uncertain.
-  // Acknowledge it, but never publish a successful register transfer.
-  if ((S.Cancel || Control.interrupted()) &&
-      (S.Status >= 0 || S.EntryInterrupted))
-    return diagnostic::interrupted(diagnostic::KvmRun, Control);
-  if (S.Status < 0)
+  auto TransferError = std::move(S.TransferError);
+  const int Status = S.Status;
+  const bool Cancelled = S.Cancel, EntryInterrupted = S.EntryInterrupted;
+  Lock.unlock();
+  auto Release = llvm::scope_exit([&] {
+    std::lock_guard Lock(S.Mutex);
+    S.Running = false;
+  });
+  if (TransferError)
+    return TransferError;
+  if (Status < 0) {
+    if (EntryInterrupted && (Cancelled || Control.interrupted()))
+      return diagnostic::interrupted(diagnostic::KvmRun, Control);
     return diagnostic::error(diagnostic::KvmRun);
+  }
+  // ISA validation stays on the owner thread. A genuine processor exception
+  // or malformed capture outranks a stop observed during successful state IO.
+  // Running remains true until this callback and result classification finish.
+  if (Complete)
+    if (auto E = Complete())
+      return E;
+  if (Cancelled || Control.interrupted())
+    return diagnostic::interrupted(diagnostic::KvmRun, Control);
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

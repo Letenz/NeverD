@@ -535,3 +535,5 @@ KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完�
 當 `GuardFlags` 為零時，未啟用 CFG 的指標槽仍然有效。載入器驗證其儲存、可執行回退目標，以及重定位時完整的 `DIR64` 覆蓋，並保留原始客體指標。啟用 CFG 的映像仍須同時具備映像啟用位元與插樁/函式表旗標。`DriverGuardCases.def` 與 `NeverDDriverGuardMetadataTests` 透過 Unicorn、KVM 和 WHP 涵蓋這些情況，也可用於停用 Unicorn 的建置。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完整狀態回讀共用一次單步額度。`UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限；同步引擎呼叫返回前解除 hook 借用，機器單步則保留控制直到發佈狀態。Unicorn 與 WHP 暫存完整 CPU 狀態，並在成功步驟發佈前檢查同一控制條件。WHP 在準備前只建立一次額度。已確認的 x64 CPU 例外優先於回讀期間到來的停止要求。回讀取消時，checked RAM 交易捨棄推測寫入；非受限軟體契約不變。 `MachineInterruptedError` 區分已確認取消與主機或回讀失敗。共用 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 並允許重試；真實故障即使伴隨停止要求也仍是 `BackendFailure`。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或逾期時拒絕呼叫主機，取消期間保留真實主機結果，並在釋放借用的停止標記前確認中斷回呼結束。KVM 和 WHP 在持有執行租約的呼叫執行緒上驗證完整擷取的私有狀態，然後分類同時到達的停止或逾時。真實主機錯誤、擷取失敗以及經過認證的 x64 CPU 例外保持較高優先順序。一般成功狀態在取消檢查結束前保持私有；已確認的中斷捨棄推測性的 CPU/RAM 效果並允許重試。準備、原生執行和擷取共用一次單步寬限。這些控制提供協作式取消，不保證硬性實際時間上限。

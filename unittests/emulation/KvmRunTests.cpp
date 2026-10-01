@@ -361,5 +361,105 @@ TEST_F(KvmRun, CancelledActiveEntryRetiresTransfersWithoutCapture) {
   EXPECT_EQ(Prepared, 1u);
   EXPECT_EQ(Captured, 0u);
 }
+TEST_F(KvmRun, CompleteValidatesCapturedPacketOnCallerBeforeCancellation) {
+  unsigned Captured = 0, Completed = 0;
+  const auto Caller = std::this_thread::get_id();
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      {},
+      [&] {
+        ++Captured;
+        Stop = true;
+        return llvm::Error::success();
+      },
+      [&] {
+        EXPECT_EQ(std::this_thread::get_id(), Caller);
+        EXPECT_NE(std::this_thread::get_id(), EntryThread);
+        EXPECT_EQ(Captured, 1u);
+        ++Completed;
+        return llvm::Error::success();
+      });
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_EQ(Completed, 1u);
+  Stop = false;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Captured, 1u);
+  EXPECT_EQ(Completed, 1u);
+}
+TEST_F(KvmRun, CompletionFailureOutranksStopDuringSuccessfulCapture) {
+  unsigned Completed = 0;
+  auto E = VM.runUntilExit(
+      {std::chrono::steady_clock::now() +
+           std::chrono::microseconds(TimeoutMicroseconds),
+       &Stop},
+      {},
+      [&] {
+        Stop = true;
+        return llvm::Error::success();
+      },
+      [&] {
+        ++Completed;
+        return diagnostic::error(CompletionFailure);
+      });
+  EXPECT_FALSE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), CompletionFailure);
+  EXPECT_EQ(Completed, 1u);
+  Stop = false;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Completed, 1u);
+}
+TEST_F(KvmRun, StopDuringCompletionDoesNotPublishASuccessfulEntry) {
+  unsigned Completed = 0;
+  auto E = VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(TimeoutMicroseconds),
+                            &Stop},
+                           {}, {}, [&] {
+                             ++Completed;
+                             Stop = true;
+                             return llvm::Error::success();
+                           });
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_EQ(Completed, 1u);
+  Stop = false;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Completed, 1u);
+}
+TEST_F(KvmRun, CompletionCannotReplaceTheActiveEntryControl) {
+  auto E = VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(TimeoutMicroseconds),
+                            &Stop},
+                           {}, {}, [&] {
+                             const auto Before = Calls;
+                             EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)),
+                                       diagnostic::KvmRunActive);
+                             EXPECT_EQ(Calls, Before);
+                             return llvm::Error::success();
+                           });
+  EXPECT_EQ(llvm::toString(std::move(E)), "");
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+}
+TEST_F(KvmRun, HostOrCaptureFailureDoesNotInvokeCompletion) {
+  for (const bool HostFailure : {false, true}) {
+    SCOPED_TRACE(HostFailure);
+    Result = HostFailure ? RunResult::Fatal : RunResult::Transient;
+    unsigned Completed = 0;
+    auto E = VM.runUntilExit(
+        {std::chrono::steady_clock::now() +
+             std::chrono::microseconds(TimeoutMicroseconds),
+         &Stop},
+        {}, [] { return diagnostic::error(CaptureFailure); },
+        [&] {
+          ++Completed;
+          return llvm::Error::success();
+        });
+    EXPECT_EQ(llvm::toString(std::move(E)),
+              HostFailure ? diagnostic::KvmRun : CaptureFailure);
+    EXPECT_EQ(Completed, 0u);
+  }
+}
 } // namespace
 } // namespace neverd::emulation
