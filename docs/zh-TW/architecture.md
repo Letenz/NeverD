@@ -443,6 +443,8 @@ CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗�
 
 ARM64 原生整數狀態讀取由統一的 ISA 層負責。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暫存全部讀取結果，再正規化 NZCV 並一次提交完整狀態。KVM 和 WHP 共用該函式。任一讀取失敗都保留全部輸入狀態，權限級、向量和未傳輸的暫存器保持不變。這不新增原生 FP/SIMD 指令准入。
 
+checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立底層儲存或別名的頁面。ISA 計算運算元範圍，共用位址空間在進入前檢查每個頁面，並回報首個失敗片段。`RAMTransaction` 在完整 CPU 步驟成功後提交宣告的實體位元組；故障及觀察器停止會保留 RAM、暫存器和位址回寫。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 的組譯範例；這不新增 FP/SIMD 或 Windows ARM64 驅動載入。
+
 KVM x64 在每次進入前讀取實際特殊暫存器，僅比較 `KvmX64State.def` 定義的協定欄位。CR3、CPL、TLS、CR8 或其他欄位變化時重新寫入投影。只有完整擷取的單步偵錯退出允許重用可執行狀態；例外、取消或進入失敗後都重新建立該狀態。`X64StateTransition` 透過真實 CPU 讀取驗證 TLS、權限級和 CR8 變化、重複例外及取消。KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完整 FP/SSE 狀態與上次確認完成的偵錯退出狀態比較，只重新安裝變更的輸入。主機寫入和上下文恢復也參與比較；例外、取消及失敗會使重用失效。每條指令仍啟用單步並讀取真實的通用及 FP 狀態。
 
 KVM x64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。
