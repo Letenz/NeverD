@@ -183,6 +183,7 @@ add_neverd_unittest(NeverDRunControlTests
   WhpEntryControlTests.cpp
   WhpXsaveTests.cpp
   WhpMemoryTests.cpp
+  WhpResourceTests.cpp
   MachineRunControlTests.cpp
   TIMEOUT 10
   LINK_COMPONENTS EmulationCPU)

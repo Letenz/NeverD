@@ -11,6 +11,7 @@
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
+#include "WhpResourceCache.h"
 #include "WhpXsaveState.h"
 
 #include <vector>
@@ -18,14 +19,28 @@
 
 namespace neverd::emulation {
 namespace {
-class WhpMachine final : public X64Machine, public WhpPartition {
+class WhpX64Partition final : public WhpPartition {
 public:
   WhpXsaveState Xsave;
+};
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpX64Partition(MemoryProjection &Memory);
+class WhpMachine final : public X64Machine {
+public:
+  explicit WhpMachine(MemoryProjection &Memory)
+      : Binding([&Memory] { return createWhpX64Partition(Memory); }) {}
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
     if (auto E = validateX64FPState(State.FP))
       return E;
+    auto Active = Binding.acquire(Control);
+    if (!Active)
+      return Active.takeError();
+    auto &Host = static_cast<WhpX64Partition &>(**Active);
+    auto &API = Host.API;
+    const auto Partition = Host.Partition;
+    auto &Xsave = Host.Xsave;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
@@ -116,18 +131,20 @@ public:
       }
       return llvm::Error::success();
     };
-    if (auto E = run(Exit, Control, Complete))
+    if (auto E = Host.run(Exit, Control, Complete))
       return E;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
     return llvm::Error::success();
   }
+
+private:
+  WhpResourceBinding<WhpPartition> Binding;
 };
-} // namespace
-llvm::Expected<std::unique_ptr<X64Machine>>
-createWhpMachine(MemoryProjection &Memory) {
-  auto M = std::make_unique<WhpMachine>();
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpX64Partition(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpX64Partition>();
   if (auto E = M->API.load())
     return E;
   WHV_CAPABILITY C{};
@@ -182,14 +199,9 @@ createWhpMachine(MemoryProjection &Memory) {
       FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvSetPartitionProperty);
-  P = {};
-  P.ProcessorXsaveFeatures.XsaveSupport = 1;
-  if (const auto Status = M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeProcessorXsaveFeatures, &P,
-          sizeof(P));
-      FAILED(Status))
-    return whpError(diagnostic::WhpCreate, Status,
-                    whp::operation::WHvSetPartitionProperty);
+  // Keep the host's coherent default XSAVE feature set. Enabling only XSAVE
+  // while clearing its dependent feature bits can make setup fail with
+  // ERROR_HV_INVALID_PARAMETER. Guest XCR0 still admits only x87 and SSE.
   P = {};
   P.ExceptionExitBitmap = x64::ExceptionExitBitmap;
   if (const auto Status = M->API.WHvSetPartitionProperty(
@@ -212,6 +224,12 @@ createWhpMachine(MemoryProjection &Memory) {
     return E;
   if (auto E = M->initializeRunControl())
     return E;
+  return std::unique_ptr<WhpPartition>(std::move(M));
+}
+} // namespace
+llvm::Expected<std::unique_ptr<X64Machine>>
+createWhpMachine(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpMachine>(Memory);
   if (auto E = verifyX64Machine(*M, Memory))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
