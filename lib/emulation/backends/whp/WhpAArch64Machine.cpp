@@ -9,6 +9,7 @@
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpPartition.h"
+#include "WhpResourceCache.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -40,11 +41,21 @@ WHV_REGISTER_NAME scalarRegister(AArch64Register Register, bool UserMode) {
     llvm_unreachable(diagnostic::Register);
   }
 }
-class WhpAArch64Machine final : public AArch64Machine, public WhpPartition {
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpArmPartition(MemoryProjection &Memory);
+class WhpAArch64Machine final : public AArch64Machine {
 public:
+  explicit WhpAArch64Machine(MemoryProjection &Memory)
+      : Binding([&Memory] { return createWhpArmPartition(Memory); }) {}
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
+    auto Active = Binding.acquire(Control);
+    if (!Active)
+      return Active.takeError();
+    auto &Host = **Active;
+    auto &API = Host.API;
+    const auto Partition = Host.Partition;
     using namespace aarch64;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
@@ -123,18 +134,20 @@ public:
             return RegisterValue{Value.Low64, Value.High64};
           });
     };
-    if (auto E = run(Exit, Control, Complete))
+    if (auto E = Host.run(Exit, Control, Complete))
       return E;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
     return llvm::Error::success();
   }
+
+private:
+  WhpResourceBinding<WhpPartition> Binding;
 };
-} // namespace
-llvm::Expected<std::unique_ptr<AArch64Machine>>
-createWhpAArch64Machine(MemoryProjection &Memory) {
-  auto M = std::make_unique<WhpAArch64Machine>();
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpArmPartition(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpPartition>();
   if (auto E = M->API.load())
     return E;
   WHV_CAPABILITY C{};
@@ -211,6 +224,12 @@ createWhpAArch64Machine(MemoryProjection &Memory) {
                     whp::operation::WHvSetVirtualProcessorRegisters);
   if (auto E = M->initializeRunControl())
     return E;
+  return std::unique_ptr<WhpPartition>(std::move(M));
+}
+} // namespace
+llvm::Expected<std::unique_ptr<AArch64Machine>>
+createWhpAArch64Machine(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpAArch64Machine>(Memory);
   if (auto E = verifyAArch64Machine(*M, Memory))
     return E;
   return std::unique_ptr<AArch64Machine>(std::move(M));

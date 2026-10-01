@@ -24,10 +24,27 @@ public:
     if (Buffer.base())
       return diagnostic::error(diagnostic::WhpState);
     Modern = API.WHvGetVirtualProcessorState && API.WHvSetVirtualProcessorState;
-    if (!Modern && !(API.WHvGetVirtualProcessorXsaveState &&
-                     API.WHvSetVirtualProcessorXsaveState))
+    if (!API.WHvGetPartitionProperty ||
+        (!Modern && !(API.WHvGetVirtualProcessorXsaveState &&
+                      API.WHvSetVirtualProcessorXsaveState)))
       return diagnostic::unavailable(diagnostic::WhpCapability,
                                      BackendAvailability::HostAPI);
+    // Query the effective partition, not just host capabilities. Preserve its
+    // default feature dependencies; the ISA codec rejects active extensions
+    // outside the checked FP/SSE contract without narrowing the host mask.
+    WHV_PROCESSOR_XSAVE_FEATURES Features{};
+    UINT32 FeatureBytes = 0;
+    const auto FeatureStatus = API.WHvGetPartitionProperty(
+        Partition, WHvPartitionPropertyCodeProcessorXsaveFeatures, &Features,
+        sizeof(Features), &FeatureBytes);
+    if (FAILED(FeatureStatus))
+      return whpError(diagnostic::WhpState, FeatureStatus,
+                      whp::operation::WHvGetPartitionProperty);
+    if (FeatureBytes != sizeof(Features))
+      return diagnostic::error(diagnostic::WhpState);
+    if (!Features.XsaveSupport)
+      return diagnostic::unavailable(diagnostic::WhpCapability,
+                                     BackendAvailability::MissingCapability);
     UINT32 Required = 0;
     const HRESULT Status = get(API, Partition, nullptr, 0, Required);
     if (uint32_t(Status) != InsufficientBuffer)
