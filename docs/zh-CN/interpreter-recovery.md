@@ -180,5 +180,4 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `pairLowIRLoopRefinementPlans` 通过显式的 `LowIRLoopCutpointPair` 合并两个独立提出的自关系计划，每个切点必须恰好配对一次。`SharedInputs` 在等宽归纳输入之间添加相等谓词，保留双方绑定及投影供检查器验证。其余临时值保持独立，候选侧前缀输入改用 `CandidatePrefix`，保留双方谓词并采用原始侧排名。两个计划的 `UseEntryPrefix` 必须一致；任一计划需要时启用 `GeneralizeEntryPrefix`。临时值定义不得重叠，使用必须匹配精确宽度。`MaxMetadata` 默认为 65536，在复制前限制构建量。结果只是未受信任的提案，仍须由 `checkLowIRLoopRefinement` 独立检查完整覆盖、状态／帧相等、可观察结果和严格进展。此助手不提供证书，也不改变 CLI 默认值。
 
-
 `inferAndCheckLowIRLoopRefinement` 搜索经过验证的 LowIR 循环关系。它固定原程序首次推断出的自关系计划，先尝试候选程序的默认推断，再逐个尝试循环切点，并按需枚举已推断切点的排列。它仅为偏移相同、宽度相同的栈帧输入提出相等关系；寄存器重命名、仿射关系和任意反馈切点集合仍需显式配对。权威配对器和完整检查器保留调用者的原始审计记录、witness、入口域、栈帧观测及终止性义务。`LowIRLoopAlignmentLimits` 的 `MaxSolverQueries` 在全部推断和证明尝试间共享，失败尝试也扣账；每次调用最多获得阶段上限与剩余总额的较小值。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts` 和 `MaxCuts` 限制搜索构造和枚举。单次预算耗尽可以重试，全局预算耗尽则停止。`Unsupported` 表示未找到关系，不表示程序不等价。只有重新验证成功的 `Refinement` 包含证书。CLI 默认行为不变。

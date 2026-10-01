@@ -180,5 +180,4 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `pairLowIRLoopRefinementPlans` は、明示的な `LowIRLoopCutpointPair` により独立に提案された二つの自己関係計画を結合します。各カット点は一度だけ対応付けます。`SharedInputs` は同じ幅の帰納入力間に等価述語を追加し、検査器が検証できるよう両側の束縛と射影を保持します。他の一時値は独立のままで、候補側の前置入力には `CandidatePrefix` を使い、両方の述語と原側のランクを保持します。`UseEntryPrefix` は両計画で一致する必要があり、どちらかが必要とすれば `GeneralizeEntryPrefix` を有効にします。一時値の定義は重複不可で、使用幅は厳密に一致させます。`MaxMetadata` の既定値は 65536 で、コピー前に構築量を制限します。結果は未検証の提案です。`checkLowIRLoopRefinement` による完全な網羅性、状態とフレームの一致、観測結果、厳密な進捗の独立検査が必要です。この補助 API は証明書を発行せず、CLI の既定値も変更しません。
 
-
 `inferAndCheckLowIRLoopRefinement` は LowIR ループ間の検証済み関係を探索します。元プログラムの最初の自己関係計画を固定し、候補の既定推論、個別の循環カットポイントの順に試し、推論済みカットの順列を必要に応じて列挙します。同一オフセットで同じ幅のフレーム入力にのみ等式を提案します。レジスタの改名、アフィン関係、任意のフィードバック集合は明示的な対応付けが必要です。正規の対応付け器と完全な検査器は、呼び出し元の元の監査記録、witness、入口領域、フレーム観測、停止性の証明義務を保持します。`LowIRLoopAlignmentLimits` の `MaxSolverQueries` は失敗も含む全推論・証明で共有され、各呼び出しには段階上限と残り総量の小さい方だけを渡します。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts`、`MaxCuts` が探索構築と列挙を制限します。単一試行の予算切れは再試行できますが、全体予算切れは停止します。`Unsupported` は関係が見つからないことを示し、非等価の証明ではありません。新たな検証に成功した `Refinement` だけが証明書を持ちます。CLI の既定動作は変わりません。
