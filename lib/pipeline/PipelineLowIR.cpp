@@ -2946,6 +2946,7 @@ void computeCallRegisterEffects(
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
   Result.CallEntryStackArgs = std::move(Summaries.EntryStackArgs);
+  Result.CallVariadicFrom = std::move(Summaries.VariadicFrom);
 }
 } // namespace
 

@@ -41792,6 +41792,68 @@ TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, VariadicCalleeTakesOnlyTheArgumentsPassed) {
+  // DbgPrint: the prologue spills RDX, R8 and R9 to their home slots and
+  // hands a pointer to RDX's slot on as the va_list.  A caller passes the
+  // format and the variadic arguments it sets, here one, not R8 and R9 taken
+  // from its own incoming registers.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001040;
+  constexpr va_t Formatter = 0x140001080;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xba, 0x05, 0x00, 0x00, 0x00, // mov edx, 5
+                               0xe8, 0x2f, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x49, 0x89, 0xe3,             // mov r11, rsp
+                           0x49, 0x89, 0x53, 0x10,       // mov [r11+10h], rdx
+                           0x4d, 0x89, 0x43, 0x18,       // mov [r11+18h], r8
+                           0x4d, 0x89, 0x4b, 0x20,       // mov [r11+20h], r9
+                           0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                           0x49, 0x8d, 0x53, 0x10,       // lea rdx, [r11+10h]
+                           0xe8, 0x24, 0x00, 0x00, 0x00, // call formatter
+                           0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                           0xc3});
+  Code.resize(Formatter - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0x02, // mov rax, [rdx]
+                           0x48, 0x03, 0x01, // add rax, [rcx]
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg2"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(sub_140001040\([^,()]+, [^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, HomeSpillNothingReadsBackIsNoArgument) {
+  // BiLogMessage with its logging compiled out: the prologue still spills R8
+  // and R9 to their home slots, but nothing reads them back and no pointer
+  // to them escapes.  The callee takes no argument.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001030;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xba, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+                               0xe8, 0x1f, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x4c, 0x89, 0x44, 0x24, 0x18, // mov [rsp+18h], r8
+                           0x4c, 0x89, 0x4c, 0x24, 0x20, // mov [rsp+20h], r9
+                           0x33, 0xc0,                   // xor eax, eax
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg2"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("sub_140001030()"), std::string::npos) << HighC;
+}
+
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   // A value stored in the outgoing argument area is not an argument of a
   // call whose WDK prototype takes one parameter (ExAcquireFastMutexUnsafe).

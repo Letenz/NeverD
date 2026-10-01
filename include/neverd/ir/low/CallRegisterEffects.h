@@ -114,6 +114,12 @@ struct LocalRegisterEffect {
   /// Callees entered by a tail call at the entry stack pointer; they read
   /// this function's incoming stack arguments as their own.
   std::set<va_t> StackTailCallees;
+  /// A Win64 variadic function (`f(fmt, ...)`): the register position of its
+  /// first variadic argument, else -1.  Its prologue spills that register and
+  /// every later argument register to their home slots and hands a pointer to
+  /// the first of those slots on as the va_list.  Those spills are not
+  /// argument reads: a caller passes exactly the variadic arguments it sets.
+  int VariadicFrom = -1;
 };
 
 /// Summarize \p F.  A call into a function \p NoReturnTargets names as
@@ -135,6 +141,9 @@ struct CallRegisterSummaries {
   /// reads, including through tail calls (0 when none), for functions whose
   /// stack reads are bounded.
   std::map<va_t, int> EntryStackArgs;
+  /// Register position of the first variadic argument of each variadic
+  /// function (LocalRegisterEffect::VariadicFrom).
+  std::map<va_t, int> VariadicFrom;
 };
 
 /// Solve may-write and entry-read GPR sets over \p Funcs (entry -> local
