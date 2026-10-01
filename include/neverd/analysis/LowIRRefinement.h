@@ -204,9 +204,12 @@ struct LowIRLoopInferenceResult {
 /// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
 /// control and rank families outside this bounded search remain unsupported.
 /// Single-cut coverage checks include every originally reachable block and
-/// consume cutpoint attempts before symbolic execution. Scalar ranks retain
-/// priority; failed scalar guesses may fall back to lexicographic unit ranks
-/// on the complete stable template, sharing all inference budgets.
+/// consume cutpoint attempts before symbolic execution. Scalar counters with
+/// unit progress on every returning edge retain priority. Up to eight observed
+/// unit-counter tuple proposals then alternate with broader scalar hypotheses.
+/// After the remaining scalar hypotheses, tuple search resumes without replay
+/// on the complete stable template. Order is independent of budget caps;
+/// every attempt shares the same cumulative inference budgets.
 /// Single-cut search may retry another eligible cut after a generalized
 /// template violates a contract. Real-prefix failures, malformed inputs,
 /// unsupported execution and shared-budget exhaustion still stop the search.

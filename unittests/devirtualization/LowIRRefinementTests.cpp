@@ -637,8 +637,11 @@ TEST(LowIRLoopInference, ResettingCounterStillRejectsStutterAndWrap) {
   }
 }
 
-Program nonUnitDiamondLoop() {
+Program nonUnitDiamondLoop(bool UnitNoise = false) {
   Program P;
+  if (UnitNoise)
+    for (uint64_t Offset : {24, 32, 40})
+      P.Contract.ReturnRegisters.push_back({Offset, 8});
   P.Function.Blocks[0].Succs = {1};
   P.instruction(
       {op(NdOp::COPY, r(0), {n(0)}), op(NdOp::BRANCH, {}, {n(0x200)})});
@@ -650,6 +653,11 @@ Program nonUnitDiamondLoop() {
                  op(NdOp::COND_BR, {}, {n(0x500), NdVar::tmp(0, 1)})});
   for (int Id : {3, 4}) {
     P.block(Id, (Id + 1) * 0x100, {1});
+    if (UnitNoise)
+      P.instruction(
+          {op(NdOp::INT_ADD, r(Id == 3 ? 24 : 32),
+              {r(Id == 3 ? 24 : 32), n(1)}),
+           op(Id == 3 ? NdOp::INT_ADD : NdOp::INT_SUB, r(40), {r(40), n(1)})});
     P.instruction({op(NdOp::INT_SUB, r(8), {r(8), n(2)}),
                    op(NdOp::INT_ADD, r(0), {r(0), n(Id == 3 ? 3 : 5)}),
                    op(NdOp::BRANCH, {}, {n(0x200)})});
@@ -665,6 +673,86 @@ TEST(LowIRLoopInference, DiamondRetainsNonUnitScalarRank) {
   ASSERT_TRUE(R.inferred()) << R.Diagnostic;
   const auto Proof = loopCheck(P, P, *R.Plan);
   ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+}
+
+Program counterChain(unsigned Counters, unsigned Accumulators = 0) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)})});
+  for (unsigned I = 0; I != Accumulators; ++I) {
+    const auto Offset = 64 + I * 8;
+    P.Contract.ReturnRegisters.push_back({Offset, 8});
+    P.instruction({op(NdOp::COPY, r(Offset), {n(0)})});
+  }
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+  for (unsigned I = 0; I != Counters; ++I) {
+    const int Header = 1 + I * 2;
+    const auto Address = 0x200 + I * 0x200;
+    const auto Counter = r(8 + I * 8);
+    P.block(Header, Address, {Header + 1, Header + 2});
+    P.instruction(
+        {op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {Counter, n(0)}),
+         op(NdOp::COND_BR, {}, {n(Address + 0x200), NdVar::tmp(0, 1)})});
+    P.block(Header + 1, Address + 0x100, {1});
+    P.instruction({op(NdOp::INT_SUB, Counter, {Counter, n(1)}),
+                   op(NdOp::INT_ADD, r(0), {r(0), n(3 + I * 2)})});
+    for (unsigned J = 0; J != Accumulators; ++J) {
+      const auto Value = r(64 + J * 8);
+      P.instruction({op(NdOp::INT_ADD, Value, {Value, n(7 + J * 2)})});
+    }
+    P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+  }
+  P.block(1 + Counters * 2, 0x200 + Counters * 0x200);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, ObservedTuplesPrecedeUnrelatedScalarGuesses) {
+  const auto P = counterChain(2, 10);
+  LowIRLoopInferenceLimits Limits;
+  Limits.MaxRankCandidates = 24;
+  const auto R =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  auto Wrong = P;
+  Wrong.Function.Blocks[2].Ops[1].Inputs[1] = n(4);
+  loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+}
+
+TEST(LowIRLoopInference, WrappingUnitNoiseDoesNotStarveNonUnitScalarRank) {
+  const auto P = nonUnitDiamondLoop(true);
+  LowIRLoopInferenceLimits Limits;
+  Limits.MaxRankCandidates = 16;
+  const auto R =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+}
+
+TEST(LowIRLoopInference, TupleSearchResumesPastTheEarlyWindowWithoutReplay) {
+  const auto P = counterChain(3);
+  LowIRLoopInferenceLimits Limits;
+  // The first valid tuple uses all three counters, after three singleton
+  // and six pair proposals. Replaying the early window would exceed this.
+  Limits.MaxRankCandidates = 28;
+  const auto R =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  EXPECT_EQ(R.Plan->Cutpoints[0].Rank.size(), 5U);
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  Limits.MaxRankCandidates = R.RankCandidates;
+  const auto Exact =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  ASSERT_TRUE(Exact.inferred()) << Exact.Diagnostic;
+  --Limits.MaxRankCandidates;
+  const auto Short =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  EXPECT_EQ(Short.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_FALSE(Short.Plan);
 }
 
 Program renamedCounterLoop() {
