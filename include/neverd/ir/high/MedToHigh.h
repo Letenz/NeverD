@@ -81,8 +81,9 @@ bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
 /// runs only after a loop's one break or a switch's one falling case moves
 /// there first. Returns true when anything changed.
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
-/// `X: S...` whose every jump to X comes from inside S becomes
-/// `while (1) { S...; break; }` with those jumps as `continue`.
+/// `X: S...` where jumps from inside S return to X becomes
+/// `while (1) { S...; break; }` with those jumps as `continue`. A jump to X
+/// from elsewhere still lands on the first statement of the loop body.
 bool loopifyBackwardGotos(std::vector<HighStmt> &Body);
 /// A label on the first statement of a `while (1)` or do-while body that is
 /// entered only from outside the loop moves onto the loop statement.
