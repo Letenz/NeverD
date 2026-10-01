@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
+<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
 
 <div align="center">
 
@@ -53,6 +53,8 @@ input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF 
 独立した C++ `checkBinaryLLVMRefinement` API は正確な LLVM 成果物に対し新規のネイティブ・LLVM 検証を合成します。C コンパイルは証明範囲外です。
 
 PE 回復は優先ベースの DIR64 バイトも認証し、インポート書き込みを除外します。固定イメージ契約は ASLR や初期化の等価性を証明しません。
+
+明示的なマシン状態契約では、有界な入口スタック整列分割と内部 `RET imm16` のスタック解放を回復できます。これらの分割に対する自動 native-to-LLVM 証明合成は未実装です。
 
 <!-- i18n-section: why-neverd -->
 

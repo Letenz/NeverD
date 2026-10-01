@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
+<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
 
 <div align="center">
 
@@ -53,6 +53,8 @@ L’API C++ distincte de preuve des boucles infère des invariants bornés et de
 L’API C++ distincte `checkBinaryLLVMRefinement` compose de nouvelles vérifications natives et LLVM sur un artefact LLVM exact ; la compilation C reste hors du périmètre de preuve.
 
 La récupération PE authentifie aussi les octets DIR64 à la base préférée et exclut les écritures des imports ; ce contrat ne certifie ni l’ASLR ni l’initialisation.
+
+Sous le contrat explicite d’état machine, la récupération traite des partitions bornées d’alignement de pile à l’entrée et le nettoyage interne `RET imm16`. La composition automatique des preuves natif-vers-LLVM pour ces partitions reste à réaliser.
 
 <!-- i18n-section: why-neverd -->
 

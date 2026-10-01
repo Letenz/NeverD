@@ -57,6 +57,8 @@ The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM 
 
 PE recovery also authenticates preferred-base DIR64 bytes and excludes import writes; its fixed-image contract does not certify ASLR or initialization.
 
+Interpreter recovery covers bounded entry-stack alignment partitions and internal `RET imm16` cleanup under the explicit machine-state contract. Automatic native-to-LLVM proof composition for these partitions remains pending.
+
 <!-- i18n-section: why-neverd -->
 
 ## Why NeverD?

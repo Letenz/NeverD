@@ -258,10 +258,23 @@ public:
           return llvm::createStringError(
               llvm::errc::not_supported,
               "only ordinary near returns have a source recovery contract");
-        if (auto Pop = Decode.returnImmediate(Insn); Pop && *Pop != 0)
+        // This physical projection pops exactly eight bytes. Do not infer
+        // that width from the mnemonic when operand-size or other prefixes
+        // may change the instruction's contract.
+        if (Options.ExplicitMachineState && Options.X64CetDisabled &&
+            !((Result.NativeBytes.size() == 1 &&
+               Result.NativeBytes[0] == 0xc3) ||
+              (Result.NativeBytes.size() == 3 &&
+               Result.NativeBytes[0] == 0xc2)))
+          return llvm::createStringError(llvm::errc::not_supported,
+                                         "native stack projection requires a "
+                                         "canonical 64-bit near return");
+        if (auto Pop = Decode.returnImmediate(Insn);
+            Pop && *Pop != 0 &&
+            !(Options.ExplicitMachineState && Options.X64CetDisabled))
           return llvm::createStringError(
               llvm::errc::not_supported,
-              "callee-pop returns require a recovery contract");
+              "callee-pop returns require physical native stack semantics");
         if (Options.ExplicitMachineState && Options.X64CetDisabled)
           Result.NativeStackControl = SpecializationNativeStackControl::Return;
         B.Control = LowInstructionControl::Return;

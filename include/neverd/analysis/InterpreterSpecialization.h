@@ -116,9 +116,10 @@ struct SpecializationOptions {
   /// do not unroll a loop forever.
   std::vector<symbolic::SymRegisterRange> ControlRegisters;
   /// Optional entry-relative frame identity. This enables affine pointers,
-  /// complete affine pointer spills, and constant frame-byte propagation,
-  /// not a private/non-aliasing memory claim.
-  /// The initial implementation requires an eight-byte register root.
+  /// complete affine pointer spills, and constant frame-byte propagation.
+  /// Bounded alignment refinements cover every entry-root residue; they do
+  /// not assume ABI alignment or private/non-aliasing memory. The root must
+  /// be an eight-byte register.
   std::optional<symbolic::SymRegisterRange> FrameBaseRegister;
   /// Context hints only: missing bytes remain unknown. Other frame facts join
   /// by intersection, so changing spilled business values do not unroll loops.
@@ -126,7 +127,8 @@ struct SpecializationOptions {
   /// An outer RETURN requires the original frame-base value and no writes to
   /// its entry [0, 8) control slot. With a provider native-stack certificate,
   /// non-entry RETURN instead loads a proved exact destination and advances
-  /// the stack. Uncertified return dispatch remains unsupported.
+  /// the stack, including certified internal imm16 cleanup. Outer cleanup
+  /// and uncertified return dispatch remain unsupported.
   bool RequireRestoredFrameAtReturn = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry

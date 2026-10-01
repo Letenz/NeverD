@@ -76,6 +76,7 @@ add_neverd_unittest(NeverDInterpreterSpecializationTests
   ControlDiscoveryTests.cpp
   FiniteValuesTests.cpp
   FiniteQueryCacheTests.cpp
+  FrameOffsetsTests.cpp
   LINK_COMPONENTS InterpreterSpecialization
 )
 
