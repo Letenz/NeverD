@@ -46,13 +46,19 @@ public:
     return Native.step(State, Root, Control);
   }
 };
-class X64ProbeExecution : public testing::TestWithParam<ExecutionBackendKind> {
+struct ProbeBackend {
+  ExecutionBackendKind Backend;
+};
+void PrintTo(const ProbeBackend &Value, std::ostream *OS) {
+  *OS << executionBackendName(Value.Backend);
+}
+class X64ProbeExecution : public testing::TestWithParam<ProbeBackend> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
   std::unique_ptr<X64Machine> Machine;
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
-    auto Created = GetParam() == ExecutionBackendKind::KVM
+    auto Created = GetParam().Backend == ExecutionBackendKind::KVM
                        ? createKvmMachine(*Memory)
                        : createWhpMachine(*Memory);
     if (!Created) {
@@ -85,8 +91,10 @@ TEST_P(X64ProbeExecution, ExistingGuestMappingAndRAMSurviveInitialization) {
   EXPECT_EQ(After, Before);
   EXPECT_EQ(Original.Entries, Instructions);
 }
-INSTANTIATE_TEST_SUITE_P(Native, X64ProbeExecution,
-                         testing::Values(ExecutionBackendKind::KVM,
-                                         ExecutionBackendKind::WHP));
+INSTANTIATE_TEST_SUITE_P(
+    Native, X64ProbeExecution,
+    testing::Values(ProbeBackend{ExecutionBackendKind::KVM},
+                    ProbeBackend{ExecutionBackendKind::WHP}),
+    [](const auto &Info) { return executionBackendName(Info.param.Backend); });
 } // namespace
 } // namespace neverd::emulation

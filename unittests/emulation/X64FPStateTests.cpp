@@ -14,7 +14,7 @@
 #include "llvm/Support/Memory.h"
 
 #include <cstring>
-#include <tuple>
+#include <string>
 
 namespace neverd::emulation {
 namespace {
@@ -193,7 +193,24 @@ TEST(X64FPState, SoftwareResetAndContextsRetainExtendedRegisters) {
             S.FP.Registers.back());
 }
 
-using Parameter = std::tuple<ExecutionBackendKind, bool>;
+struct Parameter {
+  ExecutionBackendKind Backend;
+  bool UserMode;
+  std::string name() const {
+    return std::string(executionBackendName(Backend)) +
+           (UserMode ? UserSuffix : SupervisorSuffix);
+  }
+};
+void PrintTo(const Parameter &Value, std::ostream *OS) { *OS << Value.name(); }
+std::string parameterName(const testing::TestParamInfo<Parameter> &Info) {
+  return Info.param.name();
+}
+const Parameter Parameters[] = {
+#define NEVERD_FP_TRANSPORT(Backend, User)                                     \
+  {ExecutionBackendKind::Backend, User},
+#include "X64FPCases.def"
+#undef NEVERD_FP_TRANSPORT
+};
 class X64FPTransport : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
@@ -201,11 +218,11 @@ protected:
   uint64_t Root = 0;
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
-    auto M = std::get<0>(GetParam()) == ExecutionBackendKind::KVM
+    auto M = GetParam().Backend == ExecutionBackendKind::KVM
                  ? createKvmMachine(*Memory)
-             : std::get<0>(GetParam()) == ExecutionBackendKind::WHP
+             : GetParam().Backend == ExecutionBackendKind::WHP
                  ? createWhpMachine(*Memory)
-                 : createUnicornX64Machine(*Memory, std::get<1>(GetParam()));
+                 : createUnicornX64Machine(*Memory, GetParam().UserMode);
     if (!M) {
       auto E = M.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
@@ -221,7 +238,7 @@ protected:
         Memory->map(Data, memory::PageSize, Read | Write | UserAccessible));
   }
   void step(X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes) {
-    State.UserMode = std::get<1>(GetParam());
+    State.UserMode = GetParam().UserMode;
     State.reg(X64Register::PC) = Code;
     llvm::cantFail(Memory->write(Code, Bytes));
     llvm::cantFail(Memory->beginRun());
@@ -312,8 +329,8 @@ class X64FPContext : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<ExecutionBackend> CPU;
   void SetUp() override {
-    auto B = createExecutionBackend(std::get<0>(GetParam()),
-                                    std::get<1>(GetParam())
+    auto B = createExecutionBackend(GetParam().Backend,
+                                    GetParam().UserMode
                                         ? ExecutionContract::CheckedUserX64
                                         : ExecutionContract::CheckedX64,
                                     Limit);
@@ -403,18 +420,9 @@ TEST_P(X64FPContext, RejectsInvalidWidthsAndEncodingsWithoutTruncation) {
   llvm::consumeError(std::move(W));
   EXPECT_FALSE(registerMatches(CPURegister::Invalid, GuestArchitecture::X64));
 }
-INSTANTIATE_TEST_SUITE_P(
-    ExplicitBackends, X64FPContext,
-    testing::Combine(testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP,
-                                     ExecutionBackendKind::Unicorn),
-                     testing::Bool()));
-
-INSTANTIATE_TEST_SUITE_P(
-    ExplicitBackends, X64FPTransport,
-    testing::Combine(testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP,
-                                     ExecutionBackendKind::Unicorn),
-                     testing::Bool()));
+INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64FPContext,
+                         testing::ValuesIn(Parameters), parameterName);
+INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64FPTransport,
+                         testing::ValuesIn(Parameters), parameterName);
 } // namespace
 } // namespace neverd::emulation

@@ -1,0 +1,32 @@
+//===- WhpHostFailureCases.def - Independent native error expectations ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_RUN_FAILURE
+NEVERD_WHP_RUN_FAILURE(
+    E_FAIL, "WHP single-step execution failed (WHvRunVirtualProcessor; HRESULT "
+            "0x80004005)")
+NEVERD_WHP_RUN_FAILURE(
+    E_ACCESSDENIED,
+    "WHP single-step execution failed (WHvRunVirtualProcessor; HRESULT "
+    "0x80070005)")
+#endif
+#ifdef NEVERD_WHP_FAILURE_TEXT
+NEVERD_WHP_FAILURE_TEXT(
+    ModernCapture,
+    "WHP CPU state transfer failed (WHvGetVirtualProcessorState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyCapture,
+    "WHP CPU state transfer failed (WHvGetVirtualProcessorXsaveState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    ModernInstall,
+    "WHP CPU state transfer failed (WHvSetVirtualProcessorState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyInstall,
+    "WHP CPU state transfer failed (WHvSetVirtualProcessorXsaveState; HRESULT "
+    "0x80004005)")
+#endif

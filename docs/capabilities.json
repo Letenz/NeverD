@@ -4310,6 +4310,33 @@
           "platforms": [
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpEntryControlTests.cpp",
+          "filter": "WhpEntryControl.GenuineHostFailureOutranksASimultaneousStop",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.QueryFailureRetainsStatusBeforeAllocatingState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InstallFailureRetainsStatusAndHostPacket/*",
+          "platforms": [
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
