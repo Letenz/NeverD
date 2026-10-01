@@ -28,5 +28,10 @@ std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
                                                      uint64_t CountAndFlags,
                                                      uint64_t Storage);
 
+/// Validate both value words of Darwin's 64-bit inline UTF-8 String form.
+/// This does not establish that an arbitrary numeric pair is a String; the
+/// caller must authenticate the String consumer or storage declaration.
+bool isCanonicalSwiftSmallString(uint64_t Payload, uint64_t TaggedPayload);
+
 } // namespace neverd
 #endif

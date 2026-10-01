@@ -3720,12 +3720,11 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
       !Address || Address % Width || Address > InvalidVA - Width)
     return std::nullopt;
   const auto Bytes = readImmutableImageBytes(Image, Address, Width);
-  if (!Bytes || ((*Bytes)[15] & 0xf0) != 0xe0)
+  if (!Bytes || ((*Bytes)[15] & 0xf0) != 0xe0 ||
+      !isCanonicalSwiftSmallString(
+          llvm::support::endian::read64le(Bytes->data()),
+          llvm::support::endian::read64le(Bytes->data() + 8)))
     return std::nullopt;
-  const uint8_t Count = (*Bytes)[15] & 0x0f;
-  for (unsigned I = 0; I < 15; ++I)
-    if ((I < Count && (*Bytes)[I] >= 0x80) || (I >= Count && (*Bytes)[I] != 0))
-      return std::nullopt;
 
   const Symbol *Storage = nullptr;
   for (const auto &Candidate : Image.Symbols) {
@@ -3864,16 +3863,8 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
 
   const uint64_t Payload = First.StoreVal->ConstVal;
   const uint64_t Tag = Second.StoreVal->ConstVal;
-  const uint8_t Marker = Tag >> 56;
-  if ((Marker & 0xf0) != 0xe0)
+  if ((Tag >> 60) != 0xe || !isCanonicalSwiftSmallString(Payload, Tag))
     return false;
-  const unsigned Length = Marker & 0x0f;
-  for (unsigned Index = 0; Index < 15; ++Index) {
-    const uint8_t Byte =
-        Index < 8 ? Payload >> (Index * 8) : Tag >> ((Index - 8) * 8);
-    if ((Index < Length && Byte >= 0x80) || (Index >= Length && Byte != 0))
-      return false;
-  }
 
   const auto SameAddress = [&](auto &&Self, const ExprPtr &Left,
                                const ExprPtr &Right, unsigned Depth) -> bool {
@@ -3995,12 +3986,11 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
     return std::nullopt;
   for (uint64_t Word = 0; Word < Pairs * 2; ++Word) {
     const auto *String = Bytes + Word * 16;
-    if ((String[15] & 0xf0) != 0xe0)
+    if ((String[15] & 0xf0) != 0xe0 ||
+        !isCanonicalSwiftSmallString(
+            llvm::support::endian::read64le(String),
+            llvm::support::endian::read64le(String + 8)))
       return std::nullopt;
-    const uint8_t Count = String[15] & 0x0f;
-    for (unsigned I = 0; I < 15; ++I)
-      if ((I < Count && String[I] >= 0x80) || (I >= Count && String[I] != 0))
-        return std::nullopt;
   }
   size_t BoundarySymbols = 0;
   for (const auto &Symbol : Image.Symbols) {
@@ -4099,12 +4089,11 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
       return std::nullopt;
   for (uint64_t I = 0; I < Count * 2; ++I) {
     const auto *String = Bytes + 40 + I * 16;
-    if ((String[15] & 0xf0) != 0xe0)
+    if ((String[15] & 0xf0) != 0xe0 ||
+        !isCanonicalSwiftSmallString(
+            llvm::support::endian::read64le(String),
+            llvm::support::endian::read64le(String + 8)))
       return std::nullopt;
-    const unsigned Length = String[15] & 0xf;
-    for (unsigned J = 0; J < 15; ++J)
-      if ((J < Length && String[J] >= 0x80) || (J >= Length && String[J] != 0))
-        return std::nullopt;
   }
   // Revalidate this complete layout when the binding is consumed, while
   // sharing the ordinary named-storage helper with direct accesses.
@@ -6790,8 +6779,45 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           if (Expected && runtimeBindingMatches(Binding, *Expected) &&
               Expression->Operands.size() ==
                   Binding.Signature.Parameters.size()) {
+            bool InlineValue = false;
             for (const auto &[WordIndex, StorageIndex] :
                  Expected->SwiftStringInputs) {
+              if ((Index == WordIndex || Index == StorageIndex) &&
+                  WordIndex < Expression->Operands.size() &&
+                  StorageIndex < Expression->Operands.size()) {
+                const auto PlainWord = [](const ExprPtr &Value) {
+                  return Value && Value->Kind == ExprKind::Const &&
+                         Value->Type && Value->Type->Size == 8 &&
+                         (Value->Type->Kind == NdTypeKind::Int ||
+                          Value->Type->Kind == NdTypeKind::Ptr) &&
+                         Value->Operands.empty() && !Value->SourceCallHint &&
+                         Value->IntrinsicId == Intrinsic::None &&
+                         Value->IntrinsicOutputs.empty() &&
+                         !Value->IndirectTarget &&
+                         Value->MemoryOrdering == NdMemoryOrdering::None &&
+                         Value->MemoryAddressSpace ==
+                             NdMemoryAddressSpace::Default &&
+                         Value->AddressOwnerVA == InvalidVA &&
+                         (Value->ConstProvenance ==
+                              ConstantAddressProvenance::Scalar ||
+                          Value->ConstProvenance ==
+                              ConstantAddressProvenance::Unknown);
+                };
+                const auto &Word = Expression->Operands[WordIndex];
+                const auto &Storage = Expression->Operands[StorageIndex];
+                if (PlainWord(Word) && PlainWord(Storage) &&
+                    isCanonicalSwiftSmallString(Word->ConstVal,
+                                                Storage->ConstVal)) {
+                  // The authenticated String argument contains inline bytes,
+                  // even if one word coincides with an image address. This
+                  // value proof applies only to this consumer occurrence.
+                  auto Scalar = std::make_shared<HighExpr>(*Operand);
+                  Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+                  Operand = Copy(Scalar, Depth + 1, true, false, false);
+                  InlineValue = true;
+                  break;
+                }
+              }
               if (Index != StorageIndex ||
                   WordIndex >= Expression->Operands.size())
                 continue;
@@ -6819,7 +6845,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
               Result.BorrowedBytes.insert(Range);
               break;
             }
-            if (containsBorrowedStorage(Operand))
+            if (InlineValue || containsBorrowedStorage(Operand))
               continue;
           }
         }

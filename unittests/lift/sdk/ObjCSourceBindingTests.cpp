@@ -5256,6 +5256,147 @@ TEST(ObjCSourceBindings, SwiftLiteralStoragePreservesBytesAndConsumerIdentity) {
   }
 }
 
+TEST(ObjCSourceBindings, SwiftInlineStringValidatesBothWords) {
+  for (const std::string Text :
+       {std::string(), std::string("url"), std::string("abcdefgh"),
+        std::string("abcdefghijklmno"), std::string("caf\xc3\xa9"),
+        std::string("\xe4\xb8\xad\xf0\x9f\x8c\x8d"), std::string("a\0b", 3)}) {
+    std::array<uint8_t, 16> Bytes{};
+    std::copy(Text.begin(), Text.end(), Bytes.begin());
+    const bool ASCII = std::all_of(Text.begin(), Text.end(), [](char C) {
+      return static_cast<unsigned char>(C) < 0x80;
+    });
+    Bytes[15] = (ASCII ? 0xe0 : 0xa0) | Text.size();
+    const auto Word = llvm::support::endian::read64le(Bytes.data());
+    const auto Storage = llvm::support::endian::read64le(Bytes.data() + 8);
+    EXPECT_TRUE(isCanonicalSwiftSmallString(Word, Storage));
+    EXPECT_FALSE(
+        isCanonicalSwiftSmallString(Word, Storage ^ (UINT64_C(1) << 62)));
+    EXPECT_FALSE(
+        isCanonicalSwiftSmallString(Word, Storage | (UINT64_C(1) << 60)));
+    if (Text.size() < 15) {
+      Bytes[Text.size()] = 1;
+      EXPECT_FALSE(isCanonicalSwiftSmallString(
+          llvm::support::endian::read64le(Bytes.data()),
+          llvm::support::endian::read64le(Bytes.data() + 8)));
+    }
+  }
+  for (const auto InvalidUTF8 :
+       {UINT64_C(0x80), UINT64_C(0xc3), UINT64_C(0xafc0), UINT64_C(0x80a0ed)}) {
+    SCOPED_TRACE(InvalidUTF8);
+    const unsigned Count = InvalidUTF8 <= 0xff     ? 1
+                           : InvalidUTF8 <= 0xffff ? 2
+                                                   : 3;
+    EXPECT_FALSE(isCanonicalSwiftSmallString(InvalidUTF8,
+                                             (UINT64_C(0xa0) | Count) << 56));
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftInlineStringPayloadIsLocalToItsExactConsumer) {
+  using P = ConstantAddressProvenance;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto Provenance : {P::Unknown, P::Scalar}) {
+      SwiftLiteralFixture F(Architecture);
+      // Two ASCII bytes happen to occupy an unrelated mapped-image address.
+      const auto Word = HighExpr::makeConst(0x1041, 8, Provenance);
+      const auto Storage =
+          HighExpr::makeConst(UINT64_C(0xe200000000000000), 8, Provenance);
+      F.Call->Operands = {Word, Storage};
+      const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      EXPECT_TRUE(Result.BorrowedBytes.empty());
+      const auto Bound = Result.Function.Body[0].RetVal;
+      ASSERT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+      for (unsigned I = 0; I < 2; ++I) {
+        EXPECT_EQ(Bound->Operands[I]->Kind, ExprKind::Const);
+        EXPECT_EQ(Bound->Operands[I]->ConstVal, F.Call->Operands[I]->ConstVal);
+        EXPECT_EQ(Bound->Operands[I]->ConstProvenance, P::Scalar);
+        EXPECT_EQ(F.Call->Operands[I]->ConstProvenance, Provenance);
+      }
+      F.Function.Body[0].RetVal =
+          HighExpr::makeBinop(NdOp::INT_OR, F.Call, Word);
+      EXPECT_FALSE(
+          bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+    }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftInlineStringRejectsUnprovenConsumerAndAddressWords) {
+  using P = ConstantAddressProvenance;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      SwiftLiteralFixture F(Architecture);
+      auto Word = HighExpr::makeConst(0x1041, 8, P::Scalar);
+      auto Storage =
+          HighExpr::makeConst(UINT64_C(0xe200000000000000), 8, P::Scalar);
+      F.Call->Operands = {Word, Storage};
+      auto Hint = std::make_shared<SourceCallTypeHint>(*F.Call->SourceCallHint);
+      F.Call->SourceCallHint = Hint;
+      switch (Mutation) {
+      case 0:
+        Word->ConstProvenance = P::DataAddress;
+        break;
+      case 1:
+        Word->ConstProvenance = P::CodeAddress;
+        break;
+      case 2:
+        Word->AddressOwnerVA = Word->ConstVal;
+        break;
+      case 3:
+        Storage->ConstProvenance = P::DataAddress;
+        break;
+      case 4:
+        Storage->AddressOwnerVA = 0x1041;
+        break;
+      case 5:
+        Storage->ConstVal = UINT64_C(0xe100000000000000);
+        break;
+      case 6:
+        Storage->ConstVal = UINT64_C(0xa200000000000000);
+        break;
+      case 7:
+        F.Image.DyldBindSlots[F.ImportSlot].Module = "/tmp/Foundation";
+        break;
+      case 8:
+        F.Image.DyldBindSlots[F.ImportSlot].WeakImport = true;
+        break;
+      case 9:
+        F.Image.DyldBindSlots[F.ImportSlot].Addend = 8;
+        break;
+      case 10:
+        Hint->SwiftStringInputs = {{1, 0}};
+        break;
+      case 11:
+        Hint->SwiftStringInputs.clear();
+        break;
+      case 12:
+        F.Call->IsIndirectCall = true;
+        break;
+      case 13:
+        Word->Type = NdType::makeInt(4, false);
+        break;
+      case 14:
+        Storage->Operands.push_back(HighExpr::makeConst(0, 8));
+        break;
+      case 15:
+        Storage->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 16:
+        Storage->IndirectTarget = HighExpr::makeConst(0, 8);
+        break;
+      case 17:
+        F.Call->Operands.push_back(HighExpr::makeConst(0, 8));
+        break;
+      case 18:
+        Hint->Signature.Parameters[0].Type = NdType::makeFloat(8);
+        break;
+      }
+      EXPECT_FALSE(
+          bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+    }
+}
+
 TEST(ObjCSourceBindings,
      UIKitImageLiteralInitializerRebuildsExactSwiftStringStorage) {
   SwiftLiteralFixture F(Arch::AArch64);
