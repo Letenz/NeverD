@@ -4703,3 +4703,221 @@ int main() {
 )CPP";
   executeSynchronizedSource(*Source, Harness);
 }
+
+namespace {
+struct SynchronizedForwardedResumeFixture : SynchronizedSplitResumeFixture {
+  SynchronizedForwardedResumeFixture() {
+    put(0x3008, 0xaa0003f4U); // self and the retained lock are different values
+    call(0x3014, 0x4100);     // retainAutoreleasedReturnValue returns the lock
+    put(0x3018, 0xaa0003f3U);
+    call(0x3030, 0x4000); // another protected call in the same loop
+    put(0x3060, 0xaa0003f4U);
+    put(0x3064, 0x14000006U); // resumption-only entry reaches mov x0, x20
+    put(0x3068, 0x14000002U); // first alias of the synchronized cleanup
+    put(0x306c, 0x14000001U); // second alias
+    put(0x3070, 0xaa0003f4U);
+    put(0x3074, 0xaa1303e0U);
+    call(0x3078, 0x4210);
+    put(0x307c, 0xaa1403e0U);
+    call(0x3080, 0x4220);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange.End = 0x3084;
+    auto &Sites = EH.Itanium->CallSites;
+    Sites[1].GuardedRange.End = 0x302c;
+    Sites[1].LandingPadVA = 0x3068;
+    Sites[2].LandingPadVA = 0x3060;
+    Sites[4].LandingPadVA = 0x3060;
+    Sites[5].GuardedRange.End = 0x3084;
+    const auto AliasSite = Sites[1];
+    Sites.insert(Sites.begin() + 2, AliasSite);
+    Sites[2].GuardedRange = {0x302c, 0x3034};
+    Sites[2].LandingPadVA = 0x306c;
+    EH.ObjC->LandingPads = {
+        {{0x3024, 0x302c}, 0x3068, ObjCPadKind::Cleanup, {}},
+        {{0x302c, 0x3034}, 0x306c, ObjCPadKind::Cleanup, {}},
+        {{0x3034, 0x303c}, 0x3060, ObjCPadKind::Cleanup, {}},
+        {{0x304c, 0x3054}, 0x3060, ObjCPadKind::Cleanup, {}}};
+    // Both cleanup aliases are referenced, while the explicit cleanup body
+    // remains part of the authenticated machine trailer.
+    MedVar Lock;
+    Lock.Kind = MedVar::Reg;
+    Lock.Id = 50003;
+    Lock.Size = 8;
+    Lock.TheArch = Arch::AArch64;
+    Lock.RegOff = a64reg::X19;
+    HighStmt NormalExit = Function.Body[3];
+    NormalExit.Addr = 0x3048;
+    NormalExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                        {HighExpr::makeVar(Lock)});
+    auto Label = Function.Body[2];
+    auto Save = Function.Body[4];
+    Save.Addr = 0x3064;
+    auto Resume = Function.Body[5];
+    Resume.Addr = 0x3064;
+    auto AliasExit = NormalExit;
+    AliasExit.Addr = 0x3068;
+    AliasExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                       {HighExpr::makeVar(Lock)});
+    auto AliasSave = Save;
+    AliasSave.Addr = 0x3068;
+    auto AliasResume = Resume;
+    AliasResume.Addr = 0x3068;
+    auto SecondLabel = Label;
+    SecondLabel.Addr = 0x306c;
+    auto CleanupLabel = Label;
+    CleanupLabel.Addr = 0x3070;
+    auto CleanupExit = NormalExit;
+    CleanupExit.Addr = 0x3078;
+    CleanupExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                         {HighExpr::makeVar(Lock)});
+    auto CleanupSave = Save;
+    CleanupSave.Addr = 0x3078;
+    auto CleanupResume = Resume;
+    CleanupResume.Addr = 0x3080;
+    auto Work = Function.Body.front();
+    auto Return = Function.Body[1];
+    auto SyntheticReturn = Function.Body.back();
+    Function.Body = {Work,        NormalExit,    Return,         Label,
+                     Save,        Resume,        AliasExit,      AliasSave,
+                     AliasResume, SecondLabel,   CleanupLabel,   CleanupExit,
+                     CleanupSave, CleanupResume, SyntheticReturn};
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeUsesRetainedLockIdentity) {
+  SynchronizedForwardedResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->SplitResumePadBytes, 36U);
+  EXPECT_EQ(
+      branch::a64BranchTarget(*objcSynchronizedWord(F.Image, 0x3064), 0x3064),
+      0x307cU);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+  EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  EXPECT_EQ(F.Function.Body.size(), 3U);
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeRejectsWrongLockAndEdges) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3018,
+                                  0xaa0003f4U}, // saved a different register
+        {0x3024, 0xaa0003f3U},    // overwrite lock inside the loop
+        {0x3044, 0xaa1403e0U},    // normal unlock uses self
+        {0x3074, 0xaa1403e0U},    // exceptional unlock uses self
+        {0x3064, 0x14000005U},    // passthrough performs an unlock
+        {0x3068, 0x14000003U},    // alias misses exception preservation
+        {0x306c, 0x17fffffdU},    // alias loops through passthrough
+        {0x302c, 0x17fffffaU}}) { // reenter the saved-lock instruction
+    SynchronizedForwardedResumeFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Address);
+  }
+  SynchronizedForwardedResumeFixture F;
+  F.call(0x3014,
+         0x4140); // plain retain does not certify this acquisition shape
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  SynchronizedForwardedResumeFixture Weak;
+  Weak.Image.DyldBindSlots[0x5108].WeakImport = true;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Weak.Image, Weak.Function));
+  SynchronizedForwardedResumeFixture Pad;
+  Pad.Function.ExceptionMetadata->ObjC->LandingPads[0].Kind =
+      ObjCPadKind::Catch;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Pad.Image, Pad.Function));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeRejectsHighReceiverMismatch) {
+  for (int Change = 0; Change < 4; ++Change) {
+    SynchronizedForwardedResumeFixture F;
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    if (Change == 0)
+      F.Function.Body[6].Val->Operands[0] = F.Function.Body[0].Val->Operands[0];
+    if (Change == 1)
+      F.Function.Body[1].Val->Operands[0] = F.Function.Body[0].Val->Operands[0];
+    if (Change == 2)
+      F.Function.Body[6].Val->CallAddr = 0x4200;
+    if (Change == 3)
+      F.Function.Body[6].Addr = 0x3064;
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeUnwindsOnlyTheRetainedLock) {
+  SynchronizedForwardedResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *query(void*);
+extern void *objc_retainAutoreleasedReturnValue(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*);
+void neverd_objc_imp_3000(void *objc_self) {
+    uint64_t v3 = (uint64_t)(uintptr_t)objc_retainAutoreleasedReturnValue(query(objc_self));
+    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(v3)));
+    for (int i = 0; i < 2; ++i) work(objc_self);
+    objc_release(objc_self);
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(v3)));
+    objc_release((void*)(uintptr_t)(v3));
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *self = (void*)(uintptr_t)0x1122;
+static void *lock = (void*)(uintptr_t)0x3344;
+static int failure, exits, bad;
+static uint64_t order;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (failure == tag) throw tag;
+}
+extern "C" void *query(void *object) { step(object, self, 1); return lock; }
+extern "C" void *objc_retainAutoreleasedReturnValue(void *object) {
+    step(object, lock, 2); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 3); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*) __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object) { step(object, self, 4); }
+extern "C" void *objc_retain(void *object) { step(object, self, 6); return object; }
+extern "C" void objc_release(void *object) {
+    step(object, exits ? lock : self, exits ? 8 : 5);
+}
+extern "C" void neverd_objc_imp_3000(void*);
+int main() {
+    const uint64_t wanted[] = {123445678, 1, 12, 123, 12347,
+                              123445, 1234456, 12344567, 123445678};
+    for (failure = 0; failure <= 8; ++failure) {
+        order = bad = exits = 0;
+        int caught = 0;
+        try { neverd_objc_imp_3000(self); }
+        catch (int exception) { caught = exception; }
+        const int unlocks = failure == 0 || failure == 4 || failure >= 7;
+        if (caught != failure || order != wanted[failure] || exits != unlocks || bad)
+            return 10 + failure;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}

@@ -44,9 +44,10 @@ struct ObjCSynchronizedSourceProof {
   uint8_t LandingPadPrelude = 0; // exact B to the five-instruction cleanup
   // Separate, non-nested acquisitions of the same saved self receiver.
   std::vector<ObjCSynchronizedSourceLifetime> Lifetimes;
-  // Unlocking and resumption-only entries share a seven-instruction tail.
+  // Unlocking and resumption-only entries share one authenticated tail.
   bool SplitResumeTail = false;
   va_t LandingPadExitTarget = 0;
+  uint8_t SplitResumePadBytes = 0;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -1170,13 +1171,26 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
       EH.Delphi || EH.DelphiScopes || EH.Go || EH.Rust ||
       EH.ObjC->Runtime != ObjCRuntimeKind::AppleNonFragile ||
       EH.ObjC->UsesFragileSetjmp || EH.ObjC->UsesMSVCTables ||
-      EH.CodeRange.End < 28 || EH.CodeRange.End - 28 <= Function.Entry ||
-      EH.CodeRange.End - 28 - Function.Entry > 16384 ||
       (Function.Entry | EH.CodeRange.End) % 4 ||
       EH.Itanium->CallSites.empty() || EH.Itanium->CallSites.size() > 129)
     return std::nullopt;
-  const va_t Landing = EH.CodeRange.End - 28;
-  const va_t Passthrough = Landing + 16;
+  va_t Landing = InvalidVA;
+  for (const auto &Site : EH.Itanium->CallSites)
+    if (Site.LandingPadVA)
+      Landing = std::min(Landing, Site.LandingPadVA);
+  if (Landing <= Function.Entry || Landing >= EH.CodeRange.End ||
+      Landing - Function.Entry > 16384 || Landing % 4)
+    return std::nullopt;
+  const va_t PadBytes = EH.CodeRange.End - Landing;
+  if (PadBytes != 28 && PadBytes != 36)
+    return std::nullopt;
+  const bool Forwarded = PadBytes == 36;
+  const va_t Cleanup = Landing + (Forwarded ? 16 : 0);
+  const va_t Passthrough = Landing + (Forwarded ? 0 : 16);
+  const auto Unlocks = [&](va_t Pad) {
+    return Pad == Cleanup ||
+           (Forwarded && (Pad == Landing + 8 || Pad == Landing + 12));
+  };
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
   };
@@ -1187,13 +1201,16 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
     return objcUnwindRuntimeTargetIs(Image, Target(Address), Name,
                                      "/usr/lib/libobjc.A.dylib");
   };
-  const va_t ExitTarget = Target(Landing + 8);
-  const va_t ResumeTarget = Target(Landing + 24);
-  if (!SyncIs(Landing + 8, "_objc_sync_exit") ||
+  const va_t ExitTarget = Target(Cleanup + 8);
+  const va_t ResumeTarget = Target(EH.CodeRange.End - 4);
+  if (!SyncIs(Cleanup + 8, "_objc_sync_exit") ||
       !objcUnwindRuntimeTargetIs(
           Image, ResumeTarget, "__Unwind_Resume",
           "/usr/lib/libSystem.B.dylib|/usr/lib/system/libunwind.dylib") ||
-      Word(Landing + 12) != 0x14000002U)
+      (!Forwarded && Word(Cleanup + 12) != 0x14000002U) ||
+      (Forwarded &&
+       (Word(Landing + 4) != 0x14000006U || Word(Landing + 8) != 0x14000002U ||
+        Word(Landing + 12) != 0x14000001U)))
     return std::nullopt;
   const auto SaveX0 = [](unsigned Register) { return 0xaa0003e0U | Register; };
   const auto LoadX0 = [](unsigned Register) {
@@ -1201,14 +1218,14 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
   };
   unsigned Receiver = 0, Exception = 0;
   for (unsigned Register = 19; Register <= 22; ++Register) {
-    if (Word(Landing + 4) == LoadX0(Register))
+    if (Word(Cleanup + 4) == LoadX0(Register))
       Receiver = Register;
-    if (Word(Landing) == SaveX0(Register))
+    if (Word(Cleanup) == SaveX0(Register))
       Exception = Register;
   }
   if (!Receiver || !Exception || Receiver == Exception ||
       Word(Passthrough) != SaveX0(Exception) ||
-      Word(Landing + 20) != LoadX0(Exception))
+      Word(EH.CodeRange.End - 8) != LoadX0(Exception))
     return std::nullopt;
   for (const auto &Call : EH.ObjC->RuntimeCalls)
     if (Call.Kind == ObjCRuntimeCallKind::BeginCatch ||
@@ -1230,12 +1247,12 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
     Next = Range.End;
     if (!Site.LandingPadVA)
       continue;
-    const bool Unlock = Site.LandingPadVA == Landing;
+    const bool Unlock = Unlocks(Site.LandingPadVA);
     if ((!Unlock && Site.LandingPadVA != Passthrough) || Range.End > Landing ||
         std::count_if(EH.ObjC->LandingPads.begin(), EH.ObjC->LandingPads.end(),
                       [&](const auto &Pad) {
                         return Pad.PadVA == Site.LandingPadVA &&
-                               Pad.Kind == (Unlock
+                               Pad.Kind == (Site.LandingPadVA == Cleanup
                                                 ? ObjCPadKind::SynchronizedExit
                                                 : ObjCPadKind::Cleanup) &&
                                Pad.Catches.empty() &&
@@ -1263,14 +1280,25 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
       return std::nullopt;
   }
   if (Enter < Function.Entry + 8 || Exit <= Enter + 4 ||
-      Word(Enter - 4) != LoadX0(Receiver) || Word(Exit - 4) != LoadX0(Receiver))
+      Word(Exit - 4) != LoadX0(Receiver))
     return std::nullopt;
-  for (va_t Address = Function.Entry; Address < Enter - 4; Address += 4)
-    if (Word(Address) == SaveX0(Receiver)) {
-      if (Saved || Address - Function.Entry > 32)
-        return std::nullopt;
-      Saved = Address;
-    }
+  const bool RetainedLocal =
+      Word(Enter - 4) == SaveX0(Receiver) &&
+      objcSynchronizedRuntimeTargetIs(Image, Target(Enter - 8),
+                                      "objc_retainAutoreleasedReturnValue",
+                                      a64reg::X0);
+  if (RetainedLocal)
+    Saved = Enter - 4;
+  else {
+    if (Word(Enter - 4) != LoadX0(Receiver))
+      return std::nullopt;
+    for (va_t Address = Function.Entry; Address < Enter - 4; Address += 4)
+      if (Word(Address) == SaveX0(Receiver)) {
+        if (Saved || Address - Function.Entry > 32)
+          return std::nullopt;
+        Saved = Address;
+      }
+  }
   if (!Saved)
     return std::nullopt;
 
@@ -1314,7 +1342,7 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
                        Writes, &WriteCount) != CS_ERR_OK)
       return std::nullopt;
     for (uint8_t I = 0; I < WriteCount; ++I)
-      if ((Address < Saved &&
+      if ((!RetainedLocal && Address < Saved &&
            (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0)) ||
           (Address > Saved && Address < Exit &&
            (Writes[I] == ReceiverX[Receiver - 19] ||
@@ -1325,7 +1353,7 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL);
     const bool Jump =
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP);
-    if (Address < Saved && (Node.Call || Jump))
+    if (!RetainedLocal && Address < Saved && (Node.Call || Jump))
       return std::nullopt;
     for (const auto &Site : EH.Itanium->CallSites)
       if (Address >= Site.GuardedRange.Begin &&
@@ -1394,7 +1422,7 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
         return std::nullopt;
       Held = false;
     } else if (Node.Call && !Node.Terminal) {
-      if (Node.Pad == Landing) {
+      if (Unlocks(Node.Pad)) {
         if (!Held)
           return std::nullopt;
         ProtectedARC |= Node.ARC;
@@ -1422,6 +1450,8 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
   Proof.SuspendARC = SuspendARC;
   Proof.SplitResumeTail = true;
   Proof.LandingPadExitTarget = ExitTarget;
+  Proof.SplitResumePadBytes = static_cast<uint8_t>(PadBytes);
+  Proof.ReceiverIsSavedLocal = RetainedLocal;
   return Proof;
 }
 
@@ -1456,13 +1486,24 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
     HighFunc &Function, const ObjCSynchronizedSourceProof &Proof) {
   if (!Proof.SplitResumeTail || !Proof.LandingPad || !Proof.ResumeTarget ||
       !Proof.LandingPadExitTarget || Proof.LandingPadPrelude ||
-      Proof.LandingPad > InvalidVA - 28 || !Function.ExceptionMetadata ||
+      (Proof.SplitResumePadBytes != 28 && Proof.SplitResumePadBytes != 36) ||
+      Proof.LandingPad > InvalidVA - Proof.SplitResumePadBytes ||
+      !Function.ExceptionMetadata ||
       Function.ExceptionMetadata->CodeRange.Begin != Function.Entry ||
-      Function.ExceptionMetadata->CodeRange.End != Proof.LandingPad + 28 ||
+      Function.ExceptionMetadata->CodeRange.End !=
+          Proof.LandingPad + Proof.SplitResumePadBytes ||
       Function.Body.empty())
     return false;
   const auto InPad = [&](va_t Address) {
-    return Address >= Proof.LandingPad && Address < Proof.LandingPad + 28;
+    return Address >= Proof.LandingPad &&
+           Address < Proof.LandingPad + Proof.SplitResumePadBytes;
+  };
+  const bool Forwarded = Proof.SplitResumePadBytes == 36;
+  const va_t Cleanup = Proof.LandingPad + (Forwarded ? 16 : 0);
+  const va_t Passthrough = Proof.LandingPad + (Forwarded ? 0 : 16);
+  const auto UnlockAlias = [&](va_t Address) {
+    return Forwarded && (Address == Proof.LandingPad + 8 ||
+                         Address == Proof.LandingPad + 12);
   };
   auto &Body = Function.Body;
   const auto Marker = std::find_if(
@@ -1471,6 +1512,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
   for (auto It = Body.begin(); It != Marker; ++It)
     Pending.push_back(&*It);
   size_t Budget = 4096;
+  std::optional<MedVar> SavedReceiver;
   while (!Pending.empty()) {
     if (!Budget--)
       return false;
@@ -1478,6 +1520,22 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
     Pending.pop_back();
     if (InPad(S->Addr) || (S->Kind == StmtKind::Goto && InPad(S->GotoTarget)))
       return false;
+    if (Proof.ReceiverIsSavedLocal && S->Addr == Proof.ExitCall) {
+      const auto &Call = S->Val;
+      if (!Call || Call->Kind != ExprKind::Call || Call->IsIndirectCall ||
+          Call->CallAddr != Proof.LandingPadExitTarget ||
+          Call->Operands.size() != 1 || !Call->Operands[0] ||
+          Call->Operands[0]->Kind != ExprKind::Var ||
+          !Call->Operands[0]->Operands.empty() ||
+          Call->Operands[0]->Var.Size != 8 ||
+          (Call->Operands[0]->Var.Kind != MedVar::Temp &&
+           Call->Operands[0]->Var.Kind != MedVar::Reg))
+        return false;
+      const auto &Receiver = Call->Operands[0]->Var;
+      if (SavedReceiver && *SavedReceiver != Receiver)
+        return false;
+      SavedReceiver = Receiver;
+    }
     for (const auto &Child : S->Body)
       Pending.push_back(&Child);
     for (const auto &Child : S->ElseBody)
@@ -1491,6 +1549,8 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
       for (const auto &Child : Clause)
         Pending.push_back(&Child);
   }
+  if (Proof.ReceiverIsSavedLocal && !SavedReceiver)
+    return false;
   if (Marker == Body.end())
     return Body.back().Kind == StmtKind::Return;
   if (Marker == Body.begin() || Marker->Addr != Proof.LandingPad)
@@ -1507,7 +1567,8 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
             std::find(Exceptions.begin(), Exceptions.end(), E->Var) !=
                 Exceptions.end());
   };
-  bool SawExit = false, SawResume = false;
+  std::vector<va_t> Exits;
+  bool SawResume = false;
   for (auto It = Marker; It != Body.end(); ++It) {
     const auto &S = *It;
     if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
@@ -1547,18 +1608,23 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
       return false;
     const auto &Argument = Call->Operands.front();
     if (Call->CallAddr == Proof.LandingPadExitTarget &&
-        S.Addr == Proof.LandingPad + 8 && !SawExit && Variable(Argument) &&
-        Argument->Var.Kind == MedVar::Param && Argument->Var.Id == 0 &&
-        Argument->Var.Size == 8) {
-      SawExit = true;
+        (S.Addr == Cleanup + 8 || UnlockAlias(S.Addr)) && Variable(Argument) &&
+        Argument->Var.Size == 8 &&
+        (SavedReceiver
+             ? Argument->Var == *SavedReceiver
+             : Argument->Var.Kind == MedVar::Param && Argument->Var.Id == 0) &&
+        std::find(Exits.begin(), Exits.end(), S.Addr) == Exits.end()) {
+      Exits.push_back(S.Addr);
       continue;
     }
     if (Call->CallAddr != Proof.ResumeTarget || !Exception(Argument) ||
-        (S.Addr != Proof.LandingPad + 12 && S.Addr != Proof.LandingPad + 24))
+        (S.Addr != Proof.LandingPad + Proof.SplitResumePadBytes - 4 &&
+         (Forwarded ? S.Addr != Passthrough + 4 && !UnlockAlias(S.Addr)
+                    : S.Addr != Cleanup + 12)))
       return false;
     SawResume = true;
   }
-  if (!SawExit || !SawResume)
+  if (Exits.empty() || !SawResume)
     return false;
   Body.erase(Marker, Body.end());
   return true;
