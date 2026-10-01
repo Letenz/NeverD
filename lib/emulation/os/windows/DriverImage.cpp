@@ -573,8 +573,8 @@ validateGuard(const COFFObjectFile &Object,
       Slot(offsetof(coff_load_configuration64, GuardCFCheckDispatch), false);
   if (!Dispatch)
     return Dispatch.takeError();
-  if ((*Check || *Dispatch) && !(Flags & guard::Instrumented))
-    return invalid("CFG slots require the instrumented flag");
+  // Dormant slots retain ordinary guest fallback code even when the linker
+  // emits zero GuardFlags. The enabled-image check above owns CFG admission.
   if (Guard.Enabled && !*Check)
     return invalid("CFG image requires a check pointer slot");
   Guard.CheckPointerAddress = *Check ? ActualBase + *Check : 0;
