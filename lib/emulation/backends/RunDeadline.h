@@ -12,11 +12,16 @@
 #include <algorithm>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <type_traits>
 #include <utility>
 
 namespace neverd::emulation {
+template <typename Status> struct NativeEntryResult {
+  std::optional<Status> Value;
+  bool Cancelled = false;
+};
 /// A transport-owned worker, reused across entries. The interrupt operation
 /// must be nonthrowing and remain valid until this controller is destroyed.
 /// Disarming waits for any in-flight interrupt call, so an old generation
@@ -38,6 +43,28 @@ public:
   }
   RunDeadline(const RunDeadline &) = delete;
   RunDeadline &operator=(const RunDeadline &) = delete;
+
+  /// Execute one nonthrowing host API call under this borrowed control. An
+  /// absent result means cancellation rejected entry before calling the host.
+  /// Retain an actual host result even with concurrent cancellation; only the
+  /// transport can interpret its success/failure convention and priority.
+  template <typename HostCall>
+  auto invoke(MachineRunControl Control, HostCall &&Call) {
+    static_assert(std::is_nothrow_invocable_v<HostCall &>);
+    using Status = std::invoke_result_t<HostCall &>;
+    if (Control.interrupted())
+      return NativeEntryResult<Status>{std::nullopt, true};
+    arm(Control);
+    // Arming may wait for an older interrupt to retire. Recheck before entry.
+    if (Control.interrupted()) {
+      disarm();
+      return NativeEntryResult<Status>{std::nullopt, true};
+    }
+    auto Value = Call();
+    const bool Cancelled = disarm();
+    return NativeEntryResult<Status>{std::move(Value),
+                                     Cancelled || Control.interrupted()};
+  }
 
   void arm(MachineRunControl Control) {
     std::lock_guard Lock(Mutex);

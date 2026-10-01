@@ -166,11 +166,17 @@ endif()
 
 add_neverd_unittest(NeverDRunControlTests
   RunControlTests.cpp
+  NativeEntryTests.cpp
+  WhpEntryControlTests.cpp
   MachineRunControlTests.cpp
   TIMEOUT 10
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRunControlTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(WIN32 AND NEVERD_EMULATION_BACKEND_WHP)
+  target_compile_definitions(NeverDRunControlTests PRIVATE
+    NEVERD_EMULATION_WHP=1 NOMINMAX)
+endif()
 
 add_neverd_unittest(NeverDExecutionConfigurationTests
   ExecutionConfigurationTests.cpp
