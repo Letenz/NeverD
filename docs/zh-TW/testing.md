@@ -890,7 +890,20 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇十個測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
 
-在 `native_cpu_only=true` 時，另設 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。`NativeDriverTests.def` 從 `DriverBuiltinImages.def` 的 26 個內建映像產生原位址和重定位位址共 52 個 WHP 必測結果；固定位址映像重定位時必須得到預期的載入器拒絕。穩定的參數識別使缺少或略過內建案例導致工作失敗；缺少選用 WDK 樣本仍明確略過。同一證據執行器支援 `--with-drivers`，並於執行前記錄全部選定測試目標。
+在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 28 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
+
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 76 個工作負載產生 152 個 WHP 結果：26 個內建映像、28 個 WDK 映像及 22 個要求情境，均涵蓋原始與重定位位址。加上 45 項 CPU 檢查，共有 197 項原生必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。
+
+```bash
+python3 scripts/build_wdk_driver_fixtures.py \
+  --output build-driver-fixtures --cache build-driver-packages
+cmake -S . -B build-native -G Ninja \
+  -C build-driver-fixtures/fixtures.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+  -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+```
 
 `NeverDAArch64StateTests` 驗證每個純量欄位、每個向量的兩個字、特權級改變、浮點指令未執行及傳輸錯誤診斷的保留。`NeverDAArch64FPTests` 在兩種特權級的真實傳輸上執行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用獨立組譯的 `AArch64ProbeCases.def` 原始指令。測試把這些與 PC 無關的指令遷到客體程式，保持監控頁僅供特權級存取。Unicorn 執行和原生後端的明確略過不能取代 ARM64 原生啟動證據。
 
