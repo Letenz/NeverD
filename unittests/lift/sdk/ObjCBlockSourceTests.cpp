@@ -394,6 +394,250 @@ TEST(ObjCBlockSources, StrongCaptureRetainsOnlyProvenMethodSelfClass) {
             "TestOwner");
 }
 
+namespace {
+struct CapturedIvarFixture : OwnedSourceFixture {
+  static constexpr va_t OffsetSlot = 0x2800;
+  ExprPtr Receiver, Offset, Address;
+  explicit CapturedIvarFixture(Arch Architecture = Arch::AArch64,
+                               unsigned Width = 8, bool Floating = false)
+      : OwnedSourceFixture(Architecture) {
+    ObjCClass Class;
+    Class.Name = "TestOwner";
+    Class.Address = 0x2900;
+    Class.RootClass = true;
+    Class.InheritanceStatus = "root";
+    Class.IvarStatus = "recovered";
+    Class.InstanceStart = 8;
+    Class.InstanceSize = 32;
+    const std::string Encoding = Floating     ? (Width == 4 ? "f" : "d")
+                                 : Width == 1 ? "C"
+                                 : Width == 2 ? "S"
+                                 : Width == 4 ? "I"
+                                              : "Q";
+    Class.Ivars.push_back(
+        {"_value", Encoding, 0x2920, OffsetSlot, 8, Width, Width});
+    Image.ObjCClasses.push_back(Class);
+    const unsigned SlotWidth = Architecture == Arch::AArch64 ? 4 : 8;
+    Image.ObjCSourceReferences[OffsetSlot] = {
+        ObjCSourceReference::Kind::IvarOffset, OffsetSlot,
+        static_cast<uint16_t>(SlotWidth), "_value", Class.Name};
+    put64(OffsetSlot, 8);
+    ObjCMethod Method;
+    Method.Implementation = Caller;
+    Method.ClassName = Class.Name;
+    Method.ClassAddress = Class.Address;
+    Method.Selector = "makeBlock";
+    Method.TypeEncoding = "@16@0:8";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    Image.ObjCMethods.push_back(Method);
+    const auto Hint = objcMethodSourceTypeHint(Image, Caller);
+    EXPECT_TRUE(Hint);
+    caller().SourceTypeHint = Hint;
+    caller().ReturnType = Hint->ReturnType;
+    caller().Params.clear();
+    for (const auto &P : Hint->Parameters)
+      caller().Params.push_back({P.Name, P.Type});
+    Receiver = HighExpr::makeLoad(
+        HighExpr::makeBinop(NdOp::INT_ADD,
+                            parameter(0, invoke().Params[0].Type),
+                            HighExpr::makeConst(32, 8)),
+        NdType::makeInt(8));
+    Offset = HighExpr::makeLoad(HighExpr::makeConst(OffsetSlot, 8),
+                                NdType::makeInt(SlotWidth));
+    if (SlotWidth != 8) {
+      Offset = HighExpr::makeUnary(NdOp::INT_ZEXT, Offset);
+      Offset->Type = NdType::makeInt(8);
+    }
+    Address = HighExpr::makeBinop(NdOp::INT_ADD, Receiver, Offset);
+    auto Value = HighExpr::makeConst(7, Width);
+    if (Floating) {
+      Value = HighExpr::makeUnary(NdOp::COPY, Value);
+      Value->Kind = ExprKind::BitCast;
+      Value->Type = NdType::makeFloat(Width);
+    }
+    invoke().Body = {store(Address, Value), ret(HighExpr::makeConst(0, 4))};
+  }
+  HighFunc &invoke() { return Result.HighFuncs[0]; }
+  std::string rejection(const ObjCBlockSourcePlan &Plan) {
+    return bindObjCBlockSourceReferences(caller(), Image, Plan, functions())
+        .Limitation;
+  }
+};
+} // namespace
+
+TEST(ObjCBlockSources, StrongCapturedIvarWritesRequireBoundedMetadataStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Width : {1U, 2U, 4U, 8U})
+      for (bool Floating : {false, true}) {
+        if (Floating && Width < 4)
+          continue;
+        SCOPED_TRACE(::testing::Message()
+                     << int(Architecture) << ':' << Width << ':' << Floating);
+        CapturedIvarFixture F(Architecture, Width, Floating);
+        auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+        ASSERT_EQ(Plan.CaptureReceivers.count(F.Invoke), 1U);
+        ASSERT_EQ(Plan.CaptureReceivers.at(F.Invoke).count(32), 1U);
+        EXPECT_TRUE(F.rejection(Plan).empty()) << F.rejection(Plan);
+        // The escape proof changes neither the runtime offset load nor store.
+        EXPECT_EQ(F.invoke().Body[0].StoreAddr, F.Address);
+        EXPECT_EQ(F.Address->Operands[1], F.Offset);
+        F.invoke().Body[0].StoreVal = HighExpr::makeConst(0, Width * 2);
+        EXPECT_FALSE(F.rejection(Plan).empty());
+      }
+}
+
+TEST(ObjCBlockSources, CapturedIvarStoresRejectIncompleteOrPrivateProvenance) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CapturedIvarFixture F;
+    auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    ASSERT_TRUE(F.rejection(Plan).empty()) << F.rejection(Plan);
+    auto &Store = F.invoke().Body[0];
+    if (Mutation == 0)
+      Plan.CaptureReceivers.clear();
+    else if (Mutation == 1)
+      Plan.SourceImage = nullptr;
+    else if (Mutation == 2)
+      Plan.CaptureReceivers.at(F.Invoke).at(32).ClassName = "Unknown";
+    else if (Mutation == 3)
+      Plan.CaptureReceivers.at(F.Invoke).at(32).Address += 4;
+    else if (Mutation == 4)
+      F.Image.ObjCMethods.clear();
+    else if (Mutation == 5)
+      Store.StoreVal = parameter(0, F.invoke().Params[0].Type);
+    else if (Mutation == 6) {
+      F.invoke().FrameSize = 32;
+      Store.StoreVal = frame(F.Image, -8);
+    } else if (Mutation == 7)
+      F.Address->Operands[1] = HighExpr::makeConst(8, 8);
+    else if (Mutation == 8)
+      Store.StoreAddr = HighExpr::makeBinop(NdOp::INT_ADD, F.Address,
+                                            HighExpr::makeConst(1, 8));
+    else if (Mutation == 9)
+      F.Receiver->Operands[0]->Operands[1] = HighExpr::makeConst(33, 8);
+    else if (Mutation == 10)
+      F.Address->Operands[1] = HighExpr::makeLoad(
+          HighExpr::makeConst(F.OffsetSlot, 8), NdType::makeInt(8));
+    else if (Mutation == 11)
+      F.Offset->Operands[0]->Type = NdType::makeInt(2);
+    else if (Mutation == 12)
+      F.Address->Operands[0] = parameter(0, F.invoke().Params[0].Type);
+    else if (Mutation == 13) {
+      auto Partial = HighExpr::makeUnary(NdOp::INT_ZEXT, F.Receiver);
+      Partial->Kind = ExprKind::Cast;
+      Partial->Type = NdType::makeInt(4);
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Partial);
+      Extended->Type = NdType::makeInt(8);
+      F.Address->Operands[0] = Extended;
+    } else if (Mutation == 14)
+      F.Image.ObjCSourceReferences.at(F.OffsetSlot).Name = "_other";
+    else if (Mutation == 15)
+      F.Image.ObjCClasses[0].InstanceSize = 12;
+    else if (Mutation == 16)
+      F.Image.ObjCClasses[0].Ivars[0].TypeEncoding = "I";
+    else
+      F.Offset->Operands[0]->Operands[0] =
+          HighExpr::makeConst(F.OffsetSlot + 4, 8);
+    EXPECT_FALSE(F.rejection(Plan).empty());
+  }
+}
+
+TEST(ObjCBlockSources, CapturedIvarProofDistinguishesBitsFromNumericCasts) {
+  for (bool Bitwise : {false, true}) {
+    CapturedIvarFixture F;
+    auto Floating = HighExpr::makeUnary(NdOp::COPY, F.Receiver);
+    Floating->Kind = Bitwise ? ExprKind::BitCast : ExprKind::Cast;
+    Floating->Type = NdType::makeFloat(8);
+    auto Integer = HighExpr::makeUnary(NdOp::COPY, Floating);
+    Integer->Kind = Bitwise ? ExprKind::BitCast : ExprKind::Cast;
+    Integer->Type = NdType::makeInt(8);
+    F.Address->Operands[0] = Integer;
+    const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_EQ(F.rejection(Plan).empty(), Bitwise) << F.rejection(Plan);
+    // Numeric uses of independent captures remain valid scalar operations.
+    F.invoke().Body = {ret(HighExpr::makeUnary(NdOp::INT_ZEXT, Integer))};
+    F.invoke().Body[0].RetVal->Type = NdType::makeInt(4);
+    EXPECT_TRUE(F.rejection(Plan).empty()) << F.rejection(Plan);
+  }
+}
+
+TEST(ObjCBlockSources, CapturedIvarStoresIntersectEveryReachingReceiver) {
+  for (bool Same : {false, true}) {
+    CapturedIvarFixture F;
+    MedVar Local;
+    Local.Kind = MedVar::Temp;
+    Local.Id = 77;
+    Local.Size = 8;
+    auto Destination = HighExpr::makeVar(Local, NdType::makeInt(8));
+    HighStmt Left, Right, Branch;
+    Left.Kind = Right.Kind = StmtKind::Assign;
+    Left.Dst = Right.Dst = Destination;
+    Left.Val = F.Receiver;
+    Right.Val = Same ? F.Receiver : HighExpr::makeConst(1234, 8);
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = parameter(1, NdType::makeInt(4));
+    Branch.Body = {Left};
+    Branch.ElseBody = {Right};
+    F.Address->Operands[0] = Destination;
+    F.invoke().Body.insert(F.invoke().Body.begin(), Branch);
+    auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_EQ(F.rejection(Plan).empty(), Same) << F.rejection(Plan);
+  }
+}
+
+TEST(ObjCBlockSources, CapturedIvarStoresRetainReceiverThroughPrivateSpill) {
+  CapturedIvarFixture F;
+  F.invoke().FrameSize = 32;
+  const auto Slot = frame(F.Image, -16);
+  F.Address->Operands[0] = HighExpr::makeLoad(Slot, NdType::makeInt(8));
+  F.invoke().Body.insert(F.invoke().Body.begin(), store(Slot, F.Receiver));
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  EXPECT_TRUE(F.rejection(Plan).empty()) << F.rejection(Plan);
+  F.invoke().Body[0].StoreVal = parameter(0, F.invoke().Params[0].Type);
+  EXPECT_FALSE(F.rejection(Plan).empty());
+}
+
+TEST(ObjCBlockSources, CapturedIvarAssignmentsRequireExactValueCopies) {
+  for (bool IvarOffset : {false, true})
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << IvarOffset << ':' << Mutation);
+      CapturedIvarFixture F;
+      auto Value = IvarOffset ? F.Offset : F.Receiver;
+      MedVar Local;
+      Local.Kind = MedVar::Temp;
+      Local.Id = 78;
+      Local.Size = Mutation == 1 ? 2 : 8;
+      const auto Type = Mutation == 2 || Mutation == 3
+                            ? NdType::makeFloat(8)
+                            : NdType::makeInt(Local.Size);
+      const auto Destination = HighExpr::makeVar(Local, Type);
+      if (Mutation == 3) {
+        Value = HighExpr::makeUnary(NdOp::COPY, Value);
+        Value->Kind = ExprKind::BitCast;
+        Value->Type = Type;
+      }
+      HighStmt Copy;
+      Copy.Kind = StmtKind::Assign;
+      Copy.Dst = Destination;
+      Copy.Val = Value;
+      auto Read = HighExpr::makeVar(Local, Type);
+      if (Mutation == 4) {
+        Read->Var.Size = 2;
+        Read->Type = NdType::makeInt(2);
+      }
+      auto Bits = HighExpr::makeUnary(NdOp::COPY, Read);
+      Bits->Kind = ExprKind::BitCast;
+      Bits->Type = NdType::makeInt(8);
+      F.Address->Operands[IvarOffset ? 1 : 0] = Bits;
+      F.invoke().Body.insert(F.invoke().Body.begin(), Copy);
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      EXPECT_EQ(F.rejection(Plan).empty(),
+                Mutation == 0 || (!IvarOffset && Mutation == 3))
+          << F.rejection(Plan);
+    }
+}
+
 TEST(ObjCBlockSources, StrongCaptureRetainsProvenUIImageMethodParameter) {
   OwnedSourceFixture F(Arch::AArch64);
   F.Image.DynInfo.NeededLibs = {
