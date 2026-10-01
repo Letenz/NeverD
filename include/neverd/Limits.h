@@ -329,6 +329,10 @@ constexpr int kMaxStackPtrTraceDepth = 24;
 /// take it, instead of jumping over them.
 constexpr size_t kMaxSkippedCopyStatements = 4;
 
+/// Most nested ifs an early exit may sit under for its skipped tails to be
+/// copied onto the paths that do not take it.
+constexpr size_t kMaxSkippedCopyDepth = 4;
+
 /// Most pure statements ahead of a return that a jump to them may copy in
 /// place of the jump.
 constexpr size_t kMaxReturnTailStatements = 5;

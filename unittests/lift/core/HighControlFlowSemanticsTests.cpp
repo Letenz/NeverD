@@ -6159,3 +6159,53 @@ TEST(HighControlFlowSemantics, NestedExitCopiesTheSmallTailItSkips) {
   for (uint64_t X : {0, 1, 2})
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
 }
+
+TEST(HighControlFlowSemantics, ThreeLevelExitCopiesEachSkippedTail) {
+  // v = 0; if (x) { v += 1; if (x != 1) { v += 2;
+  //   if (x == 3) { v = 50; goto X; } v += 4; } v += 8; }
+  // v += 100; X: return v;
+  // Each level's other arm keeps running the tails above it and the code
+  // before X; only the exit skips them.
+  auto Add = [](va_t At, uint64_t K) {
+    HighStmt S = assign(At, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(K, 8));
+    return S;
+  };
+  auto Test = [](va_t At, NdOp Op, uint64_t K, std::vector<HighStmt> Body) {
+    HighStmt S;
+    S.Kind = StmtKind::If;
+    S.Addr = At;
+    S.Cond = HighExpr::makeBinop(Op, local(0), HighExpr::makeConst(K, 8));
+    S.Body = std::move(Body);
+    return S;
+  };
+  HighStmt Third = Test(0x1010, NdOp::INT_EQUAL, 3,
+                        {assign(0x1014, 1, 50), jump(0x1018, 0x1040)});
+  HighStmt Second = Test(0x1008, NdOp::INT_NOTEQUAL, 1,
+                         {Add(0x100c, 2), Third, Add(0x101c, 4)});
+  HighStmt First = Test(0x1000, NdOp::INT_NOTEQUAL, 0,
+                        {Add(0x1004, 1), Second, Add(0x1020, 8)});
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0), First, Add(0x1030, 100),
+            result(0x1040, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    switch (X) {
+    case 0:
+      return 100;
+    case 1:
+      return 109;
+    case 3:
+      return 50;
+    default:
+      return 115;
+    }
+  };
+  for (uint64_t X : {0, 1, 2, 3, 4})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0, 1, 2, 3, 4})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}

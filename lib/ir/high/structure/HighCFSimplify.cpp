@@ -2192,55 +2192,99 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           return true;
     return false;
   };
-  // T16 on L[I]; see its use below.
-  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
-    HighStmt &Outer = L[I];
-    for (int Arm = 0; Arm < 2; ++Arm) {
-      std::vector<HighStmt> &A = Arm == 0 ? Outer.Body : Outer.ElseBody;
-      std::vector<HighStmt> &Other = Arm == 0 ? Outer.ElseBody : Outer.Body;
-      for (size_t P = 0; P < A.size(); ++P) {
-        HighStmt &Inner = A[P];
-        if ((Inner.Kind != StmtKind::If && Inner.Kind != StmtKind::IfElse) ||
-            !Inner.Cond || Inner.Body.empty() ||
-            Inner.Body.back().Kind != StmtKind::Goto)
-          continue;
-        const va_t X = Inner.Body.back().GotoTarget;
-        if (usesOf(X) != 1)
-          continue;
-        size_t J = I + 1;
-        while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
-          ++J;
-        if (J >= L.size() || J == I + 1)
-          continue;
-        // R: what the exit skips after the outer if; T: after the inner one.
-        bool Bad = false;
-        for (size_t K = I + 1; K < J && !Bad; ++K)
-          Bad = Uncopyable(L[K]);
-        for (size_t K = P + 1; K < A.size() && !Bad; ++K)
-          Bad = Uncopyable(A[K]);
-        std::vector<HighStmt> R(L.begin() + I + 1, L.begin() + J);
-        if (Bad || Size(R) > limits::kMaxSkippedCopyStatements)
-          continue;
-        // An arm that already ends in a jump or return never reaches R.
-        std::vector<HighStmt> T(std::make_move_iterator(A.begin() + P + 1),
-                                std::make_move_iterator(A.end()));
-        A.erase(A.begin() + P + 1, A.end());
-        popGoto(Inner.Body);
-        --Uses[X];
-        Inner.Kind = StmtKind::IfElse;
-        Inner.ElseBody.insert(Inner.ElseBody.end(),
-                              std::make_move_iterator(T.begin()),
-                              std::make_move_iterator(T.end()));
-        Inner.ElseBody.insert(Inner.ElseBody.end(), R.begin(), R.end());
-        Outer.Kind = StmtKind::IfElse;
-        Other.insert(Other.end(), std::make_move_iterator(R.begin()),
-                     std::make_move_iterator(R.end()));
-        L.erase(L.begin() + I + 1, L.begin() + J);
-        Changed = true;
+  // T16 on L[I]; see its use below. The exit may sit several ifs deep:
+  // the rest of each arm on its way down then runs only off the exit.
+  struct Level {
+    HighStmt *If = nullptr;
+    bool Then = true;
+    size_t Pos = 0;
+  };
+  // A path of ifs from \p If down to an arm that ends in a jump; each level
+  // records the arm taken and where the next if (or the jump) sits in it.
+  std::function<bool(HighStmt &, std::vector<Level> &)> FindExit =
+      [&](HighStmt &If, std::vector<Level> &Path) -> bool {
+    if (Path.size() >= limits::kMaxSkippedCopyDepth)
+      return false;
+    for (const bool Then : {true, false}) {
+      std::vector<HighStmt> &A = Then ? If.Body : If.ElseBody;
+      if (!Path.empty() && !A.empty() && A.back().Kind == StmtKind::Goto) {
+        Path.push_back({&If, Then, A.size() - 1});
         return true;
       }
+      for (size_t P = 0; P < A.size(); ++P)
+        if ((A[P].Kind == StmtKind::If || A[P].Kind == StmtKind::IfElse) &&
+            A[P].Cond) {
+          Path.push_back({&If, Then, P});
+          if (FindExit(A[P], Path))
+            return true;
+          Path.pop_back();
+        }
     }
     return false;
+  };
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
+    std::vector<Level> Path;
+    if (!FindExit(L[I], Path))
+      return false;
+    auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
+      return V.Then ? V.If->Body : V.If->ElseBody;
+    };
+    const size_t D = Path.size();
+    const va_t X = ArmOf(Path[D - 1]).back().GotoTarget;
+    if (usesOf(X) != 1)
+      return false;
+    size_t J = I + 1;
+    while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
+      ++J;
+    if (J >= L.size())
+      return false;
+    // Tails[K]: the rest of level K's arm after the if one level down.
+    std::vector<std::vector<HighStmt>> Tails(D - 1);
+    for (size_t K = 0; K + 1 < D; ++K) {
+      const std::vector<HighStmt> &A = ArmOf(Path[K]);
+      Tails[K].assign(A.begin() + Path[K].Pos + 1, A.end());
+    }
+    const std::vector<HighStmt> R(L.begin() + I + 1, L.begin() + J);
+    for (const auto &T : Tails)
+      for (const HighStmt &S : T)
+        if (Uncopyable(S))
+          return false;
+    for (const HighStmt &S : R)
+      if (Uncopyable(S))
+        return false;
+    // Level K's other arm continues, as before, with the tails of the levels
+    // above it, innermost first, then R.
+    std::vector<std::vector<HighStmt>> Append(D);
+    size_t Total = 0;
+    for (size_t K = 0; K < D; ++K) {
+      for (size_t Up = K; Up-- > 0;)
+        Append[K].insert(Append[K].end(), Tails[Up].begin(), Tails[Up].end());
+      Append[K].insert(Append[K].end(), R.begin(), R.end());
+      Total += Size(Append[K]);
+    }
+    size_t Original = Size(R);
+    for (const auto &T : Tails)
+      Original += Size(T);
+    if (Total - Original > limits::kMaxSkippedCopyStatements)
+      return false;
+    for (size_t K = 0; K < D; ++K) {
+      const Level &V = Path[K];
+      std::vector<HighStmt> &A = ArmOf(V);
+      if (K + 1 == D)
+        popGoto(A);
+      else
+        A.erase(A.begin() + V.Pos + 1, A.end());
+      if (Append[K].empty())
+        continue;
+      std::vector<HighStmt> &Other = V.Then ? V.If->ElseBody : V.If->Body;
+      V.If->Kind = StmtKind::IfElse;
+      Other.insert(Other.end(), std::make_move_iterator(Append[K].begin()),
+                   std::make_move_iterator(Append[K].end()));
+    }
+    --Uses[X];
+    L.erase(L.begin() + I + 1, L.begin() + J);
+    Changed = true;
+    return true;
   };
 
   std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
