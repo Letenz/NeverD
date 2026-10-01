@@ -8,6 +8,7 @@
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "FiniteValues.h"
+#include "LowIRLoopInference.h"
 #include "NativeStackControl.h"
 #include "NativeUndefinedIndependence.h"
 #include "X64UserFlags.h"
@@ -2634,6 +2635,7 @@ class LoopPlanInference {
   LowIRLoopInferenceResult Result;
   std::map<int, const LowBlock *> Blocks;
   std::vector<va_t> Choices;
+  std::vector<va_t> BranchArmEntries;
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
@@ -3266,7 +3268,7 @@ class LoopPlanInference {
     return TryTuples({});
   }
 
-  void findChoices(llvm::ArrayRef<va_t> Eligible) {
+  void findChoices(llvm::ArrayRef<va_t> Eligible, bool BranchArms) {
     for (const auto &B : Candidate.Blocks)
       Blocks.emplace(B.Id, &B);
     const auto Root = std::find_if(
@@ -3342,6 +3344,26 @@ class LoopPlanInference {
     for (int Id : Order)
       if (Members[Components.at(Id)].size() > 1)
         Add(Id);
+    if (BranchArms)
+      for (int Id : Order) {
+        const auto &B = *Blocks.at(Id);
+        if (Members[Components.at(Id)].size() < 2 || B.Succs.size() < 2)
+          continue;
+        for (int S : B.Succs) {
+          const auto Address = Blocks.at(S)->StartAddr;
+          if (Components.at(S) == Components.at(Id) &&
+              Blocks.at(S)->Succs.size() == 1 &&
+              std::find(Choices.begin(), Choices.end(), Address) !=
+                  Choices.end() &&
+              std::find(BranchArmEntries.begin(), BranchArmEntries.end(),
+                        Address) == BranchArmEntries.end()) {
+            if (BranchArmEntries.size() >= Limits.MaxCutpointAttempts)
+              stop(Status::BudgetExceeded,
+                   "loop inference cutpoint budget exhausted");
+            BranchArmEntries.push_back(Address);
+          }
+        }
+      }
   }
 
   std::vector<int> uncoveredCycle(const std::set<va_t> &Selected) {
@@ -3384,8 +3406,9 @@ class LoopPlanInference {
 
   // Select a feedback set before symbolic execution. Trying a single cut on
   // a nested cycle first would spend the whole finite budget unrolling it.
-  std::optional<std::vector<va_t>> feedbackCuts() {
-    std::set<va_t> Selected;
+  std::optional<std::vector<va_t>> feedbackCuts(std::set<va_t> Selected = {}) {
+    if (Selected.size() > Limits.MaxCutpointAttempts)
+      stop(Status::BudgetExceeded, "loop inference cutpoint budget exhausted");
     for (;;) {
       const auto Cycle = uncoveredCycle(Selected);
       if (Cycle.empty()) {
@@ -4102,7 +4125,9 @@ public:
     Session.LoopPrefixes.resize(1);
   }
 
-  LowIRLoopInferenceResult run(llvm::ArrayRef<va_t> Eligible) {
+  LowIRLoopInferenceResult
+  run(llvm::ArrayRef<va_t> Eligible, bool BranchArms = false,
+      const LowIRLoopRefinementPlan *DefaultPlan = nullptr) {
     std::string LastTemplateFailure;
     try {
       if (!prepareCandidateRecords(Session, Records) ||
@@ -4114,18 +4139,33 @@ public:
       if (!Limits.MaxCutpointAttempts || !Limits.MaxWideningRounds ||
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
-      findChoices(Eligible);
-      const auto Feedback = feedbackCuts();
+      findChoices(Eligible, BranchArms);
+      if (BranchArms && BranchArmEntries.empty())
+        stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
+      // A complete branch-arm set can preserve phases that a shared header
+      // collapses. Add feedback cuts only for cycles it does not yet cover.
+      const auto Feedback =
+          BranchArms ? feedbackCuts(std::set<va_t>(BranchArmEntries.begin(),
+                                                   BranchArmEntries.end()))
+                     : feedbackCuts();
       if (!Feedback)
         stop(Status::Unsupported,
              "eligible cutpoints do not cover every cycle");
+      if (BranchArms && DefaultPlan &&
+          Feedback->size() == DefaultPlan->Cutpoints.size() &&
+          std::all_of(Feedback->begin(), Feedback->end(), [&](va_t Address) {
+            return std::any_of(
+                DefaultPlan->Cutpoints.begin(), DefaultPlan->Cutpoints.end(),
+                [&](const auto &C) { return C.OriginalAddress == Address; });
+          }))
+        stop(Status::Unsupported, "branch-arm cuts duplicate default plan");
       if (Feedback->size() > 1 || MultipleCycles) {
         if (inferMultiple(*Feedback)) {
           Result.Status = LowIRLoopInferenceStatus::Inferred;
           Result.Plan = Plan;
         }
       } else
-        for (va_t Address : Choices) {
+        for (va_t Address : BranchArms ? *Feedback : Choices) {
           if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
             stop(Status::BudgetExceeded,
                  "loop inference cutpoint budget exhausted");
@@ -4179,6 +4219,14 @@ inferLowIRLoopRefinementPlan(const LowFunc &Candidate,
                              const LowIRLoopInferenceLimits &Limits,
                              llvm::ArrayRef<va_t> EligibleCutpoints) {
   return LoopPlanInference(Candidate, Contract, Limits).run(EligibleCutpoints);
+}
+
+LowIRLoopInferenceResult detail::inferBranchArmLowIRLoopRefinementPlan(
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopInferenceLimits &Limits,
+    const LowIRLoopRefinementPlan *DefaultPlan) {
+  return LoopPlanInference(Candidate, Contract, Limits)
+      .run({}, true, DefaultPlan);
 }
 
 LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
