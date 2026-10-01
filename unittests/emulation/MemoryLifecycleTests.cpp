@@ -308,21 +308,25 @@ TEST(MemoryLifecycle, SharedDeviceRetirementReleasesCallbacksBeforeCPUsResume) {
       ExecutionBackendKind::Unicorn, ExecutionContract::Software, A));
   auto Lifetime = std::make_shared<uint64_t>(Value);
   std::weak_ptr<uint64_t> Weak = Lifetime;
-  GuestMMIOCallbacks IO;
-  IO.Validate = [&](uint64_t, uint64_t, bool) {
-    // Host MMIO validation participates in the same physical-owner lease.
-    EXPECT_NE(llvm::toString(A->unmapMMIO(Data, PageSize)), "");
-    EXPECT_NE(llvm::toString(Second.CPU->run(Code, Timeout)), "");
-    return llvm::Error::success();
-  };
-  IO.Read = [Lifetime](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
-    return *Lifetime;
-  };
-  IO.Write = [](uint64_t, unsigned, uint64_t) {
-    return llvm::Error::success();
-  };
-  Lifetime.reset();
-  ASSERT_EQ(llvm::toString(A->mapMMIO(Data, PageSize, std::move(IO))), "");
+  // Destroy caller-held callbacks before testing the mapping's ownership.
+  {
+    GuestMMIOCallbacks IO;
+    IO.Validate = [&](uint64_t, uint64_t, bool) {
+      // Host MMIO validation participates in the same physical-owner lease.
+      EXPECT_NE(llvm::toString(A->unmapMMIO(Data, PageSize)), "");
+      EXPECT_NE(llvm::toString(Second.CPU->run(Code, Timeout)), "");
+      return llvm::Error::success();
+    };
+    IO.Read = [Lifetime](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+      return *Lifetime;
+    };
+    IO.Write = [](uint64_t, unsigned, uint64_t) {
+      return llvm::Error::success();
+    };
+    Lifetime.reset();
+    ASSERT_EQ(llvm::toString(A->mapMMIO(Data, PageSize, std::move(IO))), "");
+  }
+  EXPECT_FALSE(Weak.expired());
   EXPECT_EQ(*First.CPU->readInteger(Data, sizeof(uint32_t)), Value);
   EXPECT_EQ(*Second.CPU->readInteger(Data, sizeof(uint32_t)), Value);
   ASSERT_EQ(llvm::toString(A->unmapMMIO(Data, PageSize)), "");

@@ -386,13 +386,17 @@ TEST_F(DriverUnicornMMIO, AliasesShareStateAcrossCPUContextRestoration) {
 TEST_F(DriverUnicornMMIO, ExactUnmapRetiresCallbacksAndReturnsBudget) {
   auto Lifetime = std::make_shared<int>(1);
   std::weak_ptr<int> Weak = Lifetime;
-  auto Callbacks = callbacks();
-  Callbacks.Validate = [Lifetime](uint64_t, uint64_t, bool) {
-    return llvm::Error::success();
-  };
-  Lifetime.reset();
-  ASSERT_EQ(
-      llvm::toString(CPU->mapMMIO(Device, 4 * Page, std::move(Callbacks))), "");
+  // Destroy caller-held callbacks before testing the mapping's ownership.
+  {
+    auto Callbacks = callbacks();
+    Callbacks.Validate = [Lifetime](uint64_t, uint64_t, bool) {
+      return llvm::Error::success();
+    };
+    Lifetime.reset();
+    ASSERT_EQ(
+        llvm::toString(CPU->mapMMIO(Device, 4 * Page, std::move(Callbacks))),
+        "");
+  }
   EXPECT_NE(llvm::toString(CPU->mapMMIO(Device + 8 * Page, Page, callbacks()))
                 .find("memory limit"),
             std::string::npos);
