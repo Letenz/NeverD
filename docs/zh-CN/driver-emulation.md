@@ -531,3 +531,5 @@ KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完�
 当 `GuardFlags` 为零时，未启用 CFG 的指针槽仍然有效。加载器校验其存储、可执行回退目标以及重定位时完整的 `DIR64` 覆盖，并保留原始来宾指针。启用 CFG 的映像仍必须同时具备映像启用位和插桩/函数表标志。`DriverGuardCases.def` 与 `NeverDDriverGuardMetadataTests` 通过 Unicorn、KVM 和 WHP 覆盖这些情况，也可用于禁用 Unicorn 的构建。
 
 Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。
+
+checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。

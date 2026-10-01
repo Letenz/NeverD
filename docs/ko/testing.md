@@ -877,3 +877,7 @@ checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 
 Checked ARM64 상태 수집은 ISA 계층의 공통 커밋 경계를 사용합니다. KVM/WHP는 `AArch64GeneralState.def`의 35개 필드를 수집하고 Unicorn은 추가 스레드 및 부동소수점 제어 상태를 포함한 공개 스칼라 필드 39개를 유지합니다. `captureAArch64ScalarState`는 `Registers.def`의 너비를 적용하고 NZCV를 정규화하며 모든 읽기가 성공한 뒤에만 상태를 공개합니다. 권한, 벡터 및 전송하지 않은 필드는 유지됩니다. 이 전송은 checked ARM64의 FP/SIMD 명령 지원을 의미하지 않습니다.
 
 `NeverDAArch64GeneralStateTests`는 두 권한 수준에서 네이티브 35개 및 소프트웨어 39개 필드를 검사하며 각 읽기 실패, 너비 정규화 및 재시도를 검증합니다. Linux의 `NeverDUnicornStateTransferTests`는 실제 게스트 실행 후 각 스칼라 읽기에 실패를 주입해 입력 보존과 재시도 시 정확히 한 번의 실행을 확인하며 `CapturesDeclaredWidthsWithoutStaleUpperBits`도 검사합니다. 원본 명령과 상태는 `UnicornStateTransferCases.def`에 정의되며 ARM64 KVM/WHP 실기기 검증을 대신하지 않습니다.
+
+checked Unicorn 단일 단계 실행은 이제 `MachineRunControl`을 따릅니다. ARM64 유지보수와 게스트 실행은 한 단계 실행 한도를 공유하며, 내부 `UC_HOOK_CODE`가 명령 진입 시 빌린 정지 토큰과 기한을 확인합니다. 동기 진입은 반환 전에 참조를 해제합니다. 진입 거부는 호출자 상태와 RAM을 유지하며 취소된 실행 결과는 checked RAM 트랜잭션으로 커밋할 수 없습니다. 명령 허용 범위와 비제한 소프트웨어 계약은 그대로 유지합니다.
+
+`NeverDUnicornMachineControlTests`는 실제 x64와 ARM64 엔진의 두 권한 수준에서 `UnicornMachineControlCases.def`의 원래 저장 명령을 실행합니다. `RejectedEntryPreservesStateAndRAMAndAllowsRetry`는 단계 전 취소, 실제 게스트 진입 시 정지 또는 기한 만료, 전체 입력 상태와 RAM 보존, 이후 한 번의 성공적인 저장을 검증합니다. 테스트 전용 진입 래퍼는 하이퍼바이저 없이 실행하며 네이티브 ARM64/WHP 증거를 제공하지 않습니다.

@@ -11,6 +11,8 @@
 #include "UnicornArchitecture.h"
 #include "UnicornMemory.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <unicorn/arm64.h>
 #include <unicorn/unicorn.h>
 #include <unicorn/x86.h>
@@ -47,9 +49,13 @@ public:
         if (auto E = check(uc_mem_map_ptr(Engine, Range.Physical, Range.Size,
                                           UC_PROT_ALL, Range.Backing)))
           return E;
-    return initializeUnicornArchitecture(
-        Engine, Arch == UC_ARCH_X86 ? GuestArchitecture::X64
-                                    : GuestArchitecture::AArch64);
+    if (auto E = initializeUnicornArchitecture(
+            Engine, Arch == UC_ARCH_X86 ? GuestArchitecture::X64
+                                        : GuestArchitecture::AArch64))
+      return E;
+    uc_hook Hook;
+    return check(uc_hook_add(Engine, &Hook, UC_HOOK_CODE,
+                             reinterpret_cast<void *>(entry), this, 1, 0));
   }
   llvm::Error synchronize() {
     if (UserMode)
@@ -75,16 +81,50 @@ public:
     MappedSpace = Memory.addressSpace();
     return llvm::Error::success();
   }
-  llvm::Error run(uint64_t PC, size_t Count = 1) {
+  llvm::Error run(uint64_t PC, size_t Count = 1,
+                  const MachineRunControl *Control = nullptr) {
+    ActiveControl = Control;
+    Cancelled = false;
+    auto Release = llvm::scope_exit([&] { ActiveControl = nullptr; });
+    if (interrupted()) {
+      Cancelled = true;
+      return diagnostic::error(diagnostic::UnicornRun);
+    }
     // Host backing writes bypass Unicorn's code-write invalidation. Discard
     // translated blocks before entering so aliases and self-modifying code
     // observe current authoritative bytes.
     if (auto E = check(uc_ctl_flush_tb(Engine)))
       return E;
-    return check(uc_emu_start(Engine, PC, 0, 0, Count));
+    if (interrupted()) {
+      Cancelled = true;
+      return diagnostic::error(diagnostic::UnicornRun);
+    }
+    const auto Status = uc_emu_start(Engine, PC, 0, 0, Count);
+    if (Cancelled || interrupted()) {
+      Cancelled = true;
+      return diagnostic::error(diagnostic::UnicornRun);
+    }
+    return check(Status);
   }
+  bool entryCancelled() const { return Cancelled; }
 
 private:
+  // The synchronous engine call owns this borrow. Its instruction hook closes
+  // the race between the caller's final check and actual guest execution.
+  const MachineRunControl *ActiveControl = nullptr;
+  bool Cancelled = false;
+  bool interrupted() const {
+    return ActiveControl &&
+           (ActiveControl->stopRequested() ||
+            std::chrono::steady_clock::now() >= ActiveControl->Deadline);
+  }
+  static void entry(uc_engine *Engine, uint64_t, uint32_t, void *UserData) {
+    auto &CPU = *static_cast<UnicornStepper *>(UserData);
+    if (CPU.interrupted()) {
+      CPU.Cancelled = true;
+      uc_emu_stop(Engine);
+    }
+  }
   uint64_t Generation = 0;
   std::weak_ptr<AddressSpace> MappedSpace;
   std::map<uint64_t, MemoryProjection::Page> Mapped;
@@ -148,7 +188,8 @@ public:
     return llvm::Error::success();
   }
   llvm::Error step(X64MachineState &State, uint64_t Root,
-                   MachineRunControl) override {
+                   MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     if (auto E = validateX64FPState(State.FP))
       return E;
     if (auto E = CPU.synchronize())
@@ -193,8 +234,8 @@ public:
     if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_FPTAG, &Tag)))
       return E;
     PendingException.reset();
-    auto RunError = CPU.run(State.reg(X64Register::PC));
-    if (!PendingException && RunError)
+    auto RunError = CPU.run(State.reg(X64Register::PC), 1, &Control);
+    if (RunError && (!PendingException || CPU.entryCancelled()))
       return RunError;
     llvm::consumeError(std::move(RunError));
     auto Next = State;
@@ -269,7 +310,9 @@ public:
   UnicornStepper CPU;
   explicit UnicornAArch64Machine(MemoryProjection &Memory, bool UserMode)
       : CPU(Memory, UserMode) {}
-  llvm::Error step(AArch64MachineState &State, MachineRunControl) override {
+  llvm::Error step(AArch64MachineState &State,
+                   MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     if (auto E = CPU.synchronize())
       return E;
     if (CPU.UserMode) {
@@ -303,9 +346,10 @@ public:
       if (auto E = SpsrEl1(aarch64::PStateEL0t | aarch64::PStateDAIF |
                            State.reg(AArch64Register::NZCV)))
         return E;
-      if (auto E =
-              CPU.run(aarch64::EntryGPA, std::size(aarch64::Maintenance) +
-                                             aarch64::GateReturnInstructions))
+      if (auto E = CPU.run(aarch64::EntryGPA,
+                           std::size(aarch64::Maintenance) +
+                               aarch64::GateReturnInstructions,
+                           &Control))
         return E;
     }
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
@@ -319,7 +363,7 @@ public:
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_REGISTER_AArch64
-    if (auto E = CPU.run(State.reg(AArch64Register::PC)))
+    if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control))
       return E;
     // SIMD is outside this checked contract, so the typed vector cache is
     // preserved. The unrestricted software contract uses UnicornBackend.
