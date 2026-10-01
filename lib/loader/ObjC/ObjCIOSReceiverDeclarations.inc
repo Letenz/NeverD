@@ -102,6 +102,21 @@ ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "prot
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationController", "", false, "interactivePopGestureRecognizer", "@16@0:8", "UIGestureRecognizer", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationController", "", false, "viewControllers", "@16@0:8", "NSArray", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "parentViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
+// The public getter declarations cited in the selector catalog agree with
+// the local UIKit header inventory on these owners and result classes.
+// Preserve both additional owners of navigationItem/presentedViewController;
+// selector agreement alone does not establish a receiver's class.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "viewIfLoaded", "@16@0:8", "UIView", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "view", "@16@0:8", "UIView", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "presentedViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", "", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", false, "navigationItem", "@16@0:8", "UINavigationItem", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", false, "navigationController", "@16@0:8", "UINavigationController", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationItem", "", "C:NSObject|P:NSCoding", nullptr)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UISearchDisplayController", "", "C:NSObject", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UISearchDisplayController", "", false, "navigationItem", "@16@0:8", "UINavigationItem", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIPresentationController", "", "C:NSObject|P:UIAppearanceContainer|P:UIContentContainer|P:UIFocusEnvironment|P:UITraitEnvironment", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIPresentationController", "", false, "presentedViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "transitionCoordinator", "@16@0:8", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "flashScrollIndicators", "v16@0:8", "", false, nullptr, "", false)
 // Public UIScrollView property declarations and independent arm64 iOS
