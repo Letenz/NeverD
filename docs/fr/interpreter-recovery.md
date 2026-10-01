@@ -145,6 +145,8 @@ L’ABI source ordinaire reconstruit un cadre privé à l’invocation : toutes 
 
 Si des indicateurs indéfinis influencent le contrôle, les adresses ou des sorties définies, une preuve indépendante de non-interférence est nécessaire. Le rapport actuel ne fournit pas cette preuve et ne certifie pas ce comportement dépendant du processeur.
 
+`modelInterpreterMachineStateX64` renvoie un `InterpreterMachineStateModel` avec le générateur commun à l’enveloppe source. Les octets de registre `[0, 136)` représentent les 17 mots bruts de l’état ; `RETURN` porte le statut séparément de RAX invité, et la mémoire invitée reste de la mémoire. Des drapeaux d’entrée invalides ou des écritures dynamiques refusées maintiennent un statut d’échec. Le stockage d’état doit être accessible, aligné et disjoint des accès invités. `MaxOperations` borne les métadonnées d’entrée et les opérations générées. Les enregistrements LowIR déterministes ne prouvent pas les sorties architecturalement indéfinies. L’appelant doit fournir les observations, les contrats d’entrée et de cadre, puis une nouvelle preuve `checkLowIRLoopRefinement` ou une preuve de raffinement sur chemins finis ; ni le modèle ni ses enregistrements ne certifient le C compilé.
+
 <!-- i18n-section: limits -->
 
 ## Limites actuelles

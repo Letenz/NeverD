@@ -59,6 +59,7 @@ bool nativeRegister(const NdVar &Value) {
 struct InstructionWriter {
   std::vector<LowOp> &Ops;
   va_t Address;
+  bool StateRegisters = false;
   uint64_t NextTemporary = ScratchBase;
 
   NdVar temporary(uint16_t Bytes = 8) {
@@ -84,11 +85,17 @@ struct InstructionWriter {
   }
 
   void load(NdVar Output, uint64_t Offset) {
-    emit(NdOp::LOAD, Output, {address(Offset)});
+    if (StateRegisters)
+      emit(NdOp::COPY, Output, {NdVar::reg(Offset, Output.Size)});
+    else
+      emit(NdOp::LOAD, Output, {address(Offset)});
   }
 
   void store(uint64_t Offset, NdVar Value) {
-    emit(NdOp::STORE, {}, {address(Offset), Value});
+    if (StateRegisters)
+      emit(NdOp::COPY, NdVar::reg(Offset, Value.Size), {Value});
+    else
+      emit(NdOp::STORE, {}, {address(Offset), Value});
   }
 
   NdVar packedFlags() {
@@ -106,8 +113,9 @@ struct InstructionWriter {
   }
 
   void entry(uint64_t ParameterRegister) {
-    emit(NdOp::COPY, NdVar::reg(StatePointer, 8),
-         {NdVar::reg(ParameterRegister, 8)});
+    if (!StateRegisters)
+      emit(NdOp::COPY, NdVar::reg(StatePointer, 8),
+           {NdVar::reg(ParameterRegister, 8)});
     for (uint64_t Index = 0; Index != 16; ++Index)
       load(NdVar::reg(GuestBase + Index * 8, 8), Index * 8);
     const NdVar Packed = temporary();
@@ -140,6 +148,10 @@ struct InstructionWriter {
     for (uint64_t Index = 0; Index != 16; ++Index)
       store(Index * 8, NdVar::reg(GuestBase + Index * 8, 8));
     store(offsetof(InterpreterMachineStateX64V1, RFlags), packedFlags());
+    if (StateRegisters) {
+      emit(NdOp::RETURN, {}, {NdVar::reg(ProfileStatus, 8)});
+      return;
+    }
     // The wrapper's source ABI returns status in the real host RAX. Guest RAX
     // has already been relocated and committed to the state buffer above.
     emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 8),
@@ -199,10 +211,10 @@ llvm::Error validateInterpreterMachineStateX64V1(
   return llvm::Error::success();
 }
 
-llvm::Expected<InterpreterMachineSource>
-wrapInterpreterMachineStateX64(const LowFunc &Residual,
-                               BinaryFormat SourceFormat,
-                               InterpreterMachineStateProfile Profile) {
+static llvm::Expected<InterpreterMachineSource>
+buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
+                   InterpreterMachineStateProfile Profile,
+                   bool StateRegisters) {
   if (Profile != InterpreterMachineStateProfile::UserX64NoFaultV1)
     return invalid("unsupported interpreter machine-state profile");
   if (SourceFormat != BinaryFormat::ELF && SourceFormat != BinaryFormat::COFF &&
@@ -231,7 +243,7 @@ wrapInterpreterMachineStateX64(const LowFunc &Residual,
     Block.Ops.clear();
     for (LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
       const size_t First = Block.Ops.size();
-      InstructionWriter Writer{Block.Ops, Boundary.Address};
+      InstructionWriter Writer{Block.Ops, Boundary.Address, StateRegisters};
       if (!Seeded) {
         Writer.entry(ParameterRegister);
         Seeded = true;
@@ -380,6 +392,55 @@ wrapInterpreterMachineStateX64(const LowFunc &Residual,
   std::string Diagnostic;
   if (!validateSourceABI(ABI, Diagnostic))
     return invalid(Diagnostic);
+  return Result;
+}
+
+llvm::Expected<InterpreterMachineSource>
+wrapInterpreterMachineStateX64(const LowFunc &Residual,
+                               BinaryFormat SourceFormat,
+                               InterpreterMachineStateProfile Profile) {
+  return buildMachineSource(Residual, SourceFormat, Profile, false);
+}
+
+llvm::Expected<InterpreterMachineStateModel>
+modelInterpreterMachineStateX64(const LowFunc &Residual,
+                                InterpreterMachineStateProfile Profile,
+                                uint64_t MaxOperations) {
+  uint64_t Remaining = MaxOperations;
+  const auto Charge = [&](uint64_t Count) {
+    if (Count > Remaining)
+      return false;
+    Remaining -= Count;
+    return true;
+  };
+  if (!Charge(Residual.Blocks.size()))
+    return invalid("machine-state model input budget exhausted");
+  for (const auto &B : Residual.Blocks)
+    if (!Charge(B.Ops.size()) || !Charge(B.InstructionBoundaries.size()) ||
+        !Charge(B.Preds.size()) || !Charge(B.Succs.size()) ||
+        !Charge(B.ExceptionalPreds.size()) ||
+        !Charge(B.ExceptionalSuccs.size()))
+      return invalid("machine-state model input budget exhausted");
+  auto Generated =
+      buildMachineSource(Residual, BinaryFormat::ELF, Profile, true);
+  if (!Generated)
+    return Generated.takeError();
+  InterpreterMachineStateModel Result;
+  Result.Function = std::move(Generated->Function);
+  Remaining = MaxOperations;
+  for (const auto &B : Result.Function.Blocks) {
+    if (!Charge(B.Ops.size()))
+      return invalid("machine-state model operation budget exhausted");
+    for (const auto &Boundary : B.InstructionBoundaries) {
+      LowInstructionUndefinedEffects Effects;
+      Effects.Coverage = LowUndefinedCoverage::Complete;
+      Effects.OpCount = Boundary.OpCount;
+      Effects.OperationDigest =
+          lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
+              Boundary.FirstOp, Boundary.OpCount));
+      Result.Instructions.push_back({B.Id, Boundary, std::move(Effects)});
+    }
+  }
   return Result;
 }
 

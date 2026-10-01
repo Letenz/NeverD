@@ -104,6 +104,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 정의되지 않은 플래그가 제어 흐름, 주소 또는 정의된 출력에 영향을 줄 수 있다면 별도의 비간섭 증명이 필요합니다. 현재 복구 보고서는 이 증명을 제공하지 않으며 이러한 프로세서 의존 동작을 보증하지 않습니다.
 
+`modelInterpreterMachineStateX64`는 소스 래퍼와 같은 생성기로 `InterpreterMachineStateModel`을 반환합니다. 레지스터 바이트 `[0, 136)`은 원시 17워드 상태 객체를 나타내고, `RETURN`은 게스트 RAX와 별도로 상태를 반환합니다. 게스트 메모리 접근은 메모리 접근으로 유지됩니다. 잘못된 진입 플래그와 거부된 동적 플래그 쓰기는 실패 상태를 계속 유지합니다. 상태 저장소는 접근 가능하고 정렬되어야 하며 게스트 접근과 겹치지 않아야 합니다. `MaxOperations`는 입력 메타데이터와 생성 연산을 제한합니다. 결정적 LowIR 기록은 원래 아키텍처의 미정의 출력 증거가 아닙니다. 호출자는 관찰 항목, 진입 및 프레임 계약과 새로운 `checkLowIRLoopRefinement` 또는 유한 경로 정제 증명을 제공해야 합니다. 모델과 기록 생성은 컴파일된 C를 인증하지 않습니다.
+
 <!-- i18n-section: limits -->
 
 ## 현재 제한 사항
