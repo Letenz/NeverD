@@ -14,8 +14,17 @@ namespace neverd::emulation {
 namespace {
 #define NEVERD_X64_PROBE_TEST_VALUE(Name, Value)                               \
   constexpr uint64_t Name = Value;
+#define NEVERD_X64_PROBE_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "X64ProbeCases.def"
+#undef NEVERD_X64_PROBE_TEST_TEXT
 #undef NEVERD_X64_PROBE_TEST_VALUE
+void expectStateMismatch(llvm::Error Error) {
+  ASSERT_TRUE(bool(Error));
+  const auto Text = llvm::toString(std::move(Error));
+  EXPECT_TRUE(llvm::StringRef(Text).starts_with(x64::probe::State)) << Text;
+  EXPECT_NE(Text.find(Expected), std::string::npos) << Text;
+  EXPECT_NE(Text.find(Observed), std::string::npos) << Text;
+}
 using Corruption = void (*)(X64MachineState &);
 class CorruptingTransport final : public X64Machine {
 public:
@@ -42,6 +51,19 @@ public:
     return llvm::Error::success();
   }
 };
+TEST(X64MachineProbe, DiagnosticIdentifiesStepFieldAndBothValues) {
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  CorruptingTransport Scalar;
+  EXPECT_EQ(llvm::toString(verifyX64Machine(Scalar, *Memory)), ScalarMismatch);
+  CorruptingTransport Vector;
+  Vector.CorruptVector = true;
+  EXPECT_EQ(llvm::toString(verifyX64Machine(Vector, *Memory)), VectorMismatch);
+  CorruptingTransport Opcode;
+  Opcode.Corrupt = [](X64MachineState &State) {
+    State.FP.Opcode ^= CorruptBit;
+  };
+  EXPECT_EQ(llvm::toString(verifyX64Machine(Opcode, *Memory)), OpcodeMismatch);
+}
 TEST(X64MachineProbe, EveryScalarCorruptionRejectsNativeInitialization) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   X64MachineState Inventory;
@@ -49,8 +71,7 @@ TEST(X64MachineProbe, EveryScalarCorruptionRejectsNativeInitialization) {
     SCOPED_TRACE(Index);
     CorruptingTransport Machine;
     Machine.Scalar = Index;
-    EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)),
-              x64::probe::State);
+    expectStateMismatch(verifyX64Machine(Machine, *Memory));
     EXPECT_EQ(Machine.Entries, 1u);
   }
 }
@@ -65,8 +86,7 @@ TEST(X64MachineProbe, EveryXmmWordCorruptionRejectsNativeInitialization) {
       Machine.CorruptVector = true;
       Machine.Vector = Index;
       Machine.Word = Word;
-      EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)),
-                x64::probe::State);
+      expectStateMismatch(verifyX64Machine(Machine, *Memory));
       EXPECT_EQ(Machine.Entries, 1u);
     }
 }
@@ -81,8 +101,7 @@ TEST(X64MachineProbe, EveryPhysicalFPWordCorruptionRejectsInitialization) {
       Machine.CorruptFP = true;
       Machine.Vector = Index;
       Machine.Word = Word;
-      EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)),
-                x64::probe::State);
+      expectStateMismatch(verifyX64Machine(Machine, *Memory));
       EXPECT_EQ(Machine.Entries, 1u);
     }
 }
@@ -103,8 +122,7 @@ TEST(X64MachineProbe, ControlTLSAndPrivilegeCorruptionRejectInitialization) {
     SCOPED_TRACE(Index);
     CorruptingTransport Machine;
     Machine.Corrupt = Changes[Index];
-    EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)),
-              x64::probe::State);
+    expectStateMismatch(verifyX64Machine(Machine, *Memory));
     EXPECT_EQ(Machine.Entries, 1u);
   }
 }
@@ -112,8 +130,7 @@ TEST(X64MachineProbe, NopSupportDoesNotProveFloatingPointExecution) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   CorruptingTransport Machine;
   Machine.NopOnly = true;
-  EXPECT_EQ(llvm::toString(verifyX64Machine(Machine, *Memory)),
-            x64::probe::State);
+  expectStateMismatch(verifyX64Machine(Machine, *Memory));
   EXPECT_EQ(Machine.Entries, 2u);
 }
 TEST(X64MachineProbe, GenuineTransferFailureRetainsDiagnosticAndReleasesLease) {

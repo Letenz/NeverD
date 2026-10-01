@@ -170,6 +170,17 @@ TEST(X64Xsave, TruncatedAndUnknownExtensionsCannotPublishState) {
       llvm::consumeError(std::move(E));
       EXPECT_EQ(State, Before);
     }
+    // An undeclared packing/alignment must not hide live state in a tail that
+    // the known compacted profile does not own.
+    llvm::support::endian::write64le(Bytes.data() + LayoutOffset,
+                                     CompactedLayout | Layout.Mask);
+    Bytes.resize(Layout.Bytes + UnexpectedPaddingBytes);
+    Bytes.back() = StaleByte;
+    auto State = Before;
+    auto E = decodeX64XsaveState(State, Bytes);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(State, Before);
   }
 }
 TEST(X64Xsave, AbsentExtensionsIgnoreStaleBytes) {

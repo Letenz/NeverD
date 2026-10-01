@@ -208,6 +208,8 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
   }
 #include "X64FPState.def"
 #undef NEVERD_X64_XSAVE_INITIAL_COMPONENT
+    if ((Layout & InitialComponents) && Offset != Bytes.size())
+      return diagnostic::error(diagnostic::FPState);
   }
   auto Next = State;
   if (auto E = decodeX64FXState(Next, Bytes))

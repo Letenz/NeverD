@@ -3570,6 +3570,17 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "filter": "X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
           "source": "unittests/emulation/X64XsaveTests.cpp",
           "filter": "X64Xsave.CompactedInitialExtensionsPreserveTheCompleteFPState",
           "platforms": [

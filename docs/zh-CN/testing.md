@@ -849,6 +849,8 @@ WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执
 
 `NeverDMemoryLifecycleTests` 独立于 Unicorn 构建，也覆盖仅启用原生后端的配置。禁用 Unicorn 时，专用的软件投影/设备用例明确跳过；匹配主机的共享 CPU 用例仍会注册。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 个用例隔离原生内存 API：单页/投影大小的后备内存、共享/独立分配、未触页/已驻留字节，以及存在/不存在第一个虚拟处理器。每个案例保留两个存活的逻辑所有者，反复切换其映射分区，销毁非活动所有者，并验证剩余映射无需重建即可继续使用。真实映射错误保留 HRESULT 并使测试失败；这是内存 API 证据，不是指令执行证明。
 
+`X64MachineProbe.def` 的启动诊断列出失败指令，以及所有不一致的标量、TLS、特权级、x87 控制字段、物理 FP 通道和 XMM 字，并保留预期值及观测值。`DiagnosticIdentifiesStepFieldAndBothValues` 使用独立的预期消息验证。状态比较仍要求完全一致；诊断用于区分传输丢失与指令执行问题，失败的原生探针仍判为失败。
+
 `WhpResourceTests.cpp` 覆盖缓存复用、替换前销毁、失败恢复及截止时间/停止竞争。`LogicalCPUSwitchingRestoresPhysicalFPAndTLS` 在两种权限模式下交替执行两个存活机器，检查独立的物理 x87/XMM 和 FS/GS 状态，并在销毁同伴后恢复剩余机器。Windows CI 要求两种权限的 WHP 案例都执行通过。
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` 默认为 `ON`，控制 `unittests/semantic` 中的测试组及其聚合运行目标。构建不依赖 Unicorn 的原生 CPU 测试时，保留 `BUILD_TESTING=ON`，同时设置 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 测试仍可构建，包括具有对应 SDK 头文件的 Windows ARM64/MSVC 配置。在 Windows ARM64 上启用 Unicorn 仍需 ARM64 LLVM-MinGW 工具链。这项构建解耦不等于 ARM64 原生运行验证。

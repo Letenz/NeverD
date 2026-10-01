@@ -50,8 +50,8 @@ NEVERD_X64_FP_VALUE(MaxXsaveBytes, 64 * 1024)
 #endif
 #ifdef NEVERD_X64_XSAVE_INITIAL_COMPONENT
 // Ordered compacted components whose architectural initial payload is zero.
-// Name, component bit, bytes. Each component here has natural byte packing;
-// none requests the additional 64-byte compacted alignment.
+// Name, component bit, bytes. These profiles use packed components; packets
+// with a different total size are not accepted as this declared layout.
 NEVERD_X64_XSAVE_INITIAL_COMPONENT(AVX, 2, 256)
 NEVERD_X64_XSAVE_INITIAL_COMPONENT(CETUser, 11, 16)
 NEVERD_X64_XSAVE_INITIAL_COMPONENT(CETSupervisor, 12, 24)

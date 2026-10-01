@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <cstring>
 
@@ -26,6 +27,45 @@ static_assert(probe::FloatingDestination < XmmCount &&
               probe::FloatingSource < XmmCount &&
               probe::VectorDestination < XmmCount &&
               probe::VectorSource < XmmCount);
+
+llvm::Error stateMismatch(const probe::Instruction &Instruction,
+                          const X64MachineState &Expected,
+                          const X64MachineState &Observed) {
+  std::string Details;
+  auto Field = [&](llvm::StringRef Name, uint64_t Want, uint64_t Got) {
+    if (Want == Got)
+      return;
+    if (!Details.empty())
+      Details += probe::FieldSeparator;
+    Details += llvm::formatv(probe::FieldMismatch, Name, Want, Got).str();
+  };
+#define NEVERD_X64_REGISTER(Name, Decoder, Backend)                            \
+  Field(#Name, Expected.reg(X64Register::Name),                                \
+        Observed.reg(X64Register::Name));
+#include "neverd/emulation/X64Registers.def"
+#undef NEVERD_X64_REGISTER
+#define NEVERD_X64_PROBE_FIELD(Member)                                         \
+  Field(#Member, Expected.Member, Observed.Member);
+#include "X64MachineProbe.def"
+#undef NEVERD_X64_PROBE_FIELD
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  Field(#Name, Expected.FP.Member, Observed.FP.Member);
+#include "X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+  auto Lanes = [&](llvm::StringRef Name, const auto &Want, const auto &Got) {
+    for (unsigned Index = 0; Index < Want.size(); ++Index)
+      for (unsigned Word = 0; Word < Want[Index].size(); ++Word)
+        Field(llvm::formatv(probe::IndexedWord, Name, Index, Word).str(),
+              Want[Index][Word], Got[Index][Word]);
+  };
+  Lanes(probe::XmmName, Expected.Xmm, Observed.Xmm);
+  Lanes(probe::FPName, Expected.FP.Registers, Observed.FP.Registers);
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 llvm::formatv(probe::StateMismatch,
+                                               probe::State, Instruction.Name,
+                                               Details)
+                                     .str());
+}
 } // namespace
 
 llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
@@ -125,7 +165,7 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
     if (auto E = Machine.step(State, *Root, Control))
       return E;
     if (State != Expected)
-      return diagnostic::error(x64::probe::State);
+      return stateMismatch(Instruction, Expected, State);
     if (Control.interrupted())
       return diagnostic::interrupted(x64::probe::State, Control);
   }

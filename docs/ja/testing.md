@@ -919,6 +919,8 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `NeverDMemoryLifecycleTests` は Unicorn と独立して構築され、ネイティブ専用構成でも登録されます。Unicorn を無効にすると専用のソフトウェア投影・デバイスケースは明示的にスキップされますが、ホストに一致する共有 CPU ケースは残ります。`WhpMemoryTests.cpp` は `WhpMemoryCases.def` の 16 ケースでネイティブメモリ API を分離します。ページ・投影サイズの領域、共有・独立した割り当て、未アクセス・常駐したバイト、最初の仮想プロセッサの有無を検証します。各ケースは二つの論理所有者を維持し、マッピング済みパーティションを繰り返し切り替え、非アクティブ所有者を破棄した後も残るマッピングが再構築なしで利用可能なことを確認します。実際のマッピングエラーは HRESULT を保持して失敗となります。これはメモリ API の証拠であり、命令実行の証明ではありません。
 
+`X64MachineProbe.def` の起動診断は、失敗した命令と、不一致のスカラー、TLS、特権、x87 制御、物理 FP レーン、XMM ワードをすべて列挙し、期待値と観測値を保持します。`DiagnosticIdentifiesStepFieldAndBothValues` は独立した期待メッセージを検証します。状態比較は引き続き完全一致を要求し、転送損失と命令実行の問題を区別します。失敗した実機プローブを成功扱いにはしません。
+
 `WhpResourceTests.cpp` はキャッシュ再利用、置換前の破棄、失敗からの復旧、期限と停止の競合を検証します。`LogicalCPUSwitchingRestoresPhysicalFPAndTLS` は両特権モードで二つのマシンを交互に実行し、物理 x87/XMM と FS/GS の独立した状態を確認してから、一方の破棄後に残るマシンを再開します。Windows CI は両モードの WHP ケースを必須とします。
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` の既定値は `ON` で、`unittests/semantic` のテスト群と集約実行ターゲットを制御します。Unicorn を使わずにネイティブ CPU テストを構築するには、`BUILD_TESTING=ON` を維持し、`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と `NEVERD_EMULATION_BACKEND_UNICORN=OFF` を指定します。適切な SDK ヘッダーを備えた Windows ARM64/MSVC を含め、KVM/WHP のネイティブテストは引き続き構築できます。Windows ARM64 で Unicorn を有効にする場合は ARM64 LLVM-MinGW ツールチェーンが必要です。このビルド分離は ARM64 の実機実行を検証するものではありません。

@@ -276,3 +276,7 @@ NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/cpu-execution.md")
 NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(NativeTestBuild, "NEVERD_ENABLE_SEMANTIC_TESTS")
+NEVERD_EMULATION_DOC_PATH(NativeProbeDiagnostics, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeProbeDiagnostics, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(NativeProbeDiagnostics,
+                         "DiagnosticIdentifiesStepFieldAndBothValues")

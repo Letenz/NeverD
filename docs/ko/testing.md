@@ -909,6 +909,8 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 `NeverDMemoryLifecycleTests`는 Unicorn과 독립적으로 빌드되며 네이티브 전용 구성에도 등록됩니다. Unicorn을 끄면 전용 소프트웨어 투영/장치 사례는 명시적으로 건너뛰지만, 호스트에 맞는 공유 CPU 사례는 유지됩니다. `WhpMemoryTests.cpp`는 `WhpMemoryCases.def`의 16개 사례로 네이티브 메모리 API를 분리합니다. 페이지/투영 크기, 공유/독립 할당, 미접근/상주 바이트, 첫 가상 프로세서의 존재 여부를 확인합니다. 각 사례는 두 논리 소유자를 유지하면서 매핑된 파티션을 반복 전환하고, 비활성 소유자를 제거한 뒤 남은 매핑을 다시 만들지 않고 사용할 수 있는지 확인합니다. 실제 매핑 오류는 HRESULT를 보존하며 테스트를 실패시킵니다. 이는 메모리 API 증거이며 명령 실행 증명은 아닙니다.
 
+`X64MachineProbe.def`의 시작 진단은 실패한 명령과 불일치하는 모든 스칼라, TLS, 권한, x87 제어 필드, 물리 FP 레인 및 XMM 워드를 나열하고 예상값과 관측값을 보존합니다. `DiagnosticIdentifiesStepFieldAndBothValues`는 독립적인 예상 메시지로 검증합니다. 상태 비교는 완전한 일치를 계속 요구하며, 진단은 전송 손실과 명령 실행 문제를 구분합니다. 실패한 네이티브 프로브는 통과로 처리하지 않습니다.
+
 `WhpResourceTests.cpp`는 캐시 재사용, 교체 전 제거, 실패 복구, 기한과 중지의 경합을 검증합니다. `LogicalCPUSwitchingRestoresPhysicalFPAndTLS`는 두 권한 모드에서 두 머신을 번갈아 실행하고 독립적인 물리 x87/XMM 및 FS/GS 상태를 확인한 뒤 한 머신을 제거하고 나머지를 재개합니다. Windows CI는 두 권한 모드의 WHP 사례를 모두 요구합니다.
 
 `NEVERD_ENABLE_SEMANTIC_TESTS`의 기본값은 `ON`이며 `unittests/semantic`의 테스트 그룹과 통합 실행 대상을 제어합니다. Unicorn 없이 네이티브 CPU 테스트를 빌드하려면 `BUILD_TESTING=ON`을 유지하고 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`를 설정합니다. 적절한 SDK 헤더가 있는 Windows ARM64/MSVC를 포함하여 네이티브 KVM/WHP 테스트를 계속 빌드할 수 있습니다. Windows ARM64에서 Unicorn을 활성화하려면 ARM64 LLVM-MinGW 도구 모음이 필요합니다. 이 빌드 분리는 ARM64 네이티브 실행 검증을 의미하지 않습니다.
