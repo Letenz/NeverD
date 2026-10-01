@@ -24,13 +24,14 @@ enum class Step {
 struct Instruction {
   Step Kind;
   llvm::ArrayRef<uint8_t> Code;
+  const char *Name;
 };
 #define NEVERD_X64_PROBE_INSTRUCTION(Name, ...)                                \
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64MachineProbe.def"
 #undef NEVERD_X64_PROBE_INSTRUCTION
 inline constexpr Instruction Program[] = {
-#define NEVERD_X64_PROBE_INSTRUCTION(Name, ...) {Step::Name, Name},
+#define NEVERD_X64_PROBE_INSTRUCTION(Name, ...) {Step::Name, Name, #Name},
 #include "X64MachineProbe.def"
 #undef NEVERD_X64_PROBE_INSTRUCTION
 };

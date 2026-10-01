@@ -24,6 +24,12 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Native startup, integer/FP state and shared CPU execution must not skip.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpXsaveProtocol."
+    "NativeInstallRetainsFPStateBeforeAnyGuestExecution/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpXsaveProtocol."
+    "NativeInstallRetainsFPStateBeforeAnyGuestExecution/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "X64Integer.MultiplyPreservesWidthsAndDefinedFlags/"
     "whpSupervisor")

@@ -21,6 +21,8 @@ namespace x64::fp {
 /// Registers are physical FP0..FP7, with only 16 significant high-word bits.
 /// Logical ST(i) is FP[(TOP+i)%8]. Tag is the physical abridged nonempty mask;
 /// full tag classifications derive from the retained 80-bit payloads.
+/// Last-operation metadata records observed state. Native save/restore may
+/// clear inactive exception metadata according to the host processor's rules.
 struct X64FPState {
   uint16_t Control = x64::fp::InitialControl;
   uint16_t Status = 0, Opcode = 0;
@@ -49,7 +51,8 @@ llvm::Error encodeX64FXState(const X64MachineState &State,
 llvm::Error decodeX64FXState(X64MachineState &State,
                              llvm::ArrayRef<uint8_t> Bytes);
 /// Bounded FP/SSE XSAVE profile. Both standard and compacted headers retain
-/// the same legacy slots; active extended components are unsupported.
+/// the same legacy slots. Declared compacted extension components are accepted
+/// only in architectural init state; non-initial extensions are unsupported.
 llvm::Error encodeX64XsaveState(const X64MachineState &State,
                                 llvm::MutableArrayRef<uint8_t> Bytes,
                                 bool Compacted = false);

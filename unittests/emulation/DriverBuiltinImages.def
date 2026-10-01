@@ -1,0 +1,45 @@
+//===- DriverBuiltinImages.def - Required original Windows drivers -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(BuiltinApifault, NEVERD_DRIVER_FIXTURES "/apifault.sys")
+NEVERD_PARITY_IMAGE(BuiltinDevices, NEVERD_DRIVER_FIXTURES "/devices.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverAsync,
+                    NEVERD_DRIVER_FIXTURES "/driver_async.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverContextLimits,
+                    NEVERD_DRIVER_FIXTURES "/driver_context_limits.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverDirect,
+                    NEVERD_DRIVER_FIXTURES "/driver_direct.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverDispatcher,
+                    NEVERD_DRIVER_FIXTURES "/driver_dispatcher.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuard,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInactive,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_inactive.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInvalidCheck,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_invalid_check.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverGuardInvalidDispatch,
+                    NEVERD_DRIVER_FIXTURES "/driver_guard_invalid_dispatch.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverIo, NEVERD_DRIVER_FIXTURES "/driver_io.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverMdl, NEVERD_DRIVER_FIXTURES "/driver_mdl.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverRegistry,
+                    NEVERD_DRIVER_FIXTURES "/driver_registry.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverRuntime,
+                    NEVERD_DRIVER_FIXTURES "/driver_runtime.sys")
+NEVERD_PARITY_IMAGE(BuiltinFailure, NEVERD_DRIVER_FIXTURES "/failure.sys")
+NEVERD_PARITY_IMAGE(BuiltinFault, NEVERD_DRIVER_FIXTURES "/fault.sys")
+NEVERD_PARITY_IMAGE(BuiltinGs, NEVERD_DRIVER_FIXTURES "/gs.sys")
+NEVERD_PARITY_IMAGE(BuiltinLoader, NEVERD_DRIVER_FIXTURES "/loader.sys")
+NEVERD_PARITY_IMAGE(BuiltinLoop, NEVERD_DRIVER_FIXTURES "/loop.sys")
+NEVERD_PARITY_IMAGE(BuiltinOpaque, NEVERD_DRIVER_FIXTURES "/opaque.sys")
+NEVERD_PARITY_IMAGE(BuiltinOpaqueargument,
+                    NEVERD_DRIVER_FIXTURES "/opaqueargument.sys")
+NEVERD_PARITY_IMAGE(BuiltinPendingentry,
+                    NEVERD_DRIVER_FIXTURES "/pendingentry.sys")
+NEVERD_PARITY_IMAGE(BuiltinPrivileged, NEVERD_DRIVER_FIXTURES "/privileged.sys")
+NEVERD_PARITY_IMAGE(BuiltinReadonly, NEVERD_DRIVER_FIXTURES "/readonly.sys")
+NEVERD_PARITY_IMAGE(BuiltinSuccess, NEVERD_DRIVER_FIXTURES "/success.sys")
+NEVERD_PARITY_IMAGE(BuiltinUnknown, NEVERD_DRIVER_FIXTURES "/unknown.sys")
+#endif

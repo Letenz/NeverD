@@ -59,7 +59,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             ],
         })
 
-    def run_evidence(self):
+    def run_evidence(self, with_drivers=False):
         with (
             mock.patch.object(native, "ROOT", self.root),
             mock.patch.object(native.subprocess, "run", side_effect=self.execute),
@@ -68,7 +68,57 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             ),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            return native.run(self.build, self.evidence, 2, True)
+            return native.run(
+                self.build, self.evidence, 2, True, with_drivers=with_drivers
+            )
+
+    def add_drivers(self):
+        (self.root / "scripts" / "NativeDriverTests.def").write_text(
+            'NEVERD_NATIVE_DRIVER_OWNER(DriverOwner)\n'
+            'NEVERD_NATIVE_DRIVER_REQUIRED_CASES('
+            '"Driver/Original/", "drivers.def", "IMAGE")\n'
+            'NEVERD_NATIVE_DRIVER_REQUIRED_CASES('
+            '"Driver/Rebased/", "drivers.def", "IMAGE")\n'
+        )
+        (self.root / "drivers.def").write_text("IMAGE(Fixture, 1)\n")
+        targets = self.build / "CMakeFiles" / "TargetDirectories.txt"
+        targets.write_text(targets.read_text() + str(
+            self.build / "unittests/emulation/CMakeFiles/DriverOwner.dir"
+        ) + "\n")
+        self.records += tuple(
+            TestRecord(name, frozenset({"DriverOwner"}))
+            for name in ("Driver/Original/Fixture", "Driver/Rebased/Fixture")
+        )
+        self.reported = self.records
+
+    def test_driver_mode_builds_and_requires_both_load_outcomes(self):
+        self.add_drivers()
+        self.assertEqual(self.run_evidence(with_drivers=True), 0)
+        self.assertIn("DriverOwner", self.executions[0])
+        self.assertEqual(self.summary()["required_native_tests"], 4)
+        self.assertTrue(self.summary()["with_drivers"])
+
+    def test_missing_driver_registration_cannot_pass_vacuously(self):
+        self.add_drivers()
+        self.records = self.records[:-1]
+        with self.assertRaisesRegex(ValueError, "missing required native WHP"):
+            self.run_evidence(with_drivers=True)
+        self.assertEqual(len(self.executions), 1)
+
+    def test_skipped_builtin_driver_fails_even_when_cpu_tests_pass(self):
+        self.add_drivers()
+        self.changes[self.records[-1]] = (
+            "notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing built-in image"
+        )
+        self.assertEqual(self.run_evidence(with_drivers=True), 1)
+        self.assertEqual(
+            self.summary()["required_native_unexecuted"], [self.records[-1].name]
+        )
+
+    def test_cpu_profile_does_not_require_driver_configuration(self):
+        self.assertEqual(self.run_evidence(), 0)
+        self.assertEqual(self.summary()["owners"], ["Owner"])
+        self.assertFalse(self.summary()["with_drivers"])
 
     def summary(self):
         return json.loads((self.evidence / "summary.json").read_text())
