@@ -1830,11 +1830,20 @@ jobs:
       - name: Configure the native CPU profile
         shell: bash
         run: |
-          python -m unittest scripts.tests.test_run_native_cpu_ci -q
+          python -m unittest scripts.tests.test_run_native_cpu_ci \
+            scripts.tests.test_build_wdk_driver_fixtures -q
           python scripts/check_capabilities.py
           python scripts/check_docs_i18n.py
           python scripts/audit_ci_test_results.py check-tool
+          fixture_args=()
+          if [[ "$NEVERD_NATIVE_DRIVER_TESTS" == "ON" ]]; then
+            python scripts/build_wdk_driver_fixtures.py \
+              --output build-ci-native/driver-fixtures \
+              --cache build-ci-native/driver-packages
+            fixture_args+=(-C build-ci-native/driver-fixtures/fixtures.cmake)
+          fi
           cmake -S . -B build-ci-native -G Ninja \
+            "${fixture_args[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
@@ -1863,6 +1872,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-cpu-windows-x64-whp
-          path: build-ci-native/native-evidence/
+          path: |
+            build-ci-native/native-evidence/
+            build-ci-native/driver-fixtures/build-manifest.json
+            build-ci-native/driver-fixtures/*.log
           if-no-files-found: warn
           retention-days: 14

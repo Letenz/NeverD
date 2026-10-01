@@ -187,6 +187,15 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         _, required = native.declared_inventory(self.root)
         self.assertEqual(required, {"Native/Case/First", "Native/Case/Third"})
 
+    def test_formatted_adjacent_literals_preserve_required_families(self):
+        definition = self.root / "scripts" / "NativeCPUTests.def"
+        definition.write_text(definition.read_text().replace(
+            '"Native/Case/", "cases.def", "CASE"',
+            '"Native/"\n "Case/", "cases."\n "def", "CA"\n "SE"',
+        ))
+        self.assertEqual(self.run_evidence(), 0)
+        self.assertEqual(self.summary()["required_native_tests"], 2)
+
     def test_named_native_execution_cannot_be_replaced_by_mapping_only(self):
         definition = self.root / "scripts" / "NativeCPUTests.def"
         definition.write_text(

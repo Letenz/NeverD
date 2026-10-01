@@ -10,9 +10,38 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDNativeDriverTests)
 // Fixed images intentionally reject rebasing before guest entry. These
 // outcomes are required as well as the original-address execution outcomes.
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
-    "Corpus/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Original_",
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "whp_Original_",
     "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
-    "Corpus/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
     "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "whp_Original_",
+    "unittests/emulation/DriverBackendParityCases.def", "NEVERD_PARITY_IMAGE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "unittests/emulation/DriverBackendParityCases.def", "NEVERD_PARITY_IMAGE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "whp_Original_",
+    "unittests/emulation/DriverBackendParityCases.def",
+    "NEVERD_PARITY_SCENARIO")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "unittests/emulation/DriverBackendParityCases.def",
+    "NEVERD_PARITY_SCENARIO")
 #endif
