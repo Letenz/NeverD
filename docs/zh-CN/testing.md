@@ -64,6 +64,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。
 
+受条件保护的倒计数测试覆盖拒绝循环体模板后的重试、任意字长输入的完整循环头证明、切点与查询预算的累计计费，以及真实入口契约违规时立即拒绝。
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests

@@ -2636,6 +2636,7 @@ class LoopPlanInference {
   std::vector<va_t> Choices;
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
+  bool GeneralContractFailure = false;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -3069,7 +3070,13 @@ class LoopPlanInference {
     auto C = checker();
     if (!C.startLoopSegment(ActiveCutpoint))
       throw Stop{};
-    runCandidate();
+    try {
+      runCandidate();
+    } catch (const Stop &) {
+      GeneralContractFailure =
+          Session.Statistics.Status == Status::ContractViolation;
+      throw;
+    }
   }
 
   bool fits(TerminalState State) {
@@ -3116,6 +3123,7 @@ class LoopPlanInference {
   }
 
   bool inferAt(va_t Address) {
+    GeneralContractFailure = false;
     auto &Cut = Plan.Cutpoints[ActiveCutpoint];
     Cut = {};
     Cut.OriginalAddress = Cut.CandidateAddress = Address;
@@ -3990,6 +3998,7 @@ public:
   }
 
   LowIRLoopInferenceResult run(llvm::ArrayRef<va_t> Eligible) {
+    std::string LastTemplateFailure;
     try {
       if (!prepareCandidateRecords(Session, Records) ||
           !checker().validateInput())
@@ -4016,14 +4025,26 @@ public:
             stop(Status::BudgetExceeded,
                  "loop inference cutpoint budget exhausted");
           ++Result.CutpointAttempts;
-          if (inferAt(Address)) {
-            Result.Status = LowIRLoopInferenceStatus::Inferred;
-            Result.Plan = Plan;
-            break;
+          try {
+            if (inferAt(Address)) {
+              Result.Status = LowIRLoopInferenceStatus::Inferred;
+              Result.Plan = Plan;
+              break;
+            }
+          } catch (const Stop &) {
+            // An overgeneralized template can violate a return or frame
+            // contract even when another cut admits a valid invariant. Retry
+            // only that hypothesis failure. Real prefixes, malformed input,
+            // unsupported execution and exhausted shared budgets still stop.
+            if (!GeneralContractFailure)
+              throw;
+            LastTemplateFailure = Session.Statistics.Diagnostic;
           }
         }
       if (!Result.inferred())
-        Result.Diagnostic = "no loop template and unsigned rank inferred";
+        Result.Diagnostic = LastTemplateFailure.empty()
+                                ? "no loop template and unsigned rank inferred"
+                                : LastTemplateFailure;
     } catch (const Stop &) {
       Result.Diagnostic = Session.Statistics.Diagnostic;
       if (!Stage.empty())

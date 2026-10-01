@@ -70,6 +70,8 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 `NeverDLLVMInterpreterModelTests` compare du LLVM indépendant à des oracles LowIR de tout l’état : largeurs, PHI parallèles, switch, mémoire invitée, statut distinct, gardes poison, plages intrinsèques, contrats refusés et quatre budgets. Il vérifie une preuve complète de décompte sur un mot arbitraire et rejette un statut modifié. Du C indépendant compilé à O1/O2 doit respecter les mêmes observations. Ces tests valident le modèle admis ; découverte automatique d’invariants et correction du compilateur restent séparées.
 
+Les tests de décompte gardé couvrent la reprise après rejet du modèle du corps, une preuve complète sur un mot arbitraire à l’en-tête, les budgets partagés et le refus immédiat d’une violation réelle du contrat d’entrée.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests

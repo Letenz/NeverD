@@ -70,6 +70,8 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `NeverDLLVMInterpreterModelTests` vergleicht unabhängig geschriebenes LLVM mit LowIR-Referenzen für den gesamten Zustand: Breiten, parallele PHIs, switch, Gastspeicher, separater Status, Poison-Bedingungen, Intrinsic-Bereiche, abgelehnte Verträge und vier Budgets. Ein vollständiger Beweis für beliebige Wort-Countdowns wird geprüft, veränderter Status abgelehnt. Unabhängiges C muss nach O1/O2-Kompilierung dieselben Beobachtungen erfüllen. Die Tests prüfen das unterstützte Modell; automatische Invariantenfindung und Compilerkorrektheit bleiben separat.
 
+Geschützte Countdown-Tests prüfen den nächsten Versuch nach einem verworfenen Rumpf-Template, einen vollständigen Kopfbeweis für beliebige Worteingaben, gemeinsame Schnittpunkt-/Anfragebudgets und die sofortige Ablehnung echter Eingangsvertragsverletzungen.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
