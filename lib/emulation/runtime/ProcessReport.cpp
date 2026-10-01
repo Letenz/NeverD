@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/emulation/ProcessReport.h"
 
+#include "ProcessAndroidJSON.h"
+
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -48,6 +50,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   ProcessOptions Options;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::Android) {
+      auto Native = androidOptionsFromJSON(V);
+      if (!Native)
+        return Native.takeError();
+      Options.Android = std::move(*Native);
+      continue;
+    }
     if (Name == field::Backend) {
       auto Text = V.getAsString();
       if (!Text)
@@ -118,6 +127,12 @@ std::string processResultJSON(const ProcessResult &Result) {
       {field::Stderr, llvm::toHex(Result.StandardError, true)},
       {field::Services, std::move(Services)},
       {field::CPUExit, nullptr}};
+  if (Result.Profile == ProcessProfile::AndroidNativeAArch64) {
+    Object[field::Android] = androidResultJSON(Result);
+    Object[field::ReturnValue] =
+        Result.ReturnValue ? llvm::json::Value(bits(*Result.ReturnValue))
+                           : nullptr;
+  }
   if (Result.LastCPUExit) {
     const auto &Exit = *Result.LastCPUExit;
     Object[field::CPUExit] =

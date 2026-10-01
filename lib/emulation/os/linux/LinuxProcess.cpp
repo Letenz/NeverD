@@ -14,73 +14,11 @@
 #include "neverd/emulation/ImageMapping.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 
-#include "llvm/Support/FormatVariadic.h"
-
 namespace neverd::emulation::linux_model {
-namespace {
-std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
-#define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count)                \
-  if (Number == (ISA == GuestArchitecture::X64 ? X64Number : ARMNumber))       \
-    return ServiceKind::Name;
-#include "LinuxValues.def"
-#undef NEVERD_LINUX_SERVICE
-#define NEVERD_LINUX_X64_SERVICE(Name, Value, Count)                           \
-  if (ISA == GuestArchitecture::X64 && Number == Value)                        \
-    return ServiceKind::Name;
-#include "LinuxValues.def"
-#undef NEVERD_LINUX_X64_SERVICE
-  return std::nullopt;
-}
-
-llvm::Expected<std::optional<uint64_t>>
-writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
-            const ProcessLayout &Layout, const ProcessOptions &Options,
-            ProcessResult &Result) {
-  const auto [FD, Address, Count, A3, A4, A5] = Event.Arguments;
-  if (FD != StandardOutput && FD != StandardError)
-    return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  if (!Count)
-    return std::optional<uint64_t>(0);
-  if (Address >= Layout.UserLimit || Count > Layout.UserLimit - Address)
-    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
-  const uint64_t Used =
-      Result.StandardOutput.size() + Result.StandardError.size();
-  if (Count > Options.OutputLimit - Used) {
-    Result.Stop = ProcessStopReason::OutputLimit;
-    Result.Diagnostic = Output;
-    return std::optional<uint64_t>();
-  }
-  // Captured streams are virtual byte sinks. Preserve a readable prefix on a
-  // later-page fault, and return EFAULT only when no byte can be copied. Pure
-  // permission queries must not poison the CPU while delivering a syscall
-  // error which the guest is allowed to handle and recover from.
-  uint64_t Readable = 0;
-  while (Readable < Count) {
-    const uint64_t Start = Address + Readable;
-    const uint64_t Size =
-        std::min(Count - Readable, Layout.PageSize - Start % Layout.PageSize);
-    auto Access = CPU.canAccess(Start, Size, Read | UserAccessible);
-    if (!Access)
-      return Access.takeError();
-    if (!*Access)
-      break;
-    Readable += Size;
-  }
-  if (!Readable)
-    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
-  std::string Bytes(Readable, '\0');
-  if (auto E = CPU.read(Address, llvm::MutableArrayRef<uint8_t>(
-                                     reinterpret_cast<uint8_t *>(Bytes.data()),
-                                     Bytes.size())))
-    return std::move(E);
-  (FD == StandardOutput ? Result.StandardOutput : Result.StandardError)
-      .append(Bytes);
-  return std::optional<uint64_t>(Readable);
-}
-} // namespace
-
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options) {
+  if (Options.Android)
+    return failure("Android options require the Android native profile");
   if (!Options.Limits.Instructions || !Options.Limits.Events ||
       !Options.Limits.TimeoutMicroseconds || !Options.MemoryLimit ||
       !Options.StackSize || !Options.OutputLimit ||
@@ -228,56 +166,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     Result.Services.push_back(*Event);
-    auto Kind = serviceKind(Layout->Architecture, Event->Number);
-    if (!Kind) {
-      Result.Stop = ProcessStopReason::UnsupportedService;
-      Result.Diagnostic = llvm::formatv(Service, Event->Number).str();
+    auto Returned =
+        handleService(CPU, Memory, *Event, *Layout, Options, Result);
+    if (!Returned) {
+      RuntimeFailure(Returned.takeError());
       break;
     }
-    std::optional<uint64_t> Value;
-    switch (*Kind) {
-    case ServiceKind::Exit:
-    case ServiceKind::ExitGroup:
-      Result.Stop = ProcessStopReason::Exited;
-      Result.ExitStatus = Event->Arguments[0] & ExitMask;
-      break;
-    case ServiceKind::GetPID:
-      Value = ProcessID;
-      break;
-    case ServiceKind::GetTID:
-      Value = ThreadID;
-      break;
-    case ServiceKind::Mmap:
-    case ServiceKind::Mprotect:
-    case ServiceKind::Munmap:
-    case ServiceKind::Brk: {
-      auto Returned = Memory.handle(*Kind, *Event, Result);
-      if (!Returned) {
-        RuntimeFailure(Returned.takeError());
-        break;
-      }
-      Value = *Returned;
-      break;
-    }
-    case ServiceKind::ArchPrctl: {
-      auto Returned = archPrctl(CPU, *Event, *Layout, Result);
-      if (!Returned) {
-        RuntimeFailure(Returned.takeError());
-        break;
-      }
-      Value = *Returned;
-      break;
-    }
-    case ServiceKind::Write: {
-      auto Written = writeOutput(CPU, *Event, *Layout, Options, Result);
-      if (!Written) {
-        RuntimeFailure(Written.takeError());
-        break;
-      }
-      Value = *Written;
-      break;
-    }
-    }
+    auto Value = *Returned;
     if (!Value)
       break;
     Result.Services.back().Result = *Value;
