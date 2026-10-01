@@ -102,6 +102,13 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "potentialEDRHeadroom", "d16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "resignFirstResponder", "B16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "safeAreaLayoutGuide", "@16@0:8", nullptr},
+// UIView's public iOS properties and the local UIKit header inventory agree
+// on signed NSInteger layout direction and the four-Double inset result.
+// Apple Clang independently emits these encodings on both arm64 iOS targets.
+// https://developer.apple.com/documentation/uikit/uiview/effectiveuserinterfacelayoutdirection?language=objc
+// https://developer.apple.com/documentation/uikit/uiview/safeareainsets?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "effectiveUserInterfaceLayoutDirection", "q16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "safeAreaInsets", "{UIEdgeInsets=dddd}16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "scale", "d16@0:8", nullptr},
 // UIColor's public no-argument instance method has this exact arm64 ABI;
 // unqualified selector use is admitted only when local declarations agree.

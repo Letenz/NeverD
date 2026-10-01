@@ -287,6 +287,20 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     {"$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6"
      "leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vppppC"},
+    // Swift 6.1.2 arm64 and x86_64 Foundation clients preserve the generic
+    // class metadata separately from the class argument and swiftself. The
+    // typed Optional object is one integer word; Any? is an indirect result.
+    {"$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+     "SStSo8NSObjectCRbzSo8NSCodingRzlF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "zpzppC"},
+    {"$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIzzpC"},
     // The concrete UIImage initializer consumes the two String words in x0/x1
     // and returns an object in x0. WMF's arm64 call uses those carriers and
     // links the exact Swift overlay symbol from UIKit.
@@ -412,6 +426,13 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     Hint.SwiftStringInputs = {{0, 1}};
   if (Hint.TargetName == "$s10Foundation3URLV6stringACSgSSh_tcfC")
     Hint.SwiftStringInputs = {{1, 2}};
+  if (Hint.TargetName ==
+      "$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+      "SStSo8NSObjectCRbzSo8NSCodingRzlF")
+    Hint.SwiftStringInputs = {{1, 2}};
+  if (Hint.TargetName ==
+      "$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF")
+    Hint.SwiftStringInputs = {{2, 3}};
   for (char Code : Encoding) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());

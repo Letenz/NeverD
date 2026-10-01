@@ -287,6 +287,124 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftNSCoderPreservesMetadataContextAndCompleteResult) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Word = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (const bool Any : {false, true}) {
+    const std::string Import =
+        Any ? "_$"
+              "sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg"
+              "_SStF"
+            : "_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+              "SStSo8NSObjectCRbzSo8NSCodingRzlF";
+    const va_t Slot = Any ? 0x2000 : 0x1000;
+    Image.ImportPtrSlots[Slot] = Import;
+    Image.DyldBindSlots[Slot] = {
+        Import, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+        false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    // Ordinary wrapper prototypes come from the independent compiler client.
+    const std::vector<TypeRef> Types =
+        Any ? std::vector<TypeRef>{Pointer, Word, Word, Pointer, Pointer}
+            : std::vector<TypeRef>{Pointer, Word, Pointer, Pointer, Pointer};
+    std::vector<ExprPtr> Arguments;
+    HighFunc Function;
+    Function.Name = Any ? "decode_any" : "decode_typed";
+    Function.ReturnType = Hint->Signature.ReturnType;
+    for (unsigned I = 0; I != Types.size(); ++I) {
+      Function.Params.push_back({"arg" + std::to_string(I), Types[I]});
+      Arguments.push_back(parameter(I, Types[I]));
+    }
+    HighStmt Statement;
+    Statement.Kind = Any ? StmtKind::ExprStmt : StmtKind::Return;
+    auto Result = call(*Hint, Hint->Signature.ReturnType, Arguments);
+    if (Any)
+      Statement.Val = Result;
+    else
+      Statement.RetVal = Result;
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swift_indirect_result"), std::string::npos);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  const auto Program = Source + R"(
+struct CoderOracle { unsigned calls, empty; };
+struct AnyOracle { uintptr_t buffer[3]; const void *metadata; };
+static int expected_type, expected_metadata, expected_storage;
+uint64_t __attribute__((swiftcall)) typed_oracle(
+    const void *, uint64_t, const void *, const void *,
+    struct CoderOracle * __attribute__((swift_context)))
+    __asm__("_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_SStSo8NSObjectCRbzSo8NSCodingRzlF");
+uint64_t __attribute__((swiftcall)) typed_oracle(
+    const void *type, uint64_t word, const void *storage, const void *metadata,
+    struct CoderOracle *coder __attribute__((swift_context))) {
+  if (type != &expected_type || metadata != &expected_metadata ||
+      storage != &expected_storage || word != 0x8123456789abcdefULL)
+    __builtin_trap();
+  ++coder->calls;
+  return coder->empty ? 0 : (uint64_t)(uintptr_t)metadata;
+}
+void __attribute__((swiftcall)) any_oracle(
+    struct AnyOracle * __attribute__((swift_indirect_result)),
+    uint64_t, uint64_t, const void *,
+    struct CoderOracle * __attribute__((swift_context)))
+    __asm__("_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF");
+void __attribute__((swiftcall)) any_oracle(
+    struct AnyOracle *result __attribute__((swift_indirect_result)),
+    uint64_t classes, uint64_t word, const void *storage,
+    struct CoderOracle *coder __attribute__((swift_context))) {
+  if (classes != 0xf123456789abcde0ULL || word != 0x1122334455667788ULL ||
+      storage != &expected_storage) __builtin_trap();
+  ++coder->calls;
+  // Apple Clang 17's DSE drops nonvolatile payload stores in this explicit
+  // swift_indirect_result definition even when called without our wrapper.
+  // Keep the oracle writes observable; the generated caller stays optimized.
+  volatile struct AnyOracle *observed = result;
+  observed->buffer[0] = coder->empty ? 0 : classes;
+  observed->buffer[1] = coder->empty ? 0 : word;
+  observed->buffer[2] = coder->empty ? 0 : (uintptr_t)storage;
+  observed->metadata = coder->empty ? 0 : &expected_metadata;
+}
+int main(void) {
+  struct CoderOracle coder = {0, 0};
+  struct { uint64_t before; struct AnyOracle value; uint64_t after; } box;
+  box.before = 0x0123456789abcdefULL;
+  box.after = 0xfedcba9876543210ULL;
+  for (unsigned empty = 0; empty != 2; ++empty) {
+    coder.empty = empty;
+    uint64_t object = decode_typed(&expected_type, 0x8123456789abcdefULL,
+                                   &expected_storage, &expected_metadata, &coder);
+    if (object != (empty ? 0 : (uint64_t)(uintptr_t)&expected_metadata)) return 1;
+    decode_any(&box.value, 0xf123456789abcde0ULL, 0x1122334455667788ULL,
+               &expected_storage, &coder);
+    if (box.value.buffer[0] != (empty ? 0 : 0xf123456789abcde0ULL) ||
+        box.value.buffer[1] != (empty ? 0 : 0x1122334455667788ULL) ||
+        box.value.buffer[2] != (empty ? 0 : (uintptr_t)&expected_storage) ||
+        box.value.metadata != (empty ? 0 : &expected_metadata)) return 2;
+    if (box.before != 0x0123456789abcdefULL || box.after != 0xfedcba9876543210ULL ||
+        coder.calls != 2 * (empty + 1)) return 3;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, CFunctionParameterCallPreservesDispatchAndEffects) {
   using namespace c_function_parameter_test;
   Fixture F;
@@ -1858,6 +1976,75 @@ int main(void) {
     set_insets(0x1234, 0x5678, input.top, input.left, input.bottom, input.right);
     if (memcmp(&observed, patterns[i], sizeof(observed)) || calls != i + 1)
       return 1;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, SafeAreaResultPreservesEveryFieldAndSingleEvaluation) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "safeAreaInsets");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "safeAreaInsets";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (unsigned I = 0; I != 4; ++I) {
+    auto Result = call(Hint, Signature->ReturnType,
+                       {parameter(0, Word), parameter(1, Word)});
+    Functions.push_back(returning("read_edge" + std::to_string(I),
+                                  HighExpr::makeRecordField(Result, I * 8, 8),
+                                  {Word, Word}));
+  }
+  const auto Source = emit(Functions, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static unsigned calls;
+static const uint64_t expected[] = {
+  0x3ff4000000000000ULL, 0xc004000000000000ULL,
+  0x8000000000000000ULL, 0x7ff8000000000042ULL
+};
+static InsetsOracle implementation(id receiver, SEL selector) {
+  if (selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  ++calls;
+  InsetsOracle result = {0, 0, 0, 0};
+  if (receiver) {
+    if (receiver != (id)(uintptr_t)0x1234) __builtin_trap();
+    memcpy(&result, expected, sizeof(result));
+  }
+  return result;
+}
+static InsetsOracle (*objc_msgSend)(id, SEL) = implementation;
+)" + Source + R"(
+int main(void) {
+  double (*readers[])(uint64_t, uint64_t) = {
+    read_edge0, read_edge1, read_edge2, read_edge3
+  };
+  for (unsigned i = 0; i != 4; ++i) {
+    double value = readers[i](0x1234, 0x5678);
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != expected[i] || calls != 2 * i + 1) return 1;
+    value = readers[i](0, 0x5678);
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != 0 || calls != 2 * i + 2) return 2;
   }
   return 0;
 }
