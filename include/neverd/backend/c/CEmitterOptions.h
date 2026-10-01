@@ -27,6 +27,10 @@ struct CEmitterOptions {
   /// the guards without changing the declarations themselves.
   bool EmitRecordGuards = true;
   bool UseDebugNames = true;
+  /// LLVMC clients with a complete source contract can retain the module's
+  /// function types and request prototypes for definitions as well as imports.
+  /// Disables inferred-void and debug-signature projections in that route.
+  bool PreserveLLVMFunctionTypes = false;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::Unknown;
   /// When set, HighC can fold rdata integer loads, print printable

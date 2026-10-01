@@ -196,6 +196,30 @@ HighStmt ret(ExprPtr Value) {
   return Result;
 }
 
+TEST(HighCStoreForwarding, BitwiseOperandsParenthesizeComparisons) {
+  auto U64 = NdType::makeInt(8, false);
+  for (NdOp Bitwise : {NdOp::INT_AND, NdOp::INT_OR, NdOp::INT_XOR}) {
+    for (NdOp Compare : {NdOp::INT_NOTEQUAL, NdOp::INT_LESS}) {
+      for (bool OnRight : {false, true}) {
+        HighFunc Func;
+        Func.Name = "compared_bits";
+        Func.ReturnType = U64;
+        Func.Params = {{"arg0", U64}, {"arg1", U64}};
+        auto Condition = HighExpr::makeBinop(Compare, makeParam(0, 8, U64),
+                                             HighExpr::makeConst(3, 8));
+        auto Mask = makeParam(1, 8, U64);
+        Func.Body = {ret(HighExpr::makeBinop(
+            Bitwise, OnRight ? Mask : Condition, OnRight ? Condition : Mask))};
+        const auto Body = emitBody(Func);
+        EXPECT_NE(Body.find(Compare == NdOp::INT_NOTEQUAL ? "(arg0 != 3)"
+                                                          : "(arg0 < 3)"),
+                  std::string::npos)
+            << Body;
+      }
+    }
+  }
+}
+
 TEST(HighCStoreForwarding, RetainsDefinitionsUsedByForwardedValues) {
   for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
     for (unsigned Mode = 0; Mode != 4; ++Mode) {

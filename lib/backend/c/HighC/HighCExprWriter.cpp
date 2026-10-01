@@ -364,8 +364,6 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         return exprStr(*Call, ParentPrec);
     }
     auto &Inner = *E.Operands[0];
-    if (Inner.Kind == ExprKind::Const)
-      return exprStr(Inner, ParentPrec);
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
     return "(" + typeToC(E.Type) + ")(" +

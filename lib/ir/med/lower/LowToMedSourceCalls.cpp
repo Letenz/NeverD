@@ -46,7 +46,10 @@ std::optional<int64_t> returnAddressBias(const BinaryImage *Image,
 
 void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                                         BinaryFormat Fmt) {
-  if (!SourceCallHintsEnabled || Fmt != BinaryFormat::MachO ||
+  // Image-independent IR clients supply explicit source contracts. Their
+  // physical carriers do not depend on a container format. Runtime discovery
+  // from a loaded image remains restricted to its supported Mach-O path.
+  if (!SourceCallHintsEnabled || (Image && Fmt != BinaryFormat::MachO) ||
       (Image && (Image->IsRelocatable || Image->Arch != TargetArch)) ||
       (TargetArch != Arch::AArch64 && TargetArch != Arch::X64))
     return;

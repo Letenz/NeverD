@@ -684,6 +684,76 @@ TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
   }
 }
 
+TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
+  for (const bool Atomic : {false, true}) {
+    auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8));
+    if (Atomic)
+      Memory->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else
+      Memory->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    std::vector<ExprPtr> Roots{Memory, local(1)};
+    // Many roots share most of their graph; the last roots also share an
+    // ordered indirect target, which is not an ordinary call argument.
+    for (unsigned I = 0; I < 256; ++I)
+      Roots.push_back(
+          HighExpr::makeBinop(NdOp::INT_ADD, Roots[I], Roots[I + 1]));
+    auto Indirect = HighExpr::makeCall("indirect", 0x4000, {local(2)});
+    Indirect->IsIndirectCall = true;
+    Indirect->IndirectTarget = Memory;
+    Roots.push_back(Indirect);
+    Roots.push_back(nullptr);
+    const auto Ancestors = findOrderedMemoryAncestors(Roots);
+    for (const auto &Root : Roots)
+      EXPECT_EQ(Ancestors.count(Root.get()) != 0,
+                Root && Root->hasOrderedMemoryAccess());
+    EXPECT_FALSE(Ancestors.count(Indirect->Operands.front().get()));
+  }
+
+  auto A = HighExpr::makeUnary(NdOp::INT_NEGATE, local(0));
+  auto B = HighExpr::makeUnary(NdOp::INT_NEGATE, A);
+  A->Operands[0] = B;
+  EXPECT_TRUE(findOrderedMemoryAncestors({A, B}).empty());
+  auto Memory = HighExpr::makeLoad(local(1), NdType::makeInt(8),
+                                   NdMemoryOrdering::Acquire);
+  A->Operands.push_back(Memory);
+  const auto Ancestors = findOrderedMemoryAncestors({B});
+  EXPECT_EQ(Ancestors.size(), 3U);
+  EXPECT_TRUE(Ancestors.count(A.get()));
+  EXPECT_TRUE(Ancestors.count(B.get()));
+  EXPECT_TRUE(Ancestors.count(Memory.get()));
+  A->Operands.clear(); // Break the deliberately malformed cycle.
+}
+
+TEST(HighControlFlowSemantics, SharedOrderedComparisonsRemainObservable) {
+  for (const bool Reverse : {false, true}) {
+    HighFunc F;
+    auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8),
+                                     NdMemoryOrdering::Acquire);
+    auto Shared = Memory;
+    for (unsigned I = 0; I < 512; ++I) {
+      Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(1));
+      auto Compare = HighExpr::makeBinop(NdOp::INT_LESS, Shared,
+                                         HighExpr::makeConst(0, 8));
+      F.Body.push_back(result(0, Compare));
+    }
+    if (Reverse)
+      std::reverse(F.Body.begin(), F.Body.end());
+    simplifyAllExprs(F.Body);
+    for (const auto &Statement : F.Body) {
+      EXPECT_EQ(Statement.RetVal->Op, NdOp::INT_LESS);
+      EXPECT_TRUE(Statement.RetVal->hasOrderedMemoryAccess());
+    }
+    // Effect facts are specific to this invocation, not persistent node
+    // annotations. Removing the ordering permits the next pass to fold.
+    Memory->MemoryOrdering = NdMemoryOrdering::None;
+    simplifyAllExprs(F.Body);
+    for (const auto &Statement : F.Body) {
+      EXPECT_EQ(Statement.RetVal->Kind, ExprKind::Const);
+      EXPECT_EQ(Statement.RetVal->ConstVal, 0U);
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, LowSlicesIgnoreOnlyUnobservedConcatPadding) {
   for (unsigned LowBytes : {1U, 2U, 4U}) {
     for (unsigned HighBytes : {1U, 2U, 4U}) {
