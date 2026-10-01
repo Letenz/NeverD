@@ -606,12 +606,117 @@ static std::optional<size_t> pureAssignCount(const HighStmt &S,
 }
 
 static bool endsItsBlock(const HighStmt &S);
+static bool isEmptyAnchor(const HighStmt &S);
 
 /// `goto L` where L starts a few pure assignments and a return (typically
 /// `result = 1; return result;` shared through an epilogue), or a call that
 /// never returns such as the fail-fast trap, becomes a copy of those
 /// statements.  The labelled original stays for any other path, so no code
 /// is removed; only the jump is.
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
+  std::map<va_t, unsigned> Uses;
+  std::set<va_t> Pinned;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      ++Uses[S.GotoTarget];
+    for (const HighEHClause &Clause : S.EHClauses)
+      if (Clause.HandlerVA != 0 && Clause.HandlerVA != InvalidVA)
+        Pinned.insert(Clause.HandlerVA);
+  });
+  auto UsesOf = [&](va_t A) -> unsigned {
+    auto It = Uses.find(A);
+    return It == Uses.end() ? 0 : It->second;
+  };
+  std::set<va_t> Targets;
+  for (const auto &[Addr, Count] : Uses)
+    Targets.insert(Addr);
+  auto Addressed = [](va_t A) { return A != 0 && A != InvalidVA; };
+  // The tail at a label nothing falls into: a few pure assignments, then a
+  // forward jump, or the next label, which the copy then jumps to.
+  std::map<va_t, std::vector<HighStmt>> Tails;
+  std::function<void(const std::vector<HighStmt> &)> Collect =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const va_t X = L[I].Addr;
+          if (!Addressed(X) || Pinned.count(X) || UsesOf(X) < 2 ||
+              (I > 0 && L[I - 1].Addr == X) || Tails.count(X))
+            continue;
+          size_t Before = I;
+          while (Before > 0 && isEmptyAnchor(L[Before - 1]) &&
+                 !UsesOf(L[Before - 1].Addr))
+            --Before;
+          if (Before == 0 || !endsItsBlock(L[Before - 1]))
+            continue;
+          size_t J = I;
+          size_t Assigns = 0;
+          bool Pure = true;
+          for (; J < L.size(); ++J) {
+            if (J > I && Addressed(L[J].Addr) && L[J].Addr != L[J - 1].Addr &&
+                UsesOf(L[J].Addr))
+              break;
+            if (L[J].Kind == StmtKind::Goto)
+              break;
+            std::optional<size_t> Count = pureAssignCount(L[J], Targets);
+            if (!Count || Assigns + *Count > limits::kMaxJumpTailStatements) {
+              Pure = false;
+              break;
+            }
+            Assigns += *Count;
+          }
+          if (!Pure || J == L.size())
+            continue;
+          std::vector<HighStmt> Tail(L.begin() + I, L.begin() + J);
+          HighStmt Jump;
+          Jump.Kind = StmtKind::Goto;
+          Jump.GotoTarget =
+              L[J].Kind == StmtKind::Goto ? L[J].GotoTarget : L[J].Addr;
+          // Forward only, so copies never chase each other round a cycle.
+          if (!Addressed(Jump.GotoTarget) || Jump.GotoTarget <= X)
+            continue;
+          Tail.push_back(std::move(Jump));
+          Tails.emplace(X, std::move(Tail));
+        }
+        for (const HighStmt &S : L) {
+          Collect(S.Body);
+          Collect(S.ElseBody);
+          for (const auto &C : S.Cases)
+            Collect(C.Body);
+          Collect(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Collect(ClauseBody);
+        }
+      };
+  Collect(Body);
+  if (Tails.empty())
+    return false;
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Rewrite =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          if (L[I].Kind == StmtKind::Goto) {
+            auto It = Tails.find(L[I].GotoTarget);
+            if (It != Tails.end()) {
+              L.erase(L.begin() + I);
+              L.insert(L.begin() + I, It->second.begin(), It->second.end());
+              I += It->second.size() - 1;
+              Changed = true;
+              continue;
+            }
+          }
+          Rewrite(L[I].Body);
+          Rewrite(L[I].ElseBody);
+          for (auto &C : L[I].Cases)
+            Rewrite(C.Body);
+          Rewrite(L[I].DefaultBody);
+          for (auto &ClauseBody : L[I].EHClauseBodies)
+            Rewrite(ClauseBody);
+        }
+      };
+  Rewrite(Body);
+  return Changed;
+}
+
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
   constexpr size_t kMaxTailAssigns = 3;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
