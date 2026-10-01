@@ -199,6 +199,28 @@ TEST(NativeStackControl, InternalReturnReadsTheActualOldStackThenPops) {
             0x1000U);
 }
 
+TEST(NativeStackControl, InternalCleanupIsUnsignedAndFollowsTheTargetRead) {
+  for (uint64_t Cleanup : {uint64_t{1}, uint64_t{24}, uint64_t{65535}}) {
+    auto Insn = returnInstruction();
+    Insn.Origin.Immediate = Cleanup;
+    auto Result = expand(Insn);
+    ASSERT_TRUE(static_cast<bool>(Result))
+        << llvm::toString(Result.takeError());
+    validBoundary(*Result);
+    EXPECT_EQ(Result->Receipt.OriginalBoundary.Immediate, Cleanup);
+    SymContext Ctx;
+    SymState State(Ctx);
+    SymExec Exec(Ctx, State);
+    State.write(SymSpace::Register, Stack.Offset, Ctx.mkConst(64, 0x1000));
+    State.store(Ctx.mkConst(64, 0x1000), Ctx.mkConst(64, 0x900));
+    for (const auto &Op : Result->Ops)
+      Exec.step(Op);
+    EXPECT_EQ(word(Ctx, Exec.branchTarget()), 0x900u);
+    EXPECT_EQ(word(Ctx, State.read(SymSpace::Register, Stack.Offset, 8)),
+              0x1008u + Cleanup);
+  }
+}
+
 TEST(NativeStackControl, OuterReturnKeepsThePrepopObservation) {
   const auto Insn = returnInstruction();
   auto Result = expandNativeStackControl(
@@ -347,7 +369,7 @@ TEST(NativeStackControl, RejectsNoncanonicalMemoryPrefixes) {
   }
 }
 
-TEST(NativeStackControl, RejectsDirectPrefixAndCalleePopReturns) {
+TEST(NativeStackControl, RejectsDirectPrefixAndInvalidCleanupBoundaries) {
   auto Insn = directCall();
   Insn.Ops.insert(Insn.Ops.begin(), op(NdOp::COPY, NdVar::tmp(0, 8), {Stack}));
   Insn.Ops[0].Addr = Insn.Origin.Address;
@@ -356,8 +378,13 @@ TEST(NativeStackControl, RejectsDirectPrefixAndCalleePopReturns) {
   Insn.UndefinedEffects = {};
   reject(Insn);
   Insn = returnInstruction();
-  Insn.Origin.Immediate = 8;
+  Insn.Origin.Immediate = 65536;
   reject(Insn);
+  Insn.Origin.Immediate = 8;
+  auto Outer = expandNativeStackControl(
+      Insn, Stack, Scratch, NativeReturnExpansion::OuterFunctionBoundary);
+  ASSERT_FALSE(static_cast<bool>(Outer));
+  EXPECT_FALSE(llvm::toString(Outer.takeError()).empty());
 }
 
 } // namespace

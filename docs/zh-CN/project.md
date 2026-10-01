@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -53,6 +53,10 @@ CLI、集成方与 AI 智能体通过 **纯 C API** 使用同一个引擎 **`lib
 独立的 C++ `checkBinaryLLVMRefinement` API 对精确 LLVM 产物组合全新的原生和 LLVM 检查；C 编译仍不在证明范围内。
 
 PE 恢复还会认证首选基址下的 DIR64 字节并排除导入写入；固定映像契约不证明 ASLR 或初始化等价性。
+
+在显式机器状态契约下，解释器恢复支持有界入口栈对齐分区及内部 `RET imm16` 栈清理。这些分区的自动原生到 LLVM 证明组合尚未完成。
+
+有界 `REP MOVS/STOS` 恢复保留逐元素顺序和重叠行为；原始指令的证明覆盖仍待完成。
 
 <!-- i18n-section: why-neverd -->
 
