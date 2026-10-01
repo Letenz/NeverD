@@ -71,6 +71,10 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts);
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts);
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture);
+/// Forward scalar copies through nonescaping private slots on the shared
+/// source-flow graph. Calls must already carry complete source ABI bindings.
+/// Every reaching context must agree; cycles and exhausted budgets do nothing.
+bool forwardBoundPrivateFrameCopies(HighFunc &Func, Arch Architecture);
 void narrowSourceConcatLocals(HighFunc &Func);
 /// Define each register value whose every read selects the same low bytes as
 /// that zero-extended prefix, dropping only pure upper bytes.

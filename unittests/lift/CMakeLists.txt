@@ -1049,6 +1049,7 @@ endif()
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
   core/HighControlFlowSemanticsTests.cpp
+  core/HighFrameStoreForwardingTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

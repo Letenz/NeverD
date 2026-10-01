@@ -8,7 +8,8 @@
 namespace neverd::high_detail {
 /// A bounded arithmetic offset from the synthetic entry stack pointer.
 /// The caller must separately check the access width and private frame bounds,
-/// and prove that any supplied alias has one dominating immutable definition.
+/// and prove that each supplied alias is defined and evaluates to the same
+/// immutable frame address at every use.
 inline std::optional<int64_t>
 frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
                    size_t &Budget, unsigned Depth = 0,
