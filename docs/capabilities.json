@@ -3556,7 +3556,8 @@
         "KVM can interrupt an active entry using a private execution thread and a realtime signal temporarily unblocked by KVM_SET_SIGNAL_MASK. It joins the cancelled worker before returning and neither changes caller masks/process handlers nor consumes application signals. The selected signal must remain non-ignored during entry. Native interruption is tested on x64; ARM64 runtime validation remains outstanding.",
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
         "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; exact FPCR/FPSR access is separately admitted, while other checked ARM64 system-register encodings remain unsupported.",
-        "ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding."
+        "ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding.",
+        "`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee."
       ],
       "tests": [
         {
@@ -4094,6 +4095,62 @@
             "darwin",
             "linux",
             "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/NativeEntryTests.cpp",
+          "filter": "NativeEntry.InvocationWaitsForInFlightCancellationAcknowledgement",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpEntryControlTests.cpp",
+          "filter": "WhpEntryControl.AuthenticatedExceptionRetainsPriorityOverStop",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmRunTests",
+          "source": "unittests/emulation/KvmRunTests.cpp",
+          "filter": "KvmRun.CompleteValidatesCapturedPacketOnCallerBeforeCancellation",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmRunTests",
+          "source": "unittests/emulation/KvmRunTests.cpp",
+          "filter": "KvmRun.CompletionCannotReplaceTheActiveEntryControl",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.ActualCPUExceptionOutranksStopDuringCapture/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.PublicCPUExceptionOutranksStopDuringCapture/*",
+          "platforms": [
+            "linux"
           ]
         }
       ],

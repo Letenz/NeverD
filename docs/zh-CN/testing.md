@@ -842,3 +842,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 状态回读回归： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` 在真实 x64 和 ARM64 引擎的两种权限级执行 `UnicornMachineControlCases.def` 中的原始存储指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 检查单步前取消、实际来宾入口处停止或期限到期、全部输入状态与 RAM 保持不变，以及随后成功执行一次存储。测试专用入口包装无需虚拟机监控器，也不构成 ARM64/WHP 原生运行证据。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或过期时拒绝调用宿主，取消期间保留真实宿主结果，并在释放借用的停止标记前确认中断回调结束。KVM 和 WHP 在持有执行租约的调用线程上验证完整捕获的私有状态，然后分类同时到达的停止或超时。真实宿主错误、捕获失败以及经过认证的 x64 CPU 异常保持更高优先级。普通成功状态在取消检查结束前保持私有；已确认的中断丢弃推测性的 CPU/RAM 效果并允许重试。准备、原生执行和捕获共用一次单步宽限。这些控制提供协作式取消，不保证硬性墙钟时限。
+
+`NeverDRunControlTests` 包含可移植的 `NativeEntryTests.cpp` 和 Windows 启用 WHP 时的 `WhpEntryControlTests.cpp`。内存宿主回调验证拒绝入口、重试、晚到取消、真实错误保留、完成结果优先级和已确认的回调生命周期，无需 Hyper-V。`NeverDKvmRunTests` 检查调用线程完成、错误优先级及重复进入拒绝。真实 `NeverDKvmStateTransferTests` 执行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真实寄存器/XSAVE 读取后停止，并保留除零异常、原始上下文、RAM 和显式恢复。Wine 上采用 Windows ABI 执行的可移植测试仅提供线程及控制协议证据，不证明原生 WHP 执行。不可用的原生后端仍明确跳过。

@@ -863,3 +863,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 狀態回讀回歸： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` 在真實 x64 和 ARM64 引擎的兩種權限級執行 `UnicornMachineControlCases.def` 中的原始儲存指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 檢查單步前取消、實際客體入口處停止或期限到期、全部輸入狀態與 RAM 保持不變，以及隨後成功執行一次儲存。測試專用入口包裝不需要虛擬機監控器，也不構成 ARM64/WHP 原生執行證據。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或逾期時拒絕呼叫主機，取消期間保留真實主機結果，並在釋放借用的停止標記前確認中斷回呼結束。KVM 和 WHP 在持有執行租約的呼叫執行緒上驗證完整擷取的私有狀態，然後分類同時到達的停止或逾時。真實主機錯誤、擷取失敗以及經過認證的 x64 CPU 例外保持較高優先順序。一般成功狀態在取消檢查結束前保持私有；已確認的中斷捨棄推測性的 CPU/RAM 效果並允許重試。準備、原生執行和擷取共用一次單步寬限。這些控制提供協作式取消，不保證硬性實際時間上限。
+
+`NeverDRunControlTests` 包含可攜式 `NativeEntryTests.cpp` 和 Windows 啟用 WHP 時的 `WhpEntryControlTests.cpp`。記憶體主機回呼驗證拒絕入口、重試、晚到取消、真實錯誤保留、完成結果優先順序和已確認的回呼生命週期，無需 Hyper-V。`NeverDKvmRunTests` 檢查呼叫執行緒完成、錯誤優先順序及重入拒絕。真實 `NeverDKvmStateTransferTests` 執行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真實暫存器/XSAVE 讀取後停止，並保留除零例外、原始上下文、RAM 和明確恢復。Wine 上採用 Windows ABI 執行的可攜式測試僅提供執行緒及控制協定證據，不證明原生 WHP 執行。不可用的原生後端仍明確略過。

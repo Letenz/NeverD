@@ -1517,9 +1517,11 @@ still require corresponding hardware.
 Both x64 and ARM64 WHP use one cancellation worker per partition. It observes
 the CPU's borrowed stop token and native deadline, retries cancellation until
 the host entry returns, and acknowledges any in-flight cancellation before
-the token, next entry or partition can be retired. A cancellation with uncertain
-guest progress is a terminal backend failure; stop and elapsed-deadline facts
-remain visible in the typed exit. It never implies a completed instruction.
+the token, next entry or partition can be retired. Acknowledged cancellation
+returns a retryable stop or deadline after discarding speculative CPU/RAM
+effects; a genuine host, capture or guest fault retains priority. It never
+implies a completed instruction.
+
 KVM gives each vCPU a private execution thread. Only this thread enters
 `KVM_RUN`; it blocks signals in host userspace and uses `KVM_SET_SIGNAL_MASK`
 to temporarily unblock one non-ignored realtime signal during guest entry.
@@ -2575,3 +2577,5 @@ Nested Objective-C stack-block discovery carries a method receiver class into a 
 A verified descriptor may seed the invoke ABI before its body is accepted; consumer calls use receiver captures from the same validated block plan, and publication still requires independent body and lifetime proofs.
 
 Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance, guest execution and complete state capture. `UC_HOOK_CODE` checks the borrowed stop token and deadline at instruction entry; the synchronous engine call retires its hook borrow before returning, while the machine step retains control through publication. Unicorn and WHP stage complete CPU state and check the same control before publishing a successful step. WHP creates its allowance once before preparation. An authenticated x64 CPU exception takes precedence over a stop arriving during capture. The checked RAM transaction discards speculative stores when capture is cancelled; the unrestricted software contract is unchanged. `MachineInterruptedError` distinguishes acknowledged cancellation from host or capture failure. The shared checked CPU returns `Stopped` or `Deadline`, preserves CPU/RAM and permits retry; genuine failures remain `BackendFailure` even with a simultaneous stop.
+
+`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.

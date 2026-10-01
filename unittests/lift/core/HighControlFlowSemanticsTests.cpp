@@ -1,3 +1,4 @@
+#include "../../../lib/ir/high/lower/CompareTreeSwitch.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -17,7 +18,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace neverd {
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
@@ -5665,6 +5668,186 @@ TEST(HighControlFlowSemantics, BackwardJumpsAroundATryBecomeALoop) {
   EXPECT_EQ(countKind(G, StmtKind::Goto), 2u);
 }
 
+namespace {
+/// A MedIR function from (start address, operations, successors) blocks; the
+/// predecessors follow from the successors.
+MedFunc treeFunction(
+    const std::vector<std::tuple<va_t, std::vector<MedOp>, std::vector<int>>>
+        &Blocks) {
+  MedFunc M;
+  M.Entry = std::get<0>(Blocks.front());
+  M.Name = "dispatch_tree";
+  M.ReturnType = NdType::makeInt(8, false);
+  M.Blocks.resize(Blocks.size());
+  for (size_t I = 0; I < Blocks.size(); ++I) {
+    MedBlock &B = M.Blocks[I];
+    B.Id = static_cast<int>(I);
+    B.StartAddr = std::get<0>(Blocks[I]);
+    B.EndAddr = B.StartAddr + 0x10;
+    B.Ops = std::get<1>(Blocks[I]);
+    B.Succs = std::get<2>(Blocks[I]);
+  }
+  for (const MedBlock &B : M.Blocks)
+    for (int Succ : B.Succs)
+      M.Blocks[Succ].Preds.push_back(B.Id);
+  return M;
+}
+
+/// Case values of the switches in \p F.
+std::set<uint64_t> switchCaseValues(const HighFunc &F) {
+  std::set<uint64_t> Values;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Switch)
+      for (const SwitchCase &C : S.Cases)
+        Values.insert(C.Value);
+  });
+  return Values;
+}
+
+/// Parts of a compare-tree test over one 64-bit parameter on x64.
+struct TreeParts {
+  const Arch Architecture = Arch::X64;
+  MedVar Input;
+  int Next = 1;
+  TreeParts() {
+    Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+  }
+  static MedVar constant(uint64_t V) { return MedVar::makeConst(V, 8); }
+  MedVar value() { return machineValue(Next++, Architecture); }
+  MedVar flag() {
+    MedVar V = value();
+    V.Size = 1;
+    return V;
+  }
+  MedVar returnRegister() {
+    MedVar R = value();
+    R.Kind = MedVar::Reg;
+    R.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+    R.SSAVer = Next;
+    return R;
+  }
+  /// `return V` at \p At.
+  std::vector<MedOp> leaf(va_t At, uint64_t V) {
+    const MedVar R = returnRegister();
+    return {operation(NdOp::COPY, At, R, {constant(V)}),
+            operation(NdOp::RETURN, At + 4, {}, {R})};
+  }
+  std::vector<MedOp> branch(va_t At, NdOp Compare, MedVar Left, MedVar Right,
+                            va_t Target) {
+    const MedVar F = flag();
+    return {operation(Compare, At, F, {Left, Right}),
+            operation(NdOp::COND_BR, At + 4, {}, {constant(Target), F})};
+  }
+};
+} // namespace
+
+TEST(HighControlFlowSemantics, CompareChainLowersToOneSwitch) {
+  // sub x, 1; je A; sub x, 1; je B; cmp x, 2; jne D; C: -- the sparse switch
+  // `case 1: case 2: case 4: default:` as compilers emit it.
+  TreeParts P;
+  const MedVar X1 = P.value(), X2 = P.value();
+  auto First = P.branch(0x1004, NdOp::INT_EQUAL, X1, P.constant(0), 0x1100);
+  First.insert(First.begin(),
+               operation(NdOp::INT_SUB, 0x1000, X1, {P.Input, P.constant(1)}));
+  auto Second = P.branch(0x1014, NdOp::INT_EQUAL, X2, P.constant(0), 0x1200);
+  Second.insert(Second.begin(),
+                operation(NdOp::INT_SUB, 0x1010, X2, {X1, P.constant(1)}));
+  MedFunc M = treeFunction(
+      {{0x1000, First, {1, 4}},
+       {0x1010, Second, {2, 5}},
+       {0x1020,
+        P.branch(0x1020, NdOp::INT_NOTEQUAL, X2, P.constant(2), 0x1400),
+        {3, 6}},
+       {0x1030, P.leaf(0x1030, 40), {}},
+       {0x1100, P.leaf(0x1100, 10), {}},
+       {0x1200, P.leaf(0x1200, 20), {}},
+       {0x1400, P.leaf(0x1400, 7), {}}});
+  M.Params = {P.Input};
+  MedToHighConverter Converter;
+  const HighFunc High = Converter.convert(M, P.Architecture);
+  EXPECT_EQ(countKind(High, StmtKind::Switch), 1u);
+  EXPECT_EQ(switchCaseValues(High), (std::set<uint64_t>{1, 2, 4}));
+  for (uint64_t X : {0ull, 1ull, 2ull, 3ull, 4ull, 5ull, ~0ull}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(High, X), X == 1   ? 10u
+                                : X == 2 ? 20u
+                                : X == 4 ? 40u
+                                         : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, SignedBinarySearchLowersToOneSwitch) {
+  // if (x > 5) { if (x == 9) C; } else { if (x == 5) B; if (x == 2) A; } D:
+  // a signed spine; every value outside {2, 5, 9} reaches D, -1 included.
+  TreeParts P;
+  MedFunc M = treeFunction(
+      {{0x1000,
+        P.branch(0x1000, NdOp::INT_SLESS, P.constant(5), P.Input, 0x1030),
+        {1, 3}},
+       {0x1010,
+        P.branch(0x1010, NdOp::INT_EQUAL, P.Input, P.constant(5), 0x1100),
+        {2, 4}},
+       {0x1020,
+        P.branch(0x1020, NdOp::INT_EQUAL, P.Input, P.constant(2), 0x1200),
+        {7, 5}},
+       {0x1030,
+        P.branch(0x1030, NdOp::INT_EQUAL, P.Input, P.constant(9), 0x1300),
+        {7, 6}},
+       {0x1100, P.leaf(0x1100, 2), {}},
+       {0x1200, P.leaf(0x1200, 1), {}},
+       {0x1300, P.leaf(0x1300, 3), {}},
+       {0x1400, P.leaf(0x1400, 0), {}}});
+  M.Params = {P.Input};
+  MedToHighConverter Converter;
+  const HighFunc High = Converter.convert(M, P.Architecture);
+  EXPECT_EQ(countKind(High, StmtKind::Switch), 1u);
+  EXPECT_EQ(switchCaseValues(High), (std::set<uint64_t>{2, 5, 9}));
+  for (uint64_t X :
+       {0ull, 2ull, 4ull, 5ull, 6ull, 9ull, 10ull, ~0ull, 1ull << 63}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(High, X), X == 2 ? 1u : X == 5 ? 2u : X == 9 ? 3u : 0u);
+  }
+}
+
+TEST(HighControlFlowSemantics, CompareTreeEdgesWithDifferentValuesStayApart) {
+  // The two edges into D give its PHI different values, so D cannot be one
+  // default; no tree is left with three case targets, and nothing changes.
+  TreeParts P;
+  const MedVar Joined = P.returnRegister();
+  MedFunc M = treeFunction(
+      {{0x1000,
+        P.branch(0x1000, NdOp::INT_SLESS, P.constant(5), P.Input, 0x1030),
+        {1, 3}},
+       {0x1010,
+        P.branch(0x1010, NdOp::INT_EQUAL, P.Input, P.constant(5), 0x1100),
+        {2, 4}},
+       {0x1020,
+        P.branch(0x1020, NdOp::INT_EQUAL, P.Input, P.constant(2), 0x1200),
+        {7, 5}},
+       {0x1030,
+        P.branch(0x1030, NdOp::INT_EQUAL, P.Input, P.constant(9), 0x1300),
+        {7, 6}},
+       {0x1100, P.leaf(0x1100, 2), {}},
+       {0x1200, P.leaf(0x1200, 1), {}},
+       {0x1300, P.leaf(0x1300, 3), {}},
+       {0x1400, {operation(NdOp::RETURN, 0x1400, {}, {Joined})}, {}}});
+  M.Blocks[7].Phis = {{Joined, {{2, P.constant(100)}, {3, P.constant(200)}}}};
+  M.Params = {P.Input};
+  MedToHighConverter Converter;
+  const HighFunc High = Converter.convert(M, P.Architecture);
+  EXPECT_EQ(countKind(High, StmtKind::Switch), 0u);
+  for (uint64_t X : {0ull, 2ull, 5ull, 6ull, 9ull, ~0ull}) {
+    SCOPED_TRACE(X);
+    EXPECT_EQ(execute(High, X), X == 2   ? 1u
+                                : X == 5 ? 2u
+                                : X == 9 ? 3u
+                                : X == 6 ? 200u
+                                         : 100u);
+  }
+}
+
 TEST(HighControlFlowSemantics, CodeAfterASwitchMovesToItsOnlyFallOut) {
   // switch (x) { case 1: case 2: case 3: v = 10x; goto J; } v = 7; goto K;
   // J: return v; K: return 99; -- only the missing default falls out of the
@@ -5698,5 +5881,111 @@ TEST(HighControlFlowSemantics, CodeAfterASwitchMovesToItsOnlyFallOut) {
     EXPECT_EQ(countKind(F, StmtKind::Goto), SecondFallOut ? Gotos : 1u);
     for (uint64_t X : {0, 1, 2, 3, 4})
       EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  }
+}
+
+TEST(HighControlFlowSemantics, CompareTreeCasesOwningTheirCodeBreakToTheJoin) {
+  // switch (x) { case 1: v = 10; case 2: v = 20; case 3: v = 30; default:
+  // v = 0; } return v; -- each case block jumps to the join, so the cases
+  // end in break.  When the default path may also enter case 2's block, that
+  // block is not the case's own and the tree stays branches.
+  for (bool Shared : {false, true}) {
+    SCOPED_TRACE(Shared);
+    TreeParts P;
+    const MedVar Reload = P.value();
+    const MedVar V[4] = {P.returnRegister(), P.returnRegister(),
+                         P.returnRegister(), P.returnRegister()};
+    const MedVar Joined = P.returnRegister();
+    auto Set = [&](va_t At, int K, uint64_t Value) {
+      return std::vector<MedOp>{
+          operation(NdOp::COPY, At, V[K], {P.constant(Value)}),
+          operation(NdOp::BRANCH, At + 4, {}, {P.constant(0x1400)})};
+    };
+    auto Root =
+        P.branch(0x1004, NdOp::INT_EQUAL, P.Input, P.constant(1), 0x1100);
+    Root.insert(Root.begin(), operation(NdOp::STORE, 0x1000, {},
+                                        {P.constant(0x9000), P.Input}));
+    std::vector<MedOp> Default = Set(0x1030, 0, 0);
+    std::vector<int> DefaultSuccs{7};
+    if (Shared) {
+      // v = 0; if (*p == 7) goto case2; -- a second way into case 2.
+      Default =
+          P.branch(0x1034, NdOp::INT_EQUAL, Reload, P.constant(7), 0x1200);
+      Default.insert(Default.begin(), operation(NdOp::LOAD, 0x1030, Reload,
+                                                {P.constant(0x9000)}));
+      Default.insert(Default.begin(),
+                     operation(NdOp::COPY, 0x1030, V[0], {P.constant(0)}));
+      DefaultSuccs = {7, 5};
+    }
+    MedFunc M = treeFunction(
+        {{0x1000, Root, {1, 4}},
+         {0x1010,
+          P.branch(0x1010, NdOp::INT_EQUAL, P.Input, P.constant(2), 0x1200),
+          {2, 5}},
+         {0x1020,
+          P.branch(0x1020, NdOp::INT_EQUAL, P.Input, P.constant(3), 0x1300),
+          {3, 6}},
+         {0x1030, Default, DefaultSuccs},
+         {0x1100, Set(0x1100, 1, 10), {7}},
+         {0x1200, Set(0x1200, 2, 20), {7}},
+         {0x1300, Set(0x1300, 3, 30), {7}},
+         {0x1400, {operation(NdOp::RETURN, 0x1400, {}, {Joined})}, {}}});
+    M.Blocks[7].Phis = {{Joined, {{3, V[0]}, {4, V[1]}, {5, V[2]}, {6, V[3]}}}};
+    M.Params = {P.Input};
+    EXPECT_EQ(findCompareTreeSwitches(M).size(), Shared ? 0u : 1u);
+    MedToHighConverter Converter;
+    const HighFunc High = Converter.convert(M, P.Architecture);
+    if (!Shared) {
+      EXPECT_EQ(countKind(High, StmtKind::Switch), 1u);
+      EXPECT_EQ(countKind(High, StmtKind::Goto), 0u);
+    }
+    for (uint64_t X : {0ull, 1ull, 2ull, 3ull, 4ull, 7ull}) {
+      SCOPED_TRACE(X);
+      const uint64_t Expected = X >= 1 && X <= 3   ? X * 10
+                                : X == 7 && Shared ? 20
+                                                   : 0;
+      EXPECT_EQ(execute(High, X), Expected);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, FrameRegisterReadInACaseKeepsItsDefinition) {
+  // rbp = x + 100 before a compare-tree switch whose cases return rbp + k.
+  // MSVC uses rbp as an ordinary register: a read inside a case body keeps
+  // its definition, which prologue cleanup must not take for a restore.
+  TreeParts P;
+  MedVar Frame = P.value();
+  Frame.Kind = MedVar::Reg;
+  Frame.RegOff = getTargetRegInfo(P.Architecture).FramePointer;
+  Frame.SSAVer = 1;
+  auto Root = P.branch(0x1004, NdOp::INT_EQUAL, P.Input, P.constant(1), 0x1100);
+  Root.insert(Root.begin(), operation(NdOp::INT_ADD, 0x1000, Frame,
+                                      {P.Input, P.constant(100)}));
+  auto Plus = [&](va_t At, uint64_t K) {
+    const MedVar R = P.returnRegister();
+    return std::vector<MedOp>{
+        operation(NdOp::INT_ADD, At, R, {Frame, P.constant(K)}),
+        operation(NdOp::RETURN, At + 4, {}, {R})};
+  };
+  MedFunc M = treeFunction(
+      {{0x1000, Root, {1, 4}},
+       {0x1010,
+        P.branch(0x1010, NdOp::INT_EQUAL, P.Input, P.constant(2), 0x1200),
+        {2, 5}},
+       {0x1020,
+        P.branch(0x1020, NdOp::INT_EQUAL, P.Input, P.constant(3), 0x1300),
+        {3, 6}},
+       {0x1030, P.leaf(0x1030, 0), {}},
+       {0x1100, Plus(0x1100, 1), {}},
+       {0x1200, Plus(0x1200, 2), {}},
+       {0x1300, Plus(0x1300, 3), {}}});
+  M.Params = {P.Input};
+  MedToHighConverter Converter;
+  const HighFunc High = Converter.convert(M, P.Architecture);
+  EXPECT_EQ(countKind(High, StmtKind::Switch), 1u);
+  for (uint64_t X : {0ull, 1ull, 2ull, 3ull, 4ull}) {
+    SCOPED_TRACE(X);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(High, X), X >= 1 && X <= 3 ? X + 100 + X : 0u));
   }
 }

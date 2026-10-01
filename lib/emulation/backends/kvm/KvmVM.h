@@ -30,10 +30,11 @@ public:
   }
   llvm::Error runUntilExit(MachineRunControl Control,
                            KvmRunControl::StateTransfer Prepare = {},
-                           KvmRunControl::StateTransfer Capture = {}) {
+                           KvmRunControl::StateTransfer Capture = {},
+                           KvmRunControl::Completion Complete = {}) {
     if (!this->Control)
       return diagnostic::error(diagnostic::KvmRunControl);
-    return this->Control->run(Control, Prepare, Capture);
+    return this->Control->run(Control, Prepare, Capture, Complete);
   }
   virtual ~KvmVM() {
     // Stop the entry worker before unmapping its run state or closing the vCPU.

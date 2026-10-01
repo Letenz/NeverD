@@ -16,4 +16,5 @@ NEVERD_KVM_TEST_STATE_VALUE(TransferInitialValue, 0x123456789abcdef0ULL)
 #ifdef NEVERD_KVM_TEST_TEXT
 NEVERD_KVM_TEST_TEXT(PrepareFailure, "native state preparation failed")
 NEVERD_KVM_TEST_TEXT(CaptureFailure, "native state capture failed")
+NEVERD_KVM_TEST_TEXT(CompletionFailure, "native packet validation failed")
 #endif

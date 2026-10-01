@@ -195,10 +195,22 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       CollectVarRefs(S.RetVal);
     if (S.CallExpr)
       CollectVarRefs(S.CallExpr);
+    if (S.SwitchExpr)
+      CollectVarRefs(S.SwitchExpr);
+    // Every nested body the strip below visits: a read inside a switch case
+    // keeps its value as much as one inside an if arm.
     for (auto &Inner : S.Body)
       CollectStmtRefsPE(Inner);
     for (auto &Inner : S.ElseBody)
       CollectStmtRefsPE(Inner);
+    for (auto &C : S.Cases)
+      for (auto &Inner : C.Body)
+        CollectStmtRefsPE(Inner);
+    for (auto &Inner : S.DefaultBody)
+      CollectStmtRefsPE(Inner);
+    for (auto &Clause : S.EHClauseBodies)
+      for (auto &Inner : Clause)
+        CollectStmtRefsPE(Inner);
   };
   for (auto &S : Func.Body)
     CollectStmtRefsPE(S);
