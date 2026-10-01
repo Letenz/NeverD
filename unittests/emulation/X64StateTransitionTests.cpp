@@ -80,6 +80,7 @@ protected:
     EXPECT_EQ(State.UserMode, Before.UserMode);
     EXPECT_EQ(State.Xmm, Before.Xmm);
     EXPECT_EQ(State.MXCSR, Before.MXCSR);
+    EXPECT_EQ(State.FP, Before.FP);
   }
 
   void expectDivideFault() {
@@ -212,7 +213,8 @@ TEST_P(X64StateTransition,
     EXPECT_EQ(llvm::support::endian::read16le(Scalar), RequestedControl);
 
     const unsigned Top = Round % x64::fp::RegisterCount;
-    State.FP.Status = Top << x64::fp::TopShift;
+    State.FP.Control &= ~FPInvalidException;
+    State.FP.Status = (Top << x64::fp::TopShift) | FPPendingStatus;
     State.FP.Tag = UINT8_MAX;
     State.FP.Opcode = Round;
     State.FP.Instruction = Code + Round;
@@ -234,7 +236,7 @@ TEST_P(X64StateTransition,
         Before.FP.Control);
     EXPECT_EQ(
         llvm::support::endian::read16le(FX.data() + x64::fp::StatusOffset),
-        Top << x64::fp::TopShift);
+        Before.FP.Status);
     EXPECT_EQ(FX[x64::fp::TagOffset], UINT8_MAX);
     EXPECT_EQ(
         llvm::support::endian::read16le(FX.data() + x64::fp::OpcodeOffset),
