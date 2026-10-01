@@ -5,12 +5,14 @@
 
 // Native x86_64 host-CPU oracle for lift / decompile / identity-patch.
 // ENTERW must preserve RBP[63:16]; a pointer-width ENTER clobbers them to a
-// stack address and the process exit status changes.
+// stack address and the process exit status changes.  The fixtures are static
+// ELF programs that exit through the Linux `exit` system call, so only a Linux
+// x86_64 host can run them.
 
 class X86_64_NativeHostMode : public NeverDLiftTest {
 protected:
-  static bool hostIsX86_64() {
-#if defined(__x86_64__) || defined(_M_X64)
+  static bool hostRunsLinuxX86_64() {
+#if defined(__linux__) && defined(__x86_64__)
     return true;
 #else
     return false;
@@ -47,8 +49,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_64_NativeHostMode, EnterWLiftDecompilePatchAgreeWithCpu) {
-  if (!hostIsX86_64())
-    GTEST_SKIP() << "native x86_64 host execution required";
+  if (!hostRunsLinuxX86_64())
+    GTEST_SKIP() << "native Linux x86_64 host execution required";
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "clang required to build the native x86_64 fixture";
 
@@ -60,8 +62,8 @@ TEST_F(X86_64_NativeHostMode, EnterWLiftDecompilePatchAgreeWithCpu) {
   auto Orig = tmpFile("enterw_host");
   auto CR = exec(NEVERD_TEST_CLANG,
                  {"-O0", "-nostdlib", "-static", "-fno-stack-protector",
-                  "-fno-asynchronous-unwind-tables", "-fno-unwind-tables",
-                  "-o", Orig.string(), Src.string()});
+                  "-fno-asynchronous-unwind-tables", "-fno-unwind-tables", "-o",
+                  Orig.string(), Src.string()});
   ASSERT_EQ(CR.exitCode, 0) << "native fixture compile failed: " << CR.err;
   ASSERT_TRUE(fs::exists(Orig));
   EXPECT_GT(fs::file_size(Orig), 0u);
@@ -80,15 +82,14 @@ TEST_F(X86_64_NativeHostMode, EnterWLiftDecompilePatchAgreeWithCpu) {
   EXPECT_NE(Lift.out.find("define"), std::string::npos) << Lift.out;
 
   auto HighC = tmpFile("enterw_host.c.decompiled");
-  auto DC = exec(ndBin(),
-                 {"decompile", "-o", HighC.string(), Orig.string()});
+  auto DC = exec(ndBin(), {"decompile", "-o", HighC.string(), Orig.string()});
   ASSERT_EQ(DC.exitCode, 0) << "neverd decompile failed: " << DC.err;
   ASSERT_TRUE(fs::exists(HighC));
   EXPECT_GT(fs::file_size(HighC), 0u);
 
   auto LLVMC = tmpFile("enterw_host.llvm.c");
-  auto DL = exec(ndBin(), {"decompile", "--llvm", "-o", LLVMC.string(),
-                           Orig.string()});
+  auto DL = exec(ndBin(),
+                 {"decompile", "--llvm", "-o", LLVMC.string(), Orig.string()});
   ASSERT_EQ(DL.exitCode, 0) << "neverd decompile --llvm failed: " << DL.err;
   ASSERT_TRUE(fs::exists(LLVMC));
   EXPECT_GT(fs::file_size(LLVMC), 0u);
@@ -100,7 +101,8 @@ TEST_F(X86_64_NativeHostMode, EnterWLiftDecompilePatchAgreeWithCpu) {
   EXPECT_GT(fs::file_size(Patched), 0u);
 
   auto Relift = liftToLowIR(Patched);
-  ASSERT_EQ(Relift.exitCode, 0) << "patched ELF should still lift: " << Relift.err;
+  ASSERT_EQ(Relift.exitCode, 0)
+      << "patched ELF should still lift: " << Relift.err;
 
   const int PatchedStatus = runNative(Patched);
   EXPECT_EQ(PatchedStatus, OrigStatus)
@@ -139,8 +141,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_64_NativeHostMode, CvtSI2SDMulpdPatchAgreesWithCpu) {
-  if (!hostIsX86_64())
-    GTEST_SKIP() << "native x86_64 host execution required";
+  if (!hostRunsLinuxX86_64())
+    GTEST_SKIP() << "native Linux x86_64 host execution required";
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "clang required to build the native x86_64 fixture";
 
@@ -152,8 +154,8 @@ TEST_F(X86_64_NativeHostMode, CvtSI2SDMulpdPatchAgreesWithCpu) {
   auto Orig = tmpFile("cvtsi2sd_mulpd_host");
   auto CR = exec(NEVERD_TEST_CLANG,
                  {"-O0", "-nostdlib", "-static", "-fno-stack-protector",
-                  "-fno-asynchronous-unwind-tables", "-fno-unwind-tables",
-                  "-o", Orig.string(), Src.string()});
+                  "-fno-asynchronous-unwind-tables", "-fno-unwind-tables", "-o",
+                  Orig.string(), Src.string()});
   ASSERT_EQ(CR.exitCode, 0) << "native fixture compile failed: " << CR.err;
   ASSERT_TRUE(fs::exists(Orig));
 
