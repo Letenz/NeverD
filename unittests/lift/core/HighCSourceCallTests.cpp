@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "CFunctionParameterCallFixture.h"
 #include "RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
@@ -396,6 +397,95 @@ int main(void) {
     if (box.before != 0x0123456789abcdefULL || box.after != 0xfedcba9876543210ULL ||
         coder.calls != 2 * (empty + 1)) return 3;
   }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, NamedReleaseStorageKeepsOrderingBitsAndAdjacentBytes) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Data;
+  Data.VA = Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 24;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(24);
+  std::fill_n(Data.Data.begin(), 8, 0xa5);
+  std::fill_n(Data.Data.begin() + 16, 8, 0x5a);
+  Image.Segments.push_back(Data);
+  Section Section;
+  Section.Name = "__data";
+  Section.VA = Section.FileOff = Data.VA;
+  Section.Size = Section.FileSz = Data.Size;
+  Section.Flags = Data.Flags;
+  Image.Sections.push_back(Section);
+  Symbol Storage;
+  Storage.Name = "_published_state";
+  Storage.Addr = Data.VA;
+  Storage.Size = Data.Size;
+  Image.Symbols.push_back(Storage);
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  std::map<va_t, uint64_t> Extents;
+  for (const bool Object : {false, true}) {
+    HighFunc Function;
+    Function.Name = Object ? "publish_pointer" : "publish_word";
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {{"arg0", Object ? Pointer : Word}};
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(0x1008, 8);
+    Store.StoreVal = parameter(0, Function.Params.front().Type);
+    Store.MemoryOrdering = NdMemoryOrdering::Release;
+    Function.Body = {Store};
+    const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_EQ(Bound.Function.Body.front().MemoryOrdering,
+              NdMemoryOrdering::Release);
+    for (const auto &[Address, Width] : Bound.LocalStorageExtents)
+      Extents[Address] = std::max(Extents[Address], Width);
+    Functions.push_back(Bound.Function);
+  }
+  for (unsigned I = 0; I != 3; ++I) {
+    auto Function = returning(
+        "read_word" + std::to_string(I),
+        HighExpr::makeLoad(HighExpr::makeConst(0x1000 + 8 * I, 8), Word));
+    const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    for (const auto &[Address, Width] : Bound.LocalStorageExtents)
+      Extents[Address] = std::max(Extents[Address], Width);
+    Functions.push_back(Bound.Function);
+  }
+  std::set<std::string> Shared;
+  const auto Source =
+      emit(Functions, true, Arch::AArch64) +
+      sdk::renderObjCLocalStorageHelpers(Image, Extents, Shared);
+  ASSERT_NE(Source.find("__ATOMIC_RELEASE"), std::string::npos);
+  const auto Program = Source + R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, 0x8000000000000000ULL,
+                              0x1234567887654321ULL, 0};
+  uint64_t *published = (uint64_t *)(neverd_local_storage_1000_address() + 8);
+  for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i) {
+    publish_word(values[i]);
+    if (__atomic_load_n(published, __ATOMIC_ACQUIRE) != values[i] ||
+        read_word1() != values[i]) return 1;
+    if (read_word0() != 0xa5a5a5a5a5a5a5a5ULL ||
+        read_word2() != 0x5a5a5a5a5a5a5a5aULL) return 2;
+  }
+  publish_pointer(published);
+  if (__atomic_load_n(published, __ATOMIC_ACQUIRE) != (uintptr_t)published ||
+      read_word1() != (uintptr_t)published) return 3;
+  publish_pointer(0);
+  if (read_word1() || read_word0() != 0xa5a5a5a5a5a5a5a5ULL ||
+      read_word2() != 0x5a5a5a5a5a5a5a5aULL) return 4;
   return 0;
 }
 )";

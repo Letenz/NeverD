@@ -149,6 +149,119 @@ struct StorageImage {
   }
 };
 
+TEST(ObjCStorage, NamedReleaseStoresPreserveOrderingAndExactStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const unsigned Width : {1U, 2U, 4U, 8U}) {
+      for (const bool ExpressionStore : {false, true}) {
+        SCOPED_TRACE(std::to_string(Width) + ":" +
+                     std::to_string(ExpressionStore));
+        StorageImage Fixture;
+        Fixture.Image.Arch = Architecture;
+        Symbol Storage;
+        Storage.Name = "_published_value";
+        Storage.Addr = 0x1e00;
+        Storage.Size = 32;
+        Fixture.Image.Symbols.push_back(Storage);
+        HighFunc Function;
+        Function.ReturnType = NdType::makeVoid();
+        HighStmt Store;
+        Store.Kind = StmtKind::Store;
+        Store.StoreAddr = HighExpr::makeConst(0x1e08, 8);
+        Store.StoreVal = HighExpr::makeConst(0x5a, Width);
+        Store.MemoryOrdering = NdMemoryOrdering::Release;
+        if (ExpressionStore) {
+          auto Expression = std::make_shared<HighExpr>();
+          Expression->Kind = ExprKind::Store;
+          Expression->Type = Store.StoreVal->Type;
+          Expression->Operands = {Store.StoreAddr, Store.StoreVal};
+          Expression->MemoryOrdering = Store.MemoryOrdering;
+          Store = {};
+          Store.Kind = StmtKind::ExprStmt;
+          Store.Val = Expression;
+        }
+        Function.Body = {Store};
+        const auto Bound =
+            sdk::bindObjCSourceReferences(Function, Fixture.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        EXPECT_EQ(Bound.LocalStorageExtents,
+                  (std::map<va_t, uint64_t>{{0x1e00, 8 + Width}}));
+        const auto &Result = Bound.Function.Body.front();
+        EXPECT_EQ(ExpressionStore ? Result.Val->MemoryOrdering
+                                  : Result.MemoryOrdering,
+                  NdMemoryOrdering::Release);
+        auto Address =
+            ExpressionStore ? Result.Val->Operands[0] : Result.StoreAddr;
+        ASSERT_EQ(Address->Kind, ExprKind::BinOp);
+        ASSERT_EQ(Address->Operands.size(), 2U);
+        const auto Helper = Address->Operands[0];
+        ASSERT_TRUE(Helper->SourceCallHint);
+        EXPECT_EQ(Helper->SourceCallHint->TargetAddress, 0x1e00U);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Helper, Fixture.Image, {}));
+        auto Changed = Fixture.Image;
+        Changed.DataPtrRelocSlots.insert(0x1e08);
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Helper, Changed, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCStorage, NamedReleaseStoresRejectUnprovedAlignmentAndStorage) {
+  StorageImage Fixture;
+  Symbol Storage;
+  Storage.Name = "_published_value";
+  Storage.Addr = 0x1e00;
+  Storage.Size = 32;
+  Fixture.Image.Symbols.push_back(Storage);
+  HighFunc Function;
+  Function.ReturnType = NdType::makeVoid();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(0x1e08, 8);
+  Store.StoreVal = HighExpr::makeConst(0x5a, 8);
+  Store.MemoryOrdering = NdMemoryOrdering::Release;
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    auto Image = Fixture.Image;
+    auto Changed = Store;
+    if (Mutation == 0)
+      Changed.StoreAddr = HighExpr::makeConst(0x1e09, 8);
+    if (Mutation == 1)
+      Image.Symbols.back().Addr = 0x1e01;
+    if (Mutation == 2) {
+      Changed.StoreVal = HighExpr::makeConst(0, 8);
+      Changed.StoreVal->Type = NdType::makeFloat(8);
+    }
+    if (Mutation == 3)
+      Changed.StoreVal = HighExpr::makeConst(0, 16);
+    if (Mutation == 4)
+      Changed.MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mutation == 5)
+      Changed.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    if (Mutation == 6)
+      Image.Symbols.clear();
+    if (Mutation == 7)
+      Image.Symbols.push_back(Image.Symbols.back());
+    if (Mutation == 8)
+      Image.DataPtrRelocSlots.insert(0x1e08);
+    if (Mutation == 9)
+      Image.Sections[0].Flags = SegmentFlags::Readable;
+    if (Mutation == 10)
+      Image.Symbols.back().Size = 12;
+    if (Mutation == 11) {
+      Changed.Kind = StmtKind::Return;
+      Changed.RetVal =
+          HighExpr::makeLoad(Changed.StoreAddr, NdType::makeInt(8));
+      Changed.RetVal->MemoryOrdering = NdMemoryOrdering::Release;
+      Changed.StoreAddr.reset();
+      Changed.StoreVal.reset();
+      Changed.MemoryOrdering = NdMemoryOrdering::None;
+    }
+    Function.Body = {Changed};
+    EXPECT_FALSE(
+        sdk::bindObjCSourceReferences(Function, Image).Limitation.empty())
+        << Mutation;
+  }
+}
+
 TEST(ObjCStorage, RuntimeSwiftOffsetsRetainIdentityWithoutInventingLayout) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     StorageImage Fixture;

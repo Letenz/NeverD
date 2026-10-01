@@ -7939,10 +7939,12 @@ TEST(ObjCSourceBindings, PointerAccessesKeepStorageAndValueProofsSeparate) {
           Statement.RetVal = Store;
         }
         const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
-        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+        const bool ReleaseStore = Shape != 0 && Mutation == 6;
+        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0 || ReleaseStore)
+            << Bound.Limitation;
         EXPECT_EQ(Bound.LocalStorageExtents.empty(),
-                  Mutation != 0 && Mutation != 7);
-        if (!Mutation || Mutation == 7)
+                  Mutation != 0 && Mutation != 7 && !ReleaseStore);
+        if (!Mutation || Mutation == 7 || ReleaseStore)
           EXPECT_EQ(Bound.LocalStorageExtents,
                     (std::map<va_t, uint64_t>{{Address, 8}}));
       }
