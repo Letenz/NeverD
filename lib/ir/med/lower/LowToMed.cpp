@@ -253,6 +253,23 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
                                            : 8;
         MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], Size)));
       }
+      // A variadic callee also reads the variadic arguments the caller
+      // passes: the argument registers set on every path to the call.  An
+      // unread fixed slot below them carries zero as above.
+      if (CallVariadicFrom)
+        if (auto V = CallVariadicFrom->find(LOp.Inputs[0].Offset);
+            V != CallVariadicFrom->end()) {
+          int8_t Passed = Count;
+          for (int8_t I = static_cast<int8_t>(V->second); I < 4; ++I)
+            if ((DispatchCallDefinedArgs >> I) & 1)
+              Passed = I + 1;
+          for (int8_t I = Count; I < Passed; ++I)
+            MOp.addInput(I < V->second
+                             ? MedVar::makeConst(
+                                   0, getTargetRegInfo(TargetArch).PointerSize)
+                             : ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
+          Count = Passed;
+        }
       MOp.CalleeRegisterArgs = Count;
       if (CallEntryStackArgs)
         if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
@@ -468,10 +485,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   }
 
   // Win64 argument registers written on every path from entry, per block,
-  // for Control Flow Guard dispatcher calls.  A call clobbers them.
+  // for Control Flow Guard dispatcher and variadic calls.  A call clobbers
+  // them.
   std::vector<uint8_t> DispatchDefinedIn;
   const bool TrackDispatchArgs =
-      CallDispatchThunks && !CallDispatchThunks->empty() &&
+      ((CallDispatchThunks && !CallDispatchThunks->empty()) ||
+       (CallVariadicFrom && !CallVariadicFrom->empty())) &&
       TheArch == Arch::X64 && Fmt == BinaryFormat::COFF;
   auto ArgBit = [](const NdVar &V) -> uint8_t {
     if (!V.isReg())

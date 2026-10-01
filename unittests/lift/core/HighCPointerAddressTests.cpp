@@ -41626,6 +41626,45 @@ TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, ForwarderToTheGuardDispatchPointerIsADispatcher) {
+  // KeGuardDispatchICall in ntoskrnl is `jmp [__guard_dispatch_icall_fptr]`,
+  // a jump through the load configuration's dispatch pointer.  Whichever
+  // dispatcher the runtime installs there calls RAX, so a call to the
+  // forwarder is a call to the function loaded into RAX, with no name
+  // needed to say so.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Forwarder = 0x140001020;
+  constexpr va_t Slot = 0x140002000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x01,             // mov rax, [rcx]
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x10, 0x00, 0x00, 0x00, // call forwarder
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Forwarder - Entry, 0xcc);
+  const uint32_t Disp = static_cast<uint32_t>(Slot - (Forwarder + 6));
+  Code.insert(Code.end(),
+              {0xff, 0x25, uint8_t(Disp), uint8_t(Disp >> 8),
+               uint8_t(Disp >> 16), uint8_t(Disp >> 24)}); // jmp [slot]
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Segment Data;
+  Data.Name = ".rdata";
+  Data.VA = Slot;
+  Data.Size = 8;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.assign(8, 0);
+  Img.Segments.push_back(std::move(Data));
+  ASSERT_TRUE(Img.recordRuntimeCallablePointerSlot(
+      Slot, RuntimeCallablePointerSlotKind::GuardCFDispatch));
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("140001020"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, GuardDispatchTargetChosenOnTwoPathsStaysAssigned) {
   // IovpCancelRoutine: RAX is a loaded callback, or the caller's third
   // argument when there is none.  The dispatch call reads the value that
@@ -41710,6 +41749,126 @@ TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   EXPECT_TRUE(HighC.find("-1") != std::string::npos ||
               HighC.find("0xFFFFFFFF") != std::string::npos)
       << HighC;
+}
+
+TEST(HighCPointerAddresses, BorrowFromItselfDoesNotReadTheRegister) {
+  // WmipEnableDisableTrace: `neg dl; sbb sil, sil` sets SIL to -CF, all ones
+  // when DL was nonzero.  SIL minus itself is zero whatever RSI held, so the
+  // callee-saved register is not read.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0xf6, 0xda,             // neg dl
+                                     0x40, 0x1a, 0xf6,       // sbb sil, sil
+                                     0x40, 0x80, 0xe6, 0xfe, // and sil, 0FEh
+                                     0x40, 0x80, 0xc6, 0x07, // add sil, 7
+                                     0x40, 0x0f, 0xb6, 0xc6, // movzx eax, sil
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("arg1"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, LowByteReplacementKeepsTheUpperBytesByMask) {
+  // `mov al, [rcx]` replaces the low byte of RAX and keeps the other seven.
+  // The result is the old value with its low byte masked off, ORed with the
+  // new byte; no 56-bit carrier is needed for the upper bytes.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc2,       // mov rax, rdx
+                                     0x8a, 0x01,             // mov al, [rcx]
+                                     0x48, 0x89, 0x41, 0x08, // mov [rcx+8], rax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("_BitInt"), std::string::npos) << HighC;
+  EXPECT_TRUE(HighC.find("0xFFFFFFFFFFFFFF00") != std::string::npos ||
+              HighC.find("-256") != std::string::npos)
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
+  // RtlSetAllBits: `or r9d, -1` sets R9D to all ones without reading R9, so
+  // the callee reads RCX alone.  Its callers pass one argument, not RCX
+  // through R9 with R9 taken from their own incoming registers.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001030;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xe8, 0x24, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x41, 0x83, 0xc9, 0xff, // or r9d, -1
+                           0x44, 0x89, 0x09,       // mov [rcx], r9d
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(
+      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, VariadicCalleeTakesOnlyTheArgumentsPassed) {
+  // DbgPrint: the prologue spills RDX, R8 and R9 to their home slots and
+  // hands a pointer to RDX's slot on as the va_list.  A caller passes the
+  // format and the variadic arguments it sets, here one, not R8 and R9 taken
+  // from its own incoming registers.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001040;
+  constexpr va_t Formatter = 0x140001080;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xba, 0x05, 0x00, 0x00, 0x00, // mov edx, 5
+                               0xe8, 0x2f, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x49, 0x89, 0xe3,             // mov r11, rsp
+                           0x49, 0x89, 0x53, 0x10,       // mov [r11+10h], rdx
+                           0x4d, 0x89, 0x43, 0x18,       // mov [r11+18h], r8
+                           0x4d, 0x89, 0x4b, 0x20,       // mov [r11+20h], r9
+                           0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                           0x49, 0x8d, 0x53, 0x10,       // lea rdx, [r11+10h]
+                           0xe8, 0x24, 0x00, 0x00, 0x00, // call formatter
+                           0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                           0xc3});
+  Code.resize(Formatter - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0x02, // mov rax, [rdx]
+                           0x48, 0x03, 0x01, // add rax, [rcx]
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg2"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(sub_140001040\([^,()]+, [^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, HomeSpillNothingReadsBackIsNoArgument) {
+  // BiLogMessage with its logging compiled out: the prologue still spills R8
+  // and R9 to their home slots, but nothing reads them back and no pointer
+  // to them escapes.  The callee takes no argument.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001030;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xba, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+                               0xe8, 0x1f, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x4c, 0x89, 0x44, 0x24, 0x18, // mov [rsp+18h], r8
+                           0x4c, 0x89, 0x4c, 0x24, 0x20, // mov [rsp+20h], r9
+                           0x33, 0xc0,                   // xor eax, eax
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg2"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("sub_140001030()"), std::string::npos) << HighC;
 }
 
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {

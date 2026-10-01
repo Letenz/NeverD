@@ -100,6 +100,10 @@ public:
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
   }
+  /// Variadic direct callees (PipelineResult::CallVariadicFrom).
+  void setCallVariadicFrom(const std::map<va_t, int> *M) {
+    CallVariadicFrom = M;
+  }
 
   /// Provide the set of GOT/pointer-slot VAs that hold a stack-probe import
   /// (`____chkstk_darwin`), derived by the loader from the binary's import
@@ -289,8 +293,9 @@ private:
   const std::map<va_t, GPRReadWidths> *CallEntryReadGPRs = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
+  const std::map<va_t, int> *CallVariadicFrom = nullptr;
   /// Win64 argument registers (bit I = RCX, RDX, R8, R9) defined on every
-  /// path to the dispatcher call being converted.
+  /// path to the dispatcher or variadic call being converted.
   uint8_t DispatchCallDefinedArgs = 0;
 
   /// GOT/pointer-slot VAs holding a stack-probe import; see setStackProbeSlots.
