@@ -3204,29 +3204,66 @@ class LoopPlanInference {
         (Unit ? Ranks : OtherRanks).emplace_back(I, Complement);
       }
     }
-    Ranks.insert(Ranks.end(), OtherRanks.begin(), OtherRanks.end());
-    for (const auto &[Index, Complement] : Ranks) {
+    std::optional<TupleRankSearch> TupleSearch;
+    bool TupleInitialized = false, TupleExhausted = false;
+    const auto TryTuples = [&](std::optional<uint32_t> Attempts) {
+      if (TupleExhausted)
+        return false;
+      Cut = StableCut;
+      if (!TupleInitialized) {
+        TupleInitialized = true;
+        for (const auto &State : Prefixes)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint) &&
+              !fits(State)) {
+            TupleExhausted = true;
+            return false;
+          }
+        for (const auto &E : StableEdges)
+          if (!fits(E.After)) {
+            TupleExhausted = true;
+            return false;
+          }
+        TupleSearch = makeTupleSearch(StableEdges);
+      }
+      const auto Status = inferTupleRanks(StableEdges, *TupleSearch, Attempts);
+      TupleExhausted = Status == TupleRankStatus::Exhausted;
+      return Status == TupleRankStatus::Inferred;
+    };
+    uint32_t EarlyTupleAttempts = 0;
+    const auto TryEarlyTuple = [&] {
+      // Keep this window independent of the remaining budget, so an exact
+      // replay follows the same proposal prefix. It grants no extra budget.
+      if (EarlyTupleAttempts == 8)
+        return false;
+      const auto Before = Result.RankCandidates;
+      const bool Inferred = TryTuples(1);
+      EarlyTupleAttempts += Result.RankCandidates - Before;
+      return Inferred;
+    };
+    const auto TryScalar = [&](size_t Index, bool Complement, bool Interleave) {
       const auto Try = [&](bool Guard, std::optional<LowIRLoopLocation> Bound) {
         if (Result.RankCandidates >= Limits.MaxRankCandidates)
           stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
         ++Result.RankCandidates;
         makeTemplate(Index, Complement, Guard, Bound);
-        return checkRank(Prefixes);
+        return checkRank(Prefixes) || (Interleave && TryEarlyTuple());
       };
       if (Try(false, {}) || Try(true, {}))
         return true;
       for (const auto &Bound : Bounds)
         if (Bound.Bytes == words()[Index].Location.Bytes && Try(false, Bound))
           return true;
-    }
-    Cut = StableCut;
-    for (const auto &State : Prefixes)
-      if (State.Cutpoint == static_cast<int>(ActiveCutpoint) && !fits(State))
-        return false;
-    for (const auto &E : StableEdges)
-      if (!fits(E.After))
-        return false;
-    return inferTupleRanks(StableEdges);
+      return false;
+    };
+    for (const auto &[Index, Complement] : Ranks)
+      if (TryScalar(Index, Complement, false))
+        return true;
+    if (TryEarlyTuple())
+      return true;
+    for (const auto &[Index, Complement] : OtherRanks)
+      if (TryScalar(Index, Complement, true))
+        return true;
+    return TryTuples({});
   }
 
   void findChoices(llvm::ArrayRef<va_t> Eligible) {
@@ -3895,44 +3932,81 @@ class LoopPlanInference {
       throw Stop{};
   }
 
-  bool inferTupleRanks(std::vector<Edge> &Edges) {
-    std::vector<Counter> Candidates;
-    for (const auto &Location : locations())
+  struct TupleRankSearch {
+    std::vector<Counter> Candidates, Ranks;
+    std::vector<size_t> Next{0};
+    size_t Size = 1, MaxSize = 0;
+    bool Resume = false;
+  };
+  enum class TupleRankStatus { Inferred, Exhausted, Paused };
+
+  TupleRankSearch makeTupleSearch(std::vector<Edge> &Edges) {
+    TupleRankSearch Search;
+    for (const auto &Location : locations()) {
+      const auto Before = Search.Candidates.size();
       for (bool Complement : {false, true}) {
         bool Unit = false;
         for (auto &E : Edges)
           Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
                            Location.Bytes, Complement);
         if (Unit)
-          Candidates.push_back({Location, Complement});
+          Search.Candidates.push_back({Location, Complement});
       }
-    std::vector<Counter> Ranks;
-    Phases Phase;
-    const auto Search = [&](auto &&Self, size_t Size) -> bool {
+      Search.MaxSize += Search.Candidates.size() != Before;
+    }
+    return Search;
+  }
+
+  static bool nextTuple(TupleRankSearch &Search) {
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume] = Search;
+    if (Resume) {
+      Ranks.pop_back();
+      Next.pop_back();
+      Resume = false;
+    }
+    while (Size <= MaxSize) {
       if (Ranks.size() == Size) {
-        if (Result.RankCandidates >= Limits.MaxRankCandidates)
-          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
-        ++Result.RankCandidates;
-        return inferPhases(Edges, Ranks, Phase);
-      }
-      for (const auto &C : Candidates) {
-        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
-              return sameLocation(C.Location, R.Location);
-            }))
-          continue;
-        Ranks.push_back(C);
-        if (Self(Self, Size))
-          return true;
-        Ranks.pop_back();
-      }
-      return false;
-    };
-    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
-      if (Search(Search, Size)) {
-        installRanks(Ranks, Phase);
+        Resume = true;
         return true;
       }
+      if (Next.back() == Candidates.size()) {
+        if (Ranks.empty()) {
+          ++Size;
+          Next.front() = 0;
+        } else {
+          Ranks.pop_back();
+          Next.pop_back();
+        }
+        continue;
+      }
+      const auto &C = Candidates[Next.back()++];
+      if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
+            return sameLocation(C.Location, R.Location);
+          }))
+        continue;
+      Ranks.push_back(C);
+      Next.push_back(0);
+    }
     return false;
+  }
+
+  TupleRankStatus inferTupleRanks(std::vector<Edge> &Edges,
+                                  TupleRankSearch &Search,
+                                  std::optional<uint32_t> MaxAttempts = {}) {
+    for (uint32_t Attempt = 0; !MaxAttempts || Attempt < *MaxAttempts;
+         ++Attempt) {
+      if (!nextTuple(Search))
+        return TupleRankStatus::Exhausted;
+      if (Result.RankCandidates >= Limits.MaxRankCandidates)
+        stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+      ++Result.RankCandidates;
+      Phases Phase;
+      if (inferPhases(Edges, Search.Ranks, Phase)) {
+        installRanks(Search.Ranks, Phase);
+        return TupleRankStatus::Inferred;
+      }
+    }
+    return TupleRankStatus::Paused;
   }
 
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
@@ -4009,7 +4083,8 @@ class LoopPlanInference {
         if (!fits(S))
           return false;
       }
-    return inferTupleRanks(Edges);
+    auto Search = makeTupleSearch(Edges);
+    return inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred;
   }
 
 public:
