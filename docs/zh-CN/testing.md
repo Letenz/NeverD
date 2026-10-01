@@ -796,7 +796,9 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 `NeverDX64ExceptionTests` 中的 `X64StateTransition` 在原生 CPU 上执行独立 RAM 读取和 CR8 读取，交替改变 TLS 基址与权限级，在重复除法异常后恢复，并在取消进入后更改 TLS。修改原生状态传输时，应运行所属 CTest 标签，同时覆盖别名重映射、CPU 上下文、FP 状态和原始驱动结果对比。KVM/WHP 不可用仍显式跳过。
 
 
-`NeverDKvmRunTests` 无需 `/dev/kvm` 即可验证 `KvmRunControl` 借用的传输回调。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 检查准备、读取和被拦截的宿主进入使用同一线程，且中断重试期间只准备一次。其他用例覆盖准备失败而不进入、读取失败、准备期间停止及活动进入被取消；随后重新运行，确认不会复用旧回调。验证仍应包含真实取消、RAM 回滚、异常和原有驱动测试。
+`NeverDKvmRunTests` 无需 `/dev/kvm` 即可验证 `KvmRunControl` 借用的传输回调。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 检查准备、读取和被拦截的宿主进入使用同一线程，且中断重试期间只准备一次。其他用例覆盖准备失败而不进入、读取失败、准备期间停止及活动进入被取消；随后重新运行，确认不会复用旧回调。验证仍应包含真实取消、RAM 回滚、异常和原有驱动测试。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` 验证同一期限内的多次进入复用该线程，每轮传输只执行一次，并保持此前状态包不变。
+
+`KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在宿主修改通用寄存器、首尾 XMM 寄存器、MXCSR 和 x87 控制字后，验证连续执行及真实 CPU 写入。停止进入后的实际 `FXSAVE64` 字节验证全部物理 80 位寄存器、TOP、标签、操作码和指针；重复除法异常也会使复用失效。这些机器边界测试不向 checked 配置开放额外的 x87 指令。
 
