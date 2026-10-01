@@ -5,12 +5,14 @@
 
 // Native x86_64 host-CPU oracle for lift / decompile / identity-patch.
 // ENTERW must preserve RBP[63:16]; a pointer-width ENTER clobbers them to a
-// stack address and the process exit status changes.
+// stack address and the process exit status changes.  The fixtures are static
+// ELF programs that exit through the Linux `exit` system call, so only a Linux
+// x86_64 host can run them.
 
 class X86_64_NativeHostMode : public NeverDLiftTest {
 protected:
-  static bool hostIsX86_64() {
-#if defined(__x86_64__) || defined(_M_X64)
+  static bool hostRunsLinuxX86_64() {
+#if defined(__linux__) && defined(__x86_64__)
     return true;
 #else
     return false;
@@ -47,8 +49,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_64_NativeHostMode, EnterWLiftDecompilePatchAgreeWithCpu) {
-  if (!hostIsX86_64())
-    GTEST_SKIP() << "native x86_64 host execution required";
+  if (!hostRunsLinuxX86_64())
+    GTEST_SKIP() << "native Linux x86_64 host execution required";
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "clang required to build the native x86_64 fixture";
 
@@ -139,8 +141,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_64_NativeHostMode, CvtSI2SDMulpdPatchAgreesWithCpu) {
-  if (!hostIsX86_64())
-    GTEST_SKIP() << "native x86_64 host execution required";
+  if (!hostRunsLinuxX86_64())
+    GTEST_SKIP() << "native Linux x86_64 host execution required";
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "clang required to build the native x86_64 fixture";
 
