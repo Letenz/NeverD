@@ -10,6 +10,7 @@
 #include "X64Machine.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cassert>
@@ -175,7 +176,7 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
   const auto Layout =
       llvm::support::endian::read64le(Bytes.data() + XCompOffset);
   constexpr uint64_t InitialComponents = 0
-#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size)                    \
+#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size, Alignment)         \
   | (uint64_t(1) << Bit)
 #include "X64FPState.def"
 #undef NEVERD_X64_XSAVE_INITIAL_COMPONENT
@@ -193,12 +194,14 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
       return diagnostic::error(diagnostic::FPState);
   // A host can mark an initial component present. Accept only declared
   // compacted layouts whose present extension payload is actually initial;
-  // never silently drop live AVX/CET state. Layout, not presence, owns offsets.
+  // never silently drop live extended state. Layout owns offsets, including
+  // alignment, even when the corresponding component is absent.
   if (Layout & Compacted) {
     size_t Offset = XsaveBytes;
-#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size)                    \
+#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size, Alignment)         \
   if (Layout & (uint64_t(1) << Bit)) {                                         \
-    if (Size > Bytes.size() - Offset)                                          \
+    Offset = llvm::alignTo(Offset, Alignment);                                 \
+    if (Offset > Bytes.size() || Size > Bytes.size() - Offset)                 \
       return diagnostic::error(diagnostic::FPState);                           \
     if (Present & (uint64_t(1) << Bit))                                        \
       for (const auto Byte : Bytes.slice(Offset, Size))                        \

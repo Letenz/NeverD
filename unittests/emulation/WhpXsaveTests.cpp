@@ -207,6 +207,26 @@ TEST_P(WhpXsaveProtocol, InitialCETComponentsDoNotHideFPState) {
   llvm::consumeError(std::move(E));
   EXPECT_EQ(Next, Before);
 }
+TEST_P(WhpXsaveProtocol, InitialWideComponentsDoNotHideFPState) {
+  Target.Packet.resize(xsavecase::WideBytes);
+  Target.Required = Target.Written = Target.Packet.size();
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
+  llvm::support::endian::write64le(Target.Packet.data() +
+                                       xsavecase::PresentOffset,
+                                   xsavecase::NativePresent);
+  llvm::support::endian::write64le(
+      Target.Packet.data() + xsavecase::LayoutOffset, xsavecase::WideLayout);
+  X64MachineState Next;
+  ASSERT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)), "");
+  EXPECT_EQ(Next, State);
+  const auto Before = Next;
+  Target.Packet[xsavecase::WideCETEnd - 1] = xsavecase::StaleByte;
+  auto E = Transfer.capture(API, &Target, Next);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(Next, Before);
+}
 TEST_P(WhpXsaveProtocol, NativeInstallRetainsFPStateBeforeAnyGuestExecution) {
   WhpPartition Host;
   if (auto E = Host.API.load()) {

@@ -81,9 +81,12 @@ std::array<unsigned, 4> cpuid(unsigned Leaf, unsigned Subleaf = 0) {
 struct ExtendedLayout {
   uint64_t Mask;
   size_t Bytes;
+  size_t PaddingBegin;
+  size_t PaddingBytes;
 };
 constexpr ExtendedLayout ExtendedLayouts[] = {
-#define NEVERD_XSAVE_LAYOUT(Mask, Bytes) {Mask, Bytes},
+#define NEVERD_XSAVE_LAYOUT(Mask, Bytes, PaddingBegin, PaddingBytes)           \
+  {Mask, Bytes, PaddingBegin, PaddingBytes},
 #include "X64XsaveCases.def"
 #undef NEVERD_XSAVE_LAYOUT
 };
@@ -129,6 +132,30 @@ TEST(X64Xsave, CompactedOffsetsFollowLayoutRatherThanPresentBits) {
     EXPECT_EQ(State, Before);
   }
 }
+TEST(X64Xsave, WideLayoutIgnoresAbsentComponentsAndAlignmentPadding) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  Before.Xmm.back() = {SeedControl, InvalidControl};
+  auto Bytes =
+      extendedPacket({WideLayout & ~CompactedLayout, WideBytes, 0, 0}, Before);
+  llvm::support::endian::write64le(Bytes.data() + PresentOffset, NativePresent);
+  std::fill(Bytes.begin() + PacketBytes, Bytes.end(), StaleByte);
+  std::fill(Bytes.begin() + WideCETUserOffset, Bytes.begin() + WideCETEnd, 0);
+  auto State = Before;
+  auto E = decodeX64XsaveState(State, Bytes);
+  ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+  EXPECT_EQ(State, Before);
+  for (const auto &Layout : ExtendedLayouts) {
+    if (!Layout.PaddingBytes)
+      continue;
+    auto Padded = extendedPacket(Layout, Before);
+    std::fill_n(Padded.begin() + Layout.PaddingBegin, Layout.PaddingBytes,
+                StaleByte);
+    E = decodeX64XsaveState(State, Padded);
+    ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
 TEST(X64Xsave, EveryNonInitialExtensionByteRejectsWithoutPublication) {
   X64MachineState Before;
   Before.MXCSR = SeedControl;
@@ -137,6 +164,9 @@ TEST(X64Xsave, EveryNonInitialExtensionByteRejectsWithoutPublication) {
     SCOPED_TRACE(Layout.Mask);
     auto Bytes = extendedPacket(Layout, Before);
     for (size_t I = PacketBytes; I < Bytes.size(); ++I) {
+      if (I >= Layout.PaddingBegin &&
+          I - Layout.PaddingBegin < Layout.PaddingBytes)
+        continue;
       SCOPED_TRACE(I);
       Bytes[I] = StaleByte;
       auto State = Before;
