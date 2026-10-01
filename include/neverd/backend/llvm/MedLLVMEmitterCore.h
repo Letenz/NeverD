@@ -919,8 +919,13 @@ private:
   bool valueIsStableAddressOffset(const MedVar &V,
                                   const MedVar *Forbidden = nullptr) const;
 
-  bool valueIsStableAddressOffsetImpl(const MedVar &V,
-                                      const MedVar *Forbidden) const;
+  /// One bounded attempt of the stable-offset proof with \p ProofNodeBudget
+  /// graph expansions. \p Exhausted reports that the attempt ran out of
+  /// expansions and the closed-graph proof could not decide the value either;
+  /// only a \p FinalAttempt records a failure snapshot for such a result.
+  bool valueIsStableAddressOffsetImpl(const MedVar &V, const MedVar *Forbidden,
+                                      int ProofNodeBudget, bool FinalAttempt,
+                                      bool &Exhausted) const;
 
   /// Return the sole input of an operation only when the emitted operation is
   /// guaranteed to preserve that input's complete unsigned pointer value.
