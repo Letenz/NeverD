@@ -2351,6 +2351,11 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
     return getName(V);
   if (auto Imm = foldImmediate(V))
     return *Imm;
+  // A scalar FP bitcast is materialized with a byte copy. Display provenance
+  // may name its integer input, but that name cannot replace the float value.
+  if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V);
+      Inst && isFloatingPointBitcast(*Inst))
+    return getName(V);
   if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V);
       Cast &&
       llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(Cast)) {

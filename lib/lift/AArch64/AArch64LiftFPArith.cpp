@@ -290,16 +290,21 @@ bool liftFPArith(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     break;
   }
 
-  // --- FCMP / FCCMP (float compare -> NZCV) ---
+  // --- FCMP / FCMPE (float compare -> NZCV) ---
   case AARCH64_INS_FCMP:
   case AARCH64_INS_FCMPE: {
     if (ARM64.op_count < 2)
       break;
     NdVar A = L.operandRead(S, ARM64.operands[0]);
-    NdVar B =
-        (ARM64.operands[1].type == AARCH64_OP_FP && ARM64.operands[1].fp == 0.0)
-            ? NdVar::cst(0, A.Size)
-            : L.operandRead(S, ARM64.operands[1]);
+    const auto &Right = ARM64.operands[1];
+    // Capstone and the native decoder represent #0.0 as XZR. Its floating
+    // width comes from the compared register, not operandRead's integer size.
+    // Also accept the immediate representations used by decoded clients.
+    const bool Zero =
+        (Right.type == AARCH64_OP_FP && Right.fp == 0.0) ||
+        (Right.type == AARCH64_OP_IMM && Right.imm == 0) ||
+        (Right.type == AARCH64_OP_REG && Right.reg == AARCH64_REG_XZR);
+    NdVar B = Zero ? NdVar::cst(0, A.Size) : L.operandRead(S, Right);
     NdVar Eq = S.makeTemp(1);
     NdVar Lt = S.makeTemp(1);
     S.emit(NdOp::FLOAT_EQUAL, Eq, {A, B});
