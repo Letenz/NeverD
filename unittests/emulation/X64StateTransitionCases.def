@@ -28,6 +28,9 @@ NEVERD_X64_TRANSITION_VALUE(MXCSRRoundUnit, 0x2000)
 NEVERD_X64_TRANSITION_VALUE(ControlRoundUnit, 0x400)
 NEVERD_X64_TRANSITION_VALUE(FP80Base, 0x8000000000000000ULL)
 NEVERD_X64_TRANSITION_VALUE(FP80High, 0x3fff)
+// A pending unmasked invalid operation keeps saved metadata valid on AMD.
+NEVERD_X64_TRANSITION_VALUE(FPInvalidException, 1)
+NEVERD_X64_TRANSITION_VALUE(FPPendingStatus, 0x8081)
 #endif
 #ifdef NEVERD_X64_TRANSITION_CODE
 // MOV RAX,FS:[RCX]; MOV RDX,GS:[RCX]. The host checks independent RAM values.
