@@ -22,6 +22,7 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/object/SectionNames.h"
+#include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -96,6 +97,7 @@ struct Dispatch {
   va_t SelectorSlot = 0;
   va_t ImportSlot = 0;
   bool LoadsSelector = false;
+  std::optional<ObjCArgumentTailCall> ArgumentCopy;
 };
 
 std::optional<Dispatch> veneerStorage(const BinaryImage &Image, va_t Address) {
@@ -976,6 +978,31 @@ bool objcSelectorStubMatches(const BinaryImage &Image, va_t Address,
          Target->Selector == Selector;
 }
 
+std::optional<ObjCArgumentTailCall>
+objcArgumentTailCall(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      Address % 4 || Address > InvalidVA - 8 || !Image.isCodeAddress(Address))
+    return std::nullopt;
+  const auto *Bytes = Image.readVA(Address, 8);
+  if (!Bytes)
+    return std::nullopt;
+  const auto Move = llvm::support::endian::read32le(Bytes);
+  const auto Branch = llvm::support::endian::read32le(Bytes + 4);
+  const unsigned Register = (Move >> 16) & 31;
+  const unsigned Destination = Move & 31;
+  if ((Move & 0xffe0ffe0u) != 0xaa0003e0u || Register < 19 || Register > 28 ||
+      Destination > 7 || Destination == 1 ||
+      (Branch & 0xfc000000u) != 0x14000000u ||
+      !sourceLocalLeafRange(Image, Address, 8))
+    return std::nullopt;
+  const auto Target = branch::a64BranchTarget(Branch, Address + 4);
+  if (!Target || !objcSelectorStubPreservesNonvolatileRegisters(Image, *Target))
+    return std::nullopt;
+  return ObjCArgumentTailCall{*Target, a64reg::X0 + Register * 8,
+                              a64reg::X0 + Destination * 8};
+}
+
 std::optional<SourceCallTypeHint>
 objcSelectorStubSentinelSourceCallHint(const BinaryImage &Image, va_t Address,
                                        const ObjCReceiverTypeHint &Receiver,
@@ -1534,6 +1561,12 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
               Target = Dispatch{Name, {}, 0, V->Number};
           } else if (Op.Opcode == NdOp::CALL) {
             Target = veneer(Image, V->Number);
+            if (!Target)
+              if (const auto Tail = objcArgumentTailCall(Image, V->Number)) {
+                Target = veneer(Image, Tail->SelectorStub);
+                if (Target)
+                  Target->ArgumentCopy = *Tail;
+              }
           }
         }
         if (V && V->TheKind == Value::Kind::Number && Op.Opcode == NdOp::CALL) {
@@ -1691,10 +1724,17 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             Target->Selector = Name->Name;
         }
         std::optional<ObjCReceiverTypeHint> SuperInitReceiver;
+        const auto ArgumentRegister = [&](uint64_t Register) {
+          return Target && Target->ArgumentCopy &&
+                         Target->ArgumentCopy->DestinationRegister == Register
+                     ? Target->ArgumentCopy->SourceRegister
+                     : Register;
+        };
         if (Target && !Target->Selector.empty()) {
           std::optional<ObjCReceiverTypeHint> Receiver;
           ObjCReceiverDeclaration Declaration;
-          const auto Self = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
+          const auto Self =
+              Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[0]), 8));
           if (Self && Target->Name == "objc_msgSend")
             Receiver = receiver(*Self);
           if (Self && Target->Name == "objc_msgSendSuper2" &&
@@ -1837,7 +1877,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                     Return.Inputs[0] ==
                     NdVar::reg(Caller->ReturnLocation.RegisterOffset, 8);
             }
-            const auto Self = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
+            const auto Self =
+                Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[0]), 8));
             const auto ReceiverParameter =
                 Self ? SourceParameter(*Self) : std::nullopt;
             const size_t ArgumentCount = std::count(
@@ -1849,8 +1890,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
               Evidence.ReceiverSourceParameter = *ReceiverParameter;
               bool ExactArguments = true;
               for (size_t I = 0; I < ArgumentCount; ++I) {
-                const auto Argument =
-                    Read(NdVar::reg(TRI.IntParamRegs[I + 2], 8));
+                const auto Argument = Read(
+                    NdVar::reg(ArgumentRegister(TRI.IntParamRegs[I + 2]), 8));
                 const auto Parameter =
                     Argument ? SourceParameter(*Argument) : std::nullopt;
                 if (!Parameter) {
@@ -1900,8 +1941,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           if (!Signature && !Qualified && !SelectorForwardingContract) {
             for (size_t Parameter = 2; Parameter < TRI.IntParamRegs.size();
                  ++Parameter) {
-              const auto Argument =
-                  Read(NdVar::reg(TRI.IntParamRegs[Parameter], 8));
+              const auto Argument = Read(
+                  NdVar::reg(ArgumentRegister(TRI.IntParamRegs[Parameter]), 8));
               if (!Argument ||
                   Argument->TheKind != Value::Kind::SourceParameter)
                 continue;
@@ -1926,8 +1967,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           if (!Signature && !Qualified && !SelectorForwardingContract) {
             for (size_t Parameter = 2; Parameter < TRI.IntParamRegs.size();
                  ++Parameter) {
-              const auto Argument =
-                  Read(NdVar::reg(TRI.IntParamRegs[Parameter], 8));
+              const auto Argument = Read(
+                  NdVar::reg(ArgumentRegister(TRI.IntParamRegs[Parameter]), 8));
               if (!Argument || Argument->TheKind != Value::Kind::Frame)
                 continue;
               const int64_t Offset = static_cast<int64_t>(Argument->Number);
@@ -1978,7 +2019,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                       .Location;
               auto Format =
                   Location.Kind == SourceABICarrierKind::IntegerRegister
-                      ? Read(NdVar::reg(Location.RegisterOffset, 8))
+                      ? Read(NdVar::reg(
+                            ArgumentRegister(Location.RegisterOffset), 8))
                       : std::nullopt;
               std::optional<SourceCallTypeHint> Hint;
               if (Format && Format->TheKind == Value::Kind::Number)
@@ -2015,7 +2057,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                     return Value.Number;
                   return std::nullopt;
                 };
-                const auto First = Read(NdVar::reg(TRI.IntParamRegs[2], 8));
+                const auto First =
+                    Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[2]), 8));
                 if (!First)
                   return std::nullopt;
                 // sentinel(0,1) permits firstObject itself to be nil. Do not
@@ -2056,7 +2099,30 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         // Only a bound Darwin ABI establishes which ordinary physical views
         // survive. A returning call must restore SP; typed frame spills below
         // every frame address visible to an unknown convention remain private.
-        const auto Bound = BlockHints.find(Op.Addr);
+        auto Bound = BlockHints.find(Op.Addr);
+        if (Bound != BlockHints.end() && Target && Target->ArgumentCopy) {
+          auto &Signature = Bound->second.Signature;
+          std::string Error;
+          SourceParameterTypeHint *Parameter = nullptr;
+          for (auto &P : Signature.Parameters)
+            if (P.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+                P.Location.RegisterOffset ==
+                    Target->ArgumentCopy->DestinationRegister &&
+                P.Location.ValueBytes == 8 && P.Components.empty())
+              Parameter = &P;
+          if (Bound->second.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+              !Parameter) {
+            BlockHints.erase(Bound);
+            Bound = BlockHints.end();
+          } else {
+            Parameter->Location.RegisterOffset =
+                Target->ArgumentCopy->SourceRegister;
+            if (!validateSourceABI(Signature, Error)) {
+              BlockHints.erase(Bound);
+              Bound = BlockHints.end();
+            }
+          }
+        }
         std::optional<ObjCReceiverTypeHint> ReturnedReceiver;
         std::vector<std::pair<std::pair<int64_t, unsigned>, Value>>
             OutParameterReceivers;
@@ -2080,9 +2146,12 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                 ObjCReceiverTypeHint::OriginKind::MethodParameter &&
             Bound->second.Receiver->Steps.empty() &&
             Bound->second.Receiver->ClassName == "NSEnumerator") {
-          const auto StateAddress = Read(NdVar::reg(TRI.IntParamRegs[2], 8));
-          const auto BufferAddress = Read(NdVar::reg(TRI.IntParamRegs[3], 8));
-          const auto Count = Read(NdVar::reg(TRI.IntParamRegs[4], 8));
+          const auto StateAddress =
+              Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[2]), 8));
+          const auto BufferAddress =
+              Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[3]), 8));
+          const auto Count =
+              Read(NdVar::reg(ArgumentRegister(TRI.IntParamRegs[4]), 8));
           if (StateAddress && BufferAddress && Count &&
               StateAddress->TheKind == Value::Kind::Frame &&
               BufferAddress->TheKind == Value::Kind::Frame &&
