@@ -2080,6 +2080,7 @@ inline bool swiftImportedNominalDescriptor(const BinaryImage &Image, va_t Slot,
   // provider on its target runtime. Only its identity is reconstructed;
   // the storage class layout and metadata contents remain opaque.
   return Symbol == "_$ss18_DictionaryStorageCMn" ||
+         Symbol == "_$ss17_NativeDictionaryVMn" ||
          Symbol == "_$ss13ManagedBufferCMn";
 }
 
@@ -8017,17 +8018,101 @@ inline bool objcSourceCallBound(
       // An LLVM i1 input does not promise the other bits of a byte. Accept
       // the complete source carrier only when this current value is exactly
       // zero or one; never infer normalization from its narrow type alone.
-      const auto Canonical = [](const auto &Self, const ExprPtr &Value,
-                                unsigned Depth = 0) -> bool {
-        if (!Value || Depth > 16 || !Value->Type ||
+      using BooleanDefinition = std::pair<TypeRef, ExprPtr>;
+      std::map<HighSourceLocalIdentity, std::vector<BooleanDefinition>>
+          BooleanDefinitions;
+      std::set<HighSourceLocalIdentity> AddressTaken, ActiveBooleanVariables;
+      std::optional<bool> BooleanFlowValid;
+      size_t BooleanBudget = 4096;
+      const auto PrepareBooleanFlow = [&]() {
+        if (BooleanFlowValid)
+          return *BooleanFlowValid;
+        BooleanFlowValid = false;
+        if (!ContainingFunction)
+          return false;
+        const auto Flow = analyzeHighSourceFlow(*ContainingFunction, false);
+        if (!Flow.Complete || !Flow.Items.empty())
+          return false;
+        bool OwnsCall = false;
+        std::vector<std::pair<ExprPtr, bool>> Pending;
+        walkStmts(ContainingFunction->Body, [&](const HighStmt &Statement) {
+          if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+              Statement.Dst->Kind == ExprKind::Var && Statement.Val)
+            BooleanDefinitions[highSourceLocalIdentity(Statement.Dst->Var)]
+                .emplace_back(Statement.Dst->Type, Statement.Val);
+          forEachExpr(Statement, [&](const ExprPtr &Root) {
+            Pending.emplace_back(Root, false);
+          });
+        });
+        while (!Pending.empty()) {
+          if (!BooleanBudget)
+            return false;
+          --BooleanBudget;
+          auto [Value, Address] = Pending.back();
+          Pending.pop_back();
+          if (!Value)
+            continue;
+          OwnsCall |= Value.get() == &Expression;
+          Address |= Value->Kind == ExprKind::Addr;
+          if (Address && Value->Kind == ExprKind::Var)
+            AddressTaken.insert(highSourceLocalIdentity(Value->Var));
+          for (const auto &Operand : Value->Operands)
+            Pending.emplace_back(Operand, Address);
+        }
+        BooleanFlowValid = OwnsCall;
+        return OwnsCall;
+      };
+      const auto Canonical = [&](const auto &Self, const ExprPtr &Value,
+                                 unsigned Depth = 0) -> bool {
+        if (!BooleanBudget || !Value || Depth > 16 || !Value->Type ||
             Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
             Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
-            !Value->IntrinsicOutputs.empty() || Value->SourceCallHint ||
+            !Value->IntrinsicOutputs.empty() ||
             Value->MemoryOrdering != NdMemoryOrdering::None ||
             Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
           return false;
+        --BooleanBudget;
+        if (Value->Kind == ExprKind::Call && Value->SourceCallHint) {
+          // The compiler declares this C runtime result as zeroext i1 on
+          // both Darwin architectures. Revalidate the actual import and its
+          // complete binding before using that stronger 0/1 value fact.
+          const auto &Producer = *Value->SourceCallHint;
+          const auto Bind = Image.DyldBindSlots.find(Producer.TargetAddress);
+          return Producer.CallKind ==
+                     SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+                 Producer.TargetName ==
+                     "swift_isUniquelyReferenced_nonNull_native" &&
+                 Producer.CanonicalBooleanInputs.empty() &&
+                 equalSourceTypes(Value->Type, Producer.Signature.ReturnType) &&
+                 Bind != Image.DyldBindSlots.end() &&
+                 Bind->second.Module == "/usr/lib/swift/libswiftCore.dylib" &&
+                 objcSourceCallBound(*Value, Image, Functions);
+        }
+        if (Value->SourceCallHint)
+          return false;
         if (Value->Kind == ExprKind::Const)
           return Value->Operands.empty() && Value->ConstVal <= 1;
+        if (Value->Kind == ExprKind::Var && Value->Operands.empty() &&
+            Value->Var.Kind != MedVar::Param &&
+            Value->Var.Size == Value->Type->Size) {
+          if (!PrepareBooleanFlow())
+            return false;
+          const auto Key = highSourceLocalIdentity(Value->Var);
+          const auto Definitions = BooleanDefinitions.find(Key);
+          if (AddressTaken.count(Key) ||
+              Definitions == BooleanDefinitions.end() ||
+              Definitions->second.empty() ||
+              !ActiveBooleanVariables.insert(Key).second)
+            return false;
+          const bool Valid = std::all_of(
+              Definitions->second.begin(), Definitions->second.end(),
+              [&](const BooleanDefinition &Definition) {
+                return equalSourceTypes(Definition.first, Value->Type) &&
+                       Self(Self, Definition.second, Depth + 1);
+              });
+          ActiveBooleanVariables.erase(Key);
+          return Valid;
+        }
         if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SUBBYTES &&
             Value->Operands.size() == 2 && Value->Operands[0] &&
             Value->Operands[0]->Type &&

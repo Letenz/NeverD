@@ -9,6 +9,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -213,6 +214,70 @@ int main(void) {
   result = project_name1(metadata);
   if ((uint64_t)result != 0x556678 || (uint64_t)(result >> 64) != 0x778812 ||
       seen != 1 || count != 4) return 4;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, SwiftDictionaryRemovalKeepsMetadataAndContextDistinct) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const std::string Import =
+      "_$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF";
+  Image.ImportPtrSlots[0x1000] = Import;
+  Image.DyldBindSlots[0x1000] = {Import, 0, "/usr/lib/swift/libswiftCore.dylib",
+                                 false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const unsigned Flag : {0U, 1U}) {
+    HighFunc Function;
+    Function.Name = "clear" + std::to_string(Flag);
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {{"arg0", Pointer}, {"arg1", Pointer}};
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = call(*Hint, Hint->Signature.ReturnType,
+                         {HighExpr::makeConst(Flag, 1), parameter(0, Pointer),
+                          parameter(1, Pointer)});
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+static const void *expected_metadata;
+void __attribute__((swiftcall)) remove_oracle(
+    _Bool, const void *, uintptr_t * __attribute__((swift_context)))
+    __asm__("_$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF");
+void __attribute__((swiftcall)) remove_oracle(
+    _Bool unique, const void *metadata,
+    uintptr_t *dictionary __attribute__((swift_context))) {
+  if (metadata != expected_metadata || *dictionary != 0x112233) __builtin_trap();
+  *dictionary = unique ? 0x445566 : 0x778899;
+  ++calls;
+}
+int main(void) {
+  uintptr_t dictionary = 0x112233;
+  expected_metadata = &calls;
+  clear0((void *)expected_metadata, &dictionary);
+  if (dictionary != 0x778899 || calls != 1) return 1;
+  dictionary = 0x112233;
+  clear1((void *)expected_metadata, &dictionary);
+  if (dictionary != 0x445566 || calls != 2) return 2;
   return 0;
 }
 )";
@@ -1727,6 +1792,80 @@ int main(void) {
   }
   return 0;
 })");
+}
+
+TEST(HighCSourceCalls, ScrollInsetsPreserveAllFourIndependentValues) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "setContentInset:");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "setContentInset:";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  const auto Double = NdType::makeFloat(8);
+  std::vector<ExprPtr> Leaves;
+  HighFunc Function;
+  Function.Name = "set_insets";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"receiver", Word}, {"selector", Word}};
+  for (unsigned I = 0; I != 4; ++I) {
+    Function.Params.push_back({"edge" + std::to_string(I), Double});
+    Leaves.push_back(parameter(I + 2, Double));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val =
+      call(Hint, Function.ReturnType,
+           {parameter(0, Word), parameter(1, Word),
+            HighExpr::makeRecord(Signature->Parameters.back().Type, Leaves)});
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static InsetsOracle observed;
+static unsigned calls;
+static void implementation(id receiver, SEL selector, InsetsOracle insets) {
+  if (receiver != (id)(uintptr_t)0x1234 ||
+      selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  observed = insets;
+  ++calls;
+}
+static void (*objc_msgSend)(id, SEL, InsetsOracle) = implementation;
+)" + Source + R"(
+int main(void) {
+  const uint64_t patterns[][4] = {
+    {0, 0, 0x4024000000000000ULL, 0},
+    {0x3ff4000000000000ULL, 0xc004000000000000ULL,
+     0x8000000000000000ULL, 0xc032c00000000000ULL},
+    {1, 0x7ff8000000000042ULL, 0xfff0000000000000ULL,
+     0x3fe0000000000000ULL}
+  };
+  _Static_assert(sizeof(InsetsOracle) == 32, "four CGFloat fields");
+  for (unsigned i = 0; i != 3; ++i) {
+    InsetsOracle input;
+    memcpy(&input, patterns[i], sizeof(input));
+    set_insets(0x1234, 0x5678, input.top, input.left, input.bottom, input.right);
+    if (memcmp(&observed, patterns[i], sizeof(observed)) || calls != i + 1)
+      return 1;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
 }
 
 TEST(HighCSourceCalls, RuntimeImportsCompileAndPreserveObjectAndVoidEffects) {

@@ -331,6 +331,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // index precedes the buffer value; neither input uses swiftself.
     {"$ss12_ArrayBufferV19_getElementSlowPathyyXlSiFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "pzp"},
+    // Swift 6.1.2 arm64 and x86_64 clients declare swiftcc void
+    // (i1 isUnique, ptr concreteMetadata, ptr swiftself dictionaryAddress).
+    // Publication must prove a canonical Boolean before using a byte carrier.
+    {"$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF",
+     "/usr/lib/swift/libswiftCore.dylib", "vbpC"},
     {"$ss18_CocoaArrayWrapperV8endIndexSivg",
      "/usr/lib/swift/libswiftCore.dylib", "zz"},
     // Swift 6.1.2 DictionaryStorage.swift defines the original storage,
@@ -397,6 +402,8 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
   Hint.DoesNotReturn = Found->DoesNotReturn;
   if (Hint.TargetName == "$ss9_typeName_9qualifiedSSypXp_SbtF")
     Hint.CanonicalBooleanInputs = {1};
+  if (Hint.TargetName == "$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF")
+    Hint.CanonicalBooleanInputs = {0};
   // UIKit's image-literal initializer receives the opaque String words in
   // x0/x1. Authenticate that exact SDK import before allowing its immutable
   // literal storage to be copied into the generated source.

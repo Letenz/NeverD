@@ -6054,3 +6054,19 @@ TEST(HighControlFlowSemantics, SmallJumpTailIsCopiedToItsJumps) {
   for (uint64_t X : {0, 1, 2, 3})
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
 }
+
+TEST(HighControlFlowSemantics, FiveAssignmentReturnTailIsCopied) {
+  // if (x) goto T; v1 = 1; return v1; T: v1..v5 = ...; return v1; -- a tail
+  // of limits::kMaxReturnTailStatements pure assignments still takes a copy.
+  HighFunc F;
+  F.Body = {conditional(0x1000, 0x1010), assign(0x1004, 1, 1),
+            result(0x1008, local(1))};
+  for (int K = 0; K < static_cast<int>(limits::kMaxReturnTailStatements); ++K)
+    F.Body.push_back(assign(0x1010 + 4 * K, 1 + K, 10 + K));
+  F.Body.push_back(result(0x1040, local(1)));
+  ASSERT_EQ(execute(F, 1), std::optional<uint64_t>(10));
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
+}

@@ -718,7 +718,7 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
 }
 
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
-  constexpr size_t kMaxTailAssigns = 3;
+  constexpr size_t kMaxTailAssigns = limits::kMaxReturnTailStatements;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
   std::set<va_t> Targets;
   walkStmts(Body, [&](const HighStmt &S) {
