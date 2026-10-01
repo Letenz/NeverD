@@ -146,6 +146,22 @@
 // https://developer.apple.com/documentation/uikit/uiscrollview/contentinset?language=objc
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBounces:", "v20@0:8B16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+// Layout controls: all declaration owners agree in both complete Xcode 26.5
+// Messages ASTs from GitHub Actions artifact 11077989891. Their bool, long
+// enum, double and object types independently produce these encodings with
+// Apple Clang for arm64 iOS and arm64 iOS Simulator. setAlignment: also has
+// paragraph/content-configuration owners; setSpacing: has a glass-effect
+// owner. All agree on the complete fixed ABI, not merely the selector name.
+// iPhoneOS SHA-256: 8836f6b50c979975b1d3e2a365bf23ec1b7304ff42b26393bc713d2c1be1a163
+// Simulator SHA-256: a028c7a405bc849dc7f899de99fe1e4d26984b24872088a28ac01746efd868fc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "subviews", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "insertSubview:atIndex:", "v32@0:8@16q24", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setShowsHorizontalScrollIndicator:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setShowsVerticalScrollIndicator:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAxis:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setDistribution:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAlignment:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setSpacing:", "v24@0:8d16", nullptr},
 // UIView's public layout-priority setters take float UILayoutPriority and a
 // signed NSInteger-backed axis. Apple Clang emits this packed arm64 encoding
 // for both methods; the ABI keeps s0 and x2 in separate register banks.
