@@ -91,7 +91,7 @@ des exceptions du langage arrêtent la récupération.
 
 La récupération PE exige toutes les métadonnées de l’image, y compris les relocations globales et les enregistrements d’exceptions. La CLI les charge avant d’appliquer `--func` ; les appelants de l’API C ne doivent pas restreindre d’abord la session avec `neverd_session_restrict_function()`. L’adaptateur refuse les images chargées avec un ensemble limité de fonctions, car des métadonnées omises ne prouvent pas l’absence de corrections ni d’arêtes d’exception.
 
-Seules des plages complètes en lecture seule, adossées au fichier et dépourvues
+Sans les preuves PE ci-dessous, seules des plages complètes en lecture seule, adossées au fichier et dépourvues
 de mappages superposés ou de corrections du chargeur, peuvent fournir des
 lectures constantes de l’image. Les tables modifiables, relocations non résolues
 et instantanés d’exécution ne prouvent pas l’immuabilité des lectures. Les relocations COPY et les répertoires d’exceptions structurellement
@@ -109,6 +109,8 @@ aux jonctions ; perdre une expression affine ne la transforme pas en pointeur
 externe. Les pivots de pile, retours où l’appelé dépile les arguments et
 distributions fondées sur RET sont actuellement refusés. L’adaptateur impose
 la sémantique x64 petit-boutiste.
+
+`PEFixedImageView` authentifie les images PE x64 complètes à leur base préférée. Il vérifie les en-têtes bruts, les mappages uniques, les champs DIR64 complets et les écritures des imports ordinaires ; les octets IAT restent exclus. TLS, load-config, imports différés/liés, CLR et écritures inconnues sont refusés. Récupération et preuves natives/LLVM lient le même instantané. Les options C++ `MaxImagePreparationBytes` et `MaxImagePreparationRecords` valent par défaut 64 MiB et 65536 ; leur épuisement produit `BudgetExceeded`. L’image doit rester inchangée. Cela ne prouve pas l’équivalence de l’ASLR, de l’initialisation ou du dépaquetage.
 
 Cette fonction produit du source et de l’IR pour l’analyse. Elle ne prouve pas
 la sûreté des relocations, du déroulement de pile, des exceptions asynchrones

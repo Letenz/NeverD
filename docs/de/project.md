@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
 
 <div align="center">
 
@@ -51,6 +51,8 @@ Wiederherstellungsbudgets sind explizit: `--vm-max-fields`, `--vm-max-refinement
 Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
 
 Die separate C++-API `checkBinaryLLVMRefinement` kombiniert neue native und LLVM-Prüfungen für ein exaktes LLVM-Artefakt; C-Kompilierung liegt außerhalb des Beweisumfangs.
+
+Die PE-Wiederherstellung authentifiziert auch DIR64-Bytes an der bevorzugten Basis und schließt Import-Schreibzugriffe aus; dieser Vertrag zertifiziert weder ASLR noch Initialisierung.
 
 <!-- i18n-section: why-neverd -->
 

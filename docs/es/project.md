@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
 
 <div align="center">
 
@@ -51,6 +51,8 @@ Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
 
 La API C++ independiente `checkBinaryLLVMRefinement` compone nuevas comprobaciones nativas y LLVM sobre un artefacto LLVM exacto; la compilación C queda fuera de su prueba.
+
+La recuperación PE también autentica bytes DIR64 en la base preferida y excluye escrituras de importaciones; el contrato no certifica ASLR ni inicialización.
 
 <!-- i18n-section: why-neverd -->
 

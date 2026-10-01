@@ -93,8 +93,8 @@ Rekonstruktion.
 
 Die PE-Rekonstruktion erfordert vollständige Abbildmetadaten einschließlich aller Relokationen und Ausnahmeeinträge. Die CLI lädt sie vor der Anwendung von `--func`; C-API-Aufrufer dürfen die Sitzung nicht zuvor mit `neverd_session_restrict_function()` einschränken. Der Binäradapter lehnt Abbilder ab, die mit einer eingeschränkten Funktionsmenge geladen wurden: Ausgelassene Metadaten beweisen weder die Abwesenheit von Fixups noch die von Ausnahmekanten.
 
-Nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
-überlappende Mappings oder Loader-Fixups dürfen konstante Abbildlesevorgänge
+Ohne die nachfolgenden PE-Nachweise dürfen nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
+überlappende Mappings oder Loader-Fixups konstante Abbildlesevorgänge
 begründen. Schreibbare Tabellen, nicht aufgelöste Relokationen und punktuelle
 Laufzeitschnappschüsse belegen keine Unveränderlichkeit. COPY-Relokationen und strukturell unvollständige Ausnahmedirektoren werden
 abgelehnt. Ist das PE-Verzeichnis samt Funktionsbereichen vollständig, hindert
@@ -112,6 +112,8 @@ affinen Ausdrucks macht daraus keinen externen Zeiger. Stack-Pivots,
 Rücksprünge mit Bereinigung der Argumente durch den Aufgerufenen und RET-basierter
 Dispatch werden derzeit abgelehnt. Der Binäradapter erzwingt die
 Little-Endian-Semantik von x64.
+
+`PEFixedImageView` authentifiziert vollständige x64-PE-Abbilder an ihrer bevorzugten Basisadresse. Geprüft werden rohe Header, eindeutige Mappings, vollständige DIR64-Felder und gewöhnliche Import-Schreibzugriffe; IAT-Bytes bleiben ausgeschlossen. TLS, load-config, verzögerte/gebundene Imports, CLR und unbekannte Schreibmechanismen werden abgelehnt. Wiederherstellung und native/LLVM-Beweise binden denselben Snapshot. Die C++-Optionen `MaxImagePreparationBytes` und `MaxImagePreparationRecords` haben die Standardwerte 64 MiB und 65536; Erschöpfung ergibt `BudgetExceeded`. Das Abbild muss unverändert bleiben. Dies beweist keine Äquivalenz von ASLR, Initialisierung oder Entpacken.
 
 Die Ausgabe umfasst Quelltext und IR für die Analyse. Sie weist keine Sicherheit
 für Relokation, Stack-Unwinding, asynchrone Ausnahmen oder binären Ersatz nach.

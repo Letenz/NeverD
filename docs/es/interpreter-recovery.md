@@ -91,7 +91,7 @@ excepciones del lenguaje detienen la recuperación.
 
 La recuperación PE requiere todos los metadatos de la imagen, incluidas las reubicaciones globales y los registros de excepciones. La CLI los carga antes de aplicar `--func`; quienes usan la API C no deben restringir previamente la sesión mediante `neverd_session_restrict_function()`. El adaptador rechaza imágenes cargadas con un conjunto limitado de funciones, porque los metadatos omitidos no prueban la ausencia de correcciones ni de aristas de excepción.
 
-Solo los rangos completos de solo lectura respaldados por el archivo, sin
+Sin las pruebas PE descritas a continuación, solo los rangos completos de solo lectura respaldados por el archivo, sin
 mapeos superpuestos ni ajustes del cargador, pueden proporcionar lecturas
 constantes de la imagen. Las tablas modificables, relocaciones sin resolver y
 capturas puntuales de ejecución no demuestran la inmutabilidad. Las relocaciones COPY y los directorios de excepciones estructuralmente
@@ -109,6 +109,8 @@ y en las uniones; perder una expresión afín no la convierte en un puntero
 externo. Actualmente se rechazan los cambios de base de pila, los retornos que
 retiran argumentos desde la función llamada y el despacho basado en RET.
 El adaptador impone la semántica little-endian de x64.
+
+`PEFixedImageView` autentica imágenes PE x64 completas en su base preferida. Comprueba cabeceras originales, mapeos únicos, campos DIR64 completos y escrituras de importaciones ordinarias; excluye los bytes IAT. Rechaza TLS, load-config, importaciones diferidas/vinculadas, CLR y mecanismos de escritura desconocidos. La recuperación y las pruebas nativas/LLVM vinculan la misma instantánea. Las opciones C++ `MaxImagePreparationBytes` y `MaxImagePreparationRecords` tienen valores predeterminados de 64 MiB y 65536; el agotamiento produce `BudgetExceeded`. La imagen debe permanecer intacta. Esto no demuestra equivalencia de ASLR, inicialización ni desempaquetado.
 
 Se producen código fuente e IR para análisis. Esto no demuestra la seguridad
 de las relocaciones, el desenrollado de pila, las excepciones asíncronas ni la
