@@ -221,22 +221,38 @@ bool liftShiftMulDiv(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     }
     break;
   }
-  case AARCH64_INS_SDIV: {
-    if (ARM64.op_count < 3)
-      break;
-    NdVar Dst = L.operandWrite(ARM64.operands[0]);
-    NdVar A = L.operandRead(S, ARM64.operands[1]);
-    NdVar B = L.operandRead(S, ARM64.operands[2]);
-    S.emit(NdOp::INT_SDIV, Dst, {A, B});
-    break;
-  }
+  case AARCH64_INS_SDIV:
   case AARCH64_INS_UDIV: {
-    if (ARM64.op_count < 3)
-      break;
+    if (ARM64.op_count != 3)
+      return false;
     NdVar Dst = L.operandWrite(ARM64.operands[0]);
     NdVar A = L.operandRead(S, ARM64.operands[1]);
     NdVar B = L.operandRead(S, ARM64.operands[2]);
-    S.emit(NdOp::INT_DIV, Dst, {A, B});
+    if ((Dst.Size != 4 && Dst.Size != 8) || A.Size != Dst.Size ||
+        B.Size != Dst.Size)
+      return false;
+    // AArch64 division is total: zero divisors produce zero, and signed
+    // MIN/-1 produces MIN. LowIR division has the ordinary partial integer
+    // contract, so guard its operands here before any backend sees it.
+    const bool Signed = Insn->id == AARCH64_INS_SDIV;
+    NdVar Zero = S.makeTemp(1);
+    S.emit(NdOp::INT_EQUAL, Zero, {B, NdVar::cst(0, B.Size)});
+    NdVar Exceptional = Zero;
+    if (Signed) {
+      const uint64_t Sign = uint64_t{1} << (Dst.Size * 8 - 1);
+      const uint64_t Mask = Dst.Size == 8 ? UINT64_MAX : UINT32_MAX;
+      NdVar Minimum = S.makeTemp(1), MinusOne = S.makeTemp(1);
+      NdVar Overflow = S.makeTemp(1);
+      Exceptional = S.makeTemp(1);
+      S.emit(NdOp::INT_EQUAL, Minimum, {A, NdVar::cst(Sign, A.Size)});
+      S.emit(NdOp::INT_EQUAL, MinusOne, {B, NdVar::cst(Mask, B.Size)});
+      S.emit(NdOp::BOOL_AND, Overflow, {Minimum, MinusOne});
+      S.emit(NdOp::BOOL_OR, Exceptional, {Zero, Overflow});
+    }
+    NdVar Divisor = S.makeTemp(B.Size), Quotient = S.makeTemp(Dst.Size);
+    S.emit(NdOp::SELECT, Divisor, {Exceptional, NdVar::cst(1, B.Size), B});
+    S.emit(Signed ? NdOp::INT_SDIV : NdOp::INT_DIV, Quotient, {A, Divisor});
+    S.emit(NdOp::SELECT, Dst, {Zero, NdVar::cst(0, Dst.Size), Quotient});
     break;
   }
 

@@ -118,6 +118,72 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCValues, InlinedFalseArmKeepsLoopEntryPhiCopy) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("inlined-loop-entry", Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, {Pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "seeded_loop", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *First = llvm::BasicBlock::Create(Context, "first", Function);
+  auto *Loop = llvm::BasicBlock::Create(Context, "loop", Function);
+  auto *Body = llvm::BasicBlock::Create(Context, "body", Function);
+  // This preheader is physically after the loop but is printed on the false
+  // edge of First. Its outgoing edge still initializes the shared PHI.
+  auto *Preheader = llvm::BasicBlock::Create(Context, "preheader", Function);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+  llvm::IRBuilder<> B(Entry);
+  auto *State = Function->getArg(0);
+  auto *Count = B.CreateLoad(I64, State);
+  B.CreateCondBr(B.CreateICmpEQ(Count, B.getInt64(0)), Exit, First);
+  B.SetInsertPoint(First);
+  B.CreateStore(B.CreateSub(Count, B.getInt64(1)), State);
+  auto *Value = B.CreateGEP(I64, State, B.getInt64(1));
+  auto Update = [&](uint64_t Addend) {
+    return B.CreateAdd(B.CreateMul(B.CreateLoad(I64, Value), B.getInt64(13)),
+                       B.getInt64(Addend));
+  };
+  B.CreateStore(Update(222), Value);
+  auto *Remaining = B.CreateLoad(I64, State);
+  B.CreateCondBr(B.CreateICmpEQ(Remaining, B.getInt64(0)), Exit, Preheader);
+  B.SetInsertPoint(Loop);
+  auto *Merged = B.CreatePHI(I64, 2, "merged");
+  B.CreateStore(Merged, Value);
+  auto *Budget = B.CreateLoad(I64, State);
+  B.CreateCondBr(B.CreateICmpEQ(Budget, B.getInt64(0)), Exit, Body);
+  B.SetInsertPoint(Body);
+  B.CreateStore(B.CreateSub(Budget, B.getInt64(1)), State);
+  Merged->addIncoming(Update(62), Body);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Preheader);
+  B.CreateStore(B.CreateSub(Remaining, B.getInt64(1)), State);
+  Merged->addIncoming(Update(215), Preheader);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Exit);
+  B.CreateRet(B.getInt64(0));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t count = 0; count < 32; ++count) {
+    for (uint64_t seed = 0; seed < 64; ++seed) {
+      uint64_t state[2] = {count, seed}, expected = seed;
+      for (uint64_t step = 0; step < count; ++step)
+        expected = expected * 13 + (step == 0 ? 222 : step == 1 ? 215 : 62);
+      if (seeded_loop(state) || state[0] || state[1] != expected) return 1;
+    }
+  }
+  return 0;
+}
+)");
+}
+
 TEST(LLVMCValues, BranchAndSwitchPhiCopiesFollowSelectedEdges) {
   llvm::LLVMContext Context;
   llvm::Module Module("branch-switch-phi-copies", Context);

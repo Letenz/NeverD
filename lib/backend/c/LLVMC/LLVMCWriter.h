@@ -626,6 +626,7 @@ public:
   /// FPREM asm before C compilation can spill and pop the x87 stack.
   std::set<const llvm::CallInst *> CapturedX87StatusCalls;
   std::map<const llvm::BasicBlock *, std::string> BlockLabels;
+  std::map<const llvm::BasicBlock *, size_t> DeferredBlockLabels;
   std::set<const llvm::BasicBlock *> ReferencedBlocks;
   bool HasCIntrinsics = false;
   std::set<std::string> IntrinsicMappedNames;
