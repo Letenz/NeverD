@@ -76,7 +76,8 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id);
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
 
 /// Whether an x86 intrinsic may render through an <intrin.h> declaration on
-/// a Windows target: REP MOVS/STOS and the flat LIDT/SIDT/INVLPG forms.
+/// a Windows target: REP MOVS/STOS, the flat LIDT/SIDT/INVLPG forms and an
+/// FS/GS MXCSR transfer through the segment accessors.
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
 
 /// Whether an x86 intrinsic reads fixed registers and prints as an `__asm`

@@ -21,6 +21,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -931,6 +932,25 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
         !Rendered.empty())
       return Rendered;
 
+  // An FS/GS MXCSR transfer moves one DWORD at a segment offset, which the
+  // <intrin.h> segment accessors read and write with the override attached.
+  if (MsvcIntrinsics &&
+      (Call.IntrinsicId == Intrinsic::Ldmxcsr ||
+       Call.IntrinsicId == Intrinsic::Stmxcsr) &&
+      (Call.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ||
+       Call.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) &&
+      !Call.Operands.empty() && Call.Operands[0] &&
+      Call.Operands[0]->Kind == ExprKind::Const &&
+      Call.Operands[0]->ConstVal <= std::numeric_limits<uint32_t>::max()) {
+    const bool GS = Call.MemoryAddressSpace == NdMemoryAddressSpace::X86GS;
+    const std::string Offset = ExprFn(*Call.Operands[0]);
+    if (Call.IntrinsicId == Intrinsic::Ldmxcsr)
+      return std::string("_mm_setcsr(") + x86SegmentedReadIntrinsic(GS, 4) +
+             "(" + Offset + "));\n";
+    return std::string(GS ? "__writegsdword(" : "__writefsdword(") + Offset +
+           ", _mm_getcsr());\n";
+  }
+
   const char *Mnemonic = memoryIntrinsicMnemonic(Call.IntrinsicId);
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
   if (!Mnemonic || !Segment || Call.Operands.empty() || !Call.Operands[0] ||
@@ -1066,7 +1086,8 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
-         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg;
+         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
+         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr;
 }
 
 bool x86UsesImplicitRegisterAsm(Intrinsic Id) {

@@ -41729,6 +41729,24 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, SegmentMxcsrTransferUsesSegmentAccessors) {
+  // KiSaveProcessorControlState keeps MXCSR in the KPCR: `stmxcsr gs:[180h]`
+  // and `ldmxcsr gs:[184h]` move one DWORD at a GS offset, which the
+  // <intrin.h> segment accessors express without inline assembly.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x65, 0x0f, 0xae, 0x1c, 0x25, 0x80, 0x01, 0x00, 0x00, // stmxcsr gs:[180h]
+      0x65, 0x0f, 0xae, 0x14, 0x25, 0x84, 0x01, 0x00, 0x00, // ldmxcsr gs:[184h]
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("__asm"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__writegsdword(384, _mm_getcsr());"), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_mm_setcsr(__readgsdword(388));"), std::string::npos)
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, VerwKeepsItsBufferFlush) {
   // KiKernelSysretExit flushes CPU buffers with `verw [rsp+20h]` and
   // `verw gs:[902Ah]` (MDS mitigation).  Each stays a VERW, keeping its
