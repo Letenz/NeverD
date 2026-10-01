@@ -463,7 +463,30 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertIn("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache", source)
         self.assertIn('-DNEVERD_LLVM_PREBUILT="$NEVERD_LLVM_PREBUILT_MODE"', source)
         self.assertEqual(
-            source.count("-DNEVERD_LLVM_PREBUILT="),
+            source.split("  build-and-test:\n", 1)[1]
+            .split("  native-cpu:\n", 1)[0]
+            .count("-DNEVERD_LLVM_PREBUILT="),
             1,
             "the compiler cache must not introduce a prebuilt-LLVM fast path",
         )
+
+    def test_native_cpu_dispatch_keeps_default_ci_and_requires_whp_evidence(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        native = source.split("  native-cpu:\n", 1)[1].split(
+            "  build-and-test:\n", 1
+        )[0]
+        self.assertIn(
+            "github.event_name == 'workflow_dispatch' && inputs.native_cpu_only",
+            native,
+        )
+        self.assertIn("NEVERD_REQUIRE_NATIVE_WHP: '1'", native)
+        self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
+        self.assertIn("scripts/run_native_cpu_ci.py", native)
+        self.assertIn("--require-whp", native)
+        self.assertIn("native-evidence/", native)
+        full = source.split("  build-and-test:\n", 1)[1]
+        self.assertIn("!inputs.native_cpu_only", full)
+        dispatch = source.split("      native_cpu_only:\n", 1)[1].split(
+            "\npermissions:", 1
+        )[0]
+        self.assertIn("default: false", dispatch)

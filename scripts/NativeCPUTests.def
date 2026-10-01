@@ -1,0 +1,21 @@
+//===- NativeCPUTests.def - Focused native CPU validation owners ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_CPU_OWNER
+NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64MemoryUpdateTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64ExceptionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDServiceRequestTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDProjectionCacheTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
+#endif
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "NativeMemory/WHPMapping.TwoLivePartitionsRegisterAndRetireBacking/",
+    "unittests/emulation/WhpMemoryCases.def", "NEVERD_WHP_MEMORY_CASE")
+#endif
