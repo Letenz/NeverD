@@ -173,6 +173,7 @@ bool isCFunctionParameterCallHint(const SourceCallTypeHint &Hint,
       Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
       !Hint.Selector.empty() || !Hint.OwnerClass.empty() ||
       Hint.SelectorReferenceAddress || !Hint.BorrowedByteInputs.empty() ||
+      !Hint.SwiftStaticStringInputs.empty() ||
       !Hint.CanonicalBooleanInputs.empty() || !Hint.SwiftStringInputs.empty() ||
       Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
       Hint.Receiver || Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||

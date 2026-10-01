@@ -344,6 +344,11 @@ struct SourceCallTypeHint {
   /// rebuild proven immortal literal storage; ownership and dynamic values
   /// remain unchanged.
   std::vector<std::pair<unsigned, unsigned>> SwiftStringInputs;
+  /// Triples of data, byte-count and flag parameter indices carrying a Swift
+  /// StaticString. Only an authenticated content consumer may rebuild its
+  /// immutable bytes, after proving the pointer representation (flags 0/2).
+  /// Scalar representations (flags 1/3) retain their Unicode value instead.
+  std::vector<std::tuple<unsigned, unsigned, unsigned>> SwiftStaticStringInputs;
   enum class FormatSyntax { NSString, Predicate, Printf };
   /// Proven actual arguments of a declared format call. Signature contains
   /// every supplied value at its physical location; only FixedCount values

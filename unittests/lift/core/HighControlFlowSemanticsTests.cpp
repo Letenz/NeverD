@@ -481,6 +481,152 @@ TEST(HighControlFlowSemantics,
   EXPECT_FALSE(MissingCopy.Items.empty());
 }
 
+HighFunc mergedCopyEquality() {
+  auto F = copiedBooleanEquality(false);
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.Id = 0;
+  Parameter.Size = 8;
+  const auto Input = HighExpr::makeVar(Parameter);
+  F.Body[0].Val = Input;
+  const auto Copy = [](va_t Address, int Destination, int Source) {
+    auto S = assign(Address, Destination, 0);
+    S.Val = local(Source);
+    return S;
+  };
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Addr = 0x1006;
+  Branch.Cond = Input;
+  Branch.Body = {Copy(0x2000, 10, 1), Copy(0x2004, 3, 10)};
+  Branch.ElseBody = {Copy(0x2010, 11, 1), Copy(0x2014, 3, 11)};
+  F.Body[2] = std::move(Branch);
+  return F;
+}
+
+TEST(HighControlFlowSemantics, DistinctBranchCopiesShareOneDominatingRoot) {
+  const auto F = mergedCopyEquality();
+  const auto Report = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Report.Complete);
+  ASSERT_TRUE(Report.Items.empty())
+      << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+  for (uint64_t Input : {0ULL, 1ULL, 2ULL, 7ULL, 0xffffffffULL,
+                         0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, CopyViewsPreserveOnlyFullWidthIntegerBits) {
+  for (unsigned Variant = 0; Variant != 9; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Copy = F.Body[2].ElseBody.back();
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(8, false);
+    View->Operands = {Copy.Val};
+    Copy.Val = View;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      View->Type = View->CastTo = NdType::makeInt(4, false);
+      break;
+    case 2:
+      View->Type = View->CastTo = NdType::makeInt(16, false);
+      break;
+    case 3:
+      View->Type = View->CastTo = NdType::makePtr();
+      break;
+    case 4:
+      View->Type = View->CastTo = NdType::makeFloat(8);
+      break;
+    case 5:
+      View->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 6:
+      View->IndirectTarget = HighExpr::makeConst(0x1000, 8);
+      break;
+    case 7:
+      View->CastTo = NdType::makeInt(8, true);
+      break;
+    case 8:
+      View->Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), Variant == 0);
+    if (Variant == 0)
+      for (uint64_t Input : {0ULL, 1ULL, 0xffffffffULL, 0x8000000000000000ULL,
+                             0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, FullWidthCopySignednessKeepsEqualityBits) {
+  auto F = mergedCopyEquality();
+  walkStmts(F.Body, [&](HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      std::set<const HighExpr *> Seen;
+      while (!Pending.empty()) {
+        const auto E = Pending.back();
+        Pending.pop_back();
+        if (!E || !Seen.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp &&
+            E->Var.Id == 3)
+          E->Type = NdType::makeInt(8, false);
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+  for (uint64_t Input :
+       {0ULL, 1ULL, 0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, MergedCopyRootsNeedEveryDefinitionAndPath) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Branch = F.Body[2];
+    switch (Variant) {
+    case 0:
+      // One edge carries a different stable root.
+      Branch.ElseBody[0].Val = local(2);
+      break;
+    case 1:
+      // One edge reads its alias before that alias has a definition.
+      Branch.ElseBody.erase(Branch.ElseBody.begin());
+      break;
+    case 2:
+      // A write to the original after the snapshot invalidates the relation.
+      F.Body.insert(F.Body.begin() + 4, assign(0x2020, 1, 2));
+      break;
+    case 3:
+      // The merged local is not defined on one incoming path.
+      Branch.ElseBody.pop_back();
+      break;
+    case 4:
+      // A cyclic copy graph supplies no stable root.
+      Branch.ElseBody[0].Val = local(3);
+      break;
+    case 5:
+      // A later conflicting write must not borrow the earlier alias fact.
+      F.Body.insert(F.Body.begin() + 6, assign(0x2020, 3, 2));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_FALSE(Report.Items.empty());
+  }
+}
+
 TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
   auto F = copiedBooleanEquality(true);
   const auto Report = analyzeHighSourceFlow(F, true);
@@ -681,6 +827,76 @@ TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
     F.Body = {result(0, concatenate(High, Low))};
     simplifyAllExprs(F.Body);
     EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::CONCAT) << Case;
+  }
+}
+
+TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
+  for (const bool Atomic : {false, true}) {
+    auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8));
+    if (Atomic)
+      Memory->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else
+      Memory->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    std::vector<ExprPtr> Roots{Memory, local(1)};
+    // Many roots share most of their graph; the last roots also share an
+    // ordered indirect target, which is not an ordinary call argument.
+    for (unsigned I = 0; I < 256; ++I)
+      Roots.push_back(
+          HighExpr::makeBinop(NdOp::INT_ADD, Roots[I], Roots[I + 1]));
+    auto Indirect = HighExpr::makeCall("indirect", 0x4000, {local(2)});
+    Indirect->IsIndirectCall = true;
+    Indirect->IndirectTarget = Memory;
+    Roots.push_back(Indirect);
+    Roots.push_back(nullptr);
+    const auto Ancestors = findOrderedMemoryAncestors(Roots);
+    for (const auto &Root : Roots)
+      EXPECT_EQ(Ancestors.count(Root.get()) != 0,
+                Root && Root->hasOrderedMemoryAccess());
+    EXPECT_FALSE(Ancestors.count(Indirect->Operands.front().get()));
+  }
+
+  auto A = HighExpr::makeUnary(NdOp::INT_NEGATE, local(0));
+  auto B = HighExpr::makeUnary(NdOp::INT_NEGATE, A);
+  A->Operands[0] = B;
+  EXPECT_TRUE(findOrderedMemoryAncestors({A, B}).empty());
+  auto Memory = HighExpr::makeLoad(local(1), NdType::makeInt(8),
+                                   NdMemoryOrdering::Acquire);
+  A->Operands.push_back(Memory);
+  const auto Ancestors = findOrderedMemoryAncestors({B});
+  EXPECT_EQ(Ancestors.size(), 3U);
+  EXPECT_TRUE(Ancestors.count(A.get()));
+  EXPECT_TRUE(Ancestors.count(B.get()));
+  EXPECT_TRUE(Ancestors.count(Memory.get()));
+  A->Operands.clear(); // Break the deliberately malformed cycle.
+}
+
+TEST(HighControlFlowSemantics, SharedOrderedComparisonsRemainObservable) {
+  for (const bool Reverse : {false, true}) {
+    HighFunc F;
+    auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8),
+                                     NdMemoryOrdering::Acquire);
+    auto Shared = Memory;
+    for (unsigned I = 0; I < 512; ++I) {
+      Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(1));
+      auto Compare = HighExpr::makeBinop(NdOp::INT_LESS, Shared,
+                                         HighExpr::makeConst(0, 8));
+      F.Body.push_back(result(0, Compare));
+    }
+    if (Reverse)
+      std::reverse(F.Body.begin(), F.Body.end());
+    simplifyAllExprs(F.Body);
+    for (const auto &Statement : F.Body) {
+      EXPECT_EQ(Statement.RetVal->Op, NdOp::INT_LESS);
+      EXPECT_TRUE(Statement.RetVal->hasOrderedMemoryAccess());
+    }
+    // Effect facts are specific to this invocation, not persistent node
+    // annotations. Removing the ordering permits the next pass to fold.
+    Memory->MemoryOrdering = NdMemoryOrdering::None;
+    simplifyAllExprs(F.Body);
+    for (const auto &Statement : F.Body) {
+      EXPECT_EQ(Statement.RetVal->Kind, ExprKind::Const);
+      EXPECT_EQ(Statement.RetVal->ConstVal, 0U);
+    }
   }
 }
 

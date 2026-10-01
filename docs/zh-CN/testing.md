@@ -41,13 +41,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 恢复 API 测试覆盖 v1/v2/v3 默认值、显式预算、截断结构、各层 reserved 字段和未来尾部兼容。CLI 测试在两种 ABI、两个源码后端下检查字段／查询预算耗尽及成功恢复，拒绝非法十进制上限，并要求 `--devirtualize`。预算耗尽不得发布源码或部分残余图。
@@ -107,6 +108,10 @@ build-release/bin/NeverDLowIRRefinementTests
 打包标志测试覆盖全部标量入口标志组合、特权掩码、两次执行的 TF/AC 条件、不同未定义产生点、相关副本、原生调用、兄弟路径状态、强制最终系统状态观察、畸形证据及资源计费。有限循环必须结束每条可行输入路径；安全分支不能掩盖无限或截断路径。RDSSPD/RDSSPQ 检查覆盖 16 个通用寄存器和两种宽度、高位保持、保留 `Missing` 证据及伪造投影拒绝。机器状态测试在两个 C 后端的 O0/O2 下开启未定义行为陷阱，与独立用户态标志位预言机比较，并检查环境失败状态不会被后续操作清除。 INCSSPD/INCSSPQ 测试覆盖两种宽度和全部通用寄存器、不可达边界保留、安全兄弟路径完成后的可行陷阱、零操作数及伪造陷阱证据。
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
+
+`NeverDPEFixedImageTests` 使用独立构造的 PE 文件，检查带重定位的指令与不可变数据、导入写入范围、畸形头部／表、别名和来源信息篡改。原生到 LowIR 及精确 LLVM 证明接受匹配候选，拒绝结果、状态或原始字节被修改的候选。准备预算耗尽保持独立分类，允许显式提高限额后重试；普通加载也接受含 40000 条有效重定位记录、超过默认分析预算的文件。
+
+`NeverDX86NoIndexAddressTests` 检查 32／64 位地址宽度下无索引的 x86 SIB 寻址：忽略缩放位、目标寄存器位宽、加载／存储、完整未定义输出元数据、段偏移和地址来源。测试拒绝把伪寄存器用作基址或错误位宽的索引，并保留 REX.X 选择的真实 R12 索引。EVEX 广播和掩码移动测试还覆盖这些形式、非活动内存访问抑制，以及不一致的 SIB 元数据。
 
 移位回归覆盖全部八位原始次数、零次移位的标志组合、两种 x86 模式、全部标量位宽、CL 与目标重叠、AH/CH/DH/BH、扩展寄存器和内存。按字节建模的符号执行与逐位算术模型对照，检查已定义结果及守卫触发条件。关系测试检查复制与新生标志、溢出保存、循环重访、未定义值派生次数、分支拒绝、畸形编码及摘要和预算失败。有限不可变读取测试覆盖 1/2/4/8 字节、输入相关选择、路径内单地址集合、完整读取见证和地址上限绑定，并拒绝依赖未定义值、缺失、可写、无文件字节、重定位或无界候选。
 
@@ -768,6 +773,47 @@ execution fault 的稳定值；`SBFSourceStatuses.def` 单独拥有 generated-so
 10,000 规模 fixture 守护 worklist、function ownership 与 multi-latch，不固定某台机器
 的耗时。cluster/account/slot row 支持 `RPC activation audit`，普通测试仍保持
 deterministic 与 offline。
+
+## Android 类清单性能
+
+测量 `neverd mobile INPUT --list-classes` 前，以 Release 构建 `NeverDMobileTests` 并运行其标签。读取器测试覆盖稀疏元数据、Unicode、无效引用、不支持的方法体、校验和及预算；归档测试区分全量提取与选中载荷查询。CLI 测试检查前缀筛选、JSON 范围、已有输出保护及 multidex 失败原子性。
+
+独立夹具/测量工具在接受计时样本前，验证每个进程的完整描述符清单：
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+每轮使用新输出目录。`--generate-only` 只写夹具和清单；`--workload` 为可选 `--peer-command 'tool {input} {prefix}'` 选择共同输入，输入准备不计时。报告保留哈希、命令、所有新建进程样本、热缓存前提，以及 Linux/GNU time 下的最大子进程 RSS。RSS 不表示多进程工具的同时总峰值。合成 APK 是查询容器，不能安装；类清单速度不证明引用搜索速度或 Java 恢复质量。
+
+混合架构 CPU 上，应将工具及子进程固定到同一个允许使用的 CPU，例如 Linux 下 `taskset -c 4 python3 ...`，避免混用性能核和能效核。报告记录继承的 CPU 亲和性。
+
+## Android 代码引用性能
+
+引用查询共用恢复读取器的指令边界与代码校验，修改该边界后应运行移动套件。读取器测试覆盖各池操作数、匹配模式、方法归属、共享代码、payload/立即数干扰、损坏输入及资源限额。共享调试流按每个方法体的帧、范围和参数校验。存储上限覆盖须同时保留大型成员清单与分支密集方法体，持久索引和临时容器增长具有不同生命周期。
+
+还需覆盖乱序/重叠项目、同宽但原型不兼容的共享代码、未对齐输入、跨搜索块的子串匹配。私有解码器数据的性能调整须保持完整的独立恢复模型和引用多重集，包括不支持的恢复元数据对应的失败行为。区分独立发射的预期结果与真实输入的跨工具一致性。
+
+独立引用夹具在发射指令时记录预期出现位置，每次测量都核对完整方法身份、代码单元 PC、opcode、目标身份、UTF-16 单元及重数，并核对 NeverD 独立预期的覆盖计数与 `code_scan_complete`：
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+`--kind` 和 `--workload` 选择用例；`--extra-strings 65536` 覆盖真实32位字符串索引。默认启用 payload 干扰；`--no-payload-lookalikes` 保持布局和真实引用，只替换干扰数据，用于共同输入对照。正确性与计时结果都要保留；误报 payload 或漏掉真实引用的查询不接受计时。
+
+可选 `--peer-command` 接受包含 `{input}`、`{kind}` 和 `{query}` 的 argv 模板。另一工具语义不同时须显式转换查询语法，比较完整出现位置的多重集。保留其声明的验证范围，不将其说成完整代码扫描。类清单基准的新目录、CPU 亲和性、新建进程、热缓存及 RSS 限制同样适用。只有 `NEVERD_REFERENCE_TEST_BINARY` 指向已构建程序时才运行可选 CLI 测试，否则必须报告跳过。
 
 ## 移动 SDK 导出证据
 

@@ -1164,6 +1164,8 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
   }
   if (ReferencedBlocks.count(&BB))
     OS << blockLabel(&BB) << ":\n";
+  else
+    DeferredBlockLabels.try_emplace(&BB, OS.stream().tell());
   for (const llvm::Instruction &Inst : BB) {
     if (llvm::isa<llvm::AllocaInst>(&Inst))
       continue;
@@ -2170,6 +2172,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UsedNames.clear();
   CapturedX87StatusCalls.clear();
   BlockLabels.clear();
+  DeferredBlockLabels.clear();
   ReferencedBlocks.clear();
   KnownImmediates.clear();
   AllocaImmediates.clear();
@@ -2325,7 +2328,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         OverlappingFrameAccessOffsets.insert(FrameAccesses[I].first);
     First = End;
   }
-  InferredVoid = analyzeVoidReturn(Analysis, Fn);
+  InferredVoid = !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
 
   if (InferredVoid)
     analyzeVoidDeadChain(Analysis, Fn);
@@ -2334,6 +2337,12 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   collectTypedHomes(Fn);
   markSinglePrintedUseCalls(Fn);
   scanReferencedBlocks(Fn);
+  // The scan predicts references and layout; it has not emitted any region.
+  // Re-evaluate ownership during the statement walk, where folded conditions
+  // and call results can cause a predicted inline region to be declined.
+  InlinedFallthroughBlocks.clear();
+  DuplicatedAssignBlocks.clear();
+  ConditionChainBodies.clear();
 }
 
 std::optional<FunctionSym>
@@ -8384,7 +8393,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   writeExceptionAnnotation(Fn);
 
   const bool IndirectReturn =
-      DebugFn && isMsvcIndirectReturn(DebugFn->ReturnType);
+      !Opts.PreserveLLVMFunctionTypes && DebugFn &&
+      isMsvcIndirectReturn(DebugFn->ReturnType);
   const bool MemberIndirectReturn = IndirectReturn &&
                                     !DebugFn->Params.empty() &&
                                     DebugFn->Params[0].first == "this";
@@ -8427,6 +8437,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
     return ParamName;
   };
   auto ParamTypeStr = [&](llvm::Argument &Arg, unsigned ParamIdx) {
+    if (Opts.PreserveLLVMFunctionTypes)
+      return typeToCLLVM(Arg.getType());
     if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx) {
       if (std::string Ty = IndirectReturnTypeStr(); !Ty.empty())
         return Ty;
@@ -9155,6 +9167,24 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   BufOS.flush();
   Guard.Armed = false;
   OS.retarget(Guard.Primary);
+  // Structuring can discover a backward goto after its destination has been
+  // rendered. The reference scan predicts layout, but cannot decide whether
+  // a later region will actually inline. Retain the destination's rendered
+  // position and reconcile late references before publishing the function.
+  std::vector<std::pair<size_t, std::string>> MissingLabels;
+  for (const auto &[Block, Position] : DeferredBlockLabels) {
+    const std::string Name = blockLabel(Block);
+    // A later duplicated tail can erase the prediction from ReferencedBlocks
+    // even though an earlier edge has already printed its goto.
+    if (Buffered.find("goto " + Name + ";") == std::string::npos)
+      continue;
+    const std::string Label = Name + ":\n";
+    if (Buffered.find("\n" + Label) == std::string::npos)
+      MissingLabels.emplace_back(Position, Label);
+  }
+  std::sort(MissingLabels.rbegin(), MissingLabels.rend());
+  for (const auto &[Position, Label] : MissingLabels)
+    Buffered.insert(Position, Label);
   // Declaration prediction runs before the statement walk. EH wraps and
   // cross-block alloca homes can change which values and slots the statement
   // writer actually prints. Reconcile against the rendered body so

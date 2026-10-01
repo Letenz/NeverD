@@ -18,6 +18,10 @@ struct Step {
   enum class Kind { Add, Load } TheKind = Kind::Add;
   int64_t Offset = 0;
   uint16_t Bytes = 0;
+  // A load in the metadata value's own provenance denotes this execution
+  // point, not stable memory contents. Only the two witness-pattern loads
+  // synthesized below omit their site.
+  std::optional<std::pair<size_t, size_t>> Definition;
   bool operator==(const Step &) const = default;
 };
 
@@ -61,10 +65,26 @@ struct Path {
     return Steps.size() <= 32;
   }
 
-  bool load(uint16_t Bytes) {
+  bool
+  load(uint16_t Bytes,
+       std::optional<std::pair<size_t, size_t>> Definition = std::nullopt) {
     if (Bytes != 8 || Steps.size() == 32)
       return false;
-    Steps.push_back({Step::Kind::Load, 0, Bytes});
+    Steps.push_back({Step::Kind::Load, 0, Bytes, Definition});
+    return true;
+  }
+
+  bool matchesWitnessPattern(const Path &Pattern) const {
+    if (Base != Pattern.Base || Steps.size() != Pattern.Steps.size())
+      return false;
+    for (size_t I = 0; I < Steps.size(); ++I) {
+      const auto &Actual = Steps[I];
+      const auto &Expected = Pattern.Steps[I];
+      if (Actual.TheKind != Expected.TheKind ||
+          Actual.Offset != Expected.Offset || Actual.Bytes != Expected.Bytes ||
+          (Expected.Definition && Actual.Definition != Expected.Definition))
+        return false;
+    }
     return true;
   }
 };
@@ -263,8 +283,7 @@ class Tracer {
           !Image.isDataAddress(Value.Offset))
         return std::nullopt;
       return Path{Root{Root::Kind::Constant, 0, 0, VnodeSpace::CONST,
-                       Value.Offset, 8, Value.Provenance,
-                       Value.AddressOwnerVA},
+                       Value.Offset, 8, Value.Provenance, Value.AddressOwnerVA},
                   {}};
     }
     if (Value.isRam() ||
@@ -346,11 +365,22 @@ class Tracer {
                 trace(BlockIndex, Index, NdVar::reg(TRI.StackPointer, 8),
                       Operation.Addr);
             const auto StackAtLoad = Stack ? stackOffset(*Stack) : std::nullopt;
-            return StackAtLoad && *StackAtLoad <= *Slot
-                       ? traceSpill(BlockIndex, Index, *Slot)
-                       : std::nullopt;
+            if (StackAtLoad && *StackAtLoad <= *Slot)
+              if (auto Spill = traceSpill(BlockIndex, Index, *Slot))
+                return Spill;
+            // An unproved cell does not identify an earlier spill or another
+            // load. This particular full-word load still defines one value:
+            // its register copies can supply both metadata and the table
+            // lookup derived from that metadata. Keep the defining operation
+            // as the root, without assuming anything about frame contents
+            // before or after it. Cycle and budget checks still apply.
+            return Path{Root{Root::Kind::Definition, BlockIndex, Index,
+                             Value.Space, Value.Offset, Value.Size},
+                        {}};
           }
-        return Result && Result->load(8) ? Result : std::nullopt;
+        return Result && Result->load(8, std::pair{BlockIndex, Index})
+                   ? Result
+                   : std::nullopt;
       }
       return Path{Root{Root::Kind::Definition, BlockIndex, Index, Value.Space,
                        Value.Offset, Value.Size},
@@ -561,7 +591,7 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
         Path Expected = *Type;
         if (!Expected.add(-8) || !Expected.load(8) ||
             !Expected.add(int64_t(Witness.Slot) * 8) || !Expected.load(8) ||
-            *Target != Expected)
+            !Target->matchesWitnessPattern(Expected))
           continue;
         if (Match) {
           Match = nullptr;

@@ -31,10 +31,13 @@ struct SessionExit {
 /// neither consumption nor a quantum yield resets resources or guest state.
 class ExecutionSession final {
 public:
+  /// Observer sees admitted instruction attempts only; it must not mutate
+  /// or execute the CPU, replace hooks, or replenish the workload budget.
   static llvm::Expected<std::unique_ptr<ExecutionSession>>
   create(std::unique_ptr<ExecutionBackend> CPU,
          std::shared_ptr<ExecutionBudget> Budget,
-         std::function<bool(const BackendFault &)> Recovery = {});
+         std::function<bool(const BackendFault &)> Recovery = {},
+         std::function<void(uint64_t, uint32_t)> InstructionObserver = {});
 
   ExecutionSession(const ExecutionSession &) = delete;
   ExecutionSession &operator=(const ExecutionSession &) = delete;

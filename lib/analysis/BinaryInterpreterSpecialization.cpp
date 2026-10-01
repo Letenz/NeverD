@@ -10,6 +10,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/COFF/PEFixedImage.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
@@ -20,6 +21,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <system_error>
 
 namespace neverd::analysis {
 namespace {
@@ -52,10 +54,13 @@ class ImageProvider final : public SpecializationProvider {
   const BinaryImage &Image;
   Decoder Decode;
   const SpecializationOptions &Options;
+  std::optional<PEFixedImageView> FixedPE;
+  std::string FixedPEDiagnostic;
+  bool FixedPEBudgetExceeded = false;
 
-  // The adapter deliberately refuses loader-fixed bytes. Width information is
-  // not normalized for every relocation kind, so conservatively inspect the
-  // preceding maximum x64 scalar relocation width as well as the read itself.
+  // Without authenticated fixed-image evidence, refuse loader-fixed bytes.
+  // Width information is not normalized for every relocation kind, so inspect
+  // the preceding maximum x64 scalar width as well as the read itself.
   bool touchesFixup(va_t Address, uint16_t Bytes) const {
     const va_t Begin = Address >= 7 ? Address - 7 : 0;
     const va_t End = Address + Bytes;
@@ -84,7 +89,8 @@ class ImageProvider final : public SpecializationProvider {
         return nullptr;
       Owner = &S;
     }
-    if (!Owner || touchesFixup(Address, Bytes))
+    if (!Owner || (FixedPE ? !FixedPE->read(Address, Bytes, Executable)
+                           : touchesFixup(Address, Bytes)))
       return nullptr;
     return Owner;
   }
@@ -94,10 +100,42 @@ public:
       : Image(Image), Options(Options) {
     Decode.init(Arch::X64);
     Decode.setStrict(true);
+    if (Image.Format == BinaryFormat::COFF && !Image.Raw.empty()) {
+      auto View = PEFixedImageView::create(
+          Image, {.MaxBytes = Options.MaxImagePreparationBytes,
+                  .MaxRecords = Options.MaxImagePreparationRecords});
+      if (View)
+        FixedPE = std::move(*View);
+      else
+        llvm::handleAllErrors(
+            View.takeError(), [&](const llvm::ErrorInfoBase &E) {
+              FixedPEDiagnostic = E.message();
+              FixedPEBudgetExceeded =
+                  E.convertToErrorCode() ==
+                  std::make_error_code(std::errc::value_too_large);
+            });
+    }
+  }
+
+  template <typename ResultT> bool preparationFailed(ResultT &Result) const {
+    if (FixedPEDiagnostic.empty())
+      return false;
+    using Status = decltype(Result.Status);
+    Result.Status =
+        FixedPEBudgetExceeded ? Status::BudgetExceeded : Status::Unsupported;
+    Result.Diagnostic = FixedPEDiagnostic;
+    return true;
+  }
+
+  llvm::StringRef fixedImageDigest() const {
+    return FixedPE ? llvm::StringRef(FixedPE->digest()) : llvm::StringRef();
   }
 
   llvm::Expected<SpecializationInstruction>
   instruction(SpecializationCursor Cursor) override {
+    if (!FixedPEDiagnostic.empty())
+      return llvm::createStringError(llvm::errc::not_supported,
+                                     FixedPEDiagnostic);
     if (Cursor.Mode != InstructionMode::Default)
       return llvm::createStringError(llvm::errc::not_supported,
                                      "unsupported instruction mode");
@@ -260,13 +298,17 @@ public:
 
   std::optional<SpecializationImmutableRead>
   immutableRead(va_t Address, uint16_t Bytes) override {
+    if (!FixedPEDiagnostic.empty())
+      return std::nullopt;
     const auto *S = immutableMapping(Address, Bytes, false);
     if (!S)
       return std::nullopt;
     const auto *Begin = S->Data.data() + (Address - S->VA);
     return SpecializationImmutableRead{
         std::vector<uint8_t>(Begin, Begin + Bytes),
-        "file-backed read-only mapping; fixed permissions; no loader fixup"};
+        FixedPE ? "PE preferred-base snapshot; " + FixedPE->digest()
+                : "file-backed read-only mapping; fixed permissions; no loader "
+                  "fixup"};
   }
 };
 std::optional<SpecializationResult>
@@ -337,6 +379,9 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   if (auto Failure = validateBinaryImage(Image, Options))
     return std::move(*Failure);
   ImageProvider Provider(Image, Options);
+  SpecializationResult Preparation;
+  if (Provider.preparationFailed(Preparation))
+    return Preparation;
   SpecializationOptions Effective = Options;
   if (!Effective.FrameBaseRegister)
     Effective.FrameBaseRegister =
@@ -349,11 +394,13 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   return Result;
 }
 namespace {
-std::string binaryExecutionDigest(
-    const BinaryImage &Image, const SpecializationOptions &Options,
-    llvm::StringRef Domain, uint64_t Scope, llvm::StringRef ProofDigest,
-    llvm::ArrayRef<SpecializationInstruction> Instructions,
-    llvm::ArrayRef<SpecializationReadWitness> Reads) {
+std::string
+binaryExecutionDigest(const BinaryImage &Image,
+                      const SpecializationOptions &Options,
+                      llvm::StringRef Domain, llvm::StringRef FixedImageDigest,
+                      uint64_t Scope, llvm::StringRef ProofDigest,
+                      llvm::ArrayRef<SpecializationInstruction> Instructions,
+                      llvm::ArrayRef<SpecializationReadWitness> Reads) {
   llvm::SHA256 Hash;
   Hash.update(Domain);
   const auto Number = [&](uint64_t Value) {
@@ -385,6 +432,9 @@ std::string binaryExecutionDigest(
   Number(static_cast<unsigned>(Image.Format));
   Number(static_cast<unsigned>(Image.Mode));
   Number(Image.IsRelocatable);
+  Number(Image.Base);
+  Number(FixedImageDigest.size());
+  Hash.update(FixedImageDigest);
   Number(Options.ExplicitMachineState);
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
@@ -430,7 +480,8 @@ std::string binaryExecutionDigest(
     Number(Instruction.IsNativeCall);
     Number(static_cast<unsigned>(Instruction.ProfileProjection));
     // The provider has already checked uniqueness, permissions, full file
-    // coverage and absence of fixups for this exact native instruction.
+    // coverage and either absent fixups or the authenticated preferred-base
+    // snapshot contract for this exact native instruction.
     Mappings(Instruction.Origin.Address);
   }
   Number(Reads.size());
@@ -548,13 +599,16 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
     return Result;
   }
   ImageProvider Provider(Image, Options);
+  if (Provider.preparationFailed(Result.Proof))
+    return Result;
   auto Checked = detail::checkNativeUndefinedIndependence(
       Provider, {Entry, Image.Mode}, Effective, Limits);
   Result.Proof = std::move(Checked.Proof);
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-control-independence-v6",
+        Image, Options, "neverd-original-native-control-independence-v7",
+        Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
         Checked.Reads);
@@ -596,6 +650,8 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
     return Result;
   }
   ImageProvider Provider(Image, Options);
+  if (Provider.preparationFailed(Result.Proof))
+    return Result;
   auto Checked = detail::checkNativeLowIRRefinement(
       Provider, {Entry, Image.Mode}, Candidate, Effective, Witness, Limits,
       LoopPlan);
@@ -603,7 +659,8 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
   if (Result.Proof.proved()) {
     BinaryLowIRRefinementCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-lowir-refinement-v1",
+        Image, Options, "neverd-original-native-lowir-refinement-v2",
+        Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
         Checked.Reads);
@@ -697,6 +754,10 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
     return Result;
   }
   ImageProvider Provider(Image, Options);
+  if (Provider.preparationFailed(Result.Inference)) {
+    Refuse(Result.Inference.Status, Result.Inference.Diagnostic);
+    return Result;
+  }
   Result.Inference = detail::inferNativeLowIRLoopRefinementPlan(
       Provider, Recovery.Residual, Effective, InferenceLimits, Eligible);
   if (!Result.Inference.inferred()) {

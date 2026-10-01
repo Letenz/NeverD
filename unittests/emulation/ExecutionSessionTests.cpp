@@ -97,6 +97,26 @@ protected:
   }
 };
 
+TEST_P(RuntimeSession, ObserverSeesOnlyAdmittedAttemptsAcrossQuanta) {
+  code(CounterX64, CounterARM);
+  Budget =
+      llvm::cantFail(ExecutionBudget::create({Instructions, Events, Timeout}));
+  std::vector<uint64_t> Trace;
+  auto Session = llvm::cantFail(ExecutionSession::create(
+      std::move(CPU), Budget, {},
+      [&](uint64_t Address, uint32_t) { Trace.push_back(Address); }));
+  uint64_t Next = Code;
+  for (;;) {
+    auto Exit = llvm::cantFail(Session->run(Next, Quantum));
+    EXPECT_EQ(Trace.size(), Budget->instructions());
+    if (Exit.Kind == SessionExitKind::InstructionLimit)
+      break;
+    ASSERT_EQ(Exit.Kind, SessionExitKind::Quantum);
+    Next = reg(*Session, PC);
+  }
+  EXPECT_EQ(Trace.size(), Instructions);
+}
+
 TEST_P(RuntimeSession, TwoCPUsShareRAMAndOneBudgetWithIndependentRegisters) {
   code(CounterX64, CounterARM);
   auto First = start();

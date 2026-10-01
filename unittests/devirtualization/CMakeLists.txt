@@ -1,3 +1,16 @@
+add_neverd_unittest(NeverDBytecodeAnalysisTests
+  BytecodeDecoderTests.cpp
+  BytecodeCLITests.cpp
+  LINK_COMPONENTS BytecodeAnalysis IRMed IRHigh BackendC BackendLLVM Support
+)
+target_compile_definitions(NeverDBytecodeAnalysisTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_BYTECODE_BINARY="$<TARGET_FILE:neverd-bytecode>"
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+)
+add_dependencies(NeverDBytecodeAnalysisTests neverd-bytecode)
+
 add_neverd_unittest(NeverDLowIRUndefinedIndependenceTests
   LowIRUndefinedIndependenceTests.cpp
   BinaryUndefinedIndependenceTests.cpp
@@ -7,6 +20,11 @@ add_neverd_unittest(NeverDLowIRUndefinedIndependenceTests
 add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   OriginalBinaryUndefinedIndependenceTests.cpp
   LINK_COMPONENTS BinaryInterpreterSpecialization
+)
+
+add_neverd_unittest(NeverDPEFixedImageTests
+  PEFixedImageTests.cpp
+  LINK_COMPONENTS InterpreterLLVMRefinement Loader
 )
 
 add_neverd_unittest(NeverDLowIRRefinementTests

@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
 
 <div align="center" dir="rtl">
 
@@ -51,6 +51,8 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 تستنتج واجهة C++ المنفصلة لإثبات الحلقات ثوابت محدودة ورتبًا معجمية للحلقات المتداخلة ثم تعيد فحص التنقيح من الشيفرة الأصلية إلى LowIR. راجع [دليل الاستعادة](interpreter-recovery.md)؛ فهي لا تصادق على C الناتجة.
 
 تركب واجهة C++ المستقلة `checkBinaryLLVMRefinement` فحوصاً جديدة للشيفرة الأصلية وLLVM على منتج LLVM دقيق؛ وتبقى ترجمة C خارج نطاق البرهان.
+
+يتحقق استرداد PE أيضًا من بايتات DIR64 عند الأساس المفضل ويستبعد كتابات الاستيراد؛ ولا يشهد العقد بتكافؤ ASLR أو التهيئة.
 
 <!-- i18n-section: why-neverd -->
 

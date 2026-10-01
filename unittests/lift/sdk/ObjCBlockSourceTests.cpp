@@ -4,6 +4,7 @@
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include "llvm/BinaryFormat/MachO.h"
+
 #include <tuple>
 using namespace neverd;
 using namespace neverd::sdk;
@@ -130,10 +131,9 @@ TEST(ObjCBlockSources, CallbackClassRequiresExactPublishedDescriptor) {
   RejectedBody.Rejections[F.Invoke] = "nested block consumer is unresolved";
   EXPECT_TRUE(objc_block_source_detail::publish(
       RejectedBody, Plan.Globals.at(F.Literal).Descriptor, F.Invoke));
-  EXPECT_EQ(objcBlockParameterReceivers(F.Image, RejectedBody)
-                .at(F.Invoke)
-                .at(1),
-            Root);
+  EXPECT_EQ(
+      objcBlockParameterReceivers(F.Image, RejectedBody).at(F.Invoke).at(1),
+      Root);
   RejectedBody.InvalidInvokeDescriptors.insert(F.Invoke);
   EXPECT_TRUE(objcBlockParameterReceivers(F.Image, RejectedBody).empty());
 
@@ -593,10 +593,10 @@ TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
     Binding.Signature = *Declaration.Signature;
     auto Call = HighExpr::makeCall(
         "objc_msgSend", 0,
-        {HighExpr::makeLoad(
-             HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
-                                 HighExpr::makeConst(32, 8)),
-             Pointer),
+        {HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                                parameter(0, Pointer),
+                                                HighExpr::makeConst(32, 8)),
+                            Pointer),
          HighExpr::makeConst(0x2600, 8), frame(F.Image, -48)});
     Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
     Call->Type = Binding.Signature.ReturnType;
@@ -614,7 +614,7 @@ TEST(ObjCBlockSources, NestedDirectAndWideStrongCaptureRetainsMethodSelfClass) {
     const auto Bound = discoverObjCBlockSourcesPass(Source, F.Result, &First);
     EXPECT_EQ(Bound.StackBlocks.count(F.Invoke), 1U)
         << (Bound.Rejections.count(F.Invoke) ? Bound.Rejections.at(F.Invoke)
-                                            : "");
+                                             : "");
     EXPECT_TRUE(HasNestedRoot(Bound));
     const auto Proven = discoverObjCBlockSources(Source, F.Result);
     const auto &Initialized =
@@ -1152,9 +1152,8 @@ TEST(ObjCBlockSources,
       }
     }
   SourceFixture F(true);
-  auto UnknownWide =
-      HighExpr::makeBinop(NdOp::CONCAT, HighExpr::makeConst(1, 8),
-                          HighExpr::makeConst(0, 8));
+  auto UnknownWide = HighExpr::makeBinop(
+      NdOp::CONCAT, HighExpr::makeConst(1, 8), HighExpr::makeConst(0, 8));
   UnknownWide->Type = NdType::makeInt(16);
   F.caller().Body.insert(F.caller().Body.begin(),
                          store(frame(F.Image, -64), UnknownWide));
@@ -1746,6 +1745,121 @@ TEST(ObjCBlockSources, CoreDataAsyncConsumerRequiresQualifiedCopiedContract) {
     }
 }
 
+TEST(ObjCBlockSources, SDDownloaderCopyContractKeepsCallbackAndCaptureChecks) {
+  for (bool Request : {false, true})
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      SCOPED_TRACE(Request);
+      SCOPED_TRACE(Mutation);
+      SourceFixture F(true);
+      F.string(F.Signature, Mutation == 2 ? "i12@?0i8"
+                            : Request     ? "@16@?0@\"NSURLRequest\"8"
+                                          : "@16@?0@\"NSURLResponse\"8");
+      std::string Error;
+      auto Descriptor =
+          readObjCBlockDescriptor(F.Image, F.Descriptor, 0xc0000000, Error);
+      ASSERT_TRUE(Descriptor) << Error;
+      auto &Invoke = F.Result.HighFuncs[0];
+      Invoke.SourceTypeHint = *Descriptor->InvokeTypeHint;
+      Invoke.ReturnType = Invoke.SourceTypeHint->ReturnType;
+      Invoke.Params.clear();
+      for (const auto &P : Invoke.SourceTypeHint->Parameters)
+        Invoke.Params.push_back({P.Name, P.Type});
+      Invoke.Body = {ret(parameter(1, Invoke.Params[1].Type))};
+      F.Image.DynInfo.NeededLibs = {
+          "/System/Library/Frameworks/Foundation.framework/Foundation"};
+      ObjCClass Owner;
+      Owner.Address = 0x2700;
+      Owner.Name = Request ? "SDWebImageDownloaderRequestModifier"
+                           : "SDWebImageDownloaderResponseModifier";
+      Owner.SuperclassName = "NSObject";
+      Owner.InheritanceStatus = "resolved";
+      F.Image.ObjCClasses.push_back(Owner);
+      const std::pair<const char *, const char *> Methods[] = {
+          {"initWithBlock:", "@24@0:8@?16"},
+          {"block", "@?16@0:8"},
+          {"setBlock:", "v24@0:8@?16"},
+          {Request ? "modifiedRequestWithRequest:"
+                   : "modifiedResponseWithResponse:",
+           "@24@0:8@16"}};
+      for (size_t I = 0; I < std::size(Methods); ++I) {
+        ObjCMethod Method;
+        Method.ClassName = Owner.Name;
+        Method.ClassAddress = Owner.Address;
+        Method.MetadataAddress = 0x2800 + I * 24;
+        Method.Implementation = 0x1700 + I * 16;
+        Method.Selector = Methods[I].first;
+        Method.TypeEncoding = Methods[I].second;
+        Method.Status = "supported";
+        Method.TypeHint =
+            parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+        ASSERT_TRUE(Method.TypeHint);
+        F.Image.ObjCMethods.push_back(Method);
+      }
+      ObjCProperty Property;
+      Property.OwnerAddress = Owner.Address;
+      Property.MetadataAddress = 0x2900;
+      Property.OwnerName = Property.ClassName = Owner.Name;
+      Property.Name = Property.Getter = "block";
+      Property.Setter = "setBlock:";
+      Property.Attributes = "T@?,C,N,V_block";
+      Property.TypeEncoding = "@?";
+      Property.Status = "supported";
+      F.Image.ObjCProperties.push_back(Property);
+      ObjCMethod CallerMethod;
+      CallerMethod.ClassName = Owner.Name;
+      CallerMethod.ClassAddress = Owner.Address;
+      CallerMethod.Implementation = F.Caller;
+      CallerMethod.Selector = "make:";
+      CallerMethod.TypeHint = parseObjCMethodEncoding("make:", "v24@0:8@16");
+      F.Image.ObjCMethods.push_back(CallerMethod);
+      const auto Receiver = objcMethodReceiverTypeHint(F.Image, F.Caller);
+      ASSERT_TRUE(Receiver);
+      const auto Parent =
+          objcReceiverSourceTypeHint(F.Image, "initWithBlock:", *Receiver);
+      ASSERT_TRUE(Parent.Signature);
+      SourceCallTypeHint Binding;
+      Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+      Binding.TargetName = "objc_msgSend";
+      Binding.Selector = "initWithBlock:";
+      Binding.Receiver = *Receiver;
+      Binding.Signature = *Parent.Signature;
+      if (Mutation == 1)
+        Binding.Receiver.reset();
+      if (Mutation == 3) {
+        // A copied lifetime does not authorize a missing captured value.
+        Invoke.Body = {ret(HighExpr::makeLoad(
+            HighExpr::makeBinop(NdOp::INT_ADD,
+                                parameter(0, Invoke.Params[0].Type),
+                                HighExpr::makeConst(32, 8)),
+            Invoke.ReturnType))};
+        F.caller().Body.erase(F.caller().Body.begin() + 4);
+      }
+      auto Call = HighExpr::makeCall("objc_msgSend", 0,
+                                     {parameter(0, F.caller().Params[0].Type),
+                                      HighExpr::makeConst(0x2600, 8),
+                                      frame(F.Image, -48)});
+      Call->Type = Binding.Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+      HighStmt Send;
+      Send.Kind = StmtKind::Call;
+      Send.CallExpr = Call;
+      F.caller().Body.back() = Send;
+      F.caller().Body.push_back(ret(HighExpr::makeConst(0, 4)));
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                       Plan, F.functions());
+      EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+      if (Mutation == 1)
+        EXPECT_NE(Bound.Limitation.find("unqualified receiver"),
+                  std::string::npos);
+      if (Mutation == 2)
+        EXPECT_NE(Bound.Limitation.find("callback ABI differs"),
+                  std::string::npos);
+      if (Mutation == 3)
+        EXPECT_NE(Bound.Limitation.find("capture"), std::string::npos);
+    }
+}
+
 TEST(ObjCBlockSources, CoreDataAsyncCallCopiesOnlyAuthenticatedStackBlock) {
   for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -1839,7 +1953,8 @@ TEST(ObjCBlockSources, FLAnimatedImageLoggingBlockIsNonEscaping) {
   Method.TypeEncoding = "v32@0:8@?16Q24";
   Method.IsClassMethod = true;
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   ObjCSourceReference Reference;
@@ -1906,8 +2021,7 @@ TEST(ObjCBlockSources, MantleTransformerFactoriesCopyBlocks) {
   for (const auto &[Selector, Encoding, Count] :
        {std::tuple<const char *, const char *, unsigned>{
             "transformerUsingForwardBlock:", "@24@0:8@?16", 3},
-        {"transformerUsingForwardBlock:reverseBlock:",
-         "@32@0:8@?16@?24", 4}}) {
+        {"transformerUsingForwardBlock:reverseBlock:", "@32@0:8@?16@?24", 4}}) {
     SCOPED_TRACE(Selector);
     F.Image.ObjCMethods.clear();
     ObjCMethod Method;
@@ -1931,7 +2045,8 @@ TEST(ObjCBlockSources, MantleTransformerFactoriesCopyBlocks) {
     ASSERT_TRUE(Declaration.Signature);
     Call.Signature = *Declaration.Signature;
     for (unsigned Parameter = 2; Parameter < Count; ++Parameter) {
-      const auto Contract = objcBlockParameterContract(F.Image, Call, Parameter);
+      const auto Contract =
+          objcBlockParameterContract(F.Image, Call, Parameter);
       ASSERT_TRUE(Contract);
       EXPECT_EQ(Contract->Storage,
                 ObjCBlockParameterContract::Lifetime::Copied);
@@ -1974,7 +2089,8 @@ TEST(ObjCBlockSources, WMFAsyncBlockOperationCopiesEscapingSwiftClosure) {
   Method.Selector = "initWithAsyncBlock:";
   Method.TypeEncoding = "@24@0:8@?16";
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   ObjCMethod Caller;
@@ -1984,10 +2100,12 @@ TEST(ObjCBlockSources, WMFAsyncBlockOperationCopiesEscapingSwiftClosure) {
   Caller.Selector = "submit:";
   Caller.TypeEncoding = "v24@0:8@16";
   Caller.Status = "supported";
-  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
   ASSERT_TRUE(Caller.TypeHint);
   F.Image.ObjCMethods.push_back(Caller);
-  const auto Receiver = objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
+  const auto Receiver =
+      objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
   ASSERT_TRUE(Receiver);
   SourceCallTypeHint Call;
   Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -1999,8 +2117,7 @@ TEST(ObjCBlockSources, WMFAsyncBlockOperationCopiesEscapingSwiftClosure) {
   Call.Signature = *Declaration.Signature;
   const auto Contract = objcBlockParameterContract(F.Image, Call, 2);
   ASSERT_TRUE(Contract);
-  EXPECT_EQ(Contract->Storage,
-            ObjCBlockParameterContract::Lifetime::Copied);
+  EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
   EXPECT_EQ(Contract->Signature.Parameters.size(), 2U);
   EXPECT_FALSE(objcBlockParameterContract(F.Image, Call, 1));
 
@@ -2032,11 +2149,11 @@ TEST(ObjCBlockSources, WMFSessionCopiesJSONCompletion) {
   Method.MetadataAddress = 0x2800;
   Method.ClassAddress = Class.Address;
   Method.ClassName = Class.Name;
-  Method.Selector =
-      "getJSONDictionaryFromURL:ignoreCache:completionHandler:";
+  Method.Selector = "getJSONDictionaryFromURL:ignoreCache:completionHandler:";
   Method.TypeEncoding = "@36@0:8@16B24@?28";
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   ObjCMethod Caller;
@@ -2046,10 +2163,12 @@ TEST(ObjCBlockSources, WMFSessionCopiesJSONCompletion) {
   Caller.Selector = "submit:";
   Caller.TypeEncoding = "v24@0:8@16";
   Caller.Status = "supported";
-  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
   ASSERT_TRUE(Caller.TypeHint);
   F.Image.ObjCMethods.push_back(Caller);
-  const auto Receiver = objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
+  const auto Receiver =
+      objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
   ASSERT_TRUE(Receiver);
   SourceCallTypeHint Call;
   Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -2086,11 +2205,10 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
   constexpr Case Cases[] = {
       {"MWKDataStore", "setupCoreDataStackWithContainerURL:completion:",
        "v32@0:8@16@?24", 3, 1},
-      {"MWKDataStore",
-       "performBackgroundCoreDataOperationOnATemporaryContext:",
+      {"MWKDataStore", "performBackgroundCoreDataOperationOnATemporaryContext:",
        "v24@0:8@?16", 2, 2},
-      {"WMFFeedContentSource", "fetchContentForDate:force:completion:",
-       "v36@0:8@16B24@?28", 4, 3},
+      {"WMFFeedContentSource",
+       "fetchContentForDate:force:completion:", "v36@0:8@16B24@?28", 4, 3},
       {"WMFFeedContentFetcher",
        "fetchFeedContentForURL:date:force:failure:success:",
        "v52@0:8@16@24B32@?36@?44", 5, 2},
@@ -2104,8 +2222,8 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
        "fetchAnnouncementsForURL:force:failure:success:",
        "v44@0:8@16B24@?28@?36", 5, 2},
       {"WMFRelatedSearchFetcher",
-       "fetchRelatedArticlesForArticleWithURL:completion:",
-       "v32@0:8@16@?24", 3, 3},
+       "fetchRelatedArticlesForArticleWithURL:completion:", "v32@0:8@16@?24", 3,
+       3},
       {"WMFExploreFeedContentController",
        "updateExploreFeedPreferences:willTurnOnContentGroupOrLanguage:"
        "waitForCallbackFromCoordinator:apply:updateFeed:",
@@ -2117,13 +2235,13 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
        "getGroupForLocation:inManagedObjectContext:force:completion:failure:",
        "v52@0:8@16@24B32@?36@?44", 6, 2},
       {"WMFEchoSubscriptionFetcher",
-       "subscribeWithSiteURL:deviceToken:completion:",
-       "v40@0:8@16@24@?32", 4, 2},
+       "subscribeWithSiteURL:deviceToken:completion:", "v40@0:8@16@24@?32", 4,
+       2},
       {"WMFEchoSubscriptionFetcher",
-       "unsubscribeWithSiteURL:deviceToken:completion:",
-       "v40@0:8@16@24@?32", 4, 2},
-      {"WMFExploreFeedContentController", "performBackgroundFetch:",
-       "v24@0:8@?16", 2, 2},
+       "unsubscribeWithSiteURL:deviceToken:completion:", "v40@0:8@16@24@?32", 4,
+       2},
+      {"WMFExploreFeedContentController",
+       "performBackgroundFetch:", "v24@0:8@?16", 2, 2},
       {"MWKImageInfoFetcher",
        "fetchGalleryInfoForImageFiles:fromSiteURL:success:failure:",
        "@48@0:8@16@24@?32@?40", 4, 2},
@@ -2149,8 +2267,8 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
     Method.Selector = C.Selector;
     Method.TypeEncoding = C.Encoding;
     Method.Status = "supported";
-    Method.TypeHint = parseObjCMethodEncoding(Method.Selector,
-                                              Method.TypeEncoding);
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
     ASSERT_TRUE(Method.TypeHint);
     F.Image.ObjCMethods.push_back(Method);
     ObjCMethod Caller;
@@ -2160,8 +2278,8 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
     Caller.Selector = "submit:";
     Caller.TypeEncoding = "v24@0:8@16";
     Caller.Status = "supported";
-    Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector,
-                                              Caller.TypeEncoding);
+    Caller.TypeHint =
+        parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
     ASSERT_TRUE(Caller.TypeHint);
     F.Image.ObjCMethods.push_back(Caller);
     const auto Receiver =
@@ -2175,7 +2293,8 @@ TEST(ObjCBlockSources, WMFInstanceMethodsCopyAsyncCallbacks) {
         objcReceiverSourceTypeHint(F.Image, Call.Selector, *Receiver);
     ASSERT_TRUE(Declaration.Signature);
     Call.Signature = *Declaration.Signature;
-    const auto Contract = objcBlockParameterContract(F.Image, Call, C.Parameter);
+    const auto Contract =
+        objcBlockParameterContract(F.Image, Call, C.Parameter);
     ASSERT_TRUE(Contract) << C.Selector;
     EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
     EXPECT_EQ(Contract->Signature.Parameters.size(), C.CallbackParameters);
@@ -2222,8 +2341,8 @@ TEST(ObjCBlockSources, WMFPermanentCacheClassSetupCopiesCompletion) {
   Method.TypeEncoding = "v24@0:8@?16";
   Method.IsClassMethod = true;
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector,
-                                            Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   SourceCallTypeHint Call;
@@ -2267,8 +2386,8 @@ TEST(ObjCBlockSources, WMFContentGroupMethodsBorrowCallbacks) {
   Method.Selector = "enumerateContentGroupsOfKind:withBlock:";
   Method.TypeEncoding = "v28@0:8i16@?20";
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector,
-                                            Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   ObjCMethod Caller;
@@ -2278,8 +2397,8 @@ TEST(ObjCBlockSources, WMFContentGroupMethodsBorrowCallbacks) {
   Caller.Selector = "submit:";
   Caller.TypeEncoding = "v24@0:8@16";
   Caller.Status = "supported";
-  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector,
-                                            Caller.TypeEncoding);
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
   ASSERT_TRUE(Caller.TypeHint);
   F.Image.ObjCMethods.push_back(Caller);
   const auto Receiver =
@@ -2292,8 +2411,7 @@ TEST(ObjCBlockSources, WMFContentGroupMethodsBorrowCallbacks) {
     unsigned CallbackParameters;
   };
   constexpr Case Cases[] = {
-      {"enumerateContentGroupsOfKind:withBlock:", "v28@0:8i16@?20", 3,
-       3},
+      {"enumerateContentGroupsOfKind:withBlock:", "v28@0:8i16@?20", 3, 3},
       {"createGroupForURL:ofKind:forDate:withSiteURL:associatedContent:"
        "customizationBlock:",
        "@60@0:8@16i24@28@36@44@?52", 7, 2},
@@ -2319,7 +2437,8 @@ TEST(ObjCBlockSources, WMFContentGroupMethodsBorrowCallbacks) {
         objcReceiverSourceTypeHint(F.Image, Call.Selector, *Receiver);
     ASSERT_TRUE(Declaration.Signature);
     Call.Signature = *Declaration.Signature;
-    const auto Contract = objcBlockParameterContract(F.Image, Call, C.Parameter);
+    const auto Contract =
+        objcBlockParameterContract(F.Image, Call, C.Parameter);
     ASSERT_TRUE(Contract);
     EXPECT_EQ(Contract->Storage,
               ObjCBlockParameterContract::Lifetime::NonEscaping);
@@ -2356,8 +2475,8 @@ TEST(ObjCBlockSources, WMFFaceDetectionCopiesQueuedCallbacks) {
   Method.Selector = "wmf_getFaceBoundsInImage:onGPU:failure:success:";
   Method.TypeEncoding = "v44@0:8@16B24@?28@?36";
   Method.Status = "supported";
-  Method.TypeHint = parseObjCMethodEncoding(Method.Selector,
-                                            Method.TypeEncoding);
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   ASSERT_TRUE(Method.TypeHint);
   F.Image.ObjCMethods.push_back(Method);
   ObjCMethod Caller;
@@ -2367,8 +2486,8 @@ TEST(ObjCBlockSources, WMFFaceDetectionCopiesQueuedCallbacks) {
   Caller.Selector = "submit:";
   Caller.TypeEncoding = "v24@0:8@16";
   Caller.Status = "supported";
-  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector,
-                                            Caller.TypeEncoding);
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
   ASSERT_TRUE(Caller.TypeHint);
   F.Image.ObjCMethods.push_back(Caller);
   const auto Receiver =
@@ -2413,18 +2532,16 @@ TEST(ObjCBlockSources, WMFCollectionSwiftExtensionsCopyCallbacks) {
       {"NSArray", "wmf_match:", "@24@0:8@?16", 2, 2, NdTypeKind::Int},
       {"NSArray", "wmf_reduce:withBlock:", "@32@0:8@16@?24", 3, 3,
        NdTypeKind::Ptr},
-      {"NSArray", "wmf_mapAndRejectNil:", "@24@0:8@?16", 2, 2,
-       NdTypeKind::Ptr, false},
+      {"NSArray", "wmf_mapAndRejectNil:", "@24@0:8@?16", 2, 2, NdTypeKind::Ptr,
+       false},
       {"NSSet", "wmf_map:", "@24@0:8@?16", 2, 2, NdTypeKind::Ptr},
       {"NSSet", "wmf_select:", "@24@0:8@?16", 2, 2, NdTypeKind::Int},
       {"NSSet", "wmf_match:", "@24@0:8@?16", 2, 2, NdTypeKind::Int},
       {"NSSet", "wmf_reduce:withBlock:", "@32@0:8@16@?24", 3, 3,
        NdTypeKind::Ptr},
       {"NSDictionary", "wmf_map:", "@24@0:8@?16", 2, 3, NdTypeKind::Ptr},
-      {"NSDictionary", "wmf_select:", "@24@0:8@?16", 2, 3,
-       NdTypeKind::Int},
-      {"NSDictionary", "wmf_match:", "@24@0:8@?16", 2, 3,
-       NdTypeKind::Int},
+      {"NSDictionary", "wmf_select:", "@24@0:8@?16", 2, 3, NdTypeKind::Int},
+      {"NSDictionary", "wmf_match:", "@24@0:8@?16", 2, 3, NdTypeKind::Int},
       {"NSDictionary", "wmf_reduce:withBlock:", "@32@0:8@16@?24", 3, 4,
        NdTypeKind::Ptr},
   };
@@ -2456,7 +2573,8 @@ TEST(ObjCBlockSources, WMFCollectionSwiftExtensionsCopyCallbacks) {
         parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
     ASSERT_TRUE(Caller.TypeHint);
     F.Image.ObjCMethods.push_back(Caller);
-    const auto Receiver = objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
+    const auto Receiver =
+        objcMethodReceiverTypeHint(F.Image, Caller.Implementation);
     ASSERT_TRUE(Receiver);
     SourceCallTypeHint Call;
     Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -2877,17 +2995,16 @@ TEST(ObjCBlockSources,
   auto Call = HighExpr::makeCall(
       "objc_msgSend", 0,
       {HighExpr::makeConst(0x3000, 8), HighExpr::makeConst(0x2600, 8),
-       frame(F.Image, -256), frame(F.Image, -192),
-       HighExpr::makeConst(16, 8)});
+       frame(F.Image, -256), frame(F.Image, -192), HighExpr::makeConst(16, 8)});
   Call->Type = Binding.Signature.ReturnType;
   Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
   EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, F.functions()));
   HighStmt Send;
   Send.Kind = StmtKind::Call;
   Send.CallExpr = Call;
-  Function.Body = {store(frame(F.Image, -64),
-                         parameter(0, Function.Params[0].Type)),
-                   Send, ret(HighExpr::makeConst(0, 4))};
+  Function.Body = {
+      store(frame(F.Image, -64), parameter(0, Function.Params[0].Type)), Send,
+      ret(HighExpr::makeConst(0, 4))};
   const ObjCBlockSourceContext Source(F.Image);
   std::set<std::pair<va_t, size_t>> Active;
   std::string Reason;

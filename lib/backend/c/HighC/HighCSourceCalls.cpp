@@ -53,11 +53,13 @@ std::string bad(llvm::StringRef Reason) {
   return "(0 /* bad source call: " + Reason.str() + " */)";
 }
 
+} // namespace
+
 // HighIR retains scalar machine carriers. A floating register's bits must be
 // reinterpreted at a source-call boundary, not numerically converted by C.
-std::optional<std::string> sourceValue(llvm::StringRef Text,
-                                       const TypeRef &Carrier,
-                                       const TypeRef &Source) {
+std::optional<std::string> HighCWriter::sourceValue(llvm::StringRef Text,
+                                                    const TypeRef &Carrier,
+                                                    const TypeRef &Source) {
   if (Carrier && Source && Carrier->Kind == NdTypeKind::Struct &&
       Source->Kind == NdTypeKind::Struct && equalSourceTypes(Carrier, Source))
     return Text.str();
@@ -81,7 +83,6 @@ std::optional<std::string> sourceValue(llvm::StringRef Text,
     return "(" + typeToC(Source) + ")(uintptr_t)(" + Text.str() + ")";
   return "(" + typeToC(Source) + ")(" + Text.str() + ")";
 }
-} // namespace
 
 llvm::StringRef HighCWriter::sourceConventionAttribute(
     SourceFunctionTypeHint::ConventionKind Convention) {
@@ -216,6 +217,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.DoesNotReturn || Hint.WeakImport || Hint.ReturnedArgument ||
        Hint.RuntimeObjCResultType || Hint.ValueWitness ||
        !Hint.OwnerClass.empty() || !Hint.BorrowedByteInputs.empty() ||
+       !Hint.SwiftStaticStringInputs.empty() ||
        !Hint.SwiftStringInputs.empty() || Hint.SwiftTypeMetadata ||
        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
@@ -437,12 +439,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
         Hint.ValueWitness || Hint.Receiver || !Hint.Selector.empty() ||
         !Hint.OwnerClass.empty() || Hint.SelectorReferenceAddress ||
-        !Hint.BorrowedByteInputs.empty() || !Hint.SwiftStringInputs.empty() ||
-        Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
-        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
-        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
-        Hint.SelectorArgumentStorageUse || Hint.ObjCIndirectResultStorage ||
-        Hint.ByteCount || Hint.ImmutablePointerSlot ||
+        !Hint.BorrowedByteInputs.empty() ||
+        !Hint.SwiftStaticStringInputs.empty() ||
+        !Hint.SwiftStringInputs.empty() || Hint.Format || Hint.NilTerminated ||
+        Hint.SwiftTypeMetadata || Hint.SelectorResultUse ||
+        Hint.SelectorResultTypeUse || Hint.SelectorArgumentTypeUse ||
+        Hint.SelectorForwardingUse || Hint.SelectorArgumentStorageUse ||
+        Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
+        Hint.ImmutablePointerSlot ||
         std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
                     [](const auto &Parameter) {
                       return !Parameter.Type ||

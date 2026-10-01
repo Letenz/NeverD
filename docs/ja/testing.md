@@ -44,13 +44,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 復元 API テストは v1/v2/v3 の既定値、明示予算、切り詰めた構造体、全 reserved フィールド、将来の末尾を検査します。CLI テストは両 ABI と両バックエンドでフィールド／問い合わせ予算超過と復元成功を確認し、不正な十進上限と `--devirtualize` の欠如を拒否します。予算超過時はソースも部分残余グラフも公開しません。
@@ -110,6 +111,10 @@ build-release/bin/NeverDLowIRRefinementTests
 パック済みフラグのテストは、全スカラー入口フラグの組み合わせ、特権マスク、両実行の TF/AC 条件、異なる未定義値の生成、相関するコピー、ネイティブ呼び出し、兄弟経路の状態、最終システム状態の必須観測、不正な証拠、資源上限を検証します。有限ループは全実行可能入力経路が終了する必要があり、安全な分岐で無限経路や打ち切り経路を隠せません。RDSSPD/RDSSPQ は 16 汎用レジスタと両幅、上位ビット保持、`Missing` 証拠の保持、偽造投影の拒否を検証します。機械状態テストは両 C 経路の O0/O2 と未定義動作トラップを用い、独立したユーザーモードのフラグオラクルと比較し、プロファイル違反が後から消えないことも確認します。 INCSSPD/INCSSPQ は両幅と全汎用レジスタ、到達不能境界の保持、安全な兄弟経路完了後の実行可能なトラップ、ゼロオペランド、偽造したトラップ証拠を検証します。
 
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
+
+`NeverDPEFixedImageTests` は独立に構成した PE ファイルで、再配置付き命令と不変データ、インポート書き込み範囲、不正なヘッダー／表、別名、来歴の改変を検証します。ネイティブから LowIR および正確な LLVM への証明は一致する候補を受理し、結果、ステータス、元のバイトが変わった候補を拒否します。準備予算の超過は独立に分類し、明示的に上限を増やして再試行できます。通常のロードでは、既定の解析予算を超える 40000 件の有効な再配置も受理します。
+
+`NeverDX86NoIndexAddressTests` は、32／64 ビットのアドレス幅でインデックスを持たない x86 SIB アドレッシングを検証します。無視されるスケールビット、宛先幅、ロード／ストア、完全な未定義出力メタデータ、セグメントオフセット、アドレスの由来を対象とします。疑似レジスタをベースや幅の異なるインデックスとして使う場合は拒否し、REX.X が選択する実際の R12 インデックスは保持します。EVEX ブロードキャストとマスク付き移動のテストも、これらの形式、非アクティブなメモリアクセスの抑制、矛盾する SIB メタデータを検証します。
 
 シフト回帰は全 8 ビット回数、ゼロ回数のフラグ組合せ、両 x86 モード、全スカラー幅、CL と宛先の重複、AH/CH/DH/BH、拡張レジスタ、メモリを網羅します。バイト単位のシンボリック実行を反復 1 ビット算術と比較し、定義済み結果とガードを検証します。関係テストはコピーと新規フラグ、スピル、ループ再訪、未定義値由来の回数、分岐拒否、不正形式、ダイジェストと予算を検証します。有限不変読み取りは 1/2/4/8 バイト、入力依存選択、パスごとの単一候補、全証拠、上限の結び付けと、依存・欠落・書き込み可能・未格納・再配置・無限候補の拒否を検証します。
 
@@ -838,6 +843,69 @@ provenance/test のみです。`SBFFaultCodes.def` は execution fault の安定
 10,000 scale fixture が worklist、function ownership、multi-latch を守り、
 machine 固有時間は固定しません。cluster/account/slot row は通常 test を
 deterministic/offline に保ったまま `RPC activation audit` を可能にします。
+
+## Android クラス一覧の性能
+
+`neverd mobile INPUT --list-classes` を測定する前に、`NeverDMobileTests` を Release でビルドし、そのラベルを実行します。
+リーダーテストは疎なメタデータ、Unicode、不正な参照、未対応のメソッド本体、チェックサム、予算を対象とします。
+アーカイブテストは完全展開と選択ペイロードのクエリーを区別し、CLI テストは接頭辞の絞り込み、JSON の範囲、
+既存出力の保持、multidex の失敗原子性を検査します。
+
+独立したフィクスチャー／測定ハーネスは、計測サンプルを受け入れる前に各プロセスの完全な記述子一覧を検証します。
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+実行ごとに新しい出力ディレクトリを使用します。`--generate-only` はフィクスチャーと manifest を書き込み、計時しません。
+`--workload` は任意の `--peer-command 'tool {input} {prefix}'` 用に共通入力の種類を選択し、入力準備は計測コマンドの外で行います。
+レポートにはハッシュ、コマンド、すべての新規プロセスのサンプル、ウォームキャッシュの前提、および GNU time のある Linux では
+最大子プロセス RSS を保持します。この RSS は複数プロセスを使うツールの合計ピークではありません。
+合成 APK はクエリー用コンテナーであり、インストール可能なアプリではありません。一覧取得の速度は参照検索の速度や Java 復元の品質を証明しません。
+
+ハイブリッド CPU では、ハーネスと継承される子プロセスを同じ許可済み CPU に固定します
+（Linux なら `taskset -c 4 python3 ...` など）。これにより高性能コアと高効率コアの混在を避けます。
+レポートには継承した CPU アフィニティーを記録します。
+
+## Android コード参照の性能
+
+参照クエリーは復元リーダーの命令境界とコード検証を共有します。この境界を変更したらモバイルスイートを実行してください。
+リーダーテストはオペランドプールの種類、照合モード、メソッド所有関係と共有コード、参照に見えるペイロード／即値、
+不正入力、リソース上限を対象とします。共有デバッグストリームは各所有本体のフレーム、範囲、引数に対して検査します。
+記憶領域上限のテストでは、大きなメンバー一覧と分岐が密集した本体の両方を維持します。永続索引と一時コンテナー拡張では寿命が異なります。
+順序が変わった項目や重なる項目、同じ幅でも互換性のないプロトタイプを持つ共有コード、アラインされない入力記憶領域、
+検索ブロック境界をまたぐ部分文字列一致も検査します。非公開デコーダーデータの性能変更は、完全な所有復元モデルと
+参照出現の多重集合を維持し、未対応の復元メタデータでの失敗動作も保つ必要があります。
+独立して生成した期待値と、実入力でのツール間の一致は区別してください。
+
+独立した参照ハーネスは、命令を出力する際に期待する出現を記録します。測定する毎回の実行で完全なメソッド識別情報、
+code unit 単位の PC、opcode、ターゲット識別情報、UTF-16 単位、重複数を検査します。
+独立に期待する NeverD のカバレッジ集計数と `code_scan_complete` も検査します。
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+`--kind` と `--workload` でケースを選択します。`--extra-strings 65536` は実際の 32 ビット文字列索引を検査します。
+ペイロードの囮は既定で有効です。`--no-payload-lookalikes` は同じレイアウトと真の参照を維持し、囮のペイロード値を置き換えて共通入力で比較できます。
+正しさと計測の両結果を保持してください。偽のペイロード参照を返す、または実際の参照を取りこぼすクエリーは検証に失敗し、計測を受け入れません。
+
+任意の `--peer-command` は `{input}`、`{kind}`、`{query}` を含む argv テンプレートを受け付けます。
+別のツールが異なる意味を使う場合はクエリー構文を明示的に調整し、完全な出現多重集合を比較します。
+宣言された検証範囲を保持し、完全なコードスキャンを行ったとは主張しません。一覧ベンチマークと同じ新規ディレクトリ、
+CPU アフィニティー、新規プロセス、ウォームキャッシュ、RSS の条件が適用されます。
+`NEVERD_REFERENCE_TEST_BINARY` がビルド済み実行ファイルを指さない限り、任意の CLI 単体テストはスキップされるため、そのスキップを報告してください。
 
 ## モバイル SDK のエクスポート証拠
 

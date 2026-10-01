@@ -38,6 +38,16 @@
 namespace neverd {
 
 namespace {
+std::string integerConstantText(const llvm::APInt &Bits) {
+  if (Bits.getBitWidth() == 1)
+    return Bits.isZero() ? "0" : "1";
+  // The positive magnitude of INT64_MIN is not a signed decimal C literal.
+  if (Bits.getBitWidth() == 64 && Bits.isMinSignedValue())
+    return "(-9223372036854775807LL - 1)";
+  return Bits.isNegative() ? std::to_string(Bits.getSExtValue())
+                           : std::to_string(Bits.getZExtValue());
+}
+
 // Fold only literal integer DAGs. Do not borrow display-time load values or
 // pointer provenance: LLVM owns bit widths, overflow flags, and poison here.
 const llvm::ConstantInt *foldLiteralInteger(const llvm::Value *V,
@@ -550,11 +560,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     if (auto Lit = imageStringLiteral(Img, CI->getZExtValue(),
                                       /*AllowEmpty=*/true))
       return *Lit;
-    if (CI->getType()->isIntegerTy(1))
-      return CI->isZero() ? "0" : "1";
-    if (CI->isNegative())
-      return std::to_string(CI->getSExtValue());
-    return std::to_string(CI->getZExtValue());
+    return integerConstantText(CI->getValue());
   }
 
   if (auto *CF = llvm::dyn_cast<llvm::ConstantFP>(C)) {
@@ -678,6 +684,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   };
   auto ParseInteger = [](llvm::StringRef Text,
                          unsigned Width) -> std::optional<llvm::APInt> {
+    if (Text == "(-9223372036854775807LL - 1)")
+      return llvm::APInt(64, UINT64_C(1) << 63).zextOrTrunc(Width);
     const bool Negative = Text.consume_front("-");
     llvm::APInt Bits;
     if (Text.getAsInteger(0, Bits))
@@ -686,10 +694,7 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
     return Negative ? -Bits : Bits;
   };
   auto IntegerText = [](const llvm::APInt &Bits) {
-    if (Bits.getBitWidth() == 1)
-      return Bits.isZero() ? std::string("0") : std::string("1");
-    return Bits.isNegative() ? std::to_string(Bits.getSExtValue())
-                             : std::to_string(Bits.getZExtValue());
+    return integerConstantText(Bits);
   };
   // Wider values retain their full representation through
   // constStr/renderInline.
@@ -701,7 +706,7 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   if (CurMod) {
     unsigned Budget = 64;
     if (const auto *C = foldLiteralInteger(V, CurMod->getDataLayout(), Budget))
-      return llvm::toString(C->getValue(), 10, !C->getType()->isIntegerTy(1));
+      return integerConstantText(C->getValue());
   }
   if (auto Known = KnownImmediates.find(V); Known != KnownImmediates.end())
     return Known->second;
@@ -710,11 +715,7 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V)) {
     if (CI->getBitWidth() > 64)
       return std::nullopt;
-    if (CI->getType()->isIntegerTy(1))
-      return CI->isZero() ? std::string("0") : std::string("1");
-    if (CI->isNegative() && CI->getBitWidth() <= 64)
-      return std::to_string(CI->getSExtValue());
-    return std::to_string(CI->getZExtValue());
+    return integerConstantText(CI->getValue());
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (Analysis.ForwardedLoads.find(LI) == Analysis.ForwardedLoads.end()) {
@@ -743,11 +744,7 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
     if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(Cur)) {
       if (CI->getBitWidth() > 64)
         return std::nullopt;
-      if (CI->getType()->isIntegerTy(1))
-        return CI->isZero() ? std::string("0") : std::string("1");
-      if (CI->isNegative() && CI->getBitWidth() <= 64)
-        return std::to_string(CI->getSExtValue());
-      return std::to_string(CI->getZExtValue());
+      return integerConstantText(CI->getValue());
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
       if (!LI->isSimple())
@@ -2351,6 +2348,11 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
     return getName(V);
   if (auto Imm = foldImmediate(V))
     return *Imm;
+  // A scalar FP bitcast is materialized with a byte copy. Display provenance
+  // may name its integer input, but that name cannot replace the float value.
+  if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V);
+      Inst && isFloatingPointBitcast(*Inst))
+    return getName(V);
   if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V);
       Cast &&
       llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(Cast)) {
@@ -2542,11 +2544,17 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::UDiv:
     return Unsigned(LHS) + " / " + Unsigned(RHS);
   case llvm::Instruction::SDiv:
+    return castStr(llvm::Instruction::Trunc,
+                   signedIntegerOperand(Ty, LHS) + " / " +
+                       signedIntegerOperand(Ty, RHS), Ty, Ty);
   case llvm::Instruction::FDiv:
     return LHS + " / " + RHS;
   case llvm::Instruction::URem:
     return Unsigned(LHS) + " % " + Unsigned(RHS);
   case llvm::Instruction::SRem:
+    return castStr(llvm::Instruction::Trunc,
+                   signedIntegerOperand(Ty, LHS) + " % " +
+                       signedIntegerOperand(Ty, RHS), Ty, Ty);
   case llvm::Instruction::FRem:
     return LHS + " % " + RHS;
   case llvm::Instruction::Shl:
@@ -2811,6 +2819,7 @@ std::string LLVMCWriter::icmpInlineText(const llvm::ICmpInst &CI, bool Invert) {
     LHS = signedIntegerOperand(CI.getOperand(0), LHS);
     RHS = signedIntegerOperand(CI.getOperand(1), RHS);
   } else if (llvm::CmpInst::isUnsigned(Predicate) ||
+             (Type->isIntegerTy() && CI.isEquality()) ||
              integerComparisonNeedsNormalization(Type)) {
     LHS = unsignedCompareOperand(CI.getOperand(0), std::move(LHS));
     RHS = unsignedCompareOperand(CI.getOperand(1), std::move(RHS));

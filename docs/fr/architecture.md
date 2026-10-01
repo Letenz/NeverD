@@ -74,6 +74,8 @@ certificats d’occurrences natives et de patch binaire.
 
 `InterpreterSpecialization` gère la propagation arrière bornée des demandes de bits après une tentative échouée. Il réutilise l’évaluateur scalaire sans modifier les faits du graphe ni ajouter de champs de contrôle ou de contextes ; tout travail reste soumis aux budgets et la publication exige une nouvelle preuve complète.
 
+`NeverDLoader` possède `PEFixedImageView` et partage l’analyse complète des relocations de base avec le chargement PE ordinaire. L’adaptateur d’interpréteur binaire utilise cette vue authentifiée à la base préférée pour la récupération et les preuves natives, sans analyser lui-même les tables PE. La préparation vérifie les écritures des imports, l’identité des mappages et les champs bruts complets avant de certifier les octets. La vue emprunte une image inchangée et ne prouve ni l’ASLR ni l’équivalence de l’initialisation.
+
 `modelInterpreterMachineStateX64` et l’enveloppe source partagent le générateur des sous-registres invités, des drapeaux empaquetés, du statut du profil et du contrôle. Le modèle remplace seulement les accès à l’objet d’état par des octets de registre explicites et sépare le statut de RAX invité. La sémantique du compilateur et la politique de preuve restent extérieures ; l’appelant possède le domaine d’entrée, les observations, le contrat de cadre et la vérification complète du raffinement.
 
 `NeverDLLVMInterpreterModel` possède l’import scalaire LLVM séparé et borné vers la même ABI d’état brut. `modelLLVMInterpreterMachineStateX64` conserve le vrai statut et produit des gardes de définition. `llvmInterpreterMachineStateContract` fournit toutes les observations et la préservation du moniteur nul ; domaine, mémoire et preuve complète restent à la charge de l’appelant. Cet import ne modifie ni lifting ordinaire ni publication des sources et ne prouve pas le compilateur.
@@ -560,6 +562,45 @@ une affirmation distincte et ne découle ni de la reconnaissance de personnalit�
 ni du lowering natif.
 
 ## Carte des composants
+
+La CLI mobile expérimentale gère l’inventaire des classes APK/DEX et les
+requêtes de références dans le code dans `tools/neverd/mobile`. Les deux
+parcours partagent avec la reconstruction le lecteur d’enveloppe DEX/MUTF-8
+et le validateur des métadonnées ZIP. L’inventaire matérialise uniquement les
+identités de classe. Les requêtes observent les opérandes de pool dans le
+décodeur d’instructions existant et partagent la validation de l’appartenance
+des classes/membres et du flot de contrôle ; aucun décodeur distinct de largeur
+d’instruction n’est utilisé. Le décodeur produit des informations compactes de
+flot dans les deux modes ; la reconstruction crée en plus des instructions
+possédant leurs données. Après validation de chaque opérande, les requêtes ne
+conservent que les références sélectionnées. Les entrées privées du pool de
+membres empruntent les tables d’identifiants complètes et immuables ; les
+modèles de reconstruction et les résultats de référence matérialisent
+explicitement des données de membres possédées. Les prototypes empruntent aussi
+les listes de types validées. Les deux représentations utilisent le même
+formateur canonique d’identité de méthode et le même validateur des indicateurs
+d’accès encodés. Le décodeur résout une seule fois les arêtes de branchement
+privées en indices d’instructions ; les cibles publiques de reconstruction
+conservent leurs PC en unités de code. Les requêtes réutilisent les tables de
+classes validées et collectent les étendues des éléments par section de la map,
+en vérifiant les chevauchements avant publication même lorsque l’ordre physique
+des éléments diffère.
+Les débits du budget de travail restent immédiats. Les lectures scalaires,
+comparaisons courtes et étapes d’instructions bornées partagent des points de
+contrôle de délai ; les opérations plus grandes le vérifient directement.
+Les flux de débogage sont vérifiés pour le cadre et l’étendue de chaque élément
+de code, sans cache d’un succès indépendant du contexte. Les sites compacts
+sont rejoués pour chaque propriétaire d’un élément de code physique partagé.
+La recherche gère la sélection littérale des cibles ; la passerelle de conteneur
+gère l’agrégation entre DEX et la publication JSON, y compris les unités UTF-16
+sans perte des chaînes. `visitZipMembers` valide toutes les métadonnées des
+membres et toutes les charges utiles sélectionnées avant de les parcourir en
+mémoire ; `extractZip` conserve la validation des charges utiles de l’archive
+entière. Les résultats s’accumulent avant publication et excluent explicitement
+l’intégrité des charges utiles non sélectionnées. L’inventaire exclut les corps
+de méthodes ; les requêtes de références valident tous les corps définis sans
+prétendre valider les annotations ou la reconstruction Java. Aucun de ces
+parcours n’étend le contrat de formats du SDK binaire natif.
 
 Chaque composant est une archive statique créée par
 `add_neverd_component_library`. Le tableau liste les dépendances NeverD

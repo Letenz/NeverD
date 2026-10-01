@@ -33,5 +33,17 @@ std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
 /// caller must authenticate the String consumer or storage declaration.
 bool isCanonicalSwiftSmallString(uint64_t Payload, uint64_t TaggedPayload);
 
+/// Validate StaticString's pointer representation and its exact immutable
+/// UTF-8 extent. Unlike String literals, a trailing zero is not required and
+/// embedded zeros are preserved. Requires an authenticated content consumer.
+std::optional<SwiftLiteralString>
+swiftStaticStringLiteral(const BinaryImage &Image, uint64_t Data,
+                         uint64_t ByteCount, uint8_t Flags);
+
+/// Validate StaticString's Unicode scalar representation without interpreting
+/// the data word as an address, even when its bits overlap an image section.
+bool isCanonicalSwiftStaticStringScalar(uint64_t Data, uint64_t ByteCount,
+                                        uint8_t Flags);
+
 } // namespace neverd
 #endif

@@ -43,13 +43,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 복구 API 테스트는 v1/v2/v3 기본값, 명시적 예산, 잘린 구조체, 모든 reserved 필드 및 미래 꼬리 호환성을 검사합니다. CLI 테스트는 두 ABI와 두 백엔드에서 필드／질의 예산 소진 및 복구 성공을 확인하고 잘못된 십진 한도와 `--devirtualize` 누락을 거부합니다. 예산 소진 시 소스나 부분 잔여 그래프를 게시하면 안 됩니다.
@@ -109,6 +110,10 @@ build-release/bin/NeverDLowIRRefinementTests
 패킹 플래그 테스트는 모든 스칼라 진입 플래그 조합, 권한 마스크, 두 실행의 TF/AC 조건, 별개 미정의 생성자, 상관된 복사, 네이티브 호출, 형제 경로 상태, 필수 최종 시스템 상태 관찰, 잘못된 증거와 자원 제한을 검사합니다. 유한 루프의 모든 실행 가능한 입력 경로가 종료해야 하며 안전한 분기로 무한 또는 잘린 경로를 숨길 수 없습니다. RDSSPD/RDSSPQ는 16개 범용 레지스터와 두 폭, 상위 비트 보존, `Missing` 증거 유지, 위조 투영 거부를 검사합니다. 기계 상태 테스트는 두 C 경로의 O0/O2와 미정의 동작 트랩으로 독립적인 사용자 모드 플래그 오라클과 비교하고 프로파일 실패가 나중에 지워지지 않음을 확인합니다. INCSSPD/INCSSPQ 테스트는 두 폭과 모든 범용 레지스터, 도달 불가능 경계 보존, 안전한 형제 경로 완료 후의 실행 가능한 트랩, 0 피연산자, 위조 트랩 증거를 확인합니다.
 
 `NeverDX86UndefinedEffectsTests`는 미정의 비트 메타데이터, 정의되거나 보존되는 플래그, 오래된 인증서 거부를 검사합니다. `NeverDX86CarryArithmeticFlagTests`는 산술 오라클을 기준으로 레지스터 및 메모리 형태 ADC/SBB의 보조 캐리를 검사합니다. `NeverDX86LogicIdentityTests`는 동일 피연산자 AND가 64비트 모드에서 32비트 대상에 쓸 때 해당 64비트 레지스터의 비트 63:32를 0으로 만들면서 더 좁은 쓰기의 미기록 비트는 보존하는지 검사합니다.
+
+`NeverDPEFixedImageTests`는 독립적으로 구성한 PE 파일로 재배치된 명령과 불변 데이터, 가져오기 쓰기 범위, 잘못된 헤더／테이블, 별칭과 출처 정보 변경을 검사합니다. 네이티브에서 LowIR 및 정확한 LLVM으로 이어지는 증명은 일치하는 후보를 허용하고 결과, 상태 또는 원본 바이트가 변경된 후보를 거부합니다. 준비 예산 소진은 별도로 분류하며 한도를 명시적으로 늘려 재시도할 수 있습니다. 일반 로드는 기본 분석 예산을 넘는 40000개의 유효한 재배치 레코드도 허용합니다.
+
+`NeverDX86NoIndexAddressTests`는 32/64비트 주소 폭에서 인덱스 없는 x86 SIB 주소 지정을 검사합니다. 무시되는 배율 비트, 대상 폭, 로드/스토어, 완전한 미정의 출력 메타데이터, 세그먼트 오프셋과 주소 출처를 확인합니다. 의사 레지스터를 베이스 또는 잘못된 폭의 인덱스로 사용하면 거부하며, REX.X가 선택하는 실제 R12 인덱스는 유지합니다. EVEX 브로드캐스트 및 마스크 이동 테스트도 이러한 형식, 비활성 메모리 접근 억제와 모순된 SIB 메타데이터를 검사합니다.
 
 시프트 회귀는 모든 8비트 원시 횟수, 0회 플래그 조합, 두 x86 모드, 모든 스칼라 폭, CL 대상 별칭, AH/CH/DH/BH, 확장 레지스터와 메모리를 다룹니다. 바이트 단위 기호 실행을 반복 1비트 산술과 비교하여 정의된 결과와 가드를 검증합니다. 관계 테스트는 복사와 새 플래그, 스필, 루프 재방문, 미정의 값에서 나온 횟수, 분기 거부, 잘못된 인코딩, 다이제스트와 예산 실패를 확인합니다. 유한 불변 읽기 테스트는 1/2/4/8바이트, 입력별 선택, 경로별 단일 주소, 전체 읽기 증거와 한도 결합을 확인하고 의존·누락·쓰기 가능·파일 바이트 없음·재배치·무한 후보를 거부합니다.
 
@@ -828,6 +833,69 @@ V0→V1→V2→V3으로 전진시킵니다. 현재는 V3입니다. 명시 v4는 
 10,000 scale fixture가 worklist, function ownership, multi-latch를 보호하며 machine별
 시간은 고정하지 않습니다. cluster/account/slot row는 일반 test를 deterministic 및
 offline으로 유지하면서 `RPC activation audit`를 가능하게 합니다.
+
+## Android 클래스 목록 성능
+
+`neverd mobile INPUT --list-classes`를 측정하기 전에 `NeverDMobileTests`를 Release로 빌드하고 해당 라벨을 실행합니다.
+판독기 테스트는 희소 메타데이터, Unicode, 잘못된 참조, 지원하지 않는 메서드 본문, 체크섬 및 예산을 검증하며,
+아카이브 테스트는 전체 추출과 선택 페이로드 쿼리를 구분합니다. CLI 테스트는 접두사 필터, JSON 범위, 기존 출력 보존,
+multidex 실패 원자성을 검사합니다.
+
+독립적인 fixture/측정 하네스는 시간 샘플을 받아들이기 전에 각 프로세스의 전체 설명자 목록을 검증합니다.
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+실행마다 새 출력 디렉터리를 사용합니다. `--generate-only`는 fixture와 manifest를 쓰고 시간을 측정하지 않습니다.
+`--workload`는 선택적 `--peer-command 'tool {input} {prefix}'`에 사용할 공통 입력 종류를 고르며, 입력 준비는 측정 명령 밖에서 수행합니다.
+보고서에는 해시, 명령, 모든 새 프로세스 샘플, 따뜻한 캐시 가정, GNU time이 있는 Linux에서는 최대 자식 프로세스 RSS를 보관합니다.
+이 RSS는 여러 프로세스를 사용하는 도구의 합산 최고값이 아닙니다. 합성 APK는 쿼리 컨테이너이며 설치 가능한 앱이 아닙니다.
+목록 속도는 참조 검색 속도나 Java 복원 품질을 증명하지 않습니다.
+
+하이브리드 CPU에서는 하네스와 그 자식 프로세스를 같은 허용 CPU에 고정하여 성능 코어와 효율 코어가 섞이지 않도록 합니다
+(Linux의 `taskset -c 4 python3 ...` 등). 보고서는 상속된 CPU 선호도를 기록합니다.
+
+## Android 코드 참조 성능
+
+참조 쿼리는 복원 판독기의 명령 경계와 코드 검증을 공유합니다. 이 경계를 변경하면 모바일 테스트 모음을 실행하세요.
+판독기 테스트는 피연산자 풀 종류, 일치 모드, 메서드 소유 관계와 공유 코드, 참조처럼 보이는 페이로드/즉시값,
+잘못된 입력 및 리소스 제한을 검증합니다. 공유 디버그 스트림은 각 소유 본문의 프레임, 범위 및 매개변수에 맞춰 검사합니다.
+저장 공간 제한 테스트에 큰 멤버 목록과 분기가 많은 본문을 모두 유지하세요. 지속 인덱스와 임시 컨테이너 확장은 수명이 다릅니다.
+순서가 바뀌거나 겹치는 항목, 같은 너비라도 호환되지 않는 프로토타입의 공유 코드, 정렬되지 않은 입력 저장 공간,
+검색 블록 경계를 넘는 부분 문자열 일치도 검사해야 합니다. 비공개 디코더 데이터의 성능 변경은 전체 소유 복원 모델과
+참조 발생 다중집합을 보존해야 하며, 지원하지 않는 복원 메타데이터의 실패 동작도 유지해야 합니다.
+독립적으로 생성한 기대값과 실제 입력에서의 도구 간 일치를 구분하세요.
+
+독립 참조 하네스는 명령을 생성하면서 예상 발생 위치를 기록합니다. 측정할 때마다 전체 메서드 식별 정보,
+code unit 단위 PC, opcode, 대상 식별 정보, UTF-16 단위와 중복 횟수를 검사합니다.
+독립적으로 예상한 NeverD의 검사 범위 집계 수와 `code_scan_complete`도 확인합니다.
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+`--kind`와 `--workload`로 사례를 선택합니다. `--extra-strings 65536`은 실제 32비트 문자열 인덱스를 검사합니다.
+페이로드 미끼는 기본적으로 활성화됩니다. `--no-payload-lookalikes`는 같은 배치와 실제 참조를 유지하면서 미끼 페이로드 값을
+바꾸어 공통 입력 비교에 사용합니다. 정확성과 측정 결과를 모두 보관하세요. 가짜 페이로드 참조를 반환하거나 실제 참조를 빠뜨리는
+쿼리는 검증에 실패하며 측정값을 받아들이지 않습니다.
+
+선택적 `--peer-command`는 `{input}`, `{kind}`, `{query}`가 포함된 argv 템플릿을 받습니다.
+다른 도구의 의미가 다르면 쿼리 구문을 명시적으로 조정하고 전체 발생 다중집합을 비교하세요.
+선언된 검증 범위를 유지하며 전체 코드 스캔을 수행했다고 주장하지 않습니다. 목록 벤치마크와 같은 새 디렉터리,
+CPU 선호도, 새 프로세스, 따뜻한 캐시 및 RSS 조건이 적용됩니다. `NEVERD_REFERENCE_TEST_BINARY`가 빌드된 실행 파일을
+가리키지 않으면 선택적 CLI 단위 테스트를 건너뛰므로 해당 생략을 보고하세요.
 
 ## 모바일 SDK 내보내기 증거
 

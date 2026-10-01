@@ -46,13 +46,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 I test API coprono valori predefiniti v1/v2/v3, budget espliciti, strutture troncate, tutti i campi reserved e code future. I test CLI verificano esaurimento e recupero riuscito con entrambe le ABI e i backend, rifiutano limiti decimali non validi e richiedono `--devirtualize`. L’esaurimento non deve pubblicare sorgenti o grafi residui parziali.
@@ -112,6 +113,10 @@ build-release/bin/NeverDLowIRRefinementTests
 I test coprono tutte le combinazioni dei flag scalari iniziali, maschere di privilegio, TF/AC in entrambe le esecuzioni, produttori indefiniti distinti, copie correlate, chiamate native, stato dei rami fratelli, osservazione finale obbligatoria, prove malformate e limiti delle risorse. Ogni percorso di input ammissibile dei cicli finiti deve terminare; un ramo sicuro non nasconde un percorso infinito o troncato. RDSSPD/RDSSPQ verifica i 16 registri generali in entrambe le larghezze, bit alti preservati, prove `Missing` mantenute e proiezioni contraffatte rifiutate. I test dello stato macchina confrontano entrambe le vie C a O0/O2 con trap per comportamento indefinito con un oracolo indipendente dei flag utente e verificano che gli errori del profilo restino registrati. I test INCSSPD/INCSSPQ coprono entrambe le larghezze e tutti i registri generali, conservazione dei limiti irraggiungibili, trap ammissibili dopo un ramo fratello completato, operandi zero e prove di trap contraffatte.
 
 `NeverDX86UndefinedEffectsTests` verifica i metadati dei bit indefiniti, i flag definiti o preservati e il rifiuto dei certificati obsoleti. `NeverDX86CarryArithmeticFlagTests` controlla il riporto ausiliario di ADC/SBB nelle forme registro e memoria con un oracolo aritmetico. `NeverDX86LogicIdentityTests` verifica che AND con operandi identici azzeri ancora i bit 63:32 del registro a 64 bit corrispondente quando scrive una destinazione a 32 bit in modalità a 64 bit, preservando i bit non scritti nelle scritture più strette.
+
+`NeverDPEFixedImageTests` usa file PE costruiti indipendentemente per verificare istruzioni rilocate, dati immutabili, scritture delle importazioni, intestazioni/tabelle malformate, alias e provenienza alterata. Le prove dal codice nativo a LowIR e LLVM esatto accettano candidati corrispondenti e rifiutano risultati, stati o byte nativi modificati. L’esaurimento del budget di preparazione resta distinto e consente un nuovo tentativo con limiti esplicitamente aumentati; il caricamento ordinario accetta anche 40000 rilocazioni valide oltre il budget di analisi predefinito.
+
+`NeverDX86NoIndexAddressTests` verifica l’indirizzamento SIB x86 senza indice con indirizzi a 32 e 64 bit: bit di scala ignorati, larghezze di destinazione, letture/scritture, metadati completi degli output indefiniti, offset di segmento e provenienza degli indirizzi. Rifiuta gli pseudoregistri come base o indice di larghezza errata e conserva gli indici R12 reali selezionati da REX.X. I test EVEX di broadcast e trasferimento mascherato coprono anche queste forme, la soppressione degli accessi inattivi e i metadati SIB incoerenti.
 
 Le regressioni coprono tutti i conteggi grezzi a otto bit, combinazioni dei flag con conteggio zero, entrambi i modi x86, tutte le larghezze, alias CL, AH/CH/DH/BH, registri estesi e memoria. L’esecuzione simbolica per byte è confrontata con aritmetica ripetuta a un bit. I test relazionali verificano copie e nuovi flag, salvataggi, visite dei cicli, conteggi derivati da valori indefiniti, rami, formati non validi, digest e budget. Le letture finite coprono 1/2/4/8 byte, selezione dipendente dall’ingresso, insiemi singoli per percorso, evidenze complete e limiti; rifiutano candidati dipendenti, mancanti, scrivibili, non presenti nel file, rilocati o illimitati.
 
@@ -907,6 +912,96 @@ execution fault e `SBFSourceStatuses.def` possiede separatamente l’ABI source.
 Fixture in scala 10,000 proteggono worklist, function ownership e multi-latch
 senza fissare tempi di macchina. Le righe cluster/account/slot consentono un
 `RPC activation audit` mentre i test ordinari restano deterministic e offline.
+
+## Prestazioni dell’inventario delle classi Android
+
+Compila `NeverDMobileTests` in Release ed esegui la relativa etichetta prima di
+misurare `neverd mobile INPUT --list-classes`. I test del lettore coprono metadati
+sparsi, Unicode, riferimenti non validi, corpi di metodo non supportati, checksum
+e budget; quelli degli archivi distinguono l’estrazione completa dalle query sui
+payload selezionati. I test CLI verificano filtri di prefisso, ambito JSON,
+preservazione dell’output e atomicità degli errori multidex.
+
+Il sistema indipendente di fixture e misurazione convalida l’intero inventario
+dei descrittori di ogni processo prima di accettare un campione temporale:
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Usa una nuova directory di output per ogni esecuzione. `--generate-only` scrive
+fixture e manifest senza misure temporali. `--workload` seleziona i tipi di input
+comuni per un eventuale `--peer-command 'tool {input} {prefix}'`; la preparazione
+dell’input resta fuori dal comando misurato. I report conservano hash, comandi,
+tutti i campioni da nuovi processi, ipotesi sulla cache calda e, su Linux con GNU
+time, il massimo RSS del processo figlio. Questo RSS non è il picco combinato di
+uno strumento multiprocesso. Gli APK sintetici sono contenitori per query, non
+app installabili. La velocità dell’inventario non dimostra né quella della
+ricerca dei riferimenti né la qualità del recupero Java.
+
+Sulle CPU ibride, vincola il sistema di misura e i figli che ne ereditano le
+impostazioni alla stessa CPU consentita (per esempio `taskset -c 4 python3 ...`
+su Linux) per non mescolare core ad alte prestazioni e a basso consumo. Il report
+registra l’affinità CPU ereditata.
+
+## Prestazioni dei riferimenti nel codice Android
+
+Le query sui riferimenti condividono i confini delle istruzioni e la convalida
+del codice del lettore di recupero. Esegui la suite mobile dopo modifiche a
+questo confine. I test del lettore coprono tipi di pool degli operandi, modalità
+di corrispondenza, appartenenza dei metodi e codice condiviso, payload/immediati
+che imitano riferimenti, input malformati e limiti delle risorse. I flussi di
+debug condivisi vengono verificati rispetto a frame, estensione e parametri di
+ogni corpo proprietario. Mantieni nella copertura dei limiti di memoria sia
+grandi inventari dei membri sia corpi densi di salti; indici persistenti e
+crescita dei contenitori temporanei hanno durate diverse.
+Controlla anche elementi riordinati e sovrapposti, codice condiviso con prototipi
+incompatibili della stessa larghezza, memoria di input non allineata e
+corrispondenze di sottostringhe che attraversano i confini dei blocchi di ricerca.
+Le ottimizzazioni dei dati privati del decoder devono preservare i modelli di
+recupero completi con dati propri e i multinsiemi delle occorrenze dei
+riferimenti, incluso il comportamento di errore per metadati di recupero non
+supportati. Distingui le aspettative generate indipendentemente dall’accordo
+tra strumenti su input reali.
+
+Il sistema indipendente per i riferimenti registra le occorrenze attese mentre
+emette le istruzioni. Controlla identità complete dei metodi, PC in unità di
+codice, opcode, identità delle destinazioni, unità UTF-16 e molteplicità a ogni
+esecuzione misurata. Verifica anche i conteggi di copertura attesi di NeverD,
+determinati indipendentemente, e `code_scan_complete`:
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Usa `--kind` e `--workload` per selezionare i casi. `--extra-strings 65536`
+esercita veri indici di stringa a 32 bit. I payload esca sono abilitati per
+impostazione predefinita; `--no-payload-lookalikes` mantiene disposizione e
+riferimenti reali, sostituendo i valori esca nei payload per confronti su input
+comuni. Conserva sia i risultati di correttezza sia quelli temporali. Una query
+che restituisce falsi riferimenti ai payload o omette riferimenti reali non
+supera la convalida e non riceve una misura temporale accettata.
+
+L’opzione facoltativa `--peer-command` accetta un modello argv contenente
+`{input}`, `{kind}` e `{query}`. Adatta esplicitamente la sintassi della query
+quando un altro strumento usa semantiche diverse e confronta multinsiemi
+completi delle occorrenze. Il suo ambito di convalida dichiarato viene conservato
+senza affermare una scansione completa del codice. Si applicano le stesse
+precisazioni su directory nuove, affinità CPU, processi nuovi, cache calda e RSS
+del benchmark dell’inventario. Il test CLI facoltativo viene saltato se
+`NEVERD_REFERENCE_TEST_BINARY` non indica l’eseguibile compilato; segnala il test
+saltato.
 
 ## Evidenze delle esportazioni degli SDK mobili
 

@@ -46,13 +46,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 Las pruebas de API cubren valores predeterminados v1/v2/v3, presupuestos explícitos, estructuras truncadas, todos los campos reserved y colas futuras. Las pruebas CLI comprueban agotamiento y recuperación correcta con ambas ABI y motores, rechazan límites decimales inválidos y exigen `--devirtualize`. El agotamiento no debe publicar código ni grafos residuales parciales.
@@ -112,6 +113,10 @@ build-release/bin/NeverDLowIRRefinementTests
 Las pruebas cubren todas las combinaciones de indicadores escalares de entrada, máscaras de privilegio, TF/AC en ambas ejecuciones, productores indefinidos distintos, copias correlacionadas, llamadas nativas, estados de ramas hermanas, observación final obligatoria, evidencia malformada y límites de recursos. Todo camino factible de entrada de un bucle finito debe terminar; una rama segura no oculta un camino infinito o truncado. RDSSPD/RDSSPQ cubre los 16 registros generales y ambas anchuras, preservación de bits altos, evidencia `Missing` conservada y rechazo de proyecciones falsificadas. Las pruebas de estado de máquina comparan ambas rutas C en O0/O2 con trampas de comportamiento indefinido frente a un oráculo independiente de indicadores de usuario y comprueban que el fallo de perfil persiste. Las pruebas INCSSPD/INCSSPQ cubren ambas anchuras y todos los registros generales, conservación de límites inalcanzables, trampas factibles tras completar una rama hermana, operandos cero y evidencia de trampa falsificada.
 
 `NeverDX86UndefinedEffectsTests` comprueba metadatos de bits indefinidos, flags definidos o preservados y el rechazo de certificados obsoletos. `NeverDX86CarryArithmeticFlagTests` comprueba el acarreo auxiliar de ADC/SBB en las formas de registro y memoria frente a un oráculo aritmético. `NeverDX86LogicIdentityTests` verifica que AND con operandos idénticos siga poniendo a cero los bits 63:32 del registro de 64 bits correspondiente al escribir un destino de 32 bits en modo de 64 bits y preserve los bits no escritos de destinos más estrechos.
+
+`NeverDPEFixedImageTests` usa archivos PE construidos independientemente para comprobar instrucciones reubicadas, datos inmutables, escrituras de importaciones, cabeceras/tablas malformadas, alias y procedencia alterada. Las pruebas de código nativo a LowIR y LLVM exacto aceptan candidatos coincidentes y rechazan resultados, estados o bytes nativos modificados. El agotamiento del presupuesto de preparación conserva su clasificación y permite reintentar con límites ampliados explícitamente; la carga ordinaria también acepta 40000 reubicaciones válidas por encima del presupuesto de análisis predeterminado.
+
+`NeverDX86NoIndexAddressTests` comprueba el direccionamiento SIB x86 sin índice con direcciones de 32 y 64 bits: bits de escala ignorados, anchuras de destino, cargas/almacenamientos, metadatos completos de salidas indefinidas, desplazamientos de segmento y procedencia de direcciones. Rechaza seudorregistros como base o índice de anchura incorrecta y conserva los índices R12 reales seleccionados por REX.X. Las pruebas EVEX de difusión y movimientos enmascarados también cubren estas formas, la supresión de accesos inactivos y los metadatos SIB contradictorios.
 
 Las regresiones cubren todos los contadores de ocho bits, combinaciones de indicadores con cuenta cero, ambos modos x86, todos los anchos, alias CL, AH/CH/DH/BH, registros extendidos y memoria. La ejecución simbólica por bytes se contrasta con aritmética repetida bit a bit. Las pruebas relacionales verifican copias y nuevos indicadores, guardados, bucles, cuentas derivadas de valores indefinidos, ramas, formatos inválidos, resúmenes y presupuestos. Las lecturas finitas cubren 1/2/4/8 bytes, selección según entrada, conjuntos unitarios por ruta, testigos completos y límites; rechazan candidatos dependientes, ausentes, modificables, sin respaldo de archivo, reubicados o ilimitados.
 
@@ -911,6 +916,97 @@ Fixtures de escala 10,000 protegen worklist, function ownership y multi-latch
 sin fijar tiempo de máquina. Las filas cluster/account/slot permiten un
 `RPC activation audit` mientras las pruebas normales siguen deterministic y
 offline.
+
+## Rendimiento del inventario de clases Android
+
+Compile `NeverDMobileTests` en Release y ejecute su etiqueta antes de medir
+`neverd mobile INPUT --list-classes`. Las pruebas del lector cubren metadatos
+dispersos, Unicode, referencias inválidas, cuerpos de métodos no admitidos,
+sumas de comprobación y presupuestos; las pruebas de archivos distinguen la
+extracción completa de las consultas de cargas seleccionadas. Las pruebas CLI
+comprueban filtrado por prefijo, alcance JSON, conservación de salidas y
+atomicidad ante fallos multidex.
+
+El generador y banco de medición independientes validan el inventario completo
+de descriptores de cada proceso antes de aceptar una muestra de tiempo:
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Use un directorio de salida nuevo en cada ejecución. `--generate-only` escribe
+los casos de prueba y su manifiesto sin medir tiempos. `--workload` selecciona
+tipos de entrada comunes para un `--peer-command 'tool {input} {prefix}'`
+opcional; la preparación de entradas queda fuera del comando cronometrado.
+Los informes conservan hashes, comandos, todas las muestras de procesos nuevos,
+las hipótesis de caché caliente y, en Linux con GNU time, el RSS máximo de los
+procesos hijos. Este RSS no es el pico combinado de una herramienta
+multiproceso. Los APK sintéticos son contenedores de consulta, no aplicaciones
+instalables. La velocidad del inventario no demuestra la velocidad de búsqueda
+de referencias ni la calidad de recuperación Java.
+
+En CPU híbridas, fije el banco y sus hijos a la misma CPU permitida (por ejemplo,
+`taskset -c 4 python3 ...` en Linux) para no mezclar núcleos de rendimiento y de
+eficiencia. El informe registra la afinidad de CPU heredada.
+
+## Rendimiento de referencias de código Android
+
+Las consultas de referencias comparten límites de instrucciones y validación
+de código con el lector de recuperación. Ejecute la suite móvil tras cambiar
+este límite. Las pruebas del lector cubren tipos de pools de operandos, modos
+de búsqueda, pertenencia de métodos y código compartido, valores engañosos en
+cargas/inmediatos, entradas malformadas y límites de recursos. Los flujos de
+depuración compartidos se comprueban con el marco, la extensión y los parámetros
+de cada cuerpo propietario. Mantenga inventarios grandes de miembros y cuerpos
+con muchos saltos en la cobertura de límites de almacenamiento; los índices
+persistentes y el crecimiento temporal de contenedores tienen vidas distintas.
+Compruebe también elementos reordenados y solapados, código compartido con
+prototipos incompatibles del mismo ancho, almacenamiento de entrada no alineado
+y subcadenas que cruzan límites de bloques de búsqueda. Las optimizaciones de
+datos privados del decodificador deben conservar los modelos completos de
+recuperación con datos propios y los multiconjuntos de apariciones de referencias,
+incluido el comportamiento de fallo ante metadatos de recuperación no admitidos.
+Distinga expectativas emitidas de forma independiente de la coincidencia entre
+herramientas sobre entradas reales.
+
+El banco independiente de referencias registra las apariciones esperadas al
+emitir instrucciones. En cada ejecución medida comprueba identidades completas
+de métodos, PC en unidades de código, opcodes, identidades de destino, unidades
+UTF-16 y multiplicidad. También comprueba los contadores de cobertura de NeverD
+esperados de forma independiente y `code_scan_complete`:
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Use `--kind` y `--workload` para seleccionar casos. `--extra-strings 65536`
+ejercita índices de cadenas reales de 32 bits. Los señuelos de cargas están
+activados por defecto; `--no-payload-lookalikes` conserva la distribución y
+las referencias verdaderas, sustituyendo los valores señuelo para comparaciones
+con entradas comunes. Conserve los resultados de corrección y de tiempos.
+Una consulta que devuelve referencias falsas de cargas u omite referencias
+reales falla la validación y no obtiene una medida de tiempo aceptada.
+
+El `--peer-command` opcional acepta una plantilla argv con `{input}`, `{kind}`
+y `{query}`. Adapte explícitamente la sintaxis de consulta cuando otra herramienta
+use una semántica diferente y compare multiconjuntos completos de apariciones.
+Se conserva su alcance de validación declarado sin atribuirle un análisis
+completo del código. Se aplican las mismas condiciones sobre directorios nuevos,
+afinidad de CPU, procesos nuevos, caché caliente y RSS que en el banco de
+inventario. La prueba unitaria CLI opcional se omite salvo que
+`NEVERD_REFERENCE_TEST_BINARY` indique el ejecutable compilado; informe de
+esa omisión.
 
 ## Evidencia de exportaciones de los SDK móviles
 

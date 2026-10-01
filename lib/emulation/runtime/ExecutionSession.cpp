@@ -11,27 +11,33 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace neverd::emulation {
-llvm::Expected<std::unique_ptr<ExecutionSession>>
-ExecutionSession::create(std::unique_ptr<ExecutionBackend> CPU,
-                         std::shared_ptr<ExecutionBudget> Budget,
-                         std::function<bool(const BackendFault &)> Recovery) {
+llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
+    std::unique_ptr<ExecutionBackend> CPU,
+    std::shared_ptr<ExecutionBudget> Budget,
+    std::function<bool(const BackendFault &)> Recovery,
+    std::function<void(uint64_t, uint32_t)> InstructionObserver) {
   if (!CPU || !Budget)
     return diagnostic::error(runtime::SessionResources);
   auto Session = std::unique_ptr<ExecutionSession>(
       new ExecutionSession(std::move(CPU), std::move(Budget)));
   BackendHooks Hooks;
-  Hooks.Instruction = [S = Session.get()](uint64_t, uint32_t) {
-    if (!S->Budget->hasInstructions())
-      S->AdmissionStop = SessionExitKind::InstructionLimit;
-    else if (S->Admitted == S->Quantum)
-      S->AdmissionStop = SessionExitKind::Quantum;
-    else if (!S->Budget->consumeInstructions())
-      S->AdmissionStop = SessionExitKind::InstructionLimit;
-    else
-      ++S->Admitted;
-    if (S->AdmissionStop)
-      S->CPU->stop();
-  };
+  Hooks.Instruction =
+      [S = Session.get(),
+       Observer = std::move(InstructionObserver)](uint64_t PC, uint32_t Size) {
+        if (!S->Budget->hasInstructions())
+          S->AdmissionStop = SessionExitKind::InstructionLimit;
+        else if (S->Admitted == S->Quantum)
+          S->AdmissionStop = SessionExitKind::Quantum;
+        else if (!S->Budget->consumeInstructions())
+          S->AdmissionStop = SessionExitKind::InstructionLimit;
+        else {
+          ++S->Admitted;
+          if (Observer)
+            Observer(PC, Size);
+        }
+        if (S->AdmissionStop)
+          S->CPU->stop();
+      };
   Hooks.RecoverableFault = std::move(Recovery);
   if (auto E = Session->CPU->installHooks(std::move(Hooks)))
     return std::move(E);

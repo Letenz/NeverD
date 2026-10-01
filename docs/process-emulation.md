@@ -13,8 +13,10 @@ the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
 signals, threads, file systems and unsupported services fail
-explicitly. Windows user processes, Android, Darwin and other kernel workloads
-remain separate implementation work.
+explicitly. The [Android native profile](android-native-emulation.md),
+`android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
+function calls and Bionic models. Windows user processes, Android managed
+runtimes, Darwin and other kernel workloads remain separate work.
 
 <!-- i18n-section: cli-sdk -->
 

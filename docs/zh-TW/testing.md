@@ -41,13 +41,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 恢復 API 測試涵蓋 v1/v2/v3 預設值、明確預算、截斷結構、各層 reserved 欄位與未來尾部相容性。CLI 測試在兩種 ABI、兩個原始碼後端下檢查欄位／查詢預算耗盡及成功恢復，拒絕非法十進位上限，並要求 `--devirtualize`。預算耗盡不得發布原始碼或部分殘餘圖。
@@ -107,6 +108,10 @@ build-release/bin/NeverDLowIRRefinementTests
 封裝旗標測試涵蓋全部純量入口旗標組合、特權遮罩、兩次執行的 TF/AC 條件、不同未定義產生點、相關副本、原生呼叫、兄弟路徑狀態、強制最終系統狀態觀察、畸形證據及資源計費。有限迴圈必須結束每條可行輸入路徑；安全分支不能掩蓋無限或截斷路徑。RDSSPD/RDSSPQ 檢查涵蓋 16 個通用暫存器和兩種寬度、高位元保持、保留 `Missing` 證據及偽造投影拒絕。機器狀態測試在兩個 C 後端的 O0/O2 下啟用未定義行為陷阱，與獨立使用者模式旗標預言機比較，並檢查環境失敗狀態不會被後續操作清除。 INCSSPD/INCSSPQ 測試涵蓋兩種寬度和全部通用暫存器、不可達邊界保留、安全兄弟路徑完成後的可行陷阱、零運算元及偽造陷阱證據。
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
+
+`NeverDPEFixedImageTests` 使用獨立建構的 PE 檔案，檢查含重定位的指令與不可變資料、匯入寫入範圍、畸形標頭／表格、別名及來源資訊竄改。原生到 LowIR 與精確 LLVM 證明接受相符候選，拒絕結果、狀態或原始位元組遭修改的候選。準備預算耗盡維持獨立分類，允許明確提高限額後重試；一般載入也接受含 40000 筆有效重定位記錄、超過預設分析預算的檔案。
+
+`NeverDX86NoIndexAddressTests` 檢查 32／64 位元位址寬度下無索引的 x86 SIB 定址：忽略縮放位元、目的暫存器寬度、載入／儲存、完整未定義輸出中繼資料、區段偏移與位址來源。測試拒絕將虛擬暫存器用作基底或寬度錯誤的索引，並保留 REX.X 選取的真實 R12 索引。EVEX 廣播及遮罩移動測試也涵蓋這些形式、非作用中記憶體存取抑制與不一致的 SIB 中繼資料。
 
 移位回歸涵蓋所有八位元原始次數、零次移位旗標組合、兩種 x86 模式、全部純量位寬、CL 與目的地重疊、AH/CH/DH/BH、擴充暫存器及記憶體。以位元組建模的符號執行對照逐位算術模型，檢查已定義結果與守衛條件。關係測試檢查複製與新生旗標、暫存溢出保存、迴圈重訪、未定義值衍生次數、分支拒絕、畸形編碼及摘要和預算失敗。有限不可變讀取涵蓋 1/2/4/8 位元組、輸入相關選擇、路徑內單位址集合、完整讀取見證與上限綁定，並拒絕相依、缺失、可寫、無檔案支援、重定位或無界候選。
 
@@ -789,6 +794,64 @@ execution fault 的穩定值；`SBFSourceStatuses.def` 獨立擁有 generated-so
 10,000 規模 fixture 守護 worklist、function ownership 與 multi-latch，不固定特定機器
 的耗時。cluster/account/slot row 支援 `RPC activation audit`，一般測試仍保持
 deterministic 與 offline。
+
+## Android 類別清單效能
+
+在量測 `neverd mobile INPUT --list-classes` 前，以 Release 建置 `NeverDMobileTests` 並執行其標籤。
+讀取器測試涵蓋稀疏中繼資料、Unicode、無效參照、不支援的方法本體、校驗和及預算；
+封存測試區分完整擷取與選定內容查詢。CLI 測試檢查前綴篩選、JSON 範圍、既有輸出保護及 multidex 失敗原子性。
+
+獨立的樣本／量測工具在接受計時樣本前，會驗證每個程序的完整描述符清單：
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+每次執行使用新的輸出目錄。`--generate-only` 只寫入樣本和 manifest，不計時。
+`--workload` 為選用的 `--peer-command 'tool {input} {prefix}'` 選擇共用輸入類型；
+輸入準備不計入命令時間。報告保留雜湊、命令、所有新程序樣本、暖快取假設，以及在具有 GNU time
+的 Linux 上的最大子程序 RSS。該 RSS 不是多程序工具的合計尖峰。合成 APK 是查詢容器，不是可安裝的應用程式。
+清單速度不能證明參照搜尋速度或 Java 還原品質。
+
+混合核心 CPU 上，將量測工具及其繼承的子程序綁定至同一個允許的 CPU（例如 Linux 的
+`taskset -c 4 python3 ...`），避免混合效能核心與效率核心。報告會記錄繼承的 CPU 親和性。
+
+## Android 程式碼參照效能
+
+參照查詢與還原讀取器共用指令邊界和程式碼驗證。修改此邊界後應執行行動測試套件。
+讀取器測試涵蓋運算元池種類、比對模式、方法歸屬與共用程式碼、看似參照的 payload／立即值、
+格式錯誤輸入及資源限制。共用除錯資料流須依每個所屬本體的框架、範圍和參數檢查。
+儲存上限測試應同時保留大型成員清單及密集分支本體；持久索引和暫時容器擴充的生命週期不同。
+另須檢查重新排序和重疊項目、寬度相同但原型不相容的共用程式碼、未對齊輸入儲存，以及跨越搜尋區塊邊界的子字串。
+私有解碼資料的效能變更必須保留完整的具所有權還原模型及參照出現多重集合，包括不支援還原中繼資料時的失敗行為。
+請區分獨立產生的預期結果與真實輸入上的跨工具一致性。
+
+獨立參照量測工具在產生指令時記錄預期出現位置。每次量測都檢查完整方法身分、以 code unit
+計算的 PC、opcode、目標身分、UTF-16 單位和重複次數，並檢查獨立預期的 NeverD 覆蓋計數及 `code_scan_complete`：
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+使用 `--kind` 和 `--workload` 選擇案例。`--extra-strings 65536` 測試實際的 32 位元字串索引。
+預設啟用 payload 誘餌；`--no-payload-lookalikes` 保留相同配置和真實參照，只替換誘餌 payload 值，
+供共同輸入比較使用。正確性和計時結果都要保留。若查詢回傳假的 payload 參照或漏掉真實參照，驗證失敗且計時不被接受。
+
+選用的 `--peer-command` 接受含 `{input}`、`{kind}` 和 `{query}` 的 argv 範本。
+若其他工具語義不同，須明確調整查詢語法並比較完整出現多重集合。報告保留其宣告的驗證範圍，不宣稱完整程式碼掃描。
+清單基準的全新目錄、CPU 親和性、新程序、暖快取及 RSS 限定同樣適用。
+除非 `NEVERD_REFERENCE_TEST_BINARY` 指向已建置的可執行檔，否則選用 CLI 單元測試會略過；請報告該略過情況。
 
 ## 行動 SDK 匯出證據
 

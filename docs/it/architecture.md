@@ -74,6 +74,8 @@ occorrenze native e delle patch binarie.
 
 `InterpreterSpecialization` gestisce la propagazione inversa limitata delle richieste di bit dopo un tentativo fallito. Riutilizza il valutatore scalare senza cambiare i fatti del grafo né aggiungere campi di controllo o contesti; tutto il lavoro resta soggetto ai budget e la pubblicazione richiede una nuova prova completa.
 
+`NeverDLoader` gestisce `PEFixedImageView` e condivide l’analisi completa delle rilocazioni di base con il caricamento PE ordinario. L’adattatore dell’interprete binario usa questa vista autenticata alla base preferita per recupero e prove native, senza analizzare autonomamente le tabelle PE. La preparazione verifica scritture delle importazioni, identità delle mappature e campi originali completi prima di certificare i byte. La vista prende in prestito un’immagine invariata e non dimostra equivalenza di ASLR o inizializzazione.
+
 `modelInterpreterMachineStateX64` e il wrapper sorgente condividono un generatore per sottoregistri ospiti, flag impacchettati, stato del profilo e flusso di controllo. Il modello sostituisce solo gli accessi all’oggetto di stato con byte di registro espliciti e separa lo stato dal RAX ospite. Non possiede la semantica del compilatore o la politica di prova; dominio di ingresso, osservazioni, contratto del frame e verifica completa del raffinamento restano al chiamante.
 
 `NeverDLLVMInterpreterModel` gestisce l’importazione LLVM scalare separata e limitata nella stessa ABI di stato grezzo. `modelLLVMInterpreterMachineStateX64` conserva lo stato effettivo e genera controlli di definitezza. `llvmInterpreterMachineStateContract` fornisce osservazioni complete e conservazione del monitor zero; dominio, memoria e prova completa spettano al chiamante. Non modifica lifting ordinario o pubblicazione dei sorgenti e non dimostra il compilatore.
@@ -552,6 +554,45 @@ distinta e non è implicato dal riconoscimento della personality né dal lowerin
 nativo.
 
 ## Mappa dei componenti
+
+La CLI mobile sperimentale gestisce le query di inventario delle classi e dei
+riferimenti nel codice APK/DEX in `tools/neverd/mobile`. Entrambe usano lo stesso
+lettore dell’involucro DEX/MUTF-8 e lo stesso validatore dei metadati ZIP del
+recupero. L’inventario materializza solo le identità delle classi. Le query sui
+riferimenti osservano gli operandi dei pool nel decoder di istruzioni esistente,
+condividendo la convalida dell’appartenenza di classi e membri e del flusso del
+codice; non esiste un decoder separato delle larghezze delle istruzioni. Il
+decoder produce fatti compatti sul flusso in entrambe le modalità; il recupero
+crea inoltre istruzioni con dati propri. Le query conservano solo gli operandi
+di riferimento selezionati dopo aver convalidato ogni operando. Le voci private
+dei pool dei membri prendono in prestito le tabelle degli identificatori
+complete e immutabili; i modelli di recupero e i risultati dei riferimenti
+materializzano esplicitamente dati dei membri di loro proprietà. Anche le voci
+dei prototipi prendono in prestito liste di tipi convalidate. Entrambe le
+rappresentazioni usano lo stesso formattatore canonico delle identità dei metodi
+e lo stesso validatore dei flag di accesso codificati. Il decoder risolve una
+sola volta gli archi privati dei salti in indici ordinali di istruzione; le
+destinazioni pubbliche del recupero mantengono i PC in unità di codice. Le query
+riusano le tabelle delle classi convalidate e raccolgono gli intervalli degli
+elementi per sezione mappata, verificando le sovrapposizioni prima della
+pubblicazione anche quando gli elementi fisici arrivano fuori ordine.
+Gli addebiti di lavoro restano immediati. Letture scalari limitate, confronti
+brevi e passi di istruzione condividono punti di controllo della scadenza;
+operazioni più grandi effettuano il controllo direttamente. I flussi di debug
+vengono controllati per frame ed estensione di ogni elemento di codice senza
+memorizzare un esito positivo indipendente dal contesto. I siti compatti vengono
+riprodotti per ogni proprietario di un elemento fisico di codice condiviso. La
+corrispondenza delle query gestisce la selezione letterale della destinazione,
+mentre il ponte dei contenitori gestisce aggregazione tra DEX e pubblicazione
+JSON, incluse le unità UTF-16 delle stringhe senza perdita.
+`visitZipMembers` convalida tutti i metadati dei membri e i payload selezionati
+completi prima di visitarli in memoria; `extractZip` conserva la convalida dei
+payload dell’intero archivio. I risultati delle query vengono accumulati prima
+della pubblicazione ed escludono esplicitamente l’integrità dei payload non
+selezionati. L’inventario delle classi esclude i corpi dei metodi; le query sui
+riferimenti convalidano ogni corpo definito ma non dichiarano di convalidare
+annotazioni o recupero Java. Nessuno dei due percorsi estende il contratto dei
+formati binari nativi dell’SDK.
 
 Ogni componente è un archivio statico creato da
 `add_neverd_component_library`. La tabella elenca le dipendenze NeverD

@@ -162,6 +162,28 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
       Edge.BlockId = It != OldToNew.end() ? It->second : -1;
     }
   }
+  // Jump threading can merge the taken and fallthrough edges of a conditional.
+  // Canonicalize it before SSA: downstream structuring must not infer a false
+  // edge from physical block order when both outcomes have the same target.
+  // Keep condition-producing operations, including their observable effects.
+  for (auto &Blk : NewBlocks) {
+    if (Blk.Ops.empty() || Blk.Succs.empty() || Blk.Succs.size() > 2 ||
+        (Blk.Succs.size() == 2 && Blk.Succs[0] != Blk.Succs[1]))
+      continue;
+    auto &Terminator = Blk.Ops.back();
+    if (Terminator.Opcode != NdOp::COND_BR || Terminator.NumInputs != 2 ||
+        !Terminator.Inputs[0].isConst())
+      continue;
+    const auto &Target = NewBlocks[Blk.Succs.front()];
+    const va_t Address = Terminator.Inputs[0].ConstVal;
+    if (Target.StartAddr != Address &&
+        (Target.Ops.empty() || Target.Ops.front().Addr != Address))
+      continue;
+    Terminator.Opcode = NdOp::BRANCH;
+    Terminator.NumInputs = 1;
+    Terminator.Inputs[1] = {};
+    Blk.Succs.resize(1);
+  }
   // Preds are derived data. Rebuild them from the retained successor edges so
   // removing an empty block cannot leave a stale predecessor ID or make the
   // two edge directions disagree.

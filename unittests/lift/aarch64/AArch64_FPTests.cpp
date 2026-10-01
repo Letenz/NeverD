@@ -44,6 +44,95 @@ TEST_F(AArch64_FP, AllStagesPass) {
 
 TEST_F(AArch64_FP, NoUnlifted) { verifyNoUnlifted(testObj()); }
 
+TEST_F(AArch64_FP, ZeroCompareFlagsExecuteThroughBothCRoutes) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "floating-point source execution requires Clang";
+  const auto Assembly = tmpFile("fp-zero.s");
+  const auto Object = tmpFile("fp-zero.o");
+  {
+    std::ofstream Out(Assembly);
+    Out << ".text\n";
+    for (const char *Register : {"s", "d"}) {
+      for (bool Signaling : {false, true}) {
+        const auto Name =
+            std::string("fp_zero_") + Register + (Signaling ? "e" : "");
+        Out << ".global " << Name << "\n.type " << Name << ",%function\n"
+            << Name << ":\n  fmov " << Register << "0, "
+            << (Register[0] == 'd' ? "x0" : "w0") << "\n  "
+            << (Signaling ? "fcmpe" : "fcmp") << " " << Register << "0, #0.0\n"
+            << "  cset w1, mi\n  cset w2, cs\n  cset w3, vs\n"
+            << "  b.ne 1f\n  mov w0, #2\n  b 2f\n1:\n  mov w0, #0\n2:\n"
+            << "  orr w0, w0, w1\n  orr w0, w0, w2, lsl #2\n"
+            << "  orr w0, w0, w3, lsl #3\n  ret\n.size " << Name << ",.-"
+            << Name << "\n";
+      }
+    }
+  }
+  const auto Assembled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "aarch64-none-elf", "-march=armv8.2-a+fp16", "-c",
+            Assembly.string(), "-o", Object.string()});
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  const std::string Harness = R"C(
+#include <stdint.h>
+int main(void) {
+  const uint64_t signs[] = {UINT64_C(0x80000000),
+                            UINT64_C(0x8000000000000000)};
+  const uint64_t exponents[] = {UINT64_C(0x7f800000),
+                                UINT64_C(0x7ff0000000000000)};
+  const uint64_t mantissas[] = {UINT64_C(0x7fffff),
+                                UINT64_C(0xfffffffffffff)};
+  uint64_t random = UINT64_C(0xb71943d2836aa815);
+  for (unsigned width = 0; width != 2; ++width) {
+    const uint64_t sign = signs[width], exponent = exponents[width];
+    const uint64_t mantissa = mantissas[width];
+    const uint64_t edges[] = {0, sign, 1, sign | 1, exponent,
+      sign | exponent, exponent | 1, sign | exponent | 1,
+      exponent | (mantissa >> 1), exponent - 1, sign | (exponent - 1)};
+    for (unsigned i = 0; i != 523; ++i) {
+      random = random * UINT64_C(6364136223846793005) + 1;
+      uint64_t bits = (i < 11 ? edges[i] : random) &
+                      (sign | exponent | mantissa);
+      int nan = (bits & exponent) == exponent && (bits & mantissa) != 0;
+      int zero = (bits & ~sign) == 0;
+      int negative = (bits & sign) != 0 && !zero && !nan;
+      // Return N | (Z << 1) | (C << 2) | (V << 3). Unordered is 0b1100.
+      unsigned expected = nan ? 12 : zero ? 6 : negative ? 1 : 4;
+      if (width == 0 && (fp_zero_s(bits) != expected ||
+                        fp_zero_se(bits) != expected)) return 1;
+      if (width == 1 && (fp_zero_d(bits) != expected ||
+                        fp_zero_de(bits) != expected)) return 2;
+    }
+  }
+  return 0;
+}
+)C";
+  for (bool LLVMRoute : {false, true}) {
+    SCOPED_TRACE(LLVMRoute ? "LLVMC" : "HighC");
+    const auto Decompiled =
+        LLVMRoute ? decompileToC(Object) : decompileToHighC(Object);
+    ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+    std::ifstream Input(
+        tmpFile(LLVMRoute ? "decompiled.c" : "decompiled_high.c"));
+    ASSERT_TRUE(Input.good());
+    const std::string Source((std::istreambuf_iterator<char>(Input)),
+                             std::istreambuf_iterator<char>());
+    ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+    const auto CFile = tmpFile("fp-zero-generated.c");
+    std::ofstream(CFile) << Source << "\n" << Harness;
+    const auto Program = tmpFile("fp-zero-generated.exe");
+    for (const char *Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      const auto Compiled =
+          exec(NEVERD_TEST_CLANG, {"-std=gnu11", Level, CFile.string(), "-lm",
+                                   "-o", Program.string()});
+      ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << Source;
+      const auto Executed = exec(Program.string(), {});
+      EXPECT_EQ(Executed.exitCode, 0) << Executed.err << "\n" << Source;
+    }
+  }
+}
+
 TEST_F(AArch64_FP, FaddLifts) {
   verifyLowIRContains(testObj(), "test_fadd_a64", "FLOAT_ADD");
 }

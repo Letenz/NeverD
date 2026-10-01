@@ -47,13 +47,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Strukturen, alle reserved-Felder und künftige Anhänge. CLI-Tests prüfen Feld-/Abfrageerschöpfung und erfolgreiche Wiederherstellung für beide ABIs und Backends, lehnen ungültige Dezimalgrenzen ab und verlangen `--devirtualize`. Erschöpfte Budgets dürfen weder Quellcode noch partielle Restgraphen veröffentlichen.
@@ -113,6 +114,10 @@ build-release/bin/NeverDLowIRRefinementTests
 Tests gepackter Flags prüfen alle skalaren Eingangsflagkombinationen, Privilegmasken, TF/AC in beiden Ausführungen, getrennte undefinierte Erzeuger, korrelierte Kopien, native Aufrufe, Geschwisterpfade, verpflichtende Endzustandsbeobachtung, fehlerhafte Belege und Ressourcenlimits. Alle möglichen Eingabepfade endlicher Schleifen müssen terminieren; ein sicherer Zweig verdeckt keinen unendlichen oder abgeschnittenen Pfad. RDSSPD/RDSSPQ prüft alle 16 allgemeinen Register in beiden Breiten, erhaltene obere Bits, unveränderte `Missing`-Belege und abgelehnte gefälschte Projektionen. Maschinenzustandstests vergleichen beide C-Wege bei O0/O2 mit Fallen für undefiniertes Verhalten gegen ein unabhängiges Benutzermodus-Flagorakel und prüfen dauerhaft gespeicherte Profilfehler. INCSSPD/INCSSPQ-Tests prüfen beide Breiten und alle allgemeinen Register, erhaltene unerreichbare Grenzen, ausführbare Traps nach einem abgeschlossenen Geschwisterpfad, Nulloperanden und gefälschte Trap-Belege.
 
 `NeverDX86UndefinedEffectsTests` prüft Metadaten undefinierter Bits, definierte oder erhaltene Flags und die Ablehnung veralteter Zertifikate. `NeverDX86CarryArithmeticFlagTests` prüft den Hilfsübertrag von ADC/SBB für Register- und Speicherformen anhand eines arithmetischen Orakels. `NeverDX86LogicIdentityTests` prüft, dass AND mit identischen Operanden im 64-Bit-Modus beim Schreiben eines 32-Bit-Ziels weiterhin die Bits 63:32 des zugehörigen 64-Bit-Registers löscht und bei schmaleren Schreibzugriffen die ungeschriebenen Bits erhält.
+
+`NeverDPEFixedImageTests` prüft mit unabhängig erstellten PE-Dateien relokierte Instruktionen, unveränderliche Daten, Import-Schreibbereiche, fehlerhafte Header/Tabellen, Aliase und geänderte Herkunftsdaten. Beweise von nativen Instruktionen zu LowIR und exaktem LLVM akzeptieren passende Kandidaten und lehnen geänderte Ergebnisse, Statuswerte oder native Bytes ab. Ein erschöpftes Vorbereitungsbudget bleibt separat erkennbar und erlaubt eine Wiederholung mit ausdrücklich erhöhten Grenzen; normales Laden akzeptiert auch 40000 gültige Relokationen oberhalb des Standardbudgets der Analyse.
+
+`NeverDX86NoIndexAddressTests` prüft x86-SIB-Adressierung ohne Index bei 32 und 64 Bit Adressbreite: ignorierte Skalierungsbits, Zielbreiten, Laden/Speichern, vollständige Metadaten undefinierter Ausgaben, Segmentoffsets und Adressherkunft. Pseudoregister als Basis oder Index falscher Breite werden abgewiesen; durch REX.X ausgewählte echte R12-Indizes bleiben erhalten. EVEX-Tests für Broadcast und maskierte Transfers prüfen diese Formen, unterdrückte inaktive Speicherzugriffe und widersprüchliche SIB-Metadaten.
 
 Schiebetests decken alle rohen 8-Bit-Zähler, Flagkombinationen bei null, beide x86-Modi, alle Breiten, CL-Aliase, AH/CH/DH/BH, erweiterte Register und Speicher ab. Bytegenaue symbolische Ausführung wird mit wiederholter Ein-Bit-Arithmetik verglichen. Relationale Tests prüfen kopierte und neue Flags, Speicherablagen, Schleifenbesuche, undefinierte Zählerquellen, Zweige, ungültige Formen, Digests und Budgets. Endliche unveränderliche Lesezugriffe prüfen 1/2/4/8 Bytes, eingabeabhängige Auswahl, pfadabhängige Einzeladressen, vollständige Belege und Grenzen; abhängige, fehlende, beschreibbare, nicht dateigestützte, relokierte und unbeschränkte Kandidaten werden abgelehnt.
 
@@ -927,6 +932,96 @@ Fault-Werte, `SBFSourceStatuses.def` getrennt die Generated-Source-ABI.
 Multi-Latch-Verhalten ohne eine Maschinenzeit zu fixieren. Cluster-/Account-/
 Slot-Zeilen ermöglichen einen `RPC activation audit`, während normale Tests
 deterministisch und offline bleiben.
+
+## Leistung des Android-Klasseninventars
+
+Bauen Sie `NeverDMobileTests` in Release und führen Sie sein Label aus, bevor
+Sie `neverd mobile INPUT --list-classes` messen. Lesertests decken spärliche
+Metadaten, Unicode, ungültige Referenzen, nicht unterstützte Methodenrümpfe,
+Prüfsummen und Budgets ab; Archivtests unterscheiden vollständige Extraktion
+von Abfragen ausgewählter Nutzdaten. CLI-Tests prüfen Präfixfilterung,
+JSON-Prüfumfang, Erhaltung bestehender Ausgaben und atomare Fehler bei Multidex.
+
+Der unabhängige Fixture- und Messrahmen validiert das vollständige
+Deskriptorinventar jedes Prozesses, bevor er einen Zeitmesswert akzeptiert:
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Verwenden Sie für jeden Lauf ein neues Ausgabeverzeichnis. `--generate-only`
+schreibt Fixtures und Manifest ohne Zeitmessung. `--workload` wählt gemeinsame
+Eingabearten für ein optionales `--peer-command 'tool {input} {prefix}'`;
+die Eingabevorbereitung liegt außerhalb des gemessenen Befehls. Berichte
+bewahren Hashes, Befehle, sämtliche Messwerte aus neuen Prozessen,
+Warm-Cache-Annahmen und unter Linux mit GNU time den maximalen RSS der
+Kindprozesse auf. Dieser RSS ist nicht die kombinierte Spitze eines Werkzeugs
+mit mehreren Prozessen. Synthetische APKs sind Abfragecontainer, keine
+installierbaren Apps. Inventargeschwindigkeit belegt weder die Geschwindigkeit
+der Referenzsuche noch die Qualität der Java-Rekonstruktion.
+
+Binden Sie auf Hybrid-CPUs den Messrahmen und seine Kindprozesse an dieselbe
+zulässige CPU (unter Linux etwa `taskset -c 4 python3 ...`), um Performance-
+und Effizienzkerne nicht zu vermischen. Der Bericht erfasst die geerbte CPU-Affinität.
+
+## Leistung von Android-Codereferenzen
+
+Referenzabfragen teilen die Instruktionsgrenzen und Codevalidierung des
+Rekonstruktionslesers. Führen Sie nach Änderungen an dieser Grenze die mobile
+Testsuite aus. Lesertests decken Operanden-Pool-Arten, Abgleichmodi,
+Methodenzuordnung und gemeinsam genutzten Code, täuschende Payload-/Immediate-Werte,
+fehlerhafte Eingaben und Ressourcenlimits ab. Gemeinsam genutzte Debug-Ströme
+werden gegen Rahmen, Ausdehnung und Parameter jedes zugehörigen Rumpfs geprüft.
+Behalten Sie große Member-Inventare und verzweigungsreiche Rümpfe in den Tests
+für Speicherlimits bei; dauerhafte Indizes und temporäres Containerwachstum
+haben unterschiedliche Lebensdauern.
+Prüfen Sie auch umgeordnete und überlappende Elemente, gemeinsamen Code mit
+inkompatiblen Prototypen gleicher Breite, nicht ausgerichteten Eingabespeicher
+und Teilzeichenfolgen über Suchblockgrenzen hinweg. Leistungsänderungen an
+privaten Decoderdaten müssen vollständige Rekonstruktionsmodelle mit eigenen
+Daten und Multimengen der Referenzvorkommen bewahren, einschließlich des
+Fehlerverhaltens bei nicht unterstützten Rekonstruktionsmetadaten. Unterscheiden
+Sie unabhängig erzeugte Erwartungen von Übereinstimmung mehrerer Werkzeuge
+bei realen Eingaben.
+
+Der unabhängige Referenzmessrahmen erfasst erwartete Vorkommen beim Erzeugen
+der Instruktionen. Er prüft bei jedem gemessenen Lauf vollständige
+Methodenidentitäten, PCs in Codeeinheiten, Opcodes, Zielidentitäten,
+UTF-16-Einheiten und Häufigkeiten. Er prüft außerdem die unabhängig erwarteten
+Abdeckungszähler von NeverD und `code_scan_complete`:
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Wählen Sie Fälle mit `--kind` und `--workload`. `--extra-strings 65536` testet
+echte 32-Bit-Zeichenkettenindizes. Payload-Köder sind standardmäßig aktiv;
+`--no-payload-lookalikes` bewahrt Anordnung und echte Referenzen, ersetzt aber
+die Köderwerte für Vergleiche mit gemeinsamen Eingaben. Bewahren Sie sowohl
+Korrektheits- als auch Zeitergebnisse auf. Liefert eine Abfrage falsche
+Payload-Referenzen oder fehlen echte Referenzen, schlägt die Validierung fehl
+und es wird kein Zeitmesswert akzeptiert.
+
+Ein optionales `--peer-command` akzeptiert eine argv-Vorlage mit `{input}`,
+`{kind}` und `{query}`. Passen Sie die Abfragesyntax ausdrücklich an, wenn ein
+anderes Werkzeug andere Semantik verwendet, und vergleichen Sie vollständige
+Multimengen von Vorkommen. Sein angegebener Validierungsumfang bleibt erhalten,
+ohne ihm einen vollständigen Codescan zuzuschreiben. Dieselben Einschränkungen
+bezüglich neuer Verzeichnisse, CPU-Affinität, neuer Prozesse, warmem Cache und
+RSS wie beim Inventarbenchmark gelten. Der optionale CLI-Unittest wird
+übersprungen, solange `NEVERD_REFERENCE_TEST_BINARY` nicht das gebaute Programm
+bezeichnet; melden Sie diesen übersprungenen Test.
 
 ## Exportnachweise der mobilen SDKs
 

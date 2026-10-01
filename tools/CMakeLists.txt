@@ -1,6 +1,7 @@
 add_subdirectory(neverd-bench)
 add_subdirectory(neverd)
 add_subdirectory(neverd-sigmaker)
+add_subdirectory(neverd-bytecode)
 
 if(NEVERD_BUILD_GUI OR NEVERD_BUILD_WORKER)
   if(NOT NEVERD_BUILD_SHARED)

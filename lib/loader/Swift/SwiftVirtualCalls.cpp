@@ -426,6 +426,7 @@ bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
       Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
       !Hint.Selector.empty() || !Hint.OwnerClass.empty() ||
       Hint.SelectorReferenceAddress || !Hint.BorrowedByteInputs.empty() ||
+      !Hint.SwiftStaticStringInputs.empty() ||
       !Hint.SwiftStringInputs.empty() || Hint.SelectorResultUse ||
       Hint.SelectorResultTypeUse || Hint.SelectorArgumentTypeUse ||
       Hint.SelectorForwardingUse || Hint.SelectorArgumentStorageUse ||

@@ -90,4 +90,57 @@ TEST_F(A64NativeParity, FpScalarDataProcSweep) {
   }
 }
 
+TEST_F(A64NativeParity, FpZeroCompareUsesRegisterWidth) {
+  for (const auto &[Ptype, Bytes] :
+       {std::pair{0U, 4U}, std::pair{1U, 8U}, std::pair{3U, 2U}}) {
+    for (bool Signaling : {false, true}) {
+      for (unsigned Register : {0U, 31U}) {
+        const uint32_t Word =
+            0x1e202008 | (Ptype << 22) | (Register << 5) | (Signaling ? 16 : 0);
+        SCOPED_TRACE(Word);
+        cs_insn Insn{};
+        cs_detail Detail{};
+        ASSERT_TRUE(a64native::tryDecode(Word, 0x1000, Insn, Detail));
+        std::vector<LowOp> CapstoneOps;
+        ASSERT_TRUE(O.lift(Word, 0x1000, CapstoneOps));
+        // The current decoders use XZR. Decoded clients can supply a numeric
+        // zero too; all three representations have the same floating width.
+        for (unsigned Representation = 0; Representation < 3;
+             ++Representation) {
+          auto &Right = Detail.aarch64.operands[1];
+          if (Representation == 0) {
+            Right.type = AARCH64_OP_REG;
+            Right.reg = AARCH64_REG_XZR;
+          } else if (Representation == 1) {
+            Right.type = AARCH64_OP_FP;
+            Detail.aarch64.operands[1].fp = 0.0;
+          } else {
+            Right.type = AARCH64_OP_IMM;
+            Right.imm = 0;
+          }
+          std::vector<LowOp> Ops;
+          nativeLift(Word, 0x1000, Insn, Ops);
+          ASSERT_EQ(Ops.size(), CapstoneOps.size());
+          EXPECT_TRUE(
+              std::equal(Ops.begin(), Ops.end(), CapstoneOps.begin(), lowOpEq));
+          unsigned Comparisons = 0;
+          for (const auto &Op : Ops) {
+            if (Op.Opcode != NdOp::FLOAT_EQUAL && Op.Opcode != NdOp::FLOAT_LESS)
+              continue;
+            ++Comparisons;
+            ASSERT_EQ(Op.NumInputs, 2U);
+            EXPECT_EQ(Op.Inputs[0].Size, Bytes);
+            EXPECT_EQ(Op.Inputs[1].Size, Bytes);
+            const auto &Zero =
+                Op.Inputs[0].isConst() ? Op.Inputs[0] : Op.Inputs[1];
+            EXPECT_TRUE(Zero.isConst());
+            EXPECT_EQ(Zero.Offset, 0U);
+          }
+          EXPECT_EQ(Comparisons, 3U);
+        }
+      }
+    }
+  }
+}
+
 } // namespace

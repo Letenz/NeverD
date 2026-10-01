@@ -16,6 +16,9 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+
 namespace neverd {
 
 bool isSyntheticEntryStackPointer(const MedVar &Value, const HighFunc &Function,
@@ -246,6 +249,14 @@ bool isTerminatingHighCall(const ExprPtr &Expression) {
          isUnconditionalTrapIntrinsic(Expression->IntrinsicId);
 }
 
+static bool hasMemoryBoundary(const HighExpr &Expr) {
+  // A target address space is not itself an atomic ordering, but cleanup
+  // must also preserve FS/GS boundaries instead of treating their numeric
+  // offsets as ordinary address-space-zero memory.
+  return Expr.MemoryOrdering != NdMemoryOrdering::None ||
+         Expr.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+}
+
 bool HighExpr::hasOrderedMemoryAccess() const {
   std::unordered_set<const HighExpr *> Seen;
   std::vector<const HighExpr *> Work{this};
@@ -254,18 +265,41 @@ bool HighExpr::hasOrderedMemoryAccess() const {
     Work.pop_back();
     if (!Expr || !Seen.insert(Expr).second)
       continue;
-    // A target address space is not itself an atomic ordering, but the HighIR
-    // cleanup passes use this query as their general "must preserve the memory
-    // boundary" gate.  Treat FS/GS accesses conservatively here so an
-    // optimization keyed only by the numeric offset cannot merge or discard
-    // them as ordinary address-space-zero memory.
-    if (Expr->MemoryOrdering != NdMemoryOrdering::None ||
-        Expr->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    if (hasMemoryBoundary(*Expr))
       return true;
     Expr->forEachChildExpr(
         [&](const ExprPtr &Operand) { Work.push_back(Operand.get()); });
   }
   return false;
+}
+
+std::unordered_set<const HighExpr *>
+findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots) {
+  llvm::DenseMap<const HighExpr *, llvm::SmallVector<const HighExpr *, 2>>
+      Parents;
+  std::vector<const HighExpr *> Nodes, Ordered;
+  for (const auto &Root : Roots)
+    if (Root && Parents.try_emplace(Root.get()).second)
+      Nodes.push_back(Root.get());
+  // Record every edge before propagating effects. A recursive memo can mark
+  // a shared cycle pure before discovering the ordered access it reaches.
+  for (size_t I = 0; I < Nodes.size(); ++I) {
+    const HighExpr *Expr = Nodes[I];
+    if (hasMemoryBoundary(*Expr))
+      Ordered.push_back(Expr);
+    Expr->forEachChildExpr([&](const ExprPtr &Child) {
+      auto [It, Added] = Parents.try_emplace(Child.get());
+      It->second.push_back(Expr);
+      if (Added)
+        Nodes.push_back(Child.get());
+    });
+  }
+  std::unordered_set<const HighExpr *> Result(Ordered.begin(), Ordered.end());
+  for (size_t I = 0; I < Ordered.size(); ++I)
+    for (const HighExpr *Parent : Parents.find(Ordered[I])->second)
+      if (Result.insert(Parent).second)
+        Ordered.push_back(Parent);
+  return Result;
 }
 
 ExprPtr HighExpr::makeCall(const std::string &Target, va_t Addr,

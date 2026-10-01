@@ -842,7 +842,8 @@ COFFLoader::load(const std::filesystem::path &Path) {
   coff_loader::parseDelayImports(Obj, Img);
 
   // --- Base Relocation Table (.reloc) ---
-  coff_loader::parseBaseRelocations(Obj, Img, ImageBase);
+  if (auto Error = coff_loader::parseBaseRelocations(Obj, Img, ImageBase))
+    return std::move(Error);
 
   // --- Debug Directory (PDB path) ---
   coff_loader::parseDebugDirectory(Obj, Img);

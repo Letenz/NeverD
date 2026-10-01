@@ -353,17 +353,18 @@ static bool discardMaskedConcatHigh(const ExprPtr &E) {
   return true;
 }
 
-static void simplifyExprRecursive(ExprPtr &E,
-                                  std::unordered_set<const HighExpr *> &Seen) {
+static void simplifyExprRecursive(
+    ExprPtr &E, std::unordered_set<const HighExpr *> &Seen,
+    const std::unordered_set<const HighExpr *> &OrderedMemory) {
   if (!E || !Seen.insert(E.get()).second)
     return;
   for (auto &Op : E->Operands)
-    simplifyExprRecursive(Op, Seen);
+    simplifyExprRecursive(Op, Seen, OrderedMemory);
 
   // Atomic accesses are observable even when the surrounding value appears
   // algebraically redundant.  Keep the containing expression intact so a
   // simplification cannot discard, duplicate, or move the access.
-  if (E->hasOrderedMemoryAccess())
+  if (OrderedMemory.count(E.get()))
     return;
 
   if (auto Joined = joinLocalSlices(E)) {
@@ -578,9 +579,19 @@ static void simplifyExprRecursive(ExprPtr &E,
 }
 
 void simplifyAllExprs(std::vector<HighStmt> &Stmts) {
+  std::vector<ExprPtr> Roots;
+  walkStmts(Stmts, [&](const HighStmt &S) {
+    forEachRhsExpr(S, [&](const ExprPtr &EP) { Roots.push_back(EP); });
+  });
+  // These rewrites only replace pure expressions. No ordered node or its
+  // ancestors can be removed, and new nodes contain only pure operands, so
+  // one graph-wide effect analysis remains valid throughout this pass.
+  const auto OrderedMemory = findOrderedMemoryAncestors(Roots);
   std::unordered_set<const HighExpr *> Seen;
   walkStmts(Stmts, [&](HighStmt &S) {
-    forEachRhsExpr(S, [&](ExprPtr &EP) { simplifyExprRecursive(EP, Seen); });
+    forEachRhsExpr(S, [&](ExprPtr &EP) {
+      simplifyExprRecursive(EP, Seen, OrderedMemory);
+    });
   });
 }
 

@@ -21,6 +21,7 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <map>
 #include <set>
@@ -110,6 +111,7 @@ bool stackCheckFailureBinding(const BinaryImage &Image, const MedOp &Op,
       Binding.ReturnedArgument || Binding.RuntimeObjCResultType ||
       !Binding.Selector.empty() || !Binding.OwnerClass.empty() ||
       Binding.SelectorReferenceAddress || !Binding.BorrowedByteInputs.empty() ||
+      !Binding.SwiftStaticStringInputs.empty() ||
       !Binding.SwiftStringInputs.empty() || Binding.Format ||
       Binding.NilTerminated || Binding.SwiftTypeMetadata || Binding.Receiver ||
       Binding.SelectorResultUse || Binding.SelectorResultTypeUse ||
@@ -1085,6 +1087,55 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
   return Targets;
 }
 
+std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
+                                             Arch Architecture) {
+  if (Architecture != Arch::AArch64 || Function.Blocks.size() > 16384)
+    return {};
+  const auto &Registers = getTargetRegInfo(Architecture).IntParamRegs;
+  std::set<va_t> Targets;
+  size_t Budget = 262144;
+  for (const auto &Block : Function.Blocks) {
+    std::optional<va_t> Target;
+    unsigned Available = 0, Observed = 0;
+    for (const auto &Op : Block.Ops) {
+      if (!Budget-- || Op.NumInputs > 6)
+        return {};
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR) {
+        Target.reset();
+        Available = Observed = 0;
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+            Op.Inputs[0].isConst()) {
+          Target = Op.Inputs[0].Offset;
+          Available = 15;
+        }
+        continue;
+      }
+      if (!Target)
+        continue;
+      const bool SelfZero =
+          (Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_SUB) &&
+          Op.NumInputs == 2 && Op.Inputs[0] == Op.Inputs[1];
+      for (unsigned I = 0; I < 4; ++I) {
+        if (!SelfZero && (Available & (1U << I)))
+          for (unsigned J = 0; J < Op.NumInputs; ++J)
+            if (Op.Inputs[J] == NdVar::reg(Registers[I], 8))
+              Observed |= 1U << I;
+        if (Op.Output.isReg() && Op.Output.Size &&
+            (Op.Output.Offset <= Registers[I]
+                 ? Registers[I] - Op.Output.Offset < Op.Output.Size
+                 : Op.Output.Offset - Registers[I] < 8))
+          Available &= ~(1U << I);
+      }
+      if (Observed == 15)
+        Targets.insert(*Target);
+      if (Op.Opcode == NdOp::RETURN)
+        Target.reset();
+    }
+  }
+  return Targets;
+}
+
 bool sourceStackStoreStateContract(const BinaryImage &Image, const LowFunc &Low,
                                    const MedFunc &Med, const HighFunc &High) {
   std::string Error;
@@ -1407,6 +1458,111 @@ refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
       !equalSourceTypes(High.ReturnType, Med.SourceTypeHint->ReturnType))
     return std::nullopt;
   return integerPairReturn(Med, *Med.SourceTypeHint);
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeFourWordReturnHint(const BinaryImage &Image, const LowFunc &Low,
+                               const MedFunc &Med, const HighFunc &High,
+                               const PipelineFunctionAudit &Audit) {
+  if (Image.Arch != Arch::AArch64 || Image.Format != BinaryFormat::MachO ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      Low.Entry != Med.Entry || Med.Entry != High.Entry ||
+      !completeNativeAudit(Med.Entry, Audit) || !Med.SourceParametersBound ||
+      !Med.SourceTypeHint || !High.SourceTypeHint || High.Body.empty() ||
+      High.DoesNotReturn || Med.DoesNotReturn || Med.IsVariadic ||
+      !Med.MultiReturn.empty() || Low.Blocks.empty() ||
+      !Low.hasCompleteInstructionLift() ||
+      Low.DecodedInstructionCount != Audit.DecodedInstructions ||
+      High.StructuredExceptionRegions || High.UnstructuredExceptionRegions ||
+      !equalSourceABIs(*Med.SourceTypeHint, *High.SourceTypeHint))
+    return std::nullopt;
+  const auto &Scalar = *Med.SourceTypeHint;
+  const auto &Registers = getTargetRegInfo(Image.Arch).IntParamRegs;
+  std::string Error;
+  if (Scalar.Origin != SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      Scalar.Architecture != Image.Arch || !validateSourceABI(Scalar, Error) ||
+      Scalar.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !integerCarrier(Scalar.ReturnType) || !Scalar.ReturnComponents.empty() ||
+      Scalar.Parameters.empty() || Scalar.Parameters.size() > 4 ||
+      !equalSourceTypes(Med.ReturnType, Scalar.ReturnType) ||
+      !equalSourceTypes(High.ReturnType, Scalar.ReturnType) ||
+      Scalar.ReturnLocation.Kind != SourceABICarrierKind::IntegerRegister ||
+      Scalar.ReturnLocation.RegisterOffset != Registers[0])
+    return std::nullopt;
+  auto CompleteResult = Scalar.ReturnLocation;
+  CompleteResult.ValueBytes = 8;
+  CompleteResult.ExtendTo32Bits = false;
+  if (!definedReturnPaths(Med, Image.Arch, CompleteResult, std::nullopt))
+    return std::nullopt;
+  // Scalar inference need not retain words which the body never reads. The
+  // caller's four-result demand also observes these unchanged input words.
+  // Make those carrier inputs explicit, retaining every already-bound type
+  // and physical location. This remains an internal native projection.
+  std::array<std::optional<SourceParameterTypeHint>, 4> Inputs;
+  for (const auto &P : Scalar.Parameters) {
+    const auto Reg = std::find(Registers.begin(), Registers.begin() + 4,
+                               P.Location.RegisterOffset);
+    if (!integerCarrier(P.Type) || !P.Components.empty() ||
+        P.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+        P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+        Reg == Registers.begin() + 4)
+      return std::nullopt;
+    const size_t I = Reg - Registers.begin();
+    if (Inputs[I] || (I && (P.Type->Size != 8 || P.Location.ValueBytes != 8)))
+      return std::nullopt;
+    Inputs[I] = P;
+  }
+  if (!Inputs[0])
+    return std::nullopt;
+  auto Record = Scalar;
+  Record.Parameters.clear();
+  std::vector<TypeRef> Results{Scalar.ReturnType->Size == 8
+                                   ? Scalar.ReturnType
+                                   : NdType::makeInt(8, false)};
+  for (unsigned I = 0; I < 4; ++I) {
+    auto P = Inputs[I].value_or(SourceParameterTypeHint{
+        "forwarded_word" + std::to_string(I), NdType::makeInt(8, false)});
+    Record.Parameters.push_back(P);
+    if (I)
+      Results.push_back(P.Type);
+  }
+  for (const auto &Block : Med.Blocks)
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return std::nullopt;
+  size_t Budget = 262144;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget-- || Op.NumInputs > 6 || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !isArchitecturalNoReturn(Op, Image.Arch)))
+        return std::nullopt;
+      // No complete or partial write may change a forwarded register, even
+      // on a path where another register was sufficient for scalar recovery.
+      for (unsigned I = 1; I < 4; ++I)
+        if (Op.Output.isReg() && Op.Output.Size &&
+            (Op.Output.Offset <= Registers[I]
+                 ? Registers[I] - Op.Output.Offset < Op.Output.Size
+                 : Op.Output.Offset - Registers[I] < 8))
+          return std::nullopt;
+    }
+  Record.ReturnType = NdType::makeStruct(std::move(Results));
+  if (!assignDarwinSwiftSourceABI(Record, Image.Arch, Error))
+    return std::nullopt;
+  // Selecting the result layout must not reinterpret any observed input.
+  for (unsigned I = 0; I < 4; ++I)
+    if (Inputs[I]) {
+      auto Original = Scalar;
+      Original.Parameters = {*Inputs[I]};
+      auto Projected = Original;
+      Projected.Parameters = {Record.Parameters[I]};
+      if (!equalSourceABIs(Projected, Original))
+        return std::nullopt;
+    }
+  if (!hasNativeSourceStateContract(Image, &Low, Med, false, nullptr, false,
+                                    nullptr, &Record))
+    return std::nullopt;
+  return Record;
 }
 
 std::optional<SourceFunctionTypeHint>

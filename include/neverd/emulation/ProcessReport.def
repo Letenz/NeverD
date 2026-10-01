@@ -4,9 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_PROCESS_OPTION_NUMBER
-NEVERD_PROCESS_OPTION_NUMBER(InstructionLimit, "instruction_limit", Limits.Instructions)
+NEVERD_PROCESS_OPTION_NUMBER(InstructionLimit, "instruction_limit",
+                             Limits.Instructions)
 NEVERD_PROCESS_OPTION_NUMBER(EventLimit, "event_limit", Limits.Events)
-NEVERD_PROCESS_OPTION_NUMBER(Timeout, "timeout_microseconds", Limits.TimeoutMicroseconds)
+NEVERD_PROCESS_OPTION_NUMBER(Timeout, "timeout_microseconds",
+                             Limits.TimeoutMicroseconds)
 NEVERD_PROCESS_OPTION_NUMBER(MemoryLimit, "memory_limit", MemoryLimit)
 NEVERD_PROCESS_OPTION_NUMBER(StackSize, "stack_size", StackSize)
 NEVERD_PROCESS_OPTION_NUMBER(OutputLimit, "output_limit", OutputLimit)
@@ -17,6 +19,22 @@ NEVERD_PROCESS_OPTION_STRINGS(Arguments, "arguments", Arguments)
 NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_FIELD
+NEVERD_PROCESS_REPORT_FIELD(Android, "android")
+NEVERD_PROCESS_REPORT_FIELD(EntrySymbol, "entry_symbol")
+NEVERD_PROCESS_REPORT_FIELD(EntryAddress, "entry_address")
+NEVERD_PROCESS_REPORT_FIELD(LoadBias, "load_bias")
+NEVERD_PROCESS_REPORT_FIELD(TraceLimit, "trace_limit")
+NEVERD_PROCESS_REPORT_FIELD(Initialize, "initialize")
+NEVERD_PROCESS_REPORT_FIELD(Properties, "properties")
+NEVERD_PROCESS_REPORT_FIELD(Memory, "memory")
+NEVERD_PROCESS_REPORT_FIELD(ReadMemory, "read_memory")
+NEVERD_PROCESS_REPORT_FIELD(Bytes, "bytes_hex")
+NEVERD_PROCESS_REPORT_FIELD(Executable, "executable")
+NEVERD_PROCESS_REPORT_FIELD(ReturnValue, "return_value")
+NEVERD_PROCESS_REPORT_FIELD(NativeCalls, "native_calls")
+NEVERD_PROCESS_REPORT_FIELD(Trace, "trace")
+NEVERD_PROCESS_REPORT_FIELD(TraceTruncated, "trace_truncated")
+NEVERD_PROCESS_REPORT_FIELD(Name, "name")
 NEVERD_PROCESS_REPORT_FIELD(Backend, "backend")
 NEVERD_PROCESS_REPORT_FIELD(Version, "schema_version")
 NEVERD_PROCESS_REPORT_FIELD(Profile, "profile")
@@ -51,27 +69,41 @@ NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #ifdef NEVERD_PROCESS_REPORT_TEXT
 NEVERD_PROCESS_REPORT_TEXT(EmptyOptions, "{}")
 NEVERD_PROCESS_REPORT_TEXT(TooLarge, "process options JSON exceeds 64 KiB")
-NEVERD_PROCESS_REPORT_TEXT(ObjectRequired, "process options must be a JSON object")
+NEVERD_PROCESS_REPORT_TEXT(ObjectRequired,
+                           "process options must be a JSON object")
 NEVERD_PROCESS_REPORT_TEXT(UnknownField, "unknown process option: ")
 NEVERD_PROCESS_REPORT_TEXT(FieldType, "invalid process option type or value: ")
-NEVERD_PROCESS_REPORT_TEXT(PathRequired, "process emulation requires a nonempty input path")
-NEVERD_PROCESS_REPORT_TEXT(ProfileRequired, "process emulation requires an explicit guest profile")
-NEVERD_PROCESS_REPORT_TEXT(Disabled, "process emulation is disabled; rebuild with -DNEVERD_ENABLE_CPU_EMULATION=ON")
-NEVERD_PROCESS_REPORT_TEXT(AllocationFailed, "could not allocate process report")
+NEVERD_PROCESS_REPORT_TEXT(PathRequired,
+                           "process emulation requires a nonempty input path")
+NEVERD_PROCESS_REPORT_TEXT(
+    ProfileRequired, "process emulation requires an explicit guest profile")
+NEVERD_PROCESS_REPORT_TEXT(Disabled, "process emulation is disabled; rebuild "
+                                     "with -DNEVERD_ENABLE_CPU_EMULATION=ON")
+NEVERD_PROCESS_REPORT_TEXT(AllocationFailed,
+                           "could not allocate process report")
 NEVERD_PROCESS_REPORT_TEXT(RunFailed, "process emulation failed: ")
-NEVERD_PROCESS_REPORT_TEXT(UnexpectedException, "process emulation failed with an unexpected exception")
-NEVERD_PROCESS_REPORT_TEXT(SessionFailed, "could not create process emulation session")
+NEVERD_PROCESS_REPORT_TEXT(
+    UnexpectedException,
+    "process emulation failed with an unexpected exception")
+NEVERD_PROCESS_REPORT_TEXT(SessionFailed,
+                           "could not create process emulation session")
 NEVERD_PROCESS_REPORT_TEXT(InvalidReport, "invalid process emulation report")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STRING
 NEVERD_PROCESS_CLI_STRING(Command, "emulate")
-NEVERD_PROCESS_CLI_STRING(Help, "Run a bounded guest process under an explicit OS profile and emit JSON")
+NEVERD_PROCESS_CLI_STRING(
+    Help,
+    "Run a bounded guest process under an explicit OS profile and emit JSON")
 NEVERD_PROCESS_CLI_STRING(Input, "input executable")
 NEVERD_PROCESS_CLI_STRING(ProfileOption, "profile")
-NEVERD_PROCESS_CLI_STRING(ProfileHelp, "Guest process profile (required): linux-elf64-v1")
+NEVERD_PROCESS_CLI_STRING(
+    ProfileHelp,
+    "Guest profile (required): linux-elf64-v1 or android-aarch64-api28-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
-NEVERD_PROCESS_CLI_STRING(OptionsHelp, "Process options JSON: backend, arguments, environment and resource limits")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp,
+                          "Options JSON: backend, resource limits, "
+                          "arguments/environment or android native options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS

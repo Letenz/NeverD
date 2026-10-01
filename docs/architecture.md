@@ -40,6 +40,14 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
+The standalone `neverd-bytecode` tool accepts externally specified instruction
+languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+LowIR; explicit byte-addressed state lowering then feeds the existing source
+routes. Image-independent source ABI binding uses caller-supplied contracts,
+while runtime signature discovery from native images retains its format gates.
+This source-only path does not authenticate native instruction boundaries or
+authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
@@ -811,6 +819,8 @@ demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
+`NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
+
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.
@@ -1171,6 +1181,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1193,6 +1204,7 @@ lib/emulation/
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
   os/linux/              Linux ELF process startup and system-call ABI/services
+  os/linux/android/      Android native library linking, TLS and Bionic models
 ```
 
 The architecture library depends only on core memory/register ownership and
@@ -1246,16 +1258,15 @@ common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
 
-The Linux process environment lives beside Windows. Android-specific
-APIs and runtimes should build on the applicable Linux kernel contracts under
+The Linux process environment lives beside Windows. The Android native
+environment builds on the applicable Linux kernel contracts under
 `os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
 separates its runtime and framework from the kernel. macOS and iOS models should
 share applicable Darwin primitives while keeping platform APIs and ABI/version
 profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
 [XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
-identifies their shared kernel foundation. These are extension locations, not
-implemented Android or Darwin environments. Add them with real workloads rather than empty
-classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
+identifies their shared kernel foundation. Darwin directories remain proposed
+extension locations. Calling conventions, syscall ABIs and user/kernel privilege contracts
 remain explicit OS/workload requirements, independent of the CPU transport.
 
 [`ExecutionSession`](../include/neverd/emulation/ExecutionSession.h) owns one CPU,
@@ -1285,6 +1296,16 @@ self-relocating static PIE, while rejecting an interpreter, external dynamic
 dependencies, signals and thread creation. Those OS semantics remain in
 `os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
+
+Android native function workloads use `android-aarch64-api28-v1`; see
+[the Android contract](android-native-emulation.md). Loader-owned
+`readELFProgramLinking` decodes original dynamic metadata without section-table
+requirements. `os/linux/android/` owns Android linking and Bionic behavior,
+while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
+for both Linux processes and Android native workloads. An optional runtime
+instruction observer receives only attempts admitted by `ExecutionSession`'s
+existing budget; OS models do not replace CPU hooks to collect traces.
+
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
@@ -1573,10 +1594,10 @@ incompatible MSVC/Unicorn combination fails explicitly rather than selecting
 an incorrect JIT architecture.
 
 The Windows ARM64 driver loader, ABI/unwinding and OS environment are not yet
-implemented. Windows ring3, Linux kernel and Android user or kernel environments, and
-Darwin user or kernel environments also need their own loaders, ABI and OS
-models. CPU transport availability does not imply compatibility with these
-workloads.
+implemented. Windows ring3, Linux kernel, Android managed/kernel workloads,
+and Darwin user/kernel workloads need their own loaders, ABI and OS models.
+The bounded Android native profile described above supports a specified API 28
+subset. CPU transport availability does not imply arbitrary OS compatibility.
 
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
@@ -1979,6 +2000,37 @@ The initial public slice is register-seeded and intraprocedural on x86-64 and
 AArch64 PE, ELF, and Mach-O images.
 
 ## Component map
+
+The experimental mobile CLI owns APK/DEX class inventory and code-reference
+queries in `tools/neverd/mobile`. Both use the same DEX envelope/MUTF-8 reader
+and ZIP metadata validator as recovery. Class inventory materializes only
+class identities. Reference queries observe pool operands in the existing
+instruction decoder, sharing class/member ownership and code-flow validation;
+there is no separate instruction-width decoder. The decoder produces compact
+flow facts in both modes; recovery additionally creates owned instructions.
+Queries retain only selected reference operands after validating every operand.
+Private member-pool entries borrow completed, immutable identifier tables;
+recovery models and reference results explicitly materialize owned member data.
+Prototype entries also borrow validated type lists. Both representations use
+the same canonical method-identity formatter and encoded access-flag validator.
+The decoder resolves private branch edges to instruction ordinals once;
+public recovery targets retain their code-unit PCs. Queries reuse validated
+class tables and collect item extents per mapped section, checking overlaps
+before publication even when physical items arrive out of order.
+Work charges remain immediate. Bounded scalar reads, short comparisons and
+instruction steps share deadline checkpoints; larger operations check directly.
+Debug streams are checked for each code item's frame and extent without caching
+a context-independent success flag. Compact sites are replayed for every owner
+of a shared physical code item. Query matching owns literal target
+selection, while the container bridge owns cross-DEX aggregation and JSON
+publication, including lossless UTF-16 string units.
+`visitZipMembers` validates all member metadata and complete selected payloads
+before visiting them in memory; `extractZip` retains whole-archive payload
+validation. Query results are accumulated before publication and explicitly
+exclude unselected payload integrity. Class inventory excludes method bodies;
+reference queries validate every defined body but do not claim annotation or
+Java recovery validation. Neither route extends the native binary SDK format
+contract.
 
 The optional Z3 backend remains inside `lib/solver`; `lib/symbolic` has no
 external solver dependency. It translates the expression DAG directly and

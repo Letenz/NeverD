@@ -47,13 +47,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 Les tests de récupération couvrent les valeurs par défaut v1/v2/v3, les budgets explicites, les structures tronquées, tous les champs reserved et les extensions futures. Les tests CLI vérifient l’épuisement et la réussite avec les deux ABI et moteurs source, rejettent les limites décimales invalides et exigent `--devirtualize`. Un budget épuisé ne doit publier ni source ni graphe résiduel partiel.
@@ -113,6 +114,10 @@ build-release/bin/NeverDLowIRRefinementTests
 Les tests de drapeaux regroupés couvrent toutes les combinaisons d’entrée scalaires, les masques de privilège, TF/AC dans les deux exécutions, les producteurs indéfinis distincts, les copies corrélées, les appels natifs, l’état des branches sœurs, l’observation finale obligatoire, les preuves malformées et les budgets. Toutes les entrées réalisables des boucles finies doivent terminer ; une branche sûre ne masque pas un chemin infini ou tronqué. RDSSPD/RDSSPQ couvre les 16 registres généraux, les deux largeurs, les bits hauts conservés, les preuves `Missing` préservées et les projections falsifiées. Les tests d’état machine comparent les deux sorties C à O0/O2 avec pièges de comportement indéfini à un oracle indépendant des drapeaux utilisateur, et vérifient la persistance des violations du profil. Les tests INCSSPD/INCSSPQ couvrent les deux largeurs et tous les registres généraux, les limites inaccessibles conservées, les pièges réalisables après une branche sœur terminée, les opérandes nuls et les preuves de piège falsifiées.
 
 `NeverDX86UndefinedEffectsTests` vérifie les métadonnées des bits indéfinis, les drapeaux définis ou conservés et le refus des certificats périmés. `NeverDX86CarryArithmeticFlagTests` compare la retenue auxiliaire d’ADC/SBB, pour les formes registre et mémoire, à un oracle arithmétique. `NeverDX86LogicIdentityTests` vérifie qu’AND avec deux opérandes identiques efface encore les bits 63:32 du registre de 64 bits correspondant lors de l’écriture d’une destination de 32 bits en mode 64 bits, tout en préservant les bits non écrits des destinations plus étroites.
+
+`NeverDPEFixedImageTests` utilise des fichiers PE construits indépendamment pour vérifier les instructions relocalisées, les données immuables, les écritures des imports, les en-têtes/tables malformés, les alias et la provenance modifiée. Les preuves natives vers LowIR et LLVM exact acceptent les candidats conformes et refusent les résultats, statuts ou octets natifs modifiés. L’épuisement du budget de préparation reste distinct et permet un nouvel essai avec des limites explicitement relevées ; le chargement ordinaire accepte aussi 40000 relocations valides au-delà du budget d’analyse par défaut.
+
+`NeverDX86NoIndexAddressTests` vérifie l’adressage SIB x86 sans index sur 32 et 64 bits : bits d’échelle ignorés, largeur de destination, lectures/écritures, métadonnées complètes des sorties indéfinies, offsets de segment et provenance des adresses. Il refuse les pseudo-registres comme base ou index de largeur incorrecte et conserve les vrais index R12 sélectionnés par REX.X. Les tests EVEX de diffusion et de déplacement masqué couvrent aussi ces formes, la suppression des accès mémoire inactifs et les métadonnées SIB incohérentes.
 
 Les régressions de décalage couvrent tous les comptes bruts de huit bits, les combinaisons de flags à compte nul, les deux modes x86, toutes les largeurs, les alias CL, AH/CH/DH/BH, les registres étendus et la mémoire. L’exécution symbolique par octet est comparée à une arithmétique répétée bit par bit. Les tests relationnels vérifient copies et nouveaux flags, sauvegardes, boucles, comptes issus de valeurs indéfinies, branches, formes invalides, empreintes et budgets. Les lectures finies couvrent 1/2/4/8 octets, sélection selon l’entrée, ensembles unitaires par chemin, témoins complets et limites, et refusent les candidats dépendants, absents, modifiables, non adossés au fichier, relocalisés ou non bornés.
 
@@ -922,6 +927,100 @@ Les fixtures à l’échelle 10,000 protègent worklist, function ownership et
 multi-latch sans figer un temps machine. Les lignes cluster/account/slot
 permettent un `RPC activation audit`, les tests ordinaires restant déterministes
 et offline.
+
+## Performances de l’inventaire des classes Android
+
+Compilez `NeverDMobileTests` en Release et exécutez son label avant de mesurer
+`neverd mobile INPUT --list-classes`. Les tests du lecteur couvrent les
+métadonnées éparses, Unicode, les références invalides, les corps de méthodes
+non pris en charge, les sommes de contrôle et les budgets ; les tests d’archive
+distinguent l’extraction complète des requêtes sur charges utiles sélectionnées.
+Les tests CLI vérifient le filtrage par préfixe, le périmètre JSON, la préservation
+des sorties et l’atomicité des échecs multidex.
+
+Le générateur et banc de mesure indépendants valident l’inventaire complet des
+descripteurs de chaque processus avant d’accepter une mesure de temps :
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Utilisez un nouveau répertoire de sortie à chaque exécution. `--generate-only`
+écrit les jeux d’essai et leur manifeste sans chronométrage. `--workload`
+sélectionne des types d’entrée communs pour une éventuelle commande
+`--peer-command 'tool {input} {prefix}'` ; la préparation des entrées est hors
+chronométrage. Les rapports conservent les empreintes, les commandes, tous les
+échantillons issus de nouveaux processus, les hypothèses de cache chaud et,
+sous Linux avec GNU time, le RSS maximal des processus enfants. Ce RSS n’est
+pas le pic cumulé d’un outil multiprocessus. Les APK synthétiques sont des
+conteneurs de requête, pas des applications installables. La vitesse de
+l’inventaire ne prouve ni celle des recherches de références ni la qualité de
+la reconstruction Java.
+
+Sur les processeurs hybrides, fixez le banc et ses enfants à un même CPU autorisé
+(par exemple `taskset -c 4 python3 ...` sous Linux) pour éviter de mélanger les
+cœurs de performance et d’efficacité. Le rapport consigne l’affinité CPU héritée.
+
+## Performances des références de code Android
+
+Les requêtes de références partagent les frontières d’instructions et la
+validation du code du lecteur de reconstruction. Exécutez la suite mobile
+après toute modification de cette frontière. Les tests du lecteur couvrent les
+types de pools d’opérandes, les modes de recherche, l’appartenance des méthodes
+et le code partagé, les faux semblants dans les charges utiles/valeurs
+immédiates, les entrées malformées et les limites de ressources. Les flux de
+débogage partagés sont vérifiés avec le cadre, l’étendue et les paramètres de
+chaque corps propriétaire. Conservez les grands inventaires de membres et les
+corps riches en branchements dans la couverture des limites de stockage ; les
+index persistants et la croissance temporaire des conteneurs ont des durées de
+vie différentes.
+Vérifiez aussi les éléments réordonnés ou se chevauchant, le code partagé entre
+prototypes incompatibles de même largeur, le stockage d’entrée non aligné et
+les sous-chaînes traversant les frontières des blocs de recherche. Les
+optimisations des données privées du décodeur doivent préserver les modèles
+complets de reconstruction possédant leurs données et les multiensembles
+d’occurrences de références, y compris les échecs sur les métadonnées de
+reconstruction non prises en charge. Distinguez les résultats attendus produits
+indépendamment de la concordance entre outils sur des entrées réelles.
+
+Le banc de références indépendant enregistre les occurrences attendues pendant
+l’émission des instructions. Il vérifie à chaque mesure les identités complètes
+de méthodes, les PC en unités de code, les opcodes, les identités cibles, les
+unités UTF-16 et les multiplicités. Il vérifie aussi les compteurs de couverture
+attendus indépendamment pour NeverD et `code_scan_complete` :
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+Utilisez `--kind` et `--workload` pour sélectionner les cas. `--extra-strings 65536`
+exerce de véritables indices de chaînes sur 32 bits. Les leurres de charges
+utiles sont activés par défaut ; `--no-payload-lookalikes` conserve la disposition
+et les vraies références tout en remplaçant les valeurs des leurres, pour des
+comparaisons sur entrées communes. Conservez les résultats de correction et de
+temps. Une requête produisant de fausses références dans les charges utiles ou
+omettant des références réelles échoue à la validation ; aucune mesure n’est
+alors acceptée.
+
+L’option `--peer-command` accepte un modèle argv contenant `{input}`, `{kind}`
+et `{query}`. Adaptez explicitement la syntaxe si un autre outil utilise une
+sémantique différente et comparez les multiensembles complets d’occurrences.
+Son périmètre de validation déclaré est conservé sans lui attribuer un balayage
+complet du code. Les mêmes réserves sur le nouveau répertoire, l’affinité CPU,
+les nouveaux processus, le cache chaud et le RSS que pour l’inventaire
+s’appliquent. Le test unitaire CLI facultatif est ignoré sauf si
+`NEVERD_REFERENCE_TEST_BINARY` désigne l’exécutable compilé ; signalez ce saut.
 
 ## Preuves des exports des SDK mobiles
 
