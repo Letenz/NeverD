@@ -39785,7 +39785,6 @@ int main(void) {
   }
 }
 
-
 TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
   // `??1SC_DISK` ends by tail-calling the base destructor. MSVC destructors
   // return nothing, so what the base leaves in RAX is not a result.
