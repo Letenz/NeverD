@@ -2129,6 +2129,45 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   return O;
 }
 
+TEST(HighControlFlowSemantics,
+     IncomingRegisterBehindAVersionedSeedIsTheParameter) {
+  // PiCMCaptureRegistryPropertyInputData: SSA versions a parameter
+  // register's entry seed (`COPY RCX.1 = RCX` there, CL being seeded too)
+  // while later reads still name the incoming register.  Those reads are the
+  // first parameter, not an unknown register.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "versioned_seed";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto Incoming = machineValue(5, Architecture);
+  Incoming.Kind = MedVar::Reg;
+  Incoming.RegOff = TRI.IntParamRegs[0];
+  auto Seeded = Incoming;
+  Seeded.SSAVer = 1;
+  auto Sum = machineValue(6, Architecture);
+  auto Return = machineValue(7, Architecture);
+  Return.Kind = MedVar::Reg;
+  Return.RegOff = TRI.IntReturnReg;
+  Return.SSAVer = 1;
+  M.Blocks.resize(1);
+  M.Blocks[0].Id = 0;
+  M.Blocks[0].StartAddr = 0x1000;
+  M.Blocks[0].EndAddr = 0x1020;
+  M.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Seeded, {Incoming}),
+                     operation(NdOp::INT_ADD, 0x1004, Sum,
+                               {Incoming, MedVar::makeConst(1, 8)}),
+                     operation(NdOp::COPY, 0x1008, Return, {Sum}),
+                     operation(NdOp::RETURN, 0x100c, {}, {Return})};
+  const auto F = MedToHighConverter().convert(M, Architecture);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 41, true), 42u));
+}
+
 TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
   // Both arms jump to `sink = v; r = sink; return r;`.  Folding the jump into
   // `return r` would skip the store and read an undefined value.
