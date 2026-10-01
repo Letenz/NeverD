@@ -9,6 +9,7 @@ add_neverd_component_library(NeverDLLVMInterpreterModel
   llvm/LLVMInterpreterMachineState.cpp
   llvm/LLVMInterpreterModelContract.cpp
   llvm/LLVMInterpreterModelControl.cpp
+  llvm/LLVMInterpreterModelInitialization.cpp
   llvm/LLVMInterpreterModelMemory.cpp
   llvm/LLVMInterpreterModelScalar.cpp
   LINK_COMPONENTS InterpreterSpecialization
