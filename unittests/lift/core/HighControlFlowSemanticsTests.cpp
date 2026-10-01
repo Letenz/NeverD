@@ -6252,3 +6252,19 @@ TEST(HighControlFlowSemantics, NestedExitToASharedLabelCopiesItsTail) {
   for (uint64_t X : {0, 1, 2, 9})
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
 }
+
+TEST(HighControlFlowSemantics, PlainBlocksSpliceIntoTheirList) {
+  // goto L; { v = 1; L: v = 2; } return v;  -- the block only groups its
+  // statements, so they join the enclosing list and the jump stays there.
+  HighStmt Group;
+  Group.Kind = StmtKind::Block;
+  Group.Addr = 0x1008;
+  Group.Body = {assign(0x1008, 1, 1), assign(0x1010, 1, 2)};
+  HighFunc F;
+  F.Body = {jump(0x1000, 0x1010), Group, result(0x1020, local(1))};
+  EXPECT_TRUE(flattenBlocks(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Block), 0u);
+  ASSERT_EQ(F.Body.size(), 4u);
+  EXPECT_EQ(F.Body[2].Addr, 0x1010u);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(2));
+}

@@ -1189,6 +1189,57 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool flattenBlocks(std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Targets.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      if (Clause.HandlerVA != 0 && Clause.HandlerVA != InvalidVA)
+        Targets.insert(Clause.HandlerVA);
+  });
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          // A block groups statements and nothing else: its statements run
+          // in the enclosing list just the same. An entered block address
+          // keeps an empty anchor ahead of them.
+          if (L[I].Kind != StmtKind::Block || L[I].Body.empty() ||
+              isEmptyAnchor(L[I]))
+            continue;
+          std::vector<HighStmt> Inner = std::move(L[I].Body);
+          const va_t Addr = L[I].Addr;
+          const bool Anchor =
+              Addr != 0 && Addr != InvalidVA && Targets.count(Addr) &&
+              (Inner.front().Addr != Addr || (I > 0 && L[I - 1].Addr == Addr));
+          if (Anchor) {
+            L[I].Body.clear();
+            L.insert(L.begin() + I + 1, std::make_move_iterator(Inner.begin()),
+                     std::make_move_iterator(Inner.end()));
+          } else {
+            L.erase(L.begin() + I);
+            L.insert(L.begin() + I, std::make_move_iterator(Inner.begin()),
+                     std::make_move_iterator(Inner.end()));
+            --I;
+          }
+          Changed = true;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 bool hoistLoopEntryLabels(std::vector<HighStmt> &Body) {
   std::map<va_t, unsigned> Uses;
   walkStmts(Body, [&](const HighStmt &S) {

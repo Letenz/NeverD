@@ -917,6 +917,7 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
           (Phase != 0 && LateJoinSink && sinkJoinDefaultsLate(Func)) |
           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
+          (Phase != 0 && flattenBlocks(Func.Body)) |
           (Phase != 0 && loopifyTrailingArmBodies(Func.Body));
       if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
           !Grouped)
