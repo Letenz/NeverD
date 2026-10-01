@@ -67,6 +67,13 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 `InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` usa esempi LowIR indipendenti per verificare flag di ingresso grezzi, stato distinto dal RAX ospite, tutte le 17 parole, sottoregistri, flag impacchettati, rifiuto dinamico persistente, scritture del frame ospite, entrambi i rami e inferenza ciclica seguita da una nuova prova. Uscite errate, stato perso, memoria modificata, registrazioni obsolete, ingressi malformati e budget esauriti devono fallire. I test sorgente esistenti eseguono anche entrambi i percorsi C a O0/O2; i test del modello da soli non certificano il C compilato.
 
+`NeverDLLVMInterpreterModelTests` confronta LLVM indipendente con oracoli LowIR dello stato completo: larghezze, PHI paralleli, switch, memoria ospite, stato distinto, condizioni poison, intervalli intrinseci, contratti rifiutati e quattro budget. Verifica una prova completa del conto alla rovescia su una parola arbitraria e rifiuta stati alterati. C indipendente compilato a O1/O2 deve rispettare le stesse osservazioni. I test validano il modello ammesso; scoperta automatica degli invarianti e correttezza del compilatore restano separate.
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 Le uscite per uguaglianza memorizzate nei cicli a due e tre livelli verificano operandi correlati, limiti variabili, azzeramenti dei contatori e copie alterate.
 
 Le regressioni dei confronti in cache coprono uguaglianza e disuguaglianza, guardie e inizializzazione costante, campi scoperti dopo l’ampliamento e bit 7/31/63 in cache da 1/4/8 byte. Cambiare solo un bit vicino conservando quello verificato deve fallire nel confronto dell’intero stato. Passi nulli, limiti mobili, azzeramenti e budget esauriti devono essere rifiutati.

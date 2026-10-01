@@ -106,6 +106,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `modelInterpreterMachineStateX64` はソースラッパーと同じ生成器から `InterpreterMachineStateModel` を返します。レジスタバイト `[0, 136)` は生の 17 ワードの状態オブジェクトを表し、`RETURN` はゲスト RAX と別にステータスを返します。ゲストメモリアクセスはメモリアクセスのままです。不正な入口フラグと拒否された動的フラグ書込みは失敗状態を保持します。状態領域にはアクセス可能性、アラインメント、ゲストアクセスとの非重複が必要です。`MaxOperations` は入力メタデータと生成操作を制限します。決定的 LowIR 記録は元のアーキテクチャの未定義出力の証拠ではありません。呼出側は観測、入口・フレーム契約と新しい `checkLowIRLoopRefinement` または有限経路の精化証明を提供する必要があります。モデルや記録の生成はコンパイル済み C を証明しません。
 
+`modelLLVMInterpreterMachineStateX64` は、状態ポインターを一つ受け取り i64 のステータスを返す検証済みスカラー LLVM 関数をモデル化します。`llvmInterpreterMachineStateContract` は全 17 ワードを観測し、独立した `LLVMInterpreterDefinednessOffset` バイトが初期値ゼロを維持することを要求します。入口領域とゲストフレームを追加しても、この義務を保持してください。PHI コピーは並列で、整数オーバーフロー、正確なシフト、値域属性などは検証対象のガードになります。デッドコードや select が [LLVM の意味論](https://llvm.org/docs/UndefinedBehavior.html)で poison を隠せる場合も、実行された対応操作はすべて非 poison である必要があります。`MaxInputItems`、`MaxBlocks`、`MaxOperations`、`MaxWork` が構築を制限します。未対応の型、ポインターの逸脱、メモリモード、呼び出し、属性、メタデータは明示的に拒否します。除算、可変シフト、freeze は未対応です。完全な有限経路または帰納的検査を改めて実行し、定義性、メモリ安全性、観測値、停止性を証明してください。自動ループ候補推論は不完全です。ソース、モジュール、コンパイラー入力は別途厳密に結び付けます。パーサーとコンパイラーは信頼前提であり、この API は C、生成機械語、実 CPU の未定義ビット選択を認証しません。契約は [LLVM 言語リファレンス](https://llvm.org/docs/LangRef.html)を参照してください。 読み取る入口バイトは初期化済みで、ゲストアクセスは宣言したフレーム内の生存ストレージを指す必要があります。平坦な LowIR メモリは LLVM オブジェクト寿命やポインター由来を証明しません。
+
 <!-- i18n-section: limits -->
 
 ## 現在の制限

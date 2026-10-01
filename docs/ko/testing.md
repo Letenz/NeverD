@@ -64,6 +64,13 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests`의 `InterpreterMachineStateModel.*`는 독립적인 LowIR 예제로 원시 진입 플래그, 상태와 게스트 RAX의 구분, 17개 상태 워드 전체, 부분 레지스터, 플래그 패킹, 동적 거부 상태의 유지, 게스트 프레임 쓰기, 양쪽 분기와 순환 추론 후의 새 증명을 검사합니다. 잘못된 출력, 누락된 상태, 메모리 변경, 오래된 명령 기록, 잘못된 입력, 생성 예산 소진은 실패해야 합니다. 기존 머신 소스 테스트는 두 C 경로를 O0/O2에서 실행하며 모델 테스트만으로 컴파일된 C를 인증하지 않습니다.
 
+`NeverDLLVMInterpreterModelTests`는 독립 LLVM을 전체 상태 LowIR 기준과 비교하여 비트 폭, 병렬 PHI, switch, 게스트 메모리, 별도 상태, poison 조건, 내장 함수 범위, 거부 계약과 네 가지 구성 예산을 검사합니다. 임의 워드 카운트다운의 완전한 증명을 검사하고 변조된 상태를 거부합니다. 독립 C의 O1/O2 컴파일 결과도 같은 관찰 계약을 만족해야 합니다. 지원 모델을 검증하는 테스트이며 자동 불변식 발견과 컴파일러 정확성은 별도 의무입니다.
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 2중 및 3중 루프의 캐시된 동등 종료 조건은 피연산자 상관관계, 변하는 경계, 카운터 재설정 및 손상된 복사를 검사합니다.
 
 비교 캐시 회귀는 같음과 다름, 가드와 상수 접기된 초기화, 확장 후 처음 나타나는 필드, 1/4/8바이트 캐시의 비트 7/31/63을 검증합니다. 검사 대상 비트를 유지하며 인접 비트만 바꾸어도 전체 상태 비교가 거부해야 합니다. 0 증분, 이동 경계, 카운터 초기화와 공통 예산 소진도 거부합니다.

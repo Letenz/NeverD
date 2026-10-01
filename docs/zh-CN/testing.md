@@ -62,6 +62,13 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用独立编写的 LowIR 用例，检查原始入口标志、状态码与客体 RAX 的区分、全部 17 个状态字、部分寄存器分片、打包标志、动态拒绝状态的持续保留、客体栈帧写入、两个分支以及循环推断后的全新证明。错误输出、丢失状态、内存变化、过期指令记录、非法输入和生成预算耗尽必须失败。已有机器状态源码测试还覆盖两条 C 路径的 O0/O2；模型测试本身不证明编译后的 C。
 
+`NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+```
+
 两层和三层循环的缓存相等退出测试覆盖操作数相关性、变化的边界、计数器重置和被破坏的复制。
 
 比较缓存回归覆盖相等与不等、带守卫和常量折叠的初始化、扩宽后才出现的字段，以及字节、双字和四字缓存中的第 7/31/63 位。保留被检查位而仅改变相邻位，也必须被完整状态比较拒绝。零步长、移动边界、计数器重置和共享预算耗尽必须拒绝。
