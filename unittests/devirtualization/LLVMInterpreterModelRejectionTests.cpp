@@ -19,7 +19,7 @@ TEST_F(LLVMModel, UnsupportedInstructionsAndConstantsFailClearly) {
       "%x = srem i64 9, 3\nret i64 %x",
       "%x = mul nsw i64 9, 3\nret i64 %x",
       "%x = shl i64 1, 64\nret i64 %x",
-      "%x = load i64, ptr %state\n%v = shl i64 1, %x\nret i64 %v",
+      "%x = shl i1 true, false\n%v = zext i1 %x to i64\nret i64 %v",
       "%x = add i1 true, true\n%v = zext i1 %x to i64\nret i64 %v",
       "%x = icmp slt i1 true, false\n%v = zext i1 %x to i64\nret i64 %v",
       "%x = trunc i128 123456789012345678901234567890 to i64\nret i64 %x",

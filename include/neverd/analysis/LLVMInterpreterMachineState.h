@@ -51,7 +51,9 @@ LowIRIndependenceContract llvmInterpreterMachineStateContract();
 /// Guarded arithmetic emits sticky definedness obligations. These require
 /// every executed admitted operation to be non-poison, a conservative
 /// restriction even when a later select or dead use could mask poison.
-/// Division, variable shifts, freeze, undef/poison literals, arbitrary calls,
+/// Variable shifts preserve the full unsigned count and guard it against the
+/// source width; no-wrap and exact flags add their own obligations.
+/// Division, freeze, undef/poison literals, arbitrary calls,
 /// vector/floating operations and exceptions are currently refused.
 ///
 /// Use llvmInterpreterMachineStateContract and a fresh complete finite or
