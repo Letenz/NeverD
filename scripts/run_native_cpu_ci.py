@@ -28,10 +28,14 @@ def read_inventory(
 ) -> tuple[list[str], set[str]]:
     definitions = (root / "scripts" / filename).read_text(encoding="utf-8")
     owners = re.findall(rf"^{prefix}_OWNER\((\w+)\)$", definitions, re.M)
-    families = re.findall(
-        rf'^{prefix}_REQUIRED_CASES\(\s*"([^"]+)",\s*"([^"]+)",'
-        r'\s*"([^"]+)"\s*\)', definitions, re.M
-    )
+    literal = r'((?:"[^"]+"\s*)+)'
+    families = [
+        tuple("".join(re.findall(r'"([^"]*)"', field)) for field in fields)
+        for fields in re.findall(
+            rf'^{prefix}_REQUIRED_CASES\(\s*{literal},\s*{literal},'
+            rf'\s*{literal}\)', definitions, re.M
+        )
+    ]
     explicit = [
         "".join(re.findall(r'"([^"]*)"', value))
         for value in re.findall(

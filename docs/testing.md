@@ -1800,7 +1800,20 @@ The native-only CI checkout initializes pinned Capstone sources and uses the ver
 
 The existing `ci.yml` provides an opt-in `native_cpu_only` manual mode on its Windows x64 runner. `NativeCPUTests.def` selects ten owners; `run_native_cpu_ci.py` builds them before filtered CTest and saves inventory, JUnit, logs and a summary. Shared CI parsers distinguish passed, failed, skipped, disabled and not-run results. Every declared native WHP mapping case must be discovered and executed; missing or skipped native evidence fails the focused job. Default source-built CI remains unchanged. Protocol tests and compilation do not replace native WHP or ARM64 workload validation.
 
-With `native_cpu_only=true`, the additional `native_driver_tests=true` input enables `NeverDNativeDriverTests` without Unicorn. `NativeDriverTests.def` adds 52 required WHP outcomes from the 26 images in `DriverBuiltinImages.def`, at original and rebased addresses. Fixed images must report the expected loader rejection when rebased. Stable parameter identities make missing or skipped built-in cases fail the job; unavailable optional WDK fixtures remain explicit skips. The same evidence runner accepts `--with-drivers` and records all selected owners before execution.
+With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 28 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
+
+`NativeDriverTests.def` requires 152 WHP outcomes from all 76 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 28 WDK images and 22 request scenarios, each at original and rebased addresses. Together with the 45 CPU checks, 197 native outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build.
+
+```bash
+python3 scripts/build_wdk_driver_fixtures.py \
+  --output build-driver-fixtures --cache build-driver-packages
+cmake -S . -B build-native -G Ninja \
+  -C build-driver-fixtures/fixtures.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+  -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+```
 
 `NeverDAArch64StateTests` checks corruption of every scalar field, both words of every vector, privilege changes, missing floating-point execution and preserved transport diagnostics. `NeverDAArch64FPTests` runs `OriginalProgramChecksCompleteStateAndOneDeadline` using independently assembled `AArch64ProbeCases.def` instructions at both privileges on real transports. The test relocates these PC-independent words to guest code without granting user access to monitor pages. Unicorn execution and explicit native skips do not replace native ARM64 startup evidence.
 

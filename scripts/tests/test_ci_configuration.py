@@ -490,6 +490,13 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertIn("--require-whp", native)
         self.assertIn("inputs.native_driver_tests", native)
         self.assertIn("driver_args+=(--with-drivers)", native)
+        self.assertIn("scripts/build_wdk_driver_fixtures.py", native)
+        self.assertIn("-C build-ci-native/driver-fixtures/fixtures.cmake", native)
+        self.assertLess(native.index("scripts/build_wdk_driver_fixtures.py"),
+                        native.index("cmake -S . -B build-ci-native"))
+        self.assertIn("build-ci-native/driver-fixtures/build-manifest.json", native)
+        self.assertNotIn("build-ci-native/driver-packages/", native)
+        self.assertNotIn("build-ci-native/driver-fixtures/kit/", native)
         self.assertIn(
             '-DNEVERD_ENABLE_DRIVER_EMULATION="$NEVERD_NATIVE_DRIVER_TESTS"',
             native,

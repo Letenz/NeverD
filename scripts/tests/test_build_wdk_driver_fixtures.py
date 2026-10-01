@@ -1,0 +1,136 @@
+import hashlib
+from pathlib import Path
+import re
+import tempfile
+import unittest
+from unittest import mock
+import zipfile
+
+from scripts import build_wdk_driver_fixtures as fixtures
+from scripts import run_native_cpu_ci as native
+
+
+class WDKDriverFixtureTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def archive(self, name, files):
+        path = self.root / name
+        with zipfile.ZipFile(path, "w") as archive:
+            for filename, data in files.items():
+                archive.writestr(filename, data)
+        return path
+
+    def test_corrupt_cached_package_is_rejected_without_network(self):
+        package = self.root / "package.nupkg"
+        package.write_bytes(b"modified bytes")
+        with mock.patch.object(fixtures.urllib.request, "urlopen") as fetch:
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                fixtures.download(self.root, package.name, "unused", "0" * 64)
+        fetch.assert_not_called()
+
+    def test_formatted_package_identity_is_one_complete_string(self):
+        definition = self.root / "inputs.def"
+        definition.write_text('NEVERD_WDK_DOWNLOAD("archive",\n'
+                              ' "https://example.invalid/"\n "package", "sha")\n')
+        self.assertEqual(fixtures.declarations(definition), {
+            "DOWNLOAD": [["archive", "https://example.invalid/package", "sha"]],
+        })
+
+    def test_failed_download_cannot_publish_partial_package(self):
+        package = self.root / "package.nupkg"
+        expected = hashlib.sha256(b"complete bytes").hexdigest()
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = [b"truncated", b""]
+        with mock.patch.object(fixtures.urllib.request, "urlopen",
+                               return_value=response):
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                fixtures.download(self.root, package.name, "unused", expected)
+        self.assertFalse(package.exists())
+        self.assertFalse(package.with_suffix(".nupkg.part").exists())
+
+    def test_extract_preserves_original_case_bytes_and_license(self):
+        files = {"c/Include/Native.h": b"original header\r\n",
+                 "LICENSE.txt": b"original terms\r\n",
+                 "tools/unneeded.exe": b"not selected"}
+        archive = self.archive("kit.zip", files)
+        kit = self.root / "kit"
+        records = fixtures.extract([archive], kit, ["c/Include/", "LICENSE.txt"])
+        self.assertEqual({item["path"] for item in records},
+                         {"c/Include/Native.h", "LICENSE.txt"})
+        for item in records:
+            self.assertEqual((kit / item["path"]).read_bytes(), files[item["path"]])
+            self.assertEqual(fixtures.digest(kit / item["path"]), item["sha256"])
+        self.assertFalse((kit / "tools").exists())
+        overlay = fixtures.overlay_directory(kit / "c/Include", True)
+        self.assertEqual(overlay["contents"][0]["name"], "Native.h")
+
+    def test_missing_package_member_and_conflicting_headers_fail(self):
+        first = self.archive("a.zip", {"include/header.h": b"first"})
+        second = self.archive("b.zip", {"include/header.h": b"changed"})
+        kit = self.root / "kit"
+        with self.assertRaisesRegex(ValueError, "missing Microsoft package"):
+            fixtures.extract([first], kit, ["include/", "missing.lib"])
+        with self.assertRaisesRegex(ValueError, "conflicting Microsoft"):
+            fixtures.extract([first, second], kit, ["include/"])
+
+    def test_stale_unverified_header_cannot_enter_include_overlay(self):
+        archive = self.archive("kit.zip", {"include/header.h": b"verified"})
+        kit = self.root / "kit"
+        (kit / "include").mkdir(parents=True)
+        (kit / "include/stale.h").write_bytes(b"unverified")
+        with self.assertRaisesRegex(ValueError, "unverified files"):
+            fixtures.extract([archive], kit, ["include/"])
+
+    def test_selected_archive_path_cannot_escape_destination(self):
+        archive = self.archive("kit.zip", {"include/../../escape.h": b"bad"})
+        with self.assertRaisesRegex(ValueError, "invalid Microsoft archive path"):
+            fixtures.extract([archive], self.root / "kit", ["include/"])
+        self.assertFalse((self.root / "escape.h").exists())
+
+    def test_failed_build_removes_previous_completion_cache(self):
+        output = self.root / "output"
+        output.mkdir()
+        (output / "fixtures.cmake").write_text("stale complete build")
+        (output / "build-manifest.json").write_text("stale successful evidence")
+        with mock.patch.object(fixtures, "download", side_effect=ValueError("bad")):
+            with self.assertRaisesRegex(ValueError, "bad"):
+                fixtures.build(output, self.root / "cache", "clang", "lld-link")
+        self.assertFalse((output / "fixtures.cmake").exists())
+        self.assertFalse((output / "build-manifest.json").exists())
+
+    def test_cmake_paths_preserve_spaces_and_reject_list_or_code_expansion(self):
+        image = self.root / "directory with spaces" / "driver.sys"
+        text = fixtures.cache_entry("NEVERD_TEST_FIXTURE", image)
+        self.assertIn('"' + image.as_posix() + '"', text)
+        for name in ('x;y.sys', '${VAR}.sys', 'x"y.sys'):
+            with self.subTest(name=name):
+                with mock.patch.object(Path, "resolve", side_effect=AssertionError):
+                    with self.assertRaisesRegex(ValueError, "unsupported CMake"):
+                        fixtures.cache_entry("NEVERD_TEST_FIXTURE", self.root / name)
+
+    def test_every_original_wdk_image_has_a_declared_build_and_native_gate(self):
+        inventory = fixtures.declarations()
+        variables = ["NEVERD_" + name + suffix + "_FIXTURE"
+                     for name, *_ in inventory["FIXTURE"]
+                     for suffix in ("", "_CFG")]
+        self.assertEqual(len(set(variables)), len(variables))
+        source = (fixtures.ROOT / "unittests/emulation/DriverBackendParityCases.def")
+        images = re.findall(r"^NEVERD_PARITY_IMAGE\(\s*(\w+),\s*(\w+)\)",
+                            source.read_text(), re.M)
+        self.assertEqual(set(variables), {variable for _, variable in images})
+        _, required = native.declared_inventory(fixtures.ROOT, with_drivers=True)
+        for name, _ in images:
+            for suffix in ("Original", "Rebased"):
+                self.assertTrue(any(test.endswith(f"/whp_{suffix}_{name}")
+                                    for test in required))
+        self.assertEqual(len(required), 197)
+        for _, filename, *_ in inventory["FIXTURE"]:
+            self.assertTrue((fixtures.ROOT / "unittests/emulation/fixtures"
+                             / filename).is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
