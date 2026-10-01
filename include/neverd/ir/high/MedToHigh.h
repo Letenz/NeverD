@@ -57,7 +57,7 @@ void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 
-/// Replace `goto L` with a copy of L's tail when L is at most three pure
+/// Replace `goto L` with a copy of L's tail when L is a few pure
 /// assignments followed by a return, or ending in a call that never returns.
 /// The original stays for other paths. Returns true when a goto was replaced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
