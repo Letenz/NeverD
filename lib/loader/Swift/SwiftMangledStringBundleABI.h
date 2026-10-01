@@ -1,6 +1,8 @@
 #ifndef NEVERD_LOADER_SWIFT_SWIFTMANGLEDSTRINGBUNDLEABI_H
 #define NEVERD_LOADER_SWIFT_SWIFTMANGLEDSTRINGBUNDLEABI_H
 
+#include "SwiftFunctionSymbols.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -13,21 +15,15 @@ namespace neverd {
 // function name and module are irrelevant; the complete mangled type tree,
 // exact local function symbol, and a caller's second-result-word use agree.
 // This is an ABI declaration only. It does not certify the function body.
-inline std::optional<SourceFunctionTypeHint>
-swiftMangledStringBundleSourceABI(const BinaryImage &Image, va_t Entry,
-                                  bool ObservedSecondResultWord) {
+inline std::optional<SourceFunctionTypeHint> swiftMangledStringBundleSourceABI(
+    const BinaryImage &Image, va_t Entry, bool ObservedSecondResultWord,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (!ObservedSecondResultWord || Image.Format != BinaryFormat::MachO ||
       Image.IsRelocatable || Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
