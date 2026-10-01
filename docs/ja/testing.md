@@ -65,6 +65,19 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` の `InterpreterMachineStateModel.*` は独立した LowIR 例で、生の入口フラグ、ステータスとゲスト RAX の分離、全 17 状態ワード、部分レジスタ、フラグのパック、動的拒否状態の保持、ゲストフレーム書込み、両分岐、循環推論後の新しい証明を検査します。誤った出力、消失したステータス、メモリ変更、古い命令記録、不正入力、生成予算の枯渇は失敗しなければなりません。既存のマシンソーステストは両 C 経路を O0/O2 で実行しますが、モデルテストだけではコンパイル済み C を証明しません。
 
+`NeverDLLVMInterpreterModelTests` は独自 LLVM を全状態 LowIR 参照実装と比較し、ビット幅、並列 PHI、switch、ゲストメモリ、独立ステータス、poison ガード、組み込み関数の値域、拒否契約、四つの構築予算を検証します。任意ワードのカウントダウンを完全に証明し、変更されたステータスを拒否します。独自 C の O1/O2 コンパイル結果も同じ観測契約を満たす必要があります。これは対応モデルの検証であり、自動不変条件発見とコンパイラーの正しさは別の義務です。 可変シフトのケースは四つのビット幅、マスクや分岐で制限したシフト量、境界値と範囲外の値、オーバーフロー禁止と正確性フラグ、厳格な poison 拒否、O1/O2 でコンパイルした C を検証します。
+
+ガード付きカウントダウンの検証は、本体テンプレート拒否後の再試行、任意ワード入力に対する完全なヘッダー証明、共有カット・問い合わせ予算、実入口契約違反の即時拒否を含みます。
+
+`NeverDInterpreterLLVMRefinementTests` は新規の合成証明、正確なテキスト／関数の結合、独立予算、全観測項目、広いソース領域を検証します。バイト、残余、結果、フラグ、ステータス、フレーム書込み、poison、誤った／古いループ案の変更は合成証明を拒否させます。任意ワード幅のカウントダウンは両帰納前提を要求し、独立 C 例の O1/O2 コンパイルは実際の LLVM テキストを検証します。状態モデルの回帰は隠れた入口後退辺を拒否し、付随する出自情報をコピーせずルートを予算計上します。
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
+```
+
 二段・三段のループのキャッシュされた等値終了条件では、オペランドの相関、変化する境界、カウンターのリセット、破損したコピーを検査します。
 
 比較キャッシュの回帰は等値・不等値、入口ガードと定数畳み込み、拡幅後に初めて変化するフィールド、1/4/8 バイトのキャッシュのビット 7/31/63 を検証します。対象ビットを保ったまま隣接ビットだけを変更しても全状態比較で拒否します。ゼロ増分、移動する境界、カウンタのリセット、共通予算の枯渇も拒否します。
@@ -878,18 +891,26 @@ KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準
 
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
+ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
+
+`NeverDAArch64StateTests` は全スカラーフィールド、全ベクトルの両ワード、権限変更、浮動小数点命令の未実行、転送エラー診断の保持を検証します。`NeverDAArch64FPTests` の `OriginalProgramChecksCompleteStateAndOneDeadline` は独立に組み立てた `AArch64ProbeCases.def` の命令を実際の転送で両権限から実行します。テストは PC に依存しない命令をゲストコードへ移し、監視ページへの user アクセスは許可しません。Unicorn の実行と明示的な native skip は native ARM64 起動証拠を代替しません。
+
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
 `AArch64InstructionEffects` が最大128ビットの scalar/FP/SIMD 単一・ペア RAM 範囲を所有します。共有 address space は CPU entry 前に全ページを検証し、`RAMTransaction` は宣言された完全な物理書き込みのみを確定します。128ビット書き込みは実行前に二つの64ビット値として順序付きで観測されます。停止・fault は RAM、vector、writeback を保持します。Xn/Vn の番号重複は有効で、pair 範囲のアドレス wrap は拒否します。`NeverDAArch64MemoryTests` は独立した `AArch64CrossPageCases.def` と `AArch64VectorMemoryCases.def` を使用します。
 
-`NeverDAArch64GeneralStateTests` は両 privilege の scalar subset と完全状態の71箇所の読み取り、幅の正規化、欠落 reader、retry を検証します。`NeverDAArch64FPTests` は `AArch64FPCases.def` の原始命令で全 vector lane、packed arithmetic、scalar/vector FP、4種類の丸め、FZ/DN、累積 FPSR、context と拒否条件を確認します。`NeverDAArch64MemoryTests` は全 crossing offset、observer の順序・停止、拒否ページ、alias、復元後の vector input を検証します。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) は実際の実行後に全 scalar/vector read failure を注入します。利用不可の native transport は明示的に skip し、これらは native ARM64 KVM/WHP の実機証拠を代替しません。
+`NeverDAArch64StateTests` は両 privilege の完全状態の71箇所の読み取り、幅の正規化、欠落 reader、retry を検証します。`NeverDAArch64FPTests` は `AArch64FPCases.def` の原始命令で全 vector lane、packed arithmetic、scalar/vector FP、4種類の丸め、FZ/DN、累積 FPSR、context と拒否条件を確認します。`NeverDAArch64MemoryTests` は全 crossing offset、observer の順序・停止、拒否ページ、alias、復元後の vector input を検証します。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) は実際の実行後に全 scalar/vector read failure を注入します。利用不可の native transport は明示的に skip し、これらは native ARM64 KVM/WHP の実機証拠を代替しません。
 
 `NeverDAArch64MemoryTests` は両権限レベルの Unicorn、KVM、WHP で18種類のスカラー／ペア命令を検証します。全ページ跨ぎ offset、符号と幅、observer 順序、第2ページの権限拒否／欠落、障害の明示的な消費と再試行、同一物理領域のエイリアス、エイリアス置換後の context 復元を含みます。変更前には合法なページ跨ぎ load の拒否を再現しました。利用不能な transport は明示的に skip します。Unicorn と cross-compile は ARM64 KVM/WHP 実機の証拠を代替しません。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) は、フラグがゼロの無効状態の CFG メタデータ、両方のロードアドレスで保持されるフォールバックポインタ、不正なスロット/ターゲット、欠落した再配置を検証します。実行ケースは明示的な Unicorn/KVM/WHP と `driver-strict`、`checked-x64-v1` を使用し、利用できないバックエンドは個別にスキップします。`DriverPublicCLICases.def` は、互換性を維持する v1 C API と比較する CLI に `--backend unicorn` を指定します。ネイティブと `auto` の選択は独立した公開 API テストを維持し、ホスト API が利用できない場合に暗黙のフォールバックは行いません。
 
-`NeverDAArch64GeneralStateTests` は両 privilege の scalar subset と完全状態の71箇所の読み取り、幅の正規化、欠落 reader、retry を検証します。`NeverDAArch64FPTests` は `AArch64FPCases.def` の原始命令で全 vector lane、packed arithmetic、scalar/vector FP、4種類の丸め、FZ/DN、累積 FPSR、context と拒否条件を確認します。`NeverDAArch64MemoryTests` は全 crossing offset、observer の順序・停止、拒否ページ、alias、復元後の vector input を検証します。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) は実際の実行後に全 scalar/vector read failure を注入します。利用不可の native transport は明示的に skip し、これらは native ARM64 KVM/WHP の実機証拠を代替しません。
+checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト実行、完全な状態読み出しを一つのステップ時間枠で処理します。`UC_HOOK_CODE` は命令入口で借用した停止トークンと期限を確認します。同期エンジン呼び出しは戻る前に hook の借用を解除しますが、マシンステップは状態公開まで制御を保持します。Unicorn と WHP は完全な CPU 状態を一時保存し、成功したステップの公開直前に同じ制御を確認します。WHP は準備前に時間枠を一度だけ作ります。確認済みの x64 CPU 例外は読み出し中の停止要求に優先します。読み出しが中止されると checked RAM トランザクションは投機的な書き込みを破棄し、非制限ソフトウェア契約は変わりません。 `MachineInterruptedError` は確認済みの中止をホストや状態読み出しの失敗と区別します。共通 checked CPU は `Stopped` または `Deadline` を返し、CPU/RAM を保持して再試行を許可します。同時に停止要求があっても実際の失敗は `BackendFailure` のままです。
 
-checked Unicorn の単一ステップは `MachineRunControl` に従います。ARM64 の保守とゲスト実行は一つのステップ実行枠を共有し、内部の `UC_HOOK_CODE` が命令入口で借用した停止トークンと期限を確認します。同期エントリは戻る前に借用を解除します。入口での拒否は呼び出し側の状態と RAM を保持し、キャンセルされた実行の結果は checked RAM トランザクションでコミットできません。命令の許可範囲と非制限ソフトウェア契約は変わりません。
+状態読み出しの回帰テスト： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` は実際の x64 と ARM64 エンジンの両権限レベルで `UnicornMachineControlCases.def` の原始ストア命令を実行します。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` はステップ前のキャンセル、実際のゲスト入口での停止または期限切れ、入力状態全体と RAM の保持、その後の一度の正常なストアを検証します。テスト専用の入口ラッパーはハイパーバイザーを必要とせず、ネイティブ ARM64/WHP の証拠にはなりません。
+
+`RunDeadline::invoke` は WHP の停止済み・期限切れの実行をホスト呼び出し前に拒否し、キャンセル中も実際のホスト結果を保持し、借用した停止トークンを解放する前に割り込みコールバックの完了を確認します。KVM と WHP は、完全に取得した非公開状態を実行リースの所有スレッドで検証してから、同時に到着した停止や期限を分類します。実際のホスト・取得エラーと認証済み x64 CPU 例外が優先されます。通常の成功状態はキャンセル確認が終わるまで公開せず、確認済みの中断では投機的な CPU/RAM 効果を破棄して再試行を許可します。準備、ネイティブ実行、状態取得には単一のステップ猶予を使います。協調キャンセルを提供しますが、厳密な実時間上限は保証しません。
+
+`NeverDRunControlTests` は移植可能な `NativeEntryTests.cpp` と、Windows で WHP を有効にした場合の `WhpEntryControlTests.cpp` を含みます。メモリ内のホストコールバックで、実行拒否、再試行、遅いキャンセル、実エラーの保持、完了結果の優先順位、確認済みコールバックの寿命を Hyper-V なしで検証します。`NeverDKvmRunTests` は所有スレッドでの完了、エラーの優先順位、再入拒否を確認します。実際の `NeverDKvmStateTransferTests` は `KvmStateTransferCases.def` の元の命令を実行します。`ActualCPUExceptionOutranksStopDuringCapture` と `PublicCPUExceptionOutranksStopDuringCapture` は実際のレジスタ/XSAVE 読み出し後に停止し、除算例外、元のコンテキスト、RAM、明示的な回復を保持します。Wine 上の Windows ABI による移植可能テストはスレッドと制御の証拠であり、ネイティブ WHP 実行の証拠ではありません。利用できないネイティブ経路は明示的にスキップします。

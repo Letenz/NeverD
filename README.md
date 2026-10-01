@@ -53,6 +53,8 @@ Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--
 
 The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
 
+The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM checks against an exact LLVM artifact; C compilation remains outside its proof scope.
+
 <!-- i18n-section: why-neverd -->
 
 ## Why NeverD?
@@ -103,6 +105,8 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 `driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 `checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
+
+Native ARM64 initialization rejects incorrect complete-state transfers or FP/SIMD results through a private startup probe; its success covers this bounded initialization program.
 
 <!-- i18n-section: how-it-works -->
 

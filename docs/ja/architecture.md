@@ -67,6 +67,10 @@ Objective-C の受信側の事実は、メソッド入口の self と正確な�
 
 `modelInterpreterMachineStateX64` とソースラッパーは、ゲストレジスタの部分領域、パックされたフラグ、プロファイル状態、制御フローの生成器を共有します。モデルは状態オブジェクトへのアクセスだけを明示的なレジスタバイトに変更し、ステータスをゲスト RAX と分離します。コンパイラの意味論や証明方針は担当せず、入口領域、観測、フレーム契約、完全な精化検査は呼出側が担当します。
 
+`NeverDLLVMInterpreterModel` は同じ生の状態 ABI への独立した有界スカラー LLVM 取り込みを担当します。`modelLLVMInterpreterMachineStateX64` は実際のステータス戻り値と明示的な定義性ガードを保持します。`llvmInterpreterMachineStateContract` が全観測値とゼロ監視バイトの保持義務を提供し、領域・メモリ・完全な証明は呼び出し側の責任です。通常のリフティングやソース公開を変更せず、コンパイラーも証明しません。
+
+`NeverDInterpreterLLVMRefinement` はネイティブから LLVM への証明の合成を担当します。両側の状態モデルと必須契約を再構築し、唯一のプロファイル定義から入口専用のフラグ射影を生成して、両前提を新たに検証します。呼出側はループ案を提示できますが、モデル、観測項目、証明結果を置き換えられません。解析モデルは実行グラフと宣言済みルートだけをコピーし、状態の再初期化につながる入口への後退辺を拒否します。
+
 復元 C API v3 と CLI はフィールド、細分化、ソルバー問い合わせの予算を共通の特化器に渡します。アダプターは拡張を読む前に構造体サイズと reserved を検証し、v1/v2 の配置と既定値を維持します。予算の増加は処理量のみを変更し、実行契約や公開条件を変更しません。
 
 アーキテクチャの lifter は、未定義出力の付随メタデータをトランザクションとして管理します。各試行前に古い証拠を消し、成功した正確なリフトに対してのみ効果を公開します。`Missing` は証拠の欠如であり、空の `Complete` 記述ではありません。通常の LowIR は選択済みの決定的な値を維持します。`LowIRUndefinedIndependence` は、渡された完全な非巡回 LowIR グラフの有界な関係証明を担当し、通常の入力を共有しつつ、新たな未定義値の相関を保持します。完全な命令境界と操作ダイジェストに証拠を対応付け、不完全な証明を拒否します。以下の有限なネイティブ実行経路の範囲を超えるネイティブグラフの認証、ループ不変条件、ネイティブコードから C への等価性証明は、別の課題です。
@@ -508,6 +512,8 @@ CPU factory と capability query は同じ `ExecutionConfiguration` を使い、
 
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
+ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
+
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
 `AArch64InstructionEffects` が最大128ビットの scalar/FP/SIMD 単一・ペア RAM 範囲を所有します。共有 address space は CPU entry 前に全ページを検証し、`RAMTransaction` は宣言された完全な物理書き込みのみを確定します。128ビット書き込みは実行前に二つの64ビット値として順序付きで観測されます。停止・fault は RAM、vector、writeback を保持します。Xn/Vn の番号重複は有効で、pair 範囲のアドレス wrap は拒否します。`NeverDAArch64MemoryTests` は独立した `AArch64CrossPageCases.def` と `AArch64VectorMemoryCases.def` を使用します。
@@ -802,4 +808,6 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
 
-checked Unicorn の単一ステップは `MachineRunControl` に従います。ARM64 の保守とゲスト実行は一つのステップ実行枠を共有し、内部の `UC_HOOK_CODE` が命令入口で借用した停止トークンと期限を確認します。同期エントリは戻る前に借用を解除します。入口での拒否は呼び出し側の状態と RAM を保持し、キャンセルされた実行の結果は checked RAM トランザクションでコミットできません。命令の許可範囲と非制限ソフトウェア契約は変わりません。
+checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト実行、完全な状態読み出しを一つのステップ時間枠で処理します。`UC_HOOK_CODE` は命令入口で借用した停止トークンと期限を確認します。同期エンジン呼び出しは戻る前に hook の借用を解除しますが、マシンステップは状態公開まで制御を保持します。Unicorn と WHP は完全な CPU 状態を一時保存し、成功したステップの公開直前に同じ制御を確認します。WHP は準備前に時間枠を一度だけ作ります。確認済みの x64 CPU 例外は読み出し中の停止要求に優先します。読み出しが中止されると checked RAM トランザクションは投機的な書き込みを破棄し、非制限ソフトウェア契約は変わりません。 `MachineInterruptedError` は確認済みの中止をホストや状態読み出しの失敗と区別します。共通 checked CPU は `Stopped` または `Deadline` を返し、CPU/RAM を保持して再試行を許可します。同時に停止要求があっても実際の失敗は `BackendFailure` のままです。
+
+`RunDeadline::invoke` は WHP の停止済み・期限切れの実行をホスト呼び出し前に拒否し、キャンセル中も実際のホスト結果を保持し、借用した停止トークンを解放する前に割り込みコールバックの完了を確認します。KVM と WHP は、完全に取得した非公開状態を実行リースの所有スレッドで検証してから、同時に到着した停止や期限を分類します。実際のホスト・取得エラーと認証済み x64 CPU 例外が優先されます。通常の成功状態はキャンセル確認が終わるまで公開せず、確認済みの中断では投機的な CPU/RAM 効果を破棄して再試行を許可します。準備、ネイティブ実行、状態取得には単一のステップ猶予を使います。協調キャンセルを提供しますが、厳密な実時間上限は保証しません。

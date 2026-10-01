@@ -224,6 +224,17 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
       Residual.Blocks.front().StartAddr != Residual.Entry ||
       !Residual.Blocks.front().Preds.empty())
     return invalid("machine source requires one predecessor-free entry anchor");
+  // Preds is descriptive metadata. Check actual successor edges and direct
+  // transfers too: reentering the anchor would reload the source input state.
+  for (const auto &B : Residual.Blocks) {
+    if (B.hasSucc(Residual.Blocks.front().Id))
+      return invalid("machine source entry anchor has a backedge");
+    for (const auto &Op : B.Ops)
+      if ((Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) &&
+          Op.NumInputs && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == Residual.Entry)
+        return invalid("machine source entry anchor has a backedge");
+  }
   if (Residual.ExceptionMetadata || !Residual.JumpTables.empty())
     return invalid("machine source requires a complete ordinary residual CFG");
   if (auto Error = validateLowInstructionBoundaries(
@@ -233,7 +244,16 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   const uint64_t ParameterRegister =
       SourceFormat == BinaryFormat::COFF ? x86reg::RCX : x86reg::RDI;
   InterpreterMachineSource Result;
-  Result.Function = Residual;
+  if (StateRegisters) {
+    // The analysis model needs only the executable graph and declared entry
+    // roots. Do not copy unbounded diagnostic/provenance trees or strings.
+    Result.Function.Entry = Residual.Entry;
+    Result.Function.Blocks = Residual.Blocks;
+    Result.Function.ModuleAnalysisRoots = Residual.ModuleAnalysisRoots;
+    Result.Function.OrdinaryModuleAnalysisRoots =
+        Residual.OrdinaryModuleAnalysisRoots;
+  } else
+    Result.Function = Residual;
   bool HasReturn = false;
   bool Seeded = false;
   for (LowBlock &Block : Result.Function.Blocks) {
@@ -413,7 +433,9 @@ modelInterpreterMachineStateX64(const LowFunc &Residual,
     Remaining -= Count;
     return true;
   };
-  if (!Charge(Residual.Blocks.size()))
+  if (!Charge(Residual.Blocks.size()) ||
+      !Charge(Residual.ModuleAnalysisRoots.size()) ||
+      !Charge(Residual.OrdinaryModuleAnalysisRoots.size()))
     return invalid("machine-state model input budget exhausted");
   for (const auto &B : Residual.Blocks)
     if (!Charge(B.Ops.size()) || !Charge(B.InstructionBoundaries.size()) ||

@@ -2290,6 +2290,167 @@ swiftLocalImportedLockType(const BinaryImage &Image, va_t Address) {
   return "So16os_unfair_lock_sV";
 }
 
+/// The runtime also finds stable internal type names in registered type
+/// records. A symbol that is not exported cannot be linked as a descriptor;
+/// reconstruct its textual identity only after the descriptor bytes and the
+/// image's __swift5_types registration agree with that name. Private anonymous
+/// contexts have no such stable lookup identity and remain unsupported.
+/// swift/stdlib/public/runtime/MetadataLookup.cpp:
+/// _contextDescriptorMatchesMangling and _searchTypeMetadataRecordsInSections.
+inline std::optional<std::string>
+swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      Address % 4)
+    return std::nullopt;
+  const Symbol *Descriptor = nullptr;
+  for (const auto &Candidate : Image.Symbols)
+    if (Candidate.Addr == Address) {
+      if (Descriptor || Candidate.IsFunc || Candidate.Name.empty())
+        return std::nullopt;
+      Descriptor = &Candidate;
+    }
+  if (!Descriptor || (Descriptor->Size && Descriptor->Size < 12))
+    return std::nullopt;
+  for (const auto &Candidate : Image.Symbols)
+    if (&Candidate != Descriptor && Candidate.Name == Descriptor->Name)
+      return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr == Address || Export.Name == Descriptor->Name)
+      return std::nullopt;
+
+  llvm::StringRef SymbolName(Descriptor->Name);
+  SymbolName.consume_front("_");
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(SymbolName, Options);
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "NominalTypeDescriptor", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
+    return std::nullopt;
+  const auto &Nominal = Parsed.Root->Children[0].Children[0].Children[0];
+  const unsigned Kind = Nominal.Kind == "Class"       ? 16
+                        : Nominal.Kind == "Structure" ? 17
+                        : Nominal.Kind == "Enum"      ? 18
+                                                      : 0;
+  if (!Kind || Nominal.Text || Nominal.Index || Nominal.Children.size() != 2)
+    return std::nullopt;
+  const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
+                             llvm::StringRef ExpectedKind) {
+    return Node.Kind == ExpectedKind && Node.Text && !Node.Index &&
+           Node.Children.empty() && !Node.Text->empty() &&
+           Node.Text->size() <= 128 &&
+           std::all_of(Node.Text->begin(), Node.Text->end(),
+                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
+  };
+  const auto &Module = Nominal.Children[0];
+  const auto &Name = Nominal.Children[1];
+  if (!Identifier(Module, "Module") || !Identifier(Name, "Identifier") ||
+      *Module.Text == "__C" || *Module.Text == "__C_Synthesized" ||
+      !SymbolName.starts_with("$s") || !SymbolName.ends_with("Mn"))
+    return std::nullopt;
+
+  const auto MatchesText = [&](va_t Target,
+                               const std::string &Text) -> std::optional<bool> {
+    // Stop at the first different byte. An unrelated short name may be
+    // immediately followed by pointer storage that is not part of its text.
+    for (size_t I = 0; I <= Text.size(); ++I) {
+      if (Target > InvalidVA - I)
+        return std::nullopt;
+      const auto Byte = readImmutableImageBytes(Image, Target + I, 1);
+      if (!Byte)
+        return std::nullopt;
+      const uint8_t Expected = I == Text.size() ? 0 : uint8_t(Text[I]);
+      if (Byte->front() != Expected)
+        return false;
+    }
+    return true;
+  };
+  const auto MatchesIdentity = [&](va_t Target) -> std::optional<bool> {
+    const auto Bytes = readImmutableImageBytes(Image, Target, 12);
+    if (!Bytes)
+      return std::nullopt;
+    const uint32_t Flags = llvm::support::endian::read32le(Bytes->data());
+    if ((Flags & 0x1f) != Kind)
+      return false;
+    const auto TypeName = swiftRelativeAddress(Image, Target + 8);
+    if (!TypeName)
+      return std::nullopt;
+    const auto NameMatches = MatchesText(*TypeName, *Name.Text);
+    if (!NameMatches || !*NameMatches)
+      return NameMatches;
+    // Unknown versions, import identities and indirect parents cannot prove
+    // which textual declaration the runtime will select.
+    if ((Flags & 0xff00) || (Flags & 0x40000) ||
+        (llvm::support::endian::read32le(Bytes->data() + 4) & 1))
+      return std::nullopt;
+    const auto Parent = swiftRelativeAddress(Image, Target + 4);
+    const auto ParentBytes =
+        Parent ? readImmutableImageBytes(Image, *Parent, 12) : std::nullopt;
+    if (!ParentBytes)
+      return std::nullopt;
+    const uint32_t ParentFlags =
+        llvm::support::endian::read32le(ParentBytes->data());
+    if ((ParentFlags & 0x1f) != 0)
+      return false;
+    if ((ParentFlags & ~uint32_t(0x40)) ||
+        llvm::support::endian::read32le(ParentBytes->data() + 4))
+      return std::nullopt;
+    const auto ModuleName = swiftRelativeAddress(Image, *Parent + 8);
+    return ModuleName ? MatchesText(*ModuleName, *Module.Text)
+                      : std::optional<bool>{};
+  };
+  const auto Header = readImmutableImageBytes(Image, Address, 12);
+  const auto Identity = MatchesIdentity(Address);
+  if (!Header || !Identity || !*Identity ||
+      (llvm::support::endian::read32le(Header->data()) & 0xffff) !=
+          (Kind | 0x40))
+    return std::nullopt;
+
+  const Section *Records = nullptr;
+  for (const auto &Candidate : Image.Sections)
+    if (Candidate.Name == "__swift5_types") {
+      if (Records)
+        return std::nullopt;
+      Records = &Candidate;
+    }
+  if (!Records || !Records->isReadable() || Records->isWritable() ||
+      !Records->Size || Records->Size % 4 || Records->Size / 4 > 65536)
+    return std::nullopt;
+  const auto Bytes = readImmutableImageBytes(Image, Records->VA, Records->Size);
+  if (!Bytes)
+    return std::nullopt;
+  bool Registered = false;
+  for (uint64_t I = 0; I < Records->Size; I += 4) {
+    const uint32_t Reference =
+        llvm::support::endian::read32le(Bytes->data() + I);
+    if (!Reference)
+      continue;
+    if (Reference & 3)
+      return std::nullopt;
+    const auto Target = swiftRelativeAddress(Image, Records->VA + I);
+    const auto Match = Target ? MatchesIdentity(*Target) : std::nullopt;
+    if (!Match || (*Match && *Target != Address))
+      return std::nullopt;
+    Registered |= *Target == Address;
+  }
+  return Registered ? std::optional<std::string>(
+                          SymbolName.drop_front(2).drop_back(2).str())
+                    : std::nullopt;
+}
+
 inline std::optional<SourceCallTypeHint>
 swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -2733,7 +2894,9 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     if (!DescriptorAddress)
       return std::nullopt;
     if (!DescriptorSymbol && TypeBytes[I] == 1) {
-      const auto Inline = swiftLocalImportedLockType(Image, *DescriptorAddress);
+      auto Inline = swiftLocalImportedLockType(Image, *DescriptorAddress);
+      if (!Inline)
+        Inline = swiftLocalRegisteredNominalType(Image, *DescriptorAddress);
       if (!Inline)
         return std::nullopt;
       Expanded += *Inline;

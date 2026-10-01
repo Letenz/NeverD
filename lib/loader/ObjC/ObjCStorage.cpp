@@ -208,7 +208,7 @@ void parseObjCStorage(BinaryImage &Image) {
     }
   }
   std::map<va_t, std::string> Protocols;
-  std::set<std::string> ProtocolNames, AmbiguousProtocols;
+  std::set<std::string> AmbiguousProtocols;
   for (const auto &Protocol : Image.ObjCProtocols) {
     if (!Remaining) {
       Protocols.clear();
@@ -217,8 +217,12 @@ void parseObjCStorage(BinaryImage &Image) {
       break;
     }
     --Remaining;
-    if (!ProtocolNames.insert(Protocol.Name).second ||
-        Protocol.Status != "recovered" || Protocol.Name.empty())
+    // objc4 remapProtocolRef resolves every local protocol reference through
+    // the registered name, including duplicate compiler declarations. This
+    // establishes identity only; selector ABI merging still inspects every
+    // declaration and cannot choose a winner from this name.
+    // https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.mm
+    if (Protocol.Status != "recovered" || Protocol.Name.empty())
       AmbiguousProtocols.insert(Protocol.Name);
     if (Protocol.Status == "recovered") {
       auto [It, Inserted] = Protocols.emplace(Protocol.Address, Protocol.Name);

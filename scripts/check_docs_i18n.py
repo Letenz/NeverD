@@ -2653,6 +2653,11 @@ GUIDE_SECTION_CONTRACTS = {
     ("interpreter-recovery", "machine-state"): (
         "modelInterpreterMachineStateX64", "InterpreterMachineStateModel",
         "MaxOperations", "checkLowIRLoopRefinement",
+        "modelLLVMInterpreterMachineStateX64",
+        "llvmInterpreterMachineStateContract", "LLVMInterpreterDefinednessOffset",
+        "MaxInputItems", "MaxBlocks", "MaxWork",
+        "prepareInterpreterLLVMRefinement", "checkBinaryLLVMRefinement",
+        "MaxIRBytes", "MaxMachineStateOperations", "MaxPreparationItems",
     ),
     ("interpreter-recovery", "loop-proposals"): (
         "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",

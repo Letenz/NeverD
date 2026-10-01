@@ -16,6 +16,34 @@ add_neverd_unittest(NeverDLowIRRefinementTests
   LINK_COMPONENTS BinaryInterpreterSpecialization
 )
 
+add_neverd_unittest(NeverDLLVMInterpreterModelTests
+  LLVMInterpreterModelTests.cpp
+  LLVMInterpreterModelCompileTests.cpp
+  LLVMInterpreterModelGuardTests.cpp
+  LLVMInterpreterModelLoopTests.cpp
+  LLVMInterpreterModelRejectionTests.cpp
+  LLVMInterpreterModelShiftTests.cpp
+  LINK_COMPONENTS LLVMInterpreterModel
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMInterpreterModelTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+add_neverd_unittest(NeverDInterpreterLLVMRefinementTests
+  InterpreterLLVMRefinementTests.cpp
+  InterpreterLLVMRefinementLoopTests.cpp
+  InterpreterLLVMRefinementCompileTests.cpp
+  LINK_COMPONENTS InterpreterLLVMRefinement
+)
+target_compile_definitions(NeverDInterpreterLLVMRefinementTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp

@@ -9,7 +9,10 @@
 #include "core/MemoryProjection.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/CPU.h"
+
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Endian.h"
 
 #include <cerrno>
 #include <cstdarg>
@@ -18,7 +21,10 @@
 
 namespace {
 std::atomic<unsigned long> FailureRequest{0};
-}
+std::atomic<unsigned long> CancellationRequest{0};
+std::atomic<neverd::emulation::ExecutionBackend *> PublicCPU{nullptr};
+std::atomic<std::atomic<bool> *> PrivateStop{nullptr};
+} // namespace
 
 extern "C" int __real_ioctl(int, unsigned long, ...);
 // This executable alone injects a single failed read after real guest entry.
@@ -28,6 +34,8 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
   auto Failure = FailureRequest.load();
   if (Failure == Request &&
       FailureRequest.compare_exchange_strong(Failure, 0)) {
+    if (auto *CPU = PublicCPU.load())
+      CPU->stop();
     errno = EIO;
     return -1;
   }
@@ -40,7 +48,16 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
   }
   auto *Value = va_arg(Arguments, void *);
   va_end(Arguments);
-  return __real_ioctl(FD, Request, Value);
+  const int Result = __real_ioctl(FD, Request, Value);
+  auto Cancel = CancellationRequest.load();
+  if (Result >= 0 && Cancel == Request &&
+      CancellationRequest.compare_exchange_strong(Cancel, 0)) {
+    if (auto *CPU = PublicCPU.load())
+      CPU->stop();
+    if (auto *Stop = PrivateStop.load())
+      *Stop = true;
+  }
+  return Result;
 }
 
 namespace neverd::emulation {
@@ -65,6 +82,9 @@ protected:
   X64MachineState State;
   uint64_t Root = 0;
   void SetUp() override {
+    FailureRequest = CancellationRequest = 0;
+    PublicCPU = nullptr;
+    PrivateStop = nullptr;
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
     auto Created = createKvmMachine(*Memory);
     if (!Created) {
@@ -91,15 +111,16 @@ protected:
     State.Xmm.front() =
         State.Xmm[IncrementVectorIndex] = {InitialPacked, InitialPacked};
   }
-  llvm::Error step() {
+  llvm::Error step(const std::atomic<bool> *Stop = nullptr) {
     if (auto E = Memory->beginRun())
       return E;
     auto Release = llvm::scope_exit([&] { Memory->endRun(); });
     Root = llvm::cantFail(buildX64PageTables(
-        *Memory, Root, false, Machine->requiresExceptionMonitor()));
-    return Machine->step(State, Root,
-                         {std::chrono::steady_clock::now() +
-                          std::chrono::microseconds(Timeout)});
+        *Memory, Root, State.UserMode, Machine->requiresExceptionMonitor()));
+    return Machine->step(
+        State, Root,
+        {std::chrono::steady_clock::now() + std::chrono::microseconds(Timeout),
+         Stop});
   }
 };
 
@@ -123,6 +144,165 @@ TEST_P(KvmStateTransfer, FailedReadRetainsInputAndReinstallsItBeforeRetry) {
             InitialInteger + (Vector ? 0 : IntegerIncrement));
   const auto Packed = Vector ? IncrementedPacked : InitialPacked;
   EXPECT_EQ(State.Xmm.front(), (ExecutionBackend::XmmValue{Packed, Packed}));
+}
+TEST_P(KvmStateTransfer, PublicCancellationRetainsStateRAMAndFailurePriority) {
+  auto Created = createExecutionBackend(ExecutionBackendKind::KVM,
+                                        ExecutionContract::CheckedX64, Limit);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto CPU = std::move(Created->CPU);
+  llvm::cantFail(CPU->map(Code, PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->map(Data, PageSize, Read | Write));
+  llvm::cantFail(CPU->write(Code, StoreInteger));
+  llvm::cantFail(CPU->write(Code + sizeof(StoreInteger), Warm));
+  llvm::cantFail(CPU->writeInteger(Data, InitialInteger, WordBytes));
+  llvm::cantFail(
+      CPU->setReg(X64Register::AX, InitialInteger + IntegerIncrement));
+  llvm::cantFail(CPU->setReg(X64Register::DI, Data));
+  PublicCPU = CPU.get();
+  auto Release = llvm::scope_exit([&] {
+    PublicCPU = nullptr;
+    FailureRequest = CancellationRequest = 0;
+  });
+  const bool Failed = std::get<0>(GetParam());
+  const auto Request = std::get<1>(GetParam());
+  if (Failed)
+    FailureRequest = Request;
+  else
+    CancellationRequest = Request;
+  auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  ASSERT_EQ(Exit.Kind, Failed ? ExecutionExitKind::BackendFailure
+                              : ExecutionExitKind::Stopped);
+  EXPECT_TRUE(Exit.StopRequested);
+  EXPECT_FALSE(Exit.DeadlineReached);
+  EXPECT_EQ(bool(Exit.Fault), Failed);
+  EXPECT_EQ(FailureRequest.load(), 0u);
+  EXPECT_EQ(CancellationRequest.load(), 0u);
+  uint8_t Original[WordBytes]{};
+  ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Data, Original)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Original), InitialInteger);
+  if (Failed) {
+    EXPECT_EQ(Exit.Diagnostic, diagnostic::KvmState);
+    return;
+  }
+  EXPECT_TRUE(Exit.Diagnostic.empty());
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    if (PC != Code)
+      CPU->stop();
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  auto Retry = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  EXPECT_EQ(Retry.Kind, ExecutionExitKind::Stopped);
+  EXPECT_FALSE(Retry.Fault);
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, WordBytes)),
+            InitialInteger + IntegerIncrement);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)),
+            Code + sizeof(StoreInteger));
+}
+TEST_P(KvmStateTransfer, ActualCPUExceptionOutranksStopDuringCapture) {
+  State.UserMode = std::get<0>(GetParam());
+  llvm::cantFail(
+      Memory->protect(Code, PageSize, Read | Write | Execute | UserAccessible));
+  llvm::cantFail(
+      Memory->protect(Data, PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(Memory->write(Code + sizeof(Warm), DivideInteger));
+  State.reg(X64Register::CX) = 0;
+  ASSERT_EQ(llvm::toString(step()), "");
+  const auto Before = State;
+  std::atomic<bool> Stop{false};
+  PrivateStop = &Stop;
+  CancellationRequest = std::get<1>(GetParam());
+  auto Release = llvm::scope_exit([&] {
+    PrivateStop = nullptr;
+    CancellationRequest = 0;
+  });
+  bool Caught = false;
+  auto Remaining =
+      llvm::handleErrors(step(&Stop), [&](const X64ExceptionError &E) {
+        Caught = true;
+        EXPECT_EQ(E.exception().Vector, unsigned(x64::ExceptionVector::Divide));
+        EXPECT_FALSE(E.exception().ErrorCode);
+        EXPECT_FALSE(E.exception().FaultAddress);
+      });
+  EXPECT_EQ(llvm::toString(std::move(Remaining)), "");
+  EXPECT_TRUE(Caught);
+  EXPECT_TRUE(Stop);
+  EXPECT_EQ(CancellationRequest.load(), 0u);
+  EXPECT_EQ(State.Registers, Before.Registers);
+  EXPECT_EQ(State.Xmm, Before.Xmm);
+  EXPECT_EQ(State.MXCSR, Before.MXCSR);
+  EXPECT_EQ(State.FP.Registers, Before.FP.Registers);
+  EXPECT_EQ(State.GSBase, Before.GSBase);
+  EXPECT_EQ(State.FSBase, Before.FSBase);
+  EXPECT_EQ(State.UserMode, Before.UserMode);
+  // Replace the divisor explicitly. A raw machine has no terminal OS policy.
+  Stop = false;
+  State.reg(X64Register::CX) = IntegerIncrement;
+  ASSERT_EQ(llvm::toString(step(&Stop)), "");
+  EXPECT_EQ(State.reg(X64Register::PC),
+            Code + sizeof(Warm) + sizeof(DivideInteger));
+  EXPECT_EQ(State.reg(X64Register::AX), InitialInteger);
+  EXPECT_EQ(State.reg(X64Register::DX), 0u);
+}
+TEST_P(KvmStateTransfer, PublicCPUExceptionOutranksStopDuringCapture) {
+  auto Created = createExecutionBackend(ExecutionBackendKind::KVM,
+                                        ExecutionContract::CheckedX64, Limit);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto CPU = std::move(Created->CPU);
+  llvm::cantFail(CPU->map(Code, PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->map(Data, PageSize, Read | Write));
+  llvm::cantFail(CPU->write(Code, DivideInteger));
+  llvm::cantFail(CPU->writeInteger(Data, InitialInteger, WordBytes));
+  llvm::cantFail(CPU->setReg(X64Register::AX, InitialInteger));
+  llvm::cantFail(CPU->setReg(X64Register::SP, Data + PageSize - WordBytes));
+  const bool Recoverable = std::get<0>(GetParam());
+  bool Observed = false;
+  BackendHooks Hooks;
+  if (Recoverable)
+    Hooks.RecoverableFault = [&](const BackendFault &Fault) {
+      Observed = true;
+      EXPECT_EQ(Fault.Kind, BackendFaultKind::Interrupt);
+      EXPECT_EQ(Fault.Interrupt, unsigned(x64::ExceptionVector::Divide));
+      return true;
+    };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  PublicCPU = CPU.get();
+  CancellationRequest = std::get<1>(GetParam());
+  auto Release = llvm::scope_exit([&] {
+    PublicCPU = nullptr;
+    CancellationRequest = 0;
+  });
+  auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  EXPECT_EQ(Exit.Kind, Recoverable ? ExecutionExitKind::RecoverableFault
+                                   : ExecutionExitKind::GuestTrap);
+  EXPECT_TRUE(Exit.StopRequested);
+  EXPECT_FALSE(Exit.DeadlineReached);
+  EXPECT_EQ(CancellationRequest.load(), 0u);
+  ASSERT_TRUE(Exit.Fault);
+  EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::Interrupt);
+  EXPECT_EQ(Exit.Fault->PC, Code);
+  EXPECT_EQ(Exit.Fault->Interrupt, unsigned(x64::ExceptionVector::Divide));
+  EXPECT_EQ(Observed, Recoverable);
+  uint8_t Original[WordBytes]{};
+  ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Data, Original)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Original), InitialInteger);
+  if (Recoverable) {
+    auto Taken = CPU->takeRecoverableFault();
+    ASSERT_TRUE(Taken);
+    llvm::cantFail(CPU->setReg(X64Register::CX, IntegerIncrement));
+    BackendHooks RetryHooks;
+    RetryHooks.Instruction = [&](uint64_t PC, uint32_t) {
+      if (PC != Code)
+        CPU->stop();
+    };
+    llvm::cantFail(CPU->installHooks(std::move(RetryHooks)));
+    auto Retry = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+    EXPECT_EQ(Retry.Kind, ExecutionExitKind::Stopped);
+    EXPECT_FALSE(Retry.Fault);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)),
+              Code + sizeof(DivideInteger));
+  }
 }
 INSTANTIATE_TEST_SUITE_P(Native, KvmStateTransfer,
                          testing::Combine(testing::Bool(),

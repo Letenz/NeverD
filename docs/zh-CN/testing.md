@@ -62,6 +62,19 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用独立编写的 LowIR 用例，检查原始入口标志、状态码与客体 RAX 的区分、全部 17 个状态字、部分寄存器分片、打包标志、动态拒绝状态的持续保留、客体栈帧写入、两个分支以及循环推断后的全新证明。错误输出、丢失状态、内存变化、过期指令记录、非法输入和生成预算耗尽必须失败。已有机器状态源码测试还覆盖两条 C 路径的 O0/O2；模型测试本身不证明编译后的 C。
 
+`NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。 变量移位用例覆盖全部四种位宽、经掩码或分支限制的移位量、边界及越界移位量、无回绕与精确标志、严格 poison 拒绝，以及 O1/O2 编译后的 C。
+
+受条件保护的倒计数测试覆盖拒绝循环体模板后的重试、任意字长输入的完整循环头证明、切点与查询预算的累计计费，以及真实入口契约违规时立即拒绝。
+
+`NeverDInterpreterLLVMRefinementTests` 检查全新的原生到 LLVM 组合证明、精确文本／函数绑定、独立预算、完整观察项及刻意扩大的源码域。修改字节、残余程序、结果、标志、状态码、栈帧写入、poison 或错误／过期循环方案，都必须拒绝组合凭据。任意字长倒计数要求两段归纳前提；独立 C 用例在 O1/O2 编译后验证真实序列化 LLVM 输入。状态模型回归拒绝隐藏入口回边，对入口集合计费且不复制附属来源信息。
+
+```sh
+cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
+build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
+```
+
 两层和三层循环的缓存相等退出测试覆盖操作数相关性、变化的边界、计数器重置和被破坏的复制。
 
 比较缓存回归覆盖相等与不等、带守卫和常量折叠的初始化、扩宽后才出现的字段，以及字节、双字和四字缓存中的第 7/31/63 位。保留被检查位而仅改变相邻位，也必须被完整状态比较拒绝。零步长、移动边界、计数器重置和共享预算耗尽必须拒绝。
@@ -808,18 +821,26 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
+ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
+
+`NeverDAArch64StateTests` 验证每个标量字段、每个向量的两个字、特权级改变、浮点指令未执行及传输错误诊断的保留。`NeverDAArch64FPTests` 在两种特权级的真实传输上运行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用独立汇编的 `AArch64ProbeCases.def` 原始指令。测试把这些与 PC 无关的指令迁到客户代码，保持监控页仅供特权级访问。Unicorn 执行和原生后端的明确跳过不能替代 ARM64 原生启动证据。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
 `AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。
 
-`NeverDAArch64GeneralStateTests` 在两种特权级验证标量子集及完整状态的全部 71 个读取位置，包括位宽规范化、缺失读取器和重试。`NeverDAArch64FPTests` 执行 `AArch64FPCases.def` 原始指令，验证全部向量通道、打包运算、标量及向量浮点结果、四种舍入模式、FZ/DN、累积 FPSR、上下文状态及扩展和控制位拒绝。`NeverDAArch64MemoryTests` 覆盖每个跨页偏移、观察器顺序和停止、权限拒绝、别名及恢复后的向量输入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真实执行后注入每个标量、向量读取失败。不可用的原生传输明确跳过；这些测试及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
+`NeverDAArch64StateTests` 在两种特权级验证完整状态的全部 71 个读取位置，包括位宽规范化、缺失读取器和重试。`NeverDAArch64FPTests` 执行 `AArch64FPCases.def` 原始指令，验证全部向量通道、打包运算、标量及向量浮点结果、四种舍入模式、FZ/DN、累积 FPSR、上下文状态及扩展和控制位拒绝。`NeverDAArch64MemoryTests` 覆盖每个跨页偏移、观察器顺序和停止、权限拒绝、别名及恢复后的向量输入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真实执行后注入每个标量、向量读取失败。不可用的原生传输明确跳过；这些测试及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
 
 `NeverDAArch64MemoryTests` 在两种权限级下覆盖 Unicorn、KVM 和 WHP 的 18 种标量及成对指令，检查所有跨页偏移、符号扩展及宽度结果、观察器顺序、第二页权限不足或缺失、显式消费故障后重试、重复物理别名，以及别名替换后的上下文恢复。修改前已复现合法跨页加载被拒绝的情况。不可用后端明确跳过；Unicorn 验证及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 检查零标志的未启用 CFG 元数据、两种加载地址下不变的回退指针、无效指针槽/目标及缺失重定位。执行用例显式选择 Unicorn/KVM/WHP，并使用 `driver-strict` 和 `checked-x64-v1`；不可用的后端分别跳过。`DriverPublicCLICases.def` 为 CLI 与兼容的 v1 C API 对比选择 `--backend unicorn`。原生后端及 `auto` 选择保留独立的公共接口覆盖，主机 API 不可用时不会静默回退。
 
-`NeverDAArch64GeneralStateTests` 在两种特权级验证标量子集及完整状态的全部 71 个读取位置，包括位宽规范化、缺失读取器和重试。`NeverDAArch64FPTests` 执行 `AArch64FPCases.def` 原始指令，验证全部向量通道、打包运算、标量及向量浮点结果、四种舍入模式、FZ/DN、累积 FPSR、上下文状态及扩展和控制位拒绝。`NeverDAArch64MemoryTests` 覆盖每个跨页偏移、观察器顺序和停止、权限拒绝、别名及恢复后的向量输入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真实执行后注入每个标量、向量读取失败。不可用的原生传输明确跳过；这些测试及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
+checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。
 
-checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。
+状态回读回归： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` 在真实 x64 和 ARM64 引擎的两种权限级执行 `UnicornMachineControlCases.def` 中的原始存储指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 检查单步前取消、实际来宾入口处停止或期限到期、全部输入状态与 RAM 保持不变，以及随后成功执行一次存储。测试专用入口包装无需虚拟机监控器，也不构成 ARM64/WHP 原生运行证据。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或过期时拒绝调用宿主，取消期间保留真实宿主结果，并在释放借用的停止标记前确认中断回调结束。KVM 和 WHP 在持有执行租约的调用线程上验证完整捕获的私有状态，然后分类同时到达的停止或超时。真实宿主错误、捕获失败以及经过认证的 x64 CPU 异常保持更高优先级。普通成功状态在取消检查结束前保持私有；已确认的中断丢弃推测性的 CPU/RAM 效果并允许重试。准备、原生执行和捕获共用一次单步宽限。这些控制提供协作式取消，不保证硬性墙钟时限。
+
+`NeverDRunControlTests` 包含可移植的 `NativeEntryTests.cpp` 和 Windows 启用 WHP 时的 `WhpEntryControlTests.cpp`。内存宿主回调验证拒绝入口、重试、晚到取消、真实错误保留、完成结果优先级和已确认的回调生命周期，无需 Hyper-V。`NeverDKvmRunTests` 检查调用线程完成、错误优先级及重复进入拒绝。真实 `NeverDKvmStateTransferTests` 执行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真实寄存器/XSAVE 读取后停止，并保留除零异常、原始上下文、RAM 和显式恢复。Wine 上采用 Windows ABI 执行的可移植测试仅提供线程及控制协议证据，不证明原生 WHP 执行。不可用的原生后端仍明确跳过。

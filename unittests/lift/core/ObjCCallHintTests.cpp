@@ -1935,6 +1935,84 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
   }
 }
 
+TEST(ObjCCallHints, FoundationUUIDPreservesIndirectResultAndStringPairABI) {
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool Constructor : {false, true}) {
+      const std::string Name = Constructor
+                                   ? "$s10Foundation4UUIDVACycfC"
+                                   : "$s10Foundation4UUIDV10uuidStringSSvg";
+      const std::string Import = "_" + Name;
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind,
+                Constructor ? NdTypeKind::Void : NdTypeKind::Int);
+      ASSERT_EQ(Signature.Parameters.size(), 1U);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[0].TheRole,
+                Constructor ? SourceParameterTypeHint::Role::SwiftIndirectResult
+                            : SourceParameterTypeHint::Role::SwiftContext);
+      EXPECT_EQ(
+          Signature.Parameters[0].Location.RegisterOffset,
+          Constructor
+              ? (Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                               : TRI.IntReturnReg)
+              : (Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13));
+      if (!Constructor) {
+        EXPECT_EQ(Signature.ReturnType->Size, 16U);
+        ASSERT_EQ(Signature.ReturnComponents.size(), 2U);
+        for (unsigned I = 0; I < 2; ++I)
+          EXPECT_EQ(Signature.ReturnComponents[I].RegisterOffset,
+                    TRI.IntReturnRegs[I]);
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Call = HighExpr::makeCall("untrusted_name", 0x2180,
+                                     {HighExpr::makeConst(0x4560, 8)});
+      Call->Type = Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      for (const char *Alias :
+           {"/System/Library/Frameworks/Foundation.framework/Versions/C/"
+            "Foundation",
+            "/usr/lib/swift/libswiftFoundation.dylib"}) {
+        auto Aliased = Image;
+        Aliased.DyldBindSlots[0x2180].Module = Alias;
+        EXPECT_TRUE(swiftRuntimeSourceCallHint(Aliased, 0x2180));
+      }
+      for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+        auto Wrong = Image;
+        if (Mutation == 0)
+          Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+        else if (Mutation == 1)
+          Wrong.DyldBindSlots[0x2180].WeakImport = true;
+        else if (Mutation == 2)
+          Wrong.DyldBindSlots[0x2180].Addend = 1;
+        else
+          Wrong.ConflictingImportStorageSlots.insert(0x2180);
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+      }
+      auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+      Changed->Signature.Parameters[0].TheRole =
+          SourceParameterTypeHint::Role::Ordinary;
+      ASSERT_TRUE(assignDarwinSwiftSourceABI(Changed->Signature, Architecture,
+                                             Diagnostic));
+      Call->SourceCallHint = std::move(Changed);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftCocoaArrayEndIndexKeepsItsWordABI) {
   constexpr llvm::StringLiteral Name = "$ss18_CocoaArrayWrapperV8endIndexSivg";
   constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
@@ -2506,6 +2584,88 @@ TEST(ObjCCallHints, SwiftHasherSeedAndFinalizeKeepSpecialCarriers) {
       Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
       EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
     }
+  }
+}
+
+TEST(ObjCCallHints, SwiftArrayAnyObjectSlowElementKeepsOrdinaryCarriers) {
+  constexpr llvm::StringLiteral Name =
+      "$ss12_ArrayBufferV19_getElementSlowPathyyXlSiFyXl_Ts5";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_FALSE(Hint->DoesNotReturn);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_EQ(Signature.Parameters.size(), 2U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+    for (unsigned I = 0; I < 2; ++I) {
+      EXPECT_EQ(Signature.Parameters[I].Type->Kind,
+                I == 0 ? NdTypeKind::Int : NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[I].Type->Size, 8U);
+      EXPECT_EQ(Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+    }
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall(
+        "untrusted_name", 0x2180,
+        {HighExpr::makeConst(3, 8), HighExpr::makeConst(0x4560, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    HighFunc Function;
+    Function.Name = "array_element_wrapper";
+    Function.ReturnType = Signature.ReturnType;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Call;
+    Function.Body = {Return};
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+    EXPECT_NE(Source.find("__attribute__((swiftcall))"), std::string::npos);
+    EXPECT_NE(Source.find("__asm__(\"" + Import + "\")"), std::string::npos);
+    EXPECT_EQ(Source.find("__attribute__((swift_context))"), std::string::npos);
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      else if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Addend = 1;
+      else if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      else if (Mutation == 3)
+        Wrong.DyldBindSlots[0x2180].Name =
+            "_$ss12_ArrayBufferV19_getElementSlowPathyyXlSiF";
+      else if (Mutation == 4)
+        Wrong.DyldBindSlots.erase(0x2180);
+      else
+        Wrong.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+    }
+    // A stale binding cannot move the buffer to the Swift context carrier.
+    auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+    Changed->Signature.Parameters[1].TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Changed->Signature, Architecture,
+                                           Diagnostic));
+    Call->SourceCallHint = std::move(Changed);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
   }
 }
 

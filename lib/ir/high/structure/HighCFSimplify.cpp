@@ -1533,10 +1533,95 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
     L.erase(L.begin() + K + 1, L.begin() + M);
     Changed = true;
   };
+  // The one place a switch falls out of: a case body that ends without a
+  // jump or with `break`, or the default (an absent one falls out too).
+  // Nothing when two places fall out or one breaks before its end.
+  std::function<bool(const std::vector<HighStmt> &, bool)> BreaksInside =
+      [&](const std::vector<HighStmt> &B, bool SkipLast) {
+        for (size_t I = 0; I < B.size(); ++I) {
+          const HighStmt &S = B[I];
+          if (S.Kind == StmtKind::Break && !(SkipLast && I + 1 == B.size()))
+            return true;
+          if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+               S.Kind == StmtKind::Block) &&
+              (BreaksInside(S.Body, false) || BreaksInside(S.ElseBody, false)))
+            return true;
+        }
+        return false;
+      };
+  auto OnlyFallOut = [&](HighStmt &Switch) -> std::vector<HighStmt> * {
+    std::vector<HighStmt> *Out = nullptr;
+    unsigned Count = 0;
+    auto Consider = [&](std::vector<HighStmt> &B) {
+      if (BreaksInside(B, true)) {
+        Count = 2;
+        return;
+      }
+      auto Last = std::find_if(B.rbegin(), B.rend(), [](const HighStmt &T) {
+        return !isEmptyAnchor(T) || (T.Addr != 0 && T.Addr != InvalidVA);
+      });
+      if (Last == B.rend() || Last->Kind == StmtKind::Break ||
+          (!endsItsBlock(*Last) && Last->Kind != StmtKind::Continue)) {
+        Out = &B;
+        ++Count;
+      }
+    };
+    for (SwitchCase &C : Switch.Cases)
+      if (!C.FallsThrough)
+        Consider(C.Body);
+    Consider(Switch.DefaultBody);
+    return Count == 1 ? Out : nullptr;
+  };
+  // `switch (x) { case A: ..goto X; default: ..break; } P...; X:` where
+  // nothing enters P: P runs only after the switch falls out of its one
+  // falling place, so it can run there instead, leaving X as what follows
+  // the switch. X may also be what follows the list, \p After, when P runs
+  // to its end.
+  auto MoveFollowToFallOut = [&](std::vector<HighStmt> &L, size_t K,
+                                 const std::set<va_t> &After) {
+    HighStmt &Switch = L[K];
+    if (Switch.Kind != StmtKind::Switch)
+      return;
+    std::set<va_t> Targets;
+    for (const auto &C : Switch.Cases)
+      Jumps(C.Body, Targets);
+    Jumps(Switch.DefaultBody, Targets);
+    size_t M = K + 1;
+    for (; M < L.size(); ++M) {
+      const va_t X = L[M].Addr;
+      if (M > K + 1 && Targets.count(X) && Labels.unique(X))
+        break;
+      if (anyAddressEntered(L[M], Entered))
+        return;
+    }
+    if (M == L.size() && std::none_of(After.begin(), After.end(), [&](va_t X) {
+          return Targets.count(X) != 0;
+        }))
+      return;
+    if (std::all_of(L.begin() + K + 1, L.begin() + M, isEmptyAnchor))
+      return;
+    std::vector<HighStmt> *Out = OnlyFallOut(Switch);
+    if (!Out)
+      return;
+    std::vector<HighStmt> Follow(std::make_move_iterator(L.begin() + K + 1),
+                                 std::make_move_iterator(L.begin() + M));
+    // A loose break or continue would bind to the switch once inside it.
+    if (hasLooseBreakOrContinue(Follow)) {
+      std::move(Follow.begin(), Follow.end(), L.begin() + K + 1);
+      return;
+    }
+    if (!Out->empty() && Out->back().Kind == StmtKind::Break)
+      Out->pop_back();
+    Out->insert(Out->end(), std::make_move_iterator(Follow.begin()),
+                std::make_move_iterator(Follow.end()));
+    L.erase(L.begin() + K + 1, L.begin() + M);
+    Changed = true;
+  };
   std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> Visit =
       [&](std::vector<HighStmt> &L, const std::set<va_t> &After) {
         for (size_t K = 0; K < L.size(); ++K) {
           MoveFollowToBreak(L, K, After);
+          MoveFollowToFallOut(L, K, After);
           HighStmt &S = L[K];
           const bool Loop = S.Kind == StmtKind::While ||
                             S.Kind == StmtKind::DoWhile ||
@@ -1545,11 +1630,18 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
           const bool Arms = S.Kind == StmtKind::If ||
                             S.Kind == StmtKind::IfElse ||
                             S.Kind == StmtKind::Block;
+          const bool Switch = S.Kind == StmtKind::Switch;
           std::set<va_t> Follow;
-          if (Loop || Arms)
+          if (Loop || Arms || Switch)
             Follow = FollowAt(L, K + 1, After);
           if (Loop && !Follow.empty())
             ToBreak(S.Body, Follow);
+          // A case leaves its switch for the same follow with `break`.
+          if (Switch && !Follow.empty()) {
+            for (auto &C : S.Cases)
+              ToBreak(C.Body, Follow);
+            ToBreak(S.DefaultBody, Follow);
+          }
           const std::set<va_t> &Inner = Arms ? Follow : None;
           Visit(S.Body, Inner);
           Visit(S.ElseBody, Inner);

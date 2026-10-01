@@ -1,8 +1,10 @@
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
+#include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -304,7 +306,7 @@ TEST(ObjCStorage, StableSwiftPreservesWideOffsetsAndAbsentFieldTypes) {
   }
 }
 
-TEST(ObjCStorage, ProtocolSlotsRequireCompleteUniqueLocalRuntimeDeclarations) {
+TEST(ObjCStorage, ProtocolSlotsRequireCompleteLocalRuntimeDeclarations) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Case = 0; Case < 11; ++Case) {
       SCOPED_TRACE(Case);
@@ -337,6 +339,7 @@ TEST(ObjCStorage, ProtocolSlotsRequireCompleteUniqueLocalRuntimeDeclarations) {
         break;
       case 4:
         Protocol.Address += 8;
+        Protocol.Status = "invalid_metadata";
         F.Image.ObjCProtocols.push_back(Protocol);
         break;
       case 5:
@@ -388,6 +391,75 @@ TEST(ObjCStorage, ProtocolSlotsRequireCompleteUniqueLocalRuntimeDeclarations) {
       EXPECT_FALSE(sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal,
                                             F.Image, {}));
     }
+  }
+}
+
+TEST(ObjCStorage, DuplicateProtocolReferencesKeepOneRegisteredIdentity) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    StorageImage F;
+    F.Image.Arch = Architecture;
+    F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 0x800;
+    Section References;
+    References.Name = "__objc_protorefs";
+    References.VA = References.FileOff = 0x1800;
+    References.Size = References.FileSz = 16;
+    References.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    F.Image.Sections.push_back(References);
+    for (unsigned Index = 0; Index != 2; ++Index) {
+      ObjCProtocol Protocol;
+      Protocol.Address = 0x1700 + Index * 8;
+      Protocol.Name = "ValueProtocol";
+      Protocol.Status = "recovered";
+      ObjCProtocolMethod Method;
+      Method.MetadataAddress = 0x1600 + Index * 32;
+      Method.Selector = "measure:";
+      Method.TypeEncoding = Index ? "q24@0:8q16" : "i24@0:8i16";
+      Method.Status = "supported";
+      Method.TypeHint =
+          parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+      ASSERT_TRUE(Method.TypeHint);
+      std::string Diagnostic;
+      ASSERT_TRUE(
+          assignDarwinObjCSourceABI(*Method.TypeHint, Architecture, Diagnostic))
+          << Diagnostic;
+      Protocol.Methods.push_back(std::move(Method));
+      F.pointer(0x1800 + Index * 8, Protocol.Address);
+      F.Image.ObjCProtocols.push_back(std::move(Protocol));
+    }
+    for (unsigned Order = 0; Order != 2; ++Order) {
+      parseObjCStorage(F.Image);
+      // The runtime registry supplies the same object to both references.
+      // Conflicting method ABIs still have no selected declaration.
+      EXPECT_FALSE(objcSelectorSourceTypeHint(F.Image, "measure:"));
+      for (va_t Slot : {0x1800U, 0x1808U}) {
+        const auto Found = F.Image.ObjCSourceReferences.find(Slot);
+        ASSERT_NE(Found, F.Image.ObjCSourceReferences.end());
+        EXPECT_EQ(Found->second.TheKind, ObjCSourceReference::Kind::Protocol);
+        EXPECT_EQ(Found->second.Name, "ValueProtocol");
+        HighFunc Function;
+        HighStmt Return;
+        Return.Kind = StmtKind::Return;
+        Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(Slot, 8),
+                                           NdType::makePtr(NdType::makeVoid()));
+        Function.Body = {Return};
+        const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_TRUE(Bound.Function.Body[0].RetVal->SourceCallHint);
+        EXPECT_EQ(Bound.RuntimeProtocols,
+                  std::set<std::string>{"ValueProtocol"});
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal,
+                                             F.Image, {}));
+        F.Image.ObjCSourceReferences.at(Slot).Name = "OtherProtocol";
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal,
+                                              F.Image, {}));
+      }
+      std::reverse(F.Image.ObjCProtocols.begin(), F.Image.ObjCProtocols.end());
+    }
+    F.Image.ObjCProtocols[1].Status = "invalid_inheritance";
+    parseObjCStorage(F.Image);
+    EXPECT_FALSE(F.Image.ObjCSourceReferences.count(0x1800));
+    EXPECT_FALSE(F.Image.ObjCSourceReferences.count(0x1808));
   }
 }
 

@@ -159,6 +159,10 @@ Swift 具体类型元数据的缓存/引用对只有在零值缓存、不可变�
 
 `modelInterpreterMachineStateX64` 与源码包装器共用同一生成器，统一处理客体寄存器分片、打包标志、执行配置状态和控制流。模型只把状态对象访问改为显式寄存器字节，状态码与客体 RAX 分开。它不负责编译器语义或证明策略；入口域、观察项、栈帧契约和完整精化检查仍由调用方负责。
 
+`NeverDLLVMInterpreterModel` 负责独立、有界的标量 LLVM 导入，使用同一原始状态 ABI。`modelLLVMInterpreterMachineStateX64` 保留真实状态码返回，并生成显式语义有效性检查。`llvmInterpreterMachineStateContract` 提供完整观察项及零监视字节保持义务；入口域、内存与完整证明由调用方负责。LLVM 导入不改变普通提升或源码发布，也不证明编译器。
+
+`NeverDInterpreterLLVMRefinement` 负责组合原生到 LLVM 的证明。它重新构建两侧状态模型和强制契约，通过权威执行配置生成只在入口执行的标志投影，并重新检查两个前提。调用方可提交循环候选方案，但不能替换模型、观察项或证明凭据。分析模型只复制可执行图和声明入口；入口回边会被拒绝，避免重复初始化状态。
+
 恢复 C API v3 与 CLI 将显式字段、细化和求解查询预算传入共享特化器。适配层先检查结构大小与 reserved 字段，再读取扩展；v1/v2 布局和默认值保持稳定。提高预算仅改变允许的工作量，不改变执行契约或结果发布条件。
 
 架构 lifter 负责事务式的未定义输出附属元数据：每次尝试前清除旧证据，只为精确对应的成功提升发布效果。`Missing` 表示证据缺失，不等于空的 `Complete` 描述。普通 LowIR 保持确定的选定值。`LowIRUndefinedIndependence` 负责对传入的完整无环 LowIR 图进行有界关系证明，共享普通输入，并保留新产生未定义值的来源关联；它绑定完整指令边界和操作摘要，拒绝不完整证明。超出下述有限原生路径范围的一般原生图认证、循环不变量及原生代码到 C 的源码等价证明，仍属于独立工作。
@@ -537,6 +541,8 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
+ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
 `AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。
@@ -804,4 +810,6 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
 
-checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。
+checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或过期时拒绝调用宿主，取消期间保留真实宿主结果，并在释放借用的停止标记前确认中断回调结束。KVM 和 WHP 在持有执行租约的调用线程上验证完整捕获的私有状态，然后分类同时到达的停止或超时。真实宿主错误、捕获失败以及经过认证的 x64 CPU 异常保持更高优先级。普通成功状态在取消检查结束前保持私有；已确认的中断丢弃推测性的 CPU/RAM 效果并允许重试。准备、原生执行和捕获共用一次单步宽限。这些控制提供协作式取消，不保证硬性墙钟时限。

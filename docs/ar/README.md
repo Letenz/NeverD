@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: dea200c826d205dc426fba8733a2fb5ce99212ff67dd1f3566c89b1af0bf481f -->
+<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
 
 [← مشروع NeverD](project.md)
 
@@ -26,7 +26,7 @@
 | [الاختبارات](testing.md) | المجموعات، وfixtures المولدة، ودورات Unicorn، والأوامر التزايدية |
 | [بيئة العمل المكتبية (الإنجليزية)](../gui.md) | واجهة Qt Quick اختيارية وعامل منفصل وC ABI وتعليقات وسير عمل MCP |
 | [سجل تحقق سطح المكتب (الإنجليزية)](../gui-qualification.md) | أدلة GUI المقاسة وحدود الحزم والتحقق المتبقي للمنصات |
-| [استعادة المصدر من المفسّرات](interpreter-recovery.md) | تخصيص تجريبي عبر `--devirtualize`، وخيارات CLI، وعقد التنفيذ، والأدلة والحدود; مقترحات إثبات للحلقات المتداخلة; ميزانيات اكتشاف صريحة وواجهة C ذات إصدارات |
+| [استعادة المصدر من المفسّرات](interpreter-recovery.md) | تخصيص تجريبي عبر `--devirtualize`، وخيارات CLI، وعقد التنفيذ، والأدلة والحدود; مقترحات إثبات للحلقات المتداخلة; ميزانيات اكتشاف صريحة وواجهة C ذات إصدارات; واجهة إثبات دقيقة من الشيفرة الأصلية إلى LLVM |
 | [إعادة بناء استثناءات Windows](windows-exception-reconstruction.md) | مصفوفة دعم SEH/C++، وعقد IR، وقواعد patch الأصلية، والتحقق من PE |
 | [تنفيذ CPU](cpu-execution.md) | إعدادات CPU واستعلامات القدرات ونتائج التنفيذ وحدودها |
 | [براهين bitvector](solver.md) | Z3 الاختياري، وتوليف مشروط بالإثبات، وفحوص مستقلة وتصدير الاستعلامات |

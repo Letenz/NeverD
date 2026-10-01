@@ -248,6 +248,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
+    std::map<va_t, ObjCSynchronizedSourceProof> SynchronizedProjections;
     std::set<va_t> ResumeOnlyProjections;
     const auto SuperGetterPlan = discoverObjCSuperGetterSources(S->Img, Result);
     std::set<va_t> SuperGetterProjections;
@@ -268,9 +269,10 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
       if (const auto Cleanup = proveObjCSynchronizedReceiverCleanup(
-              S->Img, BlockBinding.Function))
-        (void)omitProvenObjCSynchronizedLandingPad(BlockBinding.Function,
-                                                   *Cleanup);
+              S->Img, BlockBinding.Function);
+          Cleanup &&
+          omitProvenObjCSynchronizedLandingPad(BlockBinding.Function, *Cleanup))
+        SynchronizedProjections.emplace(Entry, *Cleanup);
       if (const auto Resume =
               proveObjCResumeOnlySource(S->Img, BlockBinding.Function);
           Resume && omitProvenObjCResumeOnlyPad(BlockBinding.Function, *Resume))
@@ -364,6 +366,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       std::string Reason = BlockBinding.Limitation.empty()
                                ? Binding.Limitation
                                : BlockBinding.Limitation;
+      if (SynchronizedProjections.count(Entry) &&
+          !proveObjCSynchronizedReceiverCleanup(S->Img, Binding.Function))
+        Reason = "synchronized cleanup proof is no longer valid";
       if (!RegisterCopies.valid(Binding.Function))
         Reason = "source register-copy proof is no longer valid";
       if (Reason.empty()) {
@@ -374,9 +379,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         ReadOnlyHelpers.insert(ObjectPointerHelpers.begin(),
                                ObjectPointerHelpers.end());
         const auto Audit = Audits.find(Entry);
-        Reason = sourceBodyLimitation(
-            Binding.Function, *Binding.Function.SourceTypeHint,
-            Audit == Audits.end() ? nullptr : Audit->second,
+        const auto CallAllowed =
             [&](const HighExpr &Expression) {
               return objcSourceCallBound(Expression, S->Img, Functions,
                                          &ProfileStorage, &ReadOnlyHelpers,
@@ -402,7 +405,22 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                              Functions) ||
                      objcBlockSourceCallBound(Expression, BlockSource,
                                               BlockPlan, Functions);
-            });
+            };
+        Reason = sourceBodyLimitation(
+            Binding.Function, *Binding.Function.SourceTypeHint,
+            Audit == Audits.end() ? nullptr : Audit->second, CallAllowed);
+        if (SynchronizedProjections.count(Entry)) {
+          auto Evidence = sourceBodyDiagnostics(
+              Binding.Function, *Binding.Function.SourceTypeHint,
+              Audit == Audits.end() ? nullptr : Audit->second, CallAllowed);
+          std::erase_if(Evidence.Items, [](const auto &Item) {
+            return Item.Issue == SourceProjectionIssue::Exception &&
+                   Item.StatementAddress == 0 && !Item.Expression;
+          });
+          Reason = Evidence.limitation();
+          if (Reason.empty() && !Evidence.Complete)
+            Reason = "synchronized source inspection is incomplete";
+        }
       }
       if (Reason.empty()) {
         Closed.insert(Entry);
@@ -512,6 +530,12 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      objcBlockSourceCallBound(Expression, BlockSource,
                                               BlockPlan, Functions);
             });
+        if (SynchronizedProjections.count(Entry) &&
+            proveObjCSynchronizedReceiverCleanup(S->Img, Binding.Function))
+          std::erase_if(Evidence.Items, [](const auto &Item) {
+            return Item.Issue == SourceProjectionIssue::Exception &&
+                   Item.StatementAddress == 0 && !Item.Expression;
+          });
         if (ImmutableStringInputs.count(Entry) &&
             !objCImmutableStringCallbackValid(Binding.Function, S->Img, Result,
                                               OncePlan)) {
@@ -905,16 +929,32 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           });
       if (RequiresResumeUnwind)
         Source.insert(0, ObjCResumeSourceRequirements);
-      const auto CleanupSource =
-          Emitted && SynchronizedCleanup
-              ? addObjCSynchronizedReceiverCleanup(Source, *SynchronizedCleanup)
-              : std::optional<std::string>{};
-      if (CleanupSource)
+      bool RequiresSynchronizedCleanup = false;
+      bool CleanupRendered = true;
+      // Every included body owns its cleanup, including a block invoke reached
+      // through a relocatable literal. A root-only edit would discard the
+      // dependent function's exceptional unlock after removing its pad.
+      for (const auto &Function : Unit) {
+        if (!SynchronizedProjections.count(Function.Entry))
+          continue;
+        RequiresSynchronizedCleanup = true;
+        const auto Proof =
+            proveObjCSynchronizedReceiverCleanup(S->Img, Function);
+        const auto CleanupSource = Emitted && Proof
+                                       ? addObjCSynchronizedReceiverCleanup(
+                                             Source, *Proof, Function.Name)
+                                       : std::optional<std::string>{};
+        if (!CleanupSource) {
+          CleanupRendered = false;
+          break;
+        }
         Source = *CleanupSource;
+      }
       if (!Emitted) {
         Row["status"] = "unrecovered";
         Row["reason"] = "method C source projection failed";
-      } else if (SynchronizedCleanup && !CleanupSource) {
+      } else if (!CleanupRendered ||
+                 (SynchronizedCleanup && !RequiresSynchronizedCleanup)) {
         Row["status"] = "unrecovered";
         Row["reason"] = "synchronized cleanup source rendering failed";
       } else if (auto Limitation = objcSourceTextLimitation(Source);
@@ -950,7 +990,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Row["return_type"] = typeToC(Projection.ReturnType);
         Row["parameters"] = std::move(Parameters);
         Row["function_name"] = Projection.Name;
-        if (SynchronizedCleanup || RequiresResumeUnwind)
+        if (RequiresSynchronizedCleanup || RequiresResumeUnwind)
           Row["required_cflags"] = llvm::json::Array{"-fexceptions"};
         // Rendering and the text guard above remain publication checks in
         // both modes. Only retaining/encoding the successful body is optional.

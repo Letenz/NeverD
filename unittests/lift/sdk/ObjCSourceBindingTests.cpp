@@ -3089,6 +3089,241 @@ TEST(ObjCSourceBindings,
   }
 }
 
+namespace {
+SwiftTypeMetadataFixture
+swiftRegisteredInternalTypeFixture(Arch Architecture, char TypeKind = 'C',
+                                   bool Nested = false) {
+  SwiftTypeMetadataFixture F(Architecture, false, false, false, true);
+  constexpr va_t Module = 0x4040, Name = 0x4080, ModuleName = 0x40a0;
+  constexpr va_t Records = 0x6000;
+  const std::string Type =
+      "13WMFComponents10ArticleTab" + std::string(1, TypeKind);
+  const std::string Base =
+      Nested ? "_$s7Combine9PublishedVySay" + Type + "GG" : "_$s" + Type + "Sg";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.Symbols[2].Name = "_$s" + Type + "Mn";
+  F.Image.Exports.clear();
+  auto &Data = F.Image.Segments[3].Data;
+  const auto Relative = [](uint8_t *Field, va_t Location, va_t Target) {
+    llvm::support::endian::write32le(
+        Field, static_cast<uint32_t>(static_cast<int32_t>(Target - Location)));
+  };
+  llvm::support::endian::write32le(Data.data() + F.LocalDescriptor - 0x4000,
+                                   0x40 | (TypeKind == 'C'   ? 16
+                                           : TypeKind == 'V' ? 17
+                                                             : 18));
+  Relative(Data.data() + F.LocalDescriptor + 4 - 0x4000, F.LocalDescriptor + 4,
+           Module);
+  Relative(Data.data() + F.LocalDescriptor + 8 - 0x4000, F.LocalDescriptor + 8,
+           Name);
+  Relative(Data.data() + Module + 8 - 0x4000, Module + 8, ModuleName);
+  std::memcpy(Data.data() + Name - 0x4000, "ArticleTab", 11);
+  std::memcpy(Data.data() + ModuleName - 0x4000, "WMFComponents", 14);
+  Segment Mapping;
+  Mapping.Name = "__TEXT";
+  Mapping.VA = Mapping.FileOff = Records;
+  Mapping.Size = Mapping.FileSz = 0x100;
+  Mapping.Flags = SegmentFlags::Readable;
+  Mapping.Data.resize(0x100);
+  Relative(Mapping.Data.data(), Records, F.LocalDescriptor);
+  F.Image.Segments.push_back(std::move(Mapping));
+  Section Registration;
+  Registration.Name = "__swift5_types";
+  Registration.SegmentName = "__TEXT";
+  Registration.VA = Registration.FileOff = Records;
+  Registration.Size = Registration.FileSz = 4;
+  Registration.Flags = SegmentFlags::Readable;
+  F.Image.Sections.push_back(Registration);
+  auto &Reference = F.Image.Segments[0].Data;
+  auto *Bytes = Reference.data() + F.TypeReference - 0x1000;
+  const unsigned Offset = Nested ? 9 : 0;
+  if (Nested) {
+    Bytes[0] = 2;
+    Relative(Bytes + 1, F.TypeReference + 1, F.NestedDescriptorSlot);
+    std::memcpy(Bytes + 5, "ySay", 4);
+    EXPECT_TRUE(F.Image.recordDyldBindSlot(
+        F.NestedDescriptorSlot, "_$s7Combine9PublishedVMn", 0,
+        "/System/Library/Frameworks/Combine.framework/Combine", false));
+  }
+  Bytes[Offset] = 1;
+  Relative(Bytes + Offset + 1, F.TypeReference + Offset + 1, F.LocalDescriptor);
+  std::memcpy(Bytes + Offset + 5, Nested ? "GG" : "Sg", 3);
+  llvm::support::endian::write32le(Reference.data() + F.Reference + 4 - 0x1000,
+                                   Offset + 7);
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredInternalSwiftTypesRebuildOnlyTheirStableTextualIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char Kind : {'C', 'V', 'O'})
+      for (const bool Nested : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Kind);
+        SCOPED_TRACE(Nested);
+        auto F = swiftRegisteredInternalTypeFixture(Architecture, Kind, Nested);
+        const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+            F.Image, F.Cache, F.Reference);
+        ASSERT_TRUE(Proof);
+        EXPECT_EQ(Proof->Descriptors.size(), Nested ? 1U : 0U);
+        const std::string Type =
+            "13WMFComponents10ArticleTab" + std::string(1, Kind);
+        EXPECT_EQ(Proof->Address.Suffix,
+                  Nested ? "ySay" + Type + "GG" : Type + "Sg");
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+        const auto &Call = Bound.Function.Body[0].Val;
+        for (const auto &Arg : Call->Operands)
+          ASSERT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        std::set<std::string> Helpers;
+        const auto Source = renderObjCSwiftTypeMetadataHelpers(
+            F.Image, Bound.SwiftTypeMetadataPairs, Helpers);
+        EXPECT_EQ(Source.find("ArticleTabCMn"), std::string::npos);
+        EXPECT_EQ(Source.find("ArticleTabVMn"), std::string::npos);
+        EXPECT_EQ(Source.find("ArticleTabOMn"), std::string::npos);
+        if (Nested)
+          EXPECT_NE(Source.find("_$s7Combine9PublishedVMn"), std::string::npos);
+        else
+          EXPECT_EQ(Source.find("__asm__("), std::string::npos);
+      }
+}
+
+TEST(ObjCSourceBindings,
+     InternalSwiftIdentityRequiresExactImmutableRegistrationAndModule) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRegisteredInternalTypeFixture(Architecture);
+      auto &Data = F.Image.Segments[3].Data;
+      auto *Header = Data.data() + F.LocalDescriptor - 0x4000;
+      switch (Mutation) {
+      case 0:
+        F.Image.Sections.back().Name = "__other_types";
+        break;
+      case 1:
+        F.Image.Sections.back().Size = 3;
+        break;
+      case 2:
+        F.Image.Sections.back().Size = 65537 * 4;
+        break;
+      case 3:
+        F.Image.Sections.back().Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 4:
+        F.Image.Segments.back().Data[0] = 1;
+        break;
+      case 5:
+        F.Image.Segments.back().Data.assign(0x100, 0);
+        break;
+      case 6:
+        Data[0x80] = 'B';
+        break;
+      case 7:
+        Data[0xa0] = 'B';
+        break;
+      case 8:
+        Data[0x40] = 2;
+        break; // Anonymous private context.
+      case 9:
+        llvm::support::endian::write32le(Header, 0x51);
+        break;
+      case 10:
+        llvm::support::endian::write32le(Header, 0xd0);
+        break;
+      case 11:
+        llvm::support::endian::write32le(Header, 0x150);
+        break;
+      case 12:
+        llvm::support::endian::write32le(Header, 0x40050);
+        break;
+      case 13:
+        Header[4] |= 1;
+        break;
+      case 14:
+        F.Image.Symbols.push_back(F.Image.Symbols[2]);
+        break;
+      case 15:
+        F.Image.Symbols.push_back({F.Image.Symbols[2].Name, 0x40c0, 0, false});
+        break;
+      case 16:
+        F.Image.Exports.push_back({F.Image.Symbols[2].Name, 0, 0x40c0});
+        break;
+      case 17:
+        F.Image.RelDataPtrRelocSlots.insert(F.LocalDescriptor + 8);
+        break;
+      case 18:
+        F.Image.Sections.push_back(F.Image.Sections.back());
+        break;
+      case 19:
+        F.Image.Sections[3].Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+        break;
+      case 20: {
+        // A second registered descriptor with the same runtime name cannot
+        // be silently selected by its record order or by the symbol table.
+        std::memcpy(Data.data() + 0xc0, Header, 12);
+        llvm::support::endian::write32le(Data.data() + 0xc4,
+                                         uint32_t(0x4040 - 0x40c4));
+        llvm::support::endian::write32le(Data.data() + 0xc8,
+                                         uint32_t(0x4080 - 0x40c8));
+        F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+        llvm::support::endian::write32le(
+            F.Image.Segments.back().Data.data() + 4, uint32_t(0x40c0 - 0x6004));
+        break;
+      }
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftLocalRegisteredNominalType(
+          F.Image, F.LocalDescriptor));
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Bound.Limitation.empty());
+      EXPECT_TRUE(Bound.SwiftTypeMetadataPairs.empty());
+    }
+}
+
+TEST(ObjCSourceBindings,
+     OtherRegisteredTypeNamesDoNotBorrowAdjacentPointerStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftRegisteredInternalTypeFixture(Architecture);
+    auto &Data = F.Image.Segments[3].Data;
+    llvm::support::endian::write32le(Data.data() + 0xc0, 0x50);
+    llvm::support::endian::write32le(Data.data() + 0xc4,
+                                     uint32_t(0x4040 - 0x40c4));
+    llvm::support::endian::write32le(Data.data() + 0xc8,
+                                     uint32_t(0x40e0 - 0x40c8));
+    std::memcpy(Data.data() + 0xe0, "Other", 6);
+    F.Image.RelDataPtrRelocSlots.insert(0x40e8);
+    F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+    llvm::support::endian::write32le(F.Image.Segments.back().Data.data() + 4,
+                                     uint32_t(0x40c0 - 0x6004));
+    // Looking at sizeof("ArticleTab") bytes of "Other" would cross the
+    // pointer. The runtime name differs before that storage is touched.
+    ASSERT_FALSE(readImmutableImageBytes(F.Image, 0x40e0, 11));
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    F.Image.RelDataPtrRelocSlots.insert(0x4088);
+    EXPECT_FALSE(objcSourceCallBound(*Bound.Function.Body[0].Val->Operands[0],
+                                     F.Image, {}));
+  }
+}
+
+TEST(ObjCSourceBindings, InternalSwiftTypeNamesAreRevalidatedAtPublication) {
+  auto F = swiftRegisteredInternalTypeFixture(Arch::AArch64, 'C', true);
+  const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+  auto Cache = Bound.Function.Body[0].Val->Operands[0];
+  F.Image.Segments[3].Data[0xa0] = 'B';
+  EXPECT_FALSE(objcSourceCallBound(*Cache, F.Image, {}));
+  std::set<std::string> Helpers;
+  EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                   F.Image, Bound.SwiftTypeMetadataPairs, Helpers),
+               std::runtime_error);
+}
+
 TEST(ObjCSourceBindings,
      SwiftTypeMetadataPairsAcceptExactPrintableTypeReferences) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64})

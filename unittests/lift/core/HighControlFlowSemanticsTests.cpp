@@ -486,6 +486,76 @@ TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
   EXPECT_EQ(Report.Items[0].Issue, HighSourceFlowIssue::DefiniteAssignment);
 }
 
+TEST(HighControlFlowSemantics, SourceFlowSharedSwitchLabelsReachTheirBody) {
+  MedVar Selector;
+  Selector.Kind = MedVar::Param;
+  Selector.Size = 8;
+  HighStmt Dispatch;
+  Dispatch.Kind = StmtKind::Switch;
+  Dispatch.Addr = 0x1000;
+  Dispatch.SwitchExpr = HighExpr::makeVar(Selector);
+  Dispatch.Cases = {{0, {}, true}, {1, {}, true}, {2, {assign(0x1010, 1, 7)}}};
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  Break.Addr = 0x1014;
+  Dispatch.Cases.back().Body.push_back(Break);
+  Dispatch.DefaultBody = {result(0x1020, HighExpr::makeConst(99, 8))};
+  HighFunc F;
+  F.Body = {Dispatch, result(0x1030, local(1))};
+  for (uint64_t Value : {0, 1, 2, 3})
+    EXPECT_EQ(execute(F, Value), Value < 3 ? 7U : 99U);
+  auto Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  F.Body[0].Cases[0].FallsThrough = false;
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
+TEST(HighControlFlowSemantics, SourceFlowFallingCaseKeepsEffectsAndDefault) {
+  HighStmt Dispatch;
+  Dispatch.Kind = StmtKind::Switch;
+  Dispatch.Addr = 0x1000;
+  Dispatch.SwitchExpr = HighExpr::makeConst(0, 8);
+  Dispatch.Cases = {{0, {assign(0x1010, 1, 7)}, true}, {1, {}, true}};
+  Dispatch.DefaultBody = {result(0x1020, local(1))};
+  HighFunc F;
+  F.Body = {Dispatch, result(0x1030, local(2))};
+  auto Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  const auto Graph = buildHighSourceFlowGraph(F);
+  ASSERT_TRUE(Graph.Diagnostics.Complete);
+  auto Definition = std::find_if(
+      Graph.Nodes.begin(), Graph.Nodes.end(), [](const auto &Node) {
+        return Node.Statement && Node.Statement->Addr == 0x1010;
+      });
+  ASSERT_NE(Definition, Graph.Nodes.end());
+  ASSERT_EQ(Definition->Successors.size(), 1U);
+  const auto &Next = Graph.Nodes[Definition->Successors.front()];
+  ASSERT_TRUE(Next.Statement);
+  EXPECT_EQ(Next.Statement->Addr, 0x1020U);
+  // An explicit break bypasses the falling case and default, even when the
+  // case's FallsThrough flag remains set. The follow reads undefined v2.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  Break.Addr = 0x1014;
+  F.Body[0].Cases[0].Body.push_back(Break);
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+  // Entering default directly cannot borrow the earlier case's definition.
+  F.Body[0].Cases[0].Body.pop_back();
+  F.Body[0].SwitchExpr = HighExpr::makeConst(99, 8);
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
 TEST(HighControlFlowSemantics, EitherEqualityOperandWriteInvalidatesTheFact) {
   for (unsigned Operand : {0U, 3U})
     for (bool Swapped : {false, true}) {
@@ -5593,4 +5663,40 @@ TEST(HighControlFlowSemantics, BackwardJumpsAroundATryBecomeALoop) {
   G.Body = {Try, Again, result(0x1014, local(1))};
   EXPECT_FALSE(loopifyBackwardGotos(G.Body));
   EXPECT_EQ(countKind(G, StmtKind::Goto), 2u);
+}
+
+TEST(HighControlFlowSemantics, CodeAfterASwitchMovesToItsOnlyFallOut) {
+  // switch (x) { case 1: case 2: case 3: v = 10x; goto J; } v = 7; goto K;
+  // J: return v; K: return 99; -- only the missing default falls out of the
+  // switch, so `v = 7; goto K;` becomes the default and every goto J breaks.
+  for (bool SecondFallOut : {false, true}) {
+    SCOPED_TRACE(SecondFallOut);
+    HighStmt Dispatch;
+    Dispatch.Kind = StmtKind::Switch;
+    Dispatch.Addr = 0x1000;
+    Dispatch.SwitchExpr = local(0);
+    for (uint64_t V : {1, 2, 3})
+      Dispatch.Cases.push_back(
+          {V,
+           {assign(0x1000 + V * 4, 1, V * 10), jump(0x1000 + V * 4, 0x1100)}});
+    // A case that falls out too keeps the code where it is.
+    if (SecondFallOut)
+      Dispatch.Cases.back().Body.pop_back();
+    HighFunc F;
+    F.Body = {Dispatch, assign(0x1040, 1, 7), jump(0x1044, 0x1200),
+              result(0x1100, local(1)),
+              result(0x1200, HighExpr::makeConst(99, 8))};
+    auto Expected = [&](uint64_t X) -> uint64_t {
+      if (X == 3 && SecondFallOut)
+        return 99;
+      return X >= 1 && X <= 3 ? X * 10 : 99;
+    };
+    for (uint64_t X : {0, 1, 2, 3, 4})
+      ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+    const size_t Gotos = countKind(F, StmtKind::Goto);
+    breakToTheLoopFollow(F.Body);
+    EXPECT_EQ(countKind(F, StmtKind::Goto), SecondFallOut ? Gotos : 1u);
+    for (uint64_t X : {0, 1, 2, 3, 4})
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  }
 }

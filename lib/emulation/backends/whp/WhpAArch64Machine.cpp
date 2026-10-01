@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64GeneralState.h"
+#include "../../arch/aarch64/AArch64State.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
@@ -44,6 +44,7 @@ class WhpAArch64Machine final : public AArch64Machine, public WhpPartition {
 public:
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     using namespace aarch64;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
@@ -91,32 +92,39 @@ public:
     // ARM64 WHP does not expose x64's exception-exit bitmap. The immutable EL1
     // vector gateway returns through an intercepted HVC after one debug step.
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    if (auto E = run(Exit, Control))
+    auto Next = State;
+    auto Complete = [&]() -> llvm::Error {
+      if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
+          Exit.Hypercall.Header.Pc !=
+              VectorGPA + (State.UserMode ? LowerELVector : CurrentELVector) ||
+          Exit.Hypercall.Immediate)
+        return diagnostic::error(diagnostic::WhpExit);
+      Names.resize(StateCount);
+      Values.resize(StateCount);
+      const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
+      if (FAILED(API.WHvGetVirtualProcessorRegisters(
+              Partition, 0, Names.data(), Names.size(), Values.data())))
+        return diagnostic::error(diagnostic::WhpState);
+      if (((Values[Syndrome].Reg64 >> ExceptionClassShift) &
+           ExceptionClassMask) !=
+          (State.UserMode ? StepFromLowerEL : StepFromEL1))
+        return diagnostic::error(diagnostic::ArmState);
+      return captureAArch64State(
+          Next,
+          [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+            return Values[unsigned(Register)].Reg64;
+          },
+          [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+            const auto &Value = Values[VectorBegin + Index].Reg128;
+            return RegisterValue{Value.Low64, Value.High64};
+          });
+    };
+    if (auto E = run(Exit, Control, Complete))
       return E;
-    if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
-        Exit.Hypercall.Header.Pc !=
-            VectorGPA + (State.UserMode ? LowerELVector : CurrentELVector) ||
-        Exit.Hypercall.Immediate)
-      return diagnostic::error(diagnostic::WhpExit);
-    Names.resize(StateCount);
-    Values.resize(StateCount);
-    const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
-    if (FAILED(API.WHvGetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), Names.size(), Values.data())))
-      return diagnostic::error(diagnostic::WhpState);
-    if (((Values[Syndrome].Reg64 >> ExceptionClassShift) &
-         ExceptionClassMask) !=
-        (State.UserMode ? StepFromLowerEL : StepFromEL1))
-      return diagnostic::error(diagnostic::ArmState);
-    return captureAArch64State(
-        State,
-        [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-          return Values[unsigned(Register)].Reg64;
-        },
-        [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-          const auto &Value = Values[VectorBegin + Index].Reg128;
-          return RegisterValue{Value.Low64, Value.High64};
-        });
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::WhpRun, Control);
+    State = Next;
+    return llvm::Error::success();
   }
 };
 } // namespace

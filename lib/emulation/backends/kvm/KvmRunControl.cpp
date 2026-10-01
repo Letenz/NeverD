@@ -8,6 +8,8 @@
 #if defined(__linux__) && defined(NEVERD_EMULATION_KVM)
 #include "../../core/ExecutionDiagnostics.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <cerrno>
 #include <climits>
 #include <condition_variable>
@@ -41,6 +43,7 @@ struct KvmRunControl::State {
   std::atomic<bool> Cancel{false};
   bool Ready = false, Initialized = false, Shutdown = false, Running = false;
   bool Requested = false, Completed = false, PendingKick = false;
+  bool EntryInterrupted = false;
 
   ~State() {
     if (!Worker.joinable())
@@ -113,6 +116,7 @@ struct KvmRunControl::State {
       Requested = false;
       Lock.unlock();
       int Result = -1;
+      bool Interrupted = false;
       llvm::Error Error = llvm::Error::success();
       if (Prepare && !Cancel.load() && !Control.stopRequested() &&
           Clock::now() < Control.Deadline)
@@ -122,6 +126,7 @@ struct KvmRunControl::State {
           if (Cancel.load() || Control.stopRequested() ||
               Clock::now() >= Control.Deadline) {
             Result = -1;
+            Interrupted = true;
             break;
           }
           Result = ioctl(VCPU, KVM_RUN, 0);
@@ -131,6 +136,7 @@ struct KvmRunControl::State {
       }
       Lock.lock();
       Status = Result;
+      EntryInterrupted = Interrupted;
       TransferError = std::move(Error);
       Completed = true;
       Changed.notify_all();
@@ -162,13 +168,13 @@ llvm::Error KvmRunControl::run(MachineRunControl Control) {
 }
 
 llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
-                               StateTransfer Capture) {
+                               StateTransfer Capture, Completion Complete) {
   auto &S = *Impl;
   std::unique_lock Lock(S.Mutex);
   if (S.Running)
     return diagnostic::error(diagnostic::KvmRunActive);
-  if (Control.stopRequested() || Clock::now() >= Control.Deadline)
-    return diagnostic::error(diagnostic::KvmRun);
+  if (Control.interrupted())
+    return diagnostic::interrupted(diagnostic::KvmRun, Control);
   S.Running = true;
   if (!S.Worker.joinable() && !S.start(Lock)) {
     S.Running = false;
@@ -209,13 +215,29 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   }
   S.Control.Stop = nullptr;
   S.Prepare = S.Capture = {};
-  S.Running = false;
-  if (S.TransferError)
-    return std::move(S.TransferError);
-  // A cancellation racing a successful exit leaves native progress uncertain.
-  // Acknowledge it, but never publish a successful register transfer.
-  if (S.Cancel || S.Status < 0)
+  auto TransferError = std::move(S.TransferError);
+  const int Status = S.Status;
+  const bool Cancelled = S.Cancel, EntryInterrupted = S.EntryInterrupted;
+  Lock.unlock();
+  auto Release = llvm::scope_exit([&] {
+    std::lock_guard Lock(S.Mutex);
+    S.Running = false;
+  });
+  if (TransferError)
+    return TransferError;
+  if (Status < 0) {
+    if (EntryInterrupted && (Cancelled || Control.interrupted()))
+      return diagnostic::interrupted(diagnostic::KvmRun, Control);
     return diagnostic::error(diagnostic::KvmRun);
+  }
+  // ISA validation stays on the owner thread. A genuine processor exception
+  // or malformed capture outranks a stop observed during successful state IO.
+  // Running remains true until this callback and result classification finish.
+  if (Complete)
+    if (auto E = Complete())
+      return E;
+  if (Cancelled || Control.interrupted())
+    return diagnostic::interrupted(diagnostic::KvmRun, Control);
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

@@ -203,6 +203,9 @@ struct LowIRLoopInferenceResult {
 /// observed unit counters and inferred phases in unsigned lexicographic ranks.
 /// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
 /// control and rank families outside this bounded search remain unsupported.
+/// Single-cut search may retry another eligible cut after a generalized
+/// template violates a contract. Real-prefix failures, malformed inputs,
+/// unsupported execution and shared-budget exhaustion still stop the search.
 /// A nonempty EligibleCutpoints restricts only the search, not execution or
 /// the admitted input domain. No native/source equivalence follows from an
 /// inferred plan; pass it to the original/candidate checker before use.

@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64GeneralState.h"
+#include "../../arch/aarch64/AArch64State.h"
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
@@ -88,7 +88,7 @@ public:
     auto Release = llvm::scope_exit([&] { ActiveControl = nullptr; });
     if (interrupted()) {
       Cancelled = true;
-      return diagnostic::error(diagnostic::UnicornRun);
+      return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
     }
     // Host backing writes bypass Unicorn's code-write invalidation. Discard
     // translated blocks before entering so aliases and self-modifying code
@@ -97,14 +97,16 @@ public:
       return E;
     if (interrupted()) {
       Cancelled = true;
-      return diagnostic::error(diagnostic::UnicornRun);
+      return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
     }
     const auto Status = uc_emu_start(Engine, PC, 0, 0, Count);
-    if (Cancelled || interrupted()) {
-      Cancelled = true;
-      return diagnostic::error(diagnostic::UnicornRun);
-    }
-    return check(Status);
+    if (Cancelled)
+      return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
+    if (Status != UC_ERR_OK)
+      return check(Status);
+    if (interrupted())
+      return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
+    return llvm::Error::success();
   }
   bool entryCancelled() const { return Cancelled; }
 
@@ -114,9 +116,7 @@ private:
   const MachineRunControl *ActiveControl = nullptr;
   bool Cancelled = false;
   bool interrupted() const {
-    return ActiveControl &&
-           (ActiveControl->stopRequested() ||
-            std::chrono::steady_clock::now() >= ActiveControl->Deadline);
+    return ActiveControl && ActiveControl->interrupted();
   }
   static void entry(uc_engine *Engine, uint64_t, uint32_t, void *UserData) {
     auto &CPU = *static_cast<UnicornStepper *>(UserData);
@@ -277,6 +277,8 @@ public:
       return llvm::make_error<X64ExceptionError>(
           X64Exception{*PendingException, std::nullopt, Address});
     }
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::UnicornRun, Control);
     State = Next;
     return llvm::Error::success();
   }
@@ -369,22 +371,28 @@ public:
         return E;
     if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control))
       return E;
-    return captureAArch64State(
-        State,
-        [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-          uint64_t Value = 0;
-          if (auto E =
-                  check(uc_reg_read(CPU.Engine, registerID(Register), &Value)))
-            return E;
-          return Value;
-        },
-        [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-          RegisterValue Value{};
-          if (auto E = check(uc_reg_read(CPU.Engine, UC_ARM64_REG_Q0 + Index,
-                                         Value.data())))
-            return E;
-          return Value;
-        });
+    auto Next = State;
+    if (auto E = captureAArch64State(
+            Next,
+            [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+              uint64_t Value = 0;
+              if (auto E = check(
+                      uc_reg_read(CPU.Engine, registerID(Register), &Value)))
+                return E;
+              return Value;
+            },
+            [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+              RegisterValue Value{};
+              if (auto E = check(uc_reg_read(
+                      CPU.Engine, UC_ARM64_REG_Q0 + Index, Value.data())))
+                return E;
+              return Value;
+            }))
+      return E;
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::UnicornRun, Control);
+    State = Next;
+    return llvm::Error::success();
   }
 
 private:

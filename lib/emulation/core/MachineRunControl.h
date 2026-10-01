@@ -20,6 +20,9 @@ struct MachineRunControl {
   const std::atomic<bool> *Stop = nullptr;
 
   bool stopRequested() const { return Stop && Stop->load(); }
+  bool interrupted() const {
+    return stopRequested() || std::chrono::steady_clock::now() >= Deadline;
+  }
 
   MachineRunControl forNativeStep() const {
     // Normal run budgets are checked at instruction boundaries. Give an

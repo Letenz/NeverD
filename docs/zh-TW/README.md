@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: dea200c826d205dc426fba8733a2fb5ce99212ff67dd1f3566c89b1af0bf481f -->
+<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
 
 [← NeverD 專案](project.md)
 
@@ -26,7 +26,7 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 | [測試](testing.md) | 測試套件、產生的 fixture、Unicorn 往返與增量命令 |
 | [桌面工作台 (英文)](../gui.md) | 可選 Qt Quick 介面、獨立工作行程、C ABI、註記與 MCP 工作流程 |
 | [桌面驗收紀錄 (英文)](../gui-qualification.md) | 已量測的 GUI 證據、封裝邊界與尚未完成的平台驗收 |
-| [直譯器原始碼還原](interpreter-recovery.md) | 實驗性 x64 直譯器特化、HighC/LLVMC 輸出、執行前提、證據與限制; 巢狀迴圈證明候選; 明確的探索預算與版本化 C API |
+| [直譯器原始碼還原](interpreter-recovery.md) | 實驗性 x64 直譯器特化、HighC/LLVMC 輸出、執行前提、證據與限制; 巢狀迴圈證明候選; 明確的探索預算與版本化 C API; 精確的原生到 LLVM 證明 API |
 | [Windows 例外重建](windows-exception-reconstruction.md) | SEH/C++ 展開支援矩陣、IR 契約、原生 patch 規則與 PE 驗證 |
 | [CPU 執行](cpu-execution.md) | 組態、能力查詢、後端可用性與型別化結果 |
 | [Bitvector 證明後端](solver.md) | 選用 Z3 證明、門控合成、獨立檢查與查詢匯出 |

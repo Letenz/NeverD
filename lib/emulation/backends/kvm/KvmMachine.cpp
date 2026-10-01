@@ -84,6 +84,7 @@ public:
   bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     // Only a completely captured debug exit proves the next entry runnable.
     // Failed, cancelled and exception entries must reestablish it explicitly.
     const bool WasRunnable = Runnable;
@@ -196,33 +197,37 @@ public:
         return diagnostic::error(diagnostic::KvmState);
       return llvm::Error::success();
     };
-    if (auto E = runUntilExit(Control.forNativeStep(), Prepare, Capture))
-      return E;
-    const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
     auto Next = State;
-    if (auto E = decodeX64FXState(Next, {Bytes, sizeof(F.region)}))
-      return E;
-    const auto Present =
-        llvm::support::endian::read64le(Bytes + x64::fp::XStateOffset);
-    if (!(Present & x64::fp::X87Present))
-      Next.FP = {};
-    if (!(Present & x64::fp::SSEPresent)) {
-      Next.MXCSR = x64::InitialMXCSR;
-      Next.Xmm = {};
-    }
+    auto Complete = [&]() -> llvm::Error {
+      if (auto E = decodeX64FXState(Next, {Bytes, sizeof(F.region)}))
+        return E;
+      const auto Present =
+          llvm::support::endian::read64le(Bytes + x64::fp::XStateOffset);
+      if (!(Present & x64::fp::X87Present))
+        Next.FP = {};
+      if (!(Present & x64::fp::SSEPresent)) {
+        Next.MXCSR = x64::InitialMXCSR;
+        Next.Xmm = {};
+      }
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-    if (Exception) {
-      if (S.cs.selector != x64::CodeSelector)
-        return diagnostic::error(x64::exceptiontext::Gateway);
-      auto Trap = consumeX64ExceptionMonitor(Memory, Next, State, S.cr2);
-      if (!Trap)
-        return Trap.takeError();
-      State = Next;
-      return llvm::make_error<X64ExceptionError>(*Trap);
-    }
+      if (Run->exit_reason == KVM_EXIT_HLT) {
+        if (S.cs.selector != x64::CodeSelector)
+          return diagnostic::error(x64::exceptiontext::Gateway);
+        auto Trap = consumeX64ExceptionMonitor(Memory, Next, State, S.cr2);
+        if (!Trap)
+          return Trap.takeError();
+        State = Next;
+        return llvm::make_error<X64ExceptionError>(*Trap);
+      }
+      return llvm::Error::success();
+    };
+    if (auto E = runUntilExit(Control, Prepare, Capture, Complete))
+      return E;
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::KvmRun, Control);
     State = Next;
     // Only acknowledged, fully decoded debug exits establish reusable state.
     // Host writes or context restoration are compared against this capture;

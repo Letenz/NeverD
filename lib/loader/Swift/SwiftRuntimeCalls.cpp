@@ -149,6 +149,20 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 UUID.uuidString clients read UUID through
+    // swiftself and receive both physical String words in result registers.
+    {"$s10Foundation4UUIDV10uuidStringSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)C"},
+    // UUID.init() constructs the opaque UUID through swift_indirect_result
+    // on both Darwin targets; there are no ordinary or context inputs.
+    {"$s10Foundation4UUIDVACycfC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vI"},
     // Locale.preferredLanguages returns the Array object in one register.
     {"$s10Foundation6LocaleV18preferredLanguagesSaySSGvgZ",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
@@ -312,6 +326,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
+    // Swift 6.1.2 arm64 and x86_64 Array<AnyObject> subscript clients
+    // declare this exact specialization as swiftcc ptr (i64, ptr). The
+    // index precedes the buffer value; neither input uses swiftself.
+    {"$ss12_ArrayBufferV19_getElementSlowPathyyXlSiFyXl_Ts5",
+     "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$ss18_CocoaArrayWrapperV8endIndexSivg",
      "/usr/lib/swift/libswiftCore.dylib", "zz"},
     // Swift 6.1.2 DictionaryStorage.swift defines the original storage,
