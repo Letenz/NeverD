@@ -177,6 +177,7 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress &&
          Binding.BorrowedByteInputs.empty() &&
+         Binding.SwiftStaticStringInputs.empty() &&
          Binding.CanonicalBooleanInputs.empty() &&
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
@@ -259,6 +260,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
          Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
          Binding.CanonicalBooleanInputs == Expected.CanonicalBooleanInputs &&
          Binding.SwiftStringInputs == Expected.SwiftStringInputs &&
+         Binding.SwiftStaticStringInputs == Expected.SwiftStaticStringInputs &&
          objc_projection_detail::sameHint(Binding.Signature,
                                           Expected.Signature);
 }
@@ -4288,7 +4290,9 @@ kvoRegistrationContextParameter(const HighExpr &Expression,
       Hint.SelectorArgumentStorageUse || Hint.ObjCIndirectResultStorage ||
       Hint.DoesNotReturn || Hint.WeakImport || Hint.ReturnedArgument ||
       Hint.RuntimeObjCResultType || Hint.ValueWitness ||
-      !Hint.BorrowedByteInputs.empty() || !Hint.SwiftStringInputs.empty() ||
+      !Hint.BorrowedByteInputs.empty() ||
+      !Hint.SwiftStaticStringInputs.empty() ||
+      !Hint.SwiftStringInputs.empty() ||
       Expression.Operands.size() != Hint.Signature.Parameters.size() ||
       ContextParameter >= Expression.Operands.size())
     return std::nullopt;
@@ -6774,6 +6778,85 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Expression->MemoryOrdering == NdMemoryOrdering::None &&
           !Expression->IsIndirectCall) {
         const auto &Binding = *Expression->SourceCallHint;
+        if (!Binding.SwiftStaticStringInputs.empty()) {
+          const auto Expected = runtimeSourceCallHint(Image, Binding);
+          if (Expected && runtimeBindingMatches(Binding, *Expected) &&
+              Expression->Operands.size() ==
+                  Binding.Signature.Parameters.size()) {
+            // Only pure constant conversions may select a representation.
+            // Dynamic values keep their original carriers and runtime call.
+            const auto PureConstant = [&](const auto &Self, const ExprPtr &E,
+                                          unsigned Depth) -> bool {
+              if (!E || Depth > 16 || !E->Type || E->SourceCallHint ||
+                  E->IntrinsicId != Intrinsic::None ||
+                  !E->IntrinsicOutputs.empty() || E->IndirectTarget ||
+                  E->MemoryOrdering != NdMemoryOrdering::None ||
+                  E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+                return false;
+              if (E->Kind == ExprKind::Const)
+                return E->Operands.empty();
+              if (E->Kind == ExprKind::Cast &&
+                  (!E->CastTo || !equalSourceTypes(E->Type, E->CastTo)))
+                return false;
+              return (E->Kind == ExprKind::Cast ||
+                      (E->Kind == ExprKind::UnaryOp &&
+                       (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT))) &&
+                     E->Operands.size() == 1 &&
+                     Self(Self, E->Operands[0], Depth + 1);
+            };
+            bool Rewritten = false;
+            for (const auto &[DataIndex, CountIndex, FlagsIndex] :
+                 Expected->SwiftStaticStringInputs) {
+              if (Index != DataIndex ||
+                  CountIndex >= Expression->Operands.size() ||
+                  FlagsIndex >= Expression->Operands.size() ||
+                  !PureConstant(PureConstant, Operand, 0) ||
+                  !PureConstant(PureConstant, Expression->Operands[CountIndex],
+                                0) ||
+                  !PureConstant(PureConstant, Expression->Operands[FlagsIndex],
+                                0))
+                continue;
+              const auto Data = swiftLiteralStorageWord(Operand);
+              const auto Count = constantBorrowedByteCount(
+                  Expression->Operands[CountIndex],
+                  Expected->Signature.Parameters[CountIndex].Type);
+              const auto Flags = constantBorrowedByteCount(
+                  Expression->Operands[FlagsIndex],
+                  Expected->Signature.Parameters[FlagsIndex].Type);
+              if (!Data || !Count || !Flags || *Flags > UINT8_MAX)
+                continue;
+              if (isCanonicalSwiftStaticStringScalar(*Data, *Count, *Flags) &&
+                  Operand->Kind == ExprKind::Const &&
+                  Operand->Type->Kind == NdTypeKind::Int &&
+                  Operand->AddressOwnerVA == InvalidVA &&
+                  (Operand->ConstProvenance ==
+                       ConstantAddressProvenance::Scalar ||
+                   Operand->ConstProvenance ==
+                       ConstantAddressProvenance::Unknown)) {
+                auto Scalar = std::make_shared<HighExpr>(*Operand);
+                Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+                Operand = Copy(Scalar, Depth + 1, true, false, false);
+                Rewritten = true;
+                break;
+              }
+              const auto Literal =
+                  swiftStaticStringLiteral(Image, *Data, *Count, *Flags);
+              if (!Literal)
+                continue;
+              const BorrowedByteRange Range{Literal->Contents, Literal->Bytes};
+              auto Bytes = HighExpr::makeCall({}, 0, {});
+              Bytes->Type = Operand->Type;
+              Bytes->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+                  *borrowedByteSourceHint(Image, Range));
+              Operand = std::move(Bytes);
+              Result.BorrowedBytes.insert(Range);
+              Rewritten = true;
+              break;
+            }
+            if (Rewritten)
+              continue;
+          }
+        }
         if (!Binding.SwiftStringInputs.empty()) {
           const auto Expected = runtimeSourceCallHint(Image, Binding);
           if (Expected && runtimeBindingMatches(Binding, *Expected) &&
@@ -7469,6 +7552,7 @@ inline bool objcSourceCallBound(
        Binding.WeakImport || Binding.ReturnedArgument ||
        Binding.RuntimeObjCResultType || Binding.ValueWitness ||
        !Binding.OwnerClass.empty() || !Binding.BorrowedByteInputs.empty() ||
+       !Binding.SwiftStaticStringInputs.empty() ||
        !Binding.SwiftStringInputs.empty() || Binding.SwiftTypeMetadata ||
        Binding.SelectorResultUse || Binding.SelectorResultTypeUse ||
        Binding.SelectorArgumentTypeUse || Binding.SelectorForwardingUse ||
@@ -7529,6 +7613,7 @@ inline bool objcSourceCallBound(
        Binding.WeakImport || Binding.ReturnedArgument ||
        Binding.RuntimeObjCResultType || Binding.ValueWitness ||
        !Binding.OwnerClass.empty() || !Binding.BorrowedByteInputs.empty() ||
+       !Binding.SwiftStaticStringInputs.empty() ||
        !Binding.SwiftStringInputs.empty() || Binding.SwiftTypeMetadata ||
        Binding.ByteCount || Binding.ImmutablePointerSlot))
     return false;
@@ -7652,6 +7737,7 @@ inline bool objcSourceCallBound(
            Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            !Binding.ByteCount && Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
@@ -7672,6 +7758,7 @@ inline bool objcSourceCallBound(
            !Binding.SelectorReferenceAddress &&
            Binding.ByteCount == Expected->ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
@@ -7686,6 +7773,7 @@ inline bool objcSourceCallBound(
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
@@ -7701,6 +7789,7 @@ inline bool objcSourceCallBound(
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
@@ -7755,6 +7844,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7768,6 +7858,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7781,6 +7872,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7794,6 +7886,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7807,6 +7900,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7820,6 +7914,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7841,6 +7936,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7860,6 +7956,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() &&
            Expression.IntrinsicOutputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
@@ -7875,6 +7972,7 @@ inline bool objcSourceCallBound(
              Binding.Selector.empty() && Binding.OwnerClass.empty() &&
              !Binding.SelectorReferenceAddress &&
              Binding.BorrowedByteInputs.empty() &&
+             Binding.SwiftStaticStringInputs.empty() &&
              Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
              !Expression.CallAddr && Expression.CallTarget.empty() &&
              Expression.Operands.empty() &&
@@ -7920,6 +8018,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.IntrinsicOutputs.empty() &&
@@ -7936,6 +8035,7 @@ inline bool objcSourceCallBound(
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStaticStringInputs.empty() &&
            Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
            !Expression.CallAddr && Expression.CallTarget.empty() &&
            Expression.Operands.empty() && Expression.IntrinsicOutputs.empty() &&
@@ -8330,6 +8430,7 @@ inline bool objcSourceCallBound(
              !Binding.DoesNotReturn && !Binding.WeakImport &&
              !Binding.ReturnedArgument && !Binding.RuntimeObjCResultType &&
              Binding.OwnerClass.empty() && Binding.BorrowedByteInputs.empty() &&
+             Binding.SwiftStaticStringInputs.empty() &&
              Binding.SwiftStringInputs.empty() && !Binding.SwiftTypeMetadata &&
              !Binding.Receiver && !Binding.SelectorResultUse &&
              !Binding.SelectorResultTypeUse &&

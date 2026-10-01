@@ -3794,8 +3794,10 @@ TEST(ObjCCallHints,
     EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
     EXPECT_EQ(Hint->TargetName, Import.substr(1));
     EXPECT_TRUE(Hint->DoesNotReturn);
-    EXPECT_EQ(Hint->BorrowedByteInputs,
-              (std::vector<std::pair<unsigned, unsigned>>{{0, 1}, {5, 6}}));
+    EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+    EXPECT_EQ(Hint->SwiftStaticStringInputs,
+              (std::vector<std::tuple<unsigned, unsigned, unsigned>>{
+                  {0, 1, 2}, {5, 6, 7}}));
     EXPECT_EQ(Hint->SwiftStringInputs,
               (std::vector<std::pair<unsigned, unsigned>>{{3, 4}}));
     const auto &Signature = Hint->Signature;
@@ -3922,7 +3924,7 @@ TEST(ObjCCallHints,
         Wrong->Signature.Origin =
             SourceFunctionTypeHint::OriginKind::SwiftRuntime;
       else if (Mutation == 5)
-        Wrong->BorrowedByteInputs.pop_back();
+        Wrong->SwiftStaticStringInputs.pop_back();
       else
         Wrong->SwiftStringInputs.clear();
       WrongCall.SourceCallHint = std::move(Wrong);

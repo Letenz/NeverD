@@ -133,6 +133,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
   core/SwiftStringValueCallTests.cpp
+  core/SwiftStaticStringCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp
@@ -1014,6 +1015,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
   core/SwiftStringValueCallTests.cpp
+  core/SwiftStaticStringCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp

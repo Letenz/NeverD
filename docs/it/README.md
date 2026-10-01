@@ -8,7 +8,7 @@
 
 Panoramica, build e CLI sono nel README del repository. I riferimenti di design e test per i contributor sono raccolti qui.
 
-**Supporto mobile (CLI sperimentale):** `neverd mobile` recupera Java da APK, DEX e smali [Android](android.md), e C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` e Mach-O [iOS](ios.md). I report JSON descrivono risultati e copertura. Iniziare dalla [panoramica mobile (inglese)](../mobile.md), poi consultare le guide di piattaforma per comandi e limiti.
+**Supporto mobile (CLI sperimentale):** `neverd mobile` recupera Java da APK, DEX e smali [Android](android.md), e C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` e Mach-O [iOS](ios.md). I report JSON descrivono risultati e copertura. Iniziare dalla [panoramica mobile](mobile.md), poi consultare le guide di piattaforma per comandi e limiti.
 
 Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/` e `zh-TW/`. Ogni directory contiene l’indice `README.md`, la panoramica `project.md`, guide tematiche, `CONTRIBUTING.md`, `ATTRIBUTION.md` e `roadmap.md`. Le immagini condivise sono in `assets/`.
 
@@ -35,7 +35,7 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 | [Audit e hunt di sicurezza della memoria](memory-safety.md) | Analisi di vita dell’heap e overflow di copia: contratto di identità per formato, catalogo sink/source, verdetti, budget e schema JSON |
 | [Plugin nativi](plugins.md) | ABI del descrittore C puro, callback ed eventi, flusso di build/link, rilevamento e regole di compatibilità |
 | [Plugin Python](python-plugins.md) | Sviluppo, API di sessione ed eventi, isolamento, test e pubblicazione |
-| [Panoramica mobile (inglese)](../mobile.md) | CLI sperimentale Android/iOS, input, output, report e limiti |
+| [Panoramica mobile](mobile.md) | CLI sperimentale Android/iOS, input, output, report e limiti |
 | [Ricostruzione Java per Android](android.md) | APK (incluso multidex), DEX, file/directory smali → Java; CLI, report JSON, risoluzione dei problemi, limiti e verifica |
 | [Recupero dei sorgenti iOS](ios.md) | IPA/.app/Mach-O (arm64/x86_64) → C nativo e sorgenti Objective-C/Swift supportati; layout, CLI/export, copertura JSON, limiti e prove eseguibili |
 | [Decompilazione EVM](evm.md) | Input, hardfork, IR a stadi, ABI host C/LLVM, ricostruzione Solidity e limiti |

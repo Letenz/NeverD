@@ -3292,6 +3292,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd mobile --timeout",
                     "neverd export --max-func",
                     "neverd export --source-signatures",
+                    "neverd mobile --list-classes",
+                    "neverd mobile --class-prefix",
+                    "neverd mobile --find-refs",
+                    "neverd mobile --query",
+                    "neverd mobile --exact",
+                    "neverd mobile --owner",
                 ],
                 "json": [
                     "neverd_objc_methods_json",
