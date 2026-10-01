@@ -2663,6 +2663,9 @@ GUIDE_SECTION_CONTRACTS = {
         "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",
         "CandidatePrefix", "UseEntryPrefix", "GeneralizeEntryPrefix",
         "MaxMetadata", "checkLowIRLoopRefinement",
+        "inferAndCheckLowIRLoopRefinement", "LowIRLoopAlignmentLimits",
+        "MaxSolverQueries", "MaxSearchWork", "MaxCandidateAttempts",
+        "MaxPairingAttempts", "MaxCuts",
     ),
     ("process-emulation", "linux-semantics"): (
         "mmap", "mprotect", "munmap", "brk", "PROT_NONE", "ENOMEM",

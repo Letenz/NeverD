@@ -11,6 +11,7 @@ add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
 
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
+  LowIRLoopAlignmentTests.cpp
   InterpreterMachineStateModelTests.cpp
   BinaryLowIRRefinementTests.cpp
   LINK_COMPONENTS BinaryInterpreterSpecialization

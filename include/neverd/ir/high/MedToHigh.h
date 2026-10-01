@@ -72,6 +72,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
+/// Replace each jump to a label nothing falls into with a copy of its tail
+/// when that tail is a few pure assignments followed by a forward jump or by
+/// the next label. Returns true when a jump was replaced.
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body);
 /// Remove a goto whose target is exactly the next statement in its list,
 /// when no other statement starts at that address. Returns true when a goto
 /// was removed.

@@ -6021,3 +6021,36 @@ TEST(HighControlFlowSemantics, LoopEnteredFromOutsideStillBecomesALoop) {
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(5));
   EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
 }
+
+TEST(HighControlFlowSemantics, SmallJumpTailIsCopiedToItsJumps) {
+  // if (x == 1) goto Z; if (x == 2) goto Z; v = 5; return v;
+  // Z: v = 7; goto Y; Y: return v;  -- nothing falls into Z, so each jump
+  // takes a copy of `v = 7; goto Y;` and Z is left unreferenced.
+  auto Equals = [](uint64_t K) {
+    return HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                               HighExpr::makeConst(K, 8));
+  };
+  HighStmt First = conditional(0x1000, 0x1020);
+  First.Cond = Equals(1);
+  HighStmt Second = conditional(0x1004, 0x1020);
+  Second.Cond = Equals(2);
+  HighFunc F;
+  F.Body = {First,
+            Second,
+            assign(0x1008, 1, 5),
+            result(0x100c, local(1)),
+            assign(0x1020, 1, 7),
+            jump(0x1024, 0x1030),
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) { return X == 1 || X == 2 ? 7u : 5u; };
+  for (uint64_t X : {0, 1, 2, 3})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  EXPECT_TRUE(duplicateSmallJumpTails(F.Body));
+  unsigned ToZ = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    ToZ += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1020;
+  });
+  EXPECT_EQ(ToZ, 0u);
+  for (uint64_t X : {0, 1, 2, 3})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}

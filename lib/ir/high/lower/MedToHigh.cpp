@@ -882,7 +882,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       else if (Phase == 5)
         Rewritten = breakToTheLoopFollow(Func.Body);
       else
-        Rewritten = duplicateSmallReturnTails(Func.Body);
+        Rewritten = duplicateSmallReturnTails(Func.Body) |
+                    duplicateSmallJumpTails(Func.Body);
       // The last phase always runs its rounds: the dead-code cleanup above
       // can leave a jump that now just falls through.
       if (!Rewritten && Phase != 5)
