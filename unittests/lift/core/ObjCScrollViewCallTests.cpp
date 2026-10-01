@@ -107,6 +107,23 @@ ExprPtr receiverCallExpression(const SourceCallTypeHint &Binding) {
     Call->Operands.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
   return Call;
 }
+
+struct LayoutMember {
+  const char *Selector;
+  const char *Owner;
+  const char *Encoding;
+};
+// Apple Clang encodings independently obtained from the agreeing device and
+// simulator declarations, including their fixed enum underlying types.
+constexpr LayoutMember LayoutMembers[] = {
+    {"subviews", "UIView", "@16@0:8"},
+    {"insertSubview:atIndex:", "UIView", "v32@0:8@16q24"},
+    {"setShowsHorizontalScrollIndicator:", "UIScrollView", "v20@0:8B16"},
+    {"setShowsVerticalScrollIndicator:", "UIScrollView", "v20@0:8B16"},
+    {"setAxis:", "UIStackView", "v24@0:8q16"},
+    {"setDistribution:", "UIStackView", "v24@0:8q16"},
+    {"setAlignment:", "UIStackView", "v24@0:8q16"},
+    {"setSpacing:", "UIStackView", "v24@0:8d16"}};
 } // namespace
 
 TEST(ObjCCallHints, IOSScrollPropertiesRequireDeclaredProviderAndReceiver) {
@@ -169,6 +186,103 @@ TEST(ObjCCallHints, IOSScrollPropertiesRequireDeclaredProviderAndReceiver) {
     auto Unsupported = Image;
     Unsupported.Arch = Arch::X64;
     EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+  }
+}
+
+TEST(ObjCCallHints, IOSLayoutControlsPreserveDeclaredCarriersAndOwners) {
+  for (const auto &Member : LayoutMembers) {
+    SCOPED_TRACE(Member.Selector);
+    auto Image = image();
+    Image.ObjCMethods.front().Selector = "use";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation",
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+    ObjCClass Class;
+    Class.Name = "First";
+    Class.SuperclassName = Member.Owner;
+    Class.InheritanceStatus = "resolved";
+    Image.ObjCClasses.push_back(Class);
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1400);
+    ASSERT_TRUE(Receiver);
+    auto Expected = parseObjCMethodEncoding(Member.Selector, Member.Encoding);
+    ASSERT_TRUE(Expected);
+    Expected->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinObjCSourceABI(*Expected, Image.Arch, Error));
+    const auto Global = objcSelectorSourceTypeHint(Image, Member.Selector);
+    ASSERT_TRUE(Global);
+    EXPECT_TRUE(equalSourceABIs(*Expected, *Global));
+    const auto Owned =
+        objcReceiverSourceTypeHint(Image, Member.Selector, *Receiver);
+    ASSERT_TRUE(Owned.Signature);
+    EXPECT_FALSE(Owned.RequiresGlobalAgreement);
+    EXPECT_TRUE(equalSourceABIs(*Expected, *Owned.Signature));
+    if (llvm::StringRef(Member.Selector) == "subviews")
+      EXPECT_EQ(Owned.ReturnClass, "NSArray");
+
+    Image.ObjCSourceReferences.at(0x2100).Name = Member.Selector;
+    auto Low = caller();
+    Low.Blocks.front().Ops.back().NumInputs = 0;
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    EXPECT_TRUE(equalSourceABIs(*Expected, Call.SourceCallHint->Signature));
+    EXPECT_EQ(Call.Args.size(), Expected->Parameters.size());
+    const auto Expression = receiverCallExpression(*Call.SourceCallHint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    auto Changed = Image;
+    Changed.DynInfo.NeededLibs[0] = "/tmp/UIKit.framework/UIKit";
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+    Changed = Image;
+    Changed.Arch = Arch::X64;
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Member.Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+    Changed = Image;
+    Changed.ObjCClasses.front().SuperclassName = "NSString";
+    EXPECT_FALSE(objcReceiverSourceTypeHint(Changed, Member.Selector, *Receiver)
+                     .Signature);
+  }
+}
+
+TEST(ObjCCallHints, IOSLayoutControlsRejectChangedWidthsAndRuntimeConflicts) {
+  for (const auto &Member : LayoutMembers) {
+    SCOPED_TRACE(Member.Selector);
+    auto Image = image();
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit"};
+    Image.ObjCSourceReferences.at(0x2100).Name = Member.Selector;
+    auto Low = caller();
+    Low.Blocks.front().Ops.back().NumInputs = 0;
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+    const auto &Binding = *Med.CallInfos.front().SourceCallHint;
+    const auto Expression = receiverCallExpression(Binding);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    auto Changed = std::make_shared<SourceCallTypeHint>(Binding);
+    if (Changed->Signature.Parameters.size() > 2)
+      Changed->Signature.Parameters.back().Location.ValueBytes = 2;
+    else
+      Changed->Signature.ReturnLocation.ValueBytes = 4;
+    Expression->SourceCallHint = Changed;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    Expression->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+    ObjCMethod Conflict;
+    Conflict.Selector = Member.Selector;
+    auto ConflictingEncoding = std::string(Member.Encoding);
+    ConflictingEncoding.front() = 'd';
+    Conflict.TypeHint =
+        parseObjCMethodEncoding(Member.Selector, ConflictingEncoding);
+    ASSERT_TRUE(Conflict.TypeHint);
+    std::string Error;
+    ASSERT_TRUE(
+        assignDarwinObjCSourceABI(*Conflict.TypeHint, Image.Arch, Error));
+    Image.ObjCMethods.push_back(Conflict);
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Member.Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
   }
 }
 
