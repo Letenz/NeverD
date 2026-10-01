@@ -82,6 +82,8 @@ Lorsqu’une condition réduit une dépendance d’adresse à une tranche d’oc
 
 L’énumération facultative des adresses immuables s’arrête dès qu’une adresse réalisable manque de certificat. La lecture d’origine reste exécutée. Les valeurs et certificats observés ne sont utilisés qu’après preuve du domaine complet ; un résultat en cache exige encore la validation de l’étendue de lecture actuelle, et un certificat mal formé effectivement observé reste une erreur.
 
+Une preuve complète des dépendances peut éviter l’énumération d’une valeur de contrôle complète sur 64 bits `root + constant` lorsque le prédicat de l’arête courante laisse libres les 32 bits hauts de la nouvelle variable racine. Cela ne fixe pas l’adresse racine et ne prouve pas l’accessibilité. Les masques étroits des producteurs et les vérifications finales de faisabilité restent appliqués ; un prédicat bornant la racine entière suit la projection finie normale.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution

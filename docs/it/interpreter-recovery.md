@@ -82,6 +82,8 @@ Quando una condizione restringe una dipendenza di indirizzo a una porzione di by
 
 L’enumerazione facoltativa degli indirizzi immutabili si arresta quando un indirizzo ammissibile non ha un certificato. La lettura originale resta eseguita. Valori e certificati osservati si usano solo dopo la prova dell’intero dominio; anche un risultato in cache richiede la verifica dell’estensione di lettura attuale, e un certificato malformato effettivamente osservato resta un errore.
 
+Una prova completa delle dipendenze può omettere l’enumerazione di un valore di controllo completo a 64 bit `root + constant` quando il predicato dell’arco corrente lascia liberi i 32 bit alti della nuova variabile radice. Ciò non fissa l’indirizzo della radice e non dimostra la raggiungibilità. Restano attive le maschere ristrette dei produttori e le verifiche finali di fattibilità; un predicato che limita l’intera radice segue la normale proiezione finita.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione

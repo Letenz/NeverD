@@ -138,6 +138,17 @@ std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
   return detail::frameRelativeOffset(Ctx, Value, Root);
 }
 
+bool framePredicateLeavesHighBitsFree(const SymState &State, SymRef Predicate,
+                                      SymRef Root, uint64_t MaxVisited) {
+  const SymContext &Ctx = State.context();
+  if (!Root || Ctx.width(Root) != 64 || !Ctx.isVar(Root) ||
+      !Ctx.varInfo(Ctx.varId(Root)).Fresh)
+    return false;
+  const auto Dependencies =
+      detail::gatherControlDependencies(State, Predicate, Root, MaxVisited);
+  return Dependencies.FrameRootBits && (*Dependencies.FrameRootBits >> 32) == 0;
+}
+
 Projection project(SymState &State, SymRef Root,
                    const std::set<uint64_t> &AffineCandidates,
                    const FrameOrigins &Origins, const FrameFacts &Frame) {
@@ -1181,6 +1192,7 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
   size_t VaryingColumn = 0;
   bool MultipleVarying = false;
   bool ProvedReachable = Ctx.isConstOnes(Predicate);
+  std::optional<bool> WideFrameRootDomain;
   const size_t FieldCount =
       Options.ControlRegisters.size() + Options.ControlFrameSlots.size();
   for (uint32_t Field = 0; Field < FieldCount; ++Field) {
@@ -1246,6 +1258,18 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
                 Ctx, Predicate, ProjectedValue, Options.MaxControlTuples,
                 Options.MaxSymbolicNodes))
           return {FiniteValueStatus::Unknown, {}};
+        if (Ctx.width(Value) == 64 && Mask == UINT64_MAX &&
+            affineDisplacement(Ctx, Value, Root)) {
+          if (!WideFrameRootDomain)
+            WideFrameRootDomain = framePredicateLeavesHighBitsFree(
+                State, Predicate, Root, Options.MaxSymbolicNodes);
+          // On a reachable path, the free high bits give this bijective
+          // translation at least 2^32 values, beyond any uint32_t limit.
+          // This refusal proves neither feasibility nor a finite relation;
+          // narrow producer demands and the final reachability check remain.
+          if (*WideFrameRootDomain)
+            return {FiniteValueStatus::TooManyValues, {}};
+        }
         return enumerate(Ctx, Predicate, {ProjectedValue},
                          Options.MaxControlTuples);
       };
@@ -2132,12 +2156,9 @@ bool Specializer::evaluate(int Id) {
           WideFrameRootDomain = detail::hasUnconstrainedProjectionInput(
               Ctx, IncomingPredicate, FrameRoot,
               Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
-          if (!*WideFrameRootDomain) {
-            const auto Dependencies = detail::gatherControlDependencies(
+          if (!*WideFrameRootDomain)
+            WideFrameRootDomain = framePredicateLeavesHighBitsFree(
                 State, EntryPredicate, FrameRoot, Options.MaxSymbolicNodes);
-            WideFrameRootDomain = Dependencies.FrameRootBits &&
-                                  (*Dependencies.FrameRootBits >> 32) == 0;
-          }
         }
         const bool FreeFrameAddress = ExactFrameAddress &&
                                       WideFrameRootDomain.value_or(false) &&

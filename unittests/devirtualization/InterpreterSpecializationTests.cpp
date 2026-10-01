@@ -1493,6 +1493,49 @@ TEST(InterpreterSpecialization,
 }
 
 TEST(InterpreterSpecialization,
+     FiniteHighRootBitsRetainCompleteControlDestinations) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SCOPED_TRACE(Order == llvm::endianness::little ? "little" : "big");
+    constexpr uint64_t FirstRoot = 0x1a00;
+    constexpr uint64_t SecondRoot = 0x100001a00;
+    constexpr uint64_t Displacement = 0x1600;
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::INT_SUB, reg(48), {reg(32), constant(Displacement)}),
+           op(NdOp::INT_EQUAL, reg(64, 1), {reg(32), constant(FirstRoot)}),
+           op(NdOp::INT_EQUAL, reg(65, 1), {reg(32), constant(SecondRoot)}),
+           op(NdOp::INT_OR, reg(66, 1), {reg(64, 1), reg(65, 1)}),
+           op(NdOp::COND_BR, {}, {constant(0x200), reg(66, 1)})},
+          0x300);
+    P.add(0x200, {op(NdOp::INDIR_BR, {}, {reg(48)})});
+    P.add(0x300, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+    P.add(FirstRoot - Displacement,
+          {op(NdOp::COPY, reg(0), {constant(29)}), ret()});
+    P.add(SecondRoot - Displacement,
+          {op(NdOp::COPY, reg(0), {constant(43)}), ret()});
+    SpecializationOptions Options;
+    Options.ByteOrder = Order;
+    Options.FrameBaseRegister = SymRegisterRange{32, 8};
+    Options.RequireRestoredFrameAtReturn = true;
+    Options.ControlRegisters = {{32, 8}, {48, 8}};
+    const auto Result = specializeInterpreter(P, {0x100}, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    EXPECT_EQ(count(Result.Residual, NdOp::INDIR_BR), 0u);
+    for (uint64_t Root : {uint64_t{0}, FirstRoot, SecondRoot, FirstRoot + 1,
+                          SecondRoot + 1, UINT64_MAX}) {
+      const uint64_t Expected = Root == FirstRoot    ? 29
+                                : Root == SecondRoot ? 43
+                                                     : 7;
+      EXPECT_EQ(execute(Result.Residual, {{32, Root}}), Expected);
+    }
+    P.Code.erase(SecondRoot - Displacement);
+    const auto Unsupported = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Unsupported.Status, SpecializationStatus::Unsupported);
+    EXPECT_TRUE(Unsupported.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
      FiniteAffineRootRelationRetainsEveryImmutableReadWitness) {
   Provider P;
   P.add(0x100,
