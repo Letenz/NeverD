@@ -94,6 +94,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pp"},
+    // Swift 6.1.2 arm64 and x86_64 clients pass Optional<NSError> as i64
+    // and receive the Error object as ptr; nil retains its zero word.
+    {"$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pz"},
     // URL.pathExtension reads the URL value through swiftself and returns
     // both words of the String value.
     {"$s10Foundation3URLV13pathExtensionSSvg",

@@ -1713,6 +1713,7 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
     DataFromObjC,
     DataToObjC,
     ObjectToObject,
+    WordToObject,
     GenericArray,
     GenericDictionary
   };
@@ -1742,6 +1743,8 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
        Shape::IndirectFromObjC},
       {"$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF",
        Shape::ObjectToObject},
+      {"$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF",
+       Shape::WordToObject},
       {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
        Shape::ContextToObjC},
       {"$s10Foundation3URLV36_"
@@ -1838,9 +1841,15 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
                   TRI.IntParamRegs[1]);
         break;
       case Shape::ObjectToObject:
+      case Shape::WordToObject:
         EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
         ASSERT_EQ(Signature.Parameters.size(), 1U);
-        EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.Parameters[0].Type->Kind,
+                  Bridge.TheShape == Shape::WordToObject ? NdTypeKind::Int
+                                                         : NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.Parameters[0].Type->Size, 8U);
+        if (Bridge.TheShape == Shape::WordToObject)
+          EXPECT_FALSE(Signature.Parameters[0].Type->IsSigned);
         EXPECT_EQ(Signature.Parameters[0].TheRole,
                   SourceParameterTypeHint::Role::Ordinary);
         EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
