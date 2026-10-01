@@ -363,6 +363,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
               *Binding.Function.ExceptionMetadata, Entry, DecodedInstructions);
         }
       }
+      // ABI binding exposes every call operand before private frame copies
+      // can be proved nonescaping. Validate dependencies and the resulting
+      // source body only after the shared liveness cleanup sees those copies.
+      if (forwardBoundPrivateFrameCopies(Binding.Function, S->Img.Arch))
+        eliminateHighDeadPhiCopies(Binding.Function);
       std::string Reason = BlockBinding.Limitation.empty()
                                ? Binding.Limitation
                                : BlockBinding.Limitation;

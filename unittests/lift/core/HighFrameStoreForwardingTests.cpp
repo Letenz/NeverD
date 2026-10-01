@@ -8,8 +8,10 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -21,6 +23,7 @@
 
 namespace neverd {
 void forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture);
+bool forwardBoundPrivateFrameCopies(HighFunc &Function, Arch Architecture);
 void simplifyExprSemantics(std::vector<HighStmt> &Statements);
 } // namespace neverd
 
@@ -707,5 +710,407 @@ TEST(HighFrameStoreForwarding, DoesNotForwardCyclicValues) {
     EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
     Value->Operands[1] = nullptr;
   }
+}
+
+ExprPtr integerView(ExprPtr Value, TypeRef Type) {
+  auto Result = std::make_shared<HighExpr>();
+  Result->Kind = ExprKind::Cast;
+  Result->Type = Result->CastTo = std::move(Type);
+  Result->Operands = {std::move(Value)};
+  return Result;
+}
+
+HighStmt boundCall(Arch Architecture, ExprPtr Argument) {
+  auto Hint = std::make_shared<SourceCallTypeHint>();
+  Hint->Signature.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+  Hint->Signature.ReturnType = NdType::makeVoid();
+  Hint->Signature.Parameters = {{"value", Argument->Type}};
+  std::string Error;
+  EXPECT_TRUE(assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error))
+      << Error;
+  HighStmt Result;
+  Result.Kind = StmtKind::Call;
+  Result.CallExpr = HighExpr::makeCall("observe", 0x2000, {Argument});
+  Result.CallExpr->Type = NdType::makeVoid();
+  Result.CallExpr->SourceCallHint = std::move(Hint);
+  return Result;
+}
+
+std::string statementText(const HighFunc &Function) {
+  std::string Result;
+  for (const auto &S : Function.Body)
+    Result += S.str();
+  return Result;
+}
+
+TEST(HighBoundPrivateFrameCopies, ExecutesSnapshotsAcrossBranchesAndSlotReuse) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    std::vector<HighFunc> Functions;
+    std::string Checks;
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      const auto Type = NdType::makeInt(Bytes, false);
+      HighFunc F;
+      F.Name = "reused_frame_" + std::to_string(Bytes);
+      F.FrameSize = 64;
+      F.ReturnType = Type;
+      F.Params = {{"choose", NdType::makeInt(8, false)},
+                  {"first", Type},
+                  {"second", Type}};
+      HighStmt Branch;
+      Branch.Kind = StmtKind::IfElse;
+      Branch.Cond = parameter(0, F.Params[0].Type, Architecture);
+      Branch.Body = {assign(temporary(1, Type, Architecture),
+                            temporary(0, Type, Architecture))};
+      Branch.ElseBody = {assign(temporary(1, Type, Architecture),
+                                integerView(temporary(0, Type, Architecture),
+                                            NdType::makeInt(Bytes, true)))};
+      F.Body = {
+          store(frameSlot(Architecture), parameter(1, Type, Architecture)),
+          assign(temporary(0, Type, Architecture),
+                 HighExpr::makeLoad(frameSlot(Architecture), Type)),
+          Branch,
+          store(frameSlot(Architecture), parameter(2, Type, Architecture)),
+          returning(HighExpr::makeBinop(
+              NdOp::INT_XOR, temporary(1, Type, Architecture),
+              HighExpr::makeLoad(frameSlot(Architecture), Type)))};
+      ASSERT_TRUE(forwardBoundPrivateFrameCopies(F, Architecture));
+      eliminateHighDeadPhiCopies(F);
+      const auto Report = analyzeHighSourceFlow(F, true);
+      ASSERT_TRUE(Report.Complete);
+      ASSERT_TRUE(Report.Items.empty());
+      walkStmts(F.Body, [&](const HighStmt &S) {
+        EXPECT_NE(S.Kind, StmtKind::Store);
+        forEachRhsExpr(S, [&](const ExprPtr &E) { EXPECT_FALSE(hasLoad(E)); });
+      });
+      const auto Ty = "uint" + std::to_string(Bytes * 8) + "_t";
+      Checks += "if (" + F.Name + "(i & 1, (" + Ty + ")a, (" + Ty + ")b) != (" +
+                Ty + ")(a ^ b)) return " + std::to_string(Bytes) + ";\n";
+      Functions.push_back(std::move(F));
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    Options.EmitComments = false;
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    compileAndRun(Source + R"(
+int main(void) {
+  uint64_t a = 0, b = UINT64_MAX;
+  for (unsigned i = 0; i < 4096; ++i) {
+)" + Checks + R"(
+    a = a * UINT64_C(6364136223846793005) + 1;
+    b = (b << 7) | (b >> 57);
+    b ^= a;
+  }
+  return 0;
+}
+)");
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, IntersectsAllReachingStores) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Variant = 0; Variant != 4; ++Variant) {
+      SCOPED_TRACE(Variant);
+      const auto Type = NdType::makeInt(8, false);
+      auto F = roundTrip(A, Type);
+      F.Params.push_back({"other", Type});
+      HighStmt Branch;
+      Branch.Kind = StmtKind::IfElse;
+      Branch.Cond = parameter(0, Type, A);
+      Branch.Body = {F.Body[0]};
+      Branch.ElseBody = {F.Body[0]};
+      if (Variant == 1)
+        Branch.ElseBody.clear();
+      if (Variant == 2)
+        Branch.ElseBody[0].StoreVal = parameter(1, Type, A);
+      if (Variant == 3)
+        Branch.ElseBody[0].StoreVal =
+            integerView(parameter(0, Type, A), NdType::makeInt(8, true));
+      F.Body[0] = Branch;
+      const auto Before = statementText(F);
+      const bool Expected = Variant == 0 || Variant == 3;
+      EXPECT_EQ(forwardBoundPrivateFrameCopies(F, A), Expected);
+      EXPECT_EQ(hasLoad(F.Body.back().RetVal), !Expected);
+      if (!Expected)
+        EXPECT_EQ(statementText(F), Before);
+    }
+}
+
+TEST(HighBoundPrivateFrameCopies, KeepsFactsSeparateAcrossGuardContexts) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    const auto T = NdType::makeInt(8, false);
+    auto F = roundTrip(A, T);
+    F.Params.push_back({"other", T});
+    HighStmt Store;
+    Store.Kind = StmtKind::IfElse;
+    Store.Cond = parameter(0, T, A);
+    Store.Body = {store(frameSlot(A), HighExpr::makeConst(71, 8))};
+    Store.ElseBody = {store(frameSlot(A), HighExpr::makeConst(23, 8))};
+    HighStmt Read;
+    Read.Kind = StmtKind::IfElse;
+    Read.Cond = parameter(0, T, A);
+    Read.Body = {F.Body.back()};
+    Read.ElseBody = {F.Body.back()};
+    F.Body = {Store, Read};
+    ASSERT_TRUE(forwardBoundPrivateFrameCopies(F, A));
+    EXPECT_FALSE(hasLoad(F.Body[1].Body[0].RetVal));
+    EXPECT_FALSE(hasLoad(F.Body[1].ElseBody[0].RetVal));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = A;
+    ASSERT_TRUE(HighCEmitter().emit({F}, OS, Options));
+    compileAndRun(Source + R"(
+int main(void) {
+  return frame_round_trip(0, 0) != 23 || frame_round_trip(1, 0) != 71 ||
+         frame_round_trip(UINT64_MAX, 0) != 71;
+}
+)");
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, InvalidatesWritesToTheSameSourceLocal) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (bool Renamed : {false, true}) {
+      const auto T = NdType::makeInt(8, false);
+      auto F = roundTrip(A, T);
+      auto V = temporary(0, T, A);
+      auto W = temporary(Renamed ? 1 : 0, T, A);
+      if (Renamed)
+        V->Var.RenameTag = W->Var.RenameTag = 12;
+      F.Body[0].StoreVal = V;
+      F.Body.insert(F.Body.begin(), assign(V, parameter(0, T, A)));
+      F.Body.insert(F.Body.begin() + 2,
+                    assign(parameter(0, T, A), HighExpr::makeConst(99, 8)));
+      F.Body.insert(F.Body.begin() + 3, assign(W, HighExpr::makeConst(12, 8)));
+      ASSERT_TRUE(forwardBoundPrivateFrameCopies(F, A));
+      EXPECT_TRUE(hasLoad(F.Body.back().RetVal));
+    }
+}
+
+TEST(HighBoundPrivateFrameCopies, RequiresInitializedInvariantFrameAliases) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Variant = 0; Variant != 4; ++Variant) {
+      SCOPED_TRACE(Variant);
+      const auto T = NdType::makeInt(8, false);
+      auto F = roundTrip(A, T);
+      auto Alias = temporary(20, T, A);
+      HighStmt Define;
+      Define.Kind = StmtKind::IfElse;
+      Define.Cond = parameter(0, T, A);
+      Define.Body = {assign(Alias, frameSlot(A))};
+      Define.ElseBody = {assign(Alias, frameSlot(A, Variant == 2 ? 24 : 16))};
+      if (Variant == 1)
+        Define.ElseBody.clear();
+      F.Body[0].StoreAddr = Alias;
+      F.Body[1].RetVal = HighExpr::makeLoad(Alias, T);
+      F.Body.insert(F.Body.begin() + (Variant == 3 ? 1 : 0), Define);
+      const auto Before = statementText(F);
+      EXPECT_EQ(forwardBoundPrivateFrameCopies(F, A), Variant == 0);
+      if (Variant != 0)
+        EXPECT_EQ(statementText(F), Before);
+    }
+}
+
+TEST(HighBoundPrivateFrameCopies, LaterFrameAssignmentCannotRebindEntryInput) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (bool Renamed : {false, true}) {
+      const auto T = NdType::makeInt(8, false);
+      auto F = roundTrip(A, T);
+      auto Input = parameter(0, T, A);
+      auto Destination = Renamed ? temporary(20, T, A) : parameter(0, T, A);
+      if (Renamed)
+        Input->Var.RenameTag = Destination->Var.RenameTag = 7;
+      F.Body = {store(Input, HighExpr::makeConst(7, 8)),
+                assign(Destination, frameSlot(A)),
+                returning(HighExpr::makeLoad(Destination, T))};
+      const auto Before = statementText(F);
+      EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+      EXPECT_EQ(statementText(F), Before);
+    }
+}
+
+TEST(HighBoundPrivateFrameCopies, OrdinaryConversionsDoNotBecomePhiCopies) {
+  constexpr auto A = Arch::AArch64;
+  const auto T = NdType::makeInt(8, false);
+  for (const auto &Destination : {NdType::makeFloat(8), NdType::makeInt(4)}) {
+    auto F = roundTrip(A, T);
+    F.Body.insert(F.Body.begin(),
+                  assign(temporary(20, Destination, A), parameter(0, T, A)));
+    ASSERT_TRUE(forwardBoundPrivateFrameCopies(F, A));
+    EXPECT_FALSE(F.Body[0].IsPhiCopy);
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, AliasViewsMustRetainTheFullPointerWidth) {
+  constexpr auto A = Arch::AArch64;
+  const auto T = NdType::makeInt(8, false);
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = roundTrip(A, T);
+    auto Dst = temporary(20, T, A);
+    auto Use = temporary(20, T, A);
+    if (Variant == 0 || Variant == 1) {
+      Dst->Type = NdType::makeInt(4, false);
+      if (Variant == 0)
+        Dst->Var.Size = 4;
+    } else if (Variant == 2) {
+      Use->Type = NdType::makeFloat(8);
+    } else {
+      Use->Var.Size = 4;
+    }
+    F.Body[0].StoreAddr = Use;
+    F.Body.back().RetVal = HighExpr::makeLoad(Use, T);
+    F.Body.insert(F.Body.begin(), assign(Dst, frameSlot(A)));
+    const auto Before = statementText(F);
+    EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+    EXPECT_EQ(statementText(F), Before);
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, CallsRequireABIBindingAndNoFrameEscape) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Variant = 0; Variant != 7; ++Variant) {
+      SCOPED_TRACE(Variant);
+      const auto T = NdType::makeInt(8, false);
+      auto F = roundTrip(A, T);
+      auto Call = boundCall(A, parameter(0, T, A));
+      switch (Variant) {
+      case 0:
+        break;
+      case 1:
+        Call.CallExpr->SourceCallHint = nullptr;
+        break;
+      case 2:
+        Call.CallExpr->Operands[0] = frameSlot(A);
+        break;
+      case 3:
+        Call.CallExpr->IndirectTarget = frameSlot(A);
+        break;
+      case 4:
+        Call.CallExpr->Operands.push_back(frameSlot(A));
+        break;
+      case 5:
+        Call.CallExpr->Operands[0] = temporary(20, T, A);
+        F.Body.insert(F.Body.begin(),
+                      assign(temporary(20, T, A), frameSlot(A)));
+        break;
+      case 6:
+        Call.CallExpr->IntrinsicOutputs = {temporary(2, T, A)->Var};
+        break;
+      }
+      F.Body.insert(F.Body.end() - 1, Call);
+      const auto Before = statementText(F);
+      EXPECT_EQ(forwardBoundPrivateFrameCopies(F, A), Variant == 0);
+      EXPECT_EQ(F.Body[F.Body.size() - 2].CallExpr, Call.CallExpr);
+      if (Variant != 0)
+        EXPECT_EQ(statementText(F), Before);
+    }
+}
+
+TEST(HighBoundPrivateFrameCopies, RejectsEscapesEffectsAndIncompleteFlow) {
+  for (unsigned Variant = 0; Variant != 15; ++Variant) {
+    SCOPED_TRACE(Variant);
+    constexpr auto A = Arch::AArch64;
+    const auto T = NdType::makeInt(8, false);
+    auto F = roundTrip(A, T);
+    HighStmt Extra;
+    switch (Variant) {
+    case 0:
+      Extra = store(parameter(0, T, A), frameSlot(A));
+      break;
+    case 1:
+      Extra = returning(frameSlot(A));
+      break;
+    case 2:
+      Extra.Kind = StmtKind::ExprStmt;
+      Extra.Val = std::make_shared<HighExpr>();
+      Extra.Val->Kind = ExprKind::Addr;
+      Extra.Val->Operands = {parameter(0, T, A)};
+      break;
+    case 3:
+      F.Body[0].MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 4:
+      F.Body.back().RetVal->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 5:
+      F.Body.back().RetVal->Op = NdOp::ATOMIC_ADD;
+      break;
+    case 6:
+      Extra = assign(entryStackPointer(A), parameter(0, T, A));
+      break;
+    case 7:
+      Extra.Kind = StmtKind::Goto;
+      Extra.GotoTarget = 0x8000;
+      break;
+    case 8:
+      Extra.Kind = StmtKind::While;
+      Extra.Cond = parameter(0, T, A);
+      break;
+    case 9:
+      F.Body[0].Addr = 0x8000;
+      Extra.Kind = StmtKind::Goto;
+      Extra.GotoTarget = 0x8000;
+      break;
+    case 10:
+      F.Body[0].StoreAddr = frameSlot(A, 72);
+      break;
+    case 11:
+      F.Body[0].StoreVal->Operands = {HighExpr::makeConst(12, 8)};
+      break;
+    case 12:
+      F.Body[0].Body = {boundCall(A, parameter(0, T, A))};
+      break;
+    case 13:
+      F.Body.back().RetVal->Operands[0] = nullptr;
+      break;
+    case 14:
+      F.Body[0].CallExpr = boundCall(A, parameter(0, T, A)).CallExpr;
+      break;
+    }
+    F.Body.insert(F.Body.end() - 1, Extra);
+    const auto OriginalLoad = F.Body.back().RetVal;
+    EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+    EXPECT_EQ(F.Body.back().RetVal, OriginalLoad);
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, KeepsOverlappingAndMixedWidthSlots) {
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    constexpr auto A = Arch::AArch64;
+    const auto T = NdType::makeInt(8, false);
+    auto F = roundTrip(A, T);
+    const auto Other = Variant == 2
+                           ? NdType::makeFloat(8)
+                           : NdType::makeInt(Variant == 0 ? 4 : 8, false);
+    if (Variant == 3)
+      F.Body[0].StoreVal = HighExpr::makeBinop(
+          NdOp::INT_ADD, parameter(0, T, A), HighExpr::makeConst(1, 8));
+    else
+      F.Body.insert(
+          F.Body.end() - 1,
+          store(frameSlot(A, Variant == 1 ? 20 : 16), temporary(2, Other, A)));
+    EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+    EXPECT_TRUE(hasLoad(F.Body.back().RetVal));
+  }
+}
+
+TEST(HighBoundPrivateFrameCopies, RejectsCyclesAndBudgetExhaustionAtomically) {
+  constexpr auto A = Arch::AArch64;
+  const auto T = NdType::makeInt(8, false);
+  auto F = roundTrip(A, T);
+  auto Cyclic = integerView(parameter(0, T, A), T);
+  Cyclic->Operands[0] = Cyclic;
+  F.Body[0].StoreVal = Cyclic;
+  EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+  EXPECT_TRUE(hasLoad(F.Body.back().RetVal));
+  Cyclic->Operands[0] = nullptr;
+  F = roundTrip(A, T);
+  F.Body.insert(F.Body.begin(), 100001, HighStmt{});
+  const auto Original = F.Body.back().RetVal;
+  EXPECT_FALSE(forwardBoundPrivateFrameCopies(F, A));
+  EXPECT_EQ(F.Body.back().RetVal, Original);
 }
 } // namespace
