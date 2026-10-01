@@ -192,6 +192,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 client IR declares Published.init as
+    // swiftcc void (ptr sret, ptr value, ptr genericMetadata). The result and
+    // consumed input stay opaque; neither carrier uses swiftself.
+    {"$s7Combine9PublishedV12initialValueACyxGx_tcfC",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vIpp"},
     // Binding.wrappedValue's generic setter receives the value address,
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
