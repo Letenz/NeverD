@@ -61,6 +61,8 @@ C では `neverd_devirtualize_source_v3()` または `neverd_devirtualize_machin
 
 JSON レポートには `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements`、`discoveryVisits` が追加され、有効な動作、上限、解析作業量を記録します。フィールドの検出だけでは復元成功を証明しません。
 
+条件によってアドレス依存がバイト部分に狭まる場合、細分化は、その部分を包含する追跡済みの完全な8バイトの直接アドレスフィールドもコンテキスト候補に保持します。元の狭いフィールドと生成元ビットマスクは変更せず、無関係な広いフィールドは昇格しません。定数と入口相対オフセットには引き続き証明が必要で、全コンテキストは既存の上限を共有します。
+
 <!-- i18n-section: execution-contract -->
 
 ## 実行契約

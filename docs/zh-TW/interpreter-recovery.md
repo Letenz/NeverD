@@ -61,6 +61,8 @@ C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
+如果條件將位址相依縮窄為位元組片段，細化還會把包含該片段、已追蹤的完整八位元組直接位址欄位列為上下文候選。原有窄欄位及其產生者位元遮罩保持不變，不提升無關的寬欄位。常數和相對入口的偏移仍須證明，所有上下文共用現有上限。
+
 <!-- i18n-section: execution-contract -->
 
 ## 執行契約

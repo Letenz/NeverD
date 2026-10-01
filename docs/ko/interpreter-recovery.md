@@ -61,6 +61,8 @@ C 호출자는 `neverd_devirtualize_source_v3()` 또는 `neverd_devirtualize_mac
 
 JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements`, `discoveryVisits`가 추가되어 활성화 상태, 제한 및 분석 작업량을 기록합니다. 필드를 찾았다는 사실만으로 복원 성공이 입증되지는 않습니다.
 
+조건에 의해 주소 의존성이 바이트 조각으로 좁아지면, 정밀화는 해당 조각을 포함하는 이미 추적 중인 완전한 8바이트 직접 주소 필드도 문맥 후보로 유지합니다. 기존의 좁은 필드와 생성자 비트 마스크는 그대로 두며, 관련 없는 넓은 필드는 승격하지 않습니다. 상수와 진입점 상대 오프셋은 여전히 증명이 필요하고 모든 문맥은 기존 한도를 공유합니다.
+
 <!-- i18n-section: execution-contract -->
 
 ## 실행 계약

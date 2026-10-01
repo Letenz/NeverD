@@ -78,6 +78,8 @@ In C si usa `neverd_devirtualize_source_v3()` o `neverd_devirtualize_machine_sou
 
 Il rapporto JSON aggiunge `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` e `discoveryVisits` per registrare attivazione, limiti e lavoro di analisi. L’individuazione dei campi, da sola, non prova il successo del recupero.
 
+Quando una condizione restringe una dipendenza di indirizzo a una porzione di byte, il raffinamento conserva come candidati di contesto anche i campi completi di indirizzo diretto di otto byte già tracciati che la contengono. Il campo ristretto e la maschera del suo produttore restano invariati; i campi più ampi non pertinenti non vengono promossi. Costanti e scostamenti relativi all’ingresso richiedono ancora una prova e tutti i contesti condividono i limiti esistenti.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione

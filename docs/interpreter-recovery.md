@@ -188,6 +188,8 @@ The JSON report adds `discoverControlState`, `maxControlRefinements`,
 limits, and analysis work; field discovery alone does not establish successful
 recovery.
 
+When a guard narrows an address dependency to a byte slice, refinement also retains enclosing, already tracked eight-byte direct-address fields as context candidates. The original narrow field and producer mask remain unchanged; unrelated wider fields are not promoted. Constants and entry-relative offsets still require proof, and all contexts share the existing limits.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract

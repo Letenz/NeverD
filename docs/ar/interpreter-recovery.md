@@ -74,6 +74,8 @@ neverd decompile program --func vm_entry --devirtualize \
 
 يضيف تقرير JSON الحقول `discoverControlState` و`maxControlRefinements` و`maxDiscoveryVisits` و`discoveredControlFields` و`discoveredContextFields` و`controlRefinements` و`discoveryVisits` لتسجيل التفعيل والحدود والعمل التحليلي. اكتشاف الحقول وحده لا يثبت نجاح الاستعادة.
 
+عندما يضيّق شرط اعتماد العنوان إلى جزء من البايتات، يحتفظ التنقيح أيضاً بحقول العنوان المباشر الكاملة ذات الثمانية بايتات، المتتبعة مسبقاً والمحيطة بذلك الجزء، كمرشحات للسياق. يظل الحقل الضيق الأصلي وقناع بتات منتجه دون تغيير، ولا تُرقّى الحقول الأوسع غير ذات الصلة. تبقى الثوابت والإزاحات النسبية إلى نقطة الدخول بحاجة إلى إثبات، وتشترك جميع السياقات في الحدود الحالية.
+
 <!-- i18n-section: execution-contract -->
 
 ## عقد التنفيذ

@@ -853,17 +853,44 @@ void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
     }
     if (NewBits)
       Refinement.PendingProducerDemands[Producer] |= NewBits;
+    const auto PromoteContext = [&](const auto &Location) {
+      const auto Matches = [&](const auto &Other) {
+        return Location.Offset == Other.Offset && Location.Bytes == Other.Bytes;
+      };
+      if (std::none_of(Existing.begin(), Existing.begin() + ManualCount,
+                       Matches) &&
+          std::none_of(ContextFields.begin(), ContextFields.end(), Matches) &&
+          std::none_of(PendingContexts.begin(), PendingContexts.end(), Matches))
+        PendingContexts.push_back(Location);
+    };
+    if (Demand == ControlDemand::Memory) {
+      // A guard can make a complete relative pointer numerically narrow. Its
+      // remaining byte demand still needs the original pointer's affine
+      // context: a byte alone cannot key an entry-relative displacement.
+      // Nominate only already tracked full address carriers, retaining the
+      // narrow field and its exact producer bits independently. No fact is
+      // introduced here; enqueue still requires a proved value or offset.
+      for (const auto &Other : Existing) {
+        const uint64_t Delta = static_cast<uint64_t>(Field.Offset) -
+                               static_cast<uint64_t>(Other.Offset);
+        if (Other.Bytes == 8 && Delta < Other.Bytes &&
+            Field.Bytes <= Other.Bytes - Delta &&
+            std::any_of(
+                AddressFields.begin(), AddressFields.end(),
+                [&](const auto &Address) {
+                  return Address.Offset == Other.Offset &&
+                         Address.Bytes == Other.Bytes;
+                }))
+          PromoteContext(Other);
+      }
+    }
     if (std::any_of(Existing.begin(), Existing.end(), Same)) {
       // First try relational propagation. If an exact memory address still
       // cannot be established on a later attempt, separate only its already
       // tracked dependencies whose incoming bytes are proven constant. This
       // is bounded context refinement, never a sample-based input binding.
-      if (Demand == ControlDemand::Memory &&
-          !std::any_of(Existing.begin(), Existing.begin() + ManualCount,
-                       Same) &&
-          !std::any_of(ContextFields.begin(), ContextFields.end(), Same) &&
-          !std::any_of(PendingContexts.begin(), PendingContexts.end(), Same))
-        PendingContexts.push_back(Field);
+      if (Demand == ControlDemand::Memory)
+        PromoteContext(Field);
       return;
     }
     if (std::any_of(Pending.begin(), Pending.end(), Same))

@@ -61,6 +61,8 @@ C 调用方使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 和 `discoveryVisits`，分别记录启用行为、上限和分析工作量。发现字段本身不等于恢复成功。
 
+如果条件将地址依赖缩窄为字节片段，细化还会把包含该片段、已跟踪的完整八字节直接地址字段列为上下文候选。原有窄字段及其生产者位掩码保持不变，不提升无关的宽字段。常量和相对入口的偏移仍须证明，所有上下文共享现有上限。
+
 <!-- i18n-section: execution-contract -->
 
 ## 执行契约

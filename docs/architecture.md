@@ -819,6 +819,8 @@ demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
+Context refinement may additionally nominate a tracked eight-byte address carrier when a later memory demand uses only its byte slice. The original narrow producer coordinates remain authoritative; only enqueue forms keys from proved constants or frame offsets.
+
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
 `FrameOffsets` owns budgeted singleton proofs of entry-relative displacements. Recovery canonicalizes actual symbolic memory accesses without changing residual address expressions; native checks retain two-execution address equality. Recovery owns exhaustive alignment dispatch and shared retry budgets. Native/LLVM partition-proof aggregation remains separate, unfinished work. `NativeStackControl` owns internal unsigned-16-bit return cleanup; the binary provider authenticates canonical eight-byte-pop encodings.
