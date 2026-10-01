@@ -30,9 +30,10 @@ struct SpecializationCursor {
 
 /// Provider certificate for the omitted physical effects of a native near
 /// CALL/RETURN. The instruction uses the configured eight-byte frame register
-/// as its stack pointer. CALL pushes its exact fallthrough address; RETURN
-/// consumes one address and has no additional stack adjustment. Generic LowIR
-/// CALL/RETURN operands alone do not establish this machine-level contract.
+/// as its stack pointer. CALL pushes its exact fallthrough address. Internal
+/// RETURN consumes one address and may apply authenticated unsigned-16-bit
+/// cleanup; outer returns admit no extra cleanup. Generic LowIR CALL/RETURN
+/// operands alone do not establish this machine-level contract.
 /// A memory CALL retains a temporary-only effective-address prefix, one final
 /// ordinary eight-byte LOAD, and an INDIR_CALL of that loaded temporary. The
 /// entire target evaluation precedes the physical return-address push; a

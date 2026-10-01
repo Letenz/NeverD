@@ -1,5 +1,4 @@
-//===- MachineStringSourceTests.cpp - Repeated memory source execution
-//-----===//
+//===- MachineStringSourceTests.cpp - Repeated transfer execution ---------===//
 //
 // NeverD Decompiler
 //
