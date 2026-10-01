@@ -1,6 +1,7 @@
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
 #include "../MachO/DarwinRuntimeImport.h"
+#include "SwiftVirtualSlot.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -325,6 +326,9 @@ canonicalAccessor(const BinaryImage &Image, va_t Entry, va_t CallSite,
   const bool VoidMethod = Method->TypeEncoding == "v16@0:8" &&
                           Method->Selector.find(':') == std::string::npos;
   if (DirectSelf && !VoidMethod)
+    return std::nullopt;
+  if (DirectSelf &&
+      !swift_virtual_detail::isVoidClassVirtualSlot(Image, *Method, Slot))
     return std::nullopt;
   const bool Setter = DoubleSetter || BoolSetter;
   const bool Floating = DoubleGetter || DoubleSetter;
