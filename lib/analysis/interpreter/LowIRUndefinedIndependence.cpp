@@ -2867,17 +2867,20 @@ class LoopPlanInference {
       const auto Initial = read(Prefix, W.Location);
       const auto Before = read(*Session.CandidateStart, W.Location);
       auto Stable = W.FixedMask;
-      bool Holds = true, Additive = true;
+      bool Holds = true, Additive = false;
       for (auto &State : Session.CandidateReturns) {
         if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
           continue;
         const auto After = read(State, W.Location);
-        Additive &= additiveRecurrence(Before, After, W.Location.Bytes);
+        Additive |= additiveRecurrence(Before, After, W.Location.Bytes);
         Stable &= commonBits(Initial, After, W.Location.Bytes);
         const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      // One additive arm can invalidate spurious prefix bits even when a
+      // sibling stutters or resets. Structural bits still intersect every
+      // returning arm, and an already valid mask is never weakened here.
       if (!Holds && !Additive) {
         // Relations such as packed flags often require the path predicate:
         // equal system bits need not have identical expression trees. Keep
