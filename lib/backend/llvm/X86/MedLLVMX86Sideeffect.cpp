@@ -781,6 +781,8 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
   case I::Cli:
   case I::Sti:
   case I::Wrpkru:
+  case I::Hlt:
+  case I::Invd:
   case I::Swapgs:
   case I::Wbinvd:
   case I::Vmcall:

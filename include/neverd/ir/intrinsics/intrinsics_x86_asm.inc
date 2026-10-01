@@ -20,6 +20,7 @@ A(Intrinsic::Outsw,        "outsw");
 A(Intrinsic::Outsd,        "outsd");
 A(Intrinsic::Cli,          "cli");
 A(Intrinsic::Sti,          "sti");
+A(Intrinsic::Hlt,          "hlt");
 A(Intrinsic::Invd,         "invd");
 A(Intrinsic::Invlpg,       "invlpg");
 A(Intrinsic::Swapgs,       "swapgs");

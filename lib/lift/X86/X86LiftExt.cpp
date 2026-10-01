@@ -657,10 +657,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_STGI:
   case X86_INS_CLGI:
   case X86_INS_SKINIT:
-  case X86_INS_HLT:
-  case X86_INS_INVD:
-  case X86_INS_WBINVD:
-  case X86_INS_SWAPGS:
   case X86_INS_VERR:
   case X86_INS_VERW:
   case X86_INS_LAR:
@@ -690,23 +686,25 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     case X86_INS_VMMCALL:
       Id = Intrinsic::Vmmcall;
       break;
-    case X86_INS_HLT:
-      Id = Intrinsic::Hlt;
-      break;
-    case X86_INS_INVD:
-      Id = Intrinsic::Invd;
-      break;
-    case X86_INS_WBINVD:
-      Id = Intrinsic::Wbinvd;
-      break;
-    case X86_INS_SWAPGS:
-      Id = Intrinsic::Swapgs;
-      break;
     default:
       Id = Intrinsic::Hlt;
       break;
     }
     S.emitIntrinsic(Id);
+    break;
+  }
+
+  // These change processor state only; none of them produces a value, so
+  // RAX keeps what it held.
+  case X86_INS_HLT:
+  case X86_INS_INVD:
+  case X86_INS_WBINVD:
+  case X86_INS_SWAPGS: {
+    const Intrinsic Id = InsnId == X86_INS_HLT      ? Intrinsic::Hlt
+                         : InsnId == X86_INS_INVD   ? Intrinsic::Invd
+                         : InsnId == X86_INS_WBINVD ? Intrinsic::Wbinvd
+                                                    : Intrinsic::Swapgs;
+    S.emitIntrinsic(Id, NdVar());
     break;
   }
 

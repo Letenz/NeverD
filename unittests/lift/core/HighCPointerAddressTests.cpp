@@ -41729,6 +41729,32 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
+  // KiSystemCall64 keeps the service number in RAX across `swapgs`, which
+  // swaps the GS base and produces no value.  The store after it writes the
+  // value RAX held before, not a result of the instruction.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc1,       // mov rax, rcx
+                                     0x0f, 0x01, 0xf8,       // swapgs
+                                     0x48, 0x89, 0x02,       // mov [rdx], rax
+                                     0xf4,                   // hlt
+                                     0x48, 0x89, 0x42, 0x08, // mov [rdx+8], rax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1), "
+                       "arg0);"),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1 + 8), "
+                       "arg0);"),
+            std::string::npos)
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
   // After an unknown call ECX holds no defined value, so the OR must not

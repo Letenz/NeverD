@@ -93,6 +93,20 @@ std::vector<uint8_t> pattern(uint8_t Seed) {
   return Bytes;
 }
 
+TEST(X86SystemSideeffect, StateChangingInstructionsProduceNoValue) {
+  // HLT, INVD, WBINVD and SWAPGS change processor state only: RAX keeps
+  // what it held.
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0xf4}, std::vector<uint8_t>{0x0f, 0x08},
+        std::vector<uint8_t>{0x0f, 0x09},
+        std::vector<uint8_t>{0x0f, 0x01, 0xf8}}) {
+    const LiftedInstruction Lifted = liftX64(Bytes);
+    ASSERT_EQ(Lifted.Ops.size(), 1u);
+    EXPECT_EQ(Lifted.Ops[0].Opcode, NdOp::INTRINSIC);
+    EXPECT_EQ(Lifted.Ops[0].Output.Size, 0u);
+  }
+}
+
 TEST(X86SystemSideeffect, WrssAndWrussRetainAddressSourceWidthAndSegment) {
   struct Case {
     std::vector<uint8_t> Bytes;
