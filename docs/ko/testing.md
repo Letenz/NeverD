@@ -897,7 +897,15 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
 
-공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 활성 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
+`X64FPState.def`는 압축 AVX, AVX-512, CET_U/CET_S, AMX 전송 배치와 구성 요소의 64바이트 정렬을 선언합니다. 존재하는 확장 데이터는 모두 0인 초기 상태여야 하며, 없는 구성 요소의 데이터와 정렬 패딩은 상태를 정의하지 않습니다. 배치 비트가 오프셋을 결정하고 알 수 없는 배치, 초기 상태가 아닌 데이터, 잘못된 길이는 공개 전에 실패합니다. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState`, `InitialWideComponentsDoNotHideFPState`가 872바이트와 10752바이트 WHP 패킷을 검증합니다. 이 전송 지원은 해당 확장 명령 실행을 허용하지 않습니다.
+
+`WhpXsaveRegisters.def`는 이름이 있는 x87/SSE 제어 레지스터로 완전한 XSAVE 패킷을 보완합니다. 마지막 연산 코드와 명령/데이터 포인터를 명시적으로 쓰고 호스트에서 읽습니다. 패킷의 0 필드는 보완할 수 있지만, 0이 아닌 메타데이터 충돌이나 공통 제어값 불일치는 상태 공개 전에 실패합니다. `NamedMetadataRestoresOmittedPacketFields`는 전체 FP 데이터를 유지하면서 누락 필드를 검증합니다.
+
+네이티브 `FOP/FIP/FDP`는 호스트 x87 저장·복원 규칙을 따릅니다. 마스크되지 않은 대기 예외가 없으면 AMD는 이 필드를 0으로 만들 수 있으며 스냅샷은 관측값을 유지합니다. `X64MachineProbe.def`와 정밀 NOP/컨텍스트 테스트는 일관된 대기 예외를 설정하여 모든 필드를 유효한 상태에서 차이를 숨기지 않고 비교합니다. 호스트 프로세스 FXRSTOR64/FXSAVE64 참조는 두 상태를 검사하며, 백엔드는 호스트 결과를 입력 메타데이터로 대체하지 않습니다.
+
+`NativeGuestRAMDistinguishesEntryFromCaptureLoss`는 실제 게스트 FXSAVE64가 RAM에 저장한 전체 FP/SSE 상태를 호스트 XSAVE 결과와 비교합니다. 두 API 모두 직접 설치와 게스트 내부 FXRSTOR64를 기본 포인터 저장 기능 및 명시적으로 선택한 호스트 지원 설정에서 검사합니다. 진입, 게스트 실행, 캡처 경계를 구분하며 값을 보정하지 않고 불일치를 실패로 유지합니다. 경계 행렬은 대기 중인 마스크되지 않은 x87 예외도 검사하며, 호스트 프로세스의 FXRSTOR64/FXSAVE64 참조 결과와 프로세서 공급업체를 기록하여 조건부 포인터 저장 의미와 WHP 전송 동작을 구분합니다.
+
+공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
 
@@ -907,13 +915,21 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 XSAVE 검증 진단은 크기 조회, 로컬 데이터 준비, 캡처 데이터 디코딩을 구분하고 API 이름, 반환 바이트 수, 용량, 제한된 헤더·제어 필드를 보존합니다. 독립적인 예상값은 `WhpHostFailureCases.def`에 있으며 게스트 레지스터 데이터는 출력하지 않습니다. `InvalidInputReportsPreparationWithoutHostMutation`은 잘못된 입력이 호스트를 호출하거나 호스트 데이터를 바꾸지 않는지도 검증합니다. 공유 ISA 코덱이 검증을 전담합니다.
 
-WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 및 실행 중 발생한 호스트 API 오류는 HRESULT와 `WhpProtocol.def`에 선언된 API 이름을 보존합니다. 기능 조회 실패는 형식이 지정된 사용 불가 결과를 유지합니다. `WhpHostFailureCases.def`는 취소와 동시에 발생한 호스트 오류 및 최신/레거시 XSAVE 조회·설치·캡처 실패에 대한 독립적인 예상 결과를 제공합니다. Windows 집중 검증에서는 매핑 16개, 시작 실행 2개, 부동소수점 전송/컨텍스트 10개, 공유 CPU 수명/실행 7개, 정수 8개 등 총 43개 네이티브 사례가 모두 통과해야 합니다. 등록 누락, 건너뛰기, 비활성화 또는 미실행은 네이티브 증거 감사 실패로 처리됩니다.
+WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 및 실행 중 발생한 호스트 API 오류는 HRESULT와 `WhpProtocol.def`에 선언된 API 이름을 보존합니다. 기능 조회 실패는 형식이 지정된 사용 불가 결과를 유지합니다. `WhpHostFailureCases.def`는 취소와 동시에 발생한 호스트 오류 및 최신/레거시 XSAVE 조회·설치·캡처 실패에 대한 독립적인 예상 결과를 제공합니다. Windows 전용 CI는 네이티브 45건 통과를 요구합니다. 매핑 16건, 시작 2건, FP/컨텍스트 10건, 공유 CPU 7건, 정수 8건과 `NativeInstallRetainsFPStateBeforeAnyGuestExecution`의 두 API 변형입니다. 마지막 두 테스트는 게스트 실행 전에 전체 FP/SSE와 독립적으로 읽은 메타데이터를 비교합니다. 등록 누락, 건너뛰기, 비활성화 또는 미실행은 네이티브 증거 감사 실패로 처리됩니다.
 
 `NeverDMemoryLifecycleTests`는 Unicorn과 독립적으로 빌드되며 네이티브 전용 구성에도 등록됩니다. Unicorn을 끄면 전용 소프트웨어 투영/장치 사례는 명시적으로 건너뛰지만, 호스트에 맞는 공유 CPU 사례는 유지됩니다. `WhpMemoryTests.cpp`는 `WhpMemoryCases.def`의 16개 사례로 네이티브 메모리 API를 분리합니다. 페이지/투영 크기, 공유/독립 할당, 미접근/상주 바이트, 첫 가상 프로세서의 존재 여부를 확인합니다. 각 사례는 두 논리 소유자를 유지하면서 매핑된 파티션을 반복 전환하고, 비활성 소유자를 제거한 뒤 남은 매핑을 다시 만들지 않고 사용할 수 있는지 확인합니다. 실제 매핑 오류는 HRESULT를 보존하며 테스트를 실패시킵니다. 이는 메모리 API 증거이며 명령 실행 증명은 아닙니다.
 
+`X64MachineProbe.def`의 시작 진단은 실패한 명령과 불일치하는 모든 스칼라, TLS, 권한, x87 제어 필드, 물리 FP 레인 및 XMM 워드를 나열하고 예상값과 관측값을 보존합니다. `DiagnosticIdentifiesStepFieldAndBothValues`는 독립적인 예상 메시지로 검증합니다. 상태 비교는 완전한 일치를 계속 요구하며, 진단은 전송 손실과 명령 실행 문제를 구분합니다. 실패한 네이티브 프로브는 통과로 처리하지 않습니다.
+
 `WhpResourceTests.cpp`는 캐시 재사용, 교체 전 제거, 실패 복구, 기한과 중지의 경합을 검증합니다. `LogicalCPUSwitchingRestoresPhysicalFPAndTLS`는 두 권한 모드에서 두 머신을 번갈아 실행하고 독립적인 물리 x87/XMM 및 FS/GS 상태를 확인한 뒤 한 머신을 제거하고 나머지를 재개합니다. Windows CI는 두 권한 모드의 WHP 사례를 모두 요구합니다.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS`의 기본값은 `ON`이며 `unittests/semantic`의 테스트 그룹과 통합 실행 대상을 제어합니다. Unicorn 없이 네이티브 CPU 테스트를 빌드하려면 `BUILD_TESTING=ON`을 유지하고 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`를 설정합니다. 적절한 SDK 헤더가 있는 Windows ARM64/MSVC를 포함하여 네이티브 KVM/WHP 테스트를 계속 빌드할 수 있습니다. Windows ARM64에서 Unicorn을 활성화하려면 ARM64 LLVM-MinGW 도구 모음이 필요합니다. 이 빌드 분리는 ARM64 네이티브 실행 검증을 의미하지 않습니다.
+
+네이티브 CPU 전용 CI는 고정 버전의 Capstone 소스를 초기화하고 검증된 LLVM 패키지를 사용합니다. `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 Unicorn 어댑터 비활성화를 함께 설정하면 CPU 테스트의 구성, 빌드 및 링크에 Unicorn 소스가 필요하지 않습니다. 서명 데이터와 외부 코퍼스도 필요하지 않습니다. 기본 CI에서는 전체 의미론 테스트 그룹을 계속 활성화합니다.
+
 기존 `ci.yml`은 Windows x64 runner에서 명시적으로 선택하는 수동 모드 `native_cpu_only`를 제공합니다. `NativeCPUTests.def`가 열 테스트 소유자를 선택하고, `run_native_cpu_ci.py`가 먼저 빌드한 후 필터링된 CTest를 실행하여 목록, JUnit, 로그, 요약을 저장합니다. 공통 CI 파서는 통과, 실패, 건너뜀, 비활성화, 미실행을 구분합니다. 선언된 WHP 네이티브 매핑 사례는 모두 발견되고 실행되어야 하며, 네이티브 증거가 없거나 건너뛰면 이 작업은 실패합니다. 기본 LLVM 소스 빌드 CI는 그대로 유지됩니다. 프로토콜 테스트와 컴파일은 WHP 또는 ARM64 네이티브 워크로드 검증을 대신하지 않습니다.
+
+`native_cpu_only=true`와 함께 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. `NativeDriverTests.def`는 `DriverBuiltinImages.def`의 26개 이미지에 대해 원래 주소와 재배치 주소의 WHP 결과 52개를 필수로 요구합니다. 고정 주소 이미지는 재배치 시 예상된 로더 거부를 반환해야 합니다. 안정적인 매개변수 식별자로 내장 사례 누락이나 건너뛰기를 작업 실패로 처리하며, 선택적 WDK 픽스처 부재는 명시적으로 건너뜁니다. 동일한 증거 실행기는 `--with-drivers`를 지원하고 실행 전에 선택한 모든 테스트 대상을 기록합니다.
 
 `NeverDAArch64StateTests`는 모든 스칼라 필드와 벡터의 두 워드 손상, 권한 변경, 부동소수점 미실행 및 전송 오류 진단 보존을 검사합니다. `NeverDAArch64FPTests`의 `OriginalProgramChecksCompleteStateAndOneDeadline`은 독립적으로 어셈블한 `AArch64ProbeCases.def` 명령을 실제 전송에서 두 권한으로 실행합니다. 테스트는 PC와 무관한 명령을 게스트 코드로 옮기며 모니터 페이지의 사용자 접근을 허용하지 않습니다. Unicorn 실행과 명시적 native 건너뛰기는 native ARM64 시작 증거를 대신하지 않습니다.
 

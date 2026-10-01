@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
+<!-- i18n-source: caf1662d537b841bff9db84cc3397bd27ae079f20aeea2132a1dc492b55ae0d5 -->
 
 [← NeverD 專案](project.md)
 
@@ -44,3 +44,5 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 | 本地化文件 | 使用上方語言連結開啟各語言的文件索引與專案概覽 |
 
 x64 與 ARM64 原生啟動自檢在獨占記憶體租約下驗證有界的完整狀態執行。XSAVE 封包和包含 ISA 身分的頁表快取由唯一權威層管理；WHP/ARM64 原生工作負載證據仍未完整。
+
+原生 x64 的 `FOP/FIP/FDP` 遵循主機儲存、還原規則：AMD 可能清零未生效的 x87 例外中繼資料。啟動自檢透過未遮罩的待處理例外驗證這些欄位。

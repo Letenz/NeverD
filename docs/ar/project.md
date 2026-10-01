@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center" dir="rtl">
 
@@ -106,6 +106,8 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 يوفر `checked-aarch64-v1` و`checked-user-aarch64-v1` مجموعة محدودة من ARM64 FP32/FP64 وSIMD ثابت العرض وحالة FPCR/FPSR والمتجهات الكاملة. يستخدم Linux ARM64 المطابق KVM، ويستخدم Windows ARM64 المطابق WHP، وتستخدم ISA المختلفة Unicorn. ما زال التحقق الأصلي ARM64 مطلوباً؛ ويظل تحميل برامج تشغيل Windows مقتصراً على x64.
 
 تتحقق اختبارات البدء الأصلية لـx64 وARM64 من تنفيذ الحالة الكاملة المحدود مع حق حصري للذاكرة. تملك حزم XSAVE وجداول التخزين المؤقت المرتبطة بـISA جهة مرجعية واحدة؛ وأدلة أحمال WHP/ARM64 الأصلية لا تزال غير مكتملة.
+
+تتبع حقول x64 الأصلية `FOP/FIP/FDP` قواعد الحفظ والاستعادة للمضيف: قد يصفر AMD بيانات استثناء x87 غير النشطة. تتحقق مجسات البدء من هذه الحقول باستخدام استثناء معلق غير مقنّع.
 
 <!-- i18n-section: how-it-works -->
 
@@ -272,6 +274,7 @@ cmake --build build --target check-neverd
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | تضمين دعم إضافات CPython 3.10+ |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | إضافات مثال |
 | `BUILD_TESTING` | `OFF` | اختبارات وحدات |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | مجموعة الاختبارات الدلالية المعتمدة على Unicorn (عند `BUILD_TESTING=ON`) |
 
 </details>
 

@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -107,6 +107,8 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 `checked-aarch64-v1` e `checked-user-aarch64-v1` offrono ARM64 FP32/FP64 e SIMD fissi limitati, con stato FPCR/FPSR/vettoriale completo. Linux ARM64 corrispondente usa KVM, Windows ARM64 usa WHP e ISA diverse usano Unicorn. Le prove native ARM64 restano pendenti; il caricamento di driver Windows resta x64.
 
 Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi WHP/ARM64 restano incomplete.
+
+I campi x64 nativi `FOP/FIP/FDP` seguono le regole di salvataggio/ripristino dell’host: AMD può azzerare metadati x87 inattivi. Le sonde di avvio li verificano con un’eccezione pendente non mascherata.
 
 <!-- i18n-section: how-it-works -->
 
@@ -273,6 +275,7 @@ Per target mirati, etichette CTest, requisiti delle fixture e griglia di riscrit
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | Incorporare il supporto ai plugin CPython 3.10+ |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | Plugin di esempio |
 | `BUILD_TESTING` | `OFF` | Unit test |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | Gruppo di test semantici dipendente da Unicorn (con `BUILD_TESTING=ON`) |
 
 </details>
 

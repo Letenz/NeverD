@@ -907,7 +907,15 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
-共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。有効な拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
+`X64FPState.def` は圧縮 AVX、AVX-512、CET_U/CET_S、AMX の転送配置と成分の 64 バイト境界を宣言します。存在する拡張成分は全ゼロの初期状態に限り、欠落成分のデータと境界調整領域は状態を定義しません。配置ビットがオフセットを決め、未知の配置、非初期値、不正な長さは公開前に失敗します。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState`、`InitialWideComponentsDoNotHideFPState` は 872 バイトと 10752 バイトの WHP パケットを検証します。これらの拡張命令の実行を許可するものではありません。
+
+`WhpXsaveRegisters.def` は完全な XSAVE パケットを名前付き x87/SSE 制御レジスターで補完します。最終オペコードと命令・データポインターを明示的に書き込み、ホストから取得します。ゼロのパケット項目は補完できますが、非ゼロのメタデータ衝突や共通制御値の不一致は状態公開前に失敗します。`NamedMetadataRestoresOmittedPacketFields` は FP ペイロードを保持したまま欠落項目を検証します。
+
+ネイティブの `FOP/FIP/FDP` はホストの x87 保存・復元規則に従います。マスクされていない保留例外がなければ AMD はこれらをゼロにでき、スナップショットは観測値を保持します。`X64MachineProbe.def` と厳密な NOP/コンテキストテストは整合する保留例外を設定し、全フィールドを有効な状態で差分を隠さず比較します。ホストプロセスの FXRSTOR64/FXSAVE64 参照は両状態を検証し、バックエンドはホストの結果を入力メタデータで置き換えません。
+
+`NativeGuestRAMDistinguishesEntryFromCaptureLoss` はゲストの FXSAVE64 が RAM に保存した完全な FP/SSE とホストの XSAVE 取得結果を比較します。両 API で直接設定とゲスト内 FXRSTOR64 を試し、既定のポインター保存機能とホスト対応値を明示指定した場合を検証します。入口、ゲスト実行、取得の境界を分離し、値を修正せず、不一致は失敗として保持します。 境界マトリックスは保留中のマスクされていない x87 例外も検証し、ホストプロセスでの FXRSTOR64/FXSAVE64 の参照結果とプロセッサーベンダーを記録して、条件付きポインター保存と WHP 転送動作を区別します。
+
+共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
 
@@ -917,13 +925,21 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 XSAVE 検証診断はサイズ照会、ローカルデータ準備、取得データのデコードを区別し、API 名、返却バイト数、容量、限定したヘッダーと制御フィールドを保持します。独立した期待値は `WhpHostFailureCases.def` にあり、ゲストのレジスターデータは出力しません。`InvalidInputReportsPreparationWithoutHostMutation` は無効な入力でホストを呼び出さず、そのデータも変更しないことを検証します。共有 ISA コーデックが検証を一元的に担当します。
 
-WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。能力照会の失敗は型付きの利用不可結果を維持します。`WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。Windows の集中検証では、マッピング 16 件、起動実行 2 件、浮動小数点転送/コンテキスト 10 件、共有 CPU の寿命/実行 7 件、整数 8 件の計 43 件すべてが必須です。未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。
+WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。 能力照会の失敗は型付きの利用不可結果を維持します。 `WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。 Windows 専用 CI は 45 件の実機成功を要求します。内訳はマッピング 16 件、起動 2 件、FP/コンテキスト 10 件、共有 CPU 7 件、整数 8 件、`NativeInstallRetainsFPStateBeforeAnyGuestExecution` の API 2 種類です。後者はゲスト実行前に完全な FP/SSE と個別に取得したメタデータを比較します。 未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。
 
 `NeverDMemoryLifecycleTests` は Unicorn と独立して構築され、ネイティブ専用構成でも登録されます。Unicorn を無効にすると専用のソフトウェア投影・デバイスケースは明示的にスキップされますが、ホストに一致する共有 CPU ケースは残ります。`WhpMemoryTests.cpp` は `WhpMemoryCases.def` の 16 ケースでネイティブメモリ API を分離します。ページ・投影サイズの領域、共有・独立した割り当て、未アクセス・常駐したバイト、最初の仮想プロセッサの有無を検証します。各ケースは二つの論理所有者を維持し、マッピング済みパーティションを繰り返し切り替え、非アクティブ所有者を破棄した後も残るマッピングが再構築なしで利用可能なことを確認します。実際のマッピングエラーは HRESULT を保持して失敗となります。これはメモリ API の証拠であり、命令実行の証明ではありません。
 
+`X64MachineProbe.def` の起動診断は、失敗した命令と、不一致のスカラー、TLS、特権、x87 制御、物理 FP レーン、XMM ワードをすべて列挙し、期待値と観測値を保持します。`DiagnosticIdentifiesStepFieldAndBothValues` は独立した期待メッセージを検証します。状態比較は引き続き完全一致を要求し、転送損失と命令実行の問題を区別します。失敗した実機プローブを成功扱いにはしません。
+
 `WhpResourceTests.cpp` はキャッシュ再利用、置換前の破棄、失敗からの復旧、期限と停止の競合を検証します。`LogicalCPUSwitchingRestoresPhysicalFPAndTLS` は両特権モードで二つのマシンを交互に実行し、物理 x87/XMM と FS/GS の独立した状態を確認してから、一方の破棄後に残るマシンを再開します。Windows CI は両モードの WHP ケースを必須とします。
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` の既定値は `ON` で、`unittests/semantic` のテスト群と集約実行ターゲットを制御します。Unicorn を使わずにネイティブ CPU テストを構築するには、`BUILD_TESTING=ON` を維持し、`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と `NEVERD_EMULATION_BACKEND_UNICORN=OFF` を指定します。適切な SDK ヘッダーを備えた Windows ARM64/MSVC を含め、KVM/WHP のネイティブテストは引き続き構築できます。Windows ARM64 で Unicorn を有効にする場合は ARM64 LLVM-MinGW ツールチェーンが必要です。このビルド分離は ARM64 の実機実行を検証するものではありません。
+
+ネイティブ CPU 専用 CI は固定リビジョンの Capstone ソースを初期化し、検証済みの LLVM パッケージを使います。`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と Unicorn アダプターの無効化により、CPU テストの構成・ビルド・リンクに Unicorn ソースは不要です。署名データや外部コーパスにも依存しません。既定の CI は完全な意味論テスト群を引き続き有効にします。
+
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
+
+`native_cpu_only=true` と併せて `native_driver_tests=true` を指定すると、Unicorn に依存しない `NeverDNativeDriverTests` を有効にできます。`NativeDriverTests.def` は `DriverBuiltinImages.def` の 26 イメージについて、元のアドレスと再配置先で計 52 個の WHP 結果を必須とします。固定アドレスのイメージは再配置時に所定のローダー拒否を返す必要があります。安定したパラメーター識別子により、組み込みケースの未登録やスキップはジョブ失敗になります。任意の WDK フィクスチャがない場合は明示的にスキップします。同じ証拠ランナーが `--with-drivers` を受け付け、実行前に選択した全テストターゲットを記録します。
 
 `NeverDAArch64StateTests` は全スカラーフィールド、全ベクトルの両ワード、権限変更、浮動小数点命令の未実行、転送エラー診断の保持を検証します。`NeverDAArch64FPTests` の `OriginalProgramChecksCompleteStateAndOneDeadline` は独立に組み立てた `AArch64ProbeCases.def` の命令を実際の転送で両権限から実行します。テストは PC に依存しない命令をゲストコードへ移し、監視ページへの user アクセスは許可しません。Unicorn の実行と明示的な native skip は native ARM64 起動証拠を代替しません。
 

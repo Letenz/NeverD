@@ -29,8 +29,10 @@ NEVERD_X64_PROBE_VALUE(VectorSource, 15)
 // Round toward +infinity, FTZ, all exceptions masked; preserve division status.
 NEVERD_X64_PROBE_VALUE(MXCSR, 0xdf84)
 NEVERD_X64_PROBE_VALUE(InexactMXCSR, 0xdfa4)
-NEVERD_X64_PROBE_VALUE(FPControl, 0xb7f)
-NEVERD_X64_PROBE_VALUE(FPStatus, 0x3000)
+// Pending unmasked invalid operation keeps FOP/FIP/FDP meaningful on AMD.
+// The probe contains no waiting x87 instruction; TOP remains six.
+NEVERD_X64_PROBE_VALUE(FPControl, 0xb7e)
+NEVERD_X64_PROBE_VALUE(FPStatus, 0xb081)
 NEVERD_X64_PROBE_VALUE(FPTag, UINT8_MAX)
 NEVERD_X64_PROBE_VALUE(FPOpcode, 0x127)
 NEVERD_X64_PROBE_VALUE(FP80Base, 0x8000000000000000ULL)
@@ -38,6 +40,19 @@ NEVERD_X64_PROBE_VALUE(FP80High, 0x3fff)
 #endif
 #ifdef NEVERD_X64_PROBE_TEXT
 NEVERD_X64_PROBE_TEXT(State, "incorrect x64 native initialization state")
+NEVERD_X64_PROBE_TEXT(StateMismatch, "{0} after {1}: {2}")
+NEVERD_X64_PROBE_TEXT(FieldMismatch, "{0}: expected {1:x}, observed {2:x}")
+NEVERD_X64_PROBE_TEXT(FieldSeparator, "; ")
+NEVERD_X64_PROBE_TEXT(IndexedWord, "{0}{1}[{2}]")
+NEVERD_X64_PROBE_TEXT(XmmName, "XMM")
+NEVERD_X64_PROBE_TEXT(FPName, "FP")
+#endif
+#ifdef NEVERD_X64_PROBE_FIELD
+NEVERD_X64_PROBE_FIELD(UserMode)
+NEVERD_X64_PROBE_FIELD(FSBase)
+NEVERD_X64_PROBE_FIELD(GSBase)
+NEVERD_X64_PROBE_FIELD(MXCSR)
+NEVERD_X64_PROBE_FIELD(FP.Tag)
 #endif
 #ifdef NEVERD_X64_PROBE_INSTRUCTION
 NEVERD_X64_PROBE_INSTRUCTION(Nop, 0x90)

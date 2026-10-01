@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
 
 <div align="center">
 
@@ -108,6 +108,8 @@ Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Ga
 `checked-aarch64-v1` und `checked-user-aarch64-v1` bieten begrenztes ARM64 FP32/FP64, SIMD fester Breite und vollständigen FPCR/FPSR/Vektorzustand. Passende Linux-ARM64-Hosts verwenden KVM, Windows ARM64 WHP und andere ISAs Unicorn. Native ARM64-Laufzeitnachweise fehlen weiterhin; Windows-Treiberladen bleibt auf x64 begrenzt.
 
 Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer; native WHP/ARM64-Lastnachweise bleiben unvollständig.
+
+Native x64-Felder `FOP/FIP/FDP` folgen den Sicherungsregeln des Hosts: AMD darf inaktive x87-Ausnahmemetadaten löschen. Startprüfungen validieren sie mit einer ausstehenden unmaskierten Ausnahme.
 
 <!-- i18n-section: how-it-works -->
 
@@ -274,6 +276,7 @@ Fokussierte Targets, CTest-Labels, Fixture-Anforderungen und das formatübergrei
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | CPython-3.10+-Pluginunterstützung einbetten |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | Beispiel-Plugins |
 | `BUILD_TESTING` | `OFF` | Unit-Tests |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | Unicorn-abhängige semantische Testgruppe (bei `BUILD_TESTING=ON`) |
 
 </details>
 

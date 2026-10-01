@@ -78,6 +78,155 @@ std::array<unsigned, 4> cpuid(unsigned Leaf, unsigned Subleaf = 0) {
 #endif
 }
 #endif
+struct ExtendedLayout {
+  uint64_t Mask;
+  size_t Bytes;
+  size_t PaddingBegin;
+  size_t PaddingBytes;
+};
+constexpr ExtendedLayout ExtendedLayouts[] = {
+#define NEVERD_XSAVE_LAYOUT(Mask, Bytes, PaddingBegin, PaddingBytes)           \
+  {Mask, Bytes, PaddingBegin, PaddingBytes},
+#include "X64XsaveCases.def"
+#undef NEVERD_XSAVE_LAYOUT
+};
+std::vector<uint8_t> extendedPacket(const ExtendedLayout &Layout,
+                                    const X64MachineState &State) {
+  std::vector<uint8_t> Bytes(Layout.Bytes);
+  llvm::cantFail(encodeX64XsaveState(State, Bytes, true));
+  llvm::support::endian::write64le(Bytes.data() + PresentOffset,
+                                   FPAndSSEMask | Layout.Mask);
+  llvm::support::endian::write64le(Bytes.data() + LayoutOffset,
+                                   CompactedLayout | Layout.Mask);
+  return Bytes;
+}
+TEST(X64Xsave, CompactedInitialExtensionsPreserveTheCompleteFPState) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  Before.Xmm.front() = {SeedControl, InvalidControl};
+  for (const auto &Layout : ExtendedLayouts) {
+    SCOPED_TRACE(Layout.Mask);
+    const auto Bytes = extendedPacket(Layout, Before);
+    auto State = Before;
+    auto E = decodeX64XsaveState(State, Bytes);
+    ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
+TEST(X64Xsave, CompactedOffsetsFollowLayoutRatherThanPresentBits) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  Before.Xmm.front() = {SeedControl, InvalidControl};
+  std::vector<uint8_t> Bytes(NativeBytes);
+  llvm::cantFail(encodeX64XsaveState(Before, Bytes, true));
+  llvm::support::endian::write64le(Bytes.data() + LayoutOffset, NativeLayout);
+  for (const auto Entry :
+       {std::pair{NativePresent, NativeCETUserOffset},
+        std::pair{NativeSupervisorPresent, NativeCETSupervisorOffset}}) {
+    llvm::support::endian::write64le(Bytes.data() + PresentOffset, Entry.first);
+    std::fill(Bytes.begin() + PacketBytes, Bytes.begin() + Entry.second,
+              StaleByte);
+    auto State = Before;
+    auto E = decodeX64XsaveState(State, Bytes);
+    ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
+TEST(X64Xsave, WideLayoutIgnoresAbsentComponentsAndAlignmentPadding) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  Before.Xmm.back() = {SeedControl, InvalidControl};
+  auto Bytes =
+      extendedPacket({WideLayout & ~CompactedLayout, WideBytes, 0, 0}, Before);
+  llvm::support::endian::write64le(Bytes.data() + PresentOffset, NativePresent);
+  std::fill(Bytes.begin() + PacketBytes, Bytes.end(), StaleByte);
+  std::fill(Bytes.begin() + WideCETUserOffset, Bytes.begin() + WideCETEnd, 0);
+  auto State = Before;
+  auto E = decodeX64XsaveState(State, Bytes);
+  ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+  EXPECT_EQ(State, Before);
+  for (const auto &Layout : ExtendedLayouts) {
+    if (!Layout.PaddingBytes)
+      continue;
+    auto Padded = extendedPacket(Layout, Before);
+    std::fill_n(Padded.begin() + Layout.PaddingBegin, Layout.PaddingBytes,
+                StaleByte);
+    E = decodeX64XsaveState(State, Padded);
+    ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
+TEST(X64Xsave, EveryNonInitialExtensionByteRejectsWithoutPublication) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  Before.Xmm.front() = {SeedControl, InvalidControl};
+  for (const auto &Layout : ExtendedLayouts) {
+    SCOPED_TRACE(Layout.Mask);
+    auto Bytes = extendedPacket(Layout, Before);
+    for (size_t I = PacketBytes; I < Bytes.size(); ++I) {
+      if (I >= Layout.PaddingBegin &&
+          I - Layout.PaddingBegin < Layout.PaddingBytes)
+        continue;
+      SCOPED_TRACE(I);
+      Bytes[I] = StaleByte;
+      auto State = Before;
+      auto E = decodeX64XsaveState(State, Bytes);
+      EXPECT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(State, Before);
+      Bytes[I] = 0;
+    }
+  }
+}
+TEST(X64Xsave, TruncatedAndUnknownExtensionsCannotPublishState) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  for (const auto &Layout : ExtendedLayouts) {
+    auto Bytes = extendedPacket(Layout, Before);
+    for (size_t Size = PacketBytes; Size < Bytes.size(); ++Size) {
+      auto State = Before;
+      auto E =
+          decodeX64XsaveState(State, llvm::ArrayRef(Bytes).take_front(Size));
+      EXPECT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(State, Before);
+    }
+    for (const uint64_t Header :
+         {uint64_t(0), CompactedLayout | Layout.Mask | UnsupportedComponent}) {
+      llvm::support::endian::write64le(Bytes.data() + LayoutOffset, Header);
+      auto State = Before;
+      auto E = decodeX64XsaveState(State, Bytes);
+      EXPECT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(State, Before);
+    }
+    // An undeclared packing/alignment must not hide live state in a tail that
+    // the known compacted profile does not own.
+    llvm::support::endian::write64le(Bytes.data() + LayoutOffset,
+                                     CompactedLayout | Layout.Mask);
+    Bytes.resize(Layout.Bytes + UnexpectedPaddingBytes);
+    Bytes.back() = StaleByte;
+    auto State = Before;
+    auto E = decodeX64XsaveState(State, Bytes);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
+TEST(X64Xsave, AbsentExtensionsIgnoreStaleBytes) {
+  X64MachineState Before;
+  Before.MXCSR = SeedControl;
+  for (const auto &Layout : ExtendedLayouts) {
+    auto Bytes = extendedPacket(Layout, Before);
+    llvm::support::endian::write64le(Bytes.data() + PresentOffset,
+                                     FPAndSSEMask);
+    std::fill(Bytes.begin() + PacketBytes, Bytes.end(), StaleByte);
+    auto State = Before;
+    auto E = decodeX64XsaveState(State, Bytes);
+    ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+    EXPECT_EQ(State, Before);
+  }
+}
 class X64XsaveHost : public testing::TestWithParam<bool> {};
 TEST_P(X64XsaveHost, ActualRestoreDistinguishesStandardAndCompactedMXCSR) {
 #if defined(__x86_64__) || defined(_M_X64)
