@@ -25,6 +25,16 @@ constexpr RegisterValue Payloads[] = {
 #include "X64FPCases.def"
 #undef NEVERD_FP_PAYLOAD
 };
+struct InvalidSize {
+  UINT32 Written, Capacity;
+  const char *Legacy, *Modern;
+};
+constexpr InvalidSize InvalidSizes[] = {
+#define NEVERD_WHP_XSAVE_SIZE(Written, Capacity, Legacy, Modern)               \
+  {Written, Capacity, Legacy, Modern},
+#include "WhpHostFailureCases.def"
+#undef NEVERD_WHP_XSAVE_SIZE
+};
 struct FakeXsave {
   WHV_PROCESSOR_XSAVE_FEATURES Features{};
   UINT32 FeatureBytes = sizeof(Features);
@@ -136,23 +146,26 @@ TEST_P(WhpXsaveProtocol, CompleteCompactedPacketsRetainEveryPhysicalTOP) {
   EXPECT_EQ(Target.Captures, x64::fp::RegisterCount);
 }
 TEST_P(WhpXsaveProtocol, InvalidQuerySizesCannotAllocateOrInstallState) {
-  for (const auto Size :
-       {x64::fp::XsaveBytes - 1, x64::fp::MaxXsaveBytes + 1}) {
-    Target.Required = Size;
+  for (const auto &Case : InvalidSizes) {
+    if (Case.Capacity)
+      continue;
+    Target.Required = Case.Written;
     EXPECT_EQ(llvm::toString(Transfer.initialize(API, &Target)),
-              diagnostic::FPState);
+              GetParam() ? Case.Modern : Case.Legacy);
   }
   EXPECT_EQ(Target.Installs, 0u);
 }
 TEST_P(WhpXsaveProtocol, TruncatedAndOversizedCapturesCannotPublishState) {
   ASSERT_NO_FATAL_FAILURE(initialize());
   ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
-  for (const auto Written :
-       {x64::fp::XsaveBytes - 1, x64::fp::XsaveBytes + 1}) {
-    Target.Written = Written;
+  for (const auto &Case : InvalidSizes) {
+    if (!Case.Capacity)
+      continue;
+    ASSERT_EQ(Target.Required, Case.Capacity);
+    Target.Written = Case.Written;
     auto Next = State;
     EXPECT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)),
-              diagnostic::FPState);
+              GetParam() ? Case.Modern : Case.Legacy);
     EXPECT_EQ(Next, State);
   }
 }
@@ -163,8 +176,17 @@ TEST_P(WhpXsaveProtocol, MalformedHostHeaderCannotPublishState) {
                                    InvalidPadding);
   auto Next = State;
   EXPECT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)),
-            diagnostic::FPState);
+            GetParam() ? ModernMalformed : LegacyMalformed);
   EXPECT_EQ(Next, State);
+}
+TEST_P(WhpXsaveProtocol, InvalidInputReportsPreparationWithoutHostMutation) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  const auto Before = Target.Packet;
+  State.MXCSR = InvalidPadding;
+  EXPECT_EQ(llvm::toString(Transfer.install(API, &Target, State)),
+            GetParam() ? ModernInvalidInput : LegacyInvalidInput);
+  EXPECT_EQ(Target.Installs, 0u);
+  EXPECT_EQ(Target.Packet, Before);
 }
 TEST_P(WhpXsaveProtocol, HostFailureRetainsItsStatusAndOriginalState) {
   ASSERT_NO_FATAL_FAILURE(initialize());

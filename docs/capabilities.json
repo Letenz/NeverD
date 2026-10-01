@@ -3567,6 +3567,15 @@
       "tests": [
         {
           "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InvalidInputReportsPreparationWithoutHostMutation/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDX64IntegerTests",
           "source": "unittests/emulation/X64IntegerTests.cpp",
           "filter": "*/X64Integer.MultiplyPreservesWidthsAndDefinedFlags/*",
