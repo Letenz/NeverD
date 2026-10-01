@@ -173,12 +173,12 @@ bool isCFunctionParameterCallHint(const SourceCallTypeHint &Hint,
       Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
       !Hint.Selector.empty() || !Hint.OwnerClass.empty() ||
       Hint.SelectorReferenceAddress || !Hint.BorrowedByteInputs.empty() ||
-      !Hint.SwiftStringInputs.empty() || Hint.Format || Hint.NilTerminated ||
-      Hint.SwiftTypeMetadata || Hint.Receiver || Hint.SelectorResultUse ||
-      Hint.SelectorResultTypeUse || Hint.SelectorArgumentTypeUse ||
-      Hint.SelectorForwardingUse || Hint.SelectorArgumentStorageUse ||
-      Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
-      Hint.ImmutablePointerSlot || Hint.AddressedFunctionABI)
+      !Hint.CanonicalBooleanInputs.empty() || !Hint.SwiftStringInputs.empty() ||
+      Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
+      Hint.Receiver || Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
+      Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
+      Hint.SelectorArgumentStorageUse || Hint.ObjCIndirectResultStorage ||
+      Hint.ByteCount || Hint.ImmutablePointerSlot || Hint.AddressedFunctionABI)
     return false;
   const auto Expected = cFunctionParameterSignature(
       Entry, Hint.FunctionParameterCall->Parameter, Architecture);

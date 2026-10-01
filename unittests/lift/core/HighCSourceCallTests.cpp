@@ -141,6 +141,87 @@ void compileAndRun(const std::string &Source,
                     << Source;
 }
 
+TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const bool Dynamic : {true, false}) {
+    const std::string Import = Dynamic ? "_swift_getDynamicType"
+                                       : "_$ss9_typeName_9qualifiedSSypXp_SbtF";
+    const va_t Slot = Dynamic ? 0x1000 : 0x2000;
+    Image.ImportPtrSlots[Slot] = Import;
+    Image.DyldBindSlots[Slot] = {Import, 0, "/usr/lib/swift/libswiftCore.dylib",
+                                 false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    for (const unsigned Flag : {0U, 1U}) {
+      std::vector<TypeRef> Types{Pointer};
+      std::vector<ExprPtr> Arguments{parameter(0, Pointer)};
+      if (Dynamic) {
+        Types.push_back(Pointer);
+        Arguments.push_back(parameter(1, Pointer));
+      }
+      auto Boolean =
+          HighExpr::makeBinop(NdOp::SUBBYTES, HighExpr::makeConst(Flag, 4),
+                              HighExpr::makeConst(0, 4));
+      Boolean->Type = NdType::makeInt(1, false);
+      Arguments.push_back(Boolean);
+      Functions.push_back(
+          returning(std::string(Dynamic ? "project_type" : "project_name") +
+                        std::to_string(Flag),
+                    call(*Hint, Hint->Signature.ReturnType, Arguments), Types));
+    }
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  EXPECT_EQ(Source.find("swift_context"), std::string::npos);
+  // The independent definitions use actual one-bit prototypes and a mixed
+  // word/pointer Swift record, rather than mirroring our byte/int128 types.
+  const auto Program = Source + R"(
+static unsigned seen, count;
+void *dynamic_oracle(void *, void *, _Bool) __asm__("_swift_getDynamicType");
+void *dynamic_oracle(void *value, void *metadata, _Bool flag) {
+  seen = flag;
+  ++count;
+  return flag ? metadata : value;
+}
+struct StringWords { uint64_t word; void *storage; };
+struct StringWords __attribute__((swiftcall))
+name_oracle(void *, _Bool) __asm__("_$ss9_typeName_9qualifiedSSypXp_SbtF");
+struct StringWords __attribute__((swiftcall))
+name_oracle(void *metadata, _Bool flag) {
+  seen = flag;
+  ++count;
+  return (struct StringWords){ (uint64_t)(uintptr_t)metadata + flag,
+                              (void *)(uintptr_t)(0x778811ULL + flag) };
+}
+int main(void) {
+  void *value = (void *)(uintptr_t)0x123456;
+  void *metadata = (void *)(uintptr_t)0x556677;
+  if (project_type0(value, metadata) != value || seen != 0) return 1;
+  if (project_type1(value, metadata) != metadata || seen != 1) return 2;
+  unsigned __int128 result = project_name0(metadata);
+  if ((uint64_t)result != 0x556677 || (uint64_t)(result >> 64) != 0x778811 ||
+      seen != 0) return 3;
+  result = project_name1(metadata);
+  if ((uint64_t)result != 0x556678 || (uint64_t)(result >> 64) != 0x778812 ||
+      seen != 1 || count != 4) return 4;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, CFunctionParameterCallPreservesDispatchAndEffects) {
   using namespace c_function_parameter_test;
   Fixture F;
@@ -1730,6 +1811,63 @@ int main(void) {
   void *result = ordered_calls((void *)(uintptr_t)1,
                                (void *)(uintptr_t)2);
   return result != (void *)(uintptr_t)2 || sequence != 123;
+})");
+}
+
+TEST(HighCSourceCalls, CallResultReturnedNextIsReturnedDirectly) {
+  // Returning a call result from the very next statement moves no
+  // evaluation, so a tail call prints as `return f(x);`. A store between the
+  // call and its return keeps the call at its own statement.
+  auto Int = NdType::makeInt(8, true);
+  auto Pointer = NdType::makePtr(Int);
+  auto Next = native("next_value", Int, {Int});
+  Next.TargetAddress = 0x2000;
+  MedVar Result;
+  Result.Kind = MedVar::Temp;
+  Result.Id = 1;
+  Result.Size = 8;
+  Result.TheArch = Arch::X64;
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Addr = 0x1000;
+  Call.Dst = HighExpr::makeVar(Result, Int);
+  Call.Val = call(Next, Int, {parameter(0, Int)});
+  HighFunc Tail =
+      returning("tail_value", HighExpr::makeVar(Result, Int), {Int});
+  Tail.Entry = 0x1000;
+  Tail.Body.insert(Tail.Body.begin(), Call);
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1104;
+  Store.StoreAddr = parameter(1, Pointer);
+  Store.StoreVal = parameter(0, Int);
+  Call.Addr = 0x1100;
+  HighFunc Stored =
+      returning("stored_value", HighExpr::makeVar(Result, Int), {Int, Pointer});
+  Stored.Entry = 0x1100;
+  Stored.Body.insert(Stored.Body.begin(), {Call, Store});
+  const auto Source = emit({Tail, Stored});
+  const size_t TailAt = Source.find("int64_t tail_value(");
+  const size_t StoredAt = Source.find("int64_t stored_value(");
+  ASSERT_NE(TailAt, std::string::npos) << Source;
+  ASSERT_NE(StoredAt, std::string::npos) << Source;
+  const std::string TailBody = Source.substr(TailAt, StoredAt - TailAt);
+  const std::string StoredBody = Source.substr(StoredAt);
+  EXPECT_NE(TailBody.find("return (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_EQ(TailBody.find("= (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_NE(StoredBody.find("= (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_EQ(StoredBody.find("return (int64_t)(next_value("), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+static int64_t cell = 100;
+int64_t next_value(int64_t value) { return value + cell; }
+int main(void) {
+  if (tail_value(1) != 101)
+    return 1;
+  return stored_value(5, &cell) != 105 || cell != 5;
 })");
 }
 

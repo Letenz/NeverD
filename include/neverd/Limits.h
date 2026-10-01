@@ -325,6 +325,25 @@ constexpr int kMaxModuloDecompDepth = 24;
 /// subtract.
 constexpr int kMaxStackPtrTraceDepth = 24;
 
+/// Most decision blocks one compare-tree switch may absorb.  The binary
+/// search behind the largest sparse kernel switch stays well below this.
+constexpr size_t kMaxCompareTreeBlocks = 512;
+
+/// Most selector values one compare-tree case target may receive.  A target
+/// reached for more values is a range test, not a list of case labels.
+constexpr uint64_t kMaxCompareTreeValuesPerTarget = 8;
+
+/// Fewest case targets besides the default for a compare tree to become a
+/// switch; fewer read better as if/else.
+constexpr size_t kMinCompareTreeTargets = 3;
+
+/// Most case labels one compare-tree switch may produce.
+constexpr size_t kMaxCompareTreeCases = 1024;
+
+/// Deepest definition chain followed to express a compared value as the
+/// switch selector plus a constant.
+constexpr int kMaxCompareTreeEvalDepth = 32;
+
 //===----------------------------------------------------------------------===//
 // Function detection
 //===----------------------------------------------------------------------===//

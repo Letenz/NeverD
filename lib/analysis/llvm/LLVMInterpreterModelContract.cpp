@@ -120,6 +120,8 @@ void Builder::validateContract() {
       if (!((A.isEnumAttribute() &&
              (A.getKindAsEnum() == llvm::Attribute::NoUndef ||
               (A.getKindAsEnum() == llvm::Attribute::NoFree))) ||
+            (!A.isStringAttribute() &&
+             A.getKindAsEnum() == llvm::Attribute::Initializes) ||
             (A.getAsString() == "captures(none)")))
         fail("unsupported argument attribute obligation");
 }

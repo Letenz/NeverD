@@ -8,6 +8,7 @@ add_neverd_component_library(NeverDIRHigh
   lower/CallArgCollectionX86.cpp
   lower/CallArgCollectionARM.cpp
   lower/CallArgCollectionAArch64.cpp
+  lower/CompareTreeSwitch.cpp
   lower/MedOpToExpr.cpp
   lower/MedToHigh.cpp
   lower/NdOpCallIndLowering.cpp

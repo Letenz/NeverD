@@ -78,6 +78,8 @@ nativer Instruktionsvorkommen und binärer Patches getrennt.
 
 `NeverDLLVMInterpreterModel` besitzt den separaten begrenzten skalaren LLVM-Import in dieselbe rohe Zustands-ABI. `modelLLVMInterpreterMachineStateX64` erhält echte Statusrückgaben und erzeugt explizite Definiertheitsprüfungen. `llvmInterpreterMachineStateContract` liefert alle Beobachtungen und die Erhaltung des Null-Monitors; Domäne, Speicher und vollständiger Beweis liegen beim Aufrufer. Gewöhnliches Lifting und Quelltextveröffentlichung bleiben unverändert; ein Compilerbeweis entsteht nicht.
 
+Das LLVM-Modell prüft `initializes`-Parameterverträge. Es nutzt die vorhandenen Zustandspointer-Projektionen und führt vor der normalen skalaren Ausgabe eine begrenzte byteweise Must-Datenflussanalyse aus; ein zweiter Wertauswerter entsteht nicht.
+
 `NeverDInterpreterLLVMRefinement` verknüpft Beweise von nativem Code zu LLVM. Es erzeugt beide Zustandsmodelle und Pflichtverträge neu, projiziert Flags nur am Einstieg gemäß dem maßgeblichen Profil und prüft beide Voraussetzungen erneut. Aufrufer dürfen Schleifenpläne vorschlagen, aber keine Modelle, Beobachtungen oder Nachweise ersetzen. Analysemodelle kopieren nur den ausführbaren Graphen und deklarierte Wurzeln; Rückkanten zum Einstieg werden vor einer wiederholten Initialisierung abgelehnt.
 
 Die C-API v3 und CLI übertragen Feld-, Verfeinerungs- und Solver-Budgets an den gemeinsamen Spezialisierer. Der Adapter prüft Strukturgrößen und reserved-Felder vor dem Lesen von Erweiterungen; v1/v2-Layouts und Standardwerte bleiben stabil. Größere Budgets ändern weder Ausführungsvertrag noch Veröffentlichungskriterien.

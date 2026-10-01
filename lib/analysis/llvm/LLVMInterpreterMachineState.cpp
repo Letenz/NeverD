@@ -71,6 +71,10 @@ void Builder::preflight() {
   for (auto Set : F.getAttributes())
     for (auto A : Set) {
       input();
+      // Charge range-list payloads before LLVM verification or diagnostics
+      // can traverse/print them, including attributes on invalid positions.
+      if (A.isConstantRangeListAttribute())
+        input(A.getValueAsConstantRangeList().size());
       if (A.isStringAttribute()) {
         input(A.getKindAsString().size());
         input(A.getValueAsString().size());
@@ -268,6 +272,7 @@ InterpreterMachineStateModel Builder::build() {
   preflight();
   pointerProjections();
   validateContract();
+  validateInitialization();
   createGraph();
   emitEdges();
   for (const auto &B : F) {

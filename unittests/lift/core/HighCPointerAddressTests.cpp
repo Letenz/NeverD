@@ -32523,9 +32523,9 @@ TEST(HighCPointerAddresses,
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("void cookie"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000173C("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("t3 = sub_14000173C(arg0);"), std::string::npos)
+  EXPECT_NE(Source.find("return (int64_t)sub_14000173C(arg0)"),
+            std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("return t3;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
             std::string::npos)
       << Source;
@@ -39785,7 +39785,6 @@ int main(void) {
   }
 }
 
-
 TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
   // `??1SC_DISK` ends by tail-calling the base destructor. MSVC destructors
   // return nothing, so what the base leaves in RAX is not a result.
@@ -40870,7 +40869,8 @@ TEST(HighCPointerAddresses, LoopifyTurnsNestedBackJumpsIntoContinue) {
   EXPECT_EQ(Body[2].Kind, StmtKind::Return);
 }
 
-TEST(HighCPointerAddresses, LoopifyRefusesJumpsFromNestedLoopsOrOutside) {
+TEST(HighCPointerAddresses,
+     LoopifyRefusesNestedLoopJumpsAndKeepsOutsideEntries) {
   // A goto X inside an inner loop cannot become `continue`.
   HighStmt Inner;
   Inner.Kind = StmtKind::While;
@@ -40880,12 +40880,13 @@ TEST(HighCPointerAddresses, LoopifyRefusesJumpsFromNestedLoopsOrOutside) {
                                   returnAt(0x1020)};
   EXPECT_FALSE(loopifyBackwardGotos(Nested));
   EXPECT_EQ(countGotos(Nested), 1u);
-  // A jump to X from before X keeps the label as a plain label.
+  // A jump to X from before X still lands on X, now the first statement of
+  // the loop body; only the jump back from inside becomes `continue`.
   std::vector<HighStmt> Outside = {
       condGoto(0x1000, 1, 0x1010), assignConst(0x1010, 1, 1),
       condGoto(0x1018, 1, 0x1010), returnAt(0x1020)};
-  EXPECT_FALSE(loopifyBackwardGotos(Outside));
-  EXPECT_EQ(countGotos(Outside), 2u);
+  EXPECT_TRUE(loopifyBackwardGotos(Outside));
+  EXPECT_EQ(countGotos(Outside), 1u);
 }
 
 TEST(HighCPointerAddresses, GroupSwitchCasesSharesBodiesAndDropsDefaultCopies) {
