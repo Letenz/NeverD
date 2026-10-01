@@ -65,8 +65,9 @@ struct Path {
     return Steps.size() <= 32;
   }
 
-  bool load(uint16_t Bytes,
-            std::optional<std::pair<size_t, size_t>> Definition = std::nullopt) {
+  bool
+  load(uint16_t Bytes,
+       std::optional<std::pair<size_t, size_t>> Definition = std::nullopt) {
     if (Bytes != 8 || Steps.size() == 32)
       return false;
     Steps.push_back({Step::Kind::Load, 0, Bytes, Definition});
@@ -282,8 +283,7 @@ class Tracer {
           !Image.isDataAddress(Value.Offset))
         return std::nullopt;
       return Path{Root{Root::Kind::Constant, 0, 0, VnodeSpace::CONST,
-                       Value.Offset, 8, Value.Provenance,
-                       Value.AddressOwnerVA},
+                       Value.Offset, 8, Value.Provenance, Value.AddressOwnerVA},
                   {}};
     }
     if (Value.isRam() ||

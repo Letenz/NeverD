@@ -32,7 +32,15 @@ std::optional<SourceRegisterCopy> leaf(const BinaryImage &Image, va_t Entry) {
     const auto Word = llvm::support::endian::read32le(Bytes->data());
     Result.LeafWords.push_back(Word);
     if (Word == 0xd65f03c0) {
-      if (!I || !sourceLocalLeafRange(Image, Entry, 4 * (I + 1)))
+      // An exact RET X30 reached by a fixed, immutable BL has no register or
+      // memory effects, including when public and private symbols share it.
+      // This is a byte-level call projection, not a declaration obtained from
+      // any of those aliases. Preserve the original BL/LowIR receipt and
+      // validate both instruction ranges again before source publication.
+      if (!I)
+        return sourceLeafCodeRange(Image, Entry, 4) ? std::optional(Result)
+                                                    : std::nullopt;
+      if (!sourceLocalLeafRange(Image, Entry, 4 * (I + 1)))
         return std::nullopt;
       for (unsigned R = 0; R < Sources.size(); ++R) {
         const auto &Source = Sources[R];
@@ -51,7 +59,7 @@ std::optional<SourceRegisterCopy> leaf(const BinaryImage &Image, va_t Entry) {
                                                String->Units,
                                                String->ContentsAddress});
       }
-      // Identity-only helpers provide no useful first-stage projection.
+      // Other identity sequences need their own complete effect contract.
       return Result.Registers.empty() ? std::nullopt : std::optional(Result);
     }
     // ORR Xd, XZR, Xm, LSL #0, the full-width MOV alias. Exclude the
