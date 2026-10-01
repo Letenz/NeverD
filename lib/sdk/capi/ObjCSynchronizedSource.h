@@ -2038,8 +2038,13 @@ objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
   const llvm::StringRef Prefix = "(void*)(uintptr_t)(";
   if (!Argument.starts_with(Prefix) || !Argument.ends_with(')'))
     return std::nullopt;
-  const llvm::StringRef NameOnly =
-      Argument.drop_front(Prefix.size()).drop_back();
+  llvm::StringRef NameOnly = Argument.drop_front(Prefix.size()).drop_back();
+  // Private-frame forwarding restores a load's signedness with an exact
+  // 64-bit integer view. Both views preserve the saved pointer word. Return
+  // the canonical argument for identity checks and the guard; the emitted
+  // runtime calls themselves keep their original casts.
+  if (!NameOnly.consume_front("(int64_t)"))
+    NameOnly.consume_front("(uint64_t)");
   const auto Alpha = [](char C) {
     return (C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || C == '_';
   };
@@ -2049,7 +2054,7 @@ objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
   for (char Character : NameOnly)
     if (!Alpha(Character) && !Digit(Character))
       return std::nullopt;
-  return Argument.str();
+  return (Prefix + NameOnly + ")").str();
 }
 
 // Locate an emitted definition, ignoring prototypes, comments, and braces in

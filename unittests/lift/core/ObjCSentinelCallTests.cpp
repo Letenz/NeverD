@@ -1,3 +1,4 @@
+#include "../../../lib/ir/high/pass/HighDCEDetail.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
@@ -613,7 +614,7 @@ TEST(ObjCSentinelCalls, StackLoadsKeepTheValueAtTheirOwnReadTime) {
   const auto Hint = objcSelectorStubSentinelSourceCallHint(
       F.Image, 0x1100, F.Receiver, {0x2000, 0x2020});
   ASSERT_TRUE(Hint);
-  for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation < 18; ++Mutation) {
     SCOPED_TRACE(Mutation);
     HighFunc Function;
     Function.FrameSize = 32;
@@ -712,9 +713,22 @@ TEST(ObjCSentinelCalls, StackLoadsKeepTheValueAtTheirOwnReadTime) {
       Cast->Operands = {Function.Body[0].StoreVal};
       Function.Body[0].StoreVal = Cast;
     }
+    if (Mutation >= 13) {
+      HighStmt Anchor;
+      Anchor.Addr = 0x1050;
+      if (Mutation == 14)
+        Anchor.CallExpr = HighExpr::makeCall("unknown", 0x1550, {});
+      if (Mutation == 15)
+        Anchor.GotoTarget = 0x1000;
+      if (Mutation == 16)
+        Anchor.Body.push_back(Store(16, 0x2040, 8));
+      if (Mutation == 17)
+        Anchor.MemoryOrdering = NdMemoryOrdering::Acquire;
+      Function.Body.insert(Function.Body.begin() + 2, Anchor);
+    }
     EXPECT_EQ(sdk::objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
                                        &Function),
-              Mutation == 0 || Mutation == 11);
+              Mutation == 0 || Mutation == 11 || Mutation == 13);
   }
 }
 
@@ -737,11 +751,44 @@ TEST(ObjCSentinelCalls, EmittedVariadicCallsExecuteAgainstFoundation) {
     Return.Kind = StmtKind::Return;
     Return.RetVal = expression(*Hint);
     Function.Body = {Return};
+    if (Count) {
+      Function.FrameSize = 32;
+      MedVar Stack;
+      Stack.Kind = MedVar::Reg;
+      Stack.RegOff = a64reg::SP;
+      Stack.Size = 8;
+      Stack.TheArch = Arch::AArch64;
+      const auto Word = NdType::makeInt(8, false);
+      auto SP = HighExpr::makeVar(Stack, Word);
+      for (unsigned I = 0; I < 2; ++I) {
+        auto Address = HighExpr::makeBinop(NdOp::INT_SUB, SP,
+                                           HighExpr::makeConst(16 - I * 8, 8));
+        HighStmt Store;
+        Store.Kind = StmtKind::Store;
+        Store.StoreAddr = Address;
+        Store.StoreVal = Return.RetVal->Operands[Count + 1 + I];
+        Function.Body.insert(Function.Body.end() - 1, Store);
+        Return.RetVal->Operands[Count + 1 + I] =
+            HighExpr::makeLoad(Address, Word);
+      }
+    }
     auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
     EXPECT_EQ(Bound.ConstantStrings.size(), Count);
     Strings.insert(Bound.ConstantStrings.begin(), Bound.ConstantStrings.end());
-    ASSERT_TRUE(
-        sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal, F.Image, {}));
+    const auto ValidCall = [&] {
+      return sdk::objcSourceCallBound(*Bound.Function.Body.back().RetVal,
+                                      F.Image, {}, nullptr, nullptr,
+                                      &Bound.Function);
+    };
+    ASSERT_TRUE(ValidCall());
+    if (Count) {
+      ASSERT_TRUE(
+          forwardBoundPrivateFrameCopies(Bound.Function, Arch::AArch64));
+      EXPECT_TRUE(
+          std::any_of(Bound.Function.Body.begin(), Bound.Function.Body.end(),
+                      [](const auto &S) { return S.Kind == StmtKind::Nop; }));
+      ASSERT_TRUE(ValidCall());
+    }
     Functions.push_back(std::move(Bound.Function));
   }
   std::string C;
