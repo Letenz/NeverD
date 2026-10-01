@@ -36,6 +36,11 @@ add_neverd_unittest(NeverDProjectionCacheTests
 target_include_directories(NeverDProjectionCacheTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDMemoryLifecycleTests
+  MemoryLifecycleTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDExecutionSessionTests
   ExecutionSessionTests.cpp
   ImageMappingTests.cpp
@@ -177,6 +182,7 @@ add_neverd_unittest(NeverDRunControlTests
   NativeEntryTests.cpp
   WhpEntryControlTests.cpp
   WhpXsaveTests.cpp
+  WhpMemoryTests.cpp
   MachineRunControlTests.cpp
   TIMEOUT 10
   LINK_COMPONENTS EmulationCPU)
@@ -244,7 +250,6 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_neverd_unittest(NeverDCPUEmulationTests
     CPUArchitectureTests.cpp
     ExecutionExitTests.cpp
-    MemoryLifecycleTests.cpp
     AArch64ProjectionTests.cpp
     LINK_COMPONENTS EmulationCPU
     LINK_LIBS unicorn)

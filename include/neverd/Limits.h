@@ -325,6 +325,10 @@ constexpr int kMaxModuloDecompDepth = 24;
 /// subtract.
 constexpr int kMaxStackPtrTraceDepth = 24;
 
+/// Most pure statements in a block that a jump to it may copy in place of
+/// the jump when the block ends by jumping forward.
+constexpr size_t kMaxJumpTailStatements = 4;
+
 /// Most decision blocks one compare-tree switch may absorb.  The binary
 /// search behind the largest sparse kernel switch stays well below this.
 constexpr size_t kMaxCompareTreeBlocks = 512;

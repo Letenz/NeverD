@@ -835,6 +835,10 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `NeverDX64FPTests` 检查全部 79 个启动状态损坏位置，并在原生传输上执行独立汇编的 `X64ProbeCases.def` 指令，验证单一时限及来宾 RAM 不变。`NeverDProjectionCacheTests` 覆盖调用者切换、ISA 顺序、页表根历史、权限/监控变体、映射代次、地址空间身份及失败重建。`NeverDRunControlTests` 中的 `WhpXsaveTests.cpp` 检查新旧 API 数据包、所有 TOP、大小边界和失败时状态不变；内存协议测试不能替代 WHP 原生证据。不可用的原生传输明确跳过。
 
+`NeverDMemoryLifecycleTests` 独立于 Unicorn 构建，也覆盖仅启用原生后端的配置。禁用 Unicorn 时，专用的软件投影/设备用例明确跳过；匹配主机的共享 CPU 用例仍会注册。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 个用例隔离原生内存 API：单页/投影大小的后备内存、共享/独立分配、未触页/已驻留字节，以及存在/不存在第一个虚拟处理器。每个用例映射两个同时存在的分区，销毁一个，再检查剩余映射。真实映射错误保留 HRESULT 并使测试失败；这是内存 API 证据，不是指令执行证明。
+
+现有 `ci.yml` 在 Windows x64 runner 上提供显式选择的 `native_cpu_only` 手动模式。`NativeCPUTests.def` 选择九个测试目标；`run_native_cpu_ci.py` 先构建它们，再运行筛选后的 CTest，并保存清单、JUnit、日志和摘要。共享 CI 解析器区分通过、失败、跳过、禁用和未运行结果。每个声明的 WHP 原生映射用例都必须被发现并执行；缺失或跳过原生证据会使聚焦任务失败。默认的 LLVM 源码构建 CI 保持原样。协议测试和编译不能替代 WHP 或 ARM64 原生工作负载验证。
+
 `NeverDAArch64StateTests` 验证每个标量字段、每个向量的两个字、特权级改变、浮点指令未执行及传输错误诊断的保留。`NeverDAArch64FPTests` 在两种特权级的真实传输上运行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用独立汇编的 `AArch64ProbeCases.def` 原始指令。测试把这些与 PC 无关的指令迁到客户代码，保持监控页仅供特权级访问。Unicorn 执行和原生后端的明确跳过不能替代 ARM64 原生启动证据。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
