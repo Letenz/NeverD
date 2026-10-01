@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64GeneralState.h"
+#include "../../arch/aarch64/AArch64State.h"
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"

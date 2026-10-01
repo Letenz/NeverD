@@ -3614,8 +3614,8 @@
         },
         {
           "runner": "gtest",
-          "target": "NeverDAArch64GeneralStateTests",
-          "source": "unittests/emulation/AArch64GeneralStateTests.cpp",
+          "target": "NeverDAArch64StateTests",
+          "source": "unittests/emulation/AArch64StateTests.cpp",
           "filter": "*/AArch64CompleteState.EveryScalarAndVectorFailureRetainsCompleteInput/*",
           "platforms": [
             "darwin",

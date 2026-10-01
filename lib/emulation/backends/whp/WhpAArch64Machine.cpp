@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64GeneralState.h"
+#include "../../arch/aarch64/AArch64State.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \

@@ -1,4 +1,4 @@
-//===- AArch64GeneralStateCases.def - Transactional integer state fixtures ===//
+//===- AArch64StateCases.def - Complete architectural state fixtures ===//
 //
 // NeverD Decompiler
 //
