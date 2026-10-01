@@ -81,3 +81,19 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 ## 完全な x87 状態
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
+
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
+
+ARM64 のネイティブ整数状態の取得は ISA 層で統一します。`AArch64GeneralState.def` は X0–X30、SP、PC、NZCV、TPIDR_EL0 を列挙し、`captureAArch64GeneralState` は全読み取りを一時保存してから NZCV を正規化し、完全な結果を一度に公開します。KVM と WHP がこの関数を共有します。読み取り失敗時は全入力状態を保持し、特権、ベクトル、未転送のレジスタは変更しません。ネイティブ FP/SIMD 命令の許可は追加しません。
+
+checked ARM64 のスカラー／ペア RAM アクセスは、EL0 と EL1 で別々の物理領域やエイリアスのページ境界を越えられます。ISA がオペランド範囲を計算し、共有アドレス空間が実行前に各ページを検証して最初の失敗部分を報告します。`RAMTransaction` は CPU ステップ全体の成功後に宣言された物理バイトを確定します。障害や observer の停止時は RAM、レジスター、アドレス writeback を保持します。`NeverDAArch64MemoryTests` は `AArch64CrossPageCases.def` の組み立て済み命令を使います。FP/SIMD や Windows ARM64 ドライバーローダーの追加ではありません。
+
+KVM x64/ARM64 は `KvmRunControl` を通じ、状態準備、`KVM_RUN` へのエントリ、終了状態の取得を同じ専用 vCPU スレッドで行います。準備は `EINTR` 再試行ループの前に一度だけ行い、取得はホストエントリが成功して戻った場合にのみ行います。借用した転送コールバックはエントリ完了の確認まで有効です。ISA デコード、RAM トランザクション、OS ポリシー、実行オブザーバーは呼び出し側スレッドに残ります。準備失敗時はエントリと取得を省略し、取得失敗またはキャンセル時はゲスト状態を公開しません。 `KvmAArch64Machine.cpp` のアドレス変換の保守実行、ゲストレジスターの準備、デバッグ設定、および 35 項目すべてのレジスター読み取りも、このワーカーで行います。保守とゲスト実行は一つの単一ステップ期限を共有し、呼び出し側は完全な取得の完了確認後にのみ `captureAArch64GeneralState` で状態を反映します。ARM64 のネイティブ実行の実機証拠は未取得です。
+
+KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジスタと完全な FP/SSE 状態を直前に完了確認したデバッグ終了状態と比較し、変更された入力を再設定します。ホスト側の書き込みとコンテキスト復元も比較対象です。例外、キャンセル、失敗は再利用を無効にします。単一ステップの設定と実際の汎用・FP 状態の読み取りは各命令で行います。
+
+ハードウェア実行だけでは、処理全体の待ち時間が短くなるとは限りません。現在のネイティブ実行は命令ごとに許可判定、観測、状態転送と VM 終了を行います。同じ元のイメージとシナリオを同じ命令・イベント予算で比較し、時間と結果の一致を併記してください。CLI の待ち時間には起動とロードも含めます。
+
+Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。

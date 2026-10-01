@@ -4612,6 +4612,114 @@ TEST(ObjCCallHints, StackFailureRetainsItsTerminalRuntimeCall) {
   }
 }
 
+TEST(ObjCCallHints, UnwindResumePreservesExceptionPointerAndTerminalABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Provider :
+         {"/usr/lib/libSystem.B.dylib", "/usr/lib/system/libunwind.dylib"}) {
+      for (bool ThroughSlot : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Provider);
+        SCOPED_TRACE(ThroughSlot);
+        auto Image = runtimeImage("__Unwind_Resume", Architecture);
+        Image.DyldBindSlots[0x2180] = {"__Unwind_Resume", 0, Provider, false};
+        Image.DynInfo.NeededLibs.push_back(Provider);
+        auto Low = caller(Architecture);
+        if (ThroughSlot) {
+          Low.Blocks[0].Ops.front().Opcode = NdOp::INDIR_CALL;
+          Low.Blocks[0].Ops.front().Inputs[0] = NdVar::cst(0x2180, 8);
+        }
+        const auto Med = convert(Image, Low);
+        ASSERT_EQ(Med.CallInfos.size(), 1U);
+        const auto &Info = Med.CallInfos.front();
+        ASSERT_TRUE(Info.SourceCallHint);
+        const auto &Hint = *Info.SourceCallHint;
+        EXPECT_EQ(Hint.TargetName, "_Unwind_Resume");
+        EXPECT_TRUE(Hint.DoesNotReturn);
+        EXPECT_FALSE(Hint.WeakImport);
+        EXPECT_EQ(Hint.Signature.Origin,
+                  SourceFunctionTypeHint::OriginKind::DarwinSDK);
+        EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+        ASSERT_EQ(Hint.Signature.Parameters.size(), 1U);
+        EXPECT_EQ(Hint.Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        ASSERT_EQ(Info.Args.size(), 1U);
+        EXPECT_EQ(Info.Args[0].RegOff,
+                  getTargetRegInfo(Architecture).IntParamRegs[0]);
+        EXPECT_EQ(Info.Args[0].Size, 8U);
+        std::string Diagnostic;
+        EXPECT_TRUE(validateSourceABI(Hint.Signature, Diagnostic))
+            << Diagnostic;
+        MedToHighConverter Converter;
+        Converter.setBinaryImage(&Image);
+        const auto High = Converter.convert(Med, Architecture);
+        const auto *Call = sourceCall(High);
+        ASSERT_NE(Call, nullptr);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        EXPECT_NE(Source.find("neverd_darwin__Unwind_Resume("),
+                  std::string::npos)
+            << Source;
+        EXPECT_NE(Source.find("__asm__(\"__Unwind_Resume\")"),
+                  std::string::npos)
+            << Source;
+        EXPECT_NE(Source.find("__attribute__((noreturn)) void"),
+                  std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("os/lock.h"), std::string::npos);
+        auto Forged = *Call;
+        auto ForgedHint = std::make_shared<SourceCallTypeHint>(Hint);
+        ForgedHint->DoesNotReturn = false;
+        Forged.SourceCallHint = ForgedHint;
+        EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+        ForgedHint->DoesNotReturn = true;
+        ForgedHint->Signature.ReturnType = NdType::makeInt(8);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, UnwindResumeRequiresExactStrongProviderEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("__Unwind_Resume", Architecture);
+    Image.DyldBindSlots[0x2180] = {"__Unwind_Resume", 0,
+                                   "/usr/lib/libSystem.B.dylib", false};
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libSystem.B.dylib");
+    ASSERT_TRUE(darwinRuntimeSourceCallHint(Image, 0x2180));
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots.clear();
+      else if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].WeakImport = true;
+      else if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].Addend = 4;
+      else if (Mutation == 3)
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/libunwind.dylib";
+      else if (Mutation == 4)
+        Changed.DyldBindSlots[0x2180].Module.clear();
+      else if (Mutation == 5)
+        Changed.DynInfo.NeededLibs.clear();
+      else if (Mutation == 6)
+        Changed.ImportPtrSlots[0x2180] = "__Unwind_Resume_or_Rethrow";
+      else if (Mutation == 7)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      else if (Mutation == 8)
+        Changed.IsRelocatable = true;
+      else if (Mutation == 9)
+        Changed.Bits = Bitness::Bits32;
+      else
+        Changed.Format = BinaryFormat::ELF;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+    }
+  }
+}
+
 TEST(ObjCCallHints, StackGuardAddressRequiresExactRuntimeIdentity) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = runtimeImage("___stack_chk_guard", Architecture);

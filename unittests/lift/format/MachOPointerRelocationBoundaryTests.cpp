@@ -139,6 +139,14 @@ public:
     return Emitter.phiIncomingIsRecurrent(Phi, PredId, Arg);
   }
 
+  static bool authenticatedModelZero(MedLLVMEmitter &Emitter,
+                                     const MedFunc &Func,
+                                     const BinaryImage &Image,
+                                     const MedVar &Value) {
+    prepareFreshAnalysis(Emitter, Func, Image, Image.Arch, Image.Format);
+    return Emitter.valueIsAuthenticatedModelZero(Value);
+  }
+
   static bool selfRecurrent(MedLLVMEmitter &Emitter, const PhiNode &Phi) {
     return Emitter.phiIsSelfRecurrent(Phi);
   }
@@ -150,6 +158,14 @@ public:
     Emitter.TargetArch = TargetArch;
     Emitter.TargetFormat = Format;
     Emitter.CurMedFunc = &Func;
+  }
+
+  static bool frameReloadIsInitializedOnAllPaths(MedLLVMEmitter &Emitter,
+                                                 const MedFunc &Func,
+                                                 const BinaryImage &Image,
+                                                 const MedOp &Load) {
+    prepareFreshAnalysis(Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
+    return Emitter.frameReloadHasAllPathInitializer(Load);
   }
 
   static bool recoversAbsoluteDataPointerIdentity(MedLLVMEmitter &Emitter,
@@ -504,6 +520,73 @@ struct AuthenticatedTargetLoadFixture {
   }
 };
 
+TEST(MedLLVMFrameReloadInitialization, NarrowStoresCoverAPointerWidthReload) {
+  // `mov [esp-8], bl; mov [esp-7], cl; mov [esp-6], dl; mov [esp-5], al;
+  // mov eax, [esp-8]`: bytes written one at a time and moved as a word.  The
+  // dword reload is initialized only when every one of its bytes is.
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (unsigned Stored : {4u, 3u}) {
+    auto value = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = Kind;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = Kind == MedVar::Reg ? 0 : 1;
+      V.Size = Size;
+      return V;
+    };
+    MedFunc Func;
+    Func.Entry = CallerVA;
+    Func.Name = "byte_initialized_dword";
+    Func.FrameSize = 16;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = CallerVA;
+    MedVar SP = value(MedVar::Reg, 100, TRI.PointerSize);
+    SP.RegOff = TRI.StackPointer;
+    auto slot = [&](int Id, int64_t Offset) {
+      MedVar Address = value(MedVar::Temp, Id, TRI.PointerSize);
+      MedOp Form;
+      Form.Opcode = NdOp::INT_ADD;
+      Form.Output = Address;
+      Form.addInput(SP);
+      Form.addInput(
+          MedVar::makeConst(static_cast<uint64_t>(Offset), TRI.PointerSize));
+      Block.Ops.push_back(Form);
+      return Address;
+    };
+    for (unsigned Byte = 0; Byte < Stored; ++Byte) {
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(slot(static_cast<int>(Byte) + 1, -8 + Byte));
+      Store.addInput(MedVar::makeConst(Byte + 1, 1));
+      Block.Ops.push_back(Store);
+    }
+    MedOp Reload;
+    Reload.Opcode = NdOp::LOAD;
+    Reload.Output = value(MedVar::Temp, 10, TRI.PointerSize);
+    Reload.addInput(slot(9, -8));
+    Block.Ops.push_back(Reload);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Reload.Output);
+    Block.Ops.push_back(Return);
+    Block.EndAddr = CallerVA + 0x20;
+    Func.Blocks.push_back(std::move(Block));
+
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    const MedOp &Load =
+        Func.Blocks.front().Ops[Func.Blocks.front().Ops.size() - 2];
+    ASSERT_EQ(Load.Opcode, NdOp::LOAD);
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::frameReloadIsInitializedOnAllPaths(
+                  Emitter, Func, Image, Load),
+              Stored == 4)
+        << Stored << " of 4 bytes stored";
+  }
+}
+
 TEST(MedLLVMRecoveredTargetLoadBoundary,
      RequiresExactOccurrenceAndRejectsObservableSideUses) {
   {
@@ -680,6 +763,96 @@ TEST(MedLLVMRecoveredTargetLoadBoundary,
     MedLLVMEmitter Emitter;
     EXPECT_FALSE(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
         Emitter, Fixture.Func, Fixture.Image, Fixture.load()));
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
+     SpilledTargetReachesTheSwitchOnlyThroughExactReloads) {
+  // `mov [rsp-16], rax` ... `jmp [rsp-16]`: register pressure spills the
+  // loaded target and the dispatch reloads it.  The exact reload continues
+  // the switch-only closure; any other observer of the slot vetoes it.
+  enum class Observer { None, EscapingSlot, OverlappingRead, FrameIntrinsic };
+  for (Observer Kind : {Observer::None, Observer::EscapingSlot,
+                        Observer::OverlappingRead, Observer::FrameIntrinsic}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    AuthenticatedTargetLoadFixture Fixture;
+    const auto &TRI = getTargetRegInfo(Arch::X64);
+    int NextId = 10;
+    auto temp = [&](uint16_t Size) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.TheArch = Arch::X64;
+      V.Id = NextId++;
+      V.SSAVer = 1;
+      V.Size = Size;
+      return V;
+    };
+    MedVar SP;
+    SP.Kind = MedVar::Reg;
+    SP.TheArch = Arch::X64;
+    SP.Id = 100;
+    SP.Size = TRI.PointerSize;
+    SP.RegOff = TRI.StackPointer;
+    std::vector<MedOp> Ops;
+    auto slot = [&](int64_t Offset) {
+      MedOp Form;
+      Form.Opcode = NdOp::INT_ADD;
+      Form.Output = temp(TRI.PointerSize);
+      Form.addInput(SP);
+      Form.addInput(
+          MedVar::makeConst(static_cast<uint64_t>(Offset), TRI.PointerSize));
+      Ops.push_back(Form);
+      return Form.Output;
+    };
+
+    const MedVar Target = Fixture.load().Output;
+    MedOp Spill;
+    Spill.Opcode = NdOp::STORE;
+    Spill.addInput(slot(-16));
+    Spill.addInput(Target);
+    Ops.push_back(Spill);
+    MedVar BranchTarget = Target;
+    if (Kind == Observer::EscapingSlot) {
+      // The dispatch uses the register, but the slot's address reaches
+      // memory, so something other than the switch can read the target.
+      MedOp Leak;
+      Leak.Opcode = NdOp::STORE;
+      Leak.addInput(MedVar::makeConst(0x4000, 8));
+      Leak.addInput(slot(-16));
+      Ops.push_back(Leak);
+    } else {
+      if (Kind == Observer::OverlappingRead) {
+        MedOp Peek;
+        Peek.Opcode = NdOp::LOAD;
+        Peek.Output = temp(4);
+        Peek.addInput(slot(-12));
+        Ops.push_back(Peek);
+      } else if (Kind == Observer::FrameIntrinsic) {
+        MedOp Probe;
+        Probe.Opcode = NdOp::INTRINSIC;
+        Probe.Output = temp(1);
+        Probe.addInput(
+            MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Lodsb), 2,
+                              ConstantAddressProvenance::Scalar));
+        Probe.addInput(slot(-32));
+        Ops.push_back(Probe);
+      }
+      MedOp Reload;
+      Reload.Opcode = NdOp::LOAD;
+      Reload.Output = temp(8);
+      Reload.addInput(slot(-16));
+      Ops.push_back(Reload);
+      BranchTarget = Reload.Output;
+    }
+    std::vector<MedOp> &BlockOps = Fixture.Func.Blocks.front().Ops;
+    BlockOps.insert(std::next(BlockOps.begin()), Ops.begin(), Ops.end());
+    ASSERT_EQ(BlockOps.back().Opcode, NdOp::INDIR_BR);
+    BlockOps.back().Inputs[0] = BranchTarget;
+
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+                  Emitter, Fixture.Func, Fixture.Image, Fixture.load()),
+              Kind == Observer::None);
   }
 }
 
@@ -2897,10 +3070,10 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
     LowOp Store;
     Store.Opcode = NdOp::STORE;
     Store.Addr = Addr;
-    Store.addInput(NdVar::address(
-        RelocationFoldObservationVA +
-            static_cast<va_t>(NextObservation++) * PointerSize,
-        PointerSize));
+    Store.addInput(
+        NdVar::address(RelocationFoldObservationVA +
+                           static_cast<va_t>(NextObservation++) * PointerSize,
+                       PointerSize));
     Store.addInput(Value);
     Block.Ops.push_back(std::move(Store));
   };
@@ -12544,6 +12717,212 @@ TEST(LLVMDataPointerInvariantBoundary,
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
+     I386GOTBaseReloadedFromItsSpillSlotIsTheModelZero) {
+  // `mov [esp-8], ebx` ... `mov ecx, [esp-8]`: emission stores the certified
+  // GOT base as zero, so the exact reload reads zero back.  A slot written
+  // with another value, or a base without the certificate, stays ordinary.
+  enum class Case { Exact, Overwritten, Uncertified };
+  for (Case Kind : {Case::Exact, Case::Overwritten, Case::Uncertified}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    const auto &TRI = getTargetRegInfo(Arch::X86);
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::ELF;
+    Image.Bits = Bitness::Bits32;
+    auto value = [](MedVar::VarKind Kind, int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = Kind;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = Kind == MedVar::Reg ? 0 : 1;
+      V.Size = Size;
+      return V;
+    };
+    MedFunc Func;
+    Func.Name = "reloaded_got_base";
+    Func.Entry = 0x100;
+    Func.ReturnType = NdType::makeVoid();
+    Func.DoesNotReturn = true;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.EndAddr = Func.Entry + 0x40;
+    MedVar SP = value(MedVar::Reg, 100, TRI.PointerSize);
+    SP.RegOff = TRI.StackPointer;
+    int NextId = 10;
+    auto append = [&](NdOp Opcode, const MedVar &Output,
+                      std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const MedVar &Input : Inputs)
+        Op.addInput(Input);
+      Block.Ops.push_back(std::move(Op));
+      return Output;
+    };
+    auto slot = [&]() {
+      return append(NdOp::INT_ADD, value(MedVar::Temp, NextId++, 4),
+                    {SP, MedVar::makeConst(static_cast<uint64_t>(-8), 4)});
+    };
+    const MedVar Input = value(MedVar::Temp, 1, 4);
+    const MedVar GOT = append(
+        NdOp::INT_ADD, value(MedVar::Temp, 2, 4),
+        {Input, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)});
+    append(NdOp::STORE, MedVar{}, {slot(), GOT});
+    if (Kind == Case::Overwritten)
+      append(NdOp::STORE, MedVar{}, {slot(), Input});
+    const MedVar Reloaded =
+        append(NdOp::LOAD, value(MedVar::Temp, 3, 4), {slot()});
+    Func.Blocks.push_back(std::move(Block));
+    Func.ScalarAddressModels.push_back(
+        {RelocatedInstructionScalarModelOccurrence::ModelKind::
+             I386ELFGOTBaseZero,
+         Kind == Case::Uncertified ? Input : GOT});
+
+    MedLLVMEmitter Emitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::authenticatedModelZero(
+                  Emitter, Func, Image, Reloaded),
+              Kind == Case::Exact);
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     I386GOTRelativeResetArmsRematerializeTheOuterBase) {
+  // `p = cond ? GOT+table : p+1` merged per switch arm: each arm PHI resets
+  // to the GOT-relative table base or continues the shared recurrence.  The
+  // certified GOT base is emitted as zero and the i64 address temporary is
+  // read back through its low bytes, so both resets name the same base.
+  enum class Case { Exact, MissingModel, OtherBase, SignExtended };
+  for (Case Kind :
+       {Case::Exact, Case::MissingModel, Case::OtherBase, Case::SignExtended}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    constexpr uint64_t Table = 0x1000;
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::ELF;
+    Image.Bits = Bitness::Bits32;
+    Segment Data;
+    Data.Name = ".rodata";
+    Data.VA = Table;
+    Data.Size = 32;
+    Data.FileSz = Data.Size;
+    Data.Data.resize(Data.Size, 3);
+    Data.Flags = SegmentFlags::Readable;
+    Image.Segments.push_back(std::move(Data));
+
+    auto temp = [](int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.TheArch = Arch::X86;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = Size;
+      return V;
+    };
+    MedVar Selector;
+    Selector.Kind = MedVar::Param;
+    Selector.TheArch = Arch::X86;
+    Selector.Id = 0;
+    Selector.Size = 4;
+    const MedVar Input = temp(1, 4);
+    const MedVar GOT = temp(2, 4);
+    auto op = [](NdOp Opcode, const MedVar &Output,
+                 std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const MedVar &Value : Inputs)
+        Op.addInput(Value);
+      return Op;
+    };
+    auto branch = [&](NdOp Opcode, va_t Target) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.addInput(MedVar::makeConst(Target, 4));
+      if (Opcode == NdOp::COND_BR)
+        Op.addInput(Selector);
+      return Op;
+    };
+    auto block = [](int Id, va_t Start, std::vector<int> Preds,
+                    std::vector<int> Succs) {
+      MedBlock Block;
+      Block.Id = Id;
+      Block.StartAddr = Start;
+      Block.EndAddr = Start + 0x10;
+      Block.Preds = std::move(Preds);
+      Block.Succs = std::move(Succs);
+      return Block;
+    };
+
+    MedFunc Func;
+    Func.Name = "got_relative_reset_recurrence";
+    Func.Entry = 0x100;
+    Func.ReturnType = NdType::makeVoid();
+    Func.DoesNotReturn = true;
+    Func.Params.push_back(Selector);
+    MedBlock Entry = block(0, 0x100, {}, {2, 3});
+    MedBlock Latch = block(1, 0x120, {2, 3}, {2, 3});
+    MedBlock ArmA = block(2, 0x140, {0, 1}, {1});
+    MedBlock ArmB = block(3, 0x150, {0, 1}, {1});
+
+    // Materialize `GOT + Offset` through the i64 address temporary.
+    int NextId = 10;
+    auto gotRelative = [&](uint64_t Offset, NdOp Widen) {
+      const MedVar Sum = temp(NextId++, 4);
+      const MedVar Wide = temp(NextId++, 8);
+      const MedVar Pointer = temp(NextId++, 4);
+      Entry.Ops.push_back(
+          op(NdOp::INT_ADD, Sum,
+             {GOT, MedVar::makeConst(Offset, 4,
+                                     ConstantAddressProvenance::DataAddress)}));
+      Entry.Ops.push_back(op(Widen, Wide, {Sum}));
+      Entry.Ops.push_back(
+          op(NdOp::SUBBYTES, Pointer, {Wide, MedVar::makeConst(0, 4)}));
+      return Pointer;
+    };
+    Entry.Ops.push_back(op(
+        NdOp::INT_ADD, GOT,
+        {Input, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)}));
+    const MedVar Init = gotRelative(Table, NdOp::INT_ZEXT);
+    MedVar Reset = Init;
+    if (Kind == Case::OtherBase)
+      Reset = gotRelative(Table + 8, NdOp::INT_ZEXT);
+    if (Kind == Case::SignExtended)
+      Reset = gotRelative(Table, NdOp::INT_SEXT);
+    Entry.Ops.push_back(branch(NdOp::COND_BR, ArmB.StartAddr));
+
+    const MedVar Outer = temp(40, 4);
+    const MedVar Next = temp(41, 4);
+    const MedVar CarriedA = temp(42, 4);
+    const MedVar CarriedB = temp(43, 4);
+    Latch.Phis.push_back({Outer, {{2, CarriedA}, {3, CarriedB}}});
+    Latch.Ops.push_back(op(
+        NdOp::INT_ADD, Next,
+        {Outer, MedVar::makeConst(1, 4, ConstantAddressProvenance::Scalar)}));
+    Latch.Ops.push_back(branch(NdOp::COND_BR, ArmB.StartAddr));
+    ArmA.Phis.push_back({CarriedA, {{0, Init}, {1, Next}}});
+    ArmA.Ops.push_back(branch(NdOp::BRANCH, Latch.StartAddr));
+    ArmB.Phis.push_back({CarriedB, {{0, Reset}, {1, Next}}});
+    ArmB.Ops.push_back(branch(NdOp::BRANCH, Latch.StartAddr));
+    Func.Blocks = {std::move(Entry), std::move(Latch), std::move(ArmA),
+                   std::move(ArmB)};
+    if (Kind != Case::MissingModel)
+      Func.ScalarAddressModels.push_back(
+          {RelocatedInstructionScalarModelOccurrence::ModelKind::
+               I386ELFGOTBaseZero,
+           GOT});
+
+    MedLLVMEmitter Emitter;
+    MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
+        Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
+    const PhiNode &Phi = Func.Blocks[2].Phis.front();
+    EXPECT_EQ(
+        MedLLVMProvenanceTestPeer::incomingIsRecurrent(Emitter, Phi, 1, Next),
+        Kind == Case::Exact);
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
      SmallScalarAndMaskDoesNotEraseUnstableAddressOffsetLineage) {
   BinaryImage Image = makeSpilledConstTableImage(Arch::X64, BinaryFormat::ELF);
   auto StableAnd = [&](const MedVar &Left, const MedVar &Right) {
@@ -18152,8 +18531,7 @@ TEST(LowToMedRelocationInvariantBoundary,
       ASSERT_NE(CompletedPageAddress, nullptr);
       ASSERT_TRUE(CompletedPageAddress->isConst());
       EXPECT_EQ(CompletedPageAddress->ConstVal, 0x248U);
-      EXPECT_TRUE(
-          isExactAddressProvenance(CompletedPageAddress->Provenance));
+      EXPECT_TRUE(isExactAddressProvenance(CompletedPageAddress->Provenance));
     }
 }
 

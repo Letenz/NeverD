@@ -8,10 +8,12 @@
 #include "JSONText.h"
 #include "NativePhaseTrace.h"
 #include "ObjCBlockSources.h"
+#include "ObjCCFunctionParameterSources.h"
 #include "ObjCForwardedInitializerSources.h"
 #include "ObjCImmutableStringCallbackSources.h"
 #include "ObjCMetadataFactorySources.h"
 #include "ObjCNativeDependencies.h"
+#include "ObjCResumeSource.h"
 #include "ObjCSourceBindings.h"
 #include "ObjCSourceInputs.h"
 #include "ObjCSourceProjection.h"
@@ -246,6 +248,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
+    std::set<va_t> ResumeOnlyProjections;
     const auto SuperGetterPlan = discoverObjCSuperGetterSources(S->Img, Result);
     std::set<va_t> SuperGetterProjections;
     const auto MetadataFactoryPlan =
@@ -268,6 +271,10 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
               S->Img, BlockBinding.Function))
         (void)omitProvenObjCSynchronizedLandingPad(BlockBinding.Function,
                                                    *Cleanup);
+      if (const auto Resume =
+              proveObjCResumeOnlySource(S->Img, BlockBinding.Function);
+          Resume && omitProvenObjCResumeOnlyPad(BlockBinding.Function, *Resume))
+        ResumeOnlyProjections.insert(Entry);
       auto Inputs =
           snapshotObjCEntryInputs(BlockBinding.Function, S->Img, Functions);
       auto OnceBinding = bindSwiftOnceSourceReferences(
@@ -378,6 +385,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                          &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
+                     objCCFunctionParameterSourceCallBound(
+                         Expression, S->Img, Result, Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
@@ -485,6 +494,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                          &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
+                     objCCFunctionParameterSourceCallBound(
+                         Expression, S->Img, Result, Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
@@ -583,6 +594,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                      &BlockPlan.CaptureReceivers) ||
                  objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                  Projection.Function) ||
+                 objCCFunctionParameterSourceCallBound(
+                     Expression, S->Img, Result, Projection.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
                      Projection.Function, Functions) ||
@@ -886,6 +899,12 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                           Functions, SharedStorageFunctions);
       const bool Emitted = Emitter.emit(Unit, SourceOS, COptions);
       SourceOS << BlockHelpers << IdentityHelpers << StorageHelpers;
+      const bool RequiresResumeUnwind =
+          std::any_of(Included.begin(), Included.end(), [&](va_t Entry) {
+            return ResumeOnlyProjections.count(Entry) != 0;
+          });
+      if (RequiresResumeUnwind)
+        Source.insert(0, ObjCResumeSourceRequirements);
       const auto CleanupSource =
           Emitted && SynchronizedCleanup
               ? addObjCSynchronizedReceiverCleanup(Source, *SynchronizedCleanup)
@@ -931,7 +950,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Row["return_type"] = typeToC(Projection.ReturnType);
         Row["parameters"] = std::move(Parameters);
         Row["function_name"] = Projection.Name;
-        if (SynchronizedCleanup)
+        if (SynchronizedCleanup || RequiresResumeUnwind)
           Row["required_cflags"] = llvm::json::Array{"-fexceptions"};
         // Rendering and the text guard above remain publication checks in
         // both modes. Only retaining/encoding the successful body is optional.

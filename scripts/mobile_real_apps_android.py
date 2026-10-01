@@ -482,9 +482,8 @@ def recover_and_compile(ctx, apk, inventory):
     output = ctx.work / "recovered"
     artifacts, report, qualified, evidence = None, None, False, []
     try:
-        env = {"NEVERD_JADX": str(ctx.work / "external-decompiler-must-not-run")}
         cli = ctx.command("android-neverd-mobile", [str(ctx.neverd), "mobile", str(apk), "-o", str(output),
-                          "--timeout", str(ctx.timeout), "--json"], env=env, allow_failure=True)
+                          "--timeout", str(ctx.timeout), "--json"], allow_failure=True)
         if cli.returncode != 0:
             ctx.write_json("android-recovery-failure.json", {"returncode": cli.returncode,
                            "published_output": output.exists(), "independent_denominator_known": inventory is not None,

@@ -251,6 +251,33 @@ jobs:
         env:
           BUILD_PARALLEL: ${{ matrix.parallel }}
 
+      - name: Run emulation regressions
+        id: emulation
+        if: ${{ !cancelled() && steps.default_build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="$PWD/build-ci/emulation-focused"
+          cmake -E make_directory "$evidence"
+          ctest --test-dir build-ci/unittests/emulation \
+            --build-config Release --show-only=json-v1 > "$evidence/inventory.json"
+          ctest --test-dir build-ci/unittests/emulation \
+            --build-config Release --no-tests=error \
+            --parallel "$TEST_PARALLEL" --output-on-failure \
+            --output-junit "$evidence/results.xml" \
+            --output-log "$evidence/ctest.log"
+        env:
+          TEST_PARALLEL: ${{ matrix.parallel }}
+
+      - name: Upload emulation regression evidence
+        if: ${{ always() && steps.emulation.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulation-focused-${{ matrix.test_profile }}
+          path: build-ci/emulation-focused/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run and audit mobile native regressions
         if: ${{ !cancelled() && steps.default_build.outcome == 'success' }}
         shell: bash
@@ -603,7 +630,7 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.FloatingReturnPathsRequireCompleteDefinedLanes",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
-                  ("NativeSourceHints.FloatingParametersRequireBoundedScalarEntryBytes",
+                  ("NativeSourceHints.FloatingParametersRequireProvenEntryBytes",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.TypedRecordCallResultsDefineTheNativeReturnCarrier",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
@@ -1081,7 +1108,7 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SharedFrameworkReceiverHierarchyKeepsConflictingEvidence",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
-                  ("ObjCCallHints.ReceiverResultsKeepMessagePathsDistinctAtJoins",
+                  ("ObjCCallHints.ReceiverJoinsKeepEveryProofOfTheCommonDeclaredClass",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.ReceiverResultsRevalidatePropertyAndSDKDeclarations",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
@@ -1411,7 +1438,12 @@ jobs:
                   for item in records
               ]
 
-          name_regex = "^(" + "|".join(re.escape(item.name) for item in expected) + ")$"
+          # A regex of every expected name exceeds the Windows command-line
+          # limit, so pass the exact names through a file instead.
+          tests_file = evidence / "tests.txt"
+          tests_file.write_text(
+              "".join(item.name + "\n" for item in expected), encoding="utf-8"
+          )
           # CTest accepts any matching label. Select the owning aggregates;
           # additional labels remain part of each exact expected identity.
           owners = (
@@ -1425,7 +1457,7 @@ jobs:
           common = [
               "ctest", "--test-dir", "build-ci", "--build-config", "Release",
               "--label-regex", owner_regex,
-              "--tests-regex", name_regex,
+              "--tests-from-file", str(tests_file),
           ]
           discovery = common + ["--show-only=json-v1"]
           execution = common + [

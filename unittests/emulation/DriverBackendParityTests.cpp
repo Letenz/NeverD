@@ -56,21 +56,22 @@ llvm::json::Value observableResult(const DriverResult &Result) {
   return JSON;
 }
 
-using Parameter = std::tuple<Workload, ExecutionBackendKind, bool>;
+using Parameter =
+    std::tuple<Workload, ExecutionBackendKind, bool, ExecutionContract>;
 std::string parameterName(const testing::TestParamInfo<Parameter> &P) {
-  const auto &[Input, Backend, Rebase] = P.param;
+  const auto &[Input, Backend, Rebase, Contract] = P.param;
   return std::string(executionBackendName(Backend)) + Separator + Input.Name +
-         (Rebase ? RebaseSuffix : OriginalSuffix);
+         (Rebase ? RebaseSuffix : OriginalSuffix) +
+         (Contract == ExecutionContract::Legacy ? LegacySuffix : CheckedSuffix);
 }
 
 class DriverBackendParity : public testing::TestWithParam<Parameter> {};
 TEST_P(DriverBackendParity, OriginalImageAndScenarioPreserveObservableResults) {
-  const auto &[Input, Backend, Rebase] = GetParam();
+  const auto &[Input, Backend, Rebase, Contract] = GetParam();
   SCOPED_TRACE(Input.Name);
   if (!std::filesystem::is_regular_file(Input.Image))
     GTEST_SKIP() << UnavailableFixture;
-  auto Probe = createExecutionBackend(Backend, ExecutionContract::CheckedX64,
-                                      MemoryLimit);
+  auto Probe = createExecutionBackend(Backend, Contract, MemoryLimit);
   if (!Probe) {
     auto E = Probe.takeError();
     const bool Unavailable = E.isA<BackendUnavailableError>();
@@ -96,9 +97,15 @@ TEST_P(DriverBackendParity, OriginalImageAndScenarioPreserveObservableResults) {
   Options.TimeoutMilliseconds = TimeoutMilliseconds;
   if (Rebase)
     Options.LoadAddress = RebasedAddress;
+  const auto Software = llvm::cantFail(queryExecutionBackendBuild(
+      ExecutionBackendKind::Unicorn, GuestArchitecture::X64));
+  if (Software.Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Software.Reason;
+  Options.Backend = ExecutionBackendKind::Unicorn;
+  Options.Contract = ExecutionContract::Legacy;
   auto Expected = emulateDriver(Input.Image, Options);
   Options.Backend = Backend;
-  Options.Contract = ExecutionContract::CheckedX64;
+  Options.Contract = Contract;
   auto Actual = emulateDriver(Input.Image, Options);
   if (!Expected) {
     // Minimal fixed-address fixtures deliberately omit relocation records.
@@ -121,7 +128,9 @@ INSTANTIATE_TEST_SUITE_P(
                      testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
                                      ExecutionBackendKind::WHP),
-                     testing::Bool()),
+                     testing::Bool(),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64)),
     parameterName);
 } // namespace
 } // namespace neverd::emulation

@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, integratori e agent AI usano un solo motore — **`libneverd`** — tramite
 
 Formati di input, contratti host e limiti sono documentati nelle guide [EVM](evm.md) e [Solana SBF](sbf.md).
 
-La CLI sperimentale `neverd mobile app.apk -o recovered-app` recupera Java da APK (multidex), DEX e smali e genera `report.json`. Il motore predefinito è implementato in C++20 e non richiede Python, Java o JADX durante l’esecuzione. Né `NEVERD_JADX` né un eseguibile `jadx` nel PATH selezionano il motore esterno: serve un `--jadx PATH` esplicito. Non è previsto alcun ripiego automatico. Racchiudere tra virgolette i percorsi con spazi. La [guida Android](android.md) descrive input supportati, report e limiti di recupero.
+La CLI sperimentale `neverd mobile app.apk -o recovered-app` recupera Java da APK (multidex), DEX e smali e genera `report.json`. Il recupero Android usa esclusivamente il motore integrato di NeverD in C++20 e non richiede runtime Python o Java. Racchiudere tra virgolette i percorsi con spazi. La [guida Android](android.md) descrive input supportati, report e limiti di recupero.
 
 Il flusso iOS sperimentale `neverd mobile App.ipa -o recovered-ios` esporta C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` o Mach-O. Layout runtime, unità sorgente e omissioni per metodo rimangono espliciti; il codice generato non usa ponti verso il binario originale. Configurazione, copertura e ricompilazione indipendente sono nella [guida iOS](ios.md).
 
@@ -100,7 +100,7 @@ Il recupero dipende dai modelli di codice supportati; per copertura e limiti con
 
 L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
 
-I profili checked usano KVM su Linux e WHP su Windows con ISA corrispondente, e Unicorn tra ISA diverse. La validazione nativa ARM64/WHP resta da eseguire. `driver-strict` usa attualmente Unicorn; il percorso driver KVM/WHP richiede `checked-x64-v1`. Un backend esplicito non disponibile fallisce chiaramente. RAM condivisa, alias, scritture per fasi, operazioni atomiche scalari, eccezioni tipizzate e stato FP/SSE x64 completo sono implementati nei contratti ISA/OS documentati. Ciò non garantisce driver arbitrari o ambienti Android/Darwin implementati.
+`driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. Mancano prove native ARM64/WHP; non è stabilita la compatibilità universale dei driver o Android/Darwin.
 
 <!-- i18n-section: how-it-works -->
 

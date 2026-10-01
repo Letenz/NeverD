@@ -261,8 +261,17 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       seedReachingStackPointer(Blk, static_cast<int>(I) - 1);
       seedParamWrites(Blk.Ops, static_cast<int>(I) - 1);
       // IP-map / EH splits often isolate the CALL. `lea r8; mov edx; lea rcx`
-      // then sit in the predecessor and must stay live as call setup.
-      if (I != 0)
+      // then sit in the predecessor and must stay live as call setup.  A
+      // conditional choice between two calls does the same: each arm may add
+      // `mov edx, eax` before its call while the shared `lea ecx` stays in
+      // the dominating block.  Unless another call precedes this one in its
+      // block, the predecessors' trailing parameter writes are its setup.
+      if (std::any_of(Blk.Ops.begin(), Blk.Ops.begin() + I,
+                      [](const MedOp &Prev) {
+                        return Prev.Opcode == NdOp::CALL ||
+                               Prev.Opcode == NdOp::INDIR_CALL ||
+                               Prev.Opcode == NdOp::INTRINSIC;
+                      }))
         continue;
       for (int PredId : Blk.Preds)
         if (const MedBlock *Pred = blockById(PredId))

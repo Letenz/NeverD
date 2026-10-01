@@ -348,9 +348,111 @@ countI386AdjacentTwoTableIndirectBranches(const neverd::LowFunc &Low) {
   return Count;
 }
 
+TEST_F(JTE_X86_32, ScalarLaneThroughPointerTableSeesThroughWidenedAddress) {
+  // i386 loads `tp[k]` through a zero-extended 32-bit address.  The loaded
+  // integer feeds the next `tabs[acc % 3]` index, so the index is an offset
+  // only once every array that `tabs` names is proven immutable scalar data.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("pointer_table_lane.c");
+  const fs::path Object = tmpFile("pointer_table_lane.o");
+  {
+    std::ofstream File(Source);
+    File << R"(
+int pointer_table_lane(int input) {
+  static const int a[8] = {11, 22, 33, 44, 55, 66, 77, 88};
+  static const int b[8] = {2, 3, 5, 7, 11, 13, 17, 19};
+  static const int c[8] = {101, 202, 303, 404, 505, 606, 707, 808};
+  static const int *const tabs[3] = {a, b, c};
+  unsigned acc = (unsigned)input;
+  for (int i = 0; i < 96; ++i) {
+    const int *tp = tabs[acc % 3u];
+    acc = acc * 131u + (unsigned)tp[(acc >> 2) & 7u] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)";
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.DataPtrRelocSlots.size(), 3u);
+  auto Valid = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Valid.Result.Success) << Valid.Result.Error;
+
+  const uint64_t MissingSlot = *Image.DataPtrRelocSlots.begin();
+  Image.DataPtrRelocSlots.erase(MissingSlot);
+  auto Incomplete = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Incomplete.Result.Success)
+      << "an array without a data-pointer relocation is unproved";
+  Image.DataPtrRelocSlots.insert(MissingSlot);
+
+  Image.CodePtrRelocSlots.insert(MissingSlot);
+  auto Conflicting = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Conflicting.Result.Success)
+      << "a conflicting code/data slot cannot certify scalar array data";
+}
+
+TEST_F(JTE_X86_32, IndirectCallThroughSelectedFunctionTableSeesWidenedAddress) {
+  // `T = cond ? fa : fb; T[k](x)` indexes one of two function-pointer tables
+  // through a zero-extended 32-bit address.  The call target's slot domain
+  // is complete only when both tables' relocation slots are code pointers.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("selected_function_table.c");
+  const fs::path Object = tmpFile("selected_function_table.o");
+  {
+    std::ofstream File(Source);
+    File << R"(
+static int a0(int x) { return x + 11; }
+static int a1(int x) { return x * 5; }
+static int b0(int x) { return x - 7; }
+static int b1(int x) { return x * 9 + 2; }
+static int (*const fa[2])(int) = {a0, a1};
+static int (*const fb[2])(int) = {b0, b1};
+int selected_function_table(int input) {
+  unsigned s = (unsigned)input, h = 0;
+  for (int i = 0; i < 64; ++i) {
+    s = s * 1103515245u + 12345u;
+    int (*const *table)(int) = ((s >> 4) & 1u) ? fa : fb;
+    h = h * 131u + (unsigned)table[(s >> 7) & 1u]((int)(s >> 3));
+  }
+  return (int)h;
+}
+)";
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.CodePtrRelocSlots.size(), 4u);
+  auto Valid = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Valid.Result.Success) << Valid.Result.Error;
+
+  const uint64_t MissingSlot = *Image.CodePtrRelocSlots.rbegin();
+  Image.CodePtrRelocSlots.erase(MissingSlot);
+  auto Incomplete = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Incomplete.Result.Success)
+      << "a table slot without a code-pointer relocation is unproved";
+
+  Image.DataPtrRelocSlots.insert(MissingSlot);
+  auto Mixed = runPipelineWithEvidenceBudget(Image, 256);
+  EXPECT_FALSE(Mixed.Result.Success)
+      << "a data-pointer slot cannot supply an indirect-call target";
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
-  auto ImageOrErr = neverd::loadBinary(
-      fs::path(TEST_OBJ_DIR) / "test_i386_three_switch_loops.o");
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_i386_three_switch_loops.o");
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
       << llvm::toString(ImageOrErr.takeError());
   neverd::BinaryImage &Image = *ImageOrErr;
@@ -369,13 +471,14 @@ TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
     EXPECT_EQ(Table.Targets.size(), 5u);
     EXPECT_TRUE(StorageBases.insert(Table.BaseAddr).second);
   }
-  EXPECT_EQ(Builder.jumpTableGroupLifecycleStateForTesting().PublishedMemberCount,
-            3u);
+  EXPECT_EQ(
+      Builder.jumpTableGroupLifecycleStateForTesting().PublishedMemberCount,
+      3u);
 }
 
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsRemainOpaqueOnIncompleteModelProof) {
-  auto ImageOrErr = neverd::loadBinary(
-      fs::path(TEST_OBJ_DIR) / "test_i386_three_switch_loops.o");
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_i386_three_switch_loops.o");
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
       << llvm::toString(ImageOrErr.takeError());
   neverd::BinaryImage &Image = *ImageOrErr;
@@ -1159,7 +1262,8 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopProvesBothFiniteDispatches) {
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
-  const auto Low = Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  const auto Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
   ASSERT_EQ(Low.JumpTables.size(), 2u);
   for (const auto &Table : Low.JumpTables) {
     EXPECT_EQ(Table.BaseAddr, Storage->Addr);
@@ -1184,8 +1288,7 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
         << llvm::toString(ImageOrErr.takeError());
     auto &Image = *ImageOrErr;
     const auto *Function = Image.findSymbol("jt_i386_gotoff_joint_loop");
-    const auto *Second =
-        Image.findSymbol("jt_i386_gotoff_joint_second_branch");
+    const auto *Second = Image.findSymbol("jt_i386_gotoff_joint_second_branch");
     const auto *Storage = Image.findSymbol("jt_i386_gotoff_joint_table");
     ASSERT_NE(Function, nullptr);
     ASSERT_NE(Second, nullptr);
@@ -1197,8 +1300,8 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
       for (auto &[FieldVA, Field] : Image.DataAddressRelocOperands)
         if (FieldVA >= Function->Addr &&
             FieldVA < Function->Addr + Function->Size &&
-            Field.TargetVA == Storage->Addr &&
-            FieldVA > Second->Addr - 16 && FieldVA < Second->Addr) {
+            Field.TargetVA == Storage->Addr && FieldVA > Second->Addr - 16 &&
+            FieldVA < Second->Addr) {
           Field.Kind = neverd::RelocatedAddressFieldKind::Generic;
           ++Mutations;
         }
@@ -1224,12 +1327,11 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsInvalidSiblingEvidence) {
     neverd::Decoder Decoder;
     ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
     neverd::CFGBuilder Builder;
-    const auto Low = Builder.build(Image, Decoder, Function->Addr,
-                                   Function->Name);
-    EXPECT_TRUE(std::none_of(Low.JumpTables.begin(), Low.JumpTables.end(),
-                             [&](const auto &Table) {
-                               return Table.InsnAddr == Second->Addr;
-                             }));
+    const auto Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    EXPECT_TRUE(std::none_of(
+        Low.JumpTables.begin(), Low.JumpTables.end(),
+        [&](const auto &Table) { return Table.InsnAddr == Second->Addr; }));
     EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
   }
 }
@@ -1251,16 +1353,15 @@ TEST_F(JTE_X86_32, GOTOFFJointLoopRejectsOutOfRangeAndExhaustion) {
     neverd::CFGBuilder Builder;
     if (Budget)
       Builder.setMaskFixedPointEvidenceBudgetForTesting(Budget);
-    const auto Low = Builder.build(Image, Decoder, Function->Addr,
-                                   Function->Name);
-    EXPECT_TRUE(std::none_of(Low.JumpTables.begin(), Low.JumpTables.end(),
-                             [&](const auto &Table) {
-                               return Table.InsnAddr == Second->Addr;
-                             }));
+    const auto Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    EXPECT_TRUE(std::none_of(
+        Low.JumpTables.begin(), Low.JumpTables.end(),
+        [&](const auto &Table) { return Table.InsnAddr == Second->Addr; }));
     EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
   };
-  Run("jt_i386_gotoff_joint_oob_loop",
-      "jt_i386_gotoff_joint_oob_second_branch", std::nullopt);
+  Run("jt_i386_gotoff_joint_oob_loop", "jt_i386_gotoff_joint_oob_second_branch",
+      std::nullopt);
   Run("jt_i386_gotoff_joint_loop", "jt_i386_gotoff_joint_second_branch",
       size_t{0});
 }
@@ -8962,16 +9063,16 @@ TEST_F(JTE_AArch64, PageOffsetOutputRequiresExactReachingPageBase) {
   neverd::BinaryImage &WrongImage = *WrongImageOrErr;
   const neverd::LowFunc Wrong =
       buildFunction(WrongImage, "a64_pageoff_wrong_base_no_escape");
-  EXPECT_TRUE(outputCertificates(WrongImage, Wrong,
-                                 "a64_pageoff_wrong_base_table")
-                  .empty())
+  EXPECT_TRUE(
+      outputCertificates(WrongImage, Wrong, "a64_pageoff_wrong_base_table")
+          .empty())
       << "a PAGEOFF relocation alone must not authenticate its output";
 
   const neverd::LowFunc Clobbered =
       buildFunction(Image, "a64_pageoff_clobbered_base_no_escape");
-  EXPECT_TRUE(outputCertificates(Image, Clobbered,
-                                 "a64_pageoff_clobbered_base_table")
-                  .empty())
+  EXPECT_TRUE(
+      outputCertificates(Image, Clobbered, "a64_pageoff_clobbered_base_table")
+          .empty())
       << "a matching ADRP killed before the ADD is not a reaching source";
 
   auto BypassImageOrErr = neverd::loadBinary(pageoffReachingA64Obj());
@@ -9014,8 +9115,8 @@ TEST_F(JTE_AArch64, WrongBasePageOffsetFailsClosedOnEscape) {
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
-  const neverd::LowFunc Low = Builder.build(
-      Image, Decoder, Function->Addr, "a64_pageoff_wrong_base_no_escape");
+  const neverd::LowFunc Low = Builder.build(Image, Decoder, Function->Addr,
+                                            "a64_pageoff_wrong_base_no_escape");
   ASSERT_EQ(Low.JumpTables.size(), 1u);
   EXPECT_EQ(Low.JumpTables.front().Targets.size(), 2u);
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
@@ -9025,16 +9126,15 @@ TEST_F(JTE_AArch64, WrongBasePageOffsetFailsClosedOnEscape) {
   EXPECT_NE(LLVM.err.find("incomplete relocatable address value"),
             std::string::npos)
       << LLVM.err;
-  EXPECT_NE(LLVM.err.find("escapes through a call argument"),
-            std::string::npos)
+  EXPECT_NE(LLVM.err.find("escapes through a call argument"), std::string::npos)
       << LLVM.err;
 }
 
 TEST_F(JTE_AArch64, ClobberedPageOffsetKeepsIndependentSwitch) {
   auto LLVM = liftToLLVMIRUnopt(indexIdentityA64Obj());
   ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
-  const std::string Body = llvmFunctionBody(
-      LLVM.out, "a64_pageoff_clobbered_base_no_escape");
+  const std::string Body =
+      llvmFunctionBody(LLVM.out, "a64_pageoff_clobbered_base_no_escape");
   ASSERT_FALSE(Body.empty()) << LLVM.out;
   EXPECT_NE(Body.find("switch i"), std::string::npos) << Body;
   EXPECT_TRUE(llvmHasSwitchCase(Body, 0)) << Body;

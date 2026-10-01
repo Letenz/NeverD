@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ec928d4825cfb7fb6bb7ac59a5fc2f36471f36b1f3e99aa0f8a43bd51602f7c -->
+<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
 
 <div align="center">
 
@@ -40,7 +40,7 @@ CLI, integradores y agentes de IA usan un solo motor — **`libneverd`** — med
 
 Los formatos de entrada, contratos host y límites se documentan en las guías de [EVM](evm.md) y [Solana SBF](sbf.md).
 
-La CLI experimental `neverd mobile app.apk -o recovered-app` recupera Java de APK (multidex), DEX y smali y genera `report.json`. El motor predeterminado está implementado en C++20 y no necesita Python, Java ni JADX en tiempo de ejecución. Ni `NEVERD_JADX` ni un ejecutable `jadx` en PATH seleccionan el motor externo: solo lo hace un `--jadx PATH` explícito. No hay cambio automático a otro motor. Ponga entre comillas las rutas con espacios. Las entradas admitidas, los informes y los límites se describen en la [guía de Android](android.md).
+La CLI experimental `neverd mobile app.apk -o recovered-app` recupera Java de APK (multidex), DEX y smali y genera `report.json`. La recuperación de Android usa únicamente el motor integrado de NeverD en C++20 y no necesita Python ni Java en tiempo de ejecución. Ponga entre comillas las rutas con espacios. Las entradas admitidas, los informes y los límites se describen en la [guía de Android](android.md).
 
 El flujo iOS experimental `neverd mobile App.ipa -o recovered-ios` exporta C nativo y fuentes Objective-C/Swift compatibles desde IPA, `.app` o Mach-O. Conserva disposiciones runtime, unidades fuente y omisiones por método; el código generado no usa puentes al binario original. Consulte la [guía iOS](ios.md) para configuración, cobertura y recompilación independiente.
 
@@ -99,7 +99,7 @@ La recuperación depende de los patrones de código compatibles; consulte la [in
 
 La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
 
-Los perfiles checked usan KVM en Linux y WHP en Windows cuando coincide la ISA, y Unicorn entre ISA distintas. Sigue pendiente la validación nativa ARM64/WHP. `driver-strict` usa actualmente Unicorn; la ruta de controladores KVM/WHP requiere `checked-x64-v1`. Un motor explícito no disponible falla claramente. RAM compartida, alias, escrituras por etapas, operaciones atómicas escalares, excepciones tipadas y estado FP/SSE x64 completo están implementados dentro de los contratos ISA/SO documentados. Esto no garantiza controladores arbitrarios ni entornos Android/Darwin implementados.
+`driver-strict` / `checked-x64-v1` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
 
 <!-- i18n-section: how-it-works -->
 

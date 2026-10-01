@@ -1,0 +1,17 @@
+//===- AArch64GeneralStateCases.def - Transactional integer state fixtures ===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_AARCH64_STATE_VALUE
+NEVERD_AARCH64_STATE_VALUE(InitialScalar, 0x1122334455667788ULL)
+NEVERD_AARCH64_STATE_VALUE(CapturedScalar, 0x8877665544332200ULL)
+NEVERD_AARCH64_STATE_VALUE(InitialVectorLow, 0x0123456789abcdefULL)
+NEVERD_AARCH64_STATE_VALUE(InitialVectorHigh, 0xfedcba9876543210ULL)
+NEVERD_AARCH64_STATE_VALUE(RawPState, 0x12345678a0000205ULL)
+NEVERD_AARCH64_STATE_VALUE(CapturedNZCV, 0xa0000000ULL)
+NEVERD_AARCH64_STATE_VALUE(Scalar32Mask, 0xffffffffULL)
+#endif
+#ifdef NEVERD_AARCH64_STATE_TEXT
+NEVERD_AARCH64_STATE_TEXT(ReadFailure, "ARM64 state read failed")
+#endif

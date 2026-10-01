@@ -12,7 +12,7 @@ import subprocess
 import sys
 import unicodedata
 from collections import Counter, defaultdict
-from pathlib import Path
+from pathlib import Path, PurePath
 from urllib.parse import unquote
 
 
@@ -506,12 +506,12 @@ GUIDE_REQUIRED_TOKENS = {
         "@synchronized", "required_cflags", "-fexceptions",
     ),
     "android": (
-        "neverd mobile", ".apk", ".dex", ".smali", "JADX", "1.5.6", "C++20",
-        "NeverDMobileTests", "--jadx", "NEVERD_JADX", "JAVA_HOME",
+        "neverd mobile", ".apk", ".dex", ".smali", "C++20",
+        "NeverDMobileTests",
         "--platform=android", "--timeout", "--max-files", "--max-bytes", "--json",
         "report.json", "schema_version", "input_code_files", "dex_count",
-        "smali_count", "java_source_count", "java_sources", "logs/jadx.log",
-        "--metadata-only", "check-neverd-mobile", "test_mobile_android_backend.py",
+        "smali_count", "java_source_count", "java_sources",
+        "--metadata-only", "check-neverd-mobile",
         "test_mobile_android_internal.py", "metadata/android-methods.json",
         "android_method_recovery", "declaration_only_method_count",
         "2147483648", "20000", "300",
@@ -785,6 +785,7 @@ class RepositoryView:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self._index_cache[relative_path] = (
                 result.stdout if result.returncode == 0 else None
@@ -823,6 +824,7 @@ class RepositoryView:
                     check=True,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self._index_exists_cache[relative_path] = bool(result.stdout.strip())
         return self._index_exists_cache[relative_path]
@@ -1691,6 +1693,7 @@ def validate_mobile_native_runtime(errors: list[str], view: RepositoryView) -> N
     obsolete = (
         "--python", "NEVERD_PYTHON", "`mobile/`", "--swift-demangle",
         "NEVERD_SWIFT_DEMANGLE", "xcrun --find swift-demangle",
+        "--jadx", "NEVERD_JADX", "test_mobile_android_backend.py",
     )
     for path in (*guides, *overviews, *entries):
         text = view.read_text(path)
@@ -2647,6 +2650,11 @@ SYNCHRONIZED_GUIDES = (
     "process-emulation", "memory-safety", "solver", "interpreter-recovery",
 )
 GUIDE_SECTION_CONTRACTS = {
+    ("interpreter-recovery", "loop-proposals"): (
+        "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",
+        "CandidatePrefix", "UseEntryPrefix", "GeneralizeEntryPrefix",
+        "MaxMetadata", "checkLowIRLoopRefinement",
+    ),
     ("process-emulation", "linux-semantics"): (
         "mmap", "mprotect", "munmap", "brk", "PROT_NONE", "ENOMEM",
         "MAP_PRIVATE | MAP_ANONYMOUS", "PT_DYNAMIC", "PT_TLS", "arch_prctl",
@@ -2735,11 +2743,11 @@ def readme_urls(text: str) -> list[str]:
     return urls
 
 
-def canonical_readme_url(url: str, path: Path, section_slugs: dict[str, str]) -> str:
+def canonical_readme_url(url: str, path: PurePath, section_slugs: dict[str, str]) -> str:
     if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', url) or url.startswith('//'):
         return url
     target, sep, fragment = url.partition('#')
-    resolved = Path(posixpath.normpath(str(path.parent / unquote(target)))) if target else path
+    resolved = Path(posixpath.normpath((path.parent / unquote(target)).as_posix())) if target else path
     parts = resolved.parts
     if len(parts) >= 3 and parts[0] == 'docs' and parts[1] in LOCALES:
         name = '/'.join(parts[2:])
@@ -2747,7 +2755,7 @@ def canonical_readme_url(url: str, path: Path, section_slugs: dict[str, str]) ->
                          'ATTRIBUTION.md': 'ATTRIBUTION.md'}.get(name, 'docs/' + name))
     if not target:
         fragment = section_slugs.get(unquote(fragment), fragment)
-    return str(resolved) + (sep + fragment if sep else '')
+    return resolved.as_posix() + (sep + fragment if sep else '')
 
 
 def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
@@ -2801,7 +2809,7 @@ def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
                     if re.match(r'[a-zA-Z][a-zA-Z0-9+.-]*:', target) or target.startswith(('#', '//')):
                         continue
                     raw = target.partition('#')[0]
-                    resolved = Path(posixpath.normpath(str(path.parent / unquote(raw))))
+                    resolved = Path(posixpath.normpath((path.parent / unquote(raw)).as_posix()))
                     if resolved.parts and resolved.parts[0] == '..':
                         report(errors, f'{path}: README link escapes the repository: {target}')
                     elif not view.exists(resolved):
@@ -2813,7 +2821,7 @@ def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
                     report(errors, f'{path}: README HTML assets differ in {key}')
                 for asset in html_assets(actual_visible):
                     if not re.match(r'https?://', asset):
-                        asset_path = Path(posixpath.normpath(str(path.parent / asset)))
+                        asset_path = Path(posixpath.normpath((path.parent / asset).as_posix()))
                         if not view.exists(asset_path):
                             report(errors, f'{path}: missing README HTML asset: {asset}')
             expected_selector = [('../../README.md' if filename == 'project.md' else '../README.md')]
@@ -3116,6 +3124,7 @@ def validate_staged(errors: list[str]) -> None:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     staged = tuple(line for line in result.stdout.splitlines() if line)
     prohibited = sorted(

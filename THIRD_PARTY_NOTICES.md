@@ -45,6 +45,14 @@ semantics were checked against the
 and independently executed host instructions; no reference implementation was
 copied into NeverD.
 
+The fork includes the original 2026-09-30 pre-entry cancellation fix by NeverD
+contributors. The TCG entry boundary honors an engine stop even when CPU startup
+has reset its exit flag. Original x64, ARM32 and ARM64 regressions control only
+thread scheduling and public engine APIs, and check zero guest effects and an
+independent subsequent run. The original QEMU notice and dated modification
+notice are preserved in
+[commit 9cbcf76a](https://github.com/NeverSight/unicorn/commit/9cbcf76a1eb74d200dca6a9d6cee3200e47e9743).
+
 ## Swift runtime ABI declarations
 
 `lib/loader/Swift/SwiftRuntimeDeclarations.inc` derives fixed C and Swift ABI declarations

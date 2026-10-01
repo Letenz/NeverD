@@ -445,6 +445,221 @@ TEST(LowIRLoopInference, CountAndAccumulatorNeedNoHandwrittenTemplate) {
   loopRefused(loopCheck(A, wordLoop(2), *Inferred.Plan), Status::Different);
 }
 
+Program renamedCounterLoop() {
+  auto P = wordLoop(1, true);
+  for (auto &B : P.Function.Blocks)
+    for (auto &O : B.Ops) {
+      if (O.Output == r(8))
+        O.Output = r(24);
+      for (unsigned I = 0; I != O.NumInputs; ++I)
+        if (O.Inputs[I] == r(8))
+          O.Inputs[I] = r(24);
+    }
+  for (auto &Record : P.Records) {
+    const auto &B = P.Function.Blocks[Record.BlockId];
+    Record.Effects.OperationDigest =
+        lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
+            Record.Boundary.FirstOp, Record.Boundary.OpCount));
+  }
+  return P;
+}
+
+LowIRLoopCutpointPair counterPair(const LowIRLoopRefinementPlan &A,
+                                  const LowIRLoopRefinementPlan &B) {
+  return {
+      A.Cutpoints.front().OriginalAddress,
+      B.Cutpoints.front().OriginalAddress,
+      {{regLocation(0), regLocation(0)}, {regLocation(8), regLocation(24)}}};
+}
+
+TEST(LowIRLoopPlanPairing, RenamedCounterAndDifferentArithmeticBody) {
+  const auto A = wordLoop(), B = renamedCounterLoop();
+  const auto IA = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+  const auto IB = inferLowIRLoopRefinementPlan(B.Function, B.Contract);
+  ASSERT_TRUE(IA.inferred()) << IA.Diagnostic;
+  ASSERT_TRUE(IB.inferred()) << IB.Diagnostic;
+  ASSERT_EQ(IA.Plan->Cutpoints.size(), 1U);
+  ASSERT_EQ(IB.Plan->Cutpoints.size(), 1U);
+  const auto Pair = counterPair(*IA.Plan, *IB.Plan);
+  auto Plan = pairLowIRLoopRefinementPlans(*IA.Plan, *IB.Plan, {Pair});
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  const auto R = loopCheck(A, B, *Plan);
+  ASSERT_TRUE(R.proved()) << R.Diagnostic;
+  EXPECT_GT(R.RankingChecks, 0U);
+  auto Wrong = B;
+  for (auto &Block : Wrong.Function.Blocks)
+    for (auto &O : Block.Ops)
+      if (O.Opcode == NdOp::INT_SUB && O.Output == r(24))
+        O.Inputs[1] = n(2);
+  loopRefused(loopCheck(A, Wrong, *Plan), Status::Different);
+
+  auto Uncoupled = Pair;
+  Uncoupled.SharedInputs.erase(Uncoupled.SharedInputs.begin());
+  auto Weak = pairLowIRLoopRefinementPlans(*IA.Plan, *IB.Plan, {Uncoupled});
+  ASSERT_TRUE(bool(Weak)) << llvm::toString(Weak.takeError());
+  loopRefused(loopCheck(A, B, *Weak), Status::Different);
+}
+
+TEST(LowIRLoopPlanPairing, CandidatePredicateAndOwnPrefixAreRetained) {
+  const auto A = wordLoop(), B = renamedCounterLoop();
+  const auto IA = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+  const auto IB = inferLowIRLoopRefinementPlan(B.Function, B.Contract);
+  ASSERT_TRUE(IA.inferred()) << IA.Diagnostic;
+  ASSERT_TRUE(IB.inferred()) << IB.Diagnostic;
+  auto Right = *IB.Plan;
+  auto &Cut = Right.Cutpoints.front();
+  ASSERT_TRUE(Cut.UseEntryPrefix);
+  NdVar Counter;
+  for (const auto &I : Cut.Inputs)
+    if (I.Side == LowIRLoopSide::Original && I.Location.Offset == 24)
+      Counter = I.Temporary;
+  ASSERT_EQ(Counter.Size, 8U);
+  const auto Prefix = NdVar::tmp(100000, 8);
+  const auto Bound = NdVar::tmp(100008, 1);
+  const auto Predicate = NdVar::tmp(100016, 1);
+  Cut.Inputs.push_back(
+      {LowIRLoopSide::OriginalPrefix, regLocation(24), Prefix});
+  Cut.Expressions.push_back(op(NdOp::INT_LESSEQUAL, Bound, {Counter, Prefix}));
+  Cut.Expressions.push_back(
+      op(NdOp::BOOL_AND, Predicate, {Cut.Predicate, Bound}));
+  Cut.Predicate = Predicate;
+  const auto Pair = counterPair(*IA.Plan, Right);
+  auto Plan = pairLowIRLoopRefinementPlans(*IA.Plan, Right, {Pair});
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  const auto R = loopCheck(A, B, *Plan);
+  ASSERT_TRUE(R.proved()) << R.Diagnostic;
+  Cut.Predicate = n(0, 1);
+  auto False = pairLowIRLoopRefinementPlans(*IA.Plan, Right, {Pair});
+  ASSERT_TRUE(bool(False)) << llvm::toString(False.takeError());
+  loopRefused(loopCheck(A, B, *False), Status::Different);
+}
+
+TEST(LowIRLoopPlanPairing, MalformedBindingsAndExhaustedBudgetsRefuse) {
+  const auto Left = wordLoopPlan();
+  auto Right = Left;
+  auto Pair = LowIRLoopCutpointPair{
+      0x200,
+      0x200,
+      {{regLocation(0), regLocation(0)}, {regLocation(8), regLocation(8)}}};
+  const auto Reject = [&](const LowIRLoopRefinementPlan &B,
+                          llvm::ArrayRef<LowIRLoopCutpointPair> Pairs,
+                          uint64_t Budget = 65536) {
+    auto R = pairLowIRLoopRefinementPlans(Left, B, Pairs, Budget);
+    EXPECT_FALSE(bool(R));
+    if (!R)
+      llvm::consumeError(R.takeError());
+  };
+  Reject(Right, {Pair}, 0);
+  Reject(Right, {});
+  Reject(Right, {Pair, Pair});
+  auto Missing = Pair;
+  Missing.SharedInputs[0].Candidate = regLocation(64);
+  Reject(Right, {Missing});
+  auto Narrow = Pair;
+  Narrow.SharedInputs[0].Candidate.Bytes = 4;
+  Reject(Right, {Narrow});
+  Right.Cutpoints[0].Inputs[1].Temporary = NdVar::tmp(4, 8);
+  Reject(Right, {Pair});
+  Right = Left;
+  Right.Cutpoints[0].Predicate = NdVar::tmp(0, 1);
+  Reject(Right, {Pair});
+  Right = Left;
+  Right.Cutpoints[0].Inputs[0].Side = LowIRLoopSide::Candidate;
+  Reject(Right, {Pair});
+  Right = Left;
+  Right.Cutpoints[0].UseEntryPrefix = true;
+  Reject(Right, {Pair});
+  Right = Left;
+  Right.Cutpoints[0].CandidateState[0].Value = n(7);
+  Reject(Right, {Pair});
+}
+
+TEST(LowIRLoopPlanPairing, SideEffectsRemainVisibleToTheChecker) {
+  const auto A = wordLoop();
+  auto Left = wordLoopPlan(), Right = Left;
+  Right.Cutpoints[0].Expressions.push_back(
+      op(NdOp::LOAD, NdVar::tmp(32, 8), {NdVar::tmp(0, 8)}));
+  const LowIRLoopCutpointPair Pair{
+      0x200,
+      0x200,
+      {{regLocation(0), regLocation(0)}, {regLocation(8), regLocation(8)}}};
+  auto Plan = pairLowIRLoopRefinementPlans(Left, Right, {Pair});
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  loopRefused(loopCheck(A, A, *Plan), Status::Invalid);
+}
+
+TEST(LowIRLoopPlanPairing, CandidateInputProjectionCannotDisappear) {
+  const auto A = wordLoop();
+  const auto Left = wordLoopPlan();
+  auto Right = Left;
+  // The candidate claims its accumulator parameter comes from an unrelated
+  // register, while its assignments still write the actual accumulator.
+  Right.Cutpoints[0].Inputs[0].Location = regLocation(64);
+  const LowIRLoopCutpointPair Pair{
+      0x200,
+      0x200,
+      {{regLocation(0), regLocation(64)}, {regLocation(8), regLocation(8)}}};
+  auto Plan = pairLowIRLoopRefinementPlans(Left, Right, {Pair});
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  loopRefused(loopCheck(A, A, *Plan), Status::Different);
+}
+
+Program spilledWordLoop() {
+  Program P;
+  P.frame();
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(8), {r(16)}), op(NdOp::COPY, r(0), {n(0)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {1});
+  P.instruction({op(NdOp::INT_ADD, NdVar::tmp(0, 8), {r(32), n(uint64_t(-8))}),
+                 op(NdOp::LOAD, r(0), {NdVar::tmp(0, 8)}),
+                 op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+                 op(NdOp::STORE, {}, {NdVar::tmp(0, 8), r(0)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(3, 0x400);
+  P.finish();
+  return P;
+}
+
+std::vector<LowIRLoopCutpointPair>
+selfPairs(const LowIRLoopRefinementPlan &Plan) {
+  std::vector<LowIRLoopCutpointPair> Pairs;
+  for (const auto &Cut : Plan.Cutpoints) {
+    LowIRLoopCutpointPair Pair;
+    Pair.OriginalAddress = Pair.CandidateAddress = Cut.OriginalAddress;
+    for (const auto &I : Cut.Inputs)
+      if (I.Side == LowIRLoopSide::Original)
+        Pair.SharedInputs.push_back({I.Location, I.Location});
+    Pairs.push_back(std::move(Pair));
+  }
+  return Pairs;
+}
+
+TEST(LowIRLoopPlanPairing, FrameInputsAndWritesRemainObservable) {
+  const auto A = spilledWordLoop();
+  const auto Inferred = inferLowIRLoopRefinementPlan(A.Function, A.Contract);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  auto Pairs = selfPairs(*Inferred.Plan);
+  bool SharedFrame = false;
+  for (const auto &P : Pairs)
+    for (const auto &I : P.SharedInputs)
+      SharedFrame |= I.Original.Space == LowIRLoopSpace::Frame;
+  ASSERT_TRUE(SharedFrame);
+  auto Plan =
+      pairLowIRLoopRefinementPlans(*Inferred.Plan, *Inferred.Plan, Pairs);
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  const auto Good = loopCheck(A, A, *Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  auto Wrong = A;
+  Wrong.Function.Blocks[2].Ops[3].Inputs[1] = n(0);
+  loopRefused(loopCheck(A, Wrong, *Plan), Status::Different);
+}
+
 TEST(LowIRLoopInference, AscendingCountersSpillsAndEarlyReturns) {
   for (uint16_t Bytes : {4, 8}) {
     for (bool EarlyReturn : {false, true}) {
@@ -1003,6 +1218,30 @@ TEST(LowIRLoopInference, NestedCountersNeedNoHandwrittenPhases) {
     EXPECT_EQ(TooFew.Status, LowIRLoopInferenceStatus::BudgetExceeded);
     EXPECT_FALSE(TooFew.Plan);
   }
+}
+
+TEST(LowIRLoopPlanPairing, AllNestedCutsAndFreshProofBudgetsAreRequired) {
+  const auto A = nestedWordLoops();
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(A.Function, A.Contract, {}, {0x300, 0x500});
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  ASSERT_GT(Inferred.Plan->Cutpoints.size(), 1U);
+  auto Pairs = selfPairs(*Inferred.Plan);
+  auto Plan =
+      pairLowIRLoopRefinementPlans(*Inferred.Plan, *Inferred.Plan, Pairs);
+  ASSERT_TRUE(bool(Plan)) << llvm::toString(Plan.takeError());
+  const auto Good = loopCheck(A, A, *Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  EXPECT_GT(Good.RankingChecks, 1U);
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxSolverQueries = 0;
+  loopRefused(loopCheck(A, A, *Plan, Limits), Status::BudgetExceeded);
+  Pairs.pop_back();
+  auto Incomplete =
+      pairLowIRLoopRefinementPlans(*Inferred.Plan, *Inferred.Plan, Pairs);
+  EXPECT_FALSE(bool(Incomplete));
+  if (!Incomplete)
+    llvm::consumeError(Incomplete.takeError());
 }
 
 Program alternativeWordLoops(bool ReverseChoice, unsigned FirstStep = 1) {

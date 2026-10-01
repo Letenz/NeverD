@@ -217,6 +217,8 @@ Recovery API tests cover v1/v2/v3 defaults, explicit budgets, truncated structur
 
 `LowIRLoopInference.*` and `BinaryLowIRLoopInference.*` use independently authored counters, spills, early returns, native calls and packed flags. Regressions cover narrow arithmetic widening and semantically equal flags with different expressions. Malformed graphs, absent or forged origins, nonterminating/wrapping loops and exhausted inference or proof budgets must never yield a certificate.
 
+`LowIRLoopPlanPairing.*` in the same target checks renamed registers, different arithmetic bodies, side-specific prefix snapshots, retained predicates, shared frame inputs, nested cut coverage and fresh proof budgets. Missing relations, incorrect writes, malformed temporary bindings, incomplete pairings and exhausted metadata limits must not establish a certificate.
+
 Cached equality exits in two- and three-level loops check correlated operands, moving bounds, counter resets and corrupted copies.
 
 Cached comparison regressions cover equality and inequality, guarded and constant-folded starts, fields first discovered after widening, and bits 7/31/63 in byte/dword/qword caches. Changing only an adjacent bit while preserving the tested bit must fail full state comparison. Zero steps, moving bounds, resets and exhausted shared budgets must refuse.
@@ -1713,3 +1715,36 @@ The driver gap regression suites additionally cover:
   system-policy Query/Set children and
   missing/mismatched explicit responses. The public C API checks child origins
   and response indices without assuming result rows are grouped by origin.
+
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+
+Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
+
+The existing CI workflow runs the complete emulation test directory before the general profiles and saves the discovery inventory, JUnit results and CTest log in `emulation-focused`. A failure elsewhere cannot prevent this focused run. Unavailable hardware and optional driver fixtures remain explicit skips; a passing software or compile check does not establish native execution.
+
+On Linux, `NeverDUnicornDeadlineTests` completes the actual timer thread before guest entry using controlled pthread scheduling. It covers x64, ARM32 and ARM64, requires zero guest effects after pre-entry cancellation, and verifies that the next run uses its own budget. The test uses public engine APIs and does not mutate engine-private state.
+
+`X64StateTransition` in `NeverDX64ExceptionTests` executes independent RAM loads and CR8 reads on the native CPU. It alternates TLS bases and privilege, resumes after repeated divide faults, and changes TLS after a cancelled entry. Run the owning CTest label together with alias-remapping, CPU-context, FP-state and original-driver parity coverage after changing native state transfer. An unavailable KVM/WHP transport remains an explicit skip.
+
+
+`NeverDKvmRunTests` verifies the borrowed transfers in `KvmRunControl` without requiring `/dev/kvm`. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` checks that preparation, capture and the intercepted host entry share a thread, with one preparation across interrupted retries. Further cases cover preparation failure without entry, capture failure, stop during preparation and cancelled active entry, followed by a fresh run that cannot reuse the old callbacks. Keep the real cancellation, RAM rollback, exception and original-driver suites in the validation set. `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` verifies that multiple entries under one deadline reuse the worker, execute each transfer once and leave prior packets unchanged.
+
+`KvmAArch64Machine.cpp` also executes translation-maintenance entries, guest register preparation, debug setup and all 35 register reads on this worker. Maintenance and guest execution share one step deadline; the caller applies `captureAArch64GeneralState` only after acknowledged, complete capture. Native ARM64 runtime evidence remains pending.
+
+`ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` checks continued execution and independent CPU stores after host changes to general registers, both edge XMM lanes, MXCSR and x87 control. Actual `FXSAVE64` bytes verify all physical 80-bit registers, TOP, tags, opcode and pointers after a stopped entry; repeated divide faults also invalidate reuse. These machine-boundary tests do not admit additional x87 instructions into checked profiles.
+
+`NeverDKvmStateTransferTests` injects a failed register or XSAVE read after real KVM execution, then retries the unchanged input. Independent integer and packed-byte results prove that failed captures cannot reuse advanced native state. Only this executable wraps `ioctl`; unavailable native hosts skip explicitly.
+
+ARM64 native integer capture has one ISA authority. `AArch64GeneralState.def` lists X0–X30, SP, PC, NZCV and TPIDR_EL0; `captureAArch64GeneralState` stages every read before normalizing NZCV and publishing the complete result. KVM and WHP use this helper. A failed read preserves all input state, and privilege, vectors and untransferred registers remain unchanged. This does not add native FP/SIMD admission.
+
+Checked ARM64 scalar and pair RAM accesses can cross separately backed or aliased pages at EL0 and EL1. The ISA computes operand ranges; the shared address space validates every page before entry and reports the first failing fragment. `RAMTransaction` commits declared physical bytes after a complete CPU step. Faults and stopped observers preserve RAM, registers and writeback. `NeverDAArch64MemoryTests` uses assembled fixtures in `AArch64CrossPageCases.def`; this does not add FP/SIMD or Windows ARM64 driver loading.
+
+`NeverDAArch64GeneralStateTests` runs without Unicorn or a hypervisor. It checks complete capture, NZCV masking, failure at each of the 35 read positions, missing readers and successful retry at both privilege levels. This portable state verification and cross-compilation do not replace native ARM64 KVM/WHP runtime evidence.
+
+`NeverDAArch64MemoryTests` covers 18 scalar/pair forms at both privilege levels with Unicorn, KVM and WHP. It checks every crossing offset, sign/width results, observer ordering, denied/unmapped second pages, explicit fault consumption and retry, repeated physical aliases, and context restoration after alias replacement. The former valid crossing-load rejection is reproduced before the change. Unavailable transports skip explicitly; portable Unicorn verification and cross-compilation do not replace native ARM64 KVM/WHP evidence.
+
+`NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) checks zero-flag dormant CFG metadata, unchanged fallback pointers at both load addresses, invalid slots/targets and missing relocations. Its execution cases use `driver-strict` and `checked-x64-v1` on explicit Unicorn/KVM/WHP transports; unavailable transports skip separately. `DriverPublicCLICases.def` selects `--backend unicorn` for the CLI comparisons with the compatible v1 C API. Native and `auto` selection retain their separate public coverage and never silently fall back when the host API is unavailable.
+
+Checked ARM64 capture now shares one ISA-owned commit boundary. KVM/WHP capture the 35 fields in `AArch64GeneralState.def`; Unicorn retains all 39 public scalar fields, including its additional thread and FP control state. `captureAArch64ScalarState` takes widths from `Registers.def`, normalizes NZCV and publishes only after every read succeeds. Privilege, vectors and untransferred fields remain unchanged. This state transport does not admit FP/SIMD instructions into checked ARM64.
+
+`NeverDAArch64GeneralStateTests` checks both the 35-field native and 39-field software inventories at both privileges, including every read failure, width normalization and retry. On Linux, `NeverDUnicornStateTransferTests` injects failures after real guest execution at every scalar read, verifies unchanged input and exact single execution on retry, and checks `CapturesDeclaredWidthsWithoutStaleUpperBits`. Original instruction and state fixtures live in `UnicornStateTransferCases.def`; this evidence does not replace native ARM64 KVM/WHP validation.

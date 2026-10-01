@@ -31,6 +31,67 @@ ExecutionConfiguration checked(GuestArchitecture ISA) {
                         : ExecutionContract::CheckedAArch64;
   return Config;
 }
+TEST(ExecutionConfiguration, NativeDriverProfilesAreBackendQualified) {
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP}) {
+    const auto C = llvm::cantFail(executionCapabilities(
+        ExecutionContract::Legacy, GuestArchitecture::X64, Backend));
+    EXPECT_EQ(C.Contract, ExecutionContract::Legacy);
+    EXPECT_EQ(C.Privilege, ExecutionPrivilege::Supervisor);
+    EXPECT_EQ(C.AddressModel, ExecutionAddressModel::Canonical);
+    EXPECT_EQ(C.VirtualAddressBits, NativeAddressBits);
+    EXPECT_TRUE(C.SupportsNativeExecution);
+    EXPECT_TRUE(C.HasInstructionAllowlist);
+    EXPECT_FALSE(C.InstructionFamilies.empty());
+    EXPECT_TRUE(C.supports(ExecutionFeature::MemoryPreflight));
+    EXPECT_EQ(C.MemoryObservation,
+              ExecutionMemoryObservation::InstructionPreflight);
+    EXPECT_EQ(C.ControlPrecision,
+              ExecutionControlPrecision::InstructionBoundary);
+    ExecutionConfiguration Config;
+    Config.Backend = Backend;
+    Config.Contract = ExecutionContract::Legacy;
+    Config.RequiredFeatures = ExecutionFeature::MemoryPreflight;
+    const auto R = llvm::cantFail(resolveExecutionConfiguration(Config));
+    EXPECT_EQ(R.Configuration.Backend, Backend);
+    EXPECT_EQ(R.Configuration.Privilege, C.Privilege);
+    EXPECT_EQ(R.Configuration.VirtualAddressBits, C.VirtualAddressBits);
+    EXPECT_EQ(R.Capabilities.Contract, Config.Contract);
+  }
+  const auto C = llvm::cantFail(
+      executionCapabilities(ExecutionContract::Legacy, GuestArchitecture::X64,
+                            ExecutionBackendKind::Unicorn));
+  EXPECT_EQ(C.Privilege, ExecutionPrivilege::Flat);
+  EXPECT_EQ(C.VirtualAddressBits, PortableAddressBits);
+  EXPECT_FALSE(C.SupportsNativeExecution);
+  EXPECT_FALSE(C.HasInstructionAllowlist);
+  EXPECT_EQ(C.MemoryObservation, ExecutionMemoryObservation::EngineCallbacks);
+}
+
+TEST(ExecutionConfiguration, NativeDriverRequirementsFailBeforeRAMMutation) {
+  auto RAM = llvm::cantFail(PhysicalMemory::create(MemoryLimit));
+  auto Space = llvm::cantFail(AddressSpace::create(RAM, MemoryLimit));
+  llvm::cantFail(Space->map(Code, PageSize, Read | Write));
+  const auto Generation = Space->mappingGeneration();
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP}) {
+    for (bool Address : {false, true}) {
+      ExecutionConfiguration Config;
+      Config.Backend = Backend;
+      Config.Contract = ExecutionContract::Legacy;
+      if (Address)
+        Config.VirtualAddressBits = PortableAddressBits;
+      else
+        Config.Privilege = ExecutionPrivilege::Flat;
+      auto Result = createExecutionBackend(Config, Space);
+      ASSERT_FALSE(bool(Result));
+      auto Error = Result.takeError();
+      EXPECT_FALSE(Error.isA<BackendUnavailableError>());
+      llvm::consumeError(std::move(Error));
+      EXPECT_EQ(RAM->allocatedBytes(), PageSize);
+      EXPECT_EQ(Space->mappingGeneration(), Generation);
+    }
+  }
+}
+
 TEST(ExecutionConfiguration, UnsupportedRequirementsDoNotChangeAddressSpace) {
   auto RAM = llvm::cantFail(PhysicalMemory::create(MemoryLimit));
   auto Space = llvm::cantFail(AddressSpace::create(RAM, MemoryLimit));

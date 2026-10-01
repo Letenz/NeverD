@@ -4,11 +4,11 @@
 
 # Windows 드라이버 에뮬레이션
 
-NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라이버의 PE 진입점을 실행하며, 필요하면 명시적인 순차 요청 시나리오를 실행한 뒤 드라이버를 언로드합니다. CPU 실행에는 Unicorn을, Windows 환경에는 NeverD 자체의 제한된 모델을 사용합니다. 드라이버를 호스트 커널에 로드하거나 게스트 API 호출을 호스트 OS 서비스에 전달하지 않습니다.
+NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라이버의 PE 진입점을 실행하고 언로드 전에 명시적 요청 시나리오를 실행할 수 있습니다. CLI의 `auto`는 일치하는 Linux 호스트에서 KVM, Windows 호스트에서 WHP를 선택합니다. 기존 C++ 기본 설정과 V1 API는 Unicorn을 유지합니다. 모든 백엔드는 NeverD의 제한된 Windows 환경 모델을 공유합니다. 게스트 API 호출은 모델이 처리하며 드라이버는 호스트 커널과 격리됩니다.
 
 ## 실행 백엔드
 
-기본 `driver-strict` 계약은 Unicorn을 유지합니다. 실험적인 제한 명령 `checked-x64-v1` 계약에서는 `--backend auto`가 Linux x86_64에서 KVM, Windows x64에서 WHP를 선택합니다. 명시적 선택은 대체 백엔드로 전환하지 않으며, 하드웨어나 계약이 맞지 않으면 실행 전에 실패합니다.
+`driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. native ARM64/WHP 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
 
 ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식은 지원되지 않습니다. 일반 RAM 피연산자는 독립 할당 또는 별칭 페이지를 넘을 수 있습니다. 전체 범위의 권한을 확인한 뒤 쓰며 첫 접근 불가 바이트에서 실패를 보고합니다. MOVS는 완료된 요소와 오류 요소의 재시작 레지스터를 보존하고 요소 일부를 커밋하지 않습니다.
 
@@ -510,3 +510,19 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 ## 전체 x87 상태
 
 `NeverDEmulationArch`는 ISA, 페이지 테이블과 FP 상태 배치를 소유하며 네이티브 및 Unicorn 전송이 공유합니다. x64 컨텍스트는 x87 제어, 상태, TOP, 물리 태그, 연산 코드, 명령/데이터 포인터와 8개의 80비트 레지스터를 보존합니다. `FP0`–`FP7`은 `RegisterValue`를 사용하고 스칼라 접근은 잘림을 거부합니다. `FPTag`는 물리 비어 있지 않음 비트맵입니다. `NeverDX64FPTests`는 모든 TOP, 정확한 연산의 호스트 FXSAVE/FXRSTOR 비교와 복원을 검사합니다. checked x87 명령 또는 모든 반올림 의미를 입증하지 않으며 없는 네이티브 호스트는 명시적으로 건너뜁니다.
+
+`executionCapabilities(Contract, ISA, Backend)`로 선택한 백엔드의 기능을 조회합니다. `NativeLegacyX64`는 네이티브 x64 드라이버 실행을 나타내며, `NeverDNativeDriverTests`는 기존 드라이버 모음을 검증합니다. 이 테스트는 Unicorn을 비활성화한 빌드에서도 실행할 수 있습니다.
+
+ARM64 네이티브 정수 상태 수집은 ISA 계층에서 통일합니다. `AArch64GeneralState.def`는 X0–X30, SP, PC, NZCV, TPIDR_EL0를 열거하며 `captureAArch64GeneralState`는 모든 읽기를 임시 저장한 뒤 NZCV를 정규화하고 완전한 결과를 한 번에 게시합니다. KVM과 WHP는 이 함수를 공유합니다. 읽기 실패 시 전체 입력 상태를 유지하며 권한, 벡터와 전송하지 않는 레지스터는 변경하지 않습니다. 네이티브 FP/SIMD 명령 허용은 추가하지 않습니다.
+
+checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 저장 영역이나 별칭 페이지의 경계를 넘을 수 있습니다. ISA가 피연산자 범위를 계산하고 공유 주소 공간이 진입 전에 모든 페이지를 확인하여 첫 실패 조각을 보고합니다. `RAMTransaction`은 전체 CPU 단계가 성공한 후 선언된 물리 바이트를 반영합니다. 오류나 관찰자 중단 시 RAM, 레지스터, 주소 writeback을 보존합니다. `NeverDAArch64MemoryTests`는 `AArch64CrossPageCases.def`의 어셈블된 사례를 사용합니다. FP/SIMD나 Windows ARM64 드라이버 로딩은 추가하지 않습니다.
+
+KVM x64/ARM64는 `KvmRunControl`을 통해 상태 준비, `KVM_RUN` 진입, 종료 상태 수집을 같은 전용 vCPU 스레드에서 수행합니다. 준비는 `EINTR` 재시도 루프 전에 한 번만 수행하며, 수집은 호스트 진입이 성공적으로 반환된 뒤에만 수행합니다. 빌린 전송 콜백은 진입 완료가 확인될 때까지 유효합니다. ISA 디코딩, RAM 트랜잭션, OS 정책과 실행 관찰자는 호출 스레드에서 실행합니다. 준비 실패 시 진입과 수집을 생략하며, 수집 실패나 취소 시 게스트 상태를 게시하지 않습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지보수 실행, 게스트 레지스터 준비, 디버그 설정과 35개 레지스터 읽기도 이 작업 스레드에서 수행합니다. 유지보수와 게스트 실행은 하나의 단일 단계 기한을 공유하며, 호출 스레드는 전체 수집의 완료가 확인된 뒤에만 `captureAArch64GeneralState`로 상태를 반영합니다. ARM64 네이티브 실행의 실기 증거는 아직 없습니다.
+
+KVM은 `X64HostRegisters.def`와 `X64FPState.def`에 따라 일반 레지스터와 전체 FP/SSE 상태를 마지막으로 완료 확인한 디버그 종료 상태와 비교하고 변경된 입력을 다시 설치합니다. 호스트 쓰기와 컨텍스트 복원도 비교에 포함되며 예외, 취소와 실패는 재사용을 무효화합니다. 단일 단계 설정과 실제 일반/FP 상태 읽기는 명령마다 수행합니다.
+
+하드웨어 실행 자체가 더 짧은 전체 지연 시간을 보장하지는 않습니다. 현재 네이티브 실행은 명령마다 허용 검사, 관찰, 상태 전송과 VM 종료를 수행합니다. 같은 원본 이미지와 시나리오를 동일한 명령·이벤트 예산으로 비교하고 시간과 함께 결과 일치를 보고해야 합니다. CLI 지연에는 시작과 로드도 포함합니다.
+
+`GuardFlags`가 0이어도 CFG가 활성화되지 않은 포인터 슬롯은 유효합니다. 로더는 저장 영역, 실행 가능한 대체 대상, 재배치 시 완전한 `DIR64` 범위를 검증하고 원래 게스트 포인터를 유지합니다. 활성 CFG에는 여전히 이미지 활성화 비트와 계측/함수 테이블 플래그가 필요합니다. `DriverGuardCases.def`와 `NeverDDriverGuardMetadataTests`는 Unicorn, KVM, WHP에서 이를 검증하며 Unicorn을 끈 빌드에서도 사용할 수 있습니다.
+
+Checked ARM64 상태 수집은 ISA 계층의 공통 커밋 경계를 사용합니다. KVM/WHP는 `AArch64GeneralState.def`의 35개 필드를 수집하고 Unicorn은 추가 스레드 및 부동소수점 제어 상태를 포함한 공개 스칼라 필드 39개를 유지합니다. `captureAArch64ScalarState`는 `Registers.def`의 너비를 적용하고 NZCV를 정규화하며 모든 읽기가 성공한 뒤에만 상태를 공개합니다. 권한, 벡터 및 전송하지 않은 필드는 유지됩니다. 이 전송은 checked ARM64의 FP/SIMD 명령 지원을 의미하지 않습니다.

@@ -1213,20 +1213,48 @@ bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
     for (const auto &Op : Block.Ops)
       Member |= &Op == &Load;
   }
-  if (!Entry || !Member)
+  if (!Entry || !Member || Load.Output.Size > 64)
     return false;
+  // Initialization is per byte: one full-width store, or several narrower
+  // stores that together cover the reloaded range, as when bytes written one
+  // at a time are later moved as a word.  Each bit of a coverage mask is one
+  // reloaded byte.
+  const uint16_t Width = Load.Output.Size;
+  const uint64_t Complete =
+      Width == 64 ? ~uint64_t{0} : (uint64_t{1} << Width) - 1;
+  auto coverage = [&](const MedOp &Op) -> uint64_t {
+    if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Op.MemoryOrdering != NdMemoryOrdering::None || Op.Inputs[1].Size == 0)
+      return 0;
+    const auto Stored = canonicalFrameSlotKey(Op.Inputs[0]);
+    if (!Stored || Stored->first != Slot->first)
+      return 0;
+    // Frame offsets are small; reject any range whose bounds would not fit.
+    constexpr int64_t Limit = int64_t{1} << 40;
+    if (Stored->second <= -Limit || Stored->second >= Limit ||
+        Slot->second <= -Limit || Slot->second >= Limit)
+      return 0;
+    const int64_t Begin = std::max(Stored->second, Slot->second);
+    const int64_t End = std::min(Stored->second + Op.Inputs[1].Size,
+                                 Slot->second + int64_t{Width});
+    if (Begin >= End)
+      return 0;
+    const uint64_t Bytes = static_cast<uint64_t>(End - Begin);
+    const uint64_t Run =
+        Bytes == 64 ? ~uint64_t{0} : (uint64_t{1} << Bytes) - 1;
+    return Run << (Begin - Slot->second);
+  };
   // The entry prefix is sufficient without consulting the CFG index. It also
   // remains usable during a provisional feasible-edge transaction.
+  uint64_t EntryCovered = 0;
   for (const auto &Op : Entry->Ops) {
     if (&Op == &Load || Op.Opcode == NdOp::COND_BR ||
         Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::INDIR_BR ||
         Op.Opcode == NdOp::RETURN)
       break;
-    if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
-        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-        Op.MemoryOrdering == NdMemoryOrdering::None &&
-        Op.Inputs[1].Size == Load.Output.Size &&
-        canonicalFrameSlotKey(Op.Inputs[0]) == Slot)
+    EntryCovered |= coverage(Op);
+    if (EntryCovered == Complete)
       return true;
   }
 
@@ -1254,15 +1282,19 @@ bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
       &LoadBlock->second->Ops[Site.Index] != &Load)
     return false;
 
-  std::set<std::pair<int, bool>> Visited;
-  std::vector<std::pair<int, bool>> Work{
-      {FrameReloadIndex.EntryBlockId, false}};
+  // Explore (block, covered bytes) states.  A mask has at most Width set
+  // bits, and it only grows along a path, so the state space stays bounded.
+  std::set<std::pair<int, uint64_t>> Visited;
+  std::vector<std::pair<int, uint64_t>> Work{
+      {FrameReloadIndex.EntryBlockId, 0}};
   bool SawLoad = false;
   while (!Work.empty()) {
-    const auto [BlockId, PreviouslyInitialized] = Work.back();
+    const auto [BlockId, PreviouslyCovered] = Work.back();
     Work.pop_back();
-    if (!Visited.emplace(BlockId, PreviouslyInitialized).second)
+    if (!Visited.emplace(BlockId, PreviouslyCovered).second)
       continue;
+    if (Visited.size() > limits::kMaxFrameInitializerStates)
+      return false;
     const auto It = Blocks.find(BlockId);
     const auto Indexed = FrameReloadIndex.Blocks.find(BlockId);
     if (It == Blocks.end() || Indexed == FrameReloadIndex.Blocks.end())
@@ -1270,26 +1302,21 @@ bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
     const MedBlock &Block = *It->second;
     const size_t Boundary =
         BlockId == Site.BlockId ? Site.Index : Block.Ops.size();
-    bool Initialized = PreviouslyInitialized;
+    uint64_t Covered = PreviouslyCovered;
     for (size_t I = 0; I < Boundary; ++I) {
       const MedOp &Op = Block.Ops[I];
       if (Op.Opcode == NdOp::INDIR_BR)
         return false;
-      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          Op.MemoryOrdering == NdMemoryOrdering::None &&
-          Op.Inputs[1].Size == Load.Output.Size &&
-          canonicalFrameSlotKey(Op.Inputs[0]) == Slot)
-        Initialized = true;
+      Covered |= coverage(Op);
     }
     if (BlockId == Site.BlockId) {
       SawLoad = true;
-      if (!Initialized)
+      if (Covered != Complete)
         return false;
       continue;
     }
     for (int Successor : Indexed->second.Successors)
-      Work.emplace_back(Successor, Initialized);
+      Work.emplace_back(Successor, Covered);
   }
   return SawLoad;
 }

@@ -248,8 +248,12 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
-  if (CurOp.SourceCallHint)
+  if (CurOp.SourceCallHint) {
     Call->CallAddr = CurOp.SourceCallHint->TargetAddress;
+    // A bound void call has no output SSA value, but its expression still
+    // carries the authenticated result type rather than a guessed X0 value.
+    Call->Type = sourceCallResultType(CurOp);
+  }
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     Call->Type = sourceCallResultType(CurOp);
     S.Kind = StmtKind::Assign;

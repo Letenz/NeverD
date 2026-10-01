@@ -1,6 +1,8 @@
 #ifndef NEVERD_SDK_CAPI_OBJCSYNCHRONIZEDSOURCE_H
 #define NEVERD_SDK_CAPI_OBJCSYNCHRONIZEDSOURCE_H
 
+#include "ObjCUnwindSource.h"
+
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/lift/AArch64Regs.h"
@@ -23,6 +25,11 @@
 
 namespace neverd::sdk {
 
+struct ObjCSynchronizedSourceLifetime {
+  va_t EnterCall = 0;
+  va_t ExitCall = 0;
+};
+
 struct ObjCSynchronizedSourceProof {
   va_t EnterCall = 0;
   va_t GuardStopCall = 0;
@@ -34,12 +41,23 @@ struct ObjCSynchronizedSourceProof {
   uint8_t UnprotectedRetains = 0;
   bool ReceiverHasStackCopy = false;
   uint8_t SuspendARC = 0; // release=1, retain=2; all such calls are unprotected
+  uint8_t LandingPadPrelude = 0; // exact B to the five-instruction cleanup
+  // Separate, non-nested acquisitions of the same saved self receiver.
+  std::vector<ObjCSynchronizedSourceLifetime> Lifetimes;
+  // Unlocking and resumption-only entries share one authenticated tail.
+  bool SplitResumeTail = false;
+  va_t LandingPadExitTarget = 0;
+  uint8_t SplitResumePadBytes = 0;
+  // A CFG proof can have conditional normal exits and repeat acquisitions.
+  std::vector<va_t> NormalEnterCalls, NormalExitCalls;
+  va_t NormalEnterTarget = 0;
 };
 
 struct ObjCSynchronizedSourceRegion {
   va_t Begin = 0;
   va_t End = 0;
   va_t Landing = 0;
+  uint8_t LandingPadPrelude = 0;
 };
 
 inline bool objcSynchronizedSourceEHValid(const BinaryImage &Image,
@@ -90,6 +108,30 @@ objcSynchronizedSourceRegion(const BinaryImage &Image,
                                       Protected.LandingPadVA};
 }
 
+// A missing call-site-table interval is not a zero-landing-pad call site.
+// Accept such an interval only when every instruction decodes and none is a
+// call. The complete lifetime proof still checks its control flow and writes.
+inline bool objcSynchronizedNonCallGap(const BinaryImage &Image, va_t Begin,
+                                       va_t End) {
+  if (Image.Arch != Arch::AArch64 || Begin >= End || End - Begin > 16384 ||
+      (Begin | End) % 4)
+    return false;
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return false;
+  for (va_t Address = Begin; Address < End; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET))
+      return false;
+  }
+  return true;
+}
+
 // LSDA ranges may share one cleanup, with unprotected instructions between
 // them. Preserve those holes rather than treating their union as one protected
 // interval. Every table entry and pad record must agree exactly.
@@ -101,36 +143,61 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
   if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
-      Sites.back().LandingPadVA)
+      Sites.back().LandingPadVA || EH.CodeRange.End < 20 ||
+      Sites.front().GuardedRange.Begin != Function.Entry)
     return std::nullopt;
+  const va_t Cleanup = EH.CodeRange.End - 20;
+  va_t Landing = InvalidVA;
+  for (const auto &Site : Sites)
+    if (Site.LandingPadVA)
+      Landing = std::min(Landing, Site.LandingPadVA);
+  if (Landing < Function.Entry || Landing > Cleanup ||
+      (Cleanup - Landing != 0 && Cleanup - Landing != 4) ||
+      (Landing | Cleanup) % 4)
+    return std::nullopt;
+  const uint8_t Prelude = static_cast<uint8_t>(Cleanup - Landing);
+  // Clang can give an early range a separate entry consisting solely of
+  // B +4. Keep that address as exceptional too; all entries must reach the
+  // same exact unlock/resume sequence, with no intervening effects.
+  if (Prelude) {
+    const uint8_t *Bytes = Image.readVA(Landing, 4);
+    if (!Bytes || llvm::support::endian::read32le(Bytes) != 0x14000001U)
+      return std::nullopt;
+  }
   std::vector<ObjCSynchronizedSourceRegion> Regions;
-  va_t Next = Function.Entry, Landing = 0;
+  va_t Next = Function.Entry;
   for (const auto &Site : Sites) {
     const auto &Range = Site.GuardedRange;
-    if (Range.Begin != Next || Range.End <= Range.Begin ||
+    if (Range.Begin < Next || Range.End <= Range.Begin ||
         Range.End > EH.CodeRange.End || (Range.Begin | Range.End) % 4 ||
         Site.FirstActionOffset)
+      return std::nullopt;
+    if (Range.Begin != Next &&
+        !objcSynchronizedNonCallGap(Image, Next, Range.Begin))
       return std::nullopt;
     Next = Range.End;
     if (!Site.LandingPadVA)
       continue;
-    if (Landing && Landing != Site.LandingPadVA)
+    if (Site.LandingPadVA != Landing && Site.LandingPadVA != Cleanup)
       return std::nullopt;
-    Landing = Site.LandingPadVA;
     if (Range.End > Landing ||
         std::count_if(EH.ObjC->LandingPads.begin(), EH.ObjC->LandingPads.end(),
                       [&](const auto &Pad) {
-                        return Pad.PadVA == Landing &&
-                               Pad.Kind == ObjCPadKind::SynchronizedExit &&
+                        const bool KindMatches =
+                            Pad.PadVA == Cleanup
+                                ? Pad.Kind == ObjCPadKind::SynchronizedExit
+                                : Pad.Kind == ObjCPadKind::Cleanup ||
+                                      Pad.Kind == ObjCPadKind::SynchronizedExit;
+                        return Pad.PadVA == Site.LandingPadVA && KindMatches &&
+                               Pad.Catches.empty() &&
                                Pad.GuardedRange.Begin == Range.Begin &&
                                Pad.GuardedRange.End == Range.End;
                       }) != 1)
       return std::nullopt;
-    Regions.push_back({Range.Begin, Range.End, Landing});
+    Regions.push_back({Range.Begin, Range.End, Landing, Prelude});
   }
   if (Regions.empty() || Regions.size() != EH.ObjC->LandingPads.size() ||
-      Next != EH.CodeRange.End || !Landing || Landing > InvalidVA - 20 ||
-      EH.CodeRange.End != Landing + 20)
+      Next != EH.CodeRange.End || !Landing)
     return std::nullopt;
   return Regions;
 }
@@ -634,9 +701,11 @@ proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
 // This permits backward joins without permitting a loop, pad entry or relock.
 inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
                                               va_t Entry, va_t Begin,
-                                              va_t Landing) {
+                                              va_t Landing,
+                                              uint8_t LandingPadPrelude = 0) {
   if (Begin < Entry || Begin >= Landing || Landing - Entry > 16384 ||
-      Landing > InvalidVA - 20 || (Begin | Landing) % 4)
+      (LandingPadPrelude != 0 && LandingPadPrelude != 4) ||
+      Landing > InvalidVA - 20 - LandingPadPrelude || (Begin | Landing) % 4)
     return false;
   Decoder Decoder;
   if (!Decoder.init(Arch::AArch64))
@@ -673,7 +742,8 @@ inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
       if (!Target)
         return false;
       const bool Unconditional = Word && branch::A64Branch.matches(*Word);
-      if (Unconditional && (*Target < Entry || *Target >= Landing + 20))
+      if (Unconditional &&
+          (*Target < Entry || *Target >= Landing + 20 + LandingPadPrelude))
         continue;
       if (!AddEdge(Address, *Target))
         return false;
@@ -704,6 +774,8 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       Regions->front().Landing - Function.Entry > 16384)
     return std::nullopt;
   const va_t Landing = Regions->front().Landing;
+  const uint8_t Prelude = Regions->front().LandingPadPrelude;
+  const va_t Cleanup = Landing + Prelude;
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
   };
@@ -738,13 +810,13 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
       ReceiverFromRetainResult = true;
     }
   for (unsigned Register = 19; Register <= 22; ++Register)
-    if (Register != ReceiverRegister && Word(Landing) == SaveX0(Register))
+    if (Register != ReceiverRegister && Word(Cleanup) == SaveX0(Register))
       ExceptionRegister = Register;
   if (!ReceiverRegister || !ExceptionRegister ||
-      Word(Landing + 4) != LoadX0(ReceiverRegister) ||
-      !HasCall(Landing + 8, "_objc_sync_exit") ||
-      Word(Landing + 12) != LoadX0(ExceptionRegister) ||
-      !HasCall(Landing + 16, "__Unwind_Resume"))
+      Word(Cleanup + 4) != LoadX0(ReceiverRegister) ||
+      !HasCall(Cleanup + 8, "_objc_sync_exit") ||
+      Word(Cleanup + 12) != LoadX0(ExceptionRegister) ||
+      !HasCall(Cleanup + 16, "__Unwind_Resume"))
     return std::nullopt;
   va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
   va_t ExitCall = 0;
@@ -847,18 +919,586 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   // The legacy proofs own ordinary single-range lifetimes. This proof also
   // handles a single range when a verified prefix path bypasses the lock;
   // no ARC suspension is needed if every locked-body call is protected.
-  if ((Regions->size() == 1 && !BypassesLock) ||
+  if ((Regions->size() == 1 && !BypassesLock && !Prelude) ||
       (Regions->size() > 1 && !UnprotectedARC) ||
       (UnprotectedARC & ProtectedARC))
     return std::nullopt;
   if (!objcSynchronizedNormalSuffixValid(Image, Function.Entry, ExitCall + 4,
-                                         Landing))
+                                         Landing, Prelude))
     return std::nullopt;
   ObjCSynchronizedSourceProof Proof{
       EnterCall, ExitCall, ExitCall, Landing,
-      objcSynchronizedBranchTarget(Image, Landing + 16)};
+      objcSynchronizedBranchTarget(Image, Cleanup + 16)};
   Proof.ReceiverIsSavedLocal = ReceiverFromRetainResult;
   Proof.SuspendARC = UnprotectedARC;
+  Proof.LandingPadPrelude = Prelude;
+  return Proof;
+}
+
+// Several acquisitions can share one exceptional cleanup. Prove the lock
+// state at every normal CFG join, including the unlocked gap and paths that
+// bypass a later acquisition. A protected call must belong to its particular
+// lifetime; an unprotected call must run without the cleanup guard. Unlike
+// the single-lifetime ARC proof, this deliberately accepts no suspended calls.
+inline std::optional<ObjCSynchronizedSourceProof>
+proveObjCSynchronizedSequentialCleanup(const BinaryImage &Image,
+                                       const HighFunc &Function) {
+  const auto Regions = objcSynchronizedInterleavedRanges(Image, Function);
+  if (!Regions || Regions->size() < 2 || Function.Entry > InvalidVA - 8)
+    return std::nullopt;
+  const va_t Landing = Regions->front().Landing;
+  const uint8_t Prelude = Regions->front().LandingPadPrelude;
+  const va_t Cleanup = Landing + Prelude;
+  if (Landing <= Function.Entry || Landing - Function.Entry > 16384)
+    return std::nullopt;
+  const auto Word = [&](va_t Address) {
+    return objcSynchronizedWord(Image, Address);
+  };
+  const auto HasCall = [&](va_t Address, llvm::StringRef Name) {
+    return objcSynchronizedCallIs(Image, Address, Name);
+  };
+  std::vector<ObjCSynchronizedSourceLifetime> Lifetimes;
+  for (va_t Address = Function.Entry; Address < Landing; Address += 4) {
+    if (HasCall(Address, "_objc_sync_enter")) {
+      if (Lifetimes.size() == 16 ||
+          (!Lifetimes.empty() && !Lifetimes.back().ExitCall))
+        return std::nullopt;
+      Lifetimes.push_back({Address, 0});
+    } else if (HasCall(Address, "_objc_sync_exit")) {
+      if (Lifetimes.empty() || Lifetimes.back().ExitCall)
+        return std::nullopt;
+      Lifetimes.back().ExitCall = Address;
+    } else if (HasCall(Address, "__Unwind_Resume"))
+      return std::nullopt;
+  }
+  if (Lifetimes.size() < 2 || !Lifetimes.back().ExitCall ||
+      Lifetimes.front().EnterCall < Function.Entry + 8)
+    return std::nullopt;
+  const auto SaveX0 = [](unsigned Register) { return 0xaa0003e0U | Register; };
+  const auto LoadX0 = [](unsigned Register) {
+    return 0xaa0003e0U | (Register << 16);
+  };
+  unsigned ReceiverRegister = 0, ExceptionRegister = 0;
+  for (unsigned Register = 19; Register <= 22; ++Register)
+    if (Word(Lifetimes.front().EnterCall - 4) == LoadX0(Register))
+      ReceiverRegister = Register;
+  for (unsigned Register = 19; Register <= 22; ++Register)
+    if (Register != ReceiverRegister && Word(Cleanup) == SaveX0(Register))
+      ExceptionRegister = Register;
+  if (!ReceiverRegister || !ExceptionRegister ||
+      Word(Cleanup + 4) != LoadX0(ReceiverRegister) ||
+      !HasCall(Cleanup + 8, "_objc_sync_exit") ||
+      Word(Cleanup + 12) != LoadX0(ExceptionRegister) ||
+      !HasCall(Cleanup + 16, "__Unwind_Resume"))
+    return std::nullopt;
+  for (const auto &Lifetime : Lifetimes)
+    if (Lifetime.ExitCall <= Lifetime.EnterCall + 4 ||
+        Word(Lifetime.EnterCall - 4) != LoadX0(ReceiverRegister) ||
+        Word(Lifetime.ExitCall - 4) != LoadX0(ReceiverRegister))
+      return std::nullopt;
+  va_t SavedReceiver = 0;
+  for (va_t Address = Function.Entry; Address < Lifetimes.front().EnterCall - 4;
+       Address += 4)
+    if (Word(Address) == SaveX0(ReceiverRegister)) {
+      if (SavedReceiver || Address - Function.Entry > 32)
+        return std::nullopt;
+      SavedReceiver = Address;
+    }
+  if (!SavedReceiver || !objcSynchronizedNormalSuffixValid(
+                            Image, Function.Entry,
+                            Lifetimes.back().ExitCall + 4, Landing, Prelude))
+    return std::nullopt;
+  std::vector<unsigned> RegionOwners;
+  std::vector<bool> HasRegion(Lifetimes.size(), false);
+  for (const auto &Region : *Regions) {
+    const auto Owner = std::find_if(
+        Lifetimes.begin(), Lifetimes.end(), [&](const auto &Lifetime) {
+          return Region.Begin > Lifetime.EnterCall &&
+                 Region.End <= Lifetime.ExitCall;
+        });
+    if (Owner == Lifetimes.end())
+      return std::nullopt;
+    const unsigned Index = Owner - Lifetimes.begin();
+    HasRegion[Index] = true;
+    RegionOwners.push_back(Index + 1);
+  }
+  if (std::find(HasRegion.begin(), HasRegion.end(), false) != HasRegion.end())
+    return std::nullopt;
+
+  struct Node {
+    std::vector<size_t> Edges;
+    unsigned Enter = 0, Exit = 0, Protected = 0;
+    bool Call = false, Terminal = false;
+  };
+  const size_t Count = (Landing - Function.Entry) / 4;
+  std::vector<Node> Nodes(Count);
+  std::vector<unsigned> Incoming(Count, 0);
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return std::nullopt;
+  const unsigned ReceiverXRegisters[] = {ARM64_REG_X19, ARM64_REG_X20,
+                                         ARM64_REG_X21, ARM64_REG_X22};
+  const unsigned ReceiverWRegisters[] = {ARM64_REG_W19, ARM64_REG_W20,
+                                         ARM64_REG_W21, ARM64_REG_W22};
+  const auto AddEdge = [&](size_t Index, va_t Target) {
+    if (Target < Function.Entry || Target >= Landing || Target % 4)
+      return false;
+    const size_t Next = (Target - Function.Entry) / 4;
+    Nodes[Index].Edges.push_back(Next);
+    ++Incoming[Next];
+    return true;
+  };
+  for (size_t Index = 0; Index < Count; ++Index) {
+    const va_t Address = Function.Entry + Index * 4;
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET))
+      return std::nullopt;
+    cs_regs Reads{}, Writes{};
+    uint8_t ReadCount = 0, WriteCount = 0;
+    if (cs_regs_access(Decoder.getHandle(), Instruction.Raw, Reads, &ReadCount,
+                       Writes, &WriteCount) != CS_ERR_OK)
+      return std::nullopt;
+    for (uint8_t I = 0; I < WriteCount; ++I)
+      if ((Address < SavedReceiver &&
+           (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0)) ||
+          (Address > SavedReceiver && Address < Lifetimes.back().ExitCall &&
+           (Writes[I] == ReceiverXRegisters[ReceiverRegister - 19] ||
+            Writes[I] == ReceiverWRegisters[ReceiverRegister - 19])))
+        return std::nullopt;
+    auto &Node = Nodes[Index];
+    Node.Call =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL);
+    for (unsigned I = 0; I < Lifetimes.size(); ++I) {
+      if (Address == Lifetimes[I].EnterCall)
+        Node.Enter = I + 1;
+      if (Address == Lifetimes[I].ExitCall)
+        Node.Exit = I + 1;
+    }
+    for (unsigned I = 0; I < Regions->size(); ++I)
+      if (Address >= (*Regions)[I].Begin && Address + 4 <= (*Regions)[I].End)
+        Node.Protected = RegionOwners[I];
+    const bool Jump =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP);
+    if (Address < SavedReceiver && (Node.Call || Jump))
+      return std::nullopt;
+    if (Word(Address) == 0xd65f03c0U) {
+      Node.Terminal = true;
+      continue;
+    }
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET))
+      return std::nullopt;
+    if (Jump && !Node.Call) {
+      const auto Target = objcSynchronizedDirectBranchTarget(Instruction);
+      if (!Target)
+        return std::nullopt;
+      const bool Unconditional = branch::A64Branch.matches(*Word(Address));
+      if (Unconditional &&
+          (*Target < Function.Entry || *Target >= Cleanup + 20)) {
+        const auto Name = Image.getFunctionNameAt(*Target);
+        if (Name == "_objc_sync_enter" || Name == "_objc_sync_exit" ||
+            Name == "__Unwind_Resume")
+          return std::nullopt;
+        Node.Terminal = true;
+        continue;
+      }
+      if (!AddEdge(Index, *Target))
+        return std::nullopt;
+      if (Unconditional)
+        continue;
+    }
+    if (!AddEdge(Index, Address + 4))
+      return std::nullopt;
+  }
+  // Acyclic and fully reachable normal code. Merge only equal lock states;
+  // a skipped enter, missing exit or cross-lifetime branch cannot inherit it.
+  std::vector<size_t> Ready;
+  for (size_t I = 0; I < Count; ++I)
+    if (!Incoming[I])
+      Ready.push_back(I);
+  if (Ready.size() != 1 || Ready.front() != 0)
+    return std::nullopt;
+  std::vector<std::optional<unsigned>> States(Count);
+  States[0] = 0;
+  for (size_t I = 0; I < Ready.size(); ++I) {
+    const size_t Index = Ready[I];
+    if (!States[Index])
+      return std::nullopt;
+    unsigned State = *States[Index];
+    const auto &Node = Nodes[Index];
+    if (Node.Enter) {
+      if (State || Node.Protected)
+        return std::nullopt;
+      State = Node.Enter;
+    } else if (Node.Exit) {
+      if (State != Node.Exit || Node.Protected)
+        return std::nullopt;
+      State = 0;
+    } else if (Node.Call && State != Node.Protected)
+      return std::nullopt;
+    if (Node.Terminal && State)
+      return std::nullopt;
+    for (const size_t Next : Node.Edges) {
+      if (States[Next] && *States[Next] != State)
+        return std::nullopt;
+      States[Next] = State;
+      if (!--Incoming[Next])
+        Ready.push_back(Next);
+    }
+  }
+  if (Ready.size() != Count)
+    return std::nullopt;
+  ObjCSynchronizedSourceProof Proof{
+      Lifetimes.front().EnterCall, Lifetimes.back().ExitCall,
+      Lifetimes.back().ExitCall, Landing,
+      objcSynchronizedBranchTarget(Image, Cleanup + 16)};
+  Proof.LandingPadPrelude = Prelude;
+  Proof.Lifetimes = std::move(Lifetimes);
+  return Proof;
+}
+
+// Clang can use a second entry which only saves the exception, while the
+// synchronized entry unlocks and branches over that save. Both resume the
+// same exception. A resumption-only LSDA range does not own the unlock guard.
+inline std::optional<ObjCSynchronizedSourceProof>
+proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
+                                        const HighFunc &Function) {
+  if (!objcSynchronizedSourceEHValid(Image, Function) ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable)
+    return std::nullopt;
+  const auto &EH = *Function.ExceptionMetadata;
+  if (EH.SEH || EH.Cxx || EH.GSCookie || EH.ARMEHABI || EH.Registration ||
+      EH.Delphi || EH.DelphiScopes || EH.Go || EH.Rust ||
+      EH.ObjC->Runtime != ObjCRuntimeKind::AppleNonFragile ||
+      EH.ObjC->UsesFragileSetjmp || EH.ObjC->UsesMSVCTables ||
+      (Function.Entry | EH.CodeRange.End) % 4 ||
+      EH.Itanium->CallSites.empty() || EH.Itanium->CallSites.size() > 129)
+    return std::nullopt;
+  va_t Landing = InvalidVA;
+  for (const auto &Site : EH.Itanium->CallSites)
+    if (Site.LandingPadVA)
+      Landing = std::min(Landing, Site.LandingPadVA);
+  if (Landing <= Function.Entry || Landing >= EH.CodeRange.End ||
+      Landing - Function.Entry > 16384 || Landing % 4)
+    return std::nullopt;
+  const va_t PadBytes = EH.CodeRange.End - Landing;
+  if (PadBytes != 28 && PadBytes != 32 && PadBytes != 36)
+    return std::nullopt;
+  const bool Forwarded = PadBytes == 36;
+  const bool Prelude = PadBytes == 32;
+  const va_t Cleanup = Landing + (Forwarded ? 16 : Prelude ? 4 : 0);
+  const va_t Passthrough = Forwarded ? Landing : Cleanup + 16;
+  const auto Unlocks = [&](va_t Pad) {
+    return Pad == Cleanup || (Prelude && Pad == Landing) ||
+           (Forwarded && (Pad == Landing + 8 || Pad == Landing + 12));
+  };
+  const auto Word = [&](va_t Address) {
+    return objcSynchronizedWord(Image, Address);
+  };
+  const auto Target = [&](va_t Address) {
+    return objcSynchronizedBranchTarget(Image, Address);
+  };
+  const auto SyncIs = [&](va_t Address, llvm::StringRef Name) {
+    return objcUnwindRuntimeTargetIs(Image, Target(Address), Name,
+                                     "/usr/lib/libobjc.A.dylib");
+  };
+  const va_t ExitTarget = Target(Cleanup + 8);
+  const va_t ResumeTarget = Target(EH.CodeRange.End - 4);
+  if (!SyncIs(Cleanup + 8, "_objc_sync_exit") ||
+      !objcUnwindRuntimeTargetIs(
+          Image, ResumeTarget, "__Unwind_Resume",
+          "/usr/lib/libSystem.B.dylib|/usr/lib/system/libunwind.dylib") ||
+      (!Forwarded && Word(Cleanup + 12) != 0x14000002U) ||
+      (Prelude && Word(Landing) != 0x14000001U) ||
+      (Forwarded &&
+       (Word(Landing + 4) != 0x14000006U || Word(Landing + 8) != 0x14000002U ||
+        Word(Landing + 12) != 0x14000001U)))
+    return std::nullopt;
+  const auto SaveX0 = [](unsigned Register) { return 0xaa0003e0U | Register; };
+  const auto LoadX0 = [](unsigned Register) {
+    return 0xaa0003e0U | (Register << 16);
+  };
+  unsigned Receiver = 0, Exception = 0;
+  for (unsigned Register = 19; Register <= 22; ++Register) {
+    if (Word(Cleanup + 4) == LoadX0(Register))
+      Receiver = Register;
+    if (Word(Cleanup) == SaveX0(Register))
+      Exception = Register;
+  }
+  if (!Receiver || !Exception || Receiver == Exception ||
+      Word(Passthrough) != SaveX0(Exception) ||
+      Word(EH.CodeRange.End - 8) != LoadX0(Exception))
+    return std::nullopt;
+  for (const auto &Call : EH.ObjC->RuntimeCalls)
+    if (Call.Kind == ObjCRuntimeCallKind::BeginCatch ||
+        Call.Kind == ObjCRuntimeCallKind::EndCatch ||
+        Call.Kind == ObjCRuntimeCallKind::Rethrow ||
+        Call.Kind == ObjCRuntimeCallKind::FragileTry)
+      return std::nullopt;
+
+  va_t Next = Function.Entry;
+  size_t Protected = 0, Unlocking = 0, Resuming = 0;
+  for (const auto &Site : EH.Itanium->CallSites) {
+    const auto &Range = Site.GuardedRange;
+    if (Range.Begin < Next || Range.End <= Range.Begin ||
+        Range.End > EH.CodeRange.End || (Range.Begin | Range.End) % 4 ||
+        Site.FirstActionOffset ||
+        (Range.Begin != Next &&
+         !objcSynchronizedNonCallGap(Image, Next, Range.Begin)))
+      return std::nullopt;
+    Next = Range.End;
+    if (!Site.LandingPadVA)
+      continue;
+    const bool Unlock = Unlocks(Site.LandingPadVA);
+    if ((!Unlock && Site.LandingPadVA != Passthrough) || Range.End > Landing ||
+        std::count_if(EH.ObjC->LandingPads.begin(), EH.ObjC->LandingPads.end(),
+                      [&](const auto &Pad) {
+                        return Pad.PadVA == Site.LandingPadVA &&
+                               Pad.Kind == (Site.LandingPadVA == Cleanup
+                                                ? ObjCPadKind::SynchronizedExit
+                                                : ObjCPadKind::Cleanup) &&
+                               Pad.Catches.empty() &&
+                               Pad.GuardedRange.Begin == Range.Begin &&
+                               Pad.GuardedRange.End == Range.End;
+                      }) != 1)
+      return std::nullopt;
+    ++Protected;
+    Unlock ? ++Unlocking : ++Resuming;
+  }
+  if (Next != EH.CodeRange.End || !Unlocking || !Resuming ||
+      Protected != EH.ObjC->LandingPads.size())
+    return std::nullopt;
+  std::vector<va_t> Enters, Exits;
+  va_t Saved = 0;
+  for (va_t Address = Function.Entry; Address < Landing; Address += 4) {
+    if (SyncIs(Address, "_objc_sync_enter")) {
+      if (Enters.size() == 8)
+        return std::nullopt;
+      Enters.push_back(Address);
+    } else if (SyncIs(Address, "_objc_sync_exit")) {
+      if (Exits.size() == 16)
+        return std::nullopt;
+      Exits.push_back(Address);
+    } else if (Target(Address) == ResumeTarget)
+      return std::nullopt;
+  }
+  if (Enters.empty() || Exits.empty())
+    return std::nullopt;
+  const va_t Enter = Enters.front(), Exit = Exits.back();
+  if (Enter < Function.Entry + 8 || Exit <= Enter + 4 ||
+      std::any_of(
+          Exits.begin(), Exits.end(),
+          [&](va_t Address) { return Word(Address - 4) != LoadX0(Receiver); }))
+    return std::nullopt;
+  const bool RetainedLocal =
+      Word(Enter - 4) == SaveX0(Receiver) &&
+      objcSynchronizedRuntimeTargetIs(Image, Target(Enter - 8),
+                                      "objc_retainAutoreleasedReturnValue",
+                                      a64reg::X0);
+  if (RetainedLocal)
+    Saved = Enter - 4;
+  else {
+    if (Word(Enter - 4) != LoadX0(Receiver))
+      return std::nullopt;
+    for (va_t Address = Function.Entry; Address < Enter - 4; Address += 4)
+      if (Word(Address) == SaveX0(Receiver)) {
+        if (Saved || Address - Function.Entry > 32)
+          return std::nullopt;
+        Saved = Address;
+      }
+  }
+  if (!Saved)
+    return std::nullopt;
+  if (RetainedLocal && (Enters.size() != 1 || Exits.size() != 1))
+    return std::nullopt;
+  for (va_t Address : Enters)
+    if (Address != Enter && Word(Address - 4) != LoadX0(Receiver))
+      return std::nullopt;
+  if (std::any_of(
+          Enters.begin(), Enters.end(),
+          [&](va_t Address) { return Target(Address) != Target(Enter); }) ||
+      std::any_of(Exits.begin(), Exits.end(),
+                  [&](va_t Address) { return Target(Address) != ExitTarget; }))
+    return std::nullopt;
+
+  struct Node {
+    std::vector<size_t> Edges;
+    va_t Pad = 0;
+    uint8_t ARC = 0;
+    bool Call = false, Terminal = false;
+    bool WritesReceiver = false;
+  };
+  const size_t Count = (Landing - Function.Entry) / 4;
+  std::vector<Node> Nodes(Count);
+  const auto AddEdge = [&](size_t Index, va_t Address) {
+    if (Address < Function.Entry || Address >= Landing || Address % 4)
+      return false;
+    const va_t From = Function.Entry + Index * 4;
+    if ((Address <= Saved ||
+         std::find(Enters.begin(), Enters.end(), Address) != Enters.end() ||
+         std::find(Exits.begin(), Exits.end(), Address) != Exits.end()) &&
+        Address != From + 4)
+      return false;
+    Nodes[Index].Edges.push_back((Address - Function.Entry) / 4);
+    return true;
+  };
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return std::nullopt;
+  const unsigned ReceiverX[] = {ARM64_REG_X19, ARM64_REG_X20, ARM64_REG_X21,
+                                ARM64_REG_X22};
+  const unsigned ReceiverW[] = {ARM64_REG_W19, ARM64_REG_W20, ARM64_REG_W21,
+                                ARM64_REG_W22};
+  for (size_t Index = 0; Index < Count; ++Index) {
+    const va_t Address = Function.Entry + Index * 4;
+    const auto *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_INT) ||
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_IRET))
+      return std::nullopt;
+    cs_regs Reads{}, Writes{};
+    uint8_t ReadCount = 0, WriteCount = 0;
+    if (cs_regs_access(Decoder.getHandle(), Instruction.Raw, Reads, &ReadCount,
+                       Writes, &WriteCount) != CS_ERR_OK)
+      return std::nullopt;
+    auto &Node = Nodes[Index];
+    for (uint8_t I = 0; I < WriteCount; ++I) {
+      if (!RetainedLocal && Address < Saved &&
+          (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0))
+        return std::nullopt;
+      Node.WritesReceiver |= Writes[I] == ReceiverX[Receiver - 19] ||
+                             Writes[I] == ReceiverW[Receiver - 19];
+    }
+    Node.Call =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL);
+    const bool Jump =
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP);
+    if (!RetainedLocal && Address < Saved && (Node.Call || Jump))
+      return std::nullopt;
+    for (const auto &Site : EH.Itanium->CallSites)
+      if (Address >= Site.GuardedRange.Begin &&
+          Address + 4 <= Site.GuardedRange.End)
+        Node.Pad = Site.LandingPadVA;
+    if (Node.Call) {
+      if (Target(Address) >= Landing && Target(Address) < EH.CodeRange.End)
+        return std::nullopt;
+      const auto Hint = objcSynchronizedRuntimeTarget(Image, Target(Address));
+      if (Hint)
+        Node.ARC = Hint->TargetName == "objc_release"  ? 1
+                   : Hint->TargetName == "objc_retain" ? 2
+                                                       : 0;
+      if (objcUnwindNoReturnTarget(Image, Target(Address))) {
+        Node.Terminal = true;
+        continue;
+      }
+    }
+    if (Word(Address) == 0xd65f03c0U) {
+      Node.Terminal = true;
+      continue;
+    }
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET))
+      return std::nullopt;
+    if (Jump && !Node.Call) {
+      const auto Branch = objcSynchronizedDirectBranchTarget(Instruction);
+      if (!Branch)
+        return std::nullopt;
+      const bool Unconditional = branch::A64Branch.matches(*Word(Address));
+      if (Unconditional &&
+          (*Branch < Function.Entry || *Branch >= EH.CodeRange.End)) {
+        if (objcUnwindRuntimeTargetIs(Image, *Branch, "_objc_sync_enter",
+                                      "/usr/lib/libobjc.A.dylib") ||
+            objcUnwindRuntimeTargetIs(Image, *Branch, "_objc_sync_exit",
+                                      "/usr/lib/libobjc.A.dylib") ||
+            *Branch == ResumeTarget)
+          return std::nullopt;
+        Node.Terminal = true;
+        continue;
+      }
+      if (!AddEdge(Index, *Branch))
+        return std::nullopt;
+      if (Unconditional)
+        continue;
+    }
+    if (!AddEdge(Index, Address + 4))
+      return std::nullopt;
+  }
+  // Every reachable join must have the same lock state. This also handles a
+  // loop which preserves it: no path can inherit a skipped enter or exit.
+  struct State {
+    bool Held = false, ReceiverKnown = false;
+  };
+  std::vector<std::optional<State>> States(Count);
+  std::vector<size_t> Ready{0};
+  States[0] = State{};
+  uint8_t SuspendARC = 0, ProtectedARC = 0;
+  for (size_t I = 0; I < Ready.size(); ++I) {
+    const size_t Index = Ready[I];
+    const va_t Address = Function.Entry + Index * 4;
+    const auto &Node = Nodes[Index];
+    auto Current = *States[Index];
+    bool &Held = Current.Held;
+    if (Address == Saved)
+      Current.ReceiverKnown = true;
+    else if (Node.WritesReceiver) {
+      if (Held)
+        return std::nullopt;
+      Current.ReceiverKnown = false;
+    }
+    if (std::find(Enters.begin(), Enters.end(), Address) != Enters.end()) {
+      if (Held || Node.Pad || !Current.ReceiverKnown)
+        return std::nullopt;
+      Held = true;
+    } else if (std::find(Exits.begin(), Exits.end(), Address) != Exits.end()) {
+      if (!Held || Node.Pad || !Current.ReceiverKnown)
+        return std::nullopt;
+      Held = false;
+    } else if (Node.Call && !Node.Terminal) {
+      if (Unlocks(Node.Pad)) {
+        if (!Held)
+          return std::nullopt;
+        ProtectedARC |= Node.ARC;
+      } else if (Held) {
+        if (!Node.ARC)
+          return std::nullopt;
+        SuspendARC |= Node.ARC;
+      }
+    }
+    if (Node.Terminal && Held)
+      return std::nullopt;
+    for (const auto Successor : Node.Edges) {
+      if (States[Successor]) {
+        if (States[Successor]->Held != Held)
+          return std::nullopt;
+        if (States[Successor]->ReceiverKnown && !Current.ReceiverKnown) {
+          States[Successor]->ReceiverKnown = false;
+          Ready.push_back(Successor);
+        }
+      } else {
+        States[Successor] = Current;
+        Ready.push_back(Successor);
+      }
+    }
+  }
+  if (std::any_of(States.begin(), States.end(),
+                  [](const auto &S) { return !S; }) ||
+      (SuspendARC & ProtectedARC))
+    return std::nullopt;
+  ObjCSynchronizedSourceProof Proof{Enter, Exit, Exit, Landing, ResumeTarget};
+  Proof.SuspendARC = SuspendARC;
+  Proof.SplitResumeTail = true;
+  Proof.LandingPadExitTarget = ExitTarget;
+  Proof.SplitResumePadBytes = static_cast<uint8_t>(PadBytes);
+  Proof.ReceiverIsSavedLocal = RetainedLocal;
+  if (Enters.size() != 1 || Exits.size() != 1) {
+    Proof.NormalEnterCalls = std::move(Enters);
+    Proof.NormalExitCalls = std::move(Exits);
+    Proof.NormalEnterTarget = Target(Enter);
+  }
   return Proof;
 }
 
@@ -876,23 +1516,243 @@ proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
   if (auto Proof =
           proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function))
     return Proof;
-  return proveObjCSynchronizedInterleavedCleanup(Image, Function);
+  if (auto Proof = proveObjCSynchronizedInterleavedCleanup(Image, Function))
+    return Proof;
+  if (auto Proof = proveObjCSynchronizedSequentialCleanup(Image, Function))
+    return Proof;
+  return proveObjCSynchronizedSplitResumeCleanup(Image, Function);
 }
 
 // The proved pad is an exceptional entry, not a normal source path. A full
 // image analysis can retain it as an unreachable suffix after the ordinary
 // return. Remove that suffix only when its label and statement addresses
-// match the five proved machine instructions, with no source edge into it.
+// match the proved branch entry and five cleanup instructions, with no source
+// edge into either exceptional entry.
 // The cleanup variable below supplies the same exceptional unlock.
+inline bool omitProvenObjCSynchronizedSplitResumeTail(
+    HighFunc &Function, const ObjCSynchronizedSourceProof &Proof) {
+  if (!Proof.SplitResumeTail || !Proof.LandingPad || !Proof.ResumeTarget ||
+      !Proof.LandingPadExitTarget || Proof.LandingPadPrelude ||
+      (Proof.SplitResumePadBytes != 28 && Proof.SplitResumePadBytes != 32 &&
+       Proof.SplitResumePadBytes != 36) ||
+      Proof.LandingPad > InvalidVA - Proof.SplitResumePadBytes ||
+      !Function.ExceptionMetadata ||
+      Function.ExceptionMetadata->CodeRange.Begin != Function.Entry ||
+      Function.ExceptionMetadata->CodeRange.End !=
+          Proof.LandingPad + Proof.SplitResumePadBytes ||
+      Function.Body.empty())
+    return false;
+  const auto InPad = [&](va_t Address) {
+    return Address >= Proof.LandingPad &&
+           Address < Proof.LandingPad + Proof.SplitResumePadBytes;
+  };
+  const bool Forwarded = Proof.SplitResumePadBytes == 36;
+  const bool Prelude = Proof.SplitResumePadBytes == 32;
+  const va_t Cleanup = Proof.LandingPad + (Forwarded ? 16 : Prelude ? 4 : 0);
+  const va_t Passthrough = Forwarded ? Proof.LandingPad : Cleanup + 16;
+  const auto UnlockAlias = [&](va_t Address) {
+    return (Prelude && Address == Proof.LandingPad) ||
+           (Forwarded && (Address == Proof.LandingPad + 8 ||
+                          Address == Proof.LandingPad + 12));
+  };
+  auto &Body = Function.Body;
+  const auto Marker = std::find_if(
+      Body.begin(), Body.end(), [&](const auto &S) { return InPad(S.Addr); });
+  std::vector<HighStmt *> Pending;
+  for (auto It = Body.begin(); It != Marker; ++It)
+    Pending.push_back(&*It);
+  size_t Budget = 4096;
+  std::optional<MedVar> SavedReceiver;
+  std::vector<va_t> NormalCalls;
+  while (!Pending.empty()) {
+    if (!Budget--)
+      return false;
+    auto *S = Pending.back();
+    Pending.pop_back();
+    if (InPad(S->Addr) || (S->Kind == StmtKind::Goto && InPad(S->GotoTarget)))
+      return false;
+    const bool NormalEnter =
+        std::find(Proof.NormalEnterCalls.begin(), Proof.NormalEnterCalls.end(),
+                  S->Addr) != Proof.NormalEnterCalls.end();
+    const bool NormalExit =
+        std::find(Proof.NormalExitCalls.begin(), Proof.NormalExitCalls.end(),
+                  S->Addr) != Proof.NormalExitCalls.end();
+    if (NormalEnter || NormalExit) {
+      const auto Call = objcUnwindStatementCall(*S);
+      if (!Call || Call->Kind != ExprKind::Call || Call->IsIndirectCall ||
+          Call->IndirectTarget || Call->Operands.size() != 1 ||
+          Call->CallAddr != (NormalEnter ? Proof.NormalEnterTarget
+                                         : Proof.LandingPadExitTarget) ||
+          Function.Params.empty() || !Function.Params[0].Type ||
+          Function.Params[0].Type->Kind != NdTypeKind::Ptr ||
+          Function.Params[0].Type->Size != 8 ||
+          std::find(NormalCalls.begin(), NormalCalls.end(), S->Addr) !=
+              NormalCalls.end())
+        return false;
+      size_t Budget = 128;
+      const auto Receiver =
+          objcUnwindScalarSlice(Call->Operands[0], {}, false, Budget);
+      if (!Receiver || Receiver->Offset || Receiver->Bytes != 8)
+        return false;
+      // Preserve the native pipeline's shared expressions. Only the source
+      // copy receives the exact formal pointer reconstructed by those bytes.
+      auto Copy = std::make_shared<HighExpr>(*Call);
+      Copy->Operands = {
+          HighExpr::makeVar(Receiver->Root, Function.Params[0].Type)};
+      if (S->Kind == StmtKind::Call)
+        S->CallExpr = std::move(Copy);
+      else
+        S->Val = std::move(Copy);
+      NormalCalls.push_back(S->Addr);
+    }
+    if (Proof.ReceiverIsSavedLocal && S->Addr == Proof.ExitCall) {
+      const auto &Call = S->Val;
+      if (!Call || Call->Kind != ExprKind::Call || Call->IsIndirectCall ||
+          Call->CallAddr != Proof.LandingPadExitTarget ||
+          Call->Operands.size() != 1 || !Call->Operands[0] ||
+          Call->Operands[0]->Kind != ExprKind::Var ||
+          !Call->Operands[0]->Operands.empty() ||
+          Call->Operands[0]->Var.Size != 8 ||
+          (Call->Operands[0]->Var.Kind != MedVar::Temp &&
+           Call->Operands[0]->Var.Kind != MedVar::Reg))
+        return false;
+      const auto &Receiver = Call->Operands[0]->Var;
+      if (SavedReceiver && *SavedReceiver != Receiver)
+        return false;
+      SavedReceiver = Receiver;
+    }
+    for (auto &Child : S->Body)
+      Pending.push_back(&Child);
+    for (auto &Child : S->ElseBody)
+      Pending.push_back(&Child);
+    for (auto &Case : S->Cases)
+      for (auto &Child : Case.Body)
+        Pending.push_back(&Child);
+    for (auto &Child : S->DefaultBody)
+      Pending.push_back(&Child);
+    for (auto &Clause : S->EHClauseBodies)
+      for (auto &Child : Clause)
+        Pending.push_back(&Child);
+  }
+  if (Proof.ReceiverIsSavedLocal && !SavedReceiver)
+    return false;
+  if (NormalCalls.size() !=
+      Proof.NormalEnterCalls.size() + Proof.NormalExitCalls.size())
+    return false;
+  if (Marker == Body.end())
+    return Body.back().Kind == StmtKind::Return;
+  if (Marker == Body.begin() || Marker->Addr != Proof.LandingPad)
+    return false;
+  ObjCUnwindScalarCopies Exceptions;
+  const auto Variable = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Var && E->Operands.empty() &&
+           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  const auto Exception = [&](const ExprPtr &E) {
+    size_t Budget = 128;
+    const auto Slice = objcUnwindScalarSlice(E, Exceptions, true, Budget);
+    return Slice && !Slice->Offset && Slice->Bytes == 8;
+  };
+  std::vector<va_t> Exits;
+  bool SawResume = false;
+  for (auto It = Marker; It != Body.end(); ++It) {
+    const auto &S = *It;
+    if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
+        !S.DefaultBody.empty() || !S.EHClauseBodies.empty() ||
+        !S.EHClauses.empty() || S.MemoryOrdering != NdMemoryOrdering::None ||
+        S.MemoryAddressSpace != NdMemoryAddressSpace::Default || S.Cond ||
+        S.StoreAddr || S.StoreVal || S.SwitchExpr ||
+        (S.CallExpr && S.Kind != StmtKind::Call) ||
+        (S.Kind == StmtKind::Call && (S.Dst || S.Val)) || S.EHRange.Begin ||
+        S.EHRange.End)
+      return false;
+    if (It + 1 == Body.end() && !S.Addr && S.Kind == StmtKind::Return &&
+        !S.Dst && !S.Val && !S.GotoTarget &&
+        (!S.RetVal ||
+         (S.RetVal->Operands.empty() && (S.RetVal->Kind == ExprKind::Var ||
+                                         S.RetVal->Kind == ExprKind::Undef))))
+      continue;
+    if (!InPad(S.Addr) || S.RetVal)
+      return false;
+    if (S.Kind == StmtKind::Block && !S.Dst && !S.Val && !S.GotoTarget)
+      continue;
+    if (S.Kind == StmtKind::Goto && !S.Dst && !S.Val && InPad(S.GotoTarget))
+      continue;
+    if ((S.Kind != StmtKind::Assign && S.Kind != StmtKind::ExprStmt &&
+         S.Kind != StmtKind::Call) ||
+        S.GotoTarget || (S.Dst && !Variable(S.Dst)))
+      return false;
+    if (S.Kind == StmtKind::Assign && Variable(S.Dst) &&
+        (S.Dst->Var.Kind == MedVar::Temp || S.Dst->Var.Kind == MedVar::Reg) &&
+        S.Dst->Var.Size <= 8) {
+      size_t Budget = 128;
+      const auto Slice = objcUnwindScalarSlice(S.Val, Exceptions, true, Budget);
+      if (Slice && Slice->Bytes == S.Dst->Var.Size) {
+        std::erase_if(Exceptions, [&](const auto &Copy) {
+          return Copy.first == S.Dst->Var;
+        });
+        Exceptions.emplace_back(S.Dst->Var, *Slice);
+        continue;
+      }
+    }
+    const auto Call = objcUnwindStatementCall(S);
+    if (!Call || Call->Kind != ExprKind::Call || Call->IsIndirectCall ||
+        Call->IndirectTarget || Call->IntrinsicId != Intrinsic::None ||
+        Call->MemoryOrdering != NdMemoryOrdering::None ||
+        Call->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call->Operands.size() != 1)
+      return false;
+    const auto &Argument = Call->Operands.front();
+    size_t ReceiverBudget = 128;
+    const auto Receiver =
+        objcUnwindScalarSlice(Argument, {}, false, ReceiverBudget);
+    if (Call->CallAddr == Proof.LandingPadExitTarget &&
+        (S.Addr == Cleanup + 8 || UnlockAlias(S.Addr)) &&
+        (SavedReceiver
+             ? Variable(Argument) && Argument->Var.Size == 8 &&
+                   Argument->Var == *SavedReceiver
+             : Receiver && !Receiver->Offset && Receiver->Bytes == 8) &&
+        std::find(Exits.begin(), Exits.end(), S.Addr) == Exits.end()) {
+      Exits.push_back(S.Addr);
+      continue;
+    }
+    if (Call->CallAddr != Proof.ResumeTarget || !Exception(Argument) ||
+        (S.Addr != Proof.LandingPad + Proof.SplitResumePadBytes - 4 &&
+         (Forwarded ? S.Addr != Passthrough + 4 && !UnlockAlias(S.Addr)
+                    : S.Addr != Cleanup + 12)))
+      return false;
+    SawResume = true;
+  }
+  if (Exits.empty() || !SawResume)
+    return false;
+  Body.erase(Marker, Body.end());
+  return true;
+}
+
 inline bool
 omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
                                      const ObjCSynchronizedSourceProof &Proof) {
+  if (Proof.SplitResumeTail)
+    return omitProvenObjCSynchronizedSplitResumeTail(Function, Proof);
   if (!Proof.LandingPad || !Proof.ResumeTarget ||
-      Proof.LandingPad > InvalidVA - 20 || Function.Body.empty())
+      (Proof.LandingPadPrelude != 0 && Proof.LandingPadPrelude != 4) ||
+      Proof.LandingPad > InvalidVA - 20 - Proof.LandingPadPrelude ||
+      Function.Body.empty())
     return false;
   const va_t Landing = Proof.LandingPad;
+  const va_t Cleanup = Landing + Proof.LandingPadPrelude;
   const auto InPad = [&](va_t Address) {
-    return Address >= Landing && Address < Landing + 20;
+    return Address >= Landing && Address < Cleanup + 20;
+  };
+  const auto EmptyLabel = [](const HighStmt &S) {
+    return S.Kind == StmtKind::Block && S.Body.empty() && S.ElseBody.empty() &&
+           !S.Dst && !S.Val && !S.Cond && !S.RetVal && !S.StoreAddr &&
+           !S.StoreVal && !S.CallExpr && !S.SwitchExpr && S.Cases.empty() &&
+           S.DefaultBody.empty() && !S.GotoTarget && S.EHClauseBodies.empty() &&
+           S.EHClauses.empty() && S.MemoryOrdering == NdMemoryOrdering::None &&
+           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           !S.EHRange.Begin && !S.EHRange.End;
   };
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
@@ -926,25 +1786,19 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
   if (Marker == Body.end())
     return Body.back().Kind == StmtKind::Return;
   if (Marker == Body.begin() || (Marker - 1)->Kind != StmtKind::Return ||
-      Marker->Addr != Landing || Marker->Kind != StmtKind::Block ||
-      !Marker->Body.empty() || !Marker->ElseBody.empty() || Marker->Dst ||
-      Marker->Val || Marker->Cond || Marker->RetVal || Marker->StoreAddr ||
-      Marker->StoreVal || Marker->CallExpr || Marker->SwitchExpr ||
-      !Marker->Cases.empty() || !Marker->DefaultBody.empty() ||
-      Marker->GotoTarget || !Marker->EHClauseBodies.empty() ||
-      !Marker->EHClauses.empty() ||
-      Marker->MemoryOrdering != NdMemoryOrdering::None ||
-      Marker->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-      Marker->EHRange.Begin || Marker->EHRange.End)
+      Marker->Addr != Landing || !EmptyLabel(*Marker))
     return false;
   bool SawResume = false;
   for (auto It = Marker + 1; It != Body.end(); ++It) {
-    if (It->Addr == Landing + 16 && It->Kind == StmtKind::Assign && It->Val &&
-        It->Val->Kind == ExprKind::Call &&
-        It->Val->CallAddr == Proof.ResumeTarget)
+    if (Proof.LandingPadPrelude && It == Marker + 1 && It->Addr == Cleanup &&
+        EmptyLabel(*It))
+      continue;
+    const auto Call = objcUnwindStatementCall(*It);
+    if (It->Addr == Cleanup + 16 && Call && Call->Kind == ExprKind::Call &&
+        Call->CallAddr == Proof.ResumeTarget)
       SawResume = true;
     else if (InPad(It->Addr) && It->Kind == StmtKind::Assign &&
-             (It->Addr == Landing + 4 || It->Addr == Landing + 8))
+             (It->Addr == Cleanup + 4 || It->Addr == Cleanup + 8))
       continue;
     else if (It + 1 == Body.end() && It->Addr == 0 &&
              It->Kind == StmtKind::Return &&
@@ -1159,18 +2013,20 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
           "extern void objc_release(void*);\n"
           "static void neverd_objc_sync_release(void **guard, void *lock, "
           "void *object) {\n"
+          "    void *active = *guard ? lock : 0;\n"
           "    *guard = 0;\n"
           "    objc_release(object);\n"
-          "    *guard = lock;\n"
+          "    *guard = active;\n"
           "}\n";
     else
       Helpers +=
           "extern void *objc_retain(void*);\n"
           "static void *neverd_objc_sync_retain(void **guard, void *lock, "
           "void *object) {\n"
+          "    void *active = *guard ? lock : 0;\n"
           "    *guard = 0;\n"
           "    void *result = objc_retain(object);\n"
-          "    *guard = lock;\n"
+          "    *guard = active;\n"
           "    return result;\n"
           "}\n";
   }
@@ -1184,9 +2040,259 @@ objcSynchronizedSuspendARC(llvm::StringRef Source, size_t Begin, size_t End,
   return Helpers + Result;
 }
 
+// The emitter may expand a shared unlock into early-return tails. Before
+// accepting another rendered unlock, require the preceding one to terminate
+// its path with an unconditional return. Ignore literals and comments; reject
+// intervening control flow, labels and nested scopes instead of guessing it.
+inline bool objcSynchronizedUnlockReturns(llvm::StringRef Source, size_t Exit,
+                                          size_t NextExit) {
+  const size_t End = Source.find(';', Exit);
+  if (End == std::string::npos || End >= NextExit || NextExit > Source.size() ||
+      NextExit - End > 16 * 1024 * 1024)
+    return false;
+  enum class Lexical { Normal, String, Character, LineComment, BlockComment };
+  Lexical State = Lexical::Normal;
+  bool StatementStart = true, Returning = false;
+  unsigned Parentheses = 0;
+  for (size_t I = End + 1; I < NextExit; ++I) {
+    const char C = Source[I], Next = I + 1 < NextExit ? Source[I + 1] : 0;
+    if (State == Lexical::String || State == Lexical::Character) {
+      if (C == '\\')
+        ++I;
+      else if (C == (State == Lexical::String ? '"' : '\''))
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::LineComment) {
+      if (C == '\n')
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::BlockComment) {
+      if (C == '*' && Next == '/') {
+        State = Lexical::Normal;
+        ++I;
+      }
+      continue;
+    }
+    if (C == '/' && (Next == '/' || Next == '*')) {
+      State = Next == '/' ? Lexical::LineComment : Lexical::BlockComment;
+      ++I;
+      continue;
+    }
+    if (llvm::isSpace(C))
+      continue;
+    if (C == '"' || C == '\'') {
+      State = C == '"' ? Lexical::String : Lexical::Character;
+      StatementStart = false;
+      continue;
+    }
+    if (C == '{' || C == '}' || C == '#' || (C == ':' && !Parentheses))
+      return false;
+    if (llvm::isAlpha(C) || C == '_') {
+      const size_t Begin = I;
+      while (I + 1 < NextExit &&
+             (llvm::isAlnum(Source[I + 1]) || Source[I + 1] == '_'))
+        ++I;
+      const auto Token = Source.slice(Begin, I + 1);
+      if (Token == "if" || Token == "switch" || Token == "for" ||
+          Token == "while" || Token == "do" || Token == "goto" ||
+          Token == "break" || Token == "continue")
+        return false;
+      if (Token == "return") {
+        if (!StatementStart || Parentheses || Returning)
+          return false;
+        Returning = true;
+      }
+      StatementStart = false;
+    } else if (C == '(') {
+      ++Parentheses;
+      StatementStart = false;
+    } else if (C == ')') {
+      if (!Parentheses)
+        return false;
+      --Parentheses;
+    } else if (C == ';' && !Parentheses) {
+      if (Returning)
+        return true;
+      StatementStart = true;
+    } else
+      StatementStart = false;
+  }
+  return false;
+}
+
+inline constexpr char ObjCSynchronizedCleanupDeclarations[] =
+    "#include <stdint.h>\n"
+    "#ifndef __EXCEPTIONS\n"
+    "#error \"This source requires -fexceptions for Objective-C "
+    "synchronization cleanup\"\n"
+    "#endif\n"
+    "extern int32_t neverd_darwin_objc_sync_exit(void*) "
+    "__asm__(\"_objc_sync_exit\");\n"
+    "static void neverd_objc_sync_cleanup(void **guard) {\n"
+    "    if (*guard) (void)neverd_darwin_objc_sync_exit(*guard);\n"
+    "}\n";
+
+inline std::optional<std::string>
+addObjCSynchronizedSequentialCleanup(llvm::StringRef Source,
+                                     const ObjCSynchronizedSourceProof &Proof) {
+  const auto &Lifetimes = Proof.Lifetimes;
+  const bool Flow = !Proof.NormalEnterCalls.empty();
+  if ((!Flow && (Lifetimes.size() < 2 || Lifetimes.size() > 16 ||
+                 Proof.EnterCall != Lifetimes.front().EnterCall ||
+                 Proof.ExitCall != Lifetimes.back().ExitCall)) ||
+      (Flow &&
+       (!Lifetimes.empty() || !Proof.SplitResumeTail ||
+        Proof.NormalEnterCalls.size() > 8 || Proof.NormalExitCalls.empty() ||
+        Proof.NormalExitCalls.size() > 16 ||
+        Proof.EnterCall != Proof.NormalEnterCalls.front() ||
+        Proof.ExitCall != Proof.NormalExitCalls.back())) ||
+      Proof.GuardStopCall != Proof.ExitCall || !Proof.ResumeTarget ||
+      Proof.LandingPad <= Proof.ExitCall ||
+      (Proof.LandingPadPrelude != 0 && Proof.LandingPadPrelude != 4) ||
+      Proof.UnprotectedReleases || Proof.UnprotectedRetains ||
+      Proof.ReceiverIsSavedLocal || Proof.ReceiverHasStackCopy ||
+      (!Flow && Proof.SuspendARC))
+    return std::nullopt;
+  va_t PreviousExit = 0;
+  for (const auto &Lifetime : Lifetimes) {
+    if (Lifetime.EnterCall <= PreviousExit ||
+        Lifetime.ExitCall <= Lifetime.EnterCall)
+      return std::nullopt;
+    PreviousExit = Lifetime.ExitCall;
+  }
+  for (const auto *Addresses :
+       {&Proof.NormalEnterCalls, &Proof.NormalExitCalls}) {
+    va_t Previous = 0;
+    for (va_t Address : *Addresses) {
+      if (Address <= Previous || Address >= Proof.LandingPad)
+        return std::nullopt;
+      Previous = Address;
+    }
+  }
+  const size_t EnterCount =
+      Flow ? Proof.NormalEnterCalls.size() : Lifetimes.size();
+  const size_t ExitCount =
+      Flow ? Proof.NormalExitCalls.size() : Lifetimes.size();
+  const auto Body = objcSynchronizedSourceBody(Source);
+  if (!Body || Source.slice(Body->first, Body->second)
+                   .contains("neverd_objc_sync_guard"))
+    return std::nullopt;
+  // Collect actual runtime call tokens, excluding comments and literals.
+  // Require every normal acquisition and exit certified by the machine CFG.
+  // Source order need not alternate when mutually exclusive exits are cold.
+  enum class Lexical { Normal, String, Character, LineComment, BlockComment };
+  Lexical State = Lexical::Normal;
+  std::vector<std::pair<size_t, bool>> Calls;
+  for (size_t I = Body->first + 1; I < Body->second; ++I) {
+    const char C = Source[I], Next = I + 1 < Body->second ? Source[I + 1] : 0;
+    if (State == Lexical::String || State == Lexical::Character) {
+      if (C == '\\')
+        ++I;
+      else if (C == (State == Lexical::String ? '"' : '\''))
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::LineComment) {
+      if (C == '\n')
+        State = Lexical::Normal;
+      continue;
+    }
+    if (State == Lexical::BlockComment) {
+      if (C == '*' && Next == '/') {
+        State = Lexical::Normal;
+        ++I;
+      }
+      continue;
+    }
+    if (C == '/' && (Next == '/' || Next == '*')) {
+      State = Next == '/' ? Lexical::LineComment : Lexical::BlockComment;
+      ++I;
+      continue;
+    }
+    if (C == '"' || C == '\'') {
+      State = C == '"' ? Lexical::String : Lexical::Character;
+      continue;
+    }
+    if (!llvm::isAlpha(C) && C != '_')
+      continue;
+    const size_t Begin = I;
+    while (I + 1 < Body->second &&
+           (llvm::isAlnum(Source[I + 1]) || Source[I + 1] == '_'))
+      ++I;
+    const auto Token = Source.slice(Begin, I + 1);
+    const bool Enter = Token == "neverd_darwin_objc_sync_enter";
+    if (!Enter && Token != "neverd_darwin_objc_sync_exit")
+      continue;
+    if (I + 1 >= Body->second || Source[I + 1] != '(' ||
+        Calls.size() >= EnterCount + ExitCount)
+      return std::nullopt;
+    Calls.emplace_back(Begin, Enter);
+  }
+  if (Calls.size() != EnterCount + ExitCount ||
+      static_cast<size_t>(
+          std::count_if(Calls.begin(), Calls.end(), [](const auto &Call) {
+            return Call.second;
+          })) != EnterCount)
+    return std::nullopt;
+  std::vector<std::pair<size_t, std::string>> Edits;
+  for (size_t I = 0; I < Calls.size(); ++I) {
+    const auto [At, Enter] = Calls[I];
+    if (!Flow && Enter != (I % 2 == 0))
+      return std::nullopt;
+    const llvm::StringRef Name = Enter ? "neverd_darwin_objc_sync_enter("
+                                       : "neverd_darwin_objc_sync_exit(";
+    const size_t Line = Source.rfind('\n', At);
+    const size_t End = Source.find(';', At);
+    if (Line == std::string::npos || End == std::string::npos ||
+        End >= Body->second)
+      return std::nullopt;
+    const auto Statement = Source.slice(Line + 1, End + 1).trim();
+    bool ExactSelfCall = false;
+    for (llvm::StringRef Argument :
+         {"objc_self)", "(void*)(uintptr_t)(objc_self))",
+          "(void*)(uintptr_t)((uintptr_t)objc_self))"})
+      ExactSelfCall |=
+          Statement == ("(uint32_t)(" + Name + Argument + ");").str();
+    if (!ExactSelfCall)
+      return std::nullopt;
+    size_t IndentEnd = Line + 1;
+    while (IndentEnd < At &&
+           (Source[IndentEnd] == ' ' || Source[IndentEnd] == '\t'))
+      ++IndentEnd;
+    const std::string Indent = Source.slice(Line + 1, IndentEnd).str();
+    if (Enter)
+      Edits.emplace_back(End + 1,
+                         "\n" + Indent + "neverd_objc_sync_guard = objc_self;");
+    else
+      Edits.emplace_back(Line + 1, Indent + "neverd_objc_sync_guard = 0;\n");
+  }
+  std::string Result = Source.str();
+  std::sort(Edits.begin(), Edits.end(),
+            [](const auto &A, const auto &B) { return A.first > B.first; });
+  for (const auto &[At, Text] : Edits)
+    Result.insert(At, Text);
+  Result.insert(Body->first + 1,
+                "\n    void *neverd_objc_sync_guard "
+                "__attribute__((cleanup(neverd_objc_sync_cleanup))) = 0;");
+  Result.insert(0, ObjCSynchronizedCleanupDeclarations);
+  if (Flow && Proof.SuspendARC) {
+    const auto RenderedBody = objcSynchronizedSourceBody(Result);
+    if (!RenderedBody)
+      return std::nullopt;
+    return objcSynchronizedSuspendARC(Result, RenderedBody->first + 1,
+                                      RenderedBody->second, Proof.SuspendARC,
+                                      "objc_self");
+  }
+  return Result;
+}
+
 inline std::optional<std::string>
 addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
                                    const ObjCSynchronizedSourceProof &Proof) {
+  if (!Proof.Lifetimes.empty() || !Proof.NormalEnterCalls.empty())
+    return addObjCSynchronizedSequentialCleanup(Source, Proof);
   const std::string EnterName = "neverd_darwin_objc_sync_enter(";
   const std::string DispatchName = "neverd_darwin_dispatch_group_enter(";
   const std::string ExitName = "neverd_darwin_objc_sync_exit(";
@@ -1243,8 +2349,7 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   if (EnterEnd == std::string::npos)
     return std::nullopt;
   if (Proof.SuspendARC) {
-    if (!StopAtExit || Exits.size() != 1 || Proof.UnprotectedReleases ||
-        Proof.UnprotectedRetains ||
+    if (!StopAtExit || Proof.UnprotectedReleases || Proof.UnprotectedRetains ||
         (!Proof.ReceiverIsSavedLocal &&
          (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName) ||
           !objcSynchronizedSelfArgument(Scoped, Exit, ExitName))))
@@ -1306,6 +2411,9 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
     // statement. Clear the guard on every rendered normal-unlock path.
     if (!objcSynchronizedSelfArgument(Scoped, Enter, EnterName))
       return std::nullopt;
+    for (size_t I = 1; I < Exits.size(); ++I)
+      if (!objcSynchronizedUnlockReturns(Scoped, Exits[I - 1], Exits[I]))
+        return std::nullopt;
     for (auto It = Exits.rbegin(); It != Exits.rend(); ++It) {
       const size_t Line = Source.rfind('\n', *It);
       if (*It <= EnterEnd || Line == std::string::npos ||
@@ -1326,23 +2434,17 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   Result.insert(Open + 1,
                 "\n    void *neverd_objc_sync_guard "
                 "__attribute__((cleanup(neverd_objc_sync_cleanup))) = 0;");
-  Result.insert(0,
-                "#include <stdint.h>\n"
-                "#ifndef __EXCEPTIONS\n"
-                "#error \"This source requires -fexceptions for Objective-C "
-                "synchronization cleanup\"\n"
-                "#endif\n"
-                "extern int32_t neverd_darwin_objc_sync_exit(void*) "
-                "__asm__(\"_objc_sync_exit\");\n"
-                "static void neverd_objc_sync_cleanup(void **guard) {\n"
-                "    if (*guard) (void)neverd_darwin_objc_sync_exit(*guard);\n"
-                "}\n");
+  Result.insert(0, ObjCSynchronizedCleanupDeclarations);
   if (Proof.SuspendARC) {
     const auto RenderedBody = objcSynchronizedSourceBody(Result);
     if (!RenderedBody)
       return std::nullopt;
     const size_t RenderedEnter = Result.find(EnterName, RenderedBody->first);
-    const size_t RenderedExit = Result.find(ExitName, RenderedBody->first);
+    // A shared machine unlock can be duplicated into early HighC returns.
+    // ARC calls after an earlier rendered unlock must leave its guard zero;
+    // suspend every occurrence through the last normal unlock, preserving
+    // whether that path still owns the lock.
+    const size_t RenderedExit = Result.rfind(ExitName, RenderedBody->second);
     const size_t RenderedEnterEnd = Result.find(';', RenderedEnter);
     return objcSynchronizedSuspendARC(Result, RenderedEnterEnd + 1,
                                       RenderedExit, Proof.SuspendARC, Receiver);

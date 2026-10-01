@@ -61,6 +61,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `LowIRLoopInference.*` と `BinaryLowIRLoopInference.*` は独立に作成したカウンター、スタック保存、早期リターン、ネイティブ呼び出し、パック済みフラグを使用します。狭い幅の算術拡大と、式は異なるが意味が等しいフラグを検証します。不正なグラフ、欠落／偽造した起源、非停止やラップするループ、推論／証明予算の枯渇で証明書を生成してはいけません。
 
+同じターゲットの `LowIRLoopPlanPairing.*` は、レジスター名の変更、異なる算術本体、各側の前置スナップショット、述語の保持、共有フレーム入力、入れ子のカット点網羅性、独立した証明予算を検査します。関係の欠落、誤った書き込み、不正な一時値束縛、不完全な対応付け、メタデータ上限の超過から証明書を生成してはいけません。
+
 二段・三段のループのキャッシュされた等値終了条件では、オペランドの相関、変化する境界、カウンターのリセット、破損したコピーを検査します。
 
 比較キャッシュの回帰は等値・不等値、入口ガードと定数畳み込み、拡幅後に初めて変化するフィールド、1/4/8 バイトのキャッシュのビット 7/31/63 を検証します。対象ビットを保ったまま隣接ビットだけを変更しても全状態比較で拒否します。ゼロ増分、移動する境界、カウンタのリセット、共通予算の枯渇も拒否します。
@@ -852,3 +854,36 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 ## 完全な x87 状態
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
+
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
+
+既存の CI ワークフローは一般のテストプロファイルより先にエミュレーションの全テストを実行し、検出一覧、JUnit 結果、CTest ログを `emulation-focused` に保存します。他のモジュールの失敗はこの実行を妨げません。利用できないハードウェアと任意のドライバー資料は明示的なスキップとなり、ソフトウェア実行やコンパイルの成功はネイティブ実行の証拠にはなりません。
+
+Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリングを制御し、実際のタイマースレッドをゲストへの進入前に完了させます。x64、ARM32、ARM64 で、進入前の取り消しがゲストに影響せず、次の実行が独立した予算を使うことを検証します。公開エンジン API を使い、エンジン内部状態は変更しません。
+
+`NeverDX64ExceptionTests` の `X64StateTransition` は、ネイティブ CPU で独立した RAM 読み取りと CR8 読み取りを実行します。TLS 基底と特権レベルを交互に変え、反復する除算例外から再開し、キャンセルされたエントリ後に TLS を変更します。ネイティブ状態転送の変更後は、この CTest ラベルと、エイリアス再マッピング、CPU コンテキスト、FP 状態、元のドライバーの結果比較を実行します。KVM/WHP が利用できなければ明示的にスキップします。
+
+
+`NeverDKvmRunTests` は `/dev/kvm` を必要とせずに `KvmRunControl` の借用転送を検証します。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` は、準備、取得、インターセプトしたホストエントリが同じスレッドを使い、中断後の再試行でも準備が一度だけ行われることを確認します。他のケースは、エントリ前の準備失敗、取得失敗、準備中の停止、実行中エントリのキャンセルを検証し、その後の実行で古いコールバックが再利用されないことを確認します。実際のキャンセル、RAM ロールバック、例外、元のドライバーのテストも引き続き実行します。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` は、同一期限内の複数エントリがワーカーを再利用し、各転送を一度だけ実行して以前の状態パケットを変更しないことを検証します。
+
+`KvmAArch64Machine.cpp` のアドレス変換の保守実行、ゲストレジスターの準備、デバッグ設定、および 35 項目すべてのレジスター読み取りも、このワーカーで行います。保守とゲスト実行は一つの単一ステップ期限を共有し、呼び出し側は完全な取得の完了確認後にのみ `captureAArch64GeneralState` で状態を反映します。ARM64 のネイティブ実行の実機証拠は未取得です。
+
+`ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` は、ホスト側で汎用レジスタ、先頭・末尾 XMM レジスタ、MXCSR、x87 制御語を変更した後の継続実行と実 CPU のストアを検証します。停止したエントリ後の実際の `FXSAVE64` バイトで、全物理 80 ビットレジスタ、TOP、タグ、オペコード、ポインタを確認します。反復する除算例外も再利用を無効にします。これらの機械境界テストは checked プロファイルに追加の x87 命令を許可しません。
+
+`NeverDKvmStateTransferTests` は実際の KVM 実行後にレジスタまたは XSAVE の読み取り失敗を注入し、変更前の入力で再試行します。独立した整数とパックドバイトの結果で、取得失敗後に進行済みのネイティブ状態が再利用されないことを確認します。このテスト実行ファイルだけが `ioctl` をラップし、ネイティブホストが利用できなければ明示的にスキップします。
+
+ARM64 のネイティブ整数状態の取得は ISA 層で統一します。`AArch64GeneralState.def` は X0–X30、SP、PC、NZCV、TPIDR_EL0 を列挙し、`captureAArch64GeneralState` は全読み取りを一時保存してから NZCV を正規化し、完全な結果を一度に公開します。KVM と WHP がこの関数を共有します。読み取り失敗時は全入力状態を保持し、特権、ベクトル、未転送のレジスタは変更しません。ネイティブ FP/SIMD 命令の許可は追加しません。
+
+checked ARM64 のスカラー／ペア RAM アクセスは、EL0 と EL1 で別々の物理領域やエイリアスのページ境界を越えられます。ISA がオペランド範囲を計算し、共有アドレス空間が実行前に各ページを検証して最初の失敗部分を報告します。`RAMTransaction` は CPU ステップ全体の成功後に宣言された物理バイトを確定します。障害や observer の停止時は RAM、レジスター、アドレス writeback を保持します。`NeverDAArch64MemoryTests` は `AArch64CrossPageCases.def` の組み立て済み命令を使います。FP/SIMD や Windows ARM64 ドライバーローダーの追加ではありません。
+
+`NeverDAArch64GeneralStateTests` は Unicorn やハイパーバイザーなしで、完全な取得、NZCV マスク、35 箇所それぞれの読み取り失敗、コールバック欠落、両特権レベルでの再試行成功を検証します。この移植可能な状態検証とクロスコンパイルは ARM64 KVM/WHP の実機実行を代替しません。
+
+`NeverDAArch64MemoryTests` は両権限レベルの Unicorn、KVM、WHP で18種類のスカラー／ペア命令を検証します。全ページ跨ぎ offset、符号と幅、observer 順序、第2ページの権限拒否／欠落、障害の明示的な消費と再試行、同一物理領域のエイリアス、エイリアス置換後の context 復元を含みます。変更前には合法なページ跨ぎ load の拒否を再現しました。利用不能な transport は明示的に skip します。Unicorn と cross-compile は ARM64 KVM/WHP 実機の証拠を代替しません。
+
+`NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) は、フラグがゼロの無効状態の CFG メタデータ、両方のロードアドレスで保持されるフォールバックポインタ、不正なスロット/ターゲット、欠落した再配置を検証します。実行ケースは明示的な Unicorn/KVM/WHP と `driver-strict`、`checked-x64-v1` を使用し、利用できないバックエンドは個別にスキップします。`DriverPublicCLICases.def` は、互換性を維持する v1 C API と比較する CLI に `--backend unicorn` を指定します。ネイティブと `auto` の選択は独立した公開 API テストを維持し、ホスト API が利用できない場合に暗黙のフォールバックは行いません。
+
+Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。
+
+`NeverDAArch64GeneralStateTests` は両特権でネイティブ 35 フィールドとソフトウェア 39 フィールドを検証し、各読取り失敗、幅の正規化、再試行を確認します。Linux の `NeverDUnicornStateTransferTests` は実際のゲスト実行後の各スカラー読取りに失敗を注入し、入力保持と再試行時の一度だけの実行を検証します。`CapturesDeclaredWidthsWithoutStaleUpperBits` も確認します。元の命令と状態は `UnicornStateTransferCases.def` に定義され、ARM64 KVM/WHP 実機検証の代わりにはなりません。

@@ -16,7 +16,7 @@ and `roadmap.md`. Shared images remain in `assets/`.
 
 CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](cpu-execution.md), [Guest process emulation](process-emulation.md) and [Windows driver emulation](driver-emulation.md).
 
-Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts and Unicorn across ISAs. Native ARM64/WHP runtime coverage is still pending. `driver-strict` currently uses Unicorn; the driver KVM/WHP path requires `checked-x64-v1`. Explicit backend selections fail clearly when unavailable. Shared RAM, aliases, staged writes, scalar atomics, typed exceptions and full x64 FP/SSE context state are implemented within the documented instruction and OS contracts. This does not claim arbitrary-driver compatibility or implemented Android/Darwin environments.
+`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 | Document | Description |
 |----------|-------------|

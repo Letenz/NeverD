@@ -1,5 +1,8 @@
+#include "../../../lib/sdk/capi/ObjCCFunctionParameterSources.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../core/CFunctionParameterCallFixture.h"
+#include "../core/RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -19,6 +22,226 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
+
+TEST(ObjCSourceBindings, CFunctionParameterCallRepeatsTheCurrentMachineProof) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.high());
+  ExprPtr CallExpr;
+  size_t StatementIndex = 0;
+  for (size_t I = 0; I < F.high()->Body.size(); ++I) {
+    const auto &Statement = F.high()->Body[I];
+    if (Statement.CallExpr && Statement.CallExpr->SourceCallHint &&
+        Statement.CallExpr->SourceCallHint->FunctionParameterCall) {
+      CallExpr = Statement.CallExpr;
+      StatementIndex = I;
+    }
+  }
+  ASSERT_TRUE(CallExpr);
+  EXPECT_FALSE(objcSourceCallBound(*CallExpr, F.Image, {}));
+  EXPECT_TRUE(objCCFunctionParameterSourceCallBound(*CallExpr, F.Image,
+                                                    F.Result, *F.high()));
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    PipelineResult Result;
+    Result.Success = F.Result.Success;
+    Result.SourceImage = F.Result.SourceImage;
+    Result.LowFuncs = F.Result.LowFuncs;
+    Result.MedFuncs = F.Result.MedFuncs;
+    Result.HighFuncs = F.Result.HighFuncs;
+    Result.FunctionAudits = F.Result.FunctionAudits;
+    auto Function = *F.high();
+    auto Expression = std::make_shared<HighExpr>(*CallExpr);
+    auto Hint = *CallExpr->SourceCallHint;
+    Function.Body[StatementIndex].CallExpr = Expression;
+    switch (Case) {
+    case 0:
+      Result.SourceImage = nullptr;
+      break;
+    case 1:
+      Result.LowFuncs.push_back(*F.low());
+      break;
+    case 2:
+      for (auto &Audit : Result.FunctionAudits)
+        if (Audit.Entry == Entry)
+          ++Audit.DecodedInstructions;
+      break;
+    case 3:
+      for (auto &Low : Result.LowFuncs)
+        if (Low.Entry == Entry)
+          for (auto &Block : Low.Blocks)
+            for (auto &Op : Block.Ops)
+              if (Op.Addr == Entry + 12)
+                Op.Output.Offset = a64reg::X20;
+      break;
+    case 4:
+      Hint.FunctionParameterCall->Site.Instruction += 4;
+      break;
+    case 5:
+      Hint.FunctionParameterCall->Parameter = 0;
+      break;
+    case 6:
+      Expression->IndirectTarget =
+          std::make_shared<HighExpr>(*Expression->IndirectTarget);
+      Expression->IndirectTarget->Var.Id = 0;
+      break;
+    case 7:
+      Hint.DoesNotReturn = true;
+      break;
+    case 8:
+      Function.Body.push_back(Function.Body[StatementIndex]);
+      break;
+    case 9:
+      for (auto &Med : Result.MedFuncs)
+        if (Med.Entry == Entry)
+          Med.SourceParametersBound = false;
+      break;
+    case 10:
+      Hint.Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+      break;
+    case 11:
+      Hint.Signature.Parameters[0].Type = NdType::makeInt(8, false);
+      break;
+    }
+    Expression->SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(std::move(Hint));
+    EXPECT_FALSE(objCCFunctionParameterSourceCallBound(*Expression, F.Image,
+                                                       Result, Function));
+  }
+}
+
+TEST(ObjCSourceBindings, RuntimeCFunctionAddressRetainsImportIdentityAndType) {
+  using namespace runtime_function_address_test;
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    const auto Hint = runtimeCFunctionAddressHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    ASSERT_TRUE(Hint->AddressedFunctionABI);
+    EXPECT_EQ(Hint->TargetAddress, Slot);
+    EXPECT_EQ(Hint->TargetName, "swift_release");
+    EXPECT_EQ(Hint->Signature.ReturnType->Pointee->Kind, NdTypeKind::Func);
+    EXPECT_EQ(Hint->AddressedFunctionABI->Convention,
+              SourceFunctionTypeHint::ConventionKind::C);
+    EXPECT_EQ(Hint->AddressedFunctionABI->ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint->AddressedFunctionABI->Parameters.size(), 1U);
+    EXPECT_EQ(Hint->AddressedFunctionABI->Parameters[0].Type->Kind,
+              NdTypeKind::Ptr);
+    HighFunc Getter;
+    Getter.Entry = 0x1000;
+    Getter.Name = "runtime_callback";
+    Getter.ReturnType = Hint->Signature.ReturnType;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeLoad(
+        HighExpr::makeConst(Slot, 8, ConstantAddressProvenance::DataAddress),
+        Getter.ReturnType);
+    Getter.Body.push_back(Return);
+    const auto Projection = bindObjCSourceReferences(Getter, Image);
+    ASSERT_TRUE(Projection.Limitation.empty()) << Projection.Limitation;
+    const auto &Address = Projection.Function.Body[0].RetVal;
+    ASSERT_TRUE(Address);
+    ASSERT_EQ(Address->Kind, ExprKind::Call);
+    ASSERT_TRUE(Address->SourceCallHint);
+    EXPECT_EQ(Address->SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::RuntimeCFunctionAddress);
+    EXPECT_TRUE(Address->Operands.empty());
+    EXPECT_TRUE(objcSourceCallBound(*Address, Image, {}));
+    // Binding changes the clone, and names the loaded value rather than the
+    // import cell's storage address.
+    EXPECT_EQ(Getter.Body[0].RetVal->Kind, ExprKind::Load);
+    Getter.Body[0].RetVal = Getter.Body[0].RetVal->Operands[0];
+    EXPECT_FALSE(bindObjCSourceReferences(Getter, Image).Limitation.empty());
+    Image.DyldBindSlots[Slot].Module = "/untrusted/libswiftCore.dylib";
+    EXPECT_FALSE(objcSourceCallBound(*Address, Image, {}));
+  }
+}
+
+TEST(ObjCSourceBindings,
+     RuntimeCFunctionAddressRejectsStaleOrUnsupportedProofs) {
+  using namespace runtime_function_address_test;
+  const auto Original = image(Arch::AArch64);
+  const auto Hint = runtimeCFunctionAddressHint(Original, Slot);
+  ASSERT_TRUE(Hint);
+  for (unsigned Case = 0; Case < 13; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = Original;
+    switch (Case) {
+    case 0:
+      Image.DyldBindSlots[Slot].WeakImport = true;
+      break;
+    case 1:
+      Image.DyldBindSlots[Slot].Addend = 4;
+      break;
+    case 2:
+      Image.ImportPtrSlots[Slot] = "_swift_retain";
+      break;
+    case 3:
+      Image.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 4:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 5:
+      Image.CodePtrRelocSlots.insert(Slot);
+      break;
+    case 6:
+      Image.ConflictingImportStorageSlots.insert(Slot);
+      break;
+    case 7:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 8:
+      Image.IsRelocatable = true;
+      break;
+    case 9:
+      Image.ImportPtrSlots[Slot] = Image.DyldBindSlots[Slot].Name =
+          "_$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF";
+      Image.DyldBindSlots[Slot].Module =
+          "/usr/lib/swift/libswiftFoundation.dylib";
+      break;
+    case 10:
+      Image.ImportPtrSlots[Slot] = Image.DyldBindSlots[Slot].Name = "_printf";
+      Image.DyldBindSlots[Slot].Module = "/usr/lib/libSystem.B.dylib";
+      break;
+    case 11:
+    case 12:
+      Image.ImportPtrSlots[Slot] = Image.DyldBindSlots[Slot].Name =
+          Case == 11 ? "_objc_release_x0" : "_objc_release_x1";
+      Image.DyldBindSlots[Slot].Module = "/usr/lib/libobjc.A.dylib";
+      break;
+    }
+    EXPECT_FALSE(runtimeCFunctionAddressHint(Image, Slot));
+  }
+  auto Address = HighExpr::makeCall({}, 0, {});
+  Address->Type = Hint->Signature.ReturnType;
+  const auto Valid = std::make_shared<SourceCallTypeHint>(*Hint);
+  Address->SourceCallHint = Valid;
+  ASSERT_TRUE(objcSourceCallBound(*Address, Original, {}));
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Forged = std::make_shared<SourceCallTypeHint>(*Hint);
+    Address->SourceCallHint = Forged;
+    switch (Case) {
+    case 0:
+      Forged->AddressedFunctionABI.reset();
+      break;
+    case 1:
+      Forged->AddressedFunctionABI->ReturnType = NdType::makeInt(8, false);
+      break;
+    case 2:
+      Forged->TargetName = "swift_retain";
+      break;
+    case 3:
+      Forged->ReturnedArgument = 0;
+      break;
+    case 4:
+      Forged->CallKind = SourceCallTypeHint::Kind::Native;
+      break;
+    }
+    EXPECT_FALSE(objcSourceCallBound(*Address, Original, {}));
+  }
+}
 TEST(ObjCSourceBindings, NativeTerminationRequiresExactCalleeAndCompleteFlow) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {

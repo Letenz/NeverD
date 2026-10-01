@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 60f7be651e94b8828ef39cb35aeea8cbafaa8e706f027def09403b2df2f42228 -->
+<!-- i18n-source: 935250779b9be103631f1cb612200e7fb175dfa74d352b939b15287e751778b8 -->
 
 [← مشروع NeverD](project.md)
 
@@ -14,7 +14,7 @@
 
 يفصل تنفيذ المعالج بين قبول ISA وذاكرة الضيف ونقل المحرك وسياسة نظام الضيف. يتيح `NEVERD_ENABLE_CPU_EMULATION` طبقة x64/ARM64، ويضيف `NEVERD_ENABLE_DRIVER_EMULATION` بيئة Windows WDM/KMDF x64 المحدودة. يشغّل `linux-elf64-v1` عمليات Linux ELF المدعومة. انظر [تنفيذ المعالج](cpu-execution.md) و[محاكاة عمليات الضيف](process-emulation.md) و[محاكاة برامج تشغيل Windows](driver-emulation.md).
 
-تستخدم ملفات checked محرك KVM على Linux وWHP على Windows عند تطابق ISA، وUnicorn عند اختلافها. ما زال التحقق من التشغيل الأصلي ARM64/WHP مطلوباً. يستخدم `driver-strict` حالياً Unicorn؛ ويتطلب مسار برامج التشغيل KVM/WHP عقد `checked-x64-v1`. يفشل المحرك المحدد صراحةً بوضوح عند عدم توفره. نُفذت RAM المشتركة والأسماء المستعارة والكتابات المرحلية والعمليات الذرية العددية والاستثناءات المعرّفة وحالة x64 FP/SSE الكاملة ضمن عقود ISA/نظام التشغيل الموثقة. لا يعني ذلك توافق برامج تشغيل اعتباطية أو تنفيذ بيئات Android/Darwin.
+يدعم `driver-strict` / `checked-x64-v1` كلاً من KVM على مضيف Linux x64 المطابق وWHP على Windows x64 المطابق؛ يختار `auto` هذا النقل الأصلي، وتستخدم ISA المختلفة Unicorn. يحتفظ Unicorn الصريح وAPI V1 السابق بالملف البرمجي المحمول. يتحقق التنفيذ الأصلي من العناوين القانونية والآثار قبل الدخول؛ ويفشل العتاد غير المتاح دون تراجع. التعليمات وسلوك OS غير المدعومين أخطاء صريحة. لا تزال أدلة التشغيل الأصلي ARM64/WHP ناقصة، ولا تثبت هذه القدرة توافق أي برنامج تشغيل أو Android/Darwin.
 
 | المستند | الوصف |
 |---------|--------|
@@ -34,7 +34,7 @@
 | [الإضافات الأصلية](plugins.md) | ABI واصف بلغة C الخالصة، والاستدعاءات والأحداث، ومسار البناء/الربط، والاكتشاف، وقواعد التوافق |
 | [إضافات Python](python-plugins.md) | تأليف الإضافات، وواجهة الجلسة والأحداث، والعزل، والاختبارات، والنشر |
 | [نظرة عامة على mobile (الإنجليزية)](../mobile.md) | واجهة سطر الأوامر التجريبية لـAndroid وiOS، والمدخلات والمخرجات والتقارير والقيود |
-| [استعادة Java من Android](android.md) | APK (بما فيه multidex) وDEX وملفات/مجلدات smali → Java؛ المحرك الأصلي المدمج بلغة C++20، وJADX اختياري، وواجهة سطر الأوامر، وتقارير JSON، والقيود والتحقق |
+| [استعادة Java من Android](android.md) | APK (بما فيه multidex) وDEX وملفات/مجلدات smali → Java؛ المحرك الأصلي المدمج بلغة C++20، وواجهة سطر الأوامر، وتقارير JSON، والقيود والتحقق |
 | [استعادة مصادر iOS](ios.md) | IPA/.app/Mach-O ‏(arm64/x86_64) → شيفرة C أصلية ومصادر Objective-C/Swift المدعومة؛ التخطيطات وCLI/export وتغطية JSON والقيود والتحقق بالتنفيذ |
 | [فك تجميع EVM](evm.md) | المدخلات وhardforks وIR المرحلي وعقدا C/LLVM واستعادة Solidity والحدود |
 | [تفكيك Solana SBF](sbf.md) | ‏SBF v0-v4، وLLVM IR، ومخرجات C/Rust، والتحقق، والقيود المعروفة |

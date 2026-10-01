@@ -38,7 +38,7 @@ CLI tools, integrators, and AI agents use one engine — **`libneverd`** — thr
 
 Input formats, host contracts, and limitations are documented in the [EVM guide](docs/evm.md) and [Solana SBF guide](docs/sbf.md).
 
-Android Java recovery is available through the experimental `neverd mobile app.apk -o recovered-app` CLI for APK, multidex, DEX, and smali inputs. The default engine is implemented in C++20 and needs no Python, Java, or JADX runtime. `NEVERD_JADX` and a `jadx` executable on PATH do not select the external engine; only an explicit `--jadx PATH` does. There is no automatic fallback. Quote paths containing spaces. See the [Android guide](docs/android.md) for supported inputs, reports, and recovery limits.
+Android Java recovery is available through the experimental `neverd mobile app.apk -o recovered-app` CLI for APK, multidex, DEX, and smali inputs. Android recovery uses only NeverD’s built-in C++20 engine and needs no Python or Java runtime. Quote paths containing spaces. See the [Android guide](docs/android.md) for supported inputs, reports, and recovery limits.
 
 The experimental iOS workflow `neverd mobile App.ipa -o recovered-ios` exports native C and supported Objective-C/Swift sources from IPA, `.app`, or Mach-O. Runtime layouts, source units, and per-method omissions remain explicit; generated source does not use a bridge to the original binary. See the [iOS guide](docs/ios.md) for setup, coverage semantics, and independent compilation checks.
 
@@ -100,7 +100,7 @@ Recovery depends on supported code patterns; see the [mobile overview](docs/mobi
 
 CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](docs/cpu-execution.md), [Guest process emulation](docs/process-emulation.md) and [Windows driver emulation](docs/driver-emulation.md).
 
-Checked profiles use KVM on matching Linux hosts, WHP on matching Windows hosts and Unicorn across ISAs. Native ARM64/WHP runtime coverage is still pending. `driver-strict` currently uses Unicorn; the driver KVM/WHP path requires `checked-x64-v1`. Explicit backend selections fail clearly when unavailable. Shared RAM, aliases, staged writes, scalar atomics, typed exceptions and full x64 FP/SSE context state are implemented within the documented instruction and OS contracts. This does not claim arbitrary-driver compatibility or implemented Android/Darwin environments.
+`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 <!-- i18n-section: how-it-works -->
 

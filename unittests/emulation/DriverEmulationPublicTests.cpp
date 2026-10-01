@@ -25,6 +25,10 @@
 #include <utility>
 
 namespace {
+#define NEVERD_DRIVER_PUBLIC_CLI_TEXT(Name, Value)                             \
+  constexpr char Name[] = Value;
+#include "DriverPublicCLICases.def"
+#undef NEVERD_DRIVER_PUBLIC_CLI_TEXT
 
 std::filesystem::path fixture(const char *Name) {
   return std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
@@ -85,8 +89,8 @@ protected:
     const auto Err = Directory / "stderr.txt";
     const std::string Command =
         neverd::test::shellQuote(NEVERD_DRIVER_CLI) + " emulate-driver " +
-        neverd::test::shellQuote(Path.string()) + " --instruction-limit " +
-        neverd::test::shellQuote(Limit) +
+        neverd::test::shellQuote(Path.string()) + CompatibilityBackend +
+        " --instruction-limit " + neverd::test::shellQuote(Limit) +
         neverd::test::redirectOutput(Out.string(), Err.string());
     const int Exit =
         neverd::test::systemExitCode(neverd::test::runShellCommand(Command));

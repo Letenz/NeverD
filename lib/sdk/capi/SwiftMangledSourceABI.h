@@ -142,6 +142,186 @@ swiftMangledURLArrayForceCastSourceABI(const BinaryImage &Image, va_t Entry) {
              : std::nullopt;
 }
 
+// The fully specialized ContiguousArray<URL?> buffer initializer has three
+// scalar arguments and an inout, one-word Array in swiftself. Independent
+// Swift IR carries these as i1, i64, i1, ptr swiftself, with no return value.
+// Match the entire declaration and specialization; this supplies only its
+// ABI, while the caller's frame effects and callee body still need proof.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledURLArrayBufferSourceABI(const BinaryImage &Image, va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
+    return N.Kind == Kind && !N.Text && !N.Index &&
+           N.Children.size() == Children;
+  };
+  const auto Text = [](const Node &N, llvm::StringRef Kind,
+                       llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  const auto Nominal = [&](const Node &N, llvm::StringRef Module,
+                           llvm::StringRef Identifier) {
+    return Shape(N, "Type", 1) && Shape(N.Children[0], "Structure", 2) &&
+           Text(N.Children[0].Children[0], "Module", Module) &&
+           Text(N.Children[0].Children[1], "Identifier", Identifier);
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 2) ||
+      !Shape(Parsed.Root->Children[0], "GenericSpecialization", 2) ||
+      !Shape(Parsed.Root->Children[1], "Function", 4))
+    return std::nullopt;
+  const auto &Specialization = Parsed.Root->Children[0];
+  if (Specialization.Children[0].Kind != "SpecializationPassID" ||
+      Specialization.Children[0].Text ||
+      Specialization.Children[0].Index != 5 ||
+      !Specialization.Children[0].Children.empty() ||
+      !Shape(Specialization.Children[1], "GenericSpecializationParam", 1))
+    return std::nullopt;
+  const auto &Element = Specialization.Children[1].Children[0];
+  if (!Shape(Element, "Type", 1) ||
+      !Shape(Element.Children[0], "BoundGenericEnum", 2))
+    return std::nullopt;
+  const auto &Optional = Element.Children[0];
+  if (!Shape(Optional.Children[0], "Type", 1) ||
+      !Shape(Optional.Children[0].Children[0], "Enum", 2) ||
+      !Text(Optional.Children[0].Children[0].Children[0], "Module", "Swift") ||
+      !Text(Optional.Children[0].Children[0].Children[1], "Identifier",
+            "Optional") ||
+      !Shape(Optional.Children[1], "TypeList", 1) ||
+      !Nominal(Optional.Children[1].Children[0], "Foundation", "URL"))
+    return std::nullopt;
+  const auto &Function = Parsed.Root->Children[1];
+  if (!Shape(Function.Children[0], "Structure", 2) ||
+      !Text(Function.Children[0].Children[0], "Module", "Swift") ||
+      !Text(Function.Children[0].Children[1], "Identifier",
+            "ContiguousArray") ||
+      !Text(Function.Children[1], "Identifier", "_createNewBuffer") ||
+      !Shape(Function.Children[2], "LabelList", 3) ||
+      !Text(Function.Children[2].Children[0], "Identifier", "bufferIsUnique") ||
+      !Text(Function.Children[2].Children[1], "Identifier",
+            "minimumCapacity") ||
+      !Text(Function.Children[2].Children[2], "Identifier", "growForAppend") ||
+      !Shape(Function.Children[3], "Type", 1) ||
+      !Shape(Function.Children[3].Children[0], "FunctionType", 2))
+    return std::nullopt;
+  const auto &Type = Function.Children[3].Children[0];
+  if (!Shape(Type.Children[0], "ArgumentTuple", 1) ||
+      !Shape(Type.Children[0].Children[0], "Type", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0], "Tuple", 3) ||
+      !Shape(Type.Children[1], "ReturnType", 1) ||
+      !Shape(Type.Children[1].Children[0], "Type", 1) ||
+      !Shape(Type.Children[1].Children[0].Children[0], "Tuple", 0))
+    return std::nullopt;
+  const auto &Tuple = Type.Children[0].Children[0].Children[0];
+  for (size_t I = 0; I < 3; ++I)
+    if (!Shape(Tuple.Children[I], "TupleElement", 1) ||
+        !Nominal(Tuple.Children[I].Children[0], "Swift",
+                 I == 1 ? "Int" : "Bool"))
+      return std::nullopt;
+
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.Parameters = {{"buffer_is_unique", NdType::makeInt(1, false)},
+                     {"minimum_capacity", NdType::makeInt(8, true)},
+                     {"grow_for_append", NdType::makeInt(1, false)},
+                     {"self", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters.back().TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
+// The optimized compiler emits this exact specialization as a method taking
+// an owned one-word Array value in X0 and an inout Array cell in swiftself X20.
+// Compare the entire demangled declaration, including both specializations,
+// the Sequence/Element requirements, ownership, labels and void result.
+// This declares its ABI; native body and dependency proofs remain required.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledURLArrayAppendSourceABI(const BinaryImage &Image, va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  const auto Expected = llvm::swiftDemangle(
+      "$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lF"
+      "10Foundation3URLVSg_SayAHGTg5",
+      Options);
+  if (!Parsed.Root || !Parsed.Error.empty() || !Expected.Root ||
+      !Expected.Error.empty())
+    return std::nullopt;
+  size_t Budget = 128;
+  const auto Equal = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
+                         const llvm::SwiftDemangleNode &B) -> bool {
+    if (!Budget || A.Kind != B.Kind || A.Text != B.Text || A.Index != B.Index ||
+        A.Children.size() != B.Children.size())
+      return false;
+    --Budget;
+    for (size_t I = 0; I < A.Children.size(); ++I)
+      if (!Self(Self, A.Children[I], B.Children[I]))
+        return false;
+    return true;
+  };
+  if (!Equal(Equal, *Parsed.Root, *Expected.Root))
+    return std::nullopt;
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.Parameters = {
+      {"source_array", NdType::makePtr(NdType::makeVoid())},
+      {"destination_array", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters.back().TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Diagnostic)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // A Swift value initializer may return its Array<String> argument unchanged
 // in x0 while still performing observable side effects. The mangled type
 // gives the nominal and argument shape; the complete single-block

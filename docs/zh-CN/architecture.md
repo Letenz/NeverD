@@ -384,7 +384,7 @@ generated-code ABI 只为标量整数定义。浮点、SIMD、x87、原子操作
 
 ## Windows 驱动模拟
 
-`lib/emulation` 是由 `NEVERD_ENABLE_DRIVER_EMULATION` 启用的可选执行组件。`emulate-driver` CLI 通过公共 C API 访问该组件。`DriverSession` 负责有界的 x64 WDM 初始化，以及可选的串行 create／IOCTL／read／write／cleanup／close／unload 调用；Windows 映像映射使用现有加载器提供的完整 `BinaryImage`，Windows 模型负责来宾对象和 API 语义。Unicorn 适配器负责 CPU 执行，并持有来宾内存的权威状态。此路径不使用实验性的原生翻译流水线，也不改变其支持范围。
+`lib/emulation` 是由 `NEVERD_ENABLE_DRIVER_EMULATION` 启用的可选执行组件。`emulate-driver` CLI 通过公共 C API 访问它。`DriverSession` 负责有界的 x64 WDM 初始化，以及可选的串行 create／IOCTL／read／write／cleanup／close／unload 调用；Windows 映像映射使用现有加载器的完整 `BinaryImage`，Windows 模型负责来宾对象与 API 语义。在 `driver-strict` 下，所选 Unicorn、KVM 或 WHP 适配器使用同一套共享物理内存和地址空间权威状态。针对后端的能力描述区分可移植引擎回调与原生架构准入检查。这条路径不使用实验性的原生翻译流水线，也不改变其支持范围。
 
 Unicorn 通过 `cmake/NeverDUnicorn.cmake` 统一配置一次，与语义测试共享，并在 `BUILD_TESTING=OFF` 时仍可用。未知 API 和 CPU 环境行为会明确停止；驱动返回失败与模拟未完成始终保持区分。限制、报告及不支持的生命周期操作见[驱动模拟](driver-emulation.md)。
 
@@ -528,6 +528,18 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构、特权、地址位宽和功能。`ExecutionBudget` 为每个工作负载持有共享指令／事件计数和绝对单调 deadline；恢复执行不会重置预算。`ExecutionSession` 管理 CPU、hooks 及待处理的服务／故障续接。会话可共享内存和预算，但采用协作调度，不是并行 SMP。恢复前必须恰好消费一次待处理请求。CPU 故障优先于资源停止；无法解释的引擎停止不代表工作负载成功。
 
 `ImageMappingPlan` 使用加载器已有分段，不重新解析 header，也不解析 imports；在发布地址空间前验证完整范围和重叠。明确的 `linux-elf64-v1` 配置以初始栈、显式服务请求和有界字节输出运行 x64/AArch64 freestanding ELF `ET_EXEC` 与静态 PIE `ET_DYN`。动态链接、dynamic TLS、信号、OS 线程和不支持的服务会失败；静态 TLS 与有限的 x64 SSE/SSE2 可用；不会从 KVM 推断 Linux，也不会从 WHP 推断 Windows。详见[CPU 执行](cpu-execution.md)与[来宾进程模拟](process-emulation.md)。这不表示支持 Windows 用户态、Android 或 Darwin 应用。
+
+`driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+
+使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
+
+ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
+
+checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+
+KVM x64 在每次进入前读取实际特殊寄存器，只比较 `KvmX64State.def` 中定义的协议字段。CR3、CPL、TLS、CR8 或其他字段变化时重新写入投影。仅完整捕获的单步调试退出允许复用可运行状态；异常、取消或进入失败后都重新建立该状态。`X64StateTransition` 通过真实 CPU 读取验证 TLS、权限级和 CR8 变化、重复异常及取消。KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
+
+KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。 `KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
 
 ## 严格提升契约
 
@@ -787,3 +799,5 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
 
 checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。

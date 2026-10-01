@@ -1417,17 +1417,33 @@ bool MedLLVMEmitter::constantIsStableAddressOffset(const MedVar &V) const {
 }
 
 bool MedLLVMEmitter::valueIsAuthenticatedModelZero(const MedVar &V) const {
-  if (!CurMedFunc || V.isConst() || V.Size == 0)
+  if (!CurMedFunc || V.isConst() || V.Size == 0 ||
+      CurMedFunc->ScalarAddressModels.empty())
     return false;
-  const AddressProvenanceVarKey Key = addressProvenanceVarKey(V);
-  return std::any_of(CurMedFunc->ScalarAddressModels.begin(),
-                     CurMedFunc->ScalarAddressModels.end(),
-                     [&](const MedScalarAddressModel &Model) {
-                       return Model.Model ==
-                                  RelocatedInstructionScalarModelOccurrence::
-                                      ModelKind::I386ELFGOTBaseZero &&
-                              addressProvenanceVarKey(Model.Value) == Key;
-                     });
+  auto certified = [&](const MedVar &Value) {
+    const AddressProvenanceVarKey Key = addressProvenanceVarKey(Value);
+    return std::any_of(CurMedFunc->ScalarAddressModels.begin(),
+                       CurMedFunc->ScalarAddressModels.end(),
+                       [&](const MedScalarAddressModel &Model) {
+                         return Model.Model ==
+                                    RelocatedInstructionScalarModelOccurrence::
+                                        ModelKind::I386ELFGOTBaseZero &&
+                                addressProvenanceVarKey(Model.Value) == Key;
+                       });
+  };
+  if (certified(V))
+    return true;
+  // Register pressure spills the GOT base and reloads it where it is used.
+  // Emission stores the certified zero, so an exact reload whose every
+  // reaching store writes a certified base reads that zero back.
+  const MedOp *Def = lookupDef(V);
+  std::vector<MedVar> Sources;
+  if (!Def || Def->Opcode != NdOp::LOAD ||
+      !collectFrameReloadSources(*Def, Sources) || Sources.empty())
+    return false;
+  return std::all_of(Sources.begin(), Sources.end(), [&](const MedVar &Source) {
+    return !Source.isConst() && Source.Size == V.Size && certified(Source);
+  });
 }
 
 bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,
@@ -2928,7 +2944,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         // A pointer table may select one of several immutable integer arrays.
         // Audit every authenticated relocation target using the same index
         // constraint; one bad or unbounded candidate invalidates the domain.
-        const MedOp *Address = lookupDef(Def->Inputs[0]);
+        // The lane audit below computes slots in pointer-width arithmetic
+        // with explicit no-wrap checks, which is exactly the address sum.
+        const MedOp *Address = memoryAddressSumDef(Def->Inputs[0]);
         if (Address && Address->Opcode == NdOp::INT_ADD &&
             Address->NumInputs == 2)
           for (unsigned Side = 0; Side < 2 && !ScalarLane.Complete; ++Side) {
@@ -3208,6 +3226,24 @@ MedLLVMEmitter::pureReadOnlyBaseIdentity(
     if (auto Identity = zeroExtendedNarrowConstantIdentity(*Def))
       return Identity;
     auto Forwarded = pointerPreservingInput(*Def);
+    // i386 forms an address in a zero-extended i64 temporary and reads the
+    // pointer back as its low bytes.  Truncating a zero extension of a
+    // pointer-width value returns that value.
+    if (Forwarded && !Forwarded->isConst() && Forwarded->Size > PointerSize &&
+        Def->Output.Size == PointerSize)
+      if (const MedOp *Wide = lookupDef(*Forwarded);
+          Wide && Wide->Opcode == NdOp::INT_ZEXT && Wide->NumInputs >= 1 &&
+          Wide->Inputs[0].Size == PointerSize)
+        Forwarded = Wide->Inputs[0];
+    // Emission replaces a certified i386 GOT base with numeric zero, so
+    // adding it transports the other operand unchanged.
+    if (!Forwarded && Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2 &&
+        Def->Output.Size == PointerSize) {
+      if (valueIsAuthenticatedModelZero(Def->Inputs[0]))
+        Forwarded = Def->Inputs[1];
+      else if (valueIsAuthenticatedModelZero(Def->Inputs[1]))
+        Forwarded = Def->Inputs[0];
+    }
     if (!Forwarded || Forwarded->Size != PointerSize)
       return std::nullopt;
     Cur = *Forwarded;
@@ -3636,6 +3672,16 @@ bool MedLLVMEmitter::phiIsSelfRecurrent(const PhiNode &Phi) const {
   if (CurMedFunc)
     SelfRecurrenceCache.emplace(&Phi, false);
   return false;
+}
+
+const MedOp *MedLLVMEmitter::memoryAddressSumDef(const MedVar &Address) const {
+  const MedOp *Def = Address.isConst() ? nullptr : lookupDef(Address);
+  const uint16_t PointerSize = getTargetRegInfo(TargetArch).PointerSize;
+  if (Def && Def->Opcode == NdOp::INT_ZEXT && Def->NumInputs == 1 &&
+      Def->Inputs[0].Size == PointerSize && Def->Output.Size > PointerSize &&
+      !Def->Inputs[0].isConst())
+    return lookupDef(Def->Inputs[0]);
+  return Def;
 }
 
 std::optional<MedVar>
@@ -4588,7 +4634,7 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
   };
   if (!Domain.Complete || Domain.Seeds.empty()) {
     IndexedPointerLaneSummary Lane;
-    const MedOp *AddressDef = lookupDef(LoadAddress);
+    const MedOp *AddressDef = memoryAddressSumDef(LoadAddress);
     if (AddressDef && AddressDef->NumInputs >= 2 &&
         (AddressDef->Opcode == NdOp::INT_ADD ||
          AddressDef->Opcode == NdOp::INT_SUB)) {

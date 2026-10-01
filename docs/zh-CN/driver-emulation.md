@@ -4,11 +4,11 @@
 
 # Windows 驱动模拟
 
-NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动的 PE 入口点，并可在卸载前执行显式指定的请求场景（默认串行）。它默认使用 Unicorn 执行 CPU 指令，使用 NeverD 自有的有界 Windows 环境模型。它不会将驱动加载到宿主内核，也不会把来宾 API 调用转发给宿主操作系统服务。
+NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动 PE 入口，并可在卸载前运行显式请求场景。CLI 通过 `auto` 在匹配的 Linux 主机上选择 KVM，在匹配的 Windows 主机上选择 WHP；原有 C++ 默认设置和 V1 API 保留 Unicorn。所有后端共用 NeverD 的受限 Windows 环境模型，由模型处理客体 API 调用，驱动与主机内核保持隔离。
 
 ## 执行后端
 
-默认 `driver-strict` 契约继续使用 Unicorn。新增实验性有限指令 `checked-x64-v1` 执行配置：`--backend auto` 在 Linux x86_64 选择 KVM，在 Windows x64 选择 WHP。显式选择 `kvm` 或 `whp` 不会回退；硬件不可用或契约不匹配在执行前报错。
+`driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
 ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和寄存器 BT，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 会跨入口和上下文恢复保存；拒绝未屏蔽 SIMD 异常、DAZ、x87、AVX 和未列出操作。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式仍不支持。普通 RAM 操作数可以跨越独立分配或别名映射的页面；整段权限验证通过后才写入，失败定位到第一个不可访问的字节。MOVS 保留已完成元素及故障元素的重启寄存器，不提交部分元素。
 
@@ -515,3 +515,19 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 ## 完整 x87 状态
 
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
+
+使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
+
+ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
+
+checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+
+KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。 `KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
+
+KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
+
+硬件执行本身不保证更低的端到端耗时。当前原生执行逐条进行指令准入、观察、状态传输和 VM 退出。比较相同原始镜像与场景时，应使用一致的指令和事件预算，同时报告结果一致性与耗时；测量 CLI 延迟时应包含启动和加载。
+
+当 `GuardFlags` 为零时，未启用 CFG 的指针槽仍然有效。加载器校验其存储、可执行回退目标以及重定位时完整的 `DIR64` 覆盖，并保留原始来宾指针。启用 CFG 的映像仍必须同时具备映像启用位和插桩/函数表标志。`DriverGuardCases.def` 与 `NeverDDriverGuardMetadataTests` 通过 Unicorn、KVM 和 WHP 覆盖这些情况，也可用于禁用 Unicorn 的构建。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。

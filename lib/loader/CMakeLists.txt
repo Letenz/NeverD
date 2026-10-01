@@ -53,6 +53,8 @@ add_neverd_component_library(NeverDLoader
   PointerRelocation.cpp
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp
+  MachO/CFunctionParameterCalls.cpp
+  MachO/RuntimeFunctionAddress.cpp
   MachO/MachOChainedFixups.cpp
   MachO/MachOARM32Mode.cpp
   MachO/MachOCompactUnwind.cpp

@@ -624,10 +624,11 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
     return "(" + Ty + ")(" + Text + ")";
   };
   std::string Result = "do {\n";
-  Result += "    " + FullTy + " neverd_dividend = " +
-            Operand(Dividend, FullBytes, FullTy) + ";\n";
-  Result += "    " + HalfTy + " neverd_divisor = " +
-            Operand(Divisor, HalfBytes, HalfTy) + ";\n";
+  Result += "    " + FullTy +
+            " neverd_dividend = " + Operand(Dividend, FullBytes, FullTy) +
+            ";\n";
+  Result += "    " + HalfTy +
+            " neverd_divisor = " + Operand(Divisor, HalfBytes, HalfTy) + ";\n";
 
   // Decide quotient representability without executing C division: the
   // exceptional divisor-zero and signed-min/-1 cases would otherwise be UB.
@@ -1066,6 +1067,10 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg;
+}
+
+bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
+  return Id == Intrinsic::PrefetchW;
 }
 
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {

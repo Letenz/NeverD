@@ -540,6 +540,10 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 /// Fixed-point iterations when growing HighC frame aliases.
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
 
+/// (block, covered-byte mask) states explored while proving that every path to
+/// a frame reload initializes each of its bytes.  Exhaustion is unproved.
+constexpr size_t kMaxFrameInitializerStates = 4096;
+
 /// Compact unused HighC parameters only when at least this many are unused.
 /// A lower threshold drops trailing ABI arguments such as
 /// `identity(values, 0)`.

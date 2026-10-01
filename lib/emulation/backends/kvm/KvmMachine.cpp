@@ -9,6 +9,7 @@
 #include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 #if defined(__linux__) && defined(__x86_64__) && defined(NEVERD_EMULATION_KVM)
@@ -24,54 +25,79 @@
 
 namespace neverd::emulation {
 namespace {
+bool sameState(const kvm_segment &L, const kvm_segment &R) {
+#define NEVERD_KVM_X64_SEGMENT_FIELD(Field)                                    \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_SEGMENT_FIELD
+  return true;
+}
+bool sameState(const kvm_dtable &L, const kvm_dtable &R) {
+#define NEVERD_KVM_X64_DTABLE_FIELD(Field)                                     \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_DTABLE_FIELD
+  return true;
+}
+bool sameState(const kvm_sregs &L, const kvm_sregs &R) {
+#define NEVERD_KVM_X64_SPECIAL_SEGMENT(Field)                                  \
+  if (!sameState(L.Field, R.Field))                                            \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_DTABLE(Field)                                   \
+  if (!sameState(L.Field, R.Field))                                            \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_VALUE(Field)                                    \
+  if (L.Field != R.Field)                                                      \
+    return false;
+#define NEVERD_KVM_X64_SPECIAL_ARRAY(Field)                                    \
+  if (!llvm::equal(L.Field, R.Field))                                          \
+    return false;
+#include "KvmX64State.def"
+#undef NEVERD_KVM_X64_SPECIAL_ARRAY
+#undef NEVERD_KVM_X64_SPECIAL_VALUE
+#undef NEVERD_KVM_X64_SPECIAL_DTABLE
+#undef NEVERD_KVM_X64_SPECIAL_SEGMENT
+  return true;
+}
+bool sameGeneralRegisters(const X64MachineState &L, const X64MachineState &R) {
+#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
+  if (L.reg(X64Register::Name) != R.reg(X64Register::Name))                    \
+    return false;
+#include "../../arch/x86_64/X64HostRegisters.def"
+#undef NEVERD_X64_HOST_REGISTER
+  return true;
+}
+bool sameFPRegisters(const X64MachineState &L, const X64MachineState &R) {
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  if (L.FP.Member != R.FP.Member)                                              \
+    return false;
+#include "../../arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+  return L.FP.Tag == R.FP.Tag && L.FP.Registers == R.FP.Registers &&
+         L.MXCSR == R.MXCSR && L.Xmm == R.Xmm;
+}
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
   bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
+    // Only a completely captured debug exit proves the next entry runnable.
+    // Failed, cancelled and exception entries must reestablish it explicitly.
+    const bool WasRunnable = Runnable;
+    Runnable = false;
     kvm_regs R{};
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   R.Field = State.reg(X64Register::Name);
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
     kvm_sregs S{};
-    if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
-      return diagnostic::error(diagnostic::KvmState);
-    S.cr0 = x64::CR0;
-    S.cr3 = Root;
-    S.cr4 = x64::CR4;
-    S.efer = x64::EFER;
-    S.cr8 = State.reg(X64Register::CR8);
-    kvm_segment Code{}, Data{};
-    Code.selector = State.UserMode ? x64::UserCodeSelector : x64::CodeSelector;
-    Code.dpl = State.UserMode ? x64::UserPrivilege : 0;
-    Code.type = x64::CodeType;
-    Code.present = Code.s = Code.l = Code.g = 1;
-    Code.limit = x64::SegmentLimit;
-    Data.selector = State.UserMode ? x64::UserDataSelector : x64::DataSelector;
-    Data.dpl = Code.dpl;
-    Data.type = x64::DataType;
-    Data.present = Data.s = Data.db = Data.g = 1;
-    Data.limit = x64::SegmentLimit;
-    S.cs = Code;
-    S.ds = S.es = S.ss = S.fs = S.gs = Data;
-    S.gs.base = State.GSBase;
-    S.fs.base = State.FSBase;
     const uint64_t Monitor = x64ExceptionMonitorBase(Memory);
     if (Monitor < x64::KernelMin ||
         !x64::canonicalRange(Monitor, x64::gateway::Bytes))
       return diagnostic::error(x64::exceptiontext::Gateway);
-    S.gdt.base = Monitor + x64::gateway::GDTOffset;
-    S.gdt.limit = x64::gateway::GDTEntries * x64::WordBytes - 1;
-    S.idt.base = Monitor + x64::gateway::IDTOffset;
-    S.idt.limit = x64::gateway::VectorCount * x64::gateway::GateBytes - 1;
-    S.tr = {};
-    S.tr.selector = x64::gateway::TSSSelector;
-    S.tr.base = Monitor + x64::gateway::TSSOffset;
-    S.tr.limit = x64::gateway::TSSBytes - 1;
-    S.tr.type = x64::gateway::TSSDescriptorType;
-    S.tr.present = 1;
     // The ISA owns the legacy FP/SSE layout; KVM owns the XSAVE header.
     kvm_xsave F{};
     auto *Bytes = reinterpret_cast<uint8_t *>(F.region);
@@ -79,46 +105,100 @@ public:
       return E;
     llvm::support::endian::write64le(Bytes + x64::fp::XStateOffset,
                                      x64::fp::FPAndSSE);
-    kvm_mp_state MP{};
-    MP.mp_state = KVM_MP_STATE_RUNNABLE;
-    if (ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0 ||
-        ioctl(CPU, KVM_SET_SREGS, &S) < 0 || ioctl(CPU, KVM_SET_REGS, &R) < 0 ||
-        ioctl(CPU, KVM_SET_XSAVE, &F) < 0)
-      return diagnostic::error(diagnostic::KvmState);
-    // KVM associates software single stepping with the current linear RIP.
-    // Arm it after installing this invocation's registers, including on resume.
-    kvm_guest_debug Debug{};
-    Debug.control =
-        KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
-    if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
-      return diagnostic::unavailable(diagnostic::KvmCapabilities,
-                                     BackendAvailability::MissingCapability);
-    if (auto E = runUntilExit(Control.forNativeStep()))
+    auto Prepare = [&]() -> llvm::Error {
+      if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
+        return diagnostic::error(diagnostic::KvmState);
+      const auto PreviousSpecial = S;
+      S.cr0 = x64::CR0;
+      S.cr3 = Root;
+      S.cr4 = x64::CR4;
+      S.efer = x64::EFER;
+      S.cr8 = State.reg(X64Register::CR8);
+      kvm_segment Code{}, Data{};
+      Code.selector =
+          State.UserMode ? x64::UserCodeSelector : x64::CodeSelector;
+      Code.dpl = State.UserMode ? x64::UserPrivilege : 0;
+      Code.type = x64::CodeType;
+      Code.present = Code.s = Code.l = Code.g = 1;
+      Code.limit = x64::SegmentLimit;
+      Data.selector =
+          State.UserMode ? x64::UserDataSelector : x64::DataSelector;
+      Data.dpl = Code.dpl;
+      Data.type = x64::DataType;
+      Data.present = Data.s = Data.db = Data.g = 1;
+      Data.limit = x64::SegmentLimit;
+      S.cs = Code;
+      S.ds = S.es = S.ss = S.fs = S.gs = Data;
+      S.gs.base = State.GSBase;
+      S.fs.base = State.FSBase;
+      S.gdt.base = Monitor + x64::gateway::GDTOffset;
+      S.gdt.limit = x64::gateway::GDTEntries * x64::WordBytes - 1;
+      S.idt.base = Monitor + x64::gateway::IDTOffset;
+      S.idt.limit = x64::gateway::VectorCount * x64::gateway::GateBytes - 1;
+      S.tr = {};
+      S.tr.selector = x64::gateway::TSSSelector;
+      S.tr.base = Monitor + x64::gateway::TSSOffset;
+      S.tr.limit = x64::gateway::TSSBytes - 1;
+      S.tr.type = x64::gateway::TSSDescriptorType;
+      S.tr.present = 1;
+      kvm_mp_state MP{};
+      MP.mp_state = KVM_MP_STATE_RUNNABLE;
+      // Read actual special registers on every entry. Reapply the projection
+      // only when a defined field changed, including CR3, CPL, TLS or CR8.
+      // Comparing protocol fields excludes kernel-owned structure padding.
+      if ((!WasRunnable && ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0) ||
+          (!sameState(PreviousSpecial, S) &&
+           ioctl(CPU, KVM_SET_SREGS, &S) < 0) ||
+          ((!WasRunnable || !sameGeneralRegisters(State, CapturedState)) &&
+           ioctl(CPU, KVM_SET_REGS, &R) < 0) ||
+          ((!WasRunnable || !sameFPRegisters(State, CapturedState)) &&
+           ioctl(CPU, KVM_SET_XSAVE, &F) < 0))
+        return diagnostic::error(diagnostic::KvmState);
+      // KVM associates software single stepping with the current linear RIP.
+      // Arm it after any required register installation, including on resume.
+      // A reused capture already describes the actual RIP at this boundary.
+      kvm_guest_debug Debug{};
+      Debug.control =
+          KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
+      if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
+        return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                       BackendAvailability::MissingCapability);
+      // Without an in-kernel APIC, KVM_RUN takes CR8 from the shared run area,
+      // even when KVM_SET_SREGS already installed that register.
+      Run->cr8 = State.reg(X64Register::CR8);
+      return llvm::Error::success();
+    };
+    auto Capture = [&]() -> llvm::Error {
+      const bool Stepped = Run->exit_reason == KVM_EXIT_DEBUG &&
+                           Run->debug.arch.exception == x64::DebugVector &&
+                           (Run->debug.arch.dr6 & x64::DebugSingleStep);
+      const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
+      // Synchronous exceptions enter a private IDT/IST and complete one HLT.
+      // There is no unfinished KVM IO/MMIO operation to carry into a new entry.
+      // Authenticate that gateway before publishing any architectural state.
+      if (!Stepped && !Exception) {
+        (void)ioctl(CPU, KVM_GET_REGS, &R);
+        (void)ioctl(CPU, KVM_GET_SREGS, &S);
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            llvm::formatv(diagnostic::KvmExit, Run->exit_reason,
+                          Run->exit_reason == KVM_EXIT_DEBUG
+                              ? Run->debug.arch.exception
+                          : Run->exit_reason == KVM_EXIT_FAIL_ENTRY
+                              ? Run->fail_entry.hardware_entry_failure_reason
+                              : 0,
+                          R.rip, S.cr2)
+                .str());
+      }
+      if (ioctl(CPU, KVM_GET_REGS, &R) < 0 ||
+          ioctl(CPU, KVM_GET_XSAVE, &F) < 0 ||
+          (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0))
+        return diagnostic::error(diagnostic::KvmState);
+      return llvm::Error::success();
+    };
+    if (auto E = runUntilExit(Control.forNativeStep(), Prepare, Capture))
       return E;
-    const bool Stepped = Run->exit_reason == KVM_EXIT_DEBUG &&
-                         Run->debug.arch.exception == x64::DebugVector &&
-                         (Run->debug.arch.dr6 & x64::DebugSingleStep);
     const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
-    // Synchronous exceptions enter a private IDT/IST and complete one HLT.
-    // There is no unfinished KVM IO/MMIO operation to carry into a new entry.
-    // Authenticate that gateway before publishing any architectural state.
-    if (!Stepped && !Exception) {
-      (void)ioctl(CPU, KVM_GET_REGS, &R);
-      (void)ioctl(CPU, KVM_GET_SREGS, &S);
-      return llvm::createStringError(
-          llvm::inconvertibleErrorCode(),
-          llvm::formatv(diagnostic::KvmExit, Run->exit_reason,
-                        Run->exit_reason == KVM_EXIT_DEBUG
-                            ? Run->debug.arch.exception
-                        : Run->exit_reason == KVM_EXIT_FAIL_ENTRY
-                            ? Run->fail_entry.hardware_entry_failure_reason
-                            : 0,
-                        R.rip, S.cr2)
-              .str());
-    }
-    if (ioctl(CPU, KVM_GET_REGS, &R) < 0 || ioctl(CPU, KVM_GET_XSAVE, &F) < 0 ||
-        (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0))
-      return diagnostic::error(diagnostic::KvmState);
     auto Next = State;
     if (auto E = decodeX64FXState(Next, {Bytes, sizeof(F.region)}))
       return E;
@@ -144,11 +224,18 @@ public:
       return llvm::make_error<X64ExceptionError>(*Trap);
     }
     State = Next;
+    // Only acknowledged, fully decoded debug exits establish reusable state.
+    // Host writes or context restoration are compared against this capture;
+    // faults, failed transfers and cancellation invalidate it on next entry.
+    CapturedState = Next;
+    Runnable = true;
     return llvm::Error::success();
   }
 
 private:
   MemoryProjection &Memory;
+  X64MachineState CapturedState;
+  bool Runnable = false;
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>

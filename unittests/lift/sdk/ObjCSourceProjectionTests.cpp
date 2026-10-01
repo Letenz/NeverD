@@ -1,5 +1,6 @@
 //===- ObjCSourceProjectionTests.cpp - Objective-C projection boundaries --===//
 
+#include "../../../lib/sdk/capi/ObjCResumeSource.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
 #include "../../../lib/sdk/capi/ObjCSynchronizedSource.h"
 #include "../../../lib/sdk/capi/SourceProjectionEvidenceJSON.h"
@@ -15,6 +16,7 @@
 
 #include <functional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1410,6 +1412,48 @@ TEST(ObjCSourceProjection, SpecializedArrayCastInferenceRequiresCompleteAudit) {
   }
 }
 
+TEST(ObjCSourceProjection, SpecializedArrayBufferSchedulesSwiftSelfRelift) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.Image.Format = BinaryFormat::MachO;
+  F.Image.Bits = Bitness::Bits64;
+  F.Image.Symbols.push_back({"_$ss15ContiguousArrayV16_"
+                             "createNewBuffer14bufferIsUnique15minimumCapacity"
+                             "13growForAppendySb_SiSbtF10Foundation3URLVSg_Tg5",
+                             0x3000, 0, true});
+  F.call(0, 0x3000);
+  MedFunc Med;
+  Med.Entry = 0x3000;
+  F.Result.MedFuncs.push_back(Med);
+  HighFunc High;
+  High.Entry = 0x3000;
+  F.Result.HighFuncs.push_back(High);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = 0x3000;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  F.Result.FunctionAudits.push_back(Audit);
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 1U);
+  ASSERT_TRUE(Options.SourceTypeHints.count(0x3000));
+  const auto &Hint = Options.SourceTypeHints.at(0x3000);
+  ASSERT_EQ(Hint.Parameters.size(), 4U);
+  EXPECT_EQ(Hint.ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint.Parameters[3].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint.Parameters[3].Location.RegisterOffset, a64reg::X20);
+  EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+  F.Result.FunctionAudits[0].MedIRVerified = false;
+  PipelineOptions Incomplete;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Incomplete, Diagnostics),
+      0U);
+  EXPECT_TRUE(Incomplete.SourceTypeHints.empty());
+}
+
 TEST(ObjCSourceProjection, NativeInferenceUsesSourceBoundRefinementBodies) {
   NativeDependencyFixture F;
   F.Image.Arch = Arch::AArch64;
@@ -2499,6 +2543,9 @@ TEST(ObjCSourceProjection, SynchronizedInterleavedRangesPreserveEveryHole) {
   const auto Sites = EH.Itanium->CallSites;
   const auto Pads = EH.ObjC->LandingPads;
   EH.Itanium->CallSites[2].GuardedRange.Begin += 4;
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EH.Itanium->CallSites[2].GuardedRange.Begin +=
+      8; // omitted ARC call at 0x303c
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
   EH.Itanium->CallSites = Sites;
   EH.Itanium->CallSites[2].FirstActionOffset = 0;
@@ -2546,6 +2593,289 @@ TEST(ObjCSourceProjection,
   F.Image.DyldBindSlots[0x5118].WeakImport = false;
   F.Image.DyldBindSlots[0x5118].Module = "/tmp/foreign.dylib";
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+namespace {
+struct SynchronizedForwardedPadFixture : SynchronizedInterleavedFixture {
+  SynchronizedForwardedPadFixture() {
+    put(0x3088, 0x14000001U); // a second exceptional entry: B 0x308c
+    put(0x3084, 0xd65f03c0U); // normal return never enters either pad
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Itanium->CallSites[1].LandingPadVA = 0x3088;
+    EH.ObjC->LandingPads[0].PadVA = 0x3088;
+    EH.ObjC->LandingPads[0].Kind = ObjCPadKind::Cleanup;
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSparseLSDARequiresCompleteNonCallGaps) {
+  SynchronizedForwardedPadFixture F;
+  auto &EH = *F.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[2].GuardedRange = {0x3038, 0x303c};
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  EXPECT_TRUE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x303c, 0x3044));
+  // The second gap above contains an ARC call. A table must explicitly
+  // describe it as unprotected rather than silently omit its unwind policy.
+  EH.Itanium->CallSites[2].GuardedRange.End = 0x3040;
+  ASSERT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  for (uint32_t Word :
+       {0x94000001U, 0xd63f0260U, 0xffffffffU, 0xd4000001U, 0xd69f03e0U}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, Word);
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  // A decodable branch in an omitted interval is still subject to the
+  // lifetime proof: backwards edges, skipped unlocks and pad entry fail.
+  for (va_t Target : {0x3024U, 0x3074U, 0x3088U, 0x308cU}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.Function.ExceptionMetadata->Itanium->CallSites[2].GuardedRange = {
+        0x3038, 0x3040};
+    Changed.put(0x3034, 0x14000000U | ((Target - 0x3034) / 4 & 0x3ffffffU));
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3035, 0x3038));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x3034));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x8000, 0x8004));
+  EXPECT_FALSE(objcSynchronizedNonCallGap(F.Image, 0x3034, 0x7038));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadKeepsBothExceptionalEntries) {
+  SynchronizedForwardedPadFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->LandingPad, 0x3088U);
+  EXPECT_EQ(Proof->LandingPadPrelude, 4U);
+  EXPECT_EQ(Proof->ResumeTarget, 0x4220U);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+
+  for (uint32_t Word : {0x14000000U, 0x14000002U, 0x17ffffffU, 0x54000020U,
+                        0xd61f0260U, 0xd503201fU, 0xf90007e0U, 0xaa0003f3U}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.put(0x3088, Word);
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  for (va_t Target : {0x3088U, 0x308cU, 0x309cU}) {
+    SynchronizedForwardedPadFixture Changed;
+    Changed.put(0x3084, 0x14000000U | ((Target - 0x3084) / 4));
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function));
+  }
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SynchronizedForwardedPadFixture Changed;
+    auto &EH = *Changed.Function.ExceptionMetadata;
+    switch (Mutation) {
+    case 0:
+      EH.Itanium->CallSites[3].LandingPadVA += 4;
+      break;
+    case 1:
+      EH.ObjC->LandingPads[0].Kind = ObjCPadKind::Catch;
+      break;
+    case 2:
+      EH.ObjC->LandingPads[1].Kind = ObjCPadKind::Cleanup;
+      break;
+    case 3:
+      EH.ObjC->LandingPads[0].Catches.emplace_back();
+      break;
+    case 4:
+      EH.CodeRange.End += 4;
+      break;
+    case 5:
+      Changed.put(0x3090, 0xaa1403e0U);
+      break;
+    case 6:
+      Changed.put(0x3098, 0xaa1303e0U);
+      break;
+    case 7:
+      Changed.call(0x3094, 0x4120);
+      break;
+    }
+    EXPECT_FALSE(
+        proveObjCSynchronizedReceiverCleanup(Changed.Image, Changed.Function))
+        << Mutation;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadOnlyOmitsPureUnreachableTail) {
+  SynchronizedForwardedPadFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.Addr = 0x3084;
+  HighStmt ForwardLabel;
+  ForwardLabel.Kind = StmtKind::Block;
+  ForwardLabel.Addr = 0x3088;
+  HighStmt CleanupLabel = ForwardLabel;
+  CleanupLabel.Addr = 0x308c;
+  HighStmt Exit;
+  Exit.Kind = StmtKind::Assign;
+  Exit.Addr = 0x3094;
+  Exit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210, {});
+  HighStmt Resume = Exit;
+  Resume.Addr = 0x309c;
+  Resume.Val = HighExpr::makeCall("__Unwind_Resume", 0x4220, {});
+  HighStmt SyntheticReturn;
+  SyntheticReturn.Kind = StmtKind::Return;
+  F.Function.Body = {Return, ForwardLabel, CleanupLabel,
+                     Exit,   Resume,       SyntheticReturn};
+  for (va_t Target : {0x3088U, 0x308cU, 0x309cU}) {
+    auto Changed = F.Function;
+    HighStmt Goto;
+    Goto.Kind = StmtKind::Goto;
+    Goto.GotoTarget = Target;
+    Changed.Body.insert(Changed.Body.begin(), Goto);
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(Changed, *Proof));
+  }
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    auto Changed = F.Function;
+    switch (Mutation) {
+    case 0:
+      Changed.Body[1].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    case 1:
+      Changed.Body[2].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    case 2:
+      Changed.Body[2].Body.push_back(Exit);
+      break;
+    case 3:
+      Changed.Body[3].Addr = 0x3098;
+      break;
+    case 4:
+      Changed.Body[4].Val = HighExpr::makeCall("work", 0x4000, {});
+      break;
+    }
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(Changed, *Proof))
+        << Mutation;
+  }
+  EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  ASSERT_EQ(F.Function.Body.size(), 1U);
+  EXPECT_EQ(F.Function.Body.front().Addr, 0x3084U);
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedPadARCDoesNotRearmAnUnlockedPath) {
+  SynchronizedForwardedPadFixture F;
+  F.put(0x3040, 0xb4000175U); // early path joins the normal unlock at 0x306c
+  F.put(0x3074, 0xaa1303e0U);
+  F.call(0x3078, 0x4120); // ARC release after the lock has been closed
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void work(void*, int);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+void neverd_objc_imp_3000(void* objc_self, void *value, int path) {
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 2);
+    objc_release(value);
+    if (!path) {
+        (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+        objc_release(objc_self);
+        return;
+    }
+    work(value, 4);
+    objc_release(value);
+    (uint64_t)(uintptr_t)objc_retain(value);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+}
+)C";
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+  ASSERT_TRUE(Result);
+  auto ExtraUnlock = Source;
+  ExtraUnlock.insert(
+      ExtraUnlock.rfind("    objc_release(objc_self);"),
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(ExtraUnlock, *Proof));
+  EXPECT_NE(Result->find("void *active = *guard ? lock : 0;"),
+            std::string::npos);
+  auto Changed = Source;
+  const auto LastExit = Changed.rfind("sync_exit(objc_self)");
+  Changed.replace(LastExit, std::string("sync_exit(objc_self)").size(),
+                  "sync_exit(value)");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static int failure, order, bad, exits, releases;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 1); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object, int tag) { step(object, value, tag); }
+extern "C" void objc_release(void *object) {
+    if (object == lock) step(object, lock, 9);
+    else step(object, value, ++releases == 1 ? 3 : 5);
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, value, 6); return object;
+}
+extern "C" void neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        const int wanted[] = {12345679, 1, 127, 123, 12347, 12345,
+                              123456, 1234567, 12345679, 12345679};
+        const int shortWanted[] = {12379, 1, 127, 123, 12379, 12379,
+                                   12379, 1237, 12379, 12379};
+        for (failure = 0; failure <= 9; ++failure) {
+            order = bad = exits = releases = 0;
+            int caught = 0;
+            try { neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            const int thrown = failure == 8 ||
+                (!path && failure >= 4 && failure <= 6) ? 0 : failure;
+            const int unlocks = thrown == 0 || thrown == 2 || thrown == 4 ||
+                                thrown == 7 || thrown == 9;
+            if (caught != thrown || exits != unlocks || bad ||
+                order != (path ? wanted[failure] : shortWanted[failure]))
+                return 10 + failure + path * 10;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+}
+
+TEST(ObjCSourceProjection, SynchronizedExpandedUnlockNeedsUnconditionalReturn) {
+  for (const char *Tail : {"\nobjc_release(p);\nreturn;\n",
+                           "\n/* if (...) { goto x; } */ return;\n",
+                           "\nconsume(\"}; return; if\"); return 0;\n"}) {
+    const std::string Source = "exit();" + std::string(Tail) + "next_exit();";
+    EXPECT_TRUE(
+        objcSynchronizedUnlockReturns(Source, 0, Source.find("next_exit")));
+  }
+  for (const char *Tail :
+       {"\nobjc_release(p);\n", "\n/* return; */\n",
+        "\nconsume(\"return;\");\n", "\nif (p) return;\n",
+        "\nif (p)\nreturn;\n", "\n{ return; }\n", "\ngoto done; return;\n",
+        "\n} return;\n", "\ndone: return;\n", "\nreturn next_exit();\n"}) {
+    const std::string Source = "exit();" + std::string(Tail) + "next_exit();";
+    EXPECT_FALSE(
+        objcSynchronizedUnlockReturns(Source, 0, Source.find("next_exit")));
+  }
 }
 
 TEST(ObjCSourceProjection, SynchronizedInterleavedCOnlyWrapsUnprotectedARC) {
@@ -3502,4 +3832,1570 @@ int main() {
 }
 )CPP";
   executeSynchronizedSource(*Result, Harness);
+}
+
+namespace {
+struct SynchronizedSequentialFixture : SynchronizedInterleavedFixture {
+  SynchronizedSequentialFixture() {
+    for (va_t Address = 0x3000; Address < 0x30a0; Address += 4)
+      put(Address, 0xd503201fU);
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xa9bd57f6U},
+          {0x3004, 0xa9014ff4U},
+          {0x3008, 0xa9027bfdU},
+          {0x300c, 0x910083fdU},
+          {0x3010, 0xaa0203f4U},
+          {0x3014, 0xaa0003f3U},
+          {0x3018, 0xaa1303e0U},
+          {0x3020, 0xaa1303e0U},
+          {0x3028, 0xaa1403e0U},
+          {0x3030, 0xaa1303e0U},
+          {0x3038, 0xaa1303e0U},
+          {0x3040, 0xb40001d4U}, // cbz x20, 0x3078: skip second lock
+          {0x3044, 0xaa1403e0U},
+          {0x304c, 0xaa1303e0U},
+          {0x3054, 0xaa1303e0U},
+          {0x305c, 0xaa1403e0U},
+          {0x3064, 0xaa1303e0U},
+          {0x306c, 0xaa1303e0U},
+          {0x3074, 0x14000001U},
+          {0x3078, 0xa9427bfdU},
+          {0x307c, 0xa9414ff4U},
+          {0x3080, 0xa8c357f6U},
+          {0x3084, 0xd65f03c0U},
+          {0x3088, 0x14000001U},
+          {0x308c, 0xaa0003f4U},
+          {0x3090, 0xaa1303e0U},
+          {0x3098, 0xaa1403e0U}})
+      put(Address, Word);
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x301c, 0x4130},
+                                          {0x3024, 0x4200},
+                                          {0x302c, 0x4000},
+                                          {0x3034, 0x4210},
+                                          {0x303c, 0x4120},
+                                          {0x3048, 0x4040},
+                                          {0x3050, 0x4130},
+                                          {0x3058, 0x4200},
+                                          {0x3060, 0x4000},
+                                          {0x3068, 0x4210},
+                                          {0x3070, 0x4120},
+                                          {0x3094, 0x4210},
+                                          {0x309c, 0x4220}})
+      call(Address, Target);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Itanium->CallSites.assign(5, {});
+    auto &Sites = EH.Itanium->CallSites;
+    Sites[0].GuardedRange = {0x3000, 0x3028};
+    Sites[1].GuardedRange = {0x3028, 0x3030};
+    Sites[1].LandingPadVA = 0x308c;
+    Sites[2].GuardedRange = {0x3030, 0x305c};
+    Sites[3].GuardedRange = {0x305c, 0x3064};
+    Sites[3].LandingPadVA = 0x3088;
+    Sites[4].GuardedRange = {0x3064, 0x30a0};
+    EH.ObjC->LandingPads = {
+        {{0x3028, 0x3030}, 0x308c, ObjCPadKind::SynchronizedExit, {}},
+        {{0x305c, 0x3064}, 0x3088, ObjCPadKind::Cleanup, {}}};
+  }
+};
+
+const char *SynchronizedSequentialSource = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*, int);
+void neverd_objc_imp_3000(void *objc_self, void *value, int path) {
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 3);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+    if (!path) return;
+    work(value, 5);
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value, 8);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSequentialLocksKeepDistinctLifetimes) {
+  SynchronizedSequentialFixture F;
+  EXPECT_FALSE(proveObjCSynchronizedInterleavedCleanup(F.Image, F.Function));
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->Lifetimes.size(), 2U);
+  EXPECT_EQ(Proof->Lifetimes[0].EnterCall, 0x3024U);
+  EXPECT_EQ(Proof->Lifetimes[0].ExitCall, 0x3034U);
+  EXPECT_EQ(Proof->Lifetimes[1].EnterCall, 0x3058U);
+  EXPECT_EQ(Proof->Lifetimes[1].ExitCall, 0x3068U);
+  EXPECT_EQ(Proof->LandingPad, 0x3088U);
+  EXPECT_EQ(Proof->LandingPadPrelude, 4U);
+  EXPECT_EQ(Proof->SuspendARC, 0U);
+  // A prefix can bypass the whole first acquisition and join the unlocked
+  // gap, without inheriting either protected body's lock state.
+  F.put(0x3018, 0xb4000154U); // cbz x20, 0x3040
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  const auto Source =
+      addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource, *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_NE(
+      Source->find("neverd_objc_sync_guard = 0;\n    "
+                   "(uint32_t)(neverd_darwin_objc_sync_exit(objc_self));"),
+      std::string::npos);
+  EXPECT_NE(
+      Source->find("neverd_objc_sync_guard = objc_self;\n    work(value, 8)"),
+      std::string::npos);
+  EXPECT_EQ(Source->find("neverd_objc_sync_release"), std::string::npos);
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialRejectsAmbiguousLockState) {
+  const std::vector<std::pair<va_t, uint32_t>> Mutations = {
+      {0x3014, 0xd503201fU},  // no saved self
+      {0x3014, 0x2a0003f3U},  // only W19 saved
+      {0x3020, 0xaa1403e0U},  // different first lock
+      {0x3030, 0xaa1403e0U},  // different first unlock
+      {0x3054, 0xaa1403e0U},  // different second lock
+      {0x3064, 0xaa1403e0U},  // different second unlock
+      {0x3090, 0xaa1403e0U},  // different exceptional unlock
+      {0x3098, 0xaa1303e0U},  // wrong exception value
+      {0x3088, 0x14000002U},  // effectful exceptional forwarding
+      {0x3044, 0xaa0003f3U},  // overwrite receiver in unlocked gap
+      {0x3028, 0xd65f03c0U},  // return holding first lock
+      {0x305c, 0xd65f03c0U},  // return holding second lock
+      {0x3040, 0xb4000114U},  // bypass second enter and join its protected body
+      {0x3018, 0xb4000094U},  // bypass first enter and join its protected body
+      {0x3074, 0x17fffffeU},  // cycle in normal suffix
+      {0x3074, 0x14000005U}}; // normal edge into cleanup
+  for (const auto &[Address, Word] : Mutations) {
+    SynchronizedSequentialFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << std::hex << Address << ":" << Word;
+  }
+  for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x3024, 0x4000},
+                                        {0x3034, 0x4000},
+                                        {0x3058, 0x4000},
+                                        {0x3068, 0x4000},
+                                        {0x3048, 0x4200},
+                                        {0x309c, 0x4000}}) {
+    SynchronizedSequentialFixture F;
+    F.call(Address, Target);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+  SynchronizedSequentialFixture F;
+  F.put(0x3010, 0xaa0103e0U); // lose the incoming self before its save
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  SynchronizedSequentialFixture Range;
+  Range.Function.ExceptionMetadata->Itanium->CallSites[1].GuardedRange.End =
+      0x304c;
+  Range.Function.ExceptionMetadata->ObjC->LandingPads[0].GuardedRange.End =
+      0x304c;
+  EXPECT_FALSE(
+      proveObjCSynchronizedReceiverCleanup(Range.Image, Range.Function));
+  SynchronizedSequentialFixture Unprotected;
+  auto &EH = *Unprotected.Function.ExceptionMetadata;
+  EH.Itanium->CallSites[1].GuardedRange.End = 0x302c;
+  EH.Itanium->CallSites[2].GuardedRange.Begin = 0x302c;
+  EH.ObjC->LandingPads[0].GuardedRange.End = 0x302c;
+  // The call at 0x302c owns the lock but no longer has an LSDA cleanup.
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Unprotected.Image,
+                                                    Unprotected.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialRenderingNeedsEveryExactCall) {
+  SynchronizedSequentialFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  for (const char *Replacement :
+       {"(uint32_t)(neverd_darwin_objc_sync_enter(value));",
+        "if (path) (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));",
+        "(uint32_t)(neverd_darwin_objc_sync_exit(objc_self));",
+        "/* (uint32_t)(neverd_darwin_objc_sync_enter(objc_self)); */"}) {
+    std::string Changed = SynchronizedSequentialSource;
+    const std::string Enter =
+        "(uint32_t)(neverd_darwin_objc_sync_enter(objc_self));";
+    Changed.replace(Changed.rfind(Enter), Enter.size(), Replacement);
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+  auto Changed = *Proof;
+  Changed.SuspendARC = 1;
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource,
+                                                  Changed));
+  Changed = *Proof;
+  Changed.Lifetimes[1].EnterCall = Changed.Lifetimes[0].ExitCall;
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource,
+                                                  Changed));
+  const std::string Tail =
+      "\nvoid helper(void *p) { neverd_darwin_objc_sync_enter(p); }\n";
+  const auto Source = addObjCSynchronizedReceiverCleanup(
+      std::string(SynchronizedSequentialSource) + Tail, *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_EQ(Source->substr(Source->size() - Tail.size()), Tail);
+}
+
+TEST(ObjCSourceProjection, SynchronizedSequentialExceptionsUnlockOnlyHeldLock) {
+  SynchronizedSequentialFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source =
+      addObjCSynchronizedReceiverCleanup(SynchronizedSequentialSource, *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1111;
+static void *value = (void*)(uintptr_t)0x2222;
+static int failure, bad, exits, enters, retains, releases, held;
+static uint64_t order;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 11 + tag;
+    if (tag == failure) throw tag;
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, lock, ++retains == 1 ? 1 : 6); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    if (held) bad = 1;
+    step(object, lock, ++enters == 1 ? 2 : 7); held = 1; return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    if (!held) bad = 1;
+    held = 0; ++exits;
+    step(object, lock, enters == 1 ? 4 : 9); return 0;
+}
+extern "C" void objc_release(void *object) {
+    if (held) bad = 1;
+    step(object, lock, ++releases == 1 ? 10 : 11);
+}
+extern "C" void work(void *object, int tag) {
+    if (held != (tag != 5)) bad = 1;
+    step(object, value, tag);
+}
+extern "C" void neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    for (int path = 0; path < 2; ++path) {
+        for (failure = 0; failure <= 11; ++failure) {
+            order = bad = exits = enters = retains = releases = held = 0;
+            uint64_t expectedOrder = 0;
+            int expectedExits = 0, expectedThrow = 0;
+            const int tags[] = {1,2,3,4,10,5,6,7,8,9,11};
+            for (int i = 0; i < (path ? 11 : 5); ++i) {
+                const int tag = tags[i];
+                expectedOrder = expectedOrder * 11 + tag;
+                if (tag == 4 || tag == 9) ++expectedExits;
+                if (tag != failure) continue;
+                expectedThrow = tag;
+                if (tag == 3 || tag == 8) {
+                    expectedOrder = expectedOrder * 11 + (tag == 3 ? 4 : 9);
+                    ++expectedExits;
+                }
+                break;
+            }
+            int caught = 0;
+            try { neverd_objc_imp_3000(lock, value, path); }
+            catch (int exception) { caught = exception; }
+            if (caught != expectedThrow || exits != expectedExits || held ||
+                order != expectedOrder || bad)
+                return 10 + failure + path * 20;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
+namespace {
+struct ResumeOnlyFixture : SynchronizedRetainedStackFixture {
+  ResumeOnlyFixture() {
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libSystem.B.dylib");
+    const auto RuntimeStub = [&](va_t Address, va_t Slot, const char *Name,
+                                 const char *Provider) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, Provider, false};
+      put(Address, 0xb0000010U);
+      put(Address + 4, 0xf9400210U | ((Slot - 0x5000) / 8 << 10));
+      put(Address + 8, 0xd61f0200U);
+    };
+    RuntimeStub(0x4220, 0x5140, "__Unwind_Resume",
+                "/usr/lib/libSystem.B.dylib");
+    RuntimeStub(0x4230, 0x5148, "___stack_chk_fail",
+                "/usr/lib/libSystem.B.dylib");
+    RuntimeStub(0x4140, 0x5150, "_objc_retain", "/usr/lib/libobjc.A.dylib");
+    for (va_t Address = 0x3000; Address < 0x3034; Address += 4)
+      put(Address, 0xd503201fU);
+    put(0x3000, 0xa9bf7bfdU);
+    put(0x3004, 0x910003fdU);
+    call(0x3008, 0x4140);
+    call(0x301c, 0x4140);
+    put(0x3020, 0x52800540U);
+    put(0x3024, 0xa8c17bfdU);
+    put(0x3028, 0xd65f03c0U);
+    call(0x302c, 0x4230);
+    call(0x3030, 0x4220);
+    Projection P;
+    Function = P.Func;
+    Function.Entry = 0x3000;
+    Function.Name = "neverd_objc_imp_3000";
+    auto &EH = Function.ExceptionMetadata.emplace();
+    EH.CodeRange = {0x3000, 0x3034};
+    EH.Personality = ExceptionPersonality::ObjCPersonalityV0;
+    auto &Sites = EH.Itanium.emplace().CallSites;
+    Sites.resize(5);
+    Sites[0].GuardedRange = {0x3000, 0x3008};
+    Sites[1].GuardedRange = {0x3008, 0x3010};
+    Sites[1].LandingPadVA = 0x3030;
+    Sites[2].GuardedRange = {0x3010, 0x301c};
+    Sites[3].GuardedRange = {0x301c, 0x3020};
+    Sites[3].LandingPadVA = 0x3030;
+    Sites[4].GuardedRange = {0x3020, 0x3034};
+    EH.ObjC.emplace().LandingPads = {
+        {{0x3008, 0x3010}, 0x3030, ObjCPadKind::Cleanup, {}},
+        {{0x301c, 0x3020}, 0x3030, ObjCPadKind::Cleanup, {}}};
+    MedVar Self;
+    Self.Kind = MedVar::Param;
+    Self.TheArch = Arch::AArch64;
+    Self.Id = 0;
+    Self.Size = 8;
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+    Hint->TargetName = "objc_retain";
+    Hint->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+    Hint->Signature.Parameters = {{"object", Hint->Signature.ReturnType}};
+    std::string Diagnostic;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Hint->Signature, Arch::AArch64,
+                                            Diagnostic));
+    HighStmt Work;
+    Work.Kind = StmtKind::ExprStmt;
+    Work.Addr = 0x3008;
+    Work.Val =
+        HighExpr::makeCall("objc_retain", 0x4140, {HighExpr::makeVar(Self)});
+    Work.Val->Type = Hint->Signature.ReturnType;
+    Work.Val->SourceCallHint = Hint;
+    HighStmt Again = Work;
+    Again.Addr = 0x301c;
+    HighStmt Return = Function.Body.front();
+    Return.Addr = 0x3028;
+    HighStmt Resume;
+    Resume.Kind = StmtKind::Assign;
+    Resume.Addr = 0x3030;
+    MedVar Exception;
+    Exception.Kind = MedVar::EHException;
+    Exception.Size = 8;
+    Resume.Val = HighExpr::makeCall("__Unwind_Resume", 0x4220,
+                                    {HighExpr::makeVar(Exception)});
+    HighStmt SyntheticReturn;
+    SyntheticReturn.Kind = StmtKind::Return;
+    Function.Body = {Work, Again, Return, Resume, SyntheticReturn};
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection, ResumeOnlyPadHasNoSourceCleanupOrDispatch) {
+  ResumeOnlyFixture F;
+  const auto Proof = proveObjCResumeOnlySource(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->LandingPad, 0x3030U);
+  EXPECT_EQ(Proof->ResumeTarget, 0x4220U);
+  Projection P;
+  P.Func = F.Function;
+  P.Audit.Entry = P.Func.Entry;
+  const auto Bound = [](const HighExpr &) { return true; };
+  EXPECT_FALSE(
+      objcSourceBodyLimitation(P.Func, P.Hint, &P.Audit, Bound).empty());
+  ASSERT_TRUE(omitProvenObjCResumeOnlyPad(P.Func, *Proof));
+  EXPECT_FALSE(P.Func.ExceptionMetadata);
+  EXPECT_TRUE(F.Function.ExceptionMetadata);
+  ASSERT_EQ(P.Func.Body.size(), 3U);
+  EXPECT_EQ(P.Func.Body.back().Kind, StmtKind::Return);
+  const auto Limitation =
+      objcSourceBodyLimitation(P.Func, P.Hint, &P.Audit, Bound);
+  EXPECT_TRUE(Limitation.empty()) << Limitation;
+  EXPECT_EQ(emit(P.Func).find("Unwind_Resume"), std::string::npos);
+}
+
+TEST(ObjCSourceProjection, ResumeOnlyPadRequiresCompleteMatchingLSDA) {
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    ResumeOnlyFixture F;
+    auto &EH = *F.Function.ExceptionMetadata;
+    switch (Case) {
+    case 0:
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      EH.Itanium->CallSites[1].FirstActionOffset = 0;
+      break;
+    case 2:
+      EH.Itanium->TypeTable.resize(1);
+      break;
+    case 3:
+      EH.Itanium->CallSites[1].LandingPadVA += 4;
+      break;
+    case 4:
+      EH.ObjC->LandingPads.pop_back();
+      break;
+    case 5:
+      EH.ObjC->LandingPads[0].Kind = ObjCPadKind::Catch;
+      break;
+    case 6:
+      EH.ObjC->LandingPads[0].GuardedRange.End += 4;
+      break;
+    case 7:
+      EH.Itanium->CallSites[2].GuardedRange.Begin -= 4;
+      break;
+    case 8:
+      EH.Itanium->CallSites[4].GuardedRange.End -= 4;
+      break;
+    case 9:
+      EH.ObjC->UsesFragileSetjmp = true;
+      break;
+    case 10:
+      EH.ObjC->RuntimeCalls.push_back({0x3008, 0x4140, "objc_begin_catch",
+                                       ObjCRuntimeCallKind::BeginCatch});
+      break;
+    case 11:
+      EH.CodeRange.End += 4;
+      break;
+    }
+    EXPECT_FALSE(proveObjCResumeOnlySource(F.Image, F.Function));
+  }
+  ResumeOnlyFixture F;
+  auto &Sites = F.Function.ExceptionMetadata->Itanium->CallSites;
+  Sites.erase(Sites.begin() + 2);
+  EXPECT_TRUE(proveObjCResumeOnlySource(F.Image, F.Function));
+  F.call(0x3014, 0x4140); // a missing call-site interval cannot hide a call
+  EXPECT_FALSE(proveObjCResumeOnlySource(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, ResumeOnlyPadAuthenticatesRuntimeAndNormalEdges) {
+  for (unsigned Case = 0; Case < 11; ++Case) {
+    SCOPED_TRACE(Case);
+    ResumeOnlyFixture F;
+    switch (Case) {
+    case 0:
+      F.Image.DyldBindSlots[0x5140].WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots[0x5140].Addend = 8;
+      break;
+    case 2:
+      F.Image.DyldBindSlots[0x5140].Module = "/tmp/libfake.dylib";
+      break;
+    case 3:
+      F.Image.DynInfo.NeededLibs.pop_back();
+      break;
+    case 4:
+      F.Image.ConflictingImportStorageSlots.insert(0x5140);
+      break;
+    case 5:
+      F.call(0x3030, 0x4140);
+      break;
+    case 6:
+      F.put(0x3010, 0x14000008U);
+      break; // normal branch to the pad
+    case 7:
+      F.put(0x3010, 0xb4000100U);
+      break; // conditional pad edge
+    case 8:
+      F.put(0x3010, 0xd61f0000U);
+      break; // unknown indirect branch
+    case 9:
+      F.call(0x302c, 0x4140);
+      break; // falls through into the pad
+    case 10:
+      F.Image.DyldBindSlots[0x5148].Module = "/tmp/libfake.dylib";
+      break;
+    }
+    EXPECT_FALSE(proveObjCResumeOnlySource(F.Image, F.Function));
+  }
+  ResumeOnlyFixture F;
+  F.put(0x3018, 0xb5ffffe0U); // a normal loop remains outside the pad
+  EXPECT_TRUE(proveObjCResumeOnlySource(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, ResumeOnlyProjectionRejectsChangedHighPadOrEdges) {
+  for (unsigned Case = 0; Case < 7; ++Case) {
+    SCOPED_TRACE(Case);
+    ResumeOnlyFixture F;
+    const auto Proof = proveObjCResumeOnlySource(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    switch (Case) {
+    case 0:
+      F.Function.Body[3].Val->CallAddr += 4;
+      break;
+    case 1:
+      F.Function.Body[3].Val->Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 2:
+      F.Function.Body[3].Val->IsIndirectCall = true;
+      break;
+    case 3:
+      F.Function.Body[4].RetVal = HighExpr::makeCall("unexpected", 0x4400, {});
+      break;
+    case 4:
+      F.Function.Body.push_back(F.Function.Body[3]);
+      break;
+    case 5:
+      F.Function.Body[0].Kind = StmtKind::Goto;
+      F.Function.Body[0].GotoTarget = Proof->LandingPad;
+      break;
+    case 6:
+      F.Function.Body[0].Body.push_back(F.Function.Body[3]);
+      break;
+    }
+    EXPECT_FALSE(omitProvenObjCResumeOnlyPad(F.Function, *Proof));
+    EXPECT_TRUE(F.Function.ExceptionMetadata);
+  }
+}
+
+TEST(ObjCSourceProjection, ResumeOnlyCPropagatesTheOriginalException) {
+  ResumeOnlyFixture F;
+  const auto Proof = proveObjCResumeOnlySource(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  ASSERT_TRUE(omitProvenObjCResumeOnlyPad(F.Function, *Proof));
+  const std::string Source =
+      std::string(ObjCResumeSourceRequirements) + emit(F.Function);
+  const char *Harness = R"CPP(
+#include <cstdint>
+static int calls, failure;
+struct Exception { void *object; int site; };
+extern "C" void *objc_retain(void *object) {
+    ++calls;
+    if (calls == failure) throw Exception{object, calls};
+    return object;
+}
+extern "C" int32_t neverd_objc_imp_3000(void*, void*, int32_t);
+int main() {
+    int object;
+    for (failure = 0; failure < 3; ++failure) {
+        calls = 0;
+        int caught = 0;
+        try {
+            if (neverd_objc_imp_3000(&object, nullptr, 0) != 42) return 1;
+        } catch (const Exception &exception) {
+            if (exception.object != &object || exception.site != failure)
+                return 2;
+            caught = exception.site;
+        }
+        if (caught != failure || calls != (failure ? failure : 2)) return 3;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(Source, Harness);
+}
+
+namespace {
+struct SynchronizedSplitResumeFixture : ResumeOnlyFixture {
+  SynchronizedSplitResumeFixture() {
+    for (va_t Address = 0x3000; Address < 0x307c; Address += 4)
+      put(Address, 0xd503201fU);
+    for (const auto &[Address, Slot, Name] :
+         {std::tuple<va_t, va_t, const char *>{0x4200, 0x5160,
+                                               "_objc_sync_enter"},
+          {0x4210, 0x5168, "_objc_sync_exit"}}) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, "/usr/lib/libobjc.A.dylib", false};
+      put(Address, 0xb0000010U);
+      put(Address + 4, 0xf9400210U | ((Slot - 0x5000) / 8 << 10));
+      put(Address + 8, 0xd61f0200U);
+    }
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xa9bf7bfdU},
+          {0x3004, 0x910003fdU},
+          {0x3008, 0xaa0003f3U},
+          {0x300c, 0xaa0203f4U},
+          {0x3010, 0xaa1303e0U},
+          {0x3018, 0xaa1303e0U},
+          {0x3020, 0xb40000b4U}, // cbz x20, 0x3034
+          {0x3024, 0xaa1303e0U},
+          {0x302c, 0xb5ffffd4U}, // cbnz x20, 0x3024
+          {0x3034, 0xaa1303e0U},
+          {0x303c, 0xaa1303e0U},
+          {0x3044, 0xaa1303e0U},
+          {0x304c, 0xaa1303e0U},
+          {0x3054, 0x54000041U}, // b.ne 0x305c: reachable stack failure
+          {0x3058, 0xd65f03c0U},
+          {0x3060, 0xaa0003f4U},
+          {0x3064, 0xaa1303e0U},
+          {0x306c, 0x14000002U},
+          {0x3070, 0xaa0003f4U},
+          {0x3074, 0xaa1403e0U}})
+      put(Address, Word);
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x3014, 0x4140},
+                                          {0x301c, 0x4200},
+                                          {0x3028, 0x4000},
+                                          {0x3038, 0x4120},
+                                          {0x3040, 0x4140},
+                                          {0x3048, 0x4210},
+                                          {0x3050, 0x4120},
+                                          {0x305c, 0x4230},
+                                          {0x3068, 0x4210},
+                                          {0x3078, 0x4220}})
+      call(Address, Target);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange.End = 0x307c;
+    auto &Sites = EH.Itanium->CallSites;
+    Sites.assign(6, {});
+    Sites[0].GuardedRange = {0x3000, 0x3024};
+    Sites[1].GuardedRange = {0x3024, 0x3034};
+    Sites[1].LandingPadVA = 0x3060;
+    Sites[2].GuardedRange = {0x3034, 0x303c};
+    Sites[2].LandingPadVA = 0x3070;
+    Sites[3].GuardedRange = {0x303c, 0x304c};
+    Sites[4].GuardedRange = {0x304c, 0x3054};
+    Sites[4].LandingPadVA = 0x3070;
+    Sites[5].GuardedRange = {0x3054, 0x307c};
+    EH.ObjC->LandingPads = {
+        {{0x3024, 0x3034}, 0x3060, ObjCPadKind::SynchronizedExit, {}},
+        {{0x3034, 0x303c}, 0x3070, ObjCPadKind::Cleanup, {}},
+        {{0x304c, 0x3054}, 0x3070, ObjCPadKind::Cleanup, {}}};
+    auto Work = Function.Body.front();
+    Work.Addr = 0x3028;
+    auto Return = Function.Body[2];
+    Return.Addr = 0x3058;
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = 0x3060;
+    HighStmt Exit;
+    Exit.Kind = StmtKind::ExprStmt;
+    Exit.Addr = 0x3068;
+    Exit.Val =
+        HighExpr::makeCall("_objc_sync_exit", 0x4210, {Work.Val->Operands[0]});
+    MedVar Copy;
+    Copy.Kind = MedVar::Temp;
+    Copy.Id = 80;
+    Copy.Size = 8;
+    HighStmt Save;
+    Save.Kind = StmtKind::Assign;
+    Save.Addr = 0x306c;
+    Save.Dst = HighExpr::makeVar(Copy);
+    Save.Val = Function.Body[3].Val->Operands[0];
+    HighStmt Resume;
+    Resume.Kind = StmtKind::ExprStmt;
+    Resume.Addr = 0x306c;
+    Resume.Val = HighExpr::makeCall("__Unwind_Resume", 0x4220,
+                                    {HighExpr::makeVar(Copy)});
+    auto SaveAgain = Save;
+    SaveAgain.Addr = 0x3070;
+    auto LabelAgain = Label;
+    LabelAgain.Addr = 0x3074;
+    auto ResumeAgain = Resume;
+    ResumeAgain.Addr = 0x3078;
+    auto SyntheticReturn = Function.Body.back();
+    Function.Body = {Work,        Return,         Label,     Exit,
+                     Save,        Resume,         SaveAgain, LabelAgain,
+                     ResumeAgain, SyntheticReturn};
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedSplitResumeKeepsDistinctPadEffects) {
+  SynchronizedSplitResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->SplitResumeTail);
+  EXPECT_EQ(Proof->LandingPad, 0x3060U);
+  EXPECT_EQ(Proof->LandingPadExitTarget, 0x4210U);
+  EXPECT_EQ(Proof->ResumeTarget, 0x4220U);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+  EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  EXPECT_EQ(F.Function.Body.size(), 2U);
+  ASSERT_TRUE(F.Function.ExceptionMetadata);
+  EXPECT_EQ(F.Function.ExceptionMetadata->ObjC->LandingPads.size(), 3U);
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedSplitResumeRequiresEveryPadAndRange) {
+  for (int Change = 0; Change < 9; ++Change) {
+    SynchronizedSplitResumeFixture F;
+    auto &EH = *F.Function.ExceptionMetadata;
+    switch (Change) {
+    case 0:
+      EH.ObjC->LandingPads.pop_back();
+      break;
+    case 1:
+      EH.ObjC->LandingPads[1].Kind = ObjCPadKind::SynchronizedExit;
+      break;
+    case 2:
+      EH.Itanium->CallSites[2].LandingPadVA = 0x3060;
+      break;
+    case 3:
+      EH.Itanium->CallSites[1].FirstActionOffset = 1;
+      break;
+    case 4:
+      EH.ObjC->LandingPads[0].GuardedRange.End += 4;
+      break;
+    case 5:
+      EH.Itanium->CallSites[3].GuardedRange.Begin += 8;
+      break;
+    case 6:
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 7:
+      EH.ObjC->UsesFragileSetjmp = true;
+      break;
+    case 8:
+      EH.Itanium->CallSites.back().GuardedRange.End -= 4;
+      break;
+    }
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << Change;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedSplitResumeRejectsChangedMachineEffects) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3064, 0xaa1403e0U}, // exception as lock
+        {0x3060, 0xaa0003f3U}, // exception overwrites receiver
+        {0x306c, 0x14000001U}, // overwrite exception with exit result
+        {0x3070, 0x2a0003f4U}, // narrow exception copy
+        {0x3074, 0xaa1303e0U}, // resume lock instead of exception
+        {0x3030, 0x2a0003f3U}, // narrow receiver clobber
+        {0x302c, 0x1400000dU}, // enter exceptional tail normally
+        {0x302c, 0x14000008U}, // skip normal unlock
+        {0x302c, 0x17fffffcU}, // join before enter while holding lock
+        {0x3020,
+         0x17ffffffU}, // branch directly to enter, skipping its argument
+        {0x302c, 0x14000007U}, // branch directly to exit, skipping its argument
+        {0x3054, 0x17ffffedU}, // reenter the saved-self prefix
+        {0x302c, 0xd61f0280U}, // unknown control edge
+        {0x305c, 0xd503201fU}}) { // fall through into exceptional entry
+    SynchronizedSplitResumeFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Address);
+  }
+  for (const auto &[Address, Target] :
+       {std::pair<va_t, va_t>{0x3038, 0x4000}, // unguarded non-ARC call
+        {0x3028, 0x4120},    // operation is both protected and unprotected
+        {0x3068, 0x4200},    // acquire in cleanup
+        {0x3078, 0x4210}}) { // no resumption
+    SynchronizedSplitResumeFixture F;
+    F.call(Address, Target);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+  for (int Change = 0; Change < 4; ++Change) {
+    SynchronizedSplitResumeFixture F;
+    if (Change == 0)
+      F.Image.DyldBindSlots[0x5168].WeakImport = true;
+    if (Change == 1)
+      F.Image.DyldBindSlots[0x5140].Addend = 4;
+    if (Change == 2)
+      F.Image.DyldBindSlots[0x5160].Module = "/tmp/foreign.dylib";
+    if (Change == 3)
+      F.Image.DynInfo.NeededLibs.clear();
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  }
+}
+
+TEST(ObjCSourceProjection, SynchronizedSplitResumeRejectsChangedHighEffects) {
+  for (int Change = 0; Change < 8; ++Change) {
+    SynchronizedSplitResumeFixture F;
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    auto &Body = F.Function.Body;
+    switch (Change) {
+    case 0:
+      Body[3].Val->CallAddr = 0x4200;
+      break;
+    case 1:
+      Body[3].Val->Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 2:
+      Body[4].Val = HighExpr::makeConst(1, 8);
+      break;
+    case 3:
+      Body[5].Val->Operands[0] = HighExpr::makeConst(1, 8);
+      break;
+    case 4:
+      Body[4].Dst->Var.Size = 4;
+      break;
+    case 5:
+      Body[3].StoreVal = HighExpr::makeConst(0, 8);
+      break;
+    case 6:
+      Body.front().Kind = StmtKind::Goto;
+      Body.front().GotoTarget = 0x3070;
+      break;
+    case 7:
+      Body.front().Body.push_back(Body[3]);
+      break;
+    }
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof))
+        << Change;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedSplitResumeCPropagatesEachOriginalException) {
+  SynchronizedSplitResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*);
+extern void after(void);
+void neverd_objc_imp_3000(void *objc_self) {
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    for (int i = 0; i < 2; ++i) work(objc_self);
+    objc_release(objc_self);
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+    after();
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *lock = (void*)(uintptr_t)0x1122;
+static int failure, exits, retains, bad;
+static uint64_t order;
+static void step(void *object, int tag) {
+    if (object != lock) bad = 1;
+    order = order * 10 + tag;
+    if (failure == tag) throw tag;
+}
+extern "C" void *objc_retain(void *object) {
+    step(object, ++retains == 1 ? 1 : 5); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, 2); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*) __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, 6); return 0;
+}
+extern "C" void work(void *object) { step(object, 3); }
+extern "C" void objc_release(void *object) { step(object, exits ? 7 : 4); }
+extern "C" void after(void) { step(lock, 8); }
+extern "C" void neverd_objc_imp_3000(void*);
+int main() {
+    const uint64_t wanted[] = {123345678, 1, 12, 1236, 12334, 123345,
+                              1233456, 12334567, 123345678};
+    for (failure = 0; failure <= 8; ++failure) {
+        order = bad = exits = retains = 0;
+        int caught = 0;
+        try { neverd_objc_imp_3000(lock); }
+        catch (int exception) { caught = exception; }
+        const int unlocks = failure == 0 || failure == 3 || failure >= 6;
+        if (caught != failure || order != wanted[failure] || exits != unlocks || bad)
+            return 10 + failure;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
+namespace {
+struct SynchronizedConditionalExitFixture : SynchronizedSplitResumeFixture {
+  SynchronizedConditionalExitFixture() {
+    for (va_t Address = 0x3000; Address < 0x30bc; Address += 4)
+      put(Address, 0xd503201fU);
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xa9bf7bfdU},
+          {0x3004, 0x910003fdU},
+          {0x3008, 0xaa0003f3U},
+          {0x300c, 0xaa0203f4U},
+          {0x3010, 0xaa1303e0U},
+          {0x3018, 0xaa1303e0U},
+          {0x3020, 0xaa1303e0U},
+          {0x3028, 0x35000254U}, // cbnz w20, 0x3070
+          {0x302c, 0xaa1303e0U},
+          {0x3034, 0xaa1303e0U},
+          {0x303c, 0xaa1303e0U},
+          {0x3044, 0xaa1303e0U},
+          {0x304c, 0xaa1303e0U},
+          {0x3054, 0xaa1303e0U},
+          {0x305c, 0xaa1303e0U},
+          {0x3064, 0x52800013U}, // w19 is now the false result, after exit
+          {0x306c, 0x14000009U}, // b 0x3090
+          {0x3070, 0xaa1303e0U},
+          {0x3078, 0xaa1303e0U},
+          {0x3080, 0xaa1303e0U},
+          {0x3088, 0x52800033U}, // true result on the cold unlocked path
+          {0x3090, 0xaa1303e0U},
+          {0x3094, 0xa8c17bfdU},
+          {0x3098, 0xd65f03c0U},
+          {0x309c, 0x14000001U}, // alias of the unlocking entry
+          {0x30a0, 0xaa0003f4U},
+          {0x30a4, 0xaa1303e0U},
+          {0x30ac, 0x14000002U},
+          {0x30b0, 0xaa0003f4U},
+          {0x30b4, 0xaa1403e0U}})
+      put(Address, Word);
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x3014, 0x4140},
+                                          {0x301c, 0x4200},
+                                          {0x3024, 0x4000},
+                                          {0x3030, 0x4120},
+                                          {0x3038, 0x4210},
+                                          {0x3040, 0x4140},
+                                          {0x3048, 0x4200},
+                                          {0x3050, 0x4000},
+                                          {0x3058, 0x4120},
+                                          {0x3060, 0x4210},
+                                          {0x3074, 0x4000},
+                                          {0x307c, 0x4120},
+                                          {0x3084, 0x4210},
+                                          {0x30a8, 0x4210},
+                                          {0x30b8, 0x4220}})
+      call(Address, Target);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange.End = 0x30bc;
+    const ObjCSynchronizedSourceRegion Regions[] = {
+        {0x3000, 0x3020, 0}, {0x3020, 0x3028, 0x30a0},
+        {0x3028, 0x303c, 0}, {0x303c, 0x3044, 0x30b0},
+        {0x3044, 0x304c, 0}, {0x304c, 0x3054, 0x309c},
+        {0x3054, 0x3070, 0}, {0x3070, 0x3078, 0x30a0},
+        {0x3078, 0x30bc, 0}};
+    EH.Itanium->CallSites.assign(std::size(Regions), {});
+    EH.ObjC->LandingPads.clear();
+    for (size_t I = 0; I < std::size(Regions); ++I) {
+      const auto &R = Regions[I];
+      auto &Site = EH.Itanium->CallSites[I];
+      Site.GuardedRange = {R.Begin, R.End};
+      Site.LandingPadVA = R.Landing;
+      if (R.Landing)
+        EH.ObjC->LandingPads.push_back({{R.Begin, R.End},
+                                        R.Landing,
+                                        R.Landing == 0x30a0
+                                            ? ObjCPadKind::SynchronizedExit
+                                            : ObjCPadKind::Cleanup,
+                                        {}});
+    }
+    auto Work = Function.Body[0];
+    auto Return = Function.Body[1];
+    auto Label = Function.Body[2];
+    Label.Addr = 0x309c;
+    auto Exit = Function.Body[3];
+    Exit.Addr = 0x30a8;
+    auto Save = Function.Body[4];
+    Save.Addr = 0x30ac;
+    const auto Exception = Save.Val;
+    Save.Val = std::make_shared<HighExpr>();
+    Save.Val->Kind = ExprKind::Cast;
+    Save.Val->Type = Save.Val->CastTo = NdType::makeInt(8, false);
+    Save.Val->Operands = {Exception};
+    auto Low = Save;
+    MedVar Byte;
+    Byte.Kind = MedVar::Reg;
+    Byte.Id = 81;
+    Byte.Size = 1;
+    Low.Dst = HighExpr::makeVar(Byte);
+    Low.Val = slice(Exception, 0, 1);
+    auto Resume = Function.Body[5];
+    Resume.Addr = 0x30ac;
+    Resume.Val = HighExpr::makeCall(
+        "__Unwind_Resume", 0x4220,
+        {HighExpr::makeBinop(NdOp::CONCAT, slice(Save.Dst, 1, 7), Low.Dst)});
+    Resume.Val->Operands[0]->Type = NdType::makeInt(8, false);
+    auto Again = Save;
+    Again.Addr = 0x30b0;
+    auto LowAgain = Low;
+    LowAgain.Addr = 0x30b0;
+    auto ResumeAgain = Resume;
+    ResumeAgain.Addr = 0x30b8;
+    auto SyntheticReturn = Function.Body.back();
+    Function.Body = {Work,   Return, Label,    Exit,        Save,           Low,
+                     Resume, Again,  LowAgain, ResumeAgain, SyntheticReturn};
+    std::vector<HighStmt> NormalCalls;
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x301c, 0x4200},
+                                          {0x3038, 0x4210},
+                                          {0x3048, 0x4200},
+                                          {0x3060, 0x4210},
+                                          {0x3084, 0x4210}}) {
+      auto Statement = Exit;
+      Statement.Addr = Address;
+      Statement.Val = HighExpr::makeCall(Target == 0x4200 ? "_objc_sync_enter"
+                                                          : "_objc_sync_exit",
+                                         Target, {Work.Val->Operands[0]});
+      NormalCalls.push_back(Statement);
+    }
+    Function.Body.insert(Function.Body.begin(), NormalCalls.begin(),
+                         NormalCalls.end());
+  }
+
+  static ExprPtr slice(const ExprPtr &Value, unsigned Offset, unsigned Bytes) {
+    auto Result = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                      HighExpr::makeConst(Offset, 8));
+    Result->Type = NdType::makeInt(Bytes, false);
+    return Result;
+  }
+};
+
+const char *SynchronizedConditionalExitSource = R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*);
+int32_t neverd_objc_imp_3000(void *objc_self, void *value, int path) {
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value);
+    if (path) goto cold;
+    objc_release(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    work(value);
+    objc_release(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    return 0;
+cold:
+    work(value);
+    objc_release(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    return 1;
+}
+)C";
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedConditionalExitsKeepReceiverState) {
+  SynchronizedConditionalExitFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->SplitResumePadBytes, 32U);
+  EXPECT_EQ(Proof->SuspendARC, 1U);
+  EXPECT_EQ(Proof->NormalEnterCalls, (std::vector<va_t>{0x301c, 0x3048}));
+  EXPECT_EQ(Proof->NormalExitCalls,
+            (std::vector<va_t>{0x3038, 0x3060, 0x3084}));
+  Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Arch::AArch64));
+  DecodedInsn Branch{};
+  ASSERT_EQ(Decoder.decodeOne(F.Image.readVA(0x3028, 4), 4, 0x3028, Branch), 4);
+  ASSERT_TRUE(Branch.Raw);
+  EXPECT_EQ(objcSynchronizedDirectBranchTarget(Branch), 0x3070U);
+  ASSERT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  EXPECT_EQ(F.Function.Body.size(), 7U);
+  EXPECT_TRUE(F.Function.ExceptionMetadata);
+  auto Source = addObjCSynchronizedReceiverCleanup(
+      SynchronizedConditionalExitSource, *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_NE(Source->find("neverd_objc_sync_release(&neverd_objc_sync_guard"),
+            std::string::npos);
+  // Call-like text inside a literal or comment does not add an acquisition.
+  std::string Commented = SynchronizedConditionalExitSource;
+  Commented.insert(Commented.find("    work(value);"),
+                   "    // neverd_darwin_objc_sync_enter(value);\n");
+  EXPECT_TRUE(addObjCSynchronizedReceiverCleanup(Commented, *Proof));
+  for (bool WrongReceiver : {false, true}) {
+    auto Changed = std::string(SynchronizedConditionalExitSource);
+    const auto At = Changed.find("neverd_darwin_objc_sync_exit(objc_self)",
+                                 Changed.find("int32_t neverd_objc_imp"));
+    ASSERT_NE(At, std::string::npos);
+    if (WrongReceiver)
+      Changed.replace(
+          At, std::string("neverd_darwin_objc_sync_exit(objc_self)").size(),
+          "neverd_darwin_objc_sync_exit(value)");
+    else
+      Changed.replace(At, std::string("neverd_darwin_objc_sync_exit").size(),
+                      "different_exit");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Changed, *Proof));
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedConditionalReceiverProjectionPreservesNativeExpressions) {
+  SynchronizedConditionalExitFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Self = F.Function.Body[0].Val->Operands[0];
+  auto Bytes = HighExpr::makeBinop(
+      NdOp::CONCAT, SynchronizedConditionalExitFixture::slice(Self, 4, 4),
+      SynchronizedConditionalExitFixture::slice(Self, 0, 4));
+  Bytes->Type = NdType::makeInt(8, false);
+  F.Function.Body[0].Val->Operands[0] = Bytes;
+  const auto NativeCall = F.Function.Body[0].Val;
+  auto Source = F.Function;
+  ASSERT_TRUE(omitProvenObjCSynchronizedLandingPad(Source, *Proof));
+  ASSERT_NE(Source.Body[0].Val.get(), NativeCall.get());
+  EXPECT_EQ(Source.Body[0].Val->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Source.Body[0].Val->Operands[0]->Var.Kind, MedVar::Param);
+  EXPECT_EQ(Source.Body[0].Val->Operands[0]->Var.Id, 0);
+  EXPECT_EQ(Source.Body[0].Val->Operands[0]->Var.TheArch, Self->Var.TheArch);
+  EXPECT_EQ(Source.Body[0].Val->Operands[0]->Var.RegOff, Self->Var.RegOff);
+  EXPECT_EQ(NativeCall->Operands[0].get(), Bytes.get());
+  EXPECT_EQ(NativeCall->Operands[0]->Kind, ExprKind::BinOp);
+  EXPECT_TRUE(F.Function.ExceptionMetadata);
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    SynchronizedConditionalExitFixture Changed;
+    if (Case == 0)
+      Changed.Function.Body.erase(Changed.Function.Body.begin());
+    else if (Case == 1)
+      Changed.Function.Body.insert(Changed.Function.Body.begin(),
+                                   Changed.Function.Body[0]);
+    else if (Case == 2) {
+      MedVar Command = Self->Var;
+      Command.Id = 1;
+      Changed.Function.Body[0].Val->Operands[0] =
+          HighExpr::makeVar(Command, Self->Type);
+    } else
+      Changed.Function.Body[0].Val->CallAddr = 0x4400;
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(Changed.Function, *Proof))
+        << Case;
+  }
+}
+
+TEST(ObjCSourceProjection, SynchronizedConditionalExitsRejectChangedCFG) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3034, 0xaa1403e0U},
+        {0x3044, 0xaa1403e0U},
+        {0x3080, 0xaa1403e0U},
+        {0x309c, 0x14000002U},
+        {0x300c, 0x14000005U},
+        {0x303c, 0x14000005U},
+        {0x3028, 0x14000004U},
+        {0x3020, 0x52800013U},
+        {0x303c, 0x52800013U},
+        {0x306c, 0x17fffff6U},
+        {0x306c, 0x17ffffe7U},
+        {0x3024, 0xd65f03c0U}}) {
+    SynchronizedConditionalExitFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << std::hex << Address << ':' << Word;
+  }
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    SynchronizedConditionalExitFixture F;
+    if (Case == 0)
+      F.Function.ExceptionMetadata->Itanium->CallSites[5].GuardedRange.Begin +=
+          4;
+    else if (Case == 1)
+      F.Function.ExceptionMetadata->ObjC->LandingPads[2].Kind =
+          ObjCPadKind::Catch;
+    else if (Case == 2)
+      F.call(0x3024, 0x4120); // a release cannot also have unprotected uses
+    else
+      F.call(0x3014, 0x30a8); // normal control cannot enter the cleanup
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << Case;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedConditionalExitsRequireExactPointerBytes) {
+  for (unsigned Case = 0; Case != 10; ++Case) {
+    SynchronizedConditionalExitFixture F;
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    auto &Value = F.Function.Body[11].Val->Operands[0];
+    if (Case == 0)
+      Value->Operands[1] = F.Function.Body[9].Dst;
+    else if (Case == 1)
+      Value->Operands[0]->Operands[1]->ConstVal = 0;
+    else if (Case == 2)
+      std::swap(Value->Operands[0], Value->Operands[1]);
+    else if (Case == 3)
+      F.Function.Body[9].Val->Type = F.Function.Body[9].Val->CastTo =
+          NdType::makeInt(4, false);
+    else if (Case == 4)
+      F.Function.Body[10].Val->Operands[0] = HighExpr::makeConst(0, 8);
+    else if (Case == 5)
+      F.Function.Body[9].Val->Operands[0] = HighExpr::makeLoad(
+          F.Function.Body[9].Val->Operands[0], NdType::makeInt(8));
+    else if (Case == 6)
+      F.Function.Body[9].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else if (Case == 7)
+      F.Function.Body[10].Val->Op = NdOp::INT_ADD;
+    else if (Case == 8)
+      F.Function.Body[10].Val->Operands[1]->ConstProvenance =
+          ConstantAddressProvenance::DataAddress;
+    else {
+      auto Root =
+          std::make_shared<HighExpr>(*F.Function.Body[10].Val->Operands[0]);
+      Root->Var.SSAVer += 1;
+      F.Function.Body[10].Val->Operands[0] = Root;
+    }
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof))
+        << Case;
+  }
+  SynchronizedConditionalExitFixture F;
+  size_t Budget = 0;
+  EXPECT_FALSE(objcUnwindScalarSlice(F.Function.Body[9].Val, {}, true, Budget));
+  EXPECT_EQ(Budget, 0U);
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedConditionalExitsPropagateEachOriginalException) {
+  SynchronizedConditionalExitFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(
+      SynchronizedConditionalExitSource, *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <cstdint>
+static int calls, failure, held, bad;
+static void *lock;
+struct Exception { void *object; int site; };
+static void step(void *object) {
+    const int site = ++calls;
+    if (site == failure) throw Exception{object, site};
+}
+extern "C" void *objc_retain(void *object) { step(object); return object; }
+extern "C" void objc_release(void *object) { step(object); }
+extern "C" void work(void *object) { step(object); }
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    if (object != lock || held) bad = 1;
+    step(object);
+    held = 1;
+    return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    if (object != lock || !held) bad = 2;
+    step(object);
+    held = 0;
+    return 0;
+}
+extern "C" int32_t neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    int self, value;
+    lock = &self;
+    for (int path = 0; path != 2; ++path) {
+        const int count = path ? 6 : 10;
+        for (failure = 0; failure <= count; ++failure) {
+            calls = held = bad = 0;
+            int caught = 0;
+            try {
+                if (neverd_objc_imp_3000(&self, &value, path) != path) return 1;
+            } catch (const Exception &exception) {
+                const bool workSite = failure == 3 || failure == (path ? 4 : 8);
+                if (exception.site != failure ||
+                    exception.object != (workSite ? (void*)&value : (void*)&self))
+                    return 2;
+                caught = exception.site;
+            }
+            const bool cleanup = failure == 3 || failure == (path ? 4 : 8);
+            const bool locked = path ? failure == 5 || failure == 6
+                                     : failure == 4 || failure == 5 ||
+                                       failure == 9 || failure == 10;
+            if (bad || caught != failure || held != locked ||
+                calls != (failure ? failure + cleanup : count))
+                return 10 + failure;
+        }
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
+namespace {
+struct SynchronizedForwardedResumeFixture : SynchronizedSplitResumeFixture {
+  SynchronizedForwardedResumeFixture() {
+    put(0x3008, 0xaa0003f4U); // self and the retained lock are different values
+    call(0x3014, 0x4100);     // retainAutoreleasedReturnValue returns the lock
+    put(0x3018, 0xaa0003f3U);
+    call(0x3030, 0x4000); // another protected call in the same loop
+    put(0x3060, 0xaa0003f4U);
+    put(0x3064, 0x14000006U); // resumption-only entry reaches mov x0, x20
+    put(0x3068, 0x14000002U); // first alias of the synchronized cleanup
+    put(0x306c, 0x14000001U); // second alias
+    put(0x3070, 0xaa0003f4U);
+    put(0x3074, 0xaa1303e0U);
+    call(0x3078, 0x4210);
+    put(0x307c, 0xaa1403e0U);
+    call(0x3080, 0x4220);
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange.End = 0x3084;
+    auto &Sites = EH.Itanium->CallSites;
+    Sites[1].GuardedRange.End = 0x302c;
+    Sites[1].LandingPadVA = 0x3068;
+    Sites[2].LandingPadVA = 0x3060;
+    Sites[4].LandingPadVA = 0x3060;
+    Sites[5].GuardedRange.End = 0x3084;
+    const auto AliasSite = Sites[1];
+    Sites.insert(Sites.begin() + 2, AliasSite);
+    Sites[2].GuardedRange = {0x302c, 0x3034};
+    Sites[2].LandingPadVA = 0x306c;
+    EH.ObjC->LandingPads = {
+        {{0x3024, 0x302c}, 0x3068, ObjCPadKind::Cleanup, {}},
+        {{0x302c, 0x3034}, 0x306c, ObjCPadKind::Cleanup, {}},
+        {{0x3034, 0x303c}, 0x3060, ObjCPadKind::Cleanup, {}},
+        {{0x304c, 0x3054}, 0x3060, ObjCPadKind::Cleanup, {}}};
+    // Both cleanup aliases are referenced, while the explicit cleanup body
+    // remains part of the authenticated machine trailer.
+    MedVar Lock;
+    Lock.Kind = MedVar::Reg;
+    Lock.Id = 50003;
+    Lock.Size = 8;
+    Lock.TheArch = Arch::AArch64;
+    Lock.RegOff = a64reg::X19;
+    HighStmt NormalExit = Function.Body[3];
+    NormalExit.Addr = 0x3048;
+    NormalExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                        {HighExpr::makeVar(Lock)});
+    auto Label = Function.Body[2];
+    auto Save = Function.Body[4];
+    Save.Addr = 0x3064;
+    auto Resume = Function.Body[5];
+    Resume.Addr = 0x3064;
+    auto AliasExit = NormalExit;
+    AliasExit.Addr = 0x3068;
+    AliasExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                       {HighExpr::makeVar(Lock)});
+    auto AliasSave = Save;
+    AliasSave.Addr = 0x3068;
+    auto AliasResume = Resume;
+    AliasResume.Addr = 0x3068;
+    auto SecondLabel = Label;
+    SecondLabel.Addr = 0x306c;
+    auto CleanupLabel = Label;
+    CleanupLabel.Addr = 0x3070;
+    auto CleanupExit = NormalExit;
+    CleanupExit.Addr = 0x3078;
+    CleanupExit.Val = HighExpr::makeCall("_objc_sync_exit", 0x4210,
+                                         {HighExpr::makeVar(Lock)});
+    auto CleanupSave = Save;
+    CleanupSave.Addr = 0x3078;
+    auto CleanupResume = Resume;
+    CleanupResume.Addr = 0x3080;
+    auto Work = Function.Body.front();
+    auto Return = Function.Body[1];
+    auto SyntheticReturn = Function.Body.back();
+    Function.Body = {Work,        NormalExit,    Return,         Label,
+                     Save,        Resume,        AliasExit,      AliasSave,
+                     AliasResume, SecondLabel,   CleanupLabel,   CleanupExit,
+                     CleanupSave, CleanupResume, SyntheticReturn};
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeUsesRetainedLockIdentity) {
+  SynchronizedForwardedResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->SplitResumePadBytes, 36U);
+  EXPECT_EQ(
+      branch::a64BranchTarget(*objcSynchronizedWord(F.Image, 0x3064), 0x3064),
+      0x307cU);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  EXPECT_EQ(Proof->SuspendARC, 3U);
+  EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  EXPECT_EQ(F.Function.Body.size(), 3U);
+  EXPECT_TRUE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeRejectsWrongLockAndEdges) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3018,
+                                  0xaa0003f4U}, // saved a different register
+        {0x3024, 0xaa0003f3U},    // overwrite lock inside the loop
+        {0x3044, 0xaa1403e0U},    // normal unlock uses self
+        {0x3074, 0xaa1403e0U},    // exceptional unlock uses self
+        {0x3064, 0x14000005U},    // passthrough performs an unlock
+        {0x3068, 0x14000003U},    // alias misses exception preservation
+        {0x306c, 0x17fffffdU},    // alias loops through passthrough
+        {0x302c, 0x17fffffaU}}) { // reenter the saved-lock instruction
+    SynchronizedForwardedResumeFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function))
+        << llvm::utohexstr(Address);
+  }
+  SynchronizedForwardedResumeFixture F;
+  F.call(0x3014,
+         0x4140); // plain retain does not certify this acquisition shape
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+  SynchronizedForwardedResumeFixture Weak;
+  Weak.Image.DyldBindSlots[0x5108].WeakImport = true;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Weak.Image, Weak.Function));
+  SynchronizedForwardedResumeFixture Pad;
+  Pad.Function.ExceptionMetadata->ObjC->LandingPads[0].Kind =
+      ObjCPadKind::Catch;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Pad.Image, Pad.Function));
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeRejectsHighReceiverMismatch) {
+  for (int Change = 0; Change < 4; ++Change) {
+    SynchronizedForwardedResumeFixture F;
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    if (Change == 0)
+      F.Function.Body[6].Val->Operands[0] = F.Function.Body[0].Val->Operands[0];
+    if (Change == 1)
+      F.Function.Body[1].Val->Operands[0] = F.Function.Body[0].Val->Operands[0];
+    if (Change == 2)
+      F.Function.Body[6].Val->CallAddr = 0x4200;
+    if (Change == 3)
+      F.Function.Body[6].Addr = 0x3064;
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedForwardedResumeUnwindsOnlyTheRetainedLock) {
+  SynchronizedForwardedResumeFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void *query(void*);
+extern void *objc_retainAutoreleasedReturnValue(void*);
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern void work(void*);
+void neverd_objc_imp_3000(void *objc_self) {
+    uint64_t v3 = (uint64_t)(uintptr_t)objc_retainAutoreleasedReturnValue(query(objc_self));
+    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(v3)));
+    for (int i = 0; i < 2; ++i) work(objc_self);
+    objc_release(objc_self);
+    (uint64_t)(uintptr_t)objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(v3)));
+    objc_release((void*)(uintptr_t)(v3));
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *self = (void*)(uintptr_t)0x1122;
+static void *lock = (void*)(uintptr_t)0x3344;
+static int failure, exits, bad;
+static uint64_t order;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (failure == tag) throw tag;
+}
+extern "C" void *query(void *object) { step(object, self, 1); return lock; }
+extern "C" void *objc_retainAutoreleasedReturnValue(void *object) {
+    step(object, lock, 2); return object;
+}
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, lock, 3); return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*) __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; step(object, lock, 7); return 0;
+}
+extern "C" void work(void *object) { step(object, self, 4); }
+extern "C" void *objc_retain(void *object) { step(object, self, 6); return object; }
+extern "C" void objc_release(void *object) {
+    step(object, exits ? lock : self, exits ? 8 : 5);
+}
+extern "C" void neverd_objc_imp_3000(void*);
+int main() {
+    const uint64_t wanted[] = {123445678, 1, 12, 123, 12347,
+                              123445, 1234456, 12344567, 123445678};
+    for (failure = 0; failure <= 8; ++failure) {
+        order = bad = exits = 0;
+        int caught = 0;
+        try { neverd_objc_imp_3000(self); }
+        catch (int exception) { caught = exception; }
+        const int unlocks = failure == 0 || failure == 4 || failure >= 7;
+        if (caught != failure || order != wanted[failure] || exits != unlocks || bad)
+            return 10 + failure;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Source, Harness);
+}
+
+TEST(ObjCSourceProjection, TypedVoidResumeUsesItsStatementCallStorage) {
+  const auto Normalize = [](HighFunc &Function, va_t Target) {
+    unsigned Count = 0;
+    for (auto &Statement : Function.Body) {
+      if (Statement.Val && Statement.Val->Kind == ExprKind::Call &&
+          Statement.Val->CallAddr == Target) {
+        Statement.Kind = StmtKind::Call;
+        Statement.CallExpr = Statement.Val;
+        Statement.CallExpr->Type = NdType::makeVoid();
+        Statement.Val.reset();
+        Statement.Dst.reset();
+        ++Count;
+      }
+    }
+    EXPECT_GT(Count, 0U);
+  };
+  ResumeOnlyFixture Resume;
+  const auto ResumeProof =
+      proveObjCResumeOnlySource(Resume.Image, Resume.Function);
+  ASSERT_TRUE(ResumeProof);
+  Normalize(Resume.Function, ResumeProof->ResumeTarget);
+  EXPECT_TRUE(omitProvenObjCResumeOnlyPad(Resume.Function, *ResumeProof));
+  const auto Check = [&](auto &Fixture) {
+    const auto Proof =
+        proveObjCSynchronizedReceiverCleanup(Fixture.Image, Fixture.Function);
+    ASSERT_TRUE(Proof);
+    if (Fixture.Function.Body.empty()) {
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.Addr = Proof->LandingPad - 4;
+      HighStmt Label;
+      Label.Kind = StmtKind::Block;
+      Label.Addr = Proof->LandingPad;
+      HighStmt Resume;
+      Resume.Kind = StmtKind::Assign;
+      Resume.Addr = Proof->LandingPad + Proof->LandingPadPrelude + 16;
+      MedVar Exception;
+      Exception.Kind = MedVar::EHException;
+      Exception.Size = 8;
+      Resume.Val = HighExpr::makeCall("__Unwind_Resume", Proof->ResumeTarget,
+                                      {HighExpr::makeVar(Exception)});
+      Fixture.Function.Body = {Return, Label, Resume};
+    }
+    Normalize(Fixture.Function, Proof->ResumeTarget);
+    EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(Fixture.Function, *Proof));
+  };
+  SynchronizedRetainedStackFixture Stack;
+  Check(Stack);
+  SynchronizedSequentialFixture Sequential;
+  Check(Sequential);
+  SynchronizedSplitResumeFixture Split;
+  Check(Split);
+  SynchronizedForwardedResumeFixture Forwarded;
+  Check(Forwarded);
+  SynchronizedConditionalExitFixture Conditional;
+  Check(Conditional);
+}
+
+TEST(ObjCSourceProjection, TypedVoidResumeRejectsExtraOrMismatchedCallStorage) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    ResumeOnlyFixture F;
+    const auto Proof = proveObjCResumeOnlySource(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    auto &Statement = F.Function.Body[3];
+    Statement.Kind = StmtKind::Call;
+    Statement.CallExpr = Statement.Val;
+    Statement.Val.reset();
+    Statement.Dst.reset();
+    if (Case == 0)
+      Statement.Val = HighExpr::makeCall("unexpected", 0x4400, {});
+    else if (Case == 1)
+      Statement.Dst = HighExpr::makeConst(0, 8);
+    else if (Case == 2)
+      Statement.CallExpr->CallAddr += 4;
+    else
+      Statement.CallExpr->IsIndirectCall = true;
+    EXPECT_FALSE(omitProvenObjCResumeOnlyPad(F.Function, *Proof)) << Case;
+  }
 }

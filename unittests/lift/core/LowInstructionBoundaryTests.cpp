@@ -716,14 +716,14 @@ struct BackwardEpilogueFixture {
     External.IATAddr = ImportEntry;
     Image.Imports.push_back(External);
     word(ImportEntry, 0xd65f03c0); // Registered executable external target.
-    word(Tail, 0xa9414ff4);     // ldp x20, x19, [sp, #16]
-    word(Tail + 4, 0xa9427bfd); // ldp x29, x30, [sp, #32]
-    word(Tail + 8, 0x9100c3ff); // add sp, sp, #48
+    word(Tail, 0xa9414ff4);        // ldp x20, x19, [sp, #16]
+    word(Tail + 4, 0xa9427bfd);    // ldp x29, x30, [sp, #32]
+    word(Tail + 8, 0x9100c3ff);    // add sp, sp, #48
     word(Tail + 12, branch(Tail + 12, ImportEntry));
     for (va_t Root : {Entry, Entry + 0x40}) {
-      word(Root, 0xd100c3ff);     // sub sp, sp, #48
-      word(Root + 4, 0xa9014ff4); // stp x20, x19, [sp, #16]
-      word(Root + 8, 0xa9027bfd); // stp x29, x30, [sp, #32]
+      word(Root, 0xd100c3ff);      // sub sp, sp, #48
+      word(Root + 4, 0xa9014ff4);  // stp x20, x19, [sp, #16]
+      word(Root + 8, 0xa9027bfd);  // stp x29, x30, [sp, #32]
       word(Root + 12, 0x910083fd); // add x29, sp, #32
       word(Root + 16, branch(Root + 16, Tail));
       word(Root + 20, 0xd65f03c0);
@@ -788,25 +788,41 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueRejectsUnprovenBoundaries) {
   for (unsigned Mutation = 0; Mutation < 21; ++Mutation) {
     SCOPED_TRACE(Mutation);
     BackwardEpilogueFixture F;
-    if (Mutation == 0) F.word(F.Tail, 0xa9014ff4); // Store, not restore.
-    if (Mutation == 1) F.word(F.Tail, 0x29414ff4); // Only W registers.
-    if (Mutation == 2) F.word(F.Tail, 0xa94107e0); // x0/x1 argument loads.
-    if (Mutation == 3) F.word(F.Tail + 4, 0xa9424ff4); // Duplicate x19/x20.
-    if (Mutation == 4) F.word(F.Tail + 8, 0xd503201f); // No release.
-    if (Mutation == 5) F.word(F.Tail + 8, 0x910023ff); // Unaligned release.
-    if (Mutation == 6) F.word(F.Tail + 4, 0x910043ff); // Two releases.
-    if (Mutation == 7) F.Entries.insert(F.Tail + 4);
-    if (Mutation == 8) F.Image.RuntimeFunctionAddrs.insert(F.Tail + 4);
-    if (Mutation == 9) F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 4));
-    if (Mutation == 10) F.Image.CodePtrRelocSlots.insert(F.Tail + 4);
+    if (Mutation == 0)
+      F.word(F.Tail, 0xa9014ff4); // Store, not restore.
+    if (Mutation == 1)
+      F.word(F.Tail, 0x29414ff4); // Only W registers.
+    if (Mutation == 2)
+      F.word(F.Tail, 0xa94107e0); // x0/x1 argument loads.
+    if (Mutation == 3)
+      F.word(F.Tail + 4, 0xa9424ff4); // Duplicate x19/x20.
+    if (Mutation == 4)
+      F.word(F.Tail + 8, 0xd503201f); // No release.
+    if (Mutation == 5)
+      F.word(F.Tail + 8, 0x910023ff); // Unaligned release.
+    if (Mutation == 6)
+      F.word(F.Tail + 4, 0x910043ff); // Two releases.
+    if (Mutation == 7)
+      F.Entries.insert(F.Tail + 4);
+    if (Mutation == 8)
+      F.Image.RuntimeFunctionAddrs.insert(F.Tail + 4);
+    if (Mutation == 9)
+      F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 4));
+    if (Mutation == 10)
+      F.Image.CodePtrRelocSlots.insert(F.Tail + 4);
     if (Mutation == 11)
       F.Image.Segments[0].Flags =
           F.Image.Segments[0].Flags | SegmentFlags::Writable;
-    if (Mutation == 12) F.Image.Sections.push_back(F.Image.Sections.front());
-    if (Mutation == 13) F.Image.Segments.push_back(F.Image.Segments.front());
-    if (Mutation == 14) F.Image.Imports.clear();
-    if (Mutation == 15) F.Image.Format = BinaryFormat::ELF;
-    if (Mutation == 16) F.Image.IsRelocatable = true;
+    if (Mutation == 12)
+      F.Image.Sections.push_back(F.Image.Sections.front());
+    if (Mutation == 13)
+      F.Image.Segments.push_back(F.Image.Segments.front());
+    if (Mutation == 14)
+      F.Image.Imports.clear();
+    if (Mutation == 15)
+      F.Image.Format = BinaryFormat::ELF;
+    if (Mutation == 16)
+      F.Image.IsRelocatable = true;
     if (Mutation == 17) {
       auto *Text = &F.Image.Sections.front();
       Text->FileSz = 12; // Terminal instruction has no section file bytes.
@@ -820,7 +836,8 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueRejectsUnprovenBoundaries) {
       F.word(F.Entry + 16, F.branch(F.Entry + 16, Forward));
       F.Entries.insert(Forward);
     }
-    if (Mutation == 19) F.Entries.insert(F.Tail + 2);
+    if (Mutation == 19)
+      F.Entries.insert(F.Tail + 2);
     if (Mutation == 20)
       F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 2));
     const auto Function = F.build();
@@ -879,8 +896,10 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueSharesOneBlockForTwoBEdges) {
 
 TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsOtherPhysicalEdges) {
   BackwardEpilogueFixture F;
-  const auto Conditional = 0xb4000000u |
-      ((uint32_t((int64_t(F.Tail) - int64_t(F.Entry + 16)) / 4) & 0x7ffff) << 5);
+  const auto Conditional =
+      0xb4000000u |
+      ((uint32_t((int64_t(F.Tail) - int64_t(F.Entry + 16)) / 4) & 0x7ffff)
+       << 5);
   F.word(F.Entry + 16, Conditional); // cbz x0, tail
   F.word(F.Entry + 20, 0xd65f03c0);
   // Without an authenticating B the other function's epilogue is not decoded
@@ -3533,6 +3552,8 @@ TEST(LowInstructionBoundary, FlatPrefetchAndMxcsrUseIntrinsics) {
       << HighC;
   EXPECT_NE(HighC.find("_MM_HINT_NTA"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_m_prefetchw((void *)"), std::string::npos) << HighC;
+  // Older Clang declares _m_prefetchw only through <x86intrin.h>.
+  EXPECT_NE(HighC.find("#include <x86intrin.h>"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_mm_setcsr(neverd_csr)"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_mm_getcsr()"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("__asm__"), std::string::npos) << HighC;

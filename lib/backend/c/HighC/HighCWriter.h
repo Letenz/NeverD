@@ -465,6 +465,8 @@ public:
   bool NeedsX64SyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
+  /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
+  bool NeedsGnuX86Intrinsics = false;
   bool NeedsFEnvAccess = false;
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;

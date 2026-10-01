@@ -711,7 +711,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
         const bool DeclaredC =
-            Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+            (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+             Hint.CallKind ==
+                 SourceCallTypeHint::Kind::RuntimeCFunctionAddress) &&
             (Hint.Signature.Origin ==
                  SourceFunctionTypeHint::OriginKind::DarwinSDK ||
              (Hint.Signature.Origin ==
@@ -767,7 +769,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           // metadata argument and therefore needs no linked declaration.
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::SwiftVirtual) {
           // The proven target is a local value loaded before the call.
-        } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::CFunctionParameterCall) {
+          // This invokes the original C function-pointer parameter. It has
+          // neither an external symbol nor Objective-C dispatch machinery.
+        } else if (Hint.CallKind ==
+                       SourceCallTypeHint::Kind::RuntimeCFunctionAddress ||
+                   Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
                    Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeObjCSuperGetter ||
@@ -779,6 +787,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                        SourceCallTypeHint::Kind::SwiftRuntimeCall ||
                    DeclaredC) {
           const bool Runtime =
+              Hint.CallKind ==
+                  SourceCallTypeHint::Kind::RuntimeCFunctionAddress ||
               Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
               Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
               Hint.CallKind ==
@@ -820,7 +830,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
             }
             Targets.insert(Name.str());
             const SourceNativeDeclaration Declaration{
-                &Hint.Signature,
+                Hint.CallKind ==
+                            SourceCallTypeHint::Kind::RuntimeCFunctionAddress &&
+                        Hint.AddressedFunctionABI
+                    ? &*Hint.AddressedFunctionABI
+                    : &Hint.Signature,
                 Hint.Format ? std::optional(Hint.Format->FixedCount)
                             : std::nullopt,
                 Hint.WeakImport};
@@ -1046,6 +1060,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesMsvcIntrinsicHeader(Ex.IntrinsicId))
         NeedsMsvcIntrinsics = true;
+      if (Opts.Format != BinaryFormat::COFF &&
+          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+          x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
+        NeedsGnuX86Intrinsics = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1225,6 +1243,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       Headers.insert(Hdr);
   if (NeedsMsvcIntrinsics)
     Headers.insert("intrin.h");
+  if (NeedsGnuX86Intrinsics)
+    Headers.insert("x86intrin.h");
 
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";

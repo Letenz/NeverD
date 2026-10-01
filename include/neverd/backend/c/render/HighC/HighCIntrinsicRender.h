@@ -30,8 +30,7 @@
 namespace neverd {
 
 using IsAliveFn = std::function<bool(const MedVar &)>;
-using SameWidthUnsignedFn =
-    std::function<bool(const HighExpr &, uint16_t)>;
+using SameWidthUnsignedFn = std::function<bool(const HighExpr &, uint16_t)>;
 
 struct MultiOutputRender {
   std::string operator()(Arch TheArch, Intrinsic IID,
@@ -45,8 +44,7 @@ struct MultiOutputRender {
 //--- Dispatchers (HighCIntrinsicRender.cpp) ---
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
-                                uint16_t ResultBytes,
-                                bool &HasCIntrinsics);
+                                uint16_t ResultBytes, bool &HasCIntrinsics);
 
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
 std::string
@@ -80,6 +78,10 @@ bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
 /// Whether an x86 intrinsic may render through an <intrin.h> declaration on
 /// a Windows target: REP MOVS/STOS and the flat LIDT/SIDT/INVLPG forms.
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
+
+/// Whether an x86 intrinsic needs <x86intrin.h> on a GCC or Clang target.
+/// Older Clang declares _m_prefetchw only there, not in <immintrin.h>.
+bool x86UsesGnuIntrinsicHeader(Intrinsic Id);
 
 /// Render an x86 intrinsic that needs full typed-statement context, including
 /// architectural preconditions and implicit memory relative to FS/GS. Returns
@@ -125,8 +127,7 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   uint16_t ResultBytes,
-                                   bool &HasCIntrinsics);
+                                   uint16_t ResultBytes, bool &HasCIntrinsics);
 
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`
 /// statement with register input constraints and a memory clobber.

@@ -298,8 +298,11 @@ def read_exit_status(path: Path) -> int:
 
 def check_ctest_version(output: str) -> None:
     match = re.search(r"^ctest version (\d+)\.(\d+)\.(\d+)", output, re.MULTILINE)
-    if not match or tuple(map(int, match.groups())) < (3, 28, 0):
-        raise ResultError("CI outcome auditing requires CTest >= 3.28 for JUnit labels")
+    if not match or tuple(map(int, match.groups())) < (3, 29, 0):
+        raise ResultError(
+            "CI outcome auditing requires CTest >= 3.29 for JUnit labels "
+            "and --tests-from-file"
+        )
 
 
 def format_summary(report: dict, matrix_name: str) -> str:

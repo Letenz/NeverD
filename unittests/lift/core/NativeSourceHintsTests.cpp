@@ -1,7 +1,9 @@
 #include "../../../lib/loader/Swift/SwiftBooleanProjection.h"
 #include "../../../lib/pipeline/NativeSourcePreservation.h"
+#include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
 #include "../../../lib/sdk/capi/SwiftMangledSourceABI.h"
+#include "CFunctionParameterCallFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -21,12 +23,168 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 #include <array>
 #include <functional>
 
 using namespace neverd;
+
+TEST(NativeSourceHints, CFunctionParameterCallKeepsTheCompleteVoidCallback) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  const auto Hints =
+      buildCFunctionParameterCallHints(F.Image, *F.low(), F.Signature);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Call);
+  ASSERT_TRUE(Hint.FunctionParameterCall);
+  EXPECT_EQ(Hint.FunctionParameterCall->Parameter, 1U);
+  EXPECT_EQ(Hint.FunctionParameterCall->FunctionEntry, Entry);
+  EXPECT_EQ(Hint.FunctionParameterCall->Site.Instruction, Call);
+  EXPECT_EQ(Hint.FunctionParameterCall->Site.Sequence, 1);
+  EXPECT_EQ(Hint.Signature.Convention,
+            SourceFunctionTypeHint::ConventionKind::C);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_TRUE(F.high());
+  unsigned Calls = 0;
+  walkStmts(F.high()->Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Expression) {
+      if (Expression && Expression->SourceCallHint &&
+          Expression->SourceCallHint->FunctionParameterCall) {
+        ++Calls;
+        EXPECT_EQ(Statement.Kind, StmtKind::Call);
+        EXPECT_EQ(Expression->Type->Kind, NdTypeKind::Void);
+        EXPECT_TRUE(isCFunctionParameterSourceCall(*Expression, *F.high(),
+                                                   Arch::AArch64));
+      }
+    });
+  });
+  EXPECT_EQ(Calls, 1U);
+}
+
+TEST(NativeSourceHints,
+     CFunctionParameterCallRejectsIncompleteOrChangedEvidence) {
+  using namespace c_function_parameter_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  for (unsigned Case = 0; Case < 21; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Signature = F.Signature;
+    auto &Block = Low.Blocks.front();
+    auto OpAt = [&](va_t Address, int Sequence) -> LowOp & {
+      for (auto &Op : Block.Ops)
+        if (Op.Addr == Address && Op.Seq == Sequence)
+          return Op;
+      throw std::runtime_error("missing fixture operation");
+    };
+    const auto Word = [&](unsigned Index, uint32_t Value) {
+      llvm::support::endian::write32le(
+          Image.Segments[0].Data.data() + Index * 4, Value);
+    };
+    switch (Case) {
+    case 0:
+      Word(3, 0xaa0003f3);
+      break;
+    case 1:
+      Word(7, 0xd63f0280);
+      break;
+    case 2:
+      OpAt(Call, 0).Inputs[0] = NdVar::cst(Call + 8, 8);
+      break;
+    case 3:
+      OpAt(Call, 1).Inputs[0].Size = 4;
+      break;
+    case 4:
+      Block.InstructionBoundaries.clear();
+      break;
+    case 5:
+      --Low.DecodedInstructionCount;
+      break;
+    case 6:
+      Low.TruncatedPathAddresses.push_back(Entry);
+      break;
+    case 7:
+      Low.UnsupportedInstructionAddresses.push_back(Entry);
+      break;
+    case 8:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).WeakImport =
+          true;
+      break;
+    case 9:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).Module =
+          "/untrusted/libswiftCore.dylib";
+      break;
+    case 10:
+      Image.DyldBindSlots.at(runtime_function_address_test::Slot).Addend = 8;
+      break;
+    case 11:
+      Signature.Parameters[1].Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 12:
+      Signature.Parameters[1].Type = NdType::makePtr(NdType::makeFunc(
+          NdType::makeStruct({NdType::makeInt(8), NdType::makeInt(8)}),
+          {Signature.Parameters[0].Type}));
+      break;
+    case 13:
+      OpAt(Entry + 12, 0).Output.Offset = a64reg::X20;
+      break;
+    case 14:
+      OpAt(Entry + 16, 0).Opcode = NdOp::INTRINSIC;
+      break;
+    case 15:
+      Block.Preds.push_back(Block.Id);
+      Block.Succs.push_back(Block.Id);
+      break;
+    case 16:
+      Image.Segments[0].Flags = Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 17:
+      Signature.Parameters[1].Location.ExtendTo32Bits = true;
+      break;
+    case 18:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 19:
+      OpAt(Entry + 20, 1).Inputs[0] = NdVar::cst(0x9999, 8);
+      break;
+    case 20:
+      Image.DyldBindSlots.erase(runtime_function_address_test::Slot);
+      break;
+    }
+    EXPECT_TRUE(
+        buildCFunctionParameterCallHints(Image, Low, Signature).empty());
+  }
+}
+
+TEST(NativeSourceHints, CFunctionParameterCallRequiresAgreementAtTheCFGJoin) {
+  using namespace c_function_parameter_test;
+  Fixture Same(true, true);
+  ASSERT_TRUE(Same.Result.Success) << Same.Result.Error;
+  ASSERT_TRUE(Same.low());
+  const auto Valid =
+      buildCFunctionParameterCallHints(Same.Image, *Same.low(), Same.Signature);
+  ASSERT_EQ(Valid.size(), 1U);
+  EXPECT_EQ(Valid.begin()->first, Same.CallAddress);
+  Fixture Different(true, false);
+  ASSERT_TRUE(Different.Result.Success) << Different.Result.Error;
+  ASSERT_TRUE(Different.low());
+  EXPECT_TRUE(buildCFunctionParameterCallHints(
+                  Different.Image, *Different.low(), Different.Signature)
+                  .empty());
+  auto Cyclic = *Same.low();
+  auto &Last = Cyclic.Blocks.back();
+  Last.Succs.push_back(Last.Id);
+  Last.Preds.push_back(Last.Id);
+  EXPECT_TRUE(
+      buildCFunctionParameterCallHints(Same.Image, Cyclic, Same.Signature)
+          .empty());
+}
 
 TEST(NativeSourceHints, SpecializedURLArrayForceCastHasNoHiddenArguments) {
   BinaryImage Image;
@@ -93,6 +251,443 @@ TEST(NativeSourceHints, SpecializedURLArrayForceCastHasNoHiddenArguments) {
   Wrong.Bits = Bitness::Bits32;
   EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Wrong, 0x1000));
   EXPECT_FALSE(sdk::swiftMangledURLArrayForceCastSourceABI(Image, 0x1100));
+}
+
+TEST(NativeSourceHints, SpecializedURLArrayBufferKeepsInoutSwiftSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Stem = "_$ss15ContiguousArrayV16_"
+                           "createNewBuffer14bufferIsUnique15minimumCapacity"
+                           "13growForAppendySb_SiSbtF";
+  const std::string Name = Stem + "10Foundation3URLVSg_Tg5";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  const auto Hint = sdk::swiftMangledURLArrayBufferSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint->Parameters.size(), 4U);
+  for (size_t I = 0; I < 3; ++I) {
+    EXPECT_EQ(Hint->Parameters[I].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset, a64reg::X0 + I * 8);
+    EXPECT_EQ(Hint->Parameters[I].Location.ValueBytes, I == 1 ? 8U : 1U);
+  }
+  EXPECT_EQ(Hint->Parameters[1].Type->Kind, NdTypeKind::Int);
+  EXPECT_TRUE(Hint->Parameters[1].Type->IsSigned);
+  EXPECT_EQ(Hint->Parameters[3].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->Parameters[3].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[3].Location.RegisterOffset, a64reg::X20);
+  EXPECT_EQ(Hint->Parameters[3].Location.ValueBytes, 8U);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  std::vector<std::string> Invalid = {Stem,
+                                      Stem + "10Foundation3URLV_Tg5",
+                                      Stem + "SiSg_Tg5",
+                                      Stem + "10Foundation3URLVSgSg_Tg5",
+                                      Stem + "10Foundation3URLVSg_Tg0",
+                                      Name + "Tm",
+                                      Name + "To",
+                                      Name + "TA",
+                                      Name + "junk"};
+  auto Other = Name;
+  Other.replace(Other.find("_createNewBuffer"), 16, "_createNewBuffez");
+  Invalid.push_back(Other);
+  Other = Name;
+  Other.replace(Other.find("ySb_SiSbtF"), 10, "ySb_SiSbtKF");
+  Invalid.push_back(Other);
+  Other = Name;
+  Other.replace(Other.find("ySb_SiSbtF"), 10, "ySb_SiSftF");
+  Invalid.push_back(Other);
+  for (const auto &Bad : Invalid) {
+    SCOPED_TRACE(Bad);
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Bad;
+    EXPECT_FALSE(sdk::swiftMangledURLArrayBufferSourceABI(Wrong, 0x1000));
+  }
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    auto Wrong = Image;
+    switch (Case) {
+    case 0:
+      Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+      break;
+    case 1:
+      Wrong.Symbols[0].IsFunc = false;
+      break;
+    case 2:
+      Wrong.IsRelocatable = true;
+      break;
+    case 3:
+      Wrong.Format = BinaryFormat::ELF;
+      break;
+    case 4:
+      Wrong.Arch = Arch::X64;
+      break;
+    case 5:
+      Wrong.Bits = Bitness::Bits32;
+      break;
+    }
+    EXPECT_FALSE(sdk::swiftMangledURLArrayBufferSourceABI(Wrong, 0x1000))
+        << Case;
+  }
+  EXPECT_FALSE(sdk::swiftMangledURLArrayBufferSourceABI(Image, 0x1100));
+}
+
+namespace {
+TEST(NativeSourceHints, SpecializedURLArrayAppendKeepsOwnedValueAndInoutSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Name =
+      "_$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lF"
+      "10Foundation3URLVSg_SayAHGTg5";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  const auto Hint = sdk::swiftMangledURLArrayAppendSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint->Parameters.size(), 2U);
+  for (const auto &Parameter : Hint->Parameters) {
+    EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Parameter.Location.ValueBytes, 8U);
+  }
+  EXPECT_EQ(Hint->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::Ordinary);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[1].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+  std::vector<std::string> Invalid;
+  for (const auto &[From, To] :
+       {std::pair<const char *, const char *>{"6append", "6appenz"},
+        {"10contentsOf", "10contentzOf"},
+        {"yqd__n_t", "yqd___t"},
+        {"STRd__", "SHRd__"},
+        {"Rsz", "RszRlz"},
+        {"10Foundation", "10Foundatiox"},
+        {"3URLV", "3URLC"},
+        {"URLVSg_", "URLV_"},
+        {"URLVSg_", "URLVSgSg_"},
+        {"_SayAHG", "_SaySiG"},
+        {"Tg5", "Tg0"}}) {
+    auto Changed = Name;
+    Changed.replace(Changed.find(From), std::string(From).size(), To);
+    Invalid.push_back(Changed);
+  }
+  for (const char *Suffix : {"Tm", "To", "TA", "junk"})
+    Invalid.push_back(Name + Suffix);
+  Invalid.push_back(Name.substr(0, Name.find("10Foundation")));
+  for (const auto &Changed : Invalid) {
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Changed;
+    EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Wrong, 0x1000))
+        << Changed;
+  }
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    auto Wrong = Image;
+    switch (Mutation) {
+    case 0:
+      Wrong.Symbols.push_back(Wrong.Symbols[0]);
+      break;
+    case 1:
+      Wrong.Symbols[0].IsFunc = false;
+      break;
+    case 2:
+      Wrong.IsRelocatable = true;
+      break;
+    case 3:
+      Wrong.Format = BinaryFormat::ELF;
+      break;
+    case 4:
+      Wrong.Arch = Arch::X64;
+      break;
+    case 5:
+      Wrong.Bits = Bitness::Bits32;
+      break;
+    case 6:
+      Wrong.Segments[0].Flags = SegmentFlags::Readable;
+      break;
+    }
+    EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Wrong, 0x1000));
+  }
+  EXPECT_FALSE(sdk::swiftMangledURLArrayAppendSourceABI(Image, 0x1100));
+}
+
+struct MergedURLBufferFixture {
+  static constexpr va_t Wrapper = 0x1000, Helper = 0x1100, Slot = 0x2000;
+  static constexpr const char *HelperName =
+      "_$ss12_ArrayBufferV20_consumeAndCreateNew14bufferIsUnique"
+      "15minimumCapacity13growForAppendAByxGSb_SiSbtF10Foundation3URLVSg_"
+      "Tg5Tm";
+  BinaryImage Image;
+  llvm::LLVMContext Context;
+  PipelineResult Result;
+  void word(unsigned Index, uint32_t Value) {
+    llvm::support::endian::write32le(Image.Segments[0].Data.data() + Index * 4,
+                                     Value);
+  }
+  MergedURLBufferFixture() {
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Entry = Wrapper;
+    Segment Text;
+    Text.VA = Wrapper;
+    Text.Size = Text.FileSz = 0x200;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    Image.Segments.push_back(std::move(Text));
+    Section Code;
+    Code.Name = "__text";
+    Code.VA = Wrapper;
+    Code.Size = Code.FileSz = 0x200;
+    Code.Flags = Image.Segments[0].Flags;
+    Code.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Code);
+    Segment Data;
+    Data.VA = Slot;
+    Data.FileOff = 0x200;
+    Data.Size = Data.FileSz = 8;
+    Data.Flags = SegmentFlags::Readable;
+    Data.Data.resize(8);
+    Image.Segments.push_back(std::move(Data));
+    Section Got;
+    Got.Name = "__got";
+    Got.VA = Slot;
+    Got.FileOff = 0x200;
+    Got.Size = Got.FileSz = 8;
+    Got.Flags = SegmentFlags::Readable;
+    Got.Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
+    Image.Sections.push_back(Got);
+    Image.ImportPtrSlots[Slot] = "_swift_release";
+    Image.DyldBindSlots[Slot] = {"_swift_release", 0,
+                                 "/usr/lib/swift/libswiftCore.dylib", false};
+    Image.Symbols = {{"_$ss15ContiguousArrayV16_createNewBuffer14bufferIsUnique"
+                      "15minimumCapacity13growForAppendySb_SiSbtF"
+                      "10Foundation3URLVSg_Tg5",
+                      Wrapper, 36, true},
+                     {HelperName, Helper, 4, true}};
+    const std::array<uint32_t, 9> Words{0xa9bf7bfd, 0x910003fd, 0xf9400283,
+                                        0xb0000004, 0xf9400084, 0x9400003b,
+                                        0xf9000280, 0xa8c17bfd, 0xd65f03c0};
+    for (unsigned I = 0; I < Words.size(); ++I)
+      word(I, Words[I]);
+    word((Helper - Wrapper) / 4, 0xd65f03c0);
+    const auto Hint = sdk::swiftMangledURLArrayBufferSourceABI(Image, Wrapper);
+    EXPECT_TRUE(Hint);
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Wrapper, Helper};
+    if (Hint)
+      Options.SourceTypeHints.emplace(Wrapper, *Hint);
+    Result = Pipeline().run(Image, Context, Options);
+    EXPECT_TRUE(Result.Success) << Result.Error;
+    ObjCMethod Root;
+    Root.Implementation = Wrapper;
+    Root.Status = "supported";
+    Root.TypeHint = Hint;
+    Image.ObjCMethods.push_back(std::move(Root));
+  }
+  std::optional<SourceFunctionTypeHint> hint() {
+    return sdk::swiftMergedURLArrayBufferSourceABI(Image, Helper, Result);
+  }
+};
+} // namespace
+
+TEST(NativeSourceHints, MergedURLBufferProvesTheExtraCReleaseCallback) {
+  MergedURLBufferFixture F;
+  const auto Hint = F.hint();
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  ASSERT_EQ(Hint->Parameters.size(), 5U);
+  for (size_t I = 0; I < 5; ++I) {
+    EXPECT_EQ(Hint->Parameters[I].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset, a64reg::X0 + 8 * I);
+    EXPECT_EQ(Hint->Parameters[I].Location.ValueBytes,
+              I == 0 || I == 2 ? 1U : 8U);
+  }
+  EXPECT_TRUE(Hint->Parameters[1].Type->IsSigned);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  const auto &Callback = Hint->Parameters[4].Type;
+  ASSERT_EQ(Callback->Kind, NdTypeKind::Ptr);
+  ASSERT_TRUE(Callback->Pointee);
+  ASSERT_EQ(Callback->Pointee->Kind, NdTypeKind::Func);
+  EXPECT_EQ(Callback->Pointee->RetType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Callback->Pointee->ParamTypes.size(), 1U);
+  EXPECT_EQ(Callback->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      sdk::inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics),
+      1U);
+  ASSERT_TRUE(Options.SourceTypeHints.count(F.Helper));
+  EXPECT_TRUE(equalSourceABIs(*Hint, Options.SourceTypeHints.at(F.Helper)));
+  const auto *High =
+      sdk::swift_merged_array_detail::unique(F.Result.HighFuncs, F.Helper);
+  ASSERT_TRUE(High);
+  EXPECT_FALSE(High->SourceTypeHint);
+  auto *Audit = const_cast<PipelineFunctionAudit *>(
+      sdk::swift_merged_array_detail::unique(F.Result.FunctionAudits,
+                                             F.Helper));
+  ASSERT_TRUE(Audit);
+  Audit->MedIRVerified = false;
+  PipelineOptions Incomplete;
+  EXPECT_EQ(sdk::inferObjCNativeDependencies(F.Image, F.Result, Incomplete,
+                                             Diagnostics),
+            0U);
+  EXPECT_TRUE(Incomplete.SourceTypeHints.empty());
+}
+
+TEST(NativeSourceHints, MergedURLBufferRejectsChangedMachineAndImportEvidence) {
+  MergedURLBufferFixture F;
+  ASSERT_TRUE(F.hint());
+  for (unsigned I = 0; I < 9; ++I) {
+    SCOPED_TRACE(I);
+    const auto Original = llvm::support::endian::read32le(
+        F.Image.Segments[0].Data.data() + 4 * I);
+    F.word(I, Original ^ 1U);
+    EXPECT_FALSE(F.hint());
+    F.word(I, Original);
+  }
+  for (unsigned Case = 0; Case < 9; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Original = F.Image;
+    switch (Case) {
+    case 0:
+      F.Image.DyldBindSlots[F.Slot].WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots[F.Slot].Addend = 8;
+      break;
+    case 2:
+      F.Image.DyldBindSlots[F.Slot].Module = "/other/libswiftCore.dylib";
+      break;
+    case 3:
+      F.Image.ImportPtrSlots[F.Slot] = "_swift_retain";
+      break;
+    case 4:
+      F.Image.DyldBindSlots.erase(F.Slot);
+      break;
+    case 5:
+      F.Image.ConflictingImportStorageSlots.insert(F.Slot);
+      break;
+    case 6:
+      F.Image.Segments[1].Flags =
+          F.Image.Segments[1].Flags | SegmentFlags::Writable;
+      break;
+    case 7:
+      F.Image.Sections.push_back(F.Image.Sections.back());
+      break;
+    case 8:
+      F.Image.DataPtrRelocSlots.insert(F.Slot);
+      break;
+    }
+    EXPECT_FALSE(F.hint());
+    F.Image = std::move(Original);
+  }
+}
+
+TEST(NativeSourceHints, MergedURLBufferRequiresCompleteTypedWrapperAndType) {
+  MergedURLBufferFixture F;
+  ASSERT_TRUE(F.hint());
+  const std::string Name = MergedURLBufferFixture::HelperName;
+  for (const auto &Bad :
+       {Name.substr(0, Name.size() - 2), Name + "To", Name + "junk",
+        std::string("_$ss12_ArrayBufferV20_consumeAndCreateNew14bufferIsUnique"
+                    "15minimumCapacity13growForAppendAByxGSb_SiSbtFSiSg_Tg5Tm"),
+        std::string("_$ss12_ArrayBufferV20_consumeAndCreateNew14bufferIsUnique"
+                    "15minimumCapacity13growForAppendAByxGSb_SiSbtF"
+                    "10Foundation3URLV_Tg5Tm")}) {
+    F.Image.Symbols[1].Name = Bad;
+    EXPECT_FALSE(F.hint()) << Bad;
+  }
+  F.Image.Symbols[1].Name = Name;
+  for (unsigned Case = 0; Case < 13; ++Case) {
+    SCOPED_TRACE(Case);
+    const auto OriginalLow = F.Result.LowFuncs;
+    const auto OriginalMed = F.Result.MedFuncs;
+    const auto OriginalHigh = F.Result.HighFuncs;
+    const auto OriginalAudits = F.Result.FunctionAudits;
+    auto OriginalImage = F.Image;
+    auto &Low = F.Result.LowFuncs.front();
+    auto &Med = F.Result.MedFuncs.front();
+    auto &High = F.Result.HighFuncs.front();
+    auto &Audit = F.Result.FunctionAudits.front();
+    switch (Case) {
+    case 0:
+      F.Result.SourceImage = nullptr;
+      break;
+    case 1:
+      Audit.MedIRVerified = false;
+      break;
+    case 2:
+      Audit.TruncatedPaths.push_back(F.Wrapper + 32);
+      break;
+    case 3:
+      Med.SourceParametersBound = false;
+      break;
+    case 4:
+      High.SourceTypeHint.reset();
+      break;
+    case 5:
+      Low.Blocks[0].InstructionBoundaries.pop_back();
+      break;
+    case 6:
+      Low.Blocks[0].Ops.back().Addr += 4;
+      break;
+    case 7:
+      F.Result.FunctionAudits.push_back(Audit);
+      break;
+    case 8:
+      F.Result.LowFuncs.push_back(Low);
+      break;
+    case 9:
+      F.Image.Symbols.push_back({"_alias", F.Helper, 0, true});
+      break;
+    case 10:
+      F.Image.Symbols.push_back({"_interior", F.Wrapper + 32, 0, true});
+      break;
+    case 11:
+      F.Image.IsRelocatable = true;
+      break;
+    case 12:
+      F.Image.Arch = Arch::X64;
+      break;
+    }
+    EXPECT_FALSE(F.hint());
+    F.Result.SourceImage = &F.Image;
+    F.Result.LowFuncs = OriginalLow;
+    F.Result.MedFuncs = OriginalMed;
+    F.Result.HighFuncs = OriginalHigh;
+    F.Result.FunctionAudits = OriginalAudits;
+    F.Image = std::move(OriginalImage);
+  }
 }
 
 TEST(NativeSourceHints, ExactMangledStringBundleFunctionKeepsPairResult) {

@@ -22,8 +22,13 @@ struct Step {
 };
 
 struct Root {
-  enum class Kind { Entry, Definition, CallResult, Constant } TheKind =
-      Kind::Entry;
+  enum class Kind {
+    Entry,
+    Definition,
+    CallResult,
+    Constant,
+    Cycle
+  } TheKind = Kind::Entry;
   size_t Block = 0;
   size_t Operation = 0;
   VnodeSpace Space = VnodeSpace::REG;
@@ -106,6 +111,10 @@ class Tracer {
   size_t Budget = 0;
   size_t RemainingBudget = 1U << 20;
   bool Exhausted = false;
+  bool UsedCycle = false;
+  // Kahn's remaining nodes include every cycle and its descendants. Seeds
+  // defined there cannot certify a value carried from an earlier iteration.
+  std::set<size_t> AfterCycle;
   std::set<std::tuple<size_t, size_t, Variable>> Active;
   std::set<std::tuple<size_t, size_t, int64_t>> ActiveSpills;
 
@@ -264,8 +273,12 @@ class Tracer {
     --Budget;
     --RemainingBudget;
     const auto Guard = std::tuple{BlockIndex, Before, variable(Value)};
-    if (!Active.insert(Guard).second)
-      return std::nullopt;
+    if (!Active.insert(Guard).second) {
+      UsedCycle = true;
+      return Path{Root{Root::Kind::Cycle, BlockIndex, Before, Value.Space,
+                       Value.Offset, Value.Size},
+                  {}};
+    }
     struct Pop {
       std::set<std::tuple<size_t, size_t, Variable>> &Values;
       decltype(Guard) Key;
@@ -354,6 +367,7 @@ class Tracer {
                   {}};
     }
     std::optional<Path> Result;
+    std::optional<Path> DeferredCycle;
     for (int PredecessorId : Block.Preds) {
       const auto Found = Blocks.find(PredecessorId);
       if (Found == Blocks.end())
@@ -363,11 +377,22 @@ class Tracer {
                     Block.Id) == Predecessor.Succs.end())
         return std::nullopt;
       auto Incoming = trace(Found->second, Predecessor.Ops.size(), Value, 0);
-      if (!Incoming || (Result && *Result != *Incoming))
+      if (!Incoming)
+        return std::nullopt;
+      if (Incoming->Base.TheKind == Root::Kind::Cycle) {
+        // Only an identity cycle can inherit a seed from an entry path.
+        // A load or an uncompensated address change on a cyclic arm is not
+        // evidence of equality, even when another predecessor has a value.
+        if (!Incoming->Steps.empty())
+          return std::nullopt;
+        DeferredCycle = std::move(Incoming);
+        continue;
+      }
+      if (Result && *Result != *Incoming)
         return std::nullopt;
       Result = std::move(Incoming);
     }
-    return Result;
+    return Result ? Result : DeferredCycle;
   }
 
 public:
@@ -407,6 +432,23 @@ public:
         if (!Blocks.count(Succ) || !Predecessors[Succ].count(Id))
           Valid = false;
     }
+    if (!Valid)
+      return;
+    std::map<int, size_t> Incoming;
+    std::vector<int> Ready;
+    for (const auto &[Id, Index] : Blocks) {
+      AfterCycle.insert(Index);
+      Incoming[Id] = Predecessors[Id].size();
+      if (!Incoming[Id])
+        Ready.push_back(Id);
+    }
+    for (size_t I = 0; I < Ready.size(); ++I) {
+      const int Id = Ready[I];
+      AfterCycle.erase(Blocks.at(Id));
+      for (const int Next : Successors[Id])
+        if (!--Incoming[Next])
+          Ready.push_back(Next);
+    }
   }
 
   bool valid() const { return Valid; }
@@ -416,10 +458,18 @@ public:
     Budget = 4096;
     Active.clear();
     ActiveSpills.clear();
-    return trace(Block, Operation, Value,
-                 Operation < Function.Blocks[Block].Ops.size()
-                     ? Function.Blocks[Block].Ops[Operation].Addr
-                     : 0);
+    UsedCycle = false;
+    auto Result = trace(Block, Operation, Value,
+                        Operation < Function.Blocks[Block].Ops.size()
+                            ? Function.Blocks[Block].Ops[Operation].Addr
+                            : 0);
+    if (!Result || Result->Base.TheKind == Root::Kind::Cycle ||
+        (UsedCycle &&
+         (Result->Base.TheKind == Root::Kind::Definition ||
+          Result->Base.TheKind == Root::Kind::CallResult) &&
+         AfterCycle.count(Result->Base.Block)))
+      return std::nullopt;
+    return Result;
   }
 };
 } // namespace

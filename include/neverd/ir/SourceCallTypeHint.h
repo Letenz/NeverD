@@ -251,7 +251,14 @@ struct SourceCallTypeHint {
     RuntimeObjCForwardedInitializer,
     /// Caller-proven normalization of a raw Swift i1 result. The logical
     /// byte signature describes the source expression, never the runtime ABI.
-    SwiftBooleanProjection
+    SwiftBooleanProjection,
+    /// Value loaded from an immutable, strong runtime C-function import.
+    /// Signature describes the zero-argument address expression; the separate
+    /// addressed declaration retains the function's actual ordinary C ABI.
+    RuntimeCFunctionAddress,
+    /// A real indirect call through an explicitly typed ordinary C function
+    /// pointer parameter, unchanged on every reaching machine path.
+    CFunctionParameterCall
   };
   Kind CallKind = Kind::Native;
   struct BooleanResultProjection {
@@ -260,6 +267,14 @@ struct SourceCallTypeHint {
   };
   /// Identity only; publication must repeat the current caller proof.
   std::optional<BooleanResultProjection> BooleanResult;
+  struct FunctionParameterCallEvidence {
+    va_t FunctionEntry = 0;
+    unsigned Parameter = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const FunctionParameterCallEvidence &) const = default;
+  };
+  /// Identity only; source publication repeats the complete current proof.
+  std::optional<FunctionParameterCallEvidence> FunctionParameterCall;
   enum class SwiftValueWitnessKind {
     Destroy,
     InitializeWithCopy,
@@ -453,6 +468,7 @@ struct SourceCallTypeHint {
   /// into it; its source helper preserves the current interior offset.
   /// Revalidate the complete slot and pool against the current image.
   va_t ImmutablePointerSlot = 0;
+  std::optional<SourceFunctionTypeHint> AddressedFunctionABI;
 };
 
 } // namespace neverd

@@ -111,51 +111,9 @@ void descendant(const std::vector<std::string> &Args) {
     throw std::runtime_error("cannot spawn native fixture descendant");
 #endif
 }
-int fakeJadx(const std::vector<std::string> &Args, const fs::path &Mode) {
-  auto grow = [] {
-#ifdef _WIN32
-    const wchar_t *Temporary = _wgetenv(L"JADX_TMP_DIR");
-    if (!Temporary)
-      throw std::runtime_error("missing fixture temporary directory");
-    fs::path Directory(Temporary);
-#else
-    const char *Temporary = std::getenv("JADX_TMP_DIR");
-    if (!Temporary)
-      throw std::runtime_error("missing fixture temporary directory");
-    auto Directory = path(Temporary);
-#endif
-    std::ofstream(Directory / "growth.bin", std::ios::binary)
-        << std::string(65536, 'x');
-    sleep(400);
-  };
-  if (Args.at(1) == "--version") {
-    if (Mode == path("fake-jadx-version-growth"))
-      grow();
-    std::cout << "1.5.6\n";
-    return 0;
-  }
-  if (Args.at(1) != "--config")
-    return 112;
-  auto Output = std::find(Args.begin(), Args.end(), "--output-dir");
-  if (Output == Args.end() || ++Output == Args.end())
-    return 112;
-  auto Sources = path(*Output) / "sources";
-  fs::create_directories(Sources);
-  std::ofstream(Sources / "Fixture.java", std::ios::binary)
-      << "class Fixture {}\n";
-  if (Mode == path("fake-jadx-output-growth"))
-    grow();
-  return 0;
-}
-
 int run(const std::vector<std::string> &Args) {
   if (Args.size() < 2)
     return 111;
-  auto Name = path(Args[0]).stem();
-  if (Name == path("fake-jadx-version-growth") ||
-      Name == path("fake-jadx-output-growth") ||
-      Name == path("fake-jadx-valid"))
-    return fakeJadx(Args, Name);
   const auto &Mode = Args[1];
   if (Mode == "echo") {
     for (size_t I = 2; I < Args.size(); ++I)

@@ -2522,6 +2522,59 @@ TEST(MedDCE, X86KeepsTheStackPointerWriteThatCommitsARuntimeAllocation) {
   EXPECT_FALSE(defines(Unread));
 }
 
+TEST(MedDCE, X86KeepsArgumentSetupFromTheBlockBeforeTheCallArms) {
+  // `lea ecx, [ebx+eax+G@GOTOFF]; test dl, 16; jne 1f; mov edx, eax;
+  // call addv; ...; 1: mov edx, eax; call xorv`: clang's internal i386
+  // convention passes the pointer in ECX, which both arms share, so it is set
+  // up before the branch.  It stays live even though neither call is first in
+  // its block.
+  constexpr Arch TheArch = Arch::X86;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "argument_setup_before_call_arms";
+  Func.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Func.Blocks[I].Id = I;
+  Func.Blocks[0].Succs = {1, 2};
+  Func.Blocks[1].Preds = {0};
+  Func.Blocks[2].Preds = {0};
+
+  const MedVar EntryEAX =
+      reg(40, 0, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+  addLiveIn(Func.Blocks[0], EntryEAX);
+  const MedVar Pointer = reg(41, 1, TRI.PointerSize, x86reg::RCX, TheArch);
+  Func.Blocks[0].Ops.push_back(
+      unary(NdOp::COPY, Pointer, MedVar::makeConst(0x5000, TRI.PointerSize)));
+  MedOp Branch;
+  Branch.Opcode = NdOp::COND_BR;
+  Branch.addInput(MedVar::makeConst(0x1010, TRI.PointerSize));
+  Branch.addInput(MedVar::makeConst(1, 1));
+  Func.Blocks[0].Ops.push_back(Branch);
+
+  for (int Arm = 1; Arm < 3; ++Arm) {
+    MedBlock &Block = Func.Blocks[Arm];
+    Block.Ops.push_back(
+        unary(NdOp::COPY, reg(42, Arm, TRI.PointerSize, x86reg::RDX, TheArch),
+              EntryEAX));
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Output = reg(40, Arm, TRI.PointerSize, TRI.IntReturnReg, TheArch);
+    Call.addInput(MedVar::makeConst(0x2000 + Arm, TRI.PointerSize));
+    Block.Ops.push_back(Call);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(Return);
+  }
+
+  LowToMedConverter().runRegisterDce(Func, TheArch);
+
+  const auto &Ops = Func.Blocks[0].Ops;
+  EXPECT_TRUE(std::any_of(Ops.begin(), Ops.end(), [&](const MedOp &Op) {
+    return Op.Output.Id == Pointer.Id && Op.Output.SSAVer == Pointer.SSAVer;
+  }));
+}
+
 namespace {
 
 /// The calling convention's view of a register argument \p LiveIn.

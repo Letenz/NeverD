@@ -28,10 +28,12 @@ public:
     Control = std::move(*Created);
     return llvm::Error::success();
   }
-  llvm::Error runUntilExit(MachineRunControl Control) {
+  llvm::Error runUntilExit(MachineRunControl Control,
+                           KvmRunControl::StateTransfer Prepare = {},
+                           KvmRunControl::StateTransfer Capture = {}) {
     if (!this->Control)
       return diagnostic::error(diagnostic::KvmRunControl);
-    return this->Control->run(Control);
+    return this->Control->run(Control, Prepare, Capture);
   }
   virtual ~KvmVM() {
     // Stop the entry worker before unmapping its run state or closing the vCPU.

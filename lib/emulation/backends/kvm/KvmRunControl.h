@@ -9,6 +9,7 @@
 
 #include "../../core/MachineRunControl.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Error.h"
 
 #include <memory>
@@ -20,9 +21,16 @@ namespace neverd::emulation {
 /// descriptor and its mapped memory must outlive this controller.
 class KvmRunControl final {
 public:
+  using StateTransfer = llvm::function_ref<llvm::Error()>;
   static llvm::Expected<std::unique_ptr<KvmRunControl>> create(int VCPU);
   ~KvmRunControl();
   llvm::Error run(MachineRunControl Control);
+  /// Run transport-only state IO on the entry worker. Prepare runs once,
+  /// before any EINTR retries; Capture runs only after a successful entry.
+  /// Both callbacks must remain live until this call returns and must not
+  /// invoke guest-memory ownership, OS policy or execution observers.
+  llvm::Error run(MachineRunControl Control, StateTransfer Prepare,
+                  StateTransfer Capture);
   KvmRunControl(const KvmRunControl &) = delete;
   KvmRunControl &operator=(const KvmRunControl &) = delete;
 
