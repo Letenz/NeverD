@@ -990,9 +990,17 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_SBB: {
     if (X86.op_count < 2)
       break;
-    NdVar DstR = readArithmeticOperand(X86.operands[0]);
+    // Idiom: `sbb reg, reg` -> reg = -CF.  A register minus itself is zero
+    // whatever it holds, so every result and flag is that of 0 - (0 + CF)
+    // and the old value is not an input.
+    const bool SelfBorrow = X86.operands[0].type == X86_OP_REG &&
+                            X86.operands[1].type == X86_OP_REG &&
+                            X86.operands[0].reg == X86.operands[1].reg;
+    NdVar DstR = SelfBorrow ? NdVar{} : readArithmeticOperand(X86.operands[0]);
     NdVar DstW = L.operandWrite(X86.operands[0]);
-    NdVar Src = readArithmeticOperand(X86.operands[1]);
+    NdVar Src = SelfBorrow ? NdVar{} : readArithmeticOperand(X86.operands[1]);
+    if (SelfBorrow)
+      DstR = Src = NdVar::scalar(0, DstW.Size);
     bool MemDst = (X86.operands[0].type == X86_OP_MEM);
     // Snapshot operands before the result overwrites DstW, so the borrow/OF
     // flags read the pre-write values (DstW aliases operand[0]).  Without this

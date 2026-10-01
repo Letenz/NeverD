@@ -41751,6 +41751,23 @@ TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, BorrowFromItselfDoesNotReadTheRegister) {
+  // WmipEnableDisableTrace: `neg dl; sbb sil, sil` sets SIL to -CF, all ones
+  // when DL was nonzero.  SIL minus itself is zero whatever RSI held, so the
+  // callee-saved register is not read.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0xf6, 0xda,             // neg dl
+                                     0x40, 0x1a, 0xf6,       // sbb sil, sil
+                                     0x40, 0x80, 0xe6, 0xfe, // and sil, 0FEh
+                                     0x40, 0x80, 0xc6, 0x07, // add sil, 7
+                                     0x40, 0x0f, 0xb6, 0xc6, // movzx eax, sil
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("arg1"), std::string::npos) << HighC;
+}
+
 TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
   // RtlSetAllBits: `or r9d, -1` sets R9D to all ones without reading R9, so
   // the callee reads RCX alone.  Its callers pass one argument, not RCX
