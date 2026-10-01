@@ -37,6 +37,9 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", false, "addClip", "v16@0:8", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIBezierPath", "", false, "stroke", "v16@0:8", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIColor", "", "C:NSObject|P:NSCopying", nullptr)
+// The complete device/simulator ASTs cited for this factory in
+// ObjCIOSFrameworkDeclarations.inc return UIColor*, not instancetype.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIColor", "", true, "colorWithWhite:alpha:", "@32@0:8d16d24", "UIColor", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIColor", "", false, "setStroke", "v16@0:8", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScreen", "", "C:NSObject", nullptr)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScreen", "", true, "mainScreen", "@16@0:8", "UIScreen", false, nullptr, "", false)
