@@ -66,6 +66,8 @@ API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Struktur
 
 `LowIRLoopPlanPairing.*` im selben Ziel prüft umbenannte Register, unterschiedliche Rechenkörper, seitenspezifische Präfixzustände, erhaltene Prädikate, gemeinsame Speicherrahmeneingaben, verschachtelte Schnittpunkte und unabhängige Beweisbudgets. Fehlende Beziehungen, falsche Schreibzugriffe, ungültige Temporärbindungen, unvollständige Zuordnungen und erschöpfte Metadatengrenzen dürfen kein Zertifikat erzeugen.
 
+`InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` prüft mit unabhängigen LowIR-Beispielen rohe Eintrittsflags, Status getrennt vom Gast-RAX, alle 17 Zustandswörter, Teilregister, gepackte Flags, bleibende dynamische Ablehnung, Gast-Rahmenschreibzugriffe, beide Zweige und Schleifeninferenz mit anschließendem neuem Beweis. Falsche Ausgaben, verlorener Status, geänderter Speicher, veraltete Instruktionsdatensätze, fehlerhafte Eingaben und erschöpfte Erzeugungsbudgets müssen scheitern. Bestehende Quelltexttests führen beide C-Wege unter O0/O2 aus; Modelltests allein zertifizieren keinen kompilierten C-Code.
+
 Zwischengespeicherte Gleichheitsbedingungen in zwei- und dreifach verschachtelten Schleifen prüfen korrelierte Operanden, veränderliche Grenzen, Zählerrücksetzungen und beschädigte Kopien.
 
 Regressionen für Vergleichscaches prüfen Gleichheit und Ungleichheit, Guards und konstante Initialisierung, erst nach Erweiterung entdeckte Felder sowie Bits 7/31/63 in 1/4/8-Byte-Caches. Auch ein geändertes Nachbarbit bei unverändertem Prüfbit muss am vollständigen Zustandsvergleich scheitern. Nullschritte, bewegliche Grenzen, Rücksetzungen und erschöpfte Budgets müssen abgewiesen werden.

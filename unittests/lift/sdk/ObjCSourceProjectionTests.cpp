@@ -5378,6 +5378,359 @@ TEST(ObjCSourceProjection, TypedVoidResumeUsesItsStatementCallStorage) {
   Check(Conditional);
 }
 
+namespace {
+struct SynchronizedFrameFixture : SynchronizedInterleavedFixture {
+  ExprPtr Self, EnterOperand;
+  SynchronizedFrameFixture() {
+    for (va_t Address = 0x3000; Address < 0x3080; Address += 4)
+      put(Address, 0xd503201fU);
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libSystem.B.dylib");
+    for (const auto &[Address, Slot, Name, Provider] :
+         {std::tuple<va_t, va_t, const char *, const char *>{
+              0x4200, 0x5130, "_objc_sync_enter", "/usr/lib/libobjc.A.dylib"},
+          {0x4210, 0x5138, "_objc_sync_exit", "/usr/lib/libobjc.A.dylib"},
+          {0x4220, 0x5140, "__Unwind_Resume", "/usr/lib/libSystem.B.dylib"},
+          {0x4240, 0x5148, "_dispatch_group_leave",
+           "/usr/lib/libSystem.B.dylib"}}) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, Provider, false};
+      put(Address, 0xb0000010U);
+      put(Address + 4, 0xf9400210U | ((Slot - 0x5000) / 8 << 10));
+      put(Address + 8, 0xd61f0200U);
+    }
+    for (const auto &[Address, Word] :
+         {std::pair<va_t, uint32_t>{0x3000, 0xd10143ffU},
+          {0x3004, 0xa9034ff4U},
+          {0x3008, 0xa9047bfdU},
+          {0x300c, 0x910103fdU},
+          {0x3010, 0xf81e83a0U},
+          {0x3018, 0xf85e83a0U},
+          {0x3020, 0xf85e83a0U},
+          {0x3024, 0xb40000e2U}, // cbz x2, 0x3040
+          {0x302c, 0xaa0003f3U},
+          {0x3038, 0x14000006U}, // b 0x3050
+          {0x3040, 0xd2800468U},
+          {0x3044, 0xa9007fe8U},
+          {0x3050, 0xf85e83a0U},
+          {0x3058, 0xf85e83a0U},
+          {0x305c, 0xa9447bfdU},
+          {0x3060, 0xa9434ff4U},
+          {0x3064, 0x910143ffU},
+          {0x306c, 0xaa0003f3U},
+          {0x3070, 0xf85e83a0U},
+          {0x3078, 0xaa1303e0U}})
+      put(Address, Word);
+    for (const auto &[Address, Target] : {std::pair<va_t, va_t>{0x3014, 0x4130},
+                                          {0x301c, 0x4200},
+                                          {0x3028, 0x4000},
+                                          {0x3030, 0x4240},
+                                          {0x3034, 0x4110},
+                                          {0x304c, 0x4040},
+                                          {0x3054, 0x4210},
+                                          {0x3074, 0x4210},
+                                          {0x307c, 0x4220}})
+      call(Address, Target);
+    put(0x3068, 0x14000000U | ((0x4120 - 0x3068) / 4));
+    auto &EH = *Function.ExceptionMetadata;
+    EH.CodeRange = {0x3000, 0x3080};
+    auto &Sites = EH.Itanium->CallSites;
+    Sites.resize(5);
+    const va_t Boundaries[] = {0x3000, 0x3020, 0x302c, 0x3040, 0x3050, 0x3080};
+    EH.ObjC->LandingPads.clear();
+    for (unsigned I = 0; I < 5; ++I) {
+      Sites[I].GuardedRange = {Boundaries[I], Boundaries[I + 1]};
+      Sites[I].LandingPadVA = I % 2 ? 0x306c : 0;
+      Sites[I].FirstActionOffset.reset();
+      if (I % 2)
+        EH.ObjC->LandingPads.push_back(
+            {Sites[I].GuardedRange, 0x306c, ObjCPadKind::SynchronizedExit, {}});
+    }
+    const auto Variable = [](MedVar::VarKind Kind, int Id, uint64_t Register,
+                             int Rename = -1) {
+      MedVar V;
+      V.Kind = Kind;
+      V.Id = Id;
+      V.Size = 8;
+      V.TheArch = Arch::AArch64;
+      V.RegOff = Register;
+      V.RenameTag = Rename;
+      return HighExpr::makeVar(V);
+    };
+    Self = Variable(MedVar::Param, 0, a64reg::X0);
+    Self->Type = Function.Params[0].Type;
+    const auto SP = Variable(MedVar::Reg, 11, a64reg::SP);
+    const auto Base = Variable(MedVar::Reg, 50000, a64reg::SP, 0);
+    const auto FP = Variable(MedVar::Reg, 50001, a64reg::X29, 1);
+    const auto JoinFP = Variable(MedVar::Reg, 50002, a64reg::X29, 2);
+    const auto EnterValue = Variable(MedVar::Temp, 101, 0);
+    const auto ExitValue = Variable(MedVar::Temp, 102, 0);
+    const auto Cell = [](const ExprPtr &Frame) {
+      return HighExpr::makeBinop(NdOp::INT_SUB, Frame,
+                                 HighExpr::makeConst(24, 8));
+    };
+    const auto Assign = [](va_t Address, const ExprPtr &Dst,
+                           const ExprPtr &Val) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Addr = Address;
+      S.Dst = Dst;
+      S.Val = Val;
+      return S;
+    };
+    const auto Call = [](va_t Address, va_t Target, const ExprPtr &Argument) {
+      HighStmt S;
+      S.Kind = StmtKind::ExprStmt;
+      S.Addr = Address;
+      S.Val = HighExpr::makeCall("runtime", Target, {Argument});
+      return S;
+    };
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.Addr = 0x3010;
+    Store.StoreAddr = Cell(FP);
+    Store.StoreVal = Self;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.Addr = 0x3068;
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = 0x306c;
+    MedVar Exception;
+    Exception.Kind = MedVar::EHException;
+    Exception.Size = 8;
+    Exception.Id = -1;
+    Exception.TheArch = Arch::AArch64;
+    EnterOperand = EnterValue;
+    Function.Body = {
+        Assign(
+            0x3000, Base,
+            HighExpr::makeBinop(NdOp::INT_SUB, SP, HighExpr::makeConst(80, 8))),
+        Assign(0x300c, FP,
+               HighExpr::makeBinop(NdOp::INT_ADD, Base,
+                                   HighExpr::makeConst(64, 8))),
+        Store,
+        Assign(0x3018, EnterValue,
+               HighExpr::makeLoad(Cell(FP), NdType::makeInt(8, false))),
+        Call(0x301c, 0x4200, EnterValue),
+        Assign(0x3050, JoinFP,
+               HighExpr::makeBinop(NdOp::INT_ADD,
+                                   HighExpr::makeConst(uint64_t(-16), 8), SP)),
+        Assign(0x3050, ExitValue,
+               HighExpr::makeLoad(Cell(JoinFP), NdType::makeInt(8, false))),
+        Call(0x3054, 0x4210, ExitValue),
+        Return,
+        Label,
+        Assign(0x3070, Variable(MedVar::Temp, 103, 0),
+               HighExpr::makeLoad(Cell(FP), NdType::makeInt(8, false))),
+        Assign(0x3074, Variable(MedVar::Temp, 104, 0),
+               HighExpr::makeCall("_objc_sync_exit", 0x4210, {Self})),
+        Call(0x307c, 0x4220, HighExpr::makeVar(Exception))};
+  }
+};
+} // namespace
+
+TEST(ObjCSourceProjection,
+     SynchronizedFrameReceiverUsesAnUnescapedPrivateCell) {
+  SynchronizedFrameFixture F;
+  Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Arch::AArch64));
+  DecodedInsn Branch{};
+  ASSERT_EQ(Decoder.decodeOne(F.Image.readVA(0x3024, 4), 4, 0x3024, Branch),
+            4U);
+  EXPECT_EQ(objcSynchronizedDirectBranchTarget(Branch), 0x3040U);
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  ASSERT_TRUE(Proof->PrivateFrame);
+  EXPECT_EQ(Proof->PrivateFrame->Bytes, 80U);
+  EXPECT_EQ(Proof->PrivateFrame->ReceiverOffset, -40);
+  EXPECT_EQ(Proof->SuspendARC, 1U);
+  EXPECT_TRUE(Proof->SuspendDispatchLeave);
+  EXPECT_EQ(Proof->EnterCall, 0x301cU);
+  EXPECT_EQ(Proof->ExitCall, 0x3054U);
+  ASSERT_TRUE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof));
+  EXPECT_EQ(F.Function.Body.back().Kind, StmtKind::Return);
+  EXPECT_TRUE(objcUnwindSameScalarVariable(
+      F.Function.Body[4].Val->Operands[0]->Var, F.Self->Var));
+  EXPECT_TRUE(objcUnwindSameScalarVariable(
+      F.Function.Body[7].Val->Operands[0]->Var, F.Self->Var));
+  EXPECT_TRUE(F.Function.ExceptionMetadata);
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedFrameRejectsAliasesWritesAndForeignImports) {
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3000, 0xd10183ffU},
+        {0x3010, 0xf81e83a2U},
+        {0x3020, 0xf81e83a0U},
+        {0x3040, 0x910003e3U},
+        {0x3040, 0xaa1d03e8U},
+        {0x3044, 0xa9007ffdU},
+        {0x3040, 0x910043ffU},
+        {0x3040, 0xf94023e8U},
+        {0x3050, 0xf85e03a0U},
+        {0x3070, 0xf85e03a0U},
+        {0x3078, 0xaa1403e0U},
+        {0x3038, 0x1400000dU},
+        {0x3038, 0x17fffffaU},
+        {0x3024, 0xb40001a2U}}) {
+    SynchronizedFrameFixture F;
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedFrameCleanup(F.Image, F.Function))
+        << std::hex << Address << ":" << Word;
+  }
+  for (unsigned Case = 0; Case < 8; ++Case) {
+    SynchronizedFrameFixture F;
+    if (Case == 0)
+      F.call(0x3030, 0x4000);
+    else if (Case == 1)
+      F.call(0x3028, 0x4240);
+    else if (Case == 2)
+      F.call(0x3028, 0x4110);
+    else if (Case == 3)
+      F.Image.DyldBindSlots[0x5148].WeakImport = true;
+    else if (Case == 4)
+      F.Image.DyldBindSlots[0x5140].Module = "/tmp/unwind.dylib";
+    else if (Case == 5)
+      F.Image.DynInfo.NeededLibs.pop_back();
+    else if (Case == 6)
+      F.Function.ExceptionMetadata->Itanium->CallSites[1].FirstActionOffset = 1;
+    else
+      F.Function.ExceptionMetadata->ObjC->LandingPads[1].GuardedRange.End -= 4;
+    EXPECT_FALSE(proveObjCSynchronizedFrameCleanup(F.Image, F.Function))
+        << Case;
+  }
+}
+
+TEST(ObjCSourceProjection,
+     SynchronizedFrameSourceRejectsOtherCellsOrDefinitions) {
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SynchronizedFrameFixture F;
+    const auto Proof = proveObjCSynchronizedFrameCleanup(F.Image, F.Function);
+    ASSERT_TRUE(Proof);
+    if (Case == 0)
+      F.Function.Body[2].StoreVal = HighExpr::makeUndef(8);
+    else if (Case == 1)
+      F.Function.Body[2].StoreAddr->Operands[1] = HighExpr::makeConst(16, 8);
+    else if (Case == 2)
+      F.Function.Body[3].Val->Operands[0]->Operands[1] =
+          HighExpr::makeConst(32, 8);
+    else if (Case == 3)
+      F.Function.Body[4].Val->CallAddr = 0x4000;
+    else if (Case == 4)
+      F.Function.Body[7].Val->Operands[0] = HighExpr::makeUndef(8);
+    else if (Case == 5)
+      F.Function.Body.insert(F.Function.Body.begin(), F.Function.Body[0]);
+    else if (Case == 6)
+      F.Function.Body[0].Val->Operands[1]->ConstProvenance =
+          ConstantAddressProvenance::CodeAddress;
+    else if (Case == 7)
+      F.Function.Body[3].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else if (Case == 8) {
+      auto Store = F.Function.Body[2];
+      Store.Addr = 0x3044;
+      Store.StoreAddr =
+          HighExpr::makeBinop(NdOp::INT_SUB, Store.StoreAddr->Operands[0],
+                              HighExpr::makeConst(23, 8));
+      Store.StoreVal = HighExpr::makeConst(5, 1);
+      F.Function.Body.insert(F.Function.Body.begin(), Store);
+    } else if (Case == 9)
+      F.Function.Body.back().Val->Operands[0] = HighExpr::makeUndef(8);
+    else if (Case == 10)
+      F.Function.Body[11].Val->CallAddr = 0x4000;
+    else
+      F.Function.Body.insert(F.Function.Body.begin(), F.Function.Body[4]);
+    EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(F.Function, *Proof))
+        << Case;
+  }
+}
+
+TEST(ObjCSourceProjection, SynchronizedFrameProjectionKeepsNativeExpressions) {
+  SynchronizedFrameFixture F;
+  auto Source = F.Function;
+  const auto NativeCall = F.Function.Body[4].Val;
+  const auto Proof = proveObjCSynchronizedFrameCleanup(F.Image, Source);
+  ASSERT_TRUE(Proof);
+  ASSERT_TRUE(omitProvenObjCSynchronizedLandingPad(Source, *Proof));
+  EXPECT_EQ(NativeCall->Operands[0], F.EnterOperand);
+  EXPECT_NE(Source.Body[4].Val, NativeCall);
+  EXPECT_EQ(F.Function.Body.size(), 13U);
+}
+
+TEST(ObjCSourceProjection, SynchronizedFramePreservesUnprotectedThrowingCalls) {
+  SynchronizedFrameFixture F;
+  const auto Proof = proveObjCSynchronizedFrameCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const auto Source = addObjCSynchronizedReceiverCleanup(R"C(
+#include <stdint.h>
+extern void *objc_retain(void*);
+extern void objc_release(void*);
+extern int32_t neverd_darwin_objc_sync_enter(void*);
+extern int32_t neverd_darwin_objc_sync_exit(void*);
+extern void neverd_darwin_dispatch_group_leave(void*) __asm__("_dispatch_group_leave");
+extern void work(void*, int);
+void neverd_objc_imp_3000(void *objc_self, void *group, int path) {
+    objc_retain(objc_self);
+    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));
+    if (path) {
+        work(objc_self, 3);
+        neverd_darwin_dispatch_group_leave(group);
+        objc_release(group);
+    } else {
+        work(objc_self, 6);
+    }
+    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));
+    objc_release(objc_self);
+}
+)C",
+                                                         *Proof);
+  ASSERT_TRUE(Source);
+  EXPECT_NE(
+      Source->find(
+          "neverd_objc_sync_dispatch_group_leave(&neverd_objc_sync_guard"),
+      std::string::npos);
+  executeSynchronizedSource(*Source, R"CPP(
+#include <stdint.h>
+static void *self = (void*)(uintptr_t)0x1111, *group = (void*)(uintptr_t)0x2222;
+static int failure, order, bad, exits, held, site;
+static int original;
+static void step(void *object, void *expected, int tag) {
+    if (object != expected) bad = 1;
+    order = order * 10 + tag;
+    if (tag == failure) { site = tag; throw &original; }
+}
+extern "C" void *objc_retain(void *object) { step(object, self, 1); return object; }
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *object) {
+    step(object, self, 2); if (held++) bad = 1; return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*) __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *object) {
+    ++exits; if (held != 1) bad = 1; held = 0; step(object, self, 7); return 0;
+}
+extern "C" void neverd_darwin_dispatch_group_leave(void*) __asm__("_dispatch_group_leave");
+extern "C" void neverd_darwin_dispatch_group_leave(void *object) { step(object, group, 4); }
+extern "C" void objc_release(void *object) { step(object, object == group ? group : self, object == group ? 5 : 8); }
+extern "C" void work(void *object, int tag) { step(object, self, tag); }
+extern "C" void neverd_objc_imp_3000(void*, void*, int);
+int main() {
+    const int wanted[2][9] = {
+      {12678, 1, 12, 0, 0, 0, 1267, 1267, 12678},
+      {1234578, 1, 12, 1237, 1234, 12345, 0, 123457, 1234578}};
+    for (int path = 0; path <= 1; ++path) for (failure = 0; failure <= 8; ++failure) {
+        if (!wanted[path][failure]) continue;
+        order = bad = exits = held = site = 0;
+        void *caught = 0;
+        try { neverd_objc_imp_3000(self, group, path); }
+        catch (int *exception) { caught = exception; }
+        const bool unlock = failure == 0 || failure == 3 || failure >= 6;
+        if (caught != (failure ? &original : 0) || site != failure || bad ||
+            order != wanted[path][failure] || exits != unlock ||
+            held != ((failure == 4 || failure == 5) ? 1 : 0)) return 10 + failure;
+    }
+    return 0;
+}
+)CPP");
+}
+
 TEST(ObjCSourceProjection, TypedVoidResumeRejectsExtraOrMismatchedCallStorage) {
   for (unsigned Case = 0; Case != 4; ++Case) {
     ResumeOnlyFixture F;

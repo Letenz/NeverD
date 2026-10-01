@@ -811,6 +811,8 @@ demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
+`modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
+
 The v3 recovery C API and CLI map explicit field, refinement and solver-query budgets to the shared specializer. The adapter validates structure sizes and reserved fields before reading extensions; v1/v2 layouts and defaults remain stable. Budget increases change permitted work, not the execution contract or publication criteria.
 
 The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the finite native-path scope below.

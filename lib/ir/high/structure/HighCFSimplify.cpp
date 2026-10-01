@@ -933,6 +933,33 @@ static bool sameStraightLineBody(const std::vector<HighStmt> &A,
   return true;
 }
 
+/// True when a jump to \p X in \p Stmts sits in a __finally or cleanup body.
+/// Turning it into `continue` would leave a termination handler abnormally.
+static bool jumpsOutOfATerminationHandler(const std::vector<HighStmt> &Stmts,
+                                          va_t X, bool InHandler = false) {
+  for (const HighStmt &S : Stmts) {
+    if (InHandler && S.Kind == StmtKind::Goto && S.GotoTarget == X)
+      return true;
+    if (jumpsOutOfATerminationHandler(S.Body, X, InHandler) ||
+        jumpsOutOfATerminationHandler(S.ElseBody, X, InHandler) ||
+        jumpsOutOfATerminationHandler(S.DefaultBody, X, InHandler))
+      return true;
+    for (const auto &C : S.Cases)
+      if (jumpsOutOfATerminationHandler(C.Body, X, InHandler))
+        return true;
+    for (size_t I = 0; I < S.EHClauseBodies.size(); ++I) {
+      const bool Termination =
+          I < S.EHClauses.size() &&
+          (S.EHClauses[I].Kind == HighEHClauseKind::SEHFinally ||
+           S.EHClauses[I].Kind == HighEHClauseKind::CxxCleanup);
+      if (jumpsOutOfATerminationHandler(S.EHClauseBodies[I], X,
+                                        InHandler || Termination))
+        return true;
+    }
+  }
+  return false;
+}
+
 bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
   std::map<va_t, unsigned> Uses;
   std::set<va_t> Pinned;
@@ -1013,13 +1040,11 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
           std::vector<HighStmt> Region(
               std::make_move_iterator(L.begin() + K),
               std::make_move_iterator(L.begin() + M + 1));
-          bool HasTry = false;
-          walkStmts(Region, [&](const HighStmt &S) {
-            HasTry |= S.Kind == StmtKind::SEHTry ||
-                      S.Kind == StmtKind::CxxTry ||
-                      S.Kind == StmtKind::ItaniumTry;
-          });
-          if (HasTry || hasLooseBreakOrContinue(Region)) {
+          // A jump out of a try body or an __except handler back to X leaves
+          // it the way `continue` does, running any termination handler on
+          // the way. A jump out of a termination handler itself stays.
+          if (hasLooseBreakOrContinue(Region) ||
+              jumpsOutOfATerminationHandler(Region, X)) {
             std::move(Region.begin(), Region.end(), L.begin() + K);
             continue;
           }
@@ -1460,8 +1485,10 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   auto Entered = [&](va_t Addr) { return Labels.entered().count(Addr) != 0; };
   // `while (1) { ..break..; goto X; } P...; X:` where nothing enters P: P
   // runs only after the break, so it can run at the break instead, leaving X
-  // as what follows the loop.
-  auto MoveFollowToBreak = [&](std::vector<HighStmt> &L, size_t K) {
+  // as what follows the loop. X may also be what follows the list, \p After,
+  // when P runs to its end.
+  auto MoveFollowToBreak = [&](std::vector<HighStmt> &L, size_t K,
+                               const std::set<va_t> &After) {
     HighStmt &Loop = L[K];
     const bool Forever = !Loop.Cond || (Loop.Cond->Kind == ExprKind::Const &&
                                         Loop.Cond->ConstVal != 0);
@@ -1477,7 +1504,9 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
       if (anyAddressEntered(L[M], Entered))
         return;
     }
-    if (M == L.size())
+    if (M == L.size() && std::none_of(After.begin(), After.end(), [&](va_t X) {
+          return Targets.count(X) != 0;
+        }))
       return;
     // Empty anchors alone already let a jump past them count as the follow.
     if (std::all_of(L.begin() + K + 1, L.begin() + M, isEmptyAnchor))
@@ -1507,7 +1536,7 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> Visit =
       [&](std::vector<HighStmt> &L, const std::set<va_t> &After) {
         for (size_t K = 0; K < L.size(); ++K) {
-          MoveFollowToBreak(L, K);
+          MoveFollowToBreak(L, K, After);
           HighStmt &S = L[K];
           const bool Loop = S.Kind == StmtKind::While ||
                             S.Kind == StmtKind::DoWhile ||
