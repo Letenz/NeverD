@@ -1,4 +1,5 @@
 add_subdirectory(interpreter)
+add_subdirectory(bytecode)
 
 add_neverd_component_library(NeverDBinaryInterpreterSpecialization
   BinaryInterpreterSpecialization.cpp

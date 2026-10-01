@@ -2808,6 +2808,10 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           continue;
         writeInstruction(BodyInst, Indent);
       }
+      // Moving the false arm next to its join removes only the printed jump.
+      // Its outgoing edge must still publish PHI values, including loop seeds.
+      const auto *Go = llvm::cast<llvm::UncondBrInst>(Body->getTerminator());
+      writeGoto(Body, Go->getSuccessor(0), Indent, false);
       InlinedFallthroughBlocks.insert(Body);
       return;
     }

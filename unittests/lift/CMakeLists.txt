@@ -23,6 +23,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_SVEStoreTests.cpp
   aarch64/AArch64_WSPTests.cpp
   aarch64/AArch64_MulDivTests.cpp
+  aarch64/AArch64DivisionSemanticTests.cpp
   aarch64/AArch64_PipelineE2ETests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   aarch64/AArch64_NativeDecodeParityTests.cpp
@@ -1191,6 +1192,15 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDLLVMCPhiTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
+
+add_neverd_unittest(NeverDAArch64DivisionSemanticTests
+  aarch64/AArch64DivisionSemanticTests.cpp
+  LINK_COMPONENTS Decode IRLow Support
+)
+target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
 
 add_neverd_unittest(NeverDLLVMCValueTests
   core/LLVMCValueTests.cpp

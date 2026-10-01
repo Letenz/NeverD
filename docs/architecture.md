@@ -40,6 +40,14 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
+The standalone `neverd-bytecode` tool accepts externally specified instruction
+languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+LowIR; explicit byte-addressed state lowering then feeds the existing source
+routes. Image-independent source ABI binding uses caller-supplied contracts,
+while runtime signature discovery from native images retains its format gates.
+This source-only path does not authenticate native instruction boundaries or
+authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a

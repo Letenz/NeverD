@@ -189,6 +189,33 @@ build-release/bin/NeverDARM32InterworkingTests
 
 ## Interpreter recovery checks
 
+`NeverDBytecodeAnalysisTests` uses independently constructed instruction
+languages. It checks malformed encodings, overlapping CFGs, budgets, typed
+temporaries, byte order and full-width fields. Source checks run both AArch64
+and x64 state carriers through HighC and LLVMC, recompile at `-O0` and `-O2`
+with undefined-behavior traps, and verify loops, narrow writes, memory canaries,
+signed arithmetic and nested status-propagating calls. The state-forwarding
+checks include unaligned banks, overlapping register views, guest aliases and
+overwritten writes that a memory access can observe. CLI checks also exercise
+the optional LLVM optimization route and block-sensitive bounded graphs whose
+branch arms produce distinct values, including merged conditional targets.
+No external dialect or binary sample is needed.
+
+```sh
+cmake --build build-release --target NeverDBytecodeAnalysisTests
+build-release/bin/NeverDBytecodeAnalysisTests
+```
+
+`NeverDAArch64DivisionSemanticTests` checks both instruction decoders against
+the architectural results for signed and unsigned division, including zero
+divisors, signed overflow, aliased destinations, W-register zero extension and
+unchanged condition flags.
+
+```sh
+cmake --build build-release --target NeverDAArch64DivisionSemanticTests
+build-release/bin/NeverDAArch64DivisionSemanticTests
+```
+
 ```sh
 cmake --build build-release --target NeverDInterpreterSpecializationTests \
   NeverDDevirtualizationSourceTests NeverDInterpreterMachineStateTests --parallel 4

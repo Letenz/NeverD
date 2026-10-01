@@ -85,7 +85,9 @@ public:
   ///     ALL functions are still declared (so a body may reference a sibling
   ///     defined in another shard); functions the mask omits remain
   ///     declarations the linker resolves against their defining shard.  A
-  ///     null mask emits every body.
+  ///     masked-off function may have no blocks and supply only an explicit
+  ///     signature, for an external definition. No stub body is manufactured.
+  ///     A null mask emits every body.
   /// \p Imports carries loader-native object symbol spellings.  The emitter
   /// converts them to target LLVM global names at its object/IR boundary.
   /// The defaults (MergeableGlobals=false, null mask) reproduce the original

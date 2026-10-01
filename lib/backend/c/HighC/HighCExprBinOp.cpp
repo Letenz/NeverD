@@ -712,8 +712,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   }
 
   int MyPrec = getOpPrecedence(E.Op);
-  std::string LHS = exprStr(*E.Operands[0], MyPrec);
-  std::string RHS = exprStr(*E.Operands[1], MyPrec);
+  // Comparisons bind more tightly than bitwise operators, but spelling them
+  // without parentheses is ambiguous to readers and triggers -Wparentheses.
+  const bool Bitwise = E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
+                       E.Op == NdOp::INT_XOR || E.Op == NdOp::BOOL_XOR;
+  const int OperandPrec = Bitwise ? getOpPrecedence(NdOp::INT_LESS) : MyPrec;
+  std::string LHS = exprStr(*E.Operands[0], OperandPrec);
+  std::string RHS = exprStr(*E.Operands[1], OperandPrec);
   if (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) {
     const HighExpr *A = unwrapIntegerView(E.Operands[0].get());
     const HighExpr *B = unwrapIntegerView(E.Operands[1].get());

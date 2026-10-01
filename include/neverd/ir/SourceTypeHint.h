@@ -73,7 +73,10 @@ struct SourceFunctionTypeHint {
     /// export evidence. The loader revalidates the actual import identity.
     DarwinSDK,
     /// A compiler-observed Swift SDK declaration with exact export evidence.
-    SwiftSDK
+    SwiftSDK,
+    /// An explicit source-only contract supplied by an IR producer. It does
+    /// not establish native instruction ownership or a binary rewriting ABI.
+    ExplicitSource
   };
   enum class ConventionKind : uint8_t { C, Swift };
   OriginKind Origin = OriginKind::ObjCRuntime;

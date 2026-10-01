@@ -477,7 +477,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
             return Instruction && Instruction->getFunction() == OnlyFunction;
           }))
         continue;
-    } else if (!Fn.isDeclaration())
+    } else if (!Fn.isDeclaration() && !Opts.PreserveLLVMFunctionTypes)
       continue;
     if (Fn.isIntrinsic())
       continue;

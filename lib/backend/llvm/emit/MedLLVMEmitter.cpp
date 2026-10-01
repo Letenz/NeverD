@@ -982,7 +982,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // resolves.
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex) {
     auto &Func = Funcs[FuncIndex];
-    if (Func.Name.empty() || Func.Blocks.empty())
+    if (Func.Name.empty() ||
+        (Func.Blocks.empty() && (!BodyMask || (*BodyMask)[FuncIndex])))
       continue;
     declareFunc(Func);
     // A body mask deliberately withholds this implementation. Its interior
