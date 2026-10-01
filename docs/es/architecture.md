@@ -78,6 +78,8 @@ separadas de los certificados de apariciones nativas y parches binarios.
 
 `NeverDLLVMInterpreterModel` gestiona la importación LLVM escalar independiente y acotada a la misma ABI de estado bruto. `modelLLVMInterpreterMachineStateX64` conserva el estado real y emite condiciones de definición. `llvmInterpreterMachineStateContract` aporta todas las observaciones y preservación del monitor cero; dominio, memoria y prueba completa corresponden al llamador. No altera el lifting ordinario ni la publicación de fuentes, ni demuestra el compilador.
 
+El modelo LLVM valida los contratos de parámetro `initializes`. Reutiliza las proyecciones de punteros de estado y realiza un análisis acotado de inicialización garantizada, byte a byte, antes de la emisión escalar ordinaria; no añade otro evaluador de valores.
+
 `NeverDInterpreterLLVMRefinement` compone pruebas de código nativo a LLVM. Reconstruye ambos modelos y contratos obligatorios, proyecta los indicadores solo en la entrada según el perfil autorizado y vuelve a comprobar ambas premisas. El cliente puede proponer planes de bucle, pero no sustituir modelos, observaciones ni comprobantes. Los modelos copian solo el grafo ejecutable y las raíces declaradas; se rechazan los arcos de vuelta a la entrada para evitar reinicializar el estado.
 
 La API C v3 y la CLI transmiten los presupuestos de campos, refinamiento y consultas al especializador común. El adaptador valida tamaños y campos reserved antes de leer extensiones; los diseños v1/v2 y los valores predeterminados se mantienen. Aumentar el presupuesto no cambia el contrato de ejecución ni los criterios de publicación.

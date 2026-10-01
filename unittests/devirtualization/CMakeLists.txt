@@ -20,6 +20,7 @@ add_neverd_unittest(NeverDLLVMInterpreterModelTests
   LLVMInterpreterModelTests.cpp
   LLVMInterpreterModelCompileTests.cpp
   LLVMInterpreterModelGuardTests.cpp
+  LLVMInterpreterModelInitializationTests.cpp
   LLVMInterpreterModelLoopTests.cpp
   LLVMInterpreterModelRejectionTests.cpp
   LLVMInterpreterModelShiftTests.cpp

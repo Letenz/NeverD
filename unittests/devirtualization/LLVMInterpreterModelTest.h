@@ -73,13 +73,15 @@ protected:
   llvm::LLVMContext Context;
   std::unique_ptr<llvm::Module> Module;
   void parse(llvm::StringRef Body, llvm::StringRef Preamble = {},
-             llvm::StringRef Attributes = {},
-             llvm::StringRef ReturnAttrs = {}) {
+             llvm::StringRef Attributes = {}, llvm::StringRef ReturnAttrs = {},
+             llvm::StringRef ParameterAttrs = {}) {
     std::string IR = "target datalayout = \"e-p:64:64\"\n";
     IR += Preamble;
     IR += "\ndefine ";
     IR += ReturnAttrs;
-    IR += " i64 @model(ptr %state) ";
+    IR += " i64 @model(ptr ";
+    IR += ParameterAttrs;
+    IR += " %state) ";
     IR += Attributes;
     IR += " {\n";
     IR += Body;

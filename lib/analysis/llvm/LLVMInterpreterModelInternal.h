@@ -76,6 +76,7 @@ class Builder {
   void emit(LowBlock &Block, LowOp Operation);
   void preflight();
   void validateContract();
+  void validateInitialization();
   void pointerProjections();
   bool blockLocal(const llvm::Instruction &I);
   NdVar stateSlot(const llvm::Value *Pointer, unsigned Bytes, uint64_t Align);
