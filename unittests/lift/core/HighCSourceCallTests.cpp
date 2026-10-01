@@ -7,8 +7,13 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
@@ -28,7 +33,6 @@ namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
 void eliminateUnusedValues(std::vector<HighStmt> &);
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
-void foldStructuredContinuations(HighFunc &, const MedFunc * = nullptr);
 } // namespace neverd
 
 namespace {
@@ -141,6 +145,166 @@ void compileAndRun(const std::string &Source,
                                       : "")
                     << "\n"
                     << Source;
+}
+
+MedFunc savedFloatingRecord(unsigned Calls, bool ReplaceFirst = false,
+                            bool ReadUpper = false) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Pair =
+      NdType::makeStruct({NdType::makeFloat(8), NdType::makeFloat(8)});
+  const auto Record = NdType::makeStruct({Pair, Pair});
+  SourceFunctionTypeHint Entry, Callee;
+  Entry.ReturnType = Record;
+  Entry.Parameters = {{"value", Record}};
+  Callee.ReturnType = NdType::makeVoid();
+  std::string Error;
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Entry, Arch::AArch64, Error)) << Error;
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Callee, Arch::AArch64, Error))
+      << Error;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "saved_record";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  auto Append = [&](NdOp Code, NdVar Out, std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Code;
+    Op.Addr = Low.Entry + Block.Ops.size() * 4;
+    Op.Output = Out;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Block.Ops.push_back(Op);
+  };
+  auto Saved = [&](unsigned I) {
+    return NdVar::reg(TRI.VecRegBase + (8 + I) * TRI.VecRegStride, 16);
+  };
+  for (unsigned I = 0; I < 4; ++I)
+    Append(NdOp::COPY, Saved(I), {NdVar::reg(TRI.FPParamRegs[I], 16)});
+  for (unsigned I = 0; I < Calls; ++I) {
+    Append(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)});
+    if (ReplaceFirst && I == Calls / 2)
+      Append(NdOp::COPY, Saved(0), {Saved(1)});
+  }
+  for (unsigned I = 0; I < 4; ++I) {
+    if (ReadUpper && I == 0)
+      Append(NdOp::SUBBYTES, NdVar::reg(TRI.FPReturnReg, 8),
+             {Saved(I), NdVar::cst(8, 4)});
+    else
+      Append(NdOp::COPY, NdVar::reg(TRI.FPParamRegs[I], 16), {Saved(I)});
+  }
+  Append(NdOp::RETURN, {}, {});
+  Block.EndAddr = Low.Entry + Block.Ops.size() * 4;
+  Low.Blocks.push_back(Block);
+  const std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Entry},
+                                                     {0x2000, Callee}};
+  LowToMedConverter Converter;
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Hints);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  recoverCallAbi(Med, Arch::AArch64, {{0x2000, "observe_call"}});
+  inferMedTypes(Med, Arch::AArch64);
+  EXPECT_TRUE(verifyMedFunc(Med, "saved-floating-record"));
+  return Med;
+}
+
+HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
+  const std::map<va_t, std::string> Names{{0x2000, "observe_call"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  return Converter.convert(Med, Arch::AArch64);
+}
+
+TEST(HighCSourceCalls, SavedFloatingRecordSurvivesLongCallChains) {
+  for (unsigned Calls : {1U, 20U, 64U})
+    for (bool ReplaceFirst : {false, true}) {
+      SCOPED_TRACE(Calls);
+      SCOPED_TRACE(ReplaceFirst);
+      auto Med = savedFloatingRecord(Calls, ReplaceFirst);
+      if (Calls == 64)
+        std::reverse(Med.CallClobbers.begin(), Med.CallClobbers.end());
+      ASSERT_TRUE(Med.SourceTypeHint);
+      const auto High = lowerSavedFloatingRecord(Med);
+      ASSERT_TRUE(High.SourceTypeHint);
+      const auto Source = emit({High}, true, Arch::AArch64);
+      ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      const auto Program = "#include <string.h>\n" + Source + "\ntypedef " +
+                           typeToC(High.ReturnType) +
+                           " Record;\n#define CALLS " + std::to_string(Calls) +
+                           "\n#define REPLACE " + std::to_string(ReplaceFirst) +
+                           R"(
+static unsigned calls;
+void observe_call(void) { ++calls; }
+int main(void) {
+    const double values[] = {-0.0, 0.0, -37.5, 0.125, 1048576.25};
+    for (unsigned i = 0; i < 5; ++i) {
+        Record input = {{values[i], values[(i + 1) % 5]},
+                        {values[(i + 2) % 5], values[(i + 3) % 5]}};
+        unsigned before = calls;
+        Record actual = saved_record(input);
+        Record expected = input;
+        if (REPLACE) expected.field_0.field_0 = input.field_0.field_1;
+        if (calls - before != CALLS) return 1;
+        if (memcmp(&actual, &expected, sizeof(actual))) return 2;
+    }
+    return 0;
+}
+)";
+      for (const char *Optimization : {"-O0", "-O2"})
+        compileAndRun(Program, {Optimization});
+    }
+}
+
+TEST(HighCSourceCalls, CallClobberedVectorSuffixStaysUnknown) {
+  for (unsigned Calls : {1U, 20U, 64U}) {
+    SCOPED_TRACE(Calls);
+    const auto Med = savedFloatingRecord(Calls, false, true);
+    const auto Source =
+        emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64);
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCSourceCalls, BrokenPreservedPrefixChainsRemainUnknown) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Med = savedFloatingRecord(3);
+    std::vector<MedCallClobber *> Saved;
+    for (auto &Clobber : Med.CallClobbers)
+      if (Clobber.Value.RegOff == TRI.VecRegBase + 8 * TRI.VecRegStride)
+        Saved.push_back(&Clobber);
+    ASSERT_EQ(Saved.size(), 3U);
+    switch (Mutation) {
+    case 0:
+      Saved[1]->PreservedPrefixSize = 0;
+      Saved[1]->PreservedInput = {};
+      break;
+    case 1:
+      Saved[1]->PreservedPrefixSize = 4;
+      break;
+    case 2:
+      Saved[0]->PreservedInput = Saved[2]->Value;
+      break;
+    case 3:
+      Saved[1]->PreservedInput.RegOff += TRI.VecRegStride;
+      break;
+    case 4:
+      Saved[1]->PreservedInput.Size = 8;
+      break;
+    case 5:
+      Saved[1]->PreservedInput.TheArch = Arch::X64;
+      break;
+    }
+    // The first two are valid partial-value records; the remaining cases
+    // also require bounded, conservative handling of malformed input.
+    if (Mutation < 2)
+      ASSERT_TRUE(verifyMedFunc(Med, "reduced-preserved-prefix"));
+    const auto Source =
+        emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64);
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {

@@ -2652,6 +2652,12 @@ class LoopPlanInference {
     uint64_t FixedMask;
     bool UpperBound = false, LowerBound = false;
     bool Nonzero = false, Nonmax = false;
+    struct LaneGuard {
+      uint64_t Mask;
+      bool Maximum;
+      bool operator==(const LaneGuard &) const = default;
+    };
+    std::vector<LaneGuard> LaneGuards, LaneAttempts;
     std::vector<Bound> CounterBounds;
     bool CounterBoundsSeeded = false;
     std::vector<LowIRLoopLocation> Equalities;
@@ -2671,6 +2677,11 @@ class LoopPlanInference {
   std::vector<std::vector<EqualitySeed>> EqualitySeeds;
   std::vector<std::vector<EqualitySeed>> EqualityAttempts;
   std::vector<LowIRLoopLocation> RelationCounters;
+  struct LaneCounter {
+    LowIRLoopLocation Location;
+    Word::LaneGuard Guard;
+  };
+  std::vector<LaneCounter> LaneCounters;
   std::vector<std::vector<LowIRLoopLocation>> RelationBounds;
   std::vector<std::vector<TerminalState>> RelationArrivals;
   std::vector<std::map<SymRef, llvm::SmallVector<uint32_t, 16>>>
@@ -2774,32 +2785,80 @@ class LoopPlanInference {
     return Mask;
   }
 
-  bool unitStep(SymRef Before, SymRef After, uint16_t Bytes, bool Increment) {
+  bool preservesOutsideLane(SymRef Before, SymRef After, unsigned Offset,
+                            unsigned Width, unsigned Total) {
     auto &Ctx = Session.Context;
-    for (unsigned Width = Bytes * 8; Width; Width -= 8) {
+    return (!Offset || Ctx.mkExtract(Before, 0, Offset) ==
+                           Ctx.mkExtract(After, 0, Offset)) &&
+           (Offset + Width == Total ||
+            Ctx.mkExtract(Before, Offset + Width, Total - Offset - Width) ==
+                Ctx.mkExtract(After, Offset + Width, Total - Offset - Width));
+  }
+
+  // A zero mask denotes the existing full/zero-extended recurrence. A proper
+  // preserved lane also supplies its endpoint mask for invariant proposals.
+  std::optional<uint64_t> unitStepLane(SymRef Before, SymRef After,
+                                       uint16_t Bytes, bool Increment) {
+    auto &Ctx = Session.Context;
+    const unsigned Total = Bytes * 8;
+    // Keep existing successes ahead of any additional expression construction.
+    for (unsigned Width = Total; Width; Width -= 8) {
       const auto Input = Ctx.mkExtract(Before, 0, Width);
       const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
-      const auto Expected =
-          Ctx.mkZExtOrTrunc(Ctx.mkAdd(Input, Step), Bytes * 8);
+      const auto Expected = Ctx.mkZExtOrTrunc(Ctx.mkAdd(Input, Step), Total);
       checker().nodes();
       if (After == Expected)
-        return true;
+        return 0;
     }
-    return false;
+    for (unsigned Width = Total - 8; Width; Width -= 8)
+      for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
+        const auto Input = Ctx.mkExtract(Before, Offset, Width);
+        const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
+        const auto Updated = Ctx.mkAdd(Input, Step);
+        const bool Matches =
+            Ctx.mkExtract(After, Offset, Width) == Updated &&
+            preservesOutsideLane(Before, After, Offset, Width, Total);
+        checker().nodes();
+        if (Matches)
+          return (UINT64_MAX >> (64 - Width)) << Offset;
+      }
+    return {};
+  }
+
+  bool unitStep(SymRef Before, SymRef After, uint16_t Bytes, bool Increment) {
+    return unitStepLane(Before, After, Bytes, Increment).has_value();
   }
 
   bool additiveRecurrence(SymRef Before, SymRef After, uint16_t Bytes) {
     auto &Ctx = Session.Context;
-    for (unsigned Width = Bytes * 8; Width; Width -= 8) {
+    const unsigned Total = Bytes * 8;
+    for (unsigned Width = Total; Width; Width -= 8) {
       const auto Value = Ctx.mkExtract(After, 0, Width);
-      if (Ctx.op(Value) != SymOp::Add ||
-          After != Ctx.mkZExtOrTrunc(Value, Bytes * 8))
+      const bool ZeroExtended = Ctx.op(Value) == SymOp::Add &&
+                                After == Ctx.mkZExtOrTrunc(Value, Total);
+      checker().nodes();
+      if (!ZeroExtended)
         continue;
       const auto Input = Ctx.mkExtract(Before, 0, Width);
+      checker().nodes();
       const auto Terms = Ctx.operands(Value);
       if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
         return true;
     }
+    for (unsigned Width = Total - 8; Width; Width -= 8)
+      for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
+        const auto Value = Ctx.mkExtract(After, Offset, Width);
+        const auto Input = Ctx.mkExtract(Before, Offset, Width);
+        const bool Preserved =
+            Ctx.op(Value) == SymOp::Add &&
+            preservesOutsideLane(Before, After, Offset, Width, Total);
+        checker().nodes();
+        if (!Preserved)
+          continue;
+        const auto Terms = Ctx.operands(Value);
+        if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
+          return true;
+      }
     return false;
   }
 
@@ -3044,6 +3103,14 @@ class LoopPlanInference {
         const auto Guard =
             Expr(NdOp::INT_NOTEQUAL, Parameter,
                  NdVar::scalar(Maximum ? ones(Bytes) : 0, Bytes), 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
+      }
+      for (const auto &G : W.LaneGuards) {
+        const auto Mask = NdVar::scalar(G.Mask, Bytes);
+        const auto Value = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
+        const auto Guard =
+            Expr(NdOp::INT_NOTEQUAL, Value,
+                 NdVar::scalar(G.Maximum ? G.Mask : 0, Bytes), 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       if (Ranked != I)
@@ -3669,6 +3736,39 @@ class LoopPlanInference {
     return OldSize != W.CounterBounds.size();
   }
 
+  SymRef laneGuard(TerminalState &State, const Word &W,
+                   const Word::LaneGuard &Guard) {
+    auto &Ctx = Session.Context;
+    const auto Bits = W.Location.Bytes * 8;
+    const auto Value =
+        Ctx.mkAnd(read(State, W.Location), Ctx.mkConst(Bits, Guard.Mask));
+    return Ctx.mkNe(Value, Ctx.mkConst(Bits, Guard.Maximum ? Guard.Mask : 0));
+  }
+
+  bool seedLaneGuards(Word &W, llvm::ArrayRef<TerminalState> NewIncoming = {}) {
+    if (RelationArrivals[ActiveCutpoint].empty())
+      return false;
+    auto Incoming = RelationArrivals[ActiveCutpoint];
+    Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
+    bool Changed = false;
+    for (const auto &C : LaneCounters) {
+      if (!sameLocation(W.Location, C.Location) ||
+          std::find(W.LaneAttempts.begin(), W.LaneAttempts.end(), C.Guard) !=
+              W.LaneAttempts.end())
+        continue;
+      // Once rejected or pruned, a guard must not be reseeded from a narrower
+      // later domain. Saved concrete arrivals remain part of every seed proof.
+      W.LaneAttempts.push_back(C.Guard);
+      if (std::all_of(Incoming.begin(), Incoming.end(), [&](auto &S) {
+            return entails(S.Predicate, laneGuard(S, W, C.Guard));
+          })) {
+        W.LaneGuards.push_back(C.Guard);
+        Changed = true;
+      }
+    }
+    return Changed;
+  }
+
   bool seedWordCopies(llvm::ArrayRef<TerminalState> NewIncoming = {}) {
     if (RelationArrivals[ActiveCutpoint].empty())
       return false;
@@ -3711,20 +3811,33 @@ class LoopPlanInference {
   }
 
   bool findNewCounters(std::vector<Edge> &Edges) {
-    const auto OldSize = RelationCounters.size();
+    bool Changed = false;
     for (const auto &L : locations()) {
-      if (std::any_of(RelationCounters.begin(), RelationCounters.end(),
-                      [&](const auto &C) { return sameLocation(C, L); }))
-        continue;
       bool Unit = false;
       for (auto &E : Edges)
-        for (bool Increment : {false, true})
-          Unit |=
-              unitStep(read(E.Before, L), read(E.After, L), L.Bytes, Increment);
-      if (Unit)
+        for (bool Increment : {false, true}) {
+          const auto Mask = unitStepLane(read(E.Before, L), read(E.After, L),
+                                         L.Bytes, Increment);
+          Unit |= Mask.has_value();
+          if (!Mask || !*Mask)
+            continue;
+          const Word::LaneGuard Guard{*Mask, Increment};
+          if (std::none_of(
+                  LaneCounters.begin(), LaneCounters.end(), [&](const auto &C) {
+                    return sameLocation(C.Location, L) && C.Guard == Guard;
+                  })) {
+            LaneCounters.push_back({L, Guard});
+            Changed = true;
+          }
+        }
+      if (Unit &&
+          std::none_of(RelationCounters.begin(), RelationCounters.end(),
+                       [&](const auto &C) { return sameLocation(C, L); })) {
         RelationCounters.push_back(L);
+        Changed = true;
+      }
     }
-    return OldSize != RelationCounters.size();
+    return Changed;
   }
 
   // Seed unsigned bounds and copies only from concrete reachable witnesses.
@@ -3788,8 +3901,10 @@ class LoopPlanInference {
       for (auto &W : words())
         seedBitRelations(W);
       seedWordCopies();
-      for (auto &W : words())
+      for (auto &W : words()) {
         seedCounterBounds(W);
+        seedLaneGuards(W);
+      }
     }
   }
 
@@ -3918,6 +4033,13 @@ class LoopPlanInference {
                      }
                      return false;
                    }) != 0;
+        Changed |= std::erase_if(W.LaneGuards, [&](const auto &Guard) {
+                     return std::any_of(
+                         Incoming.begin(), Incoming.end(), [&](auto &S) {
+                           return !entails(S.Predicate, laneGuard(S, W, Guard));
+                         });
+                   }) != 0;
+        Changed |= seedLaneGuards(W, Incoming);
         Changed |= seedCounterBounds(W, Incoming);
         Changed |= seedBitRelations(W, Incoming);
       }
@@ -3929,7 +4051,34 @@ class LoopPlanInference {
     LowIRLoopLocation Location;
     bool Complement;
   };
-  using Phases = std::vector<std::vector<uint64_t>>;
+  struct Phases {
+    std::vector<std::vector<uint64_t>> Between;
+    std::vector<uint64_t> Leading;
+  };
+
+  struct PhaseConstraint {
+    size_t Source, Target;
+    uint64_t Step;
+  };
+
+  static bool solvePhaseConstraints(llvm::ArrayRef<PhaseConstraint> Constraints,
+                                    std::vector<uint64_t> &Phase) {
+    // Nonnegative weighted difference constraints. A positive cycle cannot
+    // be discharged by phase constants; it requires another changing rank.
+    for (size_t Round = 0; Round != Phase.size(); ++Round) {
+      bool Changed = false;
+      for (const auto &C : Constraints)
+        if (Phase[C.Source] < Phase[C.Target] + C.Step) {
+          Phase[C.Source] = Phase[C.Target] + C.Step;
+          Changed = true;
+        }
+      if (!Changed)
+        return true;
+      if (Round + 1 == Phase.size())
+        return false;
+    }
+    return true;
+  }
 
   static bool sameLocation(const LowIRLoopLocation &A,
                            const LowIRLoopLocation &B) {
@@ -3954,26 +4103,27 @@ class LoopPlanInference {
       Less = Ctx.mkOr(Less, Ctx.mkAnd(Equal, Ctx.mkUlt(After, Before)));
       Equal = Ctx.mkAnd(Equal, Ctx.mkEq(After, Before));
     };
+    if (First == 0 && !Phase.Leading.empty())
+      Append(Ctx.mkConst(64, Phase.Leading[E.Source]),
+             Ctx.mkConst(64, Phase.Leading[E.After.Cutpoint]));
     for (size_t I = First; I != Ranks.size(); ++I) {
       Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
       if (I + 1 != Ranks.size())
-        Append(Ctx.mkConst(64, Phase[I][E.Source]),
-               Ctx.mkConst(64, Phase[I][E.After.Cutpoint]));
+        Append(Ctx.mkConst(64, Phase.Between[I][E.Source]),
+               Ctx.mkConst(64, Phase.Between[I][E.After.Cutpoint]));
     }
     return Less;
   }
 
   bool inferPhases(std::vector<Edge> &Edges, llvm::ArrayRef<Counter> Ranks,
-                   Phases &Phase) {
+                   Phases &Phase, bool Leading) {
     auto &Ctx = Session.Context;
     const auto Count = Plan.Cutpoints.size();
-    Phase.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    Phase.Between.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    if (Leading)
+      Phase.Leading.assign(Count, 0);
     for (size_t Level = Ranks.size() - 1; Level-- > 0;) {
-      struct Constraint {
-        size_t Source, Target;
-        uint64_t Step;
-      };
-      std::vector<Constraint> Constraints;
+      std::vector<PhaseConstraint> Constraints;
       for (auto &E : Edges) {
         auto Domain = E.After.Predicate;
         for (size_t I = 0; I <= Level; ++I)
@@ -3985,20 +4135,22 @@ class LoopPlanInference {
             {E.Source, static_cast<size_t>(E.After.Cutpoint),
              entails(Domain, tupleLess(E, Ranks, Phase, Level + 1)) ? 0U : 1U});
       }
-      // Nonnegative weighted difference constraints. A positive cycle cannot
-      // be discharged by phase constants; it requires another changing rank.
-      for (size_t Round = 0; Round != Count; ++Round) {
-        bool Changed = false;
-        for (const auto &C : Constraints)
-          if (Phase[Level][C.Source] < Phase[Level][C.Target] + C.Step) {
-            Phase[Level][C.Source] = Phase[Level][C.Target] + C.Step;
-            Changed = true;
-          }
-        if (!Changed)
-          break;
-        if (Round + 1 == Count)
-          return false;
+      if (!solvePhaseConstraints(Constraints, Phase.Between[Level]))
+        return false;
+    }
+    if (Leading) {
+      std::vector<PhaseConstraint> Constraints;
+      for (auto &E : Edges) {
+        // The leading phase must not increase on any feasible transition.
+        // Unlike an inner phase, it cannot assume equal counter prefixes.
+        if (entails(E.After.Predicate, Ctx.mkFalse()))
+          continue;
+        Constraints.push_back(
+            {E.Source, static_cast<size_t>(E.After.Cutpoint),
+             entails(E.After.Predicate, tupleLess(E, Ranks, Phase)) ? 0U : 1U});
       }
+      if (!solvePhaseConstraints(Constraints, Phase.Leading))
+        return false;
     }
     for (auto &E : Edges)
       if (!entails(E.After.Predicate, tupleLess(E, Ranks, Phase)))
@@ -4015,6 +4167,8 @@ class LoopPlanInference {
       for (const auto &Op : Cut.Expressions)
         Next = std::max(Next, Op.Output.Offset + 8);
       Cut.Rank.clear();
+      if (!Phase.Leading.empty())
+        Cut.Rank.push_back(NdVar::scalar(Phase.Leading[I], 8));
       for (size_t J = 0; J != Ranks.size(); ++J) {
         const auto &R = Ranks[J];
         auto Input = std::find_if(
@@ -4043,7 +4197,7 @@ class LoopPlanInference {
         }
         Cut.Rank.push_back(Value);
         if (J + 1 != Ranks.size())
-          Cut.Rank.push_back(NdVar::scalar(Phase[J][I], 8));
+          Cut.Rank.push_back(NdVar::scalar(Phase.Between[J][I], 8));
       }
     }
     if (!checker().validateLoopPlan())
@@ -4054,7 +4208,7 @@ class LoopPlanInference {
     std::vector<Counter> Candidates, Ranks;
     std::vector<size_t> Next{0};
     size_t Size = 1, MaxSize = 0;
-    bool Resume = false;
+    bool Resume = false, PendingLeading = false;
   };
   enum class TupleRankStatus { Inferred, Exhausted, Paused };
 
@@ -4076,7 +4230,8 @@ class LoopPlanInference {
   }
 
   static bool nextTuple(TupleRankSearch &Search) {
-    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume] = Search;
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading] =
+        Search;
     if (Resume) {
       Ranks.pop_back();
       Next.pop_back();
@@ -4113,13 +4268,17 @@ class LoopPlanInference {
                                   std::optional<uint32_t> MaxAttempts = {}) {
     for (uint32_t Attempt = 0; !MaxAttempts || Attempt < *MaxAttempts;
          ++Attempt) {
-      if (!nextTuple(Search))
+      const bool Leading = Search.PendingLeading;
+      if (!Leading && !nextTuple(Search))
         return TupleRankStatus::Exhausted;
       if (Result.RankCandidates >= Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
       ++Result.RankCandidates;
+      // Keep each variant as one budgeted attempt, including across a
+      // one-attempt pause. A single cut cannot benefit from a constant prefix.
+      Search.PendingLeading = !Leading && Plan.Cutpoints.size() > 1;
       Phases Phase;
-      if (inferPhases(Edges, Search.Ranks, Phase)) {
+      if (inferPhases(Edges, Search.Ranks, Phase, Leading)) {
         installRanks(Search.Ranks, Phase);
         return TupleRankStatus::Inferred;
       }
@@ -4133,6 +4292,7 @@ class LoopPlanInference {
     EqualitySeeds.assign(Cuts.size(), {});
     EqualityAttempts.assign(Cuts.size(), {});
     RelationCounters.clear();
+    LaneCounters.clear();
     RelationBounds.assign(Cuts.size(), {});
     RelationArrivals.assign(Cuts.size(), {});
     RelationVariables.assign(Cuts.size(), {});

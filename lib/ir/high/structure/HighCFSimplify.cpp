@@ -2162,6 +2162,131 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   DropPlaceholders(Body);
 
   bool Changed = false;
+  // Statements in \p Stmts, counting nested ones.
+  std::function<size_t(const std::vector<HighStmt> &)> Size =
+      [&](const std::vector<HighStmt> &Stmts) {
+        size_t N = 0;
+        for (const HighStmt &S : Stmts) {
+          ++N;
+          N += Size(S.Body) + Size(S.ElseBody) + Size(S.DefaultBody);
+          for (const auto &C : S.Cases)
+            N += Size(C.Body);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            N += Size(ClauseBody);
+        }
+        return N;
+      };
+  // Whether a jump enters \p S or a statement nested in it, or \p S holds
+  // a loop, switch or try a copy would duplicate.
+  std::function<bool(const HighStmt &)> Uncopyable = [&](const HighStmt &S) {
+    if ((S.Addr != 0 && S.Addr != InvalidVA && usesOf(S.Addr) != 0) ||
+        S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For || S.Kind == StmtKind::Switch ||
+        S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+        S.Kind == StmtKind::ItaniumTry || S.Kind == StmtKind::Break ||
+        S.Kind == StmtKind::Continue)
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody})
+      for (const HighStmt &T : *List)
+        if (Uncopyable(T))
+          return true;
+    return false;
+  };
+  // T16 on L[I]; see its use below. The exit may sit several ifs deep:
+  // the rest of each arm on its way down then runs only off the exit.
+  struct Level {
+    HighStmt *If = nullptr;
+    bool Then = true;
+    size_t Pos = 0;
+  };
+  // A path of ifs from \p If down to an arm that ends in a jump; each level
+  // records the arm taken and where the next if (or the jump) sits in it.
+  std::function<bool(HighStmt &, std::vector<Level> &)> FindExit =
+      [&](HighStmt &If, std::vector<Level> &Path) -> bool {
+    if (Path.size() >= limits::kMaxSkippedCopyDepth)
+      return false;
+    for (const bool Then : {true, false}) {
+      std::vector<HighStmt> &A = Then ? If.Body : If.ElseBody;
+      if (!Path.empty() && !A.empty() && A.back().Kind == StmtKind::Goto) {
+        Path.push_back({&If, Then, A.size() - 1});
+        return true;
+      }
+      for (size_t P = 0; P < A.size(); ++P)
+        if ((A[P].Kind == StmtKind::If || A[P].Kind == StmtKind::IfElse) &&
+            A[P].Cond) {
+          Path.push_back({&If, Then, P});
+          if (FindExit(A[P], Path))
+            return true;
+          Path.pop_back();
+        }
+    }
+    return false;
+  };
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
+    std::vector<Level> Path;
+    if (!FindExit(L[I], Path))
+      return false;
+    auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
+      return V.Then ? V.If->Body : V.If->ElseBody;
+    };
+    const size_t D = Path.size();
+    const va_t X = ArmOf(Path[D - 1]).back().GotoTarget;
+    if (usesOf(X) != 1)
+      return false;
+    size_t J = I + 1;
+    while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
+      ++J;
+    if (J >= L.size())
+      return false;
+    // Tails[K]: the rest of level K's arm after the if one level down.
+    std::vector<std::vector<HighStmt>> Tails(D - 1);
+    for (size_t K = 0; K + 1 < D; ++K) {
+      const std::vector<HighStmt> &A = ArmOf(Path[K]);
+      Tails[K].assign(A.begin() + Path[K].Pos + 1, A.end());
+    }
+    const std::vector<HighStmt> R(L.begin() + I + 1, L.begin() + J);
+    for (const auto &T : Tails)
+      for (const HighStmt &S : T)
+        if (Uncopyable(S))
+          return false;
+    for (const HighStmt &S : R)
+      if (Uncopyable(S))
+        return false;
+    // Level K's other arm continues, as before, with the tails of the levels
+    // above it, innermost first, then R.
+    std::vector<std::vector<HighStmt>> Append(D);
+    size_t Total = 0;
+    for (size_t K = 0; K < D; ++K) {
+      for (size_t Up = K; Up-- > 0;)
+        Append[K].insert(Append[K].end(), Tails[Up].begin(), Tails[Up].end());
+      Append[K].insert(Append[K].end(), R.begin(), R.end());
+      Total += Size(Append[K]);
+    }
+    size_t Original = Size(R);
+    for (const auto &T : Tails)
+      Original += Size(T);
+    if (Total - Original > limits::kMaxSkippedCopyStatements)
+      return false;
+    for (size_t K = 0; K < D; ++K) {
+      const Level &V = Path[K];
+      std::vector<HighStmt> &A = ArmOf(V);
+      if (K + 1 == D)
+        popGoto(A);
+      else
+        A.erase(A.begin() + V.Pos + 1, A.end());
+      if (Append[K].empty())
+        continue;
+      std::vector<HighStmt> &Other = V.Then ? V.If->ElseBody : V.If->Body;
+      V.If->Kind = StmtKind::IfElse;
+      Other.insert(Other.end(), std::make_move_iterator(Append[K].begin()),
+                   std::make_move_iterator(Append[K].end()));
+    }
+    --Uses[X];
+    L.erase(L.begin() + I + 1, L.begin() + J);
+    Changed = true;
+    return true;
+  };
+
   std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
                                                                &L) {
     for (size_t I = 0; I < L.size(); ++I) {
@@ -2736,8 +2861,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           // with the jumps of its new neighbours.
           M = FallInto - 1;
           FallTarget = LL[FallInto].Addr;
-        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K &&
-                   GotoSite.Order < Block.Order) {
+        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K) {
           // A block that runs off the end of its arm continues where the
           // arm does; it moves, with a jump there, to a jump ahead of it.
           FallTarget = FollowOf(Block);
@@ -2795,6 +2919,30 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     }
     if (!Done)
       break;
+  }
+
+  // T16 (late, once no block can move instead): `if (a) { A; if (b) { B;
+  // goto X; } T } R; X:` with a small R that nothing enters becomes
+  // `if (a) { A; if (b) { B } else { T R } } else { R }`: R runs on every
+  // path but the exit, so a copy of it goes on each.
+  if (SpliceRegions) {
+    std::function<void(std::vector<HighStmt> &)> CopyTails =
+        [&](std::vector<HighStmt> &L) {
+          for (size_t I = 0; I < L.size(); ++I)
+            if ((L[I].Kind == StmtKind::If || L[I].Kind == StmtKind::IfElse) &&
+                L[I].Cond)
+              copySkippedTail(L, I);
+          for (HighStmt &S : L) {
+            CopyTails(S.Body);
+            CopyTails(S.ElseBody);
+            for (auto &C : S.Cases)
+              CopyTails(C.Body);
+            CopyTails(S.DefaultBody);
+            for (auto &ClauseBody : S.EHClauseBodies)
+              CopyTails(ClauseBody);
+          }
+        };
+    CopyTails(Body);
   }
 
   // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }
