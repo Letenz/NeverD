@@ -147,6 +147,8 @@ Die normale Quell-ABI rekonstruiert einen aufrufprivaten Rahmen. Alle extern abg
 
 Wenn undefinierte Flags den Kontrollfluss, Adressen oder definierte Ausgaben beeinflussen, ist ein separater Nichtinterferenznachweis erforderlich. Der aktuelle Bericht liefert diesen Nachweis nicht und bestätigt kein solches prozessorabhängiges Verhalten.
 
+`modelInterpreterMachineStateX64` liefert ein `InterpreterMachineStateModel` aus demselben Generator wie der Quelltext-Wrapper. Registerbytes `[0, 136)` repräsentieren das rohe Zustandsobjekt mit 17 Wörtern; `RETURN` trägt den Status getrennt vom Gast-RAX, und Gastspeicher bleibt Speicher. Ungültige Eintrittsflags und abgelehnte dynamische Flag-Schreibzugriffe erhalten den Fehlerstatus. Der Zustandsspeicher muss zugänglich, ausgerichtet und von Gastzugriffen getrennt sein. `MaxOperations` begrenzt Eingabemetadaten und erzeugte Operationen. Deterministische LowIR-Datensätze sind kein Nachweis architektonisch undefinierter Ausgaben. Der Aufrufer muss Beobachtungen, Eintritts- und Rahmenverträge sowie einen neuen `checkLowIRLoopRefinement`- oder endlichen Verfeinerungsbeweis liefern; Modell und Datensätze zertifizieren keinen kompilierten C-Code.
+
 <!-- i18n-section: limits -->
 
 ## Aktuelle Grenzen

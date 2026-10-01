@@ -65,6 +65,8 @@ En el mismo objetivo, `LowIRLoopRefinement.*` y `BinaryLowIRLoopRefinement.*` pr
 
 `LowIRLoopPlanPairing.*`, en el mismo destino, comprueba registros renombrados, cuerpos aritméticos distintos, instantáneas de prefijo de cada lado, predicados conservados, entradas de memoria compartidas, cortes anidados y presupuestos de prueba independientes. Relaciones ausentes, escrituras incorrectas, temporales mal vinculados, emparejamientos incompletos o límites de metadatos agotados no deben producir certificados.
 
+`InterpreterMachineStateModel.*` en `NeverDLowIRRefinementTests` usa ejemplos LowIR independientes para comprobar indicadores de entrada sin normalizar, estado separado del RAX invitado, las 17 palabras, subregistros, indicadores empaquetados, rechazo dinámico persistente, escrituras del marco invitado, ambas ramas e inferencia de ciclos seguida de una prueba nueva. Deben fallar las salidas incorrectas, el estado perdido, la memoria modificada, los registros obsoletos, las entradas malformadas y los presupuestos agotados. Las pruebas fuente existentes también ejecutan ambas rutas C con O0/O2; las pruebas del modelo por sí solas no certifican el C compilado.
+
 Las salidas por igualdad en caché de bucles de dos y tres niveles comprueban operandos correlacionados, límites móviles, reinicios de contador y copias alteradas.
 
 Las regresiones de comparaciones en caché cubren igualdad y desigualdad, guardas e inicialización constante, campos descubiertos tras ampliar y bits 7/31/63 en cachés de 1/4/8 bytes. Cambiar solo un bit vecino conservando el bit probado también debe fallar en la comparación completa del estado. Se rechazan pasos nulos, límites móviles, reinicios y presupuestos agotados.

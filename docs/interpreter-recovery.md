@@ -324,6 +324,8 @@ its stricter call, entry-flag and exception rejection. The machine-state wrapper
 remaps guest registers and uses the existing LowIR/MedIR/HighC/LLVMC scalar
 pipeline. It does not introduce a second instruction evaluator.
 
+`modelInterpreterMachineStateX64` returns an `InterpreterMachineStateModel` through the same generator as the source wrapper. Register bytes `[0, 136)` represent the raw 17-word state object; `RETURN` carries status separately from guest RAX, and guest memory stays memory. Invalid entry flags and rejected dynamic flag writes retain sticky failure. The abstraction requires accessible, aligned state storage disjoint from guest accesses. `MaxOperations` bounds input metadata and generated operations. Its deterministic LowIR records are not architecture-undefined-output evidence. Callers must supply observations, entry and frame contracts, and a fresh `checkLowIRLoopRefinement` or finite refinement proof; neither model generation nor these records certify compiled C.
+
 <!-- i18n-section: limits -->
 
 ## Current limits

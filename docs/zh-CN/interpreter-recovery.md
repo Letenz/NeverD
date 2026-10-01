@@ -104,6 +104,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 若未定义旗标会影响控制流、地址或其他已定义输出，还需要独立证明这些观察不受它影响。当前恢复报告不提供该证明，也不认证这种依赖处理器的行为。
 
+`modelInterpreterMachineStateX64` 与源码包装器共用生成器，返回 `InterpreterMachineStateModel`。寄存器字节 `[0, 136)` 表示原始的 17 字状态对象；`RETURN` 单独返回状态码，客体 RAX 保存在状态字段中，客体内存访问仍是内存访问。非法入口标志和被拒绝的动态标志写入会保留失败状态。该抽象要求状态存储始终可访问、满足对齐且不与客体访问重叠。`MaxOperations` 限制输入元数据和生成操作。确定性 LowIR 记录不能充当原始架构未定义输出的证据。调用方仍须提供观察项、入口与栈帧契约，并执行全新的 `checkLowIRLoopRefinement` 或有限路径精化证明；生成模型和记录都不证明编译后的 C。
+
 <!-- i18n-section: limits -->
 
 ## 当前限制
