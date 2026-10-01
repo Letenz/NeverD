@@ -3668,12 +3668,20 @@ inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   const auto &Owner = Variable.Children[0];
   const auto &Property = Variable.Children[1];
   const auto &Type = Variable.Children[2];
-  if ((Owner.Kind != "Structure" && Owner.Kind != "Class" &&
-       Owner.Kind != "Enum") ||
-      Owner.Text || Owner.Index || Owner.Children.size() != 2 ||
-      !Named(Owner.Children[0], "Module") ||
-      !Named(Owner.Children[1], "Identifier") ||
-      !Named(Property, "Identifier") || !Shape(Type, "Type", 1))
+  // A nested nominal still names one static String cell. Walk its bounded
+  // declaration context, without accepting extensions or function-local types.
+  const auto *Context = &Owner;
+  unsigned Depth = 0;
+  while (!Named(*Context, "Module")) {
+    if (++Depth > 8 ||
+        (Context->Kind != "Structure" && Context->Kind != "Class" &&
+         Context->Kind != "Enum") ||
+        Context->Text || Context->Index || Context->Children.size() != 2 ||
+        !Named(Context->Children[1], "Identifier"))
+      return false;
+    Context = &Context->Children[0];
+  }
+  if (!Depth || !Named(Property, "Identifier") || !Shape(Type, "Type", 1))
     return false;
   const auto &String = Type.Children[0];
   return Shape(String, "Structure", 2) && Named(String.Children[0], "Module") &&

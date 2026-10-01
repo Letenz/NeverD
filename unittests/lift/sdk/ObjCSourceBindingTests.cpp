@@ -7567,6 +7567,97 @@ TEST(ObjCSourceBindings, ImmutableSwiftSmallStringKeepsSharedAddress) {
   }
 }
 
+TEST(ObjCSourceBindings, NestedSwiftSmallStringsKeepExactCellProof) {
+  for (const auto *Name :
+       {"_$s13WMFComponents24AccessibilityIdentifiersO6SearchO9searchBarSSvpZ",
+        "_$s13WMFComponents24AccessibilityIdentifiersO4TabsO6buttonSSvpZ",
+        "_$s4Test1AO1BC1CV5valueSSvpZ",
+        "_$s4Test1AV1BO1CC1DV1EO1FC1GV1HO5valueSSvpZ"}) {
+    SCOPED_TRACE(Name);
+    Fixture F;
+    constexpr va_t Address = 0x1040;
+    F.Image.MachOTwoLevelNamespace = true;
+    F.Image.ObjCSourceReferences.clear();
+    F.Image.Symbols.push_back({Name, Address, 16, false});
+    F.Image.Exports.push_back({Name, 0, Address});
+    auto *Bytes = F.Image.Segments[0].Data.data() + Address - 0x1000;
+    std::fill(Bytes, Bytes + 16, 0);
+    const std::string Expected = "Search Bar";
+    std::copy(Expected.begin(), Expected.end(), Bytes);
+    Bytes[15] = 0xea;
+    F.Function.ReturnType = NdType::makeInt(8, false);
+    F.Function.Body[0].RetVal =
+        HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    EXPECT_EQ(Result.SwiftSmallStrings, std::set<va_t>{Address});
+    const auto Bound = Result.Function.Body[0].RetVal;
+    ASSERT_TRUE(Bound->SourceCallHint);
+    EXPECT_EQ(Bound->SourceCallHint->TargetName, Name);
+    EXPECT_EQ(Bound->SourceCallHint->ByteCount, 16U);
+    EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+    std::set<std::string> Helpers;
+    const auto Source = renderObjCSwiftSmallStringHelpers(
+        F.Image, Result.SwiftSmallStrings, Helpers);
+    EXPECT_NE(Source.find("[15] = 234"), std::string::npos);
+    EXPECT_EQ(Helpers,
+              std::set<std::string>{"neverd_swift_small_string_1040_address"});
+
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      auto Changed = F.Image;
+      if (Mutation == 0)
+        Changed.DataPtrRelocSlots.insert(Address);
+      if (Mutation == 1)
+        Changed.Symbols.push_back({"_alias", Address, 16, false});
+      if (Mutation == 2)
+        Changed.Exports.clear();
+      if (Mutation == 3)
+        Changed.Exports.push_back({Name, 0, Address});
+      if (Mutation == 4)
+        Changed.Exports[0].Addr += 16;
+      if (Mutation == 5)
+        Changed.Symbols.back().Size = 8;
+      if (Mutation == 6)
+        Changed.Segments[0].Data[Address - 0x1000 + 15] = 0xfa;
+      if (Mutation == 7)
+        Changed.Segments[0].Data[Address - 0x1000 + 14] = 1;
+      if (Mutation == 8) {
+        Changed.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        Changed.Segments[0].Flags = Changed.Sections[0].Flags;
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Bound, Changed, {})) << Mutation;
+      EXPECT_THROW(renderObjCSwiftSmallStringHelpers(
+                       Changed, Result.SwiftSmallStrings, Helpers),
+                   std::runtime_error)
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftSmallStringsRejectUnprovedDeclarationContexts) {
+  for (const auto *Name :
+       {"_$s4Test1AV1BO1CC1DV1EO1FC1GV1HO1IC5valueSSvpZ",
+        "_$s4Test3fooyyF1LV5valueSSvpZ", "_$s4Test1AV5OtherE5valueSSvpZ",
+        "_$s4Test1AVySiG5valueSSvpZ", "_$s4Test1AV5valueSSvp",
+        "_$s4Test1AV5valueSivpZ", "_$s4Test5valueSSvpZ",
+        "_$s4Test1AV5valueSSvpZbad"}) {
+    SCOPED_TRACE(Name);
+    Fixture F;
+    constexpr va_t Address = 0x1040;
+    F.Image.MachOTwoLevelNamespace = true;
+    F.Image.ObjCSourceReferences.clear();
+    F.Image.Symbols.push_back({Name, Address, 16, false});
+    F.Image.Exports.push_back({Name, 0, Address});
+    auto *Bytes = F.Image.Segments[0].Data.data() + Address - 0x1000;
+    std::fill(Bytes, Bytes + 16, 0);
+    Bytes[15] = 0xe0;
+    EXPECT_FALSE(
+        objc_binding_detail::swiftSmallStringStorageHint(F.Image, Address));
+  }
+}
+
 TEST(ObjCSourceBindings, SwiftOptionalSelfStaticUsesWitnessBoundedZeroStorage) {
   constexpr va_t Address = 0x3010;
   constexpr va_t Witness = 0x4000;
