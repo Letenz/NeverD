@@ -416,19 +416,27 @@ class SourceFlow {
       reads(Index, Statement.SwitchExpr);
       Nodes[Index].Test = Statement.SwitchExpr;
       std::map<uint64_t, size_t> Cases;
-      for (const auto &Case : Statement.Cases) {
+      const size_t Default =
+          block(Statement.DefaultBody, Next, {Next, Scope.Continue}, Depth + 1);
+      size_t FollowingCase = Default;
+      for (auto It = Statement.Cases.rbegin(); It != Statement.Cases.rend();
+           ++It) {
+        const auto &Case = *It;
         spend();
         if (CaseCount == MaxSwitchCases)
           fail("method source-flow graph exceeds its switch-case limit",
                HighSourceFlowIssue::Budget);
         ++CaseCount;
+        // Shared labels and non-empty falling cases enter the next emitted
+        // case (or the final default), rather than leaving the switch. An
+        // explicit break still belongs to the switch's ordinary follow.
         const size_t Body =
-            block(Case.Body, Next, {Next, Scope.Continue}, Depth + 1);
+            block(Case.Body, Case.FallsThrough ? FollowingCase : Next,
+                  {Next, Scope.Continue}, Depth + 1);
         if (!Cases.emplace(Case.Value, Body).second)
           fail("method source switch has duplicate case values");
+        FollowingCase = Body;
       }
-      const size_t Default =
-          block(Statement.DefaultBody, Next, {Next, Scope.Continue}, Depth + 1);
       if (Statement.SwitchExpr->Kind == ExprKind::Const) {
         auto It = Cases.find(Statement.SwitchExpr->ConstVal);
         edge(Index, It == Cases.end() ? Default : It->second);

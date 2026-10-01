@@ -22,6 +22,7 @@ add_neverd_unittest(NeverDLLVMInterpreterModelTests
   LLVMInterpreterModelGuardTests.cpp
   LLVMInterpreterModelLoopTests.cpp
   LLVMInterpreterModelRejectionTests.cpp
+  LLVMInterpreterModelShiftTests.cpp
   LINK_COMPONENTS LLVMInterpreterModel
   LINK_LIBS LLVMAsmParser LLVMIRReader
 )
