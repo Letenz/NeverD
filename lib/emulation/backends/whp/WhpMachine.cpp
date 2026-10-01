@@ -11,6 +11,7 @@
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
+#include "WhpResourceCache.h"
 #include "WhpXsaveState.h"
 
 #include <vector>
@@ -18,14 +19,28 @@
 
 namespace neverd::emulation {
 namespace {
-class WhpMachine final : public X64Machine, public WhpPartition {
+class WhpX64Partition final : public WhpPartition {
 public:
   WhpXsaveState Xsave;
+};
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpX64Partition(MemoryProjection &Memory);
+class WhpMachine final : public X64Machine {
+public:
+  explicit WhpMachine(MemoryProjection &Memory)
+      : Binding([&Memory] { return createWhpX64Partition(Memory); }) {}
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
     if (auto E = validateX64FPState(State.FP))
       return E;
+    auto Active = Binding.acquire(Control);
+    if (!Active)
+      return Active.takeError();
+    auto &Host = static_cast<WhpX64Partition &>(**Active);
+    auto &API = Host.API;
+    const auto Partition = Host.Partition;
+    auto &Xsave = Host.Xsave;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
     auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
@@ -70,9 +85,11 @@ public:
       Names.push_back(Name);
       Values.push_back(V);
     }
-    if (FAILED(API.WHvSetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), Names.size(), Values.data())))
-      return diagnostic::error(diagnostic::WhpState);
+    if (const auto Status = API.WHvSetVirtualProcessorRegisters(
+            Partition, 0, Names.data(), Names.size(), Values.data());
+        FAILED(Status))
+      return whpError(diagnostic::WhpState, Status,
+                      whp::operation::WHvSetVirtualProcessorRegisters);
     if (auto E = Xsave.install(API, Partition, State))
       return E;
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
@@ -80,9 +97,11 @@ public:
     auto Complete = [&]() -> llvm::Error {
       if (Exit.ExitReason != WHvRunVpExitReasonException)
         return diagnostic::error(diagnostic::WhpExit);
-      if (FAILED(API.WHvGetVirtualProcessorRegisters(
-              Partition, 0, Names.data(), ObservableCount, Values.data())))
-        return diagnostic::error(diagnostic::WhpState);
+      if (const auto Status = API.WHvGetVirtualProcessorRegisters(
+              Partition, 0, Names.data(), ObservableCount, Values.data());
+          FAILED(Status))
+        return whpError(diagnostic::WhpState, Status,
+                        whp::operation::WHvGetVirtualProcessorRegisters);
       size_t I = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = Values[I++].Reg64;
@@ -112,76 +131,105 @@ public:
       }
       return llvm::Error::success();
     };
-    if (auto E = run(Exit, Control, Complete))
+    if (auto E = Host.run(Exit, Control, Complete))
       return E;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
     return llvm::Error::success();
   }
+
+private:
+  WhpResourceBinding<WhpPartition> Binding;
 };
-} // namespace
-llvm::Expected<std::unique_ptr<X64Machine>>
-createWhpMachine(MemoryProjection &Memory) {
-  auto M = std::make_unique<WhpMachine>();
+llvm::Expected<std::unique_ptr<WhpPartition>>
+createWhpX64Partition(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpX64Partition>();
   if (auto E = M->API.load())
     return E;
   WHV_CAPABILITY C{};
-  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &C,
-                                     sizeof(C), nullptr)) ||
-      !C.HypervisorPresent)
+  if (const auto Status = M->API.WHvGetCapability(
+          WHvCapabilityCodeHypervisorPresent, &C, sizeof(C), nullptr);
+      FAILED(Status))
+    return whpUnavailable(diagnostic::WhpCapability, Status,
+                          whp::operation::WHvGetCapability);
+  if (!C.HypervisorPresent)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
-  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeExtendedVmExits, &C,
-                                     sizeof(C), nullptr)) ||
-      !C.ExtendedVmExits.ExceptionExit)
+  if (const auto Status = M->API.WHvGetCapability(
+          WHvCapabilityCodeExtendedVmExits, &C, sizeof(C), nullptr);
+      FAILED(Status))
+    return whpUnavailable(diagnostic::WhpCapability, Status,
+                          whp::operation::WHvGetCapability);
+  if (!C.ExtendedVmExits.ExceptionExit)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
-  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeExceptionExitBitmap, &C,
-                                     sizeof(C), nullptr)) ||
-      (C.ExceptionExitBitmap & x64::ExceptionExitBitmap) !=
-          x64::ExceptionExitBitmap)
+  if (const auto Status = M->API.WHvGetCapability(
+          WHvCapabilityCodeExceptionExitBitmap, &C, sizeof(C), nullptr);
+      FAILED(Status))
+    return whpUnavailable(diagnostic::WhpCapability, Status,
+                          whp::operation::WHvGetCapability);
+  if ((C.ExceptionExitBitmap & x64::ExceptionExitBitmap) !=
+      x64::ExceptionExitBitmap)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
-  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeProcessorXsaveFeatures,
-                                     &C, sizeof(C), nullptr)) ||
-      !C.ProcessorXsaveFeatures.XsaveSupport)
+  if (const auto Status = M->API.WHvGetCapability(
+          WHvCapabilityCodeProcessorXsaveFeatures, &C, sizeof(C), nullptr);
+      FAILED(Status))
+    return whpUnavailable(diagnostic::WhpCapability, Status,
+                          whp::operation::WHvGetCapability);
+  if (!C.ProcessorXsaveFeatures.XsaveSupport)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
-  if (FAILED(M->API.WHvCreatePartition(&M->Partition)))
-    return diagnostic::error(diagnostic::WhpCreate);
+  if (const auto Status = M->API.WHvCreatePartition(&M->Partition);
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvCreatePartition);
   WHV_PARTITION_PROPERTY P{};
   P.ProcessorCount = 1;
-  if (FAILED(M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeProcessorCount, &P, sizeof(P))))
-    return diagnostic::error(diagnostic::WhpCreate);
+  if (const auto Status = M->API.WHvSetPartitionProperty(
+          M->Partition, WHvPartitionPropertyCodeProcessorCount, &P, sizeof(P));
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvSetPartitionProperty);
   P = {};
   P.ExtendedVmExits.ExceptionExit = 1;
-  if (FAILED(M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeExtendedVmExits, &P,
-          sizeof(P))))
-    return diagnostic::error(diagnostic::WhpCreate);
-  P = {};
-  P.ProcessorXsaveFeatures.XsaveSupport = 1;
-  if (FAILED(M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeProcessorXsaveFeatures, &P,
-          sizeof(P))))
-    return diagnostic::error(diagnostic::WhpCreate);
+  if (const auto Status = M->API.WHvSetPartitionProperty(
+          M->Partition, WHvPartitionPropertyCodeExtendedVmExits, &P, sizeof(P));
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvSetPartitionProperty);
+  // Keep the host's coherent default XSAVE feature set. Enabling only XSAVE
+  // while clearing its dependent feature bits can make setup fail with
+  // ERROR_HV_INVALID_PARAMETER. Guest XCR0 still admits only x87 and SSE.
   P = {};
   P.ExceptionExitBitmap = x64::ExceptionExitBitmap;
-  if (FAILED(M->API.WHvSetPartitionProperty(
+  if (const auto Status = M->API.WHvSetPartitionProperty(
           M->Partition, WHvPartitionPropertyCodeExceptionExitBitmap, &P,
-          sizeof(P))) ||
-      FAILED(M->API.WHvSetupPartition(M->Partition)))
-    return diagnostic::error(diagnostic::WhpCreate);
+          sizeof(P));
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvSetPartitionProperty);
+  if (const auto Status = M->API.WHvSetupPartition(M->Partition);
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvSetupPartition);
   if (auto E = M->mapMemory(Memory))
     return E;
-  if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
-    return diagnostic::error(diagnostic::WhpCreate);
+  if (const auto Status = M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0);
+      FAILED(Status))
+    return whpError(diagnostic::WhpCreate, Status,
+                    whp::operation::WHvCreateVirtualProcessor);
   if (auto E = M->Xsave.initialize(M->API, M->Partition))
     return E;
   if (auto E = M->initializeRunControl())
     return E;
+  return std::unique_ptr<WhpPartition>(std::move(M));
+}
+} // namespace
+llvm::Expected<std::unique_ptr<X64Machine>>
+createWhpMachine(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpMachine>(Memory);
   if (auto E = verifyX64Machine(*M, Memory))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));

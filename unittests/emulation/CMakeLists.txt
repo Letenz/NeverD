@@ -23,6 +23,7 @@ add_neverd_unittest(NeverDAArch64MemoryTests
 
 add_neverd_unittest(NeverDX64FPTests
   X64FPStateTests.cpp
+  X64XsaveTests.cpp
   X64MachineProbeTests.cpp
   X64ProbeExecutionTests.cpp
   TIMEOUT 15
@@ -66,6 +67,11 @@ target_include_directories(NeverDRAMTransactionTests PRIVATE
 
 add_neverd_unittest(NeverDThreadPointerTests
   ThreadPointerTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
+add_neverd_unittest(NeverDX64IntegerTests
+  X64IntegerTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -183,6 +189,7 @@ add_neverd_unittest(NeverDRunControlTests
   WhpEntryControlTests.cpp
   WhpXsaveTests.cpp
   WhpMemoryTests.cpp
+  WhpResourceTests.cpp
   MachineRunControlTests.cpp
   TIMEOUT 10
   LINK_COMPONENTS EmulationCPU)

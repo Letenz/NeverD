@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "CFunctionParameterCallFixture.h"
 #include "RuntimeFunctionAddressFixture.h"
 #include "gtest/gtest.h"
@@ -9,6 +10,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -186,7 +188,10 @@ TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
   // word/pointer Swift record, rather than mirroring our byte/int128 types.
   const auto Program = Source + R"(
 static unsigned seen, count;
-void *dynamic_oracle(void *, void *, _Bool) __asm__("_swift_getDynamicType");
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
+void *dynamic_oracle(void *, void *, _Bool)
+    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "swift_getDynamicType");
 void *dynamic_oracle(void *value, void *metadata, _Bool flag) {
   seen = flag;
   ++count;
@@ -277,6 +282,305 @@ int main(void) {
   dictionary = 0x112233;
   clear1((void *)expected_metadata, &dictionary);
   if (dictionary != 0x445566 || calls != 2) return 2;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, SwiftNSCoderPreservesMetadataContextAndCompleteResult) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Word = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (const bool Any : {false, true}) {
+    const std::string Import =
+        Any ? "_$"
+              "sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg"
+              "_SStF"
+            : "_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+              "SStSo8NSObjectCRbzSo8NSCodingRzlF";
+    const va_t Slot = Any ? 0x2000 : 0x1000;
+    Image.ImportPtrSlots[Slot] = Import;
+    Image.DyldBindSlots[Slot] = {
+        Import, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+        false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    // Ordinary wrapper prototypes come from the independent compiler client.
+    const std::vector<TypeRef> Types =
+        Any ? std::vector<TypeRef>{Pointer, Word, Word, Pointer, Pointer}
+            : std::vector<TypeRef>{Pointer, Word, Pointer, Pointer, Pointer};
+    std::vector<ExprPtr> Arguments;
+    HighFunc Function;
+    Function.Name = Any ? "decode_any" : "decode_typed";
+    Function.ReturnType = Hint->Signature.ReturnType;
+    for (unsigned I = 0; I != Types.size(); ++I) {
+      Function.Params.push_back({"arg" + std::to_string(I), Types[I]});
+      Arguments.push_back(parameter(I, Types[I]));
+    }
+    HighStmt Statement;
+    Statement.Kind = Any ? StmtKind::ExprStmt : StmtKind::Return;
+    auto Result = call(*Hint, Hint->Signature.ReturnType, Arguments);
+    if (Any)
+      Statement.Val = Result;
+    else
+      Statement.RetVal = Result;
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swift_indirect_result"), std::string::npos);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  const auto Program = Source + R"(
+struct CoderOracle { unsigned calls, empty; };
+struct AnyOracle { uintptr_t buffer[3]; const void *metadata; };
+static int expected_type, expected_metadata, expected_storage;
+uint64_t __attribute__((swiftcall)) typed_oracle(
+    const void *, uint64_t, const void *, const void *,
+    struct CoderOracle * __attribute__((swift_context)))
+    __asm__("_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_SStSo8NSObjectCRbzSo8NSCodingRzlF");
+uint64_t __attribute__((swiftcall)) typed_oracle(
+    const void *type, uint64_t word, const void *storage, const void *metadata,
+    struct CoderOracle *coder __attribute__((swift_context))) {
+  if (type != &expected_type || metadata != &expected_metadata ||
+      storage != &expected_storage || word != 0x8123456789abcdefULL)
+    __builtin_trap();
+  ++coder->calls;
+  return coder->empty ? 0 : (uint64_t)(uintptr_t)metadata;
+}
+void __attribute__((swiftcall)) any_oracle(
+    struct AnyOracle * __attribute__((swift_indirect_result)),
+    uint64_t, uint64_t, const void *,
+    struct CoderOracle * __attribute__((swift_context)))
+    __asm__("_$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF");
+void __attribute__((swiftcall)) any_oracle(
+    struct AnyOracle *result __attribute__((swift_indirect_result)),
+    uint64_t classes, uint64_t word, const void *storage,
+    struct CoderOracle *coder __attribute__((swift_context))) {
+  if (classes != 0xf123456789abcde0ULL || word != 0x1122334455667788ULL ||
+      storage != &expected_storage) __builtin_trap();
+  ++coder->calls;
+  // Apple Clang 17's DSE drops nonvolatile payload stores in this explicit
+  // swift_indirect_result definition even when called without our wrapper.
+  // Keep the oracle writes observable; the generated caller stays optimized.
+  volatile struct AnyOracle *observed = result;
+  observed->buffer[0] = coder->empty ? 0 : classes;
+  observed->buffer[1] = coder->empty ? 0 : word;
+  observed->buffer[2] = coder->empty ? 0 : (uintptr_t)storage;
+  observed->metadata = coder->empty ? 0 : &expected_metadata;
+}
+int main(void) {
+  struct CoderOracle coder = {0, 0};
+  struct { uint64_t before; struct AnyOracle value; uint64_t after; } box;
+  box.before = 0x0123456789abcdefULL;
+  box.after = 0xfedcba9876543210ULL;
+  for (unsigned empty = 0; empty != 2; ++empty) {
+    coder.empty = empty;
+    uint64_t object = decode_typed(&expected_type, 0x8123456789abcdefULL,
+                                   &expected_storage, &expected_metadata, &coder);
+    if (object != (empty ? 0 : (uint64_t)(uintptr_t)&expected_metadata)) return 1;
+    decode_any(&box.value, 0xf123456789abcde0ULL, 0x1122334455667788ULL,
+               &expected_storage, &coder);
+    if (box.value.buffer[0] != (empty ? 0 : 0xf123456789abcde0ULL) ||
+        box.value.buffer[1] != (empty ? 0 : 0x1122334455667788ULL) ||
+        box.value.buffer[2] != (empty ? 0 : (uintptr_t)&expected_storage) ||
+        box.value.metadata != (empty ? 0 : &expected_metadata)) return 2;
+    if (box.before != 0x0123456789abcdefULL || box.after != 0xfedcba9876543210ULL ||
+        coder.calls != 2 * (empty + 1)) return 3;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
+  constexpr va_t Base = 0x1008;
+  constexpr va_t Slot = 0x2000;
+  auto Image = runtime_function_address_test::image(Arch::AArch64);
+  Image.MachOTwoLevelNamespace = true;
+  Image.ImportPtrSlots[Slot] = "_swift_initStaticObject";
+  Image.DyldBindSlots[Slot].Name = "_swift_initStaticObject";
+  Segment Data;
+  Data.VA = Data.FileOff = Base;
+  Data.Size = Data.FileSz = 72;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(72);
+  Data.Data[24] = 1;
+  Data.Data[32] = 2;
+  Data.Data[40] = 'a';
+  Data.Data[41] = 'k';
+  Data.Data[55] = 0xe2;
+  Data.Data[56] = 't';
+  Data.Data[57] = 'w';
+  Data.Data[71] = 0xe2;
+  Image.Segments.push_back(Data);
+  Section Section;
+  Section.Name = "__data";
+  Section.VA = Section.FileOff = Data.VA;
+  Section.Size = Section.FileSz = Data.Size;
+  Section.Flags = Data.Flags;
+  Image.Sections.push_back(Section);
+  Image.Symbols.push_back(
+      {"_$s14StorageFixture5pairsSaySS_SStGyFTv_", Base, 0, false});
+  Image.Symbols.push_back({"_next", Base + 72, 0, false});
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Constructor = returning(
+      "initialize_pairs",
+      call(*Hint, Pointer,
+           {parameter(0, Pointer),
+            HighExpr::makeConst(Base + 8, 8,
+                                ConstantAddressProvenance::DataAddress)}),
+      {Pointer});
+  auto Payload =
+      returning("pair_payload",
+                HighExpr::makeConst(Base + 40, 8,
+                                    ConstantAddressProvenance::DataAddress));
+  const auto BoundConstructor =
+      sdk::bindObjCSourceReferences(Constructor, Image);
+  const auto BoundPayload = sdk::bindObjCSourceReferences(Payload, Image);
+  ASSERT_TRUE(BoundConstructor.Limitation.empty())
+      << BoundConstructor.Limitation;
+  ASSERT_TRUE(BoundPayload.Limitation.empty()) << BoundPayload.Limitation;
+  ASSERT_EQ(BoundConstructor.LocalStorageExtents,
+            BoundPayload.LocalStorageExtents);
+  std::set<std::string> Shared;
+  const auto Source = emit({BoundConstructor.Function, BoundPayload.Function},
+                           true, Arch::AArch64) +
+                      sdk::renderObjCLocalStorageHelpers(
+                          Image, BoundConstructor.LocalStorageExtents, Shared) +
+                      R"(
+static unsigned initialized;
+void *initialize_oracle(void *metadata, void *object)
+  __asm__("_swift_initStaticObject");
+void *initialize_oracle(void *metadata, void *object) {
+  uintptr_t *header = object;
+  if (!header[-1]) {
+    ++initialized;
+    header[0] = (uintptr_t)metadata;
+    header[1] = 0x12345678;
+    header[-1] = 1;
+  }
+  return object;
+}
+int main(void) {
+  int first, second;
+  unsigned char *payload = (unsigned char *)(uintptr_t)pair_payload();
+  if (payload[0] != 'a' || payload[1] != 'k' || payload[15] != 0xe2 ||
+      payload[16] != 't' || payload[17] != 'w' || payload[31] != 0xe2) return 1;
+  uintptr_t *object = initialize_pairs(&first);
+  if ((unsigned char *)object + 32 != payload || object[-1] != 1 ||
+      object[0] != (uintptr_t)&first || object[1] != 0x12345678 ||
+      object[2] != 1 || object[3] != 2) return 2;
+  payload[0] = 'x';
+  if (initialize_pairs(&second) != object || initialized != 1 ||
+      object[0] != (uintptr_t)&first || ((unsigned char *)object)[32] != 'x' ||
+      pair_payload() != (uintptr_t)payload) return 3;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, {Optimization, "-fsanitize=alignment",
+                           "-fsanitize-trap=alignment"});
+}
+
+TEST(HighCSourceCalls, NamedReleaseStorageKeepsOrderingBitsAndAdjacentBytes) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Data;
+  Data.VA = Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 24;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(24);
+  std::fill_n(Data.Data.begin(), 8, 0xa5);
+  std::fill_n(Data.Data.begin() + 16, 8, 0x5a);
+  Image.Segments.push_back(Data);
+  Section Section;
+  Section.Name = "__data";
+  Section.VA = Section.FileOff = Data.VA;
+  Section.Size = Section.FileSz = Data.Size;
+  Section.Flags = Data.Flags;
+  Image.Sections.push_back(Section);
+  Symbol Storage;
+  Storage.Name = "_published_state";
+  Storage.Addr = Data.VA;
+  Storage.Size = Data.Size;
+  Image.Symbols.push_back(Storage);
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  std::map<va_t, uint64_t> Extents;
+  for (const bool Object : {false, true}) {
+    HighFunc Function;
+    Function.Name = Object ? "publish_pointer" : "publish_word";
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {{"arg0", Object ? Pointer : Word}};
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(0x1008, 8);
+    Store.StoreVal = parameter(0, Function.Params.front().Type);
+    Store.MemoryOrdering = NdMemoryOrdering::Release;
+    Function.Body = {Store};
+    const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_EQ(Bound.Function.Body.front().MemoryOrdering,
+              NdMemoryOrdering::Release);
+    for (const auto &[Address, Width] : Bound.LocalStorageExtents)
+      Extents[Address] = std::max(Extents[Address], Width);
+    Functions.push_back(Bound.Function);
+  }
+  for (unsigned I = 0; I != 3; ++I) {
+    auto Function = returning(
+        "read_word" + std::to_string(I),
+        HighExpr::makeLoad(HighExpr::makeConst(0x1000 + 8 * I, 8), Word));
+    const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    for (const auto &[Address, Width] : Bound.LocalStorageExtents)
+      Extents[Address] = std::max(Extents[Address], Width);
+    Functions.push_back(Bound.Function);
+  }
+  std::set<std::string> Shared;
+  const auto Source =
+      emit(Functions, true, Arch::AArch64) +
+      sdk::renderObjCLocalStorageHelpers(Image, Extents, Shared);
+  ASSERT_NE(Source.find("__ATOMIC_RELEASE"), std::string::npos);
+  const auto Program = Source + R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, 0x8000000000000000ULL,
+                              0x1234567887654321ULL, 0};
+  uint64_t *published = (uint64_t *)(neverd_local_storage_1000_address() + 8);
+  for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i) {
+    publish_word(values[i]);
+    if (__atomic_load_n(published, __ATOMIC_ACQUIRE) != values[i] ||
+        read_word1() != values[i]) return 1;
+    if (read_word0() != 0xa5a5a5a5a5a5a5a5ULL ||
+        read_word2() != 0x5a5a5a5a5a5a5a5aULL) return 2;
+  }
+  publish_pointer(published);
+  if (__atomic_load_n(published, __ATOMIC_ACQUIRE) != (uintptr_t)published ||
+      read_word1() != (uintptr_t)published) return 3;
+  publish_pointer(0);
+  if (read_word1() || read_word0() != 0xa5a5a5a5a5a5a5a5ULL ||
+      read_word2() != 0x5a5a5a5a5a5a5a5aULL) return 4;
   return 0;
 }
 )";
@@ -1791,6 +2095,149 @@ int main(void) {
   }
   return 0;
 })");
+}
+
+TEST(HighCSourceCalls, ScrollInsetsPreserveAllFourIndependentValues) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "setContentInset:");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "setContentInset:";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  const auto Double = NdType::makeFloat(8);
+  std::vector<ExprPtr> Leaves;
+  HighFunc Function;
+  Function.Name = "set_insets";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"receiver", Word}, {"selector", Word}};
+  for (unsigned I = 0; I != 4; ++I) {
+    Function.Params.push_back({"edge" + std::to_string(I), Double});
+    Leaves.push_back(parameter(I + 2, Double));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val =
+      call(Hint, Function.ReturnType,
+           {parameter(0, Word), parameter(1, Word),
+            HighExpr::makeRecord(Signature->Parameters.back().Type, Leaves)});
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static InsetsOracle observed;
+static unsigned calls;
+static void implementation(id receiver, SEL selector, InsetsOracle insets) {
+  if (receiver != (id)(uintptr_t)0x1234 ||
+      selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  observed = insets;
+  ++calls;
+}
+static void (*objc_msgSend)(id, SEL, InsetsOracle) = implementation;
+)" + Source + R"(
+int main(void) {
+  const uint64_t patterns[][4] = {
+    {0, 0, 0x4024000000000000ULL, 0},
+    {0x3ff4000000000000ULL, 0xc004000000000000ULL,
+     0x8000000000000000ULL, 0xc032c00000000000ULL},
+    {1, 0x7ff8000000000042ULL, 0xfff0000000000000ULL,
+     0x3fe0000000000000ULL}
+  };
+  _Static_assert(sizeof(InsetsOracle) == 32, "four CGFloat fields");
+  for (unsigned i = 0; i != 3; ++i) {
+    InsetsOracle input;
+    memcpy(&input, patterns[i], sizeof(input));
+    set_insets(0x1234, 0x5678, input.top, input.left, input.bottom, input.right);
+    if (memcmp(&observed, patterns[i], sizeof(observed)) || calls != i + 1)
+      return 1;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
+TEST(HighCSourceCalls, SafeAreaResultPreservesEveryFieldAndSingleEvaluation) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "safeAreaInsets");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "safeAreaInsets";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (unsigned I = 0; I != 4; ++I) {
+    auto Result = call(Hint, Signature->ReturnType,
+                       {parameter(0, Word), parameter(1, Word)});
+    Functions.push_back(returning("read_edge" + std::to_string(I),
+                                  HighExpr::makeRecordField(Result, I * 8, 8),
+                                  {Word, Word}));
+  }
+  const auto Source = emit(Functions, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static unsigned calls;
+static const uint64_t expected[] = {
+  0x3ff4000000000000ULL, 0xc004000000000000ULL,
+  0x8000000000000000ULL, 0x7ff8000000000042ULL
+};
+static InsetsOracle implementation(id receiver, SEL selector) {
+  if (selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  ++calls;
+  InsetsOracle result = {0, 0, 0, 0};
+  if (receiver) {
+    if (receiver != (id)(uintptr_t)0x1234) __builtin_trap();
+    memcpy(&result, expected, sizeof(result));
+  }
+  return result;
+}
+static InsetsOracle (*objc_msgSend)(id, SEL) = implementation;
+)" + Source + R"(
+int main(void) {
+  double (*readers[])(uint64_t, uint64_t) = {
+    read_edge0, read_edge1, read_edge2, read_edge3
+  };
+  for (unsigned i = 0; i != 4; ++i) {
+    double value = readers[i](0x1234, 0x5678);
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != expected[i] || calls != 2 * i + 1) return 1;
+    value = readers[i](0, 0x5678);
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != 0 || calls != 2 * i + 2) return 2;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
 }
 
 TEST(HighCSourceCalls, RuntimeImportsCompileAndPreserveObjectAndVoidEffects) {

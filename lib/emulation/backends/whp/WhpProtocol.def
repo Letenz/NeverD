@@ -9,7 +9,15 @@ NEVERD_WHP_STRING(Library, L"WinHvPlatform.dll")
 #endif
 #ifdef NEVERD_WHP_TEXT
 NEVERD_WHP_TEXT(HostFailure, "{0} (HRESULT {1:x8})")
+NEVERD_WHP_TEXT(OperationFailure, "{0} ({2}; HRESULT {1:x8})")
 NEVERD_WHP_TEXT(MapFailure, "{0} (HRESULT {1:x8}; GPA {2:x}; bytes {3})")
+NEVERD_WHP_TEXT(XsaveSizeFailure,
+                "{0} ({1}; returned bytes {2}; capacity {3}; admitted "
+                "{4}..{5})")
+NEVERD_WHP_TEXT(XsaveEncodeFailure, "{0} ({1}; preparing XSAVE; capacity {2})")
+NEVERD_WHP_TEXT(XsaveDecodeFailure,
+                "{0} ({1}; captured bytes {2}; XSTATE_BV {3:x}; "
+                "XCOMP_BV {4:x}; FCW {5:x}; FOP {6:x}; MXCSR {7:x})")
 #endif
 #ifdef NEVERD_WHP_VALUE
 // WHP's documented status is not declared by every Windows SDK.
@@ -19,6 +27,7 @@ NEVERD_WHP_VALUE(InsufficientBuffer, 0x80370301)
 NEVERD_WHP_FUNCTION(WHvGetCapability)
 NEVERD_WHP_FUNCTION(WHvCreatePartition)
 NEVERD_WHP_FUNCTION(WHvDeletePartition)
+NEVERD_WHP_FUNCTION(WHvGetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetupPartition)
 NEVERD_WHP_FUNCTION(WHvMapGpaRange)

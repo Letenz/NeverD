@@ -5,12 +5,13 @@
 
 // Native i386 host-CPU oracle for lift / decompile / identity-patch.
 // The host can run 32-bit userspace; Unicorn-only roundtrips are not enough.
+// The fixtures are static ELF programs that exit through the Linux `int 0x80`
+// system call, so only a Linux x86 host can run them.
 
 class X86_32_NativeHostMode : public NeverDLiftTest {
 protected:
-  static bool hostCanRunI386() {
-#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) ||             \
-    defined(_M_IX86)
+  static bool hostRunsLinuxI386() {
+#if defined(__linux__) && (defined(__x86_64__) || defined(__i386__))
     return true;
 #else
     return false;
@@ -46,8 +47,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_32_NativeHostMode, IdentityPatchAgreesWithCpu) {
-  if (!hostCanRunI386())
-    GTEST_SKIP() << "native i386 host execution required";
+  if (!hostRunsLinuxI386())
+    GTEST_SKIP() << "native Linux i386 host execution required";
 
   auto Src = tmpFile("i386_add_host.c");
   {
@@ -134,8 +135,8 @@ void _start(void) {
 )";
 
 TEST_F(X86_32_NativeHostMode, EnterWPatchAgreesWithCpu) {
-  if (!hostCanRunI386())
-    GTEST_SKIP() << "native i386 host execution required";
+  if (!hostRunsLinuxI386())
+    GTEST_SKIP() << "native Linux i386 host execution required";
 
   auto Src = tmpFile("i386_enterw_host.c");
   {

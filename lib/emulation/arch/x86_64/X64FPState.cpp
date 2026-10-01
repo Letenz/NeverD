@@ -190,7 +190,10 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
   if (!(Present & X87Present))
     Next.FP = {};
   if (!(Present & SSEPresent)) {
-    Next.MXCSR = x64::InitialMXCSR;
+    // Standard XRSTOR reads MXCSR independently of XSTATE_BV[1]. Only
+    // compacted init state resets it along with the XMM registers.
+    if (Layout & Compacted)
+      Next.MXCSR = x64::InitialMXCSR;
     Next.Xmm = {};
   }
   if (Next.MXCSR & ~x64::AllowedMXCSR)

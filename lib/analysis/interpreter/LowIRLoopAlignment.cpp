@@ -4,9 +4,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "neverd/analysis/LowIRRefinement.h"
+#include "LowIRLoopInference.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <numeric>
 #include <set>
@@ -24,6 +25,13 @@ class AlignmentSearch {
   const LowIRLoopAlignmentLimits &Limits;
   LowIRLoopAlignmentResult Result;
   bool AttemptExhausted = false;
+  struct CachedPlan {
+    bool Attempted = false;
+    std::optional<LowIRLoopRefinementPlan> Plan;
+    std::string Diagnostic;
+  };
+  std::array<CachedPlan, 2> OriginalPlans, CandidatePlans;
+  uint64_t RemainingCachedMetadata;
   using BlockMap = std::map<int, const LowBlock *>;
 
   [[noreturn]] void stop(Status S, llvm::StringRef Message) {
@@ -91,12 +99,16 @@ class AlignmentSearch {
     return false;
   }
 
-  LowIRLoopInferenceResult infer(const LowFunc &F,
-                                 LowIRLoopInferenceLimits Stage,
-                                 llvm::ArrayRef<va_t> Eligible = {}) {
+  LowIRLoopInferenceResult
+  infer(const LowFunc &F, LowIRLoopInferenceLimits Stage,
+        llvm::ArrayRef<va_t> Eligible = {}, bool BranchArms = false,
+        const LowIRLoopRefinementPlan *Default = nullptr) {
     Stage.Execution.MaxSolverQueries =
         queryGrant(Stage.Execution.MaxSolverQueries);
-    auto R = inferLowIRLoopRefinementPlan(F, Contract, Stage, Eligible);
+    auto R = BranchArms
+                 ? detail::inferBranchArmLowIRLoopRefinementPlan(F, Contract,
+                                                                 Stage, Default)
+                 : inferLowIRLoopRefinementPlan(F, Contract, Stage, Eligible);
     Result.SolverQueries += R.SolverQueries;
     AttemptExhausted |= R.Status == LowIRLoopInferenceStatus::BudgetExceeded;
     if (R.Status == LowIRLoopInferenceStatus::Invalid)
@@ -190,24 +202,74 @@ class AlignmentSearch {
     return false;
   }
 
-  bool tryCandidate(const LowIRLoopRefinementPlan &Left,
-                    llvm::ArrayRef<va_t> Eligible = {}) {
+  LowIRLoopInferenceResult
+  inferCandidate(llvm::ArrayRef<va_t> Eligible = {}, bool BranchArms = false,
+                 const LowIRLoopRefinementPlan *Default = nullptr) {
     requireQueries();
     if (Result.CandidateAttempts >= Limits.MaxCandidateAttempts)
       stop(Status::BudgetExceeded, "loop alignment candidate budget exhausted");
     ++Result.CandidateAttempts;
-    auto Right = infer(Candidate, Limits.CandidateInference, Eligible);
+    auto Right = infer(Candidate, Limits.CandidateInference, Eligible,
+                       BranchArms, Default);
     if (!Right.inferred()) {
       Result.LastCandidateDiagnostic = Right.Diagnostic;
       requireQueries();
-      return false;
     }
-    if (Right.Plan->Cutpoints.size() > Limits.MaxCuts) {
+    return Right;
+  }
+
+  bool admissible(const LowIRLoopRefinementPlan &Plan) {
+    if (Plan.Cutpoints.size() > Limits.MaxCuts) {
       AttemptExhausted = true;
       Result.LastCandidateDiagnostic = "loop alignment cut count exceeded";
       return false;
     }
-    if (Right.Plan->Cutpoints.size() != Left.Cutpoints.size()) {
+    return true;
+  }
+
+  void remember(LowIRLoopInferenceResult R, CachedPlan &Cache) {
+    Cache.Diagnostic = R.Diagnostic;
+    if (!R.inferred())
+      return;
+    auto Remaining = RemainingCachedMetadata;
+    if (!admissible(*R.Plan) || !planMetadata(*R.Plan, Remaining)) {
+      Cache.Diagnostic = Result.LastCandidateDiagnostic;
+      return;
+    }
+    RemainingCachedMetadata = Remaining;
+    Cache.Plan = std::move(R.Plan);
+  }
+
+  const LowIRLoopRefinementPlan *originalPlan(unsigned Family) {
+    auto &Cache = OriginalPlans[Family];
+    if (!Cache.Attempted) {
+      Cache.Attempted = true;
+      const auto &Default = OriginalPlans[0].Plan;
+      remember(infer(Original, Limits.OriginalInference, {}, Family != 0,
+                     Default ? &*Default : nullptr),
+               Cache);
+      if (!Cache.Plan)
+        requireQueries();
+    }
+    return Cache.Plan ? &*Cache.Plan : nullptr;
+  }
+
+  const LowIRLoopRefinementPlan *candidatePlan(unsigned Family) {
+    auto &Cache = CandidatePlans[Family];
+    if (!Cache.Attempted) {
+      Cache.Attempted = true;
+      const auto &Default = CandidatePlans[0].Plan;
+      remember(inferCandidate({}, Family != 0, Default ? &*Default : nullptr),
+               Cache);
+    }
+    if (!Cache.Plan)
+      Result.LastCandidateDiagnostic = Cache.Diagnostic;
+    return Cache.Plan ? &*Cache.Plan : nullptr;
+  }
+
+  bool tryPlans(const LowIRLoopRefinementPlan &Left,
+                const LowIRLoopRefinementPlan &Right) {
+    if (Right.Cutpoints.size() != Left.Cutpoints.size()) {
       Result.LastCandidateDiagnostic = "loop alignment cut counts differ";
       return false;
     }
@@ -215,7 +277,7 @@ class AlignmentSearch {
     std::vector<size_t> Order(Left.Cutpoints.size());
     std::iota(Order.begin(), Order.end(), 0);
     do {
-      if (pairAndCheck(Left, *Right.Plan, Order))
+      if (pairAndCheck(Left, Right, Order))
         return true;
       charge(Order.size());
     } while (std::next_permutation(Order.begin(), Order.end()));
@@ -228,25 +290,40 @@ public:
                   const LowFunc &B, const LowIRIndependenceContract &C,
                   LowIRRefinementWitness W, const LowIRLoopAlignmentLimits &L)
       : Original(A), Candidate(B), OriginalInstructions(Records), Contract(C),
-        Witness(W), Limits(L) {}
+        Witness(W), Limits(L), RemainingCachedMetadata(L.MaxMetadata) {}
 
   LowIRLoopAlignmentResult run() {
     try {
       index(Original);
       const auto Blocks = index(Candidate);
-      auto Left = infer(Original, Limits.OriginalInference);
-      if (!Left.inferred())
+      // Try corresponding families before spending the remaining attempts
+      // on individual candidate cuts. Failed inferences are cached as well:
+      // crossing families must not replay an exhausted or duplicate proposal.
+      for (unsigned Family : {0, 1})
+        if (const auto *Left = originalPlan(Family))
+          if (const auto *Right = candidatePlan(Family))
+            if (tryPlans(*Left, *Right))
+              return std::move(Result);
+      if (std::none_of(OriginalPlans.begin(), OriginalPlans.end(),
+                       [](const auto &P) { return P.Plan.has_value(); }))
         stop(AttemptExhausted ? Status::BudgetExceeded : Status::Unsupported,
-             "original loop inference: " + Left.Diagnostic);
-      if (Left.Plan->Cutpoints.size() > Limits.MaxCuts)
-        stop(Status::BudgetExceeded, "loop alignment cut count exceeded");
-      if (tryCandidate(*Left.Plan))
-        return std::move(Result);
+             "original loop inference: " + OriginalPlans.back().Diagnostic);
+      for (unsigned Family : {0, 1})
+        if (const auto &Left = OriginalPlans[Family].Plan)
+          if (const auto *Right = candidatePlan(1 - Family))
+            if (tryPlans(*Left, *Right))
+              return std::move(Result);
       requireQueries();
       for (const auto &B : Candidate.Blocks) {
         charge();
-        if (cyclic(B, Blocks) && tryCandidate(*Left.Plan, {B.StartAddr}))
-          return std::move(Result);
+        if (!cyclic(B, Blocks))
+          continue;
+        auto Right = inferCandidate({B.StartAddr});
+        if (!Right.inferred() || !admissible(*Right.Plan))
+          continue;
+        for (const auto &Left : OriginalPlans)
+          if (Left.Plan && tryPlans(*Left.Plan, *Right.Plan))
+            return std::move(Result);
       }
       stop(AttemptExhausted ? Status::BudgetExceeded : Status::Unsupported,
            AttemptExhausted

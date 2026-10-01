@@ -92,6 +92,20 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "invalidateIntrinsicContentSize", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "mainScreen", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "nibWithNibName:bundle:", "@32@0:8@16@24", nullptr},
+// Public UIViewController object getters, also present in the MacOSX 15.5
+// UIKit header inventory. Every SDK owner agrees on the object result and
+// absence of explicit parameters; Apple Clang independently encodes these
+// declarations for arm64 iOS and arm64 iOS Simulator as @16@0:8.
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/viewifloaded?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/view?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/navigationitem?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/navigationcontroller?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/presentedviewcontroller?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "viewIfLoaded", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "view", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "navigationItem", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "navigationController", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "presentedViewController", "@16@0:8", nullptr},
 // UIProgressView additions: both complete Xcode 26.5 Messages ASTs from
 // GitHub Actions artifact 10653622473 agree on every owner of these selectors.
 // iPhoneOS SHA-256: dc99c06a9e4aab8015f8675b08ac55e042201401c21d39a4df4535aa63e0303f
@@ -102,6 +116,13 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "potentialEDRHeadroom", "d16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "resignFirstResponder", "B16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "safeAreaLayoutGuide", "@16@0:8", nullptr},
+// UIView's public iOS properties and the local UIKit header inventory agree
+// on signed NSInteger layout direction and the four-Double inset result.
+// Apple Clang independently emits these encodings on both arm64 iOS targets.
+// https://developer.apple.com/documentation/uikit/uiview/effectiveuserinterfacelayoutdirection?language=objc
+// https://developer.apple.com/documentation/uikit/uiview/safeareainsets?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "effectiveUserInterfaceLayoutDirection", "q16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "safeAreaInsets", "{UIEdgeInsets=dddd}16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "scale", "d16@0:8", nullptr},
 // UIColor's public no-argument instance method has this exact arm64 ABI;
 // unqualified selector use is admitted only when local declarations agree.
@@ -117,6 +138,14 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setCenter:", "v32@0:8{CGPoint=dd}16", nullptr},
 // UIView and UIAccessibility Boolean setters share this exact fixed ABI.
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setClipsToBounds:", "v20@0:8B16", nullptr},
+// UIScrollView's public iOS properties declare BOOL and UIEdgeInsets. The
+// MacOSX SDK's UIKit inventory agrees on both selectors and their sole owner;
+// Apple Clang independently encodes the published types on arm64 iOS and
+// arm64 iOS Simulator. UIEdgeInsets keeps top, left, bottom and right doubles.
+// https://developer.apple.com/documentation/uikit/uiscrollview/bounces?language=objc
+// https://developer.apple.com/documentation/uikit/uiscrollview/contentinset?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBounces:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
 // UIView's public layout-priority setters take float UILayoutPriority and a
 // signed NSInteger-backed axis. Apple Clang emits this packed arm64 encoding
 // for both methods; the ABI keeps s0 and x2 in separate register banks.
@@ -168,4 +197,4 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "transitionCoordinator", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "flashScrollIndicators", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "endBackgroundTask:", "v24@0:8Q16", nullptr},
-// clang-format on
+    // clang-format on

@@ -1,0 +1,91 @@
+//===- WhpHostFailureCases.def - Independent native error expectations ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_RUN_FAILURE
+NEVERD_WHP_RUN_FAILURE(
+    E_FAIL, "WHP single-step execution failed (WHvRunVirtualProcessor; HRESULT "
+            "0x80004005)")
+NEVERD_WHP_RUN_FAILURE(
+    E_ACCESSDENIED,
+    "WHP single-step execution failed (WHvRunVirtualProcessor; HRESULT "
+    "0x80070005)")
+#endif
+#ifdef NEVERD_WHP_FAILURE_TEXT
+NEVERD_WHP_FAILURE_TEXT(
+    FeatureQuery,
+    "WHP CPU state transfer failed (WHvGetPartitionProperty; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    ModernCapture,
+    "WHP CPU state transfer failed (WHvGetVirtualProcessorState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyCapture,
+    "WHP CPU state transfer failed (WHvGetVirtualProcessorXsaveState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    ModernInstall,
+    "WHP CPU state transfer failed (WHvSetVirtualProcessorState; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyInstall,
+    "WHP CPU state transfer failed (WHvSetVirtualProcessorXsaveState; HRESULT "
+    "0x80004005)")
+#endif
+#ifdef NEVERD_WHP_XSAVE_SIZE
+// Actual byte count, capacity, independent legacy and modern diagnostics.
+NEVERD_WHP_XSAVE_SIZE(
+    575, 0,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorXsaveState; returned bytes 575; capacity 0; "
+    "admitted 576..65536)",
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorState; returned bytes 575; capacity 0; "
+    "admitted 576..65536)")
+NEVERD_WHP_XSAVE_SIZE(
+    65537, 0,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorXsaveState; returned bytes 65537; capacity 0; "
+    "admitted 576..65536)",
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorState; returned bytes 65537; capacity 0; "
+    "admitted 576..65536)")
+NEVERD_WHP_XSAVE_SIZE(
+    575, 576,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorXsaveState; returned bytes 575; capacity 576; "
+    "admitted 576..65536)",
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorState; returned bytes 575; capacity 576; "
+    "admitted 576..65536)")
+NEVERD_WHP_XSAVE_SIZE(
+    577, 576,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorXsaveState; returned bytes 577; capacity 576; "
+    "admitted 576..65536)",
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorState; returned bytes 577; capacity 576; "
+    "admitted 576..65536)")
+#endif
+#ifdef NEVERD_WHP_FAILURE_TEXT
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyMalformed,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorXsaveState; captured bytes 576; XSTATE_BV 0x10000; "
+    "XCOMP_BV 0x8000000000000003; FCW 0x37f; FOP 0x321; MXCSR 0x3f85)")
+NEVERD_WHP_FAILURE_TEXT(
+    ModernMalformed,
+    "invalid x64 floating-point state buffer "
+    "(WHvGetVirtualProcessorState; captured bytes 576; XSTATE_BV 0x10000; "
+    "XCOMP_BV 0x8000000000000003; FCW 0x37f; FOP 0x321; MXCSR 0x3f85)")
+NEVERD_WHP_FAILURE_TEXT(
+    LegacyInvalidInput,
+    "invalid x64 floating-point state buffer "
+    "(WHvSetVirtualProcessorXsaveState; preparing XSAVE; capacity 576)")
+NEVERD_WHP_FAILURE_TEXT(
+    ModernInvalidInput,
+    "invalid x64 floating-point state buffer "
+    "(WHvSetVirtualProcessorState; preparing XSAVE; capacity 576)")
+#endif

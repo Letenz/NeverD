@@ -8,6 +8,7 @@
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "FiniteValues.h"
+#include "LowIRLoopInference.h"
 #include "NativeStackControl.h"
 #include "NativeUndefinedIndependence.h"
 #include "X64UserFlags.h"
@@ -2634,6 +2635,7 @@ class LoopPlanInference {
   LowIRLoopInferenceResult Result;
   std::map<int, const LowBlock *> Blocks;
   std::vector<va_t> Choices;
+  std::vector<va_t> BranchArmEntries;
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
@@ -2867,17 +2869,20 @@ class LoopPlanInference {
       const auto Initial = read(Prefix, W.Location);
       const auto Before = read(*Session.CandidateStart, W.Location);
       auto Stable = W.FixedMask;
-      bool Holds = true, Additive = true;
+      bool Holds = true, Additive = false;
       for (auto &State : Session.CandidateReturns) {
         if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
           continue;
         const auto After = read(State, W.Location);
-        Additive &= additiveRecurrence(Before, After, W.Location.Bytes);
+        Additive |= additiveRecurrence(Before, After, W.Location.Bytes);
         Stable &= commonBits(Initial, After, W.Location.Bytes);
         const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      // One additive arm can invalidate spurious prefix bits even when a
+      // sibling stutters or resets. Structural bits still intersect every
+      // returning arm, and an already valid mask is never weakened here.
       if (!Holds && !Additive) {
         // Relations such as packed flags often require the path predicate:
         // equal system bits need not have identical expression trees. Keep
@@ -3122,6 +3127,11 @@ class LoopPlanInference {
     return HasBackedge;
   }
 
+  struct Edge {
+    size_t Source;
+    TerminalState Before, After;
+  };
+
   bool inferAt(va_t Address) {
     GeneralContractFailure = false;
     auto &Cut = Plan.Cutpoints[ActiveCutpoint];
@@ -3171,6 +3181,15 @@ class LoopPlanInference {
     if (!Stable)
       stop(Status::BudgetExceeded, "loop inference widening budget exhausted");
 
+    // Scalar guesses add guards and replace the transition snapshots. Keep
+    // the complete stable domain for a later lexicographic proposal: a failed
+    // scalar guard must not hide a stuttering sibling transition.
+    const auto StableCut = Cut;
+    std::vector<Edge> StableEdges;
+    for (const auto &After : Session.CandidateReturns)
+      if (After.Cutpoint == static_cast<int>(ActiveCutpoint))
+        StableEdges.push_back({ActiveCutpoint, *Session.CandidateStart, After});
+
     // Prefer directly observed unit recurrences, avoiding expensive guesses
     // about accumulators before trying a plain induction variable.
     const auto Bounds = boundLocations();
@@ -3187,25 +3206,69 @@ class LoopPlanInference {
         (Unit ? Ranks : OtherRanks).emplace_back(I, Complement);
       }
     }
-    Ranks.insert(Ranks.end(), OtherRanks.begin(), OtherRanks.end());
-    for (const auto &[Index, Complement] : Ranks) {
+    std::optional<TupleRankSearch> TupleSearch;
+    bool TupleInitialized = false, TupleExhausted = false;
+    const auto TryTuples = [&](std::optional<uint32_t> Attempts) {
+      if (TupleExhausted)
+        return false;
+      Cut = StableCut;
+      if (!TupleInitialized) {
+        TupleInitialized = true;
+        for (const auto &State : Prefixes)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint) &&
+              !fits(State)) {
+            TupleExhausted = true;
+            return false;
+          }
+        for (const auto &E : StableEdges)
+          if (!fits(E.After)) {
+            TupleExhausted = true;
+            return false;
+          }
+        TupleSearch = makeTupleSearch(StableEdges);
+      }
+      const auto Status = inferTupleRanks(StableEdges, *TupleSearch, Attempts);
+      TupleExhausted = Status == TupleRankStatus::Exhausted;
+      return Status == TupleRankStatus::Inferred;
+    };
+    uint32_t EarlyTupleAttempts = 0;
+    const auto TryEarlyTuple = [&] {
+      // Keep this window independent of the remaining budget, so an exact
+      // replay follows the same proposal prefix. It grants no extra budget.
+      if (EarlyTupleAttempts == 8)
+        return false;
+      const auto Before = Result.RankCandidates;
+      const bool Inferred = TryTuples(1);
+      EarlyTupleAttempts += Result.RankCandidates - Before;
+      return Inferred;
+    };
+    const auto TryScalar = [&](size_t Index, bool Complement, bool Interleave) {
       const auto Try = [&](bool Guard, std::optional<LowIRLoopLocation> Bound) {
         if (Result.RankCandidates >= Limits.MaxRankCandidates)
           stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
         ++Result.RankCandidates;
         makeTemplate(Index, Complement, Guard, Bound);
-        return checkRank(Prefixes);
+        return checkRank(Prefixes) || (Interleave && TryEarlyTuple());
       };
       if (Try(false, {}) || Try(true, {}))
         return true;
       for (const auto &Bound : Bounds)
         if (Bound.Bytes == words()[Index].Location.Bytes && Try(false, Bound))
           return true;
-    }
-    return false;
+      return false;
+    };
+    for (const auto &[Index, Complement] : Ranks)
+      if (TryScalar(Index, Complement, false))
+        return true;
+    if (TryEarlyTuple())
+      return true;
+    for (const auto &[Index, Complement] : OtherRanks)
+      if (TryScalar(Index, Complement, true))
+        return true;
+    return TryTuples({});
   }
 
-  void findChoices(llvm::ArrayRef<va_t> Eligible) {
+  void findChoices(llvm::ArrayRef<va_t> Eligible, bool BranchArms) {
     for (const auto &B : Candidate.Blocks)
       Blocks.emplace(B.Id, &B);
     const auto Root = std::find_if(
@@ -3281,45 +3344,73 @@ class LoopPlanInference {
     for (int Id : Order)
       if (Members[Components.at(Id)].size() > 1)
         Add(Id);
+    if (BranchArms)
+      for (int Id : Order) {
+        const auto &B = *Blocks.at(Id);
+        if (Members[Components.at(Id)].size() < 2 || B.Succs.size() < 2)
+          continue;
+        for (int S : B.Succs) {
+          const auto Address = Blocks.at(S)->StartAddr;
+          if (Components.at(S) == Components.at(Id) &&
+              Blocks.at(S)->Succs.size() == 1 &&
+              std::find(Choices.begin(), Choices.end(), Address) !=
+                  Choices.end() &&
+              std::find(BranchArmEntries.begin(), BranchArmEntries.end(),
+                        Address) == BranchArmEntries.end()) {
+            if (BranchArmEntries.size() >= Limits.MaxCutpointAttempts)
+              stop(Status::BudgetExceeded,
+                   "loop inference cutpoint budget exhausted");
+            BranchArmEntries.push_back(Address);
+          }
+        }
+      }
+  }
+
+  std::vector<int> uncoveredCycle(const std::set<va_t> &Selected) {
+    std::map<int, unsigned> Color;
+    std::vector<int> Cycle;
+    // Removing a cut can disconnect a reachable cycle from the entry. Its
+    // transitions still need coverage, so retain every originally reachable
+    // block as a possible DFS root.
+    for (int Root : ReachableBlocks) {
+      if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
+        continue;
+      std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
+      Color[Root] = 1;
+      while (!Stack.empty() && Cycle.empty()) {
+        auto &[Id, Next] = Stack.back();
+        const auto &Succs = Blocks.at(Id)->Succs;
+        if (Next == Succs.size()) {
+          Color[Id] = 2;
+          Stack.pop_back();
+          continue;
+        }
+        const int S = Succs[Next++];
+        if (Selected.count(Blocks.at(S)->StartAddr))
+          continue;
+        if (Color[S] == 1) {
+          const auto First = std::find_if(Stack.begin(), Stack.end(),
+                                          [&](auto P) { return P.first == S; });
+          for (auto It = First; It != Stack.end(); ++It)
+            Cycle.push_back(It->first);
+        } else if (!Color[S]) {
+          Color[S] = 1;
+          Stack.emplace_back(S, 0);
+        }
+      }
+      if (!Cycle.empty())
+        break;
+    }
+    return Cycle;
   }
 
   // Select a feedback set before symbolic execution. Trying a single cut on
   // a nested cycle first would spend the whole finite budget unrolling it.
-  std::optional<std::vector<va_t>> feedbackCuts() {
-    std::set<va_t> Selected;
+  std::optional<std::vector<va_t>> feedbackCuts(std::set<va_t> Selected = {}) {
+    if (Selected.size() > Limits.MaxCutpointAttempts)
+      stop(Status::BudgetExceeded, "loop inference cutpoint budget exhausted");
     for (;;) {
-      std::map<int, unsigned> Color;
-      std::vector<int> Cycle;
-      for (int Root : ReachableBlocks) {
-        if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
-          continue;
-        std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
-        Color[Root] = 1;
-        while (!Stack.empty() && Cycle.empty()) {
-          auto &[Id, Next] = Stack.back();
-          const auto &Succs = Blocks.at(Id)->Succs;
-          if (Next == Succs.size()) {
-            Color[Id] = 2;
-            Stack.pop_back();
-            continue;
-          }
-          const int S = Succs[Next++];
-          if (Selected.count(Blocks.at(S)->StartAddr))
-            continue;
-          if (Color[S] == 1) {
-            const auto First =
-                std::find_if(Stack.begin(), Stack.end(),
-                             [&](auto P) { return P.first == S; });
-            for (auto It = First; It != Stack.end(); ++It)
-              Cycle.push_back(It->first);
-          } else if (!Color[S]) {
-            Color[S] = 1;
-            Stack.emplace_back(S, 0);
-          }
-        }
-        if (!Cycle.empty())
-          break;
-      }
+      const auto Cycle = uncoveredCycle(Selected);
       if (Cycle.empty()) {
         std::vector<va_t> Cuts;
         for (va_t Address : Choices)
@@ -3341,11 +3432,6 @@ class LoopPlanInference {
       Selected.insert(*Choice);
     }
   }
-
-  struct Edge {
-    size_t Source;
-    TerminalState Before, After;
-  };
 
   std::vector<Edge> transitions(bool General) {
     std::vector<Edge> Edges;
@@ -3869,6 +3955,83 @@ class LoopPlanInference {
       throw Stop{};
   }
 
+  struct TupleRankSearch {
+    std::vector<Counter> Candidates, Ranks;
+    std::vector<size_t> Next{0};
+    size_t Size = 1, MaxSize = 0;
+    bool Resume = false;
+  };
+  enum class TupleRankStatus { Inferred, Exhausted, Paused };
+
+  TupleRankSearch makeTupleSearch(std::vector<Edge> &Edges) {
+    TupleRankSearch Search;
+    for (const auto &Location : locations()) {
+      const auto Before = Search.Candidates.size();
+      for (bool Complement : {false, true}) {
+        bool Unit = false;
+        for (auto &E : Edges)
+          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+                           Location.Bytes, Complement);
+        if (Unit)
+          Search.Candidates.push_back({Location, Complement});
+      }
+      Search.MaxSize += Search.Candidates.size() != Before;
+    }
+    return Search;
+  }
+
+  static bool nextTuple(TupleRankSearch &Search) {
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume] = Search;
+    if (Resume) {
+      Ranks.pop_back();
+      Next.pop_back();
+      Resume = false;
+    }
+    while (Size <= MaxSize) {
+      if (Ranks.size() == Size) {
+        Resume = true;
+        return true;
+      }
+      if (Next.back() == Candidates.size()) {
+        if (Ranks.empty()) {
+          ++Size;
+          Next.front() = 0;
+        } else {
+          Ranks.pop_back();
+          Next.pop_back();
+        }
+        continue;
+      }
+      const auto &C = Candidates[Next.back()++];
+      if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
+            return sameLocation(C.Location, R.Location);
+          }))
+        continue;
+      Ranks.push_back(C);
+      Next.push_back(0);
+    }
+    return false;
+  }
+
+  TupleRankStatus inferTupleRanks(std::vector<Edge> &Edges,
+                                  TupleRankSearch &Search,
+                                  std::optional<uint32_t> MaxAttempts = {}) {
+    for (uint32_t Attempt = 0; !MaxAttempts || Attempt < *MaxAttempts;
+         ++Attempt) {
+      if (!nextTuple(Search))
+        return TupleRankStatus::Exhausted;
+      if (Result.RankCandidates >= Limits.MaxRankCandidates)
+        stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+      ++Result.RankCandidates;
+      Phases Phase;
+      if (inferPhases(Edges, Search.Ranks, Phase)) {
+        installRanks(Search.Ranks, Phase);
+        return TupleRankStatus::Inferred;
+      }
+    }
+    return TupleRankStatus::Paused;
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
@@ -3943,43 +4106,8 @@ class LoopPlanInference {
         if (!fits(S))
           return false;
       }
-    std::vector<Counter> Candidates;
-    for (const auto &Location : locations())
-      for (bool Complement : {false, true}) {
-        bool Unit = false;
-        for (auto &E : Edges)
-          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
-                           Location.Bytes, Complement);
-        if (Unit)
-          Candidates.push_back({Location, Complement});
-      }
-    std::vector<Counter> Ranks;
-    Phases Phase;
-    const auto Search = [&](auto &&Self, size_t Size) -> bool {
-      if (Ranks.size() == Size) {
-        if (Result.RankCandidates >= Limits.MaxRankCandidates)
-          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
-        ++Result.RankCandidates;
-        return inferPhases(Edges, Ranks, Phase);
-      }
-      for (const auto &C : Candidates) {
-        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
-              return sameLocation(C.Location, R.Location);
-            }))
-          continue;
-        Ranks.push_back(C);
-        if (Self(Self, Size))
-          return true;
-        Ranks.pop_back();
-      }
-      return false;
-    };
-    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
-      if (Search(Search, Size)) {
-        installRanks(Ranks, Phase);
-        return true;
-      }
-    return false;
+    auto Search = makeTupleSearch(Edges);
+    return inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred;
   }
 
 public:
@@ -3997,7 +4125,9 @@ public:
     Session.LoopPrefixes.resize(1);
   }
 
-  LowIRLoopInferenceResult run(llvm::ArrayRef<va_t> Eligible) {
+  LowIRLoopInferenceResult
+  run(llvm::ArrayRef<va_t> Eligible, bool BranchArms = false,
+      const LowIRLoopRefinementPlan *DefaultPlan = nullptr) {
     std::string LastTemplateFailure;
     try {
       if (!prepareCandidateRecords(Session, Records) ||
@@ -4009,22 +4139,39 @@ public:
       if (!Limits.MaxCutpointAttempts || !Limits.MaxWideningRounds ||
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
-      findChoices(Eligible);
-      const auto Feedback = feedbackCuts();
+      findChoices(Eligible, BranchArms);
+      if (BranchArms && BranchArmEntries.empty())
+        stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
+      // A complete branch-arm set can preserve phases that a shared header
+      // collapses. Add feedback cuts only for cycles it does not yet cover.
+      const auto Feedback =
+          BranchArms ? feedbackCuts(std::set<va_t>(BranchArmEntries.begin(),
+                                                   BranchArmEntries.end()))
+                     : feedbackCuts();
       if (!Feedback)
         stop(Status::Unsupported,
              "eligible cutpoints do not cover every cycle");
+      if (BranchArms && DefaultPlan &&
+          Feedback->size() == DefaultPlan->Cutpoints.size() &&
+          std::all_of(Feedback->begin(), Feedback->end(), [&](va_t Address) {
+            return std::any_of(
+                DefaultPlan->Cutpoints.begin(), DefaultPlan->Cutpoints.end(),
+                [&](const auto &C) { return C.OriginalAddress == Address; });
+          }))
+        stop(Status::Unsupported, "branch-arm cuts duplicate default plan");
       if (Feedback->size() > 1 || MultipleCycles) {
         if (inferMultiple(*Feedback)) {
           Result.Status = LowIRLoopInferenceStatus::Inferred;
           Result.Plan = Plan;
         }
       } else
-        for (va_t Address : Choices) {
+        for (va_t Address : BranchArms ? *Feedback : Choices) {
           if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
             stop(Status::BudgetExceeded,
                  "loop inference cutpoint budget exhausted");
           ++Result.CutpointAttempts;
+          if (!uncoveredCycle({Address}).empty())
+            continue;
           try {
             if (inferAt(Address)) {
               Result.Status = LowIRLoopInferenceStatus::Inferred;
@@ -4072,6 +4219,14 @@ inferLowIRLoopRefinementPlan(const LowFunc &Candidate,
                              const LowIRLoopInferenceLimits &Limits,
                              llvm::ArrayRef<va_t> EligibleCutpoints) {
   return LoopPlanInference(Candidate, Contract, Limits).run(EligibleCutpoints);
+}
+
+LowIRLoopInferenceResult detail::inferBranchArmLowIRLoopRefinementPlan(
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopInferenceLimits &Limits,
+    const LowIRLoopRefinementPlan *DefaultPlan) {
+  return LoopPlanInference(Candidate, Contract, Limits)
+      .run({}, true, DefaultPlan);
 }
 
 LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(

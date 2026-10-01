@@ -459,6 +459,23 @@ constexpr size_t kMaxSingleGlobalEmbedLen = 1u << 20; // 1 MiB
 /// as a coincidental integer rather than a genuine table anchor.
 constexpr uint64_t kMaxRodataAnchorBackDistance = 0x10000;
 
+/// Graph expansions for one scalar-offset provenance proof of a table address.
+/// Exhaustion leaves the proof undecided, and a memoized closed-graph proof may
+/// still decide it.
+constexpr int kMaxScalarOffsetProofNodes = 16384;
+
+/// Expansions for the single retry of a scalar-offset proof that exhausted
+/// kMaxScalarOffsetProofNodes and that the closed-graph proof could not decide.
+/// The path-sensitive proof re-enters a loop induction PHI once for every
+/// vector lane that reads it, since a PHI's result depends on its anchoring
+/// context and is never cached.  A NEON base64 encoder (a64o157_b64) needs
+/// more than 32768 expansions for its table offsets; keep the next power of
+/// two.  Exhaustion of the retry means "no proof": the emitter keeps the raw
+/// model or refuses the stale-address fallback.
+constexpr int kMaxEscalatedScalarOffsetProofNodes = 65536;
+static_assert(kMaxEscalatedScalarOffsetProofNodes >=
+              kMaxScalarOffsetProofNodes);
+
 //===----------------------------------------------------------------------===//
 // Structuring / SSA
 //===----------------------------------------------------------------------===//
