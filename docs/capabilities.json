@@ -3569,6 +3569,15 @@
       "tests": [
         {
           "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NativeGuestRAMDistinguishesEntryFromCaptureLoss/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDX64FPTests",
           "source": "unittests/emulation/X64XsaveTests.cpp",
           "filter": "X64Xsave.WideLayoutIgnoresAbsentComponentsAndAlignmentPadding",

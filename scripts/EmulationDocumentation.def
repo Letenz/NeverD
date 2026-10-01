@@ -292,3 +292,11 @@ NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(WhpMetadata, "WhpXsaveRegisters.def")
 NEVERD_EMULATION_DOC_TOKEN(WhpMetadata, "NamedMetadataRestoresOmittedPacketFields")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WhpFPBoundary, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WhpFPBoundary, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WhpFPBoundary, "NativeGuestRAMDistinguishesEntryFromCaptureLoss")
+#endif

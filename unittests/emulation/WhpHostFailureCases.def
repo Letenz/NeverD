@@ -101,3 +101,31 @@ NEVERD_WHP_FAILURE_TEXT(
     "invalid x64 floating-point state buffer "
     "(WHvSetVirtualProcessorState; preparing XSAVE; capacity 576)")
 #endif
+
+#ifdef NEVERD_WHP_HOST_VALUE
+NEVERD_WHP_HOST_VALUE(BoundaryRAMLimit, 4 * 1024 * 1024)
+NEVERD_WHP_HOST_VALUE(BoundaryCode, 0x1000)
+NEVERD_WHP_HOST_VALUE(BoundaryData, 0x2000)
+NEVERD_WHP_HOST_VALUE(BoundaryInputOffset, 512)
+NEVERD_WHP_HOST_VALUE(BoundaryTimeoutMilliseconds, 1000)
+#endif
+#ifdef NEVERD_WHP_HOST_TEXT
+NEVERD_WHP_HOST_TEXT(
+    BoundaryTrace,
+    "guest restore {0}; host pointer feature {1}; "
+    "partition pointer feature {2}; explicit feature {3}; debug exit {4}")
+NEVERD_WHP_HOST_TEXT(BoundaryGuestState, "guest FXSAVE state")
+NEVERD_WHP_HOST_TEXT(BoundaryAPIState, "host XSAVE state")
+#endif
+#ifdef NEVERD_WHP_BOUNDARY_BYTES
+// Win64 machine registers: RCX points to output, RDX to the input packet.
+// Full program restores FP in the guest, saves it to RAM, then completes HLT.
+NEVERD_WHP_BOUNDARY_BYTES(RestoreAndSave, 0x48, 0x0f, 0xae, 0x0a, 0x48, 0x0f,
+                          0xae, 0x01, 0xf4)
+NEVERD_WHP_BOUNDARY_BYTES(Save, 0x48, 0x0f, 0xae, 0x01, 0xf4)
+// Set TF with PUSH 0x102 / POPFQ so the trap follows FXSAVE64, not FXRSTOR64.
+NEVERD_WHP_BOUNDARY_BYTES(RestoreAndTrap, 0x48, 0x0f, 0xae, 0x0a, 0x68, 0x02,
+                          0x01, 0x00, 0x00, 0x9d, 0x48, 0x0f, 0xae, 0x01, 0xf4)
+NEVERD_WHP_BOUNDARY_BYTES(Trap, 0x68, 0x02, 0x01, 0x00, 0x00, 0x9d, 0x48, 0x0f,
+                          0xae, 0x01, 0xf4)
+#endif
