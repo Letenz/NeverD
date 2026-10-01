@@ -3546,6 +3546,7 @@
         "docs/testing.md"
       ],
       "limitations": [
+        "The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller\u2019s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.",
         "`CheckedX64Instructions.def` admits unsigned `MUL` at 8/16/32/64 bits and `CBW/CWDE/CDQE/CWD/CDQ/CQO` through the existing processor transport. `NeverDX64IntegerTests` uses independent `X64IntegerCases.def` encodings and expected values at both privilege levels: partial-register preservation, 32-bit zero extension, both product halves, defined CF/OF results and unchanged flags for sign extension. Ordinary-RAM multiplication retains whole-span permission checks and read observers; a fault or observer stop preserves implicit output registers and PC. Device operands remain unsupported. These cases also run on checked Unicorn; unavailable native transports skip explicitly.",
         "Checked x64 admits register and ordinary-RAM DIV/IDIV at all integer widths. The actual processor #DE, including quotient overflow, is retained as a guest trap or explicitly admitted recoverable event. KVM authenticates a private supervisor IDT/IST gateway outside guest mappings; WHP intercepts an explicit exception bitmap. This boundary does not admit unlisted instructions or implement a general OS exception subsystem.",
         "x64 CPU snapshots and transports retain complete physical x87 state, TOP, abridged tags, 80-bit payloads and FP metadata. Existing register identities remain unchanged. Checked profiles still reject x87 instructions; exact host-oracle arithmetic is a state-transfer proof, not generic software x87 rounding evidence.",
@@ -3565,6 +3566,48 @@
         "`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.StandardInitSSEStillLoadsMXCSR",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.StandardInitSSERejectsReservedMXCSRWithoutPublication",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "*/X64XsaveHost.ActualRestoreDistinguishesStandardAndCompactedMXCSR/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InvalidInputReportsPreparationWithoutHostMutation/*",
+          "platforms": [
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",

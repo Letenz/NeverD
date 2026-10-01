@@ -23,6 +23,7 @@ add_neverd_unittest(NeverDAArch64MemoryTests
 
 add_neverd_unittest(NeverDX64FPTests
   X64FPStateTests.cpp
+  X64XsaveTests.cpp
   X64MachineProbeTests.cpp
   X64ProbeExecutionTests.cpp
   TIMEOUT 15

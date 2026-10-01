@@ -9,6 +9,7 @@
 #include "../../arch/x86_64/X64Machine.h"
 #include "WhpPartition.h"
 
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
 namespace neverd::emulation {
@@ -50,7 +51,7 @@ public:
     if (uint32_t(Status) != InsufficientBuffer)
       return whpError(diagnostic::WhpState, Status, getOperation());
     if (Required < x64::fp::XsaveBytes || Required > x64::fp::MaxXsaveBytes)
-      return diagnostic::error(diagnostic::FPState);
+      return sizeError(Required, 0);
     std::error_code EC;
     Buffer = llvm::sys::Memory::allocateMappedMemory(
         Required, nullptr,
@@ -63,7 +64,11 @@ public:
   llvm::Error install(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
                       const X64MachineState &State) {
     if (auto E = encodeX64XsaveState(State, bytes(), true))
-      return E;
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     llvm::formatv(XsaveEncodeFailure,
+                                                   llvm::toString(std::move(E)),
+                                                   setOperation(), Size)
+                                         .str());
     const auto Status =
         Modern ? API.WHvSetVirtualProcessorState(
                      Partition, 0, WHvVirtualProcessorStateTypeXsaveState,
@@ -81,11 +86,36 @@ public:
     if (FAILED(Status))
       return whpError(diagnostic::WhpState, Status, getOperation());
     if (Written < x64::fp::XsaveBytes || Written > Size)
-      return diagnostic::error(diagnostic::FPState);
-    return decodeX64XsaveState(State, bytes().take_front(Written));
+      return sizeError(Written, Size);
+    const auto Packet = bytes().take_front(Written);
+    if (auto E = decodeX64XsaveState(State, Packet)) {
+      // Report only protocol metadata. The shared ISA codec remains the sole
+      // authority for validation and never publishes a rejected packet.
+      using namespace llvm::support::endian;
+      const auto *P = Packet.data();
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          llvm::formatv(XsaveDecodeFailure, llvm::toString(std::move(E)),
+                        getOperation(), Written,
+                        read64le(P + x64::fp::XStateOffset),
+                        read64le(P + x64::fp::XCompOffset),
+                        read16le(P + x64::fp::ControlOffset),
+                        read16le(P + x64::fp::OpcodeOffset),
+                        read32le(P + x64::fp::MXCSROffset))
+              .str());
+    }
+    return llvm::Error::success();
   }
 
 private:
+  llvm::Error sizeError(UINT32 Written, UINT32 Capacity) const {
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        llvm::formatv(XsaveSizeFailure, diagnostic::FPState, getOperation(),
+                      Written, Capacity, x64::fp::XsaveBytes,
+                      x64::fp::MaxXsaveBytes)
+            .str());
+  }
   const char *getOperation() const {
     return Modern ? whp::operation::WHvGetVirtualProcessorState
                   : whp::operation::WHvGetVirtualProcessorXsaveState;
