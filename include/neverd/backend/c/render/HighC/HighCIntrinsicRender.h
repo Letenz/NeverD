@@ -30,8 +30,7 @@
 namespace neverd {
 
 using IsAliveFn = std::function<bool(const MedVar &)>;
-using SameWidthUnsignedFn =
-    std::function<bool(const HighExpr &, uint16_t)>;
+using SameWidthUnsignedFn = std::function<bool(const HighExpr &, uint16_t)>;
 
 struct MultiOutputRender {
   std::string operator()(Arch TheArch, Intrinsic IID,
@@ -45,8 +44,7 @@ struct MultiOutputRender {
 //--- Dispatchers (HighCIntrinsicRender.cpp) ---
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
-                                uint16_t ResultBytes,
-                                bool &HasCIntrinsics);
+                                uint16_t ResultBytes, bool &HasCIntrinsics);
 
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
 std::string
@@ -129,8 +127,7 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   uint16_t ResultBytes,
-                                   bool &HasCIntrinsics);
+                                   uint16_t ResultBytes, bool &HasCIntrinsics);
 
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`
 /// statement with register input constraints and a memory clobber.

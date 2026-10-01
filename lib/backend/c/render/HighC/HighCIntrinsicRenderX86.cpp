@@ -624,10 +624,11 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
     return "(" + Ty + ")(" + Text + ")";
   };
   std::string Result = "do {\n";
-  Result += "    " + FullTy + " neverd_dividend = " +
-            Operand(Dividend, FullBytes, FullTy) + ";\n";
-  Result += "    " + HalfTy + " neverd_divisor = " +
-            Operand(Divisor, HalfBytes, HalfTy) + ";\n";
+  Result += "    " + FullTy +
+            " neverd_dividend = " + Operand(Dividend, FullBytes, FullTy) +
+            ";\n";
+  Result += "    " + HalfTy +
+            " neverd_divisor = " + Operand(Divisor, HalfBytes, HalfTy) + ";\n";
 
   // Decide quotient representability without executing C division: the
   // exceptional divisor-zero and signed-min/-1 cases would otherwise be UB.
