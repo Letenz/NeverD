@@ -226,3 +226,6 @@ NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpMemoryCases.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "native_cpu_only")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "NativeCPUTests.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "run_native_cpu_ci.py")
+
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpHostFailureCases.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpProtocol.def")

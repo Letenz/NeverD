@@ -48,7 +48,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
 
     def capture(self, command, **kwargs):
         if command[0] == "git":
-            return "test-commit\n"
+            return "test-commit\n" if command[1] == "rev-parse" else ""
         return json.dumps({
             "kind": "ctestInfo", "version": {"major": 1},
             "tests": [
@@ -136,6 +136,20 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         (self.root / "cases.def").write_text("CASE(First, 1)\nCASE(Third, 3)\n")
         _, required = native.declared_inventory(self.root)
         self.assertEqual(required, {"Native/Case/First", "Native/Case/Third"})
+
+    def test_named_native_execution_cannot_be_replaced_by_mapping_only(self):
+        definition = self.root / "scripts" / "NativeCPUTests.def"
+        definition.write_text(
+            definition.read_text()
+            + 'NEVERD_NATIVE_CPU_REQUIRED_TEST("Portable/"\n "Case")\n'
+        )
+        self.changes[self.records[-1]] = (
+            "notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "CPU startup unavailable"
+        )
+        self.assertEqual(self.run_evidence(), 1)
+        self.assertEqual(
+            self.summary()["required_native_unexecuted"], [self.records[-1].name]
+        )
 
 
 if __name__ == "__main__":

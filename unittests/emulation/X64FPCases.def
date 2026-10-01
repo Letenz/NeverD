@@ -1,4 +1,5 @@
-//===- X64FPCases.def - Independent x87 state and transport fixtures --------===//
+//===- X64FPCases.def - Independent x87 state and transport fixtures
+//--------===//
 //
 // NeverD Decompiler
 //
@@ -24,7 +25,10 @@ NEVERD_FP_VALUE(InvalidTag, 0x100)
 NEVERD_FP_VALUE(ExpectedTag, 0xe8e4)
 #endif
 #ifdef NEVERD_FP_TEXT
-NEVERD_FP_TEXT(OracleUnavailable, "the independent x87 oracle requires an x64 host")
+NEVERD_FP_TEXT(OracleUnavailable,
+               "the independent x87 oracle requires an x64 host")
+NEVERD_FP_TEXT(UserSuffix, "User")
+NEVERD_FP_TEXT(SupervisorSuffix, "Supervisor")
 #endif
 #ifdef NEVERD_FP_PAYLOAD
 // Valid, signed zero, special infinity, empty; repeat with a finite negative,
@@ -45,9 +49,19 @@ NEVERD_FP_BYTES(SysVBefore, 0x48, 0x0f, 0xae, 0x02, 0x48, 0x0f, 0xae, 0x0f)
 NEVERD_FP_BYTES(SysVAfter, 0x48, 0x0f, 0xae, 0x06, 0x48, 0x0f, 0xae, 0x0a, 0xc3)
 NEVERD_FP_BYTES(Win64Before, 0x49, 0x0f, 0xae, 0x00, 0x48, 0x0f, 0xae, 0x09,
                 0x4c, 0x89, 0xc9)
-NEVERD_FP_BYTES(Win64After, 0x48, 0x0f, 0xae, 0x02, 0x49, 0x0f, 0xae, 0x08, 0xc3)
+NEVERD_FP_BYTES(Win64After, 0x48, 0x0f, 0xae, 0x02, 0x49, 0x0f, 0xae, 0x08,
+                0xc3)
 NEVERD_FP_BYTES(Nop, 0x90)
 NEVERD_FP_BYTES(Load80, 0xdb, 0x29)
 NEVERD_FP_BYTES(StorePop80, 0xdb, 0x39)
 NEVERD_FP_BYTES(AddPop, 0xde, 0xc1)
+#endif
+
+#ifdef NEVERD_FP_TRANSPORT
+NEVERD_FP_TRANSPORT(KVM, false)
+NEVERD_FP_TRANSPORT(KVM, true)
+NEVERD_FP_TRANSPORT(WHP, false)
+NEVERD_FP_TRANSPORT(WHP, true)
+NEVERD_FP_TRANSPORT(Unicorn, false)
+NEVERD_FP_TRANSPORT(Unicorn, true)
 #endif
