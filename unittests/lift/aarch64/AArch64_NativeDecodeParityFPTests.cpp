@@ -95,8 +95,8 @@ TEST_F(A64NativeParity, FpZeroCompareUsesRegisterWidth) {
        {std::pair{0U, 4U}, std::pair{1U, 8U}, std::pair{3U, 2U}}) {
     for (bool Signaling : {false, true}) {
       for (unsigned Register : {0U, 31U}) {
-        const uint32_t Word = 0x1e202008 | (Ptype << 22) |
-                              (Register << 5) | (Signaling ? 16 : 0);
+        const uint32_t Word =
+            0x1e202008 | (Ptype << 22) | (Register << 5) | (Signaling ? 16 : 0);
         SCOPED_TRACE(Word);
         cs_insn Insn{};
         cs_detail Detail{};

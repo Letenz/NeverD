@@ -158,6 +158,13 @@ struct HighExpr {
 
 using ExprPtr = std::shared_ptr<HighExpr>;
 
+/// All reachable expressions containing ordered or non-default-address-space
+/// memory, including through an indirect call target. Analyze shared nodes
+/// once. The borrowed identities remain valid only while this graph is kept
+/// alive and no transformation introduces or relocates a memory access.
+std::unordered_set<const HighExpr *>
+findOrderedMemoryAncestors(const std::vector<ExprPtr> &Roots);
+
 /// Termination promised by the bound source routine, independently of a
 /// native CFG flag or call spelling. Source admission revalidates the binding.
 bool isNonReturningSourceCall(const ExprPtr &Expression);
