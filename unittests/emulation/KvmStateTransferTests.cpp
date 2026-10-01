@@ -9,7 +9,10 @@
 #include "core/MemoryProjection.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/CPU.h"
+
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Endian.h"
 
 #include <cerrno>
 #include <cstdarg>
@@ -18,7 +21,9 @@
 
 namespace {
 std::atomic<unsigned long> FailureRequest{0};
-}
+std::atomic<unsigned long> CancellationRequest{0};
+std::atomic<neverd::emulation::ExecutionBackend *> PublicCPU{nullptr};
+} // namespace
 
 extern "C" int __real_ioctl(int, unsigned long, ...);
 // This executable alone injects a single failed read after real guest entry.
@@ -28,6 +33,8 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
   auto Failure = FailureRequest.load();
   if (Failure == Request &&
       FailureRequest.compare_exchange_strong(Failure, 0)) {
+    if (auto *CPU = PublicCPU.load())
+      CPU->stop();
     errno = EIO;
     return -1;
   }
@@ -40,7 +47,13 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
   }
   auto *Value = va_arg(Arguments, void *);
   va_end(Arguments);
-  return __real_ioctl(FD, Request, Value);
+  const int Result = __real_ioctl(FD, Request, Value);
+  auto Cancel = CancellationRequest.load();
+  if (Result >= 0 && Cancel == Request &&
+      CancellationRequest.compare_exchange_strong(Cancel, 0))
+    if (auto *CPU = PublicCPU.load())
+      CPU->stop();
+  return Result;
 }
 
 namespace neverd::emulation {
@@ -65,6 +78,8 @@ protected:
   X64MachineState State;
   uint64_t Root = 0;
   void SetUp() override {
+    FailureRequest = CancellationRequest = 0;
+    PublicCPU = nullptr;
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
     auto Created = createKvmMachine(*Memory);
     if (!Created) {
@@ -123,6 +138,61 @@ TEST_P(KvmStateTransfer, FailedReadRetainsInputAndReinstallsItBeforeRetry) {
             InitialInteger + (Vector ? 0 : IntegerIncrement));
   const auto Packed = Vector ? IncrementedPacked : InitialPacked;
   EXPECT_EQ(State.Xmm.front(), (ExecutionBackend::XmmValue{Packed, Packed}));
+}
+TEST_P(KvmStateTransfer, PublicCancellationRetainsStateRAMAndFailurePriority) {
+  auto Created = createExecutionBackend(ExecutionBackendKind::KVM,
+                                        ExecutionContract::CheckedX64, Limit);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto CPU = std::move(Created->CPU);
+  llvm::cantFail(CPU->map(Code, PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->map(Data, PageSize, Read | Write));
+  llvm::cantFail(CPU->write(Code, StoreInteger));
+  llvm::cantFail(CPU->write(Code + sizeof(StoreInteger), Warm));
+  llvm::cantFail(CPU->writeInteger(Data, InitialInteger, WordBytes));
+  llvm::cantFail(
+      CPU->setReg(X64Register::AX, InitialInteger + IntegerIncrement));
+  llvm::cantFail(CPU->setReg(X64Register::DI, Data));
+  PublicCPU = CPU.get();
+  auto Release = llvm::scope_exit([&] {
+    PublicCPU = nullptr;
+    FailureRequest = CancellationRequest = 0;
+  });
+  const bool Failed = std::get<0>(GetParam());
+  const auto Request = std::get<1>(GetParam());
+  if (Failed)
+    FailureRequest = Request;
+  else
+    CancellationRequest = Request;
+  auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  ASSERT_EQ(Exit.Kind, Failed ? ExecutionExitKind::BackendFailure
+                              : ExecutionExitKind::Stopped);
+  EXPECT_TRUE(Exit.StopRequested);
+  EXPECT_FALSE(Exit.DeadlineReached);
+  EXPECT_EQ(bool(Exit.Fault), Failed);
+  EXPECT_EQ(FailureRequest.load(), 0u);
+  EXPECT_EQ(CancellationRequest.load(), 0u);
+  uint8_t Original[WordBytes]{};
+  ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Data, Original)), "");
+  EXPECT_EQ(llvm::support::endian::read64le(Original), InitialInteger);
+  if (Failed) {
+    EXPECT_EQ(Exit.Diagnostic, diagnostic::KvmState);
+    return;
+  }
+  EXPECT_TRUE(Exit.Diagnostic.empty());
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    if (PC != Code)
+      CPU->stop();
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  auto Retry = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  EXPECT_EQ(Retry.Kind, ExecutionExitKind::Stopped);
+  EXPECT_FALSE(Retry.Fault);
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, WordBytes)),
+            InitialInteger + IntegerIncrement);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)),
+            Code + sizeof(StoreInteger));
 }
 INSTANTIATE_TEST_SUITE_P(Native, KvmStateTransfer,
                          testing::Combine(testing::Bool(),

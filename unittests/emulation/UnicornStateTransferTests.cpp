@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 #include "arch/aarch64/AArch64Machine.h"
 #include "backends/MachineFactories.h"
+#include "core/ExecutionDiagnostics.h"
 #include "core/MemoryProjection.h"
 #include "gtest/gtest.h"
 
@@ -13,11 +14,20 @@
 #include "llvm/Support/Endian.h"
 
 #include <atomic>
+#include <thread>
 #include <unicorn/unicorn.h>
+#include <vector>
 
 namespace {
+#define NEVERD_UNICORN_STATE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "UnicornStateTransferCases.def"
+#undef NEVERD_UNICORN_STATE_VALUE
+
 std::atomic<int> FailureRegister{UC_ARM64_REG_INVALID};
-}
+std::atomic<int> CancellationRegister{UC_ARM64_REG_INVALID};
+std::atomic<bool> CancellationStop;
+std::atomic<bool> ExpireCapture;
+} // namespace
 extern "C" uc_err __real_uc_reg_read(uc_engine *, int, void *);
 // Only this executable injects a single failed transport read, after the
 // original guest ADD has already changed the real engine's register state.
@@ -27,14 +37,22 @@ extern "C" uc_err __wrap_uc_reg_read(uc_engine *Engine, int Register,
   if (Register == Failure &&
       FailureRegister.compare_exchange_strong(Failure, UC_ARM64_REG_INVALID))
     return UC_ERR_RESOURCE;
-  return __real_uc_reg_read(Engine, Register, Value);
+  const auto Result = __real_uc_reg_read(Engine, Register, Value);
+  auto Cancel = CancellationRegister.load();
+  if (Register == Cancel && CancellationRegister.compare_exchange_strong(
+                                Cancel, UC_ARM64_REG_INVALID)) {
+    if (ExpireCapture)
+      std::this_thread::sleep_for(std::chrono::microseconds(
+          2 *
+          neverd::emulation::execution_limits::NativeStepGraceMicroseconds));
+    else
+      CancellationStop = true;
+  }
+  return Result;
 }
 
 namespace neverd::emulation {
 namespace {
-#define NEVERD_UNICORN_STATE_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#include "UnicornStateTransferCases.def"
-#undef NEVERD_UNICORN_STATE_VALUE
 
 constexpr int RegisterIDs[] = {
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
@@ -63,6 +81,9 @@ protected:
   AArch64MachineState State;
   void SetUp() override {
     FailureRegister = UC_ARM64_REG_INVALID;
+    CancellationRegister = UC_ARM64_REG_INVALID;
+    CancellationStop = false;
+    ExpireCapture = false;
     Memory = llvm::cantFail(MemoryProjection::create(MemoryLimit));
     const unsigned User = GetParam() ? UserAccessible : SupervisorPermission;
     llvm::cantFail(
@@ -85,14 +106,19 @@ protected:
     State.reg(AArch64Register::FPSR) = PoisonedFPControl;
     State.Vectors.fill({InitialVectorLow, InitialVectorHigh});
   }
-  void TearDown() override { FailureRegister = UC_ARM64_REG_INVALID; }
-  llvm::Error step() {
+  void TearDown() override {
+    FailureRegister = UC_ARM64_REG_INVALID;
+    CancellationRegister = UC_ARM64_REG_INVALID;
+    CancellationStop = false;
+    ExpireCapture = false;
+  }
+  llvm::Error step(MachineRunControl Control = {}) {
     if (auto E = Memory->beginRun())
       return E;
     auto Release = llvm::scope_exit([&] { Memory->endRun(); });
     if (auto E = buildAArch64PageTables(*Memory, GetParam()))
       return E;
-    return Machine->step(State, {});
+    return Machine->step(State, Control);
   }
   void expectCaptured(const AArch64MachineState &Before) {
     EXPECT_EQ(State.UserMode, Before.UserMode);
@@ -148,6 +174,39 @@ TEST_P(UnicornStateTransfer, FailedVectorReadCannotPublishScalarOrVectorState) {
     ASSERT_EQ(llvm::toString(step()), "");
     expectCaptured(Before);
   }
+}
+TEST_P(UnicornStateTransfer, StopDuringCaptureCannotPublishAndAllowsRetry) {
+  const auto Before = State;
+  std::vector<int> Registers(std::begin(RegisterIDs), std::end(RegisterIDs));
+  Registers.insert(Registers.end(), std::begin(VectorIDs), std::end(VectorIDs));
+  for (int Register : Registers) {
+    SCOPED_TRACE(Register);
+    State = Before;
+    CancellationRegister = Register;
+    CancellationStop = false;
+    EXPECT_EQ(llvm::toString(step({{}, &CancellationStop})),
+              diagnostic::UnicornRun);
+    ASSERT_EQ(CancellationRegister.load(), UC_ARM64_REG_INVALID);
+    EXPECT_EQ(State.UserMode, Before.UserMode);
+    ASSERT_EQ(State.Registers, Before.Registers);
+    EXPECT_EQ(State.Vectors, Before.Vectors);
+    CancellationStop = false;
+    ASSERT_EQ(llvm::toString(step()), "");
+    expectCaptured(Before);
+  }
+}
+TEST_P(UnicornStateTransfer, ExpiredCaptureCannotPublishAndAllowsRetry) {
+  const auto Before = State;
+  CancellationRegister = std::end(VectorIDs)[-1];
+  ExpireCapture = true;
+  EXPECT_EQ(llvm::toString(step()), diagnostic::UnicornRun);
+  ASSERT_EQ(CancellationRegister.load(), UC_ARM64_REG_INVALID);
+  EXPECT_FALSE(CancellationStop);
+  ASSERT_EQ(State.Registers, Before.Registers);
+  EXPECT_EQ(State.Vectors, Before.Vectors);
+  ExpireCapture = false;
+  ASSERT_EQ(llvm::toString(step()), "");
+  expectCaptured(Before);
 }
 INSTANTIATE_TEST_SUITE_P(Privileges, UnicornStateTransfer, testing::Bool());
 } // namespace

@@ -532,4 +532,4 @@ KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジス�
 
 `GuardFlags` がゼロでも、CFG が有効でないポインタスロットは有効です。ローダーは格納領域、実行可能なフォールバック先、リベース時の完全な `DIR64` 対応を検証し、元のゲストポインタを保持します。有効な CFG には引き続きイメージの有効化ビットと計装/関数テーブルのフラグが必要です。`DriverGuardCases.def` と `NeverDDriverGuardMetadataTests` は Unicorn、KVM、WHP でこれらを検証し、Unicorn を無効にしたビルドでも利用できます。
 
-checked Unicorn の単一ステップは `MachineRunControl` に従います。ARM64 の保守とゲスト実行は一つのステップ実行枠を共有し、内部の `UC_HOOK_CODE` が命令入口で借用した停止トークンと期限を確認します。同期エントリは戻る前に借用を解除します。入口での拒否は呼び出し側の状態と RAM を保持し、キャンセルされた実行の結果は checked RAM トランザクションでコミットできません。命令の許可範囲と非制限ソフトウェア契約は変わりません。
+checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト実行、完全な状態読み出しを一つのステップ時間枠で処理します。`UC_HOOK_CODE` は命令入口で借用した停止トークンと期限を確認します。同期エンジン呼び出しは戻る前に hook の借用を解除しますが、マシンステップは状態公開まで制御を保持します。Unicorn と WHP は完全な CPU 状態を一時保存し、成功したステップの公開直前に同じ制御を確認します。WHP は準備前に時間枠を一度だけ作ります。確認済みの x64 CPU 例外は読み出し中の停止要求に優先します。読み出しが中止されると checked RAM トランザクションは投機的な書き込みを破棄し、非制限ソフトウェア契約は変わりません。 `MachineInterruptedError` は確認済みの中止をホストや状態読み出しの失敗と区別します。共通 checked CPU は `Stopped` または `Deadline` を返し、CPU/RAM を保持して再試行を許可します。同時に停止要求があっても実際の失敗は `BackendFailure` のままです。

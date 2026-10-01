@@ -820,6 +820,8 @@ Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 3
 
 `NeverDAArch64GeneralStateTests` 在两种特权级验证标量子集及完整状态的全部 71 个读取位置，包括位宽规范化、缺失读取器和重试。`NeverDAArch64FPTests` 执行 `AArch64FPCases.def` 原始指令，验证全部向量通道、打包运算、标量及向量浮点结果、四种舍入模式、FZ/DN、累积 FPSR、上下文状态及扩展和控制位拒绝。`NeverDAArch64MemoryTests` 覆盖每个跨页偏移、观察器顺序和停止、权限拒绝、别名及恢复后的向量输入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真实执行后注入每个标量、向量读取失败。不可用的原生传输明确跳过；这些测试及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
 
-checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。
+checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。
+
+状态回读回归： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` 在真实 x64 和 ARM64 引擎的两种权限级执行 `UnicornMachineControlCases.def` 中的原始存储指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 检查单步前取消、实际来宾入口处停止或期限到期、全部输入状态与 RAM 保持不变，以及随后成功执行一次存储。测试专用入口包装无需虚拟机监控器，也不构成 ARM64/WHP 原生运行证据。
