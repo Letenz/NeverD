@@ -1,0 +1,41 @@
+//===- X64XsaveCases.def - Independent XSAVE initial-state fixtures ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_XSAVE_VALUE
+NEVERD_XSAVE_VALUE(PacketBytes, 576)
+NEVERD_XSAVE_VALUE(FXBytes, 512)
+NEVERD_XSAVE_VALUE(Alignment, 64)
+NEVERD_XSAVE_VALUE(ControlOffset, 24)
+NEVERD_XSAVE_VALUE(LayoutOffset, 520)
+NEVERD_XSAVE_VALUE(XmmOffset, 160)
+NEVERD_XSAVE_VALUE(XmmBytes, 256)
+NEVERD_XSAVE_VALUE(StaleByte, 0xa5)
+NEVERD_XSAVE_VALUE(CompactedLayout, 0x8000000000000003ULL)
+NEVERD_XSAVE_VALUE(InitialControl, 0x1f80)
+NEVERD_XSAVE_VALUE(SeedControl, 0x3f85)
+NEVERD_XSAVE_VALUE(InvalidControl, 0x10000)
+NEVERD_XSAVE_VALUE(ProcessorLeaf, 1)
+NEVERD_XSAVE_VALUE(XsaveLeaf, 13)
+NEVERD_XSAVE_VALUE(XsaveSubleaf, 1)
+NEVERD_XSAVE_VALUE(XsaveAndOSXsave, (1u << 26) | (1u << 27))
+NEVERD_XSAVE_VALUE(XsaveCompaction, 1u << 1)
+#endif
+#ifdef NEVERD_XSAVE_TEXT
+NEVERD_XSAVE_TEXT(HostUnavailable, "the XRSTOR oracle requires an x64 host")
+NEVERD_XSAVE_TEXT(FeatureUnavailable,
+                  "the host does not support the requested XRSTOR format")
+#endif
+#ifdef NEVERD_XSAVE_BYTES
+// Preserve the caller's FP/SSE state, restore only x87/SSE from the original
+// packet, capture the result with FXSAVE64, then restore the caller's state.
+// System V: input RDI, output RSI, scratch RDX (saved in RCX before EDX=0).
+NEVERD_XSAVE_BYTES(SysVRestore, 0x48, 0x89, 0xd1, 0x48, 0x0f, 0xae, 0x01, 0xb8,
+                   0x03, 0x00, 0x00, 0x00, 0x31, 0xd2, 0x48, 0x0f, 0xae, 0x2f,
+                   0x48, 0x0f, 0xae, 0x06, 0x48, 0x0f, 0xae, 0x09, 0xc3)
+// Win64: input RCX, output RDX (saved in R9), scratch R8.
+NEVERD_XSAVE_BYTES(Win64Restore, 0x49, 0x89, 0xd1, 0x49, 0x0f, 0xae, 0x00, 0xb8,
+                   0x03, 0x00, 0x00, 0x00, 0x31, 0xd2, 0x48, 0x0f, 0xae, 0x29,
+                   0x49, 0x0f, 0xae, 0x01, 0x49, 0x0f, 0xae, 0x08, 0xc3)
+#endif
