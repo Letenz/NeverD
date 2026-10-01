@@ -44,7 +44,7 @@ neverd cpu-capabilities \
   --probe-host
 ```
 
-schema 版本為 1。報告分別列出補齊設定前的 `requested_configuration`、正規化後的 `configuration`、靜態語意能力 `capabilities`、adapter 建置與 ABI 相容性 `build`，以及僅在指定 `--probe-host` 時提供的 `host`（未指定為 null）。主機探測會在私有 RAM 上初始化暫存 CPU，只證明可初始化，不代表工作負載適用或具備原生 ARM64 執行能力。可用性可能改變；不可用後端不會被靜默替換。合法報告即使後端不可用，CLI 仍回傳 0；組態或查詢無效則回傳 1。
+schema 版本為 1。報告分別列出補齊設定前的 `requested_configuration`、正規化後的 `configuration`、靜態語意能力 `capabilities`、adapter 建置與 ABI 相容性 `build`，以及僅在指定 `--probe-host` 時提供的 `host`（未指定為 null）。主機探測會在私有 RAM 上初始化暫存 CPU，只證明該初始化流程成功，不能證明任意工作負載相容性。可用性可能改變；不可用後端不會被靜默替換。合法報告即使後端不可用，CLI 仍回傳 0；組態或查詢無效則回傳 1。
 
 ## SDK 與 C++ 邊界
 
@@ -87,6 +87,8 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 使用 `executionCapabilities(Contract, ISA, Backend)` 查詢所選後端的能力設定。`NativeLegacyX64` 描述原生 x64 驅動程式執行；`NeverDNativeDriverTests` 驗證原有驅動程式集，也可在停用 Unicorn 的組建中執行。
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
+
+ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 

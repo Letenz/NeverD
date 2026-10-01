@@ -44,7 +44,7 @@ neverd cpu-capabilities \
   --probe-host
 ```
 
-schema 版本为 1。报告分别给出补全配置前的 `requested_configuration`、规范化后的 `configuration`、静态语义 `capabilities`、适配器构建与 ABI 兼容性的 `build`，以及仅在请求 `--probe-host` 时提供的 `host`（否则为 null）。主机探测会在私有 RAM 上初始化临时 CPU，只证明可初始化，不证明某个工作负载可运行或具有原生 ARM64 执行能力。可用性可能变化；不可用后端不会被静默替换。合法报告即使说明后端不可用，CLI 仍返回 0；配置或查询无效时返回 1。
+schema 版本为 1。报告分别给出补全配置前的 `requested_configuration`、规范化后的 `configuration`、静态语义 `capabilities`、适配器构建与 ABI 兼容性的 `build`，以及仅在请求 `--probe-host` 时提供的 `host`（否则为 null）。主机探测会在私有 RAM 上初始化临时 CPU，只证明该初始化流程成功，不能证明任意工作负载兼容性。可用性可能变化；不可用后端不会被静默替换。合法报告即使说明后端不可用，CLI 仍返回 0；配置或查询无效时返回 1。
 
 ## SDK 与 C++ 边界
 
@@ -87,6 +87,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
+
+ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 

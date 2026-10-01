@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDAArch64StateTests
   AArch64StateTests.cpp
+  AArch64MachineProbeTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationArch)
 target_include_directories(NeverDAArch64StateTests PRIVATE
@@ -8,6 +9,7 @@ target_include_directories(NeverDAArch64StateTests PRIVATE
 add_neverd_unittest(NeverDAArch64FPTests
   AArch64FPStateTests.cpp
   AArch64SIMDTests.cpp
+  AArch64ProbeExecutionTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDAArch64FPTests PRIVATE
