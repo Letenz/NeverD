@@ -2650,6 +2650,10 @@ SYNCHRONIZED_GUIDES = (
     "process-emulation", "memory-safety", "solver", "interpreter-recovery",
 )
 GUIDE_SECTION_CONTRACTS = {
+    ("interpreter-recovery", "machine-state"): (
+        "modelInterpreterMachineStateX64", "InterpreterMachineStateModel",
+        "MaxOperations", "checkLowIRLoopRefinement",
+    ),
     ("interpreter-recovery", "loop-proposals"): (
         "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",
         "CandidatePrefix", "UseEntryPrefix", "GeneralizeEntryPrefix",

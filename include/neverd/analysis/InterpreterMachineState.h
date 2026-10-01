@@ -8,6 +8,7 @@
 #define NEVERD_ANALYSIS_INTERPRETERMACHINESTATE_H
 
 #include "neverd/analysis/InterpreterMachineStateProfile.h"
+#include "neverd/analysis/LowIRUndefinedIndependence.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
 
@@ -69,6 +70,32 @@ llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
     const LowFunc &Residual, BinaryFormat SourceFormat = BinaryFormat::ELF,
     InterpreterMachineStateProfile Profile =
         InterpreterMachineStateProfile::UserX64NoFaultV1);
+
+/// Analysis model of the same source wrapper. Register bytes [0, 136) hold the
+/// state object's input and output bytes in InterpreterMachineStateX64V1 order.
+/// RETURN carries the wrapper's status, separately from the guest RAX field.
+/// Guest memory operations retain their original meaning. The state object is
+/// abstracted only under the wrapper's accessible, aligned, disjoint-storage
+/// precondition; this is not a model of arbitrary host-memory aliasing.
+struct InterpreterMachineStateModel {
+  LowFunc Function;
+  /// Complete deterministic LowIR records for this generated model. These
+  /// are not architecture-undefined-output evidence for the original binary.
+  std::vector<LowIRUndefinedInstruction> Instructions;
+};
+
+/// Generate the source wrapper and its register-state model through the same
+/// scalar, lane, flag and control-flow rules. No rewritten-wrapper pattern
+/// recognition, C compilation or equivalence proof is performed here. Invalid
+/// entry flags and dynamic rejected flag writes retain the sticky status.
+/// Observations, entry domain, frame contract and proof budgets remain the
+/// caller's responsibility. The model by itself supplies no native/source
+/// certificate. MaxOperations bounds input metadata and generated operations.
+llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
+    const LowFunc &Residual,
+    InterpreterMachineStateProfile Profile =
+        InterpreterMachineStateProfile::UserX64NoFaultV1,
+    uint64_t MaxOperations = 65536);
 
 } // namespace neverd::analysis
 

@@ -144,6 +144,8 @@ L’ABI sorgente ordinaria ricostruisce un frame privato dell’invocazione. Ogn
 
 Se i flag indefiniti influenzano il controllo, gli indirizzi o gli output definiti, serve una prova indipendente di non interferenza. Il rapporto attuale non fornisce tale prova né certifica questo comportamento dipendente dal processore.
 
+`modelInterpreterMachineStateX64` restituisce un `InterpreterMachineStateModel` tramite lo stesso generatore del wrapper sorgente. I byte di registro `[0, 136)` rappresentano le 17 parole grezze dello stato; `RETURN` trasporta lo stato di esecuzione separato dal RAX ospite, mentre la memoria ospite resta memoria. Flag di ingresso non validi e scritture dinamiche rifiutate mantengono lo stato di errore. La memoria dello stato deve essere accessibile, allineata e disgiunta dagli accessi ospiti. `MaxOperations` limita i metadati di ingresso e le operazioni generate. Le registrazioni LowIR deterministiche non sono prove delle uscite architetturalmente indefinite. Il chiamante deve fornire osservazioni, contratti di ingresso e frame, e una nuova prova `checkLowIRLoopRefinement` o di raffinamento su percorsi finiti; modello e registrazioni non certificano il C compilato.
+
 <!-- i18n-section: limits -->
 
 ## Limiti attuali
