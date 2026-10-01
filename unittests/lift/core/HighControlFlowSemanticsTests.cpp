@@ -489,6 +489,76 @@ TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
   EXPECT_EQ(Report.Items[0].Issue, HighSourceFlowIssue::DefiniteAssignment);
 }
 
+TEST(HighControlFlowSemantics, SourceFlowSharedSwitchLabelsReachTheirBody) {
+  MedVar Selector;
+  Selector.Kind = MedVar::Param;
+  Selector.Size = 8;
+  HighStmt Dispatch;
+  Dispatch.Kind = StmtKind::Switch;
+  Dispatch.Addr = 0x1000;
+  Dispatch.SwitchExpr = HighExpr::makeVar(Selector);
+  Dispatch.Cases = {{0, {}, true}, {1, {}, true}, {2, {assign(0x1010, 1, 7)}}};
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  Break.Addr = 0x1014;
+  Dispatch.Cases.back().Body.push_back(Break);
+  Dispatch.DefaultBody = {result(0x1020, HighExpr::makeConst(99, 8))};
+  HighFunc F;
+  F.Body = {Dispatch, result(0x1030, local(1))};
+  for (uint64_t Value : {0, 1, 2, 3})
+    EXPECT_EQ(execute(F, Value), Value < 3 ? 7U : 99U);
+  auto Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  F.Body[0].Cases[0].FallsThrough = false;
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
+TEST(HighControlFlowSemantics, SourceFlowFallingCaseKeepsEffectsAndDefault) {
+  HighStmt Dispatch;
+  Dispatch.Kind = StmtKind::Switch;
+  Dispatch.Addr = 0x1000;
+  Dispatch.SwitchExpr = HighExpr::makeConst(0, 8);
+  Dispatch.Cases = {{0, {assign(0x1010, 1, 7)}, true}, {1, {}, true}};
+  Dispatch.DefaultBody = {result(0x1020, local(1))};
+  HighFunc F;
+  F.Body = {Dispatch, result(0x1030, local(2))};
+  auto Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  const auto Graph = buildHighSourceFlowGraph(F);
+  ASSERT_TRUE(Graph.Diagnostics.Complete);
+  auto Definition = std::find_if(
+      Graph.Nodes.begin(), Graph.Nodes.end(), [](const auto &Node) {
+        return Node.Statement && Node.Statement->Addr == 0x1010;
+      });
+  ASSERT_NE(Definition, Graph.Nodes.end());
+  ASSERT_EQ(Definition->Successors.size(), 1U);
+  const auto &Next = Graph.Nodes[Definition->Successors.front()];
+  ASSERT_TRUE(Next.Statement);
+  EXPECT_EQ(Next.Statement->Addr, 0x1020U);
+  // An explicit break bypasses the falling case and default, even when the
+  // case's FallsThrough flag remains set. The follow reads undefined v2.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  Break.Addr = 0x1014;
+  F.Body[0].Cases[0].Body.push_back(Break);
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+  // Entering default directly cannot borrow the earlier case's definition.
+  F.Body[0].Cases[0].Body.pop_back();
+  F.Body[0].SwitchExpr = HighExpr::makeConst(99, 8);
+  Flow = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_FALSE(Flow.Items.empty());
+  EXPECT_EQ(Flow.Items.front().Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
 TEST(HighControlFlowSemantics, EitherEqualityOperandWriteInvalidatesTheFact) {
   for (unsigned Operand : {0U, 3U})
     for (bool Swapped : {false, true}) {

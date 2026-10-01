@@ -106,7 +106,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `modelInterpreterMachineStateX64` 與原始碼包裝器共用產生器，傳回 `InterpreterMachineStateModel`。暫存器位元組 `[0, 136)` 表示原始的 17 字狀態物件；`RETURN` 單獨傳回狀態碼，客體 RAX 保存在狀態欄位中，客體記憶體存取仍是記憶體存取。非法入口旗標和遭拒絕的動態旗標寫入會保留失敗狀態。此抽象要求狀態儲存始終可存取、符合對齊且不與客體存取重疊。`MaxOperations` 限制輸入中繼資料和產生的操作。確定性 LowIR 記錄不能作為原始架構未定義輸出的證據。呼叫端仍須提供觀察項、入口與堆疊框架契約，並執行全新的 `checkLowIRLoopRefinement` 或有限路徑精化證明；產生模型和記錄都不證明編譯後的 C。
 
-`modelLLVMInterpreterMachineStateX64` 為已驗證的純量 LLVM 函式建立模型，函式接收一個狀態指標並回傳 i64 狀態碼。`llvmInterpreterMachineStateContract` 觀察全部 17 個狀態字，並要求獨立的 `LLVMInterpreterDefinednessOffset` 位元組初始及最終皆為零；補充入口域與客體堆疊框架時必須保留這些義務。PHI 賦值平行執行，整數溢位、精確位移、值域屬性等條件轉為待證明的檢查。每個實際執行的受支援操作都不得產生 poison，即使死碼或 select 可依 [LLVM 語義](https://llvm.org/docs/UndefinedBehavior.html) 遮蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 與 `MaxWork` 限制建模成本。不支援的型別、指標逸出、記憶體模式、呼叫、屬性與中繼資料明確報錯；除法、變數位移與 freeze 尚不支援。必須重新執行完整有限路徑或歸納檢查，證明語義有效性、記憶體安全、觀察項及終止性；自動迴圈候選推斷仍不完備。原始碼、模組與編譯器輸入須另行精確綁定，剖析器與編譯器仍是信任前提。本介面不證明 C、產生的機器碼或實體 CPU 的未定義位元選擇。原始碼契約見 [LLVM 語言參考](https://llvm.org/docs/LangRef.html)。 被讀取的入口位元組必須已初始化，客體存取必須指向宣告框架內仍存活的儲存；平坦 LowIR 記憶體模型不證明 LLVM 物件生命週期或指標來源。
+`modelLLVMInterpreterMachineStateX64` 為已驗證的純量 LLVM 函式建立模型，函式接收一個狀態指標並回傳 i64 狀態碼。`llvmInterpreterMachineStateContract` 觀察全部 17 個狀態字，並要求獨立的 `LLVMInterpreterDefinednessOffset` 位元組初始及最終皆為零；補充入口域與客體堆疊框架時必須保留這些義務。PHI 賦值平行執行，整數溢位、精確位移、值域屬性等條件轉為待證明的檢查。每個實際執行的受支援操作都不得產生 poison，即使死碼或 select 可依 [LLVM 語義](https://llvm.org/docs/UndefinedBehavior.html) 遮蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 與 `MaxWork` 限制建模成本。不支援的型別、指標逸出、記憶體模式、呼叫、屬性與中繼資料明確報錯；i8/i16/i32/i64 的變數 `shl`、`lshr` 與 `ashr` 要求無號位移量小於原始碼位寬，不套用指令集的位移量遮罩；`nuw`、`nsw` 與 `exact` 條件仍個別檢查。除法與 freeze 尚不支援。必須重新執行完整有限路徑或歸納檢查，證明語義有效性、記憶體安全、觀察項及終止性；自動迴圈候選推斷仍不完備。原始碼、模組與編譯器輸入須另行精確綁定，剖析器與編譯器仍是信任前提。本介面不證明 C、產生的機器碼或實體 CPU 的未定義位元選擇。原始碼契約見 [LLVM 語言參考](https://llvm.org/docs/LangRef.html)。 被讀取的入口位元組必須已初始化，客體存取必須指向宣告框架內仍存活的儲存；平坦 LowIR 記憶體模型不證明 LLVM 物件生命週期或指標來源。
+
+`prepareInterpreterLLVMRefinement` 保存精確 LLVM 文字與所選函式名稱，驗證模組，並為兩側狀態模型產生僅執行一次的規範旗標入口投影。`checkBinaryLLVMRefinement` 重新建立這些輸入，先證明實際原生映像與同一殘餘程式的關係，再證明殘餘模型與該 LLVM 產物的關係。有限路徑與歸納檢查均保留全部狀態字、實際狀態碼、語義有效性及堆疊框架寫入，並要求 RSP 與返回位址槽保持。原生入口常數不會複製到原始碼契約：原始碼關係刻意涵蓋較大的任意通用暫存器／規範旗標域，因此可能保守地拒絕僅在原生限制下成立的結果。迴圈方案是不可信候選。只有兩個全新檢查都成功，才產生綁定精確 IR 位元組、函式名稱、兩段證明憑據、執行設定版本與預算的組合憑據。
+
+`MaxIRBytes` 在複製或解析前限制文字與函式名稱大小；`MaxMachineStateOperations` 與 `MaxPreparationItems` 限制建模及準備工作。原生與 LLVM 證明預算獨立，絕不自動提高。受信任的 LLVM 解析器／驗證器在此沒有硬性的 CPU、堆疊或配置上限。共用堆疊框架必須以原始 RSP 狀態字為根並包含入口返回位址槽。仍須確保框架儲存已初始化且存活、狀態儲存可存取且對齊並與客體存取分離，以及客體指標來源有效。此 C++ API 證明受支援的原生到 LLVM 關係，不證明 C 編譯、產生的機器碼、故障行為或實體 CPU 未定義位元選擇。
 
 <!-- i18n-section: limits -->
 
@@ -159,6 +163,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 以下前綴述詞保持要求適用於 `GeneralizeEntryPrefix = false`。
 
 `inferLowIRLoopRefinementPlan` 共用符號執行器，在預算內產生範本。回饋切點涵蓋 CFG 的每個環；拓寬保留已證明的固定位元，並淘汰無法維持的無號前綴邊界。觀察到的單位步長計數器與推導的階段常數組成字典序排名，支援遞增或遞減的巢狀迴圈。`OriginalPrefix` 與 `CandidatePrefix` 要求 `UseEntryPrefix`。位於其他切點之後的切點可從真實入口另行有限重播，取得可行的成對前綴證據。此證據不代表入口域涵蓋：每次實際到達都必須蘊含其述詞，完整入口與轉換路徑涵蓋仍是必要條件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢復與唯一原生來源，再獨立重跑完整原程式／候選程式檢查器。候選方案與來源映射均不可信；只有 `Refinement` 可包含憑證。推導與證明保留各自的明確預算。此 C++ API 不會隨 `--devirtualize` 自動執行。不可達前綴、任意控制流程對齊、搜尋範圍外的排名類型、C 後端等價性及實體 CPU 的未定義位元選擇仍不受支援。
+
+單切點搜尋在泛化模板執行違反保持性或記憶體契約時，會繼續嘗試其他允許的切點。例如，迴圈本體切點可能遺失受條件保護的計數器關係，而迴圈頭仍可保留該關係。拒絕一個假設不代表拒絕所有切點。真實入口前綴失敗、非法輸入、不支援的執行或預算耗盡仍立即停止。所有嘗試共用計費，包括 `MaxCutpointAttempts` 與求解查詢；新候選仍須通過全新完整證明。此回退不搜尋其他巢狀回饋切點集。
 
 `GeneralizeEntryPrefix` 預設為 `false`，且要求 `UseEntryPrefix`。預設模式下，每次到達都必須保持擷取路徑的述詞。顯式泛化模式則將前綴狀態運算式視為該路徑之外的全域、不可信範本函數，仍要求可行的成對見證、真實入口與片段完整覆蓋、全部暫存器／堆疊框架相等、參數投影、原生執行約束，以及擴大歸納域上的嚴格排名下降。推導僅在傳入狀態超出見證域時擴大切點，再重建並檢查所有一般轉換。首個見證零次迭代不能掩蓋另一入口的迴圈。策略綁定至歸納憑證摘要。
 

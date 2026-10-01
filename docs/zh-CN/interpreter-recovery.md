@@ -106,7 +106,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `modelInterpreterMachineStateX64` 与源码包装器共用生成器，返回 `InterpreterMachineStateModel`。寄存器字节 `[0, 136)` 表示原始的 17 字状态对象；`RETURN` 单独返回状态码，客体 RAX 保存在状态字段中，客体内存访问仍是内存访问。非法入口标志和被拒绝的动态标志写入会保留失败状态。该抽象要求状态存储始终可访问、满足对齐且不与客体访问重叠。`MaxOperations` 限制输入元数据和生成操作。确定性 LowIR 记录不能充当原始架构未定义输出的证据。调用方仍须提供观察项、入口与栈帧契约，并执行全新的 `checkLowIRLoopRefinement` 或有限路径精化证明；生成模型和记录都不证明编译后的 C。
 
-`modelLLVMInterpreterMachineStateX64` 为已验证的标量 LLVM 函数建模，函数接收一个状态指针并返回 i64 状态码。`llvmInterpreterMachineStateContract` 观察全部 17 个状态字，并要求独立的 `LLVMInterpreterDefinednessOffset` 字节初始及最终均为零；补充入口域和客体栈帧时必须保留这些义务。PHI 赋值并行执行，整数溢出、精确移位、值域属性等条件转换为待证明的检查。每个实际执行的受支持操作都必须不产生 poison，即使死代码或 select 可按 [LLVM 语义](https://llvm.org/docs/UndefinedBehavior.html) 屏蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 和 `MaxWork` 限制建模开销。不支持的类型、指针逃逸、内存模式、调用、属性和元数据明确报错；除法、变量移位和 freeze 尚不支持。必须重新执行完整有限路径或归纳检查，证明语义有效性、内存安全、观察项和终止性；自动循环候选推断仍不完备。源码、模块与编译器输入须另行精确绑定，解析器和编译器仍是信任前提。本接口不证明 C、生成的机器码或物理 CPU 的未定义位选择。源码契约见 [LLVM 语言参考](https://llvm.org/docs/LangRef.html)。 被读取的入口字节必须已初始化，客体访问必须指向声明栈帧内仍存活的存储；平坦 LowIR 内存模型不证明 LLVM 对象生命周期或指针来源。
+`modelLLVMInterpreterMachineStateX64` 为已验证的标量 LLVM 函数建模，函数接收一个状态指针并返回 i64 状态码。`llvmInterpreterMachineStateContract` 观察全部 17 个状态字，并要求独立的 `LLVMInterpreterDefinednessOffset` 字节初始及最终均为零；补充入口域和客体栈帧时必须保留这些义务。PHI 赋值并行执行，整数溢出、精确移位、值域属性等条件转换为待证明的检查。每个实际执行的受支持操作都必须不产生 poison，即使死代码或 select 可按 [LLVM 语义](https://llvm.org/docs/UndefinedBehavior.html) 屏蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 和 `MaxWork` 限制建模开销。不支持的类型、指针逃逸、内存模式、调用、属性和元数据明确报错；i8/i16/i32/i64 的变量 `shl`、`lshr` 和 `ashr` 要求无符号移位量小于源码位宽，不套用指令集的移位量掩码；`nuw`、`nsw` 和 `exact` 条件仍单独检查。除法和 freeze 尚不支持。必须重新执行完整有限路径或归纳检查，证明语义有效性、内存安全、观察项和终止性；自动循环候选推断仍不完备。源码、模块与编译器输入须另行精确绑定，解析器和编译器仍是信任前提。本接口不证明 C、生成的机器码或物理 CPU 的未定义位选择。源码契约见 [LLVM 语言参考](https://llvm.org/docs/LangRef.html)。 被读取的入口字节必须已初始化，客体访问必须指向声明栈帧内仍存活的存储；平坦 LowIR 内存模型不证明 LLVM 对象生命周期或指针来源。
+
+`prepareInterpreterLLVMRefinement` 保存精确 LLVM 文本和所选函数名，验证模块，并为两侧状态模型生成只执行一次的规范标志入口投影。`checkBinaryLLVMRefinement` 重新构建这些输入，先证明实际原生映像与同一残余程序的关系，再证明残余模型与该 LLVM 产物的关系。有限路径和归纳检查都保留全部状态字、真实状态码、语义有效性及栈帧写入，并要求 RSP 和返回地址槽保持。原生入口常量不会复制到源码契约：源码关系刻意覆盖更大的任意通用寄存器／规范标志域，因此可能保守地拒绝仅在原生限制下成立的结果。循环方案是不可信候选。只有两个全新检查都成功，才生成绑定精确 IR 字节、函数名、两段证明凭据、执行配置版本和预算的组合凭据。
+
+`MaxIRBytes` 在复制或解析前限制文本和函数名大小；`MaxMachineStateOperations` 与 `MaxPreparationItems` 限制建模及准备工作。原生与 LLVM 证明预算独立，绝不自动提高。受信任的 LLVM 解析器／验证器在此没有硬性的 CPU、栈或分配上限。共享栈帧必须以原始 RSP 状态字为根并包含入口返回地址槽。仍须保证栈帧存储已初始化且存活、状态存储可访问且对齐并与客体访问分离，以及客体指针来源有效。此 C++ API 证明受支持的原生到 LLVM 关系，不证明 C 编译、生成的机器码、故障行为或物理 CPU 未定义位选择。
 
 <!-- i18n-section: limits -->
 
@@ -159,6 +163,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 以下前缀谓词保持要求适用于 `GeneralizeEntryPrefix = false`。
 
 `inferLowIRLoopRefinementPlan` 复用符号执行器，在预算内生成模板。反馈切点覆盖 CFG 的每个环；拓宽保留已证明的固定位，并淘汰无法保持的无符号前缀边界。观察到的单位步长计数器与推导出的阶段常量组成字典序排名，支持递增或递减的嵌套循环。`OriginalPrefix` 和 `CandidatePrefix` 要求 `UseEntryPrefix`。位于其他切点之后的切点可从真实入口单独进行有界重放，取得可行的成对前缀证据。该证据不代表入口域覆盖：每次实际到达都必须蕴含其谓词，完整入口与转换路径覆盖仍是必要条件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢复及唯一原生来源，再独立重跑完整原程序／候选程序检查器。候选方案和来源映射均不可信；只有 `Refinement` 可以包含证书。推导与证明保留各自的显式预算。此 C++ API 不会随 `--devirtualize` 自动运行。不可达前缀、任意控制流对齐、搜索范围外的排名类型、C 后端等价性及物理 CPU 的未定义位选择仍不受支持。
+
+单切点搜索在泛化模板执行违反保持性或内存契约时，会继续尝试其他允许的切点。例如，循环体切点可能丢失受条件保护的计数器关系，而循环头仍可保留该关系。拒绝一个假设不等于拒绝所有切点。真实入口前缀失败、非法输入、不支持的执行或预算耗尽仍立即停止。所有尝试共用计费，包括 `MaxCutpointAttempts` 和求解查询；新候选仍须通过全新完整证明。该回退不搜索其他嵌套反馈切点集。
 
 `GeneralizeEntryPrefix` 默认为 `false`，且要求 `UseEntryPrefix`。默认模式下，每次到达都必须保持捕获路径的谓词。显式泛化模式则把前缀状态表达式视为该路径之外的全域、不可信模板函数，仍要求可行的成对见证、真实入口与片段完整覆盖、全部寄存器／栈帧相等、参数投影、原生执行约束，以及扩大归纳域上的严格排名下降。推断只在传入状态超出见证域时扩大切点，再重建并检查所有一般转换。首个见证零次迭代不能掩盖另一入口的循环。策略绑定到归纳证书摘要。
 

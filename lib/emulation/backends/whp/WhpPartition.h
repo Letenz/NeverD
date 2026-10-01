@@ -8,6 +8,8 @@
 #include "../../core/ExecutionDiagnostics.h"
 #include "../RunDeadline.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <memory>
 #include <system_error>
 #include <windows.h>
@@ -71,18 +73,30 @@ public:
     }
     return llvm::Error::success();
   }
-  llvm::Error run(WHV_RUN_VP_EXIT_CONTEXT &Exit, MachineRunControl Control) {
+  /// Complete validates a successfully returned native exit on this caller,
+  /// before classifying cancellation. It must stage ordinary state privately;
+  /// an authenticated ISA exception or real capture failure retains priority.
+  llvm::Error run(WHV_RUN_VP_EXIT_CONTEXT &Exit, MachineRunControl Control,
+                  llvm::function_ref<llvm::Error()> Complete = {}) {
+    if (!Watchdog)
+      return diagnostic::error(diagnostic::WhpRunControl);
     // step() creates one allowance for preparation, entry and state capture.
     // Starting another allowance here would extend the instruction deadline.
-    Watchdog->arm(Control);
-    const HRESULT Result =
-        API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
-    // Cancellation may race with a completed instruction. Never publish a
-    // successful register transfer when native progress is uncertain.
-    const bool Cancelled = Watchdog->disarm();
-    if (FAILED(Result))
+    const auto Entry = Watchdog->invoke(Control, [&]() noexcept {
+      return API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
+    });
+    if (Entry.Value && FAILED(*Entry.Value))
       return diagnostic::error(diagnostic::WhpRun);
-    if (Cancelled)
+    if (!Entry.Value ||
+        (Entry.Cancelled && Exit.ExitReason == WHvRunVpExitReasonCanceled))
+      return diagnostic::interrupted(diagnostic::WhpRun, Control);
+    // A successful host return may describe a processor exception. Authenticate
+    // that result before allowing a concurrent stop to hide it. The watchdog
+    // has already retired its borrow; capture retains the same step deadline.
+    if (Complete)
+      if (auto E = Complete())
+        return E;
+    if (Entry.Cancelled || Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     return llvm::Error::success();
   }

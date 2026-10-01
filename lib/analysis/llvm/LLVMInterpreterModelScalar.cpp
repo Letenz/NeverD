@@ -180,9 +180,18 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
         K != NdOp::INT_OR && K != NdOp::INT_XOR)
       fail("one-bit arithmetic unsupported");
     if (I.isShift()) {
-      auto *K = llvm::dyn_cast<llvm::ConstantInt>(I.getOperand(1));
-      if (!K || K->getZExtValue() >= I.getType()->getIntegerBitWidth())
-        fail("unproved shift definedness");
+      const unsigned Bits = I.getType()->getIntegerBitWidth();
+      if (auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(I.getOperand(1))) {
+        if (Constant->getZExtValue() >= Bits)
+          fail("unproved shift definedness");
+      } else {
+        // LLVM treats the whole unsigned count as poison-producing when it
+        // reaches the operand width. LowIR's total shift or an ISA count mask
+        // cannot discharge that source obligation.
+        auto Count = value(I.getOperand(1)), InRange = local(1);
+        emit(Out, op(NdOp::INT_LESS, InRange, {Count, num(Bits, Count.Size)}));
+        requireEqual(Out, InRange, num(1, 1));
+      }
     }
     emit(Out,
          op(K, value(&I), {value(I.getOperand(0)), value(I.getOperand(1))}));

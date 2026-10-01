@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 01f79c2abec607fec292571fdf1bbf6a2aa862a5bccf546c5c7ee213297d252e -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ CLI、集成方与 AI 智能体通过 **纯 C API** 使用同一个引擎 **`lib
 恢复预算可显式配置：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的默认值仍为 16、16、4096。兼容的 v3 C API 与失败规则见恢复指南。
 
 独立的 C++ 循环证明 API 可在预算内推导嵌套循环不变量和字典序排名，再检查原生代码到 LowIR 的精化关系，详见[恢复指南](interpreter-recovery.md)；它不证明输出 C 的等价性。
+
+独立的 C++ `checkBinaryLLVMRefinement` API 对精确 LLVM 产物组合全新的原生和 LLVM 检查；C 编译仍不在证明范围内。
 
 <!-- i18n-section: why-neverd -->
 
@@ -102,6 +104,8 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 `driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
 `checked-aarch64-v1` 和 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定宽 SIMD，以及完整 FPCR/FPSR/向量状态。匹配的 Linux ARM64 主机使用 KVM，Windows ARM64 主机使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生运行仍待实机验证；Windows 驱动加载仍限 x64。
+
+ARM64 原生初始化通过私有启动自检拒绝错误的完整状态传输或 FP/SIMD 结果；成功仅覆盖这段有界初始化程序。
 
 <!-- i18n-section: how-it-works -->
 

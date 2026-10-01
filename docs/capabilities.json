@@ -3549,13 +3549,15 @@
         "Checked x64 admits register and ordinary-RAM DIV/IDIV at all integer widths. The actual processor #DE, including quotient overflow, is retained as a guest trap or explicitly admitted recoverable event. KVM authenticates a private supervisor IDT/IST gateway outside guest mappings; WHP intercepts an explicit exception bitmap. This boundary does not admit unlisted instructions or implement a general OS exception subsystem.",
         "x64 CPU snapshots and transports retain complete physical x87 state, TOP, abridged tags, 80-bit payloads and FP metadata. Existing register identities remain unchanged. Checked profiles still reject x87 instructions; exact host-oracle arithmetic is a state-transfer proof, not generic software x87 rounding evidence.",
         "Checked x64 scalar XCHG/XADD/CMPXCHG uses actual processor results at all integer widths, with natural alignment for locked or implicit-lock memory forms. Declared ordinary-RAM writes use a bounded physical-union transaction; observers see original CPU/RAM and exact staged results. Cancellation, observer exceptions and transport failures discard speculative effects; CPU exception status survives RAM rollback. ARM64 scalar/pair writes use the same RAM authority. Unknown footprints, device atomics and parallel hardware SMP remain unsupported.",
-        "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
+        "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success establishes only bounded initialization and does not certify workload compatibility or replace independent native ARM64 validation; no unavailable backend silently falls back.",
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
         "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles admit bounded baseline FP32/FP64 and fixed-width SIMD register operations, exact FPCR/FPSR access and scalar/vector RAM transfers up to 128 bits per operand. All three transports capture 39 scalar fields and 32 vector registers atomically. Rounding, FZ, DN and sticky FPSR state are retained; unmasked exceptions, FP16, SVE/SME and unlisted extensions remain unsupported. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and operands mixing RAM/device pages remain unsupported. Ordinary RAM operands can span separately owned or aliased pages; faults identify the first failed page without partial stores. REP preserves complete earlier elements and restart registers.",
         "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion. The shared runtime owns cooperative quanta and explicit continuations; general dynamic linking, OS threads/signals and additional OS workloads remain unfinished.",
         "KVM can interrupt an active entry using a private execution thread and a realtime signal temporarily unblocked by KVM_SET_SIGNAL_MASK. It joins the cancelled worker before returning and neither changes caller masks/process handlers nor consumes application signals. The selected signal must remain non-ignored during entry. Native interruption is tested on x64; ARM64 runtime validation remains outstanding.",
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
-        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; exact FPCR/FPSR access is separately admitted, while other checked ARM64 system-register encodings remain unsupported."
+        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; exact FPCR/FPSR access is separately admitted, while other checked ARM64 system-register encodings remain unsupported.",
+        "ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding.",
+        "`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee."
       ],
       "tests": [
         {
@@ -4049,6 +4051,106 @@
             "darwin",
             "linux",
             "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64StateTests",
+          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "filter": "AArch64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64StateTests",
+          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "filter": "AArch64MachineProbe.EveryVectorCorruptionRejectsNativeInitialization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64StateTests",
+          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "filter": "AArch64MachineProbe.NopSupportDoesNotProveFloatingPointExecution",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64ProbeExecutionTests.cpp",
+          "filter": "*/AArch64ProbeExecution.OriginalProgramChecksCompleteStateAndOneDeadline/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/NativeEntryTests.cpp",
+          "filter": "NativeEntry.InvocationWaitsForInFlightCancellationAcknowledgement",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpEntryControlTests.cpp",
+          "filter": "WhpEntryControl.AuthenticatedExceptionRetainsPriorityOverStop",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmRunTests",
+          "source": "unittests/emulation/KvmRunTests.cpp",
+          "filter": "KvmRun.CompleteValidatesCapturedPacketOnCallerBeforeCancellation",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmRunTests",
+          "source": "unittests/emulation/KvmRunTests.cpp",
+          "filter": "KvmRun.CompletionCannotReplaceTheActiveEntryControl",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.ActualCPUExceptionOutranksStopDuringCapture/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.PublicCPUExceptionOutranksStopDuringCapture/*",
+          "platforms": [
+            "linux"
           ]
         }
       ],

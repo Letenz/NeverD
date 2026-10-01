@@ -150,7 +150,7 @@ The schema version is 1. The report separates:
 mean this build includes it or this machine can initialize it. Instruction
 families do not admit every encoding or operand combination; admission remains
 authoritative. Host probing checks initialization only, including any adapter
-startup probe, and does not certify a workload or native ARM64 execution.
+startup probe, and does not certify a workload or replace independent native ARM64 validation.
 Availability can change after the query. Reasons distinguish disabled builds,
 host platform/ISA mismatches, device access, host API errors, missing capability
 and other initialization failures. No unavailable backend silently falls back.
@@ -201,9 +201,11 @@ private RAM and a default space. JSON parsing/serialization lives in
 Native execution checks normal budgets between instructions. KVM and WHP also
 request cancellation of an active native entry after its transport allowance
 or a stop request, and acknowledge it before retiring execution resources. An
-interrupted entry with uncertain guest progress is terminal, even when
-`StopRequested` or `DeadlineReached` is set. KVM uses a private execution thread
-and a temporarily unblocked realtime signal without changing caller signal
+acknowledged interruption discards speculative CPU/RAM effects and returns a
+retryable stop or deadline. Genuine host, capture and guest faults retain
+priority with independent `StopRequested` and `DeadlineReached` facts. KVM uses
+a private execution thread and a temporarily unblocked realtime signal without
+changing caller signal
 masks or process handlers. The selected signal must remain non-ignored during
 an active entry. No profile promises a hard wall-clock bound.
 
@@ -276,6 +278,8 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM and WHP transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
+ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding.
+
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
@@ -287,3 +291,5 @@ KVM compares general registers and the complete FP/SSE state against the last ac
 Hardware execution alone does not guarantee lower end-to-end latency. Current native execution performs instruction admission, observation, state transfer and a VM exit for each step. Compare the same original images and scenarios with identical instruction/event budgets and report outcome parity alongside timings; include CLI startup and loading when measuring CLI latency.
 
 Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance, guest execution and complete state capture. `UC_HOOK_CODE` checks the borrowed stop token and deadline at instruction entry; the synchronous engine call retires its hook borrow before returning, while the machine step retains control through publication. Unicorn and WHP stage complete CPU state and check the same control before publishing a successful step. WHP creates its allowance once before preparation. An authenticated x64 CPU exception takes precedence over a stop arriving during capture. The checked RAM transaction discards speculative stores when capture is cancelled; the unrestricted software contract is unchanged. `MachineInterruptedError` distinguishes acknowledged cancellation from host or capture failure. The shared checked CPU returns `Stopped` or `Deadline`, preserves CPU/RAM and permits retry; genuine failures remain `BackendFailure` even with a simultaneous stop.
+
+`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.

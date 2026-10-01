@@ -5,10 +5,12 @@
 //===----------------------------------------------------------------------===//
 #include "../../core/ExecutionDiagnostics.h"
 #include "AArch64Machine.h"
+#include "AArch64MachineProbe.h"
 
 #include "llvm/Support/Endian.h"
 
 #include <cstring>
+#include <iterator>
 
 namespace neverd::emulation {
 llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
@@ -17,12 +19,22 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   if (auto E = Memory.validateMappings(aarch64::canonicalRange))
     return E;
   using namespace aarch64;
+  static_assert(ProbePC >=
+                EntryGPA + (std::size(Maintenance) + GateReturnInstructions) *
+                               InstructionBytes);
+  static_assert(ProbePC + std::size(probe::Program) * InstructionBytes <=
+                EntryGPA + memory::PageSize);
   std::memset(Memory.data(), 0, memory::ProjectionReserve);
   // This immutable, backend-owned exception gateway never overlaps guest RAM.
   for (uint64_t Offset = 0; Offset < VectorTableSize; Offset += VectorStride)
     llvm::support::endian::write32le(Memory.data() + VectorGPA + Offset,
                                      GatewayHypercall);
-  llvm::support::endian::write32le(Memory.data() + ProbePC, ProbeInstruction);
+  uint64_t ProbeOffset = ProbePC;
+  for (const auto &Instruction : probe::Program) {
+    llvm::support::endian::write32le(Memory.data() + ProbeOffset,
+                                     Instruction.Word);
+    ProbeOffset += InstructionBytes;
+  }
   uint64_t Offset = 0;
   for (uint32_t Instruction : Maintenance) {
     llvm::support::endian::write32le(Memory.data() + EntryGPA + Offset,
@@ -79,22 +91,6 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
     if (auto E = Map(VA, Page.Physical, Page.Permissions))
       return E;
   Memory.commitProjection(UserMode);
-  return llvm::Error::success();
-}
-llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
-                                 MemoryProjection &Memory) {
-  if (auto E = buildAArch64PageTables(Memory))
-    return E;
-  AArch64MachineState State;
-  State.reg(AArch64Register::PC) = aarch64::ProbePC;
-  auto Deadline = std::chrono::steady_clock::now() +
-                  std::chrono::microseconds(aarch64::ProbeTimeoutMicroseconds);
-  if (auto E = Machine.step(State, {Deadline}))
-    return E;
-  if (State.reg(AArch64Register::PC) !=
-          aarch64::ProbePC + aarch64::InstructionBytes ||
-      State.reg(AArch64Register::NZCV))
-    return diagnostic::error(diagnostic::ArmState);
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

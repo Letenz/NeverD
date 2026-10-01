@@ -64,11 +64,17 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests`의 `InterpreterMachineStateModel.*`는 독립적인 LowIR 예제로 원시 진입 플래그, 상태와 게스트 RAX의 구분, 17개 상태 워드 전체, 부분 레지스터, 플래그 패킹, 동적 거부 상태의 유지, 게스트 프레임 쓰기, 양쪽 분기와 순환 추론 후의 새 증명을 검사합니다. 잘못된 출력, 누락된 상태, 메모리 변경, 오래된 명령 기록, 잘못된 입력, 생성 예산 소진은 실패해야 합니다. 기존 머신 소스 테스트는 두 C 경로를 O0/O2에서 실행하며 모델 테스트만으로 컴파일된 C를 인증하지 않습니다.
 
-`NeverDLLVMInterpreterModelTests`는 독립 LLVM을 전체 상태 LowIR 기준과 비교하여 비트 폭, 병렬 PHI, switch, 게스트 메모리, 별도 상태, poison 조건, 내장 함수 범위, 거부 계약과 네 가지 구성 예산을 검사합니다. 임의 워드 카운트다운의 완전한 증명을 검사하고 변조된 상태를 거부합니다. 독립 C의 O1/O2 컴파일 결과도 같은 관찰 계약을 만족해야 합니다. 지원 모델을 검증하는 테스트이며 자동 불변식 발견과 컴파일러 정확성은 별도 의무입니다.
+`NeverDLLVMInterpreterModelTests`는 독립 LLVM을 전체 상태 LowIR 기준과 비교하여 비트 폭, 병렬 PHI, switch, 게스트 메모리, 별도 상태, poison 조건, 내장 함수 범위, 거부 계약과 네 가지 구성 예산을 검사합니다. 임의 워드 카운트다운의 완전한 증명을 검사하고 변조된 상태를 거부합니다. 독립 C의 O1/O2 컴파일 결과도 같은 관찰 계약을 만족해야 합니다. 지원 모델을 검증하는 테스트이며 자동 불변식 발견과 컴파일러 정확성은 별도 의무입니다. 가변 시프트 사례는 네 가지 비트 폭, 마스크나 분기로 제한한 시프트 양, 경계값과 범위 초과 값, 오버플로 금지 및 정확성 플래그, 엄격한 poison 거부, O1/O2로 컴파일한 C를 검증합니다.
+
+조건부 카운트다운 검증은 본문 템플릿 거부 후 재시도, 임의 워드 입력에 대한 완전한 헤더 증명, 절단점 및 쿼리 예산의 누적, 실제 진입 계약 위반의 즉시 거부를 검사합니다.
+
+`NeverDInterpreterLLVMRefinementTests`는 새로운 조합 증명, 정확한 텍스트/함수 바인딩, 독립 예산, 전체 관찰과 더 넓은 소스 영역을 검사합니다. 바이트, 잔여 코드, 결과, 플래그, 상태 코드, 프레임 쓰기, poison 및 잘못되거나 오래된 루프 계획은 조합 기록을 거부해야 합니다. 임의 워드 카운트다운에는 두 귀납 전제가 필요하며, 독립 C 예제의 O1/O2 컴파일은 실제 직렬화 LLVM 입력을 검증합니다. 상태 모델 회귀는 숨겨진 진입 역방향 간선을 거부하고 부수적인 출처 정보를 복사하지 않으면서 루트 예산을 검사합니다.
 
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 2중 및 3중 루프의 캐시된 동등 종료 조건은 피연산자 상관관계, 변하는 경계, 카운터 재설정 및 손상된 복사를 검사합니다.
@@ -875,6 +881,10 @@ KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드�
 
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
+ARM64 KVM/WHP 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 성공은 이 제한된 초기화 프로그램만 검증하며 독립적인 native ARM64 워크로드 검증은 아직 필요합니다.
+
+`NeverDAArch64StateTests`는 모든 스칼라 필드와 벡터의 두 워드 손상, 권한 변경, 부동소수점 미실행 및 전송 오류 진단 보존을 검사합니다. `NeverDAArch64FPTests`의 `OriginalProgramChecksCompleteStateAndOneDeadline`은 독립적으로 어셈블한 `AArch64ProbeCases.def` 명령을 실제 전송에서 두 권한으로 실행합니다. 테스트는 PC와 무관한 명령을 게스트 코드로 옮기며 모니터 페이지의 사용자 접근을 허용하지 않습니다. Unicorn 실행과 명시적 native 건너뛰기는 native ARM64 시작 증거를 대신하지 않습니다.
+
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
 `AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.
@@ -890,3 +900,7 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 상태 읽기 회귀 테스트: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests`는 실제 x64와 ARM64 엔진의 두 권한 수준에서 `UnicornMachineControlCases.def`의 원래 저장 명령을 실행합니다. `RejectedEntryPreservesStateAndRAMAndAllowsRetry`는 단계 전 취소, 실제 게스트 진입 시 정지 또는 기한 만료, 전체 입력 상태와 RAM 보존, 이후 한 번의 성공적인 저장을 검증합니다. 테스트 전용 진입 래퍼는 하이퍼바이저 없이 실행하며 네이티브 ARM64/WHP 증거를 제공하지 않습니다.
+
+`RunDeadline::invoke`는 중지되었거나 기한이 지난 WHP 실행을 호스트 호출 전에 거부하고, 취소 중에도 실제 호스트 결과를 보존하며, 빌린 중지 토큰을 해제하기 전에 인터럽트 콜백의 종료를 확인합니다. KVM과 WHP는 실행 임대를 보유한 호출 스레드에서 완전히 캡처된 비공개 상태를 검증한 다음 동시에 도착한 중지나 기한을 분류합니다. 실제 호스트·캡처 실패와 인증된 x64 CPU 예외가 우선합니다. 일반 성공 상태는 취소 확인이 끝날 때까지 비공개로 유지하며, 확인된 중단은 추측적 CPU/RAM 효과를 버리고 재시도를 허용합니다. 준비, 네이티브 실행, 캡처는 하나의 스텝 유예를 공유합니다. 협력적 취소를 제공하지만 엄격한 실제 시간 상한은 보장하지 않습니다.
+
+`NeverDRunControlTests`에는 이식 가능한 `NativeEntryTests.cpp`와 Windows에서 WHP를 활성화할 때의 `WhpEntryControlTests.cpp`가 포함됩니다. 메모리 내 호스트 콜백으로 Hyper-V 없이 실행 거부, 재시도, 늦은 취소, 실제 오류 보존, 완료 결과의 우선순위와 확인된 콜백 수명을 검증합니다. `NeverDKvmRunTests`는 호출 스레드의 완료, 오류 우선순위와 재진입 거부를 확인합니다. 실제 `NeverDKvmStateTransferTests`는 `KvmStateTransferCases.def`의 원래 명령을 실행합니다. `ActualCPUExceptionOutranksStopDuringCapture`와 `PublicCPUExceptionOutranksStopDuringCapture`는 실제 레지스터/XSAVE 읽기 후 중지하여 나눗셈 예외, 원래 컨텍스트, RAM과 명시적 복구를 보존합니다. Wine의 Windows ABI에서 실행한 이식 가능한 테스트는 스레드와 제어 증거만 제공하며 네이티브 WHP 실행을 입증하지 않습니다. 사용할 수 없는 네이티브 전송은 명시적으로 건너뜁니다.

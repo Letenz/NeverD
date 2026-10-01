@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 01f79c2abec607fec292571fdf1bbf6a2aa862a5bccf546c5c7ee213297d252e -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF 
 復元予算は `--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` で明示できます。既定値は 16、16、4096 のままです。互換性のある v3 C API と失敗時の規則は復元ガイドを参照してください。
 
 独立した C++ ループ証明 API は予算内で入れ子ループの不変条件と辞書式順位を推論し、ネイティブから LowIR への精緻化を再検査します。[復元ガイド](interpreter-recovery.md)を参照してください。出力 C の等価性は証明しません。
+
+独立した C++ `checkBinaryLLVMRefinement` API は正確な LLVM 成果物に対し新規のネイティブ・LLVM 検証を合成します。C コンパイルは証明範囲外です。
 
 <!-- i18n-section: why-neverd -->
 
@@ -102,6 +104,8 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 `driver-strict` / `checked-x64-v1` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 `checked-aarch64-v1` と `checked-user-aarch64-v1` は限定された ARM64 FP32/FP64、固定幅 SIMD、完全な FPCR/FPSR/vector 状態を提供します。ISA が一致する Linux ARM64 は KVM、Windows ARM64 は WHP、異なる ISA は Unicorn を使用します。native ARM64 の実機検証は未完了で、Windows ドライバーのロードは x64 に限定されます。
+
+ARM64 の native 初期化は専用の起動チェックで完全状態の転送や FP/SIMD 結果の誤りを拒否します。成功が示すのはこの有限の初期化プログラムです。
 
 <!-- i18n-section: how-it-works -->
 

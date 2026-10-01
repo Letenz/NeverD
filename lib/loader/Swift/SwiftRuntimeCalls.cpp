@@ -149,6 +149,20 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 UUID.uuidString clients read UUID through
+    // swiftself and receive both physical String words in result registers.
+    {"$s10Foundation4UUIDV10uuidStringSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)C"},
+    // UUID.init() constructs the opaque UUID through swift_indirect_result
+    // on both Darwin targets; there are no ordinary or context inputs.
+    {"$s10Foundation4UUIDVACycfC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vI"},
     // Locale.preferredLanguages returns the Array object in one register.
     {"$s10Foundation6LocaleV18preferredLanguagesSaySSGvgZ",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"

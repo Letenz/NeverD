@@ -62,11 +62,17 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用獨立撰寫的 LowIR 案例，檢查原始入口旗標、狀態碼與客體 RAX 的區分、全部 17 個狀態字、部分暫存器分片、封裝旗標、動態拒絕狀態的持續保留、客體堆疊框架寫入、兩個分支以及循環推斷後的全新證明。錯誤輸出、遺失狀態、記憶體變更、過期指令記錄、非法輸入和產生預算耗盡必須失敗。既有機器狀態原始碼測試也涵蓋兩條 C 路徑的 O0/O2；模型測試本身不證明編譯後的 C。
 
-`NeverDLLVMInterpreterModelTests` 將獨立編寫的 LLVM 與完整狀態 LowIR 參考實作比較，涵蓋位寬、平行 PHI、switch、客體記憶體、獨立狀態碼、poison 檢查、內建函式值域、被拒絕的契約及四種建模預算。測試完成任意字長倒數迴圈的完整證明，並拒絕遭改寫的狀態碼。獨立 C 用例經 O1/O2 編譯後必須滿足相同觀察契約。這些測試驗證受支援的模型；自動不變量發現與編譯器正確性仍是獨立義務。
+`NeverDLLVMInterpreterModelTests` 將獨立編寫的 LLVM 與完整狀態 LowIR 參考實作比較，涵蓋位寬、平行 PHI、switch、客體記憶體、獨立狀態碼、poison 檢查、內建函式值域、被拒絕的契約及四種建模預算。測試完成任意字長倒數迴圈的完整證明，並拒絕遭改寫的狀態碼。獨立 C 用例經 O1/O2 編譯後必須滿足相同觀察契約。這些測試驗證受支援的模型；自動不變量發現與編譯器正確性仍是獨立義務。 變數位移用例涵蓋全部四種位寬、經遮罩或分支限制的位移量、邊界及越界位移量、無回繞與精確旗標、嚴格 poison 拒絕，以及 O1/O2 編譯後的 C。
+
+受條件保護的倒數測試涵蓋拒絕本體模板後的重試、任意字長輸入的完整迴圈頭證明、切點與查詢預算的累計計費，以及真實入口契約違規時立即拒絕。
+
+`NeverDInterpreterLLVMRefinementTests` 檢查全新的原生到 LLVM 組合證明、精確文字／函式綁定、獨立預算、完整觀察項及刻意擴大的原始碼域。修改位元組、殘餘程式、結果、旗標、狀態碼、框架寫入、poison 或錯誤／過期迴圈方案，都必須拒絕組合憑據。任意字長倒數要求兩段歸納前提；獨立 C 案例在 O1/O2 編譯後驗證實際序列化 LLVM 輸入。狀態模型回歸拒絕隱藏入口回邊，對入口集合計費且不複製附屬來源資訊。
 
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 兩層和三層迴圈的快取相等退出測試涵蓋運算元相關性、變動邊界、計數器重設及損壞的複製。
@@ -836,6 +842,10 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
+ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。
+
+`NeverDAArch64StateTests` 驗證每個純量欄位、每個向量的兩個字、特權級改變、浮點指令未執行及傳輸錯誤診斷的保留。`NeverDAArch64FPTests` 在兩種特權級的真實傳輸上執行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用獨立組譯的 `AArch64ProbeCases.def` 原始指令。測試把這些與 PC 無關的指令遷到客體程式，保持監控頁僅供特權級存取。Unicorn 執行和原生後端的明確略過不能取代 ARM64 原生啟動證據。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 
 `AArch64InstructionEffects` 負責純量及 FP/SIMD 單次、成對 RAM 存取範圍，單一運算元最大 128 位元。共用位址空間在進入 CPU 前驗證每頁；`RAMTransaction` 僅提交完整宣告的實體寫入。128 位元寫入觀察器在生效前依序收到兩個 64 位元字。停止與故障保留 RAM、向量及位址寫回。Xn/Vn 編號重疊合法；位址回繞的成對存取被拒絕。`NeverDAArch64MemoryTests` 使用獨立的 `AArch64CrossPageCases.def` 與 `AArch64VectorMemoryCases.def` 編碼。
@@ -851,3 +861,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 狀態回讀回歸： `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineControlTests`: `StopDuringCaptureCannotPublishAndAllowsRetry`, `ExpiredCaptureCannotPublishAndAllowsRetry`, `CompletedStoreCannotPublishCancelledCapture`, `StopDuringCaptureCannotHideRealGuestException`. `UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent`; `NeverDKvmStateTransferTests`: `PublicCancellationRetainsStateRAMAndFailurePriority`.
 
 `NeverDUnicornMachineControlTests` 在真實 x64 和 ARM64 引擎的兩種權限級執行 `UnicornMachineControlCases.def` 中的原始儲存指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 檢查單步前取消、實際客體入口處停止或期限到期、全部輸入狀態與 RAM 保持不變，以及隨後成功執行一次儲存。測試專用入口包裝不需要虛擬機監控器，也不構成 ARM64/WHP 原生執行證據。
+
+`RunDeadline::invoke` 在 WHP 入口已停止或逾期時拒絕呼叫主機，取消期間保留真實主機結果，並在釋放借用的停止標記前確認中斷回呼結束。KVM 和 WHP 在持有執行租約的呼叫執行緒上驗證完整擷取的私有狀態，然後分類同時到達的停止或逾時。真實主機錯誤、擷取失敗以及經過認證的 x64 CPU 例外保持較高優先順序。一般成功狀態在取消檢查結束前保持私有；已確認的中斷捨棄推測性的 CPU/RAM 效果並允許重試。準備、原生執行和擷取共用一次單步寬限。這些控制提供協作式取消，不保證硬性實際時間上限。
+
+`NeverDRunControlTests` 包含可攜式 `NativeEntryTests.cpp` 和 Windows 啟用 WHP 時的 `WhpEntryControlTests.cpp`。記憶體主機回呼驗證拒絕入口、重試、晚到取消、真實錯誤保留、完成結果優先順序和已確認的回呼生命週期，無需 Hyper-V。`NeverDKvmRunTests` 檢查呼叫執行緒完成、錯誤優先順序及重入拒絕。真實 `NeverDKvmStateTransferTests` 執行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真實暫存器/XSAVE 讀取後停止，並保留除零例外、原始上下文、RAM 和明確恢復。Wine 上採用 Windows ABI 執行的可攜式測試僅提供執行緒及控制協定證據，不證明原生 WHP 執行。不可用的原生後端仍明確略過。

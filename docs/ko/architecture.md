@@ -68,6 +68,8 @@ Objective-C 수신자 정보는 메서드 진입점의 self와 정확한 클래�
 
 `NeverDLLVMInterpreterModel`은 동일한 원시 상태 ABI로 별도의 유계 스칼라 LLVM 가져오기를 담당합니다. `modelLLVMInterpreterMachineStateX64`는 실제 상태 반환과 명시적 정의성 검사를 유지합니다. `llvmInterpreterMachineStateContract`는 전체 관찰값과 0인 감시 바이트의 보존 의무를 제공하며 도메인, 메모리, 완전한 증명은 호출자 책임입니다. 일반 리프팅이나 소스 게시를 변경하거나 컴파일러를 증명하지 않습니다.
 
+`NeverDInterpreterLLVMRefinement`는 네이티브에서 LLVM으로의 증명 조합을 담당합니다. 두 상태 모델과 필수 계약을 재구성하고 권위 있는 프로필에서 진입 전용 플래그 투영을 생성하여 두 전제를 새로 검사합니다. 호출자는 루프 후보를 제시할 수 있지만 모델, 관찰 항목, 증명 기록을 바꿀 수 없습니다. 분석 모델은 실행 그래프와 선언된 루트만 복사하며, 상태 초기화가 반복되는 진입 역방향 간선을 거부합니다.
+
 복구 C API v3와 CLI는 필드, 정제, 솔버 질의 예산을 공통 특수화기에 전달합니다. 어댑터는 확장을 읽기 전에 구조체 크기와 reserved 필드를 검사하며 v1/v2 레이아웃과 기본값을 유지합니다. 예산 증가는 허용 작업량만 바꾸며 실행 계약이나 결과 게시 조건은 바꾸지 않습니다.
 
 아키텍처 lifter는 미정의 출력의 부가 메타데이터를 트랜잭션 방식으로 관리합니다. 각 시도 전에 이전 증거를 지우고 정확히 대응하는 성공한 리프트에만 효과를 게시합니다. `Missing`은 증거가 없다는 뜻이며 빈 `Complete` 설명과 다릅니다. 일반 LowIR은 선택된 결정적 값을 유지합니다. `LowIRUndefinedIndependence`는 전달받은 완전한 비순환 LowIR 그래프의 제한된 관계 증명을 담당하며, 일반 입력을 공유하고 새 미정의 값의 상관관계를 보존합니다. 전체 명령 경계와 연산 다이제스트에 증거를 결합하고 불완전한 증명을 거부합니다. 아래 유한 네이티브 실행 경로 범위를 넘는 일반 네이티브 그래프 인증, 루프 불변식, 네이티브 코드에서 C로의 동등성 증명은 별도 작업입니다.
@@ -492,6 +494,8 @@ CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 
 
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
+ARM64 KVM/WHP 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 성공은 이 제한된 초기화 프로그램만 검증하며 독립적인 native ARM64 워크로드 검증은 아직 필요합니다.
+
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
 `AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.
@@ -783,3 +787,5 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
 checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게스트 실행과 전체 상태 읽기를 한 단계 시간 한도에서 처리합니다. `UC_HOOK_CODE`는 명령 진입에서 빌린 정지 토큰과 기한을 확인합니다. 동기 엔진 호출은 반환 전에 hook 참조를 해제하지만 기계 단계는 상태 게시까지 제어를 유지합니다. Unicorn과 WHP는 전체 CPU 상태를 임시 저장하고 성공한 단계의 게시 직전에 같은 제어 조건을 확인합니다. WHP는 준비 전에 시간 한도를 한 번만 만듭니다. 확인된 x64 CPU 예외는 상태 읽기 중 도착한 정지 요청보다 우선합니다. 읽기가 취소되면 checked RAM 트랜잭션은 추측 쓰기를 버리며 비제한 소프트웨어 계약은 그대로입니다. `MachineInterruptedError`는 확인된 취소와 호스트 또는 상태 읽기 실패를 구분합니다. 공통 checked CPU는 `Stopped` 또는 `Deadline`을 반환하고 CPU/RAM을 유지하며 재시도를 허용합니다. 동시 정지 요청이 있어도 실제 실패는 `BackendFailure`로 남습니다.
+
+`RunDeadline::invoke`는 중지되었거나 기한이 지난 WHP 실행을 호스트 호출 전에 거부하고, 취소 중에도 실제 호스트 결과를 보존하며, 빌린 중지 토큰을 해제하기 전에 인터럽트 콜백의 종료를 확인합니다. KVM과 WHP는 실행 임대를 보유한 호출 스레드에서 완전히 캡처된 비공개 상태를 검증한 다음 동시에 도착한 중지나 기한을 분류합니다. 실제 호스트·캡처 실패와 인증된 x64 CPU 예외가 우선합니다. 일반 성공 상태는 취소 확인이 끝날 때까지 비공개로 유지하며, 확인된 중단은 추측적 CPU/RAM 효과를 버리고 재시도를 허용합니다. 준비, 네이티브 실행, 캡처는 하나의 스텝 유예를 공유합니다. 협력적 취소를 제공하지만 엄격한 실제 시간 상한은 보장하지 않습니다.

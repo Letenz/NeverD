@@ -2281,6 +2281,213 @@ struct SynchronizedRetainedStackFixture {
   }
 };
 
+struct SynchronizedLoadedRegisterFixture : SynchronizedRetainedStackFixture {
+  SynchronizedLoadedRegisterFixture() {
+    for (va_t Address = 0x3000; Address < 0x3074; Address += 4)
+      put(Address, 0xd503201fU);
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libSystem.B.dylib");
+    const auto Runtime = [&](va_t Address, va_t Slot, const char *Name,
+                             const char *Provider) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, Provider, false};
+      put(Address, 0xb0000010U);
+      put(Address + 4, 0xf9400210U | ((Slot - 0x5000) / 8 << 10));
+      put(Address + 8, 0xd61f0200U);
+    };
+    Runtime(0x4130, 0x5120, "_objc_retain_x19", "/usr/lib/libobjc.A.dylib");
+    Runtime(0x4140, 0x5128, "_objc_release_x21", "/usr/lib/libobjc.A.dylib");
+    Runtime(0x4200, 0x5130, "_objc_sync_enter", "/usr/lib/libobjc.A.dylib");
+    Runtime(0x4210, 0x5138, "_objc_sync_exit", "/usr/lib/libobjc.A.dylib");
+    Runtime(0x4220, 0x5140, "__Unwind_Resume", "/usr/lib/libSystem.B.dylib");
+    Runtime(0x4150, 0x5148, "_objc_retain_x1", "/usr/lib/libobjc.A.dylib");
+    put(0x3000, 0xd10103ffU); // sub sp, sp, #0x40
+    put(0x3004, 0xa90157f6U);
+    put(0x3008, 0xa9024ff4U);
+    put(0x300c, 0xa9037bfdU);
+    put(0x3010, 0x9100c3fdU);
+    put(0x3014, 0xf90007e1U); // preserve the notification
+    call(0x3018, 0x4150);
+    put(0x301c, 0xd0000014U); // adrp x20, 0x5000
+    put(0x3020, 0xf9401693U); // ldr x19, [x20, #0x28]
+    call(0x3024, 0x4130);     // retain the loaded receiver in x19
+    put(0x3028, 0xaa1303e0U);
+    call(0x302c, 0x4200);
+    put(0x3030, 0xf9401680U); // a separate global reload in the body
+    call(0x3034, 0x4000);
+    put(0x3038, 0xaa1d03fdU);
+    call(0x303c, 0x4100);
+    put(0x3040, 0xaa0003f5U);
+    call(0x3044, 0x4040);
+    put(0x3048, 0xaa0003f4U);
+    call(0x304c, 0x4140); // unprotected release-x21, without MOV X0
+    put(0x3050, 0xaa1303e0U);
+    call(0x3054, 0x4210);
+    call(0x3058, 0x4110);
+    put(0x305c, 0xd65f03c0U);
+    put(0x3060, 0xaa0003f4U);
+    put(0x3064, 0xaa1303e0U);
+    call(0x3068, 0x4210);
+    put(0x306c, 0xaa1403e0U);
+    call(0x3070, 0x4220);
+    Function.Params = {{"block", NdType::makePtr(NdType::makeVoid())},
+                       {"notification", NdType::makePtr(NdType::makeVoid())}};
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Itanium->CallSites[0].GuardedRange.End = 0x3034;
+    EH.Itanium->CallSites[1].GuardedRange = {0x3034, 0x3048};
+    EH.Itanium->CallSites[2].GuardedRange.Begin = 0x3048;
+    EH.ObjC->LandingPads[0].GuardedRange = {0x3034, 0x3048};
+  }
+};
+
+TEST(ObjCSourceProjection, SynchronizedLoadedReceiverDoesNotUseBlockContext) {
+  SynchronizedLoadedRegisterFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  EXPECT_EQ(Proof->EnterCall, 0x302cU);
+  EXPECT_EQ(Proof->GuardStopCall, 0x304cU);
+  EXPECT_EQ(Proof->ExitCall, 0x3054U);
+  EXPECT_EQ(Proof->UnprotectedReleases, 1U);
+  for (const auto &[Address, Word] :
+       {std::pair<va_t, uint32_t>{0x3020, 0xb9401693U}, // W19 truncates pointer
+        {0x3020, 0xf9401694U}, // loads another register
+        {0x3024, 0x94000000U | ((0x4150 - 0x3024) / 4)}, // retain-x1
+        {0x3028, 0xaa0003f3U}, // acquires incoming X0 instead
+        {0x3030, 0xf9401693U}, // changes saved lock after acquisition
+        {0x3040, 0xaa0003f3U},
+        {0x3050, 0xaa1403e0U},    // normal exit uses another receiver
+        {0x3064, 0xaa1403e0U},    // exceptional exit uses exception
+        {0x306c, 0xaa1303e0U},    // resumes the lock instead of exception
+        {0x301c, 0x14000005U}}) { // bypasses the defining load
+    const auto Original = *objcSynchronizedWord(F.Image, Address);
+    F.put(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.put(Address, Original);
+  }
+  for (va_t Slot : {0x5120U, 0x5128U, 0x5130U, 0x5138U, 0x5140U}) {
+    const auto Original = F.Image.DyldBindSlots.at(Slot);
+    F.Image.DyldBindSlots[Slot].WeakImport = true;
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.Image.DyldBindSlots[Slot] = Original;
+    F.Image.DyldBindSlots[Slot].Module = "/tmp/impostor.dylib";
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.Image.DyldBindSlots[Slot] = Original;
+    F.Image.DyldBindSlots[Slot].Addend = 4;
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+    F.Image.DyldBindSlots[Slot] = Original;
+  }
+  F.Function.ExceptionMetadata->Itanium->CallSites[1].GuardedRange.End += 4;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(F.Image, F.Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedDependencyKeepsItsOwnExceptionalUnlock) {
+  SynchronizedLoadedRegisterFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  const std::string Source = R"C(
+#include <stdint.h>
+extern void *load_lock(void);
+extern void *objc_retain(void *);
+extern void objc_release(void *);
+extern int32_t neverd_darwin_objc_sync_enter(void *);
+extern int32_t neverd_darwin_objc_sync_exit(void *);
+extern void work(int);
+void neverd_block_invoke_3000(void *block);
+// neverd_block_invoke_3000(void*) { fake }
+void neverd_objc_imp_2000(void *objc_self) {
+    const char *text = "neverd_block_invoke_3000(void*) { fake }";
+    (void)text;
+    neverd_block_invoke_3000(objc_self);
+}
+void neverd_block_invoke_3000(void *block) {
+    uint64_t v1 = (uintptr_t)load_lock();
+    (void)block;
+    (void)objc_retain((void*)(uintptr_t)(v1));
+    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(v1)));
+    work(2);
+    objc_release(block);
+    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(v1)));
+    work(4);
+}
+)C";
+  const auto Result = addObjCSynchronizedReceiverCleanup(
+      Source, *Proof, "neverd_block_invoke_3000");
+  ASSERT_TRUE(Result);
+  const auto Root = objcSynchronizedSourceBody(*Result, "neverd_objc_imp_2000");
+  const auto Block =
+      objcSynchronizedSourceBody(*Result, "neverd_block_invoke_3000");
+  ASSERT_TRUE(Root);
+  ASSERT_TRUE(Block);
+  EXPECT_FALSE(llvm::StringRef(*Result)
+                   .slice(Root->first, Root->second)
+                   .contains("neverd_objc_sync_guard"));
+  EXPECT_TRUE(llvm::StringRef(*Result)
+                  .slice(Block->first, Block->second)
+                  .contains("neverd_objc_sync_guard"));
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(*Result, *Proof,
+                                                  "neverd_block_invoke_3000"));
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Source, *Proof, "missing"));
+  const char *Harness = R"CPP(
+#include <stdint.h>
+static void *original, *current;
+static int failure, order, unlocks, bad;
+extern "C" void *load_lock(void) { return current; }
+extern "C" void *objc_retain(void *value) { return value; }
+extern "C" int32_t neverd_darwin_objc_sync_enter(void *value) {
+    if (value != original) bad = 1;
+    order = order * 10 + 1; return 0;
+}
+extern "C" int32_t neverd_darwin_objc_sync_exit(void*)
+    __asm__("_objc_sync_exit");
+extern "C" int32_t neverd_darwin_objc_sync_exit(void *value) {
+    if (value != original) bad = 1;
+    order = order * 10 + 5; ++unlocks; return 0;
+}
+extern "C" void work(int tag) {
+    current = (void*)(uintptr_t)0x9999;
+    order = order * 10 + tag;
+    if ((tag == 2 && failure == 1) || (tag == 4 && failure == 3)) throw failure;
+}
+extern "C" void objc_release(void *) {
+    order = order * 10 + 3;
+    if (failure == 2) throw failure;
+}
+extern "C" void neverd_objc_imp_2000(void *);
+int main() {
+    for (failure = 0; failure <= 3; ++failure) {
+        original = current = (void*)(uintptr_t)0x1234;
+        order = unlocks = bad = 0;
+        int caught = 0;
+        try { neverd_objc_imp_2000((void*)(uintptr_t)0x7777); }
+        catch (int exception) { caught = exception; }
+        const int wanted = failure == 1 ? 125 : failure == 2 ? 123 : 12354;
+        if (caught != failure || order != wanted ||
+            unlocks != (failure == 2 ? 0 : 1) || bad) return 10 + failure;
+    }
+    return 0;
+}
+)CPP";
+  executeSynchronizedSource(*Result, Harness);
+  // A second dependency uses the same cleanup declaration without redefining
+  // the helper; neither edit may reach the root or the other dependency.
+  std::string Multiple = Source;
+  std::string Copy = Source.substr(
+      Source.find("void neverd_block_invoke_3000(void *block) {"));
+  const auto At = Copy.find("neverd_block_invoke_3000");
+  Copy.replace(At, std::string("neverd_block_invoke_3000").size(),
+               "neverd_block_invoke_4000");
+  Multiple += Copy;
+  const auto First = addObjCSynchronizedReceiverCleanup(
+      Multiple, *Proof, "neverd_block_invoke_3000");
+  ASSERT_TRUE(First);
+  const auto Second = addObjCSynchronizedReceiverCleanup(
+      *First, *Proof, "neverd_block_invoke_4000");
+  ASSERT_TRUE(Second);
+  EXPECT_EQ(Second->find(ObjCSynchronizedCleanupDeclarations),
+            Second->rfind(ObjCSynchronizedCleanupDeclarations));
+  executeSynchronizedSource(*Second, Harness);
+}
+
 const char *SynchronizedRetainedStackSource = R"C(
 #include <stdint.h>
 extern void *cache(void*);

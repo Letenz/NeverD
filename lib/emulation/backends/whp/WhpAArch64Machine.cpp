@@ -92,33 +92,34 @@ public:
     // ARM64 WHP does not expose x64's exception-exit bitmap. The immutable EL1
     // vector gateway returns through an intercepted HVC after one debug step.
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    if (auto E = run(Exit, Control))
-      return E;
-    if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
-        Exit.Hypercall.Header.Pc !=
-            VectorGPA + (State.UserMode ? LowerELVector : CurrentELVector) ||
-        Exit.Hypercall.Immediate)
-      return diagnostic::error(diagnostic::WhpExit);
-    Names.resize(StateCount);
-    Values.resize(StateCount);
-    const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
-    if (FAILED(API.WHvGetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), Names.size(), Values.data())))
-      return diagnostic::error(diagnostic::WhpState);
-    if (((Values[Syndrome].Reg64 >> ExceptionClassShift) &
-         ExceptionClassMask) !=
-        (State.UserMode ? StepFromLowerEL : StepFromEL1))
-      return diagnostic::error(diagnostic::ArmState);
     auto Next = State;
-    if (auto E = captureAArch64State(
-            Next,
-            [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-              return Values[unsigned(Register)].Reg64;
-            },
-            [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-              const auto &Value = Values[VectorBegin + Index].Reg128;
-              return RegisterValue{Value.Low64, Value.High64};
-            }))
+    auto Complete = [&]() -> llvm::Error {
+      if (Exit.ExitReason != WHvRunVpExitReasonHypercall ||
+          Exit.Hypercall.Header.Pc !=
+              VectorGPA + (State.UserMode ? LowerELVector : CurrentELVector) ||
+          Exit.Hypercall.Immediate)
+        return diagnostic::error(diagnostic::WhpExit);
+      Names.resize(StateCount);
+      Values.resize(StateCount);
+      const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
+      if (FAILED(API.WHvGetVirtualProcessorRegisters(
+              Partition, 0, Names.data(), Names.size(), Values.data())))
+        return diagnostic::error(diagnostic::WhpState);
+      if (((Values[Syndrome].Reg64 >> ExceptionClassShift) &
+           ExceptionClassMask) !=
+          (State.UserMode ? StepFromLowerEL : StepFromEL1))
+        return diagnostic::error(diagnostic::ArmState);
+      return captureAArch64State(
+          Next,
+          [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+            return Values[unsigned(Register)].Reg64;
+          },
+          [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+            const auto &Value = Values[VectorBegin + Index].Reg128;
+            return RegisterValue{Value.Low64, Value.High64};
+          });
+    };
+    if (auto E = run(Exit, Control, Complete))
       return E;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
