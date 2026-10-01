@@ -391,9 +391,9 @@ class OutcomePolicyTests(unittest.TestCase):
             path.unlink()
             with self.assertRaises(OSError):
                 read_exit_status(path)
-        for version in ("ctest version 3.28.0", "ctest version 4.0.0"):
+        for version in ("ctest version 3.29.0", "ctest version 4.0.0"):
             check_ctest_version(version)
-        for version in ("ctest version 3.27.9", "cmake version 3.31.4", ""):
+        for version in ("ctest version 3.28.6", "cmake version 3.31.4", ""):
             with self.assertRaises(ResultError):
                 check_ctest_version(version)
 

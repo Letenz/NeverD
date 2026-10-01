@@ -1438,7 +1438,12 @@ jobs:
                   for item in records
               ]
 
-          name_regex = "^(" + "|".join(re.escape(item.name) for item in expected) + ")$"
+          # A regex of every expected name exceeds the Windows command-line
+          # limit, so pass the exact names through a file instead.
+          tests_file = evidence / "tests.txt"
+          tests_file.write_text(
+              "".join(item.name + "\n" for item in expected), encoding="utf-8"
+          )
           # CTest accepts any matching label. Select the owning aggregates;
           # additional labels remain part of each exact expected identity.
           owners = (
@@ -1452,7 +1457,7 @@ jobs:
           common = [
               "ctest", "--test-dir", "build-ci", "--build-config", "Release",
               "--label-regex", owner_regex,
-              "--tests-regex", name_regex,
+              "--tests-from-file", str(tests_file),
           ]
           discovery = common + ["--show-only=json-v1"]
           execution = common + [
