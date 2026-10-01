@@ -2817,6 +2817,53 @@ TEST(ObjCSourceBindings, SwiftDictionaryStorageMetadataUsesExactStrongImport) {
 }
 
 TEST(ObjCSourceBindings,
+     SwiftNativeDictionaryMetadataRequiresExactImportIdentity) {
+  for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftDictionaryTypeMetadataFixture();
+    const std::string Descriptor = "_$ss17_NativeDictionaryVMn";
+    F.Image.ImportPtrSlots[F.DescriptorSlot] = Descriptor;
+    F.Image.ImportStorageSlots[F.DescriptorSlot].Name = Descriptor;
+    F.Image.DyldBindSlots[F.DescriptorSlot].Name = Descriptor;
+    F.Image.Symbols[0].Name = "_$ss17_NativeDictionaryVySSSo8NSBundleCGMR";
+    F.Image.Symbols[1].Name = "_$ss17_NativeDictionaryVySSSo8NSBundleCGMd";
+    if (Mutation == 1)
+      F.Image.DyldBindSlots[F.DescriptorSlot].WeakImport = true;
+    if (Mutation == 2)
+      F.Image.DyldBindSlots[F.DescriptorSlot].Addend = 8;
+    if (Mutation == 3)
+      F.Image.DyldBindSlots[F.DescriptorSlot].Module =
+          "/tmp/libswiftCore.dylib";
+    if (Mutation == 4)
+      F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+    if (Mutation == 5)
+      F.Image.Symbols[0].Name = "_$ss17_NativeDictionaryVySiSo8NSBundleCGMR";
+    if (Mutation == 6)
+      F.Image.ImportPtrSlots[F.DescriptorSlot] = "_$ss18_DictionaryStorageCMn";
+    if (Mutation == 7)
+      F.Image.DyldBindSlots.erase(F.DescriptorSlot);
+    if (Mutation == 8)
+      F.Image.DataPtrRelocSlots.insert(F.DescriptorSlot);
+    if (Mutation == 9)
+      F.Image.MachOChainedFixupsAmbiguous = true;
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    if (Mutation) {
+      EXPECT_TRUE(Result.SwiftTypeMetadataPairs.empty());
+      EXPECT_FALSE(Result.Limitation.empty());
+      continue;
+    }
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+    EXPECT_EQ(Result.SwiftTypeMetadataPairs.at(F.Cache).DescriptorSymbol,
+              Descriptor);
+    std::set<std::string> Shared;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Result.SwiftTypeMetadataPairs, Shared);
+    EXPECT_NE(Source.find(Descriptor), std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
      SwiftImportedLockMetadataRebuildsPrivateDescriptorAsText) {
   auto F = swiftImportedLockTypeMetadataFixture();
   EXPECT_TRUE(objc_binding_detail::swiftLocalImportedLockType(
