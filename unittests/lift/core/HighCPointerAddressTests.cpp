@@ -41751,6 +41751,30 @@ TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
+  // RtlSetAllBits: `or r9d, -1` sets R9D to all ones without reading R9, so
+  // the callee reads RCX alone.  Its callers pass one argument, not RCX
+  // through R9 with R9 taken from their own incoming registers.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Callee = 0x140001030;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x09,             // mov rcx, [rcx]
+                               0xe8, 0x24, 0x00, 0x00, 0x00, // call callee
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Callee - Entry, 0xcc);
+  Code.insert(Code.end(), {0x41, 0x83, 0xc9, 0xff, // or r9d, -1
+                           0x44, 0x89, 0x09,       // mov [rcx], r9d
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(
+      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,()]+\))")))
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   // A value stored in the outgoing argument area is not an argument of a
   // call whose WDK prototype takes one parameter (ExAcquireFastMutexUnsafe).

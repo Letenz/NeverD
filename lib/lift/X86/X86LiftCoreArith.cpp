@@ -698,6 +698,27 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
+    // Idiom: `or reg, -1` / `and reg, 0` -> COPY reg = all ones / zero.  MSVC
+    // sets a register this way; its old value is not an input, so it must
+    // not become a live-in or a read of an argument register.
+    if ((InsnId == X86_INS_OR || InsnId == X86_INS_AND) &&
+        X86.operands[0].type == X86_OP_REG &&
+        X86.operands[1].type == X86_OP_IMM && X86.operands[0].size > 0 &&
+        X86.operands[0].size <= 8) {
+      const uint64_t Mask =
+          X86.operands[0].size == 8
+              ? ~uint64_t{0}
+              : (uint64_t{1} << (8 * X86.operands[0].size)) - 1;
+      const uint64_t Imm = static_cast<uint64_t>(X86.operands[1].imm) & Mask;
+      if ((InsnId == X86_INS_OR && Imm == Mask) ||
+          (InsnId == X86_INS_AND && Imm == 0)) {
+        NdVar DstW = L.operandWrite(X86.operands[0]);
+        S.emit(NdOp::COPY, DstW, {NdVar::scalar(Imm, DstW.Size)});
+        L.emitFlagsLogic(S, DstW);
+        break;
+      }
+    }
+
     // Keep the identity explicit without losing the register write: writing
     // EAX must still trigger the post-lift zero extension of RAX.
     if (InsnId == X86_INS_AND && X86.operands[0].type == X86_OP_REG &&
