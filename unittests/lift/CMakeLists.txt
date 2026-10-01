@@ -856,6 +856,11 @@ add_neverd_unittest(NeverDX86LogicIdentityTests
   LINK_COMPONENTS Decode Lift Loader
 )
 
+add_neverd_unittest(NeverDX86NoIndexAddressTests
+  x86_64/X86_64_NoIndexAddressTests.cpp
+  LINK_COMPONENTS Decode Lift Loader
+)
+
 # Keeps APX promoted NDD dataflow and NF flag suppression independently
 # runnable through decode, lift, and strict concrete emulation.
 add_neverd_unittest(NeverDX86APXNddNfSemanticTests

@@ -47,13 +47,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 API-Tests prüfen v1/v2/v3-Standardwerte, explizite Budgets, verkürzte Strukturen, alle reserved-Felder und künftige Anhänge. CLI-Tests prüfen Feld-/Abfrageerschöpfung und erfolgreiche Wiederherstellung für beide ABIs und Backends, lehnen ungültige Dezimalgrenzen ab und verlangen `--devirtualize`. Erschöpfte Budgets dürfen weder Quellcode noch partielle Restgraphen veröffentlichen.
@@ -113,6 +114,8 @@ build-release/bin/NeverDLowIRRefinementTests
 Tests gepackter Flags prüfen alle skalaren Eingangsflagkombinationen, Privilegmasken, TF/AC in beiden Ausführungen, getrennte undefinierte Erzeuger, korrelierte Kopien, native Aufrufe, Geschwisterpfade, verpflichtende Endzustandsbeobachtung, fehlerhafte Belege und Ressourcenlimits. Alle möglichen Eingabepfade endlicher Schleifen müssen terminieren; ein sicherer Zweig verdeckt keinen unendlichen oder abgeschnittenen Pfad. RDSSPD/RDSSPQ prüft alle 16 allgemeinen Register in beiden Breiten, erhaltene obere Bits, unveränderte `Missing`-Belege und abgelehnte gefälschte Projektionen. Maschinenzustandstests vergleichen beide C-Wege bei O0/O2 mit Fallen für undefiniertes Verhalten gegen ein unabhängiges Benutzermodus-Flagorakel und prüfen dauerhaft gespeicherte Profilfehler. INCSSPD/INCSSPQ-Tests prüfen beide Breiten und alle allgemeinen Register, erhaltene unerreichbare Grenzen, ausführbare Traps nach einem abgeschlossenen Geschwisterpfad, Nulloperanden und gefälschte Trap-Belege.
 
 `NeverDX86UndefinedEffectsTests` prüft Metadaten undefinierter Bits, definierte oder erhaltene Flags und die Ablehnung veralteter Zertifikate. `NeverDX86CarryArithmeticFlagTests` prüft den Hilfsübertrag von ADC/SBB für Register- und Speicherformen anhand eines arithmetischen Orakels. `NeverDX86LogicIdentityTests` prüft, dass AND mit identischen Operanden im 64-Bit-Modus beim Schreiben eines 32-Bit-Ziels weiterhin die Bits 63:32 des zugehörigen 64-Bit-Registers löscht und bei schmaleren Schreibzugriffen die ungeschriebenen Bits erhält.
+
+`NeverDX86NoIndexAddressTests` prüft x86-SIB-Adressierung ohne Index bei 32 und 64 Bit Adressbreite: ignorierte Skalierungsbits, Zielbreiten, Laden/Speichern, vollständige Metadaten undefinierter Ausgaben, Segmentoffsets und Adressherkunft. Pseudoregister als Basis oder Index falscher Breite werden abgewiesen; durch REX.X ausgewählte echte R12-Indizes bleiben erhalten. EVEX-Tests für Broadcast und maskierte Transfers prüfen diese Formen, unterdrückte inaktive Speicherzugriffe und widersprüchliche SIB-Metadaten.
 
 Schiebetests decken alle rohen 8-Bit-Zähler, Flagkombinationen bei null, beide x86-Modi, alle Breiten, CL-Aliase, AH/CH/DH/BH, erweiterte Register und Speicher ab. Bytegenaue symbolische Ausführung wird mit wiederholter Ein-Bit-Arithmetik verglichen. Relationale Tests prüfen kopierte und neue Flags, Speicherablagen, Schleifenbesuche, undefinierte Zählerquellen, Zweige, ungültige Formen, Digests und Budgets. Endliche unveränderliche Lesezugriffe prüfen 1/2/4/8 Bytes, eingabeabhängige Auswahl, pfadabhängige Einzeladressen, vollständige Belege und Grenzen; abhängige, fehlende, beschreibbare, nicht dateigestützte, relokierte und unbeschränkte Kandidaten werden abgelehnt.
 

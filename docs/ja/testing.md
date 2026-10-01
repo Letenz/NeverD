@@ -44,13 +44,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 復元 API テストは v1/v2/v3 の既定値、明示予算、切り詰めた構造体、全 reserved フィールド、将来の末尾を検査します。CLI テストは両 ABI と両バックエンドでフィールド／問い合わせ予算超過と復元成功を確認し、不正な十進上限と `--devirtualize` の欠如を拒否します。予算超過時はソースも部分残余グラフも公開しません。
@@ -110,6 +111,8 @@ build-release/bin/NeverDLowIRRefinementTests
 パック済みフラグのテストは、全スカラー入口フラグの組み合わせ、特権マスク、両実行の TF/AC 条件、異なる未定義値の生成、相関するコピー、ネイティブ呼び出し、兄弟経路の状態、最終システム状態の必須観測、不正な証拠、資源上限を検証します。有限ループは全実行可能入力経路が終了する必要があり、安全な分岐で無限経路や打ち切り経路を隠せません。RDSSPD/RDSSPQ は 16 汎用レジスタと両幅、上位ビット保持、`Missing` 証拠の保持、偽造投影の拒否を検証します。機械状態テストは両 C 経路の O0/O2 と未定義動作トラップを用い、独立したユーザーモードのフラグオラクルと比較し、プロファイル違反が後から消えないことも確認します。 INCSSPD/INCSSPQ は両幅と全汎用レジスタ、到達不能境界の保持、安全な兄弟経路完了後の実行可能なトラップ、ゼロオペランド、偽造したトラップ証拠を検証します。
 
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
+
+`NeverDX86NoIndexAddressTests` は、32／64 ビットのアドレス幅でインデックスを持たない x86 SIB アドレッシングを検証します。無視されるスケールビット、宛先幅、ロード／ストア、完全な未定義出力メタデータ、セグメントオフセット、アドレスの由来を対象とします。疑似レジスタをベースや幅の異なるインデックスとして使う場合は拒否し、REX.X が選択する実際の R12 インデックスは保持します。EVEX ブロードキャストとマスク付き移動のテストも、これらの形式、非アクティブなメモリアクセスの抑制、矛盾する SIB メタデータを検証します。
 
 シフト回帰は全 8 ビット回数、ゼロ回数のフラグ組合せ、両 x86 モード、全スカラー幅、CL と宛先の重複、AH/CH/DH/BH、拡張レジスタ、メモリを網羅します。バイト単位のシンボリック実行を反復 1 ビット算術と比較し、定義済み結果とガードを検証します。関係テストはコピーと新規フラグ、スピル、ループ再訪、未定義値由来の回数、分岐拒否、不正形式、ダイジェストと予算を検証します。有限不変読み取りは 1/2/4/8 バイト、入力依存選択、パスごとの単一候補、全証拠、上限の結び付けと、依存・欠落・書き込み可能・未格納・再配置・無限候補の拒否を検証します。
 

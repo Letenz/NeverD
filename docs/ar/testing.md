@@ -43,13 +43,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 تغطي اختبارات API افتراضيات v1/v2/v3 والميزانيات الصريحة والبنى المبتورة وكل حقول reserved والذيول المستقبلية. تتحقق اختبارات CLI من نفاد حدود الحقول والاستعلامات ومن نجاح الاستعادة عبر واجهتي ABI وخلفيتي المصدر، وترفض الحدود العشرية غير الصالحة وتتطلب `--devirtualize`. يجب ألا ينشر التشغيل المستنفد مصدرًا أو رسمًا متبقيًا جزئيًا.
@@ -109,6 +110,8 @@ build-release/bin/NeverDLowIRRefinementTests
 تغطي اختبارات الأعلام المجمعة جميع مجموعات أعلام الدخول القياسية وأقنعة الامتياز وشرط TF/AC في التنفيذين والمنتجين غير المحددين المنفصلين والنسخ المترابطة والاستدعاءات الأصلية وحالة الفروع الشقيقة والمراقبة النهائية الإلزامية والأدلة المشوهة وحدود الموارد. يجب أن تنتهي جميع مسارات الإدخال الممكنة للحلقات المحدودة؛ لا يخفي فرع آمن مسارًا لا نهائيًا أو مبتورًا. تشمل اختبارات RDSSPD/RDSSPQ السجلات العامة الستة عشر والعرضين وحفظ البتات العليا وأدلة `Missing` ورفض الإسقاطات المزورة. تقارن اختبارات حالة الآلة مساري C عند O0/O2 مع فخاخ السلوك غير المحدد بمرجع مستقل لأعلام وضع المستخدم، وتتحقق من بقاء حالة فشل الملف مسجلة. تغطي اختبارات INCSSPD/INCSSPQ العرضين وجميع السجلات العامة وحفظ الحدود غير القابلة للوصول والفخاخ الممكنة بعد اكتمال فرع شقيق والمعاملات الصفرية وأدلة الفخاخ المزورة.
 
 يتحقق `NeverDX86UndefinedEffectsTests` من بيانات البتات غير المعرّفة والأعلام المعرّفة أو المحفوظة ورفض الشهادات القديمة. يقارن `NeverDX86CarryArithmeticFlagTests` الحمل المساعد في ADC/SBB لصيغ السجلات والذاكرة بمرجع حسابي. ويتحقق `NeverDX86LogicIdentityTests` من أن AND بمعاملين متطابقين ما زال يصفر البتات 63:32 من السجل المقابل ذي 64 بت عند الكتابة إلى وجهة من 32 بت في نمط 64 بت، مع حفظ البتات التي لا تشملها الكتابات الأضيق.
+
+تتحقق `NeverDX86NoIndexAddressTests` من عنونة x86 SIB بلا فهرس بعرض عنوان 32 و64 بت: تجاهل بتات معامل القياس، وعرض الوجهة، والتحميل والتخزين، واكتمال بيانات المخرجات غير المعرّفة، وإزاحات المقاطع ومصدر العناوين. ترفض السجلات الوهمية كأساس أو كفهرس بعرض غير صحيح، وتحافظ على فهارس R12 الحقيقية التي يحددها REX.X. وتغطي اختبارات البث والنقل المقنّع في EVEX هذه الصيغ، ومنع عمليات الذاكرة غير النشطة، وبيانات SIB المتناقضة.
 
 تغطي اختبارات الإزاحة جميع الأعداد الخام ذات الثمانية بتات، وتركيبات الأعلام عند الصفر، ونمطي x86، وكل العروض، وتداخل CL، وAH/CH/DH/BH، والسجلات الممتدة والذاكرة. يُقارن التنفيذ الرمزي الدقيق بالبايت بحساب متكرر لبت واحد. تختبر العلاقات الأعلام المنسوخة والجديدة والحفظ والعودة إلى الحلقات والأعداد المشتقة من قيم غير محددة والفروع والترميزات غير الصالحة والبصمات والميزانيات. تشمل القراءات المنتهية 1/2/4/8 بايت، والاختيار حسب المدخلات، وعنواناً وحيداً لكل مسار، والأدلة الكاملة والحدود؛ وترفض المرشحين المعتمدين أو المفقودين أو القابلين للكتابة أو غير المسندين بملف أو المعاد توطينهم أو غير المحدودين.
 

@@ -47,13 +47,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 Les tests de récupération couvrent les valeurs par défaut v1/v2/v3, les budgets explicites, les structures tronquées, tous les champs reserved et les extensions futures. Les tests CLI vérifient l’épuisement et la réussite avec les deux ABI et moteurs source, rejettent les limites décimales invalides et exigent `--devirtualize`. Un budget épuisé ne doit publier ni source ni graphe résiduel partiel.
@@ -113,6 +114,8 @@ build-release/bin/NeverDLowIRRefinementTests
 Les tests de drapeaux regroupés couvrent toutes les combinaisons d’entrée scalaires, les masques de privilège, TF/AC dans les deux exécutions, les producteurs indéfinis distincts, les copies corrélées, les appels natifs, l’état des branches sœurs, l’observation finale obligatoire, les preuves malformées et les budgets. Toutes les entrées réalisables des boucles finies doivent terminer ; une branche sûre ne masque pas un chemin infini ou tronqué. RDSSPD/RDSSPQ couvre les 16 registres généraux, les deux largeurs, les bits hauts conservés, les preuves `Missing` préservées et les projections falsifiées. Les tests d’état machine comparent les deux sorties C à O0/O2 avec pièges de comportement indéfini à un oracle indépendant des drapeaux utilisateur, et vérifient la persistance des violations du profil. Les tests INCSSPD/INCSSPQ couvrent les deux largeurs et tous les registres généraux, les limites inaccessibles conservées, les pièges réalisables après une branche sœur terminée, les opérandes nuls et les preuves de piège falsifiées.
 
 `NeverDX86UndefinedEffectsTests` vérifie les métadonnées des bits indéfinis, les drapeaux définis ou conservés et le refus des certificats périmés. `NeverDX86CarryArithmeticFlagTests` compare la retenue auxiliaire d’ADC/SBB, pour les formes registre et mémoire, à un oracle arithmétique. `NeverDX86LogicIdentityTests` vérifie qu’AND avec deux opérandes identiques efface encore les bits 63:32 du registre de 64 bits correspondant lors de l’écriture d’une destination de 32 bits en mode 64 bits, tout en préservant les bits non écrits des destinations plus étroites.
+
+`NeverDX86NoIndexAddressTests` vérifie l’adressage SIB x86 sans index sur 32 et 64 bits : bits d’échelle ignorés, largeur de destination, lectures/écritures, métadonnées complètes des sorties indéfinies, offsets de segment et provenance des adresses. Il refuse les pseudo-registres comme base ou index de largeur incorrecte et conserve les vrais index R12 sélectionnés par REX.X. Les tests EVEX de diffusion et de déplacement masqué couvrent aussi ces formes, la suppression des accès mémoire inactifs et les métadonnées SIB incohérentes.
 
 Les régressions de décalage couvrent tous les comptes bruts de huit bits, les combinaisons de flags à compte nul, les deux modes x86, toutes les largeurs, les alias CL, AH/CH/DH/BH, les registres étendus et la mémoire. L’exécution symbolique par octet est comparée à une arithmétique répétée bit par bit. Les tests relationnels vérifient copies et nouveaux flags, sauvegardes, boucles, comptes issus de valeurs indéfinies, branches, formes invalides, empreintes et budgets. Les lectures finies couvrent 1/2/4/8 octets, sélection selon l’entrée, ensembles unitaires par chemin, témoins complets et limites, et refusent les candidats dépendants, absents, modifiables, non adossés au fichier, relocalisés ou non bornés.
 
