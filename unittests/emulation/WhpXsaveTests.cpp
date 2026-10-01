@@ -10,6 +10,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace neverd::emulation {
@@ -47,8 +48,42 @@ struct FakeXsave {
   std::vector<uint8_t> Packet = std::vector<uint8_t>(x64::fp::XsaveBytes);
   UINT32 Required = Packet.size(), Written = Packet.size();
   unsigned Queries = 0, Installs = 0, Captures = 0;
+  unsigned MetadataInstalls = 0, MetadataCaptures = 0;
+  inline static constexpr WHV_REGISTER_NAME MetadataNames[] = {
+      WHvX64RegisterFpControlStatus, WHvX64RegisterXmmControlStatus};
+  std::array<WHV_REGISTER_VALUE, std::size(MetadataNames)> Metadata{};
+  HRESULT MetadataInstallStatus = S_OK, MetadataCaptureStatus = S_OK;
   HRESULT QueryStatus = HRESULT(InsufficientBuffer);
   HRESULT InstallStatus = S_OK, CaptureStatus = S_OK;
+  static HRESULT WINAPI setRegisters(WHV_PARTITION_HANDLE Handle, UINT32 Index,
+                                     const WHV_REGISTER_NAME *Names,
+                                     UINT32 Count,
+                                     const WHV_REGISTER_VALUE *Values) {
+    auto &Self = *static_cast<FakeXsave *>(Handle);
+    EXPECT_EQ(Index, 0u);
+    EXPECT_EQ(Count, Self.Metadata.size());
+    EXPECT_EQ(Names[0], WHvX64RegisterFpControlStatus);
+    EXPECT_EQ(Names[1], WHvX64RegisterXmmControlStatus);
+    ++Self.MetadataInstalls;
+    if (FAILED(Self.MetadataInstallStatus))
+      return Self.MetadataInstallStatus;
+    std::copy_n(Values, Self.Metadata.size(), Self.Metadata.begin());
+    return S_OK;
+  }
+  static HRESULT WINAPI getRegisters(WHV_PARTITION_HANDLE Handle, UINT32 Index,
+                                     const WHV_REGISTER_NAME *Names,
+                                     UINT32 Count, WHV_REGISTER_VALUE *Values) {
+    auto &Self = *static_cast<FakeXsave *>(Handle);
+    EXPECT_EQ(Index, 0u);
+    EXPECT_EQ(Count, Self.Metadata.size());
+    EXPECT_EQ(Names[0], WHvX64RegisterFpControlStatus);
+    EXPECT_EQ(Names[1], WHvX64RegisterXmmControlStatus);
+    ++Self.MetadataCaptures;
+    if (FAILED(Self.MetadataCaptureStatus))
+      return Self.MetadataCaptureStatus;
+    std::copy(Self.Metadata.begin(), Self.Metadata.end(), Values);
+    return S_OK;
+  }
   static HRESULT WINAPI property(WHV_PARTITION_HANDLE Handle,
                                  WHV_PARTITION_PROPERTY_CODE Code, VOID *Bytes,
                                  UINT32 Size, UINT32 *Written) {
@@ -109,6 +144,8 @@ protected:
   WhpXsaveState Transfer;
   X64MachineState State;
   void SetUp() override {
+    API.WHvGetVirtualProcessorRegisters = FakeXsave::getRegisters;
+    API.WHvSetVirtualProcessorRegisters = FakeXsave::setRegisters;
     API.WHvGetPartitionProperty = FakeXsave::property;
     Target.Features.XsaveSupport = 1;
     Target.Features.AvxSupport = 1;
@@ -169,6 +206,145 @@ TEST_P(WhpXsaveProtocol, InitialCETComponentsDoNotHideFPState) {
   EXPECT_TRUE(bool(E));
   llvm::consumeError(std::move(E));
   EXPECT_EQ(Next, Before);
+}
+TEST_P(WhpXsaveProtocol, NativeInstallRetainsFPStateBeforeAnyGuestExecution) {
+  WhpPartition Host;
+  if (auto E = Host.API.load()) {
+    const auto Text = llvm::toString(std::move(E));
+    if (!std::getenv(XsaveRequireNative))
+      GTEST_SKIP() << Text;
+    FAIL() << Text;
+  }
+  auto &API = Host.API;
+  const bool HasAPI = GetParam() ? API.WHvGetVirtualProcessorState &&
+                                       API.WHvSetVirtualProcessorState
+                                 : API.WHvGetVirtualProcessorXsaveState &&
+                                       API.WHvSetVirtualProcessorXsaveState;
+  if (!HasAPI) {
+    if (!std::getenv(XsaveRequireNative))
+      GTEST_SKIP() << diagnostic::WhpCapability;
+    FAIL() << diagnostic::WhpCapability;
+  }
+  WHV_CAPABILITY Capability{};
+  const auto Status =
+      API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &Capability,
+                           sizeof(Capability), nullptr);
+  if (FAILED(Status) || !Capability.HypervisorPresent) {
+    const auto Text = whpFailure(diagnostic::WhpCapability, Status,
+                                 whp::operation::WHvGetCapability);
+    if (!std::getenv(XsaveRequireNative))
+      GTEST_SKIP() << Text;
+    FAIL() << Text;
+  }
+  ASSERT_EQ(API.WHvCreatePartition(&Host.Partition), S_OK);
+  WHV_PARTITION_PROPERTY Property{};
+  Property.ProcessorCount = 1;
+  ASSERT_EQ(API.WHvSetPartitionProperty(Host.Partition,
+                                        WHvPartitionPropertyCodeProcessorCount,
+                                        &Property, sizeof(Property)),
+            S_OK);
+  ASSERT_EQ(API.WHvSetupPartition(Host.Partition), S_OK);
+  ASSERT_EQ(API.WHvCreateVirtualProcessor(Host.Partition, 0, 0), S_OK);
+  const WHV_REGISTER_NAME Names[] = {WHvX64RegisterCr0, WHvX64RegisterCr4,
+                                     WHvX64RegisterEfer, WHvX64RegisterXCr0,
+                                     WHvX64RegisterCs};
+  WHV_REGISTER_VALUE Values[std::size(Names)]{};
+  Values[0].Reg64 = x64::CR0;
+  Values[1].Reg64 = x64::CR4 | x64::fp::OSXsave;
+  Values[2].Reg64 = x64::EFER;
+  Values[3].Reg64 = x64::fp::FPAndSSE;
+  auto &Code = Values[4].Segment;
+  Code.Selector = x64::CodeSelector;
+  Code.Limit = x64::SegmentLimit;
+  Code.Present = Code.NonSystemSegment = Code.Granularity = Code.Long = 1;
+  Code.SegmentType = x64::CodeType;
+  ASSERT_EQ(API.WHvSetVirtualProcessorRegisters(Host.Partition, 0, Names,
+                                                std::size(Names), Values),
+            S_OK);
+  if (!GetParam()) {
+    API.WHvGetVirtualProcessorState = nullptr;
+    API.WHvSetVirtualProcessorState = nullptr;
+  }
+  WhpXsaveState Native;
+  ASSERT_EQ(llvm::toString(Native.initialize(API, Host.Partition)), "");
+  ASSERT_EQ(llvm::toString(Native.install(API, Host.Partition, State)), "");
+  X64MachineState Actual;
+  ASSERT_EQ(llvm::toString(Native.capture(API, Host.Partition, Actual)), "");
+#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
+  EXPECT_EQ(Actual.FP.Member, State.FP.Member);
+#include "arch/x86_64/X64FPState.def"
+#undef NEVERD_X64_FP_CONTROL
+  EXPECT_EQ(Actual.FP.Tag, State.FP.Tag);
+  EXPECT_EQ(Actual.FP.Registers, State.FP.Registers);
+  EXPECT_EQ(Actual.Xmm, State.Xmm);
+  EXPECT_EQ(Actual.MXCSR, State.MXCSR);
+  // Independently query the named host metadata registers. This distinguishes
+  // installation loss from a complete-packet read that omits those fields.
+  const WHV_REGISTER_NAME MetadataNames[] = {WHvX64RegisterFpControlStatus,
+                                             WHvX64RegisterXmmControlStatus};
+  WHV_REGISTER_VALUE Metadata[std::size(MetadataNames)]{};
+  ASSERT_EQ(
+      API.WHvGetVirtualProcessorRegisters(Host.Partition, 0, MetadataNames,
+                                          std::size(MetadataNames), Metadata),
+      S_OK);
+  EXPECT_EQ(Metadata[0].FpControlStatus.LastFpOp, State.FP.Opcode);
+  EXPECT_EQ(Metadata[0].FpControlStatus.LastFpRip, State.FP.Instruction);
+  EXPECT_EQ(Metadata[1].XmmControlStatus.LastFpRdp, State.FP.Data);
+}
+TEST_P(WhpXsaveProtocol, NamedMetadataRestoresOmittedPacketFields) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
+  llvm::support::endian::write16le(Target.Packet.data() + x64::fp::OpcodeOffset,
+                                   0);
+  llvm::support::endian::write64le(
+      Target.Packet.data() + x64::fp::InstructionOffset, 0);
+  llvm::support::endian::write64le(Target.Packet.data() + x64::fp::DataOffset,
+                                   0);
+  X64MachineState Next;
+  ASSERT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)), "");
+  EXPECT_EQ(Next, State);
+  EXPECT_EQ(Target.MetadataInstalls, 1u);
+  EXPECT_EQ(Target.MetadataCaptures, 1u);
+}
+TEST_P(WhpXsaveProtocol, MetadataFailuresAndConflictsCannotPublishState) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  Target.MetadataInstallStatus = E_FAIL;
+  EXPECT_EQ(llvm::toString(Transfer.install(API, &Target, State)),
+            MetadataInstall);
+  Target.MetadataInstallStatus = S_OK;
+  ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
+  X64MachineState Next;
+  const auto Before = Next;
+  Target.MetadataCaptureStatus = E_FAIL;
+  EXPECT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)),
+            MetadataCapture);
+  EXPECT_EQ(Next, Before);
+  Target.MetadataCaptureStatus = S_OK;
+  --Target.Metadata[0].FpControlStatus.LastFpOp;
+  EXPECT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)),
+            MetadataOpcodeConflict);
+  EXPECT_EQ(Next, Before);
+}
+TEST_P(WhpXsaveProtocol, InconsistentSharedControlsCannotPublishState) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
+  using Change = void (*)(FakeXsave &);
+  const Change Changes[] = {
+      [](FakeXsave &T) { --T.Metadata[0].FpControlStatus.FpControl; },
+      [](FakeXsave &T) { --T.Metadata[0].FpControlStatus.FpStatus; },
+      [](FakeXsave &T) { --T.Metadata[0].FpControlStatus.FpTag; },
+      [](FakeXsave &T) { --T.Metadata[1].XmmControlStatus.XmmStatusControl; }};
+  const auto Original = Target.Metadata;
+  for (const auto Mutate : Changes) {
+    Target.Metadata = Original;
+    Mutate(Target);
+    X64MachineState Next;
+    const auto Before = Next;
+    auto E = Transfer.capture(API, &Target, Next);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Next, Before);
+  }
 }
 TEST_P(WhpXsaveProtocol, InvalidQuerySizesCannotAllocateOrInstallState) {
   for (const auto &Case : InvalidSizes) {

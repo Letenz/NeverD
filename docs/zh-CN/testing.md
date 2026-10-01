@@ -835,6 +835,8 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `X64FPState.def` 声明有限的压缩 AVX、CET_U 和 CET_S 布局。仅当分量完整数据符合架构定义的全零初始状态时，才接受已置位的存在标记。即使前面的分量缺席，偏移仍由布局位决定。非初始字节、未知布局和截断数据在发布 FP/SSE 状态之前失败。`CompactedOffsetsFollowLayoutRatherThanPresentBits` 和 `InitialCETComponentsDoNotHideFPState` 覆盖 872 字节 WHP 数据包；这只允许初始传输元数据，不准入 AVX 或 CET 执行。
 
+`WhpXsaveRegisters.def` 使用具名 x87/SSE 控制寄存器补充完整 XSAVE 数据包。最后操作码及指令/数据地址会显式写入并从主机回读；可补齐数据包中的零值字段，但非零元数据冲突或共有控制字段不一致时，会在发布状态前失败。`NamedMetadataRestoresOmittedPacketFields` 验证字段缺失场景，并保留完整 FP 数据。
+
 共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。非初始扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
@@ -845,7 +847,7 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 XSAVE 校验诊断区分长度查询、本地数据准备和捕获数据解码，并保留 API 名称、返回字节数、容量及有限的头部/控制字段；独立预期位于 `WhpHostFailureCases.def`，不打印客户寄存器载荷。`InvalidInputReportsPreparationWithoutHostMutation` 还验证无效输入不会调用主机或修改其数据。共享 ISA 编解码器仍是唯一校验入口。
 
-WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。`WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。Windows 聚焦入口要求全部 43 项原生用例通过：16 项映射、2 项启动执行、10 项浮点传输/上下文、7 项共享 CPU 生命周期/执行及 8 项整数检查。缺少注册、跳过、禁用或未运行都会使原生证据审计失败。
+WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。 `WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。 Windows 专项 CI 要求 45 项原生用例通过：16 项映射、2 项启动、10 项 FP/上下文、7 项共享 CPU、8 项整数用例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的两种 API 变体。后两项在执行客户代码前对比完整 FP/SSE 与独立读取的元数据。 缺少注册、跳过、禁用或未运行都会使原生证据审计失败。
 
 `NeverDMemoryLifecycleTests` 独立于 Unicorn 构建，也覆盖仅启用原生后端的配置。禁用 Unicorn 时，专用的软件投影/设备用例明确跳过；匹配主机的共享 CPU 用例仍会注册。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 个用例隔离原生内存 API：单页/投影大小的后备内存、共享/独立分配、未触页/已驻留字节，以及存在/不存在第一个虚拟处理器。每个案例保留两个存活的逻辑所有者，反复切换其映射分区，销毁非活动所有者，并验证剩余映射无需重建即可继续使用。真实映射错误保留 HRESULT 并使测试失败；这是内存 API 证据，不是指令执行证明。
 

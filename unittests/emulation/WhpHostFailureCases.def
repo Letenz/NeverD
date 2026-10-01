@@ -13,6 +13,18 @@ NEVERD_WHP_RUN_FAILURE(
     "0x80070005)")
 #endif
 #ifdef NEVERD_WHP_FAILURE_TEXT
+NEVERD_WHP_FAILURE_TEXT(XsaveRequireNative, "NEVERD_REQUIRE_NATIVE_WHP")
+NEVERD_WHP_FAILURE_TEXT(
+    MetadataCapture,
+    "WHP CPU state transfer failed (WHvGetVirtualProcessorRegisters; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
+    MetadataInstall,
+    "WHP CPU state transfer failed (WHvSetVirtualProcessorRegisters; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(MetadataOpcodeConflict,
+                        "inconsistent WHP floating-point metadata "
+                        "(FP.Opcode; XSAVE 0x321; named register 0x320)")
 NEVERD_WHP_FAILURE_TEXT(
     FeatureQuery,
     "WHP CPU state transfer failed (WHvGetPartitionProperty; HRESULT "

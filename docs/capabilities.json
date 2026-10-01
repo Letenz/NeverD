@@ -3569,6 +3569,42 @@
       "tests": [
         {
           "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NativeInstallRetainsFPStateBeforeAnyGuestExecution/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NamedMetadataRestoresOmittedPacketFields/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.MetadataFailuresAndConflictsCannotPublishState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InconsistentSharedControlsCannotPublishState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDX64FPTests",
           "source": "unittests/emulation/X64MachineProbeTests.cpp",
           "filter": "X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues",

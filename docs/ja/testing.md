@@ -905,6 +905,8 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 `X64FPState.def` は限定した圧縮 AVX、CET_U、CET_S 配置を宣言します。存在ビットが立っていても、成分全体がアーキテクチャーで定義された全ゼロの初期状態に一致する場合だけ受け入れます。前の成分が欠落していても、オフセットは配置ビットで決まります。非初期値、未知の配置、切り詰めは FP/SSE 状態の公開前に失敗します。`CompactedOffsetsFollowLayoutRatherThanPresentBits` と `InitialCETComponentsDoNotHideFPState` は 872 バイトの WHP パケットを検証します。初期状態の転送メタデータだけを許可し、AVX や CET の実行は許可しません。
 
+`WhpXsaveRegisters.def` は完全な XSAVE パケットを名前付き x87/SSE 制御レジスターで補完します。最終オペコードと命令・データポインターを明示的に書き込み、ホストから取得します。ゼロのパケット項目は補完できますが、非ゼロのメタデータ衝突や共通制御値の不一致は状態公開前に失敗します。`NamedMetadataRestoresOmittedPacketFields` は FP ペイロードを保持したまま欠落項目を検証します。
+
 共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
@@ -915,7 +917,7 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 XSAVE 検証診断はサイズ照会、ローカルデータ準備、取得データのデコードを区別し、API 名、返却バイト数、容量、限定したヘッダーと制御フィールドを保持します。独立した期待値は `WhpHostFailureCases.def` にあり、ゲストのレジスターデータは出力しません。`InvalidInputReportsPreparationWithoutHostMutation` は無効な入力でホストを呼び出さず、そのデータも変更しないことを検証します。共有 ISA コーデックが検証を一元的に担当します。
 
-WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。能力照会の失敗は型付きの利用不可結果を維持します。`WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。Windows の集中検証では、マッピング 16 件、起動実行 2 件、浮動小数点転送/コンテキスト 10 件、共有 CPU の寿命/実行 7 件、整数 8 件の計 43 件すべてが必須です。未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。
+WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。 能力照会の失敗は型付きの利用不可結果を維持します。 `WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。 Windows 専用 CI は 45 件の実機成功を要求します。内訳はマッピング 16 件、起動 2 件、FP/コンテキスト 10 件、共有 CPU 7 件、整数 8 件、`NativeInstallRetainsFPStateBeforeAnyGuestExecution` の API 2 種類です。後者はゲスト実行前に完全な FP/SSE と個別に取得したメタデータを比較します。 未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。
 
 `NeverDMemoryLifecycleTests` は Unicorn と独立して構築され、ネイティブ専用構成でも登録されます。Unicorn を無効にすると専用のソフトウェア投影・デバイスケースは明示的にスキップされますが、ホストに一致する共有 CPU ケースは残ります。`WhpMemoryTests.cpp` は `WhpMemoryCases.def` の 16 ケースでネイティブメモリ API を分離します。ページ・投影サイズの領域、共有・独立した割り当て、未アクセス・常駐したバイト、最初の仮想プロセッサの有無を検証します。各ケースは二つの論理所有者を維持し、マッピング済みパーティションを繰り返し切り替え、非アクティブ所有者を破棄した後も残るマッピングが再構築なしで利用可能なことを確認します。実際のマッピングエラーは HRESULT を保持して失敗となります。これはメモリ API の証拠であり、命令実行の証明ではありません。
 

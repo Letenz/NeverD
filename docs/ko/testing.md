@@ -895,6 +895,8 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 `X64FPState.def`는 제한된 압축 AVX, CET_U, CET_S 배치를 선언합니다. 존재 비트가 설정된 구성 요소는 전체 데이터가 아키텍처의 0으로 채워진 초기 상태와 일치할 때만 허용됩니다. 앞선 구성 요소가 없어도 오프셋은 배치 비트로 결정됩니다. 초기 상태가 아닌 바이트, 알 수 없는 배치, 잘린 데이터는 FP/SSE 상태를 공개하기 전에 실패합니다. `CompactedOffsetsFollowLayoutRatherThanPresentBits`와 `InitialCETComponentsDoNotHideFPState`는 872바이트 WHP 패킷을 검증합니다. 초기 전송 메타데이터만 허용하며 AVX나 CET 실행은 허용하지 않습니다.
 
+`WhpXsaveRegisters.def`는 이름이 있는 x87/SSE 제어 레지스터로 완전한 XSAVE 패킷을 보완합니다. 마지막 연산 코드와 명령/데이터 포인터를 명시적으로 쓰고 호스트에서 읽습니다. 패킷의 0 필드는 보완할 수 있지만, 0이 아닌 메타데이터 충돌이나 공통 제어값 불일치는 상태 공개 전에 실패합니다. `NamedMetadataRestoresOmittedPacketFields`는 전체 FP 데이터를 유지하면서 누락 필드를 검증합니다.
+
 공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
@@ -905,7 +907,7 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 XSAVE 검증 진단은 크기 조회, 로컬 데이터 준비, 캡처 데이터 디코딩을 구분하고 API 이름, 반환 바이트 수, 용량, 제한된 헤더·제어 필드를 보존합니다. 독립적인 예상값은 `WhpHostFailureCases.def`에 있으며 게스트 레지스터 데이터는 출력하지 않습니다. `InvalidInputReportsPreparationWithoutHostMutation`은 잘못된 입력이 호스트를 호출하거나 호스트 데이터를 바꾸지 않는지도 검증합니다. 공유 ISA 코덱이 검증을 전담합니다.
 
-WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 및 실행 중 발생한 호스트 API 오류는 HRESULT와 `WhpProtocol.def`에 선언된 API 이름을 보존합니다. 기능 조회 실패는 형식이 지정된 사용 불가 결과를 유지합니다. `WhpHostFailureCases.def`는 취소와 동시에 발생한 호스트 오류 및 최신/레거시 XSAVE 조회·설치·캡처 실패에 대한 독립적인 예상 결과를 제공합니다. Windows 집중 검증에서는 매핑 16개, 시작 실행 2개, 부동소수점 전송/컨텍스트 10개, 공유 CPU 수명/실행 7개, 정수 8개 등 총 43개 네이티브 사례가 모두 통과해야 합니다. 등록 누락, 건너뛰기, 비활성화 또는 미실행은 네이티브 증거 감사 실패로 처리됩니다.
+WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 및 실행 중 발생한 호스트 API 오류는 HRESULT와 `WhpProtocol.def`에 선언된 API 이름을 보존합니다. 기능 조회 실패는 형식이 지정된 사용 불가 결과를 유지합니다. `WhpHostFailureCases.def`는 취소와 동시에 발생한 호스트 오류 및 최신/레거시 XSAVE 조회·설치·캡처 실패에 대한 독립적인 예상 결과를 제공합니다. Windows 전용 CI는 네이티브 45건 통과를 요구합니다. 매핑 16건, 시작 2건, FP/컨텍스트 10건, 공유 CPU 7건, 정수 8건과 `NativeInstallRetainsFPStateBeforeAnyGuestExecution`의 두 API 변형입니다. 마지막 두 테스트는 게스트 실행 전에 전체 FP/SSE와 독립적으로 읽은 메타데이터를 비교합니다. 등록 누락, 건너뛰기, 비활성화 또는 미실행은 네이티브 증거 감사 실패로 처리됩니다.
 
 `NeverDMemoryLifecycleTests`는 Unicorn과 독립적으로 빌드되며 네이티브 전용 구성에도 등록됩니다. Unicorn을 끄면 전용 소프트웨어 투영/장치 사례는 명시적으로 건너뛰지만, 호스트에 맞는 공유 CPU 사례는 유지됩니다. `WhpMemoryTests.cpp`는 `WhpMemoryCases.def`의 16개 사례로 네이티브 메모리 API를 분리합니다. 페이지/투영 크기, 공유/독립 할당, 미접근/상주 바이트, 첫 가상 프로세서의 존재 여부를 확인합니다. 각 사례는 두 논리 소유자를 유지하면서 매핑된 파티션을 반복 전환하고, 비활성 소유자를 제거한 뒤 남은 매핑을 다시 만들지 않고 사용할 수 있는지 확인합니다. 실제 매핑 오류는 HRESULT를 보존하며 테스트를 실패시킵니다. 이는 메모리 API 증거이며 명령 실행 증명은 아닙니다.
 
