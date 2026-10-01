@@ -207,6 +207,10 @@ struct LowIRLoopInferenceResult {
 /// bodies and CFG backedge targets, retaining fixed prefix bits and unsigned
 /// bounds. Nested cycles use a feedback cutpoint set, pruned prefix bounds,
 /// observed unit counters and inferred phases in unsigned lexicographic ranks.
+/// For multiple cuts, each failed counter tuple also tries a leading constant
+/// phase, charged as a separate rank attempt. It can cover sequential counter
+/// resets only when nonincreasing phase constraints have no positive cycle.
+/// Every feasible transition still proves the complete tuple decreases.
 /// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
 /// control and rank families outside this bounded search remain unsupported.
 /// Single-cut coverage checks include every originally reachable block and
