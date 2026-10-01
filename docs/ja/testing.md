@@ -946,6 +946,8 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 フレーム spill の行列は両方の C バックエンドで x86-32（ELF/COFF/Mach-O）、ARM32（ARM/Thumb ELF）、AArch64（ELF/COFF/Mach-O）も対象にします。プライベートフレームの反復ロードは加減算へ簡約され、両方の最適化レベルでバイトの組、ワード境界の組、決定的な乱数ワードを正しく実行する必要があります。Clang AST は関数全体の残存 MBA 演算子を確認し、有効なアドレス式と区別します。HighFrameStoreForwarding はアクセス幅、ローカル変数の変更、メモリ書き込み、エイリアス、重複、順序付きアクセス、不正なグラフ、展開予算を検査します。HighCStoreForwarding は浮動小数点の再解釈を含む 4 アーキテクチャでキャッシュ値の定義を生存させ、SymSimplifyGuard はロードの同一性と順序、volatile/atomic、poison 境界を検査します。ELFARM32ModeTest は ARM/Thumb 選択、アドレス正規化、混在メタデータと矛盾の拒否を検査します。ELFARM32ModeCAPITest は SDK の明示的なエラーと Thumb 再ロード後のデコーダー復旧を検査し、InstructionMode はデコーダー、コードポインター、分岐、コード生成の境界を検査します。クロスターゲット Clang がなければスキップであり、形式が正しい証拠にはなりません。
 
+`NeverDHighControlFlowTests` の `HighBoundPrivateFrameCopies.*` は、呼び出し ABI のバインド後に、外部へ流出しない私有フレーム領域を通るコピーを検証します。分岐、領域の再利用、ガード条件ごとの事実の一致を含みます。x64 と AArch64 の生成 C を `-O0` と `-O2` で実行し、未定義動作をトラップさせながら独立した算術結果と比較します。フレームアドレスの流出、未知の呼び出し ABI、未定義または不一致のフレーム別名、入口引数の再代入、重複アクセス、順序付きまたはアトミックなメモリ、不正な文、循環、予算超過では元の関数を保持することを確認します。通常の値変換を PHI コピーとして扱ってはいけません。
+
 ## x64 のネイティブ同期例外
 
 checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない WHP/ARM64 ホストは明示的にスキップします。

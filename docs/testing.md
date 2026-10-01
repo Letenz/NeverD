@@ -182,6 +182,8 @@ code-pointer, direct-branch and code-generation boundaries.
 relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
 call sites, backward calls, malformed encodings and jumps that need a veneer.
 
+`HighBoundPrivateFrameCopies.*` in `NeverDHighControlFlowTests` checks copies through nonescaping private frame slots after call ABI binding, including branches, slot reuse and agreement across guard contexts. For x64 and AArch64, the emitted C runs at `-O0` and `-O2` with undefined-behavior traps and independent arithmetic checks. Negative cases preserve the original function for frame escape, unknown call ABIs, missing or inconsistent frame aliases, reassigned entry inputs, overlapping accesses, ordered or atomic memory, malformed statements, cycles and exhausted budgets. Ordinary value conversions must not become PHI copies.
+
 ```sh
 cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
