@@ -700,8 +700,10 @@ TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
                           Image, BoundConstructor.LocalStorageExtents, Shared) +
                       R"(
 static unsigned initialized;
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
 void *initialize_oracle(void *metadata, void *object)
-  __asm__("_swift_initStaticObject");
+  __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "swift_initStaticObject");
 void *initialize_oracle(void *metadata, void *object) {
   uintptr_t *header = object;
   if (!header[-1]) {

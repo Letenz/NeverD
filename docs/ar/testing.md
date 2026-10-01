@@ -943,7 +943,20 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 يوفر `ci.yml` الحالي وضعاً يدوياً اختيارياً صريحاً باسم `native_cpu_only` على runner ‏Windows x64. يحدد `NativeCPUTests.def` عشرة أهداف اختبار، ويبنيها `run_native_cpu_ci.py` قبل CTest المصفى ويحفظ قائمة الاختبارات وJUnit والسجلات والملخص. تميز محللات CI المشتركة بين النجاح والفشل والتخطي والتعطيل وعدم التنفيذ. يجب اكتشاف وتنفيذ كل حالة ربط أصلية معلنة لـ WHP؛ غياب الدليل الأصلي أو تخطيه يُفشل هذه المهمة المركزة. تبقى CI الافتراضية التي تبني LLVM من المصدر كما هي. لا تحل اختبارات البروتوكول أو الترجمة محل التحقق الأصلي من أحمال WHP أو ARM64.
 
-عند ضبط `native_cpu_only=true`، يفعّل الإدخال الإضافي `native_driver_tests=true` اختبارات `NeverDNativeDriverTests` دون Unicorn. يفرض `NativeDriverTests.def` تعداد 52 نتيجة WHP للصور الـ26 في `DriverBuiltinImages.def` بعناوينها الأصلية والمعاد تموضعها. يجب أن تنتج الصور ذات العنوان الثابت رفض المُحمّل المتوقع عند إعادة التموضع. تجعل هويات المعلمات الثابتة غياب الحالات المدمجة أو تخطيها سبباً لفشل المهمة؛ وتبقى عينات WDK الاختيارية غير المتاحة متخطاة صراحةً. يقبل مشغّل الأدلة نفسه `--with-drivers` ويسجل جميع أهداف الاختبار المحددة قبل التنفيذ.
+عند ضبط `native_cpu_only=true`، يفعّل `native_driver_tests=true` اختبارات `NeverDNativeDriverTests` دون Unicorn. قبل التهيئة، يتحقق `build_wdk_driver_fixtures.py` من SHA-256 الكامل لحزم Microsoft الرسمية WDK/SDK 10.0.26100.6584 ويعيد بناء 28 صورة برنامج تشغيل عادية أو CFG أو DBG من المصادر الأصلية. يحدد `WDKDriverFixtures.def` هويات الحزم ومعاملات المترجم والرابط وربط عينات الاختبار. تبقى ملفات Microsoft غير المعدلة وتراخيصها في مجلدات البناء أو التخزين المؤقت المحلية؛ ولا يرفع CI إلا بيانات البناء الوصفية وسجلاته. يسجل البيان إصدارات الأدوات والأوامر وبصمات المصادر والترويسات وصور الخرج.
+
+يفرض `NativeDriverTests.def` تعداد 152 نتيجة WHP لجميع أحمال العمل الـ76 في `DriverBuiltinImages.def` و`DriverBackendParityCases.def`:‏ 26 صورة مدمجة و28 صورة WDK و22 سيناريو طلب، بالعناوين الأصلية وبعد إعادة التموضع. ومع 45 فحص CPU يصبح المجموع 197 نتيجة أصلية إلزامية. تحتفظ الصور الثابتة برفض إعادة التموضع المتوقع. يؤدي غياب صور أو سيناريوهات WDK أو تخطيها إلى فشل مهمة CI الاختيارية هذه؛ وتظل العينات الخارجية اختيارية في البناء المحلي المعتاد. يسجل `run_native_cpu_ci.py --with-drivers` أهداف الاختبار المهيأة وجميع أدلة الجرد وJUnit. بناء الصور لا يثبت التنفيذ الأصلي على Windows أو ARM64. يمكن إعادة البناء محليًا بالأوامر التالية، أو تحميل ملف التخزين المؤقت الناتج في بناء محاكاة موجود.
+
+```bash
+python3 scripts/build_wdk_driver_fixtures.py \
+  --output build-driver-fixtures --cache build-driver-packages
+cmake -S . -B build-native -G Ninja \
+  -C build-driver-fixtures/fixtures.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+  -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+```
 
 تختبر `NeverDAArch64StateTests` فساد كل حقل عددي وكلتا كلمتي كل متجه وتغير الامتياز وعدم تنفيذ FP وحفظ تشخيص النقل. تنفذ `NeverDAArch64FPTests` اختبار `OriginalProgramChecksCompleteStateAndOneDeadline` عند الامتيازين على واجهات حقيقية باستخدام تعليمات `AArch64ProbeCases.def` المجمعة مستقلاً. ينقل الاختبار الكلمات المستقلة عن PC إلى كود الضيف دون منح المستخدم وصولاً لصفحات المراقب. لا يحل تنفيذ Unicorn والتخطي الأصلي الصريح محل دليل بدء ARM64 الأصلي.
 

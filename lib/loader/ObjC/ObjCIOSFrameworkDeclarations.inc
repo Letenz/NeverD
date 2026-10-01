@@ -41,6 +41,13 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "centerXAnchor", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "colorWithAlphaComponent:", "@24@0:8d16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "colorWithRed:green:blue:alpha:", "@48@0:8d16d24d32d40", nullptr},
+// Xcode 26.5's complete device/simulator Messages ASTs have one owner,
+// UIColor, declaring a non-variadic class factory returning UIColor* with
+// two CGFloat (double) inputs. Apple Clang independently agrees on this
+// encoding for arm64 iOS and arm64 iOS Simulator. Source AST SHA-256:
+// iPhoneOS:        f17e93958dc48979a422993dd92139ff1d897a026e123e6b1644447f28ee48e4
+// iPhoneSimulator: 078316806bd538d05dcdd08899843095d1dccd3f70c0a3655fcd86bb26467335
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "colorWithWhite:alpha:", "@32@0:8d16d24", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "currentDevice", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "currentEDRHeadroom", "d16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "contentLayoutGuide", "@16@0:8", nullptr},

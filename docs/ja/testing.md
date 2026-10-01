@@ -939,7 +939,20 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 
-`native_cpu_only=true` と併せて `native_driver_tests=true` を指定すると、Unicorn に依存しない `NeverDNativeDriverTests` を有効にできます。`NativeDriverTests.def` は `DriverBuiltinImages.def` の 26 イメージについて、元のアドレスと再配置先で計 52 個の WHP 結果を必須とします。固定アドレスのイメージは再配置時に所定のローダー拒否を返す必要があります。安定したパラメーター識別子により、組み込みケースの未登録やスキップはジョブ失敗になります。任意の WDK フィクスチャがない場合は明示的にスキップします。同じ証拠ランナーが `--with-drivers` を受け付け、実行前に選択した全テストターゲットを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 28 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 76 ワークロードについて、元のアドレスと再配置先で計 152 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 28 個、要求シナリオ 22 個です。CPU の 45 検査を合わせ、必須のネイティブ結果は 197 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。
+
+```bash
+python3 scripts/build_wdk_driver_fixtures.py \
+  --output build-driver-fixtures --cache build-driver-packages
+cmake -S . -B build-native -G Ninja \
+  -C build-driver-fixtures/fixtures.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+  -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+```
 
 `NeverDAArch64StateTests` は全スカラーフィールド、全ベクトルの両ワード、権限変更、浮動小数点命令の未実行、転送エラー診断の保持を検証します。`NeverDAArch64FPTests` の `OriginalProgramChecksCompleteStateAndOneDeadline` は独立に組み立てた `AArch64ProbeCases.def` の命令を実際の転送で両権限から実行します。テストは PC に依存しない命令をゲストコードへ移し、監視ページへの user アクセスは許可しません。Unicorn の実行と明示的な native skip は native ARM64 起動証拠を代替しません。
 

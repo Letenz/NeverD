@@ -7407,6 +7407,39 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  // A proved two-instruction argument bridge has the same dynamic message
+  // semantics as its selector stub. Normalize only for declaration validation;
+  // the published call retains the physical saved-register argument location.
+  if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+      Binding.TargetAddress && !Expression.IsIndirectCall &&
+      Expression.CallAddr == Binding.TargetAddress)
+    if (const auto Tail = objcArgumentTailCall(Image, Binding.TargetAddress)) {
+      std::optional<size_t> Parameter;
+      for (size_t I = 0; I < Binding.Signature.Parameters.size(); ++I) {
+        const auto &P = Binding.Signature.Parameters[I];
+        if (P.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+            P.Location.RegisterOffset == Tail->SourceRegister &&
+            P.Location.ValueBytes == 8 && P.Components.empty()) {
+          if (Parameter)
+            return false;
+          Parameter = I;
+        }
+      }
+      if (!Parameter || !objcSelectorStubMatches(
+                            Image, Tail->SelectorStub,
+                            Binding.SelectorReferenceAddress, Binding.Selector))
+        return false;
+      auto Normalized = std::make_shared<SourceCallTypeHint>(Binding);
+      Normalized->TargetAddress = Tail->SelectorStub;
+      Normalized->Signature.Parameters[*Parameter].Location.RegisterOffset =
+          Tail->DestinationRegister;
+      HighExpr Call = Expression;
+      Call.CallAddr = Tail->SelectorStub;
+      Call.SourceCallHint = std::move(Normalized);
+      return objcSourceCallBound(
+          Call, Image, Functions, ProfileStorage, ReadOnlyHelpers,
+          ContainingFunction, BlockParameterReceivers, BlockCaptureReceivers);
+    }
   if (!Binding.CanonicalBooleanInputs.empty() &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall)
     return false;

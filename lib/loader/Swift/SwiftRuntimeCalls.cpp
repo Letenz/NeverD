@@ -188,6 +188,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 clients return Calendar.current through
+    // the indirect-result carrier, with no ordinary or context parameters.
+    {"$s10Foundation8CalendarV7currentACvgZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vI"},
     {"$s10Foundation9IndexPathV19_bridgeToObjectiveCSo07NSIndexC0CyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -237,6 +244,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "ppppp"},
+    // Dictionary.count takes the storage pointer, Key and Value metadata,
+    // then Key's Hashable witness. Swift 6.1.2 arm64 and x86_64 client IR
+    // uses four ordinary pointer carriers and returns one integer word.
+    {"$sSD5countSivg", "/usr/lib/swift/libswiftCore.dylib", "zpppp"},
     {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib", "(zz)zp"},
     // The capacity is an Int carrier; the mutable String's address is
     // swiftself in both arm64 and x86_64 Swift 6.1.2 client IR.

@@ -2050,6 +2050,100 @@ TEST(ObjCCallHints, SwiftCocoaArrayEndIndexKeepsItsWordABI) {
   }
 }
 
+TEST(ObjCCallHints, SwiftDictionaryCountKeepsStorageMetadataAndWitness) {
+  constexpr llvm::StringLiteral Name = "$sSD5countSivg";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_" + Name.str(), Architecture);
+    Image.DyldBindSlots[0x2180] = {"_" + Name.str(), 0,
+                                   "/usr/lib/swift/libswiftCore.dylib", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.ReturnType->Size, 8U);
+    ASSERT_EQ(Signature.Parameters.size(), 4U);
+    for (unsigned I = 0; I < 4; ++I) {
+      const auto &Parameter = Signature.Parameters[I];
+      EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Parameter.TheRole, SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Parameter.Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs[I]);
+    }
+    auto Call = HighExpr::makeCall(
+        Name.str(), 0x2180,
+        {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+         HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+    Changed->Signature.Parameters.back().TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Changed->Signature, Architecture,
+                                           Diagnostic));
+    Call->SourceCallHint = std::move(Changed);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Addend = 1;
+      if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 3)
+        Wrong.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, FoundationCurrentCalendarUsesOnlyIndirectResult) {
+  constexpr llvm::StringLiteral Name = "$s10Foundation8CalendarV7currentACvgZ";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_" + Name.str(), Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        "_" + Name.str(), 0,
+        "/System/Library/Frameworks/Foundation.framework/Foundation", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::SwiftIndirectResult);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                            : TRI.IntReturnReg);
+    auto Call =
+        HighExpr::makeCall(Name.str(), 0x2180, {HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+    Changed->Signature.Parameters[0].TheRole =
+        SourceParameterTypeHint::Role::Ordinary;
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Changed->Signature, Architecture,
+                                           Diagnostic));
+    Call->SourceCallHint = std::move(Changed);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, FoundationNSKeyValueObservationInvalidateUsesSwiftSelf) {
   constexpr llvm::StringLiteral Name =
       "$s10Foundation21NSKeyValueObservationC10invalidateyyFTj";
@@ -12443,6 +12537,104 @@ TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
     Unsupported.DynInfo.NeededLibs = {Module};
     EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Case.Selector));
   }
+}
+
+TEST(ObjCCallHints, IOSGrayscaleFactoryKeepsDoubleArgumentsAndColorResult) {
+  constexpr auto Module = "/System/Library/Frameworks/UIKit.framework/UIKit";
+  constexpr auto Selector = "colorWithWhite:alpha:";
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {Module};
+  Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+  auto Low = caller();
+  Low.Blocks.front().Ops.back().Inputs[0] = NdVar::reg(TRI.IntReturnReg, 8);
+  const auto Med = convert(Image, Low);
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  const auto &Call = Med.CallInfos.front();
+  ASSERT_TRUE(Call.SourceCallHint);
+  const auto &Hint = *Call.SourceCallHint;
+  EXPECT_EQ(Hint.Signature.Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 4U);
+  ASSERT_EQ(Call.Args.size(), 4U);
+  EXPECT_EQ(Call.Args[0].RegOff, TRI.IntParamRegs[0]);
+  for (unsigned I = 0; I < 2; ++I) {
+    EXPECT_EQ(Hint.Signature.Parameters[I].Location.RegisterOffset,
+              TRI.IntParamRegs[I]);
+    const auto &Component = Hint.Signature.Parameters[I + 2];
+    EXPECT_EQ(Component.Type->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Component.Type->Size, 8U);
+    EXPECT_EQ(Component.Location.Kind, SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Component.Location.RegisterOffset, TRI.FPParamRegs[I]);
+    EXPECT_EQ(Component.Location.ValueBytes, 8U);
+    EXPECT_EQ(Call.Args[I + 2].RegOff, TRI.FPParamRegs[I]);
+    EXPECT_EQ(Call.Args[I + 2].Size, 8U);
+  }
+  auto Expression = receiverCallExpression(Hint);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Forged = std::make_shared<SourceCallTypeHint>(Hint);
+    auto &White = Forged->Signature.Parameters[2];
+    if (Mutation == 0) {
+      White.Type = NdType::makeFloat(4);
+      White.Location.ValueBytes = 4;
+    } else if (Mutation == 1) {
+      White.Location.Kind = SourceABICarrierKind::IntegerRegister;
+      White.Location.RegisterOffset = TRI.IntParamRegs[2];
+    } else if (Mutation == 2) {
+      White.Location.RegisterOffset = TRI.FPParamRegs[1];
+    } else {
+      Forged->Signature.ReturnType = NdType::makeInt(8, false);
+    }
+    Expression->SourceCallHint = Forged;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  }
+  Expression->SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+  for (const char *Other :
+       {"/tmp/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"}) {
+    auto Changed = Image;
+    Changed.DynInfo.NeededLibs = {Other};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+  }
+  auto Unsupported = image(Arch::X64);
+  Unsupported.ObjCMethods.clear();
+  Unsupported.DynInfo.NeededLibs = {Module};
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+  auto Conflicting = Image;
+  ObjCMethod OtherMethod;
+  OtherMethod.ClassName = "Unrelated";
+  OtherMethod.Selector = Selector;
+  OtherMethod.TypeEncoding = "@24@0:8f16f20";
+  OtherMethod.TypeHint =
+      parseObjCMethodEncoding(Selector, OtherMethod.TypeEncoding);
+  Conflicting.ObjCMethods.push_back(OtherMethod);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Conflicting, Selector));
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Conflicting, {}));
+
+  auto ReceiverImage = receiverImage(Arch::AArch64, true);
+  ReceiverImage.ObjCMethods.front().Selector = "useColorFactory";
+  ReceiverImage.DynInfo.NeededLibs = {
+      Module, "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  auto &Class = ReceiverImage.ObjCClasses.front();
+  Class.RootClass = false;
+  Class.InheritanceStatus = "resolved";
+  Class.SuperclassName = "UIColor";
+  const auto Receiver = objcMethodReceiverTypeHint(ReceiverImage, 0x1200);
+  ASSERT_TRUE(Receiver);
+  const auto Factory =
+      objcReceiverSourceTypeHint(ReceiverImage, Selector, *Receiver);
+  ASSERT_TRUE(Factory.Signature);
+  EXPECT_EQ(Factory.ReturnClass.value_or(""), "UIColor");
+  auto Instance = *Receiver;
+  Instance.IsClassMethod = false;
+  EXPECT_FALSE(
+      objcReceiverSourceTypeHint(ReceiverImage, Selector, Instance).Signature);
 }
 
 TEST(ObjCCallHints, IOSProgressKeepsFloatAndBooleanInSeparateABIRegisters) {
