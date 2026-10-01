@@ -5594,3 +5594,39 @@ TEST(HighControlFlowSemantics, BackwardJumpsAroundATryBecomeALoop) {
   EXPECT_FALSE(loopifyBackwardGotos(G.Body));
   EXPECT_EQ(countKind(G, StmtKind::Goto), 2u);
 }
+
+TEST(HighControlFlowSemantics, CodeAfterASwitchMovesToItsOnlyFallOut) {
+  // switch (x) { case 1: case 2: case 3: v = 10x; goto J; } v = 7; goto K;
+  // J: return v; K: return 99; -- only the missing default falls out of the
+  // switch, so `v = 7; goto K;` becomes the default and every goto J breaks.
+  for (bool SecondFallOut : {false, true}) {
+    SCOPED_TRACE(SecondFallOut);
+    HighStmt Dispatch;
+    Dispatch.Kind = StmtKind::Switch;
+    Dispatch.Addr = 0x1000;
+    Dispatch.SwitchExpr = local(0);
+    for (uint64_t V : {1, 2, 3})
+      Dispatch.Cases.push_back(
+          {V,
+           {assign(0x1000 + V * 4, 1, V * 10), jump(0x1000 + V * 4, 0x1100)}});
+    // A case that falls out too keeps the code where it is.
+    if (SecondFallOut)
+      Dispatch.Cases.back().Body.pop_back();
+    HighFunc F;
+    F.Body = {Dispatch, assign(0x1040, 1, 7), jump(0x1044, 0x1200),
+              result(0x1100, local(1)),
+              result(0x1200, HighExpr::makeConst(99, 8))};
+    auto Expected = [&](uint64_t X) -> uint64_t {
+      if (X == 3 && SecondFallOut)
+        return 99;
+      return X >= 1 && X <= 3 ? X * 10 : 99;
+    };
+    for (uint64_t X : {0, 1, 2, 3, 4})
+      ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+    const size_t Gotos = countKind(F, StmtKind::Goto);
+    breakToTheLoopFollow(F.Body);
+    EXPECT_EQ(countKind(F, StmtKind::Goto), SecondFallOut ? Gotos : 1u);
+    for (uint64_t X : {0, 1, 2, 3, 4})
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  }
+}
