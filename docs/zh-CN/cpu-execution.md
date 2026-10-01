@@ -95,3 +95,5 @@ KVM x64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进�
 KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
 
 硬件执行本身不保证更低的端到端耗时。当前原生执行逐条进行指令准入、观察、状态传输和 VM 退出。比较相同原始镜像与场景时，应使用一致的指令和事件预算，同时报告结果一致性与耗时；测量 CLI 延迟时应包含启动和加载。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。

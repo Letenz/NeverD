@@ -799,3 +799,5 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
 
 checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。

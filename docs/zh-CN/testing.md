@@ -811,3 +811,7 @@ checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立
 `NeverDAArch64MemoryTests` 在两种权限级下覆盖 Unicorn、KVM 和 WHP 的 18 种标量及成对指令，检查所有跨页偏移、符号扩展及宽度结果、观察器顺序、第二页权限不足或缺失、显式消费故障后重试、重复物理别名，以及别名替换后的上下文恢复。修改前已复现合法跨页加载被拒绝的情况。不可用后端明确跳过；Unicorn 验证及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 检查零标志的未启用 CFG 元数据、两种加载地址下不变的回退指针、无效指针槽/目标及缺失重定位。执行用例显式选择 Unicorn/KVM/WHP，并使用 `driver-strict` 和 `checked-x64-v1`；不可用的后端分别跳过。`DriverPublicCLICases.def` 为 CLI 与兼容的 v1 C API 对比选择 `--backend unicorn`。原生后端及 `auto` 选择保留独立的公共接口覆盖，主机 API 不可用时不会静默回退。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。
+
+`NeverDAArch64GeneralStateTests` 在两种特权级下检查原生 35 字段和软件 39 字段清单，覆盖每个读取失败位置、位宽规范化和重试。Linux 上的 `NeverDUnicornStateTransferTests` 在真实来宾执行后的每个标量回读位置注入失败，验证输入不变、重试只执行一次，并检查 `CapturesDeclaredWidthsWithoutStaleUpperBits`。原始指令和状态用例存放于 `UnicornStateTransferCases.def`；这些证据不能替代 ARM64 KVM/WHP 实机验证。

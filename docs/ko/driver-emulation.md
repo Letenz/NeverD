@@ -524,3 +524,5 @@ KVM은 `X64HostRegisters.def`와 `X64FPState.def`에 따라 일반 레지스터�
 하드웨어 실행 자체가 더 짧은 전체 지연 시간을 보장하지는 않습니다. 현재 네이티브 실행은 명령마다 허용 검사, 관찰, 상태 전송과 VM 종료를 수행합니다. 같은 원본 이미지와 시나리오를 동일한 명령·이벤트 예산으로 비교하고 시간과 함께 결과 일치를 보고해야 합니다. CLI 지연에는 시작과 로드도 포함합니다.
 
 `GuardFlags`가 0이어도 CFG가 활성화되지 않은 포인터 슬롯은 유효합니다. 로더는 저장 영역, 실행 가능한 대체 대상, 재배치 시 완전한 `DIR64` 범위를 검증하고 원래 게스트 포인터를 유지합니다. 활성 CFG에는 여전히 이미지 활성화 비트와 계측/함수 테이블 플래그가 필요합니다. `DriverGuardCases.def`와 `NeverDDriverGuardMetadataTests`는 Unicorn, KVM, WHP에서 이를 검증하며 Unicorn을 끈 빌드에서도 사용할 수 있습니다.
+
+Checked ARM64 상태 수집은 ISA 계층의 공통 커밋 경계를 사용합니다. KVM/WHP는 `AArch64GeneralState.def`의 35개 필드를 수집하고 Unicorn은 추가 스레드 및 부동소수점 제어 상태를 포함한 공개 스칼라 필드 39개를 유지합니다. `captureAArch64ScalarState`는 `Registers.def`의 너비를 적용하고 NZCV를 정규화하며 모든 읽기가 성공한 뒤에만 상태를 공개합니다. 권한, 벡터 및 전송하지 않은 필드는 유지됩니다. 이 전송은 checked ARM64의 FP/SIMD 명령 지원을 의미하지 않습니다.

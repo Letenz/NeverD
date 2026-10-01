@@ -727,3 +727,5 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
 
 checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+
+Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。

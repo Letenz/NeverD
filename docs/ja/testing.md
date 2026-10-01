@@ -881,3 +881,7 @@ checked ARM64 のスカラー／ペア RAM アクセスは、EL0 と EL1 で別�
 `NeverDAArch64MemoryTests` は両権限レベルの Unicorn、KVM、WHP で18種類のスカラー／ペア命令を検証します。全ページ跨ぎ offset、符号と幅、observer 順序、第2ページの権限拒否／欠落、障害の明示的な消費と再試行、同一物理領域のエイリアス、エイリアス置換後の context 復元を含みます。変更前には合法なページ跨ぎ load の拒否を再現しました。利用不能な transport は明示的に skip します。Unicorn と cross-compile は ARM64 KVM/WHP 実機の証拠を代替しません。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) は、フラグがゼロの無効状態の CFG メタデータ、両方のロードアドレスで保持されるフォールバックポインタ、不正なスロット/ターゲット、欠落した再配置を検証します。実行ケースは明示的な Unicorn/KVM/WHP と `driver-strict`、`checked-x64-v1` を使用し、利用できないバックエンドは個別にスキップします。`DriverPublicCLICases.def` は、互換性を維持する v1 C API と比較する CLI に `--backend unicorn` を指定します。ネイティブと `auto` の選択は独立した公開 API テストを維持し、ホスト API が利用できない場合に暗黙のフォールバックは行いません。
+
+Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。
+
+`NeverDAArch64GeneralStateTests` は両特権でネイティブ 35 フィールドとソフトウェア 39 フィールドを検証し、各読取り失敗、幅の正規化、再試行を確認します。Linux の `NeverDUnicornStateTransferTests` は実際のゲスト実行後の各スカラー読取りに失敗を注入し、入力保持と再試行時の一度だけの実行を検証します。`CapturesDeclaredWidthsWithoutStaleUpperBits` も確認します。元の命令と状態は `UnicornStateTransferCases.def` に定義され、ARM64 KVM/WHP 実機検証の代わりにはなりません。
