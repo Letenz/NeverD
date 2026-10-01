@@ -1,0 +1,271 @@
+//===- DriverImage.def - Strict PE driver image declarations -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_DRIVER_IMAGE_VALUE
+NEVERD_DRIVER_IMAGE_VALUE(MaxImportNameLength, unsigned, 512)
+NEVERD_DRIVER_IMAGE_VALUE(FirstImportCharacter, uint8_t, '!')
+NEVERD_DRIVER_IMAGE_VALUE(LastImportCharacter, uint8_t, '~')
+NEVERD_DRIVER_IMAGE_VALUE(MaxPESections, unsigned, 96)
+// LLVM names the defined directories; PE32+ reserves the following slot.
+NEVERD_DRIVER_IMAGE_VALUE(ReservedPEDirectory, unsigned,
+                          llvm::COFF::NUM_DATA_DIRECTORIES)
+NEVERD_DRIVER_IMAGE_VALUE(MaxPEDirectoryEntries, unsigned,
+                          ReservedPEDirectory + 1)
+NEVERD_DRIVER_IMAGE_VALUE(MinPEFileAlignment, uint64_t, 512)
+NEVERD_DRIVER_IMAGE_VALUE(PEImageBaseAlignment, uint64_t, 64 * 1024)
+NEVERD_DRIVER_IMAGE_VALUE(MaxPEFileAlignment, uint64_t, PEImageBaseAlignment)
+NEVERD_DRIVER_IMAGE_VALUE(RelocationTypeShift, unsigned, 12)
+NEVERD_DRIVER_IMAGE_VALUE(LoadConfigurationPrefixBytes, size_t, 12)
+NEVERD_DRIVER_IMAGE_VALUE(RuntimeFunctionBytes, unsigned, 3 * sizeof(uint32_t))
+#endif
+#ifdef NEVERD_DRIVER_IMAGE_DIAGNOSTIC
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(Prefix, "driver image: ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(MetadataRVARangeOverflows,
+                               "metadata RVA range overflows")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    MetadataExtendsBeyondFileBackedSectionBytes,
+    "metadata extends beyond file-backed section bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(MetadataRVAIsNotInAMappedSection,
+                               "metadata RVA is not in a mapped section")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(EmptyImportName, "empty import name")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedImportNameEncoding,
+                               "unsupported import name encoding")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnterminatedOrOversizedImportName,
+                               "unterminated or oversized import name")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(BoundOrForwardedImportsAreUnsupported,
+                               "bound or forwarded imports are unsupported")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(ImportDescriptorHasNoIAT,
+                               "import descriptor has no IAT")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedImportProvider,
+                               "unsupported import provider: ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnalignedX64ImportTable,
+                               "unaligned x64 import table")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(PreboundIATIsUnsupported,
+                               "prebound IAT is unsupported")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    OrdinalOrNoncanonicalImportLookupIsUnsupported,
+    "ordinal or noncanonical import lookup is unsupported")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(ImportCountExceedsTheExecutionProfile,
+                               "import count exceeds the execution profile")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(OverlappingImportAddressSlots,
+                               "overlapping import address slots")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnterminatedImportLookupTable,
+                               "unterminated import lookup table")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnterminatedImportDirectory,
+                               "unterminated import directory")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedBaseRelocationBlock,
+                               "truncated base relocation block")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InvalidBaseRelocationBlockExtent,
+                               "invalid base relocation block extent")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedX64BaseRelocationType,
+                               "unsupported x64 base relocation type")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    BaseRelocationTargetIsOutsideMappedSectionBytes,
+    "base relocation target is outside mapped section bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    DuplicateOrOverlappingDIR64RelocationTargets,
+    "duplicate or overlapping DIR64 relocation targets")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedLoadConfigurationSize,
+                               "truncated load configuration size")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InvalidLoadConfigurationDeclaredSize,
+                               "invalid load configuration declared size")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    PartialLoadConfigurationSecurityCookieField,
+    "partial load configuration SecurityCookie field")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    PartialLoadConfigurationPointerOrCountField,
+    "partial load configuration pointer or count field")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(PartialLoadConfigurationGuardFlagsField,
+                               "partial load configuration GuardFlags field")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedLoadConfigurationField,
+                               "unsupported load configuration field: ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    UnsupportedNonzeroLoadConfigurationExtensionAtByte,
+    "unsupported nonzero load configuration extension at byte ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    NonzeroBytesBeyondDeclaredLoadConfigurationSize,
+    "nonzero bytes beyond declared load configuration size")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(RequiresACompleteDOSPEImageHeader,
+                               "requires a complete DOS/PE image header")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InvalidPESignatureOffset,
+                               "invalid PE signature offset")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedCOFFFileHeader,
+                               "truncated COFF file header")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(RequiresACompletePE32OptionalHeader,
+                               "requires a complete PE32+ optional header")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedOptionalHeaderDataDirectories,
+                               "truncated optional-header data directories")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InvalidOrTruncatedPESectionTable,
+                               "invalid or truncated PE section table")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedLoadConfigurationDirectoryEntry,
+                               "truncated load configuration directory entry")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InconsistentLoadConfigurationRVAAndSize,
+                               "inconsistent load configuration RVA and size")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedPESectionTable,
+                               "truncated PE section table")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(LoadConfigurationIsNotFullyFileBacked,
+                               "load configuration is not fully file backed")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedLoadConfigurationBytes,
+                               "truncated load configuration bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedDeclaredLoadConfigurationBytes,
+                               "truncated declared load configuration bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(LoadConfigurationRVAIsNotMapped,
+                               "load configuration RVA is not mapped")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    InvalidLoadConfigurationSecurityCookieAddress,
+    "invalid load configuration SecurityCookie address")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    SecurityCookieRequiresWritableNonexecutableImageStorage,
+    "SecurityCookie requires writable nonexecutable image storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(SecurityCookieIsOutsideMappedImageStorage,
+                               "SecurityCookie is outside mapped image storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGImageHasNoLoadConfiguration,
+                               "CFG image has no load configuration")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    UnsupportedCFGGuardFlagsIncludingXFGExportSuppression,
+    "unsupported CFG GuardFlags (including XFG/export suppression)")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedCFGFunctionTableMetadataStride,
+                               "unsupported CFG function table metadata stride")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGImageRequiresInstrumentedAndFunctionTableFlags,
+    "CFG image requires instrumented and function-table flags")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGMetadataRequiresReadOnlyNonexecutableStorage,
+    "CFG metadata requires read-only nonexecutable storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGStorageOverlapsLoadConfiguration,
+                               "CFG storage overlaps load configuration")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGStorageOverlapsLoaderMetadata,
+                               "CFG storage overlaps loader metadata")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGStorageOverlapsImportBindingStorage,
+                               "CFG storage overlaps import binding storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(OverlappingCFGMetadataStorage,
+                               "overlapping CFG metadata storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGPointerIsOutsideImageStorage,
+                               "CFG pointer is outside image storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnalignedCFGPointerSlot,
+                               "unaligned CFG pointer slot")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    UnsupportedActiveLoadConfigurationGuardExtension,
+    "unsupported active load configuration guard extension")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGFallbackTargetIsNotFileBackedImageCode,
+    "CFG fallback target is not file-backed image code")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGImageRequiresACheckPointerSlot,
+                               "CFG image requires a check pointer slot")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InconsistentCFGTablePointerAndCount,
+                               "inconsistent CFG table pointer and count")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGFunctionTableIsMissingItsPresenceFlag,
+    "CFG function table is missing its presence flag")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGImageRequiresDeclaredFunctionTargets,
+                               "CFG image requires declared function targets")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGTargetCountExceedsExecutionProfile,
+                               "CFG target count exceeds execution profile")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CFGTargetsMustBeUniqueAndSorted,
+                               "CFG targets must be unique and sorted")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGAddressTakenIATTargetIsNotADeclaredImportSlot,
+    "CFG address-taken IAT target is not a declared import slot")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGFunctionTargetIsNotFileBackedExecutableCode,
+    "CFG function target is not file-backed executable code")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedCFGFunctionTargetMetadata,
+                               "unsupported CFG function target metadata")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    CFGEntryPointIsMissingFromDeclaredValidTargets,
+    "CFG entry point is missing from declared valid targets")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    DIR64RelocationOverlapsNonpointerLoadConfigurationMetadata,
+    "DIR64 relocation overlaps nonpointer load configuration metadata")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(DIR64RelocationOverlapsCFGMetadata,
+                               "DIR64 relocation overlaps CFG metadata")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    RebasingCFGMetadataRequiresCompleteDIR64Relocations,
+    "rebasing CFG metadata requires complete DIR64 relocations")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(CannotRead, "cannot read ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InputFileExceedsMemoryLimit,
+                               "input file exceeds memory limit")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    RequiresAnExecutableX64PE32NativeSubsystemImage,
+    "requires an executable x64 PE32+ native-subsystem image")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedOptionalHeaderFields,
+                               "unsupported optional-header fields")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    InvalidImageSizeAlignmentBaseOrMemoryLimit,
+    "invalid image size, alignment, base, or memory limit")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    ImageBaseHasInvalidAlignmentOrNoncanonicalX64Range,
+    "image base has invalid alignment or noncanonical x64 range")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    DriverImageOverlapsTheModeledUserAddressSpace,
+    "driver image overlaps the modeled user address space")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(ImageOverlapsReservedEmulationMemory,
+                               "image overlaps reserved emulation memory")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    InvalidOverlappingTruncatedOrRelocatableSection,
+    "invalid, overlapping, truncated, or relocatable section")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(OverlappingSectionFileRanges,
+                               "overlapping section file ranges")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    EntryPointIsNotInFileBackedExecutableBytes,
+    "entry point is not in file-backed executable bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(SectionTableExtendsBeyondSizeOfHeaders,
+                               "section table extends beyond SizeOfHeaders")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InconsistentDataDirectoryRVAAndSize,
+                               "inconsistent data directory RVA and size")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(UnsupportedLoaderDataDirectory,
+                               "unsupported loader data directory ")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedCertificateTable,
+                               "truncated certificate table")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    X64ExceptionDirectoryHasAnIncompleteEntry,
+    "x64 exception directory has an incomplete entry")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(IncompleteDebugDirectoryEntry,
+                               "incomplete debug directory entry")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(TruncatedExtendedDLLCharacteristics,
+                               "truncated extended DLL characteristics")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    UnsupportedExtendedDLLCharacteristicsIncludingCET,
+    "unsupported extended DLL characteristics (including CET)")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    RequestedRebaseRequiresUnstrippedDIR64Relocations,
+    "requested rebase requires unstripped DIR64 relocations")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    RebasingSecurityCookieRequiresItsLoadConfigurationDIR64Relocation,
+    "rebasing SecurityCookie requires its load configuration DIR64 relocation")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    SecurityCookieStorageOverlapsLoaderMetadata,
+    "SecurityCookie storage overlaps loader metadata")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    DIR64RelocationOverlapsImportBindingStorage,
+    "DIR64 relocation overlaps import binding storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    DIR64RelocationOverlapsSecurityCookieStorage,
+    "DIR64 relocation overlaps SecurityCookie storage")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(InputChangedWhileLoading,
+                               "input changed while loading")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    LoaderMetadataDisagreesWithValidatedExecutionImage,
+    "loader metadata disagrees with validated execution image")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    LoaderSecurityCookieIdentityDisagreesWithExecutionImage,
+    "loader SecurityCookie identity disagrees with execution image")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    LoaderDIR64IdentitiesDisagreeWithExecutionImage,
+    "loader DIR64 identities disagree with execution image")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    LoaderImportIdentityDisagreesWithValidatedIAT,
+    "loader import identity disagrees with validated IAT")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    LoaderSectionMappingDisagreesWithExecutionImage,
+    "loader section mapping disagrees with execution image")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(LoaderLostFileBackedSectionBytes,
+                               "loader lost file-backed section bytes")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(
+    RelocationTargetDisappearedFromMappingPlan,
+    "relocation target disappeared from mapping plan")
+NEVERD_DRIVER_IMAGE_DIAGNOSTIC(SecurityCookieDisappearedFromMappingPlan,
+                               "SecurityCookie disappeared from mapping plan")
+#endif

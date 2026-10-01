@@ -1033,6 +1033,53 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCIntrinsicSemantics, FloatingComparisonsReadBitcastValue) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("floating-bitcast-comparison", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  for (unsigned Bits : {32U, 64U}) {
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Float = Bits == 32 ? Builder.getFloatTy() : Builder.getDoubleTy();
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getInt32Ty(), {Integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "classify" + std::to_string(Bits),
+        Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Value = Builder.CreateBitCast(Function->getArg(0), Float);
+    auto *Zero = llvm::ConstantFP::get(Float, 0.0);
+    auto *Equal = Builder.CreateZExt(Builder.CreateFCmpOEQ(Value, Zero),
+                                     Builder.getInt32Ty());
+    auto *Less = Builder.CreateZExt(Builder.CreateFCmpOLT(Value, Zero),
+                                    Builder.getInt32Ty());
+    auto *NaN = Builder.CreateZExt(Builder.CreateFCmpUNO(Value, Zero),
+                                   Builder.getInt32Ty());
+    Builder.CreateRet(
+        Builder.CreateOr(Builder.CreateOr(Equal, Builder.CreateShl(Less, 1)),
+                         Builder.CreateShl(NaN, 2)));
+  }
+  const auto Source = "#include <stdint.h>\n" + emit(Module) + R"(
+int main(void) {
+  const uint32_t small[] = {0, UINT32_C(0x80000000), UINT32_C(0x3f800000),
+    UINT32_C(0xbf800000), UINT32_C(0x7f800000), UINT32_C(0xff800000),
+    UINT32_C(0x7fc12345), UINT32_C(0xffc54321), 1, UINT32_C(0x80000001)};
+  const uint64_t large[] = {0, UINT64_C(0x8000000000000000),
+    UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
+    UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
+    UINT64_C(0x7ff8123456789abc), UINT64_C(0xfff8fedcba987654),
+    1, UINT64_C(0x8000000000000001)};
+  const unsigned expected[] = {1, 1, 0, 2, 0, 2, 4, 4, 0, 2};
+  for (unsigned i = 0; i != 10; ++i)
+    if (classify32(small[i]) != expected[i] ||
+        classify64(large[i]) != expected[i]) return (int)i + 1;
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level);
+}
+
 TEST(LLVMCIntrinsicSemantics, FloatingPredicatesKeepNaNsAndProducerEffects) {
   llvm::LLVMContext Context;
   llvm::Module Module("floating-predicates", Context);

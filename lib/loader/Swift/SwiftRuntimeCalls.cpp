@@ -101,6 +101,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "(zz)C"},
+    // Swift 6.1.2 arm64 and x86_64 clients read URL through swiftself;
+    // absoluteString returns both physical String words.
+    {"$s10Foundation3URLV14absoluteStringSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)C"},
     {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -181,6 +188,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 clients return Calendar.current through
+    // the indirect-result carrier, with no ordinary or context parameters.
+    {"$s10Foundation8CalendarV7currentACvgZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vI"},
     {"$s10Foundation9IndexPathV19_bridgeToObjectiveCSo07NSIndexC0CyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -192,6 +206,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 arm64 and x86_64 client IR declares Published.init as
+    // swiftcc void (ptr sret, ptr value, ptr genericMetadata). The result and
+    // consumed input stay opaque; neither carrier uses swiftself.
+    {"$s7Combine9PublishedV12initialValueACyxGx_tcfC",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vIpp"},
     // Binding.wrappedValue's generic setter receives the value address,
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
@@ -223,7 +244,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "ppppp"},
+    // Dictionary.count takes the storage pointer, Key and Value metadata,
+    // then Key's Hashable witness. Swift 6.1.2 arm64 and x86_64 client IR
+    // uses four ordinary pointer carriers and returns one integer word.
+    {"$sSD5countSivg", "/usr/lib/swift/libswiftCore.dylib", "zpppp"},
     {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib", "(zz)zp"},
+    // The capacity is an Int carrier; the mutable String's address is
+    // swiftself in both arm64 and x86_64 Swift 6.1.2 client IR.
+    {"$sSS15reserveCapacityyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
     // Swift 6.1.2 arm64 client IR passes the inout Hasher address followed
     // by the two String words to String.hash(into:).
     {"$sSS4hash4intoys6HasherVz_tF", "/usr/lib/swift/libswiftCore.dylib",

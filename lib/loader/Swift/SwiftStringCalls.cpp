@@ -9,6 +9,7 @@
 #include "llvm/Support/ConvertUTF.h"
 
 #include <algorithm>
+#include <array>
 
 namespace neverd {
 std::optional<SourceCallTypeHint>
@@ -92,5 +93,25 @@ std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
                    [](uint8_t Byte) { return Byte >= 0x80; })))
     return std::nullopt;
   return SwiftLiteralString{Contents, static_cast<uint32_t>(Count + 1)};
+}
+
+bool isCanonicalSwiftSmallString(uint64_t Payload, uint64_t TaggedPayload) {
+  // StringObject.swift and SmallString.swift define the discriminator, UTF-8
+  // byte count, exact ASCII flag, and zero padding for this value-only form.
+  const uint8_t Marker = TaggedPayload >> 56;
+  if ((Marker & 0xf0) != 0xa0 && (Marker & 0xf0) != 0xe0)
+    return false;
+  const unsigned Count = Marker & 0x0f;
+  std::array<llvm::UTF8, 15> Bytes{};
+  bool ASCII = true;
+  for (unsigned I = 0; I < Bytes.size(); ++I) {
+    Bytes[I] = I < 8 ? Payload >> (I * 8) : TaggedPayload >> ((I - 8) * 8);
+    if (I >= Count && Bytes[I])
+      return false;
+    ASCII &= Bytes[I] < 0x80;
+  }
+  const auto *Start = Bytes.data();
+  return ASCII == bool(Marker & 0x40) &&
+         llvm::isLegalUTF8String(&Start, Start + Count);
 }
 } // namespace neverd

@@ -13,7 +13,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <filesystem>
-#include <tuple>
+#include <ostream>
+#include <vector>
 
 namespace neverd::emulation {
 namespace {
@@ -38,11 +39,27 @@ const Workload Workloads[] = {
 #undef NEVERD_PARITY_IMAGE
 };
 
-using Parameter = std::tuple<Workload, ExecutionBackendKind, bool>;
+struct Parameter {
+  Workload Input;
+  ExecutionBackendKind Backend;
+  bool Rebase;
+};
+void PrintTo(const Parameter &P, std::ostream *OS) {
+  *OS << executionBackendName(P.Backend)
+      << (P.Rebase ? RebaseSuffix : OriginalSuffix) << Separator
+      << P.Input.Name;
+}
 std::string parameterName(const testing::TestParamInfo<Parameter> &P) {
-  const auto &[Input, Backend, Rebase] = P.param;
-  return std::string(executionBackendName(Backend)) + Separator + Input.Name +
-         (Rebase ? RebaseSuffix : OriginalSuffix);
+  return testing::PrintToString(P.param);
+}
+std::vector<Parameter> parameters() {
+  std::vector<Parameter> Result;
+  for (const auto &Input : Workloads)
+    for (const auto Backend :
+         {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP})
+      for (const bool Rebase : {false, true})
+        Result.push_back({Input, Backend, Rebase});
+  return Result;
 }
 
 class DriverNativeExecution : public testing::TestWithParam<Parameter> {};
@@ -107,12 +124,7 @@ TEST_P(DriverNativeExecution,
       llvm::cantFail(llvm::json::parse(driverResultJSON(*Actual)));
   EXPECT_EQ(Report.getAsObject()->getBoolean(field::ScenarioSuccess), Success);
 }
-INSTANTIATE_TEST_SUITE_P(
-    Corpus, DriverNativeExecution,
-    testing::Combine(testing::ValuesIn(Workloads),
-                     testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
-                     testing::Bool()),
-    parameterName);
+INSTANTIATE_TEST_SUITE_P(Corpus, DriverNativeExecution,
+                         testing::ValuesIn(parameters()), parameterName);
 } // namespace
 } // namespace neverd::emulation

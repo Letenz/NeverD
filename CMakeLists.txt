@@ -198,6 +198,8 @@ add_custom_target(copy_sigs ALL
 )
 
 # --- Unit tests ---
+option(NEVERD_ENABLE_SEMANTIC_TESTS
+       "Enable the Unicorn-dependent semantic test group" ON)
 option(NEVERD_ENABLE_BINARY_CORPUS_TESTS
        "Enable integration tests backed by the pinned testbins corpus" OFF)
 set(NEVERD_BINARY_CORPUS_ROOT

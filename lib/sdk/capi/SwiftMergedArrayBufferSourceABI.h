@@ -15,14 +15,9 @@
 namespace neverd::sdk {
 namespace swift_merged_array_detail {
 
-inline bool declaration(const BinaryImage &Image, va_t Entry) {
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return false;
-      Only = &Symbol;
-    }
+inline bool declaration(const BinaryImage &Image, va_t Entry,
+                        const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return false;
   llvm::StringRef Name(Only->Name);
@@ -134,7 +129,8 @@ inline const T *unique(const std::vector<T> &Values, va_t Entry) {
 // the complete compiler-observed forwarding wrapper: three scalar inputs,
 // Array storage loaded from swiftself, and a strong C swift_release pointer.
 inline bool wrapper(const BinaryImage &Image, const PipelineResult &Result,
-                    const LowFunc &Low, va_t Target) {
+                    const LowFunc &Low, va_t Target,
+                    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   const va_t Entry = Low.Entry;
   if (Entry % 4 || Entry > InvalidVA - 36 || Low.DecodedInstructionCount != 9 ||
       Low.Blocks.size() != 1 ||
@@ -145,7 +141,8 @@ inline bool wrapper(const BinaryImage &Image, const PipelineResult &Result,
                             Op.Inputs[0].Offset == Target;
                    }))
     return false;
-  const auto Expected = swiftMangledURLArrayBufferSourceABI(Image, Entry);
+  const auto Expected =
+      swiftMangledURLArrayBufferSourceABI(Image, Entry, SymbolIndex);
   const auto *Audit = unique(Result.FunctionAudits, Entry);
   const auto *Med = unique(Result.MedFuncs, Entry);
   const auto *High = unique(Result.HighFuncs, Entry);
@@ -217,17 +214,18 @@ inline bool wrapper(const BinaryImage &Image, const PipelineResult &Result,
 }
 } // namespace swift_merged_array_detail
 
-inline std::optional<SourceFunctionTypeHint>
-swiftMergedURLArrayBufferSourceABI(const BinaryImage &Image, va_t Entry,
-                                   const PipelineResult &Result) {
+inline std::optional<SourceFunctionTypeHint> swiftMergedURLArrayBufferSourceABI(
+    const BinaryImage &Image, va_t Entry, const PipelineResult &Result,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Result.SourceImage != &Image || Image.Format != BinaryFormat::MachO ||
       Image.IsRelocatable || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || !Image.isCodeAddress(Entry) ||
-      !swift_merged_array_detail::declaration(Image, Entry))
+      !swift_merged_array_detail::declaration(Image, Entry, SymbolIndex))
     return std::nullopt;
   bool Proven = false;
   for (const auto &Low : Result.LowFuncs)
-    if (swift_merged_array_detail::wrapper(Image, Result, Low, Entry)) {
+    if (swift_merged_array_detail::wrapper(Image, Result, Low, Entry,
+                                           SymbolIndex)) {
       if (swift_merged_array_detail::unique(Result.LowFuncs, Low.Entry) != &Low)
         return std::nullopt;
       Proven = true;

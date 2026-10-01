@@ -6124,3 +6124,147 @@ TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   removeUnreachableCode(F.Body);
   EXPECT_EQ(F.Body.size(), 2u);
 }
+
+TEST(HighControlFlowSemantics, NestedExitCopiesTheSmallTailItSkips) {
+  // v = 0; if (x) { v = 1; if (x == 2) { v = 5; goto X; } v += 10; }
+  // v += 100; X: return v;  -- the exit skips `v += 10` and `v += 100`:
+  // `v += 10` moves under `else`, and a copy of `v += 100` goes on each
+  // path that does not exit.
+  auto Add = [](va_t At, uint64_t K) {
+    HighStmt S = assign(At, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(K, 8));
+    return S;
+  };
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1008;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {assign(0x100c, 1, 5), jump(0x1010, 0x1030)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1000;
+  Outer.Cond = local(0);
+  Outer.Body = {assign(0x1004, 1, 1), Inner, Add(0x1014, 10)};
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0), Outer, Add(0x1020, 100),
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) { return X == 0 ? 100u : X == 2 ? 5u : 111u; };
+  for (uint64_t X : {0, 1, 2})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0, 1, 2})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}
+
+TEST(HighControlFlowSemantics, ThreeLevelExitCopiesEachSkippedTail) {
+  // v = 0; if (x) { v += 1; if (x != 1) { v += 2;
+  //   if (x == 3) { v = 50; goto X; } v += 4; } v += 8; }
+  // v += 100; X: return v;
+  // Each level's other arm keeps running the tails above it and the code
+  // before X; only the exit skips them.
+  auto Add = [](va_t At, uint64_t K) {
+    HighStmt S = assign(At, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(K, 8));
+    return S;
+  };
+  auto Test = [](va_t At, NdOp Op, uint64_t K, std::vector<HighStmt> Body) {
+    HighStmt S;
+    S.Kind = StmtKind::If;
+    S.Addr = At;
+    S.Cond = HighExpr::makeBinop(Op, local(0), HighExpr::makeConst(K, 8));
+    S.Body = std::move(Body);
+    return S;
+  };
+  HighStmt Third = Test(0x1010, NdOp::INT_EQUAL, 3,
+                        {assign(0x1014, 1, 50), jump(0x1018, 0x1040)});
+  HighStmt Second = Test(0x1008, NdOp::INT_NOTEQUAL, 1,
+                         {Add(0x100c, 2), Third, Add(0x101c, 4)});
+  HighStmt First = Test(0x1000, NdOp::INT_NOTEQUAL, 0,
+                        {Add(0x1004, 1), Second, Add(0x1020, 8)});
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0), First, Add(0x1030, 100),
+            result(0x1040, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    switch (X) {
+    case 0:
+      return 100;
+    case 1:
+      return 109;
+    case 3:
+      return 50;
+    default:
+      return 115;
+    }
+  };
+  for (uint64_t X : {0, 1, 2, 3, 4})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0, 1, 2, 3, 4})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}
+
+TEST(HighControlFlowSemantics, NestedExitToASharedLabelCopiesItsTail) {
+  // v = 0; if (x == 9) goto X; if (x) { if (x == 2) { v = 5; goto X; }
+  // v += 10; } v += 100; X: return v;  -- X has another jump; it lands after
+  // the copied `v += 100` as before, and only the nested exit goes away.
+  auto Add = [](va_t At, uint64_t K) {
+    HighStmt S = assign(At, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(K, 8));
+    return S;
+  };
+  HighStmt Early = conditional(0x0ff8, 0x1030);
+  Early.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(9, 8));
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1008;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {assign(0x100c, 1, 5), jump(0x1010, 0x1030)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1000;
+  Outer.Cond = local(0);
+  Outer.Body = {Inner, Add(0x1014, 10)};
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 1, 0), Early, Outer, Add(0x1020, 100),
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X == 9 ? 0 : X == 2 ? 5 : X == 0 ? 100 : 110;
+  };
+  for (uint64_t X : {0, 1, 2, 9})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  unsigned Exits = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Exits += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1030;
+  });
+  EXPECT_LE(Exits, 1u);
+  for (uint64_t X : {0, 1, 2, 9})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}
+
+TEST(HighControlFlowSemantics, PlainBlocksSpliceIntoTheirList) {
+  // goto L; { v = 1; L: v = 2; } return v;  -- the block only groups its
+  // statements, so they join the enclosing list and the jump stays there.
+  HighStmt Group;
+  Group.Kind = StmtKind::Block;
+  Group.Addr = 0x1008;
+  Group.Body = {assign(0x1008, 1, 1), assign(0x1010, 1, 2)};
+  HighFunc F;
+  F.Body = {jump(0x1000, 0x1010), Group, result(0x1020, local(1))};
+  EXPECT_TRUE(flattenBlocks(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Block), 0u);
+  ASSERT_EQ(F.Body.size(), 4u);
+  EXPECT_EQ(F.Body[2].Addr, 0x1010u);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(2));
+}

@@ -72,6 +72,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
+/// Splice the statements of each non-empty block into the list holding it;
+/// a block address a jump enters keeps an empty anchor ahead of them.
+/// Returns true when a block went.
+bool flattenBlocks(std::vector<HighStmt> &Body);
 /// Replace each jump to a label nothing falls into with a copy of its tail
 /// when that tail is a few pure assignments followed by a forward jump or by
 /// the next label. Returns true when a jump was replaced.

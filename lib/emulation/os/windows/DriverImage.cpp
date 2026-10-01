@@ -34,18 +34,19 @@ namespace {
 using namespace llvm::object;
 constexpr uint64_t PageSize = profile::PageSize;
 constexpr unsigned MaxImports = profile::MaxImports;
-constexpr unsigned MaxImportNameLength = 512;
-constexpr unsigned MaxPESections = 96;
-// LLVM names the 15 defined directory indices; PE32+ also has one reserved
-// directory slot, so the header permits 16 entries.
-constexpr unsigned MaxPEDirectoryEntries = llvm::COFF::NUM_DATA_DIRECTORIES + 1;
-constexpr uint64_t MinPEFileAlignment = 512;
-constexpr uint64_t PEImageBaseAlignment = 64 * 1024;
-constexpr uint64_t MaxPEFileAlignment = PEImageBaseAlignment;
+#define NEVERD_DRIVER_IMAGE_VALUE(Name, Type, Value)                           \
+  constexpr Type Name = Value;
+#include "DriverImage.def"
+#undef NEVERD_DRIVER_IMAGE_VALUE
+namespace image {
+#define NEVERD_DRIVER_IMAGE_DIAGNOSTIC(Name, Text) constexpr char Name[] = Text;
+#include "DriverImage.def"
+#undef NEVERD_DRIVER_IMAGE_DIAGNOSTIC
+} // namespace image
 
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "driver image: " + Message);
+                                 image::Prefix + Message);
 }
 
 bool powerOfTwo(uint64_t Value) { return Value && (Value & (Value - 1)) == 0; }
@@ -67,7 +68,7 @@ fileBytes(const COFFObjectFile &Object,
           const std::vector<SectionPlan> &Sections, uint64_t RVA,
           uint64_t Size) {
   if (RVA > UINT32_MAX || Size > UINT32_MAX || Size > UINT32_MAX - RVA)
-    return invalid("metadata RVA range overflows");
+    return invalid(image::MetadataRVARangeOverflows);
   for (const auto &Section : Sections) {
     const uint64_t Start = Section.Header->VirtualAddress;
     const uint64_t VirtualSize = Section.Header->VirtualSize;
@@ -76,14 +77,14 @@ fileBytes(const COFFObjectFile &Object,
     const uint64_t Offset = RVA - Start;
     if (Size > VirtualSize - Offset || Offset > Section.Contents.size() ||
         Size > Section.Contents.size() - Offset)
-      return invalid("metadata extends beyond file-backed section bytes");
+      return invalid(image::MetadataExtendsBeyondFileBackedSectionBytes);
     llvm::ArrayRef<uint8_t> Bytes;
     if (auto Error = Object.getRvaAndSizeAsBytes(
             static_cast<uint32_t>(RVA), static_cast<uint32_t>(Size), Bytes))
       return std::move(Error);
     return Bytes;
   }
-  return invalid("metadata RVA is not in a mapped section");
+  return invalid(image::MetadataRVAIsNotInAMappedSection);
 }
 
 llvm::Expected<std::string> nameAt(const COFFObjectFile &Object,
@@ -97,14 +98,14 @@ llvm::Expected<std::string> nameAt(const COFFObjectFile &Object,
     const uint8_t Ch = (*Byte)[0];
     if (Ch == 0) {
       if (Name.empty())
-        return invalid("empty import name");
+        return invalid(image::EmptyImportName);
       return Name;
     }
-    if (Ch < '!' || Ch > '~')
-      return invalid("unsupported import name encoding");
+    if (Ch < FirstImportCharacter || Ch > LastImportCharacter)
+      return invalid(image::UnsupportedImportNameEncoding);
     Name += static_cast<char>(Ch);
   }
-  return invalid("unterminated or oversized import name");
+  return invalid(image::UnterminatedOrOversizedImportName);
 }
 
 llvm::Expected<std::vector<DriverImport>>
@@ -130,58 +131,61 @@ validateImports(const COFFObjectFile &Object,
       break;
     }
     if (Entry.TimeDateStamp || Entry.ForwarderChain)
-      return invalid("bound or forwarded imports are unsupported");
+      return invalid(image::BoundOrForwardedImportsAreUnsupported);
     if (!Entry.ImportAddressTableRVA)
-      return invalid("import descriptor has no IAT");
+      return invalid(image::ImportDescriptorHasNoIAT);
     auto Module = nameAt(Object, Sections, Entry.NameRVA);
     if (!Module)
       return Module.takeError();
     if (!KernelExportRegistry::canonicalImportModule(*Module))
-      return invalid("unsupported import provider: " + *Module);
+      return invalid(image::UnsupportedImportProvider + *Module);
     const uint64_t Lookup = Entry.ImportLookupTableRVA
                                 ? uint32_t(Entry.ImportLookupTableRVA)
                                 : uint32_t(Entry.ImportAddressTableRVA);
-    if ((Lookup & 7) || (Entry.ImportAddressTableRVA & 7))
-      return invalid("unaligned x64 import table");
+    if ((Lookup & (profile::PointerSize - 1)) ||
+        (Entry.ImportAddressTableRVA & (profile::PointerSize - 1)))
+      return invalid(image::UnalignedX64ImportTable);
     bool SymbolsTerminated = false;
     for (unsigned Index = 0; Index <= MaxImports; ++Index) {
-      auto Symbol =
-          fileBytes(Object, Sections, Lookup + uint64_t(Index) * 8, 8);
+      auto Symbol = fileBytes(Object, Sections,
+                              Lookup + uint64_t(Index) * profile::PointerSize,
+                              profile::PointerSize);
       if (!Symbol)
         return Symbol.takeError();
-      auto IAT = fileBytes(
-          Object, Sections,
-          uint64_t(Entry.ImportAddressTableRVA) + uint64_t(Index) * 8, 8);
+      auto IAT = fileBytes(Object, Sections,
+                           uint64_t(Entry.ImportAddressTableRVA) +
+                               uint64_t(Index) * profile::PointerSize,
+                           profile::PointerSize);
       if (!IAT)
         return IAT.takeError();
       const uint64_t Value = llvm::support::endian::read64le(Symbol->data());
       if (Value != llvm::support::endian::read64le(IAT->data()))
-        return invalid("prebound IAT is unsupported");
+        return invalid(image::PreboundIATIsUnsupported);
       if (!Value) {
         SymbolsTerminated = true;
         break;
       }
       if (Value > UINT32_MAX)
-        return invalid("ordinal or noncanonical import lookup is unsupported");
+        return invalid(image::OrdinalOrNoncanonicalImportLookupIsUnsupported);
       if (Imports.size() >= MaxImports)
-        return invalid("import count exceeds the execution profile");
-      auto Hint = fileBytes(Object, Sections, Value, 2);
+        return invalid(image::ImportCountExceedsTheExecutionProfile);
+      auto Hint = fileBytes(Object, Sections, Value, sizeof(uint16_t));
       if (!Hint)
         return Hint.takeError();
-      auto Name = nameAt(Object, Sections, Value + 2);
+      auto Name = nameAt(Object, Sections, Value + sizeof(uint16_t));
       if (!Name)
         return Name.takeError();
-      const uint64_t Slot =
-          Base + Entry.ImportAddressTableRVA + uint64_t(Index) * 8;
+      const uint64_t Slot = Base + Entry.ImportAddressTableRVA +
+                            uint64_t(Index) * profile::PointerSize;
       if (!Slots.insert(Slot).second)
-        return invalid("overlapping import address slots");
+        return invalid(image::OverlappingImportAddressSlots);
       Imports.push_back({Slot, *Module, *Name});
     }
     if (!SymbolsTerminated)
-      return invalid("unterminated import lookup table");
+      return invalid(image::UnterminatedImportLookupTable);
   }
   if (!Terminated)
-    return invalid("unterminated import directory");
+    return invalid(image::UnterminatedImportDirectory);
   return Imports;
 }
 
@@ -192,37 +196,38 @@ validateBaseRelocations(llvm::ArrayRef<uint8_t> Bytes,
   size_t Offset = 0;
   while (Offset < Bytes.size()) {
     if (Bytes.size() - Offset < sizeof(coff_base_reloc_block_header))
-      return invalid("truncated base relocation block");
+      return invalid(image::TruncatedBaseRelocationBlock);
     coff_base_reloc_block_header Block;
     std::memcpy(&Block, Bytes.data() + Offset, sizeof(Block));
     const uint64_t BlockSize = Block.BlockSize;
-    if (BlockSize < sizeof(Block) || BlockSize % 4 ||
+    if (BlockSize < sizeof(Block) || BlockSize % sizeof(uint32_t) ||
         BlockSize > Bytes.size() - Offset || Block.PageRVA % PageSize)
-      return invalid("invalid base relocation block extent");
+      return invalid(image::InvalidBaseRelocationBlockExtent);
     for (size_t EntryOffset = sizeof(Block); EntryOffset < BlockSize;
-         EntryOffset += 2) {
+         EntryOffset += sizeof(uint16_t)) {
       const uint16_t Entry =
           llvm::support::endian::read16le(Bytes.data() + Offset + EntryOffset);
-      const unsigned Type = Entry >> 12;
+      const unsigned Type = Entry >> RelocationTypeShift;
       if (Type == llvm::COFF::IMAGE_REL_BASED_ABSOLUTE)
         continue;
       if (Type != llvm::COFF::IMAGE_REL_BASED_DIR64)
-        return invalid("unsupported x64 base relocation type");
+        return invalid(image::UnsupportedX64BaseRelocationType);
       const uint64_t RVA = uint64_t(Block.PageRVA) + (Entry & (PageSize - 1));
       bool Mapped = false;
       for (const auto &Section : Sections) {
         const uint64_t Start = Section.Header->VirtualAddress;
         const uint64_t Size = Section.Header->VirtualSize;
-        if (RVA >= Start && RVA - Start <= Size && Size - (RVA - Start) >= 8)
+        if (RVA >= Start && RVA - Start <= Size &&
+            Size - (RVA - Start) >= profile::PointerSize)
           Mapped = true;
       }
       if (!Mapped)
-        return invalid(
-            "base relocation target is outside mapped section bytes");
+        return invalid(image::BaseRelocationTargetIsOutsideMappedSectionBytes);
       auto Next = Targets.lower_bound(RVA);
-      if ((Next != Targets.end() && *Next < RVA + 8) ||
-          (Next != Targets.begin() && *std::prev(Next) + 8 > RVA))
-        return invalid("duplicate or overlapping DIR64 relocation targets");
+      if ((Next != Targets.end() && *Next < RVA + profile::PointerSize) ||
+          (Next != Targets.begin() &&
+           *std::prev(Next) + profile::PointerSize > RVA))
+        return invalid(image::DuplicateOrOverlappingDIR64RelocationTargets);
       Targets.insert(RVA);
     }
     Offset += BlockSize;
@@ -240,15 +245,17 @@ struct CookiePlan {
 /// Microsoft documents these fields at:
 /// https://learn.microsoft.com/windows/win32/debug/pe-format#the-load-configuration-structure-image-only
 llvm::Error validateLoadConfigurationBytes(llvm::ArrayRef<uint8_t> Bytes) {
-  if (Bytes.size() < 4)
-    return invalid("truncated load configuration size");
+  if (Bytes.size() < sizeof(uint32_t))
+    return invalid(image::TruncatedLoadConfigurationSize);
   const uint64_t DeclaredSize = llvm::support::endian::read32le(Bytes.data());
-  if (DeclaredSize < 12 || DeclaredSize > Bytes.size())
-    return invalid("invalid load configuration declared size");
+  if (DeclaredSize < LoadConfigurationPrefixBytes ||
+      DeclaredSize > Bytes.size())
+    return invalid(image::InvalidLoadConfigurationDeclaredSize);
   constexpr size_t CookieOffset =
       offsetof(coff_load_configuration64, SecurityCookie);
-  if (DeclaredSize > CookieOffset && DeclaredSize < CookieOffset + 8)
-    return invalid("partial load configuration SecurityCookie field");
+  if (DeclaredSize > CookieOffset &&
+      DeclaredSize < CookieOffset + profile::PointerSize)
+    return invalid(image::PartialLoadConfigurationSecurityCookieField);
   const size_t PointerOffsets[] = {
       offsetof(coff_load_configuration64, SecurityCookie),
       offsetof(coff_load_configuration64, GuardCFCheckFunction),
@@ -264,12 +271,13 @@ llvm::Error validateLoadConfigurationBytes(llvm::ArrayRef<uint8_t> Bytes) {
       guard::GuardMemcpyPointerOffset,
       guard::UmaPointersOffset};
   for (size_t Offset : PointerOffsets)
-    if (DeclaredSize > Offset && DeclaredSize < Offset + 8)
-      return invalid("partial load configuration pointer or count field");
+    if (DeclaredSize > Offset && DeclaredSize < Offset + profile::PointerSize)
+      return invalid(image::PartialLoadConfigurationPointerOrCountField);
   constexpr size_t FlagsOffset =
       offsetof(coff_load_configuration64, GuardFlags);
-  if (DeclaredSize > FlagsOffset && DeclaredSize < FlagsOffset + 4)
-    return invalid("partial load configuration GuardFlags field");
+  if (DeclaredSize > FlagsOffset &&
+      DeclaredSize < FlagsOffset + sizeof(uint32_t))
+    return invalid(image::PartialLoadConfigurationGuardFlagsField);
   // Named byte ranges also reject partial nonzero unsupported fields. Future
   // layouts can extend the table only when their runtime semantics are owned.
   struct Field {
@@ -291,18 +299,17 @@ llvm::Error validateLoadConfigurationBytes(llvm::ArrayRef<uint8_t> Bytes) {
         std::min<size_t>(Field.Offset + Field.Size, DeclaredSize);
     for (size_t Offset = Field.Offset; Offset < End; ++Offset)
       if (Bytes[Offset])
-        return invalid("unsupported load configuration field: " +
+        return invalid(image::UnsupportedLoadConfigurationField +
                        llvm::Twine(Field.Name));
   }
   for (size_t Offset = guard::KnownLoadConfigurationSize; Offset < DeclaredSize;
        ++Offset)
     if (Bytes[Offset])
-      return invalid(
-          "unsupported nonzero load configuration extension at byte " +
-          llvm::Twine(Offset));
+      return invalid(image::UnsupportedNonzeroLoadConfigurationExtensionAtByte +
+                     llvm::Twine(Offset));
   for (size_t Offset = DeclaredSize; Offset < Bytes.size(); ++Offset)
     if (Bytes[Offset])
-      return invalid("nonzero bytes beyond declared load configuration size");
+      return invalid(image::NonzeroBytesBeyondDeclaredLoadConfigurationSize);
   return llvm::Error::success();
 }
 
@@ -319,71 +326,71 @@ llvm::Error preflightLoadConfiguration(llvm::ArrayRef<uint8_t> Raw) {
   };
   dos_header DOS;
   if (!Copy(0, DOS) || DOS.Magic[0] != 'M' || DOS.Magic[1] != 'Z')
-    return invalid("requires a complete DOS/PE image header");
+    return invalid(image::RequiresACompleteDOSPEImageHeader);
   const uint64_t PEOffset = DOS.AddressOfNewExeHeader;
   if (PEOffset > Raw.size() ||
       Raw.size() - PEOffset < sizeof(llvm::COFF::PEMagic) ||
       std::memcmp(Raw.data() + PEOffset, llvm::COFF::PEMagic,
                   sizeof(llvm::COFF::PEMagic)))
-    return invalid("invalid PE signature offset");
+    return invalid(image::InvalidPESignatureOffset);
   coff_file_header COFF;
-  if (!Copy(PEOffset + 4, COFF))
-    return invalid("truncated COFF file header");
-  const uint64_t OptionalOffset = PEOffset + 4 + sizeof(COFF);
+  if (!Copy(PEOffset + sizeof(uint32_t), COFF))
+    return invalid(image::TruncatedCOFFFileHeader);
+  const uint64_t OptionalOffset = PEOffset + sizeof(uint32_t) + sizeof(COFF);
   pe32plus_header Header;
   if (!Copy(OptionalOffset, Header) ||
       COFF.SizeOfOptionalHeader < sizeof(Header) ||
       Header.Magic != llvm::COFF::PE32Header::PE32_PLUS)
-    return invalid("requires a complete PE32+ optional header");
+    return invalid(image::RequiresACompletePE32OptionalHeader);
   if (Header.NumberOfRvaAndSize > MaxPEDirectoryEntries ||
       sizeof(Header) +
               uint64_t(Header.NumberOfRvaAndSize) * sizeof(data_directory) >
           COFF.SizeOfOptionalHeader)
-    return invalid("truncated optional-header data directories");
+    return invalid(image::TruncatedOptionalHeaderDataDirectories);
   const uint64_t SectionsOffset = OptionalOffset + COFF.SizeOfOptionalHeader;
   if (!COFF.NumberOfSections || COFF.NumberOfSections > MaxPESections ||
       SectionsOffset > Raw.size() ||
       uint64_t(COFF.NumberOfSections) * sizeof(coff_section) >
           Raw.size() - SectionsOffset)
-    return invalid("invalid or truncated PE section table");
+    return invalid(image::InvalidOrTruncatedPESectionTable);
   if (Header.NumberOfRvaAndSize <= llvm::COFF::LOAD_CONFIG_TABLE)
     return llvm::Error::success();
   data_directory Directory;
   if (!Copy(OptionalOffset + sizeof(Header) +
                 llvm::COFF::LOAD_CONFIG_TABLE * sizeof(Directory),
             Directory))
-    return invalid("truncated load configuration directory entry");
+    return invalid(image::TruncatedLoadConfigurationDirectoryEntry);
   if (!Directory.RelativeVirtualAddress && !Directory.Size)
     return llvm::Error::success();
   if (!Directory.RelativeVirtualAddress || !Directory.Size)
-    return invalid("inconsistent load configuration RVA and size");
+    return invalid(image::InconsistentLoadConfigurationRVAAndSize);
   for (unsigned Index = 0; Index < COFF.NumberOfSections; ++Index) {
     coff_section Section;
     if (!Copy(SectionsOffset + uint64_t(Index) * sizeof(Section), Section))
-      return invalid("truncated PE section table");
+      return invalid(image::TruncatedPESectionTable);
     const uint64_t RVA = Directory.RelativeVirtualAddress;
     if (RVA < Section.VirtualAddress)
       continue;
     const uint64_t Offset = RVA - Section.VirtualAddress;
     if (Offset >= Section.VirtualSize)
       continue;
-    if (4 > uint64_t(Section.VirtualSize) - Offset ||
+    if (sizeof(uint32_t) > uint64_t(Section.VirtualSize) - Offset ||
         Offset > Section.SizeOfRawData ||
-        4 > uint64_t(Section.SizeOfRawData) - Offset)
-      return invalid("load configuration is not fully file backed");
+        sizeof(uint32_t) > uint64_t(Section.SizeOfRawData) - Offset)
+      return invalid(image::LoadConfigurationIsNotFullyFileBacked);
     const uint64_t FileOffset = uint64_t(Section.PointerToRawData) + Offset;
-    if (FileOffset > Raw.size() || 4 > Raw.size() - FileOffset)
-      return invalid("truncated load configuration bytes");
+    if (FileOffset > Raw.size() || sizeof(uint32_t) > Raw.size() - FileOffset)
+      return invalid(image::TruncatedLoadConfigurationBytes);
     const uint64_t Span = std::max<uint64_t>(
         Directory.Size,
         llvm::support::endian::read32le(Raw.data() + FileOffset));
     if (Span > Raw.size() - FileOffset ||
         Span > uint64_t(Section.SizeOfRawData) - Offset ||
         Span > uint64_t(Section.VirtualSize) - Offset)
-      return invalid("truncated declared load configuration bytes");
+      return invalid(image::TruncatedDeclaredLoadConfigurationBytes);
     return validateLoadConfigurationBytes(Raw.slice(FileOffset, Span));
   }
-  return invalid("load configuration RVA is not mapped");
+  return invalid(image::LoadConfigurationRVAIsNotMapped);
 }
 
 llvm::Expected<CookiePlan>
@@ -394,8 +401,8 @@ validateCookie(const COFFObjectFile &Object,
       Object.getDataDirectory(llvm::COFF::LOAD_CONFIG_TABLE);
   if (!Directory || !Directory->Size)
     return CookiePlan{};
-  auto Prefix =
-      fileBytes(Object, Sections, Directory->RelativeVirtualAddress, 4);
+  auto Prefix = fileBytes(Object, Sections, Directory->RelativeVirtualAddress,
+                          sizeof(uint32_t));
   if (!Prefix)
     return Prefix.takeError();
   const uint64_t Span = std::max<uint64_t>(
@@ -408,28 +415,30 @@ validateCookie(const COFFObjectFile &Object,
     return std::move(Error);
   constexpr size_t CookieOffset =
       offsetof(coff_load_configuration64, SecurityCookie);
-  if (llvm::support::endian::read32le(Bytes->data()) < CookieOffset + 8)
+  if (llvm::support::endian::read32le(Bytes->data()) <
+      CookieOffset + profile::PointerSize)
     return CookiePlan{};
   const uint64_t Address =
       llvm::support::endian::read64le(Bytes->data() + CookieOffset);
   if (!Address)
     return CookiePlan{};
-  if (Address < PreferredBase || (Address & 7))
-    return invalid("invalid load configuration SecurityCookie address");
+  if (Address < PreferredBase || (Address & (profile::PointerSize - 1)))
+    return invalid(image::InvalidLoadConfigurationSecurityCookieAddress);
   const uint64_t RVA = Address - PreferredBase;
   for (const auto &Section : Sections) {
     const uint64_t Start = Section.Header->VirtualAddress;
     const uint64_t Size = Section.Header->VirtualSize;
-    if (RVA < Start || RVA - Start >= Size || Size - (RVA - Start) < 8)
+    if (RVA < Start || RVA - Start >= Size ||
+        Size - (RVA - Start) < profile::PointerSize)
       continue;
     if (!(Section.Header->Characteristics & llvm::COFF::IMAGE_SCN_MEM_WRITE) ||
         (Section.Header->Characteristics & llvm::COFF::IMAGE_SCN_MEM_EXECUTE))
       return invalid(
-          "SecurityCookie requires writable nonexecutable image storage");
+          image::SecurityCookieRequiresWritableNonexecutableImageStorage);
     return CookiePlan{RVA, uint64_t(Directory->RelativeVirtualAddress) +
                                CookieOffset};
   }
-  return invalid("SecurityCookie is outside mapped image storage");
+  return invalid(image::SecurityCookieIsOutsideMappedImageStorage);
 }
 /// Public CFG metadata and AMD64 helper ABI:
 /// https://learn.microsoft.com/windows/win32/secbp/pe-metadata
@@ -449,11 +458,11 @@ validateGuard(const COFFObjectFile &Object,
       Object.getDataDirectory(llvm::COFF::LOAD_CONFIG_TABLE);
   if (!Directory || !Directory->Size) {
     if (Guard.Enabled)
-      return invalid("CFG image has no load configuration");
+      return invalid(image::CFGImageHasNoLoadConfiguration);
     return Guard;
   }
   const uint64_t ConfigRVA = Directory->RelativeVirtualAddress;
-  auto Prefix = fileBytes(Object, Sections, ConfigRVA, 4);
+  auto Prefix = fileBytes(Object, Sections, ConfigRVA, sizeof(uint32_t));
   if (!Prefix)
     return Prefix.takeError();
   const uint64_t DeclaredSize = llvm::support::endian::read32le(Prefix->data());
@@ -461,14 +470,14 @@ validateGuard(const COFFObjectFile &Object,
   if (!Bytes)
     return Bytes.takeError();
   auto Read64 = [&](size_t Offset) -> uint64_t {
-    return Offset + 8 <= Bytes->size()
+    return Offset + profile::PointerSize <= Bytes->size()
                ? llvm::support::endian::read64le(Bytes->data() + Offset)
                : 0;
   };
   constexpr size_t FlagsOffset =
       offsetof(coff_load_configuration64, GuardFlags);
   const uint32_t Flags =
-      FlagsOffset + 4 <= Bytes->size()
+      FlagsOffset + sizeof(uint32_t) <= Bytes->size()
           ? llvm::support::endian::read32le(Bytes->data() + FlagsOffset)
           : 0;
   constexpr uint64_t SupportedFlags =
@@ -477,14 +486,14 @@ validateGuard(const COFFObjectFile &Object,
       guard::FunctionTableSizeMask;
   if (Flags & ~SupportedFlags)
     return invalid(
-        "unsupported CFG GuardFlags (including XFG/export suppression)");
+        image::UnsupportedCFGGuardFlagsIncludingXFGExportSuppression);
   const uint64_t ExtraBytes =
       (Flags & guard::FunctionTableSizeMask) >> guard::FunctionTableSizeShift;
   if (ExtraBytes > 1)
-    return invalid("unsupported CFG function table metadata stride");
+    return invalid(image::UnsupportedCFGFunctionTableMetadataStride);
   if (Guard.Enabled && (!(Flags & guard::Instrumented) ||
                         !(Flags & guard::FunctionTablePresent)))
-    return invalid("CFG image requires instrumented and function-table flags");
+    return invalid(image::CFGImageRequiresInstrumentedAndFunctionTableFlags);
 
   auto Executable = [&](uint64_t RVA) {
     for (const auto &Section : Sections) {
@@ -514,23 +523,24 @@ validateGuard(const COFFObjectFile &Object,
   std::vector<std::pair<uint64_t, uint64_t>> Storage;
   auto RegisterStorage = [&](uint64_t RVA, uint64_t Size) -> llvm::Error {
     if (!ReadOnly(RVA, Size))
-      return invalid("CFG metadata requires read-only nonexecutable storage");
+      return invalid(image::CFGMetadataRequiresReadOnlyNonexecutableStorage);
     if (RVA < ConfigRVA + DeclaredSize && RVA + Size > ConfigRVA)
-      return invalid("CFG storage overlaps load configuration");
-    for (unsigned Index = 0; Index != 16; ++Index) {
+      return invalid(image::CFGStorageOverlapsLoadConfiguration);
+    for (unsigned Index = 0; Index != MaxPEDirectoryEntries; ++Index) {
       const auto *Other = Object.getDataDirectory(Index);
       if (!Other || !Other->Size || Index == llvm::COFF::CERTIFICATE_TABLE)
         continue;
       const uint64_t Start = Other->RelativeVirtualAddress;
       if (RVA < Start + Other->Size && RVA + Size > Start)
-        return invalid("CFG storage overlaps loader metadata");
+        return invalid(image::CFGStorageOverlapsLoaderMetadata);
     }
     for (const auto &Import : Imports)
-      if (RVA < Import.Slot - Base + 8 && RVA + Size > Import.Slot - Base)
-        return invalid("CFG storage overlaps import binding storage");
+      if (RVA < Import.Slot - Base + profile::PointerSize &&
+          RVA + Size > Import.Slot - Base)
+        return invalid(image::CFGStorageOverlapsImportBindingStorage);
     for (auto [Start, Length] : Storage)
       if (RVA < Start + Length && RVA + Size > Start)
-        return invalid("overlapping CFG metadata storage");
+        return invalid(image::OverlappingCFGMetadataStorage);
     Storage.emplace_back(RVA, Size);
     return llvm::Error::success();
   };
@@ -539,7 +549,7 @@ validateGuard(const COFFObjectFile &Object,
     if (!Address)
       return uint64_t(0);
     if (Address <= Base || Address - Base >= Header->SizeOfImage)
-      return invalid("CFG pointer is outside image storage");
+      return invalid(image::CFGPointerIsOutsideImageStorage);
     PointerFields.insert(ConfigRVA + Offset);
     return Address - Base;
   };
@@ -547,20 +557,20 @@ validateGuard(const COFFObjectFile &Object,
     auto RVA = PointerRVA(Offset);
     if (!RVA || !*RVA)
       return RVA;
-    if (*RVA & 7)
-      return invalid("unaligned CFG pointer slot");
-    auto Contents = fileBytes(Object, Sections, *RVA, 8);
+    if (*RVA & (profile::PointerSize - 1))
+      return invalid(image::UnalignedCFGPointerSlot);
+    auto Contents = fileBytes(Object, Sections, *RVA, profile::PointerSize);
     if (!Contents)
       return Contents.takeError();
-    if (auto Error = RegisterStorage(*RVA, 8))
+    if (auto Error = RegisterStorage(*RVA, profile::PointerSize))
       return std::move(Error);
     const uint64_t Target = llvm::support::endian::read64le(Contents->data());
     if (ZeroOnly) {
       if (Target)
-        return invalid("unsupported active load configuration guard extension");
+        return invalid(image::UnsupportedActiveLoadConfigurationGuardExtension);
     } else {
       if (Target < Base || !Executable(Target - Base))
-        return invalid("CFG fallback target is not file-backed image code");
+        return invalid(image::CFGFallbackTargetIsNotFileBackedImageCode);
       PointerSlots.insert(*RVA);
     }
     return *RVA;
@@ -576,7 +586,7 @@ validateGuard(const COFFObjectFile &Object,
   // Dormant slots retain ordinary guest fallback code even when the linker
   // emits zero GuardFlags. The enabled-image check above owns CFG admission.
   if (Guard.Enabled && !*Check)
-    return invalid("CFG image requires a check pointer slot");
+    return invalid(image::CFGImageRequiresACheckPointerSlot);
   Guard.CheckPointerAddress = *Check ? ActualBase + *Check : 0;
   Guard.DispatchPointerAddress = *Dispatch ? ActualBase + *Dispatch : 0;
 
@@ -600,7 +610,7 @@ validateGuard(const COFFObjectFile &Object,
     if (!Result)
       return Result.takeError();
   }
-  const uint64_t Stride = 4 + ExtraBytes;
+  const uint64_t Stride = sizeof(uint32_t) + ExtraBytes;
   auto Table = [&](size_t PointerOffset, size_t CountOffset,
                    bool IAT) -> llvm::Error {
     auto RVA = PointerRVA(PointerOffset);
@@ -608,15 +618,15 @@ validateGuard(const COFFObjectFile &Object,
       return RVA.takeError();
     const uint64_t Count = Read64(CountOffset);
     if (bool(*RVA) != bool(Count))
-      return invalid("inconsistent CFG table pointer and count");
+      return invalid(image::InconsistentCFGTablePointerAndCount);
     if (!IAT && (Count || ExtraBytes) && !(Flags & guard::FunctionTablePresent))
-      return invalid("CFG function table is missing its presence flag");
+      return invalid(image::CFGFunctionTableIsMissingItsPresenceFlag);
     if (!IAT && Guard.Enabled && !Count)
-      return invalid("CFG image requires declared function targets");
+      return invalid(image::CFGImageRequiresDeclaredFunctionTargets);
     if (!Count)
       return llvm::Error::success();
     if (Count > guard::MaximumTargets)
-      return invalid("CFG target count exceeds execution profile");
+      return invalid(image::CFGTargetCountExceedsExecutionProfile);
     // GFIDS and address-taken IAT tables are packed 4+n-byte records. PE
     // defines no DWORD alignment for the table base (LLD uses byte alignment).
     // The executable targets' alignment is independent of this storage.
@@ -629,9 +639,9 @@ validateGuard(const COFFObjectFile &Object,
     for (uint64_t Index = 0; Index != Count; ++Index) {
       const uint8_t *Entry = Contents->data() + Index * Stride;
       const uint32_t Target = llvm::support::endian::read32le(Entry);
-      const uint8_t Metadata = ExtraBytes ? Entry[4] : 0;
+      const uint8_t Metadata = ExtraBytes ? Entry[sizeof(uint32_t)] : 0;
       if (!Target || (Index && Target <= Previous))
-        return invalid("CFG targets must be unique and sorted");
+        return invalid(image::CFGTargetsMustBeUniqueAndSorted);
       Previous = Target;
       if (IAT) {
         if (Metadata || std::none_of(Imports.begin(), Imports.end(),
@@ -639,13 +649,12 @@ validateGuard(const COFFObjectFile &Object,
                                        return Import.Slot - Base == Target;
                                      }))
           return invalid(
-              "CFG address-taken IAT target is not a declared import slot");
+              image::CFGAddressTakenIATTargetIsNotADeclaredImportSlot);
       } else {
         if (!Executable(Target))
-          return invalid(
-              "CFG function target is not file-backed executable code");
+          return invalid(image::CFGFunctionTargetIsNotFileBackedExecutableCode);
         if (Metadata & ~guard::FunctionSuppressed)
-          return invalid("unsupported CFG function target metadata");
+          return invalid(image::UnsupportedCFGFunctionTargetMetadata);
         // The linker may explicitly include compatibility fallbacks when
         // inferring targets from non-CFG objects. Honor its declared GFIDS;
         // recommending that toolchains suppress a helper is not a PE validity
@@ -668,7 +677,7 @@ validateGuard(const COFFObjectFile &Object,
   if (Guard.Enabled &&
       !std::binary_search(Guard.ValidTargets.begin(), Guard.ValidTargets.end(),
                           ActualBase + Header->AddressOfEntryPoint))
-    return invalid("CFG entry point is missing from declared valid targets");
+    return invalid(image::CFGEntryPointIsMissingFromDeclaredValidTargets);
 
   // DIR64 must cover each surviving absolute pointer on a requested rebase.
   // It may not rewrite counts, flags, RVAs or partial guard records.
@@ -676,20 +685,21 @@ validateGuard(const COFFObjectFile &Object,
   if (Read64(CookieOffset))
     PointerFields.insert(ConfigRVA + CookieOffset);
   for (uint64_t RVA : Relocations) {
-    if (RVA < ConfigRVA + DeclaredSize && RVA + 8 > ConfigRVA &&
-        !PointerFields.count(RVA))
+    if (RVA < ConfigRVA + DeclaredSize &&
+        RVA + profile::PointerSize > ConfigRVA && !PointerFields.count(RVA))
       return invalid(
-          "DIR64 relocation overlaps nonpointer load configuration metadata");
+          image::DIR64RelocationOverlapsNonpointerLoadConfigurationMetadata);
     for (auto [Start, Size] : Storage)
-      if (RVA < Start + Size && RVA + 8 > Start && !PointerSlots.count(RVA))
-        return invalid("DIR64 relocation overlaps CFG metadata");
+      if (RVA < Start + Size && RVA + profile::PointerSize > Start &&
+          !PointerSlots.count(RVA))
+        return invalid(image::DIR64RelocationOverlapsCFGMetadata);
   }
   if (ActualBase != Base) {
     PointerFields.insert(PointerSlots.begin(), PointerSlots.end());
     for (uint64_t RVA : PointerFields)
       if (!Relocations.count(RVA))
         return invalid(
-            "rebasing CFG metadata requires complete DIR64 relocations");
+            image::RebasingCFGMetadataRequiresCompleteDIR64Relocations);
   }
   return Guard;
 }
@@ -701,12 +711,12 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   std::error_code FileError;
   const uint64_t FileSize = std::filesystem::file_size(Path, FileError);
   if (FileError)
-    return invalid("cannot read " + Path.string());
+    return invalid(image::CannotRead + Path.string());
   if (FileSize > MemoryLimit)
-    return invalid("input file exceeds memory limit");
+    return invalid(image::InputFileExceedsMemoryLimit);
   auto Buffer = llvm::MemoryBuffer::getFile(Path.string());
   if (!Buffer)
-    return invalid("cannot read " + Path.string());
+    return invalid(image::CannotRead + Path.string());
   if (auto Error = preflightLoadConfiguration(llvm::ArrayRef<uint8_t>(
           reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()),
           (*Buffer)->getBufferSize())))
@@ -721,10 +731,10 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
       !(Object.getCharacteristics() &
         llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE) ||
       Header->Subsystem != llvm::COFF::IMAGE_SUBSYSTEM_NATIVE)
-    return invalid("requires an executable x64 PE32+ native-subsystem image");
+    return invalid(image::RequiresAnExecutableX64PE32NativeSubsystemImage);
   if (Header->NumberOfRvaAndSize > MaxPEDirectoryEntries ||
       Header->LoaderFlags || Header->Win32VersionValue)
-    return invalid("unsupported optional-header fields");
+    return invalid(image::UnsupportedOptionalHeaderFields);
   const uint64_t Base = Header->ImageBase;
   const uint64_t ActualBase = LoadAddress ? LoadAddress : Base;
   const uint64_t Size = Header->SizeOfImage;
@@ -738,7 +748,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
       (Size % SectionAlignment) || Size > MemoryLimit ||
       Size > UINT64_MAX - Base || !HeadersSize || HeadersSize % FileAlignment ||
       HeadersSize > (*Buffer)->getBufferSize() || pages(HeadersSize) > Size)
-    return invalid("invalid image size, alignment, base, or memory limit");
+    return invalid(image::InvalidImageSizeAlignmentBaseOrMemoryLimit);
   auto CanonicalImageRange = [&](uint64_t Address) {
     if (Address < PEImageBaseAlignment || (Address % PEImageBaseAlignment) ||
         Size > UINT64_MAX - Address)
@@ -748,11 +758,10 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
            Address >= profile::CanonicalKernelMin;
   };
   if (!CanonicalImageRange(Base) || !CanonicalImageRange(ActualBase))
-    return invalid(
-        "image base has invalid alignment or noncanonical x64 range");
+    return invalid(image::ImageBaseHasInvalidAlignmentOrNoncanonicalX64Range);
   const uint64_t End = ActualBase + Size;
   if (ActualBase < profile::UserProbeLimit)
-    return invalid("driver image overlaps the modeled user address space");
+    return invalid(image::DriverImageOverlapsTheModeledUserAddressSpace);
   for (auto [Start, Limit] :
        {std::pair{profile::KernelArenaBase,
                   profile::KernelArenaBase + profile::KernelArenaSize},
@@ -770,7 +779,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
                   profile::UserAliasBase + profile::UserAliasSize},
         std::pair{profile::MMIOBase, profile::MMIOBase + profile::MMIOSize}})
     if (ActualBase < Limit && End > Start)
-      return invalid("image overlaps reserved emulation memory");
+      return invalid(image::ImageOverlapsReservedEmulationMemory);
 
   std::vector<SectionPlan> Sections;
   std::vector<std::pair<uint64_t, uint64_t>> FileRanges;
@@ -790,10 +799,10 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
           RawSize % FileAlignment || RawOffset > (*Buffer)->getBufferSize() ||
           RawSize > (*Buffer)->getBufferSize() - RawOffset)) ||
         Section->NumberOfRelocations || Section->PointerToRelocations)
-      return invalid("invalid, overlapping, truncated, or relocatable section");
+      return invalid(image::InvalidOverlappingTruncatedOrRelocatableSection);
     for (auto [Start, Limit] : FileRanges)
       if (RawSize && RawOffset < Limit && RawOffset + RawSize > Start)
-        return invalid("overlapping section file ranges");
+        return invalid(image::OverlappingSectionFileRanges);
     if (RawSize)
       FileRanges.emplace_back(RawOffset, RawOffset + RawSize);
     llvm::ArrayRef<uint8_t> Contents;
@@ -807,18 +816,18 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
       EntryExecutable = true;
   }
   if (Sections.empty() || !EntryExecutable)
-    return invalid("entry point is not in file-backed executable bytes");
+    return invalid(image::EntryPointIsNotInFileBackedExecutableBytes);
   const auto *LastSection = Sections.back().Header;
   const auto *BufferStart =
       reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart());
   const uint64_t SectionTableEnd =
       reinterpret_cast<const uint8_t *>(LastSection + 1) - BufferStart;
   if (SectionTableEnd > HeadersSize)
-    return invalid("section table extends beyond SizeOfHeaders");
+    return invalid(image::SectionTableExtendsBeyondSizeOfHeaders);
 
   std::set<uint64_t> Relocations;
   // Runtime requirements absent from the driver profile remain explicit errors.
-  for (unsigned Index = 0; Index != 16; ++Index) {
+  for (unsigned Index = 0; Index != MaxPEDirectoryEntries; ++Index) {
     const auto *Directory = Object.getDataDirectory(Index);
     if (!Directory)
       continue;
@@ -827,18 +836,19 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
     if (!RVA && !DirectorySize)
       continue;
     if (!RVA || !DirectorySize)
-      return invalid("inconsistent data directory RVA and size");
+      return invalid(image::InconsistentDataDirectoryRVAAndSize);
     if (Index == llvm::COFF::TLS_TABLE ||
         Index == llvm::COFF::DELAY_IMPORT_DESCRIPTOR ||
         Index == llvm::COFF::BOUND_IMPORT ||
         Index == llvm::COFF::CLR_RUNTIME_HEADER ||
         Index == llvm::COFF::ARCHITECTURE || Index == llvm::COFF::GLOBAL_PTR ||
-        Index == llvm::COFF::EXPORT_TABLE || Index == 15)
-      return invalid("unsupported loader data directory " + llvm::Twine(Index));
+        Index == llvm::COFF::EXPORT_TABLE || Index == ReservedPEDirectory)
+      return invalid(image::UnsupportedLoaderDataDirectory +
+                     llvm::Twine(Index));
     if (Index == llvm::COFF::CERTIFICATE_TABLE) {
       if (RVA > (*Buffer)->getBufferSize() ||
           DirectorySize > (*Buffer)->getBufferSize() - RVA)
-        return invalid("truncated certificate table");
+        return invalid(image::TruncatedCertificateTable);
       continue; // Authenticode is metadata; this emulator does not establish
                 // trust.
     }
@@ -851,28 +861,29 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
         return Targets.takeError();
       Relocations = std::move(*Targets);
     }
-    if (Index == llvm::COFF::EXCEPTION_TABLE && DirectorySize % 12)
-      return invalid("x64 exception directory has an incomplete entry");
+    if (Index == llvm::COFF::EXCEPTION_TABLE &&
+        DirectorySize % RuntimeFunctionBytes)
+      return invalid(image::X64ExceptionDirectoryHasAnIncompleteEntry);
     if (Index == llvm::COFF::DEBUG_DIRECTORY) {
       if (DirectorySize % sizeof(debug_directory))
-        return invalid("incomplete debug directory entry");
+        return invalid(image::IncompleteDebugDirectoryEntry);
       for (size_t Offset = 0; Offset < Bytes->size();
            Offset += sizeof(debug_directory)) {
         debug_directory Entry;
         std::memcpy(&Entry, Bytes->data() + Offset, sizeof(Entry));
         if (Entry.Type != llvm::COFF::IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS)
           continue;
-        if (Entry.SizeOfData < 4 ||
+        if (Entry.SizeOfData < sizeof(uint32_t) ||
             Entry.PointerToRawData > (*Buffer)->getBufferSize() ||
             Entry.SizeOfData >
                 (*Buffer)->getBufferSize() - Entry.PointerToRawData)
-          return invalid("truncated extended DLL characteristics");
+          return invalid(image::TruncatedExtendedDLLCharacteristics);
         const auto *Data =
             reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()) +
             Entry.PointerToRawData;
         if (llvm::support::endian::read32le(Data))
           return invalid(
-              "unsupported extended DLL characteristics (including CET)");
+              image::UnsupportedExtendedDLLCharacteristicsIncludingCET);
       }
     }
   }
@@ -886,29 +897,32 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   if (Rebased &&
       ((Object.getCharacteristics() & llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED) ||
        Relocations.empty()))
-    return invalid("requested rebase requires unstripped DIR64 relocations");
+    return invalid(image::RequestedRebaseRequiresUnstrippedDIR64Relocations);
   if (Rebased && Cookie->RVA && !Relocations.count(Cookie->PointerRVA))
-    return invalid("rebasing SecurityCookie requires its load configuration "
-                   "DIR64 relocation");
+    return invalid(
+        image::
+            RebasingSecurityCookieRequiresItsLoadConfigurationDIR64Relocation);
   if (Cookie->RVA)
-    for (unsigned Index = 0; Index != 16; ++Index) {
+    for (unsigned Index = 0; Index != MaxPEDirectoryEntries; ++Index) {
       const auto *Directory = Object.getDataDirectory(Index);
       if (!Directory || !Directory->Size ||
           Index == llvm::COFF::CERTIFICATE_TABLE)
         continue;
       const uint64_t Start = Directory->RelativeVirtualAddress;
       const uint64_t Limit = Start + Directory->Size;
-      if (Cookie->RVA < Limit && Cookie->RVA + 8 > Start)
-        return invalid("SecurityCookie storage overlaps loader metadata");
+      if (Cookie->RVA < Limit && Cookie->RVA + profile::PointerSize > Start)
+        return invalid(image::SecurityCookieStorageOverlapsLoaderMetadata);
     }
   for (uint64_t RVA : Relocations) {
     for (const auto &Import : *Imports) {
       const uint64_t Slot = Import.Slot - Base;
-      if (RVA < Slot + 8 && RVA + 8 > Slot)
-        return invalid("DIR64 relocation overlaps import binding storage");
+      if (RVA < Slot + profile::PointerSize &&
+          RVA + profile::PointerSize > Slot)
+        return invalid(image::DIR64RelocationOverlapsImportBindingStorage);
     }
-    if (Cookie->RVA && RVA < Cookie->RVA + 8 && RVA + 8 > Cookie->RVA)
-      return invalid("DIR64 relocation overlaps SecurityCookie storage");
+    if (Cookie->RVA && RVA < Cookie->RVA + profile::PointerSize &&
+        RVA + profile::PointerSize > Cookie->RVA)
+      return invalid(image::DIR64RelocationOverlapsSecurityCookieStorage);
   }
 
   auto Guard =
@@ -925,21 +939,21 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   const auto Original = (*Buffer)->getBuffer();
   if (Loaded->Raw.size() != Original.size() ||
       std::memcmp(Loaded->Raw.data(), Original.data(), Original.size()) != 0)
-    return invalid("input changed while loading");
+    return invalid(image::InputChangedWhileLoading);
   if (Loaded->Base != Base ||
       Loaded->Entry != Base + Header->AddressOfEntryPoint ||
       Loaded->Arch != Arch::X64 || Loaded->Segments.size() != Sections.size() ||
       Loaded->Imports.size() != Imports->size())
-    return invalid("loader metadata disagrees with validated execution image");
+    return invalid(image::LoaderMetadataDisagreesWithValidatedExecutionImage);
   if (Loaded->DynInfo.SecurityCookieRVA != Cookie->RVA)
     return invalid(
-        "loader SecurityCookie identity disagrees with execution image");
+        image::LoaderSecurityCookieIdentityDisagreesWithExecutionImage);
   std::set<uint64_t> LoaderRelocations;
   for (const auto &Relocation : Loaded->BaseRelocations)
     if (Relocation.Type == llvm::COFF::IMAGE_REL_BASED_DIR64)
       LoaderRelocations.insert(Relocation.Address - Base);
   if (LoaderRelocations != Relocations)
-    return invalid("loader DIR64 identities disagree with execution image");
+    return invalid(image::LoaderDIR64IdentitiesDisagreeWithExecutionImage);
   for (const auto &Import : *Imports) {
     const auto Found = std::find_if(
         Loaded->Imports.begin(), Loaded->Imports.end(), [&](const auto &Item) {
@@ -947,7 +961,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
                  Item.Module == Import.Module;
         });
     if (Found == Loaded->Imports.end())
-      return invalid("loader import identity disagrees with validated IAT");
+      return invalid(image::LoaderImportIdentityDisagreesWithValidatedIAT);
   }
 
   DriverImage Image;
@@ -972,7 +986,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
     const auto &Plan = Sections[Index];
     if (Segment.VA != Base + Plan.Header->VirtualAddress ||
         Segment.Size != Plan.Header->VirtualSize)
-      return invalid("loader section mapping disagrees with execution image");
+      return invalid(image::LoaderSectionMappingDisagreesWithExecutionImage);
     DriverImageRegion Region;
     Region.Address = ActualBase + (Segment.VA - Base);
     Region.Permissions = (Segment.isReadable() ? Read : 0) |
@@ -981,7 +995,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
     Region.Bytes.resize(Plan.Span, 0);
     const size_t CopySize = std::min<uint64_t>(Segment.Size, Segment.FileSz);
     if (CopySize > Segment.Data.size())
-      return invalid("loader lost file-backed section bytes");
+      return invalid(image::LoaderLostFileBackedSectionBytes);
     std::copy_n(Segment.Data.begin(), CopySize, Region.Bytes.begin());
     Image.Regions.push_back(std::move(Region));
   }
@@ -990,7 +1004,8 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
     for (auto &Region : Image.Regions)
       if (Address >= Region.Address &&
           Address - Region.Address <= Region.Bytes.size() &&
-          Region.Bytes.size() - (Address - Region.Address) >= 8)
+          Region.Bytes.size() - (Address - Region.Address) >=
+              profile::PointerSize)
         return Region.Bytes.data() + (Address - Region.Address);
     return nullptr;
   };
@@ -1002,7 +1017,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
     for (uint64_t RVA : Relocations) {
       uint8_t *Target = MutableBytes(RVA);
       if (!Target)
-        return invalid("relocation target disappeared from mapping plan");
+        return invalid(image::RelocationTargetDisappearedFromMappingPlan);
       llvm::support::endian::write64le(
           Target, llvm::support::endian::read64le(Target) + Difference);
     }
@@ -1010,7 +1025,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   if (Cookie->RVA) {
     uint8_t *Target = MutableBytes(Cookie->RVA);
     if (!Target)
-      return invalid("SecurityCookie disappeared from mapping plan");
+      return invalid(image::SecurityCookieDisappearedFromMappingPlan);
     // A concrete deterministic guest input, not a claim of host entropy. This
     // must happen before the PE entry wrapper or any /GS-protected function.
     // https://learn.microsoft.com/cpp/c-runtime-library/reference/security-init-cookie

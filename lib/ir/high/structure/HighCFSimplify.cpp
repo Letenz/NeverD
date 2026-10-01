@@ -1189,6 +1189,57 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool flattenBlocks(std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Targets.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      if (Clause.HandlerVA != 0 && Clause.HandlerVA != InvalidVA)
+        Targets.insert(Clause.HandlerVA);
+  });
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          // A block groups statements and nothing else: its statements run
+          // in the enclosing list just the same. An entered block address
+          // keeps an empty anchor ahead of them.
+          if (L[I].Kind != StmtKind::Block || L[I].Body.empty() ||
+              isEmptyAnchor(L[I]))
+            continue;
+          std::vector<HighStmt> Inner = std::move(L[I].Body);
+          const va_t Addr = L[I].Addr;
+          const bool Anchor =
+              Addr != 0 && Addr != InvalidVA && Targets.count(Addr) &&
+              (Inner.front().Addr != Addr || (I > 0 && L[I - 1].Addr == Addr));
+          if (Anchor) {
+            L[I].Body.clear();
+            L.insert(L.begin() + I + 1, std::make_move_iterator(Inner.begin()),
+                     std::make_move_iterator(Inner.end()));
+          } else {
+            L.erase(L.begin() + I);
+            L.insert(L.begin() + I, std::make_move_iterator(Inner.begin()),
+                     std::make_move_iterator(Inner.end()));
+            --I;
+          }
+          Changed = true;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 bool hoistLoopEntryLabels(std::vector<HighStmt> &Body) {
   std::map<va_t, unsigned> Uses;
   walkStmts(Body, [&](const HighStmt &S) {
@@ -2162,6 +2213,145 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   DropPlaceholders(Body);
 
   bool Changed = false;
+  // Statements in \p Stmts, counting nested ones.
+  std::function<size_t(const std::vector<HighStmt> &)> Size =
+      [&](const std::vector<HighStmt> &Stmts) {
+        size_t N = 0;
+        for (const HighStmt &S : Stmts) {
+          ++N;
+          N += Size(S.Body) + Size(S.ElseBody) + Size(S.DefaultBody);
+          for (const auto &C : S.Cases)
+            N += Size(C.Body);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            N += Size(ClauseBody);
+        }
+        return N;
+      };
+  // Whether a jump enters \p S or a statement nested in it, or \p S holds
+  // a loop, switch or try a copy would duplicate.
+  std::function<bool(const HighStmt &)> Uncopyable = [&](const HighStmt &S) {
+    if ((S.Addr != 0 && S.Addr != InvalidVA && usesOf(S.Addr) != 0) ||
+        S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For || S.Kind == StmtKind::Switch ||
+        S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+        S.Kind == StmtKind::ItaniumTry || S.Kind == StmtKind::Break ||
+        S.Kind == StmtKind::Continue)
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody})
+      for (const HighStmt &T : *List)
+        if (Uncopyable(T))
+          return true;
+    return false;
+  };
+  // T16 on L[I]; see its use below. The exit may sit several ifs deep:
+  // the rest of each arm on its way down then runs only off the exit.
+  struct Level {
+    HighStmt *If = nullptr;
+    bool Then = true;
+    size_t Pos = 0;
+  };
+  // Paths of ifs from \p If down to an arm that ends in a jump; each level
+  // records the arm taken and where the next if (or the jump) sits in it.
+  // \p Try sees each path in turn and ends the walk by returning true.
+  std::function<bool(HighStmt &, std::vector<Level> &,
+                     const std::function<bool(std::vector<Level> &)> &)>
+      FindExits =
+          [&](HighStmt &If, std::vector<Level> &Path,
+              const std::function<bool(std::vector<Level> &)> &Try) -> bool {
+    if (Path.size() >= limits::kMaxSkippedCopyDepth)
+      return false;
+    for (const bool Then : {true, false}) {
+      std::vector<HighStmt> &A = Then ? If.Body : If.ElseBody;
+      if (!Path.empty() && !A.empty() && A.back().Kind == StmtKind::Goto) {
+        Path.push_back({&If, Then, A.size() - 1});
+        if (Try(Path))
+          return true;
+        Path.pop_back();
+      }
+      for (size_t P = 0; P < A.size(); ++P)
+        if ((A[P].Kind == StmtKind::If || A[P].Kind == StmtKind::IfElse) &&
+            A[P].Cond) {
+          Path.push_back({&If, Then, P});
+          if (FindExits(A[P], Path, Try))
+            return true;
+          Path.pop_back();
+        }
+    }
+    return false;
+  };
+  auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
+    return V.Then ? V.If->Body : V.If->ElseBody;
+  };
+  // Rewrites the exit at the end of \p Path when its label X follows L[I],
+  // later in L or as \p After, what runs once L ends.
+  auto copyExit = [&](std::vector<HighStmt> &L, size_t I, va_t After,
+                      std::vector<Level> &Path) -> bool {
+    const size_t D = Path.size();
+    // Other jumps to X land after R and keep their label.
+    const va_t X = ArmOf(Path[D - 1]).back().GotoTarget;
+    if (usesOf(X) == 0 || usesOf(X) == ~0u)
+      return false;
+    size_t J = I + 1;
+    while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
+      ++J;
+    if (J >= L.size() && X != After)
+      return false;
+    // Tails[K]: the rest of level K's arm after the if one level down.
+    std::vector<std::vector<HighStmt>> Tails(D - 1);
+    for (size_t K = 0; K + 1 < D; ++K) {
+      const std::vector<HighStmt> &A = ArmOf(Path[K]);
+      Tails[K].assign(A.begin() + Path[K].Pos + 1, A.end());
+    }
+    const std::vector<HighStmt> R(L.begin() + I + 1, L.begin() + J);
+    for (const auto &T : Tails)
+      for (const HighStmt &S : T)
+        if (Uncopyable(S))
+          return false;
+    for (const HighStmt &S : R)
+      if (Uncopyable(S))
+        return false;
+    // Level K's other arm continues, as before, with the tails of the levels
+    // above it, innermost first, then R.
+    std::vector<std::vector<HighStmt>> Append(D);
+    size_t Total = 0;
+    for (size_t K = 0; K < D; ++K) {
+      for (size_t Up = K; Up-- > 0;)
+        Append[K].insert(Append[K].end(), Tails[Up].begin(), Tails[Up].end());
+      Append[K].insert(Append[K].end(), R.begin(), R.end());
+      Total += Size(Append[K]);
+    }
+    size_t Original = Size(R);
+    for (const auto &T : Tails)
+      Original += Size(T);
+    if (Total - Original > limits::kMaxSkippedCopyStatements)
+      return false;
+    for (size_t K = 0; K < D; ++K) {
+      const Level &V = Path[K];
+      std::vector<HighStmt> &A = ArmOf(V);
+      if (K + 1 == D)
+        popGoto(A);
+      else
+        A.erase(A.begin() + V.Pos + 1, A.end());
+      if (Append[K].empty())
+        continue;
+      std::vector<HighStmt> &Other = V.Then ? V.If->ElseBody : V.If->Body;
+      V.If->Kind = StmtKind::IfElse;
+      Other.insert(Other.end(), std::make_move_iterator(Append[K].begin()),
+                   std::make_move_iterator(Append[K].end()));
+    }
+    --Uses[X];
+    L.erase(L.begin() + I + 1, L.begin() + J);
+    Changed = true;
+    return true;
+  };
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I,
+                             va_t After) -> bool {
+    std::vector<Level> Path;
+    return FindExits(L[I], Path, [&](std::vector<Level> &Exit) {
+      return copyExit(L, I, After, Exit);
+    });
+  };
+
   std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
                                                                &L) {
     for (size_t I = 0; I < L.size(); ++I) {
@@ -2736,8 +2926,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           // with the jumps of its new neighbours.
           M = FallInto - 1;
           FallTarget = LL[FallInto].Addr;
-        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K &&
-                   GotoSite.Order < Block.Order) {
+        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K) {
           // A block that runs off the end of its arm continues where the
           // arm does; it moves, with a jump there, to a jump ahead of it.
           FallTarget = FollowOf(Block);
@@ -2795,6 +2984,40 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     }
     if (!Done)
       break;
+  }
+
+  // T16 (late, once no block can move instead): `if (a) { A; if (b) { B;
+  // goto X; } T } R; X:` with a small R that nothing enters becomes
+  // `if (a) { A; if (b) { B } else { T R } } else { R }`: R runs on every
+  // path but the exit, so a copy of it goes on each.
+  if (SpliceRegions) {
+    // \p After: the label of what runs once L ends, when it is the next
+    // statement after the if/else, block or switch owning L.
+    std::function<void(std::vector<HighStmt> &, va_t)> CopyTails =
+        [&](std::vector<HighStmt> &L, va_t After) {
+          for (size_t I = 0; I < L.size(); ++I)
+            if ((L[I].Kind == StmtKind::If || L[I].Kind == StmtKind::IfElse) &&
+                L[I].Cond)
+              copySkippedTail(L, I, After);
+          for (size_t K = 0; K < L.size(); ++K) {
+            HighStmt &S = L[K];
+            va_t Next = After;
+            if (K + 1 < L.size())
+              Next = labelStart(L, K + 1) ? L[K + 1].Addr : 0;
+            const bool Arms =
+                S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+                S.Kind == StmtKind::Block || S.Kind == StmtKind::Switch;
+            const va_t Inner = Arms ? Next : 0;
+            CopyTails(S.Body, Inner);
+            CopyTails(S.ElseBody, Inner);
+            for (auto &C : S.Cases)
+              CopyTails(C.Body, Inner);
+            CopyTails(S.DefaultBody, Inner);
+            for (auto &ClauseBody : S.EHClauseBodies)
+              CopyTails(ClauseBody, 0);
+          }
+        };
+    CopyTails(Body, 0);
   }
 
   // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }

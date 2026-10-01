@@ -1,0 +1,89 @@
+//===- WDKDriverFixtures.def - Pinned original driver build inputs --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Microsoft package contents remain outside the source tree and retain their
+// original licenses. Package hashes cover the entire official NuGet archive.
+// https://learn.microsoft.com/windows-hardware/drivers/install-the-wdk-using-nuget
+NEVERD_WDK_DOWNLOAD(
+    "microsoft.windows.wdk.x64.10.0.26100.6584.nupkg",
+    "https://api.nuget.org/v3-flatcontainer/microsoft.windows.wdk.x64/"
+    "10.0.26100.6584/microsoft.windows.wdk.x64.10.0.26100.6584.nupkg",
+    "c393d03dfb640b5c92f546b32f6770ef68cd3aaf691956e7d66d8e2c28a1b55e")
+NEVERD_WDK_DOWNLOAD(
+    "microsoft.windows.sdk.cpp.10.0.26100.6584.nupkg",
+    "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp/"
+    "10.0.26100.6584/microsoft.windows.sdk.cpp.10.0.26100.6584.nupkg",
+    "5d31b38205bdd9ac761b4cb39fbbc6b7209b01c11194324afc674d7d119483a0")
+
+NEVERD_WDK_LICENSE(
+    "SDK-LICENSE.rtf",
+    "https://download.microsoft.com/download/0/F/F/"
+    "0FF2B061-47DD-4F55-89B6-FD1D8C44F14D/sdk_license.rtf",
+    "dd07eb178e00c6bba4148457fc00ff77cd4887eb521d504186fe59c9ec8bbe62")
+NEVERD_WDK_LIMIT("read_chunk", "1048576")
+NEVERD_WDK_LIMIT("download_timeout", "60")
+NEVERD_WDK_LIMIT("command_timeout", "120")
+
+NEVERD_WDK_EXTRACT("c/Include/10.0.26100.0/km/")
+NEVERD_WDK_EXTRACT("c/Include/10.0.26100.0/shared/")
+NEVERD_WDK_EXTRACT("c/Include/wdf/kmdf/1.33/")
+NEVERD_WDK_EXTRACT("c/Lib/10.0.26100.0/km/x64/ntoskrnl.lib")
+NEVERD_WDK_EXTRACT("c/Lib/10.0.26100.0/km/x64/libcntpr.lib")
+NEVERD_WDK_EXTRACT("c/Lib/10.0.26100.0/km/x64/BufferOverflowK.lib")
+NEVERD_WDK_EXTRACT("c/Lib/wdf/kmdf/x64/1.33/wdfdriverentry.lib")
+NEVERD_WDK_EXTRACT("c/Lib/wdf/kmdf/x64/1.33/wdfldr.lib")
+NEVERD_WDK_EXTRACT("LICENSE.txt")
+NEVERD_WDK_EXTRACT("Microsoft.Windows.WDK.x64.nuspec")
+NEVERD_WDK_EXTRACT("Microsoft.Windows.SDK.CPP.nuspec")
+
+NEVERD_WDK_INCLUDE("c/Include/10.0.26100.0/km")
+NEVERD_WDK_INCLUDE("c/Include/10.0.26100.0/shared")
+NEVERD_WDK_INCLUDE("c/Include/10.0.26100.0/km/crt")
+NEVERD_WDK_INCLUDE("c/Include/wdf/kmdf/1.33")
+NEVERD_WDK_LIBRARY("WDM", "c/Lib/10.0.26100.0/km/x64/ntoskrnl.lib")
+NEVERD_WDK_LIBRARY("WDM", "c/Lib/10.0.26100.0/km/x64/libcntpr.lib")
+NEVERD_WDK_LIBRARY("WDM", "c/Lib/10.0.26100.0/km/x64/BufferOverflowK.lib")
+NEVERD_WDK_LIBRARY("KMDF", "c/Lib/wdf/kmdf/x64/1.33/wdfdriverentry.lib")
+NEVERD_WDK_LIBRARY("KMDF", "c/Lib/wdf/kmdf/x64/1.33/wdfldr.lib")
+NEVERD_WDK_ENTRY("WDM", "DriverEntry")
+NEVERD_WDK_ENTRY("KMDF", "FxDriverEntry")
+
+NEVERD_WDK_ARGUMENTS("compile", "--target=x86_64-pc-windows-msvc", "-std=c11",
+                     "-ffreestanding", "-fno-stack-protector",
+                     "-fms-extensions", "-O1", "-Wall", "-Wextra", "-Werror",
+                     "-nostdinc", "-D_KERNEL_MODE=1", "-D_AMD64_=1",
+                     "-DAMD64=1", "-D_WIN32_WINNT=0x0A00",
+                     "-DNTDDI_VERSION=0x0A00000C", "-DKMDF_VERSION_MAJOR=1",
+                     "-DKMDF_VERSION_MINOR=33")
+NEVERD_WDK_ARGUMENTS("link", "/machine:x64", "/subsystem:native", "/driver",
+                     "/nodefaultlib", "/dynamicbase", "/base:0x180000000",
+                     "/timestamp:0")
+NEVERD_WDK_ARGUMENTS("cfg_compile", "-Xclang", "-cfguard")
+NEVERD_WDK_ARGUMENTS("cfg_link", "/guard:cf")
+NEVERD_WDK_ARGUMENTS("async_compile", "-fasync-exceptions")
+NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions")
+// Preserve COFF symbols used to authenticate the original GS handler assembly.
+NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
+
+// Cache stem, original source, entry library, DBG, exception compilation
+// profile. Each row builds normal and active-CFG images at their original
+// sources.
+NEVERD_WDK_FIXTURE("KMDF", "driver_kmdf_lifecycle.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_CONTROL", "driver_kmdf_control.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_PNP", "driver_kmdf_pnp.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("WDM_DMA", "driver_wdm_dma.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_DMA_CHANNEL", "driver_wdm_dma_channel.c", "WDM", "0",
+                   "")
+NEVERD_WDK_FIXTURE("WDM_INTERRUPT", "driver_wdm_interrupts.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_NEITHER", "driver_wdm_neither.c", "WDM", "0", "async")
+NEVERD_WDK_FIXTURE("WDM_PNP", "driver_wdm_pnp.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_POWER", "driver_wdm_power.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK", "driver_wdm_remove_lock.c", "WDM", "0",
+                   "")
+NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK_DBG", "driver_wdm_remove_lock.c", "WDM",
+                   "1", "")
+NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_SEH", "driver_wdm_seh.c", "WDM", "0", "seh")
+NEVERD_WDK_FIXTURE("WDM_STACK", "driver_wdm_stack.c", "WDM", "0", "")

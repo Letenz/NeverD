@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build declared CPU owners and preserve their complete CTest evidence."""
+"""Build declared native owners and preserve their complete CTest evidence."""
 
 from __future__ import annotations
 
@@ -23,25 +23,29 @@ else:
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def declared_inventory(root: Path) -> tuple[list[str], set[str]]:
-    definitions = (root / "scripts" / "NativeCPUTests.def").read_text(
-        encoding="utf-8"
-    )
-    owners = re.findall(r"^NEVERD_NATIVE_CPU_OWNER\((\w+)\)$", definitions, re.M)
-    families = re.findall(
-        r'^NEVERD_NATIVE_CPU_REQUIRED_CASES\(\s*"([^"]+)",\s*"([^"]+)",'
-        r'\s*"([^"]+)"\s*\)', definitions, re.M
-    )
+def read_inventory(
+    root: Path, filename: str, prefix: str
+) -> tuple[list[str], set[str]]:
+    definitions = (root / "scripts" / filename).read_text(encoding="utf-8")
+    owners = re.findall(rf"^{prefix}_OWNER\((\w+)\)$", definitions, re.M)
+    literal = r'((?:"[^"]+"\s*)+)'
+    families = [
+        tuple("".join(re.findall(r'"([^"]*)"', field)) for field in fields)
+        for fields in re.findall(
+            rf'^{prefix}_REQUIRED_CASES\(\s*{literal},\s*{literal},'
+            rf'\s*{literal}\)', definitions, re.M
+        )
+    ]
     explicit = [
         "".join(re.findall(r'"([^"]*)"', value))
         for value in re.findall(
-            r'^NEVERD_NATIVE_CPU_REQUIRED_TEST\(\s*((?:"[^"]+"\s*)+)\)',
+            rf'^{prefix}_REQUIRED_TEST\(\s*((?:"[^"]+"\s*)+)\)',
             definitions, re.M
         )
     ]
     if (not owners or len(set(owners)) != len(owners)
             or not (families or explicit) or len(set(explicit)) != len(explicit)):
-        raise ValueError("invalid native CPU test inventory")
+        raise ValueError(f"invalid native test inventory: {filename}")
     required = set(explicit)
     for prefix, source, macro in families:
         cases = re.findall(
@@ -54,8 +58,26 @@ def declared_inventory(root: Path) -> tuple[list[str], set[str]]:
     return owners, required
 
 
-def run(build: Path, evidence: Path, parallel: int, require_whp: bool) -> int:
-    owners, required = declared_inventory(ROOT)
+def declared_inventory(
+    root: Path, with_drivers: bool = False
+) -> tuple[list[str], set[str]]:
+    owners, required = read_inventory(root, "NativeCPUTests.def", "NEVERD_NATIVE_CPU")
+    if with_drivers:
+        driver_owners, driver_required = read_inventory(
+            root, "NativeDriverTests.def", "NEVERD_NATIVE_DRIVER"
+        )
+        if set(owners) & set(driver_owners) or required & driver_required:
+            raise ValueError("overlapping native CPU and driver inventories")
+        owners += driver_owners
+        required |= driver_required
+    return owners, required
+
+
+def run(
+    build: Path, evidence: Path, parallel: int, require_whp: bool,
+    with_drivers: bool = False,
+) -> int:
+    owners, required = declared_inventory(ROOT, with_drivers)
     configured = {
         Path(line.replace("\\", "/")).name.removesuffix(".dir")
         for line in (build / "CMakeFiles" / "TargetDirectories.txt")
@@ -118,6 +140,7 @@ def run(build: Path, evidence: Path, parallel: int, require_whp: bool) -> int:
         "missing": sorted(test.name for test in expected - actual),
         "unexpected": sorted(test.name for test in actual - expected),
         "require_whp": require_whp,
+        "with_drivers": with_drivers,
         "required_native_tests": len(required),
         "required_native_missing": sorted(required_missing),
         "required_native_unexecuted": required_unexecuted,
@@ -140,12 +163,13 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--require-whp", action="store_true")
+    parser.add_argument("--with-drivers", action="store_true")
     args = parser.parse_args()
     if args.parallel < 1:
         parser.error("parallel jobs must be positive")
     return run(
         args.build.resolve(), args.evidence.resolve(), args.parallel,
-        args.require_whp,
+        args.require_whp, args.with_drivers,
     )
 
 

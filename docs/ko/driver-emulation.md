@@ -10,6 +10,8 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 `driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. native ARM64/WHP 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
 
+`DriverImage.def`는 엄격한 PE 검증의 크기·정렬 제한과 진단 문구를 선언하며, 포인터 너비는 `DriverProfile.def`에서 가져옵니다. `DriverImage.cpp`가 검증과 재배치를 담당하며 허용되는 이미지와 오류 메시지는 바뀌지 않습니다.
+
 ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식은 지원되지 않습니다. 일반 RAM 피연산자는 독립 할당 또는 별칭 페이지를 넘을 수 있습니다. 전체 범위의 권한을 확인한 뒤 쓰며 첫 접근 불가 바이트에서 실패를 보고합니다. MOVS는 완료된 요소와 오류 요소의 재시작 레지스터를 보존하고 요소 일부를 커밋하지 않습니다.
 
 supervisor x64는 정렬된 1/2/4바이트 스칼라 MMIO 트랜잭션을 허용하며 장치 페이지는 네이티브 RAM mapping에 들어가지 않습니다. MOVS/REP MOVS는 재시작 경계마다 한 요소씩 실행합니다. destination observer가 device read commit 전에 중지할 수 있도록 device source는 부작용 없는 prepared read를 제공해야 합니다. Windows register bank는 이를 지원하고, 다른 장치는 string read를 효과 발생 전에 거부합니다. device RMW, 넓은 MMIO, 포트 I/O는 미지원입니다. 요청 바이트, 장치 상태, 쓰기 event는 Unicorn의 zero-count REP 종료 hook 차이와 별도로 비교합니다. KVM은 표준 XSAVE interface와 FP/SSE presence bit로 XMM/MXCSR를 전달합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. timeout/cancel은 허용된 유한 명령 사이에서 검사하며 일반 비동기 선점이나 시작 후 backend 재시작은 없습니다. 내장 corpus와 사용 가능한 WDK 시나리오는 일반/CFG/재배치 image에서 Unicorn과 비교하지만 corpus 일치가 임의 드라이버 호환성을 보장하지는 않습니다.
@@ -521,7 +523,13 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
 
-공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 활성 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
+`X64FPState.def`는 압축 AVX, AVX-512, CET_U/CET_S, AMX 전송 배치와 구성 요소의 64바이트 정렬을 선언합니다. 존재하는 확장 데이터는 모두 0인 초기 상태여야 하며, 없는 구성 요소의 데이터와 정렬 패딩은 상태를 정의하지 않습니다. 배치 비트가 오프셋을 결정하고 알 수 없는 배치, 초기 상태가 아닌 데이터, 잘못된 길이는 공개 전에 실패합니다. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState`, `InitialWideComponentsDoNotHideFPState`가 872바이트와 10752바이트 WHP 패킷을 검증합니다. 이 전송 지원은 해당 확장 명령 실행을 허용하지 않습니다.
+
+`WhpXsaveRegisters.def`는 이름이 있는 x87/SSE 제어 레지스터로 완전한 XSAVE 패킷을 보완합니다. 마지막 연산 코드와 명령/데이터 포인터를 명시적으로 쓰고 호스트에서 읽습니다. 패킷의 0 필드는 보완할 수 있지만, 0이 아닌 메타데이터 충돌이나 공통 제어값 불일치는 상태 공개 전에 실패합니다. `NamedMetadataRestoresOmittedPacketFields`는 전체 FP 데이터를 유지하면서 누락 필드를 검증합니다.
+
+네이티브 `FOP/FIP/FDP`는 호스트 x87 저장·복원 규칙을 따릅니다. 마스크되지 않은 대기 예외가 없으면 AMD는 이 필드를 0으로 만들 수 있으며 스냅샷은 관측값을 유지합니다. `X64MachineProbe.def`와 정밀 NOP/컨텍스트 테스트는 일관된 대기 예외를 설정하여 모든 필드를 유효한 상태에서 차이를 숨기지 않고 비교합니다. 호스트 프로세스 FXRSTOR64/FXSAVE64 참조는 두 상태를 검사하며, 백엔드는 호스트 결과를 입력 메타데이터로 대체하지 않습니다.
+
+공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
 

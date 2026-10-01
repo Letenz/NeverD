@@ -8,6 +8,23 @@ NEVERD_X64_PROBE_TEST_VALUE(Limit, 4 * 1024 * 1024)
 NEVERD_X64_PROBE_TEST_VALUE(CorruptBit, 1)
 NEVERD_X64_PROBE_TEST_VALUE(Instructions, 8)
 NEVERD_X64_PROBE_TEST_VALUE(Fill, 0xa5)
+NEVERD_X64_PROBE_TEST_VALUE(ExceptionMask, 0x3f)
+NEVERD_X64_PROBE_TEST_VALUE(PendingStatus, 0x8080)
+#endif
+#ifdef NEVERD_X64_PROBE_TEST_TEXT
+NEVERD_X64_PROBE_TEST_TEXT(Expected, ": expected ")
+NEVERD_X64_PROBE_TEST_TEXT(Observed, ", observed ")
+NEVERD_X64_PROBE_TEST_TEXT(
+    ScalarMismatch,
+    "incorrect x64 native initialization state after Nop: "
+    "AX: expected 0x1122334455667700, observed 0x1122334455667701")
+NEVERD_X64_PROBE_TEST_TEXT(
+    VectorMismatch,
+    "incorrect x64 native initialization state after Nop: "
+    "XMM0[0]: expected 0x123456789abcdef, observed 0x123456789abcdee")
+NEVERD_X64_PROBE_TEST_TEXT(
+    OpcodeMismatch, "incorrect x64 native initialization state after Nop: "
+                    "FPOP: expected 0x127, observed 0x126")
 #endif
 #ifdef NEVERD_X64_PROBE_TEST_CODE
 // Independently assembled with Clang from the original eight instructions.

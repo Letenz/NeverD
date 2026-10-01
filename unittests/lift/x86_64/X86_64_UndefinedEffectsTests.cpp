@@ -473,6 +473,7 @@ TEST(X86UndefinedEffectsForms, LegacyAliasesAndAddressWidthsRemainAudited) {
       {"16-bit address, word data", Arch::X86, {0x67, 0x66, 0x8b, 0x00}},
       {"16-bit address, dword data", Arch::X86, {0x67, 0x8b, 0x00}},
       {"MOVSXD wide", Arch::X64, {0x48, 0x63, 0xc1}},
+      {"MOVSXD dword", Arch::X64, {0x63, 0xc1}},
       {"immediate byte push", Arch::X64, {0x6a, 0x01}},
       {"word push", Arch::X64, {0x66, 0x50}},
       {"immediate ALU", Arch::X64, {0x48, 0x83, 0xc0, 0x01}},
@@ -496,19 +497,27 @@ TEST(X86UndefinedEffectsForms, LegacyAliasesAndAddressWidthsRemainAudited) {
   }
 }
 
-TEST_F(X86UndefinedEffects, PinnedDecoderRefusesNarrowOpcode63Forms) {
-  // This is an existing decoder coverage gap, not successful metadata
-  // coverage. Keep it explicit until the pinned decoder supports these forms.
+TEST_F(X86UndefinedEffects, WordMovsxdWithDisputedSourceWidthIsUnlifted) {
+  // The pinned decoder gives 66-prefixed MOVSXD a dword source, as LLVM does,
+  // while the SDM and XED read a word. The lifter refuses the form instead of
+  // choosing a source width and memory access.
   const InstructionCase Cases[] = {
-      {"opcode 63 without REX.W", {0x63, 0xc1}},
-      {"opcode 63 word form", {0x66, 0x63, 0xc1}},
+      {"register source", {0x66, 0x63, 0xc1}},
+      {"memory source", {0x66, 0x63, 0x01}},
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);
     DecodedInsn Insn{};
-    EXPECT_EQ(Dec.decodeOneForLift(Case.Bytes.data(), Case.Bytes.size(), 0x1000,
-                                   Insn),
-              0);
+    ASSERT_TRUE(decode(Case.Bytes, Insn));
+    ASSERT_EQ(Insn.Raw->id, X86_INS_MOVSXD);
+    ASSERT_EQ(Insn.Raw->detail->x86.op_count, 2U);
+    EXPECT_EQ(Insn.Raw->detail->x86.operands[0].size, 2U);
+    EXPECT_EQ(Insn.Raw->detail->x86.operands[1].size, 4U);
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects),
+                 UnliftedInstruction);
+    expectCleared(Effects);
   }
 }
 

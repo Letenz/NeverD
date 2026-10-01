@@ -489,16 +489,34 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       // Do not remap a caller-saved clobber onto this function's parameters.
       // After GSHandlerCheckCommon, r8 is flags scratch, not ContextRecord;
       // call arguments are recovered from COPYs / homes in collectCallArgs.
-      if (Clobber->PreservedPrefixSize == 0)
-        return HighExpr::makeUndef(V.Size);
-
-      auto Low = HighExpr::makeBinop(
-          NdOp::SUBBYTES, medvarToExpr(Clobber->PreservedInput),
-          HighExpr::makeConst(0, Clobber->PreservedInput.Size));
-      Low->Type = NdType::makeInt(Clobber->PreservedPrefixSize, false);
-      auto Result = HighExpr::makeUnary(NdOp::INT_ZEXT, Low);
-      Result->Type = NdType::makeInt(V.Size, false);
-      return Result;
+      // Consecutive calls preserve the intersection of their known prefixes.
+      // Follow exact SSA inputs before building an expression: nesting one
+      // SUBBYTES/extension pair per call exhausts the ordinary slice budget
+      // even when a long chain preserves the same D8-D15 value throughout.
+      MedVar Input = V;
+      uint16_t Known = V.Size;
+      size_t Steps = 0;
+      do {
+        const auto &Before = Clobber->PreservedInput;
+        if (++Steps > CurMed->CallClobbers.size() ||
+            Clobber->Value.Kind != MedVar::Reg ||
+            Clobber->Value.RegOff != Input.RegOff ||
+            Clobber->Value.TheArch != Input.TheArch ||
+            Input.Size > Clobber->Value.Size ||
+            Clobber->PreservedPrefixSize == 0 ||
+            Clobber->PreservedPrefixSize >= Clobber->Value.Size ||
+            Before.Kind != MedVar::Reg || Before.Id != Input.Id ||
+            Before.RegOff != Input.RegOff || Before.TheArch != Input.TheArch ||
+            Before.Size != Clobber->Value.Size || Before == Input)
+          return HighExpr::makeUndef(V.Size);
+        Known = std::min(Known, Clobber->PreservedPrefixSize);
+        Input = Before;
+        Clobber = findCallClobber(*CurMed, Input);
+      } while (Clobber);
+      auto Low = sourceBitSlice(medvarToExpr(Input), 0, Known);
+      // Calls do not zero the unpreserved suffix. Retain unknown bytes so a
+      // later low slice can discard them without making a wide read defined.
+      return sourceBitSlice(Low, 0, V.Size);
     }
   }
 
@@ -899,6 +917,7 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
           (Phase != 0 && LateJoinSink && sinkJoinDefaultsLate(Func)) |
           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
+          (Phase != 0 && flattenBlocks(Func.Body)) |
           (Phase != 0 && loopifyTrailingArmBodies(Func.Body));
       if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
           !Grouped)

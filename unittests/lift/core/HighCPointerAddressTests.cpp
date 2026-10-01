@@ -41953,9 +41953,11 @@ TEST(HighCPointerAddresses, SingleEntryBlockRunningIntoALabelMovesToItsJump) {
   const unsigned Before = countGotos(Body);
   ASSERT_TRUE(reduceSingleUseGotos(Body, /*SpliceRegions=*/true));
   EXPECT_LE(countGotos(Body), Before);
+  // The arm may gain an else for the code its exit skips.
   bool Moved = false;
   walkStmts(Body, [&](const HighStmt &S) {
-    if (S.Kind == StmtKind::If && S.Addr == 0x1004)
+    if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) &&
+        S.Addr == 0x1004)
       for (const HighStmt &T : S.Body)
         Moved |= T.Kind == StmtKind::Assign && T.Addr == 0x1050;
   });
