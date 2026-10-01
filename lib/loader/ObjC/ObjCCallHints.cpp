@@ -871,6 +871,20 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Canonical == "objc_enumerationMutation") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_terminate") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/libobjc.A.dylib" ||
+        std::find(Image.DynInfo.NeededLibs.begin(),
+                  Image.DynInfo.NeededLibs.end(),
+                  Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+      return std::nullopt;
+    // objc4/runtime/objc-exception.mm exports void objc_terminate(void),
+    // which invokes std::terminate. It consumes no exception register and
+    // has no normal successor; callers still retain their EH metadata.
+    // https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-exception.mm
+    Signature.ReturnType = NdType::makeVoid();
+    Result.DoesNotReturn = true;
   } else if (Canonical == "objc_exception_throw") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     if (Bind == Image.DyldBindSlots.end() ||
