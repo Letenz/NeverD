@@ -1,6 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_SWIFTMANGLEDSOURCEABI_H
 #define NEVERD_SDK_CAPI_SWIFTMANGLEDSOURCEABI_H
 
+#include "../../loader/Swift/SwiftFunctionSymbols.h"
 #include "../../loader/Swift/SwiftMangledStringBundleABI.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -24,18 +25,14 @@ namespace neverd::sdk {
 // Require the complete specialization and generic declaration, not just its
 // function name. Body, runtime-call and frame proofs remain separate gates.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledURLArrayForceCastSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledURLArrayForceCastSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -148,18 +145,14 @@ swiftMangledURLArrayForceCastSourceABI(const BinaryImage &Image, va_t Entry) {
 // Match the entire declaration and specialization; this supplies only its
 // ABI, while the caller's frame effects and callee body still need proof.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledURLArrayBufferSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledURLArrayBufferSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -263,18 +256,14 @@ swiftMangledURLArrayBufferSourceABI(const BinaryImage &Image, va_t Entry) {
 // the Sequence/Element requirements, ownership, labels and void result.
 // This declares its ABI; native body and dependency proofs remain required.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledURLArrayAppendSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledURLArrayAppendSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -328,9 +317,9 @@ swiftMangledURLArrayAppendSourceABI(const BinaryImage &Image, va_t Entry) {
 // LowIR proves that the incoming word reaches the return without a write or
 // call clobber. This is deliberately limited to the one-word array carrier.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledArrayStringValueInitializerSourceABI(const BinaryImage &Image,
-                                                 va_t Entry,
-                                                 const LowFunc &Low) {
+swiftMangledArrayStringValueInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry, const LowFunc &Low,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry) || Low.Entry != Entry ||
@@ -359,13 +348,7 @@ swiftMangledArrayStringValueInitializerSourceABI(const BinaryImage &Image,
       return std::nullopt;
   }
 
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -458,18 +441,14 @@ using neverd::swiftMangledStringBundleSourceABI;
 // the return width; the source pipeline must still prove the body and every
 // call before publication.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCBoolMemberSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledObjCBoolMemberSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -550,19 +529,14 @@ swiftMangledObjCBoolMemberSourceABI(const BinaryImage &Image, va_t Entry) {
 // that argument and swiftself for the receiver. ObjC thunks and merged
 // functions have different entry contracts and are deliberately excluded.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCObjectVoidMethodSourceABI(const BinaryImage &Image,
-                                          va_t Entry) {
+swiftMangledObjCObjectVoidMethodSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -652,19 +626,14 @@ swiftMangledObjCObjectVoidMethodSourceABI(const BinaryImage &Image,
 // only the complete mangled type tree; native body and callers remain subject
 // to the ordinary source proof.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCObjectPairVoidMethodSourceABI(const BinaryImage &Image,
-                                              va_t Entry) {
+swiftMangledObjCObjectPairVoidMethodSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -750,18 +719,14 @@ swiftMangledObjCObjectPairVoidMethodSourceABI(const BinaryImage &Image,
 // class metadata in swiftself. The demangled argument must be Swift.Int;
 // matching a machine-width integer carrier alone would also accept pointers.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledUIColorIntAllocatorSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledUIColorIntAllocatorSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -831,19 +796,14 @@ swiftMangledUIColorIntAllocatorSourceABI(const BinaryImage &Image, va_t Entry) {
 // one double, and the UIColor class metadata in swiftself. A compiler probe
 // for the corresponding NSColor extension confirms the mixed register layout.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledUIColorIntAlphaAllocatorSourceABI(const BinaryImage &Image,
-                                              va_t Entry) {
+swiftMangledUIColorIntAlphaAllocatorSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -926,18 +886,14 @@ swiftMangledUIColorIntAlphaAllocatorSourceABI(const BinaryImage &Image,
 // only its object in swiftself. Reject static, generic, extension, and ObjC
 // thunk wrappers: their root mangling shapes are distinct from this body.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledZeroArgClassMethodSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledZeroArgClassMethodSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1014,19 +970,14 @@ swiftMangledZeroArgClassMethodSourceABI(const BinaryImage &Image, va_t Entry) {
 // result through x8 and takes the class instance in swiftself. The complete
 // mangled tree excludes class-constrained and protocol-composition layouts.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledClassOptionalExistentialGetterSourceABI(const BinaryImage &Image,
-                                                    va_t Entry) {
+swiftMangledClassOptionalExistentialGetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Candidate : Image.Symbols)
-    if (Candidate.Addr == Entry && Candidate.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Candidate;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1102,18 +1053,14 @@ swiftMangledClassOptionalExistentialGetterSourceABI(const BinaryImage &Image,
 // mangled tree determines whether its result is Bool, Int, or arm64 CGFloat;
 // ObjC thunk suffixes and extensions have separate entry contracts.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledClassScalarGetterSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledClassScalarGetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1182,19 +1129,14 @@ swiftMangledClassScalarGetterSourceABI(const BinaryImage &Image, va_t Entry) {
 // initializer as swiftcc double(). Both use the FP return lane. The complete
 // mangled tree excludes thunks, generic substitutions, and other value layouts.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledDoubleFloatingPropertySourceABI(const BinaryImage &Image,
-                                            va_t Entry) {
+swiftMangledDoubleFloatingPropertySourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1280,19 +1222,14 @@ swiftMangledDoubleFloatingPropertySourceABI(const BinaryImage &Image,
 // closed mangled Class result; optional, generic and thunk results have
 // distinct contracts.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledClassReferenceGetterSourceABI(const BinaryImage &Image,
-                                          va_t Entry) {
+swiftMangledClassReferenceGetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1353,19 +1290,14 @@ swiftMangledClassReferenceGetterSourceABI(const BinaryImage &Image,
 // even though the mangling describes only the source property. Keep this
 // compiler-observed contract restricted to the exact profiled helper.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledProfiledObjCCGFloatSetterSourceABI(const BinaryImage &Image,
-                                               va_t Entry) {
+swiftMangledProfiledObjCCGFloatSetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1443,18 +1375,14 @@ swiftMangledProfiledObjCCGFloatSetterSourceABI(const BinaryImage &Image,
 // void result from the Bool, Int, or arm64 CGFloat property type; generic
 // register-result inference must not treat a clobbered x0 as a setter return.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledClassScalarSetterSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledClassScalarSetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1525,18 +1453,14 @@ swiftMangledClassScalarSetterSourceABI(const BinaryImage &Image, va_t Entry) {
 // the complete unspecialized constructor type; an allocating entry or ObjC
 // thunk has a different contract.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledAnyClassInitializerSourceABI(const BinaryImage &Image, va_t Entry) {
+swiftMangledAnyClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1614,19 +1538,14 @@ swiftMangledAnyClassInitializerSourceABI(const BinaryImage &Image, va_t Entry) {
 // The exact local mangled symbol supplies the type; body and caller closure
 // remain separate source-projection requirements.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCOptionalStringGetterSourceABI(const BinaryImage &Image,
-                                              va_t Entry) {
+swiftMangledObjCOptionalStringGetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1709,19 +1628,14 @@ swiftMangledObjCOptionalStringGetterSourceABI(const BinaryImage &Image,
 // the complete mangled result so no other optional value layout inherits
 // either register contract.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(const BinaryImage &Image,
-                                                     va_t Entry) {
+swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1815,18 +1729,13 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(const BinaryImage &Image,
 // this one-word contract.
 inline std::optional<SourceFunctionTypeHint>
 swiftMangledObjCOptionalStringIntDictionaryGetterSourceABI(
-    const BinaryImage &Image, va_t Entry) {
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -1911,19 +1820,14 @@ swiftMangledObjCOptionalStringIntDictionaryGetterSourceABI(
 // that converts both arguments from owned to guaranteed, and the complete
 // constructor type, before binding x20 as a source parameter.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledUIColorPairClassInitializerSourceABI(const BinaryImage &Image,
-                                                 va_t Entry) {
+swiftMangledUIColorPairClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -2024,19 +1928,14 @@ swiftMangledUIColorPairClassInitializerSourceABI(const BinaryImage &Image,
 // receiver in swiftself. Require the complete nominal/return type tree so an
 // ObjC thunk or allocating constructor cannot acquire this entry contract.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledCGRectClassInitializerSourceABI(const BinaryImage &Image,
-                                            va_t Entry) {
+swiftMangledCGRectClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -2123,19 +2022,14 @@ swiftMangledCGRectClassInitializerSourceABI(const BinaryImage &Image,
 // in swiftself. Other specializations, ObjC thunks and allocating entries
 // cannot borrow either entry contract.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
-                                           va_t Entry) {
+swiftMangledCoderClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -2252,19 +2146,14 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
 // Require the complete unspecialized constructor type and an exact local
 // symbol; the Objective-C thunk and allocating constructor have other ABIs.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledNibBundleClassInitializerSourceABI(const BinaryImage &Image,
-                                               va_t Entry) {
+swiftMangledNibBundleClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -2362,8 +2251,9 @@ swiftMangledNibBundleClassInitializerSourceABI(const BinaryImage &Image,
 // current HighIR must independently show no incoming register reads. This is
 // only an ABI declaration; the bundle-search body still needs source proof.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledBundleModuleClosureSourceABI(const BinaryImage &Image, va_t Entry,
-                                         const HighFunc &Function) {
+swiftMangledBundleModuleClosureSourceABI(
+    const BinaryImage &Image, va_t Entry, const HighFunc &Function,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry) || Function.Entry != Entry ||
@@ -2376,13 +2266,7 @@ swiftMangledBundleModuleClosureSourceABI(const BinaryImage &Image, va_t Entry,
   if (!FunctionName.starts_with("_$sSo8NSBundleC") ||
       !FunctionName.contains("6module"))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only || Only->Name != Function.Name)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);
@@ -2484,19 +2368,14 @@ swiftMangledBundleModuleClosureSourceABI(const BinaryImage &Image, va_t Entry,
 // declaration to an exact zero-argument constructor whose result repeats the
 // same nominal class; other constructor layouts need separate evidence.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledZeroArgClassInitializerSourceABI(const BinaryImage &Image,
-                                             va_t Entry) {
+swiftMangledZeroArgClassInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
     return std::nullopt;
-  const Symbol *Only = nullptr;
-  for (const auto &Symbol : Image.Symbols)
-    if (Symbol.Addr == Entry && Symbol.IsFunc) {
-      if (Only)
-        return std::nullopt;
-      Only = &Symbol;
-    }
+  const Symbol *Only = uniqueSwiftFunctionSymbol(Image, Entry, SymbolIndex);
   if (!Only)
     return std::nullopt;
   llvm::StringRef Name(Only->Name);

@@ -1,6 +1,6 @@
 **Lingue**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
+<!-- i18n-source: caf1662d537b841bff9db84cc3397bd27ae079f20aeea2132a1dc492b55ae0d5 -->
 
 [← Progetto NeverD](project.md)
 
@@ -44,3 +44,5 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 | Documentazione tradotta | I collegamenti linguistici in alto aprono l’indice e la panoramica di ogni lingua |
 
 Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi WHP/ARM64 restano incomplete.
+
+I campi x64 nativi `FOP/FIP/FDP` seguono le regole di salvataggio/ripristino dell’host: AMD può azzerare metadati x87 inattivi. Le sonde di avvio li verificano con un’eccezione pendente non mascherata.

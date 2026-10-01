@@ -62,7 +62,11 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 同一目标中的 `LowIRLoopPlanPairing.*` 检查寄存器重命名、不同算术体、双方独立前缀快照、谓词保留、共享帧输入、嵌套切点覆盖和独立证明预算。缺失关系、错误写入、无效临时值绑定、不完整配对或元数据预算耗尽均不得产生证书。
 
-`LowIRLoopAlignment.*` 使用独立编写的普通和旋转栈帧计数循环：两个默认自关系计划分别证明成功，首次配对失败，另一个候选切点则证明关系成立。回归覆盖多切点排列、错误结果和栈帧写入、缺失或过期的原始记录、显式未定义值 witness、不递减或回绕的计数器、畸形图、失败尝试的累计查询、恰好足够的总预算及搜索限额耗尽。任何拒绝结果都不得包含证书。 新增用例覆盖分离的重置与进展阶段、移动退出判断后需要跨族配对的等价循环、不重复推断的共享缓存，以及缓存元数据合计超限。后接独立循环的用例以显式 16384 次查询上限验证完整周期覆盖。空候选族与重复候选族不消耗符号查询，切点不足必须拒绝。同时检查恰好足够与少一次的全局预算、错误结果、缺失进展、原始证据和未定义值 witness。
+`LowIRLoopAlignment.*` 使用独立编写的普通和旋转栈帧计数循环：两个默认自关系计划分别证明成功，首次配对失败，另一个候选切点则证明关系成立。回归覆盖多切点排列、错误结果和栈帧写入、缺失或过期的原始记录、显式未定义值 witness、不递减或回绕的计数器、畸形图、失败尝试的累计查询、恰好足够的总预算及搜索限额耗尽。任何拒绝结果都不得包含证书。 新增用例覆盖分离的重置与进展阶段、移动退出判断后需要跨族配对的等价循环、不重复推断的共享缓存，以及缓存元数据合计超限。后接独立循环的用例以显式 16384 次查询上限验证完整周期覆盖。空候选族与重复候选族不消耗符号查询，切点不足必须拒绝。同时检查恰好足够与少一次的全局预算、错误结果、缺失进展、原始证据和未定义值 witness。 过滤候选族回归覆盖保持结果不变的算术菱形、局部汇合与仅在边界汇合，以及能够绕过可达汇合点退出或返回循环边界的路径。测试原始过滤族重复时仍尝试候选过滤族、先成功的过滤计划被后续完整分支尝试复用、恰好足够／少一次／零 `MaxCutSelectionWork`、失败后的累计 `CutSelectionWork`，以及全局图工作预算耗尽后不启动符号推断。两种分支候选族都验证完整周期覆盖；菱形关系使用显式推断与证明查询上限。
+
+局部计数器回归覆盖栈帧和寄存器、递增和递减、低位／中间位／高位、非标准宽度、两种字节序及三字节帧字。测试检查延迟发现新区间、篡改保留位、不进展和无保护回绕、无效新增入口、恰好足够／不足的推导预算，以及原有单切点搜索。
+
+前置阶段回归覆盖两个和三个顺序循环复用同一倒计数字、与原有嵌套循环阶段组合、恰好足够与少一次的排名／查询预算、不进展循环，以及重置回前一阶段。同宽但错误的阶段常量、错误结果和帧写入必须被完整检查器拒绝且不产生证书；缺失原始证据仍返回不支持。
 
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用独立编写的 LowIR 用例，检查原始入口标志、状态码与客体 RAX 的区分、全部 17 个状态字、部分寄存器分片、打包标志、动态拒绝状态的持续保留、客体栈帧写入、两个分支以及循环推断后的全新证明。错误输出、丢失状态、内存变化、过期指令记录、非法输入和生成预算耗尽必须失败。已有机器状态源码测试还覆盖两条 C 路径的 O0/O2；模型测试本身不证明编译后的 C。
 
@@ -831,7 +835,17 @@ ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向
 
 x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；WHP 和 ARM64 原生工作负载仍缺少独立验证。
 
-共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。活跃扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
+共享 XSAVE 解码器区分标准格式与压缩格式的 SSE 初始状态。XSTATE_BV[1] 清零时，两种格式都初始化 XMM 寄存器；标准格式仍读取并校验 MXCSR，压缩格式才初始化 MXCSR。`X64XsaveCases.def` 提供独立的数据布局和原创主机 XRSTOR 程序。`X64XsaveTests.cpp` 检查拒绝状态的原子性，并以真实主机执行对照两种格式，同时保留调用方 FP/SSE 状态。主机架构或所需指令功能不可用时，对照测试明确跳过。
+
+`X64FPState.def` 声明压缩 AVX、AVX-512、CET_U/CET_S 和 AMX 传输布局，包括分量的 64 字节对齐。存在的扩展数据必须符合架构的全零初始状态；缺席分量的数据与对齐填充不定义状态。偏移由布局位决定，未知布局、非初始数据或错误长度会在发布前失败。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState` 和 `InitialWideComponentsDoNotHideFPState` 覆盖 872 字节及 10752 字节 WHP 数据包。这项传输支持不准入上述扩展指令。
+
+`WhpXsaveRegisters.def` 使用具名 x87/SSE 控制寄存器补充完整 XSAVE 数据包。最后操作码及指令/数据地址会显式写入并从主机回读；可补齐数据包中的零值字段，但非零元数据冲突或共有控制字段不一致时，会在发布状态前失败。`NamedMetadataRestoresOmittedPacketFields` 验证字段缺失场景，并保留完整 FP 数据。
+
+原生 `FOP/FIP/FDP` 遵循宿主 x87 保存、恢复规则。没有未屏蔽的待处理异常时，AMD 可能清零这些字段；快照保留实际观测值。`X64MachineProbe.def` 与精确 NOP/上下文测试使用一致的待处理异常状态，确保每个字段有效并逐项比较，不屏蔽差异。宿主进程 FXRSTOR64/FXSAVE64 参考程序覆盖两种状态；后端不会用输入元数据替代宿主结果。
+
+`NativeGuestRAMDistinguishesEntryFromCaptureLoss` 对比客户代码实际执行 FXSAVE64 写入 RAM 的完整 FP/SSE 状态与宿主 XSAVE 回读。两种 API 都测试直接安装和客户内 FXRSTOR64，并分别使用默认指针保存特性及显式选择的宿主支持设置，以区分进入、客户执行和捕获边界。测试不修补返回值；不一致仍然失败。 边界矩阵还覆盖未屏蔽的待处理 x87 异常，并记录宿主进程直接执行 FXRSTOR64/FXSAVE64 的参考结果和处理器厂商，以区分条件式指针保存语义与 WHP 状态传输行为。
+
+共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。非初始扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
 
@@ -839,13 +853,23 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `NeverDX64FPTests` 检查全部 79 个启动状态损坏位置，并在原生传输上执行独立汇编的 `X64ProbeCases.def` 指令，验证单一时限及来宾 RAM 不变。`NeverDProjectionCacheTests` 覆盖调用者切换、ISA 顺序、页表根历史、权限/监控变体、映射代次、地址空间身份及失败重建。`NeverDRunControlTests` 中的 `WhpXsaveTests.cpp` 检查新旧 API 数据包、所有 TOP、大小边界和失败时状态不变；内存协议测试不能替代 WHP 原生证据。不可用的原生传输明确跳过。
 
-WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。`WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。Windows 聚焦入口要求全部 43 项原生用例通过：16 项映射、2 项启动执行、10 项浮点传输/上下文、7 项共享 CPU 生命周期/执行及 8 项整数检查。缺少注册、跳过、禁用或未运行都会使原生证据审计失败。
+XSAVE 校验诊断区分长度查询、本地数据准备和捕获数据解码，并保留 API 名称、返回字节数、容量及有限的头部/控制字段；独立预期位于 `WhpHostFailureCases.def`，不打印客户寄存器载荷。`InvalidInputReportsPreparationWithoutHostMutation` 还验证无效输入不会调用主机或修改其数据。共享 ISA 编解码器仍是唯一校验入口。
+
+WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。 `WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。 Windows 专项 CI 要求 45 项原生用例通过：16 项映射、2 项启动、10 项 FP/上下文、7 项共享 CPU、8 项整数用例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的两种 API 变体。后两项在执行客户代码前对比完整 FP/SSE 与独立读取的元数据。 缺少注册、跳过、禁用或未运行都会使原生证据审计失败。
 
 `NeverDMemoryLifecycleTests` 独立于 Unicorn 构建，也覆盖仅启用原生后端的配置。禁用 Unicorn 时，专用的软件投影/设备用例明确跳过；匹配主机的共享 CPU 用例仍会注册。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 个用例隔离原生内存 API：单页/投影大小的后备内存、共享/独立分配、未触页/已驻留字节，以及存在/不存在第一个虚拟处理器。每个案例保留两个存活的逻辑所有者，反复切换其映射分区，销毁非活动所有者，并验证剩余映射无需重建即可继续使用。真实映射错误保留 HRESULT 并使测试失败；这是内存 API 证据，不是指令执行证明。
 
+`X64MachineProbe.def` 的启动诊断列出失败指令，以及所有不一致的标量、TLS、特权级、x87 控制字段、物理 FP 通道和 XMM 字，并保留预期值及观测值。`DiagnosticIdentifiesStepFieldAndBothValues` 使用独立的预期消息验证。状态比较仍要求完全一致；诊断用于区分传输丢失与指令执行问题，失败的原生探针仍判为失败。
+
 `WhpResourceTests.cpp` 覆盖缓存复用、替换前销毁、失败恢复及截止时间/停止竞争。`LogicalCPUSwitchingRestoresPhysicalFPAndTLS` 在两种权限模式下交替执行两个存活机器，检查独立的物理 x87/XMM 和 FS/GS 状态，并在销毁同伴后恢复剩余机器。Windows CI 要求两种权限的 WHP 案例都执行通过。
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` 默认为 `ON`，控制 `unittests/semantic` 中的测试组及其聚合运行目标。构建不依赖 Unicorn 的原生 CPU 测试时，保留 `BUILD_TESTING=ON`，同时设置 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 测试仍可构建，包括具有对应 SDK 头文件的 Windows ARM64/MSVC 配置。在 Windows ARM64 上启用 Unicorn 仍需 ARM64 LLVM-MinGW 工具链。这项构建解耦不等于 ARM64 原生运行验证。
+
+仅原生 CPU 的 CI 检出初始化固定版本的 Capstone 源码，并使用校验过的预构建 LLVM 包。设置 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且禁用 Unicorn 后端后，CPU 测试目标的配置、构建和链接均不需要 Unicorn 源码，也不依赖签名库及外部语料。默认 CI 仍启用完整语义测试组。
+
 现有 `ci.yml` 在 Windows x64 runner 上提供显式选择的 `native_cpu_only` 手动模式。`NativeCPUTests.def` 选择十个测试目标；`run_native_cpu_ci.py` 先构建它们，再运行筛选后的 CTest，并保存清单、JUnit、日志和摘要。共享 CI 解析器区分通过、失败、跳过、禁用和未运行结果。每个声明的 WHP 原生映射用例都必须被发现并执行；缺失或跳过原生证据会使聚焦任务失败。默认的 LLVM 源码构建 CI 保持原样。协议测试和编译不能替代 WHP 或 ARM64 原生工作负载验证。
+
+在 `native_cpu_only=true` 时，额外设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。`NativeDriverTests.def` 从 `DriverBuiltinImages.def` 的 26 个内置映像生成原地址和重定位地址共 52 个 WHP 必测结果；固定地址映像重定位时必须得到预期的加载器拒绝。稳定的参数标识让缺失或跳过内置用例导致任务失败；缺少可选 WDK 样本仍明确跳过。同一证据运行器支持 `--with-drivers`，并在执行前记录全部选定测试目标。
 
 `NeverDAArch64StateTests` 验证每个标量字段、每个向量的两个字、特权级改变、浮点指令未执行及传输错误诊断的保留。`NeverDAArch64FPTests` 在两种特权级的真实传输上运行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用独立汇编的 `AArch64ProbeCases.def` 原始指令。测试把这些与 PC 无关的指令迁到客户代码，保持监控页仅供特权级访问。Unicorn 执行和原生后端的明确跳过不能替代 ARM64 原生启动证据。
 

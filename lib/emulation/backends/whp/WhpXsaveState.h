@@ -9,11 +9,13 @@
 #include "../../arch/x86_64/X64Machine.h"
 #include "WhpPartition.h"
 
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
 namespace neverd::emulation {
 /// WHP's legacy register interface does not preserve the complete physical
-/// x87 state. Transfer one XSAVE packet and use the authoritative ISA codec.
+/// x87 payload. Retain complete packets and use named control registers for
+/// the last-operation metadata omitted by some host XSAVE implementations.
 class WhpXsaveState {
 public:
   WhpXsaveState() = default;
@@ -24,7 +26,8 @@ public:
     if (Buffer.base())
       return diagnostic::error(diagnostic::WhpState);
     Modern = API.WHvGetVirtualProcessorState && API.WHvSetVirtualProcessorState;
-    if (!API.WHvGetPartitionProperty ||
+    if (!API.WHvGetPartitionProperty || !API.WHvGetVirtualProcessorRegisters ||
+        !API.WHvSetVirtualProcessorRegisters ||
         (!Modern && !(API.WHvGetVirtualProcessorXsaveState &&
                       API.WHvSetVirtualProcessorXsaveState)))
       return diagnostic::unavailable(diagnostic::WhpCapability,
@@ -50,7 +53,7 @@ public:
     if (uint32_t(Status) != InsufficientBuffer)
       return whpError(diagnostic::WhpState, Status, getOperation());
     if (Required < x64::fp::XsaveBytes || Required > x64::fp::MaxXsaveBytes)
-      return diagnostic::error(diagnostic::FPState);
+      return sizeError(Required, 0);
     std::error_code EC;
     Buffer = llvm::sys::Memory::allocateMappedMemory(
         Required, nullptr,
@@ -63,15 +66,31 @@ public:
   llvm::Error install(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
                       const X64MachineState &State) {
     if (auto E = encodeX64XsaveState(State, bytes(), true))
-      return E;
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     llvm::formatv(XsaveEncodeFailure,
+                                                   llvm::toString(std::move(E)),
+                                                   setOperation(), Size)
+                                         .str());
     const auto Status =
         Modern ? API.WHvSetVirtualProcessorState(
                      Partition, 0, WHvVirtualProcessorStateTypeXsaveState,
                      Buffer.base(), Size)
                : API.WHvSetVirtualProcessorXsaveState(Partition, 0,
                                                       Buffer.base(), Size);
-    return FAILED(Status)
-               ? whpError(diagnostic::WhpState, Status, setOperation())
+    if (FAILED(Status))
+      return whpError(diagnostic::WhpState, Status, setOperation());
+    WHV_REGISTER_VALUE Metadata[std::size(MetadataNames)]{};
+#define NEVERD_WHP_XSAVE_FIELD(Register, Member, Field, Duplicated)            \
+  Metadata[Register].Register.Member = State.Field;
+#include "WhpXsaveRegisters.def"
+#undef NEVERD_WHP_XSAVE_FIELD
+    Metadata[XmmControlStatus].XmmControlStatus.XmmStatusControlMask =
+        x64::AllowedMXCSR;
+    const auto MetadataStatus = API.WHvSetVirtualProcessorRegisters(
+        Partition, 0, MetadataNames, std::size(MetadataNames), Metadata);
+    return FAILED(MetadataStatus)
+               ? whpError(diagnostic::WhpState, MetadataStatus,
+                          whp::operation::WHvSetVirtualProcessorRegisters)
                : llvm::Error::success();
   }
   llvm::Error capture(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
@@ -81,11 +100,70 @@ public:
     if (FAILED(Status))
       return whpError(diagnostic::WhpState, Status, getOperation());
     if (Written < x64::fp::XsaveBytes || Written > Size)
-      return diagnostic::error(diagnostic::FPState);
-    return decodeX64XsaveState(State, bytes().take_front(Written));
+      return sizeError(Written, Size);
+    const auto Packet = bytes().take_front(Written);
+    auto Next = State;
+    if (auto E = decodeX64XsaveState(Next, Packet)) {
+      // Report only protocol metadata. The shared ISA codec remains the sole
+      // authority for validation and never publishes a rejected packet.
+      using namespace llvm::support::endian;
+      const auto *P = Packet.data();
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          llvm::formatv(XsaveDecodeFailure, llvm::toString(std::move(E)),
+                        getOperation(), Written,
+                        read64le(P + x64::fp::XStateOffset),
+                        read64le(P + x64::fp::XCompOffset),
+                        read16le(P + x64::fp::ControlOffset),
+                        read16le(P + x64::fp::OpcodeOffset),
+                        read32le(P + x64::fp::MXCSROffset))
+              .str());
+    }
+    WHV_REGISTER_VALUE Metadata[std::size(MetadataNames)]{};
+    const auto MetadataStatus = API.WHvGetVirtualProcessorRegisters(
+        Partition, 0, MetadataNames, std::size(MetadataNames), Metadata);
+    if (FAILED(MetadataStatus))
+      return whpError(diagnostic::WhpState, MetadataStatus,
+                      whp::operation::WHvGetVirtualProcessorRegisters);
+    // Common controls must agree with the complete packet. Only the three
+    // named last-operation fields supplement its potentially empty slots.
+#define NEVERD_WHP_XSAVE_FIELD(Register, Member, Field, Duplicated)            \
+  if ((Duplicated || Next.Field) &&                                            \
+      Next.Field != Metadata[Register].Register.Member)                        \
+    return llvm::createStringError(                                            \
+        llvm::inconvertibleErrorCode(),                                        \
+        llvm::formatv(XsaveMetadataMismatch, #Field, Next.Field,               \
+                      Metadata[Register].Register.Member)                      \
+            .str());                                                           \
+  if constexpr (!Duplicated)                                                   \
+    Next.Field = Metadata[Register].Register.Member;
+#include "WhpXsaveRegisters.def"
+#undef NEVERD_WHP_XSAVE_FIELD
+    if (auto E = validateX64FPState(Next.FP))
+      return E;
+    State = Next;
+    return llvm::Error::success();
   }
 
 private:
+  enum MetadataRegister {
+#define NEVERD_WHP_XSAVE_REGISTER(Name) Name,
+#include "WhpXsaveRegisters.def"
+#undef NEVERD_WHP_XSAVE_REGISTER
+  };
+  inline static constexpr WHV_REGISTER_NAME MetadataNames[] = {
+#define NEVERD_WHP_XSAVE_REGISTER(Name) WHvX64Register##Name,
+#include "WhpXsaveRegisters.def"
+#undef NEVERD_WHP_XSAVE_REGISTER
+  };
+  llvm::Error sizeError(UINT32 Written, UINT32 Capacity) const {
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        llvm::formatv(XsaveSizeFailure, diagnostic::FPState, getOperation(),
+                      Written, Capacity, x64::fp::XsaveBytes,
+                      x64::fp::MaxXsaveBytes)
+            .str());
+  }
   const char *getOperation() const {
     return Modern ? whp::operation::WHvGetVirtualProcessorState
                   : whp::operation::WHvGetVirtualProcessorXsaveState;

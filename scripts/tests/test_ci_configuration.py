@@ -480,12 +480,26 @@ class CiConfigurationTests(unittest.TestCase):
             native,
         )
         self.assertIn("NEVERD_REQUIRE_NATIVE_WHP: '1'", native)
+        self.assertIn("SCCACHE_GHA_ENABLED: 'true'", native)
+        self.assertIn("mozilla-actions/sccache-action@", native)
+        self.assertIn("-DCMAKE_C_COMPILER_LAUNCHER=sccache", native)
+        self.assertIn("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache", native)
         self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
+        self.assertIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", native)
         self.assertIn("scripts/run_native_cpu_ci.py", native)
         self.assertIn("--require-whp", native)
+        self.assertIn("inputs.native_driver_tests", native)
+        self.assertIn("driver_args+=(--with-drivers)", native)
+        self.assertIn(
+            '-DNEVERD_ENABLE_DRIVER_EMULATION="$NEVERD_NATIVE_DRIVER_TESTS"',
+            native,
+        )
         self.assertIn("native-evidence/", native)
-        full = source.split("  build-and-test:\n", 1)[1]
+        full = source.split("  build-and-test:\n", 1)[1].split(
+            "  native-cpu:\n", 1
+        )[0]
         self.assertIn("!inputs.native_cpu_only", full)
+        self.assertNotIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", full)
         dispatch = source.split("      native_cpu_only:\n", 1)[1].split(
             "\npermissions:", 1
         )[0]

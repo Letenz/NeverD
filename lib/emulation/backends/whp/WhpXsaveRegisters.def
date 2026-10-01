@@ -1,0 +1,19 @@
+//===- WhpXsaveRegisters.def - Named x87/SSE metadata transport ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_XSAVE_REGISTER
+NEVERD_WHP_XSAVE_REGISTER(FpControlStatus)
+NEVERD_WHP_XSAVE_REGISTER(XmmControlStatus)
+#endif
+#ifdef NEVERD_WHP_XSAVE_FIELD
+// Host register, member, architecture field, duplicated in the XSAVE payload.
+NEVERD_WHP_XSAVE_FIELD(FpControlStatus, FpControl, FP.Control, true)
+NEVERD_WHP_XSAVE_FIELD(FpControlStatus, FpStatus, FP.Status, true)
+NEVERD_WHP_XSAVE_FIELD(FpControlStatus, FpTag, FP.Tag, true)
+NEVERD_WHP_XSAVE_FIELD(FpControlStatus, LastFpOp, FP.Opcode, false)
+NEVERD_WHP_XSAVE_FIELD(FpControlStatus, LastFpRip, FP.Instruction, false)
+NEVERD_WHP_XSAVE_FIELD(XmmControlStatus, LastFpRdp, FP.Data, false)
+NEVERD_WHP_XSAVE_FIELD(XmmControlStatus, XmmStatusControl, MXCSR, true)
+#endif

@@ -170,6 +170,9 @@ struct LowIRLoopInferenceLimits {
   uint32_t MaxCutpointAttempts = 16;
   uint32_t MaxWideningRounds = 8;
   uint32_t MaxRankCandidates = 128;
+  /// Extra analysis for filtered branch arms: graph lookups, common-path
+  /// set construction and comparisons. Other cut selectors are unchanged.
+  uint64_t MaxCutSelectionWork = 262144;
 };
 
 struct LowIRLoopInferenceResult {
@@ -190,6 +193,9 @@ struct LowIRLoopInferenceResult {
   uint32_t CutpointAttempts = 0;
   uint32_t WideningRounds = 0;
   uint32_t RankCandidates = 0;
+  /// Optional selector work, including failed attempts. Alignment charges
+  /// this against its remaining MaxSearchWork as well as the stage limit.
+  uint64_t CutSelectionWork = 0;
 
   bool inferred() const {
     return Status == LowIRLoopInferenceStatus::Inferred && Plan.has_value();
@@ -201,6 +207,14 @@ struct LowIRLoopInferenceResult {
 /// bodies and CFG backedge targets, retaining fixed prefix bits and unsigned
 /// bounds. Nested cycles use a feedback cutpoint set, pruned prefix bounds,
 /// observed unit counters and inferred phases in unsigned lexicographic ranks.
+/// For multiple cuts, each failed counter tuple also tries a leading constant
+/// phase, charged as a separate rank attempt. It can cover sequential counter
+/// resets only when nonincreasing phase constraints have no positive cycle.
+/// Every feasible transition still proves the complete tuple decreases.
+/// Unit recurrences can update a byte-aligned lane while preserving all other
+/// bits. Multi-cut templates propose endpoint exclusions for such lanes only
+/// after proving them on saved and current arrivals; widening prunes failures
+/// without reseeding them. Full-word ranks and observations remain unchanged.
 /// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
 /// control and rank families outside this bounded search remain unsupported.
 /// Single-cut coverage checks include every originally reachable block and
@@ -327,16 +341,16 @@ struct LowIRLoopAlignmentLimits {
   /// Shared by every inference and proof, including failed attempts. Each
   /// invocation receives the lesser of its stage limit and the remainder.
   uint64_t MaxSolverQueries = 65536;
-  /// Cumulative graph visits, input comparisons and pairing metadata. Charged
-  /// before constructing search containers; child executors keep their own
-  /// operation, path and symbolic-node limits.
+  /// Cumulative graph visits, optional cut-selection work, input comparisons
+  /// and pairing metadata. Charged before constructing search containers;
+  /// child executors keep their operation, path and symbolic-node limits.
   uint64_t MaxSearchWork = 262144;
   /// One shared pool for all retained original/candidate family plans; also
   /// bounds each individual pairing construction. Child inference keeps its
   /// own limits, so this is not a bound on all simultaneously live metadata.
   uint64_t MaxMetadata = 65536;
-  /// Includes default and branch-arm candidate inference, then cyclic
-  /// singletons. Empty or duplicate families still consume an attempt.
+  /// Includes default, broad and filtered branch-arm candidate inference,
+  /// then cyclic singletons. Empty or duplicate families consume an attempt.
   uint32_t MaxCandidateAttempts = 33;
   uint32_t MaxPairingAttempts = 128;
   uint32_t MaxCuts = 3;
@@ -367,12 +381,16 @@ struct LowIRLoopAlignmentResult {
   }
 };
 
-/// Search default and branch-arm self-plans on both sides, first pairing the
-/// same families, then crossing them. Branch-arm cuts preserve action phases;
-/// greedy additions cover any remaining cycles. Family successes and failures
-/// are cached. Then try individual cyclic candidate entries against available
-/// original plans. Cut permutations are lazy; this does not enumerate every
-/// feedback set or rank family. Standalone default inference is unchanged.
+/// Search default, broad and filtered branch-arm self-plans on both sides,
+/// first pairing the same families, then crossing them. The filtered family
+/// omits branches whose paths all reconverge at a nonterminal node before any
+/// DFS backedge boundary; exits and boundary successors remain in the test.
+/// Branch-arm cuts preserve action phases; greedy additions cover remaining
+/// cycles. Cache successes and failures under one retained-metadata budget;
+/// optional families skip cuts duplicated by any already cached self-plan.
+/// Then try individual cyclic candidate entries against available original
+/// plans. Cut permutations are lazy; this does not enumerate every feedback
+/// set or rank family. Standalone default inference is unchanged.
 /// Only same-width frame inputs at identical offsets are proposed equal.
 /// Register renaming, different layouts and affine relations remain explicit
 /// pairing tasks. All proposals go through pairLowIRLoopRefinementPlans and

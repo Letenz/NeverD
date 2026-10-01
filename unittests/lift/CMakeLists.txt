@@ -126,8 +126,12 @@ add_neverd_unittest(NeverDLiftTests
   core/HighSourceRangeTests.cpp
   core/ObjCCallHintTests.cpp
   core/ObjCScrollViewCallTests.cpp
+  core/ObjCViewControllerCallTests.cpp
+  core/ObjCIOSSDKCallTests.cpp
   core/SwiftTypeNameCallTests.cpp
   core/SwiftNSCoderCallTests.cpp
+  core/SwiftCombineCallTests.cpp
+  core/SwiftStringValueCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp
@@ -135,6 +139,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCStorageTests.cpp
   core/HighCSourceCallTests.cpp
   core/NativeSourceHintsTests.cpp
+  core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
@@ -987,6 +992,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
   core/NativeSourceHintsTests.cpp
+  core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
@@ -996,8 +1002,12 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCBlocksTests.cpp
   core/ObjCCallHintTests.cpp
   core/ObjCScrollViewCallTests.cpp
+  core/ObjCViewControllerCallTests.cpp
+  core/ObjCIOSSDKCallTests.cpp
   core/SwiftTypeNameCallTests.cpp
   core/SwiftNSCoderCallTests.cpp
+  core/SwiftCombineCallTests.cpp
+  core/SwiftStringValueCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp

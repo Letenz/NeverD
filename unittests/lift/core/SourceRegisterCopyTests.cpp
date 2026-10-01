@@ -239,6 +239,222 @@ void stackStoreLeaf(CopyFixture &F) {
   F.run();
 }
 
+void receiverTail(CopyFixture &F) {
+  constantStrings(F);
+  F.Image.Sections[0].Name = "__objc_stubs";
+  auto *Header = reinterpret_cast<llvm::MachO::mach_header_64 *>(
+      F.Image.Segments[0].Data.data());
+  auto *Text = reinterpret_cast<llvm::MachO::segment_command_64 *>(Header + 1);
+  auto *Raw = reinterpret_cast<llvm::MachO::section_64 *>(Text + 1);
+  std::strcpy(Raw->sectname, "__objc_stubs");
+  F.Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/usr/lib/libobjc.A.dylib"};
+  F.Image.ObjCSourceReferences[0x2110] = {
+      ObjCSourceReference::Kind::Selector, 0x2110, 8, "hash", {}};
+  F.Image.ImportPtrSlots[0x2180] = "_objc_msgSend";
+  ASSERT_TRUE(F.Image.recordDyldBindSlot(0x2180, "_objc_msgSend", 0,
+                                         "/usr/lib/libobjc.A.dylib", false));
+  const uint32_t Stub[] = {0xb0000001, 0xf9408821, 0xb0000010, 0xf940c210,
+                           0xd61f0200};
+  for (unsigned I = 0; I < std::size(Stub); ++I)
+    F.word(0x1280 + I * 4, Stub[I]);
+  F.word(F.Leaf, 0xaa1503e0); // MOV x0, x21.
+  F.word(F.Leaf + 4, 0x14000000u | ((0x1280 - (F.Leaf + 4)) / 4));
+  const uint32_t Body[] = {
+      0xa9be7bfd, 0xa90157f6, 0xaa0003f5, 0xaa0103e0, F.branch(F.Root + 16),
+      0xa94157f6, 0xa8c27bfd, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word(F.Root + I * 4, Body[I]);
+  F.Signature.Parameters = {{"receiver", NdType::makePtr(NdType::makeVoid())},
+                            {"other", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Signature, Arch::AArch64, Error));
+  F.run();
+}
+
+TEST(SourceObjCArgumentTail, UsesSavedReceiverAndRevalidatesMachineBridge) {
+  CopyFixture F;
+  receiverTail(F);
+  const auto Tail = objcArgumentTailCall(F.Image, F.Leaf);
+  ASSERT_TRUE(Tail);
+  EXPECT_EQ(Tail->SourceRegister, 21U * 8);
+  EXPECT_EQ(Tail->DestinationRegister, 0U);
+  EXPECT_EQ(Tail->SelectorStub, 0x1280U);
+  const auto Hints = buildObjCSourceCallHints(F.Image, F.low());
+  const auto Found = Hints.find(F.Root + 16);
+  ASSERT_NE(Found, Hints.end());
+  EXPECT_EQ(Found->second.Signature.Parameters[0].Location.RegisterOffset,
+            21U * 8);
+  const HighExpr *Message = nullptr;
+  walkStmts(F.high().Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && E->Kind == ExprKind::Call && E->SourceCallHint &&
+          E->SourceCallHint->CallKind == SourceCallTypeHint::Kind::ObjCMessage)
+        Message = E.get();
+    });
+  });
+  ASSERT_NE(Message, nullptr);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Message, F.Image, {}));
+  const auto Original = F.Image;
+  for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    if (Mutation == 0)
+      F.word(F.Leaf, 0xaa1603e0); // Different saved receiver.
+    if (Mutation == 1)
+      F.word(F.Leaf, 0x2a1503e0); // Partial-width move.
+    if (Mutation == 2)
+      F.word(F.Leaf, 0xaa1507e0); // Shifted move.
+    if (Mutation == 3)
+      F.word(F.Leaf + 4, 0x94000000u | ((0x1280 - (F.Leaf + 4)) / 4));
+    if (Mutation == 4)
+      F.Image.CodePtrRelocSlots.insert(F.Leaf);
+    if (Mutation == 5)
+      F.Image.DyldBindSlots[0x2180].WeakImport = true;
+    if (Mutation == 6)
+      F.Image.DyldBindSlots[0x2180].Module = "/usr/lib/other.dylib";
+    if (Mutation == 7)
+      F.Image.Symbols.push_back({"interior", F.Leaf + 4, 4, true});
+    if (Mutation == 8)
+      F.Image.ObjCSourceReferences[0x2110].Name = "count";
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Message, F.Image, {}));
+    F.Image = Original;
+  }
+}
+
+TEST(SourceObjCArgumentTail, GeneratedCUsesReceiverOnceAndPreservesResult) {
+#ifndef NEVERD_TEST_CLANG
+  GTEST_SKIP() << "clang is unavailable";
+#else
+  CopyFixture F;
+  receiverTail(F);
+  auto Bound = sdk::bindObjCSourceReferences(F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  auto High = std::move(Bound.Function);
+  High.Name = "receiver_root";
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.EmitComments = false;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Source += R"C(
+extern unsigned receiver_calls(void);
+int main(void) {
+  const uintptr_t values[] = {0, 1, 17, 0x7fffffffULL, 0x8000000000000000ULL,
+                              0xffffffffffffffffULL, 0xabcdef0123456789ULL};
+  unsigned count = 0;
+  for (unsigned i = 0; i < 7; ++i) for (unsigned j = 0; j < 7; ++j) {
+    uintptr_t self = values[i], other = values[j];
+    uint64_t expected = self ? (uint64_t)self ^ 0x781234abcdef9876ULL : 0;
+    if (receiver_root((void *)self, (void *)other) != expected ||
+        receiver_calls() != ++count) return 1;
+  }
+  return 0;
+}
+)C";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-receiver-tail", Directory));
+  const std::filesystem::path Work(Directory.c_str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code Error;
+      std::filesystem::remove_all(Work, Error);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "source.c").string();
+  const auto Runtime = (Work / "runtime.c").string();
+  const auto Executable = (Work / "source").string();
+  const auto ErrorPath = (Work / "stderr").string();
+  std::ofstream(Path) << Source;
+  std::ofstream(Runtime) << R"C(
+#include <stdint.h>
+static unsigned calls;
+unsigned receiver_calls(void) { return calls; }
+uint64_t objc_msgSend(void *receiver, void *selector) {
+  (void)selector;
+  ++calls;
+  return receiver ? (uint64_t)(uintptr_t)receiver ^ 0x781234abcdef9876ULL : 0;
+}
+void *sel_registerName(const char *name) { return (void *)name; }
+)C";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    const std::string Compiler = NEVERD_TEST_CLANG;
+    const std::vector<std::string> Arguments{Compiler,  "-std=c11", Level,
+                                             "-Werror", Path,       Runtime,
+                                             "-o",      Executable};
+    const std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, ErrorPath};
+    std::string Error;
+    const auto Status = llvm::sys::ExecuteAndWait(Compiler, Refs, std::nullopt,
+                                                  Redirects, 60, 0, &Error);
+    const auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Status, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "")
+                         << Source;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                        Redirects, 30, 0, &Error),
+              0)
+        << Error << Source;
+  }
+#endif
+}
+
+TEST(SourceObjCArgumentTail, BindsLiteralFormatFromSavedArgumentRegister) {
+  CopyFixture F;
+  receiverTail(F);
+  F.Image.ObjCSourceReferences[0x2110].Name =
+      "handleFailureInMethod:object:file:lineNumber:description:";
+  F.word(F.Leaf, 0xaa1703e6); // MOV x6, x23.
+  const uint32_t Body[] = {
+      0xa9be7bfd,
+      0xa9015ff8,
+      pageAddress(F.Root + 8, 0x2040, 23),
+      completeAddress(23, 23, 0x2040),
+      0xaa0103e6, // x6 deliberately disagrees with the saved format.
+      0xaa0103e3,
+      0xd2800002,
+      pageAddress(F.Root + 28, 0x2060, 4),
+      completeAddress(4, 4, 0x2060),
+      0xd2800545,
+      F.branch(F.Root + 40),
+      0xa9415ff8,
+      0xa8c27bfd,
+      0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word(F.Root + I * 4, Body[I]);
+  F.Signature.ReturnType = NdType::makeVoid();
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Signature, Arch::AArch64, Error));
+  F.run();
+  const auto Hints = buildObjCSourceCallHints(F.Image, F.low());
+  const auto Found = Hints.find(F.Root + 40);
+  ASSERT_NE(Found, Hints.end());
+  const auto &Hint = Found->second;
+  ASSERT_TRUE(Hint.Format);
+  EXPECT_EQ(Hint.Format->FormatAddress, 0x2040U);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 7U);
+  EXPECT_EQ(Hint.Signature.Parameters[6].Location.RegisterOffset, 23U * 8);
+  EXPECT_EQ(Hint.Signature.Parameters[0].Location.RegisterOffset, 0U);
+  const auto Bound = sdk::bindObjCSourceReferences(F.high(), F.Image);
+  EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  unsigned Messages = 0;
+  walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && E->Kind == ExprKind::Call && E->SourceCallHint &&
+          E->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::ObjCMessage) {
+        ++Messages;
+        EXPECT_TRUE(sdk::objcSourceCallBound(*E, F.Image, {}));
+      }
+    });
+  });
+  EXPECT_EQ(Messages, 1U);
+}
+
 TEST(SourceRegisterCopy, StackStoreRetainsItsOwnValueAndRequiresAFrame) {
   CopyFixture F;
   stackStoreLeaf(F);

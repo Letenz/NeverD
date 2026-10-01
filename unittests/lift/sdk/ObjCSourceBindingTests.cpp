@@ -2339,6 +2339,354 @@ TEST(ObjCSourceBindings, SwiftWitnessTableNeedsOneExactReadOnlyExport) {
       bindObjCSourceReferences(Function, Image).SwiftWitnessTables.empty());
 }
 
+namespace {
+struct PrivateSwiftWitnessFixture {
+  static constexpr va_t Conformance = 0x4060, Protocol = 0x40a0;
+  static constexpr va_t Type = 0x4100, Module = 0x4140, Registration = 0x4300;
+  static constexpr va_t Metadata = 0x6000, Table = 0x6420,
+                        ProtocolSlot = 0x6470;
+  const std::string Name = "_$s14WitnessFixture5StoreCAA5ProtoAAWP";
+  const std::string ProtocolName = "_$s14WitnessFixture5ProtoMp";
+  const std::string ClassName = "_TtC14WitnessFixture5Store";
+  BinaryImage Image;
+  HighFunc Function;
+
+  explicit PrivateSwiftWitnessFixture(bool IndirectProtocol = true) {
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.MachOTwoLevelNamespace = true;
+    for (va_t Base : {va_t(0x4000), va_t(0x6000)}) {
+      Segment Mapping;
+      Mapping.VA = Mapping.FileOff = Base;
+      Mapping.Size = Mapping.FileSz = Base == 0x4000 ? 0x400 : 0x1000;
+      Mapping.Flags = SegmentFlags::Readable;
+      if (Base == 0x6000)
+        Mapping.Flags = Mapping.Flags | SegmentFlags::Writable;
+      Mapping.ReadOnlyAfterRelocations = true;
+      Mapping.Data.resize(Mapping.Size);
+      Image.Segments.push_back(Mapping);
+      Section S;
+      S.VA = S.FileOff = Base;
+      S.Size = S.FileSz = Base == 0x4000 ? 0x300 : 0x1000;
+      S.Flags = Mapping.Flags;
+      Image.Sections.push_back(S);
+    }
+    Section Records;
+    Records.Name = "__swift5_proto";
+    Records.VA = Records.FileOff = Registration;
+    Records.Size = Records.FileSz = 4;
+    Records.Flags = SegmentFlags::Readable;
+    Image.Sections.push_back(Records);
+    relative(Conformance, IndirectProtocol ? ProtocolSlot : Protocol,
+             IndirectProtocol);
+    relative(Conformance + 4, Type);
+    relative(Conformance + 8, Table);
+    put32(Conformance + 12, 0);
+    put32(Protocol, 0x10043);
+    relative(Protocol + 4, Module);
+    relative(Protocol + 8, 0x41d0);
+    put32(Type, 0x80000050);
+    relative(Type + 4, Module);
+    relative(Type + 8, 0x41e0);
+    put32(Module, 0);
+    relative(Module + 8, 0x41f0);
+    text(0x41d0, "Proto");
+    text(0x41e0, "Store");
+    text(0x41f0, "WitnessFixture");
+    relative(Registration, Conformance);
+    pointer(Table, Conformance);
+    pointer(ProtocolSlot, Protocol);
+    pointer(Metadata + 64, Type);
+    pointer(Metadata + 32, 0x6100);
+    pointer(0x6118, 0x6300);
+    text(0x6300, ClassName);
+    ObjCClass Class;
+    Class.Name = ClassName;
+    Class.Address = Metadata;
+    Image.ObjCClasses.push_back(Class);
+    Image.Symbols.push_back({Name, Table, 0, false});
+    Image.Symbols.push_back(
+        {Name.substr(0, Name.size() - 2) + "Mc", Conformance, 0, false});
+    Image.Symbols.push_back({ProtocolName, Protocol, 0, false});
+    Image.Exports.push_back({ProtocolName, 0, Protocol});
+    Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal =
+        HighExpr::makeConst(Table, 8, ConstantAddressProvenance::DataAddress);
+    Function.Body = {Return};
+  }
+  uint8_t *bytes(va_t Address) {
+    for (auto &Segment : Image.Segments)
+      if (Address >= Segment.VA && Address < Segment.VA + Segment.Size)
+        return Segment.Data.data() + Address - Segment.VA;
+    return nullptr;
+  }
+  void put32(va_t Address, uint32_t Value) {
+    llvm::support::endian::write32le(bytes(Address), Value);
+  }
+  void relative(va_t Address, va_t Target, bool Indirect = false) {
+    put32(Address, uint32_t(Target - Address) | unsigned(Indirect));
+  }
+  void pointer(va_t Address, va_t Target) {
+    llvm::support::endian::write64le(bytes(Address), Target);
+    Image.DataPtrRelocSlots.insert(Address);
+    Image.DataPtrRelocTargetOwners[Address] = Image.getSectionFor(Target)->VA;
+  }
+  void text(va_t Address, const std::string &Value) {
+    std::memcpy(bytes(Address), Value.c_str(), Value.size() + 1);
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, PrivateSwiftWitnessUsesRegisteredClassConformance) {
+  for (bool Indirect : {false, true}) {
+    PrivateSwiftWitnessFixture F(Indirect);
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    ASSERT_EQ(Result.SwiftWitnessTables.size(), 1U);
+    const auto Bound = Result.Function.Body[0].RetVal;
+    ASSERT_TRUE(Bound->SourceCallHint);
+    EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+    std::set<std::string> Helpers;
+    const auto Source = renderObjCSwiftWitnessTableHelpers(
+        F.Image, Result.SwiftWitnessTables, Helpers);
+    EXPECT_NE(Source.find("_swift_conformsToProtocol"), std::string::npos);
+    EXPECT_NE(Source.find(F.ProtocolName), std::string::npos);
+    EXPECT_NE(Source.find("objc_getClass(\"" + F.ClassName + "\")"),
+              std::string::npos);
+    EXPECT_EQ(Source.find("__asm__(\"" + F.Name + "\")"), std::string::npos);
+    F.Image.Exports.clear();
+    EXPECT_FALSE(objcSourceCallBound(*Bound, F.Image, {}));
+    EXPECT_THROW(renderObjCSwiftWitnessTableHelpers(
+                     F.Image, Result.SwiftWitnessTables, Helpers),
+                 std::runtime_error);
+  }
+}
+
+TEST(ObjCSourceBindings, PrivateSwiftWitnessRejectsIncompleteIdentityProofs) {
+  for (unsigned Mutation = 0; Mutation < 32; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    PrivateSwiftWitnessFixture F;
+    switch (Mutation) {
+    case 0:
+      F.put32(F.Conformance + 12, 0x100);
+      break;
+    case 1:
+      F.relative(F.Conformance + 8, F.Table + 8);
+      break;
+    case 2:
+      F.pointer(F.Table, F.Conformance + 16);
+      break;
+    case 3:
+      F.pointer(F.Metadata + 64, F.Type + 4);
+      break;
+    case 4:
+      F.put32(F.Type, 0xd0);
+      break;
+    case 5:
+      F.text(0x41e0, "Other");
+      break;
+    case 6:
+      F.text(0x41d0, "Other");
+      break;
+    case 7:
+      F.text(0x41f0, "ForeignModule");
+      break;
+    case 8:
+      F.Image.ObjCClasses.push_back(F.Image.ObjCClasses[0]);
+      break;
+    case 9:
+      F.Image.Exports.clear();
+      break;
+    case 10:
+      F.Image.Exports.push_back({"_alias", 0, F.Protocol});
+      break;
+    case 11:
+      F.Image.Sections.back().Name = "__other";
+      break;
+    case 12:
+      F.relative(F.Registration, F.Conformance + 16);
+      break;
+    case 13:
+      F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+      F.relative(F.Registration + 4, F.Conformance);
+      break;
+    case 14:
+      F.Image.Segments[1].ReadOnlyAfterRelocations = false;
+      break;
+    case 15:
+      F.Image.DataPtrRelocTargetOwners.erase(F.ProtocolSlot);
+      break;
+    case 16:
+      F.put32(F.Conformance + 12, 0x80);
+      break;
+    case 17:
+      F.put32(F.Conformance + 12, 0x40);
+      break;
+    case 18:
+      F.put32(F.Conformance + 12, 0x20000);
+      break;
+    case 19:
+      F.put32(F.Type + 4, 1);
+      break;
+    case 20:
+      F.Image.Sections.push_back(F.Image.Sections[0]);
+      break;
+    case 21:
+      F.Image.Symbols.back().Name = "_$s14WitnessFixture5OtherMp";
+      F.Image.Exports[0].Name = F.Image.Symbols.back().Name;
+      break;
+    case 22:
+      F.text(0x6300, "_TtC14WitnessFixture5Other");
+      break;
+    case 23:
+    case 24:
+    case 25:
+    case 26:
+      F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+      F.relative(F.Registration + 4, 0x4080);
+      F.relative(0x4080, F.Protocol);
+      F.relative(0x4084, F.Type);
+      F.relative(0x4088, F.Table + 16);
+      F.put32(0x408c, (Mutation - 23) << 3);
+      if (Mutation == 24 || Mutation == 26) {
+        F.relative(0x4084, 0x64a0);
+        F.pointer(0x64a0, Mutation == 24 ? F.Type : F.Metadata);
+      } else if (Mutation == 25) {
+        F.relative(0x4084, 0x41a0);
+        F.text(0x41a0, F.ClassName);
+      }
+      break;
+    case 27:
+      F.Image.Sections.back().FileSz = 3;
+      break;
+    case 28:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 29:
+      F.put32(F.Module + 4, 4);
+      break;
+    case 30:
+      F.put32(F.Type, 0x80000150);
+      break;
+    case 31:
+      F.Image.DataPtrRelocSlots.insert(F.Conformance);
+      break;
+    }
+    EXPECT_FALSE(
+        objc_binding_detail::swiftWitnessTableAddressHint(F.Image, F.Table));
+  }
+}
+
+TEST(ObjCSourceBindings, PrivateSwiftWitnessDistinguishesImportedTypeRecords) {
+  PrivateSwiftWitnessFixture F;
+  F.Image.Sections[2].Size = F.Image.Sections[2].FileSz = 8;
+  F.relative(F.Registration + 4, 0x4080);
+  F.relative(0x4080, F.Protocol);
+  F.relative(0x4084, 0x64a0);
+  F.relative(0x4088, F.Table + 16);
+  F.put32(0x408c, 8); // Indirect nominal descriptor.
+  F.Image.Sections[1].Size = F.Image.Sections[1].FileSz = 0x4a0;
+  Section Got;
+  Got.Name = "__got";
+  Got.VA = Got.FileOff = 0x64a0;
+  Got.Size = Got.FileSz = 8;
+  Got.Flags = SegmentFlags::Readable;
+  Got.Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
+  F.Image.Sections.push_back(Got);
+  const std::string Name = "_$s10Foundation3URLVMn";
+  F.Image.ImportPtrSlots[Got.VA] = Name;
+  F.Image.DyldBindSlots[Got.VA] = {
+      Name, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+      false};
+  ASSERT_TRUE(
+      objc_binding_detail::swiftWitnessTableAddressHint(F.Image, F.Table));
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Image = F.Image;
+    if (Mutation == 0)
+      Image.Exports.push_back({"_exported_type", 0, F.Type});
+    if (Mutation == 1)
+      Image.Exports.push_back({"_exported_metadata", 0, F.Metadata});
+    if (Mutation == 2)
+      Image.DyldBindSlots[Got.VA].WeakImport = true;
+    if (Mutation == 3)
+      Image.ConflictingImportStorageSlots.insert(Got.VA);
+    EXPECT_FALSE(
+        objc_binding_detail::swiftWitnessTableAddressHint(Image, F.Table))
+        << Mutation;
+  }
+}
+
+TEST(ObjCSourceBindings, PrivateSwiftWitnessHelperPreservesRuntimeIdentity) {
+  PrivateSwiftWitnessFixture F;
+  const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_EQ(Bound.SwiftWitnessTables.size(), 1U);
+  std::set<std::string> Helpers;
+  std::string Source = "#include <stdint.h>\n#include <string.h>\n" +
+                       renderObjCSwiftWitnessTableHelpers(
+                           F.Image, Bound.SwiftWitnessTables, Helpers);
+  Source += R"(
+static unsigned char metadata, table;
+unsigned char protocol[1] __asm__("_$s14WitnessFixture5ProtoMp") = {0};
+static unsigned queries, classes;
+void *objc_getClass(const char *name) {
+  if (strcmp(name, "_TtC14WitnessFixture5Store")) __builtin_trap();
+  ++classes;
+  return &metadata;
+}
+const void *query(const void *, const void *) __asm__("_swift_conformsToProtocol");
+const void *query(const void *type, const void *descriptor) {
+  if (type != &metadata || descriptor != protocol) __builtin_trap();
+  ++queries;
+  return &table;
+}
+int main(void) {
+  for (unsigned i = 0; i < 1024; ++i)
+    if ((void *)neverd_swift_witness_table_6420_address() != &table) return 1;
+  return queries == 1024 && classes == 1024 ? 0 : 2;
+}
+)";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-private-witness",
+                                                    Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code Error;
+      std::filesystem::remove_all(Work, Error);
+    }
+  } Cleanup{Work};
+  std::filesystem::create_directories(Work / "objc");
+  std::ofstream(Work / "objc/runtime.h")
+      << "void *objc_getClass(const char *);\n";
+  const auto Path = (Work / "witness.c").string();
+  const auto Executable = (Work / "witness").string();
+  const auto ErrorPath = (Work / "stderr").string();
+  std::ofstream(Path) << Source;
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    const std::vector<std::string> Arguments{
+        Compiler,      "-std=c11", Optimization, "-Werror", "-I",
+        Work.string(), Path,       "-o",         Executable};
+    std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, ErrorPath};
+    std::string Error;
+    const auto Status = llvm::sys::ExecuteAndWait(Compiler, Refs, std::nullopt,
+                                                  Redirects, 60, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Status, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "");
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                        Redirects, 30, 0, &Error),
+              0)
+        << Error;
+  }
+}
+
 TEST(ObjCSourceBindings, SwiftSingletonMetadataRejectsForgedProvider) {
   SwiftSingletonDescriptorFixture F;
   F.Image.DyldBindSlots[F.RuntimeSlot].Module = "/tmp/foreign.dylib";
@@ -4906,6 +5254,147 @@ TEST(ObjCSourceBindings, SwiftLiteralStoragePreservesBytesAndConsumerIdentity) {
           bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
     }
   }
+}
+
+TEST(ObjCSourceBindings, SwiftInlineStringValidatesBothWords) {
+  for (const std::string Text :
+       {std::string(), std::string("url"), std::string("abcdefgh"),
+        std::string("abcdefghijklmno"), std::string("caf\xc3\xa9"),
+        std::string("\xe4\xb8\xad\xf0\x9f\x8c\x8d"), std::string("a\0b", 3)}) {
+    std::array<uint8_t, 16> Bytes{};
+    std::copy(Text.begin(), Text.end(), Bytes.begin());
+    const bool ASCII = std::all_of(Text.begin(), Text.end(), [](char C) {
+      return static_cast<unsigned char>(C) < 0x80;
+    });
+    Bytes[15] = (ASCII ? 0xe0 : 0xa0) | Text.size();
+    const auto Word = llvm::support::endian::read64le(Bytes.data());
+    const auto Storage = llvm::support::endian::read64le(Bytes.data() + 8);
+    EXPECT_TRUE(isCanonicalSwiftSmallString(Word, Storage));
+    EXPECT_FALSE(
+        isCanonicalSwiftSmallString(Word, Storage ^ (UINT64_C(1) << 62)));
+    EXPECT_FALSE(
+        isCanonicalSwiftSmallString(Word, Storage | (UINT64_C(1) << 60)));
+    if (Text.size() < 15) {
+      Bytes[Text.size()] = 1;
+      EXPECT_FALSE(isCanonicalSwiftSmallString(
+          llvm::support::endian::read64le(Bytes.data()),
+          llvm::support::endian::read64le(Bytes.data() + 8)));
+    }
+  }
+  for (const auto InvalidUTF8 :
+       {UINT64_C(0x80), UINT64_C(0xc3), UINT64_C(0xafc0), UINT64_C(0x80a0ed)}) {
+    SCOPED_TRACE(InvalidUTF8);
+    const unsigned Count = InvalidUTF8 <= 0xff     ? 1
+                           : InvalidUTF8 <= 0xffff ? 2
+                                                   : 3;
+    EXPECT_FALSE(isCanonicalSwiftSmallString(InvalidUTF8,
+                                             (UINT64_C(0xa0) | Count) << 56));
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftInlineStringPayloadIsLocalToItsExactConsumer) {
+  using P = ConstantAddressProvenance;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto Provenance : {P::Unknown, P::Scalar}) {
+      SwiftLiteralFixture F(Architecture);
+      // Two ASCII bytes happen to occupy an unrelated mapped-image address.
+      const auto Word = HighExpr::makeConst(0x1041, 8, Provenance);
+      const auto Storage =
+          HighExpr::makeConst(UINT64_C(0xe200000000000000), 8, Provenance);
+      F.Call->Operands = {Word, Storage};
+      const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      EXPECT_TRUE(Result.BorrowedBytes.empty());
+      const auto Bound = Result.Function.Body[0].RetVal;
+      ASSERT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+      for (unsigned I = 0; I < 2; ++I) {
+        EXPECT_EQ(Bound->Operands[I]->Kind, ExprKind::Const);
+        EXPECT_EQ(Bound->Operands[I]->ConstVal, F.Call->Operands[I]->ConstVal);
+        EXPECT_EQ(Bound->Operands[I]->ConstProvenance, P::Scalar);
+        EXPECT_EQ(F.Call->Operands[I]->ConstProvenance, Provenance);
+      }
+      F.Function.Body[0].RetVal =
+          HighExpr::makeBinop(NdOp::INT_OR, F.Call, Word);
+      EXPECT_FALSE(
+          bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+    }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftInlineStringRejectsUnprovenConsumerAndAddressWords) {
+  using P = ConstantAddressProvenance;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      SwiftLiteralFixture F(Architecture);
+      auto Word = HighExpr::makeConst(0x1041, 8, P::Scalar);
+      auto Storage =
+          HighExpr::makeConst(UINT64_C(0xe200000000000000), 8, P::Scalar);
+      F.Call->Operands = {Word, Storage};
+      auto Hint = std::make_shared<SourceCallTypeHint>(*F.Call->SourceCallHint);
+      F.Call->SourceCallHint = Hint;
+      switch (Mutation) {
+      case 0:
+        Word->ConstProvenance = P::DataAddress;
+        break;
+      case 1:
+        Word->ConstProvenance = P::CodeAddress;
+        break;
+      case 2:
+        Word->AddressOwnerVA = Word->ConstVal;
+        break;
+      case 3:
+        Storage->ConstProvenance = P::DataAddress;
+        break;
+      case 4:
+        Storage->AddressOwnerVA = 0x1041;
+        break;
+      case 5:
+        Storage->ConstVal = UINT64_C(0xe100000000000000);
+        break;
+      case 6:
+        Storage->ConstVal = UINT64_C(0xa200000000000000);
+        break;
+      case 7:
+        F.Image.DyldBindSlots[F.ImportSlot].Module = "/tmp/Foundation";
+        break;
+      case 8:
+        F.Image.DyldBindSlots[F.ImportSlot].WeakImport = true;
+        break;
+      case 9:
+        F.Image.DyldBindSlots[F.ImportSlot].Addend = 8;
+        break;
+      case 10:
+        Hint->SwiftStringInputs = {{1, 0}};
+        break;
+      case 11:
+        Hint->SwiftStringInputs.clear();
+        break;
+      case 12:
+        F.Call->IsIndirectCall = true;
+        break;
+      case 13:
+        Word->Type = NdType::makeInt(4, false);
+        break;
+      case 14:
+        Storage->Operands.push_back(HighExpr::makeConst(0, 8));
+        break;
+      case 15:
+        Storage->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 16:
+        Storage->IndirectTarget = HighExpr::makeConst(0, 8);
+        break;
+      case 17:
+        F.Call->Operands.push_back(HighExpr::makeConst(0, 8));
+        break;
+      case 18:
+        Hint->Signature.Parameters[0].Type = NdType::makeFloat(8);
+        break;
+      }
+      EXPECT_FALSE(
+          bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+    }
 }
 
 TEST(ObjCSourceBindings,

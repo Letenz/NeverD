@@ -27,6 +27,16 @@ bool objcSelectorStubMatches(const BinaryImage &Image, va_t Address,
                              va_t SelectorReferenceAddress,
                              llvm::StringRef Selector);
 
+struct ObjCArgumentTailCall {
+  va_t SelectorStub = 0;
+  uint64_t SourceRegister = 0;
+  uint64_t DestinationRegister = 0;
+};
+/// Exact local MOV x0/x2..x7, x19..x28 followed by B to a strong selector stub.
+/// Only one physical argument moves; its type still needs a declaration.
+std::optional<ObjCArgumentTailCall>
+objcArgumentTailCall(const BinaryImage &Image, va_t Address);
+
 /// Authenticate an exact selector-loading objc_msgSend stub and return its
 /// declared dynamic-format signature only when the call has no variadic tail.
 /// The caller must independently prove that its actual argument count equals

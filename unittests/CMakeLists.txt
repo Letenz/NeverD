@@ -188,7 +188,9 @@ add_subdirectory(debug)
 add_subdirectory(libc)
 add_subdirectory(lift)
 add_subdirectory(translate)
-add_subdirectory(semantic)
+if(NEVERD_ENABLE_SEMANTIC_TESTS)
+  add_subdirectory(semantic)
+endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(emulation)
 endif()
@@ -223,13 +225,15 @@ add_custom_target(check-neverd
   COMMENT "Running all NeverD tests via CTest")
 
 # Semantic roundtrip + rewrite only (ctest -L selects this binary's cases).
-add_custom_target(check-neverd-semantic
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
-          -L NeverDSemanticTests
-          --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
-  DEPENDS NeverDSemanticTests ${_neverd_run_deps}
-  USES_TERMINAL
-  COMMENT "Running NeverDSemanticTests via CTest")
+if(TARGET NeverDSemanticTests)
+  add_custom_target(check-neverd-semantic
+    COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
+            -L NeverDSemanticTests
+            --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
+    DEPENDS NeverDSemanticTests ${_neverd_run_deps}
+    USES_TERMINAL
+    COMMENT "Running NeverDSemanticTests via CTest")
+endif()
 
 # Solana SBF loader, ISA, analysis, LLVM, C/Rust, and public API coverage.
 get_property(_neverd_sbf_test_targets GLOBAL PROPERTY NEVERD_SBF_TEST_TARGETS)
@@ -246,13 +250,15 @@ add_custom_target(check-neverd-sbf
 
 # Instruction-substitution (patch) equivalence only: verifies the --subst /
 # neverd_patch_full transform preserves semantics across 4 ISAs x 3 formats.
-add_custom_target(check-neverd-patch-full
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
-          -L NeverDPatchFullTests
-          --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
-  DEPENDS NeverDPatchFullTests ${_neverd_run_deps}
-  USES_TERMINAL
-  COMMENT "Running NeverDPatchFullTests via CTest")
+if(TARGET NeverDPatchFullTests)
+  add_custom_target(check-neverd-patch-full
+    COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
+            -L NeverDPatchFullTests
+            --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
+    DEPENDS NeverDPatchFullTests ${_neverd_run_deps}
+    USES_TERMINAL
+    COMMENT "Running NeverDPatchFullTests via CTest")
+endif()
 
 if(TARGET NeverDWindowsEHCorpusTests)
   add_custom_target(check-neverd-windows-eh-corpus
@@ -328,31 +334,37 @@ endif()
 
 # Switch / jump-table transformation probing only: a small standalone binary so
 # transformation + backend bugs can be hunted incrementally (ctest -L selects it).
-add_custom_target(check-neverd-switch-xform
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
-          -L NeverDSwitchXformTests
-          --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
-  DEPENDS NeverDSwitchXformTests ${_neverd_run_deps}
-  USES_TERMINAL
-  COMMENT "Running NeverDSwitchXformTests via CTest")
+if(TARGET NeverDSwitchXformTests)
+  add_custom_target(check-neverd-switch-xform
+    COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
+            -L NeverDSwitchXformTests
+            --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
+    DEPENDS NeverDSwitchXformTests ${_neverd_run_deps}
+    USES_TERMINAL
+    COMMENT "Running NeverDSwitchXformTests via CTest")
+endif()
 
 # CFG / loop structuring transformation probing only: standalone binary hunting
 # lift->Med->High control-flow reconstruction + backend re-lowering bugs
 # incrementally (ctest -L selects this binary's cases).
-add_custom_target(check-neverd-cfgloop-xform
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
-          -L NeverDCFGLoopXformTests
-          --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
-  DEPENDS NeverDCFGLoopXformTests ${_neverd_run_deps}
-  USES_TERMINAL
-  COMMENT "Running NeverDCFGLoopXformTests via CTest")
+if(TARGET NeverDCFGLoopXformTests)
+  add_custom_target(check-neverd-cfgloop-xform
+    COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
+            -L NeverDCFGLoopXformTests
+            --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
+    DEPENDS NeverDCFGLoopXformTests ${_neverd_run_deps}
+    USES_TERMINAL
+    COMMENT "Running NeverDCFGLoopXformTests via CTest")
+endif()
 
 # Adjacent PIC jump-table probing only: standalone binary hunting the
 # resolver's adjacent-unguarded-table run over-read incrementally.
-add_custom_target(check-neverd-twotable-xform
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
-          -L NeverDTwoTableXformTests
-          --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
-  DEPENDS NeverDTwoTableXformTests ${_neverd_run_deps}
-  USES_TERMINAL
-  COMMENT "Running NeverDTwoTableXformTests via CTest")
+if(TARGET NeverDTwoTableXformTests)
+  add_custom_target(check-neverd-twotable-xform
+    COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}
+            -L NeverDTwoTableXformTests
+            --output-on-failure --progress -j ${_neverd_ncpu} -C $<CONFIG>
+    DEPENDS NeverDTwoTableXformTests ${_neverd_run_deps}
+    USES_TERMINAL
+    COMMENT "Running NeverDTwoTableXformTests via CTest")
+endif()

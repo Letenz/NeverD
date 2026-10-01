@@ -7,8 +7,13 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
@@ -28,7 +33,6 @@ namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
 void eliminateUnusedValues(std::vector<HighStmt> &);
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
-void foldStructuredContinuations(HighFunc &, const MedFunc * = nullptr);
 } // namespace neverd
 
 namespace {
@@ -141,6 +145,166 @@ void compileAndRun(const std::string &Source,
                                       : "")
                     << "\n"
                     << Source;
+}
+
+MedFunc savedFloatingRecord(unsigned Calls, bool ReplaceFirst = false,
+                            bool ReadUpper = false) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Pair =
+      NdType::makeStruct({NdType::makeFloat(8), NdType::makeFloat(8)});
+  const auto Record = NdType::makeStruct({Pair, Pair});
+  SourceFunctionTypeHint Entry, Callee;
+  Entry.ReturnType = Record;
+  Entry.Parameters = {{"value", Record}};
+  Callee.ReturnType = NdType::makeVoid();
+  std::string Error;
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Entry, Arch::AArch64, Error)) << Error;
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Callee, Arch::AArch64, Error))
+      << Error;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "saved_record";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  auto Append = [&](NdOp Code, NdVar Out, std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Code;
+    Op.Addr = Low.Entry + Block.Ops.size() * 4;
+    Op.Output = Out;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Block.Ops.push_back(Op);
+  };
+  auto Saved = [&](unsigned I) {
+    return NdVar::reg(TRI.VecRegBase + (8 + I) * TRI.VecRegStride, 16);
+  };
+  for (unsigned I = 0; I < 4; ++I)
+    Append(NdOp::COPY, Saved(I), {NdVar::reg(TRI.FPParamRegs[I], 16)});
+  for (unsigned I = 0; I < Calls; ++I) {
+    Append(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)});
+    if (ReplaceFirst && I == Calls / 2)
+      Append(NdOp::COPY, Saved(0), {Saved(1)});
+  }
+  for (unsigned I = 0; I < 4; ++I) {
+    if (ReadUpper && I == 0)
+      Append(NdOp::SUBBYTES, NdVar::reg(TRI.FPReturnReg, 8),
+             {Saved(I), NdVar::cst(8, 4)});
+    else
+      Append(NdOp::COPY, NdVar::reg(TRI.FPParamRegs[I], 16), {Saved(I)});
+  }
+  Append(NdOp::RETURN, {}, {});
+  Block.EndAddr = Low.Entry + Block.Ops.size() * 4;
+  Low.Blocks.push_back(Block);
+  const std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Entry},
+                                                     {0x2000, Callee}};
+  LowToMedConverter Converter;
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Hints);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  recoverCallAbi(Med, Arch::AArch64, {{0x2000, "observe_call"}});
+  inferMedTypes(Med, Arch::AArch64);
+  EXPECT_TRUE(verifyMedFunc(Med, "saved-floating-record"));
+  return Med;
+}
+
+HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
+  const std::map<va_t, std::string> Names{{0x2000, "observe_call"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  return Converter.convert(Med, Arch::AArch64);
+}
+
+TEST(HighCSourceCalls, SavedFloatingRecordSurvivesLongCallChains) {
+  for (unsigned Calls : {1U, 20U, 64U})
+    for (bool ReplaceFirst : {false, true}) {
+      SCOPED_TRACE(Calls);
+      SCOPED_TRACE(ReplaceFirst);
+      auto Med = savedFloatingRecord(Calls, ReplaceFirst);
+      if (Calls == 64)
+        std::reverse(Med.CallClobbers.begin(), Med.CallClobbers.end());
+      ASSERT_TRUE(Med.SourceTypeHint);
+      const auto High = lowerSavedFloatingRecord(Med);
+      ASSERT_TRUE(High.SourceTypeHint);
+      const auto Source = emit({High}, true, Arch::AArch64);
+      ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      const auto Program = "#include <string.h>\n" + Source + "\ntypedef " +
+                           typeToC(High.ReturnType) +
+                           " Record;\n#define CALLS " + std::to_string(Calls) +
+                           "\n#define REPLACE " + std::to_string(ReplaceFirst) +
+                           R"(
+static unsigned calls;
+void observe_call(void) { ++calls; }
+int main(void) {
+    const double values[] = {-0.0, 0.0, -37.5, 0.125, 1048576.25};
+    for (unsigned i = 0; i < 5; ++i) {
+        Record input = {{values[i], values[(i + 1) % 5]},
+                        {values[(i + 2) % 5], values[(i + 3) % 5]}};
+        unsigned before = calls;
+        Record actual = saved_record(input);
+        Record expected = input;
+        if (REPLACE) expected.field_0.field_0 = input.field_0.field_1;
+        if (calls - before != CALLS) return 1;
+        if (memcmp(&actual, &expected, sizeof(actual))) return 2;
+    }
+    return 0;
+}
+)";
+      for (const char *Optimization : {"-O0", "-O2"})
+        compileAndRun(Program, {Optimization});
+    }
+}
+
+TEST(HighCSourceCalls, CallClobberedVectorSuffixStaysUnknown) {
+  for (unsigned Calls : {1U, 20U, 64U}) {
+    SCOPED_TRACE(Calls);
+    const auto Med = savedFloatingRecord(Calls, false, true);
+    const auto Source =
+        emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64);
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCSourceCalls, BrokenPreservedPrefixChainsRemainUnknown) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Med = savedFloatingRecord(3);
+    std::vector<MedCallClobber *> Saved;
+    for (auto &Clobber : Med.CallClobbers)
+      if (Clobber.Value.RegOff == TRI.VecRegBase + 8 * TRI.VecRegStride)
+        Saved.push_back(&Clobber);
+    ASSERT_EQ(Saved.size(), 3U);
+    switch (Mutation) {
+    case 0:
+      Saved[1]->PreservedPrefixSize = 0;
+      Saved[1]->PreservedInput = {};
+      break;
+    case 1:
+      Saved[1]->PreservedPrefixSize = 4;
+      break;
+    case 2:
+      Saved[0]->PreservedInput = Saved[2]->Value;
+      break;
+    case 3:
+      Saved[1]->PreservedInput.RegOff += TRI.VecRegStride;
+      break;
+    case 4:
+      Saved[1]->PreservedInput.Size = 8;
+      break;
+    case 5:
+      Saved[1]->PreservedInput.TheArch = Arch::X64;
+      break;
+    }
+    // The first two are valid partial-value records; the remaining cases
+    // also require bounded, conservative handling of malformed input.
+    if (Mutation < 2)
+      ASSERT_TRUE(verifyMedFunc(Med, "reduced-preserved-prefix"));
+    const auto Source =
+        emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64);
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
@@ -407,6 +571,166 @@ int main(void) {
     SCOPED_TRACE(Optimization);
     compileAndRun(Program, {Optimization});
   }
+}
+
+TEST(HighCSourceCalls, SwiftPublishedInitializerTransportsOpaqueStorage) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  auto Image = runtime_function_address_test::image(Architecture);
+  const va_t Slot = runtime_function_address_test::Slot;
+  const std::string Name = "_$s7Combine9PublishedV12initialValueACyxGx_tcfC";
+  Image.ImportPtrSlots[Slot] = Name;
+  Image.DyldBindSlots[Slot] = {
+      Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  HighFunc Function;
+  Function.Name = "recovered_published";
+  Function.ReturnType = NdType::makeVoid();
+  std::vector<ExprPtr> Arguments;
+  for (unsigned I = 0; I < 3; ++I) {
+    Function.Params.push_back({"arg" + std::to_string(I), Pointer});
+    Arguments.push_back(parameter(I, Pointer));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val = call(*Hint, Function.ReturnType, Arguments);
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, true, Architecture);
+  ASSERT_NE(Source.find("swift_indirect_result"), std::string::npos);
+  const auto Program = Source + R"(
+#include <string.h>
+struct TypeMetadata { unsigned size, calls; };
+void __attribute__((swiftcall)) published_oracle(
+    void * __attribute__((swift_indirect_result)), void *, struct TypeMetadata *)
+    __asm__("_$s7Combine9PublishedV12initialValueACyxGx_tcfC");
+void __attribute__((swiftcall)) published_oracle(
+    void *result __attribute__((swift_indirect_result)), void *value,
+    struct TypeMetadata *metadata) {
+  volatile unsigned char *out = result;
+  unsigned char *in = value;
+  for (unsigned i = 0; i < metadata->size; ++i) {
+    out[i] = in[i];
+    in[i] = 0;
+  }
+  ++metadata->calls;
+}
+int main(void) {
+  for (unsigned n = 0; n < 80; ++n) {
+    struct TypeMetadata metadata = {n, 0};
+    unsigned char input[80], output[82];
+    for (unsigned i = 0; i < 80; ++i) input[i] = (unsigned char)(i * 7 + n);
+    memset(output, 0xa5, sizeof(output));
+    recovered_published(output + 1, input, &metadata);
+    if (metadata.calls != 1 || output[0] != 0xa5 || output[n + 1] != 0xa5) return 1;
+    for (unsigned i = 0; i < n; ++i)
+      if (input[i] || output[i + 1] != (unsigned char)(i * 7 + n)) return 2;
+    for (unsigned i = n; i < 80; ++i)
+      if (input[i] != (unsigned char)(i * 7 + n)) return 3;
+    for (unsigned i = n + 1; i < sizeof(output); ++i)
+      if (output[i] != 0xa5) return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}
+
+TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
+  constexpr va_t Base = 0x1008;
+  constexpr va_t Slot = 0x2000;
+  auto Image = runtime_function_address_test::image(Arch::AArch64);
+  Image.MachOTwoLevelNamespace = true;
+  Image.ImportPtrSlots[Slot] = "_swift_initStaticObject";
+  Image.DyldBindSlots[Slot].Name = "_swift_initStaticObject";
+  Segment Data;
+  Data.VA = Data.FileOff = Base;
+  Data.Size = Data.FileSz = 72;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(72);
+  Data.Data[24] = 1;
+  Data.Data[32] = 2;
+  Data.Data[40] = 'a';
+  Data.Data[41] = 'k';
+  Data.Data[55] = 0xe2;
+  Data.Data[56] = 't';
+  Data.Data[57] = 'w';
+  Data.Data[71] = 0xe2;
+  Image.Segments.push_back(Data);
+  Section Section;
+  Section.Name = "__data";
+  Section.VA = Section.FileOff = Data.VA;
+  Section.Size = Section.FileSz = Data.Size;
+  Section.Flags = Data.Flags;
+  Image.Sections.push_back(Section);
+  Image.Symbols.push_back(
+      {"_$s14StorageFixture5pairsSaySS_SStGyFTv_", Base, 0, false});
+  Image.Symbols.push_back({"_next", Base + 72, 0, false});
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Constructor = returning(
+      "initialize_pairs",
+      call(*Hint, Pointer,
+           {parameter(0, Pointer),
+            HighExpr::makeConst(Base + 8, 8,
+                                ConstantAddressProvenance::DataAddress)}),
+      {Pointer});
+  auto Payload =
+      returning("pair_payload",
+                HighExpr::makeConst(Base + 40, 8,
+                                    ConstantAddressProvenance::DataAddress));
+  const auto BoundConstructor =
+      sdk::bindObjCSourceReferences(Constructor, Image);
+  const auto BoundPayload = sdk::bindObjCSourceReferences(Payload, Image);
+  ASSERT_TRUE(BoundConstructor.Limitation.empty())
+      << BoundConstructor.Limitation;
+  ASSERT_TRUE(BoundPayload.Limitation.empty()) << BoundPayload.Limitation;
+  ASSERT_EQ(BoundConstructor.LocalStorageExtents,
+            BoundPayload.LocalStorageExtents);
+  std::set<std::string> Shared;
+  const auto Source = emit({BoundConstructor.Function, BoundPayload.Function},
+                           true, Arch::AArch64) +
+                      sdk::renderObjCLocalStorageHelpers(
+                          Image, BoundConstructor.LocalStorageExtents, Shared) +
+                      R"(
+static unsigned initialized;
+void *initialize_oracle(void *metadata, void *object)
+  __asm__("_swift_initStaticObject");
+void *initialize_oracle(void *metadata, void *object) {
+  uintptr_t *header = object;
+  if (!header[-1]) {
+    ++initialized;
+    header[0] = (uintptr_t)metadata;
+    header[1] = 0x12345678;
+    header[-1] = 1;
+  }
+  return object;
+}
+int main(void) {
+  int first, second;
+  unsigned char *payload = (unsigned char *)(uintptr_t)pair_payload();
+  if (payload[0] != 'a' || payload[1] != 'k' || payload[15] != 0xe2 ||
+      payload[16] != 't' || payload[17] != 'w' || payload[31] != 0xe2) return 1;
+  uintptr_t *object = initialize_pairs(&first);
+  if ((unsigned char *)object + 32 != payload || object[-1] != 1 ||
+      object[0] != (uintptr_t)&first || object[1] != 0x12345678 ||
+      object[2] != 1 || object[3] != 2) return 2;
+  payload[0] = 'x';
+  if (initialize_pairs(&second) != object || initialized != 1 ||
+      object[0] != (uintptr_t)&first || ((unsigned char *)object)[32] != 'x' ||
+      pair_payload() != (uintptr_t)payload) return 3;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, {Optimization, "-fsanitize=alignment",
+                           "-fsanitize-trap=alignment"});
 }
 
 TEST(HighCSourceCalls, NamedReleaseStorageKeepsOrderingBitsAndAdjacentBytes) {

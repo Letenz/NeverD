@@ -253,3 +253,74 @@ NEVERD_EMULATION_DOC_PATH(X64Integer, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(X64Integer, "CheckedX64Instructions.def")
 NEVERD_EMULATION_DOC_TOKEN(X64Integer, "X64IntegerCases.def")
 NEVERD_EMULATION_DOC_TOKEN(X64Integer, "NeverDX64IntegerTests")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI,
+                           "InvalidInputReportsPreparationWithoutHostMutation")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(X64Xsave, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "X64XsaveCases.def")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "X64XsaveTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "CompactedOffsetsFollowLayoutRatherThanPresentBits")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "InitialCETComponentsDoNotHideFPState")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "InitialWideComponentsDoNotHideFPState")
+NEVERD_EMULATION_DOC_TOKEN(X64Xsave, "WideLayoutIgnoresAbsentComponentsAndAlignmentPadding")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "README.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/project.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeTestBuild, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(NativeTestBuild, "NEVERD_ENABLE_SEMANTIC_TESTS")
+NEVERD_EMULATION_DOC_PATH(NativeProbeDiagnostics, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeProbeDiagnostics, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(NativeProbeDiagnostics,
+                         "DiagnosticIdentifiesStepFieldAndBothValues")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WhpMetadata, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(WhpMetadata, "WhpXsaveRegisters.def")
+NEVERD_EMULATION_DOC_TOKEN(WhpMetadata, "NamedMetadataRestoresOmittedPacketFields")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WhpFPBoundary, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WhpFPBoundary, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WhpFPBoundary, "NativeGuestRAMDistinguishesEntryFromCaptureLoss")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(NativeDriverCI, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeDriverCI, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "native_driver_tests=true")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "NativeDriverTests.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverBuiltinImages.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
+NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
+NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/{locale}/driver-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverImage.def")
+NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverProfile.def")
+#endif

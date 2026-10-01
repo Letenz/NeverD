@@ -92,6 +92,20 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "invalidateIntrinsicContentSize", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "mainScreen", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "nibWithNibName:bundle:", "@32@0:8@16@24", nullptr},
+// Public UIViewController object getters, also present in the MacOSX 15.5
+// UIKit header inventory. Every SDK owner agrees on the object result and
+// absence of explicit parameters; Apple Clang independently encodes these
+// declarations for arm64 iOS and arm64 iOS Simulator as @16@0:8.
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/viewifloaded?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/view?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/navigationitem?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/navigationcontroller?language=objc
+// https://developer.apple.com/documentation/uikit/uiviewcontroller/presentedviewcontroller?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "viewIfLoaded", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "view", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "navigationItem", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "navigationController", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "presentedViewController", "@16@0:8", nullptr},
 // UIProgressView additions: both complete Xcode 26.5 Messages ASTs from
 // GitHub Actions artifact 10653622473 agree on every owner of these selectors.
 // iPhoneOS SHA-256: dc99c06a9e4aab8015f8675b08ac55e042201401c21d39a4df4535aa63e0303f
@@ -132,6 +146,22 @@
 // https://developer.apple.com/documentation/uikit/uiscrollview/contentinset?language=objc
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBounces:", "v20@0:8B16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+// Layout controls: all declaration owners agree in both complete Xcode 26.5
+// Messages ASTs from GitHub Actions artifact 11077989891. Their bool, long
+// enum, double and object types independently produce these encodings with
+// Apple Clang for arm64 iOS and arm64 iOS Simulator. setAlignment: also has
+// paragraph/content-configuration owners; setSpacing: has a glass-effect
+// owner. All agree on the complete fixed ABI, not merely the selector name.
+// iPhoneOS SHA-256: 8836f6b50c979975b1d3e2a365bf23ec1b7304ff42b26393bc713d2c1be1a163
+// Simulator SHA-256: a028c7a405bc849dc7f899de99fe1e4d26984b24872088a28ac01746efd868fc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "subviews", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "insertSubview:atIndex:", "v32@0:8@16q24", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setShowsHorizontalScrollIndicator:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setShowsVerticalScrollIndicator:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAxis:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setDistribution:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setAlignment:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setSpacing:", "v24@0:8d16", nullptr},
 // UIView's public layout-priority setters take float UILayoutPriority and a
 // signed NSInteger-backed axis. Apple Clang emits this packed arm64 encoding
 // for both methods; the ABI keeps s0 and x2 in separate register banks.
@@ -183,4 +213,79 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "transitionCoordinator", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "flashScrollIndicators", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "endBackgroundTask:", "v24@0:8Q16", nullptr},
+// Fixed UIKit/CoreImage APIs observed in both complete Xcode 26.5 Messages
+// ASTs from artifact 11077989891. Every owner of each selector agrees on
+// the full fixed signature. Enum signedness/width and every aggregate field
+// also agree, and independent Apple Clang encoding for both arm64 iOS
+// targets produces these rows. No block lifetime or dynamic receiver class
+// is inferred from these selector-wide ABI facts.
+// iPhoneOS SHA-256: 8836f6b50c979975b1d3e2a365bf23ec1b7304ff42b26393bc713d2c1be1a163
+// Simulator SHA-256: a028c7a405bc849dc7f899de99fe1e4d26984b24872088a28ac01746efd868fc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "CGContext", "^{CGContext=}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "CGPath", "r^{CGPath=}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "addGestureRecognizer:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "addLineToPoint:", "v32@0:8{CGPoint=dd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "animatedImageWithImages:duration:", "@32@0:8@16d24", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "attributedText", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "becomeFirstResponder", "B16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "bezierPathWithRect:", "@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cellForItemAtIndexPath:", "@24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "centerYAnchor", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "collectionView", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "contentOffset", "{CGPoint=dd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "contentView", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "convertPoint:toCoordinateSpace:", "{CGPoint=dd}40@0:8{CGPoint=dd}16@32", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "convertRect:toCoordinateSpace:", "{CGRect={CGPoint=dd}{CGSize=dd}}56@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16@48", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "currentTraitCollection", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "firstBaselineAnchor", "@16@0:8", nullptr},
+{"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "imageByApplyingFilter:withInputParameters:", "@32@0:8@16@24", nullptr},
+{"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "imageWithColor:", "@24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "impactOccurred", "v16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initForTextStyle:", "@24@0:8@16", nullptr},
+{"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "initWithColor:", "@24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithStyle:", "@24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "layoutDirection", "q16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "layoutFrame", "{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "layoutMargins", "{UIEdgeInsets=dddd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "leftBarButtonItem", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "moveToPoint:", "v32@0:8{CGPoint=dd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "presentationController", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "readableContentGuide", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "scaledValueForValue:", "d24@0:8d16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "scrollRangeToVisible:", "v32@0:8{_NSRange=QQ}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "selectedBackgroundView", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "selectedRange", "{_NSRange=QQ}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "semanticContentAttribute", "q16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBarTintColor:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBaseWritingDirection:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setEditable:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setExclusionPaths:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setImage:forState:", "v32@0:8@16Q24", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setItems:animated:", "v28@0:8@16B24", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLeftBarButtonItem:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLineBreakMode:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLineFragmentPadding:", "v24@0:8d16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLineHeightMultiple:", "v24@0:8d16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLineSpacing:", "v24@0:8d16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLinkTextAttributes:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setMaximumLineHeight:", "v24@0:8d16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setNumberOfLines:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setRightBarButtonItem:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setRightView:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setRightViewMode:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setScrollEnabled:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setScrollIndicatorInsets:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setSelectedRange:", "v32@0:8{_NSRange=QQ}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setSemanticContentAttribute:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setTextAlignment:", "v24@0:8q16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setTextColor:", "v24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setTextContainerInset:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "startAnimation", "v16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "systemImageNamed:", "@24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "textContainer", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "textContainerInset", "{UIEdgeInsets=dddd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "textContentManager", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "textLayoutManager", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "translationInView:", "{CGPoint=dd}24@0:8@16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "velocityInView:", "{CGPoint=dd}24@0:8@16", nullptr},
     // clang-format on

@@ -10,6 +10,8 @@ NeverD のオプションのドライバーエミュレーターは、対応す�
 
 `driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
+`DriverImage.def` は厳密な PE 検証のサイズ・アラインメント制限と診断文を宣言し、ポインター幅は `DriverProfile.def` が定義します。検証と再配置は `DriverImage.cpp` が担当し、受理するイメージとエラーメッセージは変わりません。
+
 ARM64 host では `checked-x64-v1` が x64 guest に Unicorn を使います。各命令と memory access を単一ステップ前に検証し、Windows object check、write observer、RAM alias、CPU-only context を維持します。scalar memory arithmetic、自然境界に整列した locked arithmetic、SETcc、register BT は read/write check 付きで許可し、flag は native execution が管理します。限定 SIMD は legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、masked scalar conversion/subtraction を含みます。16個すべての XMM register と MXCSR は entry/context restore をまたいで保持され、unmasked SIMD exception、DAZ、x87、AVX、未列挙 operation は拒否されます。full-width XMM store はどちらの word も変更する前に、順序付き8-byte write observerを2つ発生させます。unaligned aligned-vector 形式は未対応です。通常の RAM オペランドは独立割り当てまたはエイリアスのページを跨げます。範囲全体の権限を確認してから書き込み、最初のアクセス不能バイトで失敗を報告します。MOVS は完了済み要素と障害要素の再開レジスターを保ち、部分要素はコミットしません。
 
 supervisor x64 は1/2/4-byte の aligned scalar MMIO transaction を許可し、device page は native RAM mapping に入りません。MOVS/REP MOVS は restart boundary ごとに1要素だけ実行します。destination observer が device read の commit 前に停止できるよう、device source は副作用のない prepared read を提供する必要があります。Windows register bank はこれを実装し、その他の device は string read を効果発生前に拒否します。device RMW、wide MMIO、port I/O は未対応です。request byte、device state、write event は Unicorn の zero-count REP 終了 hook との差を除いて個別に比較します。KVM は標準 XSAVE interface と FP/SSE presence bit で XMM/MXCSR を転送します。この supervisor contract は user-process environment ではありません。timeout/cancellation は許可済み有界命令間で確認し、一般 async preemption や実行開始後の backend 再起動はありません。組み込み corpus と利用可能な WDK scenario は通常/CFG/relocated image で Unicorn と比較されますが、corpus parity は任意 driver の互換性を保証しません。
@@ -524,7 +526,15 @@ ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行しま
 
 x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、WHP と ARM64 の独立したネイティブ負荷検証は未完了です。
 
-共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。有効な拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
+共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
+
+`X64FPState.def` は圧縮 AVX、AVX-512、CET_U/CET_S、AMX の転送配置と成分の 64 バイト境界を宣言します。存在する拡張成分は全ゼロの初期状態に限り、欠落成分のデータと境界調整領域は状態を定義しません。配置ビットがオフセットを決め、未知の配置、非初期値、不正な長さは公開前に失敗します。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState`、`InitialWideComponentsDoNotHideFPState` は 872 バイトと 10752 バイトの WHP パケットを検証します。これらの拡張命令の実行を許可するものではありません。
+
+`WhpXsaveRegisters.def` は完全な XSAVE パケットを名前付き x87/SSE 制御レジスターで補完します。最終オペコードと命令・データポインターを明示的に書き込み、ホストから取得します。ゼロのパケット項目は補完できますが、非ゼロのメタデータ衝突や共通制御値の不一致は状態公開前に失敗します。`NamedMetadataRestoresOmittedPacketFields` は FP ペイロードを保持したまま欠落項目を検証します。
+
+ネイティブの `FOP/FIP/FDP` はホストの x87 保存・復元規則に従います。マスクされていない保留例外がなければ AMD はこれらをゼロにでき、スナップショットは観測値を保持します。`X64MachineProbe.def` と厳密な NOP/コンテキストテストは整合する保留例外を設定し、全フィールドを有効な状態で差分を隠さず比較します。ホストプロセスの FXRSTOR64/FXSAVE64 参照は両状態を検証し、バックエンドはホストの結果を入力メタデータで置き換えません。
+
+共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
 

@@ -3546,6 +3546,9 @@
         "docs/testing.md"
       ],
       "limitations": [
+        "Native `FOP/FIP/FDP` follow the host\u2019s x87 save/restore rules. AMD may clear these fields without a pending unmasked exception; snapshots retain observed values. `X64MachineProbe.def` and exact NOP/context tests seed a coherent pending exception so every field remains valid and is compared without masking. The host-process FXRSTOR64/FXSAVE64 oracle checks both states; backends never substitute input metadata for host results.",
+        "`X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.",
+        "The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller\u2019s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.",
         "`CheckedX64Instructions.def` admits unsigned `MUL` at 8/16/32/64 bits and `CBW/CWDE/CDQE/CWD/CDQ/CQO` through the existing processor transport. `NeverDX64IntegerTests` uses independent `X64IntegerCases.def` encodings and expected values at both privilege levels: partial-register preservation, 32-bit zero extension, both product halves, defined CF/OF results and unchanged flags for sign extension. Ordinary-RAM multiplication retains whole-span permission checks and read observers; a fault or observer stop preserves implicit output registers and PC. Device operands remain unsupported. These cases also run on checked Unicorn; unavailable native transports skip explicitly.",
         "Checked x64 admits register and ordinary-RAM DIV/IDIV at all integer widths. The actual processor #DE, including quotient overflow, is retained as a guest trap or explicitly admitted recoverable event. KVM authenticates a private supervisor IDT/IST gateway outside guest mappings; WHP intercepts an explicit exception bitmap. This boundary does not admit unlisted instructions or implement a general OS exception subsystem.",
         "x64 CPU snapshots and transports retain complete physical x87 state, TOP, abridged tags, 80-bit payloads and FP metadata. Existing register identities remain unchanged. Checked profiles still reject x87 instructions; exact host-oracle arithmetic is a state-transfer proof, not generic software x87 rounding evidence.",
@@ -3560,11 +3563,193 @@
         "ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding.",
         "`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.",
         "Native x64 KVM/WHP initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. These probes certify bounded initialization only; independent native WHP and ARM64 workload validation remains outstanding.",
-        "The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/compacted FP/SSE packets, physical TOP rotation, absent-component init state and atomic validation. WHP uses complete XSAVE APIs, preferring `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` with the older XSAVE APIs as a compatibility path. Legacy individual x87 registers cannot replace complete packets. Active extended components, malformed headers, invalid controls and truncated captures fail explicitly. WHP mapping failures retain HRESULT, GPA and size for diagnosis; live Windows verification remains required.",
+        "The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/compacted FP/SSE packets, physical TOP rotation, absent-component init state and atomic validation. WHP uses complete XSAVE APIs, preferring `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` with the older XSAVE APIs as a compatibility path. Legacy individual x87 registers cannot replace complete packets. Non-initial extended components, malformed headers, invalid controls and truncated captures fail explicitly. WHP mapping failures retain HRESULT, GPA and size for diagnosis; live Windows verification remains required.",
         "Native-only builds retain independent physical-memory and shared-CPU lifecycle tests in NeverDMemoryLifecycleTests. The opt-in Windows native_cpu_only CI mode requires every declared native WHP memory registration case to be discovered and executed, and preserves inventory/JUnit/log evidence using the shared CI parsers. This memory-API evidence does not certify instruction execution or ARM64 workloads; actual WHP mapping and XSAVE results still require native verification.",
         "`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NativeGuestRAMDistinguishesEntryFromCaptureLoss/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.WideLayoutIgnoresAbsentComponentsAndAlignmentPadding",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InitialWideComponentsDoNotHideFPState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NativeInstallRetainsFPStateBeforeAnyGuestExecution/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.NamedMetadataRestoresOmittedPacketFields/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.MetadataFailuresAndConflictsCannotPublishState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InconsistentSharedControlsCannotPublishState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "filter": "X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.CompactedInitialExtensionsPreserveTheCompleteFPState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.CompactedOffsetsFollowLayoutRatherThanPresentBits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.EveryNonInitialExtensionByteRejectsWithoutPublication",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.TruncatedAndUnknownExtensionsCannotPublishState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.AbsentExtensionsIgnoreStaleBytes",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InitialCETComponentsDoNotHideFPState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.StandardInitSSEStillLoadsMXCSR",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "X64Xsave.StandardInitSSERejectsReservedMXCSRWithoutPublication",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "filter": "*/X64XsaveHost.ActualRestoreDistinguishesStandardAndCompactedMXCSR/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InvalidInputReportsPreparationWithoutHostMutation/*",
+          "platforms": [
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",
@@ -4608,6 +4793,7 @@
         "docs/examples/driver-kmdf-usb-pofx-scenario.json"
       ],
       "limitations": [
+        "`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.",
         "Independent MDL pages support MmAllocatePagesForMdl/Ex, MmFreePagesFromMdl and MmProtectMdlSystemAddress over the bounded physical arena. Range/chunk constraints, cache identity, partial ownership, user/system aliases and release dependencies share existing physical-page authority. KernelMode pool locks make precisely pinned paged memory resident; backend page permissions remain authoritative for all mapping views.",
         "Message interrupt assignments preserve explicit per-message addresses/data/vectors/levels/affinity/polarity. PDO-wide message registration exposes real read-only interrupt tables and independent or unified synchronization. Passive ISR waits retain ownership, serialize repeated arrivals and allow independent frames and DPCs to progress; occurrence and delivery timestamps remain distinct.",
         "KMDF 1.33 implements 117 table APIs, including WdfInterruptCreate, WdfInterruptQueueDpcForIsr, WdfInterruptQueueWorkItemForIsr, WdfInterruptSynchronize, WdfInterruptAcquireLock, WdfInterruptReleaseLock, WdfInterruptEnable, WdfInterruptDisable, WdfInterruptWdmGetInterrupt, WdfInterruptGetInfo and WdfInterruptGetDevice. Framework interrupt objects use assigned line/MSI resources and existing WDM connection, epoch, lock and IRQL authority. ISR/synchronization run at assigned DIRQL or PASSIVE_LEVEL; passive GetInfo reports PASSIVE_LEVEL. Excess objects remain unassigned. Explicit enable/disable invokes genuine driver callbacks without inventing hardware pulses.",
@@ -4739,6 +4925,16 @@
         "Original built-in and configured WDK images/scenarios are compared against legacy Unicorn under checked Unicorn, KVM and WHP, at original and relocated addresses. The comparison includes negative outcomes, request bytes, API results, writes and final model state; backend metadata, diagnostics and REP instruction-count conventions are excluded. Missing artifacts and unavailable host backends skip explicitly; a successful comparison does not mean every negative fixture completed successfully."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDNativeDriverTests",
+          "source": "unittests/emulation/DriverNativeExecutionTests.cpp",
+          "filter": "*/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/*",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDDriverEmulationTests",

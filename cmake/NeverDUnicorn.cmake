@@ -15,7 +15,8 @@ function(neverd_require_unicorn)
     message(FATAL_ERROR
       "The pinned Unicorn MSVC build does not support an ARM64 host. "
       "Use an ARM64 LLVM-MinGW toolchain for Unicorn, or configure "
-      "NEVERD_EMULATION_BACKEND_UNICORN=OFF and BUILD_TESTING=OFF for native WHP.")
+      "NEVERD_EMULATION_BACKEND_UNICORN=OFF and "
+      "NEVERD_ENABLE_SEMANTIC_TESTS=OFF for native WHP tests.")
   endif()
 
   # Keep dependency policy local: libneverd still builds as a shared library.

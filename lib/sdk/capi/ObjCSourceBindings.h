@@ -15,6 +15,7 @@
 
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/RuntimeFunctionAddress.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -2501,8 +2502,20 @@ swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
   return Hint;
 }
 
-inline std::optional<SourceCallTypeHint>
-swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
+struct SwiftWitnessRuntimeIdentity {
+  std::string ClassName;
+  std::string ProtocolSymbol;
+};
+
+inline std::optional<SwiftWitnessRuntimeIdentity>
+swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
+                            const llvm::SwiftDemangleNode &Conformance);
+
+inline std::optional<SourceCallTypeHint> swiftWitnessTableAddressHint(
+    const BinaryImage &Image, va_t Address,
+    std::optional<SwiftWitnessRuntimeIdentity> *RuntimeIdentity = nullptr) {
+  if (RuntimeIdentity)
+    RuntimeIdentity->reset();
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous)
@@ -2553,8 +2566,16 @@ swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
     else if (Export.Addr == Address || Export.Name == Table->Name)
       return std::nullopt;
   }
-  if (MatchingExports != 1)
-    return std::nullopt;
+  if (MatchingExports != 1) {
+    if (MatchingExports)
+      return std::nullopt;
+    const auto Identity = swiftPrivateWitnessIdentity(
+        Image, Address, Parsed.Root->Children[0].Children[0]);
+    if (!Identity)
+      return std::nullopt;
+    if (RuntimeIdentity)
+      *RuntimeIdentity = Identity;
+  }
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress;
   Hint.TargetAddress = Address;
@@ -3699,12 +3720,11 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
       !Address || Address % Width || Address > InvalidVA - Width)
     return std::nullopt;
   const auto Bytes = readImmutableImageBytes(Image, Address, Width);
-  if (!Bytes || ((*Bytes)[15] & 0xf0) != 0xe0)
+  if (!Bytes || ((*Bytes)[15] & 0xf0) != 0xe0 ||
+      !isCanonicalSwiftSmallString(
+          llvm::support::endian::read64le(Bytes->data()),
+          llvm::support::endian::read64le(Bytes->data() + 8)))
     return std::nullopt;
-  const uint8_t Count = (*Bytes)[15] & 0x0f;
-  for (unsigned I = 0; I < 15; ++I)
-    if ((I < Count && (*Bytes)[I] >= 0x80) || (I >= Count && (*Bytes)[I] != 0))
-      return std::nullopt;
 
   const Symbol *Storage = nullptr;
   for (const auto &Candidate : Image.Symbols) {
@@ -3843,16 +3863,8 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
 
   const uint64_t Payload = First.StoreVal->ConstVal;
   const uint64_t Tag = Second.StoreVal->ConstVal;
-  const uint8_t Marker = Tag >> 56;
-  if ((Marker & 0xf0) != 0xe0)
+  if ((Tag >> 60) != 0xe || !isCanonicalSwiftSmallString(Payload, Tag))
     return false;
-  const unsigned Length = Marker & 0x0f;
-  for (unsigned Index = 0; Index < 15; ++Index) {
-    const uint8_t Byte =
-        Index < 8 ? Payload >> (Index * 8) : Tag >> ((Index - 8) * 8);
-    if ((Index < Length && Byte >= 0x80) || (Index >= Length && Byte != 0))
-      return false;
-  }
 
   const auto SameAddress = [&](auto &&Self, const ExprPtr &Left,
                                const ExprPtr &Right, unsigned Depth) -> bool {
@@ -3928,6 +3940,9 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
   return Payload == DecodedPayload && Tag == DecodedTag;
 }
 
+inline std::optional<SourceCallTypeHint>
+swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base);
+
 // Swift can leave a file-private literal array of (String, String) pairs in
 // writable __data without an nlist entry for the array itself. The two words
 // immediately before it give the pair and string counts; the next data symbol
@@ -3935,6 +3950,11 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
 // Strings, with no relocations or named object overlapping their bytes.
 inline std::optional<SourceCallTypeHint>
 swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
+  // A direct payload reference must alias its enclosing static object when
+  // that complete object is proved, including references in other functions.
+  if (Address >= 40)
+    if (auto Object = swiftStaticStringPairStorageHint(Image, Address - 40))
+      return Object;
   if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
       !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
@@ -3966,12 +3986,11 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
     return std::nullopt;
   for (uint64_t Word = 0; Word < Pairs * 2; ++Word) {
     const auto *String = Bytes + Word * 16;
-    if ((String[15] & 0xf0) != 0xe0)
+    if ((String[15] & 0xf0) != 0xe0 ||
+        !isCanonicalSwiftSmallString(
+            llvm::support::endian::read64le(String),
+            llvm::support::endian::read64le(String + 8)))
       return std::nullopt;
-    const uint8_t Count = String[15] & 0x0f;
-    for (unsigned I = 0; I < 15; ++I)
-      if ((I < Count && String[I] >= 0x80) || (I >= Count && String[I] != 0))
-        return std::nullopt;
   }
   size_t BoundarySymbols = 0;
   for (const auto &Symbol : Image.Symbols) {
@@ -4008,6 +4027,78 @@ swiftPrivateScalarStorageHint(const BinaryImage &Image, va_t Address) {
   const auto Width =
       Symbol ? swiftPrivateScalarStorageWidth(Symbol->Name) : std::nullopt;
   return Width ? localStorageHint(Image, Address, *Width) : std::nullopt;
+}
+
+// swift_initStaticObject owns the once token immediately before its object.
+// Preserve that token, both header words, and the complete bounded literal
+// payload in one named storage object. Only inline ASCII String pairs need no
+// pointer relocation; a symbol gap alone is not an array-layout proof.
+inline std::optional<SourceCallTypeHint>
+swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      !Base || Base % 8 || Base > InvalidVA - 40)
+    return std::nullopt;
+  const auto *Header = Image.readVA(Base, 40);
+  if (!Header ||
+      !std::all_of(Header, Header + 24, [](uint8_t Byte) { return !Byte; }))
+    return std::nullopt;
+  const uint64_t Count = llvm::support::endian::read64le(Header + 24);
+  if (!Count || Count > 32 ||
+      llvm::support::endian::read64le(Header + 32) != Count * 2)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Base, 40);
+  if (!Storage)
+    return std::nullopt;
+  llvm::StringRef Name(Storage->Name);
+  Name.consume_front("_");
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(Name, Options);
+  if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
+      Parsed.Root->Text || Parsed.Root->Index ||
+      Parsed.Root->Children.size() != 2)
+    return std::nullopt;
+  const auto &Variable = Parsed.Root->Children[0];
+  if (Variable.Kind != "OutlinedVariable" || !Variable.Index || Variable.Text ||
+      !Variable.Children.empty() || Parsed.Root->Children[1].Kind != "Function")
+    return std::nullopt;
+  const uint64_t Width = 40 + Count * 32;
+  if (Base > InvalidVA - Width || (Storage->Size && Storage->Size != Width))
+    return std::nullopt;
+  auto Hint = localStorageHint(Image, Base, Width);
+  const auto *Bytes = Hint ? Image.readVA(Base, Width) : nullptr;
+  if (!Bytes)
+    return std::nullopt;
+  size_t Boundaries = 0;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Base + Width) {
+      if (Symbol.IsFunc)
+        return std::nullopt;
+      ++Boundaries;
+    }
+  if (Boundaries != 1)
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr >= Base && Export.Addr < Base + Width)
+      return std::nullopt;
+  for (uint64_t I = 0; I < Count * 2; ++I) {
+    const auto *String = Bytes + 40 + I * 16;
+    if ((String[15] & 0xf0) != 0xe0 ||
+        !isCanonicalSwiftSmallString(
+            llvm::support::endian::read64le(String),
+            llvm::support::endian::read64le(String + 8)))
+      return std::nullopt;
+  }
+  // Revalidate this complete layout when the binding is consumed, while
+  // sharing the ordinary named-storage helper with direct accesses.
+  Hint->TargetName = "swift_static_string_pairs:" + Storage->Name;
+  return Hint;
 }
 
 // Darwin dispatch_once_t (also used by swift_once) is an intptr_t, initialized
@@ -4793,6 +4884,208 @@ classObjectIdentities(const BinaryImage &Image) {
       Publish(*Meta, {SourceCallTypeHint::Kind::RuntimeMetaclass, Class.Name});
   }
   return Result;
+}
+
+// A nongeneric, unique conformance's registered witness pattern is exactly
+// the table returned by swift_conformsToProtocol for its class metadata and
+// protocol descriptor. Keep this identity proof shared by binding, validation
+// and rendering; the private table itself is not a linkable source symbol.
+// ABI: swift-6.0.3-RELEASE/include/swift/ABI/{Metadata,MetadataValues}.h.
+inline std::optional<SwiftWitnessRuntimeIdentity>
+swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
+                            const llvm::SwiftDemangleNode &Conformance) {
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
+                             llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Index &&
+           Node.Children.empty() && !Node.Text->empty() &&
+           Node.Text->size() <= 128 &&
+           std::all_of(Node.Text->begin(), Node.Text->end(),
+                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
+  };
+  if (!Shape(Conformance, "ProtocolConformance", 3) ||
+      !Shape(Conformance.Children[0], "Type", 1) ||
+      !Shape(Conformance.Children[1], "Type", 1) ||
+      !Identifier(Conformance.Children[2], "Module"))
+    return std::nullopt;
+  const auto &Class = Conformance.Children[0].Children[0];
+  const auto &Protocol = Conformance.Children[1].Children[0];
+  if (!Shape(Class, "Class", 2) || !Shape(Protocol, "Protocol", 2) ||
+      !Identifier(Class.Children[0], "Module") ||
+      !Identifier(Class.Children[1], "Identifier") ||
+      !Identifier(Protocol.Children[0], "Module") ||
+      !Identifier(Protocol.Children[1], "Identifier") ||
+      Class.Children[0].Text != Conformance.Children[2].Text ||
+      Protocol.Children[0].Text != Conformance.Children[2].Text)
+    return std::nullopt;
+  const auto &ModuleName = *Class.Children[0].Text;
+  if (ModuleName == "__C" || ModuleName == "__C_Synthesized" || Address % 8)
+    return std::nullopt;
+  const auto Descriptor = readImmutableImagePointer(Image, Address);
+  const auto Bytes = Descriptor && *Descriptor % 4 == 0
+                         ? readImmutableImageBytes(Image, *Descriptor, 16)
+                         : std::nullopt;
+  if (!Bytes || llvm::support::endian::read32le(Bytes->data() + 12))
+    return std::nullopt;
+  const auto Type = swiftRelativeAddress(Image, *Descriptor + 4);
+  const auto Pattern = swiftRelativeAddress(Image, *Descriptor + 8);
+  const auto ProtocolAt = [&](va_t Field) -> std::optional<va_t> {
+    const auto Encoded = swiftRelativeAddress(Image, Field);
+    if (!Encoded)
+      return std::nullopt;
+    return *Encoded & 1 ? readImmutableImagePointer(Image, *Encoded - 1)
+                        : Encoded;
+  };
+  const auto ProtocolAddress = ProtocolAt(*Descriptor);
+  if (!Type || !Pattern || *Pattern != Address || !ProtocolAddress)
+    return std::nullopt;
+  const auto ProtocolSymbol =
+      swiftDirectTypeMetadataDescriptor(Image, *ProtocolAddress);
+  if (!ProtocolSymbol || !swiftProtocolDescriptor(*ProtocolSymbol))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(*ProtocolSymbol, Options);
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "ProtocolDescriptor", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
+    return std::nullopt;
+  const auto &Exported = Parsed.Root->Children[0].Children[0].Children[0];
+  if (!Shape(Exported, "Protocol", 2) ||
+      !Identifier(Exported.Children[0], "Module") ||
+      !Identifier(Exported.Children[1], "Identifier") ||
+      Exported.Children[0].Text != Protocol.Children[0].Text ||
+      Exported.Children[1].Text != Protocol.Children[1].Text)
+    return std::nullopt;
+  const auto MatchesText = [&](va_t Target, const std::string &Text) {
+    const auto Data = readImmutableImageBytes(Image, Target, Text.size() + 1);
+    return Data && !std::memcmp(Data->data(), Text.c_str(), Text.size() + 1);
+  };
+  const auto MatchesDeclaration = [&](va_t Target, uint32_t Kind,
+                                      const std::string &Name) {
+    if (Target % 4)
+      return false;
+    const auto Header = readImmutableImageBytes(Image, Target, 12);
+    if (!Header)
+      return false;
+    const uint32_t Flags = llvm::support::endian::read32le(Header->data());
+    if ((Flags & 0xffff) != (Kind | 0x40) || (Flags & 0x40000) ||
+        (llvm::support::endian::read32le(Header->data() + 4) & 1))
+      return false;
+    const auto Parent = swiftRelativeAddress(Image, Target + 4);
+    const auto NameAddress = swiftRelativeAddress(Image, Target + 8);
+    const auto ParentBytes = Parent && *Parent % 4 == 0
+                                 ? readImmutableImageBytes(Image, *Parent, 12)
+                                 : std::nullopt;
+    if (!NameAddress || !MatchesText(*NameAddress, Name) || !ParentBytes ||
+        (llvm::support::endian::read32le(ParentBytes->data()) &
+         ~uint32_t(0x40)) ||
+        llvm::support::endian::read32le(ParentBytes->data() + 4))
+      return false;
+    const auto ParentName = swiftRelativeAddress(Image, *Parent + 8);
+    return ParentName && MatchesText(*ParentName, ModuleName);
+  };
+  if (!MatchesDeclaration(*Type, 16, *Class.Children[1].Text) ||
+      !MatchesDeclaration(*ProtocolAddress, 3, *Protocol.Children[1].Text))
+    return std::nullopt;
+  const objc::RuntimeData Data(Image);
+  if (!Data.supportsPlainObjectPointers())
+    return std::nullopt;
+  std::optional<SwiftWitnessRuntimeIdentity> Result;
+  va_t Metadata = InvalidVA;
+  for (const auto &[Object, Identity] : classObjectIdentities(Image)) {
+    if (Identity.Kind != SourceCallTypeHint::Kind::RuntimeClass ||
+        Object > InvalidVA - 72 ||
+        readInitialImagePointer(Image, Object + 64) != Type)
+      continue;
+    if (Result ||
+        !std::all_of(Identity.Name.begin(), Identity.Name.end(), [](char C) {
+          return llvm::isAlnum(C) || C == '_' || C == '.' || C == '$';
+        }))
+      return std::nullopt;
+    Metadata = Object;
+    Result = SwiftWitnessRuntimeIdentity{Identity.Name, *ProtocolSymbol};
+  }
+  if (!Result)
+    return std::nullopt;
+
+  const Section *Records = nullptr;
+  for (const auto &Section : Image.Sections)
+    if (Section.Name == "__swift5_proto") {
+      if (Records)
+        return std::nullopt;
+      Records = &Section;
+    }
+  if (!Records || Records->VA % 4 || !Records->Size || Records->Size % 4 ||
+      Records->Size / 4 > 65536 ||
+      !readImmutableImageBytes(Image, Records->VA, Records->Size))
+    return std::nullopt;
+  unsigned Registrations = 0;
+  for (uint64_t I = 0; I < Records->Size; I += 4) {
+    const auto Target = swiftRelativeAddress(Image, Records->VA + I);
+    const auto Header = Target && *Target % 4 == 0
+                            ? readImmutableImageBytes(Image, *Target, 16)
+                            : std::nullopt;
+    if (!Header)
+      return std::nullopt;
+    if (*Target == *Descriptor) {
+      if (++Registrations != 1)
+        return std::nullopt;
+      continue;
+    }
+    const uint32_t Flags = llvm::support::endian::read32le(Header->data() + 12);
+    auto OtherType = swiftRelativeAddress(Image, *Target + 4);
+    if (!OtherType)
+      return std::nullopt;
+    bool SameType = false;
+    switch ((Flags >> 3) & 7) {
+    case 0:
+      SameType = OtherType == Type;
+      break;
+    case 1:
+    case 3: {
+      const auto Indirect = readImmutableImagePointer(Image, *OtherType);
+      if (!Indirect) {
+        if (!isImmutableImageImportSlot(Image, *OtherType) ||
+            std::any_of(Image.Exports.begin(), Image.Exports.end(),
+                        [&](const auto &Export) {
+                          return Export.Addr == *Type ||
+                                 Export.Addr == Metadata;
+                        }))
+          return std::nullopt;
+        // This class and its descriptor have no external linkage, so a strong
+        // import cannot denote either private identity in this image.
+        break;
+      }
+      SameType = (Flags & 0x38) == 8 ? Indirect == Type : *Indirect == Metadata;
+      break;
+    }
+    case 2: {
+      const auto Name = Data.string(*OtherType);
+      if (!Name || !MatchesText(*OtherType, *Name))
+        return std::nullopt;
+      SameType = *Name == Result->ClassName;
+      break;
+    }
+    default:
+      return std::nullopt;
+    }
+    if (SameType) {
+      const auto OtherProtocol = ProtocolAt(*Target);
+      if (!OtherProtocol || OtherProtocol == ProtocolAddress)
+        return std::nullopt;
+    }
+  }
+  return Registrations == 1 ? Result : std::nullopt;
 }
 
 inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
@@ -5691,12 +5984,21 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       }
       if (auto Storage =
               swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
-        *Expression = *HighExpr::makeCall({}, 0, {});
-        Expression->Type = Original->Type;
-        Expression->SourceCallHint =
+        const va_t Base = Storage->TargetAddress;
+        const uint64_t Width = Storage->ByteCount;
+        auto Helper = HighExpr::makeCall({}, 0, {});
+        Helper->Type = Original->Type;
+        Helper->SourceCallHint =
             std::make_shared<SourceCallTypeHint>(std::move(*Storage));
-        Result.LocalStorageExtents[Original->ConstVal] =
-            Expression->SourceCallHint->ByteCount;
+        *Expression =
+            Original->ConstVal == Base
+                ? *Helper
+                : *HighExpr::makeBinop(
+                      NdOp::INT_ADD, Helper,
+                      HighExpr::makeConst(Original->ConstVal - Base, 8,
+                                          ConstantAddressProvenance::Scalar));
+        Result.LocalStorageExtents[Base] =
+            std::max<uint64_t>(Result.LocalStorageExtents[Base], Width);
         return Expression;
       }
     }
@@ -6477,8 +6779,45 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           if (Expected && runtimeBindingMatches(Binding, *Expected) &&
               Expression->Operands.size() ==
                   Binding.Signature.Parameters.size()) {
+            bool InlineValue = false;
             for (const auto &[WordIndex, StorageIndex] :
                  Expected->SwiftStringInputs) {
+              if ((Index == WordIndex || Index == StorageIndex) &&
+                  WordIndex < Expression->Operands.size() &&
+                  StorageIndex < Expression->Operands.size()) {
+                const auto PlainWord = [](const ExprPtr &Value) {
+                  return Value && Value->Kind == ExprKind::Const &&
+                         Value->Type && Value->Type->Size == 8 &&
+                         (Value->Type->Kind == NdTypeKind::Int ||
+                          Value->Type->Kind == NdTypeKind::Ptr) &&
+                         Value->Operands.empty() && !Value->SourceCallHint &&
+                         Value->IntrinsicId == Intrinsic::None &&
+                         Value->IntrinsicOutputs.empty() &&
+                         !Value->IndirectTarget &&
+                         Value->MemoryOrdering == NdMemoryOrdering::None &&
+                         Value->MemoryAddressSpace ==
+                             NdMemoryAddressSpace::Default &&
+                         Value->AddressOwnerVA == InvalidVA &&
+                         (Value->ConstProvenance ==
+                              ConstantAddressProvenance::Scalar ||
+                          Value->ConstProvenance ==
+                              ConstantAddressProvenance::Unknown);
+                };
+                const auto &Word = Expression->Operands[WordIndex];
+                const auto &Storage = Expression->Operands[StorageIndex];
+                if (PlainWord(Word) && PlainWord(Storage) &&
+                    isCanonicalSwiftSmallString(Word->ConstVal,
+                                                Storage->ConstVal)) {
+                  // The authenticated String argument contains inline bytes,
+                  // even if one word coincides with an image address. This
+                  // value proof applies only to this consumer occurrence.
+                  auto Scalar = std::make_shared<HighExpr>(*Operand);
+                  Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+                  Operand = Copy(Scalar, Depth + 1, true, false, false);
+                  InlineValue = true;
+                  break;
+                }
+              }
               if (Index != StorageIndex ||
                   WordIndex >= Expression->Operands.size())
                 continue;
@@ -6506,7 +6845,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
               Result.BorrowedBytes.insert(Range);
               break;
             }
-            if (containsBorrowedStorage(Operand))
+            if (InlineValue || containsBorrowedStorage(Operand))
               continue;
           }
         }
@@ -6573,6 +6912,56 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           else
             Result.AssociationKeys.insert(*Address);
           Operand = std::move(Key);
+          continue;
+        }
+      }
+      if (Index == 1 && Operand && Operand->Kind == ExprKind::Const &&
+          Operand->Type && Operand->Type->Size == 8 &&
+          (Operand->Type->Kind == NdTypeKind::Int ||
+           Operand->Type->Kind == NdTypeKind::Ptr) &&
+          Operand->Operands.empty() &&
+          (Operand->AddressOwnerVA == InvalidVA ||
+           Operand->AddressOwnerVA == Operand->ConstVal) &&
+          isExactAddressProvenance(Operand->ConstProvenance) &&
+          !isCodeAddressProvenance(Operand->ConstProvenance) &&
+          Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
+          Expression->IntrinsicId == Intrinsic::None &&
+          Expression->MemoryOrdering == NdMemoryOrdering::None &&
+          Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+          Expression->SourceCallHint->TargetName == "swift_initStaticObject") {
+        const auto Expected =
+            runtimeSourceCallHint(Image, *Expression->SourceCallHint);
+        const auto Import =
+            Image.DyldBindSlots.find(Expression->SourceCallHint->TargetAddress);
+        const auto Slot = darwinImportVeneerSlot(Image, Expression->CallAddr);
+        const bool ExactTarget =
+            Expected && (Expression->CallAddr == Expected->TargetAddress ||
+                         (Slot && *Slot == Expected->TargetAddress));
+        const auto Address = constantAddress(*Operand);
+        auto Hint = ExactTarget && Address && *Address >= 8 &&
+                            Import != Image.DyldBindSlots.end() &&
+                            Import->second.Module ==
+                                "/usr/lib/swift/libswiftCore.dylib" &&
+                            !Expression->IsIndirectCall &&
+                            Expression->Operands.size() == 2 &&
+                            runtimeBindingMatches(*Expression->SourceCallHint,
+                                                  *Expected)
+                        ? swiftStaticStringPairStorageHint(Image, *Address - 8)
+                        : std::nullopt;
+        if (Hint) {
+          const va_t Base = Hint->TargetAddress;
+          const uint64_t Width = Hint->ByteCount;
+          auto Storage = HighExpr::makeCall({}, 0, {});
+          Storage->Type = Operand->Type;
+          Storage->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Operand = HighExpr::makeBinop(
+              NdOp::INT_ADD, Storage,
+              HighExpr::makeConst(8, 8, ConstantAddressProvenance::Scalar));
+          Result.LocalStorageExtents[Base] =
+              std::max<uint64_t>(Result.LocalStorageExtents[Base], Width);
           continue;
         }
       }
@@ -7018,6 +7407,39 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  // A proved two-instruction argument bridge has the same dynamic message
+  // semantics as its selector stub. Normalize only for declaration validation;
+  // the published call retains the physical saved-register argument location.
+  if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+      Binding.TargetAddress && !Expression.IsIndirectCall &&
+      Expression.CallAddr == Binding.TargetAddress)
+    if (const auto Tail = objcArgumentTailCall(Image, Binding.TargetAddress)) {
+      std::optional<size_t> Parameter;
+      for (size_t I = 0; I < Binding.Signature.Parameters.size(); ++I) {
+        const auto &P = Binding.Signature.Parameters[I];
+        if (P.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+            P.Location.RegisterOffset == Tail->SourceRegister &&
+            P.Location.ValueBytes == 8 && P.Components.empty()) {
+          if (Parameter)
+            return false;
+          Parameter = I;
+        }
+      }
+      if (!Parameter || !objcSelectorStubMatches(
+                            Image, Tail->SelectorStub,
+                            Binding.SelectorReferenceAddress, Binding.Selector))
+        return false;
+      auto Normalized = std::make_shared<SourceCallTypeHint>(Binding);
+      Normalized->TargetAddress = Tail->SelectorStub;
+      Normalized->Signature.Parameters[*Parameter].Location.RegisterOffset =
+          Tail->DestinationRegister;
+      HighExpr Call = Expression;
+      Call.CallAddr = Tail->SelectorStub;
+      Call.SourceCallHint = std::move(Normalized);
+      return objcSourceCallBound(
+          Call, Image, Functions, ProfileStorage, ReadOnlyHelpers,
+          ContainingFunction, BlockParameterReceivers, BlockCaptureReceivers);
+    }
   if (!Binding.CanonicalBooleanInputs.empty() &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall)
     return false;
@@ -7444,6 +7866,21 @@ inline bool objcSourceCallBound(
   }
   if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
+    if (llvm::StringRef(Binding.TargetName)
+            .starts_with("swift_static_string_pairs:")) {
+      const auto Expected =
+          swiftStaticStringPairStorageHint(Image, Binding.TargetAddress);
+      return Expected && Binding.TargetName == Expected->TargetName &&
+             Binding.ByteCount == Expected->ByteCount &&
+             Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+             !Binding.SelectorReferenceAddress &&
+             Binding.BorrowedByteInputs.empty() &&
+             Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
+             !Expression.CallAddr && Expression.CallTarget.empty() &&
+             Expression.Operands.empty() &&
+             Expression.IntrinsicOutputs.empty() &&
+             objc_projection_detail::sameHint(Expected->Signature, Hint);
+    }
     auto Expected =
         localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
     const bool OptionalURL =
@@ -8655,13 +9092,31 @@ renderObjCSwiftWitnessTableHelpers(const BinaryImage &Image,
                                    std::set<std::string> &SharedFunctions) {
   std::string Source;
   for (const auto &[Address, Symbol] : Tables) {
-    const auto Expected =
-        objc_binding_detail::swiftWitnessTableAddressHint(Image, Address);
+    std::optional<objc_binding_detail::SwiftWitnessRuntimeIdentity> Identity;
+    const auto Expected = objc_binding_detail::swiftWitnessTableAddressHint(
+        Image, Address, &Identity);
     if (!Expected || Expected->TargetName != Symbol)
       throw std::runtime_error("Swift witness table is no longer valid");
     const std::string Stem =
         "neverd_swift_witness_table_" + llvm::utohexstr(Address, true);
     SharedFunctions.insert(Stem + "_address");
+    if (Identity) {
+      // Runtime/Casting.h declares this query with the ordinary C ABI.
+      Source += "\n#include <objc/runtime.h>\nextern unsigned char " + Stem +
+                "_protocol[] __asm__(\"" + Identity->ProtocolSymbol + "\");\n";
+      Source += "extern const void *" + Stem +
+                "_query(const void *, const void *) "
+                "__asm__(\"_swift_conformsToProtocol\");\n";
+      Source += "uintptr_t " + Stem +
+                "_address(void) {\n"
+                "  const void *table = " +
+                Stem + "_query(objc_getClass(\"" + Identity->ClassName +
+                "\"), " + Stem +
+                "_protocol);\n"
+                "  if (!table) __builtin_trap();\n"
+                "  return (uintptr_t)table;\n}\n";
+      continue;
+    }
     Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
               Symbol + "\");\n";
     Source += "uintptr_t " + Stem +

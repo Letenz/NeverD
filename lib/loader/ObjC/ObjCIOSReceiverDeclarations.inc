@@ -70,6 +70,16 @@ ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "clas
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIView", "", false, "effectiveUserInterfaceLayoutDirection", "q16@0:8", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", "", nullptr)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", false, "safeAreaInsets", "{UIEdgeInsets=dddd}16@0:8", "", false, nullptr, "", false)
+// The complete device/simulator ASTs cited for layout controls in the
+// selector catalog agree on UIViewHierarchy, UIScrollView and UIStackView.
+// UIStackView directly inherits UIView and adopts no additional protocols.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", false, "subviews", "@16@0:8", "NSArray", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", false, "insertSubview:atIndex:", "v32@0:8@16q24", "", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIStackView", "", "C:UIView", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIStackView", "", false, "setAxis:", "v24@0:8q16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIStackView", "", false, "setDistribution:", "v24@0:8q16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIStackView", "", false, "setAlignment:", "v24@0:8q16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIStackView", "", false, "setSpacing:", "v24@0:8d16", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UIAppearance", "", "P:NSObject", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UIAppearanceContainer", "", "P:NSObject", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UICoordinateSpace", "", "P:NSObject", nullptr)
@@ -102,11 +112,28 @@ ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "prot
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationController", "", false, "interactivePopGestureRecognizer", "@16@0:8", "UIGestureRecognizer", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationController", "", false, "viewControllers", "@16@0:8", "NSArray", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "parentViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
+// The public getter declarations cited in the selector catalog agree with
+// the local UIKit header inventory on these owners and result classes.
+// Preserve both additional owners of navigationItem/presentedViewController;
+// selector agreement alone does not establish a receiver's class.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "viewIfLoaded", "@16@0:8", "UIView", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "view", "@16@0:8", "UIView", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "presentedViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", "", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", false, "navigationItem", "@16@0:8", "UINavigationItem", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIViewController", "UINavigationControllerItem", false, "navigationController", "@16@0:8", "UINavigationController", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UINavigationItem", "", "C:NSObject|P:NSCoding", nullptr)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UISearchDisplayController", "", "C:NSObject", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UISearchDisplayController", "", false, "navigationItem", "@16@0:8", "UINavigationItem", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIPresentationController", "", "C:NSObject|P:UIAppearanceContainer|P:UIContentContainer|P:UIFocusEnvironment|P:UITraitEnvironment", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIPresentationController", "", false, "presentedViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "transitionCoordinator", "@16@0:8", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "flashScrollIndicators", "v16@0:8", "", false, nullptr, "", false)
 // Public UIScrollView property declarations and independent arm64 iOS
 // encodings are recorded with the selector facts in ObjCIOSFrameworkDeclarations.inc.
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setBounces:", "v20@0:8B16", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setShowsHorizontalScrollIndicator:", "v20@0:8B16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setShowsVerticalScrollIndicator:", "v20@0:8B16", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIApplication", "", false, "endBackgroundTask:", "v24@0:8Q16", "", false, nullptr, "", false)
 // clang-format on
