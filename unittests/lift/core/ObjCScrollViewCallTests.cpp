@@ -123,13 +123,24 @@ TEST(ObjCCallHints, IOSScrollPropertiesRequireDeclaredProviderAndReceiver) {
   Image.ObjCClasses.push_back(Class);
   const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1400);
   ASSERT_TRUE(Receiver);
-  for (const char *Selector : {"setBounces:", "setContentInset:"}) {
+  for (const char *Selector :
+       {"setBounces:", "setContentInset:", "safeAreaInsets",
+        "effectiveUserInterfaceLayoutDirection"}) {
     SCOPED_TRACE(Selector);
+    const bool Setter = llvm::StringRef(Selector).contains(':');
     const auto Hint = objcSelectorSourceTypeHint(Image, Selector);
     ASSERT_TRUE(Hint);
     EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
-    ASSERT_EQ(Hint->Parameters.size(), 3U);
-    EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint->Parameters.size(), Setter ? 3U : 2U);
+    if (Setter)
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+    if (llvm::StringRef(Selector) == "effectiveUserInterfaceLayoutDirection") {
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->ReturnType->Size, 8U);
+      EXPECT_TRUE(Hint->ReturnType->IsSigned);
+      EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).IntReturnReg);
+    }
     if (llvm::StringRef(Selector) == "setBounces:") {
       const auto &Boolean = Hint->Parameters.back();
       EXPECT_EQ(Boolean.Type->Kind, NdTypeKind::Int);
@@ -158,6 +169,52 @@ TEST(ObjCCallHints, IOSScrollPropertiesRequireDeclaredProviderAndReceiver) {
     auto Unsupported = Image;
     Unsupported.Arch = Arch::X64;
     EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+  }
+}
+
+TEST(ObjCCallHints, IOSSafeAreaGetterKeepsEveryFloatingResultComponent) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  Image.ObjCSourceReferences.at(0x2100).Name = "safeAreaInsets";
+  auto Low = caller();
+  Low.Blocks.front().Ops.back().NumInputs = 0;
+  const auto Med = convert(Image, Low);
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  const auto &Call = Med.CallInfos.front();
+  ASSERT_TRUE(Call.SourceCallHint);
+  const auto &Binding = *Call.SourceCallHint;
+  const auto &Signature = Binding.Signature;
+  ASSERT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Signature.ReturnType->Size, 32U);
+  ASSERT_EQ(Signature.ReturnType->Fields.size(), 4U);
+  ASSERT_EQ(Signature.ReturnComponents.size(), 4U);
+  ASSERT_EQ(Call.Args.size(), 2U);
+  for (unsigned I = 0; I != 4; ++I) {
+    EXPECT_EQ(Signature.ReturnType->Fields[I]->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Signature.ReturnType->Fields[I]->Size, 8U);
+    EXPECT_EQ(Signature.ReturnComponents[I].Kind,
+              SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Signature.ReturnComponents[I].RegisterOffset,
+              TRI.FPReturnRegs[I]);
+    EXPECT_EQ(Signature.ReturnComponents[I].ValueBytes, 8U);
+  }
+  EXPECT_EQ(Med.Blocks[Call.BlockId].Ops[Call.OpIdx].Output.Size, 32U);
+  auto Expression = receiverCallExpression(Binding);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    auto Changed = std::make_shared<SourceCallTypeHint>(Binding);
+    auto &Components = Changed->Signature.ReturnComponents;
+    if (Mutation == 0)
+      Components.pop_back();
+    if (Mutation == 1)
+      Components.back().RegisterOffset = TRI.FPReturnRegs[0];
+    if (Mutation == 2)
+      Components.back().ValueBytes = 4;
+    Expression->SourceCallHint = Changed;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {})) << Mutation;
   }
 }
 

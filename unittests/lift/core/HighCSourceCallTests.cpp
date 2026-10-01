@@ -1868,6 +1868,75 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SafeAreaResultPreservesEveryFieldAndSingleEvaluation) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "safeAreaInsets");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "safeAreaInsets";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (unsigned I = 0; I != 4; ++I) {
+    auto Result = call(Hint, Signature->ReturnType,
+                       {parameter(0, Word), parameter(1, Word)});
+    Functions.push_back(returning("read_edge" + std::to_string(I),
+                                  HighExpr::makeRecordField(Result, I * 8, 8),
+                                  {Word, Word}));
+  }
+  const auto Source = emit(Functions, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static unsigned calls;
+static const uint64_t expected[] = {
+  0x3ff4000000000000ULL, 0xc004000000000000ULL,
+  0x8000000000000000ULL, 0x7ff8000000000042ULL
+};
+static InsetsOracle implementation(id receiver, SEL selector) {
+  if (selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  ++calls;
+  InsetsOracle result = {0, 0, 0, 0};
+  if (receiver) {
+    if (receiver != (id)(uintptr_t)0x1234) __builtin_trap();
+    memcpy(&result, expected, sizeof(result));
+  }
+  return result;
+}
+static InsetsOracle (*objc_msgSend)(id, SEL) = implementation;
+)" + Source + R"(
+int main(void) {
+  double (*readers[])(uint64_t, uint64_t) = {
+    read_edge0, read_edge1, read_edge2, read_edge3
+  };
+  for (unsigned i = 0; i != 4; ++i) {
+    double value = readers[i](0x1234, 0x5678);
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != expected[i] || calls != 2 * i + 1) return 1;
+    value = readers[i](0, 0x5678);
+    memcpy(&bits, &value, sizeof(bits));
+    if (bits != 0 || calls != 2 * i + 2) return 2;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, RuntimeImportsCompileAndPreserveObjectAndVoidEffects) {
   auto U64 = NdType::makeInt(8, false);
   auto Pointer = NdType::makePtr(NdType::makeVoid());
