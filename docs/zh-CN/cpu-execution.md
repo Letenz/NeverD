@@ -20,7 +20,7 @@ CPU 执行独立于来宾 OS、映像加载器和调用约定。启用 `NEVERD_E
 | `page_size` | 4096 | 来宾映射粒度；其他值会被拒绝 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) 中的必需功能名 |
 
-`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 配置仍拒绝 FP/SIMD；x64 则支持下文列出的有限指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。所有 checked 配置仍拒绝端口 I/O 和并行 CPU 要求。只有 user 配置会报告 `service_traps`。
+`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 与 x64 配置支持下文列出的受限 FP/SIMD 指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。所有 checked 配置仍拒绝端口 I/O 和并行 CPU 要求。只有 user 配置会报告 `service_traps`。
 
 用户态执行要求**每个**映射页同时具有 `UserAccessible` 和相应的 `Read`、`Write` 或 `Execute` 权限。已有映射默认仅 supervisor 可访问；即使别名共享物理字节，其权限仍彼此独立。仅有 `UserAccessible` 不会授权访问。可信宿主操作和 supervisor CPU 使用 RWX。例如：
 
@@ -62,7 +62,7 @@ checked user x64 只拦截精确的无前缀 `SYSCALL` 编码；checked user ARM
 
 ## x64 扩展与原生 CPU 状态
 
-checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 DAZ 与未屏蔽异常。checked ARM64 仍不支持 FP/SIMD。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
+checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 DAZ 与未屏蔽异常。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
 
 checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
 
@@ -86,16 +86,16 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
-ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
+Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
-checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+`CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
-KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。 `KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
+`AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。
+
+KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备状态、进入 `KVM_RUN` 和读取状态。`EINTR` 重试只准备一次；取消进入或读取失败不能发布状态。`KvmAArch64Machine.cpp` 在该线程上执行地址转换维护及完整标量、向量传递，并共用一次单步期限。调用线程只在确认完成后提交；ISA 解码、RAM 事务、OS 策略和观察器仍属于调用线程。ARM64 原生运行仍缺少实机证据。
 
 KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
 
 硬件执行本身不保证更低的端到端耗时。当前原生执行逐条进行指令准入、观察、状态传输和 VM 退出。比较相同原始镜像与场景时，应使用一致的指令和事件预算，同时报告结果一致性与耗时；测量 CLI 延迟时应包含启动和加载。
-
-Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。
 
 checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。

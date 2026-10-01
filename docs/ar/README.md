@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 935250779b9be103631f1cb612200e7fb175dfa74d352b939b15287e751778b8 -->
+<!-- i18n-source: dea200c826d205dc426fba8733a2fb5ce99212ff67dd1f3566c89b1af0bf481f -->
 
 [← مشروع NeverD](project.md)
 
@@ -15,6 +15,8 @@
 يفصل تنفيذ المعالج بين قبول ISA وذاكرة الضيف ونقل المحرك وسياسة نظام الضيف. يتيح `NEVERD_ENABLE_CPU_EMULATION` طبقة x64/ARM64، ويضيف `NEVERD_ENABLE_DRIVER_EMULATION` بيئة Windows WDM/KMDF x64 المحدودة. يشغّل `linux-elf64-v1` عمليات Linux ELF المدعومة. انظر [تنفيذ المعالج](cpu-execution.md) و[محاكاة عمليات الضيف](process-emulation.md) و[محاكاة برامج تشغيل Windows](driver-emulation.md).
 
 يدعم `driver-strict` / `checked-x64-v1` كلاً من KVM على مضيف Linux x64 المطابق وWHP على Windows x64 المطابق؛ يختار `auto` هذا النقل الأصلي، وتستخدم ISA المختلفة Unicorn. يحتفظ Unicorn الصريح وAPI V1 السابق بالملف البرمجي المحمول. يتحقق التنفيذ الأصلي من العناوين القانونية والآثار قبل الدخول؛ ويفشل العتاد غير المتاح دون تراجع. التعليمات وسلوك OS غير المدعومين أخطاء صريحة. لا تزال أدلة التشغيل الأصلي ARM64/WHP ناقصة، ولا تثبت هذه القدرة توافق أي برنامج تشغيل أو Android/Darwin.
+
+يوفر `checked-aarch64-v1` و`checked-user-aarch64-v1` مجموعة محدودة من ARM64 FP32/FP64 وSIMD ثابت العرض وحالة FPCR/FPSR والمتجهات الكاملة. يستخدم Linux ARM64 المطابق KVM، ويستخدم Windows ARM64 المطابق WHP، وتستخدم ISA المختلفة Unicorn. ما زال التحقق الأصلي ARM64 مطلوباً؛ ويظل تحميل برامج تشغيل Windows مقتصراً على x64.
 
 | المستند | الوصف |
 |---------|--------|

@@ -363,15 +363,25 @@ public:
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_REGISTER_AArch64
+    for (unsigned Index = 0; Index < State.Vectors.size(); ++Index)
+      if (auto E = check(uc_reg_write(CPU.Engine, UC_ARM64_REG_Q0 + Index,
+                                      State.Vectors[Index].data())))
+        return E;
     if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control))
       return E;
-    // SIMD is outside this checked contract, so the typed vector cache is
-    // preserved. The unrestricted software contract uses UnicornBackend.
-    return captureAArch64ScalarState(
-        State, [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+    return captureAArch64State(
+        State,
+        [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
           uint64_t Value = 0;
           if (auto E =
                   check(uc_reg_read(CPU.Engine, registerID(Register), &Value)))
+            return E;
+          return Value;
+        },
+        [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+          RegisterValue Value{};
+          if (auto E = check(uc_reg_read(CPU.Engine, UC_ARM64_REG_Q0 + Index,
+                                         Value.data())))
             return E;
           return Value;
         });

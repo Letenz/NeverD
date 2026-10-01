@@ -53,4 +53,21 @@ llvm::Error captureAArch64ScalarState(AArch64MachineState &State,
   };
   return captureRegisters(State, Read, Registers);
 }
+llvm::Error captureAArch64State(AArch64MachineState &State,
+                                AArch64RegisterReader ReadScalar,
+                                AArch64VectorReader ReadVector) {
+  if (!ReadScalar || !ReadVector)
+    return diagnostic::error(diagnostic::Register);
+  auto Next = State;
+  if (auto E = captureAArch64ScalarState(Next, ReadScalar))
+    return E;
+  for (unsigned Index = 0; Index < Next.Vectors.size(); ++Index) {
+    auto Value = ReadVector(Index);
+    if (!Value)
+      return Value.takeError();
+    Next.Vectors[Index] = *Value;
+  }
+  State = Next;
+  return llvm::Error::success();
+}
 } // namespace neverd::emulation

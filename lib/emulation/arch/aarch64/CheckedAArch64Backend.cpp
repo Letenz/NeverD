@@ -7,33 +7,16 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/RAMTransaction.h"
+#include "AArch64InstructionEffects.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 
+#include <algorithm>
+#include <climits>
+
 namespace neverd::emulation {
 using diagnostic::error;
-namespace {
-namespace encoding {
-#define NEVERD_AARCH64_ENCODING(Name, Mask, Value)                             \
-  bool is##Name(uint32_t Word) { return (Word & Mask) == Value; }
-#define NEVERD_AARCH64_FIELD(Name, Value) constexpr unsigned Name = Value;
-#include "CheckedAArch64Instructions.def"
-#undef NEVERD_AARCH64_ENCODING
-#undef NEVERD_AARCH64_FIELD
-} // namespace encoding
-bool scalarRegister(unsigned Register) {
-  switch (Register) {
-#define NEVERD_AARCH64_OPERAND(Name, Bits)                                     \
-  case AARCH64_REG_##Name:                                                     \
-    return true;
-#include "AArch64OperandRegisters.def"
-#undef NEVERD_AARCH64_OPERAND
-  default:
-    return false;
-  }
-}
-} // namespace
 bool CheckedAArch64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return aarch64::canonicalRange(A, N);
 }
@@ -72,6 +55,8 @@ llvm::Error CheckedAArch64Backend::writeRegister(CPURegister R,
     return llvm::Error::success();
   }
   if ((R == CPURegister::AArch64NZCV && (V[0] & ~aarch64::NZCVMask)) ||
+      (R == CPURegister::AArch64FPCR && (V[0] & ~aarch64::AllowedFPCR)) ||
+      (R == CPURegister::AArch64FPSR && (V[0] & ~aarch64::AllowedFPSR)) ||
       (R == CPURegister::AArch64PC &&
        (!aarch64::canonical(V[0]) || V[0] % aarch64::InstructionBytes)))
     return error(diagnostic::Register);
@@ -128,126 +113,23 @@ CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
-  using namespace encoding;
-  enum InstructionKind { Integer, Memory, ThreadPointer } Kind;
-  switch (I.id) {
-#define NEVERD_AARCH64_INSTRUCTION(Name, Type)                                 \
-  case AARCH64_INS_##Name:                                                     \
-    Kind = Type;                                                               \
-    break;
-#include "CheckedAArch64Instructions.def"
-#undef NEVERD_AARCH64_INSTRUCTION
-  default:
-    return llvm::make_error<UnsupportedExecutionError>();
-  }
-  const uint32_t Word = llvm::support::endian::read32le(I.bytes);
-  if (Kind == ThreadPointer &&
-      !((I.id == AARCH64_INS_MRS && isReadThreadPointer(Word)) ||
-        (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word))))
-    return llvm::make_error<UnsupportedExecutionError>();
-  if (I.id == AARCH64_INS_HINT && !isNOP(Word))
-    return llvm::make_error<UnsupportedExecutionError>();
-  const auto &A = I.detail->aarch64;
-  for (unsigned N = 0; N < A.op_count; ++N) {
-    const auto &O = A.operands[N];
-    if (O.type == AARCH64_OP_REG && !scalarRegister(O.reg))
-      return llvm::make_error<UnsupportedExecutionError>();
-    if (Kind == Integer && O.type != AARCH64_OP_REG && O.type != AARCH64_OP_IMM)
-      return llvm::make_error<UnsupportedExecutionError>();
-  }
-  struct Access {
-    uint64_t Address, Value;
-    unsigned Size, Permission;
-  };
-  std::vector<Access> Accesses;
-  auto GPR = [&](unsigned R) {
-    return R == aarch64::GPRCount ? uint64_t(0) : CPU.Registers[R];
-  };
-  const unsigned Rt = Word & RegisterMask;
-  const unsigned Rn = (Word >> BaseShift) & RegisterMask;
-  const uint64_t Base =
-      Rn == aarch64::GPRCount ? CPU.reg(AArch64Register::SP) : GPR(Rn);
-  if (Kind == Memory) {
-    bool Load = Word & LoadBit;
-    unsigned Size = 1u << (Word >> SizeShift);
-    uint64_t Address = Base;
-    bool Writeback = false;
-    if (isUnsignedMemory(Word) || isImmediateMemory(Word) ||
-        isRegisterMemory(Word)) {
-      unsigned Opcode = (Word >> OpcodeShift) & OpcodeMask;
-      Load = Opcode != 0;
-      // The size=8/opc=2 encoding is prefetch, not a scalar load.
-      if (Size == aarch64::WordBytes && Opcode > 1)
-        return llvm::make_error<UnsupportedExecutionError>();
-      if (isUnsignedMemory(Word))
-        Address +=
-            uint64_t((Word >> UnsignedOffsetShift) & UnsignedOffsetMask) * Size;
-      else if (isImmediateMemory(Word)) {
-        const unsigned Mode = (Word >> ModeShift) & OpcodeMask;
-        Writeback = Mode == 1 || Mode == 3;
-        if (Mode != 1)
-          Address += llvm::SignExtend64<ImmediateBits>(Word >> ImmediateShift);
-      } else {
-        const unsigned Rm = (Word >> IndexShift) & RegisterMask;
-        uint64_t Offset = GPR(Rm);
-        switch ((Word >> ExtendShift) & ExtendMask) {
-        case UXTW:
-          Offset = uint32_t(Offset);
-          break;
-        case UXTX:
-          break;
-        case SXTW:
-          Offset = uint64_t(int64_t(int32_t(Offset)));
-          break;
-        case SXTX:
-          break;
-        default:
-          return llvm::make_error<UnsupportedExecutionError>();
-        }
-        if (Word & ScaleBit)
-          Offset *= Size;
-        Address += Offset;
-      }
-      if (Writeback && Rn != aarch64::GPRCount && Rn == Rt)
-        return llvm::make_error<UnsupportedExecutionError>();
-      Accesses.push_back({Address, GPR(Rt), Size, Load ? Read : Write});
-    } else if (isPairMemory(Word)) {
-      const unsigned Rt2 = (Word >> SecondShift) & RegisterMask;
-      Size = (Word & PairWidthBit) ? aarch64::WordBytes
-                                   : aarch64::InstructionBytes;
-      const unsigned Mode = (Word >> PairModeShift) & OpcodeMask;
-      Writeback = Mode == 1 || Mode == 3;
-      if (Mode != 1)
-        Address += uint64_t(llvm::SignExtend64<PairOffsetBits>(
-                       Word >> PairOffsetShift)) *
-                   Size;
-      if ((Load && Rt == Rt2) ||
-          (Writeback && Rn != aarch64::GPRCount && (Rn == Rt || Rn == Rt2)))
-        return llvm::make_error<UnsupportedExecutionError>();
-      Accesses.push_back({Address, GPR(Rt), Size, Load ? Read : Write});
-      Accesses.push_back({Address + Size, GPR(Rt2), Size, Load ? Read : Write});
-    } else if (isLiteralMemory(Word)) {
-      const unsigned Opcode = Word >> SizeShift;
-      if (Opcode == OpcodeMask)
-        return llvm::make_error<UnsupportedExecutionError>();
-      Size = Opcode == 1 ? aarch64::WordBytes : aarch64::InstructionBytes;
-      Address = I.address + uint64_t(llvm::SignExtend64<LiteralOffsetBits>(
-                                Word >> LiteralOffsetShift)) *
-                                aarch64::InstructionBytes;
-      Accesses.push_back({Address, 0, Size, Read});
-    } else
-      return llvm::make_error<UnsupportedExecutionError>();
-  }
-  for (const auto &M : Accesses)
-    if (M.Size - 1 > UINT64_MAX - M.Address)
-      return llvm::make_error<UnsupportedExecutionError>();
+  auto Effects = getAArch64InstructionEffects(I, CPU);
+  if (!Effects)
+    return Effects.takeError();
+  const auto &Accesses = *Effects;
   // Validate the entire instruction before any native access or pair write.
   for (const auto &M : Accesses) {
     if (M.Permission == Read && Hooks.Read)
       Hooks.Read(M.Address, M.Size);
-    if (M.Permission == Write && Hooks.Write)
-      Hooks.Write(M.Address, M.Size,
-                  M.Value & (UINT64_MAX >> (aarch64::WordBits - M.Size * 8)));
+    if (M.Permission == Write && Hooks.Write) {
+      const unsigned LowBytes = std::min<unsigned>(M.Size, aarch64::WordBytes);
+      Hooks.Write(M.Address, LowBytes,
+                  M.Value[0] &
+                      llvm::maskTrailingOnes<uint64_t>(LowBytes * CHAR_BIT));
+      if (!StopRequested && !FirstFault && M.Size > aarch64::WordBytes)
+        Hooks.Write(M.Address + aarch64::WordBytes, M.Size - aarch64::WordBytes,
+                    M.Value[1]);
+    }
     if (StopRequested || FirstFault)
       return llvm::Error::success();
     if (auto E = access(M.Address, M.Size, M.Permission, true, true))

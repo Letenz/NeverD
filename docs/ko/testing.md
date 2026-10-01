@@ -858,25 +858,25 @@ Linux의 `NeverDUnicornDeadlineTests`는 pthread 스케줄링을 제어해 실�
 
 `NeverDKvmRunTests`는 `/dev/kvm` 없이 `KvmRunControl`의 빌린 전송 콜백을 검증합니다. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries`는 준비, 수집과 가로챈 호스트 진입이 같은 스레드를 사용하며 중단 후 재시도 중에도 준비를 한 번만 수행하는지 확인합니다. 다른 사례는 진입 없는 준비 실패, 수집 실패, 준비 중 정지와 활성 진입 취소를 검증한 뒤 새 실행이 이전 콜백을 재사용하지 않는지 확인합니다. 실제 취소, RAM 롤백, 예외와 기존 드라이버 테스트도 계속 포함해야 합니다. `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers`는 같은 기한 내의 여러 진입이 작업 스레드를 재사용하고 각 전송을 한 번만 수행하며 이전 상태 패킷을 변경하지 않는지 검증합니다.
 
-`KvmAArch64Machine.cpp`의 주소 변환 유지보수 실행, 게스트 레지스터 준비, 디버그 설정과 35개 레지스터 읽기도 이 작업 스레드에서 수행합니다. 유지보수와 게스트 실행은 하나의 단일 단계 기한을 공유하며, 호출 스레드는 전체 수집의 완료가 확인된 뒤에만 `captureAArch64GeneralState`로 상태를 반영합니다. ARM64 네이티브 실행의 실기 증거는 아직 없습니다.
+KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드에서 상태 준비, `KVM_RUN`, 상태 캡처를 수행합니다. `EINTR` 재시도에도 준비는 한 번이며 취소나 캡처 실패는 게시할 수 없습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지와 전체 스칼라·벡터 전송도 하나의 단일 단계 기한을 공유합니다. 호출 스레드는 완료 확인 후 커밋하며 ISA 해석, RAM 트랜잭션, OS 정책과 관찰자를 담당합니다. 네이티브 ARM64 실기 증거는 아직 없습니다.
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops`는 호스트가 일반 레지스터, 첫 번째와 마지막 XMM 레지스터, MXCSR 및 x87 제어어를 변경한 뒤 연속 실행과 실제 CPU 저장을 검증합니다. 정지된 진입 이후의 실제 `FXSAVE64` 바이트로 모든 물리 80비트 레지스터, TOP, 태그, 연산 코드와 포인터를 확인하며 반복 나눗셈 예외도 재사용을 무효화합니다. 이 머신 경계 테스트는 checked 프로필에 추가 x87 명령을 허용하지 않습니다.
 
 `NeverDKvmStateTransferTests`는 실제 KVM 실행 후 레지스터 또는 XSAVE 읽기 실패를 주입하고 변경되지 않은 입력으로 재시도합니다. 독립적인 정수와 패킹된 바이트 결과로 수집 실패 후 이미 진행된 네이티브 상태를 재사용하지 않는지 확인합니다. 이 실행 파일만 `ioctl`을 래핑하며 네이티브 호스트가 없으면 명시적으로 건너뜁니다.
 
-ARM64 네이티브 정수 상태 수집은 ISA 계층에서 통일합니다. `AArch64GeneralState.def`는 X0–X30, SP, PC, NZCV, TPIDR_EL0를 열거하며 `captureAArch64GeneralState`는 모든 읽기를 임시 저장한 뒤 NZCV를 정규화하고 완전한 결과를 한 번에 게시합니다. KVM과 WHP는 이 함수를 공유합니다. 읽기 실패 시 전체 입력 상태를 유지하며 권한, 벡터와 전송하지 않는 레지스터는 변경하지 않습니다. 네이티브 FP/SIMD 명령 허용은 추가하지 않습니다.
+Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
-checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 저장 영역이나 별칭 페이지의 경계를 넘을 수 있습니다. ISA가 피연산자 범위를 계산하고 공유 주소 공간이 진입 전에 모든 페이지를 확인하여 첫 실패 조각을 보고합니다. `RAMTransaction`은 전체 CPU 단계가 성공한 후 선언된 물리 바이트를 반영합니다. 오류나 관찰자 중단 시 RAM, 레지스터, 주소 writeback을 보존합니다. `NeverDAArch64MemoryTests`는 `AArch64CrossPageCases.def`의 어셈블된 사례를 사용합니다. FP/SIMD나 Windows ARM64 드라이버 로딩은 추가하지 않습니다.
+`CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
-`NeverDAArch64GeneralStateTests`는 Unicorn이나 하이퍼바이저 없이 완전한 수집, NZCV 마스크, 35개 위치 각각의 읽기 실패, 읽기 콜백 누락과 두 권한 수준에서의 재시도 성공을 검증합니다. 이 이식 가능한 상태 검증과 교차 컴파일은 ARM64 KVM/WHP 실기 실행 증거를 대신하지 않습니다.
+`AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.
+
+`NeverDAArch64GeneralStateTests`는 두 권한에서 스칼라 부분 집합과 전체 상태의 71개 읽기 위치, 폭 정규화, 누락된 리더와 재시도를 검사합니다. `NeverDAArch64FPTests`는 `AArch64FPCases.def` 원본 명령으로 모든 벡터 레인, 패킹 연산, 스칼라·벡터 FP, 네 반올림 모드, FZ/DN, 누적 FPSR, 컨텍스트와 거부 조건을 검증합니다. `NeverDAArch64MemoryTests`는 모든 페이지 교차 위치, 관찰 순서와 정지, 거부된 페이지, 별칭 및 복원된 벡터 입력을 검사합니다. `NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`)는 실제 실행 후 모든 스칼라·벡터 읽기 실패를 주입합니다. 사용할 수 없는 네이티브 경로는 명시적으로 건너뛰며 네이티브 ARM64 KVM/WHP 실기 증거를 대신하지 않습니다.
 
 `NeverDAArch64MemoryTests`는 두 권한 수준에서 Unicorn, KVM, WHP의 스칼라/쌍 명령 18종을 확인합니다. 모든 페이지 경계 오프셋, 부호와 폭, 관찰자 순서, 두 번째 페이지의 권한 거부/누락, 명시적인 오류 소비와 재시도, 반복된 물리 별칭, 별칭 교체 후 컨텍스트 복원을 검사합니다. 변경 전에 유효한 페이지 경계 로드가 거부되는 현상을 재현했습니다. 사용할 수 없는 전송은 명시적으로 건너뜁니다. Unicorn 및 교차 컴파일은 ARM64 KVM/WHP 실기 증거를 대신하지 않습니다.
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`)는 플래그가 0인 비활성 CFG 메타데이터, 두 로드 주소에서 유지되는 대체 포인터, 잘못된 슬롯/대상 및 누락된 재배치를 검사합니다. 실행 사례는 명시적인 Unicorn/KVM/WHP와 `driver-strict`, `checked-x64-v1`을 사용하며 사용할 수 없는 백엔드는 개별적으로 건너뜁니다. `DriverPublicCLICases.def`는 호환성을 유지하는 v1 C API와 비교하는 CLI에 `--backend unicorn`을 지정합니다. 네이티브 및 `auto` 선택은 별도의 공개 인터페이스 검증을 유지하며 호스트 API를 사용할 수 없을 때 자동으로 대체하지 않습니다.
 
-Checked ARM64 상태 수집은 ISA 계층의 공통 커밋 경계를 사용합니다. KVM/WHP는 `AArch64GeneralState.def`의 35개 필드를 수집하고 Unicorn은 추가 스레드 및 부동소수점 제어 상태를 포함한 공개 스칼라 필드 39개를 유지합니다. `captureAArch64ScalarState`는 `Registers.def`의 너비를 적용하고 NZCV를 정규화하며 모든 읽기가 성공한 뒤에만 상태를 공개합니다. 권한, 벡터 및 전송하지 않은 필드는 유지됩니다. 이 전송은 checked ARM64의 FP/SIMD 명령 지원을 의미하지 않습니다.
-
-`NeverDAArch64GeneralStateTests`는 두 권한 수준에서 네이티브 35개 및 소프트웨어 39개 필드를 검사하며 각 읽기 실패, 너비 정규화 및 재시도를 검증합니다. Linux의 `NeverDUnicornStateTransferTests`는 실제 게스트 실행 후 각 스칼라 읽기에 실패를 주입해 입력 보존과 재시도 시 정확히 한 번의 실행을 확인하며 `CapturesDeclaredWidthsWithoutStaleUpperBits`도 검사합니다. 원본 명령과 상태는 `UnicornStateTransferCases.def`에 정의되며 ARM64 KVM/WHP 실기기 검증을 대신하지 않습니다.
+`NeverDAArch64GeneralStateTests`는 두 권한에서 스칼라 부분 집합과 전체 상태의 71개 읽기 위치, 폭 정규화, 누락된 리더와 재시도를 검사합니다. `NeverDAArch64FPTests`는 `AArch64FPCases.def` 원본 명령으로 모든 벡터 레인, 패킹 연산, 스칼라·벡터 FP, 네 반올림 모드, FZ/DN, 누적 FPSR, 컨텍스트와 거부 조건을 검증합니다. `NeverDAArch64MemoryTests`는 모든 페이지 교차 위치, 관찰 순서와 정지, 거부된 페이지, 별칭 및 복원된 벡터 입력을 검사합니다. `NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`)는 실제 실행 후 모든 스칼라·벡터 읽기 실패를 주입합니다. 사용할 수 없는 네이티브 경로는 명시적으로 건너뛰며 네이티브 ARM64 KVM/WHP 실기 증거를 대신하지 않습니다.
 
 checked Unicorn 단일 단계 실행은 이제 `MachineRunControl`을 따릅니다. ARM64 유지보수와 게스트 실행은 한 단계 실행 한도를 공유하며, 내부 `UC_HOOK_CODE`가 명령 진입 시 빌린 정지 토큰과 기한을 확인합니다. 동기 진입은 반환 전에 참조를 해제합니다. 진입 거부는 호출자 상태와 RAM을 유지하며 취소된 실행 결과는 checked RAM 트랜잭션으로 커밋할 수 없습니다. 명령 허용 범위와 비제한 소프트웨어 계약은 그대로 유지합니다.
 

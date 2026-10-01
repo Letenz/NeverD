@@ -114,12 +114,17 @@ TEST(ExecutionReport, RoundTripPreservesRequirementsAndContractFacts) {
             Resolved.Capabilities.InstructionFamilies.size());
   auto *Features = Caps->getArray(field::Features);
   ASSERT_NE(Features, nullptr);
+  bool SIMD = false, FloatingPoint = false;
   for (const auto &Feature : *Features) {
-    EXPECT_NE(Feature.getAsString(),
-              executionFeatureName(ExecutionFeature::SIMD));
+    SIMD |=
+        Feature.getAsString() == executionFeatureName(ExecutionFeature::SIMD);
+    FloatingPoint |= Feature.getAsString() ==
+                     executionFeatureName(ExecutionFeature::FloatingPoint);
     EXPECT_NE(Feature.getAsString(),
               executionFeatureName(ExecutionFeature::ParallelCPUs));
   }
+  EXPECT_TRUE(SIMD);
+  EXPECT_TRUE(FloatingPoint);
 }
 
 TEST(ExecutionReport, ExplicitProbeReportsUnavailableWithoutChangingBackend) {
