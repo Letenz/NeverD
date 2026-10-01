@@ -11,10 +11,12 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Errc.h"
 
 #include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::analysis;
@@ -115,18 +117,23 @@ SpecializationOptions stackOptions() {
 struct Execution {
   uint64_t Value;
   uint64_t Stack;
+  std::vector<uint8_t> Memory;
 };
 
 std::optional<Execution>
 execute(const LowFunc &Function, uint64_t Input = 0, uint64_t Flag = 0,
         llvm::endianness Order = llvm::endianness::little,
-        uint64_t EntryStack = 0x10000) {
+        uint64_t EntryStack = 0x10000,
+        llvm::ArrayRef<int64_t> ObserveFrame = {}) {
   SymContext Ctx;
   SymState State(Ctx, Order);
   State.write(SymSpace::Register, 0, Ctx.mkConst(64, 0));
   State.write(SymSpace::Register, 8, Ctx.mkConst(64, Input));
   State.write(SymSpace::Register, 32, Ctx.mkConst(64, EntryStack));
   State.write(SymSpace::Register, x86reg::CF, Ctx.mkConst(8, Flag));
+  for (size_t I = 0; I < ObserveFrame.size(); ++I)
+    State.store(Ctx.mkConst(64, EntryStack + ObserveFrame[I]),
+                Ctx.mkConst(8, 65 + I));
   va_t Address = Function.Entry;
   for (unsigned Step = 0; Step < 1000; ++Step) {
     const LowBlock *Block = nullptr;
@@ -146,7 +153,15 @@ execute(const LowFunc &Function, uint64_t Input = 0, uint64_t Flag = 0,
         const auto Stack = Ctx.asConst(State.read(SymSpace::Register, 32, 8));
         if (!Value || !Stack)
           return std::nullopt;
-        return Execution{Value->getZExtValue(), Stack->getZExtValue()};
+        Execution Result{Value->getZExtValue(), Stack->getZExtValue(), {}};
+        for (int64_t Offset : ObserveFrame) {
+          const auto Byte =
+              Ctx.asConst(State.load(Ctx.mkConst(64, EntryStack + Offset), 1));
+          if (!Byte)
+            return std::nullopt;
+          Result.Memory.push_back(Byte->getZExtValue());
+        }
+        return Result;
       }
       if (Flow == StepResult::CondBranch) {
         const auto Condition = Ctx.asConst(Exec.branchCondition());
@@ -540,6 +555,259 @@ TEST(NativeStackSpecialization, AutomaticContextsPreserveRelativeFrameCursors) {
     auto Limited = specializeInterpreter(P, {0x100}, Options);
     EXPECT_EQ(Limited.Status, SpecializationStatus::BudgetExceeded);
     EXPECT_TRUE(Limited.Residual.Blocks.empty());
+  }
+}
+
+StackProvider guardedPointerJoin(bool Spilled) {
+  StackProvider P;
+  P.add(0x100,
+        {operation(NdOp::COPY, r(80), {r(32)}),
+         operation(NdOp::INT_SUB, r(40), {r(32), c(96)}),
+         operation(NdOp::INT_NOTEQUAL, r(96, 1), {r(8), c(0)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x200, 8), r(96, 1)})});
+  P.Code[0x100].Fallthrough = {0x300};
+  for (auto [Address, Displacement] :
+       {std::pair<va_t, uint64_t>{0x200, 32}, {0x300, 40}}) {
+    P.add(Address, {operation(NdOp::INT_SUB, r(72), {r(32), c(Displacement)}),
+                    operation(NdOp::INT_SUB, r(56), {r(32), c(48)})});
+    if (Spilled)
+      P.add(Address + 1, {operation(NdOp::STORE, {}, {r(40), r(72)})});
+    else
+      P.add(Address + 1, {});
+    P.add(Address + 2,
+          {operation(NdOp::INT_LESSEQUAL, r(96, 1), {r(72), r(56)}),
+           operation(NdOp::COND_BR, {}, {NdVar::cst(0x400, 8), r(96, 1)})});
+    P.Code[Address + 2].Fallthrough = {0x500};
+  }
+  if (Spilled)
+    P.add(0x400, {operation(NdOp::LOAD, r(72), {r(40)})});
+  else
+    P.add(0x400, {});
+  P.add(0x401, {operation(NdOp::INT_SUB, r(32), {r(72), c(16)}),
+                operation(NdOp::STORE, {}, {r(32), c(5, 1)}),
+                operation(NdOp::LOAD, r(24, 1), {r(32)}),
+                operation(NdOp::INT_ZEXT, r(0), {r(24, 1)}),
+                operation(NdOp::COPY, r(32), {r(80)}), ret()});
+  P.add(0x500, {operation(NdOp::COPY, r(0), {c(31)}), ret()});
+  return P;
+}
+
+TEST(NativeStackSpecialization, NarrowAddressDemandRetainsCompletePointer) {
+  for (bool Spilled : {false, true})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      SCOPED_TRACE(Spilled);
+      SCOPED_TRACE(Order == llvm::endianness::little ? "little" : "big");
+      auto P = guardedPointerJoin(Spilled);
+      auto Options = stackOptions();
+      Options.DiscoverControlState = true;
+      Options.ByteOrder = Order;
+      const auto Result = specializeInterpreter(P, {0x100}, Options);
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      EXPECT_GT(Result.DiscoveredContextFields, 0u);
+      std::vector<int64_t> Observed;
+      for (int64_t Offset = -112; Offset != 8; ++Offset)
+        Observed.push_back(Offset);
+      std::vector<uint64_t> Roots;
+      for (uint64_t Root = 0; Root != 65; ++Root)
+        Roots.push_back(Root);
+      for (uint64_t Root : {uint64_t{0x10000}, uint64_t{0x123456781000},
+                            UINT64_MAX - 64, UINT64_MAX})
+        Roots.push_back(Root);
+      for (uint64_t Root : Roots)
+        for (uint64_t Input : {uint64_t{0}, uint64_t{1}, UINT64_MAX}) {
+          SCOPED_TRACE(Root);
+          SCOPED_TRACE(Input);
+          const uint64_t Pointer = Root - (Input ? 32 : 40);
+          const bool Taken = Pointer <= Root - 48;
+          auto Run = execute(Result.Residual, Input, 0, Order, Root, Observed);
+          ASSERT_TRUE(Run);
+          EXPECT_EQ(Run->Value, Taken ? 5u : 31u);
+          EXPECT_EQ(Run->Stack, Root);
+          for (size_t I = 0; I < Observed.size(); ++I) {
+            uint8_t Expected = 65 + I;
+            const int64_t Offset = Observed[I];
+            if (Spilled && Offset >= -96 && Offset < -88) {
+              const auto Byte = static_cast<unsigned>(Offset + 96);
+              const unsigned Shift =
+                  8 * (Order == llvm::endianness::little ? Byte : 7 - Byte);
+              Expected = Pointer >> Shift;
+            }
+            if (Taken && Root + Offset == Pointer - 16)
+              Expected = 5;
+            EXPECT_EQ(Run->Memory[I], Expected) << Offset;
+          }
+        }
+    }
+}
+
+TEST(NativeStackSpecialization, CompleteAddressContextsShareRefinementBudgets) {
+  for (bool Spilled : {false, true}) {
+    SCOPED_TRACE(Spilled);
+    auto P = guardedPointerJoin(Spilled);
+    auto Options = stackOptions();
+    Options.DiscoverControlState = true;
+    const auto Good = specializeInterpreter(P, {0x100}, Options);
+    ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+    for (unsigned Kind = 0; Kind != 4; ++Kind) {
+      auto Exact = Options;
+      if (Kind == 0)
+        Exact.MaxOperations = Good.EvaluatedOperations;
+      if (Kind == 1)
+        Exact.MaxNodeEvaluations = Good.NodeEvaluations;
+      if (Kind == 2)
+        Exact.MaxSolverQueries = Good.SolverQueries;
+      if (Kind == 3)
+        Exact.MaxControlRefinements = Good.ControlRefinements;
+      const auto Replay = specializeInterpreter(P, {0x100}, Exact);
+      ASSERT_TRUE(Replay.complete()) << Kind << ": " << Replay.Diagnostic;
+      if (Kind == 0)
+        --Exact.MaxOperations;
+      if (Kind == 1)
+        --Exact.MaxNodeEvaluations;
+      if (Kind == 2)
+        --Exact.MaxSolverQueries;
+      if (Kind == 3)
+        --Exact.MaxControlRefinements;
+      const auto Short = specializeInterpreter(P, {0x100}, Exact);
+      EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded)
+          << Kind << ": " << Short.Diagnostic;
+      EXPECT_TRUE(Short.Residual.Blocks.empty());
+      EXPECT_TRUE(Short.Reads.empty());
+    }
+    Options.MaxContextsPerAddress = 1;
+    const auto Limited = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Limited.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Limited.Residual.Blocks.empty());
+    Options.MaxContextsPerAddress = stackOptions().MaxContextsPerAddress;
+    Options.MaxDiscoveryVisits = 1;
+    const auto NoDiscovery = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(NoDiscovery.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_LE(NoDiscovery.DiscoveryVisits, Options.MaxDiscoveryVisits);
+    EXPECT_TRUE(NoDiscovery.Residual.Blocks.empty());
+  }
+}
+
+TEST(NativeStackSpecialization, CompleteAddressContextsRejectCorruptedPointer) {
+  for (bool Spilled : {false, true}) {
+    SCOPED_TRACE(Spilled);
+    auto P = guardedPointerJoin(Spilled);
+    if (Spilled)
+      P.add(0x400, {operation(NdOp::STORE, {}, {r(40), r(88, 1)}),
+                    operation(NdOp::LOAD, r(72), {r(40)})});
+    else
+      P.add(0x400, {operation(NdOp::COPY, r(72, 1), {r(88, 1)})});
+    auto Options = stackOptions();
+    Options.DiscoverControlState = true;
+    const auto Result = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported)
+        << Result.Diagnostic;
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
+}
+
+StackProvider lowGuardedFrameControl(bool Spilled, bool Contradictory = false) {
+  StackProvider P;
+  P.add(0x100, {operation(NdOp::INT_SUB, r(48), {r(32), c(32)}),
+                operation(NdOp::INT_SUB, r(40), {r(32), c(64)})});
+  if (Spilled)
+    P.add(0x101, {operation(NdOp::STORE, {}, {r(40), r(48)}),
+                  operation(NdOp::COPY, r(48), {c(0)})});
+  else
+    P.add(0x101, {});
+  P.add(0x102, {operation(NdOp::INT_AND, r(56), {r(32), c(3)}),
+                operation(NdOp::INT_EQUAL, r(96, 1), {r(56), c(1)})});
+  if (Contradictory)
+    P.add(0x103, {operation(NdOp::INT_ADD, r(56), {r(32), c(1)}),
+                  operation(NdOp::INT_AND, r(56), {r(56), c(3)}),
+                  operation(NdOp::INT_EQUAL, r(97, 1), {r(56), c(1)}),
+                  operation(NdOp::INT_AND, r(96, 1), {r(96, 1), r(97, 1)})});
+  else
+    P.add(0x103, {});
+  P.add(0x104,
+        {operation(NdOp::COND_BR, {}, {NdVar::cst(0x200, 8), r(96, 1)})});
+  P.Code[0x104].Fallthrough = {0x300};
+  for (auto [Address, Value] :
+       {std::pair<va_t, uint64_t>{0x200, 7}, {0x300, 11}}) {
+    if (Spilled)
+      P.add(Address, {operation(NdOp::LOAD, r(48), {r(40)})});
+    else
+      P.add(Address, {});
+    P.add(Address + 1, {operation(NdOp::STORE, {}, {r(48), c(Value, 1)}),
+                        operation(NdOp::COPY, r(0), {c(Value)}), ret()});
+  }
+  return P;
+}
+
+TEST(NativeStackSpecialization, LowRootGuardKeepsAffineControlDomainUnbounded) {
+  for (bool Spilled : {false, true})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      SCOPED_TRACE(Spilled);
+      SCOPED_TRACE(Order == llvm::endianness::little ? "little" : "big");
+      auto P = lowGuardedFrameControl(Spilled);
+      auto Options = stackOptions();
+      Options.ByteOrder = Order;
+      Options.MaxSolverQueries = 8;
+      if (Spilled)
+        Options.ControlFrameSlots = {{-64, 8}};
+      else
+        Options.ControlRegisters = {{48, 8}};
+      const auto Result = specializeInterpreter(P, {0x100}, Options);
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      EXPECT_LE(Result.SolverQueries, Options.MaxSolverQueries);
+      std::vector<int64_t> Observed;
+      for (int64_t Offset = -80; Offset != 8; ++Offset)
+        Observed.push_back(Offset);
+      for (uint64_t Base : {uint64_t{0}, uint64_t{0x10000},
+                            uint64_t{0x12345678fff0}, UINT64_MAX - 15})
+        for (uint64_t Low = 0; Low != 16; ++Low) {
+          const uint64_t Root = Base + Low;
+          SCOPED_TRACE(Root);
+          const uint64_t Expected = (Root & 3) == 1 ? 7 : 11;
+          const auto Run =
+              execute(Result.Residual, 0, 0, Order, Root, Observed);
+          ASSERT_TRUE(Run);
+          EXPECT_EQ(Run->Value, Expected);
+          EXPECT_EQ(Run->Stack, Root);
+          for (size_t I = 0; I < Observed.size(); ++I) {
+            uint8_t Byte = 65 + I;
+            const int64_t Offset = Observed[I];
+            if (Spilled && Offset >= -64 && Offset < -56) {
+              const unsigned Index = Offset + 64;
+              Byte =
+                  (Root - 32) >>
+                  (8 * (Order == llvm::endianness::little ? Index : 7 - Index));
+            }
+            if (Offset == -32)
+              Byte = Expected;
+            EXPECT_EQ(Run->Memory[I], Byte) << Offset;
+          }
+        }
+    }
+}
+
+TEST(NativeStackSpecialization, FreeAffineDomainDoesNotProveEdgeReachability) {
+  for (bool Contradictory : {false, true}) {
+    SCOPED_TRACE(Contradictory);
+    auto P = lowGuardedFrameControl(false, Contradictory);
+    P.Code.erase(0x200);
+    auto Options = stackOptions();
+    Options.ControlRegisters = {{48, 8}};
+    Options.MaxSolverQueries = 8;
+    const auto Result = specializeInterpreter(P, {0x100}, Options);
+    if (!Contradictory) {
+      EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+    } else {
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      for (uint64_t Root : {uint64_t{0}, uint64_t{1}, UINT64_MAX}) {
+        const auto Run =
+            execute(Result.Residual, 0, 0, llvm::endianness::little, Root);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, 11u);
+        EXPECT_EQ(Run->Stack, Root);
+      }
+    }
   }
 }
 

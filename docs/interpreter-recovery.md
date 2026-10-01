@@ -188,6 +188,12 @@ The JSON report adds `discoverControlState`, `maxControlRefinements`,
 limits, and analysis work; field discovery alone does not establish successful
 recovery.
 
+When a guard narrows an address dependency to a byte slice, refinement also retains enclosing, already tracked eight-byte direct-address fields as context candidates. The original narrow field and producer mask remain unchanged; unrelated wider fields are not promoted. Constants and entry-relative offsets still require proof, and all contexts share the existing limits.
+
+Optional immutable-address enumeration stops when a feasible address lacks a certificate. The original runtime read remains. Observed values and certificates are used only after the complete domain is proved; cache hits still recheck the current read extent, and an observed malformed certificate remains an error.
+
+A complete dependency proof may skip enumeration of a full 64-bit `root + constant` control value when the current edge predicate leaves the fresh root's high 32 bits free. This neither fixes the root nor proves reachability. Narrow producer masks and final feasibility checks still apply; a predicate bounding the whole root follows normal finite projection.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract

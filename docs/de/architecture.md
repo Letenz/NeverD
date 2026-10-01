@@ -74,6 +74,10 @@ nativer Instruktionsvorkommen und binärer Patches getrennt.
 
 `InterpreterSpecialization` verantwortet die begrenzte Rückwärtspropagierung von Bit-Anforderungen nach einem fehlgeschlagenen Versuch. Es nutzt den skalaren Auswerter, ohne Graphfakten zu ändern oder Kontrollfelder und Kontexte hinzuzufügen; sämtliche Arbeit bleibt budgetiert und die Veröffentlichung erfordert einen neuen vollständigen Beweis.
 
+Die Kontextverfeinerung kann zusätzlich einen bereits verfolgten Acht-Byte-Adressträger nominieren, wenn eine spätere Speicheranforderung nur einen Byteausschnitt verwendet. Die ursprünglichen schmalen Erzeugerkoordinaten bleiben maßgeblich; nur das Einreihen bildet Schlüssel aus bewiesenen Konstanten oder Frame-Offsets.
+
+Die endliche Werteaufzählung darf mögliche Tupel beobachten, ohne die Beweisabfrage zu ändern. Eine Ablehnung des Beobachters liefert ein unvollständiges Ergebnis ohne Tupel. Der Cache hält nur mathematische Beweise der Wertemenge; Zertifikate unveränderlicher Lesezugriffe bleiben bis zum Abschluss lokal.
+
 `NeverDLoader` ist für `PEFixedImageView` zuständig und teilt die vollständige Analyse der Basisrelokationen mit dem normalen PE-Laden. Der binäre Interpreteradapter nutzt diese authentifizierte Ansicht an der bevorzugten Basis für Wiederherstellung und native Beweise, statt PE-Tabellen selbst zu lesen. Die Vorbereitung prüft Import-Schreibbereiche, Mapping-Identität und vollständige Rohfelder vor der Zertifizierung der Bytes. Die Ansicht leiht ein unverändertes Abbild und belegt keine ASLR- oder Initialisierungsäquivalenz.
 
 `FrameOffsets` verantwortet budgetierte Beweise eindeutiger eintrittsrelativer Verschiebungen. Die Wiederherstellung normalisiert tatsächliche symbolische Speicherzugriffe ohne Änderung residualer Adressausdrücke; native Prüfungen behalten die Adressgleichheit beider Ausführungen bei. Vollständige Ausrichtungsverzweigung und gemeinsame Wiederholungsbudgets gehören zur Wiederherstellung. Native/LLVM-Partitionsbeweisaggregation bleibt separate, unfertige Arbeit. `NativeStackControl` verantwortet interne vorzeichenlose 16-Bit-Rückkehrbereinigung; der Binäranbieter authentifiziert kanonische Kodierungen mit acht Byte Pop-Breite.
@@ -81,6 +85,8 @@ nativer Instruktionsvorkommen und binärer Patches getrennt.
 `StringTransfer` verantwortet die begrenzte, geordnete skalare Absenkung. Die Wiederherstellung verantwortet Wertebeweise, gemeinsame Budgets und die erneute Zertifizierung vollständig kopierter Rahmenzeiger; erzeugte Zugriffe verwenden die üblichen Speicherprüfungen.
 
 Die Analyse der Kontrollabhängigkeiten meldet Bitabhängigkeiten der Wurzel nur nach einem vollständigen Durchlauf. Die Wiederherstellung darf die optionale Aufzählung von Abbildadressen auslassen, wenn eine bewiesene relative Adresse mindestens 32 freie obere Wurzelbits behält; dies beweist keine Erreichbarkeit und entfernt niemals den Speicherzugriff.
+
+Dieselbe Analyse der Wurzelabhängigkeiten sichert die affine Steuerprojektion über die volle Bitbreite ab. Ihr Ergebnis gilt nur für ein Kantenprädikat; zu große Wertebereiche führen zu einem unvollständigen Ablehnungsergebnis außerhalb des mathematischen Caches. Schmale Masken werden erneut geprüft. Die bestehende Behandlung der Erfüllbarkeit bleibt unabhängig; die Ablehnung eines Wertebereichs beweist weder die Erreichbarkeit noch die Unerreichbarkeit einer Kante.
 
 `modelInterpreterMachineStateX64` und der Quelltext-Wrapper teilen einen Generator für Gast-Teilregister, gepackte Flags, Profilstatus und Kontrollfluss. Das Modell ersetzt nur Zugriffe auf das Zustandsobjekt durch explizite Registerbytes und trennt den Status vom Gast-RAX. Compilersemantik und Beweisstrategie gehören nicht zu diesem Modell; Eintrittsdomäne, Beobachtungen, Rahmenvertrag und vollständige Verfeinerungsprüfung bleiben Aufgabe des Aufrufers.
 

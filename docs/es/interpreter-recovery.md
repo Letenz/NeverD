@@ -78,6 +78,12 @@ Desde C se usa `neverd_devirtualize_source_v3()` o `neverd_devirtualize_machine_
 
 El informe JSON añade `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` y `discoveryVisits` para registrar activación, límites y trabajo de análisis. Descubrir campos no demuestra por sí solo que la recuperación haya tenido éxito.
 
+Cuando una condición reduce una dependencia de dirección a una porción de bytes, el refinamiento también conserva como candidatos de contexto los campos completos de dirección directa de ocho bytes ya seguidos que la contienen. El campo estrecho y la máscara de su productor no cambian; no se promueven campos más anchos ajenos a la dirección. Las constantes y los desplazamientos relativos a la entrada siguen requiriendo pruebas, y todos los contextos comparten los límites existentes.
+
+La enumeración opcional de direcciones inmutables se detiene cuando una dirección factible carece de certificado. Se conserva la lectura original en ejecución. Los valores y certificados observados solo se usan tras demostrar el dominio completo; los aciertos de caché vuelven a validar la extensión de lectura actual, y un certificado malformado efectivamente observado sigue siendo un error.
+
+Una prueba completa de dependencias puede omitir la enumeración de un valor de control completo de 64 bits `root + constant` cuando el predicado de la arista actual deja libres los 32 bits altos de la nueva variable raíz. Esto no fija la dirección raíz ni demuestra alcanzabilidad. Se siguen aplicando las máscaras estrechas de los productores y las comprobaciones finales de viabilidad; un predicado que limita la raíz completa utiliza la proyección finita normal.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución

@@ -74,6 +74,10 @@ separadas de los certificados de apariciones nativas y parches binarios.
 
 `InterpreterSpecialization` se encarga de la propagación inversa acotada de demandas de bits tras un intento fallido. Reutiliza el evaluador escalar sin cambiar hechos del grafo ni añadir campos de control o contextos; todo el trabajo sigue sujeto a los presupuestos y la publicación exige una nueva prueba completa.
 
+El refinamiento de contextos puede proponer además un contenedor de dirección de ocho bytes ya seguido cuando una demanda de memoria posterior usa solo una porción de sus bytes. Las coordenadas estrechas originales del productor siguen siendo la referencia; solo la inserción en la cola forma claves a partir de constantes o desplazamientos de marco demostrados.
+
+La enumeración finita puede observar tuplas factibles sin cambiar la consulta de prueba. El rechazo del observador devuelve un resultado incompleto sin tuplas. La caché solo conserva pruebas matemáticas del dominio; los certificados de lectura inmutable permanecen locales hasta completar la enumeración.
+
 `NeverDLoader` es responsable de `PEFixedImageView` y comparte el análisis completo de reubicaciones de base con la carga PE ordinaria. El adaptador del intérprete binario usa esta vista autenticada en la base preferida para la recuperación y las pruebas nativas, sin analizar tablas PE por separado. La preparación valida las escrituras de importaciones, la identidad de los mapeos y los campos originales completos antes de certificar bytes. La vista toma prestada una imagen inalterada y no demuestra equivalencia de ASLR ni inicialización.
 
 `FrameOffsets` centraliza las pruebas presupuestadas de desplazamientos únicos relativos a la entrada. La recuperación normaliza accesos simbólicos reales sin cambiar expresiones residuales de dirección; las comprobaciones nativas conservan la igualdad de direcciones entre dos ejecuciones. La recuperación gestiona la selección exhaustiva y los presupuestos compartidos de reintento. La agregación de pruebas de particiones nativo/LLVM sigue siendo trabajo independiente sin terminar. `NativeStackControl` gestiona la limpieza interna sin signo de 16 bits; el proveedor binario autentica las codificaciones canónicas que extraen ocho bytes.
@@ -81,6 +85,8 @@ separadas de los certificados de apariciones nativas y parches binarios.
 `StringTransfer` es responsable de la conversión escalar acotada y ordenada. La recuperación controla las pruebas de valores, los presupuestos compartidos y la recertificación de punteros de marco completos; los accesos generados reutilizan las comprobaciones de memoria habituales.
 
 El recorrido de dependencias de control solo informa de dependencias sobre los bits de la raíz tras un análisis completo. La recuperación puede omitir la enumeración opcional de direcciones de la imagen cuando una dirección relativa demostrada conserva al menos 32 bits altos libres de la raíz; esto no demuestra alcanzabilidad ni elimina el acceso a memoria.
+
+El mismo análisis de dependencias de la raíz protege la proyección afín de controles de ancho completo. Su resultado es local a un predicado de arista; los dominios demasiado grandes producen un rechazo incompleto fuera de la caché matemática. Se reintentan las máscaras estrechas. El tratamiento existente de la viabilidad sigue siendo independiente; el rechazo del dominio no demuestra que una arista sea alcanzable ni inalcanzable.
 
 `modelInterpreterMachineStateX64` y la envoltura fuente comparten un generador para subregistros invitados, indicadores empaquetados, estado del perfil y flujo de control. El modelo solo sustituye accesos al objeto de estado por bytes de registro explícitos y separa el estado de ejecución del RAX invitado. No controla la semántica del compilador ni la política de prueba; el llamador conserva el dominio de entrada, las observaciones, el contrato de marco y la comprobación completa de refinamiento.
 

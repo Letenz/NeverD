@@ -337,6 +337,51 @@ TEST(HighControlFlowSemantics, DeadGuardedPhiReadIsRemovedBeforeExecution) {
     EXPECT_EQ(execute(F, Condition), Condition ? 42u : 7u);
 }
 
+TEST(HighControlFlowSemantics, DeadIntegerViewPhiCopiesPreserveEffectBarriers) {
+  for (unsigned Variant = 0; Variant != 8; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedPhiCopy();
+    auto &Copy = F.Body[0].ElseBody[0];
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(8, false);
+    View->Operands = {Copy.Val};
+    Copy.Val = View;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      View->Operands[0] = HighExpr::makeCall("observe", 0x2000, {});
+      View->Operands[0]->Type = NdType::makeInt(8);
+      break;
+    case 2:
+      View->Operands[0] = HighExpr::makeLoad(local(2), NdType::makeInt(8));
+      break;
+    case 3:
+      View->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 4:
+      Copy.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 5:
+      View->Type = View->CastTo = NdType::makeFloat(8);
+      break;
+    case 6:
+      View->Type = View->CastTo = NdType::makeInt(4, false);
+      break;
+    case 7:
+      View->IndirectTarget = HighExpr::makeConst(0x2000, 8);
+      break;
+    }
+    EXPECT_EQ(eliminateHighDeadPhiCopies(F), Variant == 0);
+    if (Variant == 0)
+      for (uint64_t Input : {0ULL, 1ULL, 2ULL, 0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input ? 42u : 7u);
+    else
+      EXPECT_EQ(F.Body[0].ElseBody[0].Val, View);
+  }
+}
+
 TEST(HighControlFlowSemantics, RewrittenGuardKeepsTheReachingPhiValue) {
   auto F = guardedPhiCopy();
   F.Body.insert(F.Body.begin(), assign(0, 2, 19));
@@ -588,6 +633,51 @@ TEST(HighControlFlowSemantics, FullWidthCopySignednessKeepsEqualityBits) {
   for (uint64_t Input :
        {0ULL, 1ULL, 0x8000000000000000ULL, 0xffffffffffffffffULL})
     EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, PartitionBudgetRetainsAnAffordableGuardSubset) {
+  for (bool OverwriteGuard : {false, true}) {
+    SCOPED_TRACE(OverwriteGuard);
+    auto F = mergedCopyEquality();
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    std::vector<HighStmt> Noise;
+    for (unsigned I = 0; I < 8; ++I) {
+      auto Definition = assign(0x3000 + I * 4, 20 + I, 0);
+      Definition.Val =
+          HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Parameter),
+                              HighExpr::makeConst(uint64_t{1} << I, 8));
+      F.Body.insert(F.Body.begin(), Definition);
+    }
+    for (unsigned Pass = 0; Pass != 2; ++Pass)
+      for (unsigned I = 0; I != 8; ++I) {
+        HighStmt Test;
+        Test.Kind = StmtKind::If;
+        Test.Addr = 0x3100 + Pass * 32 + I * 4;
+        Test.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                                        local(20 + (Pass ? 7 - I : I)),
+                                        HighExpr::makeConst(0, 8));
+        Noise.push_back(Test);
+      }
+    F.Body.insert(F.Body.end() - 2, Noise.begin(), Noise.end());
+    if (OverwriteGuard) {
+      auto Rewrite = assign(0x3200, 8, 0);
+      Rewrite.Dst->Type = NdType::makeInt(1, false);
+      Rewrite.Dst->Var.Size = 1;
+      Rewrite.Val = HighExpr::makeConst(0, 1);
+      F.Body.insert(F.Body.end() - 2, Rewrite);
+      EXPECT_THROW(execute(F, 1), std::runtime_error);
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), !OverwriteGuard)
+        << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+    if (!OverwriteGuard)
+      for (uint64_t Input = 0; Input != 256; ++Input)
+        EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+  }
 }
 
 TEST(HighControlFlowSemantics, MergedCopyRootsNeedEveryDefinitionAndPath) {

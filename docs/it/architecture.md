@@ -74,6 +74,10 @@ occorrenze native e delle patch binarie.
 
 `InterpreterSpecialization` gestisce la propagazione inversa limitata delle richieste di bit dopo un tentativo fallito. Riutilizza il valutatore scalare senza cambiare i fatti del grafo né aggiungere campi di controllo o contesti; tutto il lavoro resta soggetto ai budget e la pubblicazione richiede una nuova prova completa.
 
+Il raffinamento dei contesti può proporre anche un contenitore di indirizzo di otto byte già tracciato quando una richiesta di memoria successiva ne usa soltanto una porzione. Le coordinate ristrette originali del produttore restano il riferimento; solo l’inserimento in coda forma chiavi da costanti o scostamenti del frame dimostrati.
+
+L’enumerazione finita può osservare tuple ammissibili senza cambiare la query di prova. Il rifiuto dell’osservatore restituisce un risultato incompleto senza tuple. La cache conserva solo prove matematiche del dominio; i certificati delle letture immutabili restano locali fino al completamento dell’enumerazione.
+
 `NeverDLoader` gestisce `PEFixedImageView` e condivide l’analisi completa delle rilocazioni di base con il caricamento PE ordinario. L’adattatore dell’interprete binario usa questa vista autenticata alla base preferita per recupero e prove native, senza analizzare autonomamente le tabelle PE. La preparazione verifica scritture delle importazioni, identità delle mappature e campi originali completi prima di certificare i byte. La vista prende in prestito un’immagine invariata e non dimostra equivalenza di ASLR o inizializzazione.
 
 `FrameOffsets` gestisce prove con budget degli spostamenti unici rispetto all’ingresso. Il recupero normalizza gli accessi simbolici effettivi senza cambiare le espressioni residue degli indirizzi; i controlli nativi mantengono l’uguaglianza degli indirizzi fra due esecuzioni. Il recupero gestisce la selezione esaustiva e i budget condivisi dei tentativi. L’aggregazione delle prove di partizioni native/LLVM resta un lavoro separato incompleto. `NativeStackControl` gestisce la pulizia interna di ritorno senza segno a 16 bit; il fornitore binario autentica le codifiche canoniche che estraggono otto byte.
@@ -81,6 +85,8 @@ occorrenze native e delle patch binarie.
 `StringTransfer` gestisce l’abbassamento scalare limitato e ordinato. Il recupero gestisce prove dei valori, budget condivisi e ricertificazione dei puntatori di frame copiati integralmente; gli accessi generati riusano i normali controlli di memoria.
 
 La visita delle dipendenze di controllo riporta le dipendenze dai bit della radice solo dopo un’analisi completa. Il recupero può omettere l’enumerazione facoltativa degli indirizzi dell’immagine quando un indirizzo relativo dimostrato conserva almeno 32 bit alti liberi della radice; ciò non dimostra la raggiungibilità e non elimina mai l’accesso alla memoria.
+
+La stessa analisi delle dipendenze della radice protegge la proiezione affine dei controlli a larghezza completa. Il risultato è locale a un predicato d’arco; domini troppo grandi producono un rifiuto incompleto esterno alla cache matematica. Le maschere ristrette vengono riprovate. La gestione esistente della fattibilità resta indipendente; il rifiuto del dominio non dimostra né la raggiungibilità né l’irraggiungibilità di un arco.
 
 `modelInterpreterMachineStateX64` e il wrapper sorgente condividono un generatore per sottoregistri ospiti, flag impacchettati, stato del profilo e flusso di controllo. Il modello sostituisce solo gli accessi all’oggetto di stato con byte di registro espliciti e separa lo stato dal RAX ospite. Non possiede la semantica del compilatore o la politica di prova; dominio di ingresso, osservazioni, contratto del frame e verifica completa del raffinamento restano al chiamante.
 

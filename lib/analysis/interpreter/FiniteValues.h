@@ -11,6 +11,8 @@
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/solver/BitVectorSolver.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 namespace neverd::analysis::detail {
 
 enum class FiniteValueStatus {
@@ -27,6 +29,13 @@ struct FiniteValues {
   /// predicate is unsatisfiable, not that its outputs may take any value.
   std::vector<std::vector<uint64_t>> Tuples;
 };
+
+/// Observes a feasible complete projected tuple. Returning false abandons the
+/// entire enumeration with Unknown and no tuples; it never filters the domain
+/// or proves infeasibility. Observations remain provisional until Complete.
+/// The tuple is borrowed only for this call. The observer must not mutate the
+/// symbolic context, symbolic state, predicate or solver state.
+using FiniteValueObserver = llvm::function_ref<bool(llvm::ArrayRef<uint64_t>)>;
 
 /// True only when Value preserves enough independent variable bits to exceed
 /// Limit on every reachable path, and none of those variables occurs anywhere
@@ -46,13 +55,15 @@ bool hasUnconstrainedProjectionInput(
 FiniteValues
 enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
                       llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit,
-                      const SpecializationOptions &Options, uint64_t &Queries);
+                      const SpecializationOptions &Options, uint64_t &Queries,
+                      FiniteValueObserver Observe = {});
 
 FiniteValues
 enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
                       llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit,
                       solver::SolverOptions Settings, uint64_t MaxQueries,
-                      uint64_t MaxSymbolicNodes, uint64_t &Queries);
+                      uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                      FiniteValueObserver Observe = {});
 
 } // namespace neverd::analysis::detail
 
