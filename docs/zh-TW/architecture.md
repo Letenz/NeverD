@@ -62,6 +62,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `InterpreterSpecialization` 負責失敗嘗試後的有界反向位元需求傳播。它重用標量求值器，不改寫圖中的事實，也不增加控制欄位或上下文；所有工作仍受預算限制，發布必須經過全新的完整證明。
 
+`modelInterpreterMachineStateX64` 與原始碼包裝器共用同一產生器，統一處理客體暫存器分片、封裝旗標、執行設定狀態和控制流程。模型只將狀態物件存取改為明確的暫存器位元組，狀態碼與客體 RAX 分開。它不負責編譯器語意或證明策略；入口域、觀察項、堆疊框架契約和完整精化檢查仍由呼叫端負責。
+
 恢復 C API v3 與 CLI 將明確的欄位、細化和求解查詢預算傳入共用特化器。轉接層先檢查結構大小與 reserved 欄位，再讀取擴充；v1/v2 配置和預設值保持穩定。提高預算僅改變允許的工作量，不改變執行契約或結果發布條件。
 
 架構 lifter 負責交易式的未定義輸出附屬中繼資料：每次嘗試前清除舊證據，只為精確對應的成功提升發布效果。`Missing` 表示證據缺失，不等於空的 `Complete` 描述。一般 LowIR 保持確定的選定值。`LowIRUndefinedIndependence` 負責對傳入的完整無環 LowIR 圖進行有界關係證明，共用一般輸入，並保留新產生未定義值的來源關聯；它綁定完整指令邊界與操作摘要，拒絕不完整證明。超出下述有限原生路徑範圍的一般原生圖認證、迴圈不變量及原生程式碼到 C 的等價證明，仍屬於獨立工作。
@@ -441,13 +443,15 @@ CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗�
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查詢所選後端的能力設定。`NativeLegacyX64` 描述原生 x64 驅動程式執行；`NeverDNativeDriverTests` 驗證原有驅動程式集，也可在停用 Unicorn 的組建中執行。
 
-ARM64 原生整數狀態讀取由統一的 ISA 層負責。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暫存全部讀取結果，再正規化 NZCV 並一次提交完整狀態。KVM 和 WHP 共用該函式。任一讀取失敗都保留全部輸入狀態，權限級、向量和未傳輸的暫存器保持不變。這不新增原生 FP/SIMD 指令准入。
+Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
-checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立底層儲存或別名的頁面。ISA 計算運算元範圍，共用位址空間在進入前檢查每個頁面，並回報首個失敗片段。`RAMTransaction` 在完整 CPU 步驟成功後提交宣告的實體位元組；故障及觀察器停止會保留 RAM、暫存器和位址回寫。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 的組譯範例；這不新增 FP/SIMD 或 Windows ARM64 驅動載入。
+`CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
+
+`AArch64InstructionEffects` 負責純量及 FP/SIMD 單次、成對 RAM 存取範圍，單一運算元最大 128 位元。共用位址空間在進入 CPU 前驗證每頁；`RAMTransaction` 僅提交完整宣告的實體寫入。128 位元寫入觀察器在生效前依序收到兩個 64 位元字。停止與故障保留 RAM、向量及位址寫回。Xn/Vn 編號重疊合法；位址回繞的成對存取被拒絕。`NeverDAArch64MemoryTests` 使用獨立的 `AArch64CrossPageCases.def` 與 `AArch64VectorMemoryCases.def` 編碼。
 
 KVM x64 在每次進入前讀取實際特殊暫存器，僅比較 `KvmX64State.def` 定義的協定欄位。CR3、CPL、TLS、CR8 或其他欄位變化時重新寫入投影。只有完整擷取的單步偵錯退出允許重用可執行狀態；例外、取消或進入失敗後都重新建立該狀態。`X64StateTransition` 透過真實 CPU 讀取驗證 TLS、權限級和 CR8 變化、重複例外及取消。KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完整 FP/SSE 狀態與上次確認完成的偵錯退出狀態比較，只重新安裝變更的輸入。主機寫入和上下文恢復也參與比較；例外、取消及失敗會使重用失效。每條指令仍啟用單步並讀取真實的通用及 FP 狀態。
 
-KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。 `KvmAArch64Machine.cpp` 的位址轉換維護執行、客體暫存器準備、除錯設定和全部 35 項暫存器讀取也在此執行緒上完成。維護與客體執行共用一個單步期限；只有完整讀取並確認完成後，呼叫執行緒才透過 `captureAArch64GeneralState` 提交狀態。ARM64 原生執行仍缺少實機證據。
+KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備狀態、進入 `KVM_RUN` 並讀取狀態。`EINTR` 重試僅準備一次；取消進入或讀取失敗不能發布。`KvmAArch64Machine.cpp` 在該執行緒執行位址轉換維護與完整純量、向量傳遞，共用一次單步期限。呼叫執行緒僅在確認完成後提交；ISA 解碼、RAM 交易、OS 策略和觀察器仍屬於呼叫執行緒。ARM64 原生執行仍缺少實機證據。
 
 ## 嚴格提升契約
 
@@ -728,4 +732,4 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
 
-Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。
+checked Unicorn 單步執行現在遵守 `MachineRunControl`。ARM64 維護與客體執行共用一次單步執行額度；內部 `UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限。同步進入返回前會解除借用。拒絕進入會保留呼叫方狀態和 RAM，取消後的執行進展也不能透過 checked RAM 交易提交。指令准入範圍與非受限軟體契約維持不變。

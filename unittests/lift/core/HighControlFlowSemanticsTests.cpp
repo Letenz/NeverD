@@ -5502,3 +5502,95 @@ TEST(HighControlFlowSemantics, ByteWriteIntoUnsetRegisterDropsUnreadBytes) {
   narrowUnreadRegisterBytes(F);
   EXPECT_TRUE(HasUndef(F));
 }
+
+TEST(HighControlFlowSemantics, ExceptHandlerJumpToAReturnTailBecomesItsCopy) {
+  // __try { v = 1; } __except (...) { v = 2; goto R; } v = 3; R: return v;
+  // The handler's jump reaches a return tail, which it now returns through.
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1000;
+  Try.Body = {assign(0x1000, 1, 1)};
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.HandlerVA = 0x1040;
+  Try.EHClauses = {Except};
+  Try.EHClauseBodies = {{assign(0x1040, 1, 2), jump(0x1044, 0x1020)}};
+  HighFunc F;
+  F.Body = {Try, assign(0x1010, 1, 3), result(0x1020, local(1))};
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  ASSERT_EQ(F.Body.front().EHClauseBodies.size(), 1u);
+  const auto &Handler = F.Body.front().EHClauseBodies.front();
+  ASSERT_FALSE(Handler.empty());
+  EXPECT_EQ(Handler.back().Kind, StmtKind::Return);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+}
+
+TEST(HighControlFlowSemantics, CodeAfterALoopInAnArmMovesToItsOnlyBreak) {
+  // v = c; if (c) { while (1) { ... goto out; ... break; } v = v + 100; }
+  // out: return v; -- the jump's target is what follows the arm, which the
+  // arm reaches by falling off its end after the addition.
+  HighFunc F = loopWithExitJump(false);
+  auto Follow = assign(0x1020, 1, 0);
+  Follow.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(100, 8));
+  HighStmt Arm;
+  Arm.Kind = StmtKind::If;
+  Arm.Addr = 0x1008;
+  Arm.Cond = local(0);
+  Arm.Body = {F.Body[1], Follow};
+  F.Body = {F.Body[0], Arm, F.Body[2]};
+  const uint64_t Inputs[] = {0, 3, 4, 8};
+  const uint64_t Results[] = {0, 102, 3, 7};
+  for (size_t I = 0; I < 4; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  EXPECT_TRUE(breakToTheLoopFollow(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (size_t I = 0; I < 4; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, BackwardJumpsAroundATryBecomeALoop) {
+  // X: __try { v = v - 1; if (v & 1) goto X; } __except (...) { v = 9; }
+  // if (v) goto X; return v; -- the jump out of the try body back to X is
+  // the loop's continue, exactly as the jump after the try is.
+  auto Step = assign(0x1004, 1, 0);
+  Step.Val =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(1), HighExpr::makeConst(1, 8));
+  HighStmt Odd;
+  Odd.Kind = StmtKind::If;
+  Odd.Addr = 0x1008;
+  Odd.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(1), HighExpr::makeConst(1, 8));
+  Odd.Body = {jump(0x1008, 0x1000)};
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1000;
+  Try.Body = {Step, Odd};
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.HandlerVA = 0x1040;
+  Try.EHClauses = {Except};
+  Try.EHClauseBodies = {{assign(0x1040, 1, 9)}};
+  HighStmt Again;
+  Again.Kind = StmtKind::If;
+  Again.Addr = 0x1010;
+  Again.Cond = local(1);
+  Again.Body = {jump(0x1010, 0x1000)};
+  HighFunc F;
+  F.Body = {Try, Again, result(0x1014, local(1))};
+  EXPECT_TRUE(loopifyBackwardGotos(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  ASSERT_EQ(F.Body.front().Kind, StmtKind::While);
+  ASSERT_FALSE(F.Body.front().Body.empty());
+  EXPECT_EQ(F.Body.front().Body.front().Kind, StmtKind::SEHTry);
+
+  // A jump back to X out of a __finally body is not a `continue`: leaving a
+  // termination handler that way is not the same transfer.
+  Try.EHClauses.front().Kind = HighEHClauseKind::SEHFinally;
+  Try.Body = {Step};
+  Try.EHClauseBodies = {{Odd}};
+  HighFunc G;
+  G.Body = {Try, Again, result(0x1014, local(1))};
+  EXPECT_FALSE(loopifyBackwardGotos(G.Body));
+  EXPECT_EQ(countKind(G, StmtKind::Goto), 2u);
+}

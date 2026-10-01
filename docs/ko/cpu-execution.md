@@ -20,7 +20,7 @@ CPU 실행은 게스트 OS, 이미지 로더, 호출 규약과 독립적입니�
 | `page_size` | 4096 | 게스트 매핑 단위. 다른 값은 거부 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def)의 필수 기능 이름 |
 
-`driver-strict`는 x64, `software-cpu-v1`은 x64와 ARM64를 허용합니다. `checked-x64-v1` 및 `checked-aarch64-v1`은 지정된 아키텍처와 supervisor 권한을 요구합니다. `checked-user-x64-v1`과 `checked-user-aarch64-v1`은 계약에 맞는 제한 명령 목록을 각각 CPL3/EL0에서 실행하며 MMU 격리와 명시적 서비스 요청 종료를 사용합니다. Unicorn 및 호스트와 일치하는 KVM/WHP를 지원하고, `auto`는 기존 호스트 선택을 따릅니다. flat 프로필은 아키텍처 수준 사용자/supervisor MMU 격리를 보장하지 않습니다. checked ARM64 프로필은 FP/SIMD를 거부하지만 x64는 아래의 제한된 명령군을 허용합니다. supervisor x64는 제한된 MMIO와 prepared-read 문자열 전송을 추가하고, user 프로필은 장치 매핑을 거부합니다. 모든 checked 프로필에서 포트 I/O와 병렬 CPU 요구사항은 계속 거부됩니다. `service_traps`는 user 프로필만 알립니다.
+`driver-strict`는 x64, `software-cpu-v1`은 x64와 ARM64를 허용합니다. `checked-x64-v1` 및 `checked-aarch64-v1`은 지정된 아키텍처와 supervisor 권한을 요구합니다. `checked-user-x64-v1`과 `checked-user-aarch64-v1`은 계약에 맞는 제한 명령 목록을 각각 CPL3/EL0에서 실행하며 MMU 격리와 명시적 서비스 요청 종료를 사용합니다. Unicorn 및 호스트와 일치하는 KVM/WHP를 지원하고, `auto`는 기존 호스트 선택을 따릅니다. flat 프로필은 아키텍처 수준 사용자/supervisor MMU 격리를 보장하지 않습니다. checked ARM64와 x64 프로필은 아래의 제한된 FP/SIMD 명령군을 허용합니다. supervisor x64는 제한된 MMIO와 prepared-read 문자열 전송을 추가하고, user 프로필은 장치 매핑을 거부합니다. 모든 checked 프로필에서 포트 I/O와 병렬 CPU 요구사항은 계속 거부됩니다. `service_traps`는 user 프로필만 알립니다.
 
 사용자 실행은 매핑된 **모든** 페이지에 `UserAccessible`과 적절한 `Read`, `Write`, `Execute` 권한을 요구합니다. 기존 매핑은 기본적으로 supervisor용이며, 물리 바이트를 공유하는 별칭도 권한은 독립적입니다. `UserAccessible`만으로는 접근할 수 없습니다. 신뢰된 호스트 연산과 supervisor CPU는 RWX를 사용합니다. 예:
 
@@ -62,7 +62,7 @@ checked user x64는 접두사 없는 정확한 `SYSCALL` 인코딩만 가로채�
 
 ## x64 확장과 네이티브 CPU 상태
 
-checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 DAZ와 마스크되지 않은 예외는 거부합니다. checked ARM64는 계속 FP/SIMD를 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
+checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 DAZ와 마스크되지 않은 예외는 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
 
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
@@ -86,14 +86,16 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 
 `executionCapabilities(Contract, ISA, Backend)`로 선택한 백엔드의 기능을 조회합니다. `NativeLegacyX64`는 네이티브 x64 드라이버 실행을 나타내며, `NeverDNativeDriverTests`는 기존 드라이버 모음을 검증합니다. 이 테스트는 Unicorn을 비활성화한 빌드에서도 실행할 수 있습니다.
 
-ARM64 네이티브 정수 상태 수집은 ISA 계층에서 통일합니다. `AArch64GeneralState.def`는 X0–X30, SP, PC, NZCV, TPIDR_EL0를 열거하며 `captureAArch64GeneralState`는 모든 읽기를 임시 저장한 뒤 NZCV를 정규화하고 완전한 결과를 한 번에 게시합니다. KVM과 WHP는 이 함수를 공유합니다. 읽기 실패 시 전체 입력 상태를 유지하며 권한, 벡터와 전송하지 않는 레지스터는 변경하지 않습니다. 네이티브 FP/SIMD 명령 허용은 추가하지 않습니다.
+Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
-checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 저장 영역이나 별칭 페이지의 경계를 넘을 수 있습니다. ISA가 피연산자 범위를 계산하고 공유 주소 공간이 진입 전에 모든 페이지를 확인하여 첫 실패 조각을 보고합니다. `RAMTransaction`은 전체 CPU 단계가 성공한 후 선언된 물리 바이트를 반영합니다. 오류나 관찰자 중단 시 RAM, 레지스터, 주소 writeback을 보존합니다. `NeverDAArch64MemoryTests`는 `AArch64CrossPageCases.def`의 어셈블된 사례를 사용합니다. FP/SIMD나 Windows ARM64 드라이버 로딩은 추가하지 않습니다.
+`CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
-KVM x64/ARM64는 `KvmRunControl`을 통해 상태 준비, `KVM_RUN` 진입, 종료 상태 수집을 같은 전용 vCPU 스레드에서 수행합니다. 준비는 `EINTR` 재시도 루프 전에 한 번만 수행하며, 수집은 호스트 진입이 성공적으로 반환된 뒤에만 수행합니다. 빌린 전송 콜백은 진입 완료가 확인될 때까지 유효합니다. ISA 디코딩, RAM 트랜잭션, OS 정책과 실행 관찰자는 호출 스레드에서 실행합니다. 준비 실패 시 진입과 수집을 생략하며, 수집 실패나 취소 시 게스트 상태를 게시하지 않습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지보수 실행, 게스트 레지스터 준비, 디버그 설정과 35개 레지스터 읽기도 이 작업 스레드에서 수행합니다. 유지보수와 게스트 실행은 하나의 단일 단계 기한을 공유하며, 호출 스레드는 전체 수집의 완료가 확인된 뒤에만 `captureAArch64GeneralState`로 상태를 반영합니다. ARM64 네이티브 실행의 실기 증거는 아직 없습니다.
+`AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.
+
+KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드에서 상태 준비, `KVM_RUN`, 상태 캡처를 수행합니다. `EINTR` 재시도에도 준비는 한 번이며 취소나 캡처 실패는 게시할 수 없습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지와 전체 스칼라·벡터 전송도 하나의 단일 단계 기한을 공유합니다. 호출 스레드는 완료 확인 후 커밋하며 ISA 해석, RAM 트랜잭션, OS 정책과 관찰자를 담당합니다. 네이티브 ARM64 실기 증거는 아직 없습니다.
 
 KVM은 `X64HostRegisters.def`와 `X64FPState.def`에 따라 일반 레지스터와 전체 FP/SSE 상태를 마지막으로 완료 확인한 디버그 종료 상태와 비교하고 변경된 입력을 다시 설치합니다. 호스트 쓰기와 컨텍스트 복원도 비교에 포함되며 예외, 취소와 실패는 재사용을 무효화합니다. 단일 단계 설정과 실제 일반/FP 상태 읽기는 명령마다 수행합니다.
 
 하드웨어 실행 자체가 더 짧은 전체 지연 시간을 보장하지는 않습니다. 현재 네이티브 실행은 명령마다 허용 검사, 관찰, 상태 전송과 VM 종료를 수행합니다. 같은 원본 이미지와 시나리오를 동일한 명령·이벤트 예산으로 비교하고 시간과 함께 결과 일치를 보고해야 합니다. CLI 지연에는 시작과 로드도 포함합니다.
 
-Checked ARM64 상태 수집은 ISA 계층의 공통 커밋 경계를 사용합니다. KVM/WHP는 `AArch64GeneralState.def`의 35개 필드를 수집하고 Unicorn은 추가 스레드 및 부동소수점 제어 상태를 포함한 공개 스칼라 필드 39개를 유지합니다. `captureAArch64ScalarState`는 `Registers.def`의 너비를 적용하고 NZCV를 정규화하며 모든 읽기가 성공한 뒤에만 상태를 공개합니다. 권한, 벡터 및 전송하지 않은 필드는 유지됩니다. 이 전송은 checked ARM64의 FP/SIMD 명령 지원을 의미하지 않습니다.
+checked Unicorn 단일 단계 실행은 이제 `MachineRunControl`을 따릅니다. ARM64 유지보수와 게스트 실행은 한 단계 실행 한도를 공유하며, 내부 `UC_HOOK_CODE`가 명령 진입 시 빌린 정지 토큰과 기한을 확인합니다. 동기 진입은 반환 전에 참조를 해제합니다. 진입 거부는 호출자 상태와 RAM을 유지하며 취소된 실행 결과는 checked RAM 트랜잭션으로 커밋할 수 없습니다. 명령 허용 범위와 비제한 소프트웨어 계약은 그대로 유지합니다.

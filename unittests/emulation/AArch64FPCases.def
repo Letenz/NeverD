@@ -1,0 +1,100 @@
+//===- AArch64FPCases.def - Independent ARM64 FP/SIMD fixtures ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_AARCH64_FP_VALUE
+NEVERD_AARCH64_FP_VALUE(Limit, 4 * 1024 * 1024)
+NEVERD_AARCH64_FP_VALUE(PageSize, 4096)
+NEVERD_AARCH64_FP_VALUE(Code, 0x400000)
+NEVERD_AARCH64_FP_VALUE(Stack, 0x600000)
+NEVERD_AARCH64_FP_VALUE(StackAlignment, 16)
+NEVERD_AARCH64_FP_VALUE(InitialScalar, 0x1122334455667700ULL)
+NEVERD_AARCH64_FP_VALUE(InitialVectorLow, 0x0123456789abcdefULL)
+NEVERD_AARCH64_FP_VALUE(InitialVectorHigh, 0xfedcba9876543210ULL)
+NEVERD_AARCH64_FP_VALUE(InitialNZCV, 0xa0000000)
+NEVERD_AARCH64_FP_VALUE(InitialFPSR, 0x08000080)
+NEVERD_AARCH64_FP_VALUE(RoundingShift, 22)
+NEVERD_AARCH64_FP_VALUE(RoundingModes, 4)
+NEVERD_AARCH64_FP_VALUE(Timeout, 1000000)
+NEVERD_AARCH64_FP_VALUE(SourceRegisterShift, 5)
+NEVERD_AARCH64_FP_VALUE(SourceRegisterMask, 31u << 5)
+NEVERD_AARCH64_FP_VALUE(LastVector, 31)
+NEVERD_AARCH64_FP_VALUE(FirstOperand, 0)
+NEVERD_AARCH64_FP_VALUE(SecondOperand, 1)
+// Original Clang-assembled words, independent of the production decoder.
+NEVERD_AARCH64_FP_VALUE(Nop, 0xd503201f)
+// eor v31.16b, v0.16b, v1.16b
+NEVERD_AARCH64_FP_VALUE(VectorXor, 0x6e211c1f)
+// umov x0, v31.d[1]
+NEVERD_AARCH64_FP_VALUE(VectorHighToInteger, 0x4e183fe0)
+// fadd d31, d0, d1
+NEVERD_AARCH64_FP_VALUE(AddDouble, 0x1e61281f)
+NEVERD_AARCH64_FP_VALUE(DoubleOne, 0x3ff0000000000000ULL)
+NEVERD_AARCH64_FP_VALUE(DoubleTwo, 0x4000000000000000ULL)
+NEVERD_AARCH64_FP_VALUE(DoubleThree, 0x4008000000000000ULL)
+NEVERD_AARCH64_FP_VALUE(DoubleHalfULP, 0x3ca0000000000000ULL)
+NEVERD_AARCH64_FP_VALUE(VectorAnd, 0x4e211c1f)
+NEVERD_AARCH64_FP_VALUE(VectorOr, 0x4ea11c1f)
+NEVERD_AARCH64_FP_VALUE(VectorAddBytes, 0x4e21841f)
+NEVERD_AARCH64_FP_VALUE(VectorSubBytes, 0x6e21841f)
+NEVERD_AARCH64_FP_VALUE(DuplicateInteger, 0x4e080c1f)
+NEVERD_AARCH64_FP_VALUE(ReadFPCR, 0xd53b4400)
+NEVERD_AARCH64_FP_VALUE(WriteFPCR, 0xd51b4400)
+NEVERD_AARCH64_FP_VALUE(ReadFPSR, 0xd53b4420)
+NEVERD_AARCH64_FP_VALUE(WriteFPSR, 0xd51b4420)
+NEVERD_AARCH64_FP_VALUE(InvalidFPControl, 1u << 8)
+NEVERD_AARCH64_FP_VALUE(InvalidFPStatus, 1u << 31)
+NEVERD_AARCH64_FP_VALUE(ByteCount, 16)
+NEVERD_AARCH64_FP_VALUE(WordBits, 64)
+NEVERD_AARCH64_FP_VALUE(WordBytes, 8)
+NEVERD_AARCH64_FP_VALUE(BytesPerBit, 8)
+NEVERD_AARCH64_FP_VALUE(ByteMask, 0xff)
+NEVERD_AARCH64_FP_VALUE(Inexact, 1u << 4)
+NEVERD_AARCH64_FP_VALUE(DivideByZero, 1u << 1)
+NEVERD_AARCH64_FP_VALUE(InvalidOperation, 1)
+NEVERD_AARCH64_FP_VALUE(DefaultNaN, 1u << 25)
+NEVERD_AARCH64_FP_VALUE(FlushToZero, 1u << 24)
+NEVERD_AARCH64_FP_VALUE(InputDenormal, 1u << 7)
+NEVERD_AARCH64_FP_VALUE(HalfPrecisionAdd, 0x1ee1281f)
+NEVERD_AARCH64_FP_VALUE(ScalableVectorAdd, 0x04e1001f)
+NEVERD_AARCH64_FP_VALUE(CompareDouble, 0x1e612000)
+NEVERD_AARCH64_FP_VALUE(LessNZCV, 0x80000000)
+NEVERD_AARCH64_FP_VALUE(VectorFloatingAdd, 0x4e61d41f)
+NEVERD_AARCH64_FP_VALUE(PairVectorStore, 0xad000820)
+NEVERD_AARCH64_FP_VALUE(PairIntegerStore, 0xa9000820)
+NEVERD_AARCH64_FP_VALUE(LastPage, 0xfffffffffffff000ULL)
+#endif
+#ifdef NEVERD_AARCH64_FP_INSTRUCTION
+// Name, original word, first/second input bits, independently expected result,
+// FPCR and new FPSR bits. Scalar S/D results clear all upper destination bits.
+NEVERD_AARCH64_FP_INSTRUCTION(Add64, 0x1e61281f, DoubleOne, DoubleTwo,
+                              DoubleThree, 0, 0)
+NEVERD_AARCH64_FP_INSTRUCTION(Sub64, 0x1e61381f, DoubleOne, DoubleTwo,
+                              0xbff0000000000000ULL, 0, 0)
+NEVERD_AARCH64_FP_INSTRUCTION(Multiply64, 0x1e61081f, DoubleOne, DoubleTwo,
+                              DoubleTwo, 0, 0)
+NEVERD_AARCH64_FP_INSTRUCTION(Divide64, 0x1e61181f, DoubleOne, DoubleTwo,
+                              0x3fe0000000000000ULL, 0, 0)
+NEVERD_AARCH64_FP_INSTRUCTION(Add32, 0x1e21281f, 0x3f800000, 0x40000000,
+                              0x40400000, 0, 0)
+// 1 + 2^-53 is exactly halfway between adjacent binary64 values.
+NEVERD_AARCH64_FP_INSTRUCTION(NearestEven, 0x1e61281f, DoubleOne,
+                              0x3ca0000000000000ULL, DoubleOne, 0, Inexact)
+NEVERD_AARCH64_FP_INSTRUCTION(TowardPositive, 0x1e61281f, DoubleOne,
+                              0x3ca0000000000000ULL, DoubleOne + 1,
+                              1u << RoundingShift, Inexact)
+NEVERD_AARCH64_FP_INSTRUCTION(TowardNegative, 0x1e61281f, DoubleOne,
+                              0x3ca0000000000000ULL, DoubleOne,
+                              2u << RoundingShift, Inexact)
+NEVERD_AARCH64_FP_INSTRUCTION(TowardZero, 0x1e61281f, DoubleOne,
+                              0x3ca0000000000000ULL, DoubleOne,
+                              3u << RoundingShift, Inexact)
+NEVERD_AARCH64_FP_INSTRUCTION(ZeroDivisor, 0x1e61181f, DoubleOne, 0,
+                              0x7ff0000000000000ULL, 0, DivideByZero)
+NEVERD_AARCH64_FP_INSTRUCTION(SignalingNaN, 0x1e61281f, 0x7ff0000000000001ULL,
+                              DoubleOne, 0x7ff8000000000000ULL, DefaultNaN,
+                              InvalidOperation)
+NEVERD_AARCH64_FP_INSTRUCTION(FlushSubnormalInput, 0x1e61281f, 1, DoubleOne,
+                              DoubleOne, FlushToZero, InputDenormal)
+#endif

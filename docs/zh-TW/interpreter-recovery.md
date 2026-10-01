@@ -104,6 +104,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 若未定義旗標會影響控制流程、位址或其他已定義輸出，還需要獨立證明這些觀察不受其影響。目前恢復報告不提供此證明，也不認證這類依賴處理器的行為。
 
+`modelInterpreterMachineStateX64` 與原始碼包裝器共用產生器，傳回 `InterpreterMachineStateModel`。暫存器位元組 `[0, 136)` 表示原始的 17 字狀態物件；`RETURN` 單獨傳回狀態碼，客體 RAX 保存在狀態欄位中，客體記憶體存取仍是記憶體存取。非法入口旗標和遭拒絕的動態旗標寫入會保留失敗狀態。此抽象要求狀態儲存始終可存取、符合對齊且不與客體存取重疊。`MaxOperations` 限制輸入中繼資料和產生的操作。確定性 LowIR 記錄不能作為原始架構未定義輸出的證據。呼叫端仍須提供觀察項、入口與堆疊框架契約，並執行全新的 `checkLowIRLoopRefinement` 或有限路徑精化證明；產生模型和記錄都不證明編譯後的 C。
+
 <!-- i18n-section: limits -->
 
 ## 目前限制

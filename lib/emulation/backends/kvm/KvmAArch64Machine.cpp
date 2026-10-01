@@ -9,30 +9,63 @@
 #if defined(__linux__) && defined(__aarch64__) && defined(NEVERD_EMULATION_KVM)
 #include "KvmVM.h"
 
+#include "llvm/Support/ErrorHandling.h"
+
 #include <array>
 #include <cerrno>
 #include <cstddef>
 
 namespace neverd::emulation {
 namespace {
-constexpr uint64_t coreRegister(size_t Offset) {
-  return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE |
-         (Offset / sizeof(uint32_t));
+constexpr uint64_t coreRegister(size_t Offset,
+                                uint64_t Size = KVM_REG_SIZE_U64) {
+  return KVM_REG_ARM64 | Size | KVM_REG_ARM_CORE | (Offset / sizeof(uint32_t));
 }
 #define NEVERD_AARCH64_SYSTEM_REGISTER(Name, Op0, Op1, CRn, CRm, Op2)          \
   constexpr uint64_t Name =                                                    \
       KVM_REG_ARM64 | ARM64_SYS_REG(Op0, Op1, CRn, CRm, Op2);
 #include "../../arch/aarch64/AArch64SystemRegisters.def"
 #undef NEVERD_AARCH64_SYSTEM_REGISTER
+uint64_t scalarRegister(AArch64Register Register, bool UserMode) {
+  if (unsigned(Register) < aarch64::GPRCount)
+    return coreRegister(offsetof(kvm_regs, regs.regs) +
+                        unsigned(Register) * aarch64::WordBytes);
+  switch (Register) {
+  case AArch64Register::SP:
+    return coreRegister(UserMode ? offsetof(kvm_regs, regs.sp)
+                                 : offsetof(kvm_regs, sp_el1));
+  case AArch64Register::PC:
+    return coreRegister(offsetof(kvm_regs, regs.pc));
+  case AArch64Register::NZCV:
+    return coreRegister(offsetof(kvm_regs, regs.pstate));
+  case AArch64Register::TPIDR_EL0:
+    return TpidrEl0;
+  case AArch64Register::TPIDRRO_EL0:
+    return TpidrroEl0;
+  case AArch64Register::TPIDR_EL1:
+    return TpidrEl1;
+  case AArch64Register::FPCR:
+    return coreRegister(offsetof(kvm_regs, fp_regs.fpcr), KVM_REG_SIZE_U32);
+  case AArch64Register::FPSR:
+    return coreRegister(offsetof(kvm_regs, fp_regs.fpsr), KVM_REG_SIZE_U32);
+  default:
+    llvm_unreachable(diagnostic::Register);
+  }
+}
+uint64_t vectorRegister(unsigned Index) {
+  return coreRegister(offsetof(kvm_regs, fp_regs.vregs) +
+                          Index * sizeof(RegisterValue),
+                      KVM_REG_SIZE_U128);
+}
 class KvmAArch64Machine final : public AArch64Machine, public KvmVM {
 public:
-  llvm::Error set(uint64_t Name, uint64_t Value) {
+  template <typename T> llvm::Error set(uint64_t Name, const T &Value) {
     kvm_one_reg R{Name, reinterpret_cast<uintptr_t>(&Value)};
     if (ioctl(CPU, KVM_SET_ONE_REG, &R) < 0)
       return diagnostic::error(diagnostic::KvmState);
     return llvm::Error::success();
   }
-  llvm::Error get(uint64_t Name, uint64_t &Value) {
+  template <typename T> llvm::Error get(uint64_t Name, T &Value) {
     kvm_one_reg R{Name, reinterpret_cast<uintptr_t>(&Value)};
     if (ioctl(CPU, KVM_GET_ONE_REG, &R) < 0)
       return diagnostic::error(diagnostic::KvmState);
@@ -69,8 +102,6 @@ public:
     Control = Control.forNativeStep();
     const auto PC = coreRegister(offsetof(kvm_regs, regs.pc));
     const auto PState = coreRegister(offsetof(kvm_regs, regs.pstate));
-    const auto SP = coreRegister(State.UserMode ? offsetof(kvm_regs, regs.sp)
-                                                : offsetof(kvm_regs, sp_el1));
     const uint64_t Mode = State.UserMode ? PStateEL0t : PStateEL1h;
     // Rebuilds change page-table bytes, not the translation cache. Execute the
     // immutable maintenance gate under host single-step before every entry.
@@ -87,6 +118,8 @@ public:
         return E;
       if (auto E = set(VbarEl1, VectorGPA))
         return E;
+      if (auto E = set(CpacrEl1, CPACR))
+        return E;
       if (auto E = set(PState, PStateEL1h | PStateDAIF))
         return E;
       return set(PC, EntryGPA);
@@ -101,64 +134,55 @@ public:
         return diagnostic::error(diagnostic::ArmState);
     }
     auto PrepareGuest = [&]() -> llvm::Error {
-      for (unsigned N = 0; N < GPRCount; ++N)
-        if (auto E =
-                set(coreRegister(offsetof(kvm_regs, regs.regs) + N * WordBytes),
-                    State.Registers[N]))
-          return E;
-      if (auto E = set(SP, State.reg(AArch64Register::SP)))
-        return E;
-      if (auto E = set(TpidrEl0, State.reg(AArch64Register::TPIDR_EL0)))
-        return E;
-      if (auto E =
-              set(PState, Mode | PStateDAIF | State.reg(AArch64Register::NZCV)))
-        return E;
-      return set(PC, State.reg(AArch64Register::PC));
-    };
-    constexpr AArch64Register Registers[] = {
-#define NEVERD_AARCH64_GENERAL_REGISTER(Name) AArch64Register::Name,
-#include "../../arch/aarch64/AArch64GeneralState.def"
-#undef NEVERD_AARCH64_GENERAL_REGISTER
-    };
-    std::array<uint64_t, std::size(Registers)> Captured{};
-    auto CaptureGuest = [&]() -> llvm::Error {
-      for (unsigned I = 0; I < Captured.size(); ++I) {
-        const auto Register = Registers[I];
-        uint64_t Name;
-        if (unsigned(Register) < GPRCount)
-          Name = coreRegister(offsetof(kvm_regs, regs.regs) +
-                              unsigned(Register) * WordBytes);
-        else
-          switch (Register) {
-          case AArch64Register::SP:
-            Name = SP;
-            break;
-          case AArch64Register::PC:
-            Name = PC;
-            break;
-          case AArch64Register::NZCV:
-            Name = PState;
-            break;
-          case AArch64Register::TPIDR_EL0:
-            Name = TpidrEl0;
-            break;
-          default:
-            return diagnostic::error(diagnostic::Register);
-          }
-        if (auto E = get(Name, Captured[I]))
+      for (unsigned Index = 0; Index < State.Registers.size(); ++Index) {
+        const auto Register = AArch64Register(Index);
+        const uint64_t Value = Register == AArch64Register::NZCV
+                                   ? Mode | PStateDAIF | State.reg(Register)
+                                   : State.reg(Register);
+        const auto Name = scalarRegister(Register, State.UserMode);
+        auto E = Register == AArch64Register::FPCR ||
+                         Register == AArch64Register::FPSR
+                     ? set(Name, uint32_t(Value))
+                     : set(Name, Value);
+        if (E)
           return E;
       }
+      for (unsigned Index = 0; Index < State.Vectors.size(); ++Index)
+        if (auto E = set(vectorRegister(Index), State.Vectors[Index]))
+          return E;
       return llvm::Error::success();
+    };
+    // This packet is private to the entry worker until its complete capture
+    // has been acknowledged. Scalar and vector reads share one ISA commit.
+    auto Captured = State;
+    auto CaptureGuest = [&]() -> llvm::Error {
+      return captureAArch64State(
+          Captured,
+          [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+            const auto Name = scalarRegister(Register, State.UserMode);
+            if (Register == AArch64Register::FPCR ||
+                Register == AArch64Register::FPSR) {
+              uint32_t Value = 0;
+              if (auto E = get(Name, Value))
+                return E;
+              return Value;
+            }
+            uint64_t Value = 0;
+            if (auto E = get(Name, Value))
+              return E;
+            return Value;
+          },
+          [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+            RegisterValue Value{};
+            if (auto E = get(vectorRegister(Index), Value))
+              return E;
+            return Value;
+          });
     };
     if (auto E = enter(Control, PrepareGuest, CaptureGuest))
       return E;
-    return captureAArch64GeneralState(
-        State, [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-          for (unsigned I = 0; I < Captured.size(); ++I)
-            if (Registers[I] == Register)
-              return Captured[I];
-          return diagnostic::error(diagnostic::Register);
-        });
+    State = Captured;
+    return llvm::Error::success();
   }
 };
 } // namespace

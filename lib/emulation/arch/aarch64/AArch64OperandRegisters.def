@@ -1,8 +1,9 @@
-//===- AArch64OperandRegisters.def - Scalar operand register views --------===//
+//===- AArch64OperandRegisters.def - Scalar/vector operand views --------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#ifdef NEVERD_AARCH64_OPERAND
 NEVERD_AARCH64_OPERAND(X0, 64)
 NEVERD_AARCH64_OPERAND(W0, 32)
 NEVERD_AARCH64_OPERAND(X1, 64)
@@ -69,3 +70,11 @@ NEVERD_AARCH64_OPERAND(SP, 64)
 NEVERD_AARCH64_OPERAND(WSP, 32)
 NEVERD_AARCH64_OPERAND(XZR, 64)
 NEVERD_AARCH64_OPERAND(WZR, 32)
+#endif
+#ifdef NEVERD_AARCH64_VECTOR_VIEW
+NEVERD_AARCH64_VECTOR_VIEW(B, 8)
+NEVERD_AARCH64_VECTOR_VIEW(H, 16)
+NEVERD_AARCH64_VECTOR_VIEW(S, 32)
+NEVERD_AARCH64_VECTOR_VIEW(D, 64)
+NEVERD_AARCH64_VECTOR_VIEW(Q, 128)
+#endif

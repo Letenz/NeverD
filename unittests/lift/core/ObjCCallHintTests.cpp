@@ -5357,6 +5357,135 @@ TEST(ObjCCallHints, ExceptionThrowRequiresStrongLibobjcImport) {
   }
 }
 
+TEST(ObjCCallHints,
+     ExceptionTerminationRequiresExactStrongNeededLibobjcImport) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_terminate", Architecture);
+    Image.DyldBindSlots[0x2180] = {"_objc_terminate", 0,
+                                   "/usr/lib/libobjc.A.dylib", false};
+    EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+    const auto Hint = objcRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::ObjCRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, "objc_terminate");
+    EXPECT_TRUE(Hint->DoesNotReturn);
+    EXPECT_FALSE(Hint->ReturnedArgument);
+    EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+    EXPECT_TRUE(Hint->Signature.HasExplicitABI);
+    EXPECT_EQ(Hint->Signature.Architecture, Architecture);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_TRUE(Hint->Signature.Parameters.empty());
+    EXPECT_EQ(Hint->Signature.ReturnLocation.Kind, SourceABICarrierKind::None);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Hint->Signature, Diagnostic)) << Diagnostic;
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Image;
+      auto &Bind = Changed.DyldBindSlots[0x2180];
+      switch (Mutation) {
+      case 0:
+        Bind.Module = "/tmp/libobjc.A.dylib";
+        Changed.DynInfo.NeededLibs.push_back(Bind.Module);
+        break;
+      case 1:
+        Changed.DyldBindSlots.clear();
+        break;
+      case 2:
+        Bind.WeakImport = true;
+        break;
+      case 3:
+        Bind.Addend = 8;
+        break;
+      case 4:
+        Bind.Name = "__objc_terminate";
+        break;
+      case 5:
+        Changed.ImportPtrSlots[0x2180] = "_objc_terminate_suffix";
+        Bind.Name = Changed.ImportPtrSlots[0x2180];
+        break;
+      case 6:
+        Changed.ImportStorageSlots[0x2180].Name = "_other";
+        break;
+      case 7:
+        Changed.ImportStorageSlots[0x2180].Name = "_objc_terminate";
+        Changed.ImportStorageSlots[0x2180].Addend = 8;
+        break;
+      case 8:
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+        break;
+      case 9:
+        Changed.IsRelocatable = true;
+        break;
+      case 10:
+        Changed.Format = BinaryFormat::ELF;
+        break;
+      case 11:
+        Changed.Bits = Bitness::Bits32;
+        break;
+      }
+      EXPECT_FALSE(objcRuntimeSourceCallHint(Changed, 0x2180));
+    }
+  }
+}
+
+TEST(ObjCCallHints, ExceptionTerminationStopsImportedCallFallthrough) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_terminate", Architecture);
+    Image.DyldBindSlots[0x2180] = {"_objc_terminate", 0,
+                                   "/usr/lib/libobjc.A.dylib", false};
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+    auto Med = convert(Image, caller(Architecture));
+    unsigned BoundCalls = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ASSERT_TRUE(Op.SourceCallHint);
+          EXPECT_TRUE(Op.DoesNotReturn);
+          EXPECT_EQ(Op.NumInputs, 1U);
+          EXPECT_EQ(Op.Output.Size, 0U);
+          EXPECT_EQ(Op.Inputs[0].ConstVal, 0x1100U);
+          EXPECT_EQ(Op.SourceCallHint->TargetAddress, 0x2180U);
+          ++BoundCalls;
+        }
+    ASSERT_EQ(BoundCalls, 1U);
+    // Import veneers are also present in the native inventory. Their local
+    // body cannot revoke the independent runtime declaration's exit effect.
+    auto Veneer = Med;
+    Veneer.Entry = 0x1100;
+    Veneer.Blocks[0].Ops = {MedOp{}};
+    Veneer.Blocks[0].Ops[0].Opcode = NdOp::RETURN;
+    std::vector<MedFunc> Functions{std::move(Med), std::move(Veneer)};
+    propagateInternalNoReturn(Functions, Architecture);
+    EXPECT_TRUE(Functions[0].DoesNotReturn);
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Functions[0], Architecture);
+    EXPECT_TRUE(High.DoesNotReturn);
+    unsigned SourceReturns = 0;
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      SourceReturns += Statement.Kind == StmtKind::Return;
+    });
+    EXPECT_EQ(SourceReturns, 0U);
+    const auto *Call = sourceCall(High);
+    ASSERT_TRUE(Call);
+    EXPECT_TRUE(Call->Operands.empty());
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+
+    for (bool Enabled : {false, true}) {
+      if (Enabled)
+        Image.DyldBindSlots[0x2180].Module = "/tmp/libobjc.A.dylib";
+      const auto Unbound = convert(Image, caller(Architecture), Enabled);
+      for (const auto &Block : Unbound.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL) {
+            EXPECT_FALSE(Op.SourceCallHint);
+            EXPECT_FALSE(Op.DoesNotReturn);
+          }
+    }
+  }
+}
+
 TEST(ObjCCallHints, PropertyRuntimeKeepsValueBeforeSignedOffset) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = runtimeImage("_objc_setProperty_nonatomic_copy", Architecture);

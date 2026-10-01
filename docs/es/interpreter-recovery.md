@@ -144,6 +144,8 @@ La ABI de fuente ordinaria reconstruye un marco privado de la invocación. Todo 
 
 Si los indicadores indefinidos influyen en el control, las direcciones o las salidas definidas, se necesita una prueba independiente de no interferencia. El informe actual no aporta esa prueba ni certifica ese comportamiento dependiente del procesador.
 
+`modelInterpreterMachineStateX64` devuelve un `InterpreterMachineStateModel` mediante el mismo generador que la envoltura de código fuente. Los bytes de registro `[0, 136)` representan las 17 palabras del estado sin normalizar; `RETURN` lleva el estado de ejecución separado del RAX invitado, y la memoria invitada sigue siendo memoria. Los indicadores de entrada inválidos y las escrituras dinámicas rechazadas conservan el fallo. El almacenamiento del estado debe ser accesible, alineado y disjunto de los accesos invitados. `MaxOperations` limita los metadatos de entrada y las operaciones generadas. Los registros LowIR deterministas no son evidencia de salidas arquitectónicamente indefinidas. El llamador debe aportar observaciones, contratos de entrada y marco y una prueba nueva mediante `checkLowIRLoopRefinement` o refinamiento de caminos finitos; generar el modelo y sus registros no certifica el C compilado.
+
 <!-- i18n-section: limits -->
 
 ## Límites actuales

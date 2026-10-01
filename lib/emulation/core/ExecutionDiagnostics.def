@@ -101,6 +101,8 @@ NEVERD_EXECUTION_DIAGNOSTIC(
 NEVERD_EXECUTION_DIAGNOSTIC(
     WhpArmCapability, "Windows ARM64 hypervisor lacks required capabilities")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornCreate, "create guest CPU")
+NEVERD_EXECUTION_DIAGNOSTIC(UnicornRun,
+                            "Unicorn checked entry stopped or expired")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornFlags, "initialize CPU flags")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornReadRegister, "read guest register")
 NEVERD_EXECUTION_DIAGNOSTIC(UnicornWriteRegister, "write guest register")
