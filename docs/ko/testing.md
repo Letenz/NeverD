@@ -923,6 +923,8 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 기존 `ci.yml`은 Windows x64 runner에서 명시적으로 선택하는 수동 모드 `native_cpu_only`를 제공합니다. `NativeCPUTests.def`가 열 테스트 소유자를 선택하고, `run_native_cpu_ci.py`가 먼저 빌드한 후 필터링된 CTest를 실행하여 목록, JUnit, 로그, 요약을 저장합니다. 공통 CI 파서는 통과, 실패, 건너뜀, 비활성화, 미실행을 구분합니다. 선언된 WHP 네이티브 매핑 사례는 모두 발견되고 실행되어야 하며, 네이티브 증거가 없거나 건너뛰면 이 작업은 실패합니다. 기본 LLVM 소스 빌드 CI는 그대로 유지됩니다. 프로토콜 테스트와 컴파일은 WHP 또는 ARM64 네이티브 워크로드 검증을 대신하지 않습니다.
 
+`native_cpu_only=true`와 함께 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. `NativeDriverTests.def`는 `DriverBuiltinImages.def`의 26개 이미지에 대해 원래 주소와 재배치 주소의 WHP 결과 52개를 필수로 요구합니다. 고정 주소 이미지는 재배치 시 예상된 로더 거부를 반환해야 합니다. 안정적인 매개변수 식별자로 내장 사례 누락이나 건너뛰기를 작업 실패로 처리하며, 선택적 WDK 픽스처 부재는 명시적으로 건너뜁니다. 동일한 증거 실행기는 `--with-drivers`를 지원하고 실행 전에 선택한 모든 테스트 대상을 기록합니다.
+
 `NeverDAArch64StateTests`는 모든 스칼라 필드와 벡터의 두 워드 손상, 권한 변경, 부동소수점 미실행 및 전송 오류 진단 보존을 검사합니다. `NeverDAArch64FPTests`의 `OriginalProgramChecksCompleteStateAndOneDeadline`은 독립적으로 어셈블한 `AArch64ProbeCases.def` 명령을 실제 전송에서 두 권한으로 실행합니다. 테스트는 PC와 무관한 명령을 게스트 코드로 옮기며 모니터 페이지의 사용자 접근을 허용하지 않습니다. Unicorn 실행과 명시적 native 건너뛰기는 native ARM64 시작 증거를 대신하지 않습니다.
 
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.

@@ -300,3 +300,14 @@ NEVERD_EMULATION_DOC_PATH(WhpFPBoundary, "docs/{locale}/testing.md")
 #ifdef NEVERD_EMULATION_DOC_TOKEN
 NEVERD_EMULATION_DOC_TOKEN(WhpFPBoundary, "NativeGuestRAMDistinguishesEntryFromCaptureLoss")
 #endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(NativeDriverCI, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeDriverCI, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "native_driver_tests=true")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "NativeDriverTests.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverBuiltinImages.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
+#endif

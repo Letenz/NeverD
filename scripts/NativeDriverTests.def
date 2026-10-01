@@ -1,0 +1,18 @@
+//===- NativeDriverTests.def - Required native driver outcome evidence ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_DRIVER_OWNER
+NEVERD_NATIVE_DRIVER_OWNER(NeverDNativeDriverTests)
+#endif
+#ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
+// Fixed images intentionally reject rebasing before guest entry. These
+// outcomes are required as well as the original-address execution outcomes.
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Original_",
+    "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
+#endif

@@ -933,6 +933,8 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 
+`native_cpu_only=true` と併せて `native_driver_tests=true` を指定すると、Unicorn に依存しない `NeverDNativeDriverTests` を有効にできます。`NativeDriverTests.def` は `DriverBuiltinImages.def` の 26 イメージについて、元のアドレスと再配置先で計 52 個の WHP 結果を必須とします。固定アドレスのイメージは再配置時に所定のローダー拒否を返す必要があります。安定したパラメーター識別子により、組み込みケースの未登録やスキップはジョブ失敗になります。任意の WDK フィクスチャがない場合は明示的にスキップします。同じ証拠ランナーが `--with-drivers` を受け付け、実行前に選択した全テストターゲットを記録します。
+
 `NeverDAArch64StateTests` は全スカラーフィールド、全ベクトルの両ワード、権限変更、浮動小数点命令の未実行、転送エラー診断の保持を検証します。`NeverDAArch64FPTests` の `OriginalProgramChecksCompleteStateAndOneDeadline` は独立に組み立てた `AArch64ProbeCases.def` の命令を実際の転送で両権限から実行します。テストは PC に依存しない命令をゲストコードへ移し、監視ページへの user アクセスは許可しません。Unicorn の実行と明示的な native skip は native ARM64 起動証拠を代替しません。
 
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。

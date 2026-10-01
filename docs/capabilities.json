@@ -4925,6 +4925,16 @@
       "tests": [
         {
           "runner": "gtest",
+          "target": "NeverDNativeDriverTests",
+          "source": "unittests/emulation/DriverNativeExecutionTests.cpp",
+          "filter": "*/DriverNativeExecution.OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/*",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDDriverEmulationTests",
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSCookieIsCheckedDuringSearchAndTargetUnwind",
