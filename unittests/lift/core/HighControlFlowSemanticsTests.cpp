@@ -481,6 +481,77 @@ TEST(HighControlFlowSemantics,
   EXPECT_FALSE(MissingCopy.Items.empty());
 }
 
+HighFunc mergedCopyEquality() {
+  auto F = copiedBooleanEquality(false);
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.Id = 0;
+  Parameter.Size = 8;
+  const auto Input = HighExpr::makeVar(Parameter);
+  F.Body[0].Val = Input;
+  const auto Copy = [](va_t Address, int Destination, int Source) {
+    auto S = assign(Address, Destination, 0);
+    S.Val = local(Source);
+    return S;
+  };
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Addr = 0x1006;
+  Branch.Cond = Input;
+  Branch.Body = {Copy(0x2000, 10, 1), Copy(0x2004, 3, 10)};
+  Branch.ElseBody = {Copy(0x2010, 11, 1), Copy(0x2014, 3, 11)};
+  F.Body[2] = std::move(Branch);
+  return F;
+}
+
+TEST(HighControlFlowSemantics, DistinctBranchCopiesShareOneDominatingRoot) {
+  const auto F = mergedCopyEquality();
+  const auto Report = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Report.Complete);
+  ASSERT_TRUE(Report.Items.empty())
+      << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+  for (uint64_t Input : {0ULL, 1ULL, 2ULL, 7ULL, 0xffffffffULL,
+                         0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, MergedCopyRootsNeedEveryDefinitionAndPath) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Branch = F.Body[2];
+    switch (Variant) {
+    case 0:
+      // One edge carries a different stable root.
+      Branch.ElseBody[0].Val = local(2);
+      break;
+    case 1:
+      // One edge reads its alias before that alias has a definition.
+      Branch.ElseBody.erase(Branch.ElseBody.begin());
+      break;
+    case 2:
+      // A write to the original after the snapshot invalidates the relation.
+      F.Body.insert(F.Body.begin() + 4, assign(0x2020, 1, 2));
+      break;
+    case 3:
+      // The merged local is not defined on one incoming path.
+      Branch.ElseBody.pop_back();
+      break;
+    case 4:
+      // A cyclic copy graph supplies no stable root.
+      Branch.ElseBody[0].Val = local(3);
+      break;
+    case 5:
+      // A later conflicting write must not borrow the earlier alias fact.
+      F.Body.insert(F.Body.begin() + 6, assign(0x2020, 3, 2));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_FALSE(Report.Items.empty());
+  }
+}
+
 TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
   auto F = copiedBooleanEquality(true);
   const auto Report = analyzeHighSourceFlow(F, true);

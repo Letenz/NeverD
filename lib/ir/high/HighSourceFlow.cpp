@@ -494,11 +494,11 @@ class SourceFlow {
     if (BranchTests < 2)
       return Entry;
     struct Copy {
-      size_t Source;
       NdTypeKind Kind;
       uint16_t Width;
       bool Signed;
       std::vector<size_t> Nodes;
+      std::vector<size_t> Sources;
     };
     std::vector<unsigned> WriteCount(Locals.size());
     std::vector<size_t> WriteAt(Locals.size(), NoNode);
@@ -536,9 +536,9 @@ class SourceFlow {
       }
       return Dominance.emplace(Key, Result).first->second;
     };
-    // A compiler can emit the same scalar copy on both sides of a join. All
-    // writes must copy one stable source, and every path to a comparison must
-    // cross one of those writes before the local can borrow its source's fact.
+    // Different edge copies may still carry one stable scalar through a join.
+    // Keep each source paired with its definition: a branch-local source need
+    // only dominate that edge copy, not every later use of the merged local.
     std::map<size_t, Copy> Copies;
     std::set<size_t> ConflictingCopies;
     for (size_t I = 0; I < Nodes.size(); ++I) {
@@ -558,18 +558,19 @@ class SourceFlow {
           !WriteCount[Source])
         continue;
       auto [It, Inserted] =
-          Copies.try_emplace(Destination, Copy{Source,
-                                               S->Dst->Type->Kind,
+          Copies.try_emplace(Destination, Copy{S->Dst->Type->Kind,
                                                S->Dst->Type->Size,
                                                S->Dst->Type->IsSigned,
+                                               {},
                                                {}});
-      if (!Inserted && (It->second.Source != Source ||
-                        It->second.Kind != S->Dst->Type->Kind ||
+      if (!Inserted && (It->second.Kind != S->Dst->Type->Kind ||
                         It->second.Width != S->Dst->Type->Size ||
                         It->second.Signed != S->Dst->Type->IsSigned))
         ConflictingCopies.insert(Destination);
-      else
+      else {
         It->second.Nodes.push_back(I);
+        It->second.Sources.push_back(Source);
+      }
     }
     for (auto It = Copies.begin(); It != Copies.end();)
       if (ConflictingCopies.count(It->first) ||
@@ -609,6 +610,51 @@ class SourceFlow {
                        Nodes[Current].Next.end());
       }
       return CopyDominance.emplace(Key, Result).first->second;
+    };
+    using CopyQuery = std::pair<size_t, size_t>;
+    std::map<CopyQuery, std::optional<size_t>> CopyRoots;
+    std::set<CopyQuery> ActiveCopies;
+    size_t CopyWork = 0;
+    const auto CopyRoot = [&](auto &&Self, size_t Local, size_t Use,
+                              unsigned Depth) -> std::optional<size_t> {
+      if (Depth > 64 || ++CopyWork > 100000 || Local == NoNode)
+        return std::nullopt;
+      const CopyQuery Query{Local, Use};
+      if (const auto Found = CopyRoots.find(Query); Found != CopyRoots.end())
+        return Found->second;
+      if (!ActiveCopies.insert(Query).second)
+        return std::nullopt;
+      std::optional<size_t> Root;
+      const auto It = Copies.find(Local);
+      if (It == Copies.end()) {
+        if (WriteCount[Local] == 1 && !AddressTaken.count(Local) &&
+            Dominates(WriteAt[Local], Use))
+          Root = Local;
+      } else if (CopyDominates(Local, Use)) {
+        const auto &C = It->second;
+        bool Complete = true;
+        for (size_t Edge = 0; Edge < C.Nodes.size(); ++Edge) {
+          const size_t Source = C.Sources[Edge];
+          if (const auto Parent = Copies.find(Source);
+              Parent != Copies.end() && (Parent->second.Kind != C.Kind ||
+                                         Parent->second.Width != C.Width ||
+                                         Parent->second.Signed != C.Signed)) {
+            Complete = false;
+            break;
+          }
+          const auto Reaching = Self(Self, Source, C.Nodes[Edge], Depth + 1);
+          if (!Reaching || (Root && *Root != *Reaching)) {
+            Complete = false;
+            break;
+          }
+          Root = Reaching;
+        }
+        if (!Complete || !Root || !Dominates(WriteAt[*Root], Use))
+          Root.reset();
+      }
+      ActiveCopies.erase(Query);
+      CopyRoots.emplace(Query, Root);
+      return Root;
     };
     std::vector<std::vector<std::optional<Predicate>>> CanonicalFacts;
     // A one-write boolean can preserve a repeated equality even when neither
@@ -663,38 +709,8 @@ class SourceFlow {
             }
           }
         }
-        auto Canonical = [&](size_t Local) {
-          const size_t Original = Local;
-          std::set<size_t> Seen;
-          while (Local != NoNode && Seen.insert(Local).second) {
-            const auto It = Copies.find(Local);
-            if (It == Copies.end())
-              return Local;
-            if (!CopyDominates(Local, I))
-              return Original;
-            const size_t Source = It->second.Source;
-            if (const auto SourceCopy = Copies.find(Source);
-                SourceCopy != Copies.end()) {
-              if (SourceCopy->second.Kind != It->second.Kind ||
-                  SourceCopy->second.Width != It->second.Width ||
-                  SourceCopy->second.Signed != It->second.Signed ||
-                  !CopyDominates(Source, I) ||
-                  std::any_of(It->second.Nodes.begin(), It->second.Nodes.end(),
-                              [&](size_t Definition) {
-                                return !CopyDominates(Source, Definition);
-                              }))
-                return Original;
-            } else if (WriteCount[Source] != 1 ||
-                       !Dominates(WriteAt[Source], I) ||
-                       std::any_of(
-                           It->second.Nodes.begin(), It->second.Nodes.end(),
-                           [&](size_t Definition) {
-                             return !Dominates(WriteAt[Source], Definition);
-                           }))
-              return Original;
-            Local = Source;
-          }
-          return Original;
+        const auto Canonical = [&](size_t Local) {
+          return CopyRoot(CopyRoot, Local, I, 0).value_or(Local);
         };
         for (auto &Fact : CanonicalFacts.back())
           if (Fact) {
