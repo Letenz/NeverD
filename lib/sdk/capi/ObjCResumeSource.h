@@ -161,10 +161,9 @@ inline bool omitProvenObjCResumeOnlyPad(HighFunc &Function,
           It->MemoryOrdering != NdMemoryOrdering::None ||
           It->MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
-      const auto &Call = It->Val;
-      if (!SawResume && It->Addr == Proof.LandingPad &&
-          (It->Kind == StmtKind::Assign || It->Kind == StmtKind::ExprStmt) &&
-          Call && Call->Kind == ExprKind::Call && !Call->IsIndirectCall &&
+      const auto Call = objcUnwindStatementCall(*It);
+      if (!SawResume && It->Addr == Proof.LandingPad && Call &&
+          Call->Kind == ExprKind::Call && !Call->IsIndirectCall &&
           Call->CallAddr == Proof.ResumeTarget && Call->Operands.size() == 1 &&
           Call->Operands[0] && Call->Operands[0]->Kind == ExprKind::Var &&
           Call->Operands[0]->Var.Kind == MedVar::EHException) {
