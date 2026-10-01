@@ -41768,6 +41768,23 @@ TEST(HighCPointerAddresses, BorrowFromItselfDoesNotReadTheRegister) {
   EXPECT_NE(HighC.find("arg1"), std::string::npos) << HighC;
 }
 
+TEST(HighCPointerAddresses, LowByteReplacementKeepsTheUpperBytesByMask) {
+  // `mov al, [rcx]` replaces the low byte of RAX and keeps the other seven.
+  // The result is the old value with its low byte masked off, ORed with the
+  // new byte; no 56-bit carrier is needed for the upper bytes.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc2,       // mov rax, rdx
+                                     0x8a, 0x01,             // mov al, [rcx]
+                                     0x48, 0x89, 0x41, 0x08, // mov [rcx+8], rax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("_BitInt"), std::string::npos) << HighC;
+  EXPECT_TRUE(HighC.find("0xFFFFFFFFFFFFFF00") != std::string::npos ||
+              HighC.find("-256") != std::string::npos)
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
   // RtlSetAllBits: `or r9d, -1` sets R9D to all ones without reading R9, so
   // the callee reads RCX alone.  Its callers pass one argument, not RCX
