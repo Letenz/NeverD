@@ -607,6 +607,8 @@ La fábrica CPU y la consulta de capacidades comparten `ExecutionConfiguration`;
 
 `driver-strict` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
 
+`DriverImage.def` declara los límites de tamaño y alineación y los diagnósticos de validación PE estricta; el ancho de los punteros procede de `DriverProfile.def`. `DriverImage.cpp` gestiona la validación y la reubicación sin cambiar las imágenes aceptadas ni los mensajes de error.
+
 Consulte el perfil seleccionado con `executionCapabilities(Contract, ISA, Backend)`. `NativeLegacyX64` describe la ejecución nativa de controladores x64. `NeverDNativeDriverTests` valida el corpus existente y también puede ejecutarse en una compilación sin Unicorn.
 
 ARM64 comprobado tiene un límite común para todo el estado. `Registers.def` define 39 campos escalares y 32 vectores de 128 bits; `captureAArch64State` prepara todas las lecturas, aplica anchuras y normaliza NZCV antes de publicar una vez. Unicorn, KVM y WHP transfieren el mismo inventario, incluidos TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR y FPSR. Los adaptadores nativos habilitan FP/SIMD mediante CPACR_EL1. Cualquier lectura fallida o entrada cancelada conserva todo el estado del llamante.

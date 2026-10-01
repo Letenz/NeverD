@@ -134,6 +134,7 @@ inline size_t inferObjCNativeDependencies(
     const NativeSourceCalleeContracts *CalleeContracts = nullptr) {
   const auto Targets =
       walkObjCNativeDependencies(Image, Result, nullptr, CallbackRoots);
+  const SwiftFunctionSymbolIndex FunctionSymbols(Image);
   std::map<va_t, const LowFunc *> Low;
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
@@ -225,168 +226,172 @@ inline size_t inferObjCNativeDependencies(
         A->second->UnsupportedInstructions.empty() &&
         A->second->TruncatedPaths.empty();
     if (CompleteMangledAudit) {
-      if (auto Mangled =
-              swiftMergedURLArrayBufferSourceABI(Image, Target, Result)) {
+      if (auto Mangled = swiftMergedURLArrayBufferSourceABI(
+              Image, Target, Result, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled = swiftMangledURLArrayBufferSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledURLArrayBufferSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled = swiftMangledURLArrayAppendSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledURLArrayAppendSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledURLArrayForceCastSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledURLArrayForceCastSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
       if (auto Mangled = swiftMangledArrayStringValueInitializerSourceABI(
-              Image, Target, *L->second)) {
+              Image, Target, *L->second, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
       if (auto Mangled = swiftMangledStringBundleSourceABI(
-              Image, Target, IntegerPairReturns.count(Target))) {
+              Image, Target, IntegerPairReturns.count(Target),
+              &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled = swiftMangledObjCBoolMemberSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledObjCBoolMemberSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledObjCObjectVoidMethodSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledObjCObjectVoidMethodSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledObjCObjectPairVoidMethodSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledUIColorIntAlphaAllocatorSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledUIColorIntAlphaAllocatorSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledUIColorIntAllocatorSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledUIColorIntAllocatorSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledZeroArgClassMethodSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledZeroArgClassMethodSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
       if (auto Mangled = swiftMangledClassOptionalExistentialGetterSourceABI(
-              Image, Target)) {
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledClassScalarGetterSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledClassScalarGetterSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledDoubleFloatingPropertySourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledDoubleFloatingPropertySourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledClassReferenceGetterSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledClassReferenceGetterSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledClassScalarSetterSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledClassScalarSetterSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledProfiledObjCCGFloatSetterSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledProfiledObjCCGFloatSetterSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledAnyClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledAnyClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledObjCOptionalStringGetterSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledObjCOptionalStringGetterSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
       if (auto Mangled = swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-              Image, Target)) {
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
       if (auto Mangled =
               swiftMangledObjCOptionalStringIntDictionaryGetterSourceABI(
-                  Image, Target)) {
+                  Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledUIColorPairClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledUIColorPairClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledCGRectClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledCGRectClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledCoderClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledCoderClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledNibBundleClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledNibBundleClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled = swiftMangledBundleModuleClosureSourceABI(Image, Target,
-                                                                  *H->second)) {
+      if (auto Mangled = swiftMangledBundleModuleClosureSourceABI(
+              Image, Target, *H->second, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledZeroArgClassInitializerSourceABI(Image, Target)) {
+      if (auto Mangled = swiftMangledZeroArgClassInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;

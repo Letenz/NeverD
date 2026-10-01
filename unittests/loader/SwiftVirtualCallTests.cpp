@@ -7,6 +7,8 @@
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
+#include "llvm/Support/Endian.h"
+
 using namespace neverd;
 
 namespace {
@@ -124,6 +126,63 @@ struct Fixture {
     Add(CallSite, NdOp::INDIR_CALL, X0, {Target});
   }
 };
+
+void addVoidVirtualMetadata(Fixture &F) {
+  constexpr va_t Metadata = 0x2400, Descriptor = 0x4000;
+  auto &Method = F.Image.ObjCMethods[0];
+  Method.ClassAddress = Metadata;
+  Section Data;
+  Data.VA = 0x2000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  F.Image.Sections.push_back(Data);
+  Segment ReadOnly;
+  ReadOnly.VA = Descriptor;
+  ReadOnly.Size = ReadOnly.FileSz = 0x200;
+  ReadOnly.Flags = SegmentFlags::Readable;
+  ReadOnly.Data.resize(0x200);
+  F.Image.Segments.push_back(ReadOnly);
+  Section Constants;
+  Constants.VA = Descriptor;
+  Constants.Size = Constants.FileSz = 0x200;
+  Constants.Flags = SegmentFlags::Readable;
+  F.Image.Sections.push_back(Constants);
+  auto &Mutable = F.Image.Segments[1].Data;
+  const auto Put64 = [&](va_t Address, uint64_t Value) {
+    llvm::support::endian::write64le(Mutable.data() + Address - 0x2000, Value);
+  };
+  Put64(Metadata + 32, 0x2502);
+  Put64(0x2500 + 24, 0x2580);
+  std::copy(Method.ClassName.begin(), Method.ClassName.end(),
+            Mutable.begin() + 0x580);
+  Put64(Metadata + 56, uint64_t(24) << 32 | 136);
+  Put64(Metadata + 64, Descriptor);
+  Put64(Metadata + 96, 0x1400);
+  F.Image.DataPtrRelocSlots.insert(Metadata + 64);
+  F.Image.DataPtrRelocTargetOwners[Metadata + 64] = Descriptor;
+  F.Image.CodePtrRelocSlots.insert(Metadata + 96);
+  auto &Bytes = F.Image.Segments[2].Data;
+  const auto Put32 = [&](unsigned Offset, uint32_t Value) {
+    llvm::support::endian::write32le(Bytes.data() + Offset, Value);
+  };
+  Put32(0, 0x80000050);
+  Put32(4, 0xc0 - 4);
+  Put32(8, 0x80 - 8);
+  Put32(24, 3);
+  Put32(28, 14);
+  Put32(32, 1);
+  Put32(44, 12);
+  Put32(48, 1);
+  Put32(52, 0x10);
+  Put32(56, uint32_t(0x1400 - (Descriptor + 56)));
+  Put32(0xc0, 0);
+  Put32(0xc8, 0xe0 - 0xc8);
+  const std::string Name = "AnimationViewBase", Module = "Lottie";
+  std::copy(Name.begin(), Name.end(), Bytes.begin() + 0x80);
+  std::copy(Module.begin(), Module.end(), Bytes.begin() + 0xe0);
+  F.Image.Symbols.push_back(
+      {"_$s6Lottie17AnimationViewBaseC6layoutyyF", 0x1400, 4, true});
+}
 } // namespace
 
 TEST(SwiftVirtualCalls, ExactMaskedIsaGetterBindsSwiftContext) {
@@ -286,6 +345,7 @@ TEST(SwiftVirtualCalls, RetainedSelfVoidMethodUsesSwiftContext) {
   Method.TypeHint->ReturnType = NdType::makeVoid();
   F.Image.Symbols[0].Name =
       "_$s6Lottie17AnimationViewBaseC14layoutSubviewsyyFTo";
+  addVoidVirtualMetadata(F);
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 + 0] = 0x00;
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 + 1] = 0x01;
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4 + 0] = 0xf4;
@@ -340,6 +400,113 @@ TEST(SwiftVirtualCalls, RetainedSelfVoidMethodUsesSwiftContext) {
   EXPECT_EQ(Hint.Signature.Parameters[0].TheRole,
             SourceParameterTypeHint::Role::SwiftContext);
   EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+
+  const auto OriginalImage = F.Image;
+  for (unsigned Mutation = 0; Mutation < 28; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    const auto Put32 = [&](unsigned Offset, uint32_t Value) {
+      llvm::support::endian::write32le(F.Image.Segments[2].Data.data() + Offset,
+                                       Value);
+    };
+    switch (Mutation) {
+    case 0:
+      Put32(0, 0x800000d0);
+      break; // Generic context.
+    case 1:
+      Put32(0, 0xa0000050);
+      break; // Resilient superclass.
+    case 2:
+      Put32(0, 0x80010050);
+      break; // Extra initialization prefix.
+    case 3:
+      Put32(44, 13);
+      break; // Slot is outside this vtable.
+    case 4:
+      Put32(48, 0);
+      break;
+    case 5:
+      Put32(52, 0x11);
+      break; // Constructor, not an ordinary method.
+    case 6:
+      Put32(56, uint32_t(0x1404 - (0x4000 + 56)));
+      break;
+    case 7:
+      F.Image.Symbols.back().Name = "_$s6Lottie5OtherC6layoutyyF";
+      break;
+    case 8:
+      // The enclosing ObjC method remains void; its callee takes a Bool.
+      F.Image.Symbols.back().Name =
+          "_$s6Lottie17AnimationViewBaseC6layoutyySbF";
+      break;
+    case 9:
+      F.Image.Symbols.push_back(F.Image.Symbols.back());
+      break;
+    case 10:
+      F.Image.DataPtrRelocSlots.erase(0x2440);
+      break;
+    case 11:
+      F.Image.ImportPtrSlots[0x2460] = "_external";
+      break;
+    case 12:
+      F.Image.DataPtrRelocSlots.insert(0x2460);
+      break;
+    case 13:
+      F.Image.MachOHasChainedFixups = true;
+      break;
+    case 14:
+      F.Image.ConflictingImportStorageSlots.insert(0x2440);
+      break;
+    case 15:
+      F.Image.Segments[2].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      F.Image.Sections[1].Flags = F.Image.Segments[2].Flags;
+      break;
+    case 16:
+      Put32(48, 512);
+      break;
+    case 17:
+      F.Image.Segments[2].Data[0x80] = 'X';
+      break;
+    case 18:
+      Put32(4, 0xbd);
+      break; // Indirect parent context.
+    case 19:
+      Put32(28, UINT32_MAX);
+      break;
+    case 20:
+      F.Image.ObjCMethods[0].ClassAddress = 0;
+      break;
+    case 21:
+      F.Image.Segments[1].Data[0x580] = 'X';
+      break;
+    case 22:
+      F.Image.Symbols.back().Name = "_$s6Lottie17AnimationViewBaseC6layoutSiyF";
+      break;
+    case 23:
+      F.Image.Symbols.back().Name =
+          "_$s6Lottie17AnimationViewBaseC6layoutyyYaF";
+      break;
+    case 24:
+      Put32(52, 0);
+      break; // Static method has no swiftself.
+    case 25:
+      // Same carrier shape as WMF's sizeThatFits(_:apply:) call inside
+      // layoutSubviews: two floating arguments, a Bool and a CGSize result.
+      F.Image.Symbols.back().Name =
+          "_$s6Lottie17AnimationViewBaseC6layout_5applySo6CGSizeVAG_SbtF";
+      break;
+    case 26:
+      Put32(0xc4, 4); // A module context cannot have a parent.
+      break;
+    case 27:
+      Put32(48, 2);
+      F.Image.Sections[1].Size = F.Image.Sections[1].FileSz = 60;
+      break; // The selected record exists but the declared vtable is truncated.
+    }
+    EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+    EXPECT_FALSE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+    F.Image = OriginalImage;
+  }
 
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4] = 0x00;
   EXPECT_FALSE(isSwiftVirtualSourceCallHint(F.Image, Hint));

@@ -313,3 +313,14 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/{locale}/driver-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverImage.def")
+NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverProfile.def")
+#endif

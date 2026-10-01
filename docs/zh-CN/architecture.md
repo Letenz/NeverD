@@ -549,6 +549,8 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 `driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
+`DriverImage.def` 集中声明严格 PE 校验的大小、对齐限制及诊断文本；指针宽度来自 `DriverProfile.def`。`DriverImage.cpp` 负责校验与重定位，可接受的映像和错误消息保持不变。
+
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
