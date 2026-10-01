@@ -206,7 +206,7 @@ callers must not first restrict the session with
 with a restricted function work-set because omitted metadata cannot prove the
 absence of fixups or exceptional edges.
 
-Only complete file-backed, read-only ranges without overlapping mappings or
+Without the PE evidence below, only complete file-backed, read-only ranges without overlapping mappings or
 loader fixups can supply constant image reads. Writable tables, unresolved
 relocations, and a sampled runtime snapshot are not immutable-read evidence.
 COPY relocations and structurally incomplete exception directories are refused.
@@ -222,6 +222,8 @@ The shared frame proof rejects escaping frame addresses, frame-dependent
 scalar outputs and branches, and reads of uninitialized private bytes. The
 explicit machine-state ABI retains original guest addresses and does not use
 this private-frame precondition.
+
+`PEFixedImageView` authenticates complete x64 PE images at their preferred base. It checks raw headers, unique mappings, complete DIR64 fields and ordinary import writes; IAT bytes remain excluded. TLS, load-config, delayed/bound imports, CLR and unknown writers are refused. Recovery and native/LLVM proofs bind the same snapshot. The C++ options `MaxImagePreparationBytes` and `MaxImagePreparationRecords` default to 64 MiB and 65536; exhaustion reports `BudgetExceeded`. The image must remain unchanged. This does not establish ASLR, initialization or unpacking equivalence.
 
 The source domain requires ordinary ABI returns: every external-origin store's
 target range is disjoint from the entry return-address slot. This is an explicit

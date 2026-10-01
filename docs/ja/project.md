@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 5f17cff5a09d87750010f3031e3930214af86eb5c4e349de821a1976d0888d36 -->
 
 <div align="center">
 
@@ -51,6 +51,8 @@ input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF 
 独立した C++ ループ証明 API は予算内で入れ子ループの不変条件と辞書式順位を推論し、ネイティブから LowIR への精緻化を再検査します。[復元ガイド](interpreter-recovery.md)を参照してください。出力 C の等価性は証明しません。
 
 独立した C++ `checkBinaryLLVMRefinement` API は正確な LLVM 成果物に対し新規のネイティブ・LLVM 検証を合成します。C コンパイルは証明範囲外です。
+
+PE 回復は優先ベースの DIR64 バイトも認証し、インポート書き込みを除外します。固定イメージ契約は ASLR や初期化の等価性を証明しません。
 
 <!-- i18n-section: why-neverd -->
 

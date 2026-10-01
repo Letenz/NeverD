@@ -55,6 +55,8 @@ The separate C++ loop-proof API infers bounded invariants and lexicographic rank
 
 The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM checks against an exact LLVM artifact; C compilation remains outside its proof scope.
 
+PE recovery also authenticates preferred-base DIR64 bytes and excludes import writes; its fixed-image contract does not certify ASLR or initialization.
+
 <!-- i18n-section: why-neverd -->
 
 ## Why NeverD?

@@ -22,6 +22,11 @@ add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   LINK_COMPONENTS BinaryInterpreterSpecialization
 )
 
+add_neverd_unittest(NeverDPEFixedImageTests
+  PEFixedImageTests.cpp
+  LINK_COMPONENTS InterpreterLLVMRefinement Loader
+)
+
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
   LowIRLoopAlignmentTests.cpp

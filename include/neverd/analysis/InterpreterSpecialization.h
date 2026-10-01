@@ -138,6 +138,11 @@ struct SpecializationOptions {
   /// inputs and cannot be bound here.
   std::vector<SpecializationConstant> EntryConstants;
   llvm::endianness ByteOrder = llvm::endianness::little;
+  /// Binary-provider preparation budgets for authenticating fixed image
+  /// bytes and loader metadata. Exhaustion is distinct from unsupported
+  /// semantics; callers may increase these explicitly and retry.
+  uint64_t MaxImagePreparationBytes = 64 * 1024 * 1024;
+  uint64_t MaxImagePreparationRecords = 65536;
   uint32_t MaxNodes = 4096;
   uint32_t MaxContextsPerAddress = 64;
   uint64_t MaxOperations = 262144;

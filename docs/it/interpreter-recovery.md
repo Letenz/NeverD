@@ -91,7 +91,7 @@ gestione delle eccezioni del linguaggio interrompono il recupero.
 
 Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazioni globali e i record delle eccezioni. La CLI li carica prima di applicare `--func`; chi usa l’API C non deve prima limitare la sessione con `neverd_session_restrict_function()`. L’adattatore rifiuta immagini caricate con un insieme ristretto di funzioni, perché i metadati omessi non dimostrano l’assenza di correzioni del loader o archi di eccezione.
 
-Solo intervalli completi di sola lettura, sostenuti dal file e privi di
+Senza le prove PE descritte di seguito, solo intervalli completi di sola lettura, sostenuti dal file e privi di
 mappature sovrapposte o correzioni del loader, possono fornire letture costanti
 dell’immagine. Tabelle scrivibili, rilocazioni non risolte e istantanee campionate
 durante l’esecuzione non provano l’immutabilità. Le rilocazioni COPY e le directory delle eccezioni strutturalmente incomplete
@@ -109,6 +109,8 @@ sopravvivono ai salvataggi sullo stack e alle confluenze; perdere un’espressio
 affine non la trasforma in un puntatore esterno. Pivot dello stack, ritorni che
 rimuovono gli argomenti nella funzione chiamata e dispatch basato su RET sono
 attualmente rifiutati. L’adattatore impone la semantica little-endian di x64.
+
+`PEFixedImageView` autentica immagini PE x64 complete alla base preferita. Verifica intestazioni originali, mappature univoche, campi DIR64 completi e scritture delle importazioni ordinarie; i byte IAT restano esclusi. TLS, load-config, importazioni ritardate/vincolate, CLR e meccanismi di scrittura sconosciuti vengono rifiutati. Recupero e prove native/LLVM vincolano la stessa istantanea. Le opzioni C++ `MaxImagePreparationBytes` e `MaxImagePreparationRecords` hanno valori predefiniti di 64 MiB e 65536; l’esaurimento produce `BudgetExceeded`. L’immagine deve rimanere invariata. Questo non prova l’equivalenza di ASLR, inizializzazione o decompressione.
 
 Il risultato è sorgente e IR per l’analisi. Non dimostra la sicurezza di
 rilocazione, unwinding, eccezioni asincrone o sostituzione binaria. La modalità

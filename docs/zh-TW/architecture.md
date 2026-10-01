@@ -62,6 +62,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `InterpreterSpecialization` 負責失敗嘗試後的有界反向位元需求傳播。它重用標量求值器，不改寫圖中的事實，也不增加控制欄位或上下文；所有工作仍受預算限制，發布必須經過全新的完整證明。
 
+`NeverDLoader` 負責 `PEFixedImageView`，並與一般 PE 載入共用完整的基底重定位解析器。二進位解譯器轉接器在恢復及原生證明中使用認證後的偏好基底位址視圖，不自行解析 PE 表格。準備階段先驗證匯入寫入範圍、映射身分及完整原始欄位，再認證位元組。視圖借用保持不變的映像，不宣稱 ASLR 或初始化等價性。
+
 `modelInterpreterMachineStateX64` 與原始碼包裝器共用同一產生器，統一處理客體暫存器分片、封裝旗標、執行設定狀態和控制流程。模型只將狀態物件存取改為明確的暫存器位元組，狀態碼與客體 RAX 分開。它不負責編譯器語意或證明策略；入口域、觀察項、堆疊框架契約和完整精化檢查仍由呼叫端負責。
 
 `NeverDLLVMInterpreterModel` 負責獨立、有界的純量 LLVM 匯入，使用相同原始狀態 ABI。`modelLLVMInterpreterMachineStateX64` 保留真實狀態碼回傳，並產生明確的語義有效性檢查。`llvmInterpreterMachineStateContract` 提供完整觀察項與零監視位元組保持義務；入口域、記憶體及完整證明由呼叫方負責。LLVM 匯入不改變一般提升或原始碼發布，也不證明編譯器。
