@@ -1068,6 +1068,10 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg;
 }
 
+bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
+  return Id == Intrinsic::PrefetchW;
+}
+
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id) {
   return prefetchHint(Id) || Id == Intrinsic::PrefetchW ||
          Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr;

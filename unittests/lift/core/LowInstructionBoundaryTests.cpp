@@ -3533,6 +3533,8 @@ TEST(LowInstructionBoundary, FlatPrefetchAndMxcsrUseIntrinsics) {
       << HighC;
   EXPECT_NE(HighC.find("_MM_HINT_NTA"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_m_prefetchw((void *)"), std::string::npos) << HighC;
+  // Older Clang declares _m_prefetchw only through <x86intrin.h>.
+  EXPECT_NE(HighC.find("#include <x86intrin.h>"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_mm_setcsr(neverd_csr)"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("_mm_getcsr()"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("__asm__"), std::string::npos) << HighC;

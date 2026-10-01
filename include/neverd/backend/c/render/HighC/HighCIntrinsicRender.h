@@ -81,6 +81,10 @@ bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
 /// a Windows target: REP MOVS/STOS and the flat LIDT/SIDT/INVLPG forms.
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
 
+/// Whether an x86 intrinsic needs <x86intrin.h> on a GCC or Clang target.
+/// Older Clang declares _m_prefetchw only there, not in <immintrin.h>.
+bool x86UsesGnuIntrinsicHeader(Intrinsic Id);
+
 /// Render an x86 intrinsic that needs full typed-statement context, including
 /// architectural preconditions and implicit memory relative to FS/GS. Returns
 /// an empty string for an unsupported intrinsic. Recognized intrinsics with
