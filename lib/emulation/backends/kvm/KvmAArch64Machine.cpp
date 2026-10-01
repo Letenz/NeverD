@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64GeneralState.h"
+#include "../../arch/aarch64/AArch64State.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../MachineFactories.h"
 #if defined(__linux__) && defined(__aarch64__) && defined(NEVERD_EMULATION_KVM)

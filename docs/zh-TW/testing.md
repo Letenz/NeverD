@@ -833,13 +833,11 @@ Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 3
 
 `AArch64InstructionEffects` 負責純量及 FP/SIMD 單次、成對 RAM 存取範圍，單一運算元最大 128 位元。共用位址空間在進入 CPU 前驗證每頁；`RAMTransaction` 僅提交完整宣告的實體寫入。128 位元寫入觀察器在生效前依序收到兩個 64 位元字。停止與故障保留 RAM、向量及位址寫回。Xn/Vn 編號重疊合法；位址回繞的成對存取被拒絕。`NeverDAArch64MemoryTests` 使用獨立的 `AArch64CrossPageCases.def` 與 `AArch64VectorMemoryCases.def` 編碼。
 
-`NeverDAArch64GeneralStateTests` 在兩種特權級驗證純量子集及完整狀態的全部 71 個讀取位置，包括位寬正規化、缺失讀取器與重試。`NeverDAArch64FPTests` 執行 `AArch64FPCases.def` 原始指令，驗證所有向量通道、打包運算、純量及向量浮點結果、四種捨入模式、FZ/DN、累積 FPSR、上下文狀態及擴充和控制位元拒絕。`NeverDAArch64MemoryTests` 涵蓋每個跨頁偏移、觀察器順序與停止、權限拒絕、別名及恢復後的向量輸入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真實執行後注入每個純量與向量讀取失敗。不可用的原生傳輸明確略過；測試與交叉編譯無法取代 ARM64 KVM/WHP 實機證據。
+`NeverDAArch64StateTests` 在兩種特權級驗證完整狀態的全部 71 個讀取位置，包括位寬正規化、缺失讀取器與重試。`NeverDAArch64FPTests` 執行 `AArch64FPCases.def` 原始指令，驗證所有向量通道、打包運算、純量及向量浮點結果、四種捨入模式、FZ/DN、累積 FPSR、上下文狀態及擴充和控制位元拒絕。`NeverDAArch64MemoryTests` 涵蓋每個跨頁偏移、觀察器順序與停止、權限拒絕、別名及恢復後的向量輸入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真實執行後注入每個純量與向量讀取失敗。不可用的原生傳輸明確略過；測試與交叉編譯無法取代 ARM64 KVM/WHP 實機證據。
 
 `NeverDAArch64MemoryTests` 在兩種權限層級下涵蓋 Unicorn、KVM、WHP 的 18 種純量及成對指令，檢查所有跨頁偏移、符號延伸與寬度結果、觀察器順序、第二頁權限不足或缺失、明確消費故障後重試、重複實體別名，以及別名替換後的上下文還原。修改前已重現合法跨頁載入遭拒的情況。無法使用的後端明確跳過；Unicorn 驗證及交叉編譯不能取代 ARM64 KVM/WHP 實機證據。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 檢查零旗標的未啟用 CFG 中繼資料、兩種載入位址下不變的回退指標、無效指標槽/目標及缺失重定位。執行案例明確選擇 Unicorn/KVM/WHP，並使用 `driver-strict` 和 `checked-x64-v1`；不可用的後端分別略過。`DriverPublicCLICases.def` 為 CLI 與相容的 v1 C API 比較選擇 `--backend unicorn`。原生後端與 `auto` 選擇保留獨立的公開介面涵蓋範圍，主機 API 不可用時不會靜默回退。
-
-`NeverDAArch64GeneralStateTests` 在兩種特權級驗證純量子集及完整狀態的全部 71 個讀取位置，包括位寬正規化、缺失讀取器與重試。`NeverDAArch64FPTests` 執行 `AArch64FPCases.def` 原始指令，驗證所有向量通道、打包運算、純量及向量浮點結果、四種捨入模式、FZ/DN、累積 FPSR、上下文狀態及擴充和控制位元拒絕。`NeverDAArch64MemoryTests` 涵蓋每個跨頁偏移、觀察器順序與停止、權限拒絕、別名及恢復後的向量輸入。`NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) 在真實執行後注入每個純量與向量讀取失敗。不可用的原生傳輸明確略過；測試與交叉編譯無法取代 ARM64 KVM/WHP 實機證據。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完整狀態回讀共用一次單步額度。`UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限；同步引擎呼叫返回前解除 hook 借用，機器單步則保留控制直到發佈狀態。Unicorn 與 WHP 暫存完整 CPU 狀態，並在成功步驟發佈前檢查同一控制條件。WHP 在準備前只建立一次額度。已確認的 x64 CPU 例外優先於回讀期間到來的停止要求。回讀取消時，checked RAM 交易捨棄推測寫入；非受限軟體契約不變。 `MachineInterruptedError` 區分已確認取消與主機或回讀失敗。共用 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 並允許重試；真實故障即使伴隨停止要求也仍是 `BackendFailure`。
 
