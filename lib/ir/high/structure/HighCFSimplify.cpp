@@ -2162,6 +2162,87 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   DropPlaceholders(Body);
 
   bool Changed = false;
+  // Statements in \p Stmts, counting nested ones.
+  std::function<size_t(const std::vector<HighStmt> &)> Size =
+      [&](const std::vector<HighStmt> &Stmts) {
+        size_t N = 0;
+        for (const HighStmt &S : Stmts) {
+          ++N;
+          N += Size(S.Body) + Size(S.ElseBody) + Size(S.DefaultBody);
+          for (const auto &C : S.Cases)
+            N += Size(C.Body);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            N += Size(ClauseBody);
+        }
+        return N;
+      };
+  // Whether a jump enters \p S or a statement nested in it, or \p S holds
+  // a loop, switch or try a copy would duplicate.
+  std::function<bool(const HighStmt &)> Uncopyable = [&](const HighStmt &S) {
+    if ((S.Addr != 0 && S.Addr != InvalidVA && usesOf(S.Addr) != 0) ||
+        S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For || S.Kind == StmtKind::Switch ||
+        S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+        S.Kind == StmtKind::ItaniumTry || S.Kind == StmtKind::Break ||
+        S.Kind == StmtKind::Continue)
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody})
+      for (const HighStmt &T : *List)
+        if (Uncopyable(T))
+          return true;
+    return false;
+  };
+  // T16 on L[I]; see its use below.
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
+    HighStmt &Outer = L[I];
+    for (int Arm = 0; Arm < 2; ++Arm) {
+      std::vector<HighStmt> &A = Arm == 0 ? Outer.Body : Outer.ElseBody;
+      std::vector<HighStmt> &Other = Arm == 0 ? Outer.ElseBody : Outer.Body;
+      for (size_t P = 0; P < A.size(); ++P) {
+        HighStmt &Inner = A[P];
+        if ((Inner.Kind != StmtKind::If && Inner.Kind != StmtKind::IfElse) ||
+            !Inner.Cond || Inner.Body.empty() ||
+            Inner.Body.back().Kind != StmtKind::Goto)
+          continue;
+        const va_t X = Inner.Body.back().GotoTarget;
+        if (usesOf(X) != 1)
+          continue;
+        size_t J = I + 1;
+        while (J < L.size() && !(L[J].Addr == X && labelStart(L, J)))
+          ++J;
+        if (J >= L.size() || J == I + 1)
+          continue;
+        // R: what the exit skips after the outer if; T: after the inner one.
+        bool Bad = false;
+        for (size_t K = I + 1; K < J && !Bad; ++K)
+          Bad = Uncopyable(L[K]);
+        for (size_t K = P + 1; K < A.size() && !Bad; ++K)
+          Bad = Uncopyable(A[K]);
+        std::vector<HighStmt> R(L.begin() + I + 1, L.begin() + J);
+        if (Bad || Size(R) > limits::kMaxSkippedCopyStatements)
+          continue;
+        // An arm that already ends in a jump or return never reaches R.
+        std::vector<HighStmt> T(std::make_move_iterator(A.begin() + P + 1),
+                                std::make_move_iterator(A.end()));
+        A.erase(A.begin() + P + 1, A.end());
+        popGoto(Inner.Body);
+        --Uses[X];
+        Inner.Kind = StmtKind::IfElse;
+        Inner.ElseBody.insert(Inner.ElseBody.end(),
+                              std::make_move_iterator(T.begin()),
+                              std::make_move_iterator(T.end()));
+        Inner.ElseBody.insert(Inner.ElseBody.end(), R.begin(), R.end());
+        Outer.Kind = StmtKind::IfElse;
+        Other.insert(Other.end(), std::make_move_iterator(R.begin()),
+                     std::make_move_iterator(R.end()));
+        L.erase(L.begin() + I + 1, L.begin() + J);
+        Changed = true;
+        return true;
+      }
+    }
+    return false;
+  };
+
   std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
                                                                &L) {
     for (size_t I = 0; I < L.size(); ++I) {
@@ -2736,8 +2817,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           // with the jumps of its new neighbours.
           M = FallInto - 1;
           FallTarget = LL[FallInto].Addr;
-        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K &&
-                   GotoSite.Order < Block.Order) {
+        } else if (SpliceRegions && !Bad && M >= LL.size() && M > K) {
           // A block that runs off the end of its arm continues where the
           // arm does; it moves, with a jump there, to a jump ahead of it.
           FallTarget = FollowOf(Block);
@@ -2795,6 +2875,30 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     }
     if (!Done)
       break;
+  }
+
+  // T16 (late, once no block can move instead): `if (a) { A; if (b) { B;
+  // goto X; } T } R; X:` with a small R that nothing enters becomes
+  // `if (a) { A; if (b) { B } else { T R } } else { R }`: R runs on every
+  // path but the exit, so a copy of it goes on each.
+  if (SpliceRegions) {
+    std::function<void(std::vector<HighStmt> &)> CopyTails =
+        [&](std::vector<HighStmt> &L) {
+          for (size_t I = 0; I < L.size(); ++I)
+            if ((L[I].Kind == StmtKind::If || L[I].Kind == StmtKind::IfElse) &&
+                L[I].Cond)
+              copySkippedTail(L, I);
+          for (HighStmt &S : L) {
+            CopyTails(S.Body);
+            CopyTails(S.ElseBody);
+            for (auto &C : S.Cases)
+              CopyTails(C.Body);
+            CopyTails(S.DefaultBody);
+            for (auto &ClauseBody : S.EHClauseBodies)
+              CopyTails(ClauseBody);
+          }
+        };
+    CopyTails(Body);
   }
 
   // A list ends in `goto F` directly, or through `if (c) { A...; goto F; }
