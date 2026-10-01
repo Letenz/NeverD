@@ -10,6 +10,7 @@
 #include "gtest/gtest.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
 #include <cstring>
@@ -99,6 +100,63 @@ TEST(X64FPState, InvalidStateCannotTruncateLanesOrPublishAStateBuffer) {
   EXPECT_TRUE(bool(E));
   llvm::consumeError(std::move(E));
 }
+TEST(X64FPState, StandardAndCompactedXsavePreserveEveryPhysicalTOP) {
+  for (const bool Compact : {false, true})
+    for (unsigned Top = 0; Top < x64::fp::RegisterCount; ++Top) {
+      const auto Before = seed(Top);
+      std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+      llvm::cantFail(encodeX64XsaveState(Before, Bytes, Compact));
+      X64MachineState Next;
+      llvm::cantFail(decodeX64XsaveState(Next, Bytes));
+      expectFP(Next, Before);
+    }
+}
+TEST(X64FPState, AbsentXsaveComponentsIgnoreStalePayloadAndUseInitState) {
+  for (const auto Present :
+       {uint64_t(0), x64::fp::X87Present, x64::fp::SSEPresent}) {
+    const auto Before = seed(EmptySlot);
+    std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+    llvm::cantFail(encodeX64XsaveState(Before, Bytes, true));
+    llvm::support::endian::write64le(Bytes.data() + x64::fp::XStateOffset,
+                                     Present);
+    if (!(Present & x64::fp::X87Present))
+      llvm::support::endian::write16le(Bytes.data() + x64::fp::ControlOffset,
+                                       InvalidControl);
+    if (!(Present & x64::fp::SSEPresent))
+      llvm::support::endian::write32le(Bytes.data() + x64::fp::MXCSROffset,
+                                       InvalidPadding);
+    auto Expected = Before;
+    if (!(Present & x64::fp::X87Present))
+      Expected.FP = {};
+    if (!(Present & x64::fp::SSEPresent)) {
+      Expected.MXCSR = x64::InitialMXCSR;
+      Expected.Xmm = {};
+    }
+    auto Next = Before;
+    llvm::cantFail(decodeX64XsaveState(Next, Bytes));
+    expectFP(Next, Expected);
+  }
+}
+TEST(X64FPState, MalformedXsaveHeadersCannotPublishPartialState) {
+  const auto Before = seed(EmptySlot);
+  for (const auto Offset : {x64::fp::XStateOffset, x64::fp::XCompOffset,
+                            x64::fp::XCompOffset + sizeof(uint64_t)}) {
+    std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+    llvm::cantFail(encodeX64XsaveState(Before, Bytes));
+    llvm::support::endian::write64le(Bytes.data() + Offset, InvalidPadding);
+    auto Next = Before;
+    auto E = decodeX64XsaveState(Next, Bytes);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Next, Before);
+  }
+  std::array<uint8_t, x64::fp::XsaveBytes> Short{};
+  auto Next = Before;
+  auto E = decodeX64XsaveState(Next, llvm::ArrayRef(Short).drop_back());
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(Next, Before);
+}
 
 TEST(X64FPState, SoftwareResetAndContextsRetainExtendedRegisters) {
   auto B = createExecutionBackend(ExecutionBackendKind::Unicorn,
@@ -169,7 +227,7 @@ protected:
     llvm::cantFail(Memory->beginRun());
     auto Release = llvm::scope_exit([&] { Memory->endRun(); });
     Root = llvm::cantFail(buildX64PageTables(
-        *Memory, Root, State.UserMode, Machine->requiresExceptionMonitor()));
+        *Memory, State.UserMode, Machine->requiresExceptionMonitor()));
     auto E = Machine->step(State, Root,
                            {std::chrono::steady_clock::now() +
                             std::chrono::microseconds(Timeout)});

@@ -1,0 +1,19 @@
+//===- X64ProbeCases.def - Independent startup fixtures -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_PROBE_TEST_VALUE
+NEVERD_X64_PROBE_TEST_VALUE(Limit, 4 * 1024 * 1024)
+NEVERD_X64_PROBE_TEST_VALUE(CorruptBit, 1)
+NEVERD_X64_PROBE_TEST_VALUE(Instructions, 8)
+NEVERD_X64_PROBE_TEST_VALUE(Fill, 0xa5)
+#endif
+#ifdef NEVERD_X64_PROBE_TEST_CODE
+// Independently assembled with Clang from the original eight instructions.
+NEVERD_X64_PROBE_TEST_CODE(Program, 0x90, 0xf3, 0x45, 0x0f, 0x58, 0xe5, 0x66,
+                           0x45, 0x0f, 0xd4, 0xf7, 0x64, 0x4c, 0x8b, 0x34, 0x25,
+                           0, 0, 0, 0, 0x65, 0x4c, 0x8b, 0x3c, 0x25, 0, 0, 0, 0,
+                           0x66, 0x41, 0x8c, 0xcc, 0x66, 0x41, 0x8c, 0xd5, 0x45,
+                           0x0f, 0x20, 0xc3)
+#endif

@@ -116,7 +116,7 @@ protected:
       return E;
     auto Release = llvm::scope_exit([&] { Memory->endRun(); });
     Root = llvm::cantFail(buildX64PageTables(
-        *Memory, Root, State.UserMode, Machine->requiresExceptionMonitor()));
+        *Memory, State.UserMode, Machine->requiresExceptionMonitor()));
     return Machine->step(
         State, Root,
         {std::chrono::steady_clock::now() + std::chrono::microseconds(Timeout),

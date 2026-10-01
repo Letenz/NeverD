@@ -7,6 +7,8 @@
 #include "core/ExecutionDiagnostics.h"
 #include "gtest/gtest.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 namespace neverd::emulation {
 namespace {
 #define NEVERD_AARCH64_PROBE_TEST_VALUE(Name, Value)                           \
@@ -92,6 +94,17 @@ TEST(AArch64MachineProbe, GenuineTransferFailureRetainsItsDiagnostic) {
   EXPECT_EQ(llvm::toString(verifyAArch64Machine(Machine, *Memory)),
             diagnostic::KvmState);
   EXPECT_EQ(Machine.Entries, 1u);
+}
+TEST(AArch64MachineProbe,
+     ActiveExecutionLeaseRejectsInitializationBeforeEntry) {
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  llvm::cantFail(Memory->beginRun());
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  CorruptingTransport Machine;
+  EXPECT_EQ(llvm::toString(verifyAArch64Machine(Machine, *Memory)),
+            diagnostic::Running);
+  EXPECT_EQ(Machine.Entries, 0u);
+  EXPECT_EQ(llvm::toString(Memory->mutableMemory()), diagnostic::Running);
 }
 } // namespace
 } // namespace neverd::emulation

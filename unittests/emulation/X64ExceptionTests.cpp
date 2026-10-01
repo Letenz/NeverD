@@ -119,7 +119,7 @@ protected:
     if (auto E = Memory->beginRun())
       return E;
     auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-    auto Projection = buildX64PageTables(*Memory, Root, State.UserMode,
+    auto Projection = buildX64PageTables(*Memory, State.UserMode,
                                          Machine->requiresExceptionMonitor());
     if (!Projection)
       return Projection.takeError();
@@ -222,8 +222,7 @@ TEST_P(X64ExceptionTransport,
 }
 
 TEST_P(X64ExceptionTransport, ProjectionCacheCannotReuseUnmonitoredTables) {
-  Root =
-      llvm::cantFail(buildX64PageTables(*Memory, Root, State.UserMode, false));
+  Root = llvm::cantFail(buildX64PageTables(*Memory, State.UserMode, false));
   expectException();
   expectOriginal();
 }

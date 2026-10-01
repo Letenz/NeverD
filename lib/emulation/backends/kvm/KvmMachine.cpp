@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64ExceptionMonitor.h"
 #include "../../arch/x86_64/X64Machine.h"
+#include "../../arch/x86_64/X64MachineProbe.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
@@ -70,13 +71,7 @@ bool sameGeneralRegisters(const X64MachineState &L, const X64MachineState &R) {
   return true;
 }
 bool sameFPRegisters(const X64MachineState &L, const X64MachineState &R) {
-#define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
-  if (L.FP.Member != R.FP.Member)                                              \
-    return false;
-#include "../../arch/x86_64/X64FPState.def"
-#undef NEVERD_X64_FP_CONTROL
-  return L.FP.Tag == R.FP.Tag && L.FP.Registers == R.FP.Registers &&
-         L.MXCSR == R.MXCSR && L.Xmm == R.Xmm;
+  return L.FP == R.FP && L.MXCSR == R.MXCSR && L.Xmm == R.Xmm;
 }
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
@@ -99,13 +94,11 @@ public:
     if (Monitor < x64::KernelMin ||
         !x64::canonicalRange(Monitor, x64::gateway::Bytes))
       return diagnostic::error(x64::exceptiontext::Gateway);
-    // The ISA owns the legacy FP/SSE layout; KVM owns the XSAVE header.
+    // The ISA owns FP/SSE layout, TOP rotation and XSAVE init-state semantics.
     kvm_xsave F{};
     auto *Bytes = reinterpret_cast<uint8_t *>(F.region);
-    if (auto E = encodeX64FXState(State, {Bytes, sizeof(F.region)}))
+    if (auto E = encodeX64XsaveState(State, {Bytes, sizeof(F.region)}))
       return E;
-    llvm::support::endian::write64le(Bytes + x64::fp::XStateOffset,
-                                     x64::fp::FPAndSSE);
     auto Prepare = [&]() -> llvm::Error {
       if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
         return diagnostic::error(diagnostic::KvmState);
@@ -199,16 +192,8 @@ public:
     };
     auto Next = State;
     auto Complete = [&]() -> llvm::Error {
-      if (auto E = decodeX64FXState(Next, {Bytes, sizeof(F.region)}))
+      if (auto E = decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}))
         return E;
-      const auto Present =
-          llvm::support::endian::read64le(Bytes + x64::fp::XStateOffset);
-      if (!(Present & x64::fp::X87Present))
-        Next.FP = {};
-      if (!(Present & x64::fp::SSEPresent)) {
-        Next.MXCSR = x64::InitialMXCSR;
-        Next.Xmm = {};
-      }
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"
@@ -258,6 +243,8 @@ createKvmMachine(MemoryProjection &Memory) {
   if (ioctl(M->CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
+  if (auto E = verifyX64Machine(*M, Memory))
+    return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }
 } // namespace neverd::emulation

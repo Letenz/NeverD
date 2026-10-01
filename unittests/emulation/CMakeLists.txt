@@ -23,9 +23,17 @@ add_neverd_unittest(NeverDAArch64MemoryTests
 
 add_neverd_unittest(NeverDX64FPTests
   X64FPStateTests.cpp
+  X64MachineProbeTests.cpp
+  X64ProbeExecutionTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64FPTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDProjectionCacheTests
+  ProjectionCacheTests.cpp
+  LINK_COMPONENTS EmulationArch)
+target_include_directories(NeverDProjectionCacheTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDExecutionSessionTests
@@ -168,6 +176,7 @@ add_neverd_unittest(NeverDRunControlTests
   RunControlTests.cpp
   NativeEntryTests.cpp
   WhpEntryControlTests.cpp
+  WhpXsaveTests.cpp
   MachineRunControlTests.cpp
   TIMEOUT 10
   LINK_COMPONENTS EmulationCPU)

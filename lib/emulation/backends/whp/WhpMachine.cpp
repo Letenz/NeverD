@@ -5,12 +5,13 @@
 //===----------------------------------------------------------------------===//
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
+#include "../../arch/x86_64/X64MachineProbe.h"
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/MemoryProjection.h"
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
-#include "WhpPartition.h"
+#include "WhpXsaveState.h"
 
 #include <vector>
 #include <windows.h>
@@ -19,6 +20,7 @@ namespace neverd::emulation {
 namespace {
 class WhpMachine final : public X64Machine, public WhpPartition {
 public:
+  WhpXsaveState Xsave;
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
@@ -38,37 +40,11 @@ public:
 #undef NEVERD_X64_HOST_REGISTER
     // The admitted ISA excludes all instructions observing or modifying TF.
     Values.back().Reg64 |= x64::TrapFlag;
-    for (unsigned I = 0; I < State.Xmm.size(); ++I) {
-      WHV_REGISTER_VALUE V{};
-      V.Reg128.Low64 = State.Xmm[I][0];
-      V.Reg128.High64 = State.Xmm[I][1];
-      Names.push_back(static_cast<WHV_REGISTER_NAME>(WHvX64RegisterXmm0 + I));
-      Values.push_back(V);
-    }
-    for (unsigned I = 0; I < State.FP.Registers.size(); ++I) {
-      WHV_REGISTER_VALUE V{};
-      V.Fp.AsUINT128.Low64 = State.FP.Registers[I][0];
-      V.Fp.AsUINT128.High64 = State.FP.Registers[I][1];
-      Names.push_back(static_cast<WHV_REGISTER_NAME>(WHvX64RegisterFpMmx0 + I));
-      Values.push_back(V);
-    }
-    WHV_REGISTER_VALUE FP{};
-    FP.FpControlStatus.FpControl = State.FP.Control;
-    FP.FpControlStatus.FpStatus = State.FP.Status;
-    FP.FpControlStatus.FpTag = State.FP.Tag;
-    FP.FpControlStatus.LastFpOp = State.FP.Opcode;
-    FP.FpControlStatus.LastFpRip = State.FP.Instruction;
-    Names.push_back(WHvX64RegisterFpControlStatus);
-    Values.push_back(FP);
-    WHV_REGISTER_VALUE MXCSR{};
-    MXCSR.XmmControlStatus.LastFpRdp = State.FP.Data;
-    MXCSR.XmmControlStatus.XmmStatusControl = State.MXCSR;
-    Names.push_back(WHvX64RegisterXmmControlStatus);
-    Values.push_back(MXCSR);
     const size_t ObservableCount = Names.size();
     Add(WHvX64RegisterCr0, x64::CR0);
     Add(WHvX64RegisterCr3, Root);
-    Add(WHvX64RegisterCr4, x64::CR4);
+    Add(WHvX64RegisterCr4, x64::CR4 | x64::fp::OSXsave);
+    Add(WHvX64RegisterXCr0, x64::fp::FPAndSSE);
     Add(WHvX64RegisterEfer, x64::EFER);
     Add(WHvX64RegisterCr8, State.reg(X64Register::CR8));
     for (auto Name : {WHvX64RegisterCs, WHvX64RegisterSs, WHvX64RegisterDs,
@@ -97,6 +73,8 @@ public:
     if (FAILED(API.WHvSetVirtualProcessorRegisters(
             Partition, 0, Names.data(), Names.size(), Values.data())))
       return diagnostic::error(diagnostic::WhpState);
+    if (auto E = Xsave.install(API, Partition, State))
+      return E;
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
     auto Next = State;
     auto Complete = [&]() -> llvm::Error {
@@ -110,23 +88,8 @@ public:
   Next.reg(X64Register::Name) = Values[I++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-      for (auto &Xmm : Next.Xmm) {
-        Xmm = {Values[I].Reg128.Low64, Values[I].Reg128.High64};
-        ++I;
-      }
-      for (auto &Register : Next.FP.Registers) {
-        Register = {Values[I].Fp.AsUINT128.Low64,
-                    Values[I].Fp.AsUINT128.High64 & x64::fp::RegisterHighMask};
-        ++I;
-      }
-      const auto &FPNext = Values[I++].FpControlStatus;
-      Next.FP.Control = FPNext.FpControl;
-      Next.FP.Status = FPNext.FpStatus;
-      Next.FP.Tag = FPNext.FpTag;
-      Next.FP.Opcode = FPNext.LastFpOp;
-      Next.FP.Instruction = FPNext.LastFpRip;
-      Next.FP.Data = Values[I].XmmControlStatus.LastFpRdp;
-      Next.MXCSR = Values[I].XmmControlStatus.XmmStatusControl;
+      if (auto E = Xsave.capture(API, Partition, Next))
+        return E;
       Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
       const unsigned Vector = Exit.VpException.ExceptionType;
       if (Vector != x64::DebugVector) {
@@ -180,6 +143,11 @@ createWhpMachine(MemoryProjection &Memory) {
           x64::ExceptionExitBitmap)
     return diagnostic::unavailable(diagnostic::WhpCapability,
                                    BackendAvailability::MissingCapability);
+  if (FAILED(M->API.WHvGetCapability(WHvCapabilityCodeProcessorXsaveFeatures,
+                                     &C, sizeof(C), nullptr)) ||
+      !C.ProcessorXsaveFeatures.XsaveSupport)
+    return diagnostic::unavailable(diagnostic::WhpCapability,
+                                   BackendAvailability::MissingCapability);
   if (FAILED(M->API.WHvCreatePartition(&M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_PARTITION_PROPERTY P{};
@@ -194,21 +162,27 @@ createWhpMachine(MemoryProjection &Memory) {
           sizeof(P))))
     return diagnostic::error(diagnostic::WhpCreate);
   P = {};
+  P.ProcessorXsaveFeatures.XsaveSupport = 1;
+  if (FAILED(M->API.WHvSetPartitionProperty(
+          M->Partition, WHvPartitionPropertyCodeProcessorXsaveFeatures, &P,
+          sizeof(P))))
+    return diagnostic::error(diagnostic::WhpCreate);
+  P = {};
   P.ExceptionExitBitmap = x64::ExceptionExitBitmap;
   if (FAILED(M->API.WHvSetPartitionProperty(
           M->Partition, WHvPartitionPropertyCodeExceptionExitBitmap, &P,
           sizeof(P))) ||
       FAILED(M->API.WHvSetupPartition(M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
-  for (const auto &Mapping : Memory.registrations())
-    if (FAILED(M->API.WHvMapGpaRange(
-            M->Partition, Mapping.Backing, Mapping.Physical, Mapping.Size,
-            WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
-                WHvMapGpaRangeFlagExecute)))
-      return diagnostic::error(diagnostic::WhpMap);
+  if (auto E = M->mapMemory(Memory))
+    return E;
   if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
     return diagnostic::error(diagnostic::WhpCreate);
+  if (auto E = M->Xsave.initialize(M->API, M->Partition))
+    return E;
   if (auto E = M->initializeRunControl())
+    return E;
+  if (auto E = verifyX64Machine(*M, Memory))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

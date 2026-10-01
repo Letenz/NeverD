@@ -65,7 +65,6 @@ private:
   }
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;
-  uint64_t PageTableRoot = 0;
   bool DeviceFailed = false;
 };
 } // namespace neverd::emulation
