@@ -3929,7 +3929,34 @@ class LoopPlanInference {
     LowIRLoopLocation Location;
     bool Complement;
   };
-  using Phases = std::vector<std::vector<uint64_t>>;
+  struct Phases {
+    std::vector<std::vector<uint64_t>> Between;
+    std::vector<uint64_t> Leading;
+  };
+
+  struct PhaseConstraint {
+    size_t Source, Target;
+    uint64_t Step;
+  };
+
+  static bool solvePhaseConstraints(llvm::ArrayRef<PhaseConstraint> Constraints,
+                                    std::vector<uint64_t> &Phase) {
+    // Nonnegative weighted difference constraints. A positive cycle cannot
+    // be discharged by phase constants; it requires another changing rank.
+    for (size_t Round = 0; Round != Phase.size(); ++Round) {
+      bool Changed = false;
+      for (const auto &C : Constraints)
+        if (Phase[C.Source] < Phase[C.Target] + C.Step) {
+          Phase[C.Source] = Phase[C.Target] + C.Step;
+          Changed = true;
+        }
+      if (!Changed)
+        return true;
+      if (Round + 1 == Phase.size())
+        return false;
+    }
+    return true;
+  }
 
   static bool sameLocation(const LowIRLoopLocation &A,
                            const LowIRLoopLocation &B) {
@@ -3954,26 +3981,27 @@ class LoopPlanInference {
       Less = Ctx.mkOr(Less, Ctx.mkAnd(Equal, Ctx.mkUlt(After, Before)));
       Equal = Ctx.mkAnd(Equal, Ctx.mkEq(After, Before));
     };
+    if (First == 0 && !Phase.Leading.empty())
+      Append(Ctx.mkConst(64, Phase.Leading[E.Source]),
+             Ctx.mkConst(64, Phase.Leading[E.After.Cutpoint]));
     for (size_t I = First; I != Ranks.size(); ++I) {
       Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
       if (I + 1 != Ranks.size())
-        Append(Ctx.mkConst(64, Phase[I][E.Source]),
-               Ctx.mkConst(64, Phase[I][E.After.Cutpoint]));
+        Append(Ctx.mkConst(64, Phase.Between[I][E.Source]),
+               Ctx.mkConst(64, Phase.Between[I][E.After.Cutpoint]));
     }
     return Less;
   }
 
   bool inferPhases(std::vector<Edge> &Edges, llvm::ArrayRef<Counter> Ranks,
-                   Phases &Phase) {
+                   Phases &Phase, bool Leading) {
     auto &Ctx = Session.Context;
     const auto Count = Plan.Cutpoints.size();
-    Phase.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    Phase.Between.assign(Ranks.size() - 1, std::vector<uint64_t>(Count));
+    if (Leading)
+      Phase.Leading.assign(Count, 0);
     for (size_t Level = Ranks.size() - 1; Level-- > 0;) {
-      struct Constraint {
-        size_t Source, Target;
-        uint64_t Step;
-      };
-      std::vector<Constraint> Constraints;
+      std::vector<PhaseConstraint> Constraints;
       for (auto &E : Edges) {
         auto Domain = E.After.Predicate;
         for (size_t I = 0; I <= Level; ++I)
@@ -3985,20 +4013,22 @@ class LoopPlanInference {
             {E.Source, static_cast<size_t>(E.After.Cutpoint),
              entails(Domain, tupleLess(E, Ranks, Phase, Level + 1)) ? 0U : 1U});
       }
-      // Nonnegative weighted difference constraints. A positive cycle cannot
-      // be discharged by phase constants; it requires another changing rank.
-      for (size_t Round = 0; Round != Count; ++Round) {
-        bool Changed = false;
-        for (const auto &C : Constraints)
-          if (Phase[Level][C.Source] < Phase[Level][C.Target] + C.Step) {
-            Phase[Level][C.Source] = Phase[Level][C.Target] + C.Step;
-            Changed = true;
-          }
-        if (!Changed)
-          break;
-        if (Round + 1 == Count)
-          return false;
+      if (!solvePhaseConstraints(Constraints, Phase.Between[Level]))
+        return false;
+    }
+    if (Leading) {
+      std::vector<PhaseConstraint> Constraints;
+      for (auto &E : Edges) {
+        // The leading phase must not increase on any feasible transition.
+        // Unlike an inner phase, it cannot assume equal counter prefixes.
+        if (entails(E.After.Predicate, Ctx.mkFalse()))
+          continue;
+        Constraints.push_back(
+            {E.Source, static_cast<size_t>(E.After.Cutpoint),
+             entails(E.After.Predicate, tupleLess(E, Ranks, Phase)) ? 0U : 1U});
       }
+      if (!solvePhaseConstraints(Constraints, Phase.Leading))
+        return false;
     }
     for (auto &E : Edges)
       if (!entails(E.After.Predicate, tupleLess(E, Ranks, Phase)))
@@ -4015,6 +4045,8 @@ class LoopPlanInference {
       for (const auto &Op : Cut.Expressions)
         Next = std::max(Next, Op.Output.Offset + 8);
       Cut.Rank.clear();
+      if (!Phase.Leading.empty())
+        Cut.Rank.push_back(NdVar::scalar(Phase.Leading[I], 8));
       for (size_t J = 0; J != Ranks.size(); ++J) {
         const auto &R = Ranks[J];
         auto Input = std::find_if(
@@ -4043,7 +4075,7 @@ class LoopPlanInference {
         }
         Cut.Rank.push_back(Value);
         if (J + 1 != Ranks.size())
-          Cut.Rank.push_back(NdVar::scalar(Phase[J][I], 8));
+          Cut.Rank.push_back(NdVar::scalar(Phase.Between[J][I], 8));
       }
     }
     if (!checker().validateLoopPlan())
@@ -4054,7 +4086,7 @@ class LoopPlanInference {
     std::vector<Counter> Candidates, Ranks;
     std::vector<size_t> Next{0};
     size_t Size = 1, MaxSize = 0;
-    bool Resume = false;
+    bool Resume = false, PendingLeading = false;
   };
   enum class TupleRankStatus { Inferred, Exhausted, Paused };
 
@@ -4076,7 +4108,8 @@ class LoopPlanInference {
   }
 
   static bool nextTuple(TupleRankSearch &Search) {
-    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume] = Search;
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading] =
+        Search;
     if (Resume) {
       Ranks.pop_back();
       Next.pop_back();
@@ -4113,13 +4146,17 @@ class LoopPlanInference {
                                   std::optional<uint32_t> MaxAttempts = {}) {
     for (uint32_t Attempt = 0; !MaxAttempts || Attempt < *MaxAttempts;
          ++Attempt) {
-      if (!nextTuple(Search))
+      const bool Leading = Search.PendingLeading;
+      if (!Leading && !nextTuple(Search))
         return TupleRankStatus::Exhausted;
       if (Result.RankCandidates >= Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
       ++Result.RankCandidates;
+      // Keep each variant as one budgeted attempt, including across a
+      // one-attempt pause. A single cut cannot benefit from a constant prefix.
+      Search.PendingLeading = !Leading && Plan.Cutpoints.size() > 1;
       Phases Phase;
-      if (inferPhases(Edges, Search.Ranks, Phase)) {
+      if (inferPhases(Edges, Search.Ranks, Phase, Leading)) {
         installRanks(Search.Ranks, Phase);
         return TupleRankStatus::Inferred;
       }
