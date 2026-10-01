@@ -887,7 +887,7 @@ void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
     if (std::any_of(Existing.begin(), Existing.end(), Same)) {
       // First try relational propagation. If an exact memory address still
       // cannot be established on a later attempt, separate only its already
-      // tracked dependencies whose incoming bytes are proven constant. This
+      // tracked dependencies by proved constants or frame displacements. This
       // is bounded context refinement, never a sample-based input binding.
       if (Demand == ControlDemand::Memory)
         PromoteContext(Field);

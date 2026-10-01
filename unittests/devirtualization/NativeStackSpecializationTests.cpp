@@ -11,10 +11,12 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Errc.h"
 
 #include <map>
 #include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::analysis;
