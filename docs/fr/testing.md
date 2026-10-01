@@ -72,9 +72,13 @@ Dans la même cible, `LowIRLoopRefinement.*` et `BinaryLowIRLoopRefinement.*` co
 
 Les tests de décompte gardé couvrent la reprise après rejet du modèle du corps, une preuve complète sur un mot arbitraire à l’en-tête, les budgets partagés et le refus immédiat d’une violation réelle du contrat d’entrée.
 
+`NeverDInterpreterLLVMRefinementTests` vérifie la composition nouvelle, la liaison texte/fonction exacte, les budgets indépendants, toutes les observations et le domaine source élargi. Des octets, résidus, résultats, drapeaux, statuts, écritures, poison ou plans faux/périmés doivent empêcher l’attestation composée. Le décompte sur un mot arbitraire exige les deux prémisses inductives ; des exemples C indépendants compilés en O1/O2 vérifient le LLVM sérialisé réel. Les régressions refusent les retours d’entrée cachés et bornent les racines sans copier la provenance accessoire.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 Les sorties par égalité mises en cache dans des boucles à deux et trois niveaux couvrent les opérandes corrélés, les bornes mobiles, les compteurs réinitialisés et les copies altérées.

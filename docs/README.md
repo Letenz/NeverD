@@ -28,7 +28,7 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 | [Testing](testing.md) | Test suites, generated fixtures, Unicorn roundtrips, and incremental commands |
 | [Desktop workbench](gui.md) | Qt Quick views, worker separation, localization, annotations and MCP connections |
 | [Desktop qualification](gui-qualification.md) | Supported workflows, verification evidence and platform release requirements |
-| [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; nested loop proof proposals; explicit discovery budgets and versioned C API |
+| [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; nested loop proof proposals; explicit discovery budgets and versioned C API; exact native-to-LLVM proof API |
 | [Windows exception reconstruction](windows-exception-reconstruction.md) | SEH/C++ unwind support matrix, IR contract, native patch rules, and PE validation |
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
 | [Bitvector proof backends](solver.md) | Optional Z3 proofs, fail-closed synthesis, independent solver tests and query export |

@@ -2656,6 +2656,8 @@ GUIDE_SECTION_CONTRACTS = {
         "modelLLVMInterpreterMachineStateX64",
         "llvmInterpreterMachineStateContract", "LLVMInterpreterDefinednessOffset",
         "MaxInputItems", "MaxBlocks", "MaxWork",
+        "prepareInterpreterLLVMRefinement", "checkBinaryLLVMRefinement",
+        "MaxIRBytes", "MaxMachineStateOperations", "MaxPreparationItems",
     ),
     ("interpreter-recovery", "loop-proposals"): (
         "pairLowIRLoopRefinementPlans", "LowIRLoopCutpointPair", "SharedInputs",

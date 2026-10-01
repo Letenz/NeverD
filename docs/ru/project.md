@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b5c5e186af2bdaea4eb030c7721d692044af4102a585a6ab4f8182a3de8e2e26 -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ CLI, интеграторы и ИИ-агенты используют один �
 Бюджеты восстановления задаются явно: `--vm-max-fields`, `--vm-max-refinements` и `--vm-max-queries` сохраняют значения по умолчанию 16, 16 и 4096. Совместимый C API v3 и правила отказа описаны в руководстве.
 
 Отдельный C++ API доказательства циклов выводит ограниченные инварианты и лексикографические ранги для вложенных циклов, затем повторно проверяет уточнение нативного кода до LowIR. См. [руководство по восстановлению](interpreter-recovery.md); выдаваемый C не сертифицируется.
+
+Отдельный C++ API `checkBinaryLLVMRefinement` объединяет новые нативные и LLVM-проверки точного артефакта LLVM; компиляция C остаётся вне области доказательства.
 
 <!-- i18n-section: why-neverd -->
 

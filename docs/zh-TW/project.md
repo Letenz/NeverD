@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b5c5e186af2bdaea4eb030c7721d692044af4102a585a6ab4f8182a3de8e2e26 -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`lib
 恢復預算可明確設定：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的預設值仍為 16、16、4096。相容的 v3 C API 與失敗規則見恢復指南。
 
 獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
+
+獨立的 C++ `checkBinaryLLVMRefinement` API 對精確 LLVM 產物組合全新的原生與 LLVM 檢查；C 編譯仍不在證明範圍內。
 
 <!-- i18n-section: why-neverd -->
 

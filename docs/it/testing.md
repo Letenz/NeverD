@@ -71,9 +71,13 @@ Nello stesso target, `LowIRLoopRefinement.*` e `BinaryLowIRLoopRefinement.*` cop
 
 I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiuto del template del corpo, una prova completa all’intestazione per parole arbitrarie, budget condivisi e rifiuto immediato di violazioni reali del contratto di ingresso.
 
+`NeverDInterpreterLLVMRefinementTests` controlla nuove prove composte, legame esatto testo/funzione, budget indipendenti, osservazioni complete e domini sorgente più ampi. Byte, residui, risultati, flag, stato, scritture, poison e piani errati/obsoleti devono impedire l’attestazione composta. I contatori di parola arbitraria richiedono entrambe le premesse induttive; esempi C indipendenti compilati O1/O2 verificano LLVM serializzato effettivo. Le regressioni rifiutano ritorni nascosti all’ingresso e limitano le radici senza copiare provenienza accessoria.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 Le uscite per uguaglianza memorizzate nei cicli a due e tre livelli verificano operandi correlati, limiti variabili, azzeramenti dei contatori e copie alterate.

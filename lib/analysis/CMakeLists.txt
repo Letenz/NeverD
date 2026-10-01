@@ -14,3 +14,10 @@ add_neverd_component_library(NeverDLLVMInterpreterModel
   LINK_COMPONENTS InterpreterSpecialization
   LLVM_COMPONENTS Core Support
 )
+
+add_neverd_component_library(NeverDInterpreterLLVMRefinement
+  llvm/InterpreterLLVMPreparation.cpp
+  llvm/InterpreterLLVMRefinement.cpp
+  LINK_COMPONENTS BinaryInterpreterSpecialization LLVMInterpreterModel
+  LLVM_COMPONENTS AsmParser Core Support
+)

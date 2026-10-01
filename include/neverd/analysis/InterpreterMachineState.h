@@ -91,6 +91,8 @@ struct InterpreterMachineStateModel {
 /// Observations, entry domain, frame contract and proof budgets remain the
 /// caller's responsibility. The model by itself supplies no native/source
 /// certificate. MaxOperations bounds input metadata and generated operations.
+/// Analysis models retain only the executable graph and declared entry roots;
+/// diagnostic strings and source/relocation provenance are not copied.
 llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     const LowFunc &Residual,
     InterpreterMachineStateProfile Profile =

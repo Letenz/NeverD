@@ -329,4 +329,51 @@ TEST(InterpreterMachineStateModel,
   Model->Function.Blocks.back().Ops.back().Inputs[0] = n(0);
   expect(*Model, Original, contract(), Status::Invalid);
 }
+
+TEST(InterpreterMachineStateModel, UnboundedAncillaryMetadataIsNotCopied) {
+  Program Residual;
+  Residual.finish();
+  Residual.Function.Name = std::string(100000, 'n');
+  Residual.Function.DebugName = std::string(100000, 'd');
+  Residual.Function.SourceFile = std::string(100000, 's');
+  Residual.Function.UnsupportedInstructionAddresses.resize(100000);
+  Residual.Function.RelocatedInstructionAddressOccurrences.resize(100000);
+  Residual.Function.ModuleAnalysisRoots = {Residual.Function.Entry};
+  auto Model = modelInterpreterMachineStateX64(Residual.Function);
+  ASSERT_TRUE(bool(Model)) << llvm::toString(Model.takeError());
+  EXPECT_TRUE(Model->Function.Name.empty());
+  EXPECT_TRUE(Model->Function.DebugName.empty());
+  EXPECT_TRUE(Model->Function.SourceFile.empty());
+  EXPECT_TRUE(Model->Function.UnsupportedInstructionAddresses.empty());
+  EXPECT_TRUE(Model->Function.RelocatedInstructionAddressOccurrences.empty());
+  EXPECT_EQ(Model->Function.ModuleAnalysisRoots,
+            Residual.Function.ModuleAnalysisRoots);
+  for (va_t I = 0; I != 1024; ++I)
+    Residual.Function.OrdinaryModuleAnalysisRoots.insert(I);
+  auto Limited = modelInterpreterMachineStateX64(
+      Residual.Function, InterpreterMachineStateProfile::UserX64NoFaultV1, 512);
+  ASSERT_FALSE(bool(Limited));
+  EXPECT_NE(llvm::toString(Limited.takeError()).find("budget"),
+            std::string::npos);
+}
+
+TEST(InterpreterMachineStateModel, MissingPredecessorsCannotHideEntryBackedge) {
+  for (bool DirectBranch : {false, true}) {
+    Program Residual;
+    Residual.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+    Residual.block(1, 0x200,
+                   DirectBranch ? std::vector<int>{} : std::vector<int>{0});
+    if (DirectBranch)
+      Residual.instruction({op(NdOp::BRANCH, {}, {n(0x100)})});
+    Residual.finish();
+    auto Model = modelInterpreterMachineStateX64(Residual.Function);
+    ASSERT_FALSE(bool(Model));
+    EXPECT_NE(llvm::toString(Model.takeError()).find("backedge"),
+              std::string::npos);
+    auto Source = wrapInterpreterMachineStateX64(Residual.Function);
+    ASSERT_FALSE(bool(Source));
+    EXPECT_NE(llvm::toString(Source.takeError()).find("backedge"),
+              std::string::npos);
+  }
+}
 } // namespace

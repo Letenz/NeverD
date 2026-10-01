@@ -108,6 +108,10 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `modelLLVMInterpreterMachineStateX64` 為已驗證的純量 LLVM 函式建立模型，函式接收一個狀態指標並回傳 i64 狀態碼。`llvmInterpreterMachineStateContract` 觀察全部 17 個狀態字，並要求獨立的 `LLVMInterpreterDefinednessOffset` 位元組初始及最終皆為零；補充入口域與客體堆疊框架時必須保留這些義務。PHI 賦值平行執行，整數溢位、精確位移、值域屬性等條件轉為待證明的檢查。每個實際執行的受支援操作都不得產生 poison，即使死碼或 select 可依 [LLVM 語義](https://llvm.org/docs/UndefinedBehavior.html) 遮蔽它。`MaxInputItems`、`MaxBlocks`、`MaxOperations` 與 `MaxWork` 限制建模成本。不支援的型別、指標逸出、記憶體模式、呼叫、屬性與中繼資料明確報錯；i8/i16/i32/i64 的變數 `shl`、`lshr` 與 `ashr` 要求無號位移量小於原始碼位寬，不套用指令集的位移量遮罩；`nuw`、`nsw` 與 `exact` 條件仍個別檢查。除法與 freeze 尚不支援。必須重新執行完整有限路徑或歸納檢查，證明語義有效性、記憶體安全、觀察項及終止性；自動迴圈候選推斷仍不完備。原始碼、模組與編譯器輸入須另行精確綁定，剖析器與編譯器仍是信任前提。本介面不證明 C、產生的機器碼或實體 CPU 的未定義位元選擇。原始碼契約見 [LLVM 語言參考](https://llvm.org/docs/LangRef.html)。 被讀取的入口位元組必須已初始化，客體存取必須指向宣告框架內仍存活的儲存；平坦 LowIR 記憶體模型不證明 LLVM 物件生命週期或指標來源。
 
+`prepareInterpreterLLVMRefinement` 保存精確 LLVM 文字與所選函式名稱，驗證模組，並為兩側狀態模型產生僅執行一次的規範旗標入口投影。`checkBinaryLLVMRefinement` 重新建立這些輸入，先證明實際原生映像與同一殘餘程式的關係，再證明殘餘模型與該 LLVM 產物的關係。有限路徑與歸納檢查均保留全部狀態字、實際狀態碼、語義有效性及堆疊框架寫入，並要求 RSP 與返回位址槽保持。原生入口常數不會複製到原始碼契約：原始碼關係刻意涵蓋較大的任意通用暫存器／規範旗標域，因此可能保守地拒絕僅在原生限制下成立的結果。迴圈方案是不可信候選。只有兩個全新檢查都成功，才產生綁定精確 IR 位元組、函式名稱、兩段證明憑據、執行設定版本與預算的組合憑據。
+
+`MaxIRBytes` 在複製或解析前限制文字與函式名稱大小；`MaxMachineStateOperations` 與 `MaxPreparationItems` 限制建模及準備工作。原生與 LLVM 證明預算獨立，絕不自動提高。受信任的 LLVM 解析器／驗證器在此沒有硬性的 CPU、堆疊或配置上限。共用堆疊框架必須以原始 RSP 狀態字為根並包含入口返回位址槽。仍須確保框架儲存已初始化且存活、狀態儲存可存取且對齊並與客體存取分離，以及客體指標來源有效。此 C++ API 證明受支援的原生到 LLVM 關係，不證明 C 編譯、產生的機器碼、故障行為或實體 CPU 未定義位元選擇。
+
 <!-- i18n-section: limits -->
 
 ## 目前限制

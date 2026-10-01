@@ -68,9 +68,13 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 تغطي اختبارات العد التنازلي المحمي إعادة المحاولة بعد رفض قالب الجسم، وإثباتًا كاملًا عند الرأس لكلمة اعتباطية، والميزانيات المشتركة، والرفض الفوري لانتهاك فعلي لعقد الدخول.
 
+يفحص `NeverDInterpreterLLVMRefinementTests` تركيب براهين جديدة وربط النص والدالة بدقة والميزانيات المستقلة وجميع المشاهدات ومجال المصدر الأوسع. يجب أن تمنع تغييرات البايتات والبرنامج المتبقي والنتائج والأعلام والحالة والكتابات وpoison والخطط الخاطئة أو القديمة الإيصال المركب. يتطلب العد التنازلي لكلمة اعتباطية الفرضيتين الاستقرائيتين؛ وتفحص أمثلة C مستقلة مترجمة عند O1/O2 نص LLVM الفعلي. ترفض اختبارات نموذج الحالة حواف الرجوع المخفية إلى المدخل وتحد الجذور دون نسخ بيانات المصدر الجانبية.
+
 ```sh
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
+cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
+build-release/bin/NeverDInterpreterLLVMRefinementTests
 ```
 
 تختبر مخارج المساواة المخزّنة في حلقات من مستويين وثلاثة مستويات ترابط المعاملات وتغيّر الحدود وإعادة تعيين العدّادات وفساد النسخ.

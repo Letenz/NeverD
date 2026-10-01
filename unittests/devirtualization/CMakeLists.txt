@@ -32,6 +32,18 @@ target_compile_definitions(NeverDLLVMInterpreterModelTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 
+add_neverd_unittest(NeverDInterpreterLLVMRefinementTests
+  InterpreterLLVMRefinementTests.cpp
+  InterpreterLLVMRefinementLoopTests.cpp
+  InterpreterLLVMRefinementCompileTests.cpp
+  LINK_COMPONENTS InterpreterLLVMRefinement
+)
+target_compile_definitions(NeverDInterpreterLLVMRefinementTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp

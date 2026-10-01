@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b5c5e186af2bdaea4eb030c7721d692044af4102a585a6ab4f8182a3de8e2e26 -->
+<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ La [récupération expérimentale de sources d’interpréteur](interpreter-reco
 Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
 
 L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
+
+L’API C++ distincte `checkBinaryLLVMRefinement` compose de nouvelles vérifications natives et LLVM sur un artefact LLVM exact ; la compilation C reste hors du périmètre de preuve.
 
 <!-- i18n-section: why-neverd -->
 
