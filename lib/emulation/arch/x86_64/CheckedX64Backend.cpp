@@ -500,11 +500,10 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (DeviceAccess)
     return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
                           DeviceAccess->Permission, DeviceAccess->Value);
-  auto Root = buildX64PageTables(*Memory, PageTableRoot, UserMode,
+  auto Root = buildX64PageTables(*Memory, UserMode,
                                  Machine->requiresExceptionMonitor());
   if (!Root)
     return Root.takeError();
-  PageTableRoot = *Root;
   std::vector<RAMWriteRange> Writes;
   for (const auto &A : Accesses)
     if (A.Permission == Write)
@@ -515,7 +514,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (!Transaction)
     return Transaction.takeError();
   auto Next = CPU;
-  if (auto E = Machine->step(Next, PageTableRoot, {Deadline, &StopRequested})) {
+  if (auto E = Machine->step(Next, *Root, {Deadline, &StopRequested})) {
     // Discard speculative RAM before the OS receives a processor exception.
     // Its architectural fault state (including FP status) remains
     // authoritative.

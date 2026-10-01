@@ -1,6 +1,6 @@
 **Lingue**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
+<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
 
 [← Progetto NeverD](project.md)
 
@@ -42,3 +42,5 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 | [Decompilazione Solana SBF](sbf.md) | SBF v0-v4, LLVM IR, output C/Rust, verifica e limiti noti |
 | [Roadmap](roadmap.md) | Stato: formati nativi, EVM e Solana SBF implementati |
 | Documentazione tradotta | I collegamenti linguistici in alto aprono l’indice e la panoramica di ogni lingua |
+
+Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi WHP/ARM64 restano incomplete.

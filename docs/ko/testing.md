@@ -885,6 +885,12 @@ Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `R
 
 ARM64 KVM/WHP 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 성공은 이 제한된 초기화 프로그램만 검증하며 독립적인 native ARM64 워크로드 검증은 아직 필요합니다.
 
+x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 증명하며, WHP와 ARM64의 독립적인 네이티브 작업 검증은 아직 남아 있습니다.
+
+공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 활성 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
+
+`NeverDX64FPTests`는 전체 79개 시작 상태 손상 위치와 독립적으로 어셈블한 `X64ProbeCases.def`의 네이티브 실행, 단일 기한 및 게스트 RAM 보존을 검사합니다. `NeverDProjectionCacheTests`는 호출자 변경, ISA 순서, 루트 이력, 권한/모니터 구성, 매핑 세대, 주소 공간 식별 및 재구축 실패를 검사합니다. `NeverDRunControlTests`의 `WhpXsaveTests.cpp`는 새 API와 이전 API 패킷, 모든 TOP, 크기 범위 및 실패 시 상태 보존을 검사합니다. 이 메모리 프로토콜 테스트는 네이티브 WHP 증거를 대체하지 않으며 사용 불가능한 네이티브 전송은 명시적으로 건너뜁니다.
+
 `NeverDAArch64StateTests`는 모든 스칼라 필드와 벡터의 두 워드 손상, 권한 변경, 부동소수점 미실행 및 전송 오류 진단 보존을 검사합니다. `NeverDAArch64FPTests`의 `OriginalProgramChecksCompleteStateAndOneDeadline`은 독립적으로 어셈블한 `AArch64ProbeCases.def` 명령을 실제 전송에서 두 권한으로 실행합니다. 테스트는 PC와 무관한 명령을 게스트 코드로 옮기며 모니터 페이지의 사용자 접근을 허용하지 않습니다. Unicorn 실행과 명시적 native 건너뛰기는 native ARM64 시작 증거를 대신하지 않습니다.
 
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.

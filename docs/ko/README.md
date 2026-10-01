@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
+<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -42,3 +42,5 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 | [Solana SBF 디컴파일](sbf.md) | SBF v0-v4, LLVM IR, C/Rust 출력, 검증 및 알려진 제한 사항 |
 | [로드맵](roadmap.md) | 상태: native format, EVM, Solana SBF 구현 완료 |
 | 다국어 문서 | 위의 언어 링크에서 각 언어의 색인과 프로젝트 개요를 열 수 있습니다 |
+
+x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리하며 네이티브 WHP/ARM64 작업 증거는 아직 불완전합니다.

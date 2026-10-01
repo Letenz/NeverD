@@ -8,6 +8,8 @@
 #include "../../core/ExecutionDiagnostics.h"
 #include "AArch64Machine.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 namespace neverd::emulation {
 namespace {
 namespace probe {
@@ -18,6 +20,9 @@ namespace probe {
 } // namespace
 llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
                                  MemoryProjection &Memory) {
+  if (auto E = Memory.beginRun())
+    return E;
+  auto Release = llvm::scope_exit([&] { Memory.endRun(); });
   if (auto E = buildAArch64PageTables(Memory))
     return E;
   AArch64MachineState State;

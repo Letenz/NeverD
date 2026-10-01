@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
+<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
 
 <div align="center">
 
@@ -106,7 +106,7 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 
 `checked-aarch64-v1` e `checked-user-aarch64-v1` offrono ARM64 FP32/FP64 e SIMD fissi limitati, con stato FPCR/FPSR/vettoriale completo. Linux ARM64 corrispondente usa KVM, Windows ARM64 usa WHP e ISA diverse usano Unicorn. Le prove native ARM64 restano pendenti; il caricamento di driver Windows resta x64.
 
-L’inizializzazione ARM64 nativa rifiuta trasferimenti di stato completo o risultati FP/SIMD errati tramite un probe privato; il successo copre solo questo programma di inizializzazione limitato.
+Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi WHP/ARM64 restano incomplete.
 
 <!-- i18n-section: how-it-works -->
 

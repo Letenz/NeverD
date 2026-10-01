@@ -1,0 +1,53 @@
+//===- X64MachineProbe.def - Native startup program ---------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_PROBE_VALUE
+NEVERD_X64_PROBE_VALUE(TimeoutMicroseconds, 1'000'000)
+NEVERD_X64_PROBE_VALUE(ScalarSeed, 0x1122334455667700ULL)
+NEVERD_X64_PROBE_VALUE(ScalarStride, 0x101)
+NEVERD_X64_PROBE_VALUE(VectorLowSeed, 0x0123456789abcdefULL)
+NEVERD_X64_PROBE_VALUE(VectorHighSeed, 0xfedcba9876543210ULL)
+NEVERD_X64_PROBE_VALUE(VectorStride, 0x101)
+NEVERD_X64_PROBE_VALUE(StackAlignment, 16)
+NEVERD_X64_PROBE_VALUE(CodeOffset, gateway::VectorCount *gateway::CodeStride)
+NEVERD_X64_PROBE_VALUE(TLSOffset, gateway::IDTOffset +
+                                      gateway::VectorCount * gateway::GateBytes)
+NEVERD_X64_PROBE_VALUE(FSValue, 0x13579bdf2468ace0ULL)
+NEVERD_X64_PROBE_VALUE(GSValue, 0xfedcba9876543210ULL)
+NEVERD_X64_PROBE_VALUE(CR8, 3)
+NEVERD_X64_PROBE_VALUE(SelectorMask, UINT16_MAX)
+NEVERD_X64_PROBE_VALUE(FloatMask, UINT32_MAX)
+NEVERD_X64_PROBE_VALUE(FloatOne, 0x3f800000)
+NEVERD_X64_PROBE_VALUE(FloatHalfULP, 0x33800000)
+NEVERD_X64_PROBE_VALUE(FloatRoundedUp, 0x3f800001)
+NEVERD_X64_PROBE_VALUE(FloatingDestination, 12)
+NEVERD_X64_PROBE_VALUE(FloatingSource, 13)
+NEVERD_X64_PROBE_VALUE(VectorDestination, 14)
+NEVERD_X64_PROBE_VALUE(VectorSource, 15)
+// Round toward +infinity, FTZ, all exceptions masked; preserve division status.
+NEVERD_X64_PROBE_VALUE(MXCSR, 0xdf84)
+NEVERD_X64_PROBE_VALUE(InexactMXCSR, 0xdfa4)
+NEVERD_X64_PROBE_VALUE(FPControl, 0xb7f)
+NEVERD_X64_PROBE_VALUE(FPStatus, 0x3000)
+NEVERD_X64_PROBE_VALUE(FPTag, UINT8_MAX)
+NEVERD_X64_PROBE_VALUE(FPOpcode, 0x127)
+NEVERD_X64_PROBE_VALUE(FP80Base, 0x8000000000000000ULL)
+NEVERD_X64_PROBE_VALUE(FP80High, 0x3fff)
+#endif
+#ifdef NEVERD_X64_PROBE_TEXT
+NEVERD_X64_PROBE_TEXT(State, "incorrect x64 native initialization state")
+#endif
+#ifdef NEVERD_X64_PROBE_INSTRUCTION
+NEVERD_X64_PROBE_INSTRUCTION(Nop, 0x90)
+// ADDSS XMM12,XMM13: 1 + 2^-24 rounds up and accumulates precision status.
+NEVERD_X64_PROBE_INSTRUCTION(FloatingAdd, 0xf3, 0x45, 0x0f, 0x58, 0xe5)
+// PADDQ XMM14,XMM15 executes both lanes without changing flags or FP status.
+NEVERD_X64_PROBE_INSTRUCTION(VectorAdd, 0x66, 0x45, 0x0f, 0xd4, 0xf7)
+NEVERD_X64_PROBE_INSTRUCTION(ReadFS, 0x64, 0x4c, 0x8b, 0x34, 0x25, 0, 0, 0, 0)
+NEVERD_X64_PROBE_INSTRUCTION(ReadGS, 0x65, 0x4c, 0x8b, 0x3c, 0x25, 0, 0, 0, 0)
+NEVERD_X64_PROBE_INSTRUCTION(ReadCS, 0x66, 0x41, 0x8c, 0xcc)
+NEVERD_X64_PROBE_INSTRUCTION(ReadSS, 0x66, 0x41, 0x8c, 0xd5)
+NEVERD_X64_PROBE_INSTRUCTION(ReadCR8, 0x45, 0x0f, 0x20, 0xc3)
+#endif

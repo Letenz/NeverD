@@ -27,6 +27,7 @@ struct X64FPState {
   uint8_t Tag = 0;
   uint64_t Instruction = 0, Data = 0;
   std::array<RegisterValue, x64::fp::RegisterCount> Registers{};
+  bool operator==(const X64FPState &) const = default;
   unsigned top() const {
     return (Status >> x64::fp::TopShift) & x64::fp::TopMask;
   }
@@ -42,10 +43,17 @@ RegisterValue readX64FPRegister(const X64FPState &State, CPURegister Register);
 llvm::Error writeX64FPRegister(X64FPState &State, CPURegister Register,
                                const RegisterValue &Value);
 /// Standard FXSAVE64 legacy area. The ISA owns TOP rotation, 80-bit lanes and
-/// the shared FP/SSE offsets; transport-specific XSAVE headers remain separate.
+/// the shared FP/SSE offsets used by the bounded XSAVE codec below.
 llvm::Error encodeX64FXState(const X64MachineState &State,
                              llvm::MutableArrayRef<uint8_t> Bytes);
 llvm::Error decodeX64FXState(X64MachineState &State,
                              llvm::ArrayRef<uint8_t> Bytes);
+/// Bounded FP/SSE XSAVE profile. Both standard and compacted headers retain
+/// the same legacy slots; active extended components are unsupported.
+llvm::Error encodeX64XsaveState(const X64MachineState &State,
+                                llvm::MutableArrayRef<uint8_t> Bytes,
+                                bool Compacted = false);
+llvm::Error decodeX64XsaveState(X64MachineState &State,
+                                llvm::ArrayRef<uint8_t> Bytes);
 } // namespace neverd::emulation
 #endif

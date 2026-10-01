@@ -158,7 +158,7 @@ protected:
         return E;
       return ARM->step(ARMState, Control);
     }
-    auto Built = buildX64PageTables(*Memory, Root, user());
+    auto Built = buildX64PageTables(*Memory, user());
     if (!Built)
       return Built.takeError();
     Root = *Built;

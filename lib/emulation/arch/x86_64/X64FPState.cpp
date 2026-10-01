@@ -152,4 +152,52 @@ llvm::Error decodeX64FXState(X64MachineState &State,
   }
   return llvm::Error::success();
 }
+llvm::Error encodeX64XsaveState(const X64MachineState &State,
+                                llvm::MutableArrayRef<uint8_t> Bytes,
+                                bool Compact) {
+  if (Bytes.size() < XsaveBytes || Bytes.size() > MaxXsaveBytes ||
+      (State.MXCSR & ~x64::AllowedMXCSR))
+    return diagnostic::error(diagnostic::FPState);
+  if (auto E = encodeX64FXState(State, Bytes))
+    return E;
+  std::fill(Bytes.begin() + LegacyBytes, Bytes.end(), 0);
+  llvm::support::endian::write64le(Bytes.data() + XStateOffset, FPAndSSE);
+  llvm::support::endian::write64le(Bytes.data() + XCompOffset,
+                                   Compact ? Compacted | FPAndSSE : 0);
+  return llvm::Error::success();
+}
+llvm::Error decodeX64XsaveState(X64MachineState &State,
+                                llvm::ArrayRef<uint8_t> Bytes) {
+  if (Bytes.size() < XsaveBytes || Bytes.size() > MaxXsaveBytes)
+    return diagnostic::error(diagnostic::FPState);
+  const auto Present =
+      llvm::support::endian::read64le(Bytes.data() + XStateOffset);
+  const auto Layout =
+      llvm::support::endian::read64le(Bytes.data() + XCompOffset);
+  if ((Present & ~FPAndSSE) || (Layout && !(Layout & Compacted)) ||
+      ((Layout & Compacted) && (Present & ~Layout)))
+    return diagnostic::error(diagnostic::FPState);
+  for (const auto Byte :
+       Bytes.slice(XCompOffset + sizeof(uint64_t),
+                   XsaveBytes - XCompOffset - sizeof(uint64_t)))
+    if (Byte)
+      return diagnostic::error(diagnostic::FPState);
+  auto Next = State;
+  if (auto E = decodeX64FXState(Next, Bytes))
+    return E;
+  // Architecturally absent components contain init state, independently of
+  // stale legacy bytes. Only active fields participate in validation.
+  if (!(Present & X87Present))
+    Next.FP = {};
+  if (!(Present & SSEPresent)) {
+    Next.MXCSR = x64::InitialMXCSR;
+    Next.Xmm = {};
+  }
+  if (Next.MXCSR & ~x64::AllowedMXCSR)
+    return diagnostic::error(diagnostic::FPState);
+  if (auto E = validateX64FPState(Next.FP))
+    return E;
+  State = Next;
+  return llvm::Error::success();
+}
 } // namespace neverd::emulation

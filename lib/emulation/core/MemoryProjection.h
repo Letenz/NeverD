@@ -7,9 +7,12 @@
 #define NEVERD_EMULATION_CORE_MEMORYPROJECTION_H
 #include "MemoryStorage.h"
 
+#include "neverd/emulation/ExecutionBackend.h"
+
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <array>
+#include <optional>
 
 namespace neverd::emulation {
 struct MemoryRegistration {
@@ -67,15 +70,26 @@ public:
     return Space->State->Pages;
   }
   uint64_t mappingGeneration() const { return Space->mappingGeneration(); }
-  bool needsProjection(bool UserMode = false, uint64_t Variant = 0) const {
+  bool needsProjection(GuestArchitecture Architecture, bool UserMode = false,
+                       uint64_t Variant = 0) const {
     return ProjectedSpace.lock() != Space ||
            Generation != mappingGeneration() || ProjectedUserMode != UserMode ||
-           ProjectedVariant != Variant;
+           ProjectedVariant != Variant || ProjectedArchitecture != Architecture;
   }
   const std::map<uint64_t, std::shared_ptr<Device>> &devices() const {
     return Space->State->Devices;
   }
-  void commitProjection(bool UserMode = false, uint64_t Variant = 0);
+  /// Cache identity and the current opaque root belong to these private bytes,
+  /// not to one caller. The ISA builder owns root selection and page encoding.
+  /// Invalidate before rewriting bytes, retaining root history and RAM pins
+  /// until a complete replacement is published.
+  void invalidateProjection() { ProjectedArchitecture.reset(); }
+  void commitProjection(GuestArchitecture Architecture, bool UserMode = false,
+                        uint64_t Variant = 0, uint64_t Root = 0);
+  uint64_t projectionRoot(GuestArchitecture Architecture) const {
+    auto I = ProjectedRoots.find(Architecture);
+    return I == ProjectedRoots.end() ? 0 : I->second;
+  }
   uint8_t *data() const { return static_cast<uint8_t *>(Projection.base()); }
   std::array<MemoryRegistration, 2> registrations() const;
   uint8_t *physicalPointer(uint64_t GPA) const;
@@ -88,6 +102,8 @@ private:
   uint64_t Generation = 0;
   bool ProjectedUserMode = false;
   uint64_t ProjectedVariant = 0;
+  std::map<GuestArchitecture, uint64_t> ProjectedRoots;
+  std::optional<GuestArchitecture> ProjectedArchitecture;
   std::weak_ptr<AddressSpace> ProjectedSpace;
   // Keep old allocations pinned until the transport retires the old mapping.
   std::map<uint64_t, Page> ProjectedPages;

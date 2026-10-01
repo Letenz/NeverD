@@ -44,3 +44,5 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 | [Solana SBF decompilation](sbf.md) | SBF v0-v4 ELF rules, staged IR, syscalls, C/Rust/LLVM backends, and host contracts |
 | [Roadmap](roadmap.md) | Status: native formats, EVM, and Solana SBF implemented |
 | Localized documentation | Use the language links above to open each language's index and project overview |
+
+Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native WHP/ARM64 workload evidence remains incomplete.

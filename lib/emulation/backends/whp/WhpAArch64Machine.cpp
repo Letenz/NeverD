@@ -174,12 +174,8 @@ createWhpAArch64Machine(MemoryProjection &Memory) {
           sizeof(P))) ||
       FAILED(M->API.WHvSetupPartition(M->Partition)))
     return diagnostic::error(diagnostic::WhpCreate);
-  for (const auto &Mapping : Memory.registrations())
-    if (FAILED(M->API.WHvMapGpaRange(
-            M->Partition, Mapping.Backing, Mapping.Physical, Mapping.Size,
-            WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
-                WHvMapGpaRangeFlagExecute)))
-      return diagnostic::error(diagnostic::WhpMap);
+  if (auto E = M->mapMemory(Memory))
+    return E;
   if (FAILED(M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0)))
     return diagnostic::error(diagnostic::WhpCreate);
   WHV_REGISTER_NAME Name = WHvArm64RegisterGicrBaseGpa;
