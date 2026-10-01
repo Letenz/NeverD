@@ -528,6 +528,65 @@ bool hasEmbeddedSDCallbackQueueAsync(const BinaryImage &Image) {
   return Async == 1 && MainQueue == 1;
 }
 
+bool hasEmbeddedSDDownloaderModifier(const BinaryImage &Image,
+                                     llvm::StringRef Name) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      (Name != "SDWebImageDownloaderRequestModifier" &&
+       Name != "SDWebImageDownloaderResponseModifier"))
+    return false;
+  const ObjCClass *Owner = nullptr;
+  for (const auto &Class : Image.ObjCClasses)
+    if (Class.Name == Name) {
+      if (Owner)
+        return false;
+      Owner = &Class;
+    }
+  if (!Owner || !Owner->Address || Owner->SuperclassName != "NSObject" ||
+      Owner->InheritanceStatus != "resolved" || Owner->RootClass)
+    return false;
+  unsigned Properties = 0;
+  for (const auto &Property : Image.ObjCProperties) {
+    if (Property.ClassName != Name || Property.Name != "block")
+      continue;
+    if (Property.Owner != ObjCProperty::OwnerKind::Class ||
+        Property.OwnerAddress != Owner->Address || Property.OwnerName != Name ||
+        !Property.MetadataAddress || Property.IsClassProperty ||
+        Property.ReadOnly || Property.IsOptional ||
+        Property.Status != "supported" || Property.TypeEncoding != "@?" ||
+        Property.Attributes != "T@?,C,N,V_block" ||
+        Property.Getter != "block" || Property.Setter != "setBlock:")
+      return false;
+    ++Properties;
+  }
+  const std::pair<llvm::StringRef, llvm::StringRef> Methods[] = {
+      {"initWithBlock:", "@24@0:8@?16"},
+      {"block", "@?16@0:8"},
+      {"setBlock:", "v24@0:8@?16"},
+      {Name == "SDWebImageDownloaderRequestModifier"
+           ? "modifiedRequestWithRequest:"
+           : "modifiedResponseWithResponse:",
+       "@24@0:8@16"}};
+  std::array<unsigned, std::size(Methods)> Counts{};
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.ClassName != Name)
+      continue;
+    for (size_t I = 0; I < std::size(Methods); ++I) {
+      if (Method.Selector != Methods[I].first)
+        continue;
+      if (Method.ClassAddress != Owner->Address || Method.CategoryAddress ||
+          !Method.CategoryName.empty() || !Method.MetadataAddress ||
+          Method.IsClassMethod || Method.TypeEncoding != Methods[I].second ||
+          !objcMethodHasSourceBody(Method) ||
+          !Image.isCodeAddress(Method.Implementation))
+        return false;
+      ++Counts[I];
+    }
+  }
+  return Properties == 1 &&
+         llvm::all_of(Counts, [](unsigned Count) { return Count == 1; });
+}
+
 bool usesFramework(const BinaryImage &Image,
                    const FrameworkDeclarations &Framework) {
   llvm::StringRef Modules(Framework.Modules);
@@ -1231,8 +1290,7 @@ objcMethodParameterReceiverTypeHint(const BinaryImage &Image, va_t Entry,
        "completion:",
        "v48@0:8@16@24B32B36@?40", 3},
       {"WMFRelatedPagesContentSource",
-       "extracted:completion:date:groupURL:moc:",
-       "v56@0:8@16@?24@32@40@48", 6},
+       "extracted:completion:date:groupURL:moc:", "v56@0:8@16@?24@32@40@48", 6},
       {"WMFNearbyContentSource",
        "removeSectionsForMidnightUTCDate:withKeyNotEqualToKey:"
        "inManagedObjectContext:",
@@ -2007,7 +2065,7 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
           const bool MWKLanguageArrayResult =
               Name == "MWKLanguageLinkController" &&
               hasEmbeddedMWKLanguageLinkArrayResult(Image, Selector,
-                                                     Type.IsClassMethod);
+                                                    Type.IsClassMethod);
           // WMFContentGroup+Extensions.m declares these category results as
           // NSArray<WMFContentGroup *> *; the runtime encoding retains id.
           const bool WMFContentGroupArrayResult =
@@ -2280,6 +2338,29 @@ objcBlockParameterContract(const BinaryImage &Image,
     return false;
   };
 
+  // SDWebImage 5.21.2's RequestModifier/ResponseModifier initWithBlock:
+  // assigns its argument to the copied block property. The public callback
+  // takes and returns a request/response object. Require the corresponding
+  // embedded class, property and methods; the selector alone says nothing
+  // about ownership or the callback ABI.
+  if (Type && !Type->IsClassMethod && !Type->IsProtocol &&
+      Call.Selector == "initWithBlock:" && Parameter == 2 &&
+      hasEmbeddedSDDownloaderModifier(Image, Type->ClassName)) {
+    auto Parent = parseObjCMethodEncoding(Call.Selector, "@24@0:8@?16");
+    std::string Error;
+    auto Callback = parseObjCBlockSignature(
+        Type->ClassName == "SDWebImageDownloaderRequestModifier"
+            ? "@16@?0@\"NSURLRequest\"8"
+            : "@16@?0@\"NSURLResponse\"8",
+        Image.Arch, Error);
+    if (!Parent || !Callback ||
+        !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
+        !SameDeclaration(*Expected, *Parent))
+      return std::nullopt;
+    return ObjCBlockParameterContract{
+        std::move(*Callback), ObjCBlockParameterContract::Lifetime::Copied};
+  }
+
   // SDCallbackQueue.async: either invokes the block immediately or hands it
   // to dispatch_async, which copies it. Match the embedded class and method
   // declaration before giving a stack block this escaping lifetime proof.
@@ -2398,7 +2479,8 @@ objcBlockParameterContract(const BinaryImage &Image,
         !SameDeclaration(*Expected, *Parent))
       return std::nullopt;
     return ObjCBlockParameterContract{
-        std::move(*Callback), ObjCBlockParameterContract::Lifetime::NonEscaping};
+        std::move(*Callback),
+        ObjCBlockParameterContract::Lifetime::NonEscaping};
   }
 
   // Mantle's transformer factories retain both callbacks in the constructed
@@ -2413,9 +2495,8 @@ objcBlockParameterContract(const BinaryImage &Image,
        (Call.Selector == "transformerUsingForwardBlock:reverseBlock:" &&
         Parameter == 3))) {
     const llvm::StringRef Encoding =
-        Call.Selector == "transformerUsingForwardBlock:"
-            ? "@24@0:8@?16"
-            : "@32@0:8@?16@?24";
+        Call.Selector == "transformerUsingForwardBlock:" ? "@24@0:8@?16"
+                                                         : "@32@0:8@?16@?24";
     const ObjCClass *Owner = nullptr;
     for (const auto &Class : Image.ObjCClasses)
       if (Class.Name == "MTLValueTransformer") {
@@ -2441,8 +2522,8 @@ objcBlockParameterContract(const BinaryImage &Image,
       return std::nullopt;
     auto Parent = parseObjCMethodEncoding(Call.Selector, Encoding);
     std::string Error;
-    auto Callback = parseObjCBlockSignature("@32@?0@8^B16^@24",
-                                            Image.Arch, Error);
+    auto Callback =
+        parseObjCBlockSignature("@32@?0@8^B16^@24", Image.Arch, Error);
     if (!Parent || !Callback ||
         !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
         !SameDeclaration(*Expected, *Parent))
@@ -2499,7 +2580,8 @@ objcBlockParameterContract(const BinaryImage &Image,
   // passes it into the URLSession task. The Objective-C bridge must own it.
   if (Image.Arch == Arch::AArch64 && Type && !Type->IsClassMethod &&
       !Type->IsProtocol && Type->ClassName == "WMFSession" &&
-      Call.Selector == "getJSONDictionaryFromURL:ignoreCache:completionHandler:" &&
+      Call.Selector ==
+          "getJSONDictionaryFromURL:ignoreCache:completionHandler:" &&
       Parameter == 4) {
     const ObjCClass *Owner = nullptr;
     for (const auto &Class : Image.ObjCClasses)
@@ -2563,19 +2645,17 @@ objcBlockParameterContract(const BinaryImage &Image,
   static constexpr WMFEmbeddedBlock WMFEmbeddedBlocks[] = {
       {"MWKDataStore", "setupCoreDataStackWithContainerURL:completion:",
        "v32@0:8@16@?24", "v8@?0", 3},
-      {"MWKDataStore",
-       "performBackgroundCoreDataOperationOnATemporaryContext:",
+      {"MWKDataStore", "performBackgroundCoreDataOperationOnATemporaryContext:",
        "v24@0:8@?16", "v16@?0@\"NSManagedObjectContext\"8", 2},
-      {"WMFFeedContentSource", "fetchContentForDate:force:completion:",
-       "v36@0:8@16B24@?28",
+      {"WMFFeedContentSource",
+       "fetchContentForDate:force:completion:", "v36@0:8@16B24@?28",
        "v24@?0@\"WMFFeedDayResponse\"8@\"NSDictionary\"16", 4},
       {"WMFFeedContentFetcher",
        "fetchFeedContentForURL:date:force:failure:success:",
        "v52@0:8@16@24B32@?36@?44", "v16@?0@\"NSError\"8", 5},
       {"WMFFeedContentFetcher",
        "fetchFeedContentForURL:date:force:failure:success:",
-       "v52@0:8@16@24B32@?36@?44",
-       "v16@?0@\"WMFFeedDayResponse\"8", 6},
+       "v52@0:8@16@24B32@?36@?44", "v16@?0@\"WMFFeedDayResponse\"8", 6},
       {"WMFAnnouncementsFetcher",
        "fetchAnnouncementsForURL:force:failure:success:",
        "v44@0:8@16B24@?28@?36", "v16@?0@\"NSError\"8", 4},
@@ -2583,8 +2663,8 @@ objcBlockParameterContract(const BinaryImage &Image,
        "fetchAnnouncementsForURL:force:failure:success:",
        "v44@0:8@16B24@?28@?36", "v16@?0@\"NSArray\"8", 5},
       {"WMFRelatedSearchFetcher",
-       "fetchRelatedArticlesForArticleWithURL:completion:",
-       "v32@0:8@16@?24", "v24@?0@\"NSError\"8@\"NSDictionary\"16", 3},
+       "fetchRelatedArticlesForArticleWithURL:completion:", "v32@0:8@16@?24",
+       "v24@?0@\"NSError\"8@\"NSDictionary\"16", 3},
       {"WMFExploreFeedContentController",
        "updateExploreFeedPreferences:willTurnOnContentGroupOrLanguage:"
        "waitForCallbackFromCoordinator:apply:updateFeed:",
@@ -2592,29 +2672,26 @@ objcBlockParameterContract(const BinaryImage &Image,
       {"WMFNearbyContentSource",
        "getGroupForLocation:inManagedObjectContext:force:completion:failure:",
        "v52@0:8@16@24B32@?36@?44",
-       "v32@?0@\"WMFContentGroup\"8@\"CLLocation\"16@\"CLPlacemark\"24",
-       5},
+       "v32@?0@\"WMFContentGroup\"8@\"CLLocation\"16@\"CLPlacemark\"24", 5},
       {"WMFNearbyContentSource",
        "getGroupForLocation:inManagedObjectContext:force:completion:failure:",
        "v52@0:8@16@24B32@?36@?44", "v16@?0@\"NSError\"8", 6},
       {"WMFEchoSubscriptionFetcher",
-       "subscribeWithSiteURL:deviceToken:completion:",
-       "v40@0:8@16@24@?32", "v16@?0@\"NSError\"8", 4},
+       "subscribeWithSiteURL:deviceToken:completion:", "v40@0:8@16@24@?32",
+       "v16@?0@\"NSError\"8", 4},
       {"WMFEchoSubscriptionFetcher",
-       "unsubscribeWithSiteURL:deviceToken:completion:",
-       "v40@0:8@16@24@?32", "v16@?0@\"NSError\"8", 4},
-      {"WMFExploreFeedContentController", "performBackgroundFetch:",
-       "v24@0:8@?16", "v16@?0Q8", 2},
+       "unsubscribeWithSiteURL:deviceToken:completion:", "v40@0:8@16@24@?32",
+       "v16@?0@\"NSError\"8", 4},
+      {"WMFExploreFeedContentController",
+       "performBackgroundFetch:", "v24@0:8@?16", "v16@?0Q8", 2},
       {"MWKImageInfoFetcher",
        "fetchGalleryInfoForImageFiles:fromSiteURL:success:failure:",
        "@48@0:8@16@24@?32@?40", "v16@?0@\"NSArray\"8", 4},
       {"MWKImageInfoFetcher",
        "fetchGalleryInfoForImageFiles:fromSiteURL:success:failure:",
        "@48@0:8@16@24@?32@?40", "v16@?0@\"NSError\"8", 5},
-      {"WMFPermanentCacheController", "setupCoreDataStack:",
-       "v24@0:8@?16",
-       "v24@?0@\"NSManagedObjectContext\"8@\"NSError\"16", 2,
-       true},
+      {"WMFPermanentCacheController", "setupCoreDataStack:", "v24@0:8@?16",
+       "v24@?0@\"NSManagedObjectContext\"8@\"NSError\"16", 2, true},
   };
   if (Image.Arch == Arch::AArch64 && Type && !Type->IsProtocol)
     for (const auto &D : WMFEmbeddedBlocks) {
@@ -2672,16 +2749,13 @@ objcBlockParameterContract(const BinaryImage &Image,
        "v24@?0@\"WMFContentGroup\"8^B16", 3},
       {"createGroupForURL:ofKind:forDate:withSiteURL:associatedContent:"
        "customizationBlock:",
-       "@60@0:8@16i24@28@36@44@?52",
-       "v16@?0@\"WMFContentGroup\"8", 7},
+       "@60@0:8@16i24@28@36@44@?52", "v16@?0@\"WMFContentGroup\"8", 7},
       {"createGroupOfKind:forDate:withSiteURL:associatedContent:"
        "customizationBlock:",
-       "@52@0:8i16@20@28@36@?44",
-       "v16@?0@\"WMFContentGroup\"8", 6},
+       "@52@0:8i16@20@28@36@?44", "v16@?0@\"WMFContentGroup\"8", 6},
       {"fetchOrCreateGroupForURL:ofKind:forDate:withSiteURL:"
        "associatedContent:customizationBlock:",
-       "@60@0:8@16i24@28@36@44@?52",
-       "v16@?0@\"WMFContentGroup\"8", 7},
+       "@60@0:8@16i24@28@36@44@?52", "v16@?0@\"WMFContentGroup\"8", 7},
   };
   if (Image.Arch == Arch::AArch64 && Type && !Type->IsClassMethod &&
       !Type->IsProtocol &&
@@ -2695,7 +2769,8 @@ objcBlockParameterContract(const BinaryImage &Image,
             Candidate.Selector == Call.Selector && !Candidate.IsClassMethod) {
           if (Method || !Candidate.CategoryAddress ||
               Candidate.CategoryName != "WMFArticle" ||
-              !Candidate.MetadataAddress || Candidate.TypeEncoding != D.Parent ||
+              !Candidate.MetadataAddress ||
+              Candidate.TypeEncoding != D.Parent ||
               !objcMethodHasSourceBody(Candidate) ||
               !Image.isCodeAddress(Candidate.Implementation))
             return std::nullopt;
@@ -2741,8 +2816,7 @@ objcBlockParameterContract(const BinaryImage &Image,
     auto Parent = parseObjCMethodEncoding(Call.Selector, ParentEncoding);
     std::string Error;
     auto Callback = parseObjCBlockSignature(
-        Parameter == 4 ? "v16@?0@\"NSError\"8"
-                       : "v16@?0@\"NSValue\"8",
+        Parameter == 4 ? "v16@?0@\"NSError\"8" : "v16@?0@\"NSValue\"8",
         Image.Arch, Error);
     if (!Parent || !Callback ||
         !assignDarwinObjCSourceABI(*Parent, Image.Arch, Error) ||
@@ -2768,15 +2842,12 @@ objcBlockParameterContract(const BinaryImage &Image,
       {"NSArray", "wmf_map:", "@24@0:8@?16", "@16@?0@8", 2},
       {"NSArray", "wmf_select:", "@24@0:8@?16", "B16@?0@8", 2},
       {"NSArray", "wmf_match:", "@24@0:8@?16", "B16@?0@8", 2},
-      {"NSArray", "wmf_reduce:withBlock:", "@32@0:8@16@?24",
-       "@24@?0@8@16", 3},
-      {"NSArray", "wmf_mapAndRejectNil:", "@24@0:8@?16",
-       "@16@?0@8", 2, false},
+      {"NSArray", "wmf_reduce:withBlock:", "@32@0:8@16@?24", "@24@?0@8@16", 3},
+      {"NSArray", "wmf_mapAndRejectNil:", "@24@0:8@?16", "@16@?0@8", 2, false},
       {"NSSet", "wmf_map:", "@24@0:8@?16", "@16@?0@8", 2},
       {"NSSet", "wmf_select:", "@24@0:8@?16", "B16@?0@8", 2},
       {"NSSet", "wmf_match:", "@24@0:8@?16", "B16@?0@8", 2},
-      {"NSSet", "wmf_reduce:withBlock:", "@32@0:8@16@?24",
-       "@24@?0@8@16", 3},
+      {"NSSet", "wmf_reduce:withBlock:", "@32@0:8@16@?24", "@24@?0@8@16", 3},
       {"NSDictionary", "wmf_map:", "@24@0:8@?16", "@24@?0@8@16", 2},
       {"NSDictionary", "wmf_select:", "@24@0:8@?16", "B24@?0@8@16", 2},
       {"NSDictionary", "wmf_match:", "@24@0:8@?16", "B24@?0@8@16", 2},
@@ -2794,7 +2865,8 @@ objcBlockParameterContract(const BinaryImage &Image,
         if (Candidate.ClassName == D.Owner &&
             Candidate.Selector == D.Selector && !Candidate.IsClassMethod) {
           if (Method || !Candidate.CategoryAddress ||
-              !Candidate.MetadataAddress || Candidate.TypeEncoding != D.Parent ||
+              !Candidate.MetadataAddress ||
+              Candidate.TypeEncoding != D.Parent ||
               !objcMethodHasSourceBody(Candidate) ||
               !Image.isCodeAddress(Candidate.Implementation))
             return std::nullopt;

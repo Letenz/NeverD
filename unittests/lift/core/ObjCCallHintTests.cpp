@@ -11506,6 +11506,190 @@ TEST(ObjCCallHints, WMFAnnouncementFilterArrayParameterQualifiesSelection) {
   Rejected(Changed);
 }
 
+TEST(ObjCCallHints, SDDownloaderInitializerRequiresItsCopiedBlockDeclaration) {
+  for (bool Request : {false, true}) {
+    SCOPED_TRACE(Request);
+    auto Image = image();
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    ObjCClass Owner;
+    Owner.Address = 0x2300;
+    Owner.Name = Request ? "SDWebImageDownloaderRequestModifier"
+                         : "SDWebImageDownloaderResponseModifier";
+    Owner.SuperclassName = "NSObject";
+    Owner.InheritanceStatus = "resolved";
+    Image.ObjCClasses.push_back(Owner);
+    const std::pair<const char *, const char *> Methods[] = {
+        {"initWithBlock:", "@24@0:8@?16"},
+        {"block", "@?16@0:8"},
+        {"setBlock:", "v24@0:8@?16"},
+        {Request ? "modifiedRequestWithRequest:"
+                 : "modifiedResponseWithResponse:",
+         "@24@0:8@16"}};
+    for (size_t I = 0; I < std::size(Methods); ++I) {
+      ObjCMethod Method;
+      Method.ClassName = Owner.Name;
+      Method.ClassAddress = Owner.Address;
+      Method.MetadataAddress = 0x2400 + I * 24;
+      Method.Implementation = 0x1200 + I * 16;
+      Method.Selector = Methods[I].first;
+      Method.TypeEncoding = Methods[I].second;
+      Method.Status = "supported";
+      Method.TypeHint =
+          parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+      ASSERT_TRUE(Method.TypeHint);
+      Image.ObjCMethods.push_back(Method);
+    }
+    ObjCProperty Property;
+    Property.OwnerAddress = Owner.Address;
+    Property.MetadataAddress = 0x2500;
+    Property.OwnerName = Property.ClassName = Owner.Name;
+    Property.Name = Property.Getter = "block";
+    Property.Setter = "setBlock:";
+    Property.Attributes = "T@?,C,N,V_block";
+    Property.TypeEncoding = "@?";
+    Property.Status = "supported";
+    Image.ObjCProperties.push_back(Property);
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    const auto Parent =
+        objcReceiverSourceTypeHint(Image, "initWithBlock:", *Receiver);
+    ASSERT_TRUE(Parent.Signature);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "initWithBlock:";
+    Call.Receiver = *Receiver;
+    Call.Signature = *Parent.Signature;
+    const auto Contract = objcBlockParameterContract(Image, Call, 2);
+    ASSERT_TRUE(Contract);
+    EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
+    EXPECT_EQ(Contract->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_EQ(Contract->Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Contract->Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Contract->Signature.Parameters[1].Location.RegisterOffset,
+              a64reg::X1);
+    EXPECT_FALSE(objcNonEscapingBlockSignature(Image, Call, 2));
+    EXPECT_FALSE(objcBlockParameterContract(Image, Call, 1));
+    EXPECT_FALSE(objcBlockParameterContract(Image, Call, 3));
+    auto Unqualified = Call;
+    Unqualified.Receiver.reset();
+    EXPECT_FALSE(objcBlockParameterContract(Image, Unqualified, 2));
+    auto WrongSignature = Call;
+    WrongSignature.Signature.ReturnType = NdType::makeVoid();
+    EXPECT_FALSE(objcBlockParameterContract(Image, WrongSignature, 2));
+
+    for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Image;
+      auto &P = Changed.ObjCProperties[0];
+      switch (Mutation) {
+      case 0:
+        P.Attributes = "T@?,&,N,V_block";
+        break;
+      case 1:
+        P.Attributes = "T@?,N,V_block";
+        break;
+      case 2:
+        P.Owner = ObjCProperty::OwnerKind::Protocol;
+        break;
+      case 3:
+        P.Owner = ObjCProperty::OwnerKind::Category;
+        break;
+      case 4:
+        P.OwnerAddress += 8;
+        break;
+      case 5:
+        P.OwnerName = "Unrelated";
+        break;
+      case 6:
+        P.MetadataAddress = 0;
+        break;
+      case 7:
+        P.IsClassProperty = true;
+        break;
+      case 8:
+        P.ReadOnly = true;
+        break;
+      case 9:
+        P.IsOptional = true;
+        break;
+      case 10:
+        P.Status = "invalid_metadata";
+        break;
+      case 11:
+        P.TypeEncoding = "@";
+        break;
+      case 12:
+        P.Getter = "otherBlock";
+        break;
+      case 13:
+        P.Setter = "setOtherBlock:";
+        break;
+      case 14:
+        Changed.ObjCProperties.push_back(P);
+        break;
+      case 15:
+        Changed.ObjCClasses.push_back(Owner);
+        break;
+      case 16:
+        Changed.ObjCClasses[0].SuperclassName = "Unrelated";
+        break;
+      case 17:
+        Changed.ObjCClasses[0].InheritanceStatus = "unresolved";
+        break;
+      case 18:
+        Changed.ObjCClasses[0].RootClass = true;
+        break;
+      case 19:
+        Changed.IsRelocatable = true;
+        break;
+      case 20:
+        Changed.Arch = Arch::X64;
+        break;
+      }
+      EXPECT_FALSE(objcBlockParameterContract(Changed, Call, 2));
+    }
+    for (size_t I = 0; I < std::size(Methods); ++I)
+      for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+        SCOPED_TRACE(I);
+        SCOPED_TRACE(Mutation);
+        auto Changed = Image;
+        auto &M = Changed.ObjCMethods[I];
+        switch (Mutation) {
+        case 0:
+          M.ClassAddress += 8;
+          break;
+        case 1:
+          M.CategoryAddress = 0x2700;
+          break;
+        case 2:
+          M.CategoryName = "Override";
+          break;
+        case 3:
+          M.MetadataAddress = 0;
+          break;
+        case 4:
+          M.IsClassMethod = true;
+          break;
+        case 5:
+          M.TypeEncoding = "v16@0:8";
+          break;
+        case 6:
+          M.TypeHint.reset();
+          break;
+        case 7:
+          M.Implementation = 0x2400;
+          break;
+        case 8:
+          Changed.ObjCMethods.push_back(M);
+          break;
+        }
+        EXPECT_FALSE(objcBlockParameterContract(Changed, Call, 2));
+      }
+  }
+}
+
 TEST(ObjCCallHints, SDWebImageIndicatorQueueParameterQualifiesAsyncBlock) {
   auto Image = image();
   Image.ObjCMethods.clear();
