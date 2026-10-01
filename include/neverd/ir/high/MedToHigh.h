@@ -26,6 +26,7 @@
 namespace neverd {
 
 struct BinaryImage;
+struct CompareTreeSwitch;
 
 Intrinsic intrinsicId(const MedOp &Op);
 std::string intrinsicName(const MedOp &Op);
@@ -211,10 +212,26 @@ private:
                    const MedFunc &Med);
   void lowerGenericAssign(HighFunc &Func, const MedOp &CurOp,
                           const VarKeySet &PhiArgVars);
-  void insertPhiCopies(
-      HighFunc &Func, const MedBlock &CurBlock, int BlkIdx, size_t BlkBodyStart,
-      const std::map<std::pair<int, int>,
-                     std::vector<std::pair<MedVar, MedVar>>> &PhiCopies);
+  using PhiCopyMap =
+      std::map<std::pair<int, int>, std::vector<std::pair<MedVar, MedVar>>>;
+  void insertPhiCopies(HighFunc &Func, const MedBlock &CurBlock, int BlkIdx,
+                       size_t BlkBodyStart, const PhiCopyMap &PhiCopies);
+  /// The PHI writes of the CFG edge From -> To, placed at address \p At.
+  std::vector<HighStmt> phiCopiesForEdge(int From, int To, va_t At,
+                                         const PhiCopyMap &PhiCopies);
+  /// Replace a compare tree's branches with one switch at its root: the
+  /// interior blocks' operations, then `case V: <PHI writes> goto T;`.
+  void lowerCompareTreeSwitch(HighFunc &Func, const MedFunc &Med,
+                              const CompareTreeSwitch &Tree,
+                              const PhiCopyMap &PhiCopies,
+                              const VarKeySet &PhiArgVars);
+  /// Move each compare-tree case's own blocks into its case body, once loops
+  /// are recovered: the statements whose addresses lie in the blocks the
+  /// case target dominates, with jumps for fall-through the move breaks.
+  void pullCompareTreeCases(HighFunc &Func, const MedFunc &Med);
+  /// Per compare-tree switch address: each case target's entry and the
+  /// blocks that target dominates (set by structureControlFlow).
+  std::map<va_t, std::vector<std::pair<va_t, std::vector<int>>>> CaseRegions;
 
   CallIndTarget resolveCallIndTarget(const MedBlock &CurBlock,
                                      const MedOp &CurOp,
