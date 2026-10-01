@@ -6071,6 +6071,39 @@ TEST(HighControlFlowSemantics, FiveAssignmentReturnTailIsCopied) {
   EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(1));
 }
 
+TEST(HighControlFlowSemantics, BlockEndingAnArmMovesToItsOnlyJump) {
+  // if (x) { if (x == 1) v = 1; else goto L; }
+  // else { v = 5; return v; L: v = 7; }  return v;
+  // L's block, reached only by the jump, runs off the end of the else arm
+  // into `return v`: it moves to the jump with a jump to that follow.
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1004;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  Inner.Body = {assign(0x1008, 1, 1)};
+  Inner.ElseBody = {jump(0x100c, 0x1020)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1000;
+  Outer.Cond = local(0);
+  Outer.Body = {Inner};
+  Outer.ElseBody = {assign(0x1010, 1, 5), result(0x1014, local(1)),
+                    assign(0x1020, 1, 7)};
+  HighFunc F;
+  F.Body = {Outer, result(0x1100, local(1))};
+  auto Expected = [](uint64_t X) { return X == 0 ? 5u : X == 1 ? 1u : 7u; };
+  // The interpreter resolves only top-level targets, so the jump into the
+  // else arm runs only once the block has moved.
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+  for (int Round = 0; Round < 4 && reduceSingleUseGotos(F.Body, true); ++Round)
+    ;
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0, 1, 2})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.
