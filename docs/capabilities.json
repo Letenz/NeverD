@@ -3560,6 +3560,60 @@
       "tests": [
         {
           "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.PublicCancellationRetainsStateRAMAndFailurePriority/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornStateTransferTests",
+          "source": "unittests/emulation/UnicornStateTransferTests.cpp",
+          "filter": "*/UnicornStateTransfer.StopDuringCaptureCannotPublishAndAllowsRetry/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornStateTransferTests",
+          "source": "unittests/emulation/UnicornStateTransferTests.cpp",
+          "filter": "*/UnicornStateTransfer.ExpiredCaptureCannotPublishAndAllowsRetry/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornCaptureControl.CompletedStoreCannotPublishCancelledCapture/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornExceptionCapture.StopDuringCaptureCannotHideRealGuestException/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDAArch64GeneralStateTests",
           "source": "unittests/emulation/AArch64GeneralStateTests.cpp",
           "filter": "*/AArch64CompleteState.EveryScalarAndVectorFailureRetainsCompleteInput/*",

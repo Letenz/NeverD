@@ -41,6 +41,7 @@ struct KvmRunControl::State {
   std::atomic<bool> Cancel{false};
   bool Ready = false, Initialized = false, Shutdown = false, Running = false;
   bool Requested = false, Completed = false, PendingKick = false;
+  bool EntryInterrupted = false;
 
   ~State() {
     if (!Worker.joinable())
@@ -113,6 +114,7 @@ struct KvmRunControl::State {
       Requested = false;
       Lock.unlock();
       int Result = -1;
+      bool Interrupted = false;
       llvm::Error Error = llvm::Error::success();
       if (Prepare && !Cancel.load() && !Control.stopRequested() &&
           Clock::now() < Control.Deadline)
@@ -122,6 +124,7 @@ struct KvmRunControl::State {
           if (Cancel.load() || Control.stopRequested() ||
               Clock::now() >= Control.Deadline) {
             Result = -1;
+            Interrupted = true;
             break;
           }
           Result = ioctl(VCPU, KVM_RUN, 0);
@@ -131,6 +134,7 @@ struct KvmRunControl::State {
       }
       Lock.lock();
       Status = Result;
+      EntryInterrupted = Interrupted;
       TransferError = std::move(Error);
       Completed = true;
       Changed.notify_all();
@@ -167,8 +171,8 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   std::unique_lock Lock(S.Mutex);
   if (S.Running)
     return diagnostic::error(diagnostic::KvmRunActive);
-  if (Control.stopRequested() || Clock::now() >= Control.Deadline)
-    return diagnostic::error(diagnostic::KvmRun);
+  if (Control.interrupted())
+    return diagnostic::interrupted(diagnostic::KvmRun, Control);
   S.Running = true;
   if (!S.Worker.joinable() && !S.start(Lock)) {
     S.Running = false;
@@ -214,7 +218,10 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
     return std::move(S.TransferError);
   // A cancellation racing a successful exit leaves native progress uncertain.
   // Acknowledge it, but never publish a successful register transfer.
-  if (S.Cancel || S.Status < 0)
+  if ((S.Cancel || Control.interrupted()) &&
+      (S.Status >= 0 || S.EntryInterrupted))
+    return diagnostic::interrupted(diagnostic::KvmRun, Control);
+  if (S.Status < 0)
     return diagnostic::error(diagnostic::KvmRun);
   return llvm::Error::success();
 }

@@ -532,4 +532,4 @@ KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完�
 
 当 `GuardFlags` 为零时，未启用 CFG 的指针槽仍然有效。加载器校验其存储、可执行回退目标以及重定位时完整的 `DIR64` 覆盖，并保留原始来宾指针。启用 CFG 的映像仍必须同时具备映像启用位和插桩/函数表标志。`DriverGuardCases.def` 与 `NeverDDriverGuardMetadataTests` 通过 Unicorn、KVM 和 WHP 覆盖这些情况，也可用于禁用 Unicorn 的构建。
 
-checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。
+checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。

@@ -72,13 +72,18 @@ public:
     return llvm::Error::success();
   }
   llvm::Error run(WHV_RUN_VP_EXIT_CONTEXT &Exit, MachineRunControl Control) {
-    Watchdog->arm(Control.forNativeStep());
+    // step() creates one allowance for preparation, entry and state capture.
+    // Starting another allowance here would extend the instruction deadline.
+    Watchdog->arm(Control);
     const HRESULT Result =
         API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
     // Cancellation may race with a completed instruction. Never publish a
     // successful register transfer when native progress is uncertain.
-    if (Watchdog->disarm() || FAILED(Result))
+    const bool Cancelled = Watchdog->disarm();
+    if (FAILED(Result))
       return diagnostic::error(diagnostic::WhpRun);
+    if (Cancelled)
+      return diagnostic::interrupted(diagnostic::WhpRun, Control);
     return llvm::Error::success();
   }
 

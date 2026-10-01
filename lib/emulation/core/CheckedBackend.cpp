@@ -288,6 +288,15 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
           break;
       }
       if (auto E = execute(*Decoded)) {
+        if (!FirstFault && E.isA<MachineInterruptedError>()) {
+          llvm::handleAllErrors(
+              std::move(E), [&](const MachineInterruptedError &Interrupted) {
+                if (Interrupted.stopRequested())
+                  StopRequested = true;
+                TimedOut = Interrupted.deadlineReached();
+              });
+          break;
+        }
         if (!FirstFault) {
           const bool Unsupported = E.isA<UnsupportedExecutionError>();
           BackendFailed = !Unsupported;
