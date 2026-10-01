@@ -874,4 +874,8 @@ Linux の `NeverDUnicornDeadlineTests` は pthread のスケジューリング�
 
 ARM64 のネイティブ整数状態の取得は ISA 層で統一します。`AArch64GeneralState.def` は X0–X30、SP、PC、NZCV、TPIDR_EL0 を列挙し、`captureAArch64GeneralState` は全読み取りを一時保存してから NZCV を正規化し、完全な結果を一度に公開します。KVM と WHP がこの関数を共有します。読み取り失敗時は全入力状態を保持し、特権、ベクトル、未転送のレジスタは変更しません。ネイティブ FP/SIMD 命令の許可は追加しません。
 
+checked ARM64 のスカラー／ペア RAM アクセスは、EL0 と EL1 で別々の物理領域やエイリアスのページ境界を越えられます。ISA がオペランド範囲を計算し、共有アドレス空間が実行前に各ページを検証して最初の失敗部分を報告します。`RAMTransaction` は CPU ステップ全体の成功後に宣言された物理バイトを確定します。障害や observer の停止時は RAM、レジスター、アドレス writeback を保持します。`NeverDAArch64MemoryTests` は `AArch64CrossPageCases.def` の組み立て済み命令を使います。FP/SIMD や Windows ARM64 ドライバーローダーの追加ではありません。
+
 `NeverDAArch64GeneralStateTests` は Unicorn やハイパーバイザーなしで、完全な取得、NZCV マスク、35 箇所それぞれの読み取り失敗、コールバック欠落、両特権レベルでの再試行成功を検証します。この移植可能な状態検証とクロスコンパイルは ARM64 KVM/WHP の実機実行を代替しません。
+
+`NeverDAArch64MemoryTests` は両権限レベルの Unicorn、KVM、WHP で18種類のスカラー／ペア命令を検証します。全ページ跨ぎ offset、符号と幅、observer 順序、第2ページの権限拒否／欠落、障害の明示的な消費と再試行、同一物理領域のエイリアス、エイリアス置換後の context 復元を含みます。変更前には合法なページ跨ぎ load の拒否を再現しました。利用不能な transport は明示的に skip します。Unicorn と cross-compile は ARM64 KVM/WHP 実機の証拠を代替しません。

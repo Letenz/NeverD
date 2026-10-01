@@ -804,4 +804,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
 
+checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+
 `NeverDAArch64GeneralStateTests` 无需 Unicorn 或虚拟化设备，验证完整读取、NZCV 掩码、35 个读取位置分别失败、缺少读取回调及两种权限级下的成功重试。这些可移植状态验证和交叉编译不能替代 ARM64 KVM/WHP 实机运行证据。
+
+`NeverDAArch64MemoryTests` 在两种权限级下覆盖 Unicorn、KVM 和 WHP 的 18 种标量及成对指令，检查所有跨页偏移、符号扩展及宽度结果、观察器顺序、第二页权限不足或缺失、显式消费故障后重试、重复物理别名，以及别名替换后的上下文恢复。修改前已复现合法跨页加载被拒绝的情况。不可用后端明确跳过；Unicorn 验证及交叉编译不能替代 ARM64 KVM/WHP 实机证据。

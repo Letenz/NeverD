@@ -864,4 +864,8 @@ Linux의 `NeverDUnicornDeadlineTests`는 pthread 스케줄링을 제어해 실�
 
 ARM64 네이티브 정수 상태 수집은 ISA 계층에서 통일합니다. `AArch64GeneralState.def`는 X0–X30, SP, PC, NZCV, TPIDR_EL0를 열거하며 `captureAArch64GeneralState`는 모든 읽기를 임시 저장한 뒤 NZCV를 정규화하고 완전한 결과를 한 번에 게시합니다. KVM과 WHP는 이 함수를 공유합니다. 읽기 실패 시 전체 입력 상태를 유지하며 권한, 벡터와 전송하지 않는 레지스터는 변경하지 않습니다. 네이티브 FP/SIMD 명령 허용은 추가하지 않습니다.
 
+checked ARM64의 스칼라 및 쌍 RAM 접근은 EL0와 EL1에서 서로 다른 저장 영역이나 별칭 페이지의 경계를 넘을 수 있습니다. ISA가 피연산자 범위를 계산하고 공유 주소 공간이 진입 전에 모든 페이지를 확인하여 첫 실패 조각을 보고합니다. `RAMTransaction`은 전체 CPU 단계가 성공한 후 선언된 물리 바이트를 반영합니다. 오류나 관찰자 중단 시 RAM, 레지스터, 주소 writeback을 보존합니다. `NeverDAArch64MemoryTests`는 `AArch64CrossPageCases.def`의 어셈블된 사례를 사용합니다. FP/SIMD나 Windows ARM64 드라이버 로딩은 추가하지 않습니다.
+
 `NeverDAArch64GeneralStateTests`는 Unicorn이나 하이퍼바이저 없이 완전한 수집, NZCV 마스크, 35개 위치 각각의 읽기 실패, 읽기 콜백 누락과 두 권한 수준에서의 재시도 성공을 검증합니다. 이 이식 가능한 상태 검증과 교차 컴파일은 ARM64 KVM/WHP 실기 실행 증거를 대신하지 않습니다.
+
+`NeverDAArch64MemoryTests`는 두 권한 수준에서 Unicorn, KVM, WHP의 스칼라/쌍 명령 18종을 확인합니다. 모든 페이지 경계 오프셋, 부호와 폭, 관찰자 순서, 두 번째 페이지의 권한 거부/누락, 명시적인 오류 소비와 재시도, 반복된 물리 별칭, 별칭 교체 후 컨텍스트 복원을 검사합니다. 변경 전에 유효한 페이지 경계 로드가 거부되는 현상을 재현했습니다. 사용할 수 없는 전송은 명시적으로 건너뜁니다. Unicorn 및 교차 컴파일은 ARM64 KVM/WHP 실기 증거를 대신하지 않습니다.
