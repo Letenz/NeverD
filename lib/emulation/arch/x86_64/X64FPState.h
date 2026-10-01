@@ -49,7 +49,8 @@ llvm::Error encodeX64FXState(const X64MachineState &State,
 llvm::Error decodeX64FXState(X64MachineState &State,
                              llvm::ArrayRef<uint8_t> Bytes);
 /// Bounded FP/SSE XSAVE profile. Both standard and compacted headers retain
-/// the same legacy slots; active extended components are unsupported.
+/// the same legacy slots. Declared compacted AVX/CET components are accepted
+/// only in architectural init state; non-initial extensions are unsupported.
 llvm::Error encodeX64XsaveState(const X64MachineState &State,
                                 llvm::MutableArrayRef<uint8_t> Bytes,
                                 bool Compacted = false);

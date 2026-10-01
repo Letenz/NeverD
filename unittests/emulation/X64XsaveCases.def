@@ -39,3 +39,27 @@ NEVERD_XSAVE_BYTES(Win64Restore, 0x49, 0x89, 0xd1, 0x49, 0x0f, 0xae, 0x00, 0xb8,
                    0x03, 0x00, 0x00, 0x00, 0x31, 0xd2, 0x48, 0x0f, 0xae, 0x29,
                    0x49, 0x0f, 0xae, 0x01, 0x49, 0x0f, 0xae, 0x08, 0xc3)
 #endif
+#ifdef NEVERD_XSAVE_VALUE
+NEVERD_XSAVE_VALUE(PresentOffset, 512)
+NEVERD_XSAVE_VALUE(FPAndSSEMask, 3)
+NEVERD_XSAVE_VALUE(UnsupportedComponent, 1ULL << 16)
+NEVERD_XSAVE_VALUE(NativeBytes, 872)
+NEVERD_XSAVE_VALUE(NativePresent, 0x1803)
+NEVERD_XSAVE_VALUE(NativeLayout, 0x8000000000001807ULL)
+#endif
+#ifdef NEVERD_XSAVE_LAYOUT
+// Component mask, complete compacted packet size. CET user is two 64-bit
+// MSRs; CET supervisor is three. AVX contributes sixteen upper 128-bit lanes.
+NEVERD_XSAVE_LAYOUT(0x4, 832)
+NEVERD_XSAVE_LAYOUT(0x800, 592)
+NEVERD_XSAVE_LAYOUT(0x1000, 600)
+NEVERD_XSAVE_LAYOUT(0x804, 848)
+NEVERD_XSAVE_LAYOUT(0x1004, 856)
+NEVERD_XSAVE_LAYOUT(0x1800, 616)
+NEVERD_XSAVE_LAYOUT(0x1804, 872)
+#endif
+#ifdef NEVERD_XSAVE_VALUE
+NEVERD_XSAVE_VALUE(NativeCETUserOffset, 832)
+NEVERD_XSAVE_VALUE(NativeCETSupervisorOffset, 848)
+NEVERD_XSAVE_VALUE(NativeSupervisorPresent, 0x1003)
+#endif

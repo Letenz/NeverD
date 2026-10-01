@@ -1795,7 +1795,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 32
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize pinned native test dependencies
+        shell: bash
+        run: git submodule update --init --depth 1 third_party/capstone third_party/unicorn
 
       - name: Set up native CPU evidence tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

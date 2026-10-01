@@ -174,7 +174,16 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
       llvm::support::endian::read64le(Bytes.data() + XStateOffset);
   const auto Layout =
       llvm::support::endian::read64le(Bytes.data() + XCompOffset);
-  if ((Present & ~FPAndSSE) || (Layout && !(Layout & Compacted)) ||
+  constexpr uint64_t InitialComponents = 0
+#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size)                    \
+  | (uint64_t(1) << Bit)
+#include "X64FPState.def"
+#undef NEVERD_X64_XSAVE_INITIAL_COMPONENT
+      ;
+  const auto Supported =
+      FPAndSSE | ((Layout & Compacted) ? InitialComponents : 0);
+  if ((Present & ~Supported) || (Layout && !(Layout & Compacted)) ||
+      (Layout & ~(Compacted | Supported)) ||
       ((Layout & Compacted) && (Present & ~Layout)))
     return diagnostic::error(diagnostic::FPState);
   for (const auto Byte :
@@ -182,11 +191,29 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
                    XsaveBytes - XCompOffset - sizeof(uint64_t)))
     if (Byte)
       return diagnostic::error(diagnostic::FPState);
+  // A host can mark an initial component present. Accept only declared
+  // compacted layouts whose present extension payload is actually initial;
+  // never silently drop live AVX/CET state. Layout, not presence, owns offsets.
+  if (Layout & Compacted) {
+    size_t Offset = XsaveBytes;
+#define NEVERD_X64_XSAVE_INITIAL_COMPONENT(Name, Bit, Size)                    \
+  if (Layout & (uint64_t(1) << Bit)) {                                         \
+    if (Size > Bytes.size() - Offset)                                          \
+      return diagnostic::error(diagnostic::FPState);                           \
+    if (Present & (uint64_t(1) << Bit))                                        \
+      for (const auto Byte : Bytes.slice(Offset, Size))                        \
+        if (Byte)                                                              \
+          return diagnostic::error(diagnostic::FPState);                       \
+    Offset += Size;                                                            \
+  }
+#include "X64FPState.def"
+#undef NEVERD_X64_XSAVE_INITIAL_COMPONENT
+  }
   auto Next = State;
   if (auto E = decodeX64FXState(Next, Bytes))
     return E;
-  // Architecturally absent components contain init state, independently of
-  // stale legacy bytes. Only active fields participate in validation.
+  // Absent register components contain init state regardless of stale slots.
+  // MXCSR follows its format-specific rule below.
   if (!(Present & X87Present))
     Next.FP = {};
   if (!(Present & SSEPresent)) {

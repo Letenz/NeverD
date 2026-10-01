@@ -25,6 +25,11 @@ constexpr RegisterValue Payloads[] = {
 #include "X64FPCases.def"
 #undef NEVERD_FP_PAYLOAD
 };
+namespace xsavecase {
+#define NEVERD_XSAVE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "X64XsaveCases.def"
+#undef NEVERD_XSAVE_VALUE
+} // namespace xsavecase
 struct InvalidSize {
   UINT32 Written, Capacity;
   const char *Legacy, *Modern;
@@ -39,7 +44,7 @@ struct FakeXsave {
   WHV_PROCESSOR_XSAVE_FEATURES Features{};
   UINT32 FeatureBytes = sizeof(Features);
   HRESULT FeatureStatus = S_OK;
-  std::array<uint8_t, x64::fp::XsaveBytes> Packet{};
+  std::vector<uint8_t> Packet = std::vector<uint8_t>(x64::fp::XsaveBytes);
   UINT32 Required = Packet.size(), Written = Packet.size();
   unsigned Queries = 0, Installs = 0, Captures = 0;
   HRESULT QueryStatus = HRESULT(InsufficientBuffer);
@@ -144,6 +149,26 @@ TEST_P(WhpXsaveProtocol, CompleteCompactedPacketsRetainEveryPhysicalTOP) {
   EXPECT_EQ(Target.Queries, 1u);
   EXPECT_EQ(Target.Installs, x64::fp::RegisterCount);
   EXPECT_EQ(Target.Captures, x64::fp::RegisterCount);
+}
+TEST_P(WhpXsaveProtocol, InitialCETComponentsDoNotHideFPState) {
+  Target.Packet.resize(xsavecase::NativeBytes);
+  Target.Required = Target.Written = Target.Packet.size();
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  ASSERT_EQ(llvm::toString(Transfer.install(API, &Target, State)), "");
+  llvm::support::endian::write64le(Target.Packet.data() +
+                                       xsavecase::PresentOffset,
+                                   xsavecase::NativePresent);
+  llvm::support::endian::write64le(
+      Target.Packet.data() + xsavecase::LayoutOffset, xsavecase::NativeLayout);
+  X64MachineState Next;
+  ASSERT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)), "");
+  EXPECT_EQ(Next, State);
+  const auto Before = Next;
+  Target.Packet.back() = xsavecase::StaleByte;
+  auto E = Transfer.capture(API, &Target, Next);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(Next, Before);
 }
 TEST_P(WhpXsaveProtocol, InvalidQuerySizesCannotAllocateOrInstallState) {
   for (const auto &Case : InvalidSizes) {
