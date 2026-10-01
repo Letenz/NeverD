@@ -2790,6 +2790,8 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   auto TSwitch = Now();
   if (!IsMega)
     recoverSwitchStatements(Func);
+  if (!IsMega)
+    pullCompareTreeCases(Func, Med);
 
   int IfElseMaxPasses =
       (IsMega || TooNestedForIfElse) ? 0

@@ -15,6 +15,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "CompareTreeSwitch.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
@@ -28,62 +30,69 @@ namespace neverd {
 // insertPhiCopies
 //===----------------------------------------------------------------------===//
 
-void MedToHighConverter::insertPhiCopies(
-    HighFunc &Func, const MedBlock &CurBlock, int BlkIdx, size_t BlkBodyStart,
-    const std::map<std::pair<int, int>, std::vector<std::pair<MedVar, MedVar>>>
-        &PhiCopies) {
-  auto CopiesFor = [&](int Successor) {
-    std::vector<HighStmt> Copies;
-    auto It = PhiCopies.find({BlkIdx, Successor});
-    if (It == PhiCopies.end())
-      return Copies;
-    VarKeySet Destinations;
-    for (const auto &[Output, Argument] : It->second)
-      Destinations.insert(varKey(Output));
-    std::vector<HighStmt> Writes;
-    for (const auto &[Output, Argument] : It->second) {
-      if (Output == Argument)
-        continue;
-      HighStmt Copy;
-      Copy.Kind = StmtKind::Assign;
-      Copy.Addr =
-          CurBlock.Ops.empty() ? CurBlock.StartAddr : CurBlock.Ops.back().Addr;
-      Copy.IsPhiCopy = true;
-      Copy.Dst = HighExpr::makeVar(Output);
-      // Keep a join PHI's incoming expression, not just the predecessor
-      // register. `arg = this+imm` that feeds a later call is otherwise a
-      // skippable Var PhiCopy and invert-skip drops it before HighC.
-      Copy.Val = forceInlineExpr(medvarToExpr(Argument));
-      bool ReadsDestination = false;
-      std::set<const HighExpr *> Seen;
-      std::function<void(const ExprPtr &)> Visit =
-          [&](const ExprPtr &Expression) {
-            if (!Expression || !Seen.insert(Expression.get()).second)
-              return;
-            if (Expression->Kind == ExprKind::Var &&
-                Destinations.count(varKey(Expression->Var)))
-              ReadsDestination = true;
-            for (const auto &Operand : Expression->Operands)
-              Visit(Operand);
-          };
-      Visit(Copy.Val);
-      if (ReadsDestination) {
-        // PHIs read their predecessor values simultaneously. Capture any
-        // expression using an overwritten PHI before publishing edge writes;
-        // this also handles cycles such as a <- b, b <- a.
-        MedVar Snapshot;
-        Snapshot.Kind = MedVar::Temp;
-        Snapshot.Id = NextHighTempId++;
-        Snapshot.Size = Output.Size;
-        HighStmt Capture = Copy;
-        Capture.Dst = HighExpr::makeVar(Snapshot, Copy.Val->Type);
-        Copies.push_back(Capture);
-        Copy.Val = Capture.Dst;
-      }
-      Writes.push_back(std::move(Copy));
-    }
-    Copies.insert(Copies.end(), Writes.begin(), Writes.end());
+std::vector<HighStmt>
+MedToHighConverter::phiCopiesForEdge(int From, int To, va_t At,
+                                     const PhiCopyMap &PhiCopies) {
+  std::vector<HighStmt> Copies;
+  auto It = PhiCopies.find({From, To});
+  if (It == PhiCopies.end())
     return Copies;
+  VarKeySet Destinations;
+  for (const auto &[Output, Argument] : It->second)
+    Destinations.insert(varKey(Output));
+  std::vector<HighStmt> Writes;
+  for (const auto &[Output, Argument] : It->second) {
+    if (Output == Argument)
+      continue;
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.Addr = At;
+    Copy.IsPhiCopy = true;
+    Copy.Dst = HighExpr::makeVar(Output);
+    // Keep a join PHI's incoming expression, not just the predecessor
+    // register. `arg = this+imm` that feeds a later call is otherwise a
+    // skippable Var PhiCopy and invert-skip drops it before HighC.
+    Copy.Val = forceInlineExpr(medvarToExpr(Argument));
+    bool ReadsDestination = false;
+    std::set<const HighExpr *> Seen;
+    std::function<void(const ExprPtr &)> Visit =
+        [&](const ExprPtr &Expression) {
+          if (!Expression || !Seen.insert(Expression.get()).second)
+            return;
+          if (Expression->Kind == ExprKind::Var &&
+              Destinations.count(varKey(Expression->Var)))
+            ReadsDestination = true;
+          for (const auto &Operand : Expression->Operands)
+            Visit(Operand);
+        };
+    Visit(Copy.Val);
+    if (ReadsDestination) {
+      // PHIs read their predecessor values simultaneously. Capture any
+      // expression using an overwritten PHI before publishing edge writes;
+      // this also handles cycles such as a <- b, b <- a.
+      MedVar Snapshot;
+      Snapshot.Kind = MedVar::Temp;
+      Snapshot.Id = NextHighTempId++;
+      Snapshot.Size = Output.Size;
+      HighStmt Capture = Copy;
+      Capture.Dst = HighExpr::makeVar(Snapshot, Copy.Val->Type);
+      Copies.push_back(Capture);
+      Copy.Val = Capture.Dst;
+    }
+    Writes.push_back(std::move(Copy));
+  }
+  Copies.insert(Copies.end(), Writes.begin(), Writes.end());
+  return Copies;
+}
+
+void MedToHighConverter::insertPhiCopies(HighFunc &Func,
+                                         const MedBlock &CurBlock, int BlkIdx,
+                                         size_t BlkBodyStart,
+                                         const PhiCopyMap &PhiCopies) {
+  const va_t CopyAddr =
+      CurBlock.Ops.empty() ? CurBlock.StartAddr : CurBlock.Ops.back().Addr;
+  auto CopiesFor = [&](int Successor) {
+    return phiCopiesForEdge(BlkIdx, Successor, CopyAddr, PhiCopies);
   };
 
   size_t BranchIndex = Func.Body.size();
@@ -160,13 +169,238 @@ void MedToHighConverter::insertPhiCopies(
 }
 
 //===----------------------------------------------------------------------===//
+// lowerCompareTreeSwitch
+//===----------------------------------------------------------------------===//
+
+void MedToHighConverter::lowerCompareTreeSwitch(HighFunc &Func,
+                                                const MedFunc &Med,
+                                                const CompareTreeSwitch &Tree,
+                                                const PhiCopyMap &PhiCopies,
+                                                const VarKeySet &PhiArgVars) {
+  // Everything the dispatch evaluates stays at the root's branch, inside the
+  // root block, wherever the folded blocks lie.
+  const va_t At = Med.Blocks[Tree.Root].Ops.back().Addr;
+  for (int Id : Tree.Interior) {
+    const MedBlock &Block = Med.Blocks[Id];
+    const size_t First = Func.Body.size();
+    for (size_t OpIdx = 0; OpIdx + 1 < Block.Ops.size(); ++OpIdx)
+      if (Block.Ops[OpIdx].Opcode != NdOp::NOP)
+        lowerGenericAssign(Func, Block.Ops[OpIdx], PhiArgVars);
+    for (size_t K = First; K < Func.Body.size(); ++K)
+      Func.Body[K].Addr = At;
+  }
+  auto Transfer = [&](const CompareTreeEdge &Edge) {
+    std::vector<HighStmt> Body =
+        phiCopiesForEdge(Edge.From, Edge.To, At, PhiCopies);
+    const MedBlock &Target = Med.Blocks[Edge.To];
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = Target.StartAddr     ? Target.StartAddr
+                      : Target.Ops.empty() ? 0
+                                           : Target.Ops.front().Addr;
+    Body.push_back(std::move(Jump));
+    return Body;
+  };
+  HighStmt Switch;
+  Switch.Kind = StmtKind::Switch;
+  Switch.Addr = At;
+  Switch.SwitchExpr = medvarToExpr(Tree.Selector);
+  for (const CompareTreeEdge &Edge : Tree.Cases)
+    for (size_t I = 0; I < Edge.Values.size(); ++I) {
+      SwitchCase Case;
+      Case.Value = Edge.Values[I];
+      // Values with one target share its body: `case A: case B: ...`.
+      if (I + 1 < Edge.Values.size())
+        Case.FallsThrough = true;
+      else
+        Case.Body = Transfer(Edge);
+      Switch.Cases.push_back(std::move(Case));
+    }
+  Switch.DefaultBody = Transfer(Tree.Default);
+  Func.Body.push_back(std::move(Switch));
+}
+
+//===----------------------------------------------------------------------===//
+// pullCompareTreeCases
+//===----------------------------------------------------------------------===//
+
+void MedToHighConverter::pullCompareTreeCases(HighFunc &Func,
+                                              const MedFunc &Med) {
+  if (CaseRegions.empty())
+    return;
+  // The block holding each address.
+  std::vector<std::tuple<va_t, va_t, int>> Ranges;
+  for (const MedBlock &Block : Med.Blocks) {
+    const va_t Start = Block.StartAddr     ? Block.StartAddr
+                       : Block.Ops.empty() ? 0
+                                           : Block.Ops.front().Addr;
+    const va_t End = Block.EndAddr       ? Block.EndAddr
+                     : Block.Ops.empty() ? Start
+                                         : Block.Ops.back().Addr + 1;
+    if (Start && End > Start)
+      Ranges.emplace_back(Start, End, Block.Id);
+  }
+  std::sort(Ranges.begin(), Ranges.end());
+  auto BlockAt = [&](va_t Addr) {
+    auto It = std::upper_bound(
+        Ranges.begin(), Ranges.end(), Addr,
+        [](va_t A, const auto &R) { return A < std::get<0>(R); });
+    if (It == Ranges.begin())
+      return -1;
+    --It;
+    return Addr < std::get<1>(*It) ? std::get<2>(*It) : -1;
+  };
+  auto Addressed = [](va_t A) { return A != 0 && A != InvalidVA; };
+  // The list holding the switch at \p At, and its index there.
+  std::function<std::vector<HighStmt> *(std::vector<HighStmt> &, va_t,
+                                        size_t &)>
+      Find = [&](std::vector<HighStmt> &L, va_t At,
+                 size_t &Index) -> std::vector<HighStmt> * {
+    for (size_t I = 0; I < L.size(); ++I) {
+      if (L[I].Kind == StmtKind::Switch && L[I].Addr == At) {
+        Index = I;
+        return &L;
+      }
+      for (auto *List : {&L[I].Body, &L[I].ElseBody, &L[I].DefaultBody})
+        if (auto *Found = Find(*List, At, Index))
+          return Found;
+      for (auto &C : L[I].Cases)
+        if (auto *Found = Find(C.Body, At, Index))
+          return Found;
+    }
+    return nullptr;
+  };
+  for (const auto &[At, Regions] : CaseRegions) {
+    size_t I = 0;
+    std::vector<HighStmt> *Found = Find(Func.Body, At, I);
+    if (!Found)
+      continue;
+    std::vector<HighStmt> &L = *Found;
+    // Which case region each block belongs to.
+    std::map<int, size_t> RegionOf;
+    for (size_t R = 0; R < Regions.size(); ++R)
+      for (int Block : Regions[R].second)
+        RegionOf[Block] = R;
+    // The region of each statement: its own address, else the one before.
+    // A statement holding addresses of two regions, or of no block, makes
+    // the move ambiguous; the switch then keeps its jumps.
+    constexpr size_t None = SIZE_MAX;
+    std::vector<size_t> Owner(L.size(), None);
+    bool Ambiguous = false;
+    size_t Prev = None;
+    for (size_t K = 0; K < L.size() && !Ambiguous; ++K) {
+      size_t Mine = Prev;
+      bool Seen = false;
+      std::function<void(const HighStmt &)> Check = [&](const HighStmt &S) {
+        if (Addressed(S.Addr)) {
+          const int Block = BlockAt(S.Addr);
+          if (Block < 0) {
+            Ambiguous = true;
+            return;
+          }
+          auto It = RegionOf.find(Block);
+          const size_t R = It == RegionOf.end() ? None : It->second;
+          if (!Seen) {
+            Mine = R;
+            Seen = true;
+          } else if (R != Mine) {
+            Ambiguous = true;
+          }
+        }
+        for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+          for (const HighStmt &T : *List)
+            Check(T);
+        for (const auto &C : S.Cases)
+          for (const HighStmt &T : C.Body)
+            Check(T);
+      };
+      if (K != I)
+        Check(L[K]);
+      else
+        Mine = None;
+      Owner[K] = Mine;
+      Prev = Mine;
+    }
+    if (Ambiguous)
+      continue;
+    HighStmt &Switch = L[I];
+    std::vector<std::vector<HighStmt> *> Units;
+    for (SwitchCase &C : Switch.Cases)
+      if (!C.FallsThrough)
+        Units.push_back(&C.Body);
+    Units.push_back(&Switch.DefaultBody);
+    // Build every case body first; nothing changes unless all succeed.
+    std::vector<std::pair<std::vector<HighStmt> *, std::vector<size_t>>> Moves;
+    bool Failed = false;
+    for (size_t R = 0; R < Regions.size() && !Failed; ++R) {
+      const va_t Entry = Regions[R].first;
+      std::vector<HighStmt> *Unit = nullptr;
+      for (std::vector<HighStmt> *B : Units)
+        if (!B->empty() && B->back().Kind == StmtKind::Goto &&
+            B->back().GotoTarget == Entry)
+          Unit = B;
+      std::vector<size_t> Indices;
+      for (size_t K = 0; K < L.size(); ++K)
+        if (Owner[K] == R)
+          Indices.push_back(K);
+      if (!Unit || Indices.empty())
+        continue;
+      // A run that falls off its end continues at the next statement left
+      // in place, which needs its own address to be jumped to.
+      for (size_t N = 0; N < Indices.size() && !Failed; ++N) {
+        const size_t K = Indices[N];
+        if (N + 1 < Indices.size() && Indices[N + 1] == K + 1)
+          continue;
+        const StmtKind Last = L[K].Kind;
+        if (Last == StmtKind::Goto || Last == StmtKind::Return ||
+            Last == StmtKind::Break || Last == StmtKind::Continue)
+          continue;
+        if (K + 1 >= L.size() || !Addressed(L[K + 1].Addr) ||
+            L[K + 1].Addr == L[K].Addr)
+          Failed = true;
+      }
+      Moves.push_back({Unit, std::move(Indices)});
+    }
+    if (Failed || Moves.empty())
+      continue;
+    std::vector<bool> Moved(L.size(), false);
+    for (auto &[Unit, Indices] : Moves) {
+      const va_t Entry = Unit->back().GotoTarget;
+      // The case enters its code at the target, which need not come first.
+      if (L[Indices.front()].Addr == Entry)
+        Unit->pop_back();
+      for (size_t N = 0; N < Indices.size(); ++N) {
+        const size_t K = Indices[N];
+        Moved[K] = true;
+        Unit->push_back(L[K]);
+        if (N + 1 < Indices.size() && Indices[N + 1] == K + 1)
+          continue;
+        const StmtKind Last = L[K].Kind;
+        if (Last == StmtKind::Goto || Last == StmtKind::Return ||
+            Last == StmtKind::Break || Last == StmtKind::Continue)
+          continue;
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.GotoTarget = L[K + 1].Addr;
+        Unit->push_back(std::move(Jump));
+      }
+    }
+    std::vector<HighStmt> Kept;
+    Kept.reserve(L.size());
+    for (size_t K = 0; K < L.size(); ++K)
+      if (!Moved[K])
+        Kept.push_back(std::move(L[K]));
+    L = std::move(Kept);
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // structureControlFlow — block-level dispatch
 //===----------------------------------------------------------------------===//
 
 void MedToHighConverter::structureControlFlow(HighFunc &Func,
                                               const MedFunc &Med) {
-  std::map<std::pair<int, int>, std::vector<std::pair<MedVar, MedVar>>>
-      PhiCopies;
+  PhiCopyMap PhiCopies;
   for (auto &Block : Med.Blocks)
     for (auto &Phi : Block.Phis)
       for (auto &[PredId, Arg] : Phi.Args)
@@ -181,11 +415,47 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
 
   std::vector<std::pair<size_t, va_t>> MissingEntries;
 
+  // A function too large to structure keeps its branches: a switch there
+  // only trades them for as many case jumps.
+  size_t OpCount = 0;
+  for (const MedBlock &Block : Med.Blocks)
+    OpCount += Block.Ops.size();
+  const std::vector<CompareTreeSwitch> Trees =
+      OpCount > limits::kMaxStructuredHighStmts
+          ? std::vector<CompareTreeSwitch>()
+          : findCompareTreeSwitches(Med);
+  std::map<int, const CompareTreeSwitch *> TreeAt;
+  std::set<int> TreeInterior;
+  CaseRegions.clear();
+  auto EntryOf = [](const MedBlock &Block) -> va_t {
+    return Block.StartAddr     ? Block.StartAddr
+           : Block.Ops.empty() ? 0
+                               : Block.Ops.front().Addr;
+  };
+  for (const CompareTreeSwitch &Tree : Trees) {
+    TreeAt.emplace(Tree.Root, &Tree);
+    TreeInterior.insert(Tree.Interior.begin(), Tree.Interior.end());
+    auto &Regions = CaseRegions[Med.Blocks[Tree.Root].Ops.back().Addr];
+    for (const CompareTreeEdge &Edge : Tree.Cases)
+      if (!Edge.Region.empty())
+        Regions.push_back({EntryOf(Med.Blocks[Edge.To]), Edge.Region});
+    if (!Tree.Default.Region.empty())
+      Regions.push_back(
+          {EntryOf(Med.Blocks[Tree.Default.To]), Tree.Default.Region});
+  }
+
   for (int BlkIdx = 0; BlkIdx < static_cast<int>(Med.Blocks.size()); ++BlkIdx) {
+    // A compare tree's interior blocks run at its root, inside its switch.
+    if (TreeInterior.count(BlkIdx))
+      continue;
     auto &CurBlock = Med.Blocks[BlkIdx];
+    auto TreeIt = TreeAt.find(BlkIdx);
+    const CompareTreeSwitch *Tree =
+        TreeIt == TreeAt.end() ? nullptr : TreeIt->second;
     size_t BlkBodyStart = Func.Body.size();
     std::set<size_t> IntrinsicSkip;
-    for (size_t OpIdx = 0; OpIdx < CurBlock.Ops.size(); ++OpIdx) {
+    const size_t OpEnd = CurBlock.Ops.size() - (Tree ? 1 : 0);
+    for (size_t OpIdx = 0; OpIdx < OpEnd; ++OpIdx) {
       if (IntrinsicSkip.count(OpIdx))
         continue;
       auto &CurOp = CurBlock.Ops[OpIdx];
@@ -222,12 +492,15 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       }
     }
 
-    insertPhiCopies(Func, CurBlock, BlkIdx, BlkBodyStart, PhiCopies);
+    if (Tree)
+      lowerCompareTreeSwitch(Func, Med, *Tree, PhiCopies, PhiArgVars);
+    else
+      insertPhiCopies(Func, CurBlock, BlkIdx, BlkBodyStart, PhiCopies);
     // The MedIR CFG may thread an empty branch block out of the false edge.
     // Its successor then need not be the next block in source order. Preserve
     // that transfer after the false-edge PHI copies, using the explicit taken
     // target to identify the other edge rather than relying on Succs order.
-    if (!CurBlock.Ops.empty() && CurBlock.Succs.size() == 2) {
+    if (!Tree && !CurBlock.Ops.empty() && CurBlock.Succs.size() == 2) {
       const auto &Terminator = CurBlock.Ops.back();
       if (Terminator.Opcode == NdOp::COND_BR && Terminator.NumInputs >= 2 &&
           Terminator.Inputs[0].isConst()) {

@@ -39,4 +39,36 @@ TEST_F(CompiledLLVMRefinement, IndependentCArtifactMatchesActualNativeBytes) {
     EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
   }
 }
+
+TEST_F(CompiledLLVMRefinement, OutputOnlyStateWordRetainsCompilerContracts) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  // lea rax,[rcx+rdx*2+5]; ret. Clang can attach initializes((0,8))
+  // because the first word is written before any read. Keep the exact IR.
+  Program P({0x48, 0x8d, 0x44, 0x51, 5, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto C = tmpFile("output.c"), IR = tmpFile("output.ll");
+  std::ofstream(C) << R"(
+    typedef unsigned long long word;
+    word model(word *state) {
+      state[0] = state[1] + state[2] * 2 + 5;
+      return 0;
+    }
+  )";
+  for (const char *Optimization : {"-O1", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Built =
+        exec(NEVERD_TEST_CLANG,
+             {"-target", "x86_64-unknown-linux-gnu", "-std=c11", Optimization,
+              "-fno-vectorize", "-fno-slp-vectorize", "-S", "-emit-llvm",
+              C.string(), "-o", IR.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    std::ifstream Input(IR, std::ios::binary);
+    const std::string Text{std::istreambuf_iterator<char>(Input),
+                           std::istreambuf_iterator<char>()};
+    const auto Proof = P.check(R.Residual, Text);
+    EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  }
+}
 } // namespace neverd::analysis::llvm_refinement_test
