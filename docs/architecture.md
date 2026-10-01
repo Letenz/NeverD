@@ -1179,6 +1179,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1201,6 +1202,7 @@ lib/emulation/
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
   os/linux/              Linux ELF process startup and system-call ABI/services
+  os/linux/android/      Android native library linking, TLS and Bionic models
 ```
 
 The architecture library depends only on core memory/register ownership and
@@ -1254,16 +1256,15 @@ common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
 
-The Linux process environment lives beside Windows. Android-specific
-APIs and runtimes should build on the applicable Linux kernel contracts under
+The Linux process environment lives beside Windows. The Android native
+environment builds on the applicable Linux kernel contracts under
 `os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
 separates its runtime and framework from the kernel. macOS and iOS models should
 share applicable Darwin primitives while keeping platform APIs and ABI/version
 profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
 [XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
-identifies their shared kernel foundation. These are extension locations, not
-implemented Android or Darwin environments. Add them with real workloads rather than empty
-classes. Calling conventions, syscall ABIs and user/kernel privilege contracts
+identifies their shared kernel foundation. Darwin directories remain proposed
+extension locations. Calling conventions, syscall ABIs and user/kernel privilege contracts
 remain explicit OS/workload requirements, independent of the CPU transport.
 
 [`ExecutionSession`](../include/neverd/emulation/ExecutionSession.h) owns one CPU,
@@ -1293,6 +1294,16 @@ self-relocating static PIE, while rejecting an interpreter, external dynamic
 dependencies, signals and thread creation. Those OS semantics remain in
 `os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
+
+Android native function workloads use `android-aarch64-api28-v1`; see
+[the Android contract](android-native-emulation.md). Loader-owned
+`readELFProgramLinking` decodes original dynamic metadata without section-table
+requirements. `os/linux/android/` owns Android linking and Bionic behavior,
+while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
+for both Linux processes and Android native workloads. An optional runtime
+instruction observer receives only attempts admitted by `ExecutionSession`'s
+existing budget; OS models do not replace CPU hooks to collect traces.
+
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
@@ -1581,10 +1592,10 @@ incompatible MSVC/Unicorn combination fails explicitly rather than selecting
 an incorrect JIT architecture.
 
 The Windows ARM64 driver loader, ABI/unwinding and OS environment are not yet
-implemented. Windows ring3, Linux kernel and Android user or kernel environments, and
-Darwin user or kernel environments also need their own loaders, ABI and OS
-models. CPU transport availability does not imply compatibility with these
-workloads.
+implemented. Windows ring3, Linux kernel, Android managed/kernel workloads,
+and Darwin user/kernel workloads need their own loaders, ABI and OS models.
+The bounded Android native profile described above supports a specified API 28
+subset. CPU transport availability does not imply arbitrary OS compatibility.
 
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 

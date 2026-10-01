@@ -41,6 +41,8 @@ int runEmulateProcess() {
     llvm::WithColor::error() << field::InvalidReport << '\n';
     return process_cli::Error;
   }
+  if (Root->getString(field::Stop) == emulation::process_outcome::Returned)
+    return process_cli::Success;
   if (Root->getString(field::Stop) != emulation::process_outcome::Exited)
     return process_cli::Incomplete;
   auto Status = Root->getInteger(field::ExitStatus);

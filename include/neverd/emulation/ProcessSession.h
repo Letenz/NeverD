@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_PROCESSSESSION_H
 #define NEVERD_EMULATION_PROCESSSESSION_H
 
+#include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionBudget.h"
 #include "neverd/emulation/ExecutionExit.h"
@@ -45,6 +46,7 @@ struct ProcessOptions {
   std::vector<std::string> Arguments;
   /// Explicit guest environment; no host environment is inherited.
   std::vector<std::string> Environment;
+  std::optional<AndroidNativeOptions> Android;
 };
 
 struct ProcessServiceEvent {
@@ -67,6 +69,11 @@ struct ProcessResult {
   std::string StandardOutput, StandardError;
   std::vector<ProcessServiceEvent> Services;
   std::optional<ExecutionExit> LastCPUExit;
+  std::optional<uint64_t> ReturnValue;
+  bool InitializersEnabled = false, TraceTruncated = false;
+  std::vector<NativeCallEvent> NativeCalls;
+  std::vector<uint64_t> Trace;
+  std::vector<NativeMemorySnapshot> MemorySnapshots;
 };
 
 llvm::Expected<ProcessProfile> parseProcessProfile(llvm::StringRef Name);

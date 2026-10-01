@@ -53,11 +53,13 @@ std::string bad(llvm::StringRef Reason) {
   return "(0 /* bad source call: " + Reason.str() + " */)";
 }
 
+} // namespace
+
 // HighIR retains scalar machine carriers. A floating register's bits must be
 // reinterpreted at a source-call boundary, not numerically converted by C.
-std::optional<std::string> sourceValue(llvm::StringRef Text,
-                                       const TypeRef &Carrier,
-                                       const TypeRef &Source) {
+std::optional<std::string> HighCWriter::sourceValue(llvm::StringRef Text,
+                                                    const TypeRef &Carrier,
+                                                    const TypeRef &Source) {
   if (Carrier && Source && Carrier->Kind == NdTypeKind::Struct &&
       Source->Kind == NdTypeKind::Struct && equalSourceTypes(Carrier, Source))
     return Text.str();
@@ -81,7 +83,6 @@ std::optional<std::string> sourceValue(llvm::StringRef Text,
     return "(" + typeToC(Source) + ")(uintptr_t)(" + Text.str() + ")";
   return "(" + typeToC(Source) + ")(" + Text.str() + ")";
 }
-} // namespace
 
 llvm::StringRef HighCWriter::sourceConventionAttribute(
     SourceFunctionTypeHint::ConventionKind Convention) {

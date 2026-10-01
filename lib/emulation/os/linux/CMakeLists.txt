@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDEmulationLinux
   LinuxProcess.cpp
+  LinuxServices.cpp
   LinuxProcessLayout.cpp
   LinuxProcessStack.cpp
   LinuxServiceABI.cpp
