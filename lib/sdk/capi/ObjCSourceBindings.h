@@ -3668,12 +3668,20 @@ inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   const auto &Owner = Variable.Children[0];
   const auto &Property = Variable.Children[1];
   const auto &Type = Variable.Children[2];
-  if ((Owner.Kind != "Structure" && Owner.Kind != "Class" &&
-       Owner.Kind != "Enum") ||
-      Owner.Text || Owner.Index || Owner.Children.size() != 2 ||
-      !Named(Owner.Children[0], "Module") ||
-      !Named(Owner.Children[1], "Identifier") ||
-      !Named(Property, "Identifier") || !Shape(Type, "Type", 1))
+  // A nested nominal still names one static String cell. Walk its bounded
+  // declaration context, without accepting extensions or function-local types.
+  const auto *Context = &Owner;
+  unsigned Depth = 0;
+  while (!Named(*Context, "Module")) {
+    if (++Depth > 8 ||
+        (Context->Kind != "Structure" && Context->Kind != "Class" &&
+         Context->Kind != "Enum") ||
+        Context->Text || Context->Index || Context->Children.size() != 2 ||
+        !Named(Context->Children[1], "Identifier"))
+      return false;
+    Context = &Context->Children[0];
+  }
+  if (!Depth || !Named(Property, "Identifier") || !Shape(Type, "Type", 1))
     return false;
   const auto &String = Type.Children[0];
   return Shape(String, "Structure", 2) && Named(String.Children[0], "Module") &&
@@ -5509,7 +5517,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   };
   auto BindMemoryAddress = [&](ExprPtr &Operand, const TypeRef &Type,
                                NdMemoryOrdering Ordering,
-                               NdMemoryAddressSpace AddressSpace) {
+                               NdMemoryAddressSpace AddressSpace,
+                               bool Store = false) {
     if (!Operand || !Type || AddressSpace != NdMemoryAddressSpace::Default ||
         !localStorageAccessTypeSupported(Type))
       return false;
@@ -5529,21 +5538,30 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       Result.SwiftWitnessCaches[*Address] = Function.Entry;
       return true;
     }
-    if (Ordering != NdMemoryOrdering::None)
+    // Address relocation does not discard the original release store. Admit
+    // only complete, naturally aligned scalar cells; the HighIR ordering
+    // remains on the store and HighC emits the matching atomic operation.
+    const bool ReleaseStore =
+        Store && Ordering == NdMemoryOrdering::Release && Address &&
+        (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr) &&
+        (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
+         Type->Size == 8) &&
+        *Address % Type->Size == 0;
+    if (Ordering != NdMemoryOrdering::None && !ReleaseStore)
       return false;
     const auto ProfileBase =
         Address ? ProfileStorage->sectionFor(*Address, Type->Size)
                 : std::nullopt;
     // Profiling sections have a separate numeric-counter contract. A pointer
     // access may use a proved named cell, not acquire that counter identity.
-    if (ProfileBase && Type->Kind == NdTypeKind::Ptr)
+    if (ProfileBase && (Type->Kind == NdTypeKind::Ptr || ReleaseStore))
       return false;
     auto Base = ProfileBase;
     auto Hint = Base ? profileStorageHint(Image.Arch, *Base) : std::nullopt;
     if (!Hint) {
       Hint = Address ? localStorageAccessHint(Image, *Address, Type->Size)
                      : std::nullopt;
-      if (!Hint)
+      if (!Hint || (ReleaseStore && Hint->TargetAddress % Type->Size != 0))
         return false;
       Base = Hint->TargetAddress;
       Result.LocalStorageExtents[*Base] = std::max<uint64_t>(
@@ -6016,7 +6034,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         Expression->Operands.size() == 2 && Expression->Operands[1] &&
         BindMemoryAddress(
             Expression->Operands[0], Expression->Operands[1]->Type,
-            Expression->MemoryOrdering, Expression->MemoryAddressSpace)) {
+            Expression->MemoryOrdering, Expression->MemoryAddressSpace, true)) {
       Expression->Operands[1] =
           Copy(Expression->Operands[1], Depth + 1, false, false, false);
       return Expression;
@@ -6859,7 +6877,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Statement.Kind == StmtKind::Store && Statement.StoreVal &&
           BindMemoryAddress(Statement.StoreAddr, Statement.StoreVal->Type,
                             Statement.MemoryOrdering,
-                            Statement.MemoryAddressSpace);
+                            Statement.MemoryAddressSpace, true);
       forEachExpr(Statement, [&](ExprPtr &Expression) {
         if (WideScalarAssignment && Expression == Statement.Val) {
           Expression = std::make_shared<HighExpr>(*Expression);
