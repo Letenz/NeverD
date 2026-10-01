@@ -9,6 +9,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -1791,6 +1792,80 @@ int main(void) {
   }
   return 0;
 })");
+}
+
+TEST(HighCSourceCalls, ScrollInsetsPreserveAllFourIndependentValues) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  const auto Signature = objcSelectorSourceTypeHint(Image, "setContentInset:");
+  ASSERT_TRUE(Signature);
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.TargetName = "objc_msgSend";
+  Hint.Selector = "setContentInset:";
+  Hint.Signature = *Signature;
+  const auto Word = NdType::makeInt(8, false);
+  const auto Double = NdType::makeFloat(8);
+  std::vector<ExprPtr> Leaves;
+  HighFunc Function;
+  Function.Name = "set_insets";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"receiver", Word}, {"selector", Word}};
+  for (unsigned I = 0; I != 4; ++I) {
+    Function.Params.push_back({"edge" + std::to_string(I), Double});
+    Leaves.push_back(parameter(I + 2, Double));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val =
+      call(Hint, Function.ReturnType,
+           {parameter(0, Word), parameter(1, Word),
+            HighExpr::makeRecord(Signature->Parameters.back().Type, Leaves)});
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, false, Arch::AArch64);
+  const auto Program = R"(
+#include <stdint.h>
+#include <string.h>
+typedef void *id;
+typedef void *SEL;
+typedef struct { double top, left, bottom, right; } InsetsOracle;
+static InsetsOracle observed;
+static unsigned calls;
+static void implementation(id receiver, SEL selector, InsetsOracle insets) {
+  if (receiver != (id)(uintptr_t)0x1234 ||
+      selector != (SEL)(uintptr_t)0x5678) __builtin_trap();
+  observed = insets;
+  ++calls;
+}
+static void (*objc_msgSend)(id, SEL, InsetsOracle) = implementation;
+)" + Source + R"(
+int main(void) {
+  const uint64_t patterns[][4] = {
+    {0, 0, 0x4024000000000000ULL, 0},
+    {0x3ff4000000000000ULL, 0xc004000000000000ULL,
+     0x8000000000000000ULL, 0xc032c00000000000ULL},
+    {1, 0x7ff8000000000042ULL, 0xfff0000000000000ULL,
+     0x3fe0000000000000ULL}
+  };
+  _Static_assert(sizeof(InsetsOracle) == 32, "four CGFloat fields");
+  for (unsigned i = 0; i != 3; ++i) {
+    InsetsOracle input;
+    memcpy(&input, patterns[i], sizeof(input));
+    set_insets(0x1234, 0x5678, input.top, input.left, input.bottom, input.right);
+    if (memcmp(&observed, patterns[i], sizeof(observed)) || calls != i + 1)
+      return 1;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
 }
 
 TEST(HighCSourceCalls, RuntimeImportsCompileAndPreserveObjectAndVoidEffects) {

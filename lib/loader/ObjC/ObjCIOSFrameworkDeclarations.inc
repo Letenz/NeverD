@@ -117,6 +117,14 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setCenter:", "v32@0:8{CGPoint=dd}16", nullptr},
 // UIView and UIAccessibility Boolean setters share this exact fixed ABI.
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setClipsToBounds:", "v20@0:8B16", nullptr},
+// UIScrollView's public iOS properties declare BOOL and UIEdgeInsets. The
+// MacOSX SDK's UIKit inventory agrees on both selectors and their sole owner;
+// Apple Clang independently encodes the published types on arm64 iOS and
+// arm64 iOS Simulator. UIEdgeInsets keeps top, left, bottom and right doubles.
+// https://developer.apple.com/documentation/uikit/uiscrollview/bounces?language=objc
+// https://developer.apple.com/documentation/uikit/uiscrollview/contentinset?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setBounces:", "v20@0:8B16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
 // UIView's public layout-priority setters take float UILayoutPriority and a
 // signed NSInteger-backed axis. Apple Clang emits this packed arm64 encoding
 // for both methods; the ABI keeps s0 and x2 in separate register banks.
@@ -168,4 +176,4 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "transitionCoordinator", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "flashScrollIndicators", "v16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "endBackgroundTask:", "v24@0:8Q16", nullptr},
-// clang-format on
+    // clang-format on
