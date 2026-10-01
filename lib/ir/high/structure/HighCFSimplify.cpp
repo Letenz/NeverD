@@ -691,6 +691,8 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
           for (auto &C : Stmts[I].Cases)
             Collect(C.Body, nullptr);
           Collect(Stmts[I].DefaultBody, nullptr);
+          for (auto &ClauseBody : Stmts[I].EHClauseBodies)
+            Collect(ClauseBody, nullptr);
         }
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
@@ -731,6 +733,9 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
           for (auto &C : Stmts[I].Cases)
             Rewrite(C.Body);
           Rewrite(Stmts[I].DefaultBody);
+          // A handler that jumps to a return tail returns as the copy does.
+          for (auto &ClauseBody : Stmts[I].EHClauseBodies)
+            Rewrite(ClauseBody);
         }
       };
   Rewrite(Body);

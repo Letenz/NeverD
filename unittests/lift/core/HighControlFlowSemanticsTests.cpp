@@ -5502,3 +5502,25 @@ TEST(HighControlFlowSemantics, ByteWriteIntoUnsetRegisterDropsUnreadBytes) {
   narrowUnreadRegisterBytes(F);
   EXPECT_TRUE(HasUndef(F));
 }
+
+TEST(HighControlFlowSemantics, ExceptHandlerJumpToAReturnTailBecomesItsCopy) {
+  // __try { v = 1; } __except (...) { v = 2; goto R; } v = 3; R: return v;
+  // The handler's jump reaches a return tail, which it now returns through.
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1000;
+  Try.Body = {assign(0x1000, 1, 1)};
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.HandlerVA = 0x1040;
+  Try.EHClauses = {Except};
+  Try.EHClauseBodies = {{assign(0x1040, 1, 2), jump(0x1044, 0x1020)}};
+  HighFunc F;
+  F.Body = {Try, assign(0x1010, 1, 3), result(0x1020, local(1))};
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  ASSERT_EQ(F.Body.front().EHClauseBodies.size(), 1u);
+  const auto &Handler = F.Body.front().EHClauseBodies.front();
+  ASSERT_FALSE(Handler.empty());
+  EXPECT_EQ(Handler.back().Kind, StmtKind::Return);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+}
