@@ -2199,36 +2199,41 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     bool Then = true;
     size_t Pos = 0;
   };
-  // A path of ifs from \p If down to an arm that ends in a jump; each level
+  // Paths of ifs from \p If down to an arm that ends in a jump; each level
   // records the arm taken and where the next if (or the jump) sits in it.
-  std::function<bool(HighStmt &, std::vector<Level> &)> FindExit =
-      [&](HighStmt &If, std::vector<Level> &Path) -> bool {
+  // \p Try sees each path in turn and ends the walk by returning true.
+  std::function<bool(HighStmt &, std::vector<Level> &,
+                     const std::function<bool(std::vector<Level> &)> &)>
+      FindExits =
+          [&](HighStmt &If, std::vector<Level> &Path,
+              const std::function<bool(std::vector<Level> &)> &Try) -> bool {
     if (Path.size() >= limits::kMaxSkippedCopyDepth)
       return false;
     for (const bool Then : {true, false}) {
       std::vector<HighStmt> &A = Then ? If.Body : If.ElseBody;
       if (!Path.empty() && !A.empty() && A.back().Kind == StmtKind::Goto) {
         Path.push_back({&If, Then, A.size() - 1});
-        return true;
+        if (Try(Path))
+          return true;
+        Path.pop_back();
       }
       for (size_t P = 0; P < A.size(); ++P)
         if ((A[P].Kind == StmtKind::If || A[P].Kind == StmtKind::IfElse) &&
             A[P].Cond) {
           Path.push_back({&If, Then, P});
-          if (FindExit(A[P], Path))
+          if (FindExits(A[P], Path, Try))
             return true;
           Path.pop_back();
         }
     }
     return false;
   };
-  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
-    std::vector<Level> Path;
-    if (!FindExit(L[I], Path))
-      return false;
-    auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
-      return V.Then ? V.If->Body : V.If->ElseBody;
-    };
+  auto ArmOf = [](const Level &V) -> std::vector<HighStmt> & {
+    return V.Then ? V.If->Body : V.If->ElseBody;
+  };
+  // Rewrites the exit at the end of \p Path when its label X follows L[I].
+  auto copyExit = [&](std::vector<HighStmt> &L, size_t I,
+                      std::vector<Level> &Path) -> bool {
     const size_t D = Path.size();
     // Other jumps to X land after R and keep their label.
     const va_t X = ArmOf(Path[D - 1]).back().GotoTarget;
@@ -2286,6 +2291,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     L.erase(L.begin() + I + 1, L.begin() + J);
     Changed = true;
     return true;
+  };
+  auto copySkippedTail = [&](std::vector<HighStmt> &L, size_t I) -> bool {
+    std::vector<Level> Path;
+    return FindExits(L[I], Path, [&](std::vector<Level> &Exit) {
+      return copyExit(L, I, Exit);
+    });
   };
 
   std::function<void(std::vector<HighStmt> &)> Visit = [&](std::vector<HighStmt>
