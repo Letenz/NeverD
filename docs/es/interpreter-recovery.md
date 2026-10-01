@@ -80,6 +80,8 @@ El informe JSON añade `discoverControlState`, `maxControlRefinements`, `maxDisc
 
 Cuando una condición reduce una dependencia de dirección a una porción de bytes, el refinamiento también conserva como candidatos de contexto los campos completos de dirección directa de ocho bytes ya seguidos que la contienen. El campo estrecho y la máscara de su productor no cambian; no se promueven campos más anchos ajenos a la dirección. Las constantes y los desplazamientos relativos a la entrada siguen requiriendo pruebas, y todos los contextos comparten los límites existentes.
 
+La enumeración opcional de direcciones inmutables se detiene cuando una dirección factible carece de certificado. Se conserva la lectura original en ejecución. Los valores y certificados observados solo se usan tras demostrar el dominio completo; los aciertos de caché vuelven a validar la extensión de lectura actual, y un certificado malformado efectivamente observado sigue siendo un error.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución

@@ -190,6 +190,8 @@ recovery.
 
 When a guard narrows an address dependency to a byte slice, refinement also retains enclosing, already tracked eight-byte direct-address fields as context candidates. The original narrow field and producer mask remain unchanged; unrelated wider fields are not promoted. Constants and entry-relative offsets still require proof, and all contexts share the existing limits.
 
+Optional immutable-address enumeration stops when a feasible address lacks a certificate. The original runtime read remains. Observed values and certificates are used only after the complete domain is proved; cache hits still recheck the current read extent, and an observed malformed certificate remains an error.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract

@@ -45,6 +45,7 @@ public:
   std::map<va_t, SpecializationInstruction> Code;
   std::map<va_t, uint8_t> Image;
   bool MalformedRead = false;
+  uint16_t MalformedReadSize = 0;
 
   void add(va_t Address, std::initializer_list<LowOp> Ops,
            va_t Fallthrough = InvalidVA) {
@@ -102,7 +103,7 @@ public:
         return std::nullopt;
       Read.Bytes.push_back(Found->second);
     }
-    if (MalformedRead)
+    if (MalformedRead || Size == MalformedReadSize)
       Read.Bytes.clear();
     return Read;
   }
@@ -967,6 +968,52 @@ TEST(InterpreterSpecialization,
   EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
   EXPECT_EQ(execute(Result.Residual, {{8, 0}}, P.Image), 0x200u);
   EXPECT_EQ(execute(Result.Residual, {{8, 1}}, P.Image), 0x210u);
+}
+
+TEST(InterpreterSpecialization, FirstUncertifiedAddressKeepsRuntimeRead) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(15)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}), ret()});
+  SpecializationOptions Options;
+  Options.MaxSolverQueries = 4;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(Result.SolverQueries, 1u);
+  EXPECT_TRUE(Result.Reads.empty());
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
+  for (uint64_t I = 0; I != 16; ++I)
+    imageWord(P, 0x800 + 8 * I, I * 37 + 11);
+  for (uint64_t I = 0; I != 64; ++I)
+    EXPECT_EQ(execute(Result.Residual, {{8, I}}, P.Image), (I & 15) * 37 + 11);
+}
+
+TEST(InterpreterSpecialization,
+     CachedAddressProofDoesNotCertifyADifferentReadExtent) {
+  auto P = finiteAddressProvider();
+  const auto RuntimeImage = P.Image;
+  P.Image.erase(0x80F);
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::LOAD, reg(24, 1), {reg(16)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}), ret()});
+  const auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(Result.SolverQueries, 3u);
+  ASSERT_EQ(Result.Reads.size(), 2u);
+  for (const auto &Read : Result.Reads)
+    EXPECT_EQ(Read.Bytes.size(), 1u);
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 0}}, RuntimeImage), 0x200u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 1}}, RuntimeImage), 0x210u);
+  P.Image = RuntimeImage;
+  P.MalformedReadSize = 8;
+  const auto Malformed = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Malformed.Status, SpecializationStatus::InvalidInput);
+  EXPECT_TRUE(Malformed.Residual.Blocks.empty());
+  EXPECT_TRUE(Malformed.Reads.empty());
 }
 
 // Two independent predecessors each carry a pair of correlated pointer/key

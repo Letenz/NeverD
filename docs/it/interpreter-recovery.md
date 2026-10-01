@@ -80,6 +80,8 @@ Il rapporto JSON aggiunge `discoverControlState`, `maxControlRefinements`, `maxD
 
 Quando una condizione restringe una dipendenza di indirizzo a una porzione di byte, il raffinamento conserva come candidati di contesto anche i campi completi di indirizzo diretto di otto byte già tracciati che la contengono. Il campo ristretto e la maschera del suo produttore restano invariati; i campi più ampi non pertinenti non vengono promossi. Costanti e scostamenti relativi all’ingresso richiedono ancora una prova e tutti i contesti condividono i limiti esistenti.
 
+L’enumerazione facoltativa degli indirizzi immutabili si arresta quando un indirizzo ammissibile non ha un certificato. La lettura originale resta eseguita. Valori e certificati osservati si usano solo dopo la prova dell’intero dominio; anche un risultato in cache richiede la verifica dell’estensione di lettura attuale, e un certificato malformato effettivamente osservato resta un errore.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione
