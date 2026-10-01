@@ -183,6 +183,15 @@ endif()
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_neverd_unittest(NeverDUnicornStateTransferTests
+      UnicornStateTransferTests.cpp
+      TIMEOUT 15
+      LINK_COMPONENTS EmulationCPU
+      LINK_LIBS unicorn)
+    target_include_directories(NeverDUnicornStateTransferTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/lib/emulation)
+    target_link_options(NeverDUnicornStateTransferTests PRIVATE
+      "-Wl,--wrap=uc_reg_read")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE

@@ -529,3 +529,5 @@ KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジス�
 ハードウェア実行だけでは、処理全体の待ち時間が短くなるとは限りません。現在のネイティブ実行は命令ごとに許可判定、観測、状態転送と VM 終了を行います。同じ元のイメージとシナリオを同じ命令・イベント予算で比較し、時間と結果の一致を併記してください。CLI の待ち時間には起動とロードも含めます。
 
 `GuardFlags` がゼロでも、CFG が有効でないポインタスロットは有効です。ローダーは格納領域、実行可能なフォールバック先、リベース時の完全な `DIR64` 対応を検証し、元のゲストポインタを保持します。有効な CFG には引き続きイメージの有効化ビットと計装/関数テーブルのフラグが必要です。`DriverGuardCases.def` と `NeverDDriverGuardMetadataTests` は Unicorn、KVM、WHP でこれらを検証し、Unicorn を無効にしたビルドでも利用できます。
+
+Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。

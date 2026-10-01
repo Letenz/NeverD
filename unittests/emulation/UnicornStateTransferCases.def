@@ -1,0 +1,22 @@
+//===- UnicornStateTransferCases.def - ARM64 transport fault fixtures -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_UNICORN_STATE_VALUE
+NEVERD_UNICORN_STATE_VALUE(MemoryLimit, 4 * 1024 * 1024)
+NEVERD_UNICORN_STATE_VALUE(Code, 0x400000)
+NEVERD_UNICORN_STATE_VALUE(Stack, 0x600000)
+NEVERD_UNICORN_STATE_VALUE(StackAlignment, 16)
+NEVERD_UNICORN_STATE_VALUE(SupervisorPermission, 0)
+NEVERD_UNICORN_STATE_VALUE(ExpectedFPControl, 0)
+NEVERD_UNICORN_STATE_VALUE(InitialScalar, 0x1122334455667788ULL)
+NEVERD_UNICORN_STATE_VALUE(InitialInteger, 7)
+NEVERD_UNICORN_STATE_VALUE(IntegerIncrement, 1)
+NEVERD_UNICORN_STATE_VALUE(PoisonedNZCV, 0xfeedfacea0000000ULL)
+NEVERD_UNICORN_STATE_VALUE(ExpectedNZCV, 0xa0000000ULL)
+NEVERD_UNICORN_STATE_VALUE(PoisonedFPControl, 0xffffffff00000000ULL)
+NEVERD_UNICORN_STATE_VALUE(InitialVectorLow, 0x0123456789abcdefULL)
+NEVERD_UNICORN_STATE_VALUE(InitialVectorHigh, 0xfedcba9876543210ULL)
+NEVERD_UNICORN_STATE_VALUE(IncrementInteger, 0x91000400)
+#endif

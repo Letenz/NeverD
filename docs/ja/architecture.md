@@ -797,3 +797,5 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
+
+Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。

@@ -832,3 +832,7 @@ checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立�
 `NeverDAArch64MemoryTests` 在兩種權限層級下涵蓋 Unicorn、KVM、WHP 的 18 種純量及成對指令，檢查所有跨頁偏移、符號延伸與寬度結果、觀察器順序、第二頁權限不足或缺失、明確消費故障後重試、重複實體別名，以及別名替換後的上下文還原。修改前已重現合法跨頁載入遭拒的情況。無法使用的後端明確跳過；Unicorn 驗證及交叉編譯不能取代 ARM64 KVM/WHP 實機證據。
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 檢查零旗標的未啟用 CFG 中繼資料、兩種載入位址下不變的回退指標、無效指標槽/目標及缺失重定位。執行案例明確選擇 Unicorn/KVM/WHP，並使用 `driver-strict` 和 `checked-x64-v1`；不可用的後端分別略過。`DriverPublicCLICases.def` 為 CLI 與相容的 v1 C API 比較選擇 `--backend unicorn`。原生後端與 `auto` 選擇保留獨立的公開介面涵蓋範圍，主機 API 不可用時不會靜默回退。
+
+Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。
+
+`NeverDAArch64GeneralStateTests` 在兩種特權級下檢查原生 35 欄位和軟體 39 欄位清單，涵蓋每個讀取失敗位置、位元寬度正規化和重試。Linux 上的 `NeverDUnicornStateTransferTests` 在真實客體執行後的每個純量回讀位置注入失敗，驗證輸入不變、重試僅執行一次，並檢查 `CapturesDeclaredWidthsWithoutStaleUpperBits`。原始指令和狀態案例存放於 `UnicornStateTransferCases.def`；這些證據無法取代 ARM64 KVM/WHP 實機驗證。
