@@ -41626,6 +41626,45 @@ TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, ForwarderToTheGuardDispatchPointerIsADispatcher) {
+  // KeGuardDispatchICall in ntoskrnl is `jmp [__guard_dispatch_icall_fptr]`,
+  // a jump through the load configuration's dispatch pointer.  Whichever
+  // dispatcher the runtime installs there calls RAX, so a call to the
+  // forwarder is a call to the function loaded into RAX, with no name
+  // needed to say so.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Forwarder = 0x140001020;
+  constexpr va_t Slot = 0x140002000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x01,             // mov rax, [rcx]
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x10, 0x00, 0x00, 0x00, // call forwarder
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Forwarder - Entry, 0xcc);
+  const uint32_t Disp = static_cast<uint32_t>(Slot - (Forwarder + 6));
+  Code.insert(Code.end(),
+              {0xff, 0x25, uint8_t(Disp), uint8_t(Disp >> 8),
+               uint8_t(Disp >> 16), uint8_t(Disp >> 24)}); // jmp [slot]
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Segment Data;
+  Data.Name = ".rdata";
+  Data.VA = Slot;
+  Data.Size = 8;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.assign(8, 0);
+  Img.Segments.push_back(std::move(Data));
+  ASSERT_TRUE(Img.recordRuntimeCallablePointerSlot(
+      Slot, RuntimeCallablePointerSlotKind::GuardCFDispatch));
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("140001020"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, GuardDispatchTargetChosenOnTwoPathsStaysAssigned) {
   // IovpCancelRoutine: RAX is a loaded callback, or the caller's third
   // argument when there is none.  The dispatch call reads the value that

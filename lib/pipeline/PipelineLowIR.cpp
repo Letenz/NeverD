@@ -2821,6 +2821,26 @@ WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
 //===----------------------------------------------------------------------===//
 
 namespace {
+/// True when \p F only jumps through the load configuration's Control Flow
+/// Guard dispatch pointer, as ntoskrnl's KeGuardDispatchICall does with
+/// `jmp [__guard_dispatch_icall_fptr]`.  Whichever dispatcher the runtime
+/// installs in that pointer calls RAX with the caller's argument registers.
+bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
+  if (F.Blocks.size() != 1)
+    return false;
+  const std::vector<LowOp> &Ops = F.Blocks.front().Ops;
+  if (Ops.size() != 2 || Ops[0].Opcode != NdOp::INDIR_CALL ||
+      Ops[0].NumInputs != 1 || Ops[1].Opcode != NdOp::RETURN)
+    return false;
+  // A constant input to an indirect transfer names the slot it loads from.
+  const NdVar &Slot = Ops[0].Inputs[0];
+  return Slot.isConst() && Slot.Size == Img.getPointerSize() &&
+         (Img.hasRuntimeCallablePointerSlotAt(
+              Slot.Offset, RuntimeCallablePointerSlotKind::GuardCFDispatch) ||
+          Img.hasRuntimeCallablePointerSlotAt(
+              Slot.Offset, RuntimeCallablePointerSlotKind::GuardXFGDispatch));
+}
+
 /// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
 /// Callees outside Result.LowFuncs are lifted here with the same CFG settings,
 /// up to the Limits.h depth and count; beyond those they stay unsummarized.
@@ -2834,8 +2854,11 @@ void computeCallRegisterEffects(
   std::map<va_t, LocalRegisterEffect> Effects;
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
+  std::set<va_t> GuardForwarders;
   for (const LowFunc &LF : Result.LowFuncs) {
     Effects[LF.Entry] = localRegisterEffect(Img, LF, &NoReturnTargets);
+    if (forwardsToGuardDispatch(Img, LF))
+      GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
   }
@@ -2865,6 +2888,8 @@ void computeCallRegisterEffects(
       LowFunc Body =
           ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
       Effects[Callee] = localRegisterEffect(Img, Body, &NoReturnTargets);
+      if (forwardsToGuardDispatch(Img, Body))
+        GuardForwarders.insert(Callee);
       Depth[Callee] = CalleeDepth;
       Work.push_back(Callee);
     }
@@ -2885,10 +2910,13 @@ void computeCallRegisterEffects(
   }
   // Documented contracts (WindowsKernelRoutines.inc): a Control Flow Guard
   // dispatcher is an indirect call, and a WDK routine reads exactly its
-  // prototype's parameters however its body forwards registers.
+  // prototype's parameters however its body forwards registers.  A forwarder
+  // to the load configuration's dispatch pointer is a dispatcher by that
+  // pointer's contract, whatever its name.
   std::set<va_t> DispatchThunks;
   std::map<va_t, GPRReadWidths> FixedEntryReads;
   if (Win64) {
+    DispatchThunks = GuardForwarders;
     auto Classify = [&](va_t Entry, llvm::StringRef Name) {
       if (Name.empty() || Entry == InvalidVA)
         return;
