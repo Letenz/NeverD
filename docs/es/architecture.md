@@ -584,6 +584,8 @@ específicos `lib/sdk/NeverDCAPI*.cpp`.
 
 La ejecución CPU es independiente del SO invitado y de la imagen. La política del SO y la entrada del proceso se separan del transporte y de la ISA.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` vale `ON` de forma predeterminada y controla el grupo de `unittests/semantic` y sus destinos agregados. Para compilar pruebas de CPU nativa sin Unicorn, mantenga `BUILD_TESTING=ON` y configure `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` y `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. Las pruebas nativas KVM/WHP siguen disponibles, incluso con Windows ARM64/MSVC y las cabeceras SDK adecuadas. Activar Unicorn en Windows ARM64 aún requiere una cadena ARM64 LLVM-MinGW. Esta separación de compilación no acredita ejecución nativa ARM64.
+
 | Componente | Responsabilidad |
 |---|---|
 | `NeverDEmulationCore` | Memoria, fallos, registros y bucle común de ejecución |

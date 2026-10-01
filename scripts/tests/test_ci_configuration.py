@@ -481,11 +481,15 @@ class CiConfigurationTests(unittest.TestCase):
         )
         self.assertIn("NEVERD_REQUIRE_NATIVE_WHP: '1'", native)
         self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
+        self.assertIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", native)
         self.assertIn("scripts/run_native_cpu_ci.py", native)
         self.assertIn("--require-whp", native)
         self.assertIn("native-evidence/", native)
-        full = source.split("  build-and-test:\n", 1)[1]
+        full = source.split("  build-and-test:\n", 1)[1].split(
+            "  native-cpu:\n", 1
+        )[0]
         self.assertIn("!inputs.native_cpu_only", full)
+        self.assertNotIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", full)
         dispatch = source.split("      native_cpu_only:\n", 1)[1].split(
             "\npermissions:", 1
         )[0]

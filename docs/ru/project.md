@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
 
 <div align="center">
 
@@ -273,6 +273,7 @@ cmake --build build --target check-neverd
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | Встроенная поддержка плагинов CPython 3.10+ |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | Пример плагинов |
 | `BUILD_TESTING` | `OFF` | Юнит-тесты |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | Группа семантических тестов с зависимостью от Unicorn (при `BUILD_TESTING=ON`) |
 
 </details>
 

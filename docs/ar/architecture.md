@@ -495,6 +495,8 @@ CMake.
 
 تنفيذ CPU مستقل عن نظام الضيف والصورة، وتبقى سياسة نظام التشغيل وبدء العملية منفصلة عن النقل والمعمارية.
 
+تكون `NEVERD_ENABLE_SEMANTIC_TESTS` بقيمة `ON` افتراضياً، وتتحكم في مجموعة `unittests/semantic` وأهداف تشغيلها المجمعة. لبناء اختبارات CPU الأصلية دون Unicorn، أبقِ `BUILD_TESTING=ON` واضبط `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` و`NEVERD_EMULATION_BACKEND_UNICORN=OFF`. تظل اختبارات KVM/WHP الأصلية متاحة، بما فيها إعداد Windows ARM64/MSVC مع ترويسات SDK المناسبة. لا يزال تفعيل Unicorn على Windows ARM64 يتطلب سلسلة أدوات ARM64 LLVM-MinGW. فصل البناء هذا لا يثبت تنفيذ ARM64 على عتاد أصلي.
+
 | المكوّن | المسؤولية |
 |---|---|
 | `NeverDEmulationCore` | الذاكرة والأعطال والسجلات وحلقة التنفيذ المشتركة |

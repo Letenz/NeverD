@@ -590,6 +590,8 @@ externes stables appartiennent à l’en-tête C pur et à l’un des fichiers c
 
 L’exécution CPU est indépendante de l’OS invité et de l’image. La politique OS et l’entrée de processus restent séparées du transport et de l’ISA.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS`, activé par défaut (`ON`), contrôle le groupe de tests de `unittests/semantic` et ses cibles agrégées. Pour construire les tests CPU natifs sans Unicorn, conserver `BUILD_TESTING=ON` et définir `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` ainsi que `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. Les tests natifs KVM/WHP restent disponibles, y compris avec Windows ARM64/MSVC et les en-têtes SDK appropriés. Activer Unicorn sous Windows ARM64 exige toujours une chaîne ARM64 LLVM-MinGW. Cette séparation de construction ne constitue pas une validation native ARM64.
+
 | Composant | Responsabilité |
 |---|---|
 | `NeverDEmulationCore` | Mémoire, défauts, registres et boucle d’exécution partagée |

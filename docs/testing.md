@@ -522,11 +522,12 @@ Windows ARM64 before claiming native runtime coverage. Genuine platform
 headers permit compile checking on another host, but do not validate vCPU
 initialization, debug delivery or cancellation at runtime.
 
-`BUILD_TESTING=OFF`, `NEVERD_ENABLE_CPU_EMULATION=ON`,
-`NEVERD_ENABLE_DRIVER_EMULATION=OFF` and
-`NEVERD_EMULATION_BACKEND_UNICORN=OFF` build `NeverDEmulationCPU` without
-Unicorn or the Windows driver environment. This configuration must still link
-and execute a matching native CPU through the public factory. The current
+`NEVERD_ENABLE_CPU_EMULATION=ON`,
+`NEVERD_ENABLE_DRIVER_EMULATION=OFF`,
+`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and
+`NEVERD_EMULATION_BACKEND_UNICORN=OFF` build `NeverDEmulationCPU` and its
+`BUILD_TESTING=ON` tests without Unicorn or the Windows driver environment.
+This configuration must still link and execute a matching native CPU through the public factory. The current
 Unicorn dependency requires LLVM-MinGW rather than MSVC on Windows ARM64;
 see [CPU execution](architecture.md#cpu-execution) for build requirements.
 
@@ -1781,7 +1782,9 @@ WHP host failures during capability queries, partition/virtual-CPU setup, regist
 
 `WhpResourceTests.cpp` covers cache reuse, retirement before replacement, failure recovery and deadline/stop races. `LogicalCPUSwitchingRestoresPhysicalFPAndTLS` alternates two live machines in both privilege modes, checks independent physical x87/XMM and FS/GS state, then resumes the survivor after peer destruction. Windows CI requires both WHP privilege cases.
 
-The native-only CI checkout initializes only pinned Capstone and Unicorn sources; LLVM comes from the verified prebuilt package. Unicorn sources are needed to configure the separate semantic test targets, but native CPU owners do not build or link Unicorn. Signatures and the external corpus are not dependencies of these owners.
+`NEVERD_ENABLE_SEMANTIC_TESTS` defaults to `ON` and controls the test group in `unittests/semantic`, including its aggregate runners. To build native CPU tests without Unicorn, keep `BUILD_TESTING=ON` and set both `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. The native KVM/WHP tests remain available, including Windows ARM64/MSVC builds with suitable SDK headers. Enabling Unicorn on Windows ARM64 still requires an ARM64 LLVM-MinGW toolchain. This build separation does not establish native ARM64 runtime coverage.
+
+The native-only CI checkout initializes pinned Capstone sources and uses the verified prebuilt LLVM package. With `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and the Unicorn adapter disabled, its CPU owners configure, build and link without Unicorn sources. Signatures and the external corpus are not dependencies of these owners. Default CI keeps the complete semantic test group enabled.
 
 The existing `ci.yml` provides an opt-in `native_cpu_only` manual mode on its Windows x64 runner. `NativeCPUTests.def` selects ten owners; `run_native_cpu_ci.py` builds them before filtered CTest and saves inventory, JUnit, logs and a summary. Shared CI parsers distinguish passed, failed, skipped, disabled and not-run results. Every declared native WHP mapping case must be discovered and executed; missing or skipped native evidence fails the focused job. Default source-built CI remains unchanged. Protocol tests and compilation do not replace native WHP or ARM64 workload validation.
 

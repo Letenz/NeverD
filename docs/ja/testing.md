@@ -921,7 +921,9 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `WhpResourceTests.cpp` はキャッシュ再利用、置換前の破棄、失敗からの復旧、期限と停止の競合を検証します。`LogicalCPUSwitchingRestoresPhysicalFPAndTLS` は両特権モードで二つのマシンを交互に実行し、物理 x87/XMM と FS/GS の独立した状態を確認してから、一方の破棄後に残るマシンを再開します。Windows CI は両モードの WHP ケースを必須とします。
 
-ネイティブ CPU 専用 CI は固定リビジョンの Capstone と Unicorn のソースだけを初期化し、LLVM は検証済みパッケージを使います。Unicorn のソースは別の意味論テストの構成に必要ですが、ネイティブ CPU テストは Unicorn をビルド・リンクせず、署名データや外部コーパスにも依存しません。
+`NEVERD_ENABLE_SEMANTIC_TESTS` の既定値は `ON` で、`unittests/semantic` のテスト群と集約実行ターゲットを制御します。Unicorn を使わずにネイティブ CPU テストを構築するには、`BUILD_TESTING=ON` を維持し、`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と `NEVERD_EMULATION_BACKEND_UNICORN=OFF` を指定します。適切な SDK ヘッダーを備えた Windows ARM64/MSVC を含め、KVM/WHP のネイティブテストは引き続き構築できます。Windows ARM64 で Unicorn を有効にする場合は ARM64 LLVM-MinGW ツールチェーンが必要です。このビルド分離は ARM64 の実機実行を検証するものではありません。
+
+ネイティブ CPU 専用 CI は固定リビジョンの Capstone ソースを初期化し、検証済みの LLVM パッケージを使います。`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と Unicorn アダプターの無効化により、CPU テストの構成・ビルド・リンクに Unicorn ソースは不要です。署名データや外部コーパスにも依存しません。既定の CI は完全な意味論テスト群を引き続き有効にします。
 
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 

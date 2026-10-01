@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
 
 <div align="center">
 
@@ -272,6 +272,7 @@ cmake --build build --target check-neverd
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | CPython 3.10+ 플러그인 지원 내장 |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | 예제 플러그인 |
 | `BUILD_TESTING` | `OFF` | 단위 테스트 |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | Unicorn에 의존하는 의미론 테스트 그룹 (`BUILD_TESTING=ON`일 때) |
 
 </details>
 

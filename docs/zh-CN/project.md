@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
+<!-- i18n-source: c346d897076ac13395b5b9cd152004c8064d27e00cd49229ebeec134ce3cf9a5 -->
 
 <div align="center">
 
@@ -272,6 +272,7 @@ cmake --build build --target check-neverd
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | 嵌入 CPython 3.10+ 插件支持 |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | 示例插件 |
 | `BUILD_TESTING` | `OFF` | 单元测试 |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | 依赖 Unicorn 的语义测试组（启用 `BUILD_TESTING=ON` 时） |
 
 </details>
 

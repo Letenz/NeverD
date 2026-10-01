@@ -6,6 +6,8 @@
 
 La ejecución de CPU es independiente del sistema operativo invitado, del cargador de imágenes y de la convención de llamada. `NEVERD_ENABLE_CPU_EMULATION` permite compilarla por separado; `NEVERD_ENABLE_DRIVER_EMULATION` también incluye el modelo de controladores de Windows. La [guía de arquitectura](architecture.md) describe la propiedad, la selección del backend y las limitaciones actuales.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` vale `ON` de forma predeterminada y controla el grupo de `unittests/semantic` y sus destinos agregados. Para compilar pruebas de CPU nativa sin Unicorn, mantenga `BUILD_TESTING=ON` y configure `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` y `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. Las pruebas nativas KVM/WHP siguen disponibles, incluso con Windows ARM64/MSVC y las cabeceras SDK adecuadas. Activar Unicorn en Windows ARM64 aún requiere una cadena ARM64 LLVM-MinGW. Esta separación de compilación no acredita ejecución nativa ARM64.
+
 ## Configuración
 
 La interfaz pública [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h) es compartida por la fábrica de CPU y el informe de capacidades. Los requisitos se validan antes de asignar una CPU o adjuntar un espacio de direcciones. Los valores omitidos usan el perfil fijo del contrato; los valores explícitos no admitidos fallan.

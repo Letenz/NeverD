@@ -542,6 +542,8 @@ NeverD, но не все общие библиотеки LLVM и Capstone, до�
 
 Выполнение CPU не зависит от гостевой ОС и образа. Политика ОС и вход в процесс отделены от транспорта и ISA.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` по умолчанию равен `ON` и управляет группой в `unittests/semantic` и её агрегатными целями. Чтобы собрать нативные тесты CPU без Unicorn, оставьте `BUILD_TESTING=ON` и задайте `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` вместе с `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. Нативные тесты KVM/WHP остаются доступны, в том числе для Windows ARM64/MSVC с подходящими заголовками SDK. Для Unicorn на Windows ARM64 по-прежнему требуется инструментарий ARM64 LLVM-MinGW. Это разделение сборки не подтверждает нативное исполнение ARM64.
+
 | Компонент | Ответственность |
 |---|---|
 | `NeverDEmulationCore` | Память, ошибки, регистры и общий цикл выполнения |

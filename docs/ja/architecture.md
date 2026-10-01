@@ -497,6 +497,8 @@ Capstone ライブラリは網羅しません。
 
 CPU 実行はゲスト OS と image から独立しています。OS policy と process の入口は transport や ISA と分離されています。
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` の既定値は `ON` で、`unittests/semantic` のテスト群と集約実行ターゲットを制御します。Unicorn を使わずにネイティブ CPU テストを構築するには、`BUILD_TESTING=ON` を維持し、`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と `NEVERD_EMULATION_BACKEND_UNICORN=OFF` を指定します。適切な SDK ヘッダーを備えた Windows ARM64/MSVC を含め、KVM/WHP のネイティブテストは引き続き構築できます。Windows ARM64 で Unicorn を有効にする場合は ARM64 LLVM-MinGW ツールチェーンが必要です。このビルド分離は ARM64 の実機実行を検証するものではありません。
+
 | コンポーネント | 責務 |
 |---|---|
 | `NeverDEmulationCore` | memory、fault、register、共有実行ループ |

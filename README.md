@@ -299,6 +299,7 @@ See [Testing NeverD](docs/testing.md) for focused targets, CTest labels, fixture
 | `NEVERD_ENABLE_PYTHON_PLUGINS` | `ON` | Embed CPython 3.10+ plugin support |
 | `NEVERD_BUILD_PLUGINS` | `OFF` | Example plugins |
 | `BUILD_TESTING` | `OFF` | Unit tests |
+| `NEVERD_ENABLE_SEMANTIC_TESTS` | `ON` | Unicorn-dependent semantic test group (when `BUILD_TESTING=ON`) |
 
 </details>
 

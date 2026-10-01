@@ -8,6 +8,8 @@ convention. Enable `NEVERD_ENABLE_CPU_EMULATION` to build it alone, or
 The [architecture guide](architecture.md#cpu-execution) describes ownership,
 backend selection and current platform limitations.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` defaults to `ON` and controls the test group in `unittests/semantic`, including its aggregate runners. To build native CPU tests without Unicorn, keep `BUILD_TESTING=ON` and set both `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. The native KVM/WHP tests remain available, including Windows ARM64/MSVC builds with suitable SDK headers. Enabling Unicorn on Windows ARM64 still requires an ARM64 LLVM-MinGW toolchain. This build separation does not establish native ARM64 runtime coverage.
+
 ## Configuration
 
 The public [`ExecutionConfiguration`](../include/neverd/emulation/ExecutionConfiguration.h)

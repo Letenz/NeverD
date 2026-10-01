@@ -586,6 +586,8 @@ Operationen gehören in den reinen C-Header und eine der fokussierten Dateien
 
 CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und Prozesseinstieg bleiben von Transport und Architektur getrennt.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` ist standardmäßig `ON` und steuert die Testgruppe in `unittests/semantic` samt ihren Sammelzielen. Für native CPU-Tests ohne Unicorn bleibt `BUILD_TESTING=ON` aktiv; zusätzlich werden `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` und `NEVERD_EMULATION_BACKEND_UNICORN=OFF` gesetzt. Native KVM/WHP-Tests bleiben damit verfügbar, auch unter Windows ARM64/MSVC mit geeigneten SDK-Headern. Unicorn unter Windows ARM64 benötigt weiterhin eine ARM64-LLVM-MinGW-Toolchain. Diese Trennung des Builds belegt noch keine native ARM64-Ausführung.
+
 | Komponente | Zuständigkeit |
 |---|---|
 | `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |

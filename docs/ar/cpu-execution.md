@@ -6,6 +6,8 @@
 
 تنفيذ CPU مستقل عن نظام التشغيل الضيف ومحمّل الصور واتفاقية الاستدعاء. فعّل `NEVERD_ENABLE_CPU_EMULATION` لبنائه وحده، أو `NEVERD_ENABLE_DRIVER_EMULATION` لتضمين بيئة برامج تشغيل Windows. يشرح [دليل البنية](architecture.md) الملكية واختيار المحرك والقيود الحالية.
 
+تكون `NEVERD_ENABLE_SEMANTIC_TESTS` بقيمة `ON` افتراضياً، وتتحكم في مجموعة `unittests/semantic` وأهداف تشغيلها المجمعة. لبناء اختبارات CPU الأصلية دون Unicorn، أبقِ `BUILD_TESTING=ON` واضبط `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` و`NEVERD_EMULATION_BACKEND_UNICORN=OFF`. تظل اختبارات KVM/WHP الأصلية متاحة، بما فيها إعداد Windows ARM64/MSVC مع ترويسات SDK المناسبة. لا يزال تفعيل Unicorn على Windows ARM64 يتطلب سلسلة أدوات ARM64 LLVM-MinGW. فصل البناء هذا لا يثبت تنفيذ ARM64 على عتاد أصلي.
+
 ## الإعداد
 
 تستخدم واجهة [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h) العامة مصنع CPU وتقرير القدرات نفسيهما. تُفحص المتطلبات قبل تخصيص CPU أو ربط مساحة العناوين؛ القيم المحذوفة تستخدم ملف العقد الثابت، والقيم الصريحة غير المدعومة تفشل.

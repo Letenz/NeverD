@@ -1154,6 +1154,8 @@ and live initialization probes are separate queries. The factory and
 `cpu-capabilities` CLI/C/Python reports consume the same profile inventory.
 See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` defaults to `ON` and controls the test group in `unittests/semantic`, including its aggregate runners. To build native CPU tests without Unicorn, keep `BUILD_TESTING=ON` and set both `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. The native KVM/WHP tests remain available, including Windows ARM64/MSVC builds with suitable SDK headers. Enabling Unicorn on Windows ARM64 still requires an ARM64 LLVM-MinGW toolchain. This build separation does not establish native ARM64 runtime coverage.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1555,8 +1557,9 @@ hardware. Cross-compilation and Unicorn MMU tests do not replace that evidence.
 
 The backend build switches are `NEVERD_EMULATION_BACKEND_UNICORN`,
 `NEVERD_EMULATION_BACKEND_KVM` and `NEVERD_EMULATION_BACKEND_WHP`. They default
-to ON. For a native-only Windows ARM64/MSVC build, disable Unicorn and
-`BUILD_TESTING`; the pinned Unicorn MSVC build assumes an x86 host JIT.
+to ON. For a native-only Windows ARM64/MSVC build, disable the Unicorn
+adapter and `NEVERD_ENABLE_SEMANTIC_TESTS`; `BUILD_TESTING` can remain
+enabled. The pinned Unicorn MSVC build assumes an x86 host JIT.
 Enabling Unicorn on Windows ARM64 requires an ARM64 GNU-compatible toolchain,
 such as LLVM-MinGW, together with ARM64-capable WHP SDK headers. This combined
 Windows ARM64 build still requires native validation. Configuring the

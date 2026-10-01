@@ -6,6 +6,8 @@
 
 CPU 執行獨立於客體 OS、映像載入器與呼叫慣例。啟用 `NEVERD_ENABLE_CPU_EMULATION` 可單獨建置；`NEVERD_ENABLE_DRIVER_EMULATION` 也會包含 Windows 驅動程式環境。[架構指南](architecture.md)說明所有權、後端選擇與目前的平台限制。
 
+`NEVERD_ENABLE_SEMANTIC_TESTS` 預設為 `ON`，控制 `unittests/semantic` 中的測試組及其彙總執行目標。建置不依賴 Unicorn 的原生 CPU 測試時，保留 `BUILD_TESTING=ON`，同時設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 測試仍可建置，包括具備對應 SDK 標頭的 Windows ARM64/MSVC 組態。在 Windows ARM64 上啟用 Unicorn 仍需 ARM64 LLVM-MinGW 工具鏈。這項建置解耦不等於 ARM64 原生執行驗證。
+
 ## 組態
 
 公開 [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h) 同時供 CPU factory 與能力報告使用。配置 CPU 或附加位址空間前會先驗證需求。省略值採用契約固定設定；明確指定的不支援值會失敗。

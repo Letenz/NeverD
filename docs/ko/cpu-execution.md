@@ -6,6 +6,8 @@
 
 CPU 실행은 게스트 OS, 이미지 로더, 호출 규약과 독립적입니다. `NEVERD_ENABLE_CPU_EMULATION`으로 단독 빌드할 수 있고, `NEVERD_ENABLE_DRIVER_EMULATION`은 Windows 드라이버 모델도 포함합니다. [아키텍처 안내서](architecture.md)는 소유권, 백엔드 선택, 플랫폼 제한을 설명합니다.
 
+`NEVERD_ENABLE_SEMANTIC_TESTS`의 기본값은 `ON`이며 `unittests/semantic`의 테스트 그룹과 통합 실행 대상을 제어합니다. Unicorn 없이 네이티브 CPU 테스트를 빌드하려면 `BUILD_TESTING=ON`을 유지하고 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`를 설정합니다. 적절한 SDK 헤더가 있는 Windows ARM64/MSVC를 포함하여 네이티브 KVM/WHP 테스트를 계속 빌드할 수 있습니다. Windows ARM64에서 Unicorn을 활성화하려면 ARM64 LLVM-MinGW 도구 모음이 필요합니다. 이 빌드 분리는 ARM64 네이티브 실행 검증을 의미하지 않습니다.
+
 ## 구성
 
 공개 [`ExecutionConfiguration`](../../include/neverd/emulation/ExecutionConfiguration.h)은 CPU 팩토리와 기능 보고서에서 함께 사용됩니다. CPU 할당이나 주소 공간 연결 전에 요구사항을 검증합니다. 생략한 값은 계약의 고정 프로필을 사용하고, 명시한 미지원 값은 실패합니다.
