@@ -86,7 +86,7 @@ L’enumerazione finita può osservare tuple ammissibili senza cambiare la query
 
 La visita delle dipendenze di controllo riporta le dipendenze dai bit della radice solo dopo un’analisi completa. Il recupero può omettere l’enumerazione facoltativa degli indirizzi dell’immagine quando un indirizzo relativo dimostrato conserva almeno 32 bit alti liberi della radice; ciò non dimostra la raggiungibilità e non elimina mai l’accesso alla memoria.
 
-La stessa analisi delle dipendenze della radice protegge la proiezione affine dei controlli a larghezza completa. Il risultato è locale a un predicato d’arco; domini troppo grandi producono un rifiuto incompleto esterno alla cache matematica. Le maschere ristrette vengono riprovate e solo le normali prove di fattibilità autorizzano un arco.
+La stessa analisi delle dipendenze della radice protegge la proiezione affine dei controlli a larghezza completa. Il risultato è locale a un predicato d’arco; domini troppo grandi producono un rifiuto incompleto esterno alla cache matematica. Le maschere ristrette vengono riprovate. La gestione esistente della fattibilità resta indipendente; il rifiuto del dominio non dimostra né la raggiungibilità né l’irraggiungibilità di un arco.
 
 `modelInterpreterMachineStateX64` e il wrapper sorgente condividono un generatore per sottoregistri ospiti, flag impacchettati, stato del profilo e flusso di controllo. Il modello sostituisce solo gli accessi all’oggetto di stato con byte di registro espliciti e separa lo stato dal RAX ospite. Non possiede la semantica del compilatore o la politica di prova; dominio di ingresso, osservazioni, contratto del frame e verifica completa del raffinamento restano al chiamante.
 

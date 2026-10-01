@@ -86,7 +86,7 @@ L’énumération finie peut observer des tuples réalisables sans modifier la r
 
 Le parcours des dépendances de contrôle ne rapporte les dépendances aux bits de la racine qu’après une analyse complète. La récupération peut omettre l’énumération facultative des adresses de l’image lorsqu’une adresse relative prouvée conserve au moins 32 bits de poids fort libres ; cela ne prouve aucune accessibilité et ne supprime jamais l’accès mémoire.
 
-La même analyse des dépendances de la racine protège la projection affine des contrôles sur toute leur largeur. Son résultat est local à un prédicat d’arête ; les domaines trop grands produisent un refus incomplet hors du cache mathématique. Les masques étroits sont réessayés, et seules les preuves ordinaires de faisabilité autorisent une arête.
+La même analyse des dépendances de la racine protège la projection affine des contrôles sur toute leur largeur. Son résultat est local à un prédicat d’arête ; les domaines trop grands produisent un refus incomplet hors du cache mathématique. Les masques étroits sont réessayés. Le traitement existant de la faisabilité reste indépendant ; le refus du domaine ne prouve ni l’accessibilité ni l’inaccessibilité d’une arête.
 
 `modelInterpreterMachineStateX64` et l’enveloppe source partagent le générateur des sous-registres invités, des drapeaux empaquetés, du statut du profil et du contrôle. Le modèle remplace seulement les accès à l’objet d’état par des octets de registre explicites et sépare le statut de RAX invité. La sémantique du compilateur et la politique de preuve restent extérieures ; l’appelant possède le domaine d’entrée, les observations, le contrat de cadre et la vérification complète du raffinement.
 

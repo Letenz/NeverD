@@ -86,7 +86,7 @@ Die endliche Werteaufzählung darf mögliche Tupel beobachten, ohne die Beweisab
 
 Die Analyse der Kontrollabhängigkeiten meldet Bitabhängigkeiten der Wurzel nur nach einem vollständigen Durchlauf. Die Wiederherstellung darf die optionale Aufzählung von Abbildadressen auslassen, wenn eine bewiesene relative Adresse mindestens 32 freie obere Wurzelbits behält; dies beweist keine Erreichbarkeit und entfernt niemals den Speicherzugriff.
 
-Dieselbe Analyse der Wurzelabhängigkeiten sichert die affine Steuerprojektion über die volle Bitbreite ab. Ihr Ergebnis gilt nur für ein Kantenprädikat; zu große Wertebereiche führen zu einem unvollständigen Ablehnungsergebnis außerhalb des mathematischen Caches. Schmale Masken werden erneut geprüft, und nur reguläre Erfüllbarkeitsbeweise bestätigen eine Kante.
+Dieselbe Analyse der Wurzelabhängigkeiten sichert die affine Steuerprojektion über die volle Bitbreite ab. Ihr Ergebnis gilt nur für ein Kantenprädikat; zu große Wertebereiche führen zu einem unvollständigen Ablehnungsergebnis außerhalb des mathematischen Caches. Schmale Masken werden erneut geprüft. Die bestehende Behandlung der Erfüllbarkeit bleibt unabhängig; die Ablehnung eines Wertebereichs beweist weder die Erreichbarkeit noch die Unerreichbarkeit einer Kante.
 
 `modelInterpreterMachineStateX64` und der Quelltext-Wrapper teilen einen Generator für Gast-Teilregister, gepackte Flags, Profilstatus und Kontrollfluss. Das Modell ersetzt nur Zugriffe auf das Zustandsobjekt durch explizite Registerbytes und trennt den Status vom Gast-RAX. Compilersemantik und Beweisstrategie gehören nicht zu diesem Modell; Eintrittsdomäne, Beobachtungen, Rahmenvertrag und vollständige Verfeinerungsprüfung bleiben Aufgabe des Aufrufers.
 
