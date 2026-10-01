@@ -1448,9 +1448,23 @@ bool MedLLVMEmitter::valueIsAuthenticatedModelZero(const MedVar &V) const {
 
 bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,
                                                 const MedVar *Forbidden) const {
+  // The ordinary budget decides almost every proof. Exhaustion leaves a proof
+  // undecided; when the closed-graph proof cannot decide it either, retry it
+  // once with the escalated budget. A depth or structural rejection is final.
+  auto proveEscalating = [&]() {
+    bool Exhausted = false;
+    if (valueIsStableAddressOffsetImpl(V, Forbidden,
+                                       limits::kMaxScalarOffsetProofNodes,
+                                       /*FinalAttempt=*/false, Exhausted))
+      return true;
+    return Exhausted &&
+           valueIsStableAddressOffsetImpl(
+               V, Forbidden, limits::kMaxEscalatedScalarOffsetProofNodes,
+               /*FinalAttempt=*/true, Exhausted);
+  };
   if (!CurMedFunc) {
     ++AddressProvenanceWork.StableOffsetProofs;
-    return valueIsStableAddressOffsetImpl(V, Forbidden);
+    return proveEscalating();
   }
   if (StableOffsetCacheFor != CurMedFunc) {
     StableOffsetCacheFor = CurMedFunc;
@@ -1477,14 +1491,17 @@ bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,
     return false;
 
   ++AddressProvenanceWork.StableOffsetProofs;
-  const bool Result = valueIsStableAddressOffsetImpl(V, Forbidden);
+  const bool Result = proveEscalating();
   ActiveProofs.erase(ActiveKey);
   StableOffsetCache.emplace(Key, Result);
   return Result;
 }
 
-bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
-    const MedVar &V, const MedVar *Forbidden) const {
+bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
+                                                    const MedVar *Forbidden,
+                                                    int ProofNodeBudget,
+                                                    bool FinalAttempt,
+                                                    bool &Exhausted) const {
   const char *FirstRejectionReason = nullptr;
   MedVar FirstRejectedValue = V;
   int FirstRejectionDepth = -1;
@@ -1913,7 +1930,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   // The proof is deliberately bounded. Memoized acyclic paths still leave
   // substantial work in frame-backed index loops, so allow enough expansions
   // for those complete proofs without accepting any partial result.
-  int RemainingProofNodes = 16384;
+  int RemainingProofNodes = ProofNodeBudget;
   // Identify only value-producing recurrence edges.  This is deliberately
   // separate from generic use/def reachability: a PHI used as a SELECT
   // condition or shift/mask control does not anchor the selected scalar.
@@ -3130,7 +3147,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   bool Result = prove(V, 0, {}, {}, {});
   if (!Result && RemainingProofNodes <= 0)
     Result = proveClosedScalarGraph(V);
-  if (!Result)
+  Exhausted = !Result && RemainingProofNodes <= 0;
+  if (!Result && (FinalAttempt || !Exhausted))
     detail::failure_snapshot::scalarOffsetRejection(
         CurMedFunc, V, Forbidden, FirstRejectionReason, FirstRejectedValue,
         FirstRejectionDepth, RemainingProofNodes, RemainingFrameRootNodes,

@@ -188,7 +188,10 @@ TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
   // word/pointer Swift record, rather than mirroring our byte/int128 types.
   const auto Program = Source + R"(
 static unsigned seen, count;
-void *dynamic_oracle(void *, void *, _Bool) __asm__("_swift_getDynamicType");
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
+void *dynamic_oracle(void *, void *, _Bool)
+    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "swift_getDynamicType");
 void *dynamic_oracle(void *value, void *metadata, _Bool flag) {
   seen = flag;
   ++count;
