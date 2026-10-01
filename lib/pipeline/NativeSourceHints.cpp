@@ -111,6 +111,7 @@ bool stackCheckFailureBinding(const BinaryImage &Image, const MedOp &Op,
       Binding.ReturnedArgument || Binding.RuntimeObjCResultType ||
       !Binding.Selector.empty() || !Binding.OwnerClass.empty() ||
       Binding.SelectorReferenceAddress || !Binding.BorrowedByteInputs.empty() ||
+      !Binding.SwiftStaticStringInputs.empty() ||
       !Binding.SwiftStringInputs.empty() || Binding.Format ||
       Binding.NilTerminated || Binding.SwiftTypeMetadata || Binding.Receiver ||
       Binding.SelectorResultUse || Binding.SelectorResultTypeUse ||

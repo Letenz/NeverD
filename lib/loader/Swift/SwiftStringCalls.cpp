@@ -114,4 +114,31 @@ bool isCanonicalSwiftSmallString(uint64_t Payload, uint64_t TaggedPayload) {
   return ASCII == bool(Marker & 0x40) &&
          llvm::isLegalUTF8String(&Start, Start + Count);
 }
+
+std::optional<SwiftLiteralString>
+swiftStaticStringLiteral(const BinaryImage &Image, uint64_t Data,
+                         uint64_t ByteCount, uint8_t Flags) {
+  // StaticString.swift stores either an immutable UTF-8 pointer (low bit 0)
+  // or a Unicode scalar (low bit 1); bit 1 records known ASCII contents.
+  // https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/core/StaticString.swift
+  if ((Flags != 0 && Flags != 2) || ByteCount > 1024 * 1024)
+    return std::nullopt;
+  const auto Bytes = readImmutableImageBytes(Image, Data, ByteCount);
+  if (!Bytes ||
+      (Flags == 2 && std::any_of(Bytes->begin(), Bytes->end(),
+                                 [](uint8_t Byte) { return Byte >= 0x80; })))
+    return std::nullopt;
+  if (!Bytes->empty()) {
+    const auto *Start = reinterpret_cast<const llvm::UTF8 *>(Bytes->data());
+    if (!llvm::isLegalUTF8String(&Start, Start + Bytes->size()))
+      return std::nullopt;
+  }
+  return SwiftLiteralString{Data, static_cast<uint32_t>(ByteCount)};
+}
+
+bool isCanonicalSwiftStaticStringScalar(uint64_t Data, uint64_t ByteCount,
+                                        uint8_t Flags) {
+  return !ByteCount && Data <= 0x10ffff &&
+         !(Data >= 0xd800 && Data <= 0xdfff) && Flags == (Data < 0x80 ? 3 : 1);
+}
 } // namespace neverd

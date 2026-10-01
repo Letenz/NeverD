@@ -217,6 +217,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.DoesNotReturn || Hint.WeakImport || Hint.ReturnedArgument ||
        Hint.RuntimeObjCResultType || Hint.ValueWitness ||
        !Hint.OwnerClass.empty() || !Hint.BorrowedByteInputs.empty() ||
+       !Hint.SwiftStaticStringInputs.empty() ||
        !Hint.SwiftStringInputs.empty() || Hint.SwiftTypeMetadata ||
        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
@@ -438,12 +439,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
         Hint.ValueWitness || Hint.Receiver || !Hint.Selector.empty() ||
         !Hint.OwnerClass.empty() || Hint.SelectorReferenceAddress ||
-        !Hint.BorrowedByteInputs.empty() || !Hint.SwiftStringInputs.empty() ||
-        Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
-        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
-        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
-        Hint.SelectorArgumentStorageUse || Hint.ObjCIndirectResultStorage ||
-        Hint.ByteCount || Hint.ImmutablePointerSlot ||
+        !Hint.BorrowedByteInputs.empty() ||
+        !Hint.SwiftStaticStringInputs.empty() ||
+        !Hint.SwiftStringInputs.empty() || Hint.Format || Hint.NilTerminated ||
+        Hint.SwiftTypeMetadata || Hint.SelectorResultUse ||
+        Hint.SelectorResultTypeUse || Hint.SelectorArgumentTypeUse ||
+        Hint.SelectorForwardingUse || Hint.SelectorArgumentStorageUse ||
+        Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
+        Hint.ImmutablePointerSlot ||
         std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
                     [](const auto &Parameter) {
                       return !Parameter.Type ||
