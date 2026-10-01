@@ -49,7 +49,7 @@ struct Program {
     Function.Blocks.push_back(std::move(B));
   }
 
-  void instruction(std::initializer_list<LowOp> Ops) {
+  void instruction(llvm::ArrayRef<LowOp> Ops) {
     auto &B = Function.Blocks.back();
     LowInstructionBoundary IB;
     IB.Address = B.EndAddr++;
@@ -452,6 +452,272 @@ TEST(LowIRLoopAlignment, LeadingPhasesPreserveFinalStateAndOriginalEvidence) {
                                                 P.Contract, *R.Plan);
   EXPECT_EQ(Missing.Status, LowIRRefinementStatus::Unsupported);
   EXPECT_FALSE(Missing.Certificate);
+}
+
+// Independently authored partial-word arithmetic loops keep all outside bits.
+struct CounterLane {
+  unsigned Offset, Bytes;
+  bool Register, Increment;
+  unsigned WholeBytes = 8, FrameOffset = 0;
+  llvm::endianness ByteOrder = llvm::endianness::little;
+};
+Program partialCounterLoop(CounterLane S, unsigned Loops = 2,
+                           bool WholeGuard = false, bool NoProgress = false,
+                           bool Bypass = false, bool Clobber = false) {
+  Program P;
+  P.Contract.ByteOrder = S.ByteOrder;
+  P.Contract.Frame->Begin = S.FrameOffset;
+  const auto At = [](unsigned Id) { return (Id + 1) * 0x100; };
+  const auto Load = [&](unsigned Offset, unsigned Bytes) -> std::vector<LowOp> {
+    if (S.Register)
+      return {op(NdOp::COPY, t(8, Bytes), {NdVar::reg(56 + Offset, Bytes)})};
+    return {op(NdOp::INT_ADD, t(0), {r(32), n(S.FrameOffset + Offset)}),
+            op(NdOp::LOAD, t(8, Bytes), {t(0)})};
+  };
+  P.block(0, At(0), {1});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::STORE, {}, {t(0), n(0)})});
+  P.branch(At(1));
+  for (unsigned I = 0; I != Loops; ++I) {
+    unsigned Init = 1 + 3 * I, Header = Init + 1, Body = Init + 2;
+    P.block(Init, At(Init),
+            Bypass && I + 1 == Loops ? std::vector<int>{int(Header), int(Body)}
+                                     : std::vector<int>{int(Header)});
+    if (S.Register)
+      P.instruction({op(NdOp::COPY, r(56), {r(8 * (I + 1))})});
+    else
+      P.instruction(
+          {op(NdOp::INT_ADD, t(0), {r(32), n(S.FrameOffset)}),
+           op(NdOp::STORE, {}, {t(0), NdVar::reg(8 * (I + 1), S.WholeBytes)})});
+    if (Bypass && I + 1 == Loops)
+      P.instruction({op(NdOp::INT_NOTEQUAL, t(0, 1), {r(40), n(0)}),
+                     op(NdOp::COND_BR, {}, {n(At(Body)), t(0, 1)})});
+    else
+      P.branch(At(Header));
+    P.block(Header, At(Header), {int(Body), int(Init + 3)});
+    unsigned GBytes = WholeGuard ? S.WholeBytes : S.Bytes,
+             GOffset = WholeGuard ? 0 : S.Offset;
+    auto Guard = Load(GOffset, GBytes);
+    Guard.push_back(
+        op(NdOp::INT_EQUAL, t(16, 1),
+           {t(8, GBytes), n(S.Increment ? UINT64_MAX : 0, GBytes)}));
+    Guard.push_back(op(NdOp::COND_BR, {}, {n(At(Init + 3)), t(16, 1)}));
+    P.instruction(Guard);
+    P.block(Body, At(Body), {int(Header)});
+    P.add(3 + 2 * I);
+    if (!NoProgress || I + 1 != Loops) {
+      auto Step = Load(S.Offset, S.Bytes);
+      Step.push_back(op(S.Increment ? NdOp::INT_ADD : NdOp::INT_SUB,
+                        t(16, S.Bytes), {t(8, S.Bytes), n(1, S.Bytes)}));
+      if (S.Register)
+        Step.push_back(op(NdOp::COPY, NdVar::reg(56 + S.Offset, S.Bytes),
+                          {t(16, S.Bytes)}));
+      else
+        Step.push_back(op(NdOp::STORE, {}, {t(0), t(16, S.Bytes)}));
+      P.instruction(Step);
+    }
+    P.branch(At(Header));
+  }
+  unsigned End = 1 + 3 * Loops;
+  P.block(End, At(End), {});
+  if (S.Register)
+    P.instruction({op(NdOp::STORE, {}, {r(32), r(56)})});
+  if (Clobber) {
+    unsigned NumericOffset = S.ByteOrder == llvm::endianness::big && !S.Register
+                                 ? S.WholeBytes - S.Offset - S.Bytes
+                                 : S.Offset;
+    unsigned Bit = NumericOffset == 0 ? S.WholeBytes * 8 - 1 : 0;
+    P.instruction(
+        {op(NdOp::INT_ADD, t(0), {r(32), n(S.FrameOffset)}),
+         op(NdOp::LOAD, t(8, S.WholeBytes), {t(0)}),
+         op(NdOp::INT_XOR, t(16, S.WholeBytes),
+            {t(8, S.WholeBytes), n(uint64_t{1} << Bit, S.WholeBytes)}),
+         op(NdOp::STORE, {}, {t(0), t(16, S.WholeBytes)})});
+  }
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::LOAD, r(0), {t(0)}), op(NdOp::RETURN, {}, {r(0)})});
+  return P;
+}
+
+TEST(LowIRLoopAlignment, PartialCounterLanesPreserveFullState) {
+  for (bool Register : {false, true})
+    for (bool Increment : {false, true})
+      for (const auto &[Offset, Bytes] :
+           {std::pair{0U, 1U}, {0U, 2U}, {2U, 3U}, {7U, 1U}, {1U, 7U}}) {
+        SCOPED_TRACE(::testing::Message() << Register << ':' << Increment << ':'
+                                          << Offset << ':' << Bytes);
+        const CounterLane Lane{Offset, Bytes, Register, Increment};
+        const auto P = partialCounterLoop(Lane);
+        const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        const auto Proof = checkLowIRLoopRefinement(
+            P.Function, P.Records, P.Function, P.Contract, *R.Plan);
+        ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        auto Wrong = partialCounterLoop(Lane, 2, false, false, false, true);
+        const auto Bad = checkLowIRLoopRefinement(
+            P.Function, P.Records, Wrong.Function, P.Contract, *R.Plan);
+        EXPECT_EQ(Bad.Status, LowIRRefinementStatus::Different)
+            << Bad.Diagnostic;
+        EXPECT_FALSE(Bad.Certificate);
+      }
+  const auto P = partialCounterLoop({0, 1, false, false});
+  const auto Automatic = P.check(P);
+  EXPECT_TRUE(Automatic.proved()) << Automatic.Diagnostic;
+}
+
+TEST(LowIRLoopAlignment, PartialCounterLanesRespectByteOrderAndFrameEnds) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (bool Increment : {false, true})
+      for (bool Partial : {false, true}) {
+        const CounterLane Lane{
+            1,    1, false, Increment, Partial ? 3U : 8U, Partial ? 5U : 0U,
+            Order};
+        const auto P = partialCounterLoop(Lane);
+        const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        const auto Proof = checkLowIRLoopRefinement(
+            P.Function, P.Records, P.Function, P.Contract, *R.Plan);
+        ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        auto Wrong = partialCounterLoop(Lane, 2, false, false, false, true);
+        const auto Bad = checkLowIRLoopRefinement(
+            P.Function, P.Records, Wrong.Function, P.Contract, *R.Plan);
+        EXPECT_EQ(Bad.Status, LowIRRefinementStatus::Different)
+            << Bad.Diagnostic;
+        EXPECT_FALSE(Bad.Certificate);
+      }
+}
+
+TEST(LowIRLoopAlignment, PartialCounterLanesRejectNonProgressAndUnguardedWrap) {
+  for (bool Increment : {false, true})
+    for (bool WholeGuard : {false, true}) {
+      const auto P = partialCounterLoop({0, 1, false, Increment}, 2, WholeGuard,
+                                        !WholeGuard);
+      const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::Unsupported)
+          << R.Diagnostic;
+      EXPECT_FALSE(R.Plan);
+      EXPECT_GE(R.RankCandidates, 2U);
+    }
+}
+
+TEST(LowIRLoopAlignment, PartialLaneGuardsCannotExcludeAdditionalEntrances) {
+  const CounterLane Lane{0, 1, false, false};
+  const auto P = partialCounterLoop(Lane);
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  // This added entry can arrive at the decrement with a zero lane. The loop
+  // may still terminate after one wrap, but the old guarded plan is invalid.
+  const auto Bypass = partialCounterLoop(Lane, 2, false, false, true);
+  const auto Bad =
+      checkLowIRLoopRefinement(Bypass.Function, Bypass.Records, Bypass.Function,
+                               Bypass.Contract, *R.Plan);
+  EXPECT_EQ(Bad.Status, LowIRRefinementStatus::Different) << Bad.Diagnostic;
+  EXPECT_FALSE(Bad.Certificate);
+}
+
+TEST(LowIRLoopAlignment, PartialCounterLanesRespectInferenceBudgets) {
+  const auto P = partialCounterLoop({2, 3, false, false});
+  const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  LowIRLoopInferenceLimits Limits;
+  Limits.MaxRankCandidates = Good.RankCandidates;
+  Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+  const auto Exact =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits);
+  ASSERT_TRUE(Exact.inferred()) << Exact.Diagnostic;
+  EXPECT_EQ(Exact.SolverQueries, Good.SolverQueries);
+  EXPECT_EQ(Exact.RankCandidates, Good.RankCandidates);
+  for (bool ShortRanks : {false, true}) {
+    auto Short = Limits;
+    if (ShortRanks)
+      --Short.MaxRankCandidates;
+    else
+      --Short.Execution.MaxSolverQueries;
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short);
+    EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << R.Diagnostic;
+    EXPECT_FALSE(R.Plan);
+    EXPECT_LE(R.SolverQueries, Short.Execution.MaxSolverQueries);
+    EXPECT_LE(R.RankCandidates, Short.MaxRankCandidates);
+  }
+  Limits.Execution.MaxSymbolicNodes = 64;
+  const auto Nodes =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits);
+  EXPECT_EQ(Nodes.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_FALSE(Nodes.Plan);
+}
+
+TEST(LowIRLoopAlignment, SingleCutPartialCounterLanesKeepScalarSearch) {
+  for (bool Register : {false, true})
+    for (bool Increment : {false, true}) {
+      const auto P = partialCounterLoop({2, 3, Register, Increment}, 1);
+      const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+      const auto Proof = checkLowIRLoopRefinement(
+          P.Function, P.Records, P.Function, P.Contract, *R.Plan);
+      EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    }
+}
+
+// The second byte's recurrence is hidden until the first byte becomes zero.
+Program delayedLaneCounter() {
+  Program P;
+  P.block(0, 0x100, {1});
+  P.instruction({op(NdOp::INT_AND, t(0), {r(8), n(0xffff)}),
+                 op(NdOp::INT_OR, t(8), {t(0), n(0x10000)}),
+                 op(NdOp::STORE, {}, {r(32), t(8)}),
+                 op(NdOp::STORE, {}, {r(32), n(1, 1)}),
+                 op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::STORE, {}, {t(0), n(0)})});
+  P.branch(0x200);
+  P.block(1, 0x200, {2, 5});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(1)}),
+                 op(NdOp::LOAD, t(8, 1), {t(0)}),
+                 op(NdOp::INT_EQUAL, t(16, 1), {t(8, 1), n(0, 1)}),
+                 op(NdOp::COND_BR, {}, {n(0x600), t(16, 1)})});
+  P.block(2, 0x300, {3, 4});
+  P.instruction({op(NdOp::LOAD, t(0, 1), {r(32)}),
+                 op(NdOp::INT_EQUAL, t(8, 1), {t(0, 1), n(0, 1)}),
+                 op(NdOp::COND_BR, {}, {n(0x500), t(8, 1)})});
+  P.block(3, 0x400, {1});
+  P.instruction({op(NdOp::LOAD, t(0, 1), {r(32)}),
+                 op(NdOp::INT_SUB, t(8, 1), {t(0, 1), n(1, 1)}),
+                 op(NdOp::STORE, {}, {r(32), t(8, 1)})});
+  P.branch(0x200);
+  P.block(4, 0x500, {1});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(1)}),
+                 op(NdOp::LOAD, t(8, 1), {t(0)}),
+                 op(NdOp::INT_SUB, t(16, 1), {t(8, 1), n(1, 1)}),
+                 op(NdOp::STORE, {}, {t(0), t(16, 1)})});
+  P.branch(0x200);
+  P.block(5, 0x600, {6});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::STORE, {}, {t(0), n(2)})});
+  P.branch(0x700);
+  P.block(6, 0x700, {7, 8});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::LOAD, t(8), {t(0)}),
+                 op(NdOp::INT_EQUAL, t(16, 1), {t(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x900), t(16, 1)})});
+  P.block(7, 0x800, {6});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::LOAD, t(8), {t(0)}),
+                 op(NdOp::INT_SUB, t(16), {t(8), n(1)}),
+                 op(NdOp::STORE, {}, {t(0), t(16)})});
+  P.branch(0x700);
+  P.block(8, 0x900, {});
+  P.instruction({op(NdOp::LOAD, r(0), {r(32)}), op(NdOp::RETURN, {}, {r(0)})});
+  return P;
+}
+
+TEST(LowIRLoopAlignment, KnownCounterDiscoversLaterPreservedLane) {
+  const auto P = delayedLaneCounter();
+  const va_t Cuts[] = {0x300, 0x800};
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  const auto Proof = checkLowIRLoopRefinement(P.Function, P.Records, P.Function,
+                                              P.Contract, *R.Plan);
+  EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
 }
 
 TEST(LowIRLoopAlignment, InternalDiamondsDoNotSplitLoopPhases) {

@@ -211,6 +211,10 @@ struct LowIRLoopInferenceResult {
 /// phase, charged as a separate rank attempt. It can cover sequential counter
 /// resets only when nonincreasing phase constraints have no positive cycle.
 /// Every feasible transition still proves the complete tuple decreases.
+/// Unit recurrences can update a byte-aligned lane while preserving all other
+/// bits. Multi-cut templates propose endpoint exclusions for such lanes only
+/// after proving them on saved and current arrivals; widening prunes failures
+/// without reseeding them. Full-word ranks and observations remain unchanged.
 /// Every cycle must cross a selected cut. Unreachable prefixes, unmatched
 /// control and rank families outside this bounded search remain unsupported.
 /// Single-cut coverage checks include every originally reachable block and
