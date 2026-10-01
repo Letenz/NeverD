@@ -573,6 +573,74 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftPublishedInitializerTransportsOpaqueStorage) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  auto Image = runtime_function_address_test::image(Architecture);
+  const va_t Slot = runtime_function_address_test::Slot;
+  const std::string Name = "_$s7Combine9PublishedV12initialValueACyxGx_tcfC";
+  Image.ImportPtrSlots[Slot] = Name;
+  Image.DyldBindSlots[Slot] = {
+      Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  HighFunc Function;
+  Function.Name = "recovered_published";
+  Function.ReturnType = NdType::makeVoid();
+  std::vector<ExprPtr> Arguments;
+  for (unsigned I = 0; I < 3; ++I) {
+    Function.Params.push_back({"arg" + std::to_string(I), Pointer});
+    Arguments.push_back(parameter(I, Pointer));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val = call(*Hint, Function.ReturnType, Arguments);
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, true, Architecture);
+  ASSERT_NE(Source.find("swift_indirect_result"), std::string::npos);
+  const auto Program = Source + R"(
+#include <string.h>
+struct TypeMetadata { unsigned size, calls; };
+void __attribute__((swiftcall)) published_oracle(
+    void * __attribute__((swift_indirect_result)), void *, struct TypeMetadata *)
+    __asm__("_$s7Combine9PublishedV12initialValueACyxGx_tcfC");
+void __attribute__((swiftcall)) published_oracle(
+    void *result __attribute__((swift_indirect_result)), void *value,
+    struct TypeMetadata *metadata) {
+  volatile unsigned char *out = result;
+  unsigned char *in = value;
+  for (unsigned i = 0; i < metadata->size; ++i) {
+    out[i] = in[i];
+    in[i] = 0;
+  }
+  ++metadata->calls;
+}
+int main(void) {
+  for (unsigned n = 0; n < 80; ++n) {
+    struct TypeMetadata metadata = {n, 0};
+    unsigned char input[80], output[82];
+    for (unsigned i = 0; i < 80; ++i) input[i] = (unsigned char)(i * 7 + n);
+    memset(output, 0xa5, sizeof(output));
+    recovered_published(output + 1, input, &metadata);
+    if (metadata.calls != 1 || output[0] != 0xa5 || output[n + 1] != 0xa5) return 1;
+    for (unsigned i = 0; i < n; ++i)
+      if (input[i] || output[i + 1] != (unsigned char)(i * 7 + n)) return 2;
+    for (unsigned i = n; i < 80; ++i)
+      if (input[i] != (unsigned char)(i * 7 + n)) return 3;
+    for (unsigned i = n + 1; i < sizeof(output); ++i)
+      if (output[i] != 0xa5) return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}
+
 TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
   constexpr va_t Base = 0x1008;
   constexpr va_t Slot = 0x2000;

@@ -2502,8 +2502,20 @@ swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
   return Hint;
 }
 
-inline std::optional<SourceCallTypeHint>
-swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
+struct SwiftWitnessRuntimeIdentity {
+  std::string ClassName;
+  std::string ProtocolSymbol;
+};
+
+inline std::optional<SwiftWitnessRuntimeIdentity>
+swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
+                            const llvm::SwiftDemangleNode &Conformance);
+
+inline std::optional<SourceCallTypeHint> swiftWitnessTableAddressHint(
+    const BinaryImage &Image, va_t Address,
+    std::optional<SwiftWitnessRuntimeIdentity> *RuntimeIdentity = nullptr) {
+  if (RuntimeIdentity)
+    RuntimeIdentity->reset();
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous)
@@ -2554,8 +2566,16 @@ swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
     else if (Export.Addr == Address || Export.Name == Table->Name)
       return std::nullopt;
   }
-  if (MatchingExports != 1)
-    return std::nullopt;
+  if (MatchingExports != 1) {
+    if (MatchingExports)
+      return std::nullopt;
+    const auto Identity = swiftPrivateWitnessIdentity(
+        Image, Address, Parsed.Root->Children[0].Children[0]);
+    if (!Identity)
+      return std::nullopt;
+    if (RuntimeIdentity)
+      *RuntimeIdentity = Identity;
+  }
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress;
   Hint.TargetAddress = Address;
@@ -4875,6 +4895,208 @@ classObjectIdentities(const BinaryImage &Image) {
       Publish(*Meta, {SourceCallTypeHint::Kind::RuntimeMetaclass, Class.Name});
   }
   return Result;
+}
+
+// A nongeneric, unique conformance's registered witness pattern is exactly
+// the table returned by swift_conformsToProtocol for its class metadata and
+// protocol descriptor. Keep this identity proof shared by binding, validation
+// and rendering; the private table itself is not a linkable source symbol.
+// ABI: swift-6.0.3-RELEASE/include/swift/ABI/{Metadata,MetadataValues}.h.
+inline std::optional<SwiftWitnessRuntimeIdentity>
+swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
+                            const llvm::SwiftDemangleNode &Conformance) {
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind, size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
+                             llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Index &&
+           Node.Children.empty() && !Node.Text->empty() &&
+           Node.Text->size() <= 128 &&
+           std::all_of(Node.Text->begin(), Node.Text->end(),
+                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
+  };
+  if (!Shape(Conformance, "ProtocolConformance", 3) ||
+      !Shape(Conformance.Children[0], "Type", 1) ||
+      !Shape(Conformance.Children[1], "Type", 1) ||
+      !Identifier(Conformance.Children[2], "Module"))
+    return std::nullopt;
+  const auto &Class = Conformance.Children[0].Children[0];
+  const auto &Protocol = Conformance.Children[1].Children[0];
+  if (!Shape(Class, "Class", 2) || !Shape(Protocol, "Protocol", 2) ||
+      !Identifier(Class.Children[0], "Module") ||
+      !Identifier(Class.Children[1], "Identifier") ||
+      !Identifier(Protocol.Children[0], "Module") ||
+      !Identifier(Protocol.Children[1], "Identifier") ||
+      Class.Children[0].Text != Conformance.Children[2].Text ||
+      Protocol.Children[0].Text != Conformance.Children[2].Text)
+    return std::nullopt;
+  const auto &ModuleName = *Class.Children[0].Text;
+  if (ModuleName == "__C" || ModuleName == "__C_Synthesized" || Address % 8)
+    return std::nullopt;
+  const auto Descriptor = readImmutableImagePointer(Image, Address);
+  const auto Bytes = Descriptor && *Descriptor % 4 == 0
+                         ? readImmutableImageBytes(Image, *Descriptor, 16)
+                         : std::nullopt;
+  if (!Bytes || llvm::support::endian::read32le(Bytes->data() + 12))
+    return std::nullopt;
+  const auto Type = swiftRelativeAddress(Image, *Descriptor + 4);
+  const auto Pattern = swiftRelativeAddress(Image, *Descriptor + 8);
+  const auto ProtocolAt = [&](va_t Field) -> std::optional<va_t> {
+    const auto Encoded = swiftRelativeAddress(Image, Field);
+    if (!Encoded)
+      return std::nullopt;
+    return *Encoded & 1 ? readImmutableImagePointer(Image, *Encoded - 1)
+                        : Encoded;
+  };
+  const auto ProtocolAddress = ProtocolAt(*Descriptor);
+  if (!Type || !Pattern || *Pattern != Address || !ProtocolAddress)
+    return std::nullopt;
+  const auto ProtocolSymbol =
+      swiftDirectTypeMetadataDescriptor(Image, *ProtocolAddress);
+  if (!ProtocolSymbol || !swiftProtocolDescriptor(*ProtocolSymbol))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(*ProtocolSymbol, Options);
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "ProtocolDescriptor", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
+    return std::nullopt;
+  const auto &Exported = Parsed.Root->Children[0].Children[0].Children[0];
+  if (!Shape(Exported, "Protocol", 2) ||
+      !Identifier(Exported.Children[0], "Module") ||
+      !Identifier(Exported.Children[1], "Identifier") ||
+      Exported.Children[0].Text != Protocol.Children[0].Text ||
+      Exported.Children[1].Text != Protocol.Children[1].Text)
+    return std::nullopt;
+  const auto MatchesText = [&](va_t Target, const std::string &Text) {
+    const auto Data = readImmutableImageBytes(Image, Target, Text.size() + 1);
+    return Data && !std::memcmp(Data->data(), Text.c_str(), Text.size() + 1);
+  };
+  const auto MatchesDeclaration = [&](va_t Target, uint32_t Kind,
+                                      const std::string &Name) {
+    if (Target % 4)
+      return false;
+    const auto Header = readImmutableImageBytes(Image, Target, 12);
+    if (!Header)
+      return false;
+    const uint32_t Flags = llvm::support::endian::read32le(Header->data());
+    if ((Flags & 0xffff) != (Kind | 0x40) || (Flags & 0x40000) ||
+        (llvm::support::endian::read32le(Header->data() + 4) & 1))
+      return false;
+    const auto Parent = swiftRelativeAddress(Image, Target + 4);
+    const auto NameAddress = swiftRelativeAddress(Image, Target + 8);
+    const auto ParentBytes = Parent && *Parent % 4 == 0
+                                 ? readImmutableImageBytes(Image, *Parent, 12)
+                                 : std::nullopt;
+    if (!NameAddress || !MatchesText(*NameAddress, Name) || !ParentBytes ||
+        (llvm::support::endian::read32le(ParentBytes->data()) &
+         ~uint32_t(0x40)) ||
+        llvm::support::endian::read32le(ParentBytes->data() + 4))
+      return false;
+    const auto ParentName = swiftRelativeAddress(Image, *Parent + 8);
+    return ParentName && MatchesText(*ParentName, ModuleName);
+  };
+  if (!MatchesDeclaration(*Type, 16, *Class.Children[1].Text) ||
+      !MatchesDeclaration(*ProtocolAddress, 3, *Protocol.Children[1].Text))
+    return std::nullopt;
+  const objc::RuntimeData Data(Image);
+  if (!Data.supportsPlainObjectPointers())
+    return std::nullopt;
+  std::optional<SwiftWitnessRuntimeIdentity> Result;
+  va_t Metadata = InvalidVA;
+  for (const auto &[Object, Identity] : classObjectIdentities(Image)) {
+    if (Identity.Kind != SourceCallTypeHint::Kind::RuntimeClass ||
+        Object > InvalidVA - 72 ||
+        readInitialImagePointer(Image, Object + 64) != Type)
+      continue;
+    if (Result ||
+        !std::all_of(Identity.Name.begin(), Identity.Name.end(), [](char C) {
+          return llvm::isAlnum(C) || C == '_' || C == '.' || C == '$';
+        }))
+      return std::nullopt;
+    Metadata = Object;
+    Result = SwiftWitnessRuntimeIdentity{Identity.Name, *ProtocolSymbol};
+  }
+  if (!Result)
+    return std::nullopt;
+
+  const Section *Records = nullptr;
+  for (const auto &Section : Image.Sections)
+    if (Section.Name == "__swift5_proto") {
+      if (Records)
+        return std::nullopt;
+      Records = &Section;
+    }
+  if (!Records || Records->VA % 4 || !Records->Size || Records->Size % 4 ||
+      Records->Size / 4 > 65536 ||
+      !readImmutableImageBytes(Image, Records->VA, Records->Size))
+    return std::nullopt;
+  unsigned Registrations = 0;
+  for (uint64_t I = 0; I < Records->Size; I += 4) {
+    const auto Target = swiftRelativeAddress(Image, Records->VA + I);
+    const auto Header = Target && *Target % 4 == 0
+                            ? readImmutableImageBytes(Image, *Target, 16)
+                            : std::nullopt;
+    if (!Header)
+      return std::nullopt;
+    if (*Target == *Descriptor) {
+      if (++Registrations != 1)
+        return std::nullopt;
+      continue;
+    }
+    const uint32_t Flags = llvm::support::endian::read32le(Header->data() + 12);
+    auto OtherType = swiftRelativeAddress(Image, *Target + 4);
+    if (!OtherType)
+      return std::nullopt;
+    bool SameType = false;
+    switch ((Flags >> 3) & 7) {
+    case 0:
+      SameType = OtherType == Type;
+      break;
+    case 1:
+    case 3: {
+      const auto Indirect = readImmutableImagePointer(Image, *OtherType);
+      if (!Indirect) {
+        if (!isImmutableImageImportSlot(Image, *OtherType) ||
+            std::any_of(Image.Exports.begin(), Image.Exports.end(),
+                        [&](const auto &Export) {
+                          return Export.Addr == *Type ||
+                                 Export.Addr == Metadata;
+                        }))
+          return std::nullopt;
+        // This class and its descriptor have no external linkage, so a strong
+        // import cannot denote either private identity in this image.
+        break;
+      }
+      SameType = (Flags & 0x38) == 8 ? Indirect == Type : *Indirect == Metadata;
+      break;
+    }
+    case 2: {
+      const auto Name = Data.string(*OtherType);
+      if (!Name || !MatchesText(*OtherType, *Name))
+        return std::nullopt;
+      SameType = *Name == Result->ClassName;
+      break;
+    }
+    default:
+      return std::nullopt;
+    }
+    if (SameType) {
+      const auto OtherProtocol = ProtocolAt(*Target);
+      if (!OtherProtocol || OtherProtocol == ProtocolAddress)
+        return std::nullopt;
+    }
+  }
+  return Registrations == 1 ? Result : std::nullopt;
 }
 
 inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
@@ -8811,13 +9033,31 @@ renderObjCSwiftWitnessTableHelpers(const BinaryImage &Image,
                                    std::set<std::string> &SharedFunctions) {
   std::string Source;
   for (const auto &[Address, Symbol] : Tables) {
-    const auto Expected =
-        objc_binding_detail::swiftWitnessTableAddressHint(Image, Address);
+    std::optional<objc_binding_detail::SwiftWitnessRuntimeIdentity> Identity;
+    const auto Expected = objc_binding_detail::swiftWitnessTableAddressHint(
+        Image, Address, &Identity);
     if (!Expected || Expected->TargetName != Symbol)
       throw std::runtime_error("Swift witness table is no longer valid");
     const std::string Stem =
         "neverd_swift_witness_table_" + llvm::utohexstr(Address, true);
     SharedFunctions.insert(Stem + "_address");
+    if (Identity) {
+      // Runtime/Casting.h declares this query with the ordinary C ABI.
+      Source += "\n#include <objc/runtime.h>\nextern unsigned char " + Stem +
+                "_protocol[] __asm__(\"" + Identity->ProtocolSymbol + "\");\n";
+      Source += "extern const void *" + Stem +
+                "_query(const void *, const void *) "
+                "__asm__(\"_swift_conformsToProtocol\");\n";
+      Source += "uintptr_t " + Stem +
+                "_address(void) {\n"
+                "  const void *table = " +
+                Stem + "_query(objc_getClass(\"" + Identity->ClassName +
+                "\"), " + Stem +
+                "_protocol);\n"
+                "  if (!table) __builtin_trap();\n"
+                "  return (uintptr_t)table;\n}\n";
+      continue;
+    }
     Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
               Symbol + "\");\n";
     Source += "uintptr_t " + Stem +
