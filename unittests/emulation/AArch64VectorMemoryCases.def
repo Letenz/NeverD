@@ -1,0 +1,44 @@
+//===- AArch64VectorMemoryCases.def - Original SIMD RAM fixtures ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ARM_VECTOR_MEMORY_VALUE
+NEVERD_ARM_VECTOR_MEMORY_VALUE(Data, 0x800000)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(Interposed, 0xa00000)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(Alias, 0xc00000)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(MaxBytes, 32)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(RegisterCount, 2)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(FirstMemoryLow, 0xfedcba988654a210ULL)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(FirstMemoryHigh, 0x1029384756abcdefULL)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(SecondMemoryLow, 0x546372810fedcba9ULL)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(SecondMemoryHigh, 0x9182736455aa1122ULL)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(SecondVectorLow, 0x8877665544332211ULL)
+NEVERD_ARM_VECTOR_MEMORY_VALUE(SecondVectorHigh, 0xabcdef1234567890ULL)
+#endif
+#ifdef NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION
+// Name, load, width/count, first/second vector index, address bias/writeback,
+// and independent Clang-assembled word. Numeric Xn/Vn overlap is permitted.
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Read32, true, 4, 1, 0, 2, 0, 0, 0xbd400020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Write32, false, 4, 1, 0, 2, 0, 0,
+                                     0xbd000020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Read64, true, 8, 1, 0, 2, 0, 0, 0xfd400020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Write64, false, 8, 1, 0, 2, 0, 0,
+                                     0xfd000020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Read128, true, 16, 1, 0, 2, 0, 0,
+                                     0x3dc00020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(Write128, false, 16, 1, 0, 2, 0, 0,
+                                     0x3d800020)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PairRead128, true, 16, 2, 0, 2, 0, 0,
+                                     0xad400820)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PairWrite128, false, 16, 2, 0, 2, 0, 0,
+                                     0xad000820)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PostRead128, true, 16, 1, 1, 2, 0, 16,
+                                     0x3cc10421)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PreWrite128, false, 16, 1, 1, 2, 16, 16,
+                                     0x3c810c21)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PostPairRead128, true, 16, 2, 0, 2, 0, 32,
+                                     0xacc10820)
+NEVERD_ARM_VECTOR_MEMORY_INSTRUCTION(PrePairWrite128, false, 16, 2, 0, 2, 32,
+                                     32, 0xad810820)
+#endif

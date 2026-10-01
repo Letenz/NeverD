@@ -1,6 +1,6 @@
 **Языки**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: be549fe099b995953042c5f7e2d9d9ac5518a5d864da034aed1b81c259f03c12 -->
+<!-- i18n-source: 01f79c2abec607fec292571fdf1bbf6a2aa862a5bccf546c5c7ee213297d252e -->
 
 <div align="center">
 
@@ -101,6 +101,8 @@ C11 и безопасный стабильный Rust. См. [декомпиля
 Выполнение CPU разделяет допуск ISA, гостевую память, транспорт бэкенда и политику гостевой ОС. `NEVERD_ENABLE_CPU_EMULATION` включает слой CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` добавляет ограниченную среду Windows WDM/KMDF x64. `linux-elf64-v1` выполняет поддерживаемые процессы Linux ELF. См. [Выполнение CPU](cpu-execution.md), [Эмуляция гостевых процессов](process-emulation.md) и [Эмуляция драйверов Windows](driver-emulation.md).
 
 `driver-strict` / `checked-x64-v1` поддерживает KVM на совместимых хостах Linux x64 и WHP на Windows x64; `auto` выбирает этот нативный транспорт, а другая ISA использует Unicorn. Явный Unicorn и прежний API V1 сохраняют переносимый программный профиль. Нативное выполнение проверяет канонические адреса и эффекты до входа; недоступное оборудование вызывает ошибку без подмены. Неподдерживаемые инструкции и поведение OS завершаются явной ошибкой. Нативные свидетельства ARM64/WHP ещё отсутствуют; совместимость произвольных драйверов или Android/Darwin не установлена.
+
+`checked-aarch64-v1` и `checked-user-aarch64-v1` предоставляют ограниченные ARM64 FP32/FP64, SIMD фиксированной ширины и полный FPCR/FPSR/векторный контекст. Совместимые Linux ARM64 используют KVM, Windows ARM64 — WHP, другие ISA — Unicorn. Нативные свидетельства ARM64 ещё требуются; драйверы Windows загружаются только для x64.
 
 <!-- i18n-section: how-it-works -->
 

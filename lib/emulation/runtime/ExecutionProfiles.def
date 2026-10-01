@@ -37,12 +37,17 @@ NEVERD_EXECUTION_PROFILE(CheckedX64, CheckedX64, X64, Supervisor, Canonical,
                              Feature::FloatingPoint | Feature::MMIO,
                          true, true)
 NEVERD_EXECUTION_PROFILE(CheckedARM64, CheckedAArch64, AArch64, Supervisor,
-                         Split, CheckedFeatures, true, true)
+                         Split,
+                         CheckedFeatures | Feature::SIMD |
+                             Feature::FloatingPoint,
+                         true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserX64, CheckedUserX64, X64, User, Canonical,
                          UserFeatures | Feature::SIMD | Feature::FloatingPoint,
                          true, true)
 NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
-                         Split, UserFeatures, true, true)
+                         Split,
+                         UserFeatures | Feature::SIMD | Feature::FloatingPoint,
+                         true, true)
 #endif
 
 #ifdef NEVERD_NATIVE_EXECUTION_PROFILE

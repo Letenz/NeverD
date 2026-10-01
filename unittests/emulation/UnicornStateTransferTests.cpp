@@ -46,6 +46,16 @@ constexpr int RegisterIDs[] = {
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_SCALAR_REGISTER
 };
+constexpr int VectorIDs[] = {
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
+  NEVERD_VECTOR_##Arch(Backend)
+#define NEVERD_VECTOR_X64(Backend)
+#define NEVERD_VECTOR_AArch64(Backend) Backend,
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_VECTOR_AArch64
+#undef NEVERD_VECTOR_X64
+#undef NEVERD_VECTOR_REGISTER
+};
 class UnicornStateTransfer : public testing::TestWithParam<bool> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
@@ -123,6 +133,21 @@ TEST_P(UnicornStateTransfer, CapturesDeclaredWidthsWithoutStaleUpperBits) {
   const auto Before = State;
   ASSERT_EQ(llvm::toString(step()), "");
   expectCaptured(Before);
+}
+TEST_P(UnicornStateTransfer, FailedVectorReadCannotPublishScalarOrVectorState) {
+  const auto Before = State;
+  for (int Register : VectorIDs) {
+    SCOPED_TRACE(Register);
+    State = Before;
+    FailureRegister = Register;
+    EXPECT_EQ(llvm::toString(step()), uc_strerror(UC_ERR_RESOURCE));
+    EXPECT_EQ(FailureRegister.load(), UC_ARM64_REG_INVALID);
+    EXPECT_EQ(State.UserMode, Before.UserMode);
+    EXPECT_EQ(State.Registers, Before.Registers);
+    EXPECT_EQ(State.Vectors, Before.Vectors);
+    ASSERT_EQ(llvm::toString(step()), "");
+    expectCaptured(Before);
+  }
 }
 INSTANTIATE_TEST_SUITE_P(Privileges, UnicornStateTransfer, testing::Bool());
 } // namespace
