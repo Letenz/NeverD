@@ -26,6 +26,7 @@ runtimeCFunctionAddressHint(const BinaryImage &Image, va_t ImportSlot) {
       Declaration->TargetName.empty() || Declaration->WeakImport ||
       Declaration->DoesNotReturn || Declaration->Format ||
       Declaration->NilTerminated || Declaration->BooleanResult ||
+      !Declaration->CanonicalBooleanInputs.empty() ||
       Declaration->ValueWitness || Declaration->AddressedFunctionABI)
     return std::nullopt;
   // Runtime calls may canonicalize register-specific veneers to an ordinary

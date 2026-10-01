@@ -334,6 +334,11 @@ struct SourceCallTypeHint {
   /// reads at most that nonnegative count, never writes/retains the pointer,
   /// and does not observe its identity. These are call effects, not ABI types.
   std::vector<std::pair<unsigned, unsigned>> BorrowedByteInputs;
+  /// One-bit runtime inputs represented by complete unsigned byte carriers
+  /// only at calls whose current arguments are proven canonical zero or one.
+  /// This does not declare a general uint8_t ABI or authorize a function
+  /// address. Source publication must revalidate both the catalog and values.
+  std::vector<unsigned> CanonicalBooleanInputs;
   /// Pairs of count/flags and storage parameter indices that carry an opaque
   /// Swift String value. A canonical runtime declaration may use this only to
   /// rebuild proven immortal literal storage; ownership and dynamic values
