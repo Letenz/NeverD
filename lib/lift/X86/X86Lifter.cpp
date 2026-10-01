@@ -12,6 +12,7 @@
 
 #include "neverd/lift/X86Lifter.h"
 
+#include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
 
 #include "neverd/decode/Decoder.h"
@@ -35,6 +36,12 @@ namespace neverd {
 
 X86Lifter::X86Lifter(Arch A) : TargetArch(A) {}
 
+bool isNoSibIndex(x86_reg Register, uint16_t AddressSize) {
+  return Register == X86_REG_INVALID ||
+         (AddressSize == 4 && Register == X86_REG_EIZ) ||
+         (AddressSize == 8 && Register == X86_REG_RIZ);
+}
+
 // ===----------------------------------------------------------------------===//
 // LiftState helpers
 // ===----------------------------------------------------------------------===//
@@ -47,6 +54,7 @@ NdVar X86Lifter::LiftState::computeEA(const cs_x86_op &MemOp,
   const bool SegmentRelative =
       ForMemoryAccess &&
       memoryAddressSpace(MemOp) != NdMemoryAddressSpace::Default;
+  const bool HasIndex = !isNoSibIndex(MemOp.mem.index, AddressSize);
   NdVar EA = makeTemp(ArithmeticSize);
   bool First = true;
   bool ConsumedDisplacement = false;
@@ -123,7 +131,7 @@ NdVar X86Lifter::LiftState::computeEA(const cs_x86_op &MemOp,
       Acc(NdVar::reg(RI.Offset, RI.Size));
     }
   }
-  if (MemOp.mem.index != X86_REG_INVALID) {
+  if (HasIndex) {
     auto RI = mapCapstoneReg(static_cast<x86_reg>(MemOp.mem.index));
     NdVar Idx = AtAddressWidth(NdVar::reg(RI.Offset, RI.Size));
     if (MemOp.mem.scale > 1) {
@@ -138,9 +146,8 @@ NdVar X86Lifter::LiftState::computeEA(const cs_x86_op &MemOp,
   if ((MemOp.mem.disp != 0 || RelocatedDisplacement ||
        HasAmbiguousI386GOTOFFDisplacement) &&
       !ConsumedDisplacement) {
-    const bool IsCompleteAbsoluteAddress = !SegmentRelative &&
-                                           MemOp.mem.base == X86_REG_INVALID &&
-                                           MemOp.mem.index == X86_REG_INVALID;
+    const bool IsCompleteAbsoluteAddress =
+        !SegmentRelative && MemOp.mem.base == X86_REG_INVALID && !HasIndex;
     NdVar Displacement =
         RelocatedDisplacement ? *RelocatedDisplacement
         : IsCompleteAbsoluteAddress
@@ -548,8 +555,8 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
     if (Memory.scale != 1 && Memory.scale != 2 && Memory.scale != 4 &&
         Memory.scale != 8)
       return false;
-    if (Memory.index == X86_REG_INVALID && Memory.scale != 1)
-      return false;
+    // Redundant SIB scale bits contribute nothing without an index. Decoders
+    // may retain them with INVALID or with the width-specific EIZ/RIZ alias.
     if (X86.addr_size == 2) {
       if (Memory.scale != 1)
         return false;
@@ -566,7 +573,7 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
     if (Memory.base != X86_REG_INVALID &&
         !GeneralRegister(Memory.base, X86.addr_size))
       return false;
-    return Memory.index == X86_REG_INVALID ||
+    return isNoSibIndex(Memory.index, X86.addr_size) ||
            (Memory.index != X86_REG_ESP && Memory.index != X86_REG_RSP &&
             GeneralRegister(Memory.index, X86.addr_size));
   };

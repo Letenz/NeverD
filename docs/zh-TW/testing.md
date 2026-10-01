@@ -41,13 +41,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 恢復 API 測試涵蓋 v1/v2/v3 預設值、明確預算、截斷結構、各層 reserved 欄位與未來尾部相容性。CLI 測試在兩種 ABI、兩個原始碼後端下檢查欄位／查詢預算耗盡及成功恢復，拒絕非法十進位上限，並要求 `--devirtualize`。預算耗盡不得發布原始碼或部分殘餘圖。
@@ -107,6 +108,8 @@ build-release/bin/NeverDLowIRRefinementTests
 封裝旗標測試涵蓋全部純量入口旗標組合、特權遮罩、兩次執行的 TF/AC 條件、不同未定義產生點、相關副本、原生呼叫、兄弟路徑狀態、強制最終系統狀態觀察、畸形證據及資源計費。有限迴圈必須結束每條可行輸入路徑；安全分支不能掩蓋無限或截斷路徑。RDSSPD/RDSSPQ 檢查涵蓋 16 個通用暫存器和兩種寬度、高位元保持、保留 `Missing` 證據及偽造投影拒絕。機器狀態測試在兩個 C 後端的 O0/O2 下啟用未定義行為陷阱，與獨立使用者模式旗標預言機比較，並檢查環境失敗狀態不會被後續操作清除。 INCSSPD/INCSSPQ 測試涵蓋兩種寬度和全部通用暫存器、不可達邊界保留、安全兄弟路徑完成後的可行陷阱、零運算元及偽造陷阱證據。
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
+
+`NeverDX86NoIndexAddressTests` 檢查 32／64 位元位址寬度下無索引的 x86 SIB 定址：忽略縮放位元、目的暫存器寬度、載入／儲存、完整未定義輸出中繼資料、區段偏移與位址來源。測試拒絕將虛擬暫存器用作基底或寬度錯誤的索引，並保留 REX.X 選取的真實 R12 索引。EVEX 廣播及遮罩移動測試也涵蓋這些形式、非作用中記憶體存取抑制與不一致的 SIB 中繼資料。
 
 移位回歸涵蓋所有八位元原始次數、零次移位旗標組合、兩種 x86 模式、全部純量位寬、CL 與目的地重疊、AH/CH/DH/BH、擴充暫存器及記憶體。以位元組建模的符號執行對照逐位算術模型，檢查已定義結果與守衛條件。關係測試檢查複製與新生旗標、暫存溢出保存、迴圈重訪、未定義值衍生次數、分支拒絕、畸形編碼及摘要和預算失敗。有限不可變讀取涵蓋 1/2/4/8 位元組、輸入相關選擇、路徑內單位址集合、完整讀取見證與上限綁定，並拒絕相依、缺失、可寫、無檔案支援、重定位或無界候選。
 

@@ -50,12 +50,6 @@ bool matchesAddressRegister(x86_reg Register, unsigned Index,
   return Info.Offset == ExpectedOffset && Info.Size == AddressSize;
 }
 
-bool isNoSibIndex(x86_reg Register, uint16_t AddressSize) {
-  return Register == X86_REG_INVALID ||
-         (AddressSize == 4 && Register == X86_REG_EIZ) ||
-         (AddressSize == 8 && Register == X86_REG_RIZ);
-}
-
 bool isValidEvexMemoryOperand(const cs_x86_op &Operand, uint16_t AddressSize,
                               uint16_t TupleSize) {
   if (Operand.type != X86_OP_MEM || Operand.size != TupleSize ||
@@ -73,7 +67,8 @@ bool isValidEvexMemoryOperand(const cs_x86_op &Operand, uint16_t AddressSize,
     return x86reg::isGeneralRegOffset(Info.Offset) && Info.Size == AddressSize;
   };
   if (!IsAddressRegister(static_cast<x86_reg>(Operand.mem.base)) ||
-      !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index)) ||
+      (!isNoSibIndex(Operand.mem.index, AddressSize) &&
+       !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index))) ||
       (Operand.mem.index != X86_REG_INVALID &&
        (Operand.mem.base == X86_REG_RIP || Operand.mem.base == X86_REG_EIP)))
     return false;
@@ -173,8 +168,12 @@ bool validateCanonicalVectorMemoryTail(
     return false;
 
   if (HasSIB) {
-    if (X86.sib_base != Operand.mem.base ||
-        X86.sib_index != Operand.mem.index || X86.sib_scale != ExpectedScale)
+    const bool SameIndex =
+        X86.sib_index == Operand.mem.index ||
+        (ExpectedIndex < 0 && isNoSibIndex(X86.sib_index, AddressSize) &&
+         isNoSibIndex(Operand.mem.index, AddressSize));
+    if (X86.sib_base != Operand.mem.base || !SameIndex ||
+        X86.sib_scale != ExpectedScale)
       return false;
   } else if (X86.sib_base != X86_REG_INVALID ||
              X86.sib_index != X86_REG_INVALID || X86.sib_scale != 0) {

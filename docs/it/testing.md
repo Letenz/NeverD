@@ -46,13 +46,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 I test API coprono valori predefiniti v1/v2/v3, budget espliciti, strutture troncate, tutti i campi reserved e code future. I test CLI verificano esaurimento e recupero riuscito con entrambe le ABI e i backend, rifiutano limiti decimali non validi e richiedono `--devirtualize`. L’esaurimento non deve pubblicare sorgenti o grafi residui parziali.
@@ -112,6 +113,8 @@ build-release/bin/NeverDLowIRRefinementTests
 I test coprono tutte le combinazioni dei flag scalari iniziali, maschere di privilegio, TF/AC in entrambe le esecuzioni, produttori indefiniti distinti, copie correlate, chiamate native, stato dei rami fratelli, osservazione finale obbligatoria, prove malformate e limiti delle risorse. Ogni percorso di input ammissibile dei cicli finiti deve terminare; un ramo sicuro non nasconde un percorso infinito o troncato. RDSSPD/RDSSPQ verifica i 16 registri generali in entrambe le larghezze, bit alti preservati, prove `Missing` mantenute e proiezioni contraffatte rifiutate. I test dello stato macchina confrontano entrambe le vie C a O0/O2 con trap per comportamento indefinito con un oracolo indipendente dei flag utente e verificano che gli errori del profilo restino registrati. I test INCSSPD/INCSSPQ coprono entrambe le larghezze e tutti i registri generali, conservazione dei limiti irraggiungibili, trap ammissibili dopo un ramo fratello completato, operandi zero e prove di trap contraffatte.
 
 `NeverDX86UndefinedEffectsTests` verifica i metadati dei bit indefiniti, i flag definiti o preservati e il rifiuto dei certificati obsoleti. `NeverDX86CarryArithmeticFlagTests` controlla il riporto ausiliario di ADC/SBB nelle forme registro e memoria con un oracolo aritmetico. `NeverDX86LogicIdentityTests` verifica che AND con operandi identici azzeri ancora i bit 63:32 del registro a 64 bit corrispondente quando scrive una destinazione a 32 bit in modalità a 64 bit, preservando i bit non scritti nelle scritture più strette.
+
+`NeverDX86NoIndexAddressTests` verifica l’indirizzamento SIB x86 senza indice con indirizzi a 32 e 64 bit: bit di scala ignorati, larghezze di destinazione, letture/scritture, metadati completi degli output indefiniti, offset di segmento e provenienza degli indirizzi. Rifiuta gli pseudoregistri come base o indice di larghezza errata e conserva gli indici R12 reali selezionati da REX.X. I test EVEX di broadcast e trasferimento mascherato coprono anche queste forme, la soppressione degli accessi inattivi e i metadati SIB incoerenti.
 
 Le regressioni coprono tutti i conteggi grezzi a otto bit, combinazioni dei flag con conteggio zero, entrambi i modi x86, tutte le larghezze, alias CL, AH/CH/DH/BH, registri estesi e memoria. L’esecuzione simbolica per byte è confrontata con aritmetica ripetuta a un bit. I test relazionali verificano copie e nuovi flag, salvataggi, visite dei cicli, conteggi derivati da valori indefiniti, rami, formati non validi, digest e budget. Le letture finite coprono 1/2/4/8 byte, selezione dipendente dall’ingresso, insiemi singoli per percorso, evidenze complete e limiti; rifiutano candidati dipendenti, mancanti, scrivibili, non presenti nel file, rilocati o illimitati.
 

@@ -68,7 +68,8 @@ bool isValidMaskedMoveMemoryOperand(const cs_x86_op &Operand,
     return x86reg::isGeneralRegOffset(RI.Offset) && RI.Size == AddressSize;
   };
   if (!IsAddressRegister(static_cast<x86_reg>(Operand.mem.base)) ||
-      !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index)))
+      (!isNoSibIndex(Operand.mem.index, AddressSize) &&
+       !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index))))
     return false;
   if (Operand.mem.index != X86_REG_INVALID &&
       (Operand.mem.base == X86_REG_RIP || Operand.mem.base == X86_REG_EIP))
