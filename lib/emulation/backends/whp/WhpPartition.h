@@ -28,10 +28,30 @@ namespace neverd::emulation {
 #undef NEVERD_WHP_VALUE
 #undef NEVERD_WHP_TEXT
 #undef NEVERD_WHP_STRING
-inline llvm::Error whpError(const char *Text, HRESULT Status) {
-  return llvm::createStringError(
-      llvm::inconvertibleErrorCode(),
-      llvm::formatv(HostFailure, Text, uint32_t(Status)).str());
+namespace whp::operation {
+#define NEVERD_WHP_FUNCTION(Name) inline constexpr char Name[] = #Name;
+#define NEVERD_WHP_X64_OPTIONAL_FUNCTION(Name) NEVERD_WHP_FUNCTION(Name)
+#include "WhpProtocol.def"
+#undef NEVERD_WHP_X64_OPTIONAL_FUNCTION
+#undef NEVERD_WHP_FUNCTION
+} // namespace whp::operation
+inline std::string whpFailure(const char *Text, HRESULT Status,
+                              const char *Operation = nullptr) {
+  return Operation ? llvm::formatv(OperationFailure, Text, uint32_t(Status),
+                                   Operation)
+                         .str()
+                   : llvm::formatv(HostFailure, Text, uint32_t(Status)).str();
+}
+inline llvm::Error whpError(const char *Text, HRESULT Status,
+                            const char *Operation = nullptr) {
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 whpFailure(Text, Status, Operation));
+}
+inline llvm::Error whpUnavailable(const char *Text, HRESULT Status,
+                                  const char *Operation) {
+  return llvm::make_error<BackendUnavailableError>(
+      whpFailure(Text, Status, Operation),
+      BackendAvailability::MissingCapability);
 }
 struct WhpAPI {
   HMODULE Module = nullptr;
@@ -118,7 +138,8 @@ public:
       return API.WHvRunVirtualProcessor(Partition, 0, &Exit, sizeof(Exit));
     });
     if (Entry.Value && FAILED(*Entry.Value))
-      return diagnostic::error(diagnostic::WhpRun);
+      return whpError(diagnostic::WhpRun, *Entry.Value,
+                      whp::operation::WHvRunVirtualProcessor);
     if (!Entry.Value ||
         (Entry.Cancelled && Exit.ExitReason == WHvRunVpExitReasonCanceled))
       return diagnostic::interrupted(diagnostic::WhpRun, Control);

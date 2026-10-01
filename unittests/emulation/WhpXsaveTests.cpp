@@ -14,6 +14,9 @@
 
 namespace neverd::emulation {
 namespace {
+#define NEVERD_WHP_FAILURE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "WhpHostFailureCases.def"
+#undef NEVERD_WHP_FAILURE_TEXT
 #define NEVERD_FP_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #include "X64FPCases.def"
 #undef NEVERD_FP_VALUE
@@ -26,7 +29,8 @@ struct FakeXsave {
   std::array<uint8_t, x64::fp::XsaveBytes> Packet{};
   UINT32 Required = Packet.size(), Written = Packet.size();
   unsigned Queries = 0, Installs = 0, Captures = 0;
-  HRESULT CaptureStatus = S_OK;
+  HRESULT QueryStatus = HRESULT(InsufficientBuffer);
+  HRESULT InstallStatus = S_OK, CaptureStatus = S_OK;
   static HRESULT WINAPI get(WHV_PARTITION_HANDLE Handle, UINT32 Index,
                             VOID *Bytes, UINT32 Size, UINT32 *Written) {
     auto &Self = *static_cast<FakeXsave *>(Handle);
@@ -34,7 +38,7 @@ struct FakeXsave {
     if (!Size) {
       ++Self.Queries;
       *Written = Self.Required;
-      return HRESULT(InsufficientBuffer);
+      return Self.QueryStatus;
     }
     ++Self.Captures;
     if (FAILED(Self.CaptureStatus))
@@ -50,6 +54,8 @@ struct FakeXsave {
     EXPECT_EQ(Index, 0u);
     EXPECT_GE(Size, Self.Packet.size());
     ++Self.Installs;
+    if (FAILED(Self.InstallStatus))
+      return Self.InstallStatus;
     std::memcpy(Self.Packet.data(), Bytes, Self.Packet.size());
     return S_OK;
   }
@@ -147,8 +153,25 @@ TEST_P(WhpXsaveProtocol, HostFailureRetainsItsStatusAndOriginalState) {
   Target.CaptureStatus = E_FAIL;
   auto Next = State;
   EXPECT_EQ(llvm::toString(Transfer.capture(API, &Target, Next)),
-            llvm::toString(whpError(diagnostic::WhpState, E_FAIL)));
+            GetParam() ? ModernCapture : LegacyCapture);
   EXPECT_EQ(Next, State);
+}
+TEST_P(WhpXsaveProtocol, QueryFailureRetainsStatusBeforeAllocatingState) {
+  Target.QueryStatus = E_FAIL;
+  EXPECT_EQ(llvm::toString(Transfer.initialize(API, &Target)),
+            GetParam() ? ModernCapture : LegacyCapture);
+  EXPECT_EQ(Target.Queries, 1u);
+  EXPECT_EQ(Target.Installs, 0u);
+  EXPECT_EQ(Target.Captures, 0u);
+}
+TEST_P(WhpXsaveProtocol, InstallFailureRetainsStatusAndHostPacket) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  Target.InstallStatus = E_FAIL;
+  const auto Before = Target.Packet;
+  EXPECT_EQ(llvm::toString(Transfer.install(API, &Target, State)),
+            GetParam() ? ModernInstall : LegacyInstall);
+  EXPECT_EQ(Target.Installs, 1u);
+  EXPECT_EQ(Target.Packet, Before);
 }
 TEST_P(WhpXsaveProtocol, DuplicateInitializationKeepsTheOwnedPacket) {
   ASSERT_NO_FATAL_FAILURE(initialize());

@@ -31,7 +31,7 @@ public:
     UINT32 Required = 0;
     const HRESULT Status = get(API, Partition, nullptr, 0, Required);
     if (uint32_t(Status) != InsufficientBuffer)
-      return whpError(diagnostic::WhpState, Status);
+      return whpError(diagnostic::WhpState, Status, getOperation());
     if (Required < x64::fp::XsaveBytes || Required > x64::fp::MaxXsaveBytes)
       return diagnostic::error(diagnostic::FPState);
     std::error_code EC;
@@ -53,21 +53,30 @@ public:
                      Buffer.base(), Size)
                : API.WHvSetVirtualProcessorXsaveState(Partition, 0,
                                                       Buffer.base(), Size);
-    return FAILED(Status) ? whpError(diagnostic::WhpState, Status)
-                          : llvm::Error::success();
+    return FAILED(Status)
+               ? whpError(diagnostic::WhpState, Status, setOperation())
+               : llvm::Error::success();
   }
   llvm::Error capture(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
                       X64MachineState &State) {
     UINT32 Written = 0;
     const auto Status = get(API, Partition, Buffer.base(), Size, Written);
     if (FAILED(Status))
-      return whpError(diagnostic::WhpState, Status);
+      return whpError(diagnostic::WhpState, Status, getOperation());
     if (Written < x64::fp::XsaveBytes || Written > Size)
       return diagnostic::error(diagnostic::FPState);
     return decodeX64XsaveState(State, bytes().take_front(Written));
   }
 
 private:
+  const char *getOperation() const {
+    return Modern ? whp::operation::WHvGetVirtualProcessorState
+                  : whp::operation::WHvGetVirtualProcessorXsaveState;
+  }
+  const char *setOperation() const {
+    return Modern ? whp::operation::WHvSetVirtualProcessorState
+                  : whp::operation::WHvSetVirtualProcessorXsaveState;
+  }
   llvm::MutableArrayRef<uint8_t> bytes() {
     return {static_cast<uint8_t *>(Buffer.base()), Size};
   }

@@ -32,9 +32,17 @@ def declared_inventory(root: Path) -> tuple[list[str], set[str]]:
         r'^NEVERD_NATIVE_CPU_REQUIRED_CASES\(\s*"([^"]+)",\s*"([^"]+)",'
         r'\s*"([^"]+)"\s*\)', definitions, re.M
     )
-    if not owners or len(set(owners)) != len(owners) or not families:
+    explicit = [
+        "".join(re.findall(r'"([^"]*)"', value))
+        for value in re.findall(
+            r'^NEVERD_NATIVE_CPU_REQUIRED_TEST\(\s*((?:"[^"]+"\s*)+)\)',
+            definitions, re.M
+        )
+    ]
+    if (not owners or len(set(owners)) != len(owners)
+            or not (families or explicit) or len(set(explicit)) != len(explicit)):
         raise ValueError("invalid native CPU test inventory")
-    required = set()
+    required = set(explicit)
     for prefix, source, macro in families:
         cases = re.findall(
             rf"^{re.escape(macro)}\(\s*(\w+)\s*,",
@@ -78,10 +86,11 @@ def run(build: Path, evidence: Path, parallel: int, require_whp: bool) -> int:
     missing_owners = set(owners) - registered_owners
     if missing_owners:
         raise ValueError(f"owners have no registered tests: {sorted(missing_owners)}")
-    if require_whp:
-        missing = required - {test.name for test in tests}
-        if missing:
-            raise ValueError(f"missing required native WHP tests: {sorted(missing)}")
+    required_missing = required - {test.name for test in tests}
+    if require_whp and required_missing:
+        raise ValueError(
+            f"missing required native WHP tests: {sorted(required_missing)}"
+        )
     junit = evidence / "results.xml"
     result = subprocess.run([
         *base, "--no-tests=error", "--parallel", str(parallel),
@@ -99,12 +108,18 @@ def run(build: Path, evidence: Path, parallel: int, require_whp: bool) -> int:
         "commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
+        "source_dirty": bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=ROOT, text=True
+        ).strip()),
         "owners": owners,
         "registered": len(tests),
         "total": len(cases),
         "counts": {name: counts[name] for name in OUTCOME_NAMES},
         "missing": sorted(test.name for test in expected - actual),
         "unexpected": sorted(test.name for test in actual - expected),
+        "require_whp": require_whp,
+        "required_native_tests": len(required),
+        "required_native_missing": sorted(required_missing),
         "required_native_unexecuted": required_unexecuted,
         "ctest_status": result.returncode,
     }

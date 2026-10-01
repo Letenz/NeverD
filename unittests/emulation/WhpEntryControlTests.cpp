@@ -98,11 +98,23 @@ TEST_F(WhpEntryControl, GenuineHostFailureOutranksASimultaneousStop) {
   ASSERT_NO_FATAL_FAILURE(initialize());
   std::atomic<bool> Stop{false};
   Target.StopAtReturn = &Stop;
-  Target.Result = E_FAIL;
-  auto E = Partition.run(Exit, {Clock::time_point::max(), &Stop});
-  EXPECT_FALSE(E.isA<MachineInterruptedError>());
-  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::WhpRun);
-  EXPECT_EQ(Target.Entries.load(), 1u);
+  const struct {
+    HRESULT Status;
+    const char *Message;
+  } Cases[] = {
+#define NEVERD_WHP_RUN_FAILURE(Status, Message) {Status, Message},
+#include "WhpHostFailureCases.def"
+#undef NEVERD_WHP_RUN_FAILURE
+  };
+  unsigned Entries = 0;
+  for (const auto &Case : Cases) {
+    Stop = false;
+    Target.Result = Case.Status;
+    auto E = Partition.run(Exit, {Clock::time_point::max(), &Stop});
+    EXPECT_FALSE(E.isA<MachineInterruptedError>());
+    EXPECT_EQ(llvm::toString(std::move(E)), Case.Message);
+    EXPECT_EQ(Target.Entries.load(), ++Entries);
+  }
 }
 TEST_F(WhpEntryControl, CompletedExitValidationRunsOnCallerBeforeStop) {
   ASSERT_NO_FATAL_FAILURE(initialize());
