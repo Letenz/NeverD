@@ -161,9 +161,11 @@ TEST(LowIRLoopAlignment, AlignedLoopsGetFreshCertificate) {
 // remain observable, including the phase flag and both counters.
 Program phasedResetLoop(uint64_t Amount = 3, uint64_t OuterStep = 1,
                         bool TrailingLoop = false, bool LocalExitGuards = false,
-                        bool ArithmeticDiamonds = false) {
+                        bool ArithmeticDiamonds = false,
+                        bool ReuseOuterForTrailing = false) {
   Program P;
-  P.Contract.Frame->End = TrailingLoop ? 40 : 32;
+  P.Contract.Frame->End = TrailingLoop && !ReuseOuterForTrailing ? 40 : 32;
+  const uint64_t TrailingOffset = ReuseOuterForTrailing ? 0 : 32;
   const auto Load = [&](uint64_t Offset, NdVar Output) {
     P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(Offset)}),
                    op(NdOp::LOAD, Output, {t(0)})});
@@ -210,7 +212,7 @@ Program phasedResetLoop(uint64_t Amount = 3, uint64_t OuterStep = 1,
   Store(0, r(8));
   for (uint64_t Offset : {8, 16, 24})
     Store(Offset, n(0));
-  if (TrailingLoop)
+  if (TrailingLoop && !ReuseOuterForTrailing)
     Store(32, n(0));
   P.branch(0x200);
   P.block(1, 0x200,
@@ -250,14 +252,14 @@ Program phasedResetLoop(uint64_t Amount = 3, uint64_t OuterStep = 1,
   P.block(8, 0x900,
           TrailingLoop ? std::vector<int>{9, 10} : std::vector<int>{});
   if (TrailingLoop) {
-    Store(32, r(24));
-    P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(32)}),
+    Store(TrailingOffset, r(24));
+    P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(TrailingOffset)}),
                    op(NdOp::LOAD, t(8), {t(0)}),
                    op(NdOp::INT_EQUAL, t(16, 1), {t(8), n(0)}),
                    op(NdOp::COND_BR, {}, {n(0xb00), t(16, 1)})});
     P.block(9, 0xa00, {9, 10});
-    Add(32, -1);
-    P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(32)}),
+    Add(TrailingOffset, -1);
+    P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(TrailingOffset)}),
                    op(NdOp::LOAD, t(8), {t(0)}),
                    op(NdOp::INT_NOTEQUAL, t(16, 1), {t(8), n(0)}),
                    op(NdOp::COND_BR, {}, {n(0xa00), t(16, 1)})});
@@ -275,6 +277,181 @@ TEST(LowIRLoopAlignment, SeparateResetAndProgressDiscoverPhaseCuts) {
   ASSERT_TRUE(R.Refinement.Certificate);
   EXPECT_GT(R.Refinement.Certificate->LoopPlan->Cutpoints.size(), 1U);
   EXPECT_GT(R.Refinement.RankingChecks, 0U);
+}
+
+// Independently authored sequential countdowns reuse the first frame word.
+// Each fresh input is unconstrained by the preceding loop's final counter.
+Program sequentialCounterLoop(unsigned Loops = 2, bool NoProgress = false,
+                              bool Repeat = false) {
+  Program P;
+  const auto At = [](unsigned Id) { return (Id + 1) * 0x100; };
+  P.block(0, At(0), {1});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::STORE, {}, {t(0), n(0)})});
+  P.branch(At(1));
+  for (unsigned I = 0; I != Loops; ++I) {
+    const unsigned Init = 1 + 3 * I, Header = Init + 1, Body = Init + 2;
+    P.block(Init, At(Init), {int(Header)});
+    P.instruction({op(NdOp::STORE, {}, {r(32), r(8 * (I + 1))})});
+    P.branch(At(Header));
+    P.block(Header, At(Header), {int(Body), int(Init + 3)});
+    P.zeroBranch(At(Init + 3));
+    P.block(Body, At(Body), {int(Header)});
+    P.add(3 + 2 * I);
+    if (!NoProgress || I + 1 != Loops)
+      P.decrement();
+    P.branch(At(Header));
+  }
+  const unsigned End = 1 + 3 * Loops;
+  if (Repeat) {
+    P.block(End, At(End), {1, int(End + 1)});
+    P.instruction({op(NdOp::INT_NOTEQUAL, t(0, 1), {r(40), n(0)}),
+                   op(NdOp::COND_BR, {}, {n(At(1)), t(0, 1)})});
+  }
+  P.block(Repeat ? End + 1 : End, At(Repeat ? End + 1 : End), {});
+  P.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                 op(NdOp::LOAD, r(0), {t(0)}), op(NdOp::RETURN, {}, {r(0)})});
+  return P;
+}
+
+TEST(LowIRLoopAlignment, LeadingPhasesAllowSequentialCounterReuse) {
+  for (unsigned Loops : {2, 3}) {
+    SCOPED_TRACE(Loops);
+    const auto P = sequentialCounterLoop(Loops);
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+    ASSERT_EQ(R.Plan->Cutpoints.size(), Loops);
+    std::set<uint64_t> Phases;
+    for (const auto &Cut : R.Plan->Cutpoints) {
+      ASSERT_EQ(Cut.Rank.size(), 2U);
+      EXPECT_TRUE(Cut.Rank.front().isConst());
+      EXPECT_EQ(Cut.Rank.front().Size, 8U);
+      Phases.insert(Cut.Rank.front().Offset);
+    }
+    EXPECT_EQ(Phases.size(), Loops);
+    const auto Proof = checkLowIRLoopRefinement(
+        P.Function, P.Records, P.Function, P.Contract, *R.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    EXPECT_GT(Proof.RankingChecks, 0U);
+    EXPECT_TRUE(P.check(P).proved());
+  }
+}
+
+TEST(LowIRLoopAlignment, LeadingAndInnerPhasesComposeInOneRank) {
+  const auto P = phasedResetLoop(3, 1, true, false, false, true);
+  LowIRLoopInferenceLimits Limits;
+  Limits.Execution.MaxSolverQueries = 16384;
+  const auto R = detail::inferBranchArmLowIRLoopRefinementPlan(
+      P.Function, P.Contract, Limits);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  ASSERT_EQ(R.Plan->Cutpoints.size(), 4U);
+  std::set<uint64_t> Leading;
+  for (const auto &Cut : R.Plan->Cutpoints) {
+    ASSERT_GE(Cut.Rank.size(), 4U);
+    ASSERT_TRUE(Cut.Rank.front().isConst());
+    EXPECT_EQ(Cut.Rank.front().Size, 8U);
+    Leading.insert(Cut.Rank.front().Offset);
+  }
+  EXPECT_EQ(Leading.size(), 2U);
+  const auto Proof = checkLowIRLoopRefinement(P.Function, P.Records, P.Function,
+                                              P.Contract, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+}
+
+TEST(LowIRLoopAlignment, LeadingPhasesCannotHideNonProgressOrCyclicReset) {
+  for (const auto &P : {sequentialCounterLoop(2, true),
+                        sequentialCounterLoop(2, false, true)}) {
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    EXPECT_FALSE(R.inferred());
+    EXPECT_FALSE(R.Plan);
+    EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::Unsupported) << R.Diagnostic;
+    EXPECT_GE(R.RankCandidates, 2U) << R.Diagnostic;
+    const auto Proof = P.check(P);
+    EXPECT_FALSE(Proof.proved());
+    EXPECT_FALSE(Proof.Refinement.Certificate);
+  }
+}
+
+TEST(LowIRLoopAlignment, LeadingPhaseRanksAreIndependentlyRechecked) {
+  const auto P = sequentialCounterLoop();
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  for (bool Reverse : {false, true}) {
+    auto Plan = *R.Plan;
+    for (auto &Cut : Plan.Cutpoints) {
+      ASSERT_EQ(Cut.Rank.size(), 2U);
+      ASSERT_TRUE(Cut.Rank.front().isConst());
+      Cut.Rank.front().Offset = Reverse ? 1 - Cut.Rank.front().Offset : 0;
+    }
+    const auto Proof = checkLowIRLoopRefinement(P.Function, P.Records,
+                                                P.Function, P.Contract, Plan);
+    EXPECT_EQ(Proof.Status, LowIRRefinementStatus::Different);
+    EXPECT_FALSE(Proof.Certificate);
+    EXPECT_NE(Proof.Diagnostic.find("rank decrease"), std::string::npos)
+        << Proof.Diagnostic;
+  }
+}
+
+TEST(LowIRLoopAlignment, LeadingPhaseSearchChargesBothVariants) {
+  const auto P = sequentialCounterLoop();
+  const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  ASSERT_EQ(Good.RankCandidates, 2U);
+  LowIRLoopInferenceLimits Limits;
+  Limits.MaxRankCandidates = Good.RankCandidates;
+  Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+  const auto Exact =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits);
+  ASSERT_TRUE(Exact.inferred()) << Exact.Diagnostic;
+  EXPECT_EQ(Exact.RankCandidates, Good.RankCandidates);
+  EXPECT_EQ(Exact.SolverQueries, Good.SolverQueries);
+  for (bool ShortRanks : {false, true}) {
+    auto Short = Limits;
+    if (ShortRanks)
+      --Short.MaxRankCandidates;
+    else
+      --Short.Execution.MaxSolverQueries;
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short);
+    EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(R.Plan);
+    EXPECT_LE(R.RankCandidates, Short.MaxRankCandidates);
+    EXPECT_LE(R.SolverQueries, Short.Execution.MaxSolverQueries);
+    if (ShortRanks) {
+      EXPECT_EQ(R.RankCandidates, 1U);
+      EXPECT_LT(R.SolverQueries, Good.SolverQueries);
+    } else {
+      EXPECT_EQ(R.SolverQueries, Short.Execution.MaxSolverQueries);
+    }
+  }
+}
+
+TEST(LowIRLoopAlignment, LeadingPhasesPreserveFinalStateAndOriginalEvidence) {
+  const auto P = sequentialCounterLoop();
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  for (bool FrameWrite : {false, true}) {
+    auto Wrong = P;
+    Wrong.Function.Blocks.back().Ops.clear();
+    Wrong.Function.Blocks.back().InstructionBoundaries.clear();
+    Wrong.Function.Blocks.back().EndAddr =
+        Wrong.Function.Blocks.back().StartAddr;
+    if (FrameWrite)
+      Wrong.instruction({op(NdOp::STORE, {}, {r(32), n(19)})});
+    Wrong.instruction({op(NdOp::INT_ADD, t(0), {r(32), n(8)}),
+                       op(NdOp::LOAD, r(0), {t(0)}),
+                       op(NdOp::RETURN, {}, {FrameWrite ? r(0) : n(0)})});
+    const auto Proof = checkLowIRLoopRefinement(
+        P.Function, P.Records, Wrong.Function, P.Contract, *R.Plan);
+    EXPECT_EQ(Proof.Status, LowIRRefinementStatus::Different)
+        << Proof.Diagnostic;
+    EXPECT_FALSE(Proof.Certificate);
+  }
+  auto Records = P.Records;
+  Records.front().Effects.Coverage = LowUndefinedCoverage::Missing;
+  const auto Missing = checkLowIRLoopRefinement(P.Function, Records, P.Function,
+                                                P.Contract, *R.Plan);
+  EXPECT_EQ(Missing.Status, LowIRRefinementStatus::Unsupported);
+  EXPECT_FALSE(Missing.Certificate);
 }
 
 TEST(LowIRLoopAlignment, InternalDiamondsDoNotSplitLoopPhases) {
