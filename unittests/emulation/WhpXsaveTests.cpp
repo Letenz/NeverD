@@ -26,11 +26,26 @@ constexpr RegisterValue Payloads[] = {
 #undef NEVERD_FP_PAYLOAD
 };
 struct FakeXsave {
+  WHV_PROCESSOR_XSAVE_FEATURES Features{};
+  UINT32 FeatureBytes = sizeof(Features);
+  HRESULT FeatureStatus = S_OK;
   std::array<uint8_t, x64::fp::XsaveBytes> Packet{};
   UINT32 Required = Packet.size(), Written = Packet.size();
   unsigned Queries = 0, Installs = 0, Captures = 0;
   HRESULT QueryStatus = HRESULT(InsufficientBuffer);
   HRESULT InstallStatus = S_OK, CaptureStatus = S_OK;
+  static HRESULT WINAPI property(WHV_PARTITION_HANDLE Handle,
+                                 WHV_PARTITION_PROPERTY_CODE Code, VOID *Bytes,
+                                 UINT32 Size, UINT32 *Written) {
+    auto &Self = *static_cast<FakeXsave *>(Handle);
+    EXPECT_EQ(Code, WHvPartitionPropertyCodeProcessorXsaveFeatures);
+    EXPECT_EQ(Size, sizeof(Self.Features));
+    if (FAILED(Self.FeatureStatus))
+      return Self.FeatureStatus;
+    std::memcpy(Bytes, &Self.Features, sizeof(Self.Features));
+    *Written = Self.FeatureBytes;
+    return S_OK;
+  }
   static HRESULT WINAPI get(WHV_PARTITION_HANDLE Handle, UINT32 Index,
                             VOID *Bytes, UINT32 Size, UINT32 *Written) {
     auto &Self = *static_cast<FakeXsave *>(Handle);
@@ -79,6 +94,9 @@ protected:
   WhpXsaveState Transfer;
   X64MachineState State;
   void SetUp() override {
+    API.WHvGetPartitionProperty = FakeXsave::property;
+    Target.Features.XsaveSupport = 1;
+    Target.Features.AvxSupport = 1;
     if (GetParam()) {
       API.WHvGetVirtualProcessorState = FakeXsave::getState;
       API.WHvSetVirtualProcessorState = FakeXsave::setState;
@@ -163,6 +181,31 @@ TEST_P(WhpXsaveProtocol, QueryFailureRetainsStatusBeforeAllocatingState) {
   EXPECT_EQ(Target.Queries, 1u);
   EXPECT_EQ(Target.Installs, 0u);
   EXPECT_EQ(Target.Captures, 0u);
+}
+TEST_P(WhpXsaveProtocol,
+       EffectiveFeaturesAreValidatedWithoutNarrowingDefaults) {
+  const auto Before = Target.Features.AsUINT64;
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  EXPECT_EQ(Target.Features.AsUINT64, Before);
+  EXPECT_EQ(Target.Queries, 1u);
+}
+TEST_P(WhpXsaveProtocol, FeatureQueryFailureRetainsStatusBeforeStateQuery) {
+  Target.FeatureStatus = E_FAIL;
+  EXPECT_EQ(llvm::toString(Transfer.initialize(API, &Target)), FeatureQuery);
+  EXPECT_EQ(Target.Queries, 0u);
+}
+TEST_P(WhpXsaveProtocol, MissingEffectiveXsaveIsTypedUnavailable) {
+  Target.Features.XsaveSupport = 0;
+  auto E = Transfer.initialize(API, &Target);
+  EXPECT_TRUE(E.isA<BackendUnavailableError>());
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(Target.Queries, 0u);
+}
+TEST_P(WhpXsaveProtocol, TruncatedFeatureQueryCannotAllocateState) {
+  Target.FeatureBytes -= 1;
+  EXPECT_EQ(llvm::toString(Transfer.initialize(API, &Target)),
+            diagnostic::WhpState);
+  EXPECT_EQ(Target.Queries, 0u);
 }
 TEST_P(WhpXsaveProtocol, InstallFailureRetainsStatusAndHostPacket) {
   ASSERT_NO_FATAL_FAILURE(initialize());

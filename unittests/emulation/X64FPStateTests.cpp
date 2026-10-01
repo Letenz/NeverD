@@ -13,6 +13,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -215,14 +216,17 @@ class X64FPTransport : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
   std::unique_ptr<X64Machine> Machine;
-  uint64_t Root = 0;
+  llvm::Expected<std::unique_ptr<X64Machine>>
+  createMachine(MemoryProjection &Storage) {
+    return GetParam().Backend == ExecutionBackendKind::KVM
+               ? createKvmMachine(Storage)
+           : GetParam().Backend == ExecutionBackendKind::WHP
+               ? createWhpMachine(Storage)
+               : createUnicornX64Machine(Storage, GetParam().UserMode);
+  }
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
-    auto M = GetParam().Backend == ExecutionBackendKind::KVM
-                 ? createKvmMachine(*Memory)
-             : GetParam().Backend == ExecutionBackendKind::WHP
-                 ? createWhpMachine(*Memory)
-                 : createUnicornX64Machine(*Memory, GetParam().UserMode);
+    auto M = createMachine(*Memory);
     if (!M) {
       auto E = M.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
@@ -238,16 +242,20 @@ protected:
         Memory->map(Data, memory::PageSize, Read | Write | UserAccessible));
   }
   void step(X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes) {
+    stepOn(*Machine, *Memory, State, Bytes);
+  }
+  void stepOn(X64Machine &CPU, MemoryProjection &Storage,
+              X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes) {
     State.UserMode = GetParam().UserMode;
     State.reg(X64Register::PC) = Code;
-    llvm::cantFail(Memory->write(Code, Bytes));
-    llvm::cantFail(Memory->beginRun());
-    auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-    Root = llvm::cantFail(buildX64PageTables(
-        *Memory, State.UserMode, Machine->requiresExceptionMonitor()));
-    auto E = Machine->step(State, Root,
-                           {std::chrono::steady_clock::now() +
-                            std::chrono::microseconds(Timeout)});
+    llvm::cantFail(Storage.write(Code, Bytes));
+    llvm::cantFail(Storage.beginRun());
+    auto Release = llvm::scope_exit([&] { Storage.endRun(); });
+    const auto Root = llvm::cantFail(buildX64PageTables(
+        Storage, State.UserMode, CPU.requiresExceptionMonitor()));
+    auto E = CPU.step(State, Root,
+                      {std::chrono::steady_clock::now() +
+                       std::chrono::microseconds(Timeout)});
     EXPECT_EQ(llvm::toString(std::move(E)), "");
   }
 };
@@ -260,6 +268,40 @@ TEST_P(X64FPTransport, PreservesAllPhysicalLanesAndControlAcrossEveryTOP) {
     expectFP(S, Expected);
     EXPECT_EQ(S.reg(X64Register::PC), Code + sizeof(Nop));
   }
+}
+TEST_P(X64FPTransport, LogicalCPUSwitchingRestoresPhysicalFPAndTLS) {
+  auto PeerMemory = llvm::cantFail(MemoryProjection::create(Limit));
+  auto Created = createMachine(*PeerMemory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Peer = std::move(*Created);
+  llvm::cantFail(PeerMemory->map(Code, memory::PageSize,
+                                 Read | Write | Execute | UserAccessible));
+  llvm::cantFail(
+      PeerMemory->map(Data, memory::PageSize, Read | Write | UserAccessible));
+  auto First = seed(EmptySlot), Second = seed(0);
+  First.FSBase = SeedInstruction;
+  First.GSBase = SeedData;
+  Second.FSBase = SeedData;
+  Second.GSBase = SeedInstruction;
+  for (auto &Lane : Second.Xmm)
+    std::swap(Lane[0], Lane[1]);
+  std::reverse(Second.FP.Registers.begin(), Second.FP.Registers.end());
+  auto Check = [&](X64Machine &CPU, MemoryProjection &Storage,
+                   X64MachineState &State) {
+    const auto Before = State;
+    stepOn(CPU, Storage, State, Nop);
+    expectFP(State, Before);
+    EXPECT_EQ(State.FSBase, Before.FSBase);
+    EXPECT_EQ(State.GSBase, Before.GSBase);
+    EXPECT_EQ(State.reg(X64Register::PC), Code + sizeof(Nop));
+  };
+  Check(*Machine, *Memory, First);
+  Check(*Peer, *PeerMemory, Second);
+  Check(*Machine, *Memory, First);
+  Check(*Peer, *PeerMemory, Second);
+  // Destroying an inactive logical CPU must not retire its peer's native state.
+  Machine.reset();
+  Check(*Peer, *PeerMemory, Second);
 }
 TEST_P(X64FPTransport, StackChangesMatchIndependentHostFXSaveAndRestore) {
 #if defined(__x86_64__) || defined(_M_X64)

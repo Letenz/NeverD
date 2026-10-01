@@ -16,12 +16,18 @@ NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "NativeMemory/WHPMapping.TwoLivePartitionsRegisterAndRetireBacking/",
+    "NativeMemory/WHPMapping.TwoLogicalOwnersRegisterSwitchAndRetireBacking/",
     "unittests/emulation/WhpMemoryCases.def", "NEVERD_WHP_MEMORY_CASE")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Native startup, full FP state and shared CPU execution must not skip.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/whpUser")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Native/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline/whp")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(

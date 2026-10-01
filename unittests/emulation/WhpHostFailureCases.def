@@ -14,6 +14,10 @@ NEVERD_WHP_RUN_FAILURE(
 #endif
 #ifdef NEVERD_WHP_FAILURE_TEXT
 NEVERD_WHP_FAILURE_TEXT(
+    FeatureQuery,
+    "WHP CPU state transfer failed (WHvGetPartitionProperty; HRESULT "
+    "0x80004005)")
+NEVERD_WHP_FAILURE_TEXT(
     ModernCapture,
     "WHP CPU state transfer failed (WHvGetVirtualProcessorState; HRESULT "
     "0x80004005)")

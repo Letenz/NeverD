@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #if defined(_WIN32) && defined(NEVERD_EMULATION_WHP)
 #include "backends/whp/WhpPartition.h"
+#include "backends/whp/WhpResourceCache.h"
 #include "core/MemoryLayout.h"
 #include "gtest/gtest.h"
 
@@ -108,23 +109,13 @@ const NativeMemoryCase Cases[] = {
 #undef NEVERD_WHP_MEMORY_CASE
 };
 class WHPMapping : public testing::TestWithParam<NativeMemoryCase> {};
-TEST_P(WHPMapping, TwoLivePartitionsRegisterAndRetireBacking) {
+TEST_P(WHPMapping, TwoLogicalOwnersRegisterSwitchAndRetireBacking) {
   const auto &Case = GetParam();
   llvm::sys::MemoryBlock FirstRAM, SecondRAM;
   auto Release = llvm::scope_exit([&] {
     (void)llvm::sys::Memory::releaseMappedMemory(FirstRAM);
     (void)llvm::sys::Memory::releaseMappedMemory(SecondRAM);
   });
-  // Retire the partitions before releasing their registered host bytes.
-  auto First = std::make_unique<MappingPartition>();
-  MappingPartition Second;
-  if (auto E = First->initialize()) {
-    const bool Unavailable = E.isA<BackendUnavailableError>();
-    const auto Text = llvm::toString(std::move(E));
-    if (Unavailable && !std::getenv(RequireNative))
-      GTEST_SKIP() << Text;
-    FAIL() << Text;
-  }
   std::error_code EC;
   FirstRAM = llvm::sys::Memory::allocateMappedMemory(
       Case.Size, nullptr,
@@ -141,16 +132,53 @@ TEST_P(WHPMapping, TwoLivePartitionsRegisterAndRetireBacking) {
     std::memset(FirstRAM.base(), Fill, Case.Size);
     std::memset(Other, Fill, Case.Size);
   }
-  ASSERT_EQ(llvm::toString(First->map(FirstRAM.base(), Case.Size)), "");
-  if (Case.CPU)
-    ASSERT_EQ(llvm::toString(First->createCPU()), "");
-  ASSERT_EQ(llvm::toString(Second.initialize()), "");
-  ASSERT_EQ(llvm::toString(Second.map(Other, Case.Size)), "");
-  if (Case.CPU)
-    ASSERT_EQ(llvm::toString(Second.createCPU()), "");
+  using Binding = WhpResourceBinding<WhpPartition>;
+  auto Bind = [&](void *Backing, unsigned &Creations) {
+    return std::make_unique<Binding>(
+        [&, Backing]() -> llvm::Expected<std::unique_ptr<WhpPartition>> {
+          auto P = std::make_unique<MappingPartition>();
+          if (auto E = P->initialize())
+            return E;
+          if (auto E = P->map(Backing, Case.Size))
+            return E;
+          if (Case.CPU)
+            if (auto E = P->createCPU())
+              return E;
+          ++Creations;
+          return std::unique_ptr<WhpPartition>(std::move(P));
+        });
+  };
+  // Bindings retire native mappings before their borrowed host bytes. Both
+  // logical owners stay live, but the cache never overlaps their partitions.
+  unsigned FirstCreations = 0, SecondCreations = 0;
+  auto First = Bind(FirstRAM.base(), FirstCreations);
+  auto Second = Bind(Other, SecondCreations);
+  const MachineRunControl Control{std::chrono::steady_clock::time_point::max()};
+  {
+    auto Active = First->acquire(Control);
+    if (!Active) {
+      auto E = Active.takeError();
+      const bool Unavailable = E.isA<BackendUnavailableError>();
+      const auto Text = llvm::toString(std::move(E));
+      if (Unavailable && !std::getenv(RequireNative))
+        GTEST_SKIP() << Text;
+      FAIL() << Text;
+    }
+  }
+  for (auto *Owner : {Second.get(), First.get(), Second.get()}) {
+    auto Active = Owner->acquire(Control);
+    ASSERT_TRUE(bool(Active)) << llvm::toString(Active.takeError());
+  }
+  EXPECT_EQ(FirstCreations, 2u);
+  EXPECT_EQ(SecondCreations, 2u);
   First.reset();
-  // The surviving partition and host RAM remain usable after peer retirement.
-  ASSERT_EQ(llvm::toString(Second.map(Other, Case.Size)), "");
+  // Retiring an inactive peer must keep the current partition hot and usable.
+  auto Active = Second->acquire(Control);
+  ASSERT_TRUE(bool(Active)) << llvm::toString(Active.takeError());
+  EXPECT_EQ(SecondCreations, 2u);
+  ASSERT_EQ(llvm::toString(static_cast<MappingPartition &>(**Active).map(
+                Other, Case.Size)),
+            "");
   const auto *Bytes = static_cast<const uint8_t *>(Other);
   EXPECT_EQ(Bytes[0], Case.Prefault ? Fill : 0);
   EXPECT_EQ(Bytes[Case.Size - 1], Case.Prefault ? Fill : 0);

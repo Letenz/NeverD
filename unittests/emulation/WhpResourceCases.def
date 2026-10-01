@@ -1,0 +1,13 @@
+//===- WhpResourceCases.def - Native resource lifetime boundaries --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_RESOURCE_TEXT
+NEVERD_WHP_RESOURCE_TEXT(CreateFailed,
+                         "synthetic native resource construction failed")
+#endif
+#ifdef NEVERD_WHP_RESOURCE_VALUE
+NEVERD_WHP_RESOURCE_VALUE(DeadlineMilliseconds, 20)
+NEVERD_WHP_RESOURCE_VALUE(WaitMilliseconds, 1000)
+#endif
