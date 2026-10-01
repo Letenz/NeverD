@@ -505,6 +505,91 @@ TEST(SwiftValueWitnessCalls, ExactPrivateSpillAcrossBlocksPreservesWitness) {
   }
 }
 
+TEST(SwiftValueWitnessCalls, OneOpaqueFrameLoadDefinesMetadataAndItsTable) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto Kind :
+         {SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy,
+          SourceCallTypeHint::SwiftValueWitnessKind::Destroy})
+      for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Kind));
+        SCOPED_TRACE(Mutation);
+        Fixture F(Architecture, false, Kind);
+        const auto &TRI = getTargetRegInfo(Architecture);
+        ASSERT_GE(TRI.CalleeSaveRegs.size(), 3U);
+        const auto Saved = NdVar::reg(TRI.CalleeSaveRegs[1], 8);
+        const auto Address = NdVar::reg(TRI.CalleeSaveRegs[2], 8);
+        const auto Target = NdVar::reg(F.Target, 8);
+        const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+        auto &Block = F.Function.Blocks[0];
+        Block.Ops.clear();
+        va_t PC = F.Function.Entry;
+        auto Add = [&](NdOp Code, NdVar Output,
+                       std::initializer_list<NdVar> Inputs) {
+          LowOp Op;
+          Op.Addr = PC;
+          PC += 4;
+          Op.Opcode = Code;
+          Op.Output = Output;
+          for (const auto &Input : Inputs)
+            Op.addInput(Input);
+          Block.Ops.push_back(Op);
+        };
+        Add(NdOp::INT_SUB, Stack, {Stack, NdVar::cst(128, 8)});
+        // The cell's content is unknown, including whether this call wrote
+        // it. The following load, rather than the cell, identifies a value.
+        Add(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)});
+        Add(NdOp::INT_ADD, Address, {Stack, NdVar::cst(64, 8)});
+        Add(NdOp::LOAD, Mutation == 8 ? NdVar::reg(Saved.Offset, 4) : Saved,
+            {Address});
+        Add(NdOp::INT_SUB, Target, {Saved, NdVar::cst(8, 8)});
+        Add(NdOp::LOAD, Target, {Target});
+        Add(NdOp::INT_ADD, Target,
+            {Target, NdVar::cst(*swiftValueWitnessSlot(Kind) * 8 +
+                                    (Mutation == 7 ? 1 : 0),
+                                8)});
+        Add(NdOp::LOAD, Target, {Target});
+        if (Mutation == 2 || Mutation == 6)
+          Add(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)});
+        if (Mutation == 4 || Mutation == 5)
+          Add(NdOp::STORE, {}, {Address, NdVar::cst(0, 8)});
+        if (Mutation == 1 || Mutation == 2 || Mutation == 5)
+          Add(NdOp::LOAD, Saved, {Address});
+        if (Mutation == 3)
+          Add(NdOp::COPY, NdVar::reg(Saved.Offset, 4), {NdVar::cst(0, 4)});
+        Add(NdOp::COPY, NdVar::reg(F.Metadata, 8), {Saved});
+        const auto CallAddress = PC;
+        Add(NdOp::INDIR_CALL, {}, {Target});
+        Add(NdOp::RETURN, {}, {});
+        const auto Hints = F.hints();
+        const bool SameLoadedValue =
+            Mutation == 0 || Mutation == 4 || Mutation == 6;
+        if (!SameLoadedValue) {
+          EXPECT_TRUE(Hints.empty());
+          continue;
+        }
+        ASSERT_EQ(Hints.size(), 1U);
+        EXPECT_EQ(Hints.begin()->first, CallAddress);
+        EXPECT_EQ(Hints.begin()->second.ValueWitness, Kind);
+        EXPECT_TRUE(isSwiftValueWitnessSourceCallHint(Hints.begin()->second,
+                                                      Architecture));
+        // A later cell write or call does not change the already loaded
+        // register value. Reloading that cell above deliberately does.
+        LowToMedConverter Converter;
+        Converter.setBinaryImage(&F.Image);
+        Converter.setSourceCallHintsEnabled(true);
+        const auto Med =
+            Converter.convert(F.Function, Architecture, BinaryFormat::MachO);
+        unsigned BoundCalls = 0;
+        for (const auto &B : Med.Blocks)
+          for (const auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::INDIR_CALL && Op.SourceCallHint &&
+                Op.SourceCallHint->ValueWitness == Kind)
+              ++BoundCalls;
+        EXPECT_EQ(BoundCalls, 1U);
+      }
+}
+
 TEST(SwiftValueWitnessCalls, DestroyProofRejectsMalformedControlFlow) {
   for (unsigned Case = 0; Case < 5; ++Case) {
     SCOPED_TRACE(Case);
