@@ -8,6 +8,7 @@
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "FiniteValues.h"
+#include "FrameOffsets.h"
 #include "LowIRLoopInference.h"
 #include "NativeStackControl.h"
 #include "NativeUndefinedIndependence.h"
@@ -550,6 +551,22 @@ class Checker {
     const auto Answer = Ctx.substitute(Value, ZeroLeftChoices);
     nodes();
     return Answer;
+  }
+
+  std::optional<llvm::APInt> frameDifference(SymRef Predicate, SymRef Value) {
+    uint64_t Queries = Result.SolverQueries;
+    const auto Offset = detail::proveFrameOffset(
+        Ctx, Predicate, Value, EntryRoot, Limits.Solver,
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
+    Result.SolverQueries = static_cast<uint32_t>(Queries);
+    if (Offset.Status == detail::FrameOffsetStatus::Invalid)
+      fail(Status::Invalid, "invalid frame-offset proof");
+    if (Offset.Status == detail::FrameOffsetStatus::BudgetExceeded)
+      fail(Status::BudgetExceeded,
+           "frame-offset proof exceeded its solver or symbolic-node budget");
+    if (Offset.Status == detail::FrameOffsetStatus::Exact)
+      return llvm::APInt(64, Offset.Offset);
+    return std::nullopt;
   }
 
   void checkTemporary(const NdVar &V, const std::set<uint64_t> &Defined) {
@@ -1127,7 +1144,7 @@ class Checker {
         const auto Left = P.Left.read(SymSpace::Register, Root.Offset, 8);
         const auto Right = P.Right.read(SymSpace::Register, Root.Offset, 8);
         equal(P.Predicate, Left, Right, "native return stack pointer");
-        const auto Offset = Ctx.asConst(Ctx.mkSub(ordinary(Left), EntryRoot));
+        const auto Offset = frameDifference(P.Predicate, ordinary(Left));
         if (!Offset)
           fail(Status::Unsupported,
                "native return has no exact entry-relative stack pointer");
@@ -1265,8 +1282,7 @@ class Checker {
           const auto A = Left.operandValue(*View.Address);
           const auto Other = Right.operandValue(*View.Address);
           equal(P.Predicate, A, Other, "memory address");
-          const auto Difference =
-              Ctx.asConst(Ctx.mkSub(ordinary(A), EntryRoot));
+          const auto Difference = frameDifference(P.Predicate, ordinary(A));
           const auto &Frame = *Contract.Frame;
           const bool InFrame =
               Difference && Difference->getBitWidth() == 64 &&

@@ -220,6 +220,52 @@ TEST(OriginalBinaryUndefinedIndependence,
   EXPECT_EQ(R.Proof.Paths, 1u);
 }
 
+TEST(OriginalBinaryUndefinedIndependence,
+     InternalReturnReclaimsStackArguments) {
+  // sub rsp,24; call helper; ret; helper: mov eax,7; ret 24.
+  Program P({0x48, 0x83, 0xec, 24, 0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 7, 0, 0, 0,
+             0xc2, 24, 0});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  ASSERT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 1u);
+  // Incorrect cleanup cannot establish the mandatory restored outer frame.
+  P.Image.Segments[0].Data[16] = 16;
+  const auto Bad = P.check();
+  EXPECT_FALSE(Bad.proved());
+  EXPECT_FALSE(Bad.Certificate.has_value());
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PrefixedReturnsDoNotAssumePopWidth) {
+  for (auto Bytes : {std::initializer_list<uint8_t>{0x66, 0xc3},
+                     std::initializer_list<uint8_t>{0x66, 0xc2, 8, 0},
+                     std::initializer_list<uint8_t>{0xf3, 0xc3}}) {
+    Program P(Bytes);
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     GuardedAlignmentUsesTheWholeEntryDomain) {
+  // Save the physical root, compute its low bits, allocate and align. Only
+  // residue 3 calls the helper; every other residue restores the root and
+  // returns a different result. The entry domain has no alignment assertion.
+  // mov r11,rsp; mov rax,rsp; and eax,15; sub rsp,64; and rsp,-16;
+  // cmp eax,3; jne fallback; call helper; mov rsp,r11; ret;
+  // fallback: mov rsp,r11; mov eax,9; ret; helper: mov eax,7; ret.
+  Program P({0x49, 0x89, 0xe3, 0x48, 0x89, 0xe0, 0x83, 0xe0, 0x0f, 0x48,
+             0x83, 0xec, 0x40, 0x48, 0x83, 0xe4, 0xf0, 0x83, 0xf8, 0x03,
+             0x75, 0x09, 0xe8, 0x0d, 0,    0,    0,    0x4c, 0x89, 0xdc,
+             0xc3, 0x4c, 0x89, 0xdc, 0xb8, 9,    0,    0,    0,    0xc3,
+             0xb8, 7,    0,    0,    0,    0xc3});
+  P.Contract.Frame->Begin = -96;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 2u);
+  ASSERT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_GT(R.Independence.Proof.SolverQueries, 0u);
+}
+
 TEST(OriginalBinaryUndefinedIndependence, CalleeCannotCorruptEntryReturnSlot) {
   // The internal return slot is [rsp]; [rsp+8] is the outer entry slot.
   Program P(

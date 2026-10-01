@@ -821,6 +821,12 @@ budgeted and publication requires a fresh complete proof.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
+`FrameOffsets` owns budgeted singleton proofs of entry-relative displacements. Recovery canonicalizes actual symbolic memory accesses without changing residual address expressions; native checks retain two-execution address equality. Recovery owns exhaustive alignment dispatch and shared retry budgets. Native/LLVM partition-proof aggregation remains separate, unfinished work. `NativeStackControl` owns internal unsigned-16-bit return cleanup; the binary provider authenticates canonical eight-byte-pop encodings.
+
+`StringTransfer` owns bounded ordered scalar lowering. Recovery owns value proofs, shared budgets and re-certification of complete copied frame pointers; generated accesses reuse ordinary memory checks.
+
+The control-dependency walk reports root-bit dependencies only after complete analysis. Recovery may omit optional image-address enumeration when a proved relative address retains at least 32 free high root bits; this establishes no reachability fact and never removes the memory access.
+
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.

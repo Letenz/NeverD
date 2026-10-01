@@ -225,6 +225,10 @@ this private-frame precondition.
 
 `PEFixedImageView` authenticates complete x64 PE images at their preferred base. It checks raw headers, unique mappings, complete DIR64 fields and ordinary import writes; IAT bytes remain excluded. TLS, load-config, delayed/bound imports, CLR and unknown writers are refused. Recovery and native/LLVM proofs bind the same snapshot. The C++ options `MaxImagePreparationBytes` and `MaxImagePreparationRecords` default to 64 MiB and 65536; exhaustion reports `BudgetExceeded`. The image must remain unchanged. This does not establish ASLR, initialization or unpacking equivalence.
 
+Aligned-frame recovery partitions all low entry-root residues while leaving high bits free. It emits an explicit entry dispatch and proves each constant displacement before sharing the original root's symbolic memory bank. Spills, alias invalidation and context joins retain the partition identity. Candidates are tried in increasing size; unrelated wide masks cannot force the largest partition. Context and refinement limits bound partitions and retries; nodes, operations, evaluations and solver queries are cumulative. This recovery support does not yet provide automatic native/LLVM proof aggregation across partitions or duplicated loop origins. Existing checkers may prove offsets implied by their actual path predicates. With explicit physical stack semantics, canonical internal `RET imm16` reads the old return slot and advances RSP by eight plus the unsigned cleanup; outer returns still require zero cleanup. Prefixed return encodings are refused by this projection.
+
+Repeated transfers with 64-bit addresses support 1/2/4/8-byte elements after complete count and direction proofs. Zero count accesses no memory and needs no direction proof under explicit machine state; the ordinary ABI still rejects unbound flags. Each scalar access retains ordinary alias and return-slot checks. Complete copied frame pointers are re-proved from actual memory before edge projection. Unknown counts, exhausted budgets, segmented accesses and narrower address sizes are refused. Native undefined-effect certification for these original REP instructions remains unsupported.
+
 The source domain requires ordinary ABI returns: every external-origin store's
 target range is disjoint from the entry return-address slot. This is an explicit
 caller/environment precondition, including addresses computed from external
@@ -314,7 +318,7 @@ The residual code retains one guest stack read, captures its value before the
 stack increment, and dispatches on that captured value. Reaching the preserved
 entry return slot remains an outer exit, even after discarding an internal
 frame. Unknown targets, sets containing missing or nonexecutable destinations,
-callee-pop returns and arbitrary stack pivots remain unsupported. Exact frame
+outer callee-pop returns and arbitrary stack pivots remain unsupported. Exact frame
 pointers survive complete spills, with partial or potentially aliasing writes
 invalidating the facts. Active stack positions and return-slot values separate
 contexts and are budgeted.

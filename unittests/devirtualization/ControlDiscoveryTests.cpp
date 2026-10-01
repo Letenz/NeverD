@@ -338,6 +338,46 @@ TEST(ControlDiscovery, FrameRootSpillsDoNotBecomeFiniteInputs) {
   EXPECT_EQ(R.Status, ControlDiscoveryStatus::Complete);
   EXPECT_TRUE(R.FrameSlots.empty());
   EXPECT_TRUE(R.RegisterRanges.empty());
+  ASSERT_TRUE(R.FrameRootBits);
+  EXPECT_EQ(*R.FrameRootBits, UINT64_MAX);
+}
+
+TEST(ControlDiscovery, RootDependenciesKeepLowArithmeticAndHighSlicesDistinct) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto Low = Ctx.mkExtract(Ctx.mkAdd(Root, Ctx.mkConst(64, 7)), 0, 8);
+  const auto High = Ctx.mkExtract(Root, 40, 8);
+  const std::vector<std::pair<SymRef, uint64_t>> Cases = {
+      {Ctx.mkEq(Low, Ctx.mkConst(8, 23)), 0xff},
+      {Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 0xf0)), Ctx.mkConst(64, 0x20)),
+       0xf0},
+      {Ctx.mkEq(High, Ctx.mkConst(8, 3)), uint64_t{0xff} << 40},
+      {Ctx.mkEq(Ctx.mkAdd(Low, High), Ctx.mkConst(8, 31)),
+       (uint64_t{0xff} << 40) | 0xff},
+      {Ctx.mkEq(Root, Ctx.mkConst(64, 0x1200)), UINT64_MAX}};
+  for (const auto &[Value, Mask] : Cases) {
+    const auto Nodes = Ctx.numNodes();
+    const auto R = gatherControlDependencies(State, Value, Root, 100);
+    ASSERT_EQ(R.Status, ControlDiscoveryStatus::Complete);
+    ASSERT_TRUE(R.FrameRootBits);
+    EXPECT_EQ(*R.FrameRootBits, Mask);
+    EXPECT_EQ(Ctx.numNodes(), Nodes);
+    EXPECT_TRUE(R.RegisterRanges.empty());
+    EXPECT_TRUE(R.FrameSlots.empty());
+    const auto Exact = gatherControlDependencies(State, Value, Root, R.Visited);
+    EXPECT_EQ(Exact.Status, ControlDiscoveryStatus::Complete);
+    EXPECT_EQ(Exact.FrameRootBits, R.FrameRootBits);
+    const auto Short =
+        gatherControlDependencies(State, Value, Root, R.Visited - 1);
+    EXPECT_EQ(Short.Status, ControlDiscoveryStatus::BudgetExceeded);
+    EXPECT_FALSE(Short.FrameRootBits);
+  }
+  const auto Unknown = Ctx.mkFreshVar(8, "unknown");
+  const auto R =
+      gatherControlDependencies(State, Ctx.mkEq(Low, Unknown), Root, 100);
+  EXPECT_EQ(R.Status, ControlDiscoveryStatus::UnsupportedOrigin);
+  EXPECT_FALSE(R.FrameRootBits);
 }
 
 TEST(ControlDiscovery, CopiesMaterializeTheirOwnInputMetadata) {

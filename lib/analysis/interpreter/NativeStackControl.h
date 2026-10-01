@@ -38,7 +38,9 @@ struct NativeStackExpansion {
 
 /// Expand a provider-certified physical near CALL/RET, or validate an already
 /// explicit call-to-fallthrough push. Targets are evaluated before the push;
-/// internal returns load the actual current stack word. No target projection,
+/// internal returns load the actual current stack word, then advance by the
+/// eight-byte address plus the unsigned imm16 cleanup, when present. Outer
+/// source boundaries still require zero cleanup. No target projection,
 /// call-stack prediction, reachability fact or return-slot assumption enters
 /// this transformation. The original instruction and its evidence are intact.
 ///
