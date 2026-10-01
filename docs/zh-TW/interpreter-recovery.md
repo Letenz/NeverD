@@ -179,3 +179,6 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 入口前綴重放先訪問已排隊的分支，再繼續展開較早的迴圈，因此另一分支允許任意迭代次數時，仍能找到較短的可達見證。推導階段與原始／候選程式檢查器共用此排程規則。全部工作仍計入既有預算；前綴見證不取代完整入口涵蓋、不變條件保持或終止性檢查。
 
 `pairLowIRLoopRefinementPlans` 透過明確的 `LowIRLoopCutpointPair` 合併兩個獨立提出的自關係計畫，每個切點必須恰好配對一次。`SharedInputs` 在等寬歸納輸入之間加入相等述詞，保留雙方繫結與投影供檢查器驗證。其餘暫存值保持獨立，候選側前綴輸入改用 `CandidatePrefix`，保留雙方述詞並採用原始側排名。兩個計畫的 `UseEntryPrefix` 必須一致；任一計畫需要時啟用 `GeneralizeEntryPrefix`。暫存值定義不得重疊，使用必須符合精確寬度。`MaxMetadata` 預設為 65536，在複製前限制建構量。結果只是未受信任的提案，仍須由 `checkLowIRLoopRefinement` 獨立檢查完整覆蓋、狀態／框架相等、可觀察結果及嚴格進展。此助手不提供憑證，也不改變 CLI 預設值。
+
+
+`inferAndCheckLowIRLoopRefinement` 搜尋經過驗證的 LowIR 迴圈關係。它固定原程式首次推斷出的自關係計畫，先嘗試候選程式的預設推斷，再逐一嘗試迴圈切點，並按需列舉已推斷切點的排列。它只為位移相同、寬度相同的堆疊框架輸入提出相等關係；暫存器重新命名、仿射關係和任意回饋切點集合仍須明確配對。權威配對器與完整檢查器保留呼叫者的原始稽核記錄、witness、入口域、框架觀測及終止性義務。`LowIRLoopAlignmentLimits` 的 `MaxSolverQueries` 在全部推斷及證明嘗試間共用，失敗嘗試也扣帳；每次呼叫最多取得階段上限與剩餘總額的較小值。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts` 和 `MaxCuts` 限制搜尋建構與列舉。單次預算耗盡可以重試，全域預算耗盡則停止。`Unsupported` 表示未找到關係，不表示程式不等價。只有重新驗證成功的 `Refinement` 包含憑證。CLI 預設行為不變。

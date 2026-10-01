@@ -314,6 +314,66 @@ LowIRRefinementResult checkLowIRLoopRefinement(
     LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
     const LowIRRefinementLimits &Limits = {});
 
+struct LowIRLoopAlignmentLimits {
+  LowIRLoopInferenceLimits OriginalInference, CandidateInference;
+  LowIRRefinementLimits Proof;
+  /// Shared by every inference and proof, including failed attempts. Each
+  /// invocation receives the lesser of its stage limit and the remainder.
+  uint64_t MaxSolverQueries = 65536;
+  /// Cumulative graph visits, input comparisons and pairing metadata. Charged
+  /// before constructing search containers; child executors keep their own
+  /// operation, path and symbolic-node limits.
+  uint64_t MaxSearchWork = 262144;
+  uint64_t MaxMetadata = 65536;
+  /// Includes default candidate inference, followed by singleton cyclic cuts.
+  uint32_t MaxCandidateAttempts = 33;
+  uint32_t MaxPairingAttempts = 128;
+  uint32_t MaxCuts = 3;
+};
+
+enum class LowIRLoopAlignmentStatus : uint8_t {
+  Proved,
+  /// No relation found in this search family; not a proof of inequivalence.
+  Unsupported,
+  Invalid,
+  BudgetExceeded,
+};
+
+struct LowIRLoopAlignmentResult {
+  LowIRLoopAlignmentStatus Status = LowIRLoopAlignmentStatus::Unsupported;
+  /// The last complete-checker result, using the caller's original records
+  /// and witness unchanged. Only a successful fresh check contains a receipt.
+  LowIRRefinementResult Refinement;
+  std::string Diagnostic;
+  std::string LastCandidateDiagnostic;
+  uint64_t SolverQueries = 0;
+  uint64_t SearchWork = 0;
+  uint32_t CandidateAttempts = 0;
+  uint32_t PairingAttempts = 0;
+
+  bool proved() const {
+    return Status == LowIRLoopAlignmentStatus::Proved && Refinement.proved();
+  }
+};
+
+/// Infer the original self-plan once, then search candidate self-plans and
+/// cut permutations. Tries default candidate inference, followed by individual
+/// cyclic block entries. Multiple-cut plans come only from default inference;
+/// this does not enumerate all feedback sets or retry original self-plans.
+/// Only same-width frame inputs at identical offsets are proposed equal.
+/// Register renaming, different layouts and affine relations remain explicit
+/// pairing tasks. All proposals go through pairLowIRLoopRefinementPlans and
+/// the complete checkLowIRLoopRefinement with the supplied audited records.
+/// A failed proposal never proves inequivalence. Per-attempt exhaustion may
+/// retry within the remaining total budgets; global exhaustion stops search.
+/// This API neither certifies native lifting nor proves compiler correctness.
+LowIRLoopAlignmentResult inferAndCheckLowIRLoopRefinement(
+    const LowFunc &Original,
+    llvm::ArrayRef<LowIRUndefinedInstruction> OriginalInstructions,
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    LowIRRefinementWitness Witness = LowIRRefinementWitness::LiftedBits,
+    const LowIRLoopAlignmentLimits &Limits = {});
+
 } // namespace neverd::analysis
 
 #endif
