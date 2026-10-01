@@ -331,8 +331,12 @@ struct LowIRLoopAlignmentLimits {
   /// before constructing search containers; child executors keep their own
   /// operation, path and symbolic-node limits.
   uint64_t MaxSearchWork = 262144;
+  /// One shared pool for all retained original/candidate family plans; also
+  /// bounds each individual pairing construction. Child inference keeps its
+  /// own limits, so this is not a bound on all simultaneously live metadata.
   uint64_t MaxMetadata = 65536;
-  /// Includes default candidate inference, followed by singleton cyclic cuts.
+  /// Includes default and branch-arm candidate inference, then cyclic
+  /// singletons. Empty or duplicate families still consume an attempt.
   uint32_t MaxCandidateAttempts = 33;
   uint32_t MaxPairingAttempts = 128;
   uint32_t MaxCuts = 3;
@@ -363,10 +367,12 @@ struct LowIRLoopAlignmentResult {
   }
 };
 
-/// Infer the original self-plan once, then search candidate self-plans and
-/// cut permutations. Tries default candidate inference, followed by individual
-/// cyclic block entries. Multiple-cut plans come only from default inference;
-/// this does not enumerate all feedback sets or retry original self-plans.
+/// Search default and branch-arm self-plans on both sides, first pairing the
+/// same families, then crossing them. Branch-arm cuts preserve action phases;
+/// greedy additions cover any remaining cycles. Family successes and failures
+/// are cached. Then try individual cyclic candidate entries against available
+/// original plans. Cut permutations are lazy; this does not enumerate every
+/// feedback set or rank family. Standalone default inference is unchanged.
 /// Only same-width frame inputs at identical offsets are proposed equal.
 /// Register renaming, different layouts and affine relations remain explicit
 /// pairing tasks. All proposals go through pairLowIRLoopRefinementPlans and

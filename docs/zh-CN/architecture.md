@@ -187,7 +187,7 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 
 单切点候选必须覆盖所有原先可达块中的每一个循环，包括移除该切点后与入口断开的循环。每次覆盖检查都在符号执行前消耗 `MaxCutpointAttempts`。在每条返回边上均以单位步长进展的标量计数器仍优先尝试。随后，最多八个已观察到的单位计数器组合候选，与更广泛的单个标量保护条件或边界假设交替尝试；剩余标量假设完成后，组合搜索从暂停处继续，不重复候选。这个顺序与预算上限无关。每次组合尝试都恢复保存的完整稳定模板及转换边；组合域检查失败只禁用该候选族。失败的标量保护条件不能缩小组合域。 `MaxRankCandidates`、查询、操作和路径预算持续累计。候选计划仍须通过完整的 refinement 检查器。 即使其他分支停留或重置，一条返回切点的加法递推分支也可触发基于结构的扩大；提出的模板仍须通过全部入口和转换检查。
 
-`inferAndCheckLowIRLoopRefinement` 搜索经过验证的 LowIR 循环关系。它固定原程序首次推断出的自关系计划，先尝试候选程序的默认推断，再逐个尝试循环切点，并按需枚举已推断切点的排列。它仅为偏移相同、宽度相同的栈帧输入提出相等关系；寄存器重命名、仿射关系和任意反馈切点集合仍需显式配对。权威配对器和完整检查器保留调用者的原始审计记录、witness、入口域、栈帧观测及终止性义务。`LowIRLoopAlignmentLimits` 的 `MaxSolverQueries` 在全部推断和证明尝试间共享，失败尝试也扣账；每次调用最多获得阶段上限与剩余总额的较小值。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts` 和 `MaxCuts` 限制搜索构造和枚举。单次预算耗尽可以重试，全局预算耗尽则停止。`Unsupported` 表示未找到关系，不表示程序不等价。只有重新验证成功的 `Refinement` 包含证书。CLI 默认行为不变。
+`inferAndCheckLowIRLoopRefinement` 搜索经过验证的 LowIR 循环关系。 它先配对双方的默认计划，再尝试分支动作入口计划和跨族配对，最后逐个尝试候选侧循环切点。分支入口方案选取循环分量内分支块的后继，要求该后继只有一条出边，再用贪心切点补齐未覆盖的周期。这样可以保留独立动作阶段，且不要求默认推断先成功。空候选族、与已有默认计划重复的切点集合不消耗符号查询。成功与失败均缓存，每侧至多保留两个计划，切点排列仍按需枚举。所有保留计划共用一个 `MaxMetadata` 池，每次配对构造另受同一上限约束。每次候选推断调用均计入尝试次数，包括空候选族和重复候选族。 它仅为偏移相同、宽度相同的栈帧输入提出相等关系；寄存器重命名、仿射关系和任意反馈切点集合仍需显式配对。权威配对器和完整检查器保留调用者的原始审计记录、witness、入口域、栈帧观测及终止性义务。`LowIRLoopAlignmentLimits` 的 `MaxSolverQueries` 在全部推断和证明尝试间共享，失败尝试也扣账；每次调用最多获得阶段上限与剩余总额的较小值。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts` 和 `MaxCuts` 限制搜索构造和枚举。单次预算耗尽可以重试，全局预算耗尽则停止。`Unsupported` 表示未找到关系，不表示程序不等价。只有重新验证成功的 `Refinement` 包含证书。CLI 默认行为不变。
 
 `GeneralizeEntryPrefix` 默认为 `false`，且要求 `UseEntryPrefix`。默认模式下，每次到达都必须保持捕获路径的谓词。显式泛化模式则把前缀状态表达式视为该路径之外的全域、不可信模板函数，仍要求可行的成对见证、真实入口与片段完整覆盖、全部寄存器／栈帧相等、参数投影、原生执行约束，以及扩大归纳域上的严格排名下降。推断只在传入状态超出见证域时扩大切点，再重建并检查所有一般转换。首个见证零次迭代不能掩盖另一入口的循环。策略绑定到归纳证书摘要。
 
@@ -552,6 +552,8 @@ ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向
 x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；WHP 和 ARM64 原生工作负载仍缺少独立验证。
 
 共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。活跃扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
+
+`CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
 
 `WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
 

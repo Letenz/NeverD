@@ -6,6 +6,7 @@
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64IntegerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64MemoryUpdateTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64ExceptionTests)
@@ -21,7 +22,39 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
-// Native startup, full FP state and shared CPU execution must not skip.
+// Native startup, integer/FP state and shared CPU execution must not skip.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.MultiplyPreservesWidthsAndDefinedFlags/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.MultiplyPreservesWidthsAndDefinedFlags/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.SignExtensionKeepsFlagsAndUntouchedRegisterBits/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.SignExtensionKeepsFlagsAndUntouchedRegisterBits/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.ReadObserverStopsBeforeImplicitRegisterEffects/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.ReadObserverStopsBeforeImplicitRegisterEffects/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.MissingSourcePagePreservesBothProductHalves/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64Integer.MissingSourcePagePreservesBothProductHalves/"
+    "whpUser")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/whpSupervisor")
