@@ -800,6 +800,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       OS << ";\n";
       break;
     }
+    // An instruction reading fixed registers loads them in an `__asm` block,
+    // as a software interrupt does.
+    if (x86UsesImplicitRegisterAsm(Stmt.CallExpr->IntrinsicId)) {
+      const std::string Rendered = renderX86InterruptStatement(
+          Opts.TheArch, *Stmt.CallExpr, "", 0,
+          [this](const HighExpr &E) { return exprStr(E); });
+      if (!Rendered.empty()) {
+        emitRenderedStatement(Indent, Rendered);
+        break;
+      }
+    }
     {
       auto Rendered = renderX86SegmentedIntrinsicStatement(
           Opts.TheArch, *Stmt.CallExpr, nullptr,

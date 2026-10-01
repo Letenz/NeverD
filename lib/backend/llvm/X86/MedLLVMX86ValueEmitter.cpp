@@ -730,6 +730,125 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
   }
 
+  // RDPMC reads the counter ECX selects into EDX:EAX, combined like RDMSR.
+  if (IC == I::Rdpmc && Op.Output.Size > 0) {
+    if (Op.NumInputs != 2)
+      llvm::report_fatal_error("x86 RDPMC has no counter selector");
+    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
+    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+    llvm::Value *Selector =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
+    auto *FnTy = llvm::FunctionType::get(I64Ty, {I32Ty}, false);
+    auto *IA = TargetArch == Arch::X64
+                   ? llvm::InlineAsm::get(
+                         FnTy, "rdpmc\n\tshlq $$32, %rdx\n\torq %rdx, %rax",
+                         "={rax},{ecx},~{rdx}", /*hasSideEffects=*/true)
+                   : llvm::InlineAsm::get(FnTy, "rdpmc", "=A,{ecx}",
+                                          /*hasSideEffects=*/true);
+    llvm::Value *Value = Builder.CreateCall(IA, {Selector}, "pmc");
+    return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
+  }
+
+  // A Hyper-V hypercall (TLFS): RCX, RDX and R8 in, the status in RAX.
+  if ((IC == I::Vmcall || IC == I::Vmmcall) && Op.Output.Size > 0) {
+    if (Op.NumInputs != 4)
+      llvm::report_fatal_error("x86 hypercall has an invalid operand shape");
+    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+    std::vector<llvm::Value *> Vals;
+    for (uint16_t I = 1; I < 4; ++I)
+      Vals.push_back(
+          Builder.CreateZExtOrTrunc(getVar(Op.Inputs[I], Builder), I64Ty));
+    auto *FnTy = llvm::FunctionType::get(I64Ty, {I64Ty, I64Ty, I64Ty}, false);
+    auto *IA = llvm::InlineAsm::get(
+        FnTy, IC == I::Vmcall ? "vmcall" : "vmmcall",
+        "={rax},{rcx},{rdx},{r8},~{memory}", /*hasSideEffects=*/true);
+    llvm::Value *Status = Builder.CreateCall(IA, Vals, "hypercall");
+    return Builder.CreateZExtOrTrunc(Status, sizeToType(Op.Output.Size));
+  }
+
+  // VERR/VERW with a live ZF; a memory selector keeps its FS/GS override.
+  if ((IC == I::Verr || IC == I::Verw) && Op.Output.Size > 0) {
+    if (Op.NumInputs != 2)
+      llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
+    auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
+    std::string Text = IC == I::Verr ? "verr " : "verw ";
+    llvm::Value *Operand = nullptr;
+    if (Op.Inputs[1].Size == 8) {
+      Operand = Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
+                    ? getVar(Op.Inputs[1], Builder)
+                    : getRawSegmentOffset(Op.Inputs[1], Builder);
+      if (Operand->getType()->isPointerTy())
+        Operand = Builder.CreatePtrToInt(Operand, llvm::Type::getInt64Ty(*Ctx));
+      Operand =
+          Builder.CreateZExtOrTrunc(Operand, llvm::Type::getInt64Ty(*Ctx));
+      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
+        Text += "%fs:";
+      else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86GS)
+        Text += "%gs:";
+      Text += "($1)";
+    } else {
+      Operand = Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder),
+                                          llvm::Type::getInt16Ty(*Ctx));
+      Text += "$1";
+    }
+    auto *FnTy = llvm::FunctionType::get(I8Ty, {Operand->getType()}, false);
+    auto *IA =
+        llvm::InlineAsm::get(FnTy, Text + "\n\tsetz $0", "=q,r,~{cc},~{memory}",
+                             /*hasSideEffects=*/true);
+    llvm::Value *Zf = Builder.CreateCall(IA, {Operand}, "segment_ok");
+    return Builder.CreateZExtOrTrunc(Zf, sizeToType(Op.Output.Size));
+  }
+
+  // LSL: the segment limit, or its selector check (ZF).
+  if ((IC == I::SegmentLimit || IC == I::SegmentLimitValid) &&
+      Op.Output.Size > 0) {
+    if (Op.NumInputs != 2)
+      llvm::report_fatal_error("x86 LSL has an invalid operand shape");
+    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
+    auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
+    llvm::Value *Selector =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
+    llvm::Value *Result = nullptr;
+    if (IC == I::SegmentLimit) {
+      auto *FnTy = llvm::FunctionType::get(I32Ty, {I32Ty}, false);
+      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${1:w}, $0", "=r,r,~{cc}",
+                                      /*hasSideEffects=*/false);
+      Result = Builder.CreateCall(IA, {Selector}, "segment_limit");
+    } else {
+      auto *RetTy = llvm::StructType::get(*Ctx, {I32Ty, I8Ty});
+      auto *FnTy = llvm::FunctionType::get(RetTy, {I32Ty}, false);
+      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${2:w}, $0\n\tsetz $1",
+                                      "=&r,=q,r,~{cc}",
+                                      /*hasSideEffects=*/false);
+      Result = Builder.CreateExtractValue(Builder.CreateCall(IA, {Selector}), 1,
+                                          "segment_valid");
+    }
+    return Builder.CreateZExtOrTrunc(Result, sizeToType(Op.Output.Size));
+  }
+
+  // RDRAND/RDSEED: the value with the CF success byte above it.
+  if ((IC == I::Rdrand || IC == I::Rdseed) && Op.Output.Size > 0) {
+    const unsigned Bytes = Op.Output.Size / 2;
+    if (Bytes != 2 && Bytes != 4 && Bytes != 8)
+      llvm::report_fatal_error("x86 RDRAND/RDSEED has an invalid result");
+    auto *ValueTy = sizeToType(Bytes);
+    auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
+    auto *PairTy = sizeToType(Op.Output.Size);
+    auto *RetTy = llvm::StructType::get(*Ctx, {ValueTy, I8Ty});
+    auto *FnTy = llvm::FunctionType::get(RetTy, {}, false);
+    auto *IA = llvm::InlineAsm::get(
+        FnTy,
+        std::string(IC == I::Rdrand ? "rdrand" : "rdseed") + " $0\n\tsetc $1",
+        "=r,=q,~{cc}", /*hasSideEffects=*/true);
+    llvm::Value *Pair = Builder.CreateCall(IA, {}, "random");
+    llvm::Value *Value =
+        Builder.CreateZExt(Builder.CreateExtractValue(Pair, 0), PairTy);
+    llvm::Value *Ok =
+        Builder.CreateZExt(Builder.CreateExtractValue(Pair, 1), PairTy);
+    return Builder.CreateOr(Builder.CreateShl(Ok, Bytes * 8), Value,
+                            "random_pair");
+  }
+
   // `int imm8` with a register result, and the x64 debug service (`int 2Dh`),
   // which also reads RAX, RCX, RDX, R8 and R9 in the lifter's input order.
   if ((IC == I::IntN || IC == I::DebugService) && Op.Output.Size > 0) {

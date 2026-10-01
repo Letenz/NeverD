@@ -263,6 +263,24 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
   return std::nullopt;
 }
 
+/// Write a 64-bit RDMSR/RDPMC result to EDX:EAX; in 64-bit mode the 32-bit
+/// writes zero-extend into RAX and RDX.
+void writeEdxEax(X86Lifter::LiftState &S, Arch TargetArch, NdVar Value) {
+  const NdVar Lo = S.makeTemp(4);
+  S.emit(NdOp::SUBBYTES, Lo, {Value, NdVar::cst(0, 4)});
+  const NdVar Shifted = S.makeTemp(8);
+  S.emit(NdOp::INT_RIGHT, Shifted, {Value, NdVar::cst(32, 8)});
+  const NdVar Hi = S.makeTemp(4);
+  S.emit(NdOp::SUBBYTES, Hi, {Shifted, NdVar::cst(0, 4)});
+  if (TargetArch == Arch::X64) {
+    S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RAX, 8), {Lo});
+    S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RDX, 8), {Hi});
+  } else {
+    S.emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 4), {Lo});
+    S.emit(NdOp::COPY, NdVar::reg(x86reg::RDX, 4), {Hi});
+  }
+}
+
 } // namespace
 
 bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
@@ -576,19 +594,7 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       // mode the 32-bit writes zero-extend into RAX/RDX.
       const NdVar Value = S.makeTemp(8);
       S.emitIntrinsic(Intrinsic::Rdmsr, Value, {NdVar::reg(x86reg::RCX, 4)});
-      const NdVar Lo = S.makeTemp(4);
-      S.emit(NdOp::SUBBYTES, Lo, {Value, NdVar::cst(0, 4)});
-      const NdVar Shifted = S.makeTemp(8);
-      S.emit(NdOp::INT_RIGHT, Shifted, {Value, NdVar::cst(32, 8)});
-      const NdVar Hi = S.makeTemp(4);
-      S.emit(NdOp::SUBBYTES, Hi, {Shifted, NdVar::cst(0, 4)});
-      if (TargetArch == Arch::X64) {
-        S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RAX, 8), {Lo});
-        S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RDX, 8), {Hi});
-      } else {
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 4), {Lo});
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::RDX, 4), {Hi});
-      }
+      writeEdxEax(S, TargetArch, Value);
       break;
     }
     [[fallthrough]];
@@ -631,16 +637,147 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
                     {NdVar::reg(x86reg::RCX, 4), Value});
     break;
   }
-  case X86_INS_RDPMC:
-  case X86_INS_RDPID:
+  // RDPMC reads the performance counter ECX selects into EDX:EAX.
+  case X86_INS_RDPMC: {
+    const NdVar Value = S.makeTemp(8);
+    S.emitIntrinsic(Intrinsic::Rdpmc, Value, {NdVar::reg(x86reg::RCX, 4)});
+    writeEdxEax(S, TargetArch, Value);
+    break;
+  }
+
+  // A Hyper-V hypercall (TLFS): RCX holds the hypercall input value, RDX and
+  // R8 its input and output parameters, and the status comes back in RAX.
+  case X86_INS_VMCALL:
+  case X86_INS_VMMCALL:
+    if (TargetArch != Arch::X64)
+      return false;
+    S.emitIntrinsic(InsnId == X86_INS_VMCALL ? Intrinsic::Vmcall
+                                             : Intrinsic::Vmmcall,
+                    NdVar::reg(x86reg::RAX, 8),
+                    {NdVar::reg(x86reg::RCX, 8), NdVar::reg(x86reg::RDX, 8),
+                     NdVar::reg(x86reg::R8, 8)});
+    break;
+
+  // VERR/VERW set ZF when the selector names a segment readable or writable
+  // at the current privilege; nothing else changes.  VERW also flushes the
+  // buffers the MDS mitigations rely on, so it stays even when ZF is dead.
+  case X86_INS_VERR:
+  case X86_INS_VERW: {
+    const Intrinsic Id =
+        InsnId == X86_INS_VERR ? Intrinsic::Verr : Intrinsic::Verw;
+    const NdVar Zf = NdVar::reg(x86reg::ZF, 1);
+    if (X86.op_count < 1)
+      return false;
+    if (X86.operands[0].type == X86_OP_MEM) {
+      if (!S.emitMemoryIntrinsic(Id, X86.operands[0], {}, Zf))
+        return false;
+    } else if (X86.operands[0].type == X86_OP_REG) {
+      const RegInfo Selector =
+          mapCapstoneReg(static_cast<x86_reg>(X86.operands[0].reg));
+      S.emitIntrinsic(Id, Zf, {NdVar::reg(Selector.Offset, 2)});
+    } else {
+      return false;
+    }
+    break;
+  }
+
+  // LSL loads the limit of the segment a selector names, as MSVC's
+  // __segmentlimit does, and sets ZF when the selector is valid.
+  case X86_INS_LSL: {
+    if (X86.op_count < 2 || X86.operands[0].type != X86_OP_REG)
+      return false;
+    NdVar Selector;
+    if (X86.operands[1].type == X86_OP_REG) {
+      const RegInfo Source =
+          mapCapstoneReg(static_cast<x86_reg>(X86.operands[1].reg));
+      Selector = NdVar::reg(Source.Offset, 2);
+    } else if (X86.operands[1].type == X86_OP_MEM) {
+      Selector = operandRead(S, X86.operands[1]);
+      if (Selector.Size != 2)
+        return false;
+    } else {
+      return false;
+    }
+    const NdVar Limit = S.makeTemp(4);
+    S.emitIntrinsic(Intrinsic::SegmentLimit, Limit, {Selector});
+    const NdVar Dst = operandWrite(X86.operands[0]);
+    if (Dst.Size == 4)
+      S.emit(NdOp::COPY, Dst, {Limit});
+    else if (Dst.Size > 4)
+      S.emit(NdOp::INT_ZEXT, Dst, {Limit});
+    else
+      S.emit(NdOp::SUBBYTES, Dst, {Limit, NdVar::cst(0, 4)});
+    S.emitIntrinsic(Intrinsic::SegmentLimitValid, NdVar::reg(x86reg::ZF, 1),
+                    {Selector});
+    break;
+  }
+
+  // MONITOR arms address monitoring at RAX with the extensions in ECX and
+  // the hints in EDX; MWAIT waits with the hints in EAX and the extensions
+  // in ECX.  The AMD X forms add an EBX timer to MWAITX.
+  case X86_INS_MONITOR:
+  case X86_INS_MONITORX: {
+    const uint16_t AddressSize = TargetArch == Arch::X64 ? 8 : 4;
+    S.emitIntrinsic(InsnId == X86_INS_MONITOR ? Intrinsic::Monitor
+                                              : Intrinsic::Monitorx,
+                    NdVar(),
+                    {NdVar::reg(x86reg::RAX, AddressSize),
+                     NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::RDX, 4)});
+    break;
+  }
+  case X86_INS_MWAIT:
+    S.emitIntrinsic(Intrinsic::Mwait, NdVar(),
+                    {NdVar::reg(x86reg::RAX, 4), NdVar::reg(x86reg::RCX, 4)});
+    break;
+  case X86_INS_MWAITX:
+    S.emitIntrinsic(Intrinsic::Mwaitx, NdVar(),
+                    {NdVar::reg(x86reg::RAX, 4), NdVar::reg(x86reg::RCX, 4),
+                     NdVar::reg(x86reg::RBX, 4)});
+    break;
+
+  // XSETBV writes EDX:EAX to the extended control register ECX selects.
+  case X86_INS_XSETBV: {
+    const NdVar Value = S.makeTemp(8);
+    S.emit(NdOp::CONCAT, Value,
+           {NdVar::reg(x86reg::RDX, 4), NdVar::reg(x86reg::RAX, 4)});
+    S.emitIntrinsic(Intrinsic::Xsetbv, NdVar(),
+                    {NdVar::reg(x86reg::RCX, 4), Value});
+    break;
+  }
+
+  // RDRAND/RDSEED load a random value and set CF when one was available,
+  // clearing OF, SF, ZF, AF and PF.  The intrinsic returns the value with
+  // the success byte above it.
   case X86_INS_RDRAND:
-  case X86_INS_RDSEED:
+  case X86_INS_RDSEED: {
+    if (X86.op_count < 1 || X86.operands[0].type != X86_OP_REG)
+      return false;
+    const NdVar Dst = operandWrite(X86.operands[0]);
+    if (Dst.Size != 2 && Dst.Size != 4 && Dst.Size != 8)
+      return false;
+    const NdVar Pair = S.makeTemp(2 * Dst.Size);
+    S.emitIntrinsic(InsnId == X86_INS_RDRAND ? Intrinsic::Rdrand
+                                             : Intrinsic::Rdseed,
+                    Pair, {NdVar::scalar(Dst.Size, 1)});
+    S.emit(NdOp::SUBBYTES, Dst, {Pair, NdVar::cst(0, 4)});
+    const NdVar Success = S.makeTemp(1);
+    S.emit(NdOp::SUBBYTES, Success, {Pair, NdVar::cst(Dst.Size, 4)});
+    S.emit(NdOp::INT_NOTEQUAL, NdVar::reg(x86reg::CF, 1),
+           {Success, NdVar::scalar(0, 1)});
+    for (uint64_t Flag :
+         {x86reg::OF, x86reg::SF, x86reg::ZF, x86reg::AF, x86reg::PF})
+      S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::scalar(0, 1)});
+    break;
+  }
+
+  // The rest need processor state LowIR does not model: virtual-machine and
+  // enclave control, segment and FS/GS base registers, SMX, user waits.
+  // Keep them unlifted rather than collapsing them into another instruction.
+  case X86_INS_RDPID:
   case X86_INS_RDFSBASE:
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
-  case X86_INS_VMCALL:
-  case X86_INS_VMMCALL:
   case X86_INS_VMRUN:
   case X86_INS_VMSAVE:
   case X86_INS_VMLOAD:
@@ -657,42 +794,17 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_STGI:
   case X86_INS_CLGI:
   case X86_INS_SKINIT:
-  case X86_INS_VERR:
-  case X86_INS_VERW:
   case X86_INS_LAR:
-  case X86_INS_LSL:
   case X86_INS_ARPL:
   case X86_INS_CLTS:
-  case X86_INS_XSETBV:
-  case X86_INS_MONITOR:
-  case X86_INS_MWAIT:
-  case X86_INS_MONITORX:
-  case X86_INS_MWAITX:
   case X86_INS_GETSEC:
   case X86_INS_ENCLS:
   case X86_INS_ENCLU:
   case X86_INS_ENCLV:
   case X86_INS_TPAUSE:
   case X86_INS_UMONITOR:
-  case X86_INS_UMWAIT: {
-    Intrinsic Id;
-    switch (InsnId) {
-    case X86_INS_RDPMC:
-      Id = Intrinsic::Rdpmc;
-      break;
-    case X86_INS_VMCALL:
-      Id = Intrinsic::Vmcall;
-      break;
-    case X86_INS_VMMCALL:
-      Id = Intrinsic::Vmmcall;
-      break;
-    default:
-      Id = Intrinsic::Hlt;
-      break;
-    }
-    S.emitIntrinsic(Id);
-    break;
-  }
+  case X86_INS_UMWAIT:
+    return false;
 
   // These change processor state only; none of them produces a value, so
   // RAX keeps what it held.

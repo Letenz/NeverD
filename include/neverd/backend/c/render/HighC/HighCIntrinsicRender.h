@@ -79,6 +79,10 @@ bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
 /// a Windows target: REP MOVS/STOS and the flat LIDT/SIDT/INVLPG forms.
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
 
+/// Whether an x86 intrinsic reads fixed registers and prints as an `__asm`
+/// block that loads them: the hypercalls, MONITOR/MWAIT and XSETBV.
+bool x86UsesImplicitRegisterAsm(Intrinsic Id);
+
 /// Whether an x86 intrinsic needs <x86intrin.h> on a GCC or Clang target.
 /// Older Clang declares _m_prefetchw only there, not in <immintrin.h>.
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id);
@@ -96,10 +100,10 @@ std::string renderX86SegmentedIntrinsicStatement(
 /// Windows `int 0x29` / `__fastfail`.  True when \p E is that intrinsic.
 bool isX86FastFailCall(const HighExpr &E);
 
-/// A value-returning x86 `int imm8`, or the x64 `int 2Dh` debug service, as an
-/// `__asm` block that loads its register inputs and, when \p ResultVar is not
-/// empty, moves the result register into it.  Empty when \p Call is not such
-/// an interrupt.
+/// A value-returning x86 `int imm8`, the x64 `int 2Dh` debug service, or an
+/// instruction x86UsesImplicitRegisterAsm names, as an `__asm` block that
+/// loads its register inputs and, when \p ResultVar is not empty, moves the
+/// result register into it.  Empty when \p Call is none of those.
 std::string renderX86InterruptStatement(
     Arch TheArch, const HighExpr &Call, llvm::StringRef ResultVar,
     unsigned ResultSize, std::function<std::string(const HighExpr &)> ExprFn);
