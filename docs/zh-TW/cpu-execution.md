@@ -97,3 +97,5 @@ KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完�
 硬體執行本身不保證更低的端到端耗時。目前原生執行逐條進行指令准入、觀察、狀態傳輸和 VM 退出。比較相同原始映像與情境時，應使用一致的指令和事件預算，同時報告結果一致性與耗時；測量 CLI 延遲時應包含啟動和載入。
 
 Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。
+
+checked Unicorn 單步執行現在遵守 `MachineRunControl`。ARM64 維護與客體執行共用一次單步執行額度；內部 `UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限。同步進入返回前會解除借用。拒絕進入會保留呼叫方狀態和 RAM，取消後的執行進展也不能透過 checked RAM 交易提交。指令准入範圍與非受限軟體契約維持不變。

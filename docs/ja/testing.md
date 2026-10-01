@@ -887,3 +887,7 @@ checked ARM64 のスカラー／ペア RAM アクセスは、EL0 と EL1 で別�
 Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。
 
 `NeverDAArch64GeneralStateTests` は両特権でネイティブ 35 フィールドとソフトウェア 39 フィールドを検証し、各読取り失敗、幅の正規化、再試行を確認します。Linux の `NeverDUnicornStateTransferTests` は実際のゲスト実行後の各スカラー読取りに失敗を注入し、入力保持と再試行時の一度だけの実行を検証します。`CapturesDeclaredWidthsWithoutStaleUpperBits` も確認します。元の命令と状態は `UnicornStateTransferCases.def` に定義され、ARM64 KVM/WHP 実機検証の代わりにはなりません。
+
+checked Unicorn の単一ステップは `MachineRunControl` に従います。ARM64 の保守とゲスト実行は一つのステップ実行枠を共有し、内部の `UC_HOOK_CODE` が命令入口で借用した停止トークンと期限を確認します。同期エントリは戻る前に借用を解除します。入口での拒否は呼び出し側の状態と RAM を保持し、キャンセルされた実行の結果は checked RAM トランザクションでコミットできません。命令の許可範囲と非制限ソフトウェア契約は変わりません。
+
+`NeverDUnicornMachineControlTests` は実際の x64 と ARM64 エンジンの両権限レベルで `UnicornMachineControlCases.def` の原始ストア命令を実行します。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` はステップ前のキャンセル、実際のゲスト入口での停止または期限切れ、入力状態全体と RAM の保持、その後の一度の正常なストアを検証します。テスト専用の入口ラッパーはハイパーバイザーを必要とせず、ネイティブ ARM64/WHP の証拠にはなりません。

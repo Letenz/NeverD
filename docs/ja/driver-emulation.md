@@ -531,3 +531,5 @@ KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジス�
 `GuardFlags` がゼロでも、CFG が有効でないポインタスロットは有効です。ローダーは格納領域、実行可能なフォールバック先、リベース時の完全な `DIR64` 対応を検証し、元のゲストポインタを保持します。有効な CFG には引き続きイメージの有効化ビットと計装/関数テーブルのフラグが必要です。`DriverGuardCases.def` と `NeverDDriverGuardMetadataTests` は Unicorn、KVM、WHP でこれらを検証し、Unicorn を無効にしたビルドでも利用できます。
 
 Checked ARM64 の状態取得は ISA 層の共通コミット境界を使用します。KVM/WHP は `AArch64GeneralState.def` の 35 フィールドを取得し、Unicorn は追加のスレッド状態と浮動小数点制御状態を含む公開スカラー 39 フィールドを保持します。`captureAArch64ScalarState` は `Registers.def` の幅を適用して NZCV を正規化し、全読取り成功後にのみ状態を公開します。特権、ベクトル、未転送フィールドは変えません。この転送は checked ARM64 への FP/SIMD 命令の許可を意味しません。
+
+checked Unicorn の単一ステップは `MachineRunControl` に従います。ARM64 の保守とゲスト実行は一つのステップ実行枠を共有し、内部の `UC_HOOK_CODE` が命令入口で借用した停止トークンと期限を確認します。同期エントリは戻る前に借用を解除します。入口での拒否は呼び出し側の状態と RAM を保持し、キャンセルされた実行の結果は checked RAM トランザクションでコミットできません。命令の許可範囲と非制限ソフトウェア契約は変わりません。

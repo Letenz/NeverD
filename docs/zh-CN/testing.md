@@ -817,3 +817,7 @@ checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立
 Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。
 
 `NeverDAArch64GeneralStateTests` 在两种特权级下检查原生 35 字段和软件 39 字段清单，覆盖每个读取失败位置、位宽规范化和重试。Linux 上的 `NeverDUnicornStateTransferTests` 在真实来宾执行后的每个标量回读位置注入失败，验证输入不变、重试只执行一次，并检查 `CapturesDeclaredWidthsWithoutStaleUpperBits`。原始指令和状态用例存放于 `UnicornStateTransferCases.def`；这些证据不能替代 ARM64 KVM/WHP 实机验证。
+
+checked Unicorn 单步执行现在遵守 `MachineRunControl`。ARM64 维护与来宾执行共用一次单步执行额度；内部 `UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限。同步进入返回前会解除借用。拒绝进入会保留调用方状态和 RAM，取消后的执行进展也不能通过 checked RAM 事务提交。指令准入范围与非受限软件契约保持不变。
+
+`NeverDUnicornMachineControlTests` 在真实 x64 和 ARM64 引擎的两种权限级执行 `UnicornMachineControlCases.def` 中的原始存储指令。`RejectedEntryPreservesStateAndRAMAndAllowsRetry` 检查单步前取消、实际来宾入口处停止或期限到期、全部输入状态与 RAM 保持不变，以及随后成功执行一次存储。测试专用入口包装无需虚拟机监控器，也不构成 ARM64/WHP 原生运行证据。
