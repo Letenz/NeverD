@@ -94,7 +94,8 @@ int main(void) {
       }
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
-        const auto Executable = tmpFile("carry-check");
+        const auto Executable = tmpFile(std::string("carry-check") +
+                                        neverd::test::executableSuffix());
         const auto Compiled =
             exec(NEVERD_TEST_CLANG,
                  {"-std=c11", Optimization, "-fsanitize=undefined",
@@ -275,7 +276,7 @@ entry_frame_uninitialized:
           Output << "    if (state[0] != inputs[k]+1) return 10;\n";
         Output << "  }\n  return 0;\n}\n";
       }
-      const auto Executable = tmpFile(Stem);
+      const auto Executable = tmpFile(Stem + neverd::test::executableSuffix());
       const auto Compiled =
           exec(NEVERD_TEST_CLANG,
                {"-x", "c", "-std=c2x", "-O2", "-fsanitize=undefined",

@@ -3551,13 +3551,164 @@
         "Checked x64 scalar XCHG/XADD/CMPXCHG uses actual processor results at all integer widths, with natural alignment for locked or implicit-lock memory forms. Declared ordinary-RAM writes use a bounded physical-union transaction; observers see original CPU/RAM and exact staged results. Cancellation, observer exceptions and transport failures discard speculative effects; CPU exception status survives RAM rollback. ARM64 scalar/pair writes use the same RAM authority. Unknown footprints, device atomics and parallel hardware SMP remain unsupported.",
         "Queries distinguish static semantic profiles, compiled adapter support and optional live initialization probes. Probe success is not workload or native execution evidence; no unavailable backend silently falls back.",
         "Fixed profiles use 4 KiB pages, 1 GiB physical/mapping ceilings and either a flat direct mapping namespace or checked 48-bit supervisor/user address spaces. Checked user profiles require explicit user page rights and execute at CPL3/EL0. Checked user service requests intercept SYSCALL/SVC before architectural entry and require explicit owner handling; OS service dispatch, port I/O and parallel CPUs remain unsupported. Checked instruction families do not admit every encoding or operand form.",
-        "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles remain integer-only. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and operands mixing RAM/device pages remain unsupported. Ordinary RAM operands can span separately owned or aliased pages; faults identify the first failed page without partial stores. REP preserves complete earlier elements and restart registers.",
+        "Checked x64 profiles admit the explicit SSE/SSE2 move, logical, scalar subtraction and truncating-conversion inventory with masked MXCSR exceptions and complete XMM/MXCSR state. AArch64 checked profiles admit bounded baseline FP32/FP64 and fixed-width SIMD register operations, exact FPCR/FPSR access and scalar/vector RAM transfers up to 128 bits per operand. All three transports capture 39 scalar fields and 32 vector registers atomically. Rounding, FZ, DN and sticky FPSR state are retained; unmasked exceptions, FP16, SVE/SME and unlisted extensions remain unsupported. Supervisor x64 additionally admits aligned scalar device transfers and bounded MOVS elements; device-source MOVS requires a pure prepared read and deferred commit. MMX, AVX, unmasked FP exceptions, device RMW and operands mixing RAM/device pages remain unsupported. Ordinary RAM operands can span separately owned or aliased pages; faults identify the first failed page without partial stores. REP preserves complete earlier elements and restart registers.",
         "Checked memory preflight differs from software engine memory callbacks. Stop and deadline control do not provide a hard wall-clock bound. Typed CPU exits do not imply OS/workload completion. The shared runtime owns cooperative quanta and explicit continuations; general dynamic linking, OS threads/signals and additional OS workloads remain unfinished.",
         "KVM can interrupt an active entry using a private execution thread and a realtime signal temporarily unblocked by KVM_SET_SIGNAL_MASK. It joins the cancelled worker before returning and neither changes caller masks/process handlers nor consumes application signals. The selected signal must remain non-ignored during entry. Native interruption is tested on x64; ARM64 runtime validation remains outstanding.",
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
-        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; other checked ARM64 system-register encodings remain unsupported."
+        "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; exact FPCR/FPSR access is separately admitted, while other checked ARM64 system-register encodings remain unsupported."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornPublicCapture.CancellationKeepsTypedExitStateAndRAMConsistent/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDKvmStateTransferTests",
+          "source": "unittests/emulation/KvmStateTransferTests.cpp",
+          "filter": "*/KvmStateTransfer.PublicCancellationRetainsStateRAMAndFailurePriority/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornStateTransferTests",
+          "source": "unittests/emulation/UnicornStateTransferTests.cpp",
+          "filter": "*/UnicornStateTransfer.StopDuringCaptureCannotPublishAndAllowsRetry/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornStateTransferTests",
+          "source": "unittests/emulation/UnicornStateTransferTests.cpp",
+          "filter": "*/UnicornStateTransfer.ExpiredCaptureCannotPublishAndAllowsRetry/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornCaptureControl.CompletedStoreCannotPublishCancelledCapture/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornMachineControlTests",
+          "source": "unittests/emulation/UnicornMachineControlTests.cpp",
+          "filter": "*/UnicornExceptionCapture.StopDuringCaptureCannotHideRealGuestException/*",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64StateTests",
+          "source": "unittests/emulation/AArch64StateTests.cpp",
+          "filter": "*/AArch64CompleteState.EveryScalarAndVectorFailureRetainsCompleteInput/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64FPStateTests.cpp",
+          "filter": "*/AArch64FPTransport.OriginalInstructionsConsumeAllVectorLanesAndHostChanges/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "filter": "*/AArch64SIMD.ScalarFloatingResultsRoundingAndStatusMatchIEEEBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "filter": "*/AArch64SIMD.UnsupportedFPStateCannotBeInstalledOrTruncated/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "filter": "*/AArch64SIMD.ScalableVectorsCannotEnterTheFixedWidthProfile/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64FPTests",
+          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "filter": "*/AArch64SIMD.PairVectorAddressWrapCannotAliasLowerPages/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64MemoryTests",
+          "source": "unittests/emulation/AArch64VectorMemoryTests.cpp",
+          "filter": "*/AArch64VectorMemory.ExecutesEveryCrossingWithOrderedFullWidthObservers/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDAArch64MemoryTests",
+          "source": "unittests/emulation/AArch64VectorMemoryTests.cpp",
+          "filter": "*/AArch64VectorMemory.StopAtEveryObserverRetainsRAMVectorsAndWriteback/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnicornStateTransferTests",
+          "source": "unittests/emulation/UnicornStateTransferTests.cpp",
+          "filter": "*/UnicornStateTransfer.FailedVectorReadCannotPublishScalarOrVectorState/*",
+          "platforms": [
+            "linux"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
@@ -4211,7 +4362,7 @@
         "Declared user regions use the existing process-owned allocation and physical backing authority. Completion does not revoke the original VA; explicit request unmap revokes all of that request\u2019s original and declared regions, while process exit includes completed allocations from the same PID. Independent MDL or WDFMEMORY aliases retain pinned bytes until unlock/completion. WDF probing accepts the current request\u2019s declared regions only in caller context. configuration.user_memory preserves declarations and source_request_index; requests[].user_buffers reports ID, address, size, access, revoked and backing_hex. The backing snapshot is diagnostic RAM at stop, including after terminal faults, and does not imply caller-visible output or restored access. GuestMemory.snapshotBacking validates the whole span, reads adapter-owned RAM without engine reentry, rejects running/device-callback/MMIO access and preserves the first fault. Arbitrary mappings, cross-request IDs and remapping the original declared scenario allocations remain unsupported.",
         "Original WDK WDM/KMDF nested-user fixtures exercise two-level structures, duplicate aliases and interior offsets, caught read-only failures, WDM locked workers after unmap/process exit, and WDF caller-context locking before queue delivery. Native cases run normal/CFG and preferred/rebased images; C API/CLI/Python share docs/examples/driver-nested-user-scenario.json and assert diagnostic bytes after revocation. Missing external fixtures skip explicitly; execution evidence remains Linux-only.",
         "IoBuildPartialMdl supports subranges, zero-length remainder, PFN capacity checks, source-independent nonpaged descriptors and separate root-lock/system-alias ownership. Target reuse uses the genuine MmPrepareMdlForReuse inline path. Completion preflights all dependencies before releasing chains in either order; live DMA prevents rebuild or retirement. MmMapLockedPagesSpecifyCache(UserMode) creates independent process-owned NX/read-only-capable views of existing private physical pages at IRQL <= APC_LEVEL without changing MappedSystemVa. Exact pair/process unmapping, canonical alias re-locking, typed resource shortage, process exit and lifetime guards are modeled. Requested addresses preserve page offsets in a bounded reusable arena. Exact unmapping releases address/budget; surviving pins/system aliases retain old backing after VA reuse. Different live processes can own the same VA with independent backing/rights; whole-set process switching preflights alias replacement before publishing context, and another process exit/unmap cannot retire the active view. Live opaque dispatcher objects in outgoing views reject switching. MmNonCached/MmCached/MmWriteCombined requests retain each physical page's existing cache attribute; ordinary model RAM is cached, and conflicting registrations or reserved types fail. Arbitrary virtual-memory allocation, page tables and a general process manager remain unsupported.",
-        "The backend-selecting C API and CLI preserve driver-strict on Unicorn. checked-x64-v1 is an explicit bounded instruction and memory-observation contract over Unicorn, matching Linux KVM or matching Windows WHP; cross-ISA auto selection uses Unicorn under that same contract. Hardware unavailability and unsupported instructions fail explicitly. CPU transport availability does not implement the Windows ARM64 driver ABI.",
+        "The backend-selecting C API and CLI support driver-strict over Unicorn, matching Linux x64 KVM and matching Windows x64 WHP. auto selects matching native execution; explicit Unicorn and the original V1 API preserve the portable software profile. checked-x64-v1 remains an explicit bounded instruction and memory-observation contract. Hardware unavailability and unsupported instructions fail explicitly without fallback. CPU transport availability does not implement the Windows ARM64 driver ABI.",
         "Original built-in and configured WDK images/scenarios are compared against legacy Unicorn under checked Unicorn, KVM and WHP, at original and relocated addresses. The comparison includes negative outcomes, request bytes, API results, writes and final model state; backend metadata, diagnostics and REP instruction-count conventions are excluded. Missing artifacts and unavailable host backends skip explicitly; a successful comparison does not mean every negative fixture completed successfully."
       ],
       "tests": [

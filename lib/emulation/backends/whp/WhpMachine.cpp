@@ -21,6 +21,7 @@ class WhpMachine final : public X64Machine, public WhpPartition {
 public:
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     if (auto E = validateX64FPState(State.FP))
       return E;
     std::vector<WHV_REGISTER_NAME> Names;
@@ -147,6 +148,8 @@ public:
               ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
               : std::nullopt});
     }
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
     return llvm::Error::success();
   }

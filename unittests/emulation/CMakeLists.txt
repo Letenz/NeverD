@@ -1,12 +1,21 @@
-add_neverd_unittest(NeverDAArch64GeneralStateTests
-  AArch64GeneralStateTests.cpp
+add_neverd_unittest(NeverDAArch64StateTests
+  AArch64StateTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationArch)
-target_include_directories(NeverDAArch64GeneralStateTests PRIVATE
+target_include_directories(NeverDAArch64StateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDAArch64FPTests
+  AArch64FPStateTests.cpp
+  AArch64SIMDTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDAArch64FPTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
+  AArch64VectorMemoryTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -141,7 +150,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmStateTransferTests
     KvmStateTransferTests.cpp
     TIMEOUT 15
-    LINK_COMPONENTS EmulationNative)
+    LINK_COMPONENTS EmulationCPU)
   target_include_directories(NeverDKvmStateTransferTests PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/emulation)
   target_link_options(NeverDKvmStateTransferTests PRIVATE "-Wl,--wrap=ioctl")
@@ -200,7 +209,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornMachineControlTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornMachineControlTests PRIVATE
-      "-Wl,--wrap=uc_emu_start")
+      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE

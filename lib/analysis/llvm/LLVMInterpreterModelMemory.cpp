@@ -1,0 +1,132 @@
+//===- LLVMInterpreterModelMemory.cpp - Scalar LLVM model ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "LLVMInterpreterModelInternal.h"
+
+namespace neverd::analysis::llvm_model {
+void Builder::pointerProjections() {
+  StateOffsets[F.getArg(0)] = 0;
+  bool Changed = true;
+  while (Changed) {
+    Changed = false;
+    for (auto &B : F)
+      for (auto &I : B) {
+        work();
+        if (StateOffsets.count(&I))
+          continue;
+        const llvm::Value *Base = nullptr;
+        int64_t Delta = 0;
+        if (auto *G = llvm::dyn_cast<llvm::GetElementPtrInst>(&I)) {
+          llvm::APInt O(64, 0);
+          if (!G->getSourceElementType()->isIntegerTy(8) ||
+              G->getNumIndices() != 1 || G->getPointerAddressSpace() != 0 ||
+              !G->getOperand(1)->getType()->isIntegerTy(64))
+            fail("unsupported typed pointer projection");
+          if (!G->accumulateConstantOffset(F.getParent()->getDataLayout(), O))
+            continue;
+          Base = G->getPointerOperand();
+          Delta = O.getSExtValue();
+          if (G->hasNoUnsignedWrap() && Delta < 0)
+            fail("negative state GEP cannot establish unsigned no-wrap");
+        } else if (I.getOpcode() == llvm::Instruction::PtrToInt ||
+                   I.getOpcode() == llvm::Instruction::IntToPtr) {
+          auto *IntType = I.getOpcode() == llvm::Instruction::PtrToInt
+                              ? I.getType()
+                              : I.getOperand(0)->getType();
+          auto *PtrType = I.getOpcode() == llvm::Instruction::PtrToInt
+                              ? I.getOperand(0)->getType()
+                              : I.getType();
+          if (!IntType->isIntegerTy(64) ||
+              PtrType->getPointerAddressSpace() != 0)
+            fail("lossy or nondefault pointer cast");
+          Base = I.getOperand(0);
+        } else if (I.getOpcode() == llvm::Instruction::Add ||
+                   I.getOpcode() == llvm::Instruction::Sub) {
+          auto *K = llvm::dyn_cast<llvm::ConstantInt>(I.getOperand(1));
+          if (!K || K->getBitWidth() != 64)
+            continue;
+          Base = I.getOperand(0);
+          Delta = K->getSExtValue();
+          if (I.getOpcode() == llvm::Instruction::Sub) {
+            if (Delta == INT64_MIN)
+              fail("pointer projection overflow");
+            Delta = -Delta;
+          }
+        }
+        if (!Base || !StateOffsets.count(Base))
+          continue;
+        if (auto *O = llvm::dyn_cast<llvm::OverflowingBinaryOperator>(&I);
+            O && (O->hasNoSignedWrap() || O->hasNoUnsignedWrap()))
+          fail("unproved pointer integer no-wrap obligation");
+        auto Offset = StateOffsets.at(Base);
+        if (Delta < -Offset || Delta >= int64_t(StateBytes) - Offset)
+          fail("state pointer projection outside object");
+        StateOffsets[&I] = Offset + Delta;
+        Changed = true;
+      }
+  }
+}
+NdVar Builder::stateSlot(const llvm::Value *Pointer, unsigned Bytes,
+                         uint64_t Align) {
+  auto It = StateOffsets.find(Pointer);
+  if (It == StateOffsets.end())
+    fail("unknown state pointer or external memory effect");
+  int64_t Off = It->second;
+  if (!Bytes || Off < 0 || Off >= StateBytes || Bytes > StateBytes - Off)
+    fail("memory access outside state object");
+  if (Align > 8 || (Off % Align))
+    fail("unproved state alignment");
+  return rvar(Off, Bytes);
+}
+bool Builder::emitMemory(LowBlock &Out, const llvm::Instruction &I) {
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I)) {
+    if (Load->isAtomic() || Load->isVolatile() ||
+        Load->getMetadata(llvm::LLVMContext::MD_range))
+      fail("unsupported load effect or contract");
+    if (StateOffsets.count(Load->getPointerOperand()))
+      emit(Out, op(NdOp::COPY, value(&I),
+                   {stateSlot(Load->getPointerOperand(), bytes(I.getType()),
+                              Load->getAlign().value())}));
+    else {
+      if (Load->getAlign().value() != 1)
+        fail("unproved guest alignment");
+      emit(Out, op(NdOp::LOAD, value(&I), {value(Load->getPointerOperand())}));
+    }
+    return true;
+  }
+  if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+    if (Store->isAtomic() || Store->isVolatile())
+      fail("unsupported store effect");
+    if (StateOffsets.count(Store->getPointerOperand()))
+      emit(Out, op(NdOp::COPY,
+                   stateSlot(Store->getPointerOperand(),
+                             bytes(Store->getValueOperand()->getType()),
+                             Store->getAlign().value()),
+                   {value(Store->getValueOperand())}));
+    else {
+      if (Store->getAlign().value() != 1)
+        fail("unproved guest alignment");
+      emit(Out, op(NdOp::STORE, {},
+                   {value(Store->getPointerOperand()),
+                    value(Store->getValueOperand())}));
+    }
+    return true;
+  }
+  if (I.getOpcode() == llvm::Instruction::IntToPtr ||
+      I.getOpcode() == llvm::Instruction::PtrToInt) {
+    auto *IT = I.getOpcode() == llvm::Instruction::PtrToInt
+                   ? I.getType()
+                   : I.getOperand(0)->getType();
+    if (!IT->isIntegerTy(64) || bytes(I.getType()) != 8 ||
+        bytes(I.getOperand(0)->getType()) != 8)
+      fail("lossy guest pointer cast");
+    emit(Out, op(NdOp::COPY, value(&I), {value(I.getOperand(0))}));
+    return true;
+  }
+  return false;
+}
+
+} // namespace neverd::analysis::llvm_model

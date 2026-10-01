@@ -123,10 +123,8 @@ TEST(ExecutionConfiguration,
         llvm::cantFail(executionCapabilities(Config.Contract, ISA));
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::VectorRegisterState));
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::ThreadPointer));
-    EXPECT_EQ(Capabilities.supports(ExecutionFeature::FloatingPoint),
-              ISA == GuestArchitecture::X64);
-    EXPECT_EQ(Capabilities.supports(ExecutionFeature::SIMD),
-              ISA == GuestArchitecture::X64);
+    EXPECT_TRUE(Capabilities.supports(ExecutionFeature::FloatingPoint));
+    EXPECT_TRUE(Capabilities.supports(ExecutionFeature::SIMD));
     EXPECT_TRUE(Capabilities.supports(ExecutionFeature::CooperativeCPUs));
     EXPECT_FALSE(Capabilities.supports(ExecutionFeature::ParallelCPUs));
     EXPECT_TRUE(Capabilities.HasInstructionAllowlist);
@@ -157,8 +155,8 @@ TEST(ExecutionConfiguration, BoundedFeaturesDependOnISAAndPrivilege) {
                            ExecutionFeature::SIMD, ExecutionFeature::MMIO}) {
         Config.RequiredFeatures = Feature;
         auto Resolved = resolveExecutionConfiguration(Config);
-        const bool Supported = ISA == GuestArchitecture::X64 &&
-                               (!User || Feature != ExecutionFeature::MMIO);
+        const bool Supported = Feature != ExecutionFeature::MMIO ||
+                               (ISA == GuestArchitecture::X64 && !User);
         EXPECT_EQ(bool(Resolved), Supported);
         if (!Resolved)
           llvm::consumeError(Resolved.takeError());

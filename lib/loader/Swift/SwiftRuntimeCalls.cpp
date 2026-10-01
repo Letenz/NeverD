@@ -312,6 +312,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
+    // Swift 6.1.2 arm64 and x86_64 Array<AnyObject> subscript clients
+    // declare this exact specialization as swiftcc ptr (i64, ptr). The
+    // index precedes the buffer value; neither input uses swiftself.
+    {"$ss12_ArrayBufferV19_getElementSlowPathyyXlSiFyXl_Ts5",
+     "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$ss18_CocoaArrayWrapperV8endIndexSivg",
      "/usr/lib/swift/libswiftCore.dylib", "zz"},
     // Swift 6.1.2 DictionaryStorage.swift defines the original storage,

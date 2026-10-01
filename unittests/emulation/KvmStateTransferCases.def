@@ -19,6 +19,7 @@ NEVERD_KVM_STATE_VALUE(WordBytes, 8)
 #endif
 #ifdef NEVERD_KVM_STATE_CODE
 NEVERD_KVM_STATE_CODE(Warm, 0x90)
+NEVERD_KVM_STATE_CODE(StoreInteger, 0x48, 0x89, 0x07)
 // INC RAX; NOP. A failed capture must not advance the retry's input.
 NEVERD_KVM_STATE_CODE(IncrementInteger, 0x48, 0xff, 0xc0)
 // PADDB XMM0,XMM1; NOP. Two executions without FP reinstall would add twice.

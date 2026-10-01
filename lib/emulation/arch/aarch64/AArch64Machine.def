@@ -55,6 +55,10 @@ NEVERD_AARCH64_VALUE(MAIR, 0x44)
 // Baseline RES1 bits, MMU enabled, little endian, no stack alignment trap.
 NEVERD_AARCH64_VALUE(SCTLR, 0x30d00801)
 NEVERD_AARCH64_VALUE(CPACR, 3ull << 20)
+// Baseline rounding modes, FZ/DN and cumulative exception/QC status.
+// Exception enables, FP16 and optional alternative handling are not admitted.
+NEVERD_AARCH64_VALUE(AllowedFPCR, 0x03c00000u)
+NEVERD_AARCH64_VALUE(AllowedFPSR, 0x0800009fu)
 NEVERD_AARCH64_VALUE(GicDistributor, 0x80000000ull)
 NEVERD_AARCH64_VALUE(GicRedistributor, 0x80020000ull)
 NEVERD_AARCH64_VALUE(GicITS, 0x80040000ull)

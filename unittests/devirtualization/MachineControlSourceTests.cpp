@@ -120,7 +120,8 @@ TEST_P(MachineControlRoundTripTest,
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Program = tmpFile("recovered-control");
+    const auto Program = tmpFile(std::string("recovered-control") +
+                                 neverd::test::executableSuffix());
     const auto Compiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -154,7 +155,8 @@ TEST_F(MachineControlSourceTest, NativeTransfersMatchFullIndependentState) {
     GTEST_SKIP() << "native public machine control checks require clang";
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Program = tmpFile("native-control");
+    const auto Program = tmpFile(std::string("native-control") +
+                                 neverd::test::executableSuffix());
     const auto Compiled = exec(
         NEVERD_TEST_CLANG,
         {"-target", "x86_64-linux-gnu", "-fuse-ld=lld", "-std=c11", "-no-pie",

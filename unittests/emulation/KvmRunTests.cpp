@@ -118,6 +118,15 @@ TEST_F(KvmRun, FatalHostErrorDoesNotRetry) {
   EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), diagnostic::KvmRun);
   EXPECT_EQ(Calls, 1u);
 }
+TEST_F(KvmRun, FatalHostErrorOutranksASimultaneousStop) {
+  Result = RunResult::Fatal;
+  StopOnEntry = true;
+  auto E = run(TimeoutMicroseconds);
+  EXPECT_FALSE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_TRUE(Stop);
+  EXPECT_EQ(Calls, 1u);
+}
 
 TEST_F(KvmRun, ExpiredDeadlineDoesNotEnterCPU) {
   EXPECT_EQ(llvm::toString(run(0)), diagnostic::KvmRun);
@@ -126,7 +135,9 @@ TEST_F(KvmRun, ExpiredDeadlineDoesNotEnterCPU) {
 
 TEST_F(KvmRun, StopBeforeEntryDoesNotEnterCPU) {
   Stop = true;
-  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), diagnostic::KvmRun);
+  auto E = run(TimeoutMicroseconds);
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
   EXPECT_EQ(Calls, 0u);
 }
 
@@ -316,6 +327,7 @@ TEST_F(KvmRun, StopDuringPreparationSkipsEntryAndCapture) {
         ++Captured;
         return llvm::Error::success();
       });
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
   EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
   EXPECT_EQ(Calls, 0u);
   EXPECT_EQ(Captured, 0u);
