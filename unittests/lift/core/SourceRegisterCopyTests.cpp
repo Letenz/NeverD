@@ -145,6 +145,19 @@ struct CopyFixture {
   }
 };
 
+void returnOnlyLeaf(CopyFixture &F, bool Twice = false) {
+  std::vector<uint32_t> Body{0xa9bf7bfd, CopyFixture::branch(F.Root + 4)};
+  if (Twice)
+    Body.push_back(CopyFixture::branch(F.Root + 8));
+  // Subtract and add full words only after the call(s), so all three inputs
+  // must survive the exact leaf instead of becoming external-call clobbers.
+  Body.insert(Body.end(), {0xcb010000, 0x8b020000, 0xa8c17bfd, 0xd65f03c0});
+  for (unsigned I = 0; I < Body.size(); ++I)
+    F.word(F.Root + 4 * I, Body[I]);
+  F.word(F.Leaf, 0xd65f03c0);
+  F.run();
+}
+
 uint32_t pageAddress(va_t PC, va_t Address, unsigned Register) {
   const auto Delta =
       (int64_t(Address & ~va_t(0xfff)) - int64_t(PC & ~va_t(0xfff))) / 4096;
@@ -640,7 +653,7 @@ TEST(SourceRegisterCopy,
                            0xd65f03c0};
   for (unsigned I = 0; I < std::size(Body); ++I)
     F.word(F.Root + I * 4, Body[I]);
-  F.word(0x1200, 0xd65f03c0);
+  F.word(0x1200, 0xd61f0200); // Opaque consumer veneer: BR x16.
   SourceFunctionTypeHint Consume;
   Consume.ReturnType = NdType::makeVoid();
   Consume.Parameters = {{"tag", NdType::makeInt(8, false)},
@@ -839,7 +852,7 @@ TEST(SourceRegisterCopy,
                            0xd65f03c0};
   for (unsigned I = 0; I < std::size(Body); ++I)
     F.word(F.Root + I * 4, Body[I]);
-  F.word(0x1200, 0xd65f03c0);
+  F.word(0x1200, 0xd61f0200); // Opaque consumer veneer: BR x16.
   SourceFunctionTypeHint Consume;
   Consume.ReturnType = NdType::makeVoid();
   Consume.Parameters = {{"tag", NdType::makeInt(8, false)},
@@ -1391,7 +1404,7 @@ TEST(SourceClassGetter, PreservesFreshFrameFactsButCannotUndoAnEarlierEscape) {
                            0xd61f0200};
   for (unsigned I = 0; I < std::size(Stub); ++I)
     F.word(0x1280 + I * 4, Stub[I]);
-  F.word(0x1260, 0xd65f03c0);
+  F.word(0x1260, 0xd61f0200); // Unknown callee, not a proved return-only leaf.
   std::vector<uint32_t> Body = {0xd100c3ff,
                                 0xa9027bfd,
                                 0xa90153f3,
@@ -1487,6 +1500,97 @@ TEST(SourceRegisterCopy, SequentialAliasesNormalizeToEntryAndBindEveryCall) {
   }
   EXPECT_NE(Copies.begin()->first, Copies.rbegin()->first);
   EXPECT_TRUE(restoresNativeSourceState(F.low(), Arch::AArch64, F.calls()));
+}
+
+TEST(SourceRegisterCopy, ReturnOnlyLeafPreservesEveryInputWithoutAnABI) {
+  for (bool Twice : {false, true}) {
+    CopyFixture F;
+    returnOnlyLeaf(F, Twice);
+    // A fixed direct branch to these exact bytes does not acquire an external
+    // ABI when the same RET also has a public symbol alias.
+    F.Image.Segments[0].Data[0x1804] |= llvm::MachO::N_EXT;
+    F.run();
+    ASSERT_EQ(F.med().RegisterCopyProjections.size(), Twice ? 2U : 1U);
+    for (const auto &[Site, Proof] : F.med().RegisterCopyProjections) {
+      EXPECT_TRUE(Proof.isReturnOnly());
+      EXPECT_EQ(Proof.Site, Site);
+    }
+    EXPECT_TRUE(
+        sdk::sourceRegisterCopyProjectionValid(F.high(), F.Image, F.Result));
+    EXPECT_TRUE(restoresNativeSourceState(F.low(), F.Image.Arch, F.calls()));
+    EXPECT_TRUE(sdk::sourceBodyLimitation(F.high(), F.Signature,
+                                          &F.Result.FunctionAudits.front())
+                    .empty());
+    unsigned OriginalCalls = 0, ProjectedCalls = 0;
+    for (const auto &Block : F.low().Blocks)
+      for (const auto &Op : Block.Ops)
+        OriginalCalls += Op.Opcode == NdOp::CALL;
+    for (const auto &Block : F.med().Blocks)
+      for (const auto &Op : Block.Ops)
+        ProjectedCalls += Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(OriginalCalls, Twice ? 2U : 1U);
+    EXPECT_EQ(ProjectedCalls, 0U);
+    LowToMedConverter Generic;
+    Generic.setBinaryImage(&F.Image);
+    const auto Unprojected =
+        Generic.convert(F.low(), Arch::AArch64, BinaryFormat::MachO);
+    EXPECT_TRUE(Unprojected.RegisterCopyProjections.empty());
+    unsigned GenericCalls = 0;
+    for (const auto &Block : Unprojected.Blocks)
+      for (const auto &Op : Block.Ops)
+        GenericCalls += Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(GenericCalls, OriginalCalls);
+
+    const auto Original = F.Image;
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      F.Image = Original;
+      if (Mutation == 0)
+        F.word(F.Leaf, 0xd65f0260); // RET x19 is not a standard return.
+      if (Mutation == 1)
+        F.word(F.Leaf, 0xd503201f); // An unproved instruction is not identity.
+      if (Mutation == 2)
+        F.Image.Segments[0].Flags =
+            F.Image.Segments[0].Flags | SegmentFlags::Writable;
+      if (Mutation == 3)
+        F.Image.CodePtrRelocSlots.insert(F.Leaf);
+      if (Mutation == 4)
+        F.Image.IsRelocatable = true;
+      if (Mutation == 5)
+        F.Image.Segments[0].Data.resize(F.Leaf + 3);
+      if (Mutation == 6)
+        for (unsigned I = 0; I < (Twice ? 2U : 1U); ++I) {
+          const auto Site = F.Root + 4 + I * 4;
+          // B cannot replace the proved BL.
+          F.word(Site, CopyFixture::branch(Site) & ~0x80000000U);
+        }
+      if (Mutation == 7) {
+        ExceptionFunction Metadata;
+        Metadata.CodeRange = {F.Leaf, F.Leaf + 4};
+        F.Image.ExceptionMetadata.Functions.push_back(Metadata);
+      }
+      if (Mutation == 8)
+        for (unsigned I = 0; I < (Twice ? 2U : 1U); ++I)
+          F.Image.CodePtrRelocSlots.insert(F.Root + 4 + I * 4);
+      EXPECT_TRUE(sourceRegisterCopies(F.Image, F.low()).empty());
+      EXPECT_FALSE(
+          sdk::sourceRegisterCopyProjectionValid(F.high(), F.Image, F.Result));
+    }
+    F.Image = Original;
+    auto Changed = F.high();
+    Changed.RegisterCopyProjections.begin()->second.LeafWords.clear();
+    EXPECT_FALSE(
+        sdk::sourceRegisterCopyProjectionValid(Changed, F.Image, F.Result));
+    for (const auto &Words :
+         {std::vector<uint32_t>{}, std::vector<uint32_t>{0xd65f0260},
+          std::vector<uint32_t>{0xd503201f, 0xd65f03c0}}) {
+      auto Proof = F.med().RegisterCopyProjections.begin()->second;
+      Proof.LeafWords = Words;
+      auto Calls = F.calls();
+      Calls.begin()->second.RegisterCopy = &Proof;
+      EXPECT_FALSE(restoresNativeSourceState(F.low(), F.Image.Arch, Calls));
+    }
+  }
 }
 
 TEST(SourceRegisterCopy, RejectsChangedMachineLinkageAndUnsupportedEffects) {
@@ -1818,9 +1922,12 @@ TEST(SourceRegisterCopy, GeneratedCExecutesSequentialCopiesAndPreservesInputs) {
 #ifndef NEVERD_TEST_CLANG
   GTEST_SKIP() << "clang is unavailable";
 #else
-  for (bool Swap : {false, true})
+  for (unsigned Form = 0; Form < 3; ++Form)
     for (bool Twice : {false, true}) {
+      const bool Swap = Form == 1;
       CopyFixture F(Swap, Twice);
+      if (Form == 2)
+        returnOnlyLeaf(F, Twice);
       ASSERT_EQ(F.med().RegisterCopyProjections.size(), Twice ? 2U : 1U);
       auto High = F.high();
       High.Name = "copy_root";
@@ -1839,7 +1946,7 @@ int main(void) {
       uint64_t a=values[i], b=values[j], c=values[k];
 )C";
       Source += std::string("      uint64_t expected = ") +
-                (Swap && !Twice ? "a - b + c;" : "b - a + c;") +
+                ((Swap && !Twice) || Form == 2 ? "a - b + c;" : "b - a + c;") +
                 "\n      if (copy_root(a,b,c) != expected) return 1;\n"
                 "    }\n  return 0;\n}\n";
       llvm::SmallString<128> Directory;
