@@ -231,6 +231,28 @@ class SourceFlow {
            Expression->Var.Kind == MedVar::Temp ||
            Expression->Var.Kind == MedVar::Param;
   }
+  // An integer cast of unchanged width preserves equality and zero tests.
+  // Narrowing, extension and floating conversion do not preserve these
+  // facts. Bound the peel so malformed expression cycles remain unknown.
+  static ExprPtr stripIntegerView(ExprPtr E) {
+    for (unsigned Depth = 0; E && Depth != 16; ++Depth) {
+      if (E->Kind != ExprKind::Cast || E->Operands.size() != 1 || !E->Type ||
+          !E->CastTo || !E->Operands[0] || !E->Operands[0]->Type ||
+          E->Type->Kind != NdTypeKind::Int ||
+          E->CastTo->Kind != NdTypeKind::Int ||
+          E->Operands[0]->Type->Kind != NdTypeKind::Int || E->Type->Size < 4 ||
+          E->Type->Size != E->CastTo->Size ||
+          E->Type->Size != E->Operands[0]->Type->Size ||
+          E->IntrinsicId != Intrinsic::None || E->IndirectTarget ||
+          E->Type->IsSigned != E->CastTo->IsSigned ||
+          !E->IntrinsicOutputs.empty() ||
+          E->MemoryOrdering != NdMemoryOrdering::None ||
+          E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        break;
+      E = E->Operands[0];
+    }
+    return E;
+  }
   std::optional<Predicate> predicate(const ExprPtr &Expression) {
     ExprPtr Value = Expression;
     ExprPtr Other;
@@ -252,28 +274,8 @@ class SourceFlow {
         Value = Value->Operands[0];
       }
     }
-    // An integer cast of unchanged width preserves equality and zero tests.
-    // Narrowing, extension and floating conversion do not preserve these
-    // facts. Bound the peel so malformed expression cycles remain unknown.
-    auto StripIntegerView = [](ExprPtr E) {
-      for (unsigned Depth = 0; E && Depth != 16; ++Depth) {
-        if (E->Kind != ExprKind::Cast || E->Operands.size() != 1 || !E->Type ||
-            !E->CastTo || !E->Operands[0] || !E->Operands[0]->Type ||
-            E->Type->Kind != NdTypeKind::Int ||
-            E->CastTo->Kind != NdTypeKind::Int ||
-            E->Operands[0]->Type->Kind != NdTypeKind::Int ||
-            E->Type->Size < 4 || E->Type->Size != E->CastTo->Size ||
-            E->Type->Size != E->Operands[0]->Type->Size ||
-            !E->IntrinsicOutputs.empty() ||
-            E->MemoryOrdering != NdMemoryOrdering::None ||
-            E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
-          break;
-        E = E->Operands[0];
-      }
-      return E;
-    };
-    Value = StripIntegerView(Value);
-    Other = StripIntegerView(Other);
+    Value = stripIntegerView(Value);
+    Other = stripIntegerView(Other);
     if (!scalarLocal(Value) || highSourceFrameBase(Function, Value->Var))
       return std::nullopt;
     size_t Left = local(Value->Var), Right = NoNode;
@@ -543,16 +545,18 @@ class SourceFlow {
     std::set<size_t> ConflictingCopies;
     for (size_t I = 0; I < Nodes.size(); ++I) {
       const auto *S = Nodes[I].Statement;
+      const auto Value = S ? stripIntegerView(S->Val) : nullptr;
       if (!S || S->Kind != StmtKind::Assign || !scalarLocal(S->Dst) ||
-          !scalarLocal(S->Val) || entryValue(S->Dst->Var) ||
-          entryValue(S->Val->Var) || S->Dst->Type->Kind != S->Val->Type->Kind ||
-          S->Dst->Type->Size != S->Val->Type->Size ||
-          S->Dst->Type->IsSigned != S->Val->Type->IsSigned ||
+          !scalarLocal(Value) || entryValue(S->Dst->Var) ||
+          entryValue(Value->Var) || S->Dst->Type->Kind != Value->Type->Kind ||
+          S->Dst->Type->Size != Value->Type->Size ||
+          (S->Dst->Type->Size < 4 &&
+           S->Dst->Type->IsSigned != Value->Type->IsSigned) ||
           !S->Body.empty() || !S->ElseBody.empty() || !S->Cases.empty() ||
           !S->DefaultBody.empty())
         continue;
       const size_t Destination = local(S->Dst->Var);
-      const size_t Source = local(S->Val->Var);
+      const size_t Source = local(Value->Var);
       if (Destination == Source || AddressTaken.count(Destination) ||
           AddressTaken.count(Source) || !WriteCount[Destination] ||
           !WriteCount[Source])
@@ -636,9 +640,10 @@ class SourceFlow {
         for (size_t Edge = 0; Edge < C.Nodes.size(); ++Edge) {
           const size_t Source = C.Sources[Edge];
           if (const auto Parent = Copies.find(Source);
-              Parent != Copies.end() && (Parent->second.Kind != C.Kind ||
-                                         Parent->second.Width != C.Width ||
-                                         Parent->second.Signed != C.Signed)) {
+              Parent != Copies.end() &&
+              (Parent->second.Kind != C.Kind ||
+               Parent->second.Width != C.Width ||
+               (C.Width < 4 && Parent->second.Signed != C.Signed))) {
             Complete = false;
             break;
           }

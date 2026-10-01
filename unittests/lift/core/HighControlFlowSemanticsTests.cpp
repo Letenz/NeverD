@@ -515,6 +515,81 @@ TEST(HighControlFlowSemantics, DistinctBranchCopiesShareOneDominatingRoot) {
     EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
 }
 
+TEST(HighControlFlowSemantics, CopyViewsPreserveOnlyFullWidthIntegerBits) {
+  for (unsigned Variant = 0; Variant != 9; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Copy = F.Body[2].ElseBody.back();
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(8, false);
+    View->Operands = {Copy.Val};
+    Copy.Val = View;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      View->Type = View->CastTo = NdType::makeInt(4, false);
+      break;
+    case 2:
+      View->Type = View->CastTo = NdType::makeInt(16, false);
+      break;
+    case 3:
+      View->Type = View->CastTo = NdType::makePtr();
+      break;
+    case 4:
+      View->Type = View->CastTo = NdType::makeFloat(8);
+      break;
+    case 5:
+      View->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 6:
+      View->IndirectTarget = HighExpr::makeConst(0x1000, 8);
+      break;
+    case 7:
+      View->CastTo = NdType::makeInt(8, true);
+      break;
+    case 8:
+      View->Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), Variant == 0);
+    if (Variant == 0)
+      for (uint64_t Input : {0ULL, 1ULL, 0xffffffffULL, 0x8000000000000000ULL,
+                             0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, FullWidthCopySignednessKeepsEqualityBits) {
+  auto F = mergedCopyEquality();
+  walkStmts(F.Body, [&](HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      std::set<const HighExpr *> Seen;
+      while (!Pending.empty()) {
+        const auto E = Pending.back();
+        Pending.pop_back();
+        if (!E || !Seen.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp &&
+            E->Var.Id == 3)
+          E->Type = NdType::makeInt(8, false);
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+  for (uint64_t Input :
+       {0ULL, 1ULL, 0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
 TEST(HighControlFlowSemantics, MergedCopyRootsNeedEveryDefinitionAndPath) {
   for (unsigned Variant = 0; Variant != 6; ++Variant) {
     SCOPED_TRACE(Variant);
