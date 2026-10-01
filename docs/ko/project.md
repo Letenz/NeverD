@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
+<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
 
 <div align="center">
 
@@ -105,7 +105,7 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 
 `checked-aarch64-v1`와 `checked-user-aarch64-v1`는 제한된 ARM64 FP32/FP64, 고정 폭 SIMD와 전체 FPCR/FPSR/벡터 상태를 제공합니다. ISA가 일치하는 Linux ARM64는 KVM, Windows ARM64는 WHP, 다른 ISA는 Unicorn을 사용합니다. 네이티브 ARM64 실기 검증은 남아 있으며 Windows 드라이버 로딩은 x64로 제한됩니다.
 
-ARM64 native 초기화는 전용 시작 검사로 잘못된 전체 상태 전송이나 FP/SIMD 결과를 거부합니다. 성공은 이 제한된 초기화 프로그램에만 적용됩니다.
+x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리하며 네이티브 WHP/ARM64 작업 증거는 아직 불완전합니다.
 
 <!-- i18n-section: how-it-works -->
 

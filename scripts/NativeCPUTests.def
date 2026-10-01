@@ -1,0 +1,88 @@
+//===- NativeCPUTests.def - Focused native CPU validation owners ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_CPU_OWNER
+NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64MemoryUpdateTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDX64ExceptionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDServiceRequestTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDProjectionCacheTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
+#endif
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "NativeMemory/WHPMapping.TwoLogicalOwnersRegisterSwitchAndRetireBacking/",
+    "unittests/emulation/WhpMemoryCases.def", "NEVERD_WHP_MEMORY_CASE")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Native startup, full FP state and shared CPU execution must not skip.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline/whp")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64ProbeExecution.ExistingGuestMappingAndRAMSurviveInitialization/"
+    "whp")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.PreservesAllPhysicalLanesAndControlAcrossEveryTOP/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.PreservesAllPhysicalLanesAndControlAcrossEveryTOP/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.StackChangesMatchIndependentHostFXSaveAndRestore/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPTransport.StackChangesMatchIndependentHostFXSaveAndRestore/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPContext.CapturesFullPhysicalStateAndRestoresAfterExecution/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPContext.CapturesFullPhysicalStateAndRestoresAfterExecution/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPContext.RejectsInvalidWidthsAndEncodingsWithoutTruncation/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64FPContext.RejectsInvalidWidthsAndEncodingsWithoutTruncation/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.CPUsShareBytesAndSurviveDestructionOfTheirPeer/NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.SharedCodeWritesInvalidateWarmTranslationsAndSavedContexts/"
+    "NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.RebindingUsesSpaceIdentityEvenWithMatchingGenerations/NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.OwnerLeaseRejectsMutationAndRecursiveExecutionAcrossSpaces/"
+    "NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.CPUViewAccessKeepsAllocationIdentityAndRespectsTerminalFaults/"
+    "NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/SharedCPU.StaleProjectionsPinRAMUntilTheyAreRetired/"
+    "NativeX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "PortableAndNative/"
+    "SharedCPU.ChecksExternalMappingsAtAttachmentAndBeforeExecution/NativeX64")
+#endif

@@ -522,6 +522,12 @@ Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 3
 
 ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
 
+x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；WHP 和 ARM64 原生工作负载仍缺少独立验证。
+
+共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。活跃扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
+
+`WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
 `AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。

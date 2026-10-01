@@ -8,7 +8,6 @@
 #include "core/ExecutionDiagnostics.h"
 #include "gtest/gtest.h"
 
-#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
 
 #include <iterator>
@@ -44,22 +43,22 @@ public:
     const uint64_t OriginalPC = State.reg(AArch64Register::PC);
     Instructions.push_back(
         llvm::support::endian::read32le(Memory.data() + OriginalPC));
-    uint8_t Bytes[aarch64::InstructionBytes];
-    llvm::support::endian::write32le(Bytes, Instructions.back());
-    if (auto E = Memory.write(Code, Bytes))
-      return E;
-    if (auto E = Memory.beginRun())
-      return E;
-    auto Release = llvm::scope_exit([&] { Memory.endRun(); });
+    // Initialization owns the physical lease. Borrow it for projection only;
+    // original guest words were installed before that lease was acquired.
+    auto Lease = Memory.executionLock();
+    if (!Lease)
+      return Lease.takeError();
     if (auto E = buildAArch64PageTables(Memory, UserMode))
       return E;
     auto Next = State;
     Next.UserMode = UserMode;
-    Next.reg(AArch64Register::PC) = Code;
+    const uint64_t GuestPC =
+        Code + (Instructions.size() - 1) * aarch64::InstructionBytes;
+    Next.reg(AArch64Register::PC) = GuestPC;
     if (auto E = Machine.step(Next, Control))
       return E;
     if (Next.UserMode != UserMode ||
-        Next.reg(AArch64Register::PC) != Code + aarch64::InstructionBytes)
+        Next.reg(AArch64Register::PC) != GuestPC + aarch64::InstructionBytes)
       return diagnostic::error(diagnostic::ArmState);
     Next.UserMode = State.UserMode;
     Next.reg(AArch64Register::PC) = OriginalPC + aarch64::InstructionBytes;
@@ -90,6 +89,11 @@ TEST_P(AArch64ProbeExecution,
   auto Machine = std::move(*Created);
   llvm::cantFail(Memory->map(Code, memory::PageSize,
                              Read | Write | Execute | UserAccessible));
+  std::vector<uint8_t> Bytes(sizeof(Program));
+  for (unsigned Index = 0; Index < std::size(Program); ++Index)
+    llvm::support::endian::write32le(
+        Bytes.data() + Index * aarch64::InstructionBytes, Program[Index]);
+  llvm::cantFail(Memory->write(Code, Bytes));
   RelocatedProbe Probe(*Machine, *Memory, UserMode);
   ASSERT_EQ(llvm::toString(verifyAArch64Machine(Probe, *Memory)), "");
   EXPECT_EQ(Probe.Instructions,

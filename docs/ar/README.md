@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
+<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
 
 [← مشروع NeverD](project.md)
 
@@ -42,3 +42,5 @@
 | [تفكيك Solana SBF](sbf.md) | ‏SBF v0-v4، وLLVM IR، ومخرجات C/Rust، والتحقق، والقيود المعروفة |
 | [خارطة الطريق](roadmap.md) | الحالة: الصيغ الأصلية وEVM وSolana SBF مكتملة |
 | الوثائق المترجمة | تفتح روابط اللغات أعلاه فهرس كل لغة ونظرة المشروع |
+
+تتحقق اختبارات البدء الأصلية لـx64 وARM64 من تنفيذ الحالة الكاملة المحدود مع حق حصري للذاكرة. تملك حزم XSAVE وجداول التخزين المؤقت المرتبطة بـISA جهة مرجعية واحدة؛ وأدلة أحمال WHP/ARM64 الأصلية لا تزال غير مكتملة.

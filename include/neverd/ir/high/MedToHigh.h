@@ -57,7 +57,7 @@ void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 
-/// Replace `goto L` with a copy of L's tail when L is at most three pure
+/// Replace `goto L` with a copy of L's tail when L is a few pure
 /// assignments followed by a return, or ending in a call that never returns.
 /// The original stays for other paths. Returns true when a goto was replaced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
@@ -72,6 +72,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
+/// Replace each jump to a label nothing falls into with a copy of its tail
+/// when that tail is a few pure assignments followed by a forward jump or by
+/// the next label. Returns true when a jump was replaced.
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body);
 /// Remove a goto whose target is exactly the next statement in its list,
 /// when no other statement starts at that address. Returns true when a goto
 /// was removed.
@@ -81,8 +85,9 @@ bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
 /// runs only after a loop's one break or a switch's one falling case moves
 /// there first. Returns true when anything changed.
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
-/// `X: S...` whose every jump to X comes from inside S becomes
-/// `while (1) { S...; break; }` with those jumps as `continue`.
+/// `X: S...` where jumps from inside S return to X becomes
+/// `while (1) { S...; break; }` with those jumps as `continue`. A jump to X
+/// from elsewhere still lands on the first statement of the loop body.
 bool loopifyBackwardGotos(std::vector<HighStmt> &Body);
 /// A label on the first statement of a `while (1)` or do-while body that is
 /// entered only from outside the loop moves onto the loop statement.

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
+<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
 
 [← NeverD-Projekt](project.md)
 
@@ -42,3 +42,5 @@ Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Ga
 | [Solana-SBF-Dekompilation](sbf.md) | SBF v0-v4, LLVM IR, C-/Rust-Ausgabe, Verifikation und bekannte Grenzen |
 | [Roadmap](roadmap.md) | Status: Native Formate, EVM und Solana SBF implementiert |
 | Übersetzte Dokumentation | Die Sprachlinks oben öffnen den jeweiligen Index und die Projektübersicht |
+
+Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer; native WHP/ARM64-Lastnachweise bleiben unvollständig.

@@ -2817,6 +2817,53 @@ TEST(ObjCSourceBindings, SwiftDictionaryStorageMetadataUsesExactStrongImport) {
 }
 
 TEST(ObjCSourceBindings,
+     SwiftNativeDictionaryMetadataRequiresExactImportIdentity) {
+  for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftDictionaryTypeMetadataFixture();
+    const std::string Descriptor = "_$ss17_NativeDictionaryVMn";
+    F.Image.ImportPtrSlots[F.DescriptorSlot] = Descriptor;
+    F.Image.ImportStorageSlots[F.DescriptorSlot].Name = Descriptor;
+    F.Image.DyldBindSlots[F.DescriptorSlot].Name = Descriptor;
+    F.Image.Symbols[0].Name = "_$ss17_NativeDictionaryVySSSo8NSBundleCGMR";
+    F.Image.Symbols[1].Name = "_$ss17_NativeDictionaryVySSSo8NSBundleCGMd";
+    if (Mutation == 1)
+      F.Image.DyldBindSlots[F.DescriptorSlot].WeakImport = true;
+    if (Mutation == 2)
+      F.Image.DyldBindSlots[F.DescriptorSlot].Addend = 8;
+    if (Mutation == 3)
+      F.Image.DyldBindSlots[F.DescriptorSlot].Module =
+          "/tmp/libswiftCore.dylib";
+    if (Mutation == 4)
+      F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+    if (Mutation == 5)
+      F.Image.Symbols[0].Name = "_$ss17_NativeDictionaryVySiSo8NSBundleCGMR";
+    if (Mutation == 6)
+      F.Image.ImportPtrSlots[F.DescriptorSlot] = "_$ss18_DictionaryStorageCMn";
+    if (Mutation == 7)
+      F.Image.DyldBindSlots.erase(F.DescriptorSlot);
+    if (Mutation == 8)
+      F.Image.DataPtrRelocSlots.insert(F.DescriptorSlot);
+    if (Mutation == 9)
+      F.Image.MachOChainedFixupsAmbiguous = true;
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    if (Mutation) {
+      EXPECT_TRUE(Result.SwiftTypeMetadataPairs.empty());
+      EXPECT_FALSE(Result.Limitation.empty());
+      continue;
+    }
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+    EXPECT_EQ(Result.SwiftTypeMetadataPairs.at(F.Cache).DescriptorSymbol,
+              Descriptor);
+    std::set<std::string> Shared;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Result.SwiftTypeMetadataPairs, Shared);
+    EXPECT_NE(Source.find(Descriptor), std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
      SwiftImportedLockMetadataRebuildsPrivateDescriptorAsText) {
   auto F = swiftImportedLockTypeMetadataFixture();
   EXPECT_TRUE(objc_binding_detail::swiftLocalImportedLockType(
@@ -3154,6 +3201,127 @@ swiftRegisteredInternalTypeFixture(Arch Architecture, char TypeKind = 'C',
   return F;
 }
 } // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredNestedSwiftTypesRequireTheirCompleteNamedContext) {
+  const auto Fixture = [](Arch Architecture, char ParentKind, char ChildKind,
+                          bool Deep = false) {
+    auto F = swiftRegisteredInternalTypeFixture(Architecture, ChildKind);
+    const std::string Type = "13WMFComponents" +
+                             std::string(Deep ? "5GroupC" : "") + "9Container" +
+                             ParentKind + "10ArticleTab" + ChildKind;
+    F.Image.Symbols[0].Name = "_$s" + Type + "SgMR";
+    F.Image.Symbols[1].Name = "_$s" + Type + "SgMd";
+    F.Image.Symbols[2].Name = "_$s" + Type + "Mn";
+    auto &Data = F.Image.Segments[3].Data;
+    const auto Relative = [&](va_t Field, va_t Target) {
+      llvm::support::endian::write32le(Data.data() + Field - 0x4000,
+                                       uint32_t(Target - Field));
+    };
+    llvm::support::endian::write32le(Data.data() + 0xc0,
+                                     0x40 | (ParentKind == 'C'   ? 16
+                                             : ParentKind == 'V' ? 17
+                                                                 : 18));
+    Relative(F.LocalDescriptor + 4, 0x40c0);
+    Relative(0x40c4, Deep ? 0x4060 : 0x4040);
+    Relative(0x40c8, 0x40e0);
+    std::memcpy(Data.data() + 0xe0, "Container", 10);
+    if (Deep) {
+      llvm::support::endian::write32le(Data.data() + 0x60, 0x50);
+      Relative(0x4064, 0x4040);
+      Relative(0x4068, 0x4090);
+      std::memcpy(Data.data() + 0x90, "Group", 6);
+    }
+    return F;
+  };
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char ParentKind : {'C', 'V', 'O'})
+      for (const char ChildKind : {'C', 'V', 'O'})
+        for (const bool Deep : {false, true}) {
+          auto F = Fixture(Architecture, ParentKind, ChildKind, Deep);
+          const auto Identity =
+              objc_binding_detail::swiftLocalRegisteredNominalType(
+                  F.Image, F.LocalDescriptor);
+          ASSERT_TRUE(Identity) << ParentKind << ChildKind << Deep;
+          const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+              F.Image, F.Cache, F.Reference);
+          ASSERT_TRUE(Proof);
+          EXPECT_TRUE(Proof->Descriptors.empty());
+          EXPECT_EQ(Proof->Address.Suffix, *Identity + "Sg");
+          const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+          ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+          ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+          for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+            EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        }
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      auto F = Fixture(Architecture, 'C', 'V', true);
+      auto &Data = F.Image.Segments[3].Data;
+      const auto Word = [&](unsigned Offset, uint32_t Value) {
+        llvm::support::endian::write32le(Data.data() + Offset, Value);
+      };
+      switch (Mutation) {
+      case 0:
+        Data[0xe0] = 'X';
+        break; // Different immediate parent name.
+      case 1:
+        Data[0x90] = 'X';
+        break; // Different outer name.
+      case 2:
+        Data[0xa0] = 'X';
+        break; // Different module.
+      case 3:
+        Word(0xc0, 0x51);
+        break; // Wrong parent nominal kind.
+      case 4:
+        Word(0xc0, 0x150);
+        break; // Unknown parent version.
+      case 5:
+        Word(0xc0, 0xd0);
+        break; // Generic parent needs context arguments.
+      case 6:
+        Word(0xc0, 0x10);
+        break; // Parent has no unique identity.
+      case 7:
+        Word(0xc4, uint32_t(0x4060 - 0x40c4) | 1);
+        break;
+      case 8:
+        Word(0xc4, uint32_t(0x40c0 - 0x40c4));
+        break; // Parent cycle.
+      case 9:
+        Word(0x64, uint32_t(F.LocalDescriptor - 0x4064));
+        break;
+      case 10:
+        Word(0x60, 0x42);
+        break; // Anonymous outer context.
+      case 11:
+        F.Image.Sections[3].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 12:
+        F.Image.RelDataPtrRelocSlots.insert(0x40c8);
+        break;
+      case 13: {
+        // A different registered leaf with the identical complete path vetoes
+        // the identity even if no symbol gives that duplicate a name.
+        std::memcpy(Data.data(), Data.data() + 0x20, 12);
+        Word(4, uint32_t(0x40c0 - 0x4004));
+        Word(8, uint32_t(0x4080 - 0x4008));
+        F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+        llvm::support::endian::write32le(
+            F.Image.Segments.back().Data.data() + 4, uint32_t(0x4000 - 0x6004));
+        break;
+      }
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftLocalRegisteredNominalType(
+          F.Image, F.LocalDescriptor))
+          << Mutation;
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference))
+          << Mutation;
+    }
+  }
+}
 
 TEST(ObjCSourceBindings,
      RegisteredInternalSwiftTypesRebuildOnlyTheirStableTextualIdentity) {
@@ -7399,6 +7567,97 @@ TEST(ObjCSourceBindings, ImmutableSwiftSmallStringKeepsSharedAddress) {
   }
 }
 
+TEST(ObjCSourceBindings, NestedSwiftSmallStringsKeepExactCellProof) {
+  for (const auto *Name :
+       {"_$s13WMFComponents24AccessibilityIdentifiersO6SearchO9searchBarSSvpZ",
+        "_$s13WMFComponents24AccessibilityIdentifiersO4TabsO6buttonSSvpZ",
+        "_$s4Test1AO1BC1CV5valueSSvpZ",
+        "_$s4Test1AV1BO1CC1DV1EO1FC1GV1HO5valueSSvpZ"}) {
+    SCOPED_TRACE(Name);
+    Fixture F;
+    constexpr va_t Address = 0x1040;
+    F.Image.MachOTwoLevelNamespace = true;
+    F.Image.ObjCSourceReferences.clear();
+    F.Image.Symbols.push_back({Name, Address, 16, false});
+    F.Image.Exports.push_back({Name, 0, Address});
+    auto *Bytes = F.Image.Segments[0].Data.data() + Address - 0x1000;
+    std::fill(Bytes, Bytes + 16, 0);
+    const std::string Expected = "Search Bar";
+    std::copy(Expected.begin(), Expected.end(), Bytes);
+    Bytes[15] = 0xea;
+    F.Function.ReturnType = NdType::makeInt(8, false);
+    F.Function.Body[0].RetVal =
+        HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    EXPECT_EQ(Result.SwiftSmallStrings, std::set<va_t>{Address});
+    const auto Bound = Result.Function.Body[0].RetVal;
+    ASSERT_TRUE(Bound->SourceCallHint);
+    EXPECT_EQ(Bound->SourceCallHint->TargetName, Name);
+    EXPECT_EQ(Bound->SourceCallHint->ByteCount, 16U);
+    EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+    std::set<std::string> Helpers;
+    const auto Source = renderObjCSwiftSmallStringHelpers(
+        F.Image, Result.SwiftSmallStrings, Helpers);
+    EXPECT_NE(Source.find("[15] = 234"), std::string::npos);
+    EXPECT_EQ(Helpers,
+              std::set<std::string>{"neverd_swift_small_string_1040_address"});
+
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      auto Changed = F.Image;
+      if (Mutation == 0)
+        Changed.DataPtrRelocSlots.insert(Address);
+      if (Mutation == 1)
+        Changed.Symbols.push_back({"_alias", Address, 16, false});
+      if (Mutation == 2)
+        Changed.Exports.clear();
+      if (Mutation == 3)
+        Changed.Exports.push_back({Name, 0, Address});
+      if (Mutation == 4)
+        Changed.Exports[0].Addr += 16;
+      if (Mutation == 5)
+        Changed.Symbols.back().Size = 8;
+      if (Mutation == 6)
+        Changed.Segments[0].Data[Address - 0x1000 + 15] = 0xfa;
+      if (Mutation == 7)
+        Changed.Segments[0].Data[Address - 0x1000 + 14] = 1;
+      if (Mutation == 8) {
+        Changed.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        Changed.Segments[0].Flags = Changed.Sections[0].Flags;
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Bound, Changed, {})) << Mutation;
+      EXPECT_THROW(renderObjCSwiftSmallStringHelpers(
+                       Changed, Result.SwiftSmallStrings, Helpers),
+                   std::runtime_error)
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftSmallStringsRejectUnprovedDeclarationContexts) {
+  for (const auto *Name :
+       {"_$s4Test1AV1BO1CC1DV1EO1FC1GV1HO1IC5valueSSvpZ",
+        "_$s4Test3fooyyF1LV5valueSSvpZ", "_$s4Test1AV5OtherE5valueSSvpZ",
+        "_$s4Test1AVySiG5valueSSvpZ", "_$s4Test1AV5valueSSvp",
+        "_$s4Test1AV5valueSivpZ", "_$s4Test5valueSSvpZ",
+        "_$s4Test1AV5valueSSvpZbad"}) {
+    SCOPED_TRACE(Name);
+    Fixture F;
+    constexpr va_t Address = 0x1040;
+    F.Image.MachOTwoLevelNamespace = true;
+    F.Image.ObjCSourceReferences.clear();
+    F.Image.Symbols.push_back({Name, Address, 16, false});
+    F.Image.Exports.push_back({Name, 0, Address});
+    auto *Bytes = F.Image.Segments[0].Data.data() + Address - 0x1000;
+    std::fill(Bytes, Bytes + 16, 0);
+    Bytes[15] = 0xe0;
+    EXPECT_FALSE(
+        objc_binding_detail::swiftSmallStringStorageHint(F.Image, Address));
+  }
+}
+
 TEST(ObjCSourceBindings, SwiftOptionalSelfStaticUsesWitnessBoundedZeroStorage) {
   constexpr va_t Address = 0x3010;
   constexpr va_t Witness = 0x4000;
@@ -7771,10 +8030,12 @@ TEST(ObjCSourceBindings, PointerAccessesKeepStorageAndValueProofsSeparate) {
           Statement.RetVal = Store;
         }
         const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
-        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+        const bool ReleaseStore = Shape != 0 && Mutation == 6;
+        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0 || ReleaseStore)
+            << Bound.Limitation;
         EXPECT_EQ(Bound.LocalStorageExtents.empty(),
-                  Mutation != 0 && Mutation != 7);
-        if (!Mutation || Mutation == 7)
+                  Mutation != 0 && Mutation != 7 && !ReleaseStore);
+        if (!Mutation || Mutation == 7 || ReleaseStore)
           EXPECT_EQ(Bound.LocalStorageExtents,
                     (std::map<va_t, uint64_t>{{Address, 8}}));
       }

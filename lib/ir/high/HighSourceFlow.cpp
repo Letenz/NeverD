@@ -482,10 +482,8 @@ class SourceFlow {
       ++BranchTests;
       auto Condition = N.Test;
       for (unsigned Depth = 0;
-           Depth != 8 && Condition &&
-           Condition->Kind == ExprKind::UnaryOp &&
-           Condition->Op == NdOp::BOOL_NOT &&
-           Condition->Operands.size() == 1 &&
+           Depth != 8 && Condition && Condition->Kind == ExprKind::UnaryOp &&
+           Condition->Op == NdOp::BOOL_NOT && Condition->Operands.size() == 1 &&
            Condition->IntrinsicOutputs.empty() &&
            Condition->MemoryOrdering == NdMemoryOrdering::None &&
            Condition->MemoryAddressSpace == NdMemoryAddressSpace::Default;
@@ -633,22 +631,19 @@ class SourceFlow {
                Condition->Operands.size() == 1 &&
                Condition->IntrinsicOutputs.empty() &&
                Condition->MemoryOrdering == NdMemoryOrdering::None &&
-               Condition->MemoryAddressSpace ==
-                   NdMemoryAddressSpace::Default;
+               Condition->MemoryAddressSpace == NdMemoryAddressSpace::Default;
                ++Depth) {
             Inverted = !Inverted;
             Condition = Condition->Operands[0];
           }
           if (Condition && scalarLocal(Condition)) {
             const size_t Boolean = local(Condition->Var);
-            if (WriteCount[Boolean] == 1 &&
-                !AddressTaken.count(Boolean) &&
+            if (WriteCount[Boolean] == 1 && !AddressTaken.count(Boolean) &&
                 Dominates(WriteAt[Boolean], I)) {
               const auto *Definition = Nodes[WriteAt[Boolean]].Statement;
               if (Definition && Definition->Kind == StmtKind::Assign &&
                   scalarLocal(Definition->Dst) &&
-                  local(Definition->Dst->Var) == Boolean &&
-                  Definition->Val &&
+                  local(Definition->Dst->Var) == Boolean && Definition->Val &&
                   Definition->Val->Kind == ExprKind::BinOp &&
                   (Definition->Val->Op == NdOp::INT_EQUAL ||
                    Definition->Val->Op == NdOp::INT_NOTEQUAL) &&
@@ -656,10 +651,8 @@ class SourceFlow {
                   Definition->Val->Type->Kind == NdTypeKind::Int &&
                   Definition->Val->Type->Size == Condition->Type->Size &&
                   Definition->Dst->Type->Size == Condition->Type->Size &&
-                  Definition->Body.empty() &&
-                  Definition->ElseBody.empty() &&
-                  Definition->Cases.empty() &&
-                  Definition->DefaultBody.empty())
+                  Definition->Body.empty() && Definition->ElseBody.empty() &&
+                  Definition->Cases.empty() && Definition->DefaultBody.empty())
                 if (auto Relation = predicate(Definition->Val))
                   for (size_t E = 0; E < CanonicalFacts.back().size(); ++E)
                     if (Nodes[I].EdgeTruth[E]) {
@@ -712,8 +705,8 @@ class SourceFlow {
           }
       }
     }
-    const auto Facts = [&](size_t I)
-        -> const std::vector<std::optional<Predicate>> & {
+    const auto Facts =
+        [&](size_t I) -> const std::vector<std::optional<Predicate>> & {
       return CanonicalFacts.empty() ? Nodes[I].EdgeFacts : CanonicalFacts[I];
     };
     struct Observations {
@@ -986,9 +979,8 @@ class SourceFlow {
     for (unsigned Side = 0; Side < 2; ++Side) {
       const auto &Value = Test->Operands[Side];
       const auto &Constant = Test->Operands[1 - Side];
-      if (Constant->Kind != ExprKind::Const ||
-          !Constant->Type || Constant->Type->Kind != NdTypeKind::Int ||
-          !Constant->Type->Size ||
+      if (Constant->Kind != ExprKind::Const || !Constant->Type ||
+          Constant->Type->Kind != NdTypeKind::Int || !Constant->Type->Size ||
           Constant->Type->Size > Index->Type->Size ||
           !Value->structuralEq(*Index))
         continue;

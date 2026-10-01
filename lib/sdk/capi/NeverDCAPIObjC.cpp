@@ -379,33 +379,32 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         ReadOnlyHelpers.insert(ObjectPointerHelpers.begin(),
                                ObjectPointerHelpers.end());
         const auto Audit = Audits.find(Entry);
-        const auto CallAllowed =
-            [&](const HighExpr &Expression) {
-              return objcSourceCallBound(Expression, S->Img, Functions,
-                                         &ProfileStorage, &ReadOnlyHelpers,
-                                         &Binding.Function,
-                                         &BlockPlan.ParameterReceivers,
-                                         &BlockPlan.CaptureReceivers) ||
-                     objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
-                                                     Binding.Function) ||
-                     objCCFunctionParameterSourceCallBound(
-                         Expression, S->Img, Result, Binding.Function) ||
-                     objCMetadataFactorySourceCallBound(
-                         Expression, S->Img, MetadataFactoryPlan,
-                         ProfileStorage, Binding.Function, Functions) ||
-                     objCSuperGetterSourceCallBound(
-                         Expression, S->Img, SuperGetterPlan, Binding.Function,
-                         Functions) ||
-                     objCForwardedInitializerSourceCallBound(
-                         Expression, S->Img, ForwardedInitializerPlan,
-                         Binding.Function, Functions) ||
-                     swiftOnceCallbackBound(Expression, S->Img, OncePlan,
-                                            Functions) ||
-                     swiftOnceAddressorBound(Expression, S->Img, OncePlan,
-                                             Functions) ||
-                     objcBlockSourceCallBound(Expression, BlockSource,
-                                              BlockPlan, Functions);
-            };
+        const auto CallAllowed = [&](const HighExpr &Expression) {
+          return objcSourceCallBound(Expression, S->Img, Functions,
+                                     &ProfileStorage, &ReadOnlyHelpers,
+                                     &Binding.Function,
+                                     &BlockPlan.ParameterReceivers,
+                                     &BlockPlan.CaptureReceivers) ||
+                 objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
+                                                 Binding.Function) ||
+                 objCCFunctionParameterSourceCallBound(
+                     Expression, S->Img, Result, Binding.Function) ||
+                 objCMetadataFactorySourceCallBound(
+                     Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                     Binding.Function, Functions) ||
+                 objCSuperGetterSourceCallBound(Expression, S->Img,
+                                                SuperGetterPlan,
+                                                Binding.Function, Functions) ||
+                 objCForwardedInitializerSourceCallBound(
+                     Expression, S->Img, ForwardedInitializerPlan,
+                     Binding.Function, Functions) ||
+                 swiftOnceCallbackBound(Expression, S->Img, OncePlan,
+                                        Functions) ||
+                 swiftOnceAddressorBound(Expression, S->Img, OncePlan,
+                                         Functions) ||
+                 objcBlockSourceCallBound(Expression, BlockSource, BlockPlan,
+                                          Functions);
+        };
         Reason = sourceBodyLimitation(
             Binding.Function, *Binding.Function.SourceTypeHint,
             Audit == Audits.end() ? nullptr : Audit->second, CallAllowed);

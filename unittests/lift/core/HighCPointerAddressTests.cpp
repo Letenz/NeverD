@@ -40869,7 +40869,8 @@ TEST(HighCPointerAddresses, LoopifyTurnsNestedBackJumpsIntoContinue) {
   EXPECT_EQ(Body[2].Kind, StmtKind::Return);
 }
 
-TEST(HighCPointerAddresses, LoopifyRefusesJumpsFromNestedLoopsOrOutside) {
+TEST(HighCPointerAddresses,
+     LoopifyRefusesNestedLoopJumpsAndKeepsOutsideEntries) {
   // A goto X inside an inner loop cannot become `continue`.
   HighStmt Inner;
   Inner.Kind = StmtKind::While;
@@ -40879,12 +40880,13 @@ TEST(HighCPointerAddresses, LoopifyRefusesJumpsFromNestedLoopsOrOutside) {
                                   returnAt(0x1020)};
   EXPECT_FALSE(loopifyBackwardGotos(Nested));
   EXPECT_EQ(countGotos(Nested), 1u);
-  // A jump to X from before X keeps the label as a plain label.
+  // A jump to X from before X still lands on X, now the first statement of
+  // the loop body; only the jump back from inside becomes `continue`.
   std::vector<HighStmt> Outside = {
       condGoto(0x1000, 1, 0x1010), assignConst(0x1010, 1, 1),
       condGoto(0x1018, 1, 0x1010), returnAt(0x1020)};
-  EXPECT_FALSE(loopifyBackwardGotos(Outside));
-  EXPECT_EQ(countGotos(Outside), 2u);
+  EXPECT_TRUE(loopifyBackwardGotos(Outside));
+  EXPECT_EQ(countGotos(Outside), 1u);
 }
 
 TEST(HighCPointerAddresses, GroupSwitchCasesSharesBodiesAndDropsDefaultCopies) {

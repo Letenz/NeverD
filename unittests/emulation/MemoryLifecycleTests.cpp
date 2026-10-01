@@ -251,6 +251,10 @@ TEST(MemoryLifecycle, PartialAliasRemovalLeavesExactRetirableFragments) {
 }
 TEST(MemoryLifecycle,
      ProjectionFailureIsLocalAndDoesNotRollBackPublishedMappings) {
+  const auto Software = llvm::cantFail(queryExecutionBackendBuild(
+      ExecutionBackendKind::Unicorn, GuestArchitecture::X64));
+  if (Software.Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Software.Reason;
   for (auto ISA : {GuestArchitecture::X64, GuestArchitecture::AArch64}) {
     SCOPED_TRACE(guestArchitectureName(ISA));
     auto RAM = ram();
@@ -301,6 +305,10 @@ TEST(MemoryLifecycle,
   }
 }
 TEST(MemoryLifecycle, SharedDeviceRetirementReleasesCallbacksBeforeCPUsResume) {
+  const auto Software = llvm::cantFail(queryExecutionBackendBuild(
+      ExecutionBackendKind::Unicorn, GuestArchitecture::X64));
+  if (Software.Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Software.Reason;
   auto A = space(ram());
   auto First = llvm::cantFail(createExecutionBackend(
       ExecutionBackendKind::Unicorn, ExecutionContract::Software, A));

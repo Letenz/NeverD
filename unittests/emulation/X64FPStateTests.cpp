@@ -10,10 +10,12 @@
 #include "gtest/gtest.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
+#include <algorithm>
 #include <cstring>
-#include <tuple>
+#include <string>
 
 namespace neverd::emulation {
 namespace {
@@ -99,6 +101,63 @@ TEST(X64FPState, InvalidStateCannotTruncateLanesOrPublishAStateBuffer) {
   EXPECT_TRUE(bool(E));
   llvm::consumeError(std::move(E));
 }
+TEST(X64FPState, StandardAndCompactedXsavePreserveEveryPhysicalTOP) {
+  for (const bool Compact : {false, true})
+    for (unsigned Top = 0; Top < x64::fp::RegisterCount; ++Top) {
+      const auto Before = seed(Top);
+      std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+      llvm::cantFail(encodeX64XsaveState(Before, Bytes, Compact));
+      X64MachineState Next;
+      llvm::cantFail(decodeX64XsaveState(Next, Bytes));
+      expectFP(Next, Before);
+    }
+}
+TEST(X64FPState, AbsentXsaveComponentsIgnoreStalePayloadAndUseInitState) {
+  for (const auto Present :
+       {uint64_t(0), x64::fp::X87Present, x64::fp::SSEPresent}) {
+    const auto Before = seed(EmptySlot);
+    std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+    llvm::cantFail(encodeX64XsaveState(Before, Bytes, true));
+    llvm::support::endian::write64le(Bytes.data() + x64::fp::XStateOffset,
+                                     Present);
+    if (!(Present & x64::fp::X87Present))
+      llvm::support::endian::write16le(Bytes.data() + x64::fp::ControlOffset,
+                                       InvalidControl);
+    if (!(Present & x64::fp::SSEPresent))
+      llvm::support::endian::write32le(Bytes.data() + x64::fp::MXCSROffset,
+                                       InvalidPadding);
+    auto Expected = Before;
+    if (!(Present & x64::fp::X87Present))
+      Expected.FP = {};
+    if (!(Present & x64::fp::SSEPresent)) {
+      Expected.MXCSR = x64::InitialMXCSR;
+      Expected.Xmm = {};
+    }
+    auto Next = Before;
+    llvm::cantFail(decodeX64XsaveState(Next, Bytes));
+    expectFP(Next, Expected);
+  }
+}
+TEST(X64FPState, MalformedXsaveHeadersCannotPublishPartialState) {
+  const auto Before = seed(EmptySlot);
+  for (const auto Offset : {x64::fp::XStateOffset, x64::fp::XCompOffset,
+                            x64::fp::XCompOffset + sizeof(uint64_t)}) {
+    std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+    llvm::cantFail(encodeX64XsaveState(Before, Bytes));
+    llvm::support::endian::write64le(Bytes.data() + Offset, InvalidPadding);
+    auto Next = Before;
+    auto E = decodeX64XsaveState(Next, Bytes);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Next, Before);
+  }
+  std::array<uint8_t, x64::fp::XsaveBytes> Short{};
+  auto Next = Before;
+  auto E = decodeX64XsaveState(Next, llvm::ArrayRef(Short).drop_back());
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(Next, Before);
+}
 
 TEST(X64FPState, SoftwareResetAndContextsRetainExtendedRegisters) {
   auto B = createExecutionBackend(ExecutionBackendKind::Unicorn,
@@ -135,19 +194,39 @@ TEST(X64FPState, SoftwareResetAndContextsRetainExtendedRegisters) {
             S.FP.Registers.back());
 }
 
-using Parameter = std::tuple<ExecutionBackendKind, bool>;
+struct Parameter {
+  ExecutionBackendKind Backend;
+  bool UserMode;
+  std::string name() const {
+    return std::string(executionBackendName(Backend)) +
+           (UserMode ? UserSuffix : SupervisorSuffix);
+  }
+};
+void PrintTo(const Parameter &Value, std::ostream *OS) { *OS << Value.name(); }
+std::string parameterName(const testing::TestParamInfo<Parameter> &Info) {
+  return Info.param.name();
+}
+const Parameter Parameters[] = {
+#define NEVERD_FP_TRANSPORT(Backend, User)                                     \
+  {ExecutionBackendKind::Backend, User},
+#include "X64FPCases.def"
+#undef NEVERD_FP_TRANSPORT
+};
 class X64FPTransport : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
   std::unique_ptr<X64Machine> Machine;
-  uint64_t Root = 0;
+  llvm::Expected<std::unique_ptr<X64Machine>>
+  createMachine(MemoryProjection &Storage) {
+    return GetParam().Backend == ExecutionBackendKind::KVM
+               ? createKvmMachine(Storage)
+           : GetParam().Backend == ExecutionBackendKind::WHP
+               ? createWhpMachine(Storage)
+               : createUnicornX64Machine(Storage, GetParam().UserMode);
+  }
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
-    auto M = std::get<0>(GetParam()) == ExecutionBackendKind::KVM
-                 ? createKvmMachine(*Memory)
-             : std::get<0>(GetParam()) == ExecutionBackendKind::WHP
-                 ? createWhpMachine(*Memory)
-                 : createUnicornX64Machine(*Memory, std::get<1>(GetParam()));
+    auto M = createMachine(*Memory);
     if (!M) {
       auto E = M.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
@@ -163,16 +242,20 @@ protected:
         Memory->map(Data, memory::PageSize, Read | Write | UserAccessible));
   }
   void step(X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes) {
-    State.UserMode = std::get<1>(GetParam());
+    stepOn(*Machine, *Memory, State, Bytes);
+  }
+  void stepOn(X64Machine &CPU, MemoryProjection &Storage,
+              X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes) {
+    State.UserMode = GetParam().UserMode;
     State.reg(X64Register::PC) = Code;
-    llvm::cantFail(Memory->write(Code, Bytes));
-    llvm::cantFail(Memory->beginRun());
-    auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-    Root = llvm::cantFail(buildX64PageTables(
-        *Memory, Root, State.UserMode, Machine->requiresExceptionMonitor()));
-    auto E = Machine->step(State, Root,
-                           {std::chrono::steady_clock::now() +
-                            std::chrono::microseconds(Timeout)});
+    llvm::cantFail(Storage.write(Code, Bytes));
+    llvm::cantFail(Storage.beginRun());
+    auto Release = llvm::scope_exit([&] { Storage.endRun(); });
+    const auto Root = llvm::cantFail(buildX64PageTables(
+        Storage, State.UserMode, CPU.requiresExceptionMonitor()));
+    auto E = CPU.step(State, Root,
+                      {std::chrono::steady_clock::now() +
+                       std::chrono::microseconds(Timeout)});
     EXPECT_EQ(llvm::toString(std::move(E)), "");
   }
 };
@@ -185,6 +268,40 @@ TEST_P(X64FPTransport, PreservesAllPhysicalLanesAndControlAcrossEveryTOP) {
     expectFP(S, Expected);
     EXPECT_EQ(S.reg(X64Register::PC), Code + sizeof(Nop));
   }
+}
+TEST_P(X64FPTransport, LogicalCPUSwitchingRestoresPhysicalFPAndTLS) {
+  auto PeerMemory = llvm::cantFail(MemoryProjection::create(Limit));
+  auto Created = createMachine(*PeerMemory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Peer = std::move(*Created);
+  llvm::cantFail(PeerMemory->map(Code, memory::PageSize,
+                                 Read | Write | Execute | UserAccessible));
+  llvm::cantFail(
+      PeerMemory->map(Data, memory::PageSize, Read | Write | UserAccessible));
+  auto First = seed(EmptySlot), Second = seed(0);
+  First.FSBase = SeedInstruction;
+  First.GSBase = SeedData;
+  Second.FSBase = SeedData;
+  Second.GSBase = SeedInstruction;
+  for (auto &Lane : Second.Xmm)
+    std::swap(Lane[0], Lane[1]);
+  std::reverse(Second.FP.Registers.begin(), Second.FP.Registers.end());
+  auto Check = [&](X64Machine &CPU, MemoryProjection &Storage,
+                   X64MachineState &State) {
+    const auto Before = State;
+    stepOn(CPU, Storage, State, Nop);
+    expectFP(State, Before);
+    EXPECT_EQ(State.FSBase, Before.FSBase);
+    EXPECT_EQ(State.GSBase, Before.GSBase);
+    EXPECT_EQ(State.reg(X64Register::PC), Code + sizeof(Nop));
+  };
+  Check(*Machine, *Memory, First);
+  Check(*Peer, *PeerMemory, Second);
+  Check(*Machine, *Memory, First);
+  Check(*Peer, *PeerMemory, Second);
+  // Destroying an inactive logical CPU must not retire its peer's native state.
+  Machine.reset();
+  Check(*Peer, *PeerMemory, Second);
 }
 TEST_P(X64FPTransport, StackChangesMatchIndependentHostFXSaveAndRestore) {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -254,8 +371,8 @@ class X64FPContext : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<ExecutionBackend> CPU;
   void SetUp() override {
-    auto B = createExecutionBackend(std::get<0>(GetParam()),
-                                    std::get<1>(GetParam())
+    auto B = createExecutionBackend(GetParam().Backend,
+                                    GetParam().UserMode
                                         ? ExecutionContract::CheckedUserX64
                                         : ExecutionContract::CheckedX64,
                                     Limit);
@@ -345,18 +462,9 @@ TEST_P(X64FPContext, RejectsInvalidWidthsAndEncodingsWithoutTruncation) {
   llvm::consumeError(std::move(W));
   EXPECT_FALSE(registerMatches(CPURegister::Invalid, GuestArchitecture::X64));
 }
-INSTANTIATE_TEST_SUITE_P(
-    ExplicitBackends, X64FPContext,
-    testing::Combine(testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP,
-                                     ExecutionBackendKind::Unicorn),
-                     testing::Bool()));
-
-INSTANTIATE_TEST_SUITE_P(
-    ExplicitBackends, X64FPTransport,
-    testing::Combine(testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP,
-                                     ExecutionBackendKind::Unicorn),
-                     testing::Bool()));
+INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64FPContext,
+                         testing::ValuesIn(Parameters), parameterName);
+INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64FPTransport,
+                         testing::ValuesIn(Parameters), parameterName);
 } // namespace
 } // namespace neverd::emulation

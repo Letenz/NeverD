@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
+<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
 
 <div align="center">
 
@@ -107,7 +107,7 @@ Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Ga
 
 `checked-aarch64-v1` und `checked-user-aarch64-v1` bieten begrenztes ARM64 FP32/FP64, SIMD fester Breite und vollständigen FPCR/FPSR/Vektorzustand. Passende Linux-ARM64-Hosts verwenden KVM, Windows ARM64 WHP und andere ISAs Unicorn. Native ARM64-Laufzeitnachweise fehlen weiterhin; Windows-Treiberladen bleibt auf x64 begrenzt.
 
-Die native ARM64-Initialisierung weist fehlerhafte vollständige Zustandsübertragungen oder FP/SIMD-Ergebnisse mit einer privaten Startprobe zurück; Erfolg gilt nur für dieses begrenzte Initialisierungsprogramm.
+Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer; native WHP/ARM64-Lastnachweise bleiben unvollständig.
 
 <!-- i18n-section: how-it-works -->
 

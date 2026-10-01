@@ -7,10 +7,20 @@
 #ifdef NEVERD_WHP_STRING
 NEVERD_WHP_STRING(Library, L"WinHvPlatform.dll")
 #endif
+#ifdef NEVERD_WHP_TEXT
+NEVERD_WHP_TEXT(HostFailure, "{0} (HRESULT {1:x8})")
+NEVERD_WHP_TEXT(OperationFailure, "{0} ({2}; HRESULT {1:x8})")
+NEVERD_WHP_TEXT(MapFailure, "{0} (HRESULT {1:x8}; GPA {2:x}; bytes {3})")
+#endif
+#ifdef NEVERD_WHP_VALUE
+// WHP's documented status is not declared by every Windows SDK.
+NEVERD_WHP_VALUE(InsufficientBuffer, 0x80370301)
+#endif
 #ifdef NEVERD_WHP_FUNCTION
 NEVERD_WHP_FUNCTION(WHvGetCapability)
 NEVERD_WHP_FUNCTION(WHvCreatePartition)
 NEVERD_WHP_FUNCTION(WHvDeletePartition)
+NEVERD_WHP_FUNCTION(WHvGetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetupPartition)
 NEVERD_WHP_FUNCTION(WHvMapGpaRange)
@@ -19,4 +29,12 @@ NEVERD_WHP_FUNCTION(WHvGetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvSetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvRunVirtualProcessor)
 NEVERD_WHP_FUNCTION(WHvCancelRunVirtualProcessor)
+#endif
+#if defined(_M_X64) || defined(__x86_64__)
+#ifdef NEVERD_WHP_X64_OPTIONAL_FUNCTION
+NEVERD_WHP_X64_OPTIONAL_FUNCTION(WHvGetVirtualProcessorState)
+NEVERD_WHP_X64_OPTIONAL_FUNCTION(WHvSetVirtualProcessorState)
+NEVERD_WHP_X64_OPTIONAL_FUNCTION(WHvGetVirtualProcessorXsaveState)
+NEVERD_WHP_X64_OPTIONAL_FUNCTION(WHvSetVirtualProcessorXsaveState)
+#endif
 #endif

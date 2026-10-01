@@ -3557,7 +3557,11 @@
         "Native ARM64 execution requires corresponding hardware validation; cross-compilation and Unicorn execution do not replace that evidence.",
         "Thread-pointer support covers x64 FS/GS base state with checked scalar segment accesses and ARM64 TPIDR_EL0 state with exact MRS/MSR admission. Native adapters and CPU snapshots preserve those registers. This capability does not allocate TLS blocks or implement OS threads; exact FPCR/FPSR access is separately admitted, while other checked ARM64 system-register encodings remain unsupported.",
         "ARM64 KVM/WHP startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. Success verifies this bounded initialization program; independent native ARM64 workload validation remains outstanding.",
-        "`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee."
+        "`RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.",
+        "Native x64 KVM/WHP initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. These probes certify bounded initialization only; independent native WHP and ARM64 workload validation remains outstanding.",
+        "The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/compacted FP/SSE packets, physical TOP rotation, absent-component init state and atomic validation. WHP uses complete XSAVE APIs, preferring `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` with the older XSAVE APIs as a compatibility path. Legacy individual x87 registers cannot replace complete packets. Active extended components, malformed headers, invalid controls and truncated captures fail explicitly. WHP mapping failures retain HRESULT, GPA and size for diagnosis; live Windows verification remains required.",
+        "Native-only builds retain independent physical-memory and shared-CPU lifecycle tests in NeverDMemoryLifecycleTests. The opt-in Windows native_cpu_only CI mode requires every declared native WHP memory registration case to be discovered and executed, and preserves inventory/JUnit/log evidence using the shared CI parsers. This memory-API evidence does not certify instruction execution or ARM64 workloads; actual WHP mapping and XSAVE results still require native verification.",
+        "`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP."
       ],
       "tests": [
         {
@@ -4151,6 +4155,228 @@
           "filter": "*/KvmStateTransfer.PublicCPUExceptionOutranksStopDuringCapture/*",
           "platforms": [
             "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "filter": "X64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "filter": "X64MachineProbe.EveryPhysicalFPWordCorruptionRejectsInitialization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64ProbeExecutionTests.cpp",
+          "filter": "*/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline/*",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64ProbeExecutionTests.cpp",
+          "filter": "*/X64ProbeExecution.ExistingGuestMappingAndRAMSurviveInitialization/*",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProjectionCacheTests",
+          "source": "unittests/emulation/ProjectionCacheTests.cpp",
+          "filter": "ProjectionCache.X64RootHistorySurvivesAnInterveningISAProjection",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProjectionCacheTests",
+          "source": "unittests/emulation/ProjectionCacheTests.cpp",
+          "filter": "ProjectionCache.FailedReplacementCannotRevalidatePartiallyWrittenTables",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "filter": "X64FPState.StandardAndCompactedXsavePreserveEveryPhysicalTOP",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "filter": "X64FPState.MalformedXsaveHeadersCannotPublishPartialState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.CompleteCompactedPacketsRetainEveryPhysicalTOP/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.MalformedHostHeaderCannotPublishState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMemoryLifecycleTests",
+          "source": "unittests/emulation/MemoryLifecycleTests.cpp",
+          "filter": "MemoryLifecycle.FailedTransactionsPreserveMappingGenerationAndBudgets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMemoryLifecycleTests",
+          "source": "unittests/emulation/MemoryLifecycleTests.cpp",
+          "filter": "*/SharedCPU.CPUsShareBytesAndSurviveDestructionOfTheirPeer/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMemoryLifecycleTests",
+          "source": "unittests/emulation/MemoryLifecycleTests.cpp",
+          "filter": "*/SharedCPU.OwnerLeaseRejectsMutationAndRecursiveExecutionAcrossSpaces/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpMemoryTests.cpp",
+          "filter": "WhpMemoryProtocol.FailureRetainsStatusAndExactRegistration",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpMemoryTests.cpp",
+          "filter": "*/WHPMapping.TwoLogicalOwnersRegisterSwitchAndRetireBacking/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpEntryControlTests.cpp",
+          "filter": "WhpEntryControl.GenuineHostFailureOutranksASimultaneousStop",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.QueryFailureRetainsStatusBeforeAllocatingState/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.InstallFailureRetainsStatusAndHostPacket/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpResourceTests.cpp",
+          "filter": "WhpResources.ReusesHotOwnerAndRetiresBeforeEveryOwnerSwitch",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.EffectiveFeaturesAreValidatedWithoutNarrowingDefaults/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDRunControlTests",
+          "source": "unittests/emulation/WhpXsaveTests.cpp",
+          "filter": "*/WhpXsaveProtocol.FeatureQueryFailureRetainsStatusBeforeStateQuery/*",
+          "platforms": [
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64FPTests",
+          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "filter": "*/X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
           ]
         }
       ],

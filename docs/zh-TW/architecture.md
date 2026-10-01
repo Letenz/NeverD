@@ -90,6 +90,10 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 `inferLowIRLoopRefinementPlan` 共用符號執行器，在預算內產生範本。回饋切點涵蓋 CFG 的每個環；拓寬保留已證明的固定位元，並淘汰無法維持的無號前綴邊界。觀察到的單位步長計數器與推導的階段常數組成字典序排名，支援遞增或遞減的巢狀迴圈。`OriginalPrefix` 與 `CandidatePrefix` 要求 `UseEntryPrefix`。位於其他切點之後的切點可從真實入口另行有限重播，取得可行的成對前綴證據。此證據不代表入口域涵蓋：每次實際到達都必須蘊含其述詞，完整入口與轉換路徑涵蓋仍是必要條件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢復與唯一原生來源，再獨立重跑完整原程式／候選程式檢查器。候選方案與來源映射均不可信；只有 `Refinement` 可包含憑證。推導與證明保留各自的明確預算。此 C++ API 不會隨 `--devirtualize` 自動執行。不可達前綴、任意控制流程對齊、搜尋範圍外的排名類型、C 後端等價性及實體 CPU 的未定義位元選擇仍不受支援。
 
+單切點候選必須涵蓋所有原先可達區塊中的每個迴圈，包括移除該切點後與入口斷開的迴圈。每次涵蓋檢查都在符號執行前消耗 `MaxCutpointAttempts`。在每條返回邊上均以單位步長進展的純量計數器仍優先嘗試。隨後，最多八個已觀察到的單位計數器組合候選，與較廣泛的單個純量防護條件或邊界假設交替嘗試；剩餘純量假設完成後，組合搜尋從暫停處繼續，不重複候選。此順序與預算上限無關。每次組合嘗試都恢復儲存的完整穩定模板與轉移邊；組合域檢查失敗只停用該候選族。失敗的純量防護條件不能縮小組合域。 `MaxRankCandidates`、查詢、操作和路徑預算持續累計。候選計畫仍須通過完整的 refinement 檢查器。 即使其他分支停留或重設，一條返回切點的加法遞推分支也可觸發依結構擴大；提出的模板仍須通過全部入口和轉移檢查。
+
+`inferAndCheckLowIRLoopRefinement` 搜尋經過驗證的 LowIR 迴圈關係。它固定原程式首次推斷出的自關係計畫，先嘗試候選程式的預設推斷，再逐一嘗試迴圈切點，並按需列舉已推斷切點的排列。它只為位移相同、寬度相同的堆疊框架輸入提出相等關係；暫存器重新命名、仿射關係和任意回饋切點集合仍須明確配對。權威配對器與完整檢查器保留呼叫者的原始稽核記錄、witness、入口域、框架觀測及終止性義務。`LowIRLoopAlignmentLimits` 的 `MaxSolverQueries` 在全部推斷及證明嘗試間共用，失敗嘗試也扣帳；每次呼叫最多取得階段上限與剩餘總額的較小值。`MaxSearchWork`、`MaxMetadata`、`MaxCandidateAttempts`、`MaxPairingAttempts` 和 `MaxCuts` 限制搜尋建構與列舉。單次預算耗盡可以重試，全域預算耗盡則停止。`Unsupported` 表示未找到關係，不表示程式不等價。只有重新驗證成功的 `Refinement` 包含憑證。CLI 預設行為不變。
+
 `GeneralizeEntryPrefix` 預設為 `false`，且要求 `UseEntryPrefix`。預設模式下，每次到達都必須保持擷取路徑的述詞。顯式泛化模式則將前綴狀態運算式視為該路徑之外的全域、不可信範本函數，仍要求可行的成對見證、真實入口與片段完整覆蓋、全部暫存器／堆疊框架相等、參數投影、原生執行約束，以及擴大歸納域上的嚴格排名下降。推導僅在傳入狀態超出見證域時擴大切點，再重建並檢查所有一般轉換。首個見證零次迭代不能掩蓋另一入口的迴圈。策略綁定至歸納憑證摘要。
 
 巢狀推導可在觀察到單位步長的計數器與控制述詞引用的未修改前綴值之間產生嚴格或非嚴格的無號界限候選，包括等值退出條件。先檢查具體入口／傳入狀態，再於一般傳入轉換上單調淘汰不成立的關係。述詞走訪和求解器工作均計入既有顯式推導預算；最終原程式／候選程式檢查器獨立證明範本。
@@ -452,6 +456,12 @@ CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗�
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
 ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。
+
+x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。這些自檢僅證明有界初始化；WHP 和 ARM64 原生工作負載仍缺少獨立驗證。
+
+共用的 `encodeX64XsaveState` / `decodeX64XsaveState` 編解碼層擁有標準及壓縮 FP/SSE 封包、實體 TOP 輪轉、缺失元件的初始狀態和原子驗證。WHP 使用完整 XSAVE API，優先選擇 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，舊 XSAVE API 作為相容路徑。個別的舊 x87 暫存器介面不能取代完整封包。作用中的擴充元件、格式錯誤的標頭、非法控制位元和截斷擷取明確失敗。WHP 映射錯誤保留 HRESULT、GPA 和大小供診斷；仍需 Windows 原生驗證。
+
+`WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 

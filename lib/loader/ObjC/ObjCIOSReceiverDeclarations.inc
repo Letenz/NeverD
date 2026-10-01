@@ -65,6 +65,11 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIProgressView", "", "C:UIView|P:NSCoding", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIResponder", "", "C:NSObject|P:UIResponderStandardEditActions", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIView", "", "C:UIResponder|P:NSCoding|P:UIAppearance|P:UIAppearanceContainer|P:UIDynamicItem|P:UITraitEnvironment|P:UICoordinateSpace|P:UIFocusItem|P:UIFocusItemContainer|P:CALayerDelegate", nullptr)
+// UIView and its public UIViewHierarchy category declare these properties;
+// their iOS declarations and encodings are recorded in the selector catalog.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIView", "", false, "effectiveUserInterfaceLayoutDirection", "q16@0:8", "", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", "", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIView", "UIViewHierarchy", false, "safeAreaInsets", "{UIEdgeInsets=dddd}16@0:8", "", false, nullptr, "", false)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UIAppearance", "", "P:NSObject", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UIAppearanceContainer", "", "P:NSObject", nullptr)
 ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "protocol", "UICoordinateSpace", "", "P:NSObject", nullptr)
@@ -99,5 +104,9 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "parentViewController", "@16@0:8", "UIViewController", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIViewController", "", false, "transitionCoordinator", "@16@0:8", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "flashScrollIndicators", "v16@0:8", "", false, nullptr, "", false)
+// Public UIScrollView property declarations and independent arm64 iOS
+// encodings are recorded with the selector facts in ObjCIOSFrameworkDeclarations.inc.
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setBounces:", "v20@0:8B16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setContentInset:", "v48@0:8{UIEdgeInsets=dddd}16", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIApplication", "", false, "endBackgroundTask:", "v24@0:8Q16", "", false, nullptr, "", false)
 // clang-format on

@@ -287,6 +287,20 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     {"$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6"
      "leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vppppC"},
+    // Swift 6.1.2 arm64 and x86_64 Foundation clients preserve the generic
+    // class metadata separately from the class argument and swiftself. The
+    // typed Optional object is one integer word; Any? is an indirect result.
+    {"$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+     "SStSo8NSObjectCRbzSo8NSCodingRzlF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "zpzppC"},
+    {"$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIzzpC"},
     // The concrete UIImage initializer consumes the two String words in x0/x1
     // and returns an object in x0. WMF's arm64 call uses those carriers and
     // links the exact Swift overlay symbol from UIKit.
@@ -331,6 +345,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // index precedes the buffer value; neither input uses swiftself.
     {"$ss12_ArrayBufferV19_getElementSlowPathyyXlSiFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "pzp"},
+    // Swift 6.1.2 arm64 and x86_64 clients declare swiftcc void
+    // (i1 isUnique, ptr concreteMetadata, ptr swiftself dictionaryAddress).
+    // Publication must prove a canonical Boolean before using a byte carrier.
+    {"$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF",
+     "/usr/lib/swift/libswiftCore.dylib", "vbpC"},
     {"$ss18_CocoaArrayWrapperV8endIndexSivg",
      "/usr/lib/swift/libswiftCore.dylib", "zz"},
     // Swift 6.1.2 DictionaryStorage.swift defines the original storage,
@@ -354,6 +373,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // caller passes its seed in x0, then _finalize reads the value in x20.
     {"$ss6HasherV5_seedABSi_tcfC", "/usr/lib/swift/libswiftCore.dylib", "vIz"},
     {"$ss6HasherV9_finalizeSiyF", "/usr/lib/swift/libswiftCore.dylib", "zC"},
+    // Swift 6.1.2 arm64 and x86_64 client IR passes an ordinary metadata
+    // pointer and a Boolean qualifier; the String result occupies both
+    // integer return carriers. Neither input is swiftself.
+    {"$ss9_typeName_9qualifiedSSypXp_SbtF", "/usr/lib/swift/libswiftCore.dylib",
+     "(zz)pb"},
 };
 
 bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
@@ -390,6 +414,10 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
   if (Found->DoesNotReturn && Signature.ReturnType->Kind != NdTypeKind::Void)
     return false;
   Hint.DoesNotReturn = Found->DoesNotReturn;
+  if (Hint.TargetName == "$ss9_typeName_9qualifiedSSypXp_SbtF")
+    Hint.CanonicalBooleanInputs = {1};
+  if (Hint.TargetName == "$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF")
+    Hint.CanonicalBooleanInputs = {0};
   // UIKit's image-literal initializer receives the opaque String words in
   // x0/x1. Authenticate that exact SDK import before allowing its immutable
   // literal storage to be copied into the generated source.
@@ -398,6 +426,13 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     Hint.SwiftStringInputs = {{0, 1}};
   if (Hint.TargetName == "$s10Foundation3URLV6stringACSgSSh_tcfC")
     Hint.SwiftStringInputs = {{1, 2}};
+  if (Hint.TargetName ==
+      "$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyxSgxm_"
+      "SStSo8NSObjectCRbzSo8NSCodingRzlF")
+    Hint.SwiftStringInputs = {{1, 2}};
+  if (Hint.TargetName ==
+      "$sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF")
+    Hint.SwiftStringInputs = {{2, 3}};
   for (char Code : Encoding) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());
@@ -449,11 +484,13 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
   constexpr llvm::StringLiteral AllocError = "swift_allocError";
   constexpr llvm::StringLiteral OpaqueConformance2 =
       "swift_getOpaqueTypeConformance2";
+  constexpr llvm::StringLiteral DynamicType = "swift_getDynamicType";
   const auto Bind = Image.DyldBindSlots.find(Slot);
   if (Bind == Image.DyldBindSlots.end() ||
       Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
       (Name != AssertionFailure && Name != StringRangeSubscript &&
-       Name != AllocError && Name != OpaqueConformance2) ||
+       Name != AllocError && Name != OpaqueConformance2 &&
+       Name != DynamicType) ||
       ((Name == StringRangeSubscript || Name == AllocError ||
         Name == OpaqueConformance2) &&
        Image.Arch != Arch::AArch64))
@@ -463,6 +500,20 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
   const auto Word = NdType::makeInt(8, false);
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  if (Name == DynamicType) {
+    // Compiler IR on both Darwin targets declares a C-convention pointer
+    // result from (value address, static metadata, Boolean existential flag).
+    // i1 alone does not declare a complete uint8_t parameter. Publication
+    // requires this flag to be exactly zero or one, whose full byte/32-bit
+    // extension agrees with the observed callers on both architectures.
+    Hint.CanonicalBooleanInputs = {2};
+    Signature.ReturnType = Pointer;
+    Signature.Parameters = {{"value", Pointer},
+                            {"static_type", Pointer},
+                            {"existential", NdType::makeInt(1, false)}};
+    std::string Diagnostic;
+    return assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic);
+  }
   if (Name == AllocError) {
     // Swift 6.1.2 arm64 client IR: swiftcc { ptr, ptr }
     // (ptr metadata, ptr witness, ptr initialValue, i1 isTake). Its generated
@@ -480,9 +531,8 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
     // pointer result from (arguments, signed descriptor, index). The strong
     // libswiftCore import proves this versioned entry is present.
     Signature.ReturnType = Pointer;
-    Signature.Parameters = {{"arguments", Pointer},
-                            {"descriptor", Pointer},
-                            {"index", Word}};
+    Signature.Parameters = {
+        {"arguments", Pointer}, {"descriptor", Pointer}, {"index", Word}};
     std::string Diagnostic;
     return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
   }
@@ -490,9 +540,9 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
     // Swift 6.1.2 arm64 client IR: swiftcc { i64, i64, i64, ptr }
     // (i64, i64, i64, ptr). The range precedes the String value; neither
     // its four-word result nor its storage can be collapsed to a pointer.
-    Signature.ReturnType =
-        NdType::makeStruct({Word, Word, Word, Pointer});
-    Signature.Parameters = {{"lower", Word}, {"upper", Word},
+    Signature.ReturnType = NdType::makeStruct({Word, Word, Word, Pointer});
+    Signature.Parameters = {{"lower", Word},
+                            {"upper", Word},
                             {"string_bits", Word},
                             {"string_storage", Pointer}};
     Hint.SwiftStringInputs = {{2, 3}};
@@ -671,9 +721,9 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Name == "swift_nonatomic_bridgeObjectRelease") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Pointer}};
-  // RuntimeFunctions.def instantiates this exact C-ABI storage family for
-  // native and unknown-object weak/unowned references. Keep explicit names so
-  // private suffix variants cannot acquire a public runtime contract.
+    // RuntimeFunctions.def instantiates this exact C-ABI storage family for
+    // native and unknown-object weak/unowned references. Keep explicit names so
+    // private suffix variants cannot acquire a public runtime contract.
   } else if (Name == "swift_weakInit" || Name == "swift_weakAssign" ||
              Name == "swift_unknownObjectWeakInit" ||
              Name == "swift_unknownObjectWeakAssign" ||
@@ -737,8 +787,7 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     // swiftcc void(ptr). The actor's storage is passed, not returned.
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
-        Bind->second.Module !=
-            "/usr/lib/swift/libswift_Concurrency.dylib")
+        Bind->second.Module != "/usr/lib/swift/libswift_Concurrency.dylib")
       return std::nullopt;
     Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
     Signature.ReturnType = NdType::makeVoid();
@@ -749,8 +798,7 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     // real calls with the exact libswift_Concurrency provider.
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
-        Bind->second.Module !=
-            "/usr/lib/swift/libswift_Concurrency.dylib")
+        Bind->second.Module != "/usr/lib/swift/libswift_Concurrency.dylib")
       return std::nullopt;
     Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
     if (Name == "swift_task_alloc") {
