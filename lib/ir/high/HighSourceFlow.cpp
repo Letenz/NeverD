@@ -340,9 +340,12 @@ class SourceFlow {
         Nodes[Index].PhiCopy =
             Statement.IsPhiCopy && Statement.Body.empty() &&
             Statement.ElseBody.empty() && Statement.Cases.empty() &&
-            Statement.DefaultBody.empty() && scalarLocal(Statement.Dst) &&
-            !entryValue(Statement.Dst->Var) &&
-            (scalarLocal(Statement.Val) ||
+            Statement.DefaultBody.empty() && Statement.EHClauses.empty() &&
+            Statement.EHClauseBodies.empty() &&
+            Statement.MemoryOrdering == NdMemoryOrdering::None &&
+            Statement.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            scalarLocal(Statement.Dst) && !entryValue(Statement.Dst->Var) &&
+            (scalarLocal(stripIntegerView(Statement.Val)) ||
              (Statement.Val->Kind == ExprKind::Const &&
               Statement.Val->Operands.empty() && Statement.Val->Type &&
               Statement.Val->Type->Kind == NdTypeKind::Int));
@@ -734,6 +737,7 @@ class SourceFlow {
       size_t Count = 0;
       uint16_t Width = 0;
       bool Consistent = true;
+      size_t FirstNode = 0, LastNode = 0;
     };
     using Relation = std::pair<size_t, size_t>;
     std::map<Relation, Observations> Tests;
@@ -744,6 +748,9 @@ class SourceFlow {
       auto &Seen = Tests[Fact.identity()];
       Seen.Consistent &= !Seen.Count || Seen.Width == Fact.Width;
       Seen.Width = Fact.Width;
+      if (!Seen.Count)
+        Seen.FirstNode = I;
+      Seen.LastNode = I;
       ++Seen.Count;
     }
     std::map<Relation, uint32_t> Masks;
@@ -761,83 +768,111 @@ class SourceFlow {
     if (Masks.empty())
       return Entry;
 
-    struct State {
-      size_t Original;
-      uint32_t Known, Nonzero;
-    };
-    std::vector<Node> Refined;
-    std::vector<State> States;
-    using Key = std::tuple<size_t, uint32_t, uint32_t>;
-    std::map<Key, size_t> Indices;
-    std::vector<unsigned> Counts(Nodes.size());
-    size_t Units = 0, Edges = 0;
-    const size_t Limit = std::min(MaxNodes, Nodes.size() * 4 + 256);
-    struct ExpansionLimit {};
-    auto Add = [&](size_t Original, uint32_t Known, uint32_t Nonzero) {
-      // Function exit has no uses or successors and needs no partition.
-      if (!Original)
-        Known = Nonzero = 0;
-      Key K{Original, Known, Nonzero};
-      if (auto It = Indices.find(K); It != Indices.end())
-        return It->second;
-      const auto &N = Nodes[Original];
-      Units += 1 + N.Uses.size() + N.Writes.size();
-      if (Refined.size() == Limit || Counts[Original] == 32 || Units > 1000000)
-        throw ExpansionLimit{};
-      ++Counts[Original];
-      const size_t Index = Refined.size();
-      Indices.emplace(K, Index);
-      Refined.push_back(N);
-      Refined.back().Next.clear();
-      Refined.back().Previous.clear();
-      Refined.back().EdgeFacts.clear();
-      Refined.back().EdgeTruth.clear();
-      States.push_back({Original, Known, Nonzero});
-      return Index;
-    };
-    try {
-      Add(0, 0, 0); // Keep the shared fallthrough exit at index zero.
-      const size_t NewEntry = Add(Entry, 0, 0);
-      for (size_t I = 1; I < States.size(); ++I) {
-        const auto S = States[I];
-        uint32_t Known = S.Known, Nonzero = S.Nonzero;
-        const auto &Original = Nodes[S.Original];
-        for (size_t Written : Original.Writes)
-          if (auto It = InvalidatedBy.find(Written);
-              It != InvalidatedBy.end()) {
-            Known &= ~It->second;
-            Nonzero &= ~It->second;
-          }
-        for (size_t E = 0; E < Original.Next.size(); ++E) {
-          uint32_t NextKnown = Known, NextNonzero = Nonzero;
-          if (auto Fact = Facts(S.Original)[E])
-            if (auto It = Masks.find(Fact->identity()); It != Masks.end()) {
-              const uint32_t Mask = It->second;
-              if ((Known & Mask) && bool(Nonzero & Mask) != Fact->Nonzero)
-                continue;
-              NextKnown |= Mask;
-              if (Fact->Nonzero)
-                NextNonzero |= Mask;
-              else
-                NextNonzero &= ~Mask;
+    std::vector<Relation> RetainedRelations;
+    for (const auto &[Pair, Mask] : Masks)
+      RetainedRelations.push_back(Pair);
+    // Long-spanning relations connect separated definition and cleanup
+    // regions. Prefer retaining those if the complete partition is too large.
+    std::stable_sort(RetainedRelations.begin(), RetainedRelations.end(),
+                     [&](const Relation &L, const Relation &R) {
+                       const auto &Left = Tests.at(L);
+                       const auto &Right = Tests.at(R);
+                       return Left.LastNode - Left.FirstNode >
+                              Right.LastNode - Right.FirstNode;
+                     });
+    const auto RefineWithMasks = [&]() -> std::optional<size_t> {
+      struct State {
+        size_t Original;
+        uint32_t Known, Nonzero;
+      };
+      std::vector<Node> Refined;
+      std::vector<State> States;
+      using Key = std::tuple<size_t, uint32_t, uint32_t>;
+      std::map<Key, size_t> Indices;
+      std::vector<unsigned> Counts(Nodes.size());
+      size_t Units = 0, Edges = 0;
+      const size_t Limit = std::min(MaxNodes, Nodes.size() * 4 + 256);
+      struct ExpansionLimit {};
+      auto Add = [&](size_t Original, uint32_t Known, uint32_t Nonzero) {
+        // Function exit has no uses or successors and needs no partition.
+        if (!Original)
+          Known = Nonzero = 0;
+        Key K{Original, Known, Nonzero};
+        if (auto It = Indices.find(K); It != Indices.end())
+          return It->second;
+        const auto &N = Nodes[Original];
+        Units += 1 + N.Uses.size() + N.Writes.size();
+        if (Refined.size() == Limit || Counts[Original] == 32 ||
+            Units > 1000000)
+          throw ExpansionLimit{};
+        ++Counts[Original];
+        const size_t Index = Refined.size();
+        Indices.emplace(K, Index);
+        Refined.push_back(N);
+        Refined.back().Next.clear();
+        Refined.back().Previous.clear();
+        Refined.back().EdgeFacts.clear();
+        Refined.back().EdgeTruth.clear();
+        States.push_back({Original, Known, Nonzero});
+        return Index;
+      };
+      try {
+        Add(0, 0, 0); // Keep the shared fallthrough exit at index zero.
+        const size_t NewEntry = Add(Entry, 0, 0);
+        for (size_t I = 1; I < States.size(); ++I) {
+          const auto S = States[I];
+          uint32_t Known = S.Known, Nonzero = S.Nonzero;
+          const auto &Original = Nodes[S.Original];
+          for (size_t Written : Original.Writes)
+            if (auto It = InvalidatedBy.find(Written);
+                It != InvalidatedBy.end()) {
+              Known &= ~It->second;
+              Nonzero &= ~It->second;
             }
-          if (++Edges > MaxEdges)
-            throw ExpansionLimit{};
-          const size_t Target = Add(Original.Next[E], NextKnown, NextNonzero);
-          Refined[I].Next.push_back(Target);
-          Refined[I].EdgeTruth.push_back(Original.EdgeTruth[E]);
-          Refined[Target].Previous.push_back(I);
+          for (size_t E = 0; E < Original.Next.size(); ++E) {
+            uint32_t NextKnown = Known, NextNonzero = Nonzero;
+            if (auto Fact = Facts(S.Original)[E])
+              if (auto It = Masks.find(Fact->identity()); It != Masks.end()) {
+                const uint32_t Mask = It->second;
+                if ((Known & Mask) && bool(Nonzero & Mask) != Fact->Nonzero)
+                  continue;
+                NextKnown |= Mask;
+                if (Fact->Nonzero)
+                  NextNonzero |= Mask;
+                else
+                  NextNonzero &= ~Mask;
+              }
+            if (++Edges > MaxEdges)
+              throw ExpansionLimit{};
+            const size_t Target = Add(Original.Next[E], NextKnown, NextNonzero);
+            Refined[I].Next.push_back(Target);
+            Refined[I].EdgeTruth.push_back(Original.EdgeTruth[E]);
+            Refined[Target].Previous.push_back(I);
+          }
         }
+        const size_t Words = (Locals.size() + 63) / 64;
+        if (Words && Refined.size() > MaxStateWords / Words)
+          return std::nullopt;
+        Nodes = std::move(Refined);
+        return NewEntry;
+      } catch (const ExpansionLimit &) {
+        // No partial graph or pruned edge survives an unsuccessful attempt.
+        return std::nullopt;
       }
-      const size_t Words = (Locals.size() + 63) / 64;
-      if (Words && Refined.size() > MaxStateWords / Words)
+    };
+    // Extra valid relations can exceed the joint partition budget. Retry a
+    // smaller conservative abstraction instead of losing every earlier fact.
+    // At most six attempts retain all existing per-attempt resource limits.
+    for (;;) {
+      if (const auto RefinedEntry = RefineWithMasks())
+        return *RefinedEntry;
+      if (Masks.size() <= 1)
         return Entry;
-      Nodes = std::move(Refined);
-      return NewEntry;
-    } catch (const ExpansionLimit &) {
-      // Precision is optional. Discard the whole speculative graph and retain
-      // the original conservative analysis when a partition budget is reached.
-      return Entry;
+      const size_t Keep = Masks.size() / 2;
+      while (RetainedRelations.size() > Keep) {
+        Masks.erase(RetainedRelations.back());
+        RetainedRelations.pop_back();
+      }
     }
   }
 
