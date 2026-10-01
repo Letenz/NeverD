@@ -321,174 +321,215 @@ TEST_P(WhpXsaveProtocol, NativeInstallRetainsFPStateBeforeAnyGuestExecution) {
   EXPECT_EQ(Metadata[1].XmmControlStatus.LastFpRdp, State.FP.Data);
 }
 TEST_P(WhpXsaveProtocol, NativeGuestRAMDistinguishesEntryFromCaptureLoss) {
-  for (const bool ExplicitFeature : {false, true})
-    for (const bool GuestRestore : {false, true})
-      for (const bool DebugExit : {false, true}) {
-        auto Memory =
-            llvm::cantFail(MemoryProjection::create(BoundaryRAMLimit));
-        ASSERT_EQ(llvm::toString(Memory->map(BoundaryCode, x64::PageSize,
-                                             Read | Write | Execute)),
-                  "");
-        ASSERT_EQ(llvm::toString(
-                      Memory->map(BoundaryData, x64::PageSize, Read | Write)),
-                  "");
-        const auto Program =
-            DebugExit ? (GuestRestore ? llvm::ArrayRef(BoundaryRestoreAndTrap)
-                                      : llvm::ArrayRef(BoundaryTrap))
-                      : (GuestRestore ? llvm::ArrayRef(BoundaryRestoreAndSave)
-                                      : llvm::ArrayRef(BoundarySave));
-        ASSERT_EQ(llvm::toString(Memory->write(BoundaryCode, Program)), "");
-        std::array<uint8_t, x64::fp::LegacyBytes> Input{};
-        ASSERT_EQ(llvm::toString(encodeX64FXState(State, Input)), "");
-        ASSERT_EQ(llvm::toString(
-                      Memory->write(BoundaryData + BoundaryInputOffset, Input)),
-                  "");
-        const auto Root = llvm::cantFail(buildX64PageTables(*Memory));
-        WhpPartition Host;
-        if (auto E = Host.API.load()) {
-          const auto Text = llvm::toString(std::move(E));
-          if (!std::getenv(XsaveRequireNative))
-            GTEST_SKIP() << Text;
-          FAIL() << Text;
-        }
-        auto &API = Host.API;
-        WHV_CAPABILITY Capability{};
-        ASSERT_EQ(API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent,
-                                       &Capability, sizeof(Capability),
-                                       nullptr),
-                  S_OK);
-        if (!Capability.HypervisorPresent) {
-          if (!std::getenv(XsaveRequireNative))
-            GTEST_SKIP() << diagnostic::WhpCapability;
-          FAIL() << diagnostic::WhpCapability;
-        }
-        ASSERT_EQ(API.WHvGetCapability(WHvCapabilityCodeProcessorFeatures,
-                                       &Capability, sizeof(Capability),
-                                       nullptr),
-                  S_OK);
-        const bool HostPointers =
-            Capability.ProcessorFeatures.X87PointersSavedSupport;
-        ASSERT_EQ(API.WHvCreatePartition(&Host.Partition), S_OK);
-        WHV_PARTITION_PROPERTY Property{};
-        Property.ProcessorCount = 1;
-        ASSERT_EQ(API.WHvSetPartitionProperty(
-                      Host.Partition, WHvPartitionPropertyCodeProcessorCount,
-                      &Property, sizeof(Property)),
-                  S_OK);
-        WHV_PROCESSOR_FEATURES Features{};
-        UINT32 FeatureBytes = 0;
-        ASSERT_EQ(API.WHvGetPartitionProperty(
-                      Host.Partition, WHvPartitionPropertyCodeProcessorFeatures,
-                      &Features, sizeof(Features), &FeatureBytes),
-                  S_OK);
-        ASSERT_EQ(FeatureBytes, sizeof(Features));
-        SCOPED_TRACE(llvm::formatv(BoundaryTrace, GuestRestore, HostPointers,
-                                   bool(Features.X87PointersSavedSupport),
-                                   ExplicitFeature, DebugExit)
-                         .str());
-        if (ExplicitFeature) {
-          Features.X87PointersSavedSupport = HostPointers;
-          ASSERT_EQ(API.WHvSetPartitionProperty(
-                        Host.Partition,
-                        WHvPartitionPropertyCodeProcessorFeatures, &Features,
-                        sizeof(Features)),
+  for (const bool Pending : {false, true})
+    for (const bool ExplicitFeature : {false, true})
+      for (const bool GuestRestore : {false, true})
+        for (const bool DebugExit : {false, true}) {
+          auto Expected = State;
+          if (Pending) {
+            Expected.FP.Control &= ~BoundaryInvalidException;
+            Expected.FP.Status |=
+                BoundaryPendingStatus | BoundaryInvalidException;
+          }
+          auto Memory =
+              llvm::cantFail(MemoryProjection::create(BoundaryRAMLimit));
+          ASSERT_EQ(llvm::toString(Memory->map(BoundaryCode, x64::PageSize,
+                                               Read | Write | Execute)),
+                    "");
+          ASSERT_EQ(llvm::toString(
+                        Memory->map(BoundaryData, x64::PageSize, Read | Write)),
+                    "");
+          const auto Program =
+              DebugExit ? (GuestRestore ? llvm::ArrayRef(BoundaryRestoreAndTrap)
+                                        : llvm::ArrayRef(BoundaryTrap))
+                        : (GuestRestore ? llvm::ArrayRef(BoundaryRestoreAndSave)
+                                        : llvm::ArrayRef(BoundarySave));
+          ASSERT_EQ(llvm::toString(Memory->write(BoundaryCode, Program)), "");
+          alignas(x64::fp::RegisterSlotBytes)
+              std::array<uint8_t, x64::fp::LegacyBytes>
+                  Input{}, HostOutput{}, SavedHost{};
+          ASSERT_EQ(llvm::toString(encodeX64FXState(Expected, Input)), "");
+          std::error_code EC;
+          auto Oracle = llvm::sys::Memory::allocateMappedMemory(
+              x64::PageSize, nullptr,
+              llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE, EC);
+          ASSERT_FALSE(bool(EC)) << EC.message();
+          auto ReleaseOracle = llvm::scope_exit(
+              [&] { (void)llvm::sys::Memory::releaseMappedMemory(Oracle); });
+          std::memcpy(Oracle.base(), BoundaryHostRoundTrip,
+                      sizeof(BoundaryHostRoundTrip));
+          EC = llvm::sys::Memory::protectMappedMemory(
+              Oracle, llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_EXEC);
+          ASSERT_FALSE(bool(EC)) << EC.message();
+          llvm::sys::Memory::InvalidateInstructionCache(Oracle.base(),
+                                                        Oracle.allocatedSize());
+          using HostRoundTrip = void (*)(void *, void *, void *);
+          reinterpret_cast<HostRoundTrip>(Oracle.base())(
+              Input.data(), HostOutput.data(), SavedHost.data());
+          X64MachineState HostState;
+          ASSERT_EQ(llvm::toString(decodeX64FXState(HostState, HostOutput)),
+                    "");
+          ASSERT_EQ(llvm::toString(Memory->write(
+                        BoundaryData + BoundaryInputOffset, Input)),
+                    "");
+          const auto Root = llvm::cantFail(buildX64PageTables(*Memory));
+          WhpPartition Host;
+          if (auto E = Host.API.load()) {
+            const auto Text = llvm::toString(std::move(E));
+            if (!std::getenv(XsaveRequireNative))
+              GTEST_SKIP() << Text;
+            FAIL() << Text;
+          }
+          auto &API = Host.API;
+          WHV_CAPABILITY Capability{};
+          ASSERT_EQ(API.WHvGetCapability(WHvCapabilityCodeHypervisorPresent,
+                                         &Capability, sizeof(Capability),
+                                         nullptr),
                     S_OK);
-        }
-        if (DebugExit) {
-          Property = {};
-          Property.ExtendedVmExits.ExceptionExit = 1;
+          if (!Capability.HypervisorPresent) {
+            if (!std::getenv(XsaveRequireNative))
+              GTEST_SKIP() << diagnostic::WhpCapability;
+            FAIL() << diagnostic::WhpCapability;
+          }
+          ASSERT_EQ(API.WHvGetCapability(WHvCapabilityCodeProcessorVendor,
+                                         &Capability, sizeof(Capability),
+                                         nullptr),
+                    S_OK);
+          const auto Vendor = Capability.ProcessorVendor;
+          ASSERT_EQ(API.WHvGetCapability(WHvCapabilityCodeProcessorFeatures,
+                                         &Capability, sizeof(Capability),
+                                         nullptr),
+                    S_OK);
+          const bool HostPointers =
+              Capability.ProcessorFeatures.X87PointersSavedSupport;
+          ASSERT_EQ(API.WHvCreatePartition(&Host.Partition), S_OK);
+          WHV_PARTITION_PROPERTY Property{};
+          Property.ProcessorCount = 1;
           ASSERT_EQ(API.WHvSetPartitionProperty(
-                        Host.Partition, WHvPartitionPropertyCodeExtendedVmExits,
+                        Host.Partition, WHvPartitionPropertyCodeProcessorCount,
                         &Property, sizeof(Property)),
                     S_OK);
-          Property = {};
-          Property.ExceptionExitBitmap = uint64_t(1) << x64::DebugVector;
-          ASSERT_EQ(API.WHvSetPartitionProperty(
+          WHV_PROCESSOR_FEATURES Features{};
+          UINT32 FeatureBytes = 0;
+          ASSERT_EQ(API.WHvGetPartitionProperty(
                         Host.Partition,
-                        WHvPartitionPropertyCodeExceptionExitBitmap, &Property,
-                        sizeof(Property)),
+                        WHvPartitionPropertyCodeProcessorFeatures, &Features,
+                        sizeof(Features), &FeatureBytes),
                     S_OK);
-        }
-        ASSERT_EQ(API.WHvSetupPartition(Host.Partition), S_OK);
-        ASSERT_EQ(llvm::toString(Host.mapMemory(*Memory)), "");
-        ASSERT_EQ(API.WHvCreateVirtualProcessor(Host.Partition, 0, 0), S_OK);
-        ASSERT_EQ(llvm::toString(Host.initializeRunControl()), "");
-        std::vector<WHV_REGISTER_NAME> Names;
-        std::vector<WHV_REGISTER_VALUE> Values;
-        auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
-          WHV_REGISTER_VALUE V{};
-          V.Reg64 = Value;
-          Names.push_back(Name);
-          Values.push_back(V);
-        };
-        Add(WHvX64RegisterCr0, x64::CR0);
-        Add(WHvX64RegisterCr3, Root);
-        Add(WHvX64RegisterCr4, x64::CR4 | x64::fp::OSXsave);
-        Add(WHvX64RegisterEfer, x64::EFER);
-        Add(WHvX64RegisterXCr0, x64::fp::FPAndSSE);
-        Add(WHvX64RegisterRip, BoundaryCode);
-        Add(WHvX64RegisterRflags, x64::ReservedFlag);
-        Add(WHvX64RegisterRsp, BoundaryData + x64::PageSize);
-        Add(WHvX64RegisterRcx, BoundaryData);
-        Add(WHvX64RegisterRdx, BoundaryData + BoundaryInputOffset);
-        for (const auto Name : {WHvX64RegisterCs, WHvX64RegisterSs,
-                                WHvX64RegisterDs, WHvX64RegisterEs}) {
-          WHV_REGISTER_VALUE V{};
-          const bool Code = Name == WHvX64RegisterCs;
-          V.Segment.Selector = Code ? x64::CodeSelector : x64::DataSelector;
-          V.Segment.Limit = x64::SegmentLimit;
-          V.Segment.Present = V.Segment.NonSystemSegment =
-              V.Segment.Granularity = 1;
-          V.Segment.SegmentType = Code ? x64::CodeType : x64::DataType;
-          V.Segment.Long = Code;
-          V.Segment.Default = !Code;
-          Names.push_back(Name);
-          Values.push_back(V);
-        }
-        ASSERT_EQ(
-            API.WHvSetVirtualProcessorRegisters(Host.Partition, 0, Names.data(),
-                                                Names.size(), Values.data()),
-            S_OK);
-        if (!GetParam()) {
-          API.WHvGetVirtualProcessorState = nullptr;
-          API.WHvSetVirtualProcessorState = nullptr;
-        }
-        WhpXsaveState Native;
-        ASSERT_EQ(llvm::toString(Native.initialize(API, Host.Partition)), "");
-        ASSERT_EQ(llvm::toString(Native.install(API, Host.Partition, State)),
-                  "");
-        ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
-        auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-        WHV_RUN_VP_EXIT_CONTEXT Exit{};
-        const MachineRunControl Control{
-            std::chrono::steady_clock::now() +
-            std::chrono::milliseconds(BoundaryTimeoutMilliseconds)};
-        ASSERT_EQ(llvm::toString(Host.run(Exit, Control)), "");
-        ASSERT_EQ(Exit.ExitReason, DebugExit ? WHvRunVpExitReasonException
-                                             : WHvRunVpExitReasonX64Halt);
-        if (DebugExit)
-          ASSERT_EQ(Exit.VpException.ExceptionType, x64::DebugVector);
-        std::array<uint8_t, x64::fp::LegacyBytes> Output{};
-        ASSERT_EQ(llvm::toString(Memory->read(BoundaryData, Output)), "");
-        X64MachineState Guest, Captured;
-        ASSERT_EQ(llvm::toString(decodeX64FXState(Guest, Output)), "");
-        ASSERT_EQ(llvm::toString(Native.capture(API, Host.Partition, Captured)),
-                  "");
-        auto Compare = [&](const X64MachineState &Actual,
-                           const char *Boundary) {
-          SCOPED_TRACE(Boundary);
+          ASSERT_EQ(FeatureBytes, sizeof(Features));
+          SCOPED_TRACE(llvm::formatv(BoundaryTrace, GuestRestore, HostPointers,
+                                     bool(Features.X87PointersSavedSupport),
+                                     ExplicitFeature, DebugExit, Pending,
+                                     unsigned(Vendor), HostState.FP.Opcode,
+                                     HostState.FP.Instruction,
+                                     HostState.FP.Data)
+                           .str());
+          if (ExplicitFeature) {
+            Features.X87PointersSavedSupport = HostPointers;
+            ASSERT_EQ(API.WHvSetPartitionProperty(
+                          Host.Partition,
+                          WHvPartitionPropertyCodeProcessorFeatures, &Features,
+                          sizeof(Features)),
+                      S_OK);
+          }
+          if (DebugExit) {
+            Property = {};
+            Property.ExtendedVmExits.ExceptionExit = 1;
+            ASSERT_EQ(API.WHvSetPartitionProperty(
+                          Host.Partition,
+                          WHvPartitionPropertyCodeExtendedVmExits, &Property,
+                          sizeof(Property)),
+                      S_OK);
+            Property = {};
+            Property.ExceptionExitBitmap = uint64_t(1) << x64::DebugVector;
+            ASSERT_EQ(API.WHvSetPartitionProperty(
+                          Host.Partition,
+                          WHvPartitionPropertyCodeExceptionExitBitmap,
+                          &Property, sizeof(Property)),
+                      S_OK);
+          }
+          ASSERT_EQ(API.WHvSetupPartition(Host.Partition), S_OK);
+          ASSERT_EQ(llvm::toString(Host.mapMemory(*Memory)), "");
+          ASSERT_EQ(API.WHvCreateVirtualProcessor(Host.Partition, 0, 0), S_OK);
+          ASSERT_EQ(llvm::toString(Host.initializeRunControl()), "");
+          std::vector<WHV_REGISTER_NAME> Names;
+          std::vector<WHV_REGISTER_VALUE> Values;
+          auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
+            WHV_REGISTER_VALUE V{};
+            V.Reg64 = Value;
+            Names.push_back(Name);
+            Values.push_back(V);
+          };
+          Add(WHvX64RegisterCr0, x64::CR0);
+          Add(WHvX64RegisterCr3, Root);
+          Add(WHvX64RegisterCr4, x64::CR4 | x64::fp::OSXsave);
+          Add(WHvX64RegisterEfer, x64::EFER);
+          Add(WHvX64RegisterXCr0, x64::fp::FPAndSSE);
+          Add(WHvX64RegisterRip, BoundaryCode);
+          Add(WHvX64RegisterRflags, x64::ReservedFlag);
+          Add(WHvX64RegisterRsp, BoundaryData + x64::PageSize);
+          Add(WHvX64RegisterRcx, BoundaryData);
+          Add(WHvX64RegisterRdx, BoundaryData + BoundaryInputOffset);
+          for (const auto Name : {WHvX64RegisterCs, WHvX64RegisterSs,
+                                  WHvX64RegisterDs, WHvX64RegisterEs}) {
+            WHV_REGISTER_VALUE V{};
+            const bool Code = Name == WHvX64RegisterCs;
+            V.Segment.Selector = Code ? x64::CodeSelector : x64::DataSelector;
+            V.Segment.Limit = x64::SegmentLimit;
+            V.Segment.Present = V.Segment.NonSystemSegment =
+                V.Segment.Granularity = 1;
+            V.Segment.SegmentType = Code ? x64::CodeType : x64::DataType;
+            V.Segment.Long = Code;
+            V.Segment.Default = !Code;
+            Names.push_back(Name);
+            Values.push_back(V);
+          }
+          ASSERT_EQ(
+              API.WHvSetVirtualProcessorRegisters(
+                  Host.Partition, 0, Names.data(), Names.size(), Values.data()),
+              S_OK);
+          if (!GetParam()) {
+            API.WHvGetVirtualProcessorState = nullptr;
+            API.WHvSetVirtualProcessorState = nullptr;
+          }
+          WhpXsaveState Native;
+          ASSERT_EQ(llvm::toString(Native.initialize(API, Host.Partition)), "");
+          ASSERT_EQ(
+              llvm::toString(Native.install(API, Host.Partition, Expected)),
+              "");
+          ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
+          auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+          WHV_RUN_VP_EXIT_CONTEXT Exit{};
+          const MachineRunControl Control{
+              std::chrono::steady_clock::now() +
+              std::chrono::milliseconds(BoundaryTimeoutMilliseconds)};
+          ASSERT_EQ(llvm::toString(Host.run(Exit, Control)), "");
+          ASSERT_EQ(Exit.ExitReason, DebugExit ? WHvRunVpExitReasonException
+                                               : WHvRunVpExitReasonX64Halt);
+          if (DebugExit)
+            ASSERT_EQ(Exit.VpException.ExceptionType, x64::DebugVector);
+          std::array<uint8_t, x64::fp::LegacyBytes> Output{};
+          ASSERT_EQ(llvm::toString(Memory->read(BoundaryData, Output)), "");
+          X64MachineState Guest, Captured;
+          ASSERT_EQ(llvm::toString(decodeX64FXState(Guest, Output)), "");
+          ASSERT_EQ(
+              llvm::toString(Native.capture(API, Host.Partition, Captured)),
+              "");
+          auto Compare = [&](const X64MachineState &Actual,
+                             const char *Boundary) {
+            SCOPED_TRACE(Boundary);
 #define NEVERD_X64_FP_CONTROL(Name, Member, Type, UC, Offset)                  \
-  EXPECT_EQ(Actual.FP.Member, State.FP.Member);
+  EXPECT_EQ(Actual.FP.Member, Expected.FP.Member);
 #include "arch/x86_64/X64FPState.def"
 #undef NEVERD_X64_FP_CONTROL
-          EXPECT_EQ(Actual.FP.Tag, State.FP.Tag);
-          EXPECT_EQ(Actual.FP.Registers, State.FP.Registers);
-          EXPECT_EQ(Actual.Xmm, State.Xmm);
-          EXPECT_EQ(Actual.MXCSR, State.MXCSR);
-        };
-        Compare(Guest, BoundaryGuestState);
-        Compare(Captured, BoundaryAPIState);
-      }
+            EXPECT_EQ(Actual.FP.Tag, Expected.FP.Tag);
+            EXPECT_EQ(Actual.FP.Registers, Expected.FP.Registers);
+            EXPECT_EQ(Actual.Xmm, Expected.Xmm);
+            EXPECT_EQ(Actual.MXCSR, Expected.MXCSR);
+          };
+          Compare(Guest, BoundaryGuestState);
+          Compare(Captured, BoundaryAPIState);
+        }
 }
 TEST_P(WhpXsaveProtocol, NamedMetadataRestoresOmittedPacketFields) {
   ASSERT_NO_FATAL_FAILURE(initialize());

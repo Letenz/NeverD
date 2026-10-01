@@ -837,7 +837,7 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `WhpXsaveRegisters.def` 使用具名 x87/SSE 控制寄存器补充完整 XSAVE 数据包。最后操作码及指令/数据地址会显式写入并从主机回读；可补齐数据包中的零值字段，但非零元数据冲突或共有控制字段不一致时，会在发布状态前失败。`NamedMetadataRestoresOmittedPacketFields` 验证字段缺失场景，并保留完整 FP 数据。
 
-`NativeGuestRAMDistinguishesEntryFromCaptureLoss` 对比客户代码实际执行 FXSAVE64 写入 RAM 的完整 FP/SSE 状态与宿主 XSAVE 回读。两种 API 都测试直接安装和客户内 FXRSTOR64，并分别使用默认指针保存特性及显式选择的宿主支持设置，以区分进入、客户执行和捕获边界。测试不修补返回值；不一致仍然失败。
+`NativeGuestRAMDistinguishesEntryFromCaptureLoss` 对比客户代码实际执行 FXSAVE64 写入 RAM 的完整 FP/SSE 状态与宿主 XSAVE 回读。两种 API 都测试直接安装和客户内 FXRSTOR64，并分别使用默认指针保存特性及显式选择的宿主支持设置，以区分进入、客户执行和捕获边界。测试不修补返回值；不一致仍然失败。 边界矩阵还覆盖未屏蔽的待处理 x87 异常，并记录宿主进程直接执行 FXRSTOR64/FXSAVE64 的参考结果和处理器厂商，以区分条件式指针保存语义与 WHP 状态传输行为。
 
 共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。非初始扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
 
