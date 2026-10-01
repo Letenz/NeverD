@@ -198,7 +198,8 @@ TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("generic-vm-recovered");
+    const auto Executable = tmpFile(std::string("generic-vm-recovered") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -298,7 +299,9 @@ int main(void) {
     }
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("generic-vm-flags-recovered");
+      const auto Executable =
+          tmpFile(std::string("generic-vm-flags-recovered") +
+                  neverd::test::executableSuffix());
       const auto Recompiled =
           exec(NEVERD_TEST_CLANG,
                {"-std=c11", Optimization, "-Werror=return-type",
@@ -787,7 +790,9 @@ int main(void) {
     std::ofstream(tmpFile("immintrin.h")).close();
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("generic-control-state-test");
+      const auto Executable =
+          tmpFile(std::string("generic-control-state-test") +
+                  neverd::test::executableSuffix());
       const auto Recompiled =
           exec(NEVERD_TEST_CLANG,
                {"-std=c11", Optimization, "-Werror=return-type",
@@ -937,7 +942,8 @@ int main(void) {
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("mixed-frame");
+    const auto Executable =
+        tmpFile(std::string("mixed-frame") + neverd::test::executableSuffix());
     const auto Recompiled = exec(
         NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-fsanitize=undefined",
                             "-fsanitize-trap=undefined", "-I", tmp().string(),
@@ -959,7 +965,8 @@ TEST_F(DevirtualizationSourceTest, OriginalMachinesMatchIndependentOracle) {
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(MicrosoftABI ? "Win64 ABI" : "SysV ABI");
         SCOPED_TRACE(Optimization);
-        const auto Executable = tmpFile("generic-vm-native");
+        const auto Executable = tmpFile(std::string("generic-vm-native") +
+                                        neverd::test::executableSuffix());
         std::vector<std::string> Args{"-std=c11",
                                       Optimization,
                                       "-no-pie",
@@ -1068,7 +1075,8 @@ TEST_F(DevirtualizationSourceTest, MachineStateCLIRecoversPhysicalState) {
       std::ofstream(tmpFile("immintrin.h")).close();
       for (const char *Opt : {"-O0", "-O2"}) {
         SCOPED_TRACE(Opt);
-        const auto Executable = tmpFile("generic-state-test");
+        const auto Executable = tmpFile(std::string("generic-state-test") +
+                                        neverd::test::executableSuffix());
         const auto Built =
             exec(NEVERD_TEST_CLANG,
                  {"-std=c11", Opt, "-fsanitize=undefined",
