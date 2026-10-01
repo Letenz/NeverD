@@ -369,7 +369,8 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
   std::ofstream(Harness) << Source << executionHarness();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("execute");
+    const auto Executable =
+        tmpFile(std::string("execute") + neverd::test::executableSuffix());
     const auto Recompiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -404,7 +405,8 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
           << SingleSource << SubtractionExecutionHarness;
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
-        const auto Executable = tmpFile("single-execute");
+        const auto Executable = tmpFile(std::string("single-execute") +
+                                        neverd::test::executableSuffix());
         const auto Recompiled =
             exec(NEVERD_TEST_CLANG,
                  {"-std=c11", Optimization, "-Werror=return-type",
@@ -582,7 +584,8 @@ TEST_P(MBAFrameSourceTest, RemovesSpilledMBAAndPreservesExecutableBehavior) {
                          << frameExecutionHarness();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("execute-frame");
+    const auto Executable = tmpFile(std::string("execute-frame") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -755,7 +758,8 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
                          << Source << nestedExecutionHarness();
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("nested-execute");
+    const auto Executable = tmpFile(std::string("nested-execute") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled =
         exec(NEVERD_TEST_CLANG,
              {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
@@ -782,7 +786,8 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
         << SingleSource << NestedAdditionExecutionHarness;
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("nested-single-execute");
+      const auto Executable = tmpFile(std::string("nested-single-execute") +
+                                      neverd::test::executableSuffix());
       const auto Recompiled =
           exec(NEVERD_TEST_CLANG,
                {"-std=c11", Optimization, "-Werror=return-type",
@@ -1032,7 +1037,8 @@ int main(void) {
   std::ofstream(Combined) << Source << Harness;
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("register-pair-execute");
+    const auto Executable = tmpFile(std::string("register-pair-execute") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled = exec(
         NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
                             "-Werror=implicit-function-declaration",
@@ -1159,7 +1165,8 @@ int main(void) {
   std::ofstream(Combined) << Source << Harness;
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("macho-five-execute");
+    const auto Executable = tmpFile(std::string("macho-five-execute") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled = exec(
         NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
                             "-Werror=implicit-function-declaration",
@@ -1254,7 +1261,8 @@ int main(void) {
   std::ofstream(Combined) << Source << Harness;
   for (const char *Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization);
-    const auto Executable = tmpFile("macho-mixed-mba-execute");
+    const auto Executable = tmpFile(std::string("macho-mixed-mba-execute") +
+                                    neverd::test::executableSuffix());
     const auto Recompiled = exec(
         NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
                             "-Werror=implicit-function-declaration",

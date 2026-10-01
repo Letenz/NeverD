@@ -151,7 +151,8 @@ TEST_F(X86_64_RoundTrip, SignedTernaryComparesInputsOnBothCRoutes) {
     std::ofstream(Harness) << Source << SignedTernaryExecutionHarness;
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("ternary_execute");
+      const auto Executable = tmpFile(std::string("ternary_execute") +
+                                      neverd::test::executableSuffix());
       const auto Recompiled = exec(
           NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-fsanitize=undefined",
                               "-fsanitize-trap=undefined", Harness.string(),

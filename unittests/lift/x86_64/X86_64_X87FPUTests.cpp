@@ -135,7 +135,8 @@ int main(void) {
 }
 )";
   Output.close();
-  const auto Binary = tmpFile("x87-c-execution");
+  const auto Binary = tmpFile(std::string("x87-c-execution") +
+                              neverd::test::executableSuffix());
   for (const std::string Optimization : {"-O0", "-O2"}) {
     auto Compiled = exec(NEVERD_TEST_CLANG,
                          {"-std=c11", Optimization, "-Werror=uninitialized",
