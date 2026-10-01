@@ -81,7 +81,13 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
     return std::optional<uint64_t>();
   }
-  switch (*Kind) {
+  return handleService(CPU, Memory, *Kind, Event, Layout, Options, Result);
+}
+llvm::Expected<std::optional<uint64_t>>
+handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
+              const ProcessServiceEvent &Event, const ProcessLayout &Layout,
+              const ProcessOptions &Options, ProcessResult &Result) {
+  switch (Kind) {
   case ServiceKind::Exit:
   case ServiceKind::ExitGroup:
     Result.Stop = ProcessStopReason::Exited;
@@ -95,7 +101,7 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
   case ServiceKind::Brk:
-    return Memory.handle(*Kind, Event, Result);
+    return Memory.handle(Kind, Event, Result);
   case ServiceKind::ArchPrctl:
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:

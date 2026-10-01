@@ -53,6 +53,11 @@ llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
               const ProcessServiceEvent &Event, const ProcessLayout &Layout,
               const ProcessOptions &Options, ProcessResult &Result);
+/// Named entry for libc wrappers; syscall numbering stays in serviceABI policy.
+llvm::Expected<std::optional<uint64_t>>
+handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
+              const ProcessServiceEvent &Event, const ProcessLayout &Layout,
+              const ProcessOptions &Options, ProcessResult &Result);
 llvm::Expected<ProcessLayout> processLayout(const BinaryImage &Image);
 llvm::Expected<uint64_t> prepareStack(GuestMemory &Memory,
                                       const BinaryImage &Image,

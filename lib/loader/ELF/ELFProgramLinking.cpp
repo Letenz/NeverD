@@ -68,6 +68,16 @@ readELFProgramLinking(const BinaryImage &Image) {
   auto Dynamic = readELFProgramDynamicTable(Image);
   if (!Dynamic)
     return Dynamic.takeError();
+  Reader R(Image);
+  for (const auto &P : Image.ELFMetadata->ProgramHeaders) {
+    if (P.Type != PT_DYNAMIC)
+      continue;
+    auto Mapped = R.bytes(P.VirtualAddress, P.FileSize);
+    if (!Mapped)
+      return Mapped.takeError();
+    if (Mapped->data() != Image.Raw.data() + P.FileOffset)
+      return failure("PT_DYNAMIC file and virtual mappings disagree");
+  }
   ELFProgramLinking Out;
   Out.Dynamic = std::move(*Dynamic);
   if (Out.Dynamic.size() > MaxRecords)
@@ -85,7 +95,6 @@ readELFProgramLinking(const BinaryImage &Image) {
   };
   if (Get(DT_RELSZ) || Get(DT_ANDROID_RELSZ))
     return failure("REL dynamic relocations are unsupported");
-  Reader R(Image);
   std::set<uint64_t> Slots;
   auto Add = [&](uint64_t Address, int64_t Addend, uint32_t Type,
                  uint32_t Symbol, bool Explicit) -> llvm::Error {

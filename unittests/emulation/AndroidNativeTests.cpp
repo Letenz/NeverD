@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 #include "neverd/loader/ELF/ELFLoader.h"
@@ -31,6 +32,14 @@ protected:
     Path = std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
            (std::string(GetParam()) + ".so");
     Options.Backend = ExecutionBackendKind::Unicorn;
+    ExecutionConfiguration Configuration;
+    Configuration.Backend = Options.Backend;
+    Configuration.Architecture = GuestArchitecture::AArch64;
+    Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(Configuration);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available)
+      GTEST_SKIP() << Probe->Reason;
     Options.Android.emplace();
     Options.Android->TraceLimit = 4096;
     Options.Android->Memory.push_back({Buffer, 4096, {}, false});
@@ -207,6 +216,42 @@ TEST_P(AndroidNative, InvalidRelocationsFailBeforeAnyGuestInstruction) {
       auto Result =
           emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
       EXPECT_FALSE(bool(Result));
+      llvm::consumeError(Result.takeError());
+    });
+  }
+}
+TEST_P(AndroidNative, RejectsContradictoryProgramHeaderMappings) {
+  auto Bytes = original();
+  uint64_t HeaderOffset = llvm::support::endian::read64le(Bytes.data() + 32);
+  uint16_t Count = llvm::support::endian::read16le(Bytes.data() + 56);
+  uint64_t Load = 0, Dynamic = 0;
+  for (uint16_t I = 0; I < Count; ++I) {
+    uint64_t P = HeaderOffset + I * 56;
+    uint32_t Type = llvm::support::endian::read32le(Bytes.data() + P);
+    if (Type == llvm::ELF::PT_LOAD && !Load)
+      Load = P;
+    if (Type == llvm::ELF::PT_DYNAMIC)
+      Dynamic = P;
+  }
+  ASSERT_NE(Load, 0);
+  ASSERT_NE(Dynamic, 0);
+  for (unsigned Mode = 0; Mode < 4; ++Mode) {
+    auto Bad = Bytes;
+    if (Mode == 0)
+      llvm::support::endian::write64le(Bad.data() + Load + 48, 3);
+    if (Mode == 1)
+      llvm::support::endian::write64le(Bad.data() + Load + 16, 1);
+    if (Mode == 2)
+      llvm::support::endian::write64le(Bad.data() + Load + 40, 0);
+    if (Mode == 3) {
+      uint64_t VA = llvm::support::endian::read64le(Bad.data() + Dynamic + 16);
+      llvm::support::endian::write64le(Bad.data() + Dynamic + 16, VA + 8);
+    }
+    temporary(Bad, [&] {
+      Options.Android->EntrySymbol = "tls_slots";
+      auto Result =
+          emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+      EXPECT_FALSE(bool(Result)) << Mode;
       llvm::consumeError(Result.takeError());
     });
   }

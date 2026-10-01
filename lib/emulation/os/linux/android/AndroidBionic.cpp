@@ -65,7 +65,11 @@ llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
   }
   uint64_t Mapped = (Effective + PageSize - 1) & ~(PageSize - 1);
   ProcessServiceEvent Event{
-      0, 0, {0, Mapped, 3, 0x22, UINT64_MAX, 0}, std::nullopt};
+      0,
+      0,
+      {0, Mapped, linux_model::ProtRead | linux_model::ProtWrite,
+       linux_model::MapPrivate | linux_model::MapAnonymous, UINT64_MAX, 0},
+      std::nullopt};
   auto Address = Memory.handle(linux_model::ServiceKind::Mmap, Event, Result);
   if (!Address)
     return Address.takeError();
@@ -241,20 +245,14 @@ Bionic::invoke(const NativeCallEvent &Call) {
     Kind = linux_model::ServiceKind::Mprotect;
   if (Name == "munmap")
     Kind = linux_model::ServiceKind::Munmap;
-  if (Kind || Name == "write") {
+  if (Name == "write")
+    Kind = linux_model::ServiceKind::Write;
+  if (Kind) {
     ProcessServiceEvent Event{Call.PC, 0, {}, std::nullopt};
     std::copy_n(A.begin(), Event.Arguments.size(), Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
-    if (Name == "write")
-      Event.Number = 64;
-    else if (*Kind == linux_model::ServiceKind::Mmap)
-      Event.Number = 222;
-    else if (*Kind == linux_model::ServiceKind::Mprotect)
-      Event.Number = 226;
-    else
-      Event.Number = 215;
-    auto Returned =
-        linux_model::handleService(CPU, Memory, Event, Layout, Options, Result);
+    auto Returned = linux_model::handleService(CPU, Memory, *Kind, Event,
+                                               Layout, Options, Result);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

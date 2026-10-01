@@ -10,8 +10,7 @@
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
-
-#include <set>
+#include "llvm/Support/MathExtras.h"
 
 namespace neverd::emulation::android_model {
 using namespace llvm::ELF;
@@ -41,8 +40,19 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       return failure("interpreters and ELF TLS templates are unsupported");
     if (P.Type == PT_GNU_STACK && (P.Flags & PF_X))
       return failure("executable stacks are unsupported");
-    if (P.Type == PT_LOAD && P.Alignment > 1 && Native.LoadBias % P.Alignment)
-      return failure("load bias violates PT_LOAD alignment");
+    if (P.Type == PT_LOAD) {
+      if (P.FileSize > P.MemorySize || P.FileOffset > Image.Raw.size() ||
+          P.FileSize > Image.Raw.size() - P.FileOffset ||
+          P.VirtualAddress % PageSize != P.FileOffset % PageSize ||
+          (P.Flags & ~(PF_R | PF_W | PF_X)))
+        return failure(
+            "invalid Android PT_LOAD extent, alignment or permissions");
+      if (P.Alignment > 1 &&
+          (!llvm::isPowerOf2_64(P.Alignment) ||
+           P.VirtualAddress % P.Alignment != P.FileOffset % P.Alignment ||
+           Native.LoadBias % P.Alignment))
+        return failure("load bias or PT_LOAD violates ELF alignment");
+    }
   }
   auto Facts = readELFProgramLinking(Image);
   if (!Facts)
@@ -142,7 +152,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     auto Begin = Address(P.VirtualAddress);
     if (!Begin)
       return Begin.takeError();
-    if (P.MemorySize > TLSAddress - *Begin)
+    if (*Begin >= TLSAddress || P.MemorySize > TLSAddress - *Begin)
       return failure("invalid RELRO extent");
     uint64_t Start = *Begin & ~(PageSize - 1);
     uint64_t End = (*Begin + P.MemorySize + PageSize - 1) & ~(PageSize - 1);
