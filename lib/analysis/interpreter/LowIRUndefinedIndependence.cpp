@@ -3268,7 +3268,94 @@ class LoopPlanInference {
     return TryTuples({});
   }
 
-  void findChoices(llvm::ArrayRef<va_t> Eligible, bool BranchArms) {
+  void chargeCutSelection(uint64_t Count = 1) {
+    if (Count > Limits.MaxCutSelectionWork - Result.CutSelectionWork)
+      stop(Status::BudgetExceeded,
+           "loop inference cut selection budget exhausted");
+    Result.CutSelectionWork += Count;
+  }
+
+  struct CutSelectionCompare {
+    LoopPlanInference *Owner;
+    bool operator()(int A, int B) const {
+      Owner->chargeCutSelection();
+      return A < B;
+    }
+  };
+
+  std::set<int> reconvergentBranches(llvm::ArrayRef<int> Order,
+                                     llvm::ArrayRef<int> Backedges) {
+    const CutSelectionCompare Compare{this};
+    using SelectionSet = std::set<int, CutSelectionCompare>;
+    SelectionSet Boundaries(Compare);
+    std::map<int, SelectionSet> CommonPaths;
+    for (int Id : Backedges) {
+      chargeCutSelection();
+      Boundaries.insert(Id);
+    }
+    // Cutting all DFS backedge targets leaves acyclic segments. Initialize
+    // every boundary before postorder propagation: successors may reach an
+    // ancestor boundary whose ordinary DFS visit has not finished yet.
+    for (int Id : Boundaries) {
+      chargeCutSelection(2);
+      SelectionSet Singleton(Compare);
+      Singleton.insert(Id);
+      CommonPaths.emplace(Id, std::move(Singleton));
+    }
+    const auto CommonSuccessors = [&](int Id) {
+      SelectionSet Common(Compare);
+      bool First = true;
+      chargeCutSelection();
+      for (int S : Blocks.at(Id)->Succs) {
+        chargeCutSelection();
+        const auto &Other = CommonPaths.at(S);
+        if (First) {
+          chargeCutSelection(Other.size());
+          Common = Other;
+          First = false;
+        } else {
+          for (auto It = Common.begin(); It != Common.end();) {
+            chargeCutSelection();
+            if (!Other.count(*It))
+              It = Common.erase(It);
+            else
+              ++It;
+          }
+        }
+      }
+      return Common;
+    };
+    for (int Id : Order) {
+      chargeCutSelection();
+      if (Boundaries.count(Id))
+        continue;
+      auto Common = CommonSuccessors(Id);
+      chargeCutSelection(2);
+      Common.insert(Id);
+      CommonPaths.emplace(Id, std::move(Common));
+    }
+    std::set<int> Reconvergent;
+    for (int Id : Order) {
+      chargeCutSelection();
+      if (Blocks.at(Id)->Succs.size() < 2)
+        continue;
+      // Include exits and boundaries, not just cyclic or eligible successors.
+      // A boundary's successor intersection is temporary: its saved set must
+      // remain the singleton used by transitions returning to that boundary.
+      for (int Join : CommonSuccessors(Id)) {
+        chargeCutSelection();
+        if (!Boundaries.count(Join) && !Blocks.at(Join)->Succs.empty()) {
+          chargeCutSelection();
+          Reconvergent.insert(Id);
+          break;
+        }
+      }
+    }
+    return Reconvergent;
+  }
+
+  void findChoices(llvm::ArrayRef<va_t> Eligible, bool BranchArms,
+                   bool FilterBranches) {
     for (const auto &B : Candidate.Blocks)
       Blocks.emplace(B.Id, &B);
     const auto Root = std::find_if(
@@ -3344,8 +3431,16 @@ class LoopPlanInference {
     for (int Id : Order)
       if (Members[Components.at(Id)].size() > 1)
         Add(Id);
+    const auto Reconvergent = FilterBranches
+                                  ? reconvergentBranches(Order, Backedges)
+                                  : std::set<int>{};
     if (BranchArms)
       for (int Id : Order) {
+        if (FilterBranches) {
+          chargeCutSelection();
+          if (Reconvergent.count(Id))
+            continue;
+        }
         const auto &B = *Blocks.at(Id);
         if (Members[Components.at(Id)].size() < 2 || B.Succs.size() < 2)
           continue;
@@ -4126,9 +4221,13 @@ public:
   }
 
   LowIRLoopInferenceResult
-  run(llvm::ArrayRef<va_t> Eligible, bool BranchArms = false,
-      const LowIRLoopRefinementPlan *DefaultPlan = nullptr) {
+  run(llvm::ArrayRef<va_t> Eligible,
+      detail::LowIRLoopCutFamily Family = detail::LowIRLoopCutFamily::Default,
+      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {}) {
     std::string LastTemplateFailure;
+    const bool BranchArms = Family != detail::LowIRLoopCutFamily::Default;
+    const bool FilterBranches =
+        Family == detail::LowIRLoopCutFamily::FilteredBranchArms;
     try {
       if (!prepareCandidateRecords(Session, Records) ||
           !checker().validateInput())
@@ -4139,7 +4238,7 @@ public:
       if (!Limits.MaxCutpointAttempts || !Limits.MaxWideningRounds ||
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
-      findChoices(Eligible, BranchArms);
+      findChoices(Eligible, BranchArms, FilterBranches);
       if (BranchArms && BranchArmEntries.empty())
         stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
       // A complete branch-arm set can preserve phases that a shared header
@@ -4151,14 +4250,16 @@ public:
       if (!Feedback)
         stop(Status::Unsupported,
              "eligible cutpoints do not cover every cycle");
-      if (BranchArms && DefaultPlan &&
-          Feedback->size() == DefaultPlan->Cutpoints.size() &&
-          std::all_of(Feedback->begin(), Feedback->end(), [&](va_t Address) {
-            return std::any_of(
-                DefaultPlan->Cutpoints.begin(), DefaultPlan->Cutpoints.end(),
-                [&](const auto &C) { return C.OriginalAddress == Address; });
-          }))
-        stop(Status::Unsupported, "branch-arm cuts duplicate default plan");
+      for (const auto *Previous : PreviousPlans)
+        if (BranchArms && Feedback->size() == Previous->Cutpoints.size() &&
+            std::all_of(Feedback->begin(), Feedback->end(), [&](va_t Address) {
+              return std::any_of(
+                  Previous->Cutpoints.begin(), Previous->Cutpoints.end(),
+                  [&](const auto &C) { return C.OriginalAddress == Address; });
+            }))
+          stop(Status::Unsupported,
+               FilterBranches ? "filtered cuts duplicate previous plan"
+                              : "branch-arm cuts duplicate previous plan");
       if (Feedback->size() > 1 || MultipleCycles) {
         if (inferMultiple(*Feedback)) {
           Result.Status = LowIRLoopInferenceStatus::Inferred;
@@ -4225,8 +4326,19 @@ LowIRLoopInferenceResult detail::inferBranchArmLowIRLoopRefinementPlan(
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
     const LowIRLoopInferenceLimits &Limits,
     const LowIRLoopRefinementPlan *DefaultPlan) {
+  return inferLowIRLoopRefinementPlanFamily(
+      Candidate, Contract, Limits, LowIRLoopCutFamily::BranchArms,
+      DefaultPlan
+          ? llvm::ArrayRef<const LowIRLoopRefinementPlan *>(&DefaultPlan, 1)
+          : llvm::ArrayRef<const LowIRLoopRefinementPlan *>{});
+}
+
+LowIRLoopInferenceResult detail::inferLowIRLoopRefinementPlanFamily(
+    const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
+    const LowIRLoopInferenceLimits &Limits, LowIRLoopCutFamily Family,
+    llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans) {
   return LoopPlanInference(Candidate, Contract, Limits)
-      .run({}, true, DefaultPlan);
+      .run({}, Family, PreviousPlans);
 }
 
 LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
