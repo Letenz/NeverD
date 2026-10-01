@@ -75,8 +75,10 @@ bool groupSwitchCases(std::vector<HighStmt> &Body);
 /// when no other statement starts at that address. Returns true when a goto
 /// was removed.
 bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
-/// A goto at loop level whose target is what runs after the loop, exactly
-/// as falling out of it would, becomes `break`. Returns true when one did.
+/// A goto at loop or switch level whose target is what runs after the loop
+/// or switch, exactly as falling out of it would, becomes `break`. Code that
+/// runs only after a loop's one break or a switch's one falling case moves
+/// there first. Returns true when anything changed.
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
 /// `X: S...` whose every jump to X comes from inside S becomes
 /// `while (1) { S...; break; }` with those jumps as `continue`.
