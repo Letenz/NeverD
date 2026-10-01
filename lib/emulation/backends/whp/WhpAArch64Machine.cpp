@@ -44,6 +44,7 @@ class WhpAArch64Machine final : public AArch64Machine, public WhpPartition {
 public:
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
+    Control = Control.forNativeStep();
     using namespace aarch64;
     std::vector<WHV_REGISTER_NAME> Names;
     std::vector<WHV_REGISTER_VALUE> Values;
@@ -108,15 +109,21 @@ public:
          ExceptionClassMask) !=
         (State.UserMode ? StepFromLowerEL : StepFromEL1))
       return diagnostic::error(diagnostic::ArmState);
-    return captureAArch64State(
-        State,
-        [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-          return Values[unsigned(Register)].Reg64;
-        },
-        [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-          const auto &Value = Values[VectorBegin + Index].Reg128;
-          return RegisterValue{Value.Low64, Value.High64};
-        });
+    auto Next = State;
+    if (auto E = captureAArch64State(
+            Next,
+            [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+              return Values[unsigned(Register)].Reg64;
+            },
+            [&](unsigned Index) -> llvm::Expected<RegisterValue> {
+              const auto &Value = Values[VectorBegin + Index].Reg128;
+              return RegisterValue{Value.Low64, Value.High64};
+            }))
+      return E;
+    if (Control.interrupted())
+      return diagnostic::interrupted(diagnostic::WhpRun, Control);
+    State = Next;
+    return llvm::Error::success();
   }
 };
 } // namespace

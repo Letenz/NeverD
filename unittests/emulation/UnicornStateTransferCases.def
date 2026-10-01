@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_UNICORN_STATE_VALUE
+NEVERD_UNICORN_STATE_VALUE(ExpiryDelayMultiplier, 2)
 NEVERD_UNICORN_STATE_VALUE(MemoryLimit, 4 * 1024 * 1024)
 NEVERD_UNICORN_STATE_VALUE(Code, 0x400000)
 NEVERD_UNICORN_STATE_VALUE(Stack, 0x600000)

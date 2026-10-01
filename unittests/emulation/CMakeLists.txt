@@ -150,7 +150,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmStateTransferTests
     KvmStateTransferTests.cpp
     TIMEOUT 15
-    LINK_COMPONENTS EmulationNative)
+    LINK_COMPONENTS EmulationCPU)
   target_include_directories(NeverDKvmStateTransferTests PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/emulation)
   target_link_options(NeverDKvmStateTransferTests PRIVATE "-Wl,--wrap=ioctl")
@@ -209,7 +209,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornMachineControlTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornMachineControlTests PRIVATE
-      "-Wl,--wrap=uc_emu_start")
+      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE

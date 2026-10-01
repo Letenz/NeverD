@@ -163,3 +163,11 @@ NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "NeverDUnicornMachineControlTests
 NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "UnicornMachineControlCases.def")
 NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest,
                          "RejectedEntryPreservesStateAndRAMAndAllowsRetry")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "StopDuringCaptureCannotPublishAndAllowsRetry")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "ExpiredCaptureCannotPublishAndAllowsRetry")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "CompletedStoreCannotPublishCancelledCapture")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "StopDuringCaptureCannotHideRealGuestException")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControl, "MachineInterruptedError")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "CancellationKeepsTypedExitStateAndRAMConsistent")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "NeverDKvmStateTransferTests")
+NEVERD_EMULATION_DOC_TOKEN(UnicornControlTest, "PublicCancellationRetainsStateRAMAndFailurePriority")
