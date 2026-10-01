@@ -480,6 +480,10 @@ class CiConfigurationTests(unittest.TestCase):
             native,
         )
         self.assertIn("NEVERD_REQUIRE_NATIVE_WHP: '1'", native)
+        self.assertIn("SCCACHE_GHA_ENABLED: 'true'", native)
+        self.assertIn("mozilla-actions/sccache-action@", native)
+        self.assertIn("-DCMAKE_C_COMPILER_LAUNCHER=sccache", native)
+        self.assertIn("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache", native)
         self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
         self.assertIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", native)
         self.assertIn("scripts/run_native_cpu_ci.py", native)
