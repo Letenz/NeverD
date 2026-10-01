@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -55,6 +55,8 @@ L’API C++ separata `checkBinaryLLVMRefinement` compone nuove verifiche native 
 Il recupero PE autentica anche i byte DIR64 alla base preferita ed esclude le scritture delle importazioni; il contratto non certifica ASLR né inizializzazione.
 
 Nel contratto esplicito dello stato macchina, il recupero supporta partizioni limitate dell’allineamento dello stack d’ingresso e la pulizia interna `RET imm16`. La composizione automatica delle prove native-to-LLVM per queste partizioni resta da completare.
+
+Il recupero limitato di `REP MOVS/STOS` conserva ordine degli elementi e sovrapposizioni; la prova delle istruzioni originali resta da completare.
 
 <!-- i18n-section: why-neverd -->
 

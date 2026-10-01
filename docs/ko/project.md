@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -55,6 +55,8 @@ input format, host contract와 제한은 [EVM 가이드](evm.md)와 [Solana SBF 
 PE 복구는 기본 베이스의 DIR64 바이트도 인증하고 가져오기 쓰기를 제외합니다. 고정 이미지 계약은 ASLR이나 초기화의 동등성을 증명하지 않습니다.
 
 명시적 머신 상태 계약에서 제한된 진입 스택 정렬 분할과 내부 `RET imm16` 스택 정리를 복구합니다. 이 분할의 자동 native-to-LLVM 증명 합성은 아직 구현되지 않았습니다.
+
+제한된 `REP MOVS/STOS` 복구는 요소 순서와 겹침 동작을 보존하며, 원본 명령 증명 지원은 아직 완료되지 않았습니다.
 
 <!-- i18n-section: why-neverd -->
 

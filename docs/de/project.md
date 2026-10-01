@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -55,6 +55,8 @@ Die separate C++-API `checkBinaryLLVMRefinement` kombiniert neue native und LLVM
 Die PE-Wiederherstellung authentifiziert auch DIR64-Bytes an der bevorzugten Basis und schließt Import-Schreibzugriffe aus; dieser Vertrag zertifiziert weder ASLR noch Initialisierung.
 
 Unter dem expliziten Maschinenzustandsvertrag unterstützt die Wiederherstellung begrenzte Partitionen der Stack-Ausrichtung am Eintritt und interne `RET imm16`-Bereinigung. Die automatische Zusammensetzung nativer LLVM-Beweise für diese Partitionen steht noch aus.
+
+Die begrenzte Wiederherstellung von `REP MOVS/STOS` erhält Elementreihenfolge und Überlappung; der Beweis für die Originalbefehle steht noch aus.
 
 <!-- i18n-section: why-neverd -->
 

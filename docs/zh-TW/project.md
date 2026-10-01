@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -55,6 +55,8 @@ CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`lib
 PE 恢復也會認證偏好基底位址的 DIR64 位元組並排除匯入寫入；固定映像契約不證明 ASLR 或初始化等價性。
 
 在明確的機器狀態契約下，解譯器恢復支援有界入口堆疊對齊分區及內部 `RET imm16` 清理。這些分區的自動原生至 LLVM 證明組合尚未完成。
+
+有界 `REP MOVS/STOS` 還原保留逐元素順序與重疊行為；原始指令的證明覆蓋仍待完成。
 
 <!-- i18n-section: why-neverd -->
 

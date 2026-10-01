@@ -1445,4 +1445,36 @@ TEST(InterpreterSpecialization,
   EXPECT_EQ(execute(Result.Residual, {{32, 0x1900}}, P.Image), 7u);
 }
 
+TEST(InterpreterSpecialization,
+     FiniteAffineRootRelationRetainsEveryImmutableReadWitness) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_EQUAL, reg(64, 1), {reg(32), constant(0x1800)}),
+         op(NdOp::INT_EQUAL, reg(65, 1), {reg(32), constant(0x1900)}),
+         op(NdOp::INT_OR, reg(66, 1), {reg(64, 1), reg(65, 1)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(66, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
+                op(NdOp::LOAD, reg(0), {reg(48)}), ret()});
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  for (unsigned I = 0; I < 8; ++I) {
+    P.Image[0x1800 - 16 + I] = I ? 0 : 91;
+    P.Image[0x1900 - 16 + I] = I ? 0 : 37;
+  }
+  SpecializationOptions Options;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.ControlRegisters = {{32, 8}};
+  Options.MaxImmutableReadAddresses = 2;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  ASSERT_EQ(Result.Reads.size(), 2u);
+  std::set<uint64_t> Addresses;
+  for (const auto &Read : Result.Reads)
+    Addresses.insert(Read.Address);
+  EXPECT_EQ(Addresses, (std::set<uint64_t>{0x17f0, 0x18f0}));
+  EXPECT_EQ(execute(Result.Residual, {{32, 0x1800}}, P.Image), 91u);
+  EXPECT_EQ(execute(Result.Residual, {{32, 0x1900}}, P.Image), 37u);
+  EXPECT_EQ(execute(Result.Residual, {{32, 0x1a00}}, P.Image), 7u);
+}
+
 } // namespace

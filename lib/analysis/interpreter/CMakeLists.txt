@@ -5,6 +5,7 @@ add_neverd_component_library(NeverDInterpreterSpecialization
   FiniteValues.cpp
   FiniteQueryCache.cpp
   FrameOffsets.cpp
+  StringTransfer.cpp
   ControlDiscovery.cpp
   LowIRUndefinedIndependence.cpp
   LowIRLoopPlanPairing.cpp

@@ -77,6 +77,7 @@ add_neverd_unittest(NeverDInterpreterSpecializationTests
   FiniteValuesTests.cpp
   FiniteQueryCacheTests.cpp
   FrameOffsetsTests.cpp
+  StringTransferTests.cpp
   LINK_COMPONENTS InterpreterSpecialization
 )
 
@@ -99,6 +100,7 @@ add_neverd_unittest(NeverDInterpreterMachineStateTests
   InterpreterMachineStateTests.cpp
   MachineControlSourceTests.cpp
   MachineMemoryCallSourceTests.cpp
+  MachineStringSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC Support
 )
 target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE

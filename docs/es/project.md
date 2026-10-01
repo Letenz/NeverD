@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center">
 
@@ -55,6 +55,8 @@ La API C++ independiente `checkBinaryLLVMRefinement` compone nuevas comprobacion
 La recuperación PE también autentica bytes DIR64 en la base preferida y excluye escrituras de importaciones; el contrato no certifica ASLR ni inicialización.
 
 Bajo el contrato explícito de estado de máquina, la recuperación admite particiones acotadas de alineación de pila de entrada y limpieza interna `RET imm16`. La composición automática de pruebas nativo-a-LLVM para estas particiones sigue pendiente.
+
+La recuperación acotada de `REP MOVS/STOS` conserva el orden de los elementos y el solapamiento; la prueba de las instrucciones originales sigue pendiente.
 
 <!-- i18n-section: why-neverd -->
 

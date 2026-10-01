@@ -59,6 +59,8 @@ PE recovery also authenticates preferred-base DIR64 bytes and excludes import wr
 
 Interpreter recovery covers bounded entry-stack alignment partitions and internal `RET imm16` cleanup under the explicit machine-state contract. Automatic native-to-LLVM proof composition for these partitions remains pending.
 
+Bounded `REP MOVS/STOS` recovery preserves element order and overlap; original-instruction proof coverage remains pending.
+
 <!-- i18n-section: why-neverd -->
 
 ## Why NeverD?

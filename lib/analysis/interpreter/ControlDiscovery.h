@@ -36,6 +36,11 @@ struct ControlFrameDemand {
 
 struct ControlDiscovery {
   ControlDiscoveryStatus Status = ControlDiscoveryStatus::Complete;
+  /// Conservative bit dependencies on the exact 64-bit FrameRoot expression.
+  /// Present only after a complete walk; no location, value, or reachability
+  /// fact follows from this mask. A fresh root's omitted bits cannot influence
+  /// the expression when all other symbolic inputs are held fixed.
+  std::optional<uint64_t> FrameRootBits;
   /// Candidate locations only: neither finiteness nor an incoming value is
   /// established. UnsupportedOrigin may retain useful candidates discovered
   /// through a load's address; BudgetExceeded always clears the candidates.

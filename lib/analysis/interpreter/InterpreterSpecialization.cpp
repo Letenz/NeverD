@@ -11,6 +11,7 @@
 #include "FiniteValues.h"
 #include "FrameOffsets.h"
 #include "NativeStackControl.h"
+#include "StringTransfer.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Regs.h"
@@ -437,7 +438,7 @@ bool supported(const LowOp &Op) {
   case NdOp::NOP:
     return NoOutput && Op.NumInputs == 0;
   case NdOp::INTRINSIC:
-    return runtimeFlagsIntrinsic(Op);
+    return runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op);
   default:
     return false;
   }
@@ -1676,11 +1677,15 @@ bool Specializer::evaluate(int Id) {
   FrameOrigins Origins = Draft.Incoming.Origins;
   FrameFacts Frame = Draft.Incoming.Frame;
   SymExec Exec(Ctx, State);
-  Exec.assume(controlPredicate(State, FrameRoot, Draft.Incoming.Controls));
+  const auto IncomingPredicate =
+      controlPredicate(State, FrameRoot, Draft.Incoming.Controls);
+  Exec.assume(IncomingPredicate);
   if (Refinement.FrameMask)
     Exec.assume(
         Ctx.mkEq(Ctx.mkAnd(FrameRoot, Ctx.mkConst(64, Refinement.FrameMask)),
                  Ctx.mkConst(64, FrameResidue)));
+  const auto EntryPredicate = Exec.pathPredicate();
+  std::optional<bool> WideFrameRootDomain;
   SpecializationCursor Cursor = Draft.Key.Cursor;
   bool Finished = false;
   while (!Finished) {
@@ -1824,6 +1829,8 @@ bool Specializer::evaluate(int Id) {
       Operations = std::move(Expanded->Ops);
     }
     NativeSlice Slice{Instruction.Origin, Draft.Block.Ops.size(), 0};
+    std::set<uint64_t> CopiedFrameSlots;
+    std::optional<size_t> StringTransferEnd;
     // LowIR temporary offsets are reused by each native instruction. A prior
     // instruction (or a previous loop iteration) cannot define this one's
     // temporary inputs, even if the numeric offset happens to match.
@@ -1835,7 +1842,7 @@ bool Specializer::evaluate(int Id) {
       if (Ctx.numNodes() > Options.MaxSymbolicNodes)
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
-      const LowOp &Original = Operations[I];
+      LowOp Original = Operations[I];
       if (!supported(Original))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
@@ -1871,9 +1878,100 @@ bool Specializer::evaluate(int Id) {
             return fail(SpecializationStatus::Unsupported,
                         "native operation reads an unbound temporary");
       }
+      if (const auto Shape = detail::stringTransferShape(Original)) {
+        const auto Singleton = [&](SymRef Value) -> std::optional<uint64_t> {
+          if (const auto Constant = Ctx.asConst(Value))
+            return Constant->getZExtValue();
+          const auto Domain = enumerate(Ctx, Exec.pathPredicate(), {Value}, 1);
+          if (Failed)
+            return std::nullopt;
+          if (Domain.Status == FiniteValueStatus::Unknown) {
+            fail(SpecializationStatus::BudgetExceeded,
+                 "repeated memory transfer value proof exceeded its budget");
+            return std::nullopt;
+          }
+          if (Domain.Status != FiniteValueStatus::Complete ||
+              Domain.Tuples.size() != 1) {
+            discover(State, Value, FrameRoot, ControlDemand::Memory);
+            Refinement.PrecisionFailure = true;
+            fail(SpecializationStatus::Unsupported,
+                 "repeated memory transfer requires a proved count and "
+                 "direction");
+            return std::nullopt;
+          }
+          return Domain.Tuples.front().front();
+        };
+        const auto Count =
+            Singleton(Exec.operandValue(Original.Inputs[Shape->CountInput]));
+        if (!Count)
+          return false;
+        std::optional<uint64_t> Backward = 0;
+        if (*Count)
+          Backward = Singleton(
+              Ctx.mkNe(Exec.operandValue(Original.Inputs[4]), Ctx.mkZero(8)));
+        if (!Backward)
+          return false;
+        // The lowering scans the entire current instruction for disjoint
+        // scratch space. Charge that work even for a zero-length transfer.
+        if (Operations.size() >
+            Options.MaxOperations - Result.EvaluatedOperations)
+          return fail(SpecializationStatus::BudgetExceeded,
+                      "repeated memory transfer scratch scan budget exhausted");
+        Result.EvaluatedOperations += Operations.size();
+        // The current operation is already charged. Its first scalar
+        // replacement uses that charge, and all others pass through this loop.
+        uint64_t Remaining =
+            Options.MaxOperations - Result.EvaluatedOperations + 1;
+        const uint64_t PerElement = Shape->Fill ? 2 : 4;
+        if (*Count > (Remaining - 1) / PerElement)
+          return fail(SpecializationStatus::BudgetExceeded,
+                      "repeated memory transfer exceeds operation budget");
+        if (FrameRoot && !Shape->Fill && *Count &&
+            *Count <=
+                std::numeric_limits<uint64_t>::max() / Shape->ElementBytes) {
+          const auto Source =
+              frameOffset(Ctx, Exec.pathPredicate(),
+                          Exec.operandValue(Original.Inputs[1]), FrameRoot);
+          const auto Destination =
+              frameOffset(Ctx, Exec.pathPredicate(),
+                          Exec.operandValue(Original.Inputs[2]), FrameRoot);
+          if (Failed)
+            return false;
+          if (Source && Destination) {
+            const uint64_t Bytes = *Count * Shape->ElementBytes;
+            const uint64_t Back = *Backward ? Bytes - Shape->ElementBytes : 0;
+            for (const auto &[Offset, Value] : Frame.AffineValues) {
+              if (++Result.EvaluatedOperations > Options.MaxOperations)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "copied frame-slot discovery budget exhausted");
+              const uint64_t Relative = Offset - (*Source - Back);
+              if (Relative < Bytes && Bytes - Relative >= 8)
+                CopiedFrameSlots.insert(*Destination - Back + Relative);
+            }
+          }
+        }
+        Remaining = Options.MaxOperations - Result.EvaluatedOperations + 1;
+        Remaining = std::min<uint64_t>(Remaining, Operations.max_size() -
+                                                      (Operations.size() - 1));
+        if (*Count > (Remaining - 1) / PerElement)
+          return fail(SpecializationStatus::BudgetExceeded,
+                      "repeated memory transfer exceeds operation budget");
+        auto Expanded =
+            detail::lowerStringTransfer(Original, *Count, *Backward != 0,
+                                        Operations, DispatchTemp, Remaining);
+        if (!Expanded)
+          return fail(SpecializationStatus::InvalidInput,
+                      llvm::toString(Expanded.takeError()));
+        Operations.erase(Operations.begin() + I);
+        Operations.insert(Operations.begin() + I, Expanded->begin(),
+                          Expanded->end());
+        StringTransferEnd = I + Expanded->size() - 1;
+        Original = Operations[I];
+      }
       LowOp Residual = Original;
       LowOp Evaluated = Original;
       bool OutputUnsafe = false;
+      bool ExactFrameAddress = false;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
       if (FrameRoot &&
@@ -1885,6 +1983,7 @@ bool Specializer::evaluate(int Id) {
         if (Failed)
           return false;
         if (Displacement) {
+          ExactFrameAddress = true;
           State.write(SymSpace::Temporary, FrameAddressTemp,
                       Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Displacement)));
           Evaluated.Inputs[Memory.Address - Original.Inputs] =
@@ -1988,15 +2087,26 @@ bool Specializer::evaluate(int Id) {
       if (Original.Opcode == NdOp::LOAD) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
-        // An entry-relative address translates the unconstrained frame root
-        // bijectively. When the path does not constrain that root, its domain
-        // cannot fit an immutable-address projection. Skip this optional proof
-        // without inferring reachability or changing the retained memory op.
-        const bool FreeFrameAddress =
-            affineDisplacement(Ctx, Address, FrameRoot).has_value() &&
-            detail::hasUnconstrainedProjectionInput(
-                Ctx, Exec.pathPredicate(), FrameRoot,
-                Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
+        // The canonical frame root is one fresh 64-bit variable. An incoming
+        // relation independent of it, or a complete dependency walk confined
+        // to its low 32 bits, leaves at least 32 independent high bits.
+        // A proved displacement translates those values bijectively, so the
+        // domain exceeds any uint32_t immutable-address limit. This omits an
+        // optional query, not the runtime read or a reachability check.
+        if (ExactFrameAddress && !WideFrameRootDomain) {
+          WideFrameRootDomain = detail::hasUnconstrainedProjectionInput(
+              Ctx, IncomingPredicate, FrameRoot,
+              Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
+          if (!*WideFrameRootDomain) {
+            const auto Dependencies = detail::gatherControlDependencies(
+                State, EntryPredicate, FrameRoot, Options.MaxSymbolicNodes);
+            WideFrameRootDomain = Dependencies.FrameRootBits &&
+                                  (*Dependencies.FrameRootBits >> 32) == 0;
+          }
+        }
+        const bool FreeFrameAddress = ExactFrameAddress &&
+                                      WideFrameRootDomain.value_or(false) &&
+                                      Exec.pathPredicate() == EntryPredicate;
         auto Addresses =
             FreeFrameAddress
                 ? FiniteValues{FiniteValueStatus::TooManyValues, {}}
@@ -2114,6 +2224,31 @@ bool Specializer::evaluate(int Id) {
         if (Original.Output.isReg())
           for (uint16_t B = 0; B < Original.Output.Size; ++B)
             Origins.UndefinedFlags.erase(Original.Output.Offset + B);
+      }
+      if (StringTransferEnd == I) {
+        // All byte stores have invalidated overlapping old pointer facts.
+        // Re-establish only complete pointers proved from the actual ordered
+        // transfer's final memory. Later writes use the usual invalidation.
+        for (uint64_t Offset : CopiedFrameSlots) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "copied frame-slot proof budget exhausted");
+          const auto Value =
+              State.load(Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, Offset)), 8);
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "copied frame-slot symbolic-node budget exhausted");
+          if (const auto Displacement =
+                  frameOffset(Ctx, Exec.pathPredicate(), Value, FrameRoot))
+            Frame.AffineValues[Offset] = *Displacement;
+          if (Failed)
+            return false;
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "copied frame-slot symbolic-node budget exhausted");
+        }
+        CopiedFrameSlots.clear();
+        StringTransferEnd.reset();
       }
       if (Flow == StepResult::Continue) {
         if (ImmutableOps.empty())

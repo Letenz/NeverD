@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 31e241d7d2603a10d9b74da9c60b2a0c329d1ec37e512b91a13a3c62cee389c7 -->
+<!-- i18n-source: a3467a05eda80814ac9c2b8e4dd0564fa7421b46d0e526053a4c62ac14d68564 -->
 
 <div align="center" dir="rtl">
 
@@ -55,6 +55,8 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 يتحقق استرداد PE أيضًا من بايتات DIR64 عند الأساس المفضل ويستبعد كتابات الاستيراد؛ ولا يشهد العقد بتكافؤ ASLR أو التهيئة.
 
 ضمن عقد حالة الآلة الصريح، يدعم الاسترداد تقسيمات محدودة لمحاذاة مكدس الدخول وتنظيف `RET imm16` الداخلي. لا يزال التركيب التلقائي لبراهين الشيفرة الأصلية إلى LLVM لهذه التقسيمات غير مكتمل.
+
+يحافظ استرداد `REP MOVS/STOS` المحدود على ترتيب العناصر وسلوك التداخل؛ ولا يزال إثبات التعليمات الأصلية غير مكتمل.
 
 <!-- i18n-section: why-neverd -->
 
