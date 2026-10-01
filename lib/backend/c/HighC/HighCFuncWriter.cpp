@@ -2955,6 +2955,43 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return false;
   };
 
+  // isForwardableValueExpr keeps a call at its own statement so that folding
+  // cannot reorder it with another call or store. Returning the result from
+  // the next printed statement moves nothing: `v = f(x); return v;` is
+  // `return f(x);`. That return must print its value, and no label may let
+  // another path reach it without making the call.
+  auto callResultReturnedNext = [&](const HighStmt &Def, const Site &Info) {
+    const HighExpr &Call = *Def.Val;
+    if (Call.Kind != ExprKind::Call || Info.Cleanup || Info.Handler ||
+        InferredVoid || !IndirectReturnName.empty() ||
+        Call.IntrinsicId != Intrinsic::None ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Call.CallTarget.empty() && Call.CallAddr == 0) ||
+        isNoreturnCallExpr(Call) || isMsvcCxxThrowCallName(Call.CallTarget) ||
+        knownVoidCall(Call) || isVoidSelfCall(Call))
+      return false;
+    const auto SeqIt = Linear.find(Info.Region);
+    if (SeqIt == Linear.end())
+      return false;
+    const std::vector<const HighStmt *> &Seq = SeqIt->second;
+    for (size_t I = Info.Index + 1; I < Seq.size(); ++I) {
+      const HighStmt &Next = *Seq[I];
+      if (isLabelAddress(Next.Addr))
+        return false;
+      if (Analysis.DeadStmts.count(&Next) || stmtHiddenFromC(Next) ||
+          Next.Kind == StmtKind::Block)
+        continue;
+      if (Next.Kind != StmtKind::Return || !Next.RetVal)
+        return false;
+      const HighExpr *Returned = peelIntegerViewOps(Next.RetVal.get());
+      return Returned &&
+             (Returned->Kind == ExprKind::Var ||
+              Returned->Kind == ExprKind::Phi) &&
+             varName(Returned->Var) == varName(Def.Dst->Var);
+    }
+    return false;
+  };
+
   struct Candidate {
     const HighStmt *Stmt = nullptr;
     std::string Name;
@@ -3003,7 +3040,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     const bool SavedEH = InEHClauseBody;
     if (Info.Handler)
       InEHClauseBody = true;
-    const bool Fwdable = isForwardableValueExpr(*Stmt->Val);
+    const bool Fwdable = isForwardableValueExpr(*Stmt->Val) ||
+                         callResultReturnedNext(*Stmt, Info);
     const HighExpr *Src = peelIntegerViewOps(Stmt->Val.get());
     const bool NamedSlotLoad = Src && Src->Kind == ExprKind::Load &&
                                !Src->Operands.empty() && Src->Operands[0] &&

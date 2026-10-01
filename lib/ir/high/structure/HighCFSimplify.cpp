@@ -1022,7 +1022,9 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
           if (X == 0 || X == InvalidVA || Pinned.count(X) ||
               (K > 0 && L[K - 1].Addr == X) || !Uses.count(X))
             continue;
-          // Every jump to X must come from K onward in this list.
+          // The jumps to X from K onward in this list close the loop. A jump
+          // from elsewhere still lands on X, the first statement of the loop
+          // body, which enters the loop exactly as falling into it does.
           size_t M = K;
           int Inside = 0;
           bool Bad = false;
@@ -1035,7 +1037,7 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
               M = J;
             }
           }
-          if (Bad || Inside == 0 || static_cast<unsigned>(Inside) != Uses[X])
+          if (Bad || Inside == 0)
             continue;
           std::vector<HighStmt> Region(
               std::make_move_iterator(L.begin() + K),
@@ -1061,7 +1063,8 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body) {
           Loop.Body = std::move(Region);
           L.erase(L.begin() + K + 1, L.begin() + M + 1);
           L[K] = std::move(Loop);
-          Uses.erase(X);
+          if ((Uses[X] -= static_cast<unsigned>(Inside)) == 0)
+            Uses.erase(X);
           Changed = true;
         }
         for (HighStmt &S : L) {

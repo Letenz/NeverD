@@ -5989,3 +5989,35 @@ TEST(HighControlFlowSemantics, FrameRegisterReadInACaseKeepsItsDefinition) {
         EXPECT_EQ(execute(High, X), X >= 1 && X <= 3 ? X + 100 + X : 0u));
   }
 }
+
+TEST(HighControlFlowSemantics, LoopEnteredFromOutsideStillBecomesALoop) {
+  // v = 10; if (x) goto X; v = 0; X: v = v + 1; if (v < 5) goto X; return v;
+  // The jump over `v = 0` lands on X, the first statement of the loop body,
+  // which enters the loop as falling into it does; the back edge continues.
+  auto Step = assign(0x1010, 1, 0);
+  Step.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+  HighStmt Again;
+  Again.Kind = StmtKind::If;
+  Again.Addr = 0x1014;
+  Again.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(1), HighExpr::makeConst(5, 8));
+  Again.Body = {jump(0x1014, 0x1010)};
+  HighStmt Skip;
+  Skip.Kind = StmtKind::If;
+  Skip.Addr = 0x1000;
+  Skip.Cond = local(0);
+  Skip.Body = {jump(0x1000, 0x1010)};
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 10),   Skip, assign(0x1004, 1, 0), Step, Again,
+            result(0x1018, local(1))};
+  ASSERT_EQ(execute(F, 0), std::optional<uint64_t>(5));
+  ASSERT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+  EXPECT_TRUE(loopifyBackwardGotos(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::While), 1u);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 1u);
+  // Entered only from outside now, X moves onto the loop statement.
+  EXPECT_TRUE(hoistLoopEntryLabels(F.Body));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(5));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+}
