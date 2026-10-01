@@ -15,6 +15,7 @@
 namespace neverd::analysis {
 namespace {
 using Status = LowIRLoopAlignmentStatus;
+using CutFamily = detail::LowIRLoopCutFamily;
 struct Stop {};
 
 class AlignmentSearch {
@@ -30,7 +31,7 @@ class AlignmentSearch {
     std::optional<LowIRLoopRefinementPlan> Plan;
     std::string Diagnostic;
   };
-  std::array<CachedPlan, 2> OriginalPlans, CandidatePlans;
+  std::array<CachedPlan, 3> OriginalPlans, CandidatePlans;
   uint64_t RemainingCachedMetadata;
   using BlockMap = std::map<int, const LowBlock *>;
 
@@ -101,15 +102,21 @@ class AlignmentSearch {
 
   LowIRLoopInferenceResult
   infer(const LowFunc &F, LowIRLoopInferenceLimits Stage,
-        llvm::ArrayRef<va_t> Eligible = {}, bool BranchArms = false,
-        const LowIRLoopRefinementPlan *Default = nullptr) {
+        llvm::ArrayRef<va_t> Eligible = {},
+        CutFamily Family = CutFamily::Default,
+        llvm::ArrayRef<const LowIRLoopRefinementPlan *> Previous = {}) {
+    if (Result.SearchWork == Limits.MaxSearchWork)
+      stop(Status::BudgetExceeded, "loop alignment search work exhausted");
     Stage.Execution.MaxSolverQueries =
         queryGrant(Stage.Execution.MaxSolverQueries);
-    auto R = BranchArms
-                 ? detail::inferBranchArmLowIRLoopRefinementPlan(F, Contract,
-                                                                 Stage, Default)
-                 : inferLowIRLoopRefinementPlan(F, Contract, Stage, Eligible);
+    Stage.MaxCutSelectionWork = std::min(
+        Stage.MaxCutSelectionWork, Limits.MaxSearchWork - Result.SearchWork);
+    auto R = Family == CutFamily::Default
+                 ? inferLowIRLoopRefinementPlan(F, Contract, Stage, Eligible)
+                 : detail::inferLowIRLoopRefinementPlanFamily(
+                       F, Contract, Stage, Family, Previous);
     Result.SolverQueries += R.SolverQueries;
+    charge(R.CutSelectionWork);
     AttemptExhausted |= R.Status == LowIRLoopInferenceStatus::BudgetExceeded;
     if (R.Status == LowIRLoopInferenceStatus::Invalid)
       stop(Status::Invalid, R.Diagnostic);
@@ -202,15 +209,15 @@ class AlignmentSearch {
     return false;
   }
 
-  LowIRLoopInferenceResult
-  inferCandidate(llvm::ArrayRef<va_t> Eligible = {}, bool BranchArms = false,
-                 const LowIRLoopRefinementPlan *Default = nullptr) {
+  LowIRLoopInferenceResult inferCandidate(
+      llvm::ArrayRef<va_t> Eligible = {}, CutFamily Family = CutFamily::Default,
+      llvm::ArrayRef<const LowIRLoopRefinementPlan *> Previous = {}) {
     requireQueries();
     if (Result.CandidateAttempts >= Limits.MaxCandidateAttempts)
       stop(Status::BudgetExceeded, "loop alignment candidate budget exhausted");
     ++Result.CandidateAttempts;
-    auto Right = infer(Candidate, Limits.CandidateInference, Eligible,
-                       BranchArms, Default);
+    auto Right =
+        infer(Candidate, Limits.CandidateInference, Eligible, Family, Previous);
     if (!Right.inferred()) {
       Result.LastCandidateDiagnostic = Right.Diagnostic;
       requireQueries();
@@ -240,13 +247,25 @@ class AlignmentSearch {
     Cache.Plan = std::move(R.Plan);
   }
 
+  std::vector<const LowIRLoopRefinementPlan *>
+  previousPlans(const std::array<CachedPlan, 3> &Plans, unsigned Family) {
+    std::vector<const LowIRLoopRefinementPlan *> Previous;
+    if (Family == 0)
+      return Previous;
+    charge(Plans.size() - 1);
+    for (unsigned I = 0; I != Plans.size(); ++I)
+      if (I != Family && Plans[I].Plan)
+        Previous.push_back(&*Plans[I].Plan);
+    return Previous;
+  }
+
   const LowIRLoopRefinementPlan *originalPlan(unsigned Family) {
     auto &Cache = OriginalPlans[Family];
     if (!Cache.Attempted) {
       Cache.Attempted = true;
-      const auto &Default = OriginalPlans[0].Plan;
-      remember(infer(Original, Limits.OriginalInference, {}, Family != 0,
-                     Default ? &*Default : nullptr),
+      const auto Previous = previousPlans(OriginalPlans, Family);
+      remember(infer(Original, Limits.OriginalInference, {},
+                     static_cast<CutFamily>(Family), Previous),
                Cache);
       if (!Cache.Plan)
         requireQueries();
@@ -258,8 +277,8 @@ class AlignmentSearch {
     auto &Cache = CandidatePlans[Family];
     if (!Cache.Attempted) {
       Cache.Attempted = true;
-      const auto &Default = CandidatePlans[0].Plan;
-      remember(inferCandidate({}, Family != 0, Default ? &*Default : nullptr),
+      const auto Previous = previousPlans(CandidatePlans, Family);
+      remember(inferCandidate({}, static_cast<CutFamily>(Family), Previous),
                Cache);
     }
     if (!Cache.Plan)
@@ -299,7 +318,7 @@ public:
       // Try corresponding families before spending the remaining attempts
       // on individual candidate cuts. Failed inferences are cached as well:
       // crossing families must not replay an exhausted or duplicate proposal.
-      for (unsigned Family : {0, 1})
+      for (unsigned Family = 0; Family != OriginalPlans.size(); ++Family)
         if (const auto *Left = originalPlan(Family))
           if (const auto *Right = candidatePlan(Family))
             if (tryPlans(*Left, *Right))
@@ -308,11 +327,13 @@ public:
                        [](const auto &P) { return P.Plan.has_value(); }))
         stop(AttemptExhausted ? Status::BudgetExceeded : Status::Unsupported,
              "original loop inference: " + OriginalPlans.back().Diagnostic);
-      for (unsigned Family : {0, 1})
+      for (unsigned Family = 0; Family != OriginalPlans.size(); ++Family)
         if (const auto &Left = OriginalPlans[Family].Plan)
-          if (const auto *Right = candidatePlan(1 - Family))
-            if (tryPlans(*Left, *Right))
-              return std::move(Result);
+          for (unsigned Other = 0; Other != CandidatePlans.size(); ++Other)
+            if (Other != Family)
+              if (const auto *Right = candidatePlan(Other))
+                if (tryPlans(*Left, *Right))
+                  return std::move(Result);
       requireQueries();
       for (const auto &B : Candidate.Blocks) {
         charge();
