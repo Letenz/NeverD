@@ -2867,17 +2867,20 @@ class LoopPlanInference {
       const auto Initial = read(Prefix, W.Location);
       const auto Before = read(*Session.CandidateStart, W.Location);
       auto Stable = W.FixedMask;
-      bool Holds = true, Additive = true;
+      bool Holds = true, Additive = false;
       for (auto &State : Session.CandidateReturns) {
         if (State.Cutpoint != static_cast<int>(ActiveCutpoint))
           continue;
         const auto After = read(State, W.Location);
-        Additive &= additiveRecurrence(Before, After, W.Location.Bytes);
+        Additive |= additiveRecurrence(Before, After, W.Location.Bytes);
         Stable &= commonBits(Initial, After, W.Location.Bytes);
         const auto Mask = Ctx.mkConst(W.Location.Bytes * 8, W.FixedMask);
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      // One additive arm can invalidate spurious prefix bits even when a
+      // sibling stutters or resets. Structural bits still intersect every
+      // returning arm, and an already valid mask is never weakened here.
       if (!Holds && !Additive) {
         // Relations such as packed flags often require the path predicate:
         // equal system bits need not have identical expression trees. Keep
@@ -3122,6 +3125,11 @@ class LoopPlanInference {
     return HasBackedge;
   }
 
+  struct Edge {
+    size_t Source;
+    TerminalState Before, After;
+  };
+
   bool inferAt(va_t Address) {
     GeneralContractFailure = false;
     auto &Cut = Plan.Cutpoints[ActiveCutpoint];
@@ -3171,6 +3179,15 @@ class LoopPlanInference {
     if (!Stable)
       stop(Status::BudgetExceeded, "loop inference widening budget exhausted");
 
+    // Scalar guesses add guards and replace the transition snapshots. Keep
+    // the complete stable domain for a later lexicographic proposal: a failed
+    // scalar guard must not hide a stuttering sibling transition.
+    const auto StableCut = Cut;
+    std::vector<Edge> StableEdges;
+    for (const auto &After : Session.CandidateReturns)
+      if (After.Cutpoint == static_cast<int>(ActiveCutpoint))
+        StableEdges.push_back({ActiveCutpoint, *Session.CandidateStart, After});
+
     // Prefer directly observed unit recurrences, avoiding expensive guesses
     // about accumulators before trying a plain induction variable.
     const auto Bounds = boundLocations();
@@ -3202,7 +3219,14 @@ class LoopPlanInference {
         if (Bound.Bytes == words()[Index].Location.Bytes && Try(false, Bound))
           return true;
     }
-    return false;
+    Cut = StableCut;
+    for (const auto &State : Prefixes)
+      if (State.Cutpoint == static_cast<int>(ActiveCutpoint) && !fits(State))
+        return false;
+    for (const auto &E : StableEdges)
+      if (!fits(E.After))
+        return false;
+    return inferTupleRanks(StableEdges);
   }
 
   void findChoices(llvm::ArrayRef<va_t> Eligible) {
@@ -3283,43 +3307,50 @@ class LoopPlanInference {
         Add(Id);
   }
 
+  std::vector<int> uncoveredCycle(const std::set<va_t> &Selected) {
+    std::map<int, unsigned> Color;
+    std::vector<int> Cycle;
+    // Removing a cut can disconnect a reachable cycle from the entry. Its
+    // transitions still need coverage, so retain every originally reachable
+    // block as a possible DFS root.
+    for (int Root : ReachableBlocks) {
+      if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
+        continue;
+      std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
+      Color[Root] = 1;
+      while (!Stack.empty() && Cycle.empty()) {
+        auto &[Id, Next] = Stack.back();
+        const auto &Succs = Blocks.at(Id)->Succs;
+        if (Next == Succs.size()) {
+          Color[Id] = 2;
+          Stack.pop_back();
+          continue;
+        }
+        const int S = Succs[Next++];
+        if (Selected.count(Blocks.at(S)->StartAddr))
+          continue;
+        if (Color[S] == 1) {
+          const auto First = std::find_if(Stack.begin(), Stack.end(),
+                                          [&](auto P) { return P.first == S; });
+          for (auto It = First; It != Stack.end(); ++It)
+            Cycle.push_back(It->first);
+        } else if (!Color[S]) {
+          Color[S] = 1;
+          Stack.emplace_back(S, 0);
+        }
+      }
+      if (!Cycle.empty())
+        break;
+    }
+    return Cycle;
+  }
+
   // Select a feedback set before symbolic execution. Trying a single cut on
   // a nested cycle first would spend the whole finite budget unrolling it.
   std::optional<std::vector<va_t>> feedbackCuts() {
     std::set<va_t> Selected;
     for (;;) {
-      std::map<int, unsigned> Color;
-      std::vector<int> Cycle;
-      for (int Root : ReachableBlocks) {
-        if (Color[Root] || Selected.count(Blocks.at(Root)->StartAddr))
-          continue;
-        std::vector<std::pair<int, size_t>> Stack{{Root, 0}};
-        Color[Root] = 1;
-        while (!Stack.empty() && Cycle.empty()) {
-          auto &[Id, Next] = Stack.back();
-          const auto &Succs = Blocks.at(Id)->Succs;
-          if (Next == Succs.size()) {
-            Color[Id] = 2;
-            Stack.pop_back();
-            continue;
-          }
-          const int S = Succs[Next++];
-          if (Selected.count(Blocks.at(S)->StartAddr))
-            continue;
-          if (Color[S] == 1) {
-            const auto First =
-                std::find_if(Stack.begin(), Stack.end(),
-                             [&](auto P) { return P.first == S; });
-            for (auto It = First; It != Stack.end(); ++It)
-              Cycle.push_back(It->first);
-          } else if (!Color[S]) {
-            Color[S] = 1;
-            Stack.emplace_back(S, 0);
-          }
-        }
-        if (!Cycle.empty())
-          break;
-      }
+      const auto Cycle = uncoveredCycle(Selected);
       if (Cycle.empty()) {
         std::vector<va_t> Cuts;
         for (va_t Address : Choices)
@@ -3341,11 +3372,6 @@ class LoopPlanInference {
       Selected.insert(*Choice);
     }
   }
-
-  struct Edge {
-    size_t Source;
-    TerminalState Before, After;
-  };
 
   std::vector<Edge> transitions(bool General) {
     std::vector<Edge> Edges;
@@ -3869,6 +3895,46 @@ class LoopPlanInference {
       throw Stop{};
   }
 
+  bool inferTupleRanks(std::vector<Edge> &Edges) {
+    std::vector<Counter> Candidates;
+    for (const auto &Location : locations())
+      for (bool Complement : {false, true}) {
+        bool Unit = false;
+        for (auto &E : Edges)
+          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+                           Location.Bytes, Complement);
+        if (Unit)
+          Candidates.push_back({Location, Complement});
+      }
+    std::vector<Counter> Ranks;
+    Phases Phase;
+    const auto Search = [&](auto &&Self, size_t Size) -> bool {
+      if (Ranks.size() == Size) {
+        if (Result.RankCandidates >= Limits.MaxRankCandidates)
+          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
+        ++Result.RankCandidates;
+        return inferPhases(Edges, Ranks, Phase);
+      }
+      for (const auto &C : Candidates) {
+        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
+              return sameLocation(C.Location, R.Location);
+            }))
+          continue;
+        Ranks.push_back(C);
+        if (Self(Self, Size))
+          return true;
+        Ranks.pop_back();
+      }
+      return false;
+    };
+    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
+      if (Search(Search, Size)) {
+        installRanks(Ranks, Phase);
+        return true;
+      }
+    return false;
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
@@ -3943,43 +4009,7 @@ class LoopPlanInference {
         if (!fits(S))
           return false;
       }
-    std::vector<Counter> Candidates;
-    for (const auto &Location : locations())
-      for (bool Complement : {false, true}) {
-        bool Unit = false;
-        for (auto &E : Edges)
-          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
-                           Location.Bytes, Complement);
-        if (Unit)
-          Candidates.push_back({Location, Complement});
-      }
-    std::vector<Counter> Ranks;
-    Phases Phase;
-    const auto Search = [&](auto &&Self, size_t Size) -> bool {
-      if (Ranks.size() == Size) {
-        if (Result.RankCandidates >= Limits.MaxRankCandidates)
-          stop(Status::BudgetExceeded, "loop inference rank budget exhausted");
-        ++Result.RankCandidates;
-        return inferPhases(Edges, Ranks, Phase);
-      }
-      for (const auto &C : Candidates) {
-        if (std::any_of(Ranks.begin(), Ranks.end(), [&](const auto &R) {
-              return sameLocation(C.Location, R.Location);
-            }))
-          continue;
-        Ranks.push_back(C);
-        if (Self(Self, Size))
-          return true;
-        Ranks.pop_back();
-      }
-      return false;
-    };
-    for (size_t Size = 1; Size <= Candidates.size(); ++Size)
-      if (Search(Search, Size)) {
-        installRanks(Ranks, Phase);
-        return true;
-      }
-    return false;
+    return inferTupleRanks(Edges);
   }
 
 public:
@@ -4025,6 +4055,8 @@ public:
             stop(Status::BudgetExceeded,
                  "loop inference cutpoint budget exhausted");
           ++Result.CutpointAttempts;
+          if (!uncoveredCycle({Address}).empty())
+            continue;
           try {
             if (inferAt(Address)) {
               Result.Status = LowIRLoopInferenceStatus::Inferred;

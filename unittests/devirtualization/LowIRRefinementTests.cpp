@@ -445,6 +445,228 @@ TEST(LowIRLoopInference, CountAndAccumulatorNeedNoHandwrittenTemplate) {
   loopRefused(loopCheck(A, wordLoop(2), *Inferred.Plan), Status::Different);
 }
 
+Program sharedHeaderCounters(uint16_t Bytes, bool SharedLatch,
+                             unsigned FirstStep = 1) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}),
+                 op(NdOp::INT_ZEXT, r(8), {r(8, Bytes)}),
+                 op(NdOp::INT_ZEXT, r(16), {r(16, Bytes)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction(
+      {op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8, Bytes), n(0, Bytes)}),
+       op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {SharedLatch ? 5 : 1});
+  P.instruction(
+      {op(NdOp::INT_SUB, r(8, Bytes), {r(8, Bytes), n(FirstStep, Bytes)}),
+       op(NdOp::INT_ZEXT, r(8), {r(8, Bytes)}),
+       op(NdOp::INT_ADD, r(0), {r(0), n(3)}),
+       op(NdOp::BRANCH, {}, {n(SharedLatch ? 0x600 : 0x200)})});
+  P.block(3, 0x400, {4, 6});
+  P.instruction(
+      {op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(16, Bytes), n(0, Bytes)}),
+       op(NdOp::COND_BR, {}, {n(0x700), NdVar::tmp(0, 1)})});
+  P.block(4, 0x500, {SharedLatch ? 5 : 1});
+  P.instruction({op(NdOp::INT_SUB, r(16, Bytes), {r(16, Bytes), n(1, Bytes)}),
+                 op(NdOp::INT_ZEXT, r(16), {r(16, Bytes)}),
+                 op(NdOp::INT_ADD, r(0), {r(0), n(5)}),
+                 op(NdOp::BRANCH, {}, {n(SharedLatch ? 0x600 : 0x200)})});
+  if (SharedLatch) {
+    P.block(5, 0x600, {1});
+    P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+  }
+  P.block(6, 0x700);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, SharedHeaderAndLatchNeedLexicographicRanks) {
+  for (uint16_t Bytes : {4, 8})
+    for (bool SharedLatch : {false, true}) {
+      SCOPED_TRACE(Bytes);
+      SCOPED_TRACE(SharedLatch);
+      const auto P = sharedHeaderCounters(Bytes, SharedLatch);
+      LowIRLoopInferenceLimits Limits;
+      Limits.Execution.MaxOperations = 4096;
+      const auto R =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits);
+      ASSERT_TRUE(R.inferred())
+          << R.Diagnostic << " cuts=" << R.CutpointAttempts
+          << " ranks=" << R.RankCandidates;
+      ASSERT_EQ(R.Plan->Cutpoints.size(), 1U);
+      EXPECT_GT(R.Plan->Cutpoints[0].Rank.size(), 1U);
+      const auto Proof = loopCheck(P, P, *R.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    }
+}
+
+TEST(LowIRLoopInference, SharedCyclesRejectWrongBodiesAndNonprogress) {
+  for (bool SharedLatch : {false, true}) {
+    SCOPED_TRACE(SharedLatch);
+    const auto P = sharedHeaderCounters(8, SharedLatch);
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+    ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+    auto Wrong = P;
+    Wrong.Function.Blocks[2].Ops[2].Inputs[1] = n(4);
+    loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+    for (unsigned Step : {0, 2}) {
+      SCOPED_TRACE(Step);
+      const auto Infinite = sharedHeaderCounters(8, SharedLatch, Step);
+      const auto Refused =
+          inferLowIRLoopRefinementPlan(Infinite.Function, Infinite.Contract);
+      EXPECT_FALSE(Refused.inferred());
+      EXPECT_FALSE(Refused.Plan);
+      loopRefused(loopCheck(Infinite, Infinite, *R.Plan), Status::Different);
+    }
+  }
+}
+
+TEST(LowIRLoopInference, SharedCycleScalarAndTupleSearchUseOneBudget) {
+  const auto P = sharedHeaderCounters(8, true);
+  const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  ASSERT_GT(Good.CutpointAttempts, 1U);
+  ASSERT_GT(Good.RankCandidates, 2U);
+  LowIRLoopInferenceLimits Exact;
+  Exact.MaxCutpointAttempts = Good.CutpointAttempts;
+  Exact.MaxRankCandidates = Good.RankCandidates;
+  Exact.Execution.MaxOperations = Good.Operations;
+  Exact.Execution.MaxSolverQueries = Good.SolverQueries;
+  Exact.Execution.MaxPaths = Good.ScheduledPaths;
+  const auto Enough =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact);
+  ASSERT_TRUE(Enough.inferred()) << Enough.Diagnostic;
+  const auto Proof = loopCheck(P, P, *Enough.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+
+  for (unsigned Kind = 0; Kind != 5; ++Kind) {
+    SCOPED_TRACE(Kind);
+    auto Limits = Exact;
+    if (Kind == 0)
+      --Limits.MaxCutpointAttempts;
+    if (Kind == 1)
+      --Limits.MaxRankCandidates;
+    if (Kind == 2)
+      --Limits.Execution.MaxOperations;
+    if (Kind == 3)
+      --Limits.Execution.MaxSolverQueries;
+    if (Kind == 4)
+      --Limits.Execution.MaxPaths;
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits);
+    EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << Refused.Diagnostic;
+    EXPECT_FALSE(Refused.Plan);
+    if (Kind == 0) {
+      // Reject the incomplete body cut structurally, before unrolling it.
+      EXPECT_EQ(Refused.Operations, 0U);
+      EXPECT_EQ(Refused.RankCandidates, 0U);
+    }
+  }
+  LowIRRefinementLimits ProofLimits;
+  ProofLimits.Execution.MaxSolverQueries = Proof.SolverQueries - 1;
+  loopRefused(loopCheck(P, P, *Enough.Plan, ProofLimits),
+              Status::BudgetExceeded);
+}
+
+Program resettingSharedCounter(unsigned InnerStep = 1, unsigned OuterStep = 1,
+                               bool Inclusive = false) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {n(0)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 5});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(16), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x600), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {3, 4});
+  P.instruction({op(Inclusive ? NdOp::INT_LESSEQUAL : NdOp::INT_LESS,
+                    NdVar::tmp(0, 1), {r(8), r(24)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(3, 0x400, {1});
+  P.instruction({op(NdOp::INT_ADD, r(8), {r(8), n(InnerStep)}),
+                 op(NdOp::INT_ADD, r(0), {r(0), n(3)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(4, 0x500, {1});
+  P.instruction({op(NdOp::INT_SUB, r(16), {r(16), n(OuterStep)}),
+                 op(NdOp::COPY, r(8), {n(0)}),
+                 op(NdOp::INT_ADD, r(0), {r(0), n(5)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(5, 0x600);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, AdditiveAndResetArmsWidenWithoutUnrollingCounterBits) {
+  const auto P = resettingSharedCounter();
+  LowIRLoopInferenceLimits Limits;
+  Limits.MaxWideningRounds = 4;
+  const auto R =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  EXPECT_GT(R.Plan->Cutpoints[0].Rank.size(), 1U);
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  ASSERT_GT(R.WideningRounds, 0U);
+  Limits.MaxWideningRounds = R.WideningRounds - 1;
+  const auto Refused =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_FALSE(Refused.Plan);
+  Limits.MaxWideningRounds = R.WideningRounds;
+  Limits.Execution.MaxSolverQueries = R.SolverQueries - 1;
+  const auto QueryRefused =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, {0x200});
+  EXPECT_EQ(QueryRefused.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_FALSE(QueryRefused.Plan);
+}
+
+TEST(LowIRLoopInference, ResettingCounterStillRejectsStutterAndWrap) {
+  const auto P = resettingSharedCounter();
+  const auto R =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, {0x200});
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  for (const auto &Infinite :
+       {resettingSharedCounter(0), resettingSharedCounter(2),
+        resettingSharedCounter(1, 0), resettingSharedCounter(1, 1, true)}) {
+    const auto Refused = inferLowIRLoopRefinementPlan(
+        Infinite.Function, Infinite.Contract, {}, {0x200});
+    EXPECT_FALSE(Refused.inferred());
+    EXPECT_FALSE(Refused.Plan);
+    loopRefused(loopCheck(Infinite, Infinite, *R.Plan), Status::Different);
+  }
+}
+
+Program nonUnitDiamondLoop() {
+  Program P;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction(
+      {op(NdOp::COPY, r(0), {n(0)}), op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 5});
+  P.instruction({op(NdOp::INT_LESSEQUAL, NdVar::tmp(0, 1), {r(8), n(1)}),
+                 op(NdOp::COND_BR, {}, {n(0x600), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {3, 4});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(16), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x500), NdVar::tmp(0, 1)})});
+  for (int Id : {3, 4}) {
+    P.block(Id, (Id + 1) * 0x100, {1});
+    P.instruction({op(NdOp::INT_SUB, r(8), {r(8), n(2)}),
+                   op(NdOp::INT_ADD, r(0), {r(0), n(Id == 3 ? 3 : 5)}),
+                   op(NdOp::BRANCH, {}, {n(0x200)})});
+  }
+  P.block(5, 0x600);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, DiamondRetainsNonUnitScalarRank) {
+  const auto P = nonUnitDiamondLoop();
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+}
+
 Program renamedCounterLoop() {
   auto P = wordLoop(1, true);
   for (auto &B : P.Function.Blocks)
