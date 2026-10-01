@@ -17,5 +17,10 @@ using AArch64RegisterReader =
 /// Privilege, vectors and other untransferred state remain unchanged.
 llvm::Error captureAArch64GeneralState(AArch64MachineState &State,
                                        AArch64RegisterReader Read);
+/// Capture the complete public scalar inventory with its declared widths.
+/// This includes the software transport's additional thread and FP control
+/// state; it does not admit FP/SIMD execution or capture vector payloads.
+llvm::Error captureAArch64ScalarState(AArch64MachineState &State,
+                                      AArch64RegisterReader Read);
 } // namespace neverd::emulation
 #endif

@@ -1459,10 +1459,9 @@ The ARM64 checked profile runs little-endian baseline integer instructions at
 EL1. It admits scalar loads/stores, register-offset addressing, literal loads
 and checked pair/writeback forms. It admits exact TPIDR_EL0 reads/writes for
 thread-pointer state and rejects FP/SIMD, atomics/exclusives, other system
-instructions, MMIO, constrained-unpredictable writeback and individual data
-transactions crossing a page. All accesses in a pair are validated before
-native execution. Unrestricted software execution has a separate contract and
-explicit EL1 reset state; it is not a claim of an implemented guest OS.
+instructions, MMIO and constrained-unpredictable writeback. All accesses in a
+pair are validated before native execution. Unrestricted software execution
+has a separate contract and explicit EL1 reset state; it is not a claim of an implemented guest OS.
 
 ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
 TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
@@ -1568,9 +1567,11 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 ARM64 native integer capture has one ISA authority. `AArch64GeneralState.def` lists X0–X30, SP, PC, NZCV and TPIDR_EL0; `captureAArch64GeneralState` stages every read before normalizing NZCV and publishing the complete result. KVM and WHP use this helper. A failed read preserves all input state, and privilege, vectors and untransferred registers remain unchanged. This does not add native FP/SIMD admission.
 
+Checked ARM64 scalar and pair RAM accesses can cross separately backed or aliased pages at EL0 and EL1. The ISA computes operand ranges; the shared address space validates every page before entry and reports the first failing fragment. `RAMTransaction` commits declared physical bytes after a complete CPU step. Faults and stopped observers preserve RAM, registers and writeback. `NeverDAArch64MemoryTests` uses assembled fixtures in `AArch64CrossPageCases.def`; this does not add FP/SIMD or Windows ARM64 driver loading.
+
 KVM x64 reads actual special registers before every entry and compares only the defined protocol fields in `KvmX64State.def`. It writes the projection again when CR3, CPL, TLS, CR8 or another defined field differs. Only a fully captured single-step debug exit permits reuse of runnable state; exceptions, cancellation and failed entries reestablish it. `X64StateTransition` checks actual CPU loads across TLS, privilege and CR8 changes, repeated faults and cancellation. KVM compares general registers and the complete FP/SSE state against the last acknowledged debug capture using `X64HostRegisters.def` and `X64FPState.def`, and reinstalls changed input. Host writes and context restoration participate in this comparison; exceptions, cancellation and failures invalidate reuse. Stepping is armed and actual general/FP state is read back for every instruction.
 
-KVM x64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture state on the same private vCPU thread. Preparation runs once before any `EINTR` retries; capture runs only after a successful host entry. Borrowed transfers remain live until entry acknowledgement. ISA decoding, RAM transactions, OS policy and execution observers remain on the caller thread. Failed preparation skips entry and capture; failed capture or cancellation prevents publication of guest state.
+KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture state on the same private vCPU thread. Preparation runs once before any `EINTR` retries; capture runs only after a successful host entry. Borrowed transfers remain live until entry acknowledgement. ISA decoding, RAM transactions, OS policy and execution observers remain on the caller thread. Failed preparation skips entry and capture; failed capture or cancellation prevents publication of guest state. `KvmAArch64Machine.cpp` also executes translation-maintenance entries, guest register preparation, debug setup and all 35 register reads on this worker. Maintenance and guest execution share one step deadline; the caller applies `captureAArch64GeneralState` only after acknowledged, complete capture. Native ARM64 runtime evidence remains pending.
 
 ## Windows driver emulation
 
@@ -2568,3 +2569,5 @@ An AArch64 native helper may bind a complete 16-byte `q0` or later `q` input as 
 Nested Objective-C stack-block discovery carries a method receiver class into a child block only when the current pipeline result proves the parent's strong capture and the child's complete owned copy of that field. Discovery reaches a bounded fixed point within that result; a later pipeline run must prove the chain again. A selector, bare `id`, or unqualified block consumer does not establish a receiver class, call ABI, or block lifetime. A 16-byte context copy preserves this proof only for an exact eight-byte lane inside every authenticated parent literal; partial or rearranged lanes do not.
 
 A verified descriptor may seed the invoke ABI before its body is accepted; consumer calls use receiver captures from the same validated block plan, and publication still requires independent body and lifetime proofs.
+
+Checked ARM64 capture now shares one ISA-owned commit boundary. KVM/WHP capture the 35 fields in `AArch64GeneralState.def`; Unicorn retains all 39 public scalar fields, including its additional thread and FP control state. `captureAArch64ScalarState` takes widths from `Registers.def`, normalizes NZCV and publishes only after every read succeeds. Privilege, vectors and untransferred fields remain unchanged. This state transport does not admit FP/SIMD instructions into checked ARM64.

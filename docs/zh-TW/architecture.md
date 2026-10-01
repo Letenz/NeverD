@@ -443,9 +443,11 @@ CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗�
 
 ARM64 原生整數狀態讀取由統一的 ISA 層負責。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暫存全部讀取結果，再正規化 NZCV 並一次提交完整狀態。KVM 和 WHP 共用該函式。任一讀取失敗都保留全部輸入狀態，權限級、向量和未傳輸的暫存器保持不變。這不新增原生 FP/SIMD 指令准入。
 
+checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立底層儲存或別名的頁面。ISA 計算運算元範圍，共用位址空間在進入前檢查每個頁面，並回報首個失敗片段。`RAMTransaction` 在完整 CPU 步驟成功後提交宣告的實體位元組；故障及觀察器停止會保留 RAM、暫存器和位址回寫。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 的組譯範例；這不新增 FP/SIMD 或 Windows ARM64 驅動載入。
+
 KVM x64 在每次進入前讀取實際特殊暫存器，僅比較 `KvmX64State.def` 定義的協定欄位。CR3、CPL、TLS、CR8 或其他欄位變化時重新寫入投影。只有完整擷取的單步偵錯退出允許重用可執行狀態；例外、取消或進入失敗後都重新建立該狀態。`X64StateTransition` 透過真實 CPU 讀取驗證 TLS、權限級和 CR8 變化、重複例外及取消。KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完整 FP/SSE 狀態與上次確認完成的偵錯退出狀態比較，只重新安裝變更的輸入。主機寫入和上下文恢復也參與比較；例外、取消及失敗會使重用失效。每條指令仍啟用單步並讀取真實的通用及 FP 狀態。
 
-KVM x64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。
+KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。 `KvmAArch64Machine.cpp` 的位址轉換維護執行、客體暫存器準備、除錯設定和全部 35 項暫存器讀取也在此執行緒上完成。維護與客體執行共用一個單步期限；只有完整讀取並確認完成後，呼叫執行緒才透過 `captureAArch64GeneralState` 提交狀態。ARM64 原生執行仍缺少實機證據。
 
 ## 嚴格提升契約
 
@@ -725,3 +727,5 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
 
 checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+
+Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。

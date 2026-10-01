@@ -6,16 +6,21 @@
 #include "backends/kvm/KvmVM.h"
 #include "gtest/gtest.h"
 
+#include <array>
 #include <cstdarg>
+#include <cstdint>
 #include <cstring>
 #include <signal.h>
 #include <thread>
 
 namespace {
 #define NEVERD_KVM_TEST_VALUE(Name, Value) constexpr unsigned Name = Value;
+#define NEVERD_KVM_TEST_STATE_VALUE(Name, Value)                               \
+  constexpr uint64_t Name = Value;
 #define NEVERD_KVM_TEST_TEXT(Name, Value) constexpr char Name[] = Value;
 #include "KvmRunCases.def"
 #undef NEVERD_KVM_TEST_TEXT
+#undef NEVERD_KVM_TEST_STATE_VALUE
 #undef NEVERD_KVM_TEST_VALUE
 enum class RunResult { Interrupted, Transient, Fatal, UntilKick };
 RunResult Result;
@@ -242,6 +247,43 @@ TEST_F(KvmRun, FailedPreparationDoesNotEnterOrCaptureOrPoisonTheNextRun) {
   EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
   EXPECT_EQ(Prepared, 1u);
   EXPECT_EQ(Captured, 0u);
+}
+
+TEST_F(KvmRun, SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers) {
+  std::array<uint64_t, TransferEntries> Packets{};
+  std::array<unsigned, TransferEntries> Prepared{}, Captured{};
+  std::thread::id Worker;
+  const MachineRunControl Control{
+      std::chrono::steady_clock::now() +
+          std::chrono::microseconds(TimeoutMicroseconds),
+      &Stop};
+  for (unsigned I = 0; I < Packets.size(); ++I) {
+    auto E = VM.runUntilExit(
+        Control,
+        [&] {
+          if (!I)
+            Worker = std::this_thread::get_id();
+          EXPECT_EQ(std::this_thread::get_id(), Worker);
+          ++Prepared[I];
+          Packets[I] = TransferInitialValue + I;
+          return llvm::Error::success();
+        },
+        [&] {
+          EXPECT_EQ(std::this_thread::get_id(), Worker);
+          ++Captured[I];
+          Packets[I] += TransferIncrement;
+          return llvm::Error::success();
+        });
+    ASSERT_EQ(llvm::toString(std::move(E)), "");
+    EXPECT_EQ(EntryThread, Worker);
+    EXPECT_NE(Worker, std::this_thread::get_id());
+  }
+  EXPECT_EQ(Calls, TransientInterruptions + TransferEntries);
+  for (unsigned I = 0; I < Packets.size(); ++I) {
+    EXPECT_EQ(Prepared[I], 1u);
+    EXPECT_EQ(Captured[I], 1u);
+    EXPECT_EQ(Packets[I], TransferInitialValue + I + TransferIncrement);
+  }
 }
 
 TEST_F(KvmRun, FailedCaptureReturnsItsErrorAndReleasesBorrowedTransfers) {

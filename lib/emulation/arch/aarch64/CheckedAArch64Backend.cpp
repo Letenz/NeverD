@@ -238,12 +238,9 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
     } else
       return llvm::make_error<UnsupportedExecutionError>();
   }
-  for (const auto &M : Accesses) {
-    if (M.Size - 1 > UINT64_MAX - M.Address ||
-        M.Address / memory::PageSize !=
-            (M.Address + M.Size - 1) / memory::PageSize)
+  for (const auto &M : Accesses)
+    if (M.Size - 1 > UINT64_MAX - M.Address)
       return llvm::make_error<UnsupportedExecutionError>();
-  }
   // Validate the entire instruction before any native access or pair write.
   for (const auto &M : Accesses) {
     if (M.Permission == Read && Hooks.Read)

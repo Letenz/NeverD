@@ -520,8 +520,14 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 ARM64 原生整數狀態讀取由統一的 ISA 層負責。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暫存全部讀取結果，再正規化 NZCV 並一次提交完整狀態。KVM 和 WHP 共用該函式。任一讀取失敗都保留全部輸入狀態，權限級、向量和未傳輸的暫存器保持不變。這不新增原生 FP/SIMD 指令准入。
 
-KVM x64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。
+checked ARM64 的純量與成對 RAM 存取可在 EL0、EL1 跨越具有獨立底層儲存或別名的頁面。ISA 計算運算元範圍，共用位址空間在進入前檢查每個頁面，並回報首個失敗片段。`RAMTransaction` 在完整 CPU 步驟成功後提交宣告的實體位元組；故障及觀察器停止會保留 RAM、暫存器和位址回寫。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 的組譯範例；這不新增 FP/SIMD 或 Windows ARM64 驅動載入。
+
+KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 執行緒上準備狀態、進入 `KVM_RUN` 並讀取退出狀態。準備階段只在 `EINTR` 重試迴圈前執行一次；讀取階段僅在主機進入成功返回後執行。借用的傳輸回呼保持有效，直到進入操作被確認完成。ISA 解碼、RAM 交易、OS 策略和執行觀察器仍在呼叫執行緒上執行。準備失敗會略過進入和讀取；讀取失敗或取消會阻止發布客體狀態。 `KvmAArch64Machine.cpp` 的位址轉換維護執行、客體暫存器準備、除錯設定和全部 35 項暫存器讀取也在此執行緒上完成。維護與客體執行共用一個單步期限；只有完整讀取並確認完成後，呼叫執行緒才透過 `captureAArch64GeneralState` 提交狀態。ARM64 原生執行仍缺少實機證據。
 
 KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完整 FP/SSE 狀態與上次確認完成的偵錯退出狀態比較，只重新安裝變更的輸入。主機寫入和上下文恢復也參與比較；例外、取消及失敗會使重用失效。每條指令仍啟用單步並讀取真實的通用及 FP 狀態。
 
 硬體執行本身不保證更低的端到端耗時。目前原生執行逐條進行指令准入、觀察、狀態傳輸和 VM 退出。比較相同原始映像與情境時，應使用一致的指令和事件預算，同時報告結果一致性與耗時；測量 CLI 延遲時應包含啟動和載入。
+
+當 `GuardFlags` 為零時，未啟用 CFG 的指標槽仍然有效。載入器驗證其儲存、可執行回退目標，以及重定位時完整的 `DIR64` 覆蓋，並保留原始客體指標。啟用 CFG 的映像仍須同時具備映像啟用位元與插樁/函式表旗標。`DriverGuardCases.def` 與 `NeverDDriverGuardMetadataTests` 透過 Unicorn、KVM 和 WHP 涵蓋這些情況，也可用於停用 Unicorn 的建置。
+
+Checked ARM64 的狀態回讀統一使用 ISA 層負責的提交邊界。KVM/WHP 回讀 `AArch64GeneralState.def` 中的 35 個欄位；Unicorn 保留全部 39 個公開純量欄位，包括額外的執行緒及浮點控制狀態。`captureAArch64ScalarState` 從 `Registers.def` 取得位元寬度，正規化 NZCV，並僅在所有讀取成功後發布狀態。特權、向量和未傳輸欄位保持不變。這種狀態傳輸不代表 checked ARM64 已支援 FP/SIMD 指令。

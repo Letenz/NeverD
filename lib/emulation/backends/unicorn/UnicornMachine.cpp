@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../arch/aarch64/AArch64Machine.h"
+#include "../../arch/aarch64/AArch64GeneralState.h"
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
@@ -316,20 +316,38 @@ public:
                                   &State.reg(AArch64Register::Name))))         \
     return E;
 #include "neverd/emulation/Registers.def"
-#undef NEVERD_REGISTER_AArch64
-#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
-  if (auto E = check(uc_reg_read(CPU.Engine, Backend,                          \
-                                 &State.reg(AArch64Register::Name))))          \
-    return E;
-    if (auto E = CPU.run(State.reg(AArch64Register::PC)))
-      return E;
-#include "neverd/emulation/Registers.def"
 #undef NEVERD_SCALAR_REGISTER
 #undef NEVERD_REGISTER_X64
 #undef NEVERD_REGISTER_AArch64
+    if (auto E = CPU.run(State.reg(AArch64Register::PC)))
+      return E;
     // SIMD is outside this checked contract, so the typed vector cache is
     // preserved. The unrestricted software contract uses UnicornBackend.
-    return llvm::Error::success();
+    return captureAArch64ScalarState(
+        State, [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
+          uint64_t Value = 0;
+          if (auto E =
+                  check(uc_reg_read(CPU.Engine, registerID(Register), &Value)))
+            return E;
+          return Value;
+        });
+  }
+
+private:
+  static int registerID(AArch64Register Register) {
+    switch (Register) {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  NEVERD_REGISTER_##Arch(Name, Backend)
+#define NEVERD_REGISTER_X64(Name, Backend)
+#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
+  case AArch64Register::Name:                                                  \
+    return Backend;
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_REGISTER_AArch64
+#undef NEVERD_REGISTER_X64
+#undef NEVERD_SCALAR_REGISTER
+    }
+    return UC_ARM64_REG_INVALID;
   }
 };
 } // namespace

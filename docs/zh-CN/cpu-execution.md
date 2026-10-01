@@ -88,8 +88,12 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
 
-KVM x64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。
+checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+
+KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 线程上准备状态、进入 `KVM_RUN` 并读取退出状态。准备阶段只在 `EINTR` 重试循环前执行一次；读取阶段仅在宿主进入成功返回后执行。借用的传输回调保持有效，直到进入操作被确认完成。ISA 解码、RAM 事务、OS 策略和执行观察器仍在调用线程上运行。准备失败会跳过进入和读取；读取失败或取消会阻止发布来宾状态。 `KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
 
 KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
 
 硬件执行本身不保证更低的端到端耗时。当前原生执行逐条进行指令准入、观察、状态传输和 VM 退出。比较相同原始镜像与场景时，应使用一致的指令和事件预算，同时报告结果一致性与耗时；测量 CLI 延迟时应包含启动和加载。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。

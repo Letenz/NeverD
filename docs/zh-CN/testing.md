@@ -796,7 +796,9 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 `NeverDX64ExceptionTests` 中的 `X64StateTransition` 在原生 CPU 上执行独立 RAM 读取和 CR8 读取，交替改变 TLS 基址与权限级，在重复除法异常后恢复，并在取消进入后更改 TLS。修改原生状态传输时，应运行所属 CTest 标签，同时覆盖别名重映射、CPU 上下文、FP 状态和原始驱动结果对比。KVM/WHP 不可用仍显式跳过。
 
 
-`NeverDKvmRunTests` 无需 `/dev/kvm` 即可验证 `KvmRunControl` 借用的传输回调。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 检查准备、读取和被拦截的宿主进入使用同一线程，且中断重试期间只准备一次。其他用例覆盖准备失败而不进入、读取失败、准备期间停止及活动进入被取消；随后重新运行，确认不会复用旧回调。验证仍应包含真实取消、RAM 回滚、异常和原有驱动测试。
+`NeverDKvmRunTests` 无需 `/dev/kvm` 即可验证 `KvmRunControl` 借用的传输回调。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 检查准备、读取和被拦截的宿主进入使用同一线程，且中断重试期间只准备一次。其他用例覆盖准备失败而不进入、读取失败、准备期间停止及活动进入被取消；随后重新运行，确认不会复用旧回调。验证仍应包含真实取消、RAM 回滚、异常和原有驱动测试。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` 验证同一期限内的多次进入复用该线程，每轮传输只执行一次，并保持此前状态包不变。
+
+`KvmAArch64Machine.cpp` 的地址转换维护执行、来宾寄存器准备、调试配置和全部 35 项寄存器读取也在此线程上完成。维护与来宾执行共享一个单步期限；只有完整读取并确认完成后，调用线程才通过 `captureAArch64GeneralState` 提交状态。ARM64 原生运行仍缺少实机证据。
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在宿主修改通用寄存器、首尾 XMM 寄存器、MXCSR 和 x87 控制字后，验证连续执行及真实 CPU 写入。停止进入后的实际 `FXSAVE64` 字节验证全部物理 80 位寄存器、TOP、标签、操作码和指针；重复除法异常也会使复用失效。这些机器边界测试不向 checked 配置开放额外的 x87 指令。
 
@@ -804,4 +806,14 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 ARM64 原生整数状态读取由统一的 ISA 层负责。`AArch64GeneralState.def` 列出 X0–X30、SP、PC、NZCV 和 TPIDR_EL0；`captureAArch64GeneralState` 先暂存全部读取结果，再规范化 NZCV 并一次提交完整状态。KVM 和 WHP 共用该函数。任一读取失败都会保留全部输入状态，权限级、向量和未传输的寄存器保持不变。这不新增原生 FP/SIMD 指令准入。
 
+checked ARM64 的标量及成对 RAM 访问可在 EL0 和 EL1 跨越具有独立底层内存或别名映射的页面。ISA 计算操作数范围，共享地址空间在进入前检查每个页面，并报告首个失败片段。`RAMTransaction` 在完整 CPU 步骤成功后提交声明的物理字节；故障和观察器停止会保留 RAM、寄存器及地址写回。`NeverDAArch64MemoryTests` 使用 `AArch64CrossPageCases.def` 中汇编生成的样例；这不新增 FP/SIMD 或 Windows ARM64 驱动加载。
+
 `NeverDAArch64GeneralStateTests` 无需 Unicorn 或虚拟化设备，验证完整读取、NZCV 掩码、35 个读取位置分别失败、缺少读取回调及两种权限级下的成功重试。这些可移植状态验证和交叉编译不能替代 ARM64 KVM/WHP 实机运行证据。
+
+`NeverDAArch64MemoryTests` 在两种权限级下覆盖 Unicorn、KVM 和 WHP 的 18 种标量及成对指令，检查所有跨页偏移、符号扩展及宽度结果、观察器顺序、第二页权限不足或缺失、显式消费故障后重试、重复物理别名，以及别名替换后的上下文恢复。修改前已复现合法跨页加载被拒绝的情况。不可用后端明确跳过；Unicorn 验证及交叉编译不能替代 ARM64 KVM/WHP 实机证据。
+
+`NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) 检查零标志的未启用 CFG 元数据、两种加载地址下不变的回退指针、无效指针槽/目标及缺失重定位。执行用例显式选择 Unicorn/KVM/WHP，并使用 `driver-strict` 和 `checked-x64-v1`；不可用的后端分别跳过。`DriverPublicCLICases.def` 为 CLI 与兼容的 v1 C API 对比选择 `--backend unicorn`。原生后端及 `auto` 选择保留独立的公共接口覆盖，主机 API 不可用时不会静默回退。
+
+Checked ARM64 的状态回读统一使用 ISA 层负责的提交边界。KVM/WHP 回读 `AArch64GeneralState.def` 中的 35 个字段；Unicorn 保留全部 39 个公共标量字段，包括额外的线程及浮点控制状态。`captureAArch64ScalarState` 从 `Registers.def` 获取位宽，规范化 NZCV，并仅在所有读取成功后发布状态。特权、向量和未传输字段保持不变。这种状态传输不代表 checked ARM64 已支持 FP/SIMD 指令。
+
+`NeverDAArch64GeneralStateTests` 在两种特权级下检查原生 35 字段和软件 39 字段清单，覆盖每个读取失败位置、位宽规范化和重试。Linux 上的 `NeverDUnicornStateTransferTests` 在真实来宾执行后的每个标量回读位置注入失败，验证输入不变、重试只执行一次，并检查 `CapturesDeclaredWidthsWithoutStaleUpperBits`。原始指令和状态用例存放于 `UnicornStateTransferCases.def`；这些证据不能替代 ARM64 KVM/WHP 实机验证。

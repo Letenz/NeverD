@@ -5,6 +5,11 @@ add_neverd_unittest(NeverDAArch64GeneralStateTests
 target_include_directories(NeverDAArch64GeneralStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDAArch64MemoryTests
+  AArch64CrossPageTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDX64FPTests
   X64FPStateTests.cpp
   TIMEOUT 15
@@ -178,6 +183,15 @@ endif()
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_neverd_unittest(NeverDUnicornStateTransferTests
+      UnicornStateTransferTests.cpp
+      TIMEOUT 15
+      LINK_COMPONENTS EmulationCPU
+      LINK_LIBS unicorn)
+    target_include_directories(NeverDUnicornStateTransferTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/lib/emulation)
+    target_link_options(NeverDUnicornStateTransferTests PRIVATE
+      "-Wl,--wrap=uc_reg_read")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE
@@ -951,6 +965,16 @@ add_neverd_unittest(NeverDNativeDriverTests
 target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
+
+add_neverd_unittest(NeverDDriverGuardMetadataTests
+  DriverDormantGuardTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS Emulation)
+target_include_directories(NeverDDriverGuardMetadataTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+target_compile_definitions(NeverDDriverGuardMetadataTests PRIVATE
+  ${_driver_execution_fixture_definitions})
+add_dependencies(NeverDDriverGuardMetadataTests NeverDDriverFixtures)
 
 if(NOT NEVERD_EMULATION_BACKEND_UNICORN)
   return()

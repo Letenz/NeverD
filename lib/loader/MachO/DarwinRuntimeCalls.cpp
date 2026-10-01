@@ -8,6 +8,8 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
+
 namespace neverd {
 
 std::optional<SourceFunctionTypeHint>
@@ -118,6 +120,34 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   llvm::StringRef Name(*Import);
   if (!Name.consume_front("_"))
     return std::nullopt;
+
+  // unwind_itanium.h declares one exception-record pointer and a void result.
+  // libunwind resumes phase two or aborts; this call never returns normally.
+  // https://github.com/llvm/llvm-project/blob/main/libunwind/src/UnwindLevel1.c
+  if (Name == "_Unwind_Resume") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        !darwinExportModuleMatches(
+            "/usr/lib/libSystem.B.dylib|/usr/lib/system/libunwind.dylib",
+            Bind->second.Module) ||
+        std::find(Image.DynInfo.NeededLibs.begin(),
+                  Image.DynInfo.NeededLibs.end(),
+                  Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = Name.str();
+    Result.DoesNotReturn = true;
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"exception", NdType::makePtr(NdType::makeVoid())}};
+    std::string Diagnostic;
+    if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
 
   // AAPCS64 passes a six-double CGAffineTransform by an indirect pointer.
   // Keep that physical carrier in the source call hint; the C emitter copies
