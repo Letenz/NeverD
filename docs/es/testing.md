@@ -46,13 +46,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
   NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
-  NeverDX86LogicIdentityTests --parallel 4
+  NeverDX86LogicIdentityTests NeverDX86NoIndexAddressTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
 build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests \
   --gtest_filter='OriginalBinaryUndefinedIndependence.*'
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
+build-release/bin/NeverDX86NoIndexAddressTests
 ```
 
 Las pruebas de API cubren valores predeterminados v1/v2/v3, presupuestos explícitos, estructuras truncadas, todos los campos reserved y colas futuras. Las pruebas CLI comprueban agotamiento y recuperación correcta con ambas ABI y motores, rechazan límites decimales inválidos y exigen `--devirtualize`. El agotamiento no debe publicar código ni grafos residuales parciales.
@@ -112,6 +113,8 @@ build-release/bin/NeverDLowIRRefinementTests
 Las pruebas cubren todas las combinaciones de indicadores escalares de entrada, máscaras de privilegio, TF/AC en ambas ejecuciones, productores indefinidos distintos, copias correlacionadas, llamadas nativas, estados de ramas hermanas, observación final obligatoria, evidencia malformada y límites de recursos. Todo camino factible de entrada de un bucle finito debe terminar; una rama segura no oculta un camino infinito o truncado. RDSSPD/RDSSPQ cubre los 16 registros generales y ambas anchuras, preservación de bits altos, evidencia `Missing` conservada y rechazo de proyecciones falsificadas. Las pruebas de estado de máquina comparan ambas rutas C en O0/O2 con trampas de comportamiento indefinido frente a un oráculo independiente de indicadores de usuario y comprueban que el fallo de perfil persiste. Las pruebas INCSSPD/INCSSPQ cubren ambas anchuras y todos los registros generales, conservación de límites inalcanzables, trampas factibles tras completar una rama hermana, operandos cero y evidencia de trampa falsificada.
 
 `NeverDX86UndefinedEffectsTests` comprueba metadatos de bits indefinidos, flags definidos o preservados y el rechazo de certificados obsoletos. `NeverDX86CarryArithmeticFlagTests` comprueba el acarreo auxiliar de ADC/SBB en las formas de registro y memoria frente a un oráculo aritmético. `NeverDX86LogicIdentityTests` verifica que AND con operandos idénticos siga poniendo a cero los bits 63:32 del registro de 64 bits correspondiente al escribir un destino de 32 bits en modo de 64 bits y preserve los bits no escritos de destinos más estrechos.
+
+`NeverDX86NoIndexAddressTests` comprueba el direccionamiento SIB x86 sin índice con direcciones de 32 y 64 bits: bits de escala ignorados, anchuras de destino, cargas/almacenamientos, metadatos completos de salidas indefinidas, desplazamientos de segmento y procedencia de direcciones. Rechaza seudorregistros como base o índice de anchura incorrecta y conserva los índices R12 reales seleccionados por REX.X. Las pruebas EVEX de difusión y movimientos enmascarados también cubren estas formas, la supresión de accesos inactivos y los metadatos SIB contradictorios.
 
 Las regresiones cubren todos los contadores de ocho bits, combinaciones de indicadores con cuenta cero, ambos modos x86, todos los anchos, alias CL, AH/CH/DH/BH, registros extendidos y memoria. La ejecución simbólica por bytes se contrasta con aritmética repetida bit a bit. Las pruebas relacionales verifican copias y nuevos indicadores, guardados, bucles, cuentas derivadas de valores indefinidos, ramas, formatos inválidos, resúmenes y presupuestos. Las lecturas finitas cubren 1/2/4/8 bytes, selección según entrada, conjuntos unitarios por ruta, testigos completos y límites; rechazan candidatos dependientes, ausentes, modificables, sin respaldo de archivo, reubicados o ilimitados.
 

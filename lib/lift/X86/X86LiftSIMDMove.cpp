@@ -68,7 +68,8 @@ bool isValidMaskedMoveMemoryOperand(const cs_x86_op &Operand,
     return x86reg::isGeneralRegOffset(RI.Offset) && RI.Size == AddressSize;
   };
   if (!IsAddressRegister(static_cast<x86_reg>(Operand.mem.base)) ||
-      !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index)))
+      (!isNoSibIndex(Operand.mem.index, AddressSize) &&
+       !IsAddressRegister(static_cast<x86_reg>(Operand.mem.index))))
     return false;
   if (Operand.mem.index != X86_REG_INVALID &&
       (Operand.mem.base == X86_REG_RIP || Operand.mem.base == X86_REG_EIP))
@@ -83,12 +84,11 @@ std::optional<NdVar> emitAMXStride(X86Lifter::LiftState &S,
     return std::nullopt;
   if (Memory.mem.index == X86_REG_INVALID)
     return NdVar::scalar(0, 8);
-  if (Memory.mem.scale != 1 && Memory.mem.scale != 2 &&
-      Memory.mem.scale != 4 && Memory.mem.scale != 8)
+  if (Memory.mem.scale != 1 && Memory.mem.scale != 2 && Memory.mem.scale != 4 &&
+      Memory.mem.scale != 8)
     return std::nullopt;
 
-  const RegInfo Index =
-      mapCapstoneReg(static_cast<x86_reg>(Memory.mem.index));
+  const RegInfo Index = mapCapstoneReg(static_cast<x86_reg>(Memory.mem.index));
   if (!x86reg::isGeneralRegOffset(Index.Offset) ||
       (Index.Size != 4 && Index.Size != 8) || Index.Size != S.AddressSize)
     return std::nullopt;
@@ -131,8 +131,7 @@ struct EvexFullVectorMoveSpec {
   bool RequiresAlignment;
 };
 
-std::optional<EvexFullVectorMoveSpec>
-evexFullVectorMoveSpec(unsigned InsnId) {
+std::optional<EvexFullVectorMoveSpec> evexFullVectorMoveSpec(unsigned InsnId) {
   switch (InsnId) {
   case X86_INS_VMOVDQU8:
     return EvexFullVectorMoveSpec{0x7f, 0x6f, 0x7f, 1, false};
@@ -255,9 +254,8 @@ bool liftEvexFullVectorMove(X86Lifter &L, X86Lifter::LiftState &S,
       ExpectedP2 |= 0x80;
     CompactMask = NdVar::reg(MaskInfo.Offset, RequiredMaskSize);
   } else {
-    const uint64_t AllLanes = LaneCount == 64
-                                  ? UINT64_MAX
-                                  : (UINT64_C(1) << LaneCount) - 1;
+    const uint64_t AllLanes =
+        LaneCount == 64 ? UINT64_MAX : (UINT64_C(1) << LaneCount) - 1;
     CompactMask = NdVar::cst(AllLanes, RequiredMaskSize);
   }
   if (Encoding.P2 != ExpectedP2)
@@ -279,8 +277,7 @@ bool liftEvexFullVectorMove(X86Lifter &L, X86Lifter::LiftState &S,
     return true;
   }
 
-  const cs_x86_op &MemoryOperand =
-      DestinationIsMemory ? Destination : Source;
+  const cs_x86_op &MemoryOperand = DestinationIsMemory ? Destination : Source;
   const NdVar Address = S.computeEA(MemoryOperand);
   const NdMemoryAddressSpace AddressSpace =
       X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
@@ -427,9 +424,8 @@ bool liftEvexScalarBroadcast(X86Lifter &L, X86Lifter::LiftState &S,
                                                           : X86_REG_ZMM0)))
     return false;
 
-  const uint8_t ExpectedLength = Destination.size == 16
-                                     ? 0
-                                     : (Destination.size == 32 ? 0x20 : 0x40);
+  const uint8_t ExpectedLength =
+      Destination.size == 16 ? 0 : (Destination.size == 32 ? 0x20 : 0x40);
   if ((Encoding.P2 & 0x78) != static_cast<uint8_t>(ExpectedLength | 0x08))
     return false;
 
@@ -462,7 +458,7 @@ bool liftEvexScalarBroadcast(X86Lifter &L, X86Lifter::LiftState &S,
                                          Spec->ElementSize))
       return false;
     Raw = emitEvexMaskedMemoryLoad(S, Source, CompactMask, Destination.size,
-                                  Spec->ElementSize, Spec->ElementSize, true);
+                                   Spec->ElementSize, Spec->ElementSize, true);
   } else if (!GprForm && Source.type == X86_OP_REG && Source.size == 16 &&
              Source.reg >= X86_REG_XMM0 && Source.reg <= X86_REG_XMM31) {
     if (!validateCanonicalEvexRegisterTail(Insn, X86, Encoding) ||
@@ -473,15 +469,13 @@ bool liftEvexScalarBroadcast(X86Lifter &L, X86Lifter::LiftState &S,
                            Destination.size);
   } else if (GprForm && Source.type == X86_OP_REG &&
              Source.size == (Spec->ElementSize == 8 ? 8 : 4)) {
-    const RegInfo SourceInfo =
-        mapCapstoneReg(static_cast<x86_reg>(Source.reg));
-    const unsigned EncodedSource =
-        (Encoding.ModRM & 7) | ((Encoding.P0 & 0x20) == 0 ? 8 : 0) |
-        ((Encoding.P0 & 0x08) != 0 ? 16 : 0);
+    const RegInfo SourceInfo = mapCapstoneReg(static_cast<x86_reg>(Source.reg));
+    const unsigned EncodedSource = (Encoding.ModRM & 7) |
+                                   ((Encoding.P0 & 0x20) == 0 ? 8 : 0) |
+                                   ((Encoding.P0 & 0x08) != 0 ? 16 : 0);
     const uint64_t ExpectedSourceOffset =
-        EncodedSource < 16
-            ? static_cast<uint64_t>(EncodedSource) * 8
-            : x86reg::extendedGeneralReg(EncodedSource - 16);
+        EncodedSource < 16 ? static_cast<uint64_t>(EncodedSource) * 8
+                           : x86reg::extendedGeneralReg(EncodedSource - 16);
     if (!validateCanonicalEvexRegisterTail(Insn, X86, Encoding) ||
         !x86reg::isGeneralRegOffset(SourceInfo.Offset) ||
         SourceInfo.Size != Source.size || EncodedSource >= 32 ||
@@ -618,8 +612,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     if (L.targetArch() != Arch::X64 || X86.op_count != 1 ||
         X86.operands[0].type != X86_OP_MEM)
       return false;
-    const NdVar Config =
-        NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    const NdVar Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
     if (!S.emitMemoryIntrinsic(Intrinsic::AMXLoadConfig, X86.operands[0],
                                {NdVar::scalar(S.AddressSize, 1)}, Config))
       return false;
@@ -637,11 +630,9 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     if (L.targetArch() != Arch::X64 || X86.op_count != 1 ||
         X86.operands[0].type != X86_OP_MEM)
       return false;
-    const NdVar Config =
-        NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
-    if (!S.emitMemoryIntrinsic(
-            Intrinsic::AMXStoreConfig, X86.operands[0],
-            {Config, NdVar::scalar(S.AddressSize, 1)}))
+    const NdVar Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    if (!S.emitMemoryIntrinsic(Intrinsic::AMXStoreConfig, X86.operands[0],
+                               {Config, NdVar::scalar(S.AddressSize, 1)}))
       return false;
     break;
   }
@@ -649,8 +640,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_TILERELEASE: {
     if (L.targetArch() != Arch::X64 || X86.op_count != 0)
       return false;
-    S.emit(NdOp::COPY,
-           NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize),
+    S.emit(NdOp::COPY, NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize),
            {NdVar::cst(0, x86reg::TileConfigSize)});
     for (unsigned Tile = 0; Tile < x86reg::TileRegCount; ++Tile)
       S.emit(NdOp::COPY,
@@ -677,8 +667,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     cs_x86_op RowBase = X86.operands[1];
     RowBase.mem.index = X86_REG_INVALID;
     RowBase.mem.scale = 1;
-    const NdVar Config =
-        NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    const NdVar Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
     if (!S.emitMemoryIntrinsic(
             Intrinsic::AMXTileLoad, RowBase,
             {*Stride, Config, Destination, NdVar::scalar(S.AddressSize, 1)},
@@ -703,12 +692,10 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     cs_x86_op RowBase = X86.operands[0];
     RowBase.mem.index = X86_REG_INVALID;
     RowBase.mem.scale = 1;
-    const NdVar Config =
-        NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    const NdVar Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
     if (!S.emitMemoryIntrinsic(
             Intrinsic::AMXTileStore, RowBase,
-            {*Stride, Config, Source, NdVar::scalar(S.AddressSize, 1)},
-            Config))
+            {*Stride, Config, Source, NdVar::scalar(S.AddressSize, 1)}, Config))
       return false;
     break;
   }
@@ -719,8 +706,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     NdVar Dst = L.operandWrite(X86.operands[0]);
     if (Dst.Size != x86reg::TileRegStride)
       return false;
-    const NdVar Config =
-        NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    const NdVar Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
     S.emitIntrinsic(Intrinsic::AMXTileZero, Dst, {Config});
     S.emitIntrinsic(Intrinsic::AMXClearStartRow, Config, {Config});
     break;
@@ -749,8 +735,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       return false;
     NdVar Dst = L.operandWrite(X86.operands[0]);
     NdVar Src = L.operandRead(S, X86.operands[1]);
-    if (Dst.Size != 4 ||
-        (Src.Size != 8 && Src.Size != 16 && Src.Size != 32))
+    if (Dst.Size != 4 || (Src.Size != 8 && Src.Size != 16 && Src.Size != 32))
       return false;
 
     NdVar Mask = NdVar::cst(0, Dst.Size);
@@ -763,8 +748,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.emit(NdOp::INT_ZEXT, WideBit, {Bit});
       if (I != 0) {
         NdVar Shifted = S.makeTemp(Dst.Size);
-        S.emit(NdOp::INT_LEFT, Shifted,
-               {WideBit, NdVar::cst(I, Dst.Size)});
+        S.emit(NdOp::INT_LEFT, Shifted, {WideBit, NdVar::cst(I, Dst.Size)});
         WideBit = Shifted;
       }
       if (I == 0) {
@@ -820,8 +804,7 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     const uint64_t LaneMask = (16 / ElemSz) - 1;
     const uint64_t Lane = static_cast<uint8_t>(X86.operands[2].imm) & LaneMask;
     NdVar Elem = S.makeTemp(ElemSz);
-    S.emit(NdOp::SUBBYTES, Elem,
-           {Src, NdVar::cst(Lane * ElemSz, 4)});
+    S.emit(NdOp::SUBBYTES, Elem, {Src, NdVar::cst(Lane * ElemSz, 4)});
     if (ElemSz < Dst.Size) {
       S.emit(NdOp::INT_ZEXT, Dst, {Elem});
     } else {
@@ -942,8 +925,8 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     if (!Spec)
       return false;
     NdVar Source = L.operandRead(S, X86.operands[1]);
-    NdVar Result = repeatLowElement(S, Source, Spec->ElementSize,
-                                    X86.operands[0].size);
+    NdVar Result =
+        repeatLowElement(S, Source, Spec->ElementSize, X86.operands[0].size);
     if (Result.Size != X86.operands[0].size)
       return false;
     S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {Result});

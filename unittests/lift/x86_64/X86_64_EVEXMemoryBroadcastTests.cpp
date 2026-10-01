@@ -35,7 +35,11 @@ std::vector<LowOp> liftX64(const std::vector<uint8_t> &Bytes) {
   try {
     Dec.liftToLow(Insn, Ops);
   } catch (const UnliftedInstruction &) {
-    ADD_FAILURE() << "instruction was not lifted";
+    const auto &X = Insn.Raw->detail->x86;
+    ADD_FAILURE() << "instruction was not lifted: " << Insn.Raw->mnemonic << ' '
+                  << Insn.Raw->op_str << "; addr=" << unsigned(X.addr_size)
+                  << " sib=" << unsigned(X.sib) << " index=" << X.sib_index
+                  << " scale=" << unsigned(X.sib_scale);
     return {};
   }
   return Ops;
@@ -123,6 +127,62 @@ TEST(X86EVEXMemoryBroadcast, VpadddBroadcastLoadsOneScalarForEveryZmmLane) {
   ASSERT_EQ(Emulator.run(Ops), Ops.size());
   EXPECT_EQ(Emulator.getRegisterBytes(x86reg::vectorReg(0)), Expected);
   EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86EVEXMemoryBroadcast, NoIndexScalePreservesMaskedBroadcastAndMove) {
+  for (bool Address32 : {false, true}) {
+    for (bool Broadcast : {false, true}) {
+      for (uint64_t Mask : {UINT64_C(0), UINT64_C(0x5555), UINT64_C(0xffff)}) {
+        std::vector<uint8_t> Bytes;
+        if (Address32)
+          Bytes.push_back(0x67);
+        // vpaddd zmm0{k1}{z},zmm2,[rax+riz*8]{1to16}, or
+        // vmovdqu32 zmm0{k1}{z},[rax+riz*8]. The index contributes zero.
+        const std::vector<uint8_t> Body =
+            Broadcast
+                ? std::vector<uint8_t>{0x62, 0xf1, 0x6d, 0xd9, 0xfe, 0x04, 0xe0}
+                : std::vector<uint8_t>{0x62, 0xf1, 0x7e, 0xc9,
+                                       0x6f, 0x04, 0xe0};
+        Bytes.insert(Bytes.end(), Body.begin(), Body.end());
+        auto Ops = liftX64(Bytes);
+        ASSERT_FALSE(Ops.empty());
+        std::vector<uint8_t> Memory(Broadcast ? 4 : 64);
+        std::vector<uint8_t> Left(64), Expected(64);
+        for (unsigned Lane = 0; Lane < 16; ++Lane) {
+          setLane(Left, Lane, 4, Lane);
+          if (!Broadcast || Lane == 0)
+            setLane(Memory, Lane, 4, 17 + Lane);
+          setLane(Expected, Lane, 4, (Mask >> Lane) & 1 ? 17 + Lane : 0);
+        }
+        auto Image = makeMemoryImage(0x4000, Memory);
+        if (!Mask)
+          Image.Segments.clear();
+        NdOpEmulator Emulator(Image);
+        Emulator.setStrictMode(true);
+        Emulator.setLoadCollect(true);
+        Emulator.setRegister(x86reg::RAX,
+                             Address32 ? UINT64_C(0x100004000) : 0x4000);
+        Emulator.setRegister(x86reg::opmaskReg(1), Mask);
+        Emulator.setRegisterBytes(x86reg::vectorReg(2), Left);
+        Emulator.setRegisterBytes(x86reg::vectorReg(0),
+                                  std::vector<uint8_t>(64, 0xcc));
+        ASSERT_EQ(Emulator.run(Ops), Ops.size());
+        EXPECT_FALSE(Emulator.skips().any());
+        EXPECT_EQ(Emulator.getRegisterBytes(x86reg::vectorReg(0)), Expected);
+        if (!Mask)
+          EXPECT_TRUE(Emulator.getLoadRecords().empty());
+      }
+    }
+  }
+}
+
+TEST(X86EVEXMemoryBroadcast, NoIndexAliasesCannotHideMismatchedSibMetadata) {
+  const std::vector<uint8_t> Bytes = {0x62, 0xf1, 0x7e, 0xc9, 0x6f, 0x04, 0xe0};
+  for (x86_reg Index : {X86_REG_EIZ, X86_REG_RCX, X86_REG_R12})
+    expectMutatedLiftFailsClosed(Bytes, [&](cs_insn &, cs_x86 &X86) {
+      X86.sib_index = Index;
+      return true;
+    });
 }
 
 TEST(X86EVEXMemoryBroadcast,
