@@ -1733,6 +1733,63 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, CallResultReturnedNextIsReturnedDirectly) {
+  // Returning a call result from the very next statement moves no
+  // evaluation, so a tail call prints as `return f(x);`. A store between the
+  // call and its return keeps the call at its own statement.
+  auto Int = NdType::makeInt(8, true);
+  auto Pointer = NdType::makePtr(Int);
+  auto Next = native("next_value", Int, {Int});
+  Next.TargetAddress = 0x2000;
+  MedVar Result;
+  Result.Kind = MedVar::Temp;
+  Result.Id = 1;
+  Result.Size = 8;
+  Result.TheArch = Arch::X64;
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Addr = 0x1000;
+  Call.Dst = HighExpr::makeVar(Result, Int);
+  Call.Val = call(Next, Int, {parameter(0, Int)});
+  HighFunc Tail =
+      returning("tail_value", HighExpr::makeVar(Result, Int), {Int});
+  Tail.Entry = 0x1000;
+  Tail.Body.insert(Tail.Body.begin(), Call);
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1104;
+  Store.StoreAddr = parameter(1, Pointer);
+  Store.StoreVal = parameter(0, Int);
+  Call.Addr = 0x1100;
+  HighFunc Stored =
+      returning("stored_value", HighExpr::makeVar(Result, Int), {Int, Pointer});
+  Stored.Entry = 0x1100;
+  Stored.Body.insert(Stored.Body.begin(), {Call, Store});
+  const auto Source = emit({Tail, Stored});
+  const size_t TailAt = Source.find("int64_t tail_value(");
+  const size_t StoredAt = Source.find("int64_t stored_value(");
+  ASSERT_NE(TailAt, std::string::npos) << Source;
+  ASSERT_NE(StoredAt, std::string::npos) << Source;
+  const std::string TailBody = Source.substr(TailAt, StoredAt - TailAt);
+  const std::string StoredBody = Source.substr(StoredAt);
+  EXPECT_NE(TailBody.find("return (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_EQ(TailBody.find("= (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_NE(StoredBody.find("= (int64_t)(next_value("), std::string::npos)
+      << Source;
+  EXPECT_EQ(StoredBody.find("return (int64_t)(next_value("), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+static int64_t cell = 100;
+int64_t next_value(int64_t value) { return value + cell; }
+int main(void) {
+  if (tail_value(1) != 101)
+    return 1;
+  return stored_value(5, &cell) != 105 || cell != 5;
+})");
+}
+
 TEST(HighCSourceCalls, RuntimeImportsDoNotBindToLiftedVeneersWithTheSameName) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto Runtime = native("objc_opt_self", Pointer, {Pointer});

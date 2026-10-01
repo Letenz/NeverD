@@ -19,7 +19,8 @@ struct LLVMInterpreterModelLimits {
   uint64_t MaxInputItems = 65536;
   uint64_t MaxBlocks = 4096;
   uint64_t MaxOperations = 262144;
-  /// Shared traversal, pointer-projection, allocation and emission work.
+  /// Shared traversal, pointer-projection, initialization, allocation and
+  /// emission work.
   uint64_t MaxWork = 1048576;
 };
 
@@ -53,6 +54,10 @@ LowIRIndependenceContract llvmInterpreterMachineStateContract();
 /// restriction even when a later select or dead use could mask poison.
 /// Variable shifts preserve the full unsigned count and guard it against the
 /// source width; no-wrap and exact flags add their own obligations.
+/// An initializes parameter contract is admitted only for in-object byte
+/// ranges that ordinary state stores initialize on every path before reads
+/// and normal returns. Bounded must-dataflow shares pointer projections and
+/// MaxWork; it may conservatively reject path-correlated valid programs.
 /// Division, freeze, undef/poison literals, arbitrary calls,
 /// vector/floating operations and exceptions are currently refused.
 ///

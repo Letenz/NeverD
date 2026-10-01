@@ -66,6 +66,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `NeverDLLVMInterpreterModel` 負責獨立、有界的純量 LLVM 匯入，使用相同原始狀態 ABI。`modelLLVMInterpreterMachineStateX64` 保留真實狀態碼回傳，並產生明確的語義有效性檢查。`llvmInterpreterMachineStateContract` 提供完整觀察項與零監視位元組保持義務；入口域、記憶體及完整證明由呼叫方負責。LLVM 匯入不改變一般提升或原始碼發布，也不證明編譯器。
 
+LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，並在一般純量生成前執行有預算限制的逐位元組必然資料流分析，不引入第二套值求值器。
+
 `NeverDInterpreterLLVMRefinement` 負責組合原生到 LLVM 的證明。它重新建立兩側狀態模型與強制契約，透過權威執行設定產生僅在入口執行的旗標投影，並重新檢查兩個前提。呼叫端可提交迴圈候選方案，但不能替換模型、觀察項或證明憑據。分析模型僅複製可執行圖與宣告入口；入口回邊會遭拒絕，避免重複初始化狀態。
 
 恢復 C API v3 與 CLI 將明確的欄位、細化和求解查詢預算傳入共用特化器。轉接層先檢查結構大小與 reserved 欄位，再讀取擴充；v1/v2 配置和預設值保持穩定。提高預算僅改變允許的工作量，不改變執行契約或結果發布條件。
