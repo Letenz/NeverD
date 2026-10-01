@@ -60,6 +60,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 同一目标中的 `LowIRLoopPlanPairing.*` 检查寄存器重命名、不同算术体、双方独立前缀快照、谓词保留、共享帧输入、嵌套切点覆盖和独立证明预算。缺失关系、错误写入、无效临时值绑定、不完整配对或元数据预算耗尽均不得产生证书。
 
+`LowIRLoopAlignment.*` 使用独立编写的普通和旋转栈帧计数循环：两个默认自关系计划分别证明成功，首次配对失败，另一个候选切点则证明关系成立。回归覆盖多切点排列、错误结果和栈帧写入、缺失或过期的原始记录、显式未定义值 witness、不递减或回绕的计数器、畸形图、失败尝试的累计查询、恰好足够的总预算及搜索限额耗尽。任何拒绝结果都不得包含证书。
+
 `NeverDLowIRRefinementTests` 中的 `InterpreterMachineStateModel.*` 使用独立编写的 LowIR 用例，检查原始入口标志、状态码与客体 RAX 的区分、全部 17 个状态字、部分寄存器分片、打包标志、动态拒绝状态的持续保留、客体栈帧写入、两个分支以及循环推断后的全新证明。错误输出、丢失状态、内存变化、过期指令记录、非法输入和生成预算耗尽必须失败。已有机器状态源码测试还覆盖两条 C 路径的 O0/O2；模型测试本身不证明编译后的 C。
 
 `NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。 变量移位用例覆盖全部四种位宽、经掩码或分支限制的移位量、边界及越界移位量、无回绕与精确标志、严格 poison 拒绝，以及 O1/O2 编译后的 C。
@@ -824,6 +826,12 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
 ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
+
+x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；WHP 和 ARM64 原生工作负载仍缺少独立验证。
+
+共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。活跃扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断；仍需 Windows 原生验证。
+
+`NeverDX64FPTests` 检查全部 79 个启动状态损坏位置，并在原生传输上执行独立汇编的 `X64ProbeCases.def` 指令，验证单一时限及来宾 RAM 不变。`NeverDProjectionCacheTests` 覆盖调用者切换、ISA 顺序、页表根历史、权限/监控变体、映射代次、地址空间身份及失败重建。`NeverDRunControlTests` 中的 `WhpXsaveTests.cpp` 检查新旧 API 数据包、所有 TOP、大小边界和失败时状态不变；内存协议测试不能替代 WHP 原生证据。不可用的原生传输明确跳过。
 
 `NeverDAArch64StateTests` 验证每个标量字段、每个向量的两个字、特权级改变、浮点指令未执行及传输错误诊断的保留。`NeverDAArch64FPTests` 在两种特权级的真实传输上运行 `OriginalProgramChecksCompleteStateAndOneDeadline`，使用独立汇编的 `AArch64ProbeCases.def` 原始指令。测试把这些与 PC 无关的指令迁到客户代码，保持监控页仅供特权级访问。Unicorn 执行和原生后端的明确跳过不能替代 ARM64 原生启动证据。
 

@@ -1,4 +1,5 @@
-//===- X64FPState.def - x87 and FXSAVE64 state layout ----------------------===//
+//===- X64FPState.def - x87 and FXSAVE64 state layout
+//----------------------===//
 //
 // NeverD Decompiler
 //
@@ -43,6 +44,7 @@ NEVERD_X64_FP_VALUE(XsaveBytes, LegacyBytes + XsaveHeaderBytes)
 NEVERD_X64_FP_VALUE(X87Present, 1)
 NEVERD_X64_FP_VALUE(SSEPresent, 2)
 NEVERD_X64_FP_VALUE(FPAndSSE, X87Present | SSEPresent)
+NEVERD_X64_FP_VALUE(OSXsave, 1ULL << 18)
 NEVERD_X64_FP_VALUE(Compacted, 1ULL << 63)
 NEVERD_X64_FP_VALUE(MaxXsaveBytes, 64 * 1024)
 #endif

@@ -141,6 +141,87 @@ void compileAndRun(const std::string &Source,
                     << Source;
 }
 
+TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
+#if defined(__aarch64__) || defined(__arm64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  BinaryImage Image;
+  Image.Arch = Architecture;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const bool Dynamic : {true, false}) {
+    const std::string Import = Dynamic ? "_swift_getDynamicType"
+                                       : "_$ss9_typeName_9qualifiedSSypXp_SbtF";
+    const va_t Slot = Dynamic ? 0x1000 : 0x2000;
+    Image.ImportPtrSlots[Slot] = Import;
+    Image.DyldBindSlots[Slot] = {Import, 0, "/usr/lib/swift/libswiftCore.dylib",
+                                 false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    for (const unsigned Flag : {0U, 1U}) {
+      std::vector<TypeRef> Types{Pointer};
+      std::vector<ExprPtr> Arguments{parameter(0, Pointer)};
+      if (Dynamic) {
+        Types.push_back(Pointer);
+        Arguments.push_back(parameter(1, Pointer));
+      }
+      auto Boolean =
+          HighExpr::makeBinop(NdOp::SUBBYTES, HighExpr::makeConst(Flag, 4),
+                              HighExpr::makeConst(0, 4));
+      Boolean->Type = NdType::makeInt(1, false);
+      Arguments.push_back(Boolean);
+      Functions.push_back(
+          returning(std::string(Dynamic ? "project_type" : "project_name") +
+                        std::to_string(Flag),
+                    call(*Hint, Hint->Signature.ReturnType, Arguments), Types));
+    }
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  EXPECT_EQ(Source.find("swift_context"), std::string::npos);
+  // The independent definitions use actual one-bit prototypes and a mixed
+  // word/pointer Swift record, rather than mirroring our byte/int128 types.
+  const auto Program = Source + R"(
+static unsigned seen, count;
+void *dynamic_oracle(void *, void *, _Bool) __asm__("_swift_getDynamicType");
+void *dynamic_oracle(void *value, void *metadata, _Bool flag) {
+  seen = flag;
+  ++count;
+  return flag ? metadata : value;
+}
+struct StringWords { uint64_t word; void *storage; };
+struct StringWords __attribute__((swiftcall))
+name_oracle(void *, _Bool) __asm__("_$ss9_typeName_9qualifiedSSypXp_SbtF");
+struct StringWords __attribute__((swiftcall))
+name_oracle(void *metadata, _Bool flag) {
+  seen = flag;
+  ++count;
+  return (struct StringWords){ (uint64_t)(uintptr_t)metadata + flag,
+                              (void *)(uintptr_t)(0x778811ULL + flag) };
+}
+int main(void) {
+  void *value = (void *)(uintptr_t)0x123456;
+  void *metadata = (void *)(uintptr_t)0x556677;
+  if (project_type0(value, metadata) != value || seen != 0) return 1;
+  if (project_type1(value, metadata) != metadata || seen != 1) return 2;
+  unsigned __int128 result = project_name0(metadata);
+  if ((uint64_t)result != 0x556677 || (uint64_t)(result >> 64) != 0x778811 ||
+      seen != 0) return 3;
+  result = project_name1(metadata);
+  if ((uint64_t)result != 0x556678 || (uint64_t)(result >> 64) != 0x778812 ||
+      seen != 1 || count != 4) return 4;
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    compileAndRun(Program, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, CFunctionParameterCallPreservesDispatchAndEffects) {
   using namespace c_function_parameter_test;
   Fixture F;

@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDInterpreterSpecialization
   ControlDiscovery.cpp
   LowIRUndefinedIndependence.cpp
   LowIRLoopPlanPairing.cpp
+  LowIRLoopAlignment.cpp
 
   LINK_COMPONENTS
   IR

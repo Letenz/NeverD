@@ -14,7 +14,7 @@
 
 namespace neverd::emulation {
 llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
-  if (!Memory.needsProjection(UserMode))
+  if (!Memory.needsProjection(GuestArchitecture::AArch64, UserMode))
     return llvm::Error::success();
   if (auto E = Memory.validateMappings(aarch64::canonicalRange))
     return E;
@@ -24,6 +24,7 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
                                InstructionBytes);
   static_assert(ProbePC + std::size(probe::Program) * InstructionBytes <=
                 EntryGPA + memory::PageSize);
+  Memory.invalidateProjection();
   std::memset(Memory.data(), 0, memory::ProjectionReserve);
   // This immutable, backend-owned exception gateway never overlaps guest RAM.
   for (uint64_t Offset = 0; Offset < VectorTableSize; Offset += VectorStride)
@@ -90,7 +91,7 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   for (const auto &[VA, Page] : Memory.mappings())
     if (auto E = Map(VA, Page.Physical, Page.Permissions))
       return E;
-  Memory.commitProjection(UserMode);
+  Memory.commitProjection(GuestArchitecture::AArch64, UserMode);
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

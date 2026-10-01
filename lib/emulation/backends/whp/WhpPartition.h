@@ -6,9 +6,11 @@
 #ifndef NEVERD_EMULATION_WHP_PARTITION_H
 #define NEVERD_EMULATION_WHP_PARTITION_H
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/MemoryProjection.h"
 #include "../RunDeadline.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <memory>
 #include <system_error>
@@ -20,12 +22,23 @@
 #endif
 namespace neverd::emulation {
 #define NEVERD_WHP_STRING(Name, Text) constexpr auto Name = Text;
+#define NEVERD_WHP_TEXT(Name, Text) constexpr auto Name = Text;
+#define NEVERD_WHP_VALUE(Name, Value) inline constexpr uint32_t Name = Value;
 #include "WhpProtocol.def"
+#undef NEVERD_WHP_VALUE
+#undef NEVERD_WHP_TEXT
 #undef NEVERD_WHP_STRING
+inline llvm::Error whpError(const char *Text, HRESULT Status) {
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      llvm::formatv(HostFailure, Text, uint32_t(Status)).str());
+}
 struct WhpAPI {
   HMODULE Module = nullptr;
 #define NEVERD_WHP_FUNCTION(Name) decltype(&::Name) Name = nullptr;
+#define NEVERD_WHP_X64_OPTIONAL_FUNCTION(Name) NEVERD_WHP_FUNCTION(Name)
 #include "WhpProtocol.def"
+#undef NEVERD_WHP_X64_OPTIONAL_FUNCTION
 #undef NEVERD_WHP_FUNCTION
   ~WhpAPI() {
     if (Module)
@@ -43,6 +56,10 @@ struct WhpAPI {
                                    BackendAvailability::HostAPI);
 #include "WhpProtocol.def"
 #undef NEVERD_WHP_FUNCTION
+#define NEVERD_WHP_X64_OPTIONAL_FUNCTION(Name)                                 \
+  Name = reinterpret_cast<decltype(Name)>(GetProcAddress(Module, #Name));
+#include "WhpProtocol.def"
+#undef NEVERD_WHP_X64_OPTIONAL_FUNCTION
     return llvm::Error::success();
   }
 };
@@ -63,6 +80,21 @@ public:
     Watchdog.reset();
     if (Partition)
       API.WHvDeletePartition(Partition);
+  }
+  llvm::Error mapMemory(const MemoryProjection &Memory) {
+    for (const auto &Mapping : Memory.registrations()) {
+      const auto Status = API.WHvMapGpaRange(
+          Partition, Mapping.Backing, Mapping.Physical, Mapping.Size,
+          WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
+              WHvMapGpaRangeFlagExecute);
+      if (FAILED(Status))
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            llvm::formatv(MapFailure, diagnostic::WhpMap, uint32_t(Status),
+                          Mapping.Physical, Mapping.Size)
+                .str());
+    }
+    return llvm::Error::success();
   }
   llvm::Error initializeRunControl() {
     try {

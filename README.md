@@ -106,7 +106,7 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 
 `checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
 
-Native ARM64 initialization rejects incorrect complete-state transfers or FP/SIMD results through a private startup probe; its success covers this bounded initialization program.
+Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native WHP/ARM64 workload evidence remains incomplete.
 
 <!-- i18n-section: how-it-works -->
 

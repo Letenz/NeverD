@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
+<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
 
 <div align="center">
 
@@ -106,7 +106,7 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 
 `checked-aarch64-v1` et `checked-user-aarch64-v1` fournissent FP32/FP64 et SIMD fixes bornés, avec état FPCR/FPSR/vectoriel complet. Les hôtes Linux ARM64 correspondants utilisent KVM, Windows ARM64 utilise WHP et une autre ISA utilise Unicorn. Les preuves natives ARM64 restent attendues ; les pilotes Windows sont chargés uniquement en x64.
 
-L’initialisation ARM64 native rejette les transferts d’état complet ou résultats FP/SIMD incorrects grâce à une sonde privée ; son succès ne couvre que ce programme d’initialisation borné.
+Les sondes natives x64 et ARM64 valident une exécution complète bornée sous bail mémoire exclusif. Les paquets XSAVE et les caches de tables identifiés par ISA ont une autorité unique ; les preuves des charges natives WHP/ARM64 restent incomplètes.
 
 <!-- i18n-section: how-it-works -->
 

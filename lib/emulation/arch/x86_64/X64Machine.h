@@ -30,7 +30,6 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 } // namespace x64
 class MemoryProjection;
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            uint64_t PreviousRoot,
                                             bool UserMode = false,
                                             bool ExceptionMonitor = false);
 struct X64MachineState {
@@ -41,6 +40,7 @@ struct X64MachineState {
   uint32_t MXCSR = x64::InitialMXCSR;
   X64FPState FP;
   std::array<ExecutionBackend::XmmValue, x64::XmmCount> Xmm{};
+  bool operator==(const X64MachineState &) const = default;
   uint64_t &reg(X64Register R) { return Registers[unsigned(R)]; }
   uint64_t reg(X64Register R) const { return Registers[unsigned(R)]; }
 };

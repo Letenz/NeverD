@@ -62,6 +62,8 @@ build-release/bin/NeverDX86LogicIdentityTests
 
 같은 대상의 `LowIRLoopPlanPairing.*`는 레지스터 이름 변경, 서로 다른 산술 본문, 각 측의 접두 스냅샷, 술어 보존, 공유 프레임 입력, 중첩 절단점 포괄 및 독립적인 증명 예산을 검사합니다. 관계 누락, 잘못된 쓰기, 잘못된 임시 값 바인딩, 불완전한 대응 또는 메타데이터 한도 초과 시 인증서를 생성해서는 안 됩니다.
 
+`LowIRLoopAlignment.*`는 독립적으로 작성한 일반 및 회전형 프레임 카운터 루프를 검사합니다. 두 기본 자기 관계 계획은 각각 증명되지만 첫 짝짓기는 실패하고 다른 후보 절단점에서 관계가 증명됩니다. 여러 절단점의 순열, 잘못된 결과와 프레임 쓰기, 누락되거나 오래된 원본 기록, 명시적 미정의 값 witness, 감소하지 않거나 래핑되는 카운터, 잘못된 그래프, 실패 시도의 누적 쿼리, 정확히 충분한 총예산과 탐색 한도 소진을 회귀 검사합니다. 거부 결과에는 인증서가 없어야 합니다.
+
 `NeverDLowIRRefinementTests`의 `InterpreterMachineStateModel.*`는 독립적인 LowIR 예제로 원시 진입 플래그, 상태와 게스트 RAX의 구분, 17개 상태 워드 전체, 부분 레지스터, 플래그 패킹, 동적 거부 상태의 유지, 게스트 프레임 쓰기, 양쪽 분기와 순환 추론 후의 새 증명을 검사합니다. 잘못된 출력, 누락된 상태, 메모리 변경, 오래된 명령 기록, 잘못된 입력, 생성 예산 소진은 실패해야 합니다. 기존 머신 소스 테스트는 두 C 경로를 O0/O2에서 실행하며 모델 테스트만으로 컴파일된 C를 인증하지 않습니다.
 
 `NeverDLLVMInterpreterModelTests`는 독립 LLVM을 전체 상태 LowIR 기준과 비교하여 비트 폭, 병렬 PHI, switch, 게스트 메모리, 별도 상태, poison 조건, 내장 함수 범위, 거부 계약과 네 가지 구성 예산을 검사합니다. 임의 워드 카운트다운의 완전한 증명을 검사하고 변조된 상태를 거부합니다. 독립 C의 O1/O2 컴파일 결과도 같은 관찰 계약을 만족해야 합니다. 지원 모델을 검증하는 테스트이며 자동 불변식 발견과 컴파일러 정확성은 별도 의무입니다. 가변 시프트 사례는 네 가지 비트 폭, 마스크나 분기로 제한한 시프트 양, 경계값과 범위 초과 값, 오버플로 금지 및 정확성 플래그, 엄격한 poison 거부, O1/O2로 컴파일한 C를 검증합니다.
@@ -884,6 +886,12 @@ KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드�
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
 ARM64 KVM/WHP 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 성공은 이 제한된 초기화 프로그램만 검증하며 독립적인 native ARM64 워크로드 검증은 아직 필요합니다.
+
+x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 증명하며, WHP와 ARM64의 독립적인 네이티브 작업 검증은 아직 남아 있습니다.
+
+공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 활성 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
+
+`NeverDX64FPTests`는 전체 79개 시작 상태 손상 위치와 독립적으로 어셈블한 `X64ProbeCases.def`의 네이티브 실행, 단일 기한 및 게스트 RAM 보존을 검사합니다. `NeverDProjectionCacheTests`는 호출자 변경, ISA 순서, 루트 이력, 권한/모니터 구성, 매핑 세대, 주소 공간 식별 및 재구축 실패를 검사합니다. `NeverDRunControlTests`의 `WhpXsaveTests.cpp`는 새 API와 이전 API 패킷, 모든 TOP, 크기 범위 및 실패 시 상태 보존을 검사합니다. 이 메모리 프로토콜 테스트는 네이티브 WHP 증거를 대체하지 않으며 사용 불가능한 네이티브 전송은 명시적으로 건너뜁니다.
 
 `NeverDAArch64StateTests`는 모든 스칼라 필드와 벡터의 두 워드 손상, 권한 변경, 부동소수점 미실행 및 전송 오류 진단 보존을 검사합니다. `NeverDAArch64FPTests`의 `OriginalProgramChecksCompleteStateAndOneDeadline`은 독립적으로 어셈블한 `AArch64ProbeCases.def` 명령을 실제 전송에서 두 권한으로 실행합니다. 테스트는 PC와 무관한 명령을 게스트 코드로 옮기며 모니터 페이지의 사용자 접근을 허용하지 않습니다. Unicorn 실행과 명시적 native 건너뛰기는 native ARM64 시작 증거를 대신하지 않습니다.
 

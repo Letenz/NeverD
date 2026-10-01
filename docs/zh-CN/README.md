@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 62a52f8c335f25f75bf285bd21350fb9d787a00b7b9a357f399c3df72c4c52cc -->
+<!-- i18n-source: ba45e84c6bb16ec98a28b56b663922e4996ee0cc4034936502190dc372aa3c52 -->
 
 [← NeverD 项目](project.md)
 
@@ -42,3 +42,5 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 | [Solana SBF 反编译](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 输出、验证与已知限制 |
 | [路线图](roadmap.md) | 状态：原生格式、EVM 与 Solana SBF 均已实现 |
 | 本地化文档 | 使用上方语言链接打开各语言的文档索引和项目概览 |
+
+x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理；WHP/ARM64 原生工作负载证据仍未完整。

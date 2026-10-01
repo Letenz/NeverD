@@ -56,6 +56,7 @@ inline bool isSwiftBooleanSourceBinding(const SourceCallTypeHint &Binding) {
          !Binding.RuntimeObjCResultType && Binding.Selector.empty() &&
          Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
          Binding.BorrowedByteInputs.empty() &&
+         Binding.CanonicalBooleanInputs.empty() &&
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
          !Binding.Receiver && !Binding.SelectorResultUse &&

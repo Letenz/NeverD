@@ -14,12 +14,12 @@
 
 namespace neverd::emulation {
 llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            uint64_t PreviousRoot,
                                             bool UserMode,
                                             bool ExceptionMonitor) {
   const uint64_t Variant =
       ExceptionMonitor ? x64::gateway::ProjectionVariant : 0;
-  if (!Memory.needsProjection(UserMode, Variant))
+  const uint64_t PreviousRoot = Memory.projectionRoot(GuestArchitecture::X64);
+  if (!Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant))
     return PreviousRoot;
   if (auto E = Memory.validateMappings(x64::canonicalRange, !UserMode))
     return E;
@@ -29,6 +29,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
   const uint64_t Root = PreviousRoot == x64::FirstTableRoot
                             ? x64::SecondTableRoot
                             : x64::FirstTableRoot;
+  Memory.invalidateProjection();
   std::memset(Memory.data(), 0, x64::TableReserve);
   uint64_t Next = x64::FirstChildTable;
   auto MapPage = [&](uint64_t VA, uint64_t Entry) -> llvm::Error {
@@ -85,7 +86,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
         return E;
     }
   }
-  Memory.commitProjection(UserMode, Variant);
+  Memory.commitProjection(GuestArchitecture::X64, UserMode, Variant, Root);
   return Root;
 }
 } // namespace neverd::emulation

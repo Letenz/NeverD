@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 3dda6606f79406344caf7c0a8b88918596c20a0172ddd522969c3ea6ed4b2dfb -->
+<!-- i18n-source: a1979a40032229e9924802a8cf3000a257b33223441d3c00bc1b2dce64bb44eb -->
 
 <div align="center" dir="rtl">
 
@@ -105,7 +105,7 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 
 يوفر `checked-aarch64-v1` و`checked-user-aarch64-v1` مجموعة محدودة من ARM64 FP32/FP64 وSIMD ثابت العرض وحالة FPCR/FPSR والمتجهات الكاملة. يستخدم Linux ARM64 المطابق KVM، ويستخدم Windows ARM64 المطابق WHP، وتستخدم ISA المختلفة Unicorn. ما زال التحقق الأصلي ARM64 مطلوباً؛ ويظل تحميل برامج تشغيل Windows مقتصراً على x64.
 
-ترفض تهيئة ARM64 الأصلية نقل الحالة الكاملة أو نتائج FP/SIMD غير الصحيحة بفحص بدء خاص؛ ولا يثبت النجاح إلا برنامج التهيئة المحدود هذا.
+تتحقق اختبارات البدء الأصلية لـx64 وARM64 من تنفيذ الحالة الكاملة المحدود مع حق حصري للذاكرة. تملك حزم XSAVE وجداول التخزين المؤقت المرتبطة بـISA جهة مرجعية واحدة؛ وأدلة أحمال WHP/ARM64 الأصلية لا تزال غير مكتملة.
 
 <!-- i18n-section: how-it-works -->
 
