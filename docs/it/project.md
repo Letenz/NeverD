@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ba7ba93aa3ef0ffbe4dfbf3606b07a2cbd2ae026ada2729fe9c43bf802fc973 -->
+<!-- i18n-source: 4ce947288c7a66f79f75d1ad1e87f4f9f92f0802a5bc7b403db8d21d5c53d16e -->
 
 <div align="center">
 
@@ -108,7 +108,7 @@ Il recupero dipende dai modelli di codice supportati; per copertura e limiti con
 
 L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. La CI nativa Windows x64 verifica senza Unicorn i casi WHP dichiarati per CPU, stato e memoria e i risultati attesi dei driver integrati ([`e7f205ab`](https://github.com/NeverSight/NeverD/actions/runs/36894495012)). Mancano prove native ARM64; non è stabilita la compatibilità universale dei driver o Android/Darwin.
+`driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. La CI nativa Windows x64 con Unicorn disattivato supera tutti i 273 controlli obbligatori: 45 controlli CPU, 224 risultati di driver da 26 immagini integrate, 46 immagini WDK e 40 casi di scenario alle basi preferite e rilocate, più quattro controlli dei limiti SEH ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). Mancano prove native ARM64; non è stabilita la compatibilità universale dei driver o Android/Darwin.
 
 `checked-aarch64-v1` e `checked-user-aarch64-v1` offrono ARM64 FP32/FP64 e SIMD fissi limitati, con stato FPCR/FPSR/vettoriale completo. Linux ARM64 corrispondente usa KVM, Windows ARM64 usa WHP e ISA diverse usano Unicorn. Le prove native ARM64 restano pendenti; il caricamento di driver Windows resta x64.
 

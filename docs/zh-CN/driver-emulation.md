@@ -8,7 +8,9 @@ NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动 PE 入口，并
 
 ## 执行后端
 
-`driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在不启用 Unicorn 的配置下验证已声明的 WHP CPU、状态、内存用例及内置驱动预期结果 ([`e7f205ab`](https://github.com/NeverSight/NeverD/actions/runs/36894495012)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+`driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在关闭 Unicorn 的配置下通过全部 273 项必跑检查：45 项 CPU 检查、26 个内置映像与 46 个 WDK 映像及 40 个场景组合在首选和重定位地址产生的 224 项驱动结果，以及 4 项 SEH 边界检查 ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+
+上面的原生验证覆盖已声明的驱动入口和已发布场景。下文的逐功能回归以及 C API／CLI／Python 检查，除非明确记录了 Windows 执行结果，其证据范围仍限于 Linux；原生样例集通过不代表每一种测试变体都已在 Windows 验证。
 
 `DriverImage.def` 集中声明严格 PE 校验的大小、对齐限制及诊断文本；指针宽度来自 `DriverProfile.def`。`DriverImage.cpp` 负责校验与重定位，可接受的映像和错误消息保持不变。
 

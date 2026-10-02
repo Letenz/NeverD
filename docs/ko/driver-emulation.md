@@ -8,7 +8,9 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 ## 실행 백엔드
 
-`driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn 없이 선언된 WHP CPU·상태·메모리 테스트와 내장 드라이버의 예상 결과를 검증합니다 ([`e7f205ab`](https://github.com/NeverSight/NeverD/actions/runs/36894495012)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
+`driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn을 비활성화하고 필수 검사 273개를 모두 통과합니다. CPU 검사 45개, 내장 이미지 26개·WDK 이미지 46개·시나리오 사례 40개를 기본 및 재배치 주소에서 실행한 드라이버 결과 224개, SEH 경계 검사 4개를 포함합니다 ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
+
+위 네이티브 검증은 선언된 드라이버 진입점과 공개된 시나리오를 다룹니다. 아래의 기능별 회귀 테스트와 C API／CLI／Python 검사는 Windows 실행 결과가 명시된 경우 외에는 근거 범위가 Linux로 제한됩니다. 네이티브 사례 모음의 통과가 모든 테스트 변형의 Windows 검증을 뜻하지는 않습니다.
 
 `DriverImage.def`는 엄격한 PE 검증의 크기·정렬 제한과 진단 문구를 선언하며, 포인터 너비는 `DriverProfile.def`에서 가져옵니다. `DriverImage.cpp`가 검증과 재배치를 담당하며 허용되는 이미지와 오류 메시지는 바뀌지 않습니다.
 

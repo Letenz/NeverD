@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 6ba7ba93aa3ef0ffbe4dfbf3606b07a2cbd2ae026ada2729fe9c43bf802fc973 -->
+<!-- i18n-source: 4ce947288c7a66f79f75d1ad1e87f4f9f92f0802a5bc7b403db8d21d5c53d16e -->
 
 <div align="center">
 
@@ -109,7 +109,7 @@ Die Rekonstruktion hängt von unterstützten Codemustern ab; Umfang und Grenzen 
 
 Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Gast-OS-Richtlinien. `NEVERD_ENABLE_CPU_EMULATION` aktiviert die x64/ARM64-CPU-Schicht; `NEVERD_ENABLE_DRIVER_EMULATION` ergänzt die begrenzte x64-Windows-WDM/KMDF-Umgebung. `linux-elf64-v1` führt unterstützte Linux-ELF-Prozesse aus. Siehe [CPU-Ausführung](cpu-execution.md), [Gastprozess-Emulation](process-emulation.md) und [Emulation von Windows-Treibern](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Die native Windows-x64-CI prüft ohne Unicorn die deklarierten WHP-Fälle für CPU, Zustand und Speicher sowie die erwarteten Ergebnisse der eingebauten Treiber ([`e7f205ab`](https://github.com/NeverSight/NeverD/actions/runs/36894495012)). Native ARM64-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
+`driver-strict` / `checked-x64-v1` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Die native Windows-x64-CI besteht bei deaktiviertem Unicorn alle 273 Pflichtprüfungen: 45 CPU-Prüfungen, 224 Treiberergebnisse aus 26 eingebauten Images, 46 WDK-Images und 40 Szenariofällen an bevorzugten und verschobenen Adressen sowie vier SEH-Grenzprüfungen ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). Native ARM64-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
 
 `checked-aarch64-v1` und `checked-user-aarch64-v1` bieten begrenztes ARM64 FP32/FP64, SIMD fester Breite und vollständigen FPCR/FPSR/Vektorzustand. Passende Linux-ARM64-Hosts verwenden KVM, Windows ARM64 WHP und andere ISAs Unicorn. Native ARM64-Laufzeitnachweise fehlen weiterhin; Windows-Treiberladen bleibt auf x64 begrenzt.
 

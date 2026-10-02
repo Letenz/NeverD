@@ -3597,7 +3597,7 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Native Windows x64 CI verifies the declared WHP CPU/state/memory cases and built-in driver outcomes without Unicorn. Verified at e7f205ab4ecb5a91646e8ea9ee8dd6b74ecb230a (GitHub Actions 36894495012); this is the earlier 97-outcome gate, not expanded-corpus acceptance.",
+        "Native Windows x64 CI with Unicorn disabled passes all 273 required checks: 45 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 66dc8db6e5ab5532eb177761e2d035cb2f89c486 (GitHub Actions 36958215402), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "Native `FOP/FIP/FDP` follow the host\u2019s x87 save/restore rules. AMD may clear these fields without a pending unmasked exception; snapshots retain observed values. `X64MachineProbe.def` and exact NOP/context tests seed a coherent pending exception so every field remains valid and is compared without masking. The host-process FXRSTOR64/FXSAVE64 oracle checks both states; backends never substitute input metadata for host results.",
         "`X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.",
         "The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller\u2019s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.",
@@ -4845,7 +4845,7 @@
         "docs/examples/driver-kmdf-usb-pofx-scenario.json"
       ],
       "limitations": [
-        "Native Windows x64 CI verifies the declared WHP CPU/state/memory cases and built-in driver outcomes without Unicorn. Verified at e7f205ab4ecb5a91646e8ea9ee8dd6b74ecb230a (GitHub Actions 36894495012); this is the earlier 97-outcome gate, not expanded-corpus acceptance.",
+        "Native Windows x64 CI with Unicorn disabled passes all 273 required checks: 45 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 66dc8db6e5ab5532eb177761e2d035cb2f89c486 (GitHub Actions 36958215402), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.",
         "Independent MDL pages support MmAllocatePagesForMdl/Ex, MmFreePagesFromMdl and MmProtectMdlSystemAddress over the bounded physical arena. Range/chunk constraints, cache identity, partial ownership, user/system aliases and release dependencies share existing physical-page authority. KernelMode pool locks make precisely pinned paged memory resident; backend page permissions remain authoritative for all mapping views.",
         "Message interrupt assignments preserve explicit per-message addresses/data/vectors/levels/affinity/polarity. PDO-wide message registration exposes real read-only interrupt tables and independent or unified synchronization. Passive ISR waits retain ownership, serialize repeated arrivals and allow independent frames and DPCs to progress; occurrence and delivery timestamps remain distinct.",
@@ -4997,7 +4997,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSCookieIsCheckedDuringSearchAndTargetUnwind",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5006,7 +5007,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSAlignedSlotUsesOriginalFramePointerForEncoding",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5015,7 +5017,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSRejectsTruncatedOrMalformedCookieBeforeStackReads",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5024,7 +5027,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSBoundsDoNotPermitReadsOutsideCurrentStack",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5033,7 +5037,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSRejectsNonzeroUpperCookieBitsEvenWhenValuesMatch",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5042,7 +5047,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSSignedSlotArithmeticCannotWrapIntoTheStack",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5051,7 +5057,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSRequiresAnExplicitImageCookieReader",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5060,7 +5067,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSRechecksMutationByFilterBeforeTransferringControl",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5069,7 +5077,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSChecksBeforeFinallyAndAgainInEachOuterFrame",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5078,7 +5087,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSLanguageFlagsDoNotDisableTheCookieCheck",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5087,7 +5097,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSUnwindOnlyWrapperDoesNotCheckCookieDuringSearch",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5096,7 +5107,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.GSPrologueAndEpilogueDoNotReadUnestablishedCookie",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -5141,7 +5153,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.EpilogueRestoresOnlyInstructionsAfterControlPC",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8435,7 +8448,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.HelpersRestoreSavedNonvolatileRegisters",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8444,7 +8458,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.FramePointerRestoresDynamicStackAndCallerFrame",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8453,7 +8468,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.EqualGuardedRangesRetainNativeTableOrder",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8462,7 +8478,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.RebasingDoesNotRewritePreferredMetadata",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8471,7 +8488,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.ActiveFiltersAndFinallyNeverFallThrough",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8480,7 +8498,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.LateReadFailureLeavesEveryRegisterUnchanged",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8489,7 +8508,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.StackBoundsAreCheckedBeforeAnyBackingRead",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -8498,7 +8518,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.MissingPartialDirectoryIsNotTreatedAsALeaf",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10284,7 +10305,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.StandaloneGSChecksWithoutInventingLanguageScopes",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10293,7 +10315,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.StandaloneGSUnwindOnlyChecksAfterOuterFilterSelection",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10302,7 +10325,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.StandaloneGSRejectsMissingCookieAndExtraLanguageTables",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10711,7 +10735,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.ScopeEndLabelMayOverlapTheHandlerLandingPad",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10720,7 +10745,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10729,7 +10755,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         {
@@ -10738,7 +10765,8 @@
           "source": "unittests/emulation/KernelSEHTests.cpp",
           "filter": "DriverKernelSEH.FinallyRespectsRawScopeEndAtHandlerTarget",
           "platforms": [
-            "linux"
+            "linux",
+            "windows"
           ]
         }
       ],
