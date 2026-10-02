@@ -84,7 +84,7 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
-私有分配支持 `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE` 和 `MEM_TOP_DOWN`，预留按 64 KiB 对齐，页面大小为 4 KiB。仅预留不消耗来宾 RAM。重复提交保留数据并更新权限，解除提交归还独立页面的存储。完整范围校验和分阶段分配避免普通分配或权限失败留下部分修改。查询返回 48 字节的 x64/ARM64 内存信息结构，并仅在同一次分配内向后合并。初始映像、环境、堆区域、API 入口和栈边界均参与地址分配；栈的分配标识与 TEB 一致。权限修改后的输出复制失败，与修改前失败分别处理。
+私有分配支持 `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE` 和 `MEM_TOP_DOWN`，预留按 64 KiB 对齐，页面大小为 4 KiB。仅预留不消耗来宾 RAM。重复提交保留数据并更新权限，解除提交归还独立页面的存储。完整范围校验和分阶段分配避免普通分配或权限失败留下部分修改。查询返回 48 字节的 x64/ARM64 内存信息结构，并仅在同一次分配内向后合并。初始映像、环境、堆区域、API 入口和栈边界均参与地址分配；栈的分配标识与 TEB 一致。如果成功的 `VirtualProtect` 将旧权限的输出地址改成只读，新权限仍生效，输出内容保持不变，调用仍返回成功。 对未完整提交范围的权限修改失败时，返回 `ERROR_INVALID_ADDRESS`，旧权限输出写为 `PAGE_NOACCESS`，各页权限保持不变。
 
 支持的权限为 `PAGE_NOACCESS`、`PAGE_READONLY`、`PAGE_READWRITE`、`PAGE_EXECUTE_READ` 和 `PAGE_EXECUTE_READWRITE`。保护页、仅执行及写时复制策略、缓存修饰符、大页、reset/write-watch/占位区域及修改模型拥有的运行时映射仍明确拒绝。仅私有虚拟分配可解除提交或释放。本项不增加用户态异常派发能力，也不构成 ARM64 硬件原生执行证据。
 

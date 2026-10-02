@@ -283,7 +283,7 @@ VirtualMemory::protect(uint64_t Address, uint64_t Size, uint32_t Protection) {
   if (!Mapped)
     return Mapped.takeError();
   if (!*Mapped)
-    return rejected(ErrorInvalidAddress);
+    return MemoryResult{PageNoAccess, ErrorInvalidAddress};
   auto Old = query(Address);
   if (!Old)
     return Old.takeError();
@@ -408,9 +408,7 @@ Services::memory(const Service &S, const NativeCallEvent &Event) {
     return V.takeError();
   if (V->Unsupported)
     return unsupported(S);
-  if (V->Error)
-    return WinError(V->Error);
-  if (S.Kind == API::VirtualProtect) {
+  if (S.Kind == API::VirtualProtect && V->Value) {
     auto Writable = access(A[3], DWordSize, Write);
     if (!Writable)
       return Writable.takeError();
@@ -419,8 +417,11 @@ Services::memory(const Service &S, const NativeCallEvent &Event) {
     if (*Writable)
       if (auto E = CPU.writeInteger(A[3], V->Value, DWordSize))
         return std::move(E);
-    return std::optional<uint64_t>(1);
   }
+  if (V->Error)
+    return WinError(V->Error);
+  if (S.Kind == API::VirtualProtect)
+    return std::optional<uint64_t>(1);
   return std::optional<uint64_t>(V->Value);
 }
 } // namespace neverd::emulation::windows_process

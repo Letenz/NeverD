@@ -57,7 +57,11 @@ static void memoryLifecycle(void) {
   SetLastError(LastErrorSeed);
   VM_CHECK(!VirtualProtect(Base, 3 * VMPage, VMReadWrite, &Old));
   VM_CHECK(GetLastError() == VMInvalidAddress);
-  if (Old != LastErrorSeed) {
+  VM_CHECK(Old == VMNoAccess);
+  Old = LastErrorSeed;
+  VM_CHECK(!VirtualProtect(Base + VMPage, 2 * VMPage, VMReadWrite, &Old));
+  VM_CHECK(GetLastError() == VMInvalidAddress);
+  if (Old != VMNoAccess) {
     DWORD Written;
     WriteFile(GetStdHandle(StderrSelector), &Old, sizeof(Old), &Written, 0);
     VM_CHECK(0);

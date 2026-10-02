@@ -35,7 +35,8 @@ public:
                                         uint32_t Type, uint32_t Protection);
   llvm::Expected<MemoryResult> free(uint64_t Address, uint64_t Size,
                                     uint32_t Type);
-  /// Success returns the original protection of the first page.
+  /// Value is the old-protection output, including PAGE_NOACCESS for an
+  /// uncommitted-range failure. Zero means the output must stay unchanged.
   llvm::Expected<MemoryResult> protect(uint64_t Address, uint64_t Size,
                                        uint32_t Protection);
   llvm::Expected<std::optional<MemoryInformation>> query(uint64_t Address);
