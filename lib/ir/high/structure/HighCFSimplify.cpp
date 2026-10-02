@@ -1105,6 +1105,56 @@ static bool endsItsBlock(const HighStmt &S) {
 
 bool highStmtEndsItsBlock(const HighStmt &S) { return endsItsBlock(S); }
 
+/// True when \p Stmts holds a `break` that leaves the switch around them: one
+/// outside every nested loop and switch.
+static bool hasSwitchBreak(const std::vector<HighStmt> &Stmts) {
+  for (const HighStmt &S : Stmts) {
+    if (S.Kind == StmtKind::Break)
+      return true;
+    if (S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For || S.Kind == StmtKind::Switch)
+      continue;
+    if (hasSwitchBreak(S.Body) || hasSwitchBreak(S.ElseBody))
+      return true;
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      if (hasSwitchBreak(ClauseBody))
+        return true;
+  }
+  return false;
+}
+
+static bool armNeverFallsOut(const std::vector<HighStmt> &Arm);
+
+/// True when control never runs from \p S into the statement after it: it
+/// ends its block, leaves for an enclosing loop or switch, or is an if/else,
+/// block or switch whose every way out does.  A switch also needs a default
+/// and no case that breaks out of it.
+static bool stmtNeverFallsOut(const HighStmt &S) {
+  if (S.Kind == StmtKind::Break || S.Kind == StmtKind::Continue ||
+      endsItsBlock(S))
+    return true;
+  if (S.Kind == StmtKind::IfElse)
+    return armNeverFallsOut(S.Body) && armNeverFallsOut(S.ElseBody);
+  if (S.Kind == StmtKind::Block)
+    return armNeverFallsOut(S.Body);
+  if (S.Kind != StmtKind::Switch || S.DefaultBody.empty() ||
+      !armNeverFallsOut(S.DefaultBody) || hasSwitchBreak(S.DefaultBody))
+    return false;
+  return std::all_of(S.Cases.begin(), S.Cases.end(), [](const SwitchCase &C) {
+    return C.FallsThrough ||
+           (armNeverFallsOut(C.Body) && !hasSwitchBreak(C.Body));
+  });
+}
+
+static bool armNeverFallsOut(const std::vector<HighStmt> &Arm) {
+  // An empty statement with an address may be a label a jump reaches, and
+  // then the arm runs past its end.
+  auto Last = std::find_if(Arm.rbegin(), Arm.rend(), [](const HighStmt &T) {
+    return !isEmptyAnchor(T) || (T.Addr != 0 && T.Addr != InvalidVA);
+  });
+  return Last != Arm.rend() && stmtNeverFallsOut(*Last);
+}
+
 /// Two statement lists of assignments, stores, returns and gotos that do the
 /// same thing and contain no entered label.
 static bool sameStraightLineBody(const std::vector<HighStmt> &A,
@@ -1741,6 +1791,50 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
         }
       };
   auto Entered = [&](va_t Addr) { return Labels.entered().count(Addr) != 0; };
+  // `if (c) { A } S...` ending a list, where A never falls out and jumps to
+  // what follows the list, \p After: S runs only when c fails, so it becomes
+  // the else.  A's jumps to After then leave the if/else for what follows it,
+  // and a switch case among them breaks.  Nothing may enter S.
+  auto MoveRestToElse = [&](std::vector<HighStmt> &L, size_t K,
+                            const std::set<va_t> &After) {
+    HighStmt &If = L[K];
+    if (If.Kind != StmtKind::If || !If.Cond || !If.ElseBody.empty() ||
+        After.empty() || K + 1 >= L.size() ||
+        std::all_of(L.begin() + K + 1, L.end(), isEmptyAnchor) ||
+        !armNeverFallsOut(If.Body))
+      return;
+    bool LeavesForAfter = false;
+    walkStmts(If.Body, [&](const HighStmt &S) {
+      LeavesForAfter |= S.Kind == StmtKind::Goto && After.count(S.GotoTarget);
+    });
+    if (!LeavesForAfter)
+      return;
+    for (size_t M = K + 1; M < L.size(); ++M)
+      if (anyAddressEntered(L[M], Entered))
+        return;
+    If.Kind = StmtKind::IfElse;
+    If.ElseBody.assign(std::make_move_iterator(L.begin() + K + 1),
+                       std::make_move_iterator(L.end()));
+    L.erase(L.begin() + K + 1, L.end());
+    // A trailing jump of the then arm now names what follows the if/else.
+    std::function<void(std::vector<HighStmt> &)> TrimTail =
+        [&](std::vector<HighStmt> &Arm) {
+          if (Arm.empty())
+            return;
+          HighStmt &Last = Arm.back();
+          if (Last.Kind == StmtKind::Goto && After.count(Last.GotoTarget) &&
+              !Entered(Last.Addr))
+            Arm.pop_back();
+          else if (Last.Kind == StmtKind::IfElse) {
+            TrimTail(Last.Body);
+            TrimTail(Last.ElseBody);
+          } else if (Last.Kind == StmtKind::Block) {
+            TrimTail(Last.Body);
+          }
+        };
+    TrimTail(If.Body);
+    Changed = true;
+  };
   // `while (1) { ..break..; goto X; } P...; X:` where nothing enters P: P
   // runs only after the break, so it can run at the break instead, leaving X
   // as what follows the loop. X may also be what follows the list, \p After,
@@ -1878,6 +1972,7 @@ bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   std::function<void(std::vector<HighStmt> &, const std::set<va_t> &)> Visit =
       [&](std::vector<HighStmt> &L, const std::set<va_t> &After) {
         for (size_t K = 0; K < L.size(); ++K) {
+          MoveRestToElse(L, K, After);
           MoveFollowToBreak(L, K, After);
           MoveFollowToFallOut(L, K, After);
           HighStmt &S = L[K];

@@ -6650,6 +6650,47 @@ TEST(HighControlFlowSemantics, CaseRegionHoldingATryMovesIntoItsCase) {
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X == 1 ? 3 : 8));
 }
 
+TEST(HighControlFlowSemantics, ArmThatAlwaysLeavesForTheFollowTakesTheRest) {
+  // v = 9; if (x) { v = 0;
+  //   if (x & 2) { switch (x) { case 3: v = 1; goto L; default: goto L; } }
+  //   v = 2; }
+  // L: return v;  -- the switch leaves only for L, so `v = 2` runs only when
+  // `x & 2` fails: it becomes the else, and the jumps to L become breaks.
+  HighStmt Dispatch;
+  Dispatch.Kind = StmtKind::Switch;
+  Dispatch.Addr = 0x1010;
+  Dispatch.SwitchExpr = local(0);
+  SwitchCase Three;
+  Three.Value = 3;
+  Three.Body = {assign(0x1014, 1, 1), jump(0x1018, 0x1040)};
+  Dispatch.Cases = {Three};
+  Dispatch.DefaultBody = {jump(0x101c, 0x1040)};
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1008;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+  Inner.Body = {Dispatch};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1000;
+  Outer.Cond = local(0);
+  Outer.Body = {assign(0x1004, 1, 0), Inner, assign(0x1020, 1, 2)};
+  HighFunc F;
+  F.Body = {assign(0x0ff8, 1, 9), Outer, result(0x1040, local(1))};
+  const uint64_t Inputs[] = {0, 1, 2, 3, 6};
+  const uint64_t Results[] = {9, 2, 0, 1, 0};
+  for (size_t I = 0; I < 5; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  for (int Round = 0; Round < 4 && breakToTheLoopFollow(F.Body); ++Round)
+    ;
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  ASSERT_EQ(F.Body[1].Body.size(), 2u);
+  EXPECT_EQ(F.Body[1].Body[1].Kind, StmtKind::IfElse);
+  for (size_t I = 0; I < 5; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.
