@@ -1470,6 +1470,21 @@ if(UNIX AND NOT APPLE)
   endforeach()
 endif()
 
+# Exact overlapping byte accesses before ordinary scalar promotion.
+add_neverd_unittest(NeverDByteMemoryForwardingTests
+  pipeline/ByteMemoryForwardingTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+target_include_directories(NeverDByteMemoryForwardingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDByteMemoryForwardingTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  )
+endif()
+
 # Guards the obfuscate-then-patch barrier in isolation.  A tiny TU that links
 # the prebuilt NeverDPipeline archive (which carries SymSimplifyPass through its
 # PassIR component), so the stamp/skip contract can be pinned without rebuilding
