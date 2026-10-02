@@ -39,10 +39,12 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.changes = {}
         self.status = 0
         self.executions = []
+        self.test_environment = {}
 
     def execute(self, command, **kwargs):
         self.executions.append(command)
         if command[0] == "ctest":
+            self.test_environment = kwargs.get("env", {})
             document = junit(self.reported, self.changes)
             ET.ElementTree(document).write(self.evidence / "results.xml")
         return subprocess.CompletedProcess(command, self.status)
@@ -60,7 +62,8 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             ],
         })
 
-    def run_evidence(self, with_drivers=False, require_hvf=False, host_architecture="arm64"):
+    def run_evidence(self, with_drivers=False, require_hvf=False,
+                     host_architecture="arm64", darwin_backend=None):
         with (
             mock.patch.object(native, "ROOT", self.root),
             mock.patch.object(native.platform, "machine", return_value=host_architecture),
@@ -71,8 +74,9 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             return native.run(
-                self.build, self.evidence, 2, not require_hvf, with_drivers=with_drivers,
-                require_hvf=require_hvf
+                self.build, self.evidence, 2, not (require_hvf or darwin_backend),
+                with_drivers=with_drivers, require_hvf=require_hvf,
+                darwin_backend=darwin_backend,
             )
 
     def add_drivers(self):
@@ -196,6 +200,92 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                                                      "NEVERD_NATIVE_HVF", host)
                 self.assertEqual({name for name in required if name.startswith(prefix)},
                                  {prefix + suffix + "_hvf" for suffix in suffixes})
+
+    def add_darwin_requirements(self, backend):
+        (self.root / "scripts/NativeDarwinTests.def").write_text(
+            'NEVERD_NATIVE_DARWIN_OWNER(Owner)\n'
+            'NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(ARM64, "Darwin/{case}/ARM64_{backend}")\n'
+            'NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(X64, "Darwin/{case}/X64_{backend}")\n'
+            'NEVERD_NATIVE_DARWIN_CASE(Startup)\n'
+            'NEVERD_NATIVE_DARWIN_CASE(Memory)\n'
+        )
+        self.records += tuple(
+            TestRecord(f"Darwin/{case}/{isa}_{backend}", frozenset({"Owner"}))
+            for isa in ("ARM64", "X64") for case in ("Startup", "Memory")
+        )
+        self.reported = self.records
+
+    def test_darwin_requires_every_matching_workload_and_allows_foreign_skips(self):
+        self.add_darwin_requirements("kvm")
+        self.changes = {
+            record: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "foreign ISA")
+            for record in self.records[-2:]
+        }
+        self.assertEqual(self.run_evidence(darwin_backend="kvm"), 0)
+        self.assertEqual(self.summary()["darwin_backend"], "kvm")
+        self.assertEqual(self.summary()["required_native_tests"], 2)
+        memory = self.records[-3]
+        self.changes[memory] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing fixture")
+        self.assertEqual(self.run_evidence(darwin_backend="kvm"), 1)
+        self.assertEqual(self.summary()["required_native_unexecuted"], [memory.name])
+
+    def test_darwin_deleted_workload_cannot_be_replaced_by_loader_tests(self):
+        self.add_darwin_requirements("whp")
+        self.records = tuple(record for record in self.records
+                             if record.name != "Darwin/Memory/X64_whp")
+        with self.assertRaisesRegex(ValueError, "missing required native WHP.*Darwin/Memory"):
+            self.run_evidence(darwin_backend="whp", host_architecture="AMD64")
+
+    def test_darwin_hvf_enables_required_hardware_in_the_test_process(self):
+        self.add_darwin_requirements("hvf")
+        self.assertEqual(self.run_evidence(darwin_backend="hvf"), 0)
+        self.assertEqual(self.test_environment["NEVERD_REQUIRE_HVF"], "1")
+
+    def test_native_whp_cli_sets_its_test_policy_without_workflow_environment(self):
+        self.assertEqual(self.run_evidence(), 0)
+        self.assertEqual(self.test_environment["NEVERD_REQUIRE_NATIVE_WHP"], "1")
+
+    def test_repository_darwin_inventory_requires_each_workload_on_every_native_platform(self):
+        for backend in ("hvf", "kvm", "whp"):
+            for host, platforms in (
+                ("aarch64", ("MacOSARM64", "IOSARM64", "SimulatorARM64")),
+                ("AMD64", ("MacOSX64", "SimulatorX64")),
+            ):
+                with self.subTest(backend=backend, host=host):
+                    owners, required = native.darwin_inventory(native.ROOT, backend, host)
+                    self.assertEqual(owners, ["NeverDDarwinProcessTests"])
+                    self.assertEqual(len(required), 11 * len(platforms))
+                    self.assertEqual({name.rsplit("/", 1)[1] for name in required},
+                                     {f"{platform}_{backend}" for platform in platforms})
+                    for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "InitialStackAndDataPartialUnmapReleasesPhysicalBudget/"
+                            f"{platform}_{backend}", required,
+                        )
+
+    def test_darwin_rejects_software_and_unknown_architecture(self):
+        with self.assertRaisesRegex(ValueError, "requires HVF, KVM or WHP"):
+            native.darwin_inventory(native.ROOT, "unicorn", "arm64")
+        with self.assertRaisesRegex(ValueError, "host architecture"):
+            native.darwin_inventory(native.ROOT, "kvm", "riscv64")
+        with self.assertRaisesRegex(ValueError, "separate native profile"):
+            native.run(self.build, self.evidence, 2, True, darwin_backend="whp")
+
+    def test_darwin_rejects_missing_or_duplicate_workload_requirements(self):
+        self.add_darwin_requirements("hvf")
+        path = self.root / "scripts/NativeDarwinTests.def"
+        definition = path.read_text()
+        for invalid in (
+            definition + 'NEVERD_NATIVE_DARWIN_CASE(Memory)\n',
+            definition.replace('NEVERD_NATIVE_DARWIN_CASE(Startup)\n', '')
+                      .replace('NEVERD_NATIVE_DARWIN_CASE(Memory)\n', ''),
+            definition.replace('{backend}', 'unicorn'),
+        ):
+            with self.subTest(invalid=invalid):
+                path.write_text(invalid)
+                with self.assertRaises(ValueError):
+                    native.darwin_inventory(self.root, "hvf", "arm64")
 
     def summary(self):
         return json.loads((self.evidence / "summary.json").read_text())

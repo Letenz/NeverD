@@ -94,18 +94,50 @@ def declared_inventory(
     return owners, required
 
 
+def darwin_inventory(
+    root: Path, backend: str, host_architecture: str,
+) -> tuple[list[str], set[str]]:
+    if backend not in {"hvf", "kvm", "whp"}:
+        raise ValueError("Darwin native coverage requires HVF, KVM or WHP")
+    filename = "NativeDarwinTests.def"
+    prefix = "NEVERD_NATIVE_DARWIN"
+    owners, templates = read_inventory(root, filename, prefix, host_architecture)
+    cases = re.findall(
+        rf"^{prefix}_CASE\((\w+)\)$",
+        (root / "scripts" / filename).read_text(encoding="utf-8"), re.M,
+    )
+    if not cases or len(set(cases)) != len(cases):
+        raise ValueError("Darwin native coverage requires unique workload cases")
+    if any(template.count("{case}") != 1 or template.count("{backend}") != 1
+           for template in templates):
+        raise ValueError("Darwin native names require a case and backend placeholder")
+    required = {
+        template.format(case=case, backend=backend)
+        for template in templates for case in cases
+    }
+    return owners, required
+
+
 def run(
     build: Path, evidence: Path, parallel: int, require_whp: bool,
     with_drivers: bool = False, require_hvf: bool = False,
+    darwin_backend: str | None = None,
 ) -> int:
+    if darwin_backend and (require_whp or require_hvf or with_drivers):
+        raise ValueError("Darwin workload coverage is a separate native profile")
     if require_hvf and (require_whp or with_drivers):
         raise ValueError("HVF coverage is a separate native CPU profile")
     host_architecture = platform.machine()
-    owners, required = (read_inventory(ROOT, "NativeHVFTests.def", "NEVERD_NATIVE_HVF",
-                                      host_architecture=host_architecture)
-                        if require_hvf else declared_inventory(ROOT, with_drivers))
-    required_hardware = require_whp or require_hvf
-    native_name = "HVF" if require_hvf else "WHP"
+    if darwin_backend:
+        owners, required = darwin_inventory(ROOT, darwin_backend, host_architecture)
+    elif require_hvf:
+        owners, required = read_inventory(
+            ROOT, "NativeHVFTests.def", "NEVERD_NATIVE_HVF", host_architecture,
+        )
+    else:
+        owners, required = declared_inventory(ROOT, with_drivers)
+    required_hardware = require_whp or require_hvf or bool(darwin_backend)
+    native_name = (darwin_backend or ("hvf" if require_hvf else "whp")).upper()
     output_limits = re.findall(
         r"^NEVERD_NATIVE_CPU_OUTPUT_LIMIT\(([1-9][0-9]*)\)$",
         (ROOT / "scripts" / "NativeCPUTests.def").read_text(encoding="utf-8"),
@@ -149,13 +181,18 @@ def run(
             f"missing required native {native_name} tests: {sorted(required_missing)}"
         )
     junit = evidence / "results.xml"
+    environment = dict(os.environ)
+    if require_hvf or darwin_backend == "hvf":
+        environment["NEVERD_REQUIRE_HVF"] = "1"
+    if require_whp or darwin_backend == "whp":
+        environment["NEVERD_REQUIRE_NATIVE_WHP"] = "1"
     result = subprocess.run([
         *base, "--no-tests=error", "--parallel", str(parallel),
         "--output-on-failure", "--output-junit", str(junit),
         "--test-output-size-passed", output_limits[0],
         "--test-output-size-failed", output_limits[0],
         "--output-log", str(evidence / "ctest.log"),
-    ], env={**os.environ, **({"NEVERD_REQUIRE_HVF": "1"} if require_hvf else {})})
+    ], env=environment)
     cases = parse_junit(ET.parse(junit).getroot())
     counts = Counter(case.outcome for case in cases)
     expected, actual = set(tests), {case.test for case in cases}
@@ -179,6 +216,7 @@ def run(
         "unexpected": sorted(test.name for test in actual - expected),
         "require_whp": require_whp,
         "require_hvf": require_hvf,
+        "darwin_backend": darwin_backend,
         "with_drivers": with_drivers,
         "required_native_tests": len(required),
         "required_native_names": sorted(required),
@@ -204,6 +242,8 @@ def main() -> int:
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--require-whp", action="store_true")
     parser.add_argument("--require-hvf", action="store_true")
+    parser.add_argument("--require-darwin-backend", choices=("hvf", "kvm", "whp"),
+                        help="require every native Darwin workload on the host ISA")
     parser.add_argument("--with-drivers", action="store_true")
     args = parser.parse_args()
     if args.parallel < 1:
@@ -211,6 +251,7 @@ def main() -> int:
     return run(
         args.build.resolve(), args.evidence.resolve(), args.parallel,
         args.require_whp, args.with_drivers, args.require_hvf,
+        args.require_darwin_backend,
     )
 
 

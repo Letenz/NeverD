@@ -38,6 +38,14 @@ Objective-C/Swift 运行时、Foundation/UIKit，或 arm64e/PAC 的输入会明�
 Python SDK 也通过真实共享库执行五种平台/架构组合。
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
 
+新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
+ARM64 三个平台共 33 项，x64 的 macOS 和 Simulator 共 22 项。
+`scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
+Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
+缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
+[原生 Darwin 专项工作流](../../.github/workflows/darwin-native.yml)提供关闭 Unicorn
+后的 x64 KVM/WHP 构建和验收；它需要 runner 实际提供虚拟化能力，保留完整测试证据。
+
 2026-10-03 在 Apple M4 Max / macOS 15.6.1 的 Release 构建上验证：Darwin
 114 项通过、0 失败，133 项因后端或架构不适用而跳过；共享会话和镜像映射 26 项通过；
 Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的原生 HVF 门禁
