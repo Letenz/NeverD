@@ -724,6 +724,27 @@ BinaryImage makeSharedHandlerImage() {
 
 } // namespace
 
+TEST(MedSEHHandlerEntry, ArgumentLiveIntoTheHandlerStaysAParameter) {
+  // mov [rsp+40],rdx before the protected nop; the handler stores rdx too.
+  // rdx is then live into both roots, so its entry copy takes a new SSA
+  // version, yet it is still the incoming second argument.
+  auto Img = makeFixedSEHFrameImage();
+  auto &Data = Img.Segments.front().Data;
+  const uint8_t Normal[] = {0x48, 0x89, 0x54, 0x24, 0x28, 0x90, 0x90, 0x90};
+  std::copy(std::begin(Normal), std::end(Normal), Data.begin() + 8);
+  const uint8_t Handler[] = {0x48, 0x89, 0x54, 0x24, 0x30, 0x90, 0x90,
+                             0x90, 0x90, 0x90, 0x90, 0xeb, 3};
+  std::copy(std::begin(Handler), std::end(Handler), Data.begin() + 0x20);
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-argument"));
+  auto Param =
+      std::find_if(Med.Params.begin(), Med.Params.end(),
+                   [](const MedVar &P) { return P.RegOff == x86reg::RDX; });
+  ASSERT_NE(Param, Med.Params.end());
+  EXPECT_GE(Param->Id, 0) << "rdx is a placeholder, not the read argument";
+}
+
 TEST(MedSEHHandlerEntry, NonvolatileRegisterWrittenInTheRangeIsUnspecified) {
   // mov rdi,rcx inside the protected range; the handler stores rdi. Where
   // the exception struck decides rdi, so the handler cannot know it.
