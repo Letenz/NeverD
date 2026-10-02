@@ -15,10 +15,11 @@ namespace neverd {
 std::optional<SourceFunctionTypeHint>
 darwinIndirectAffineTransformSignature(Arch Architecture,
                                        const std::string &Name) {
+  const bool Matrix = Name == "CATransform3DScale";
   if (Architecture != Arch::AArch64 ||
       (Name != "CGContextConcatCTM" && Name != "CGAffineTransformTranslate" &&
        Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate" &&
-       Name != "CGAffineTransformConcat"))
+       Name != "CGAffineTransformConcat" && !Matrix))
     return std::nullopt;
   SourceFunctionTypeHint Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
@@ -27,13 +28,13 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"context", Pointer}, {"transform", Pointer}};
   } else {
-    // CoreGraphics declares a six-double transform input and result. It is
-    // not an HFA: AAPCS64 passes the 48-byte input via x0 and the result via
-    // the hidden x8 pointer. Floating scalars use the independent d-register
-    // bank. Source emission copies the input into its genuine record value.
+    // The six-double affine and sixteen-double 3D transforms are not HFAs:
+    // AAPCS64 passes the complete input via x0 and the result via the hidden
+    // x8 pointer. Floating scalars use the independent d-register bank.
+    // Source emission copies the input into its genuine record value.
     const auto Double = NdType::makeFloat(8);
     Signature.ReturnType =
-        NdType::makeStruct({Double, Double, Double, Double, Double, Double});
+        NdType::makeStruct(std::vector<TypeRef>(Matrix ? 16 : 6, Double));
     Signature.Parameters = {{"transform", Pointer}};
     if (Name == "CGAffineTransformConcat") {
       Signature.Parameters.push_back({"second_transform", Pointer});
@@ -41,6 +42,8 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
       Signature.Parameters.push_back({"first", Double});
       if (Name != "CGAffineTransformRotate")
         Signature.Parameters.push_back({"second", Double});
+      if (Matrix)
+        Signature.Parameters.push_back({"third", Double});
     }
   }
   std::string Diagnostic;
@@ -149,28 +152,35 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     return Result;
   }
 
-  // AAPCS64 passes a six-double CGAffineTransform by an indirect pointer.
-  // Keep that physical carrier in the source call hint; the C emitter copies
-  // the 48 bytes into a genuine by-value argument before calling CoreGraphics.
+  // These non-HFA transforms use an indirect input pointer under AAPCS64.
+  // Keep that physical carrier in the source hint; the C emitter copies the
+  // complete record into a genuine by-value argument before calling its SDK.
   // Other record imports continue through the ordinary declaration catalog.
   if (Name == "CGContextConcatCTM" || Name == "CGAffineTransformTranslate" ||
       Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate" ||
-      Name == "CGAffineTransformConcat") {
+      Name == "CGAffineTransformConcat" || Name == "CATransform3DScale") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     const auto Signature =
         darwinIndirectAffineTransformSignature(Image.Arch, Name.str());
+    const bool Matrix = Name == "CATransform3DScale";
     if (!Signature || Bind == Image.DyldBindSlots.end() ||
         !darwinExportModuleMatches(
-            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics|"
-            "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/"
-            "CoreGraphics",
+            Matrix
+                ? "/System/Library/Frameworks/QuartzCore.framework/QuartzCore|"
+                  "/System/Library/Frameworks/QuartzCore.framework/Versions/A/"
+                  "QuartzCore"
+                : "/System/Library/Frameworks/CoreGraphics.framework/"
+                  "CoreGraphics|/System/Library/Frameworks/CoreGraphics."
+                  "framework/Versions/A/CoreGraphics",
             Bind->second.Module))
       return std::nullopt;
     SourceCallTypeHint Result;
     Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
     Result.TargetAddress = ImportSlot;
     Result.TargetName = Name.str();
-    Result.ByteCount = 48;
+    Result.ByteCount = Signature->ReturnType->Kind == NdTypeKind::Struct
+                           ? Signature->ReturnType->Size
+                           : 48;
     Result.Signature = *Signature;
     return Result;
   }

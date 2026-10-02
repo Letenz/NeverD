@@ -93,6 +93,110 @@ std::vector<uint8_t> pattern(uint8_t Seed) {
   return Bytes;
 }
 
+bool hasInput(const LowOp &Op, uint64_t RegOff, uint16_t Size) {
+  for (uint8_t I = 1; I < Op.NumInputs; ++I)
+    if (Op.Inputs[I] == NdVar::reg(RegOff, Size))
+      return true;
+  return false;
+}
+
+bool writes(const std::vector<LowOp> &Ops, uint64_t RegOff) {
+  return std::any_of(Ops.begin(), Ops.end(), [&](const LowOp &Op) {
+    return Op.Output.isReg() && Op.Output.Offset == RegOff;
+  });
+}
+
+TEST(X86SystemSideeffect, StateChangingInstructionsProduceNoValue) {
+  // HLT, INVD, WBINVD and SWAPGS change processor state only: RAX keeps
+  // what it held.
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0xf4}, std::vector<uint8_t>{0x0f, 0x08},
+        std::vector<uint8_t>{0x0f, 0x09},
+        std::vector<uint8_t>{0x0f, 0x01, 0xf8}}) {
+    const LiftedInstruction Lifted = liftX64(Bytes);
+    ASSERT_EQ(Lifted.Ops.size(), 1u);
+    EXPECT_EQ(Lifted.Ops[0].Opcode, NdOp::INTRINSIC);
+    EXPECT_EQ(Lifted.Ops[0].Output.Size, 0u);
+  }
+}
+
+TEST(X86SystemSideeffect, SystemInstructionsKeepTheirRegisterOperands) {
+  const LiftedInstruction Rdpmc = liftX64({0x0f, 0x33});
+  const LowOp *Counter = findIntrinsic(Rdpmc.Ops, Intrinsic::Rdpmc);
+  ASSERT_NE(Counter, nullptr);
+  EXPECT_TRUE(hasInput(*Counter, x86reg::RCX, 4));
+  EXPECT_EQ(Counter->Output.Size, 8u);
+  EXPECT_TRUE(writes(Rdpmc.Ops, x86reg::RAX));
+  EXPECT_TRUE(writes(Rdpmc.Ops, x86reg::RDX));
+
+  const LiftedInstruction Vmcall = liftX64({0x0f, 0x01, 0xc1});
+  const LowOp *Hypercall = findIntrinsic(Vmcall.Ops, Intrinsic::Vmcall);
+  ASSERT_NE(Hypercall, nullptr);
+  EXPECT_EQ(Hypercall->Output, NdVar::reg(x86reg::RAX, 8));
+  EXPECT_TRUE(hasInput(*Hypercall, x86reg::RCX, 8));
+  EXPECT_TRUE(hasInput(*Hypercall, x86reg::RDX, 8));
+  EXPECT_TRUE(hasInput(*Hypercall, x86reg::R8, 8));
+
+  const LiftedInstruction Verw = liftX64({0x0f, 0x00, 0x29}); // verw [rcx]
+  const LowOp *Check = findIntrinsic(Verw.Ops, Intrinsic::Verw);
+  ASSERT_NE(Check, nullptr);
+  EXPECT_EQ(Check->Output, NdVar::reg(x86reg::ZF, 1));
+  EXPECT_EQ(findIntrinsic(Verw.Ops, Intrinsic::Hlt), nullptr);
+
+  const LiftedInstruction Lsl = liftX64({0x0f, 0x03, 0xc0}); // lsl eax, eax
+  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimit), nullptr);
+  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimitValid), nullptr);
+  EXPECT_TRUE(writes(Lsl.Ops, x86reg::RAX));
+
+  const LiftedInstruction Monitor = liftX64({0x0f, 0x01, 0xc8});
+  const LowOp *Arm = findIntrinsic(Monitor.Ops, Intrinsic::Monitor);
+  ASSERT_NE(Arm, nullptr);
+  EXPECT_EQ(Arm->Output.Size, 0u);
+  EXPECT_TRUE(hasInput(*Arm, x86reg::RAX, 8));
+  EXPECT_TRUE(hasInput(*Arm, x86reg::RCX, 4));
+  EXPECT_TRUE(hasInput(*Arm, x86reg::RDX, 4));
+
+  const LiftedInstruction Mwait = liftX64({0x0f, 0x01, 0xc9});
+  const LowOp *Wait = findIntrinsic(Mwait.Ops, Intrinsic::Mwait);
+  ASSERT_NE(Wait, nullptr);
+  EXPECT_TRUE(hasInput(*Wait, x86reg::RAX, 4));
+  EXPECT_TRUE(hasInput(*Wait, x86reg::RCX, 4));
+
+  const LiftedInstruction Xsetbv = liftX64({0x0f, 0x01, 0xd1});
+  const LowOp *Xcr = findIntrinsic(Xsetbv.Ops, Intrinsic::Xsetbv);
+  ASSERT_NE(Xcr, nullptr);
+  EXPECT_TRUE(hasInput(*Xcr, x86reg::RCX, 4));
+  ASSERT_EQ(Xcr->NumInputs, 3);
+  EXPECT_EQ(Xcr->Inputs[2].Size, 8u);
+
+  const LiftedInstruction Rdrand = liftX64({0x0f, 0xc7, 0xf2}); // rdrand edx
+  const LowOp *Random = findIntrinsic(Rdrand.Ops, Intrinsic::Rdrand);
+  ASSERT_NE(Random, nullptr);
+  EXPECT_EQ(Random->Output.Size, 8u);
+  EXPECT_TRUE(writes(Rdrand.Ops, x86reg::RDX));
+  EXPECT_TRUE(writes(Rdrand.Ops, x86reg::CF));
+}
+
+TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
+  // CLTS, VMFUNC, ENCLS and RDGSBASE need state LowIR does not model; none
+  // of them may become another instruction.
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0x0f, 0x06},
+        std::vector<uint8_t>{0x0f, 0x01, 0xd4},
+        std::vector<uint8_t>{0x0f, 0x01, 0xcf},
+        std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0xae, 0xc8}}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    DecodedInsn Insn{};
+    ASSERT_EQ(Dec.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                   kInstructionAddress, Insn),
+              static_cast<int>(Bytes.size()));
+    std::vector<LowOp> Ops;
+    EXPECT_THROW(Dec.liftToLow(Insn, Ops), UnliftedInstruction);
+    EXPECT_TRUE(Ops.empty());
+  }
+}
+
 TEST(X86SystemSideeffect, WrssAndWrussRetainAddressSourceWidthAndSegment) {
   struct Case {
     std::vector<uint8_t> Bytes;

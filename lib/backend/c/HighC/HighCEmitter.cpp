@@ -724,7 +724,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 SourceCallTypeHint::Kind::RuntimeClassReferenceAddress ||
             Hint.CallKind ==
                 SourceCallTypeHint::Kind::RuntimeMetaclassReferenceAddress;
-        if (DeclaredC && Hint.ByteCount == 48 &&
+        if (DeclaredC && (Hint.ByteCount == 48 || Hint.ByteCount == 128) &&
             darwinIndirectAffineTransformSignature(Opts.TheArch,
                                                    Hint.TargetName))
           NeedsDarwinAffineTransformBridge = true;

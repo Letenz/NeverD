@@ -777,14 +777,94 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     return true;
   }
 
+  // VERR/VERW whose ZF is dead keep their effect; with a live ZF the value
+  // emitter lowers them.
+  if (IC == I::Verr || IC == I::Verw) {
+    if (Op.Output.Size != 0)
+      return false;
+    const char *Mn = IC == I::Verr ? "verr" : "verw";
+    if (Op.NumInputs == 2 && Op.Inputs[1].Size == 8) {
+      emitX86MemPtrAsm(Mn, Op, Builder);
+    } else if (Op.NumInputs == 2) {
+      auto *V = getVar(Op.Inputs[1], Builder);
+      auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
+                                           {V->getType()}, false);
+      auto *IA = llvm::InlineAsm::get(FnTy, std::string(Mn) + " $0",
+                                      "r,~{cc},~{memory}",
+                                      /*hasSideEffects=*/true);
+      Builder.CreateCall(IA, {V});
+    } else {
+      llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
+    }
+    return true;
+  }
+
+  // Instructions reading fixed registers: the operands go to those registers.
+  // A hypercall with a live RAX result is lowered by the value emitter.
+  if (IC == I::Monitor || IC == I::Monitorx || IC == I::Mwait ||
+      IC == I::Mwaitx || IC == I::Xsetbv ||
+      ((IC == I::Vmcall || IC == I::Vmmcall) && Op.Output.Size == 0)) {
+    std::vector<const char *> Regs;
+    switch (IC) {
+    case I::Monitor:
+    case I::Monitorx:
+      Regs = {"{rax}", "{ecx}", "{edx}"};
+      break;
+    case I::Mwait:
+      Regs = {"{eax}", "{ecx}"};
+      break;
+    case I::Mwaitx:
+      Regs = {"{eax}", "{ecx}", "{ebx}"};
+      break;
+    case I::Xsetbv:
+      Regs = {"{ecx}", "{eax}", "{edx}"};
+      break;
+    default:
+      Regs = {"{rcx}", "{rdx}", "{r8}"};
+      break;
+    }
+    std::vector<llvm::Value *> Vals;
+    if (IC == I::Xsetbv) {
+      if (Op.NumInputs != 3)
+        llvm::report_fatal_error("x86 XSETBV has an invalid operand shape");
+      auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
+      auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+      llvm::Value *Value =
+          Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I64Ty);
+      Vals = {
+          Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty),
+          Builder.CreateTrunc(Value, I32Ty, "xcr_lo"),
+          Builder.CreateTrunc(Builder.CreateLShr(Value, 32), I32Ty, "xcr_hi")};
+    } else {
+      if (Op.NumInputs != 1 + Regs.size())
+        llvm::report_fatal_error(
+            "x86 implicit-register instruction has an invalid operand shape");
+      for (uint16_t I = 1; I < Op.NumInputs; ++I)
+        Vals.push_back(getVar(Op.Inputs[I], Builder));
+    }
+    std::vector<llvm::Type *> Tys;
+    std::string Cons;
+    for (size_t I = 0; I < Vals.size(); ++I) {
+      Tys.push_back(Vals[I]->getType());
+      Cons += std::string(I ? "," : "") + Regs[I];
+    }
+    Cons += ",~{memory}";
+    auto *FnTy =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), Tys, false);
+    auto *IA = llvm::InlineAsm::get(FnTy, intrinsicAsmMnemonic(IC), Cons,
+                                    /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, Vals);
+    return true;
+  }
+
   switch (IC) {
   case I::Cli:
   case I::Sti:
   case I::Wrpkru:
+  case I::Hlt:
+  case I::Invd:
   case I::Swapgs:
   case I::Wbinvd:
-  case I::Vmcall:
-  case I::Vmmcall:
   case I::Syscall: {
     const char *Mn = intrinsicAsmMnemonic(IC);
     if (Mn)

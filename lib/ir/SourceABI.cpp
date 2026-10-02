@@ -228,10 +228,11 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
     return {};
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
   if (Floating) {
-    // Six doubles are the non-HFA CGAffineTransform shape. Darwin arm64
-    // returns it through x8; its by-value parameter ABI is not modeled yet.
-    if ((Result.size() > 4 &&
-         (Result.size() != 6 || Result.front().Type->Size != 8)) ||
+    // CGAffineTransform and CATransform3D contain six and sixteen doubles.
+    // Darwin arm64 returns these non-HFAs through x8; their general by-value
+    // parameter ABI is not modeled yet.
+    if ((Result.size() > 4 && ((Result.size() != 6 && Result.size() != 16) ||
+                               Result.front().Type->Size != 8)) ||
         !std::all_of(Result.begin(), Result.end(),
                      [&](const auto &Member) {
                        return Member.Type->Kind == NdTypeKind::Float &&
@@ -462,13 +463,14 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
       const bool ThreeSignedWords =
           Members.size() == 3 && Hint.ReturnType->Size == 24 &&
           Members.front().Type->Kind != NdTypeKind::Float;
-      const bool SixDoubles = Members.size() == 6 &&
-                              Hint.ReturnType->Size == 48 &&
-                              Members.front().Type->Kind == NdTypeKind::Float &&
-                              Members.front().Type->Size == 8;
+      const bool IndirectDoubles =
+          (Members.size() == 6 || Members.size() == 16) &&
+          Hint.ReturnType->Size == Members.size() * 8 &&
+          Members.front().Type->Kind == NdTypeKind::Float &&
+          Members.front().Type->Size == 8;
       if (Hint.Architecture != Arch::AArch64 ||
           Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
-          (!ThreeSignedWords && !SixDoubles) ||
+          (!ThreeSignedWords && !IndirectDoubles) ||
           Return.RegisterOffset != TRI.indirectResultReg() ||
           Return.EntryStackOffset != 0 || Return.ValueBytes != 8 ||
           Return.ExtendTo32Bits || !Hint.ReturnComponents.empty())
@@ -668,8 +670,9 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (Members.empty())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-    const bool SixDoubles =
-        Floating && Members.size() == 6 && Hint.ReturnType->Size == 48 &&
+    const bool IndirectDoubles =
+        Floating && (Members.size() == 6 || Members.size() == 16) &&
+        Hint.ReturnType->Size == Members.size() * 8 &&
         Members.front().Type->Size == 8 && Architecture == Arch::AArch64 &&
         Convention == SourceFunctionTypeHint::ConventionKind::C;
     const bool SwiftFourWordReturn =
@@ -680,7 +683,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                       : SwiftFourWordReturn ? TRI.IntParamRegs
                                             : TRI.IntReturnRegs;
     const bool Indirect =
-        SixDoubles ||
+        IndirectDoubles ||
         (!Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
          Convention == SourceFunctionTypeHint::ConventionKind::C);
     if (Indirect)

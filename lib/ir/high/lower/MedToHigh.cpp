@@ -253,13 +253,16 @@ public:
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff) {
   if (Func.Blocks.empty())
     return false;
+  // An entry seed copies the incoming register.  SSA may give the copy a new
+  // version (`COPY RCX.1 = RCX` when CL is seeded too) while later reads
+  // still name the incoming one; both sides are the incoming value.
   for (const MedOp &Op : Func.Blocks.front().Ops) {
     if (Op.Opcode != NdOp::COPY)
       break;
     if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
         Op.NumInputs >= 1 && Op.Inputs[0].Kind == MedVar::Reg &&
-        Op.Inputs[0].Id == Op.Output.Id &&
-        Op.Inputs[0].SSAVer == Op.Output.SSAVer && Op.Output == V)
+        Op.Inputs[0].Id == Op.Output.Id && Op.Inputs[0].SSAVer == 0 &&
+        (Op.Output == V || Op.Inputs[0] == V))
       return true;
   }
   return false;

@@ -593,6 +593,10 @@ Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.
 
+The same source ABI owner admits naturally laid-out sixteen-double `CATransform3D` results through arm64 x8. Compiler-derived declarations and exact QuartzCore exports bind `CATransform3DMakeTranslation`, `CATransform3DMakeScale`, and `CATransform3DMakeRotation`; lowering preserves all 128 result bytes. This contract does not admit general indirect record parameters, Swift or x86_64 matrix returns, or Objective-C indirect results without nil-storage proof. Generated C is checked at O0/O2 with all sixteen fields, floating bit patterns, exact scalar arguments, and guard bytes around the result buffer.
+
+The exact strong arm64 QuartzCore import `CATransform3DScale` uses the same bounded transform bridge. Its 128-byte input pointer occupies x0, three doubles use d0–d2, and x8 addresses the result. HighC copies the complete input to a genuine by-value record before calling the SDK; all sixteen result fields are written afterward. O0/O2 execution covers both separate and aliased input/result buffers, all field bit patterns, and boundary guards. Wrong providers, weak imports, stale widths, and other ABIs are rejected.
+
 The generated Darwin C catalog takes declarations only from its explicit public
 header set and intersects all four macOS/iOS architecture profiles with SDK
 export evidence. Public `notify.h` functions use this path, including exact
@@ -2668,6 +2672,10 @@ Private Swift struct or enum metadata used by value-witness code can preserve it
 An AArch64 native helper may bind a complete 16-byte `q0` or later `q` input as a by-value C vector only when all 16 entry bytes are observed, earlier floating arguments occupy every preceding `q` register, and the ordinary call, return, and frame proofs hold. HighC bit-casts the payload at source boundaries; a 128-bit integer in `x0`/`x1` is a different ABI. Partial lanes, gaps in the floating-register prefix, and non-native declarations remain unsupported.
 
 Nested Objective-C stack-block discovery carries a method receiver class into a child block only when the current pipeline result proves the parent's strong capture and the child's complete owned copy of that field. Discovery reaches a bounded fixed point within that result; a later pipeline run must prove the chain again. A selector, bare `id`, or unqualified block consumer does not establish a receiver class, call ABI, or block lifetime. A 16-byte context copy preserves this proof only for an exact eight-byte lane inside every authenticated parent literal; partial or rearranged lanes do not.
+
+A descriptor-bound block invoke may write a field of a strongly captured receiver only when the current block plan proves its origin and `objcReceiverIvarStorageSize` revalidates the class lineage, exact offset slot and load width, complete field encoding, and recorded storage extent. The escape analysis retains these facts through exact copies, private spills and agreeing control-flow joins. It preserves the runtime offset load and original store; numeric floating conversions, partial pointers, arbitrary address arithmetic, wider writes, and stores of private context or frame addresses do not receive field permission. Unknown runtime-sized layouts remain unsupported. `ObjCBlockSources` and `ObjCCallHints` cover scalar and floating fields, stale metadata, casts and conflicting paths.
+
+An ARM64 local ARC release bridge binds as `objc_release` only when its eight immutable bytes prove `MOV x0, x19..x28` followed by `B` to an authenticated import veneer. `objcRuntimeSourceCallHint` requires local linkage and the exact strong libobjc provider, retains the original saved-register argument location, and revalidates the bridge at source publication. Generated C executes the runtime release once on that argument. Partial or shifted moves, extra effects, weak or conflicting imports, relocations, and changed machine bytes remain unbound. `SourceObjCRuntimeTail` covers these failures and executes the generated C at O0/O2.
 
 A verified descriptor may seed the invoke ABI before its body is accepted; consumer calls use receiver captures from the same validated block plan, and publication still requires independent body and lifetime proofs.
 

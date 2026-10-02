@@ -9612,6 +9612,68 @@ TEST(ObjCCallHints, ReceiverFieldsPreserveExactObjectTypesAcrossNestedLoads) {
   }
 }
 
+TEST(ObjCCallHints, ReceiverIvarStorageRevalidatesBoundsAndEncoding) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+      SCOPED_TRACE(::testing::Message()
+                   << int(Architecture) << ':' << Mutation);
+      auto Image = receiverFieldImage(Architecture);
+      const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Root);
+      const unsigned Width = Architecture == Arch::AArch64 ? 4 : 8;
+      auto &Class = Image.ObjCClasses.front();
+      auto &Ivar = Class.Ivars.front();
+      auto &Ref = Image.ObjCSourceReferences.at(0x2300);
+      Ivar.TypeEncoding = "Q";
+      EXPECT_EQ(objcReceiverIvarStorageSize(Image, *Root, 0x2300, Width), 8U);
+      if (Mutation == 0)
+        Ref.Address += 1;
+      else if (Mutation == 1)
+        Ref.ClassName = "Other";
+      else if (Mutation == 2)
+        Ref.Name = "_next";
+      else if (Mutation == 3)
+        Ref.Size = 2;
+      else if (Mutation == 4)
+        Ref.TheKind = ObjCSourceReference::Kind::Class;
+      else if (Mutation == 5)
+        Ivar.MetadataAddress = 0;
+      else if (Mutation == 6)
+        Ivar.Size = 4;
+      else if (Mutation == 7)
+        Class.InstanceSize = 12;
+      else if (Mutation == 8)
+        Class.IvarStatus = "unresolved";
+      else if (Mutation == 9)
+        Class.Ivars.push_back(Ivar);
+      else if (Mutation == 10)
+        Image.ObjCClasses.push_back(Class);
+      else if (Mutation == 11)
+        Ivar.Offset.reset();
+      else if (Mutation == 12)
+        Ivar.TypeEncoding = "?";
+      else if (Mutation == 13)
+        Ivar.TypeEncoding = "Qjunk";
+      else if (Mutation == 14)
+        Ivar.Offset = 4;
+      else if (Mutation == 15) {
+        Class.InstanceSize = UINT32_MAX;
+        Ivar.Offset = UINT32_C(0x80000000);
+      } else if (Mutation == 16) {
+        Class.RootClass = false;
+        Class.InheritanceStatus = "resolved";
+        Class.SuperclassName = Class.Name;
+      } else if (Mutation == 17)
+        Image.ObjCMethods.clear();
+      else if (Mutation == 18)
+        Ref.Size = Width == 4 ? 8 : 4;
+      else
+        Ivar.OffsetAddress += 4;
+      EXPECT_FALSE(objcReceiverIvarStorageSize(Image, *Root, 0x2300, Width));
+    }
+  }
+}
+
 TEST(ObjCCallHints, ReceiverFieldsFollowRecordedSuperclassStorage) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = receiverFieldImage(Architecture);

@@ -860,6 +860,8 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests` 中的 `HighBoundPrivateFrameCopies.*` 检查调用 ABI 绑定后经非逃逸私有帧槽传播的副本，覆盖分支、栈槽复用和不同守卫上下文的一致性。x64 与 AArch64 生成的 C 在 `-O0`、`-O2` 下启用未定义行为陷阱，并与独立算术结果比较。反例要求在帧地址逃逸、调用 ABI 未知、帧别名缺失或不一致、入口参数被重新赋值、访问重叠、有序或原子内存、畸形语句、循环及预算耗尽时保留原函数。普通值转换不能被标记为 PHI 复制。
 
+源码投影还会在清理后重新验证变参对象列表：允许空的指令地址锚点，但拒绝隐藏效果或控制转移。同步清理允许同一已保存接收者的单层 `int64_t` 或 `uint64_t` 视图；窄化、浮点转换、地址运算和重新赋值仍被拒绝。Foundation 对象集合及正常、异常解锁轨迹均在 `-O0` 和 `-O2` 下执行验证。
+
 ## x64 原生同步异常
 
 checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通过私有 supervisor IDT/IST 接收异常，WHP 使用明确的异常拦截位图；异常保留原始上下文和可用的错误码，与后端传输错误分开。OS 模型必须先消费可恢复事件，再安装明确的继续执行上下文。Windows 驱动将零除及商溢出映射为 `STATUS_INTEGER_DIVIDE_BY_ZERO`，并执行实际 SEH filter、`__finally` 和重试。`NeverDX64ExceptionTests` 可在禁用 Unicorn 时构建；原始 WDK 用例由 `DriverWDMCPUException` 验证。缺少的 WHP/ARM64 主机覆盖会明确跳过。

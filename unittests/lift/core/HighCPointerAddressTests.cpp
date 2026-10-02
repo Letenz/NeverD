@@ -41729,6 +41729,113 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, SegmentMxcsrTransferUsesSegmentAccessors) {
+  // KiSaveProcessorControlState keeps MXCSR in the KPCR: `stmxcsr gs:[180h]`
+  // and `ldmxcsr gs:[184h]` move one DWORD at a GS offset, which the
+  // <intrin.h> segment accessors express without inline assembly.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x65, 0x0f, 0xae, 0x1c, 0x25, 0x80, 0x01, 0x00, 0x00, // stmxcsr gs:[180h]
+      0x65, 0x0f, 0xae, 0x14, 0x25, 0x84, 0x01, 0x00, 0x00, // ldmxcsr gs:[184h]
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("__asm"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__writegsdword(384, _mm_getcsr());"), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_mm_setcsr(__readgsdword(388));"), std::string::npos)
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, VerwKeepsItsBufferFlush) {
+  // KiKernelSysretExit flushes CPU buffers with `verw [rsp+20h]` and
+  // `verw gs:[902Ah]` (MDS mitigation).  Each stays a VERW, keeping its
+  // segment override, whether or not ZF is read afterwards.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x28,                               // sub rsp, 28h
+      0x0f, 0x00, 0x6c, 0x24, 0x20,                         // verw [rsp+20h]
+      0x65, 0x0f, 0x00, 0x2c, 0x25, 0x2a, 0x90, 0x00, 0x00, // verw gs:[902Ah]
+      0x48, 0x83, 0xc4, 0x28,                               // add rsp, 28h
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("verw (%[address])"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("verw %%gs:(%[address])"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, VerwZeroFlagReachesItsReader) {
+  // `verw [rcx]; setz [rdx]` stores the access check's ZF.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x0f, 0x00, 0x29, // verw [rcx]
+                                     0x0f, 0x94, 0x02, // setz [rdx]
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("setz %[zf]"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, LslReadsTheSegmentLimit) {
+  // KeGetCurrentProcessorNumberEx reads the processor number from the limit
+  // of selector 53h: `lsl eax, eax`.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0xb8, 0x53, 0x00,
+                                     0x00, 0x00,       // mov eax, 53h
+                                     0x0f, 0x03, 0xc0, // lsl eax, eax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__segmentlimit("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, MonitorAndMwaitLoadTheirRegisters) {
+  // PpmIdleExecuteTransition arms MONITOR at RAX and waits with MWAIT; both
+  // read fixed registers, which the asm blocks load.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc1, // mov rax, rcx
+                                     0x33, 0xc9,       // xor ecx, ecx
+                                     0x33, 0xd2,       // xor edx, edx
+                                     0x0f, 0x01, 0xc8, // monitor
+                                     0x33, 0xc0,       // xor eax, eax
+                                     0x0f, 0x01, 0xc9, // mwait
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("mov rax, _rax"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("    monitor\n"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("    mwait\n"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
+  // KiSystemCall64 keeps the service number in RAX across `swapgs`, which
+  // swaps the GS base and produces no value.  The store after it writes the
+  // value RAX held before, not a result of the instruction.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc1,       // mov rax, rcx
+                                     0x0f, 0x01, 0xf8,       // swapgs
+                                     0x48, 0x89, 0x02,       // mov [rdx], rax
+                                     0xf4,                   // hlt
+                                     0x48, 0x89, 0x42, 0x08, // mov [rdx+8], rax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1), "
+                       "arg0);"),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1 + 8), "
+                       "arg0);"),
+            std::string::npos)
+      << HighC;
+}
+
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
   // After an unknown call ECX holds no defined value, so the OR must not

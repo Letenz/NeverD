@@ -130,8 +130,9 @@ struct SourceCallTypeHint {
     RuntimeBlockIsa,
     RuntimeBlockDescriptor,
     RuntimeBlockLiteral,
-    /// Imported runtime routine with a known scalar ABI. TargetAddress is
-    /// the import pointer slot, not a native source definition.
+    /// Imported runtime routine with a known scalar ABI. TargetAddress is its
+    /// import slot or a byte-proven local ARC argument bridge; source emission
+    /// retains the runtime operation rather than publishing the bridge body.
     ObjCRuntimeCall,
     /// A static key consumed only by associated-object runtime operations.
     /// TargetAddress identifies the original key; rebuilt methods share one

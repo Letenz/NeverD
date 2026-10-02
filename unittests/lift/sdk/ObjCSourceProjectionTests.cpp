@@ -2586,6 +2586,47 @@ TEST(ObjCSourceProjection, SynchronizedStackCopyMustBeDefinedAndUnchanged) {
   }
 }
 
+namespace {
+std::string forwardedSynchronizedStackSource(llvm::StringRef View) {
+  std::string Source = SynchronizedRetainedStackSource;
+  const std::string Copy = "    var_m28 = v2;\n";
+  Source.erase(Source.find(Copy), Copy.size());
+  const std::string Old = "(var_m28)";
+  const std::string Replacement = ("(" + View + ")").str();
+  for (size_t At = Source.find(Old); At != std::string::npos;
+       At = Source.find(Old, At + Replacement.size()))
+    Source.replace(At, Old.size(), Replacement);
+  return Source;
+}
+} // namespace
+
+TEST(ObjCSourceProjection, SynchronizedForwardedLockRequiresExactPointerBits) {
+  SynchronizedRetainedStackFixture F;
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
+  ASSERT_TRUE(Proof);
+  for (const char *View : {"v2", "(int64_t)v2", "(uint64_t)v2", "(int32_t)v2",
+                           "(double)v2", "v2 + 1", "v2++", "other",
+                           "(int64_t)factory()", "(uint64_t)(double)v2"}) {
+    SCOPED_TRACE(View);
+    auto Source = forwardedSynchronizedStackSource(View);
+    const auto Result = addObjCSynchronizedReceiverCleanup(Source, *Proof);
+    const bool Accepted = llvm::StringRef(View) == "v2" ||
+                          llvm::StringRef(View) == "(int64_t)v2" ||
+                          llvm::StringRef(View) == "(uint64_t)v2";
+    EXPECT_EQ(Result.has_value(), Accepted);
+    if (!Accepted)
+      continue;
+    ASSERT_TRUE(Result);
+    EXPECT_NE(Result->find("neverd_objc_sync_guard = (void*)(uintptr_t)(v2);"),
+              std::string::npos);
+    EXPECT_NE(Result->find("sync_exit((void*)(uintptr_t)(" + std::string(View) +
+                           "))"),
+              std::string::npos);
+    Source.insert(Source.find("    clear("), "    v2 = 0;\n");
+    EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(Source, *Proof));
+  }
+}
+
 TEST(ObjCSourceProjection, SynchronizedStackLockExecutesOriginalARCAndUnlocks) {
   SynchronizedRetainedStackFixture F;
   const auto Proof = proveObjCSynchronizedReceiverCleanup(F.Image, F.Function);
@@ -2642,6 +2683,12 @@ int main() {
 }
 )CPP";
   executeSynchronizedSource(*Source, Harness);
+  for (const char *View : {"(int64_t)v2", "(uint64_t)v2"}) {
+    const auto Forwarded = addObjCSynchronizedReceiverCleanup(
+        forwardedSynchronizedStackSource(View), *Proof);
+    ASSERT_TRUE(Forwarded);
+    executeSynchronizedSource(*Forwarded, Harness);
+  }
 }
 
 namespace {

@@ -942,6 +942,8 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests`의 `HighBoundPrivateFrameCopies.*`는 호출 ABI 바인딩 이후 외부로 노출되지 않는 전용 프레임 슬롯을 통한 복사를 검증합니다. 분기, 슬롯 재사용, 서로 다른 가드 조건에서의 사실 일치를 포함합니다. x64와 AArch64에서 생성한 C를 `-O0` 및 `-O2`로 실행하고, 정의되지 않은 동작을 트랩하면서 독립적인 산술 결과와 비교합니다. 프레임 주소 노출, 알 수 없는 호출 ABI, 누락되거나 일치하지 않는 프레임 별칭, 진입 인수 재할당, 겹치는 접근, 순서가 지정된 메모리 또는 원자적 메모리, 잘못된 문장, 순환, 예산 소진 시 원래 함수를 보존하는지 확인합니다. 일반 값 변환을 PHI 복사로 표시해서는 안 됩니다.
 
+소스 투영은 이 정리 후에도 가변 인자 객체 목록을 다시 검증합니다. 빈 명령 주소 앵커는 허용하지만 숨겨진 효과나 제어 이동은 거부합니다. 동기화 정리는 동일하게 저장된 수신자의 단일 `int64_t` 또는 `uint64_t` 뷰를 허용하며, 축소·부동소수점 변환·주소 연산·재할당은 계속 거부합니다. Foundation 객체 집합과 정상 및 예외 잠금 해제 추적을 `-O0`와 `-O2`에서 모두 실행합니다.
+
 ## x64 네이티브 동기 예외
 
 checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 WHP/ARM64 호스트는 명시적으로 건너뜁니다.

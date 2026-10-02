@@ -45,9 +45,11 @@ std::optional<SourceCallTypeHint>
 objcSelectorStubDynamicFormatSourceCallHint(const BinaryImage &Image,
                                             va_t Address);
 
-/// Bind a known ARC runtime routine through an exact imported pointer slot.
-/// Register-specific ARM64 entry points retain their machine argument location
-/// while TargetName names the corresponding ordinary C runtime operation.
+/// Bind a known ARC runtime routine through an exact imported pointer slot or
+/// a complete local MOV x0, x19..x28 / B bridge to a strong objc_release
+/// veneer. Register-specific ARM64 entry points retain their machine argument
+/// location while TargetName names the corresponding ordinary C runtime
+/// operation.
 std::optional<SourceCallTypeHint>
 objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
