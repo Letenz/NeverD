@@ -652,6 +652,8 @@ CMake.
 | `lib/support` | Helper condivisi per il caricamento binario | Loader |
 | `lib/translate` | Contratti versionati per guest state/policy/exit, runtime ABI fissa, guest memory controllata, audit di IR/oggetti/LinkGraph generati, linking nativo sealed e dispatcher C++ sperimentale da x86-64 ad AArch64 | Contratti IR, LLVM, LLVM Object e JITLink |
 
+`ByteMemoryForwardingPass`, in `lib/pass/ir/simplify`, ricostruisce letture intere complete dall’ultima scrittura di ogni byte di un alloca fisso nello stesso blocco di base. Accetta larghezze da 8 a 128 bit multiple di otto e GEP costanti esatti interni all’oggetto, rispettando l’ordine dei byte del target. Chiamate, scritture sconosciute e accessi ordinati cancellano i fatti. La pipeline lo esegue tra due passaggi SROA dopo il recupero esistente degli indirizzi privati, conservando gli store. Scansioni di istruzioni e indirizzi, byte tracciati, usi sostituiti e nuovo IR hanno budget finiti. Per impostazione predefinita non crea snapshot; `AllowStoreSnapshots` esplicito congela il valore una sola volta nello store e lo condivide con tutti i frammenti. Questa raffinazione LLVM opzionale non certifica la definitezza nativa né una firma di funzione.
+
 Gli header pubblici rispecchiano queste aree sotto `include/neverd`. Evita che
 una classe C++ interna diventi accidentalmente parte dell’SDK: le operazioni
 esterne stabili appartengono all’header C puro e a uno dei file mirati

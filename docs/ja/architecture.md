@@ -549,6 +549,8 @@ Capstone ライブラリは網羅しません。
 | `lib/support` | 共通のバイナリ読込み helper | Loader |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
 
+`lib/pass/ir/simplify` の `ByteMemoryForwardingPass` は、単一基本ブロック内で固定長バイト alloca の各バイトの最後の書き込みから完全な整数ロードを再構成します。対象は 8〜128 ビットのバイト単位幅とオブジェクト内の正確な定数 GEP で、ターゲットのバイト順を使います。呼び出し、不明な書き込み、順序付きメモリアクセスで記録を破棄します。既存の私有アドレス復元後、二つの SROA の間で実行し、元の store を保持します。命令走査、アドレス探索、追跡バイト、置換する使用箇所、追加 IR は有限予算で制限されます。既定ではスナップショットを追加しません。明示的な `AllowStoreSnapshots` は store の直前で一度だけ freeze し、書き込みと全断片で同じ値を共有します。この任意の LLVM 精化はネイティブ値の定義性や関数シグネチャを証明しません。
+
 公開ヘッダーは `include/neverd` 以下で各領域に対応します。内部 C++ クラスを
 誤って SDK の一部にしないでください。安定した外部操作は純粋 C ヘッダーと、
 責務を絞った `lib/sdk/NeverDCAPI*.cpp` のいずれかに置きます。

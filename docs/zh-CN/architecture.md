@@ -564,6 +564,8 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/support` | 共享二进制加载 helper | Loader |
 | `lib/translate` | 带版本的 guest state/策略/退出、固定 runtime ABI、受检 guest memory、生成 IR/目标文件/LinkGraph 审计、sealed 原生链接，以及实验性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 与 JITLink 契约 |
 
+`lib/pass/ir/simplify` 中的 `ByteMemoryForwardingPass` 在单个基本块内，根据固定字节 alloca 每个字节的最后一次写入重建完整整数读取。它按目标端序处理 8 至 128 位、宽度为整字节的访问，只接受对象内的精确常量 GEP。调用、未知写入和有序内存会清空记录。流水线在既有私有地址恢复后、两次 SROA 之间运行此 pass，并保留原始 store。指令扫描、地址遍历、跟踪字节、替换用途和新增 IR 均有有限预算。默认不引入快照；显式启用 `AllowStoreSnapshots` 后，在原 store 前仅 freeze 一次，并让写入与所有片段共享该值。这种可选 LLVM 精化不证明原生值已定义，也不恢复函数签名。
+
 公共头文件在 `include/neverd` 下对应这些区域。不要意外让内部 C++ 类成为 SDK
 的一部分：稳定的外部操作应放入纯 C 头文件及某个职责明确的
 `lib/sdk/NeverDCAPI*.cpp` 文件。

@@ -660,6 +660,8 @@ le helper CMake.
 | `lib/support` | Helpers partagés de chargement binaire | Loader |
 | `lib/translate` | Contrats versionnés d’état/policy/exit guest, ABI runtime fixe, mémoire guest vérifiée, audits de l’IR/des objets/LinkGraphs produits, linking natif scellé et dispatcher C++ expérimental de x86-64 vers AArch64 | Contrats IR, LLVM, LLVM Object et JITLink |
 
+`ByteMemoryForwardingPass`, dans `lib/pass/ir/simplify`, reconstruit les lectures entières complètes à partir de la dernière écriture de chaque octet d’un alloca fixe, dans un même bloc. Il accepte les largeurs de 8 à 128 bits multiples de huit et les GEP constants exactement situés dans l’objet, selon l’ordre des octets cible. Les appels, écritures inconnues et accès ordonnés effacent les faits. Le pipeline le place entre deux SROA après la récupération existante des adresses privées, sans supprimer les stores. Parcours des instructions et adresses, octets suivis, utilisations remplacées et IR ajouté ont des budgets finis. Aucun instantané par défaut ; `AllowStoreSnapshots` explicite fige une seule fois la valeur au store et la partage avec tous les fragments. Ce raffinement LLVM facultatif ne certifie ni les valeurs natives définies ni une signature de fonction.
+
 Les en-têtes publics reflètent ces zones sous `include/neverd`. Évitez de faire
 d’une classe C++ interne une partie accidentelle du SDK : les opérations
 externes stables appartiennent à l’en-tête C pur et à l’un des fichiers ciblés

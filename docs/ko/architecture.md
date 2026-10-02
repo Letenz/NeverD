@@ -530,6 +530,8 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/support` | 공유 바이너리 로드 helper | Loader |
 | `lib/translate` | version이 있는 guest state/policy/exit, 고정 runtime ABI, 검사된 guest memory, 생성 IR/object/LinkGraph audit, sealed native linking, experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object 및 JITLink 계약 |
 
+`lib/pass/ir/simplify`의 `ByteMemoryForwardingPass`는 단일 기본 블록에서 고정 바이트 alloca의 각 바이트를 마지막으로 쓴 값으로 완전한 정수 로드를 재구성합니다. 대상 바이트 순서에 따라 8~128비트의 바이트 배수 폭과 객체 내부의 정확한 상수 GEP만 허용합니다. 호출, 알 수 없는 쓰기, 순서가 지정된 메모리 접근은 기록을 지웁니다. 기존 전용 주소 복원 후 두 SROA 사이에서 실행하며 원래 store를 유지합니다. 명령 스캔, 주소 탐색, 추적 바이트, 교체할 사용 지점, 추가 IR에는 유한 예산이 있습니다. 기본값은 스냅샷을 추가하지 않습니다. 명시적 `AllowStoreSnapshots`는 store 직전에 한 번 freeze하여 쓰기와 모든 조각이 같은 값을 공유하게 합니다. 이 선택적 LLVM 정제는 네이티브 값의 정의성이나 함수 시그니처를 증명하지 않습니다.
+
 공개 헤더는 `include/neverd` 아래에서 이 영역들을 반영합니다. 내부 C++ 클래스가
 실수로 SDK의 일부가 되지 않게 하세요. 안정적인 외부 작업은 순수 C 헤더와 책임이
 분명한 `lib/sdk/NeverDCAPI*.cpp` 파일 중 하나에 두어야 합니다.

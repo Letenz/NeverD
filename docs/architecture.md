@@ -2403,6 +2403,8 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers | Loader |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
+`ByteMemoryForwardingPass` in `lib/pass/ir/simplify` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
+
 Public headers mirror these areas under `include/neverd`. Avoid making an
 internal C++ class part of the SDK by accident: stable external operations
 belong in the pure C header and one of the focused `lib/sdk/NeverDCAPI*.cpp`
