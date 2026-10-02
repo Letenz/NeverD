@@ -6,7 +6,7 @@
 
 `neverd emulate` ejecuta una imagen bajo un perfil explícito de sistema operativo invitado. El transporte CPU, el análisis de la imagen, la entrada del proceso y los servicios del SO tienen propietarios separados. Activa `NEVERD_ENABLE_CPU_EMULATION=ON`; la emulación de controladores también lo incluye.
 
-El primer perfil, `linux-elf64-v1`, ejecuta ELF `ET_EXEC` x64/AArch64 y PIE estáticos `ET_DYN` con autorrelocación en CPL3 o EL0. Carga segmentos ELF reales, construye la pila inicial, reanuda por intervalos y atiende solicitudes explícitas de llamadas al sistema Linux. Es un modelo de proceso independiente, no una distribución Linux completa ni una promesa de ejecutar binarios libc arbitrarios. El enlace dinámico, señales, hilos, sistemas de archivos y servicios no admitidos fallan explícitamente. El perfil x64 admite algunas formas SSE/SSE2 limitadas; AArch64 sigue siendo entero. Windows, Android, Darwin y otras cargas de kernel son trabajos separados.
+El primer perfil, `linux-elf64-v1`, ejecuta ELF `ET_EXEC` x64/AArch64 y PIE estáticos `ET_DYN` con autorrelocación en CPL3 o EL0. Carga segmentos ELF reales, construye la pila inicial, reanuda por intervalos y atiende solicitudes explícitas de llamadas al sistema Linux. Es un modelo de proceso independiente, no una distribución Linux completa ni una promesa de ejecutar binarios libc arbitrarios. El enlace dinámico, señales, hilos, sistemas de archivos y servicios no admitidos fallan explícitamente.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,29 @@ Los servicios de memoria anónima comparten el espacio del proceso y el presupue
 Las longitudes se redondean a páginas. `munmap` tolera huecos y retiradas repetidas; `mprotect` modifica el prefijo mapeado antes de devolver `ENOMEM` ante un hueco. `PROT_NONE` conserva la asignación y sus bytes, pero impide el acceso invitado. El `brk` bruto devuelve el límite solicitado si tiene éxito y el anterior si falla, no la convención cero/menos uno de libc. El límite inicial es el final de imagen alineado a página. El crecimiento respeta otros mapeos y el presupuesto; la reducción conserva los bytes de la página parcial restante. Las reglas y prioridades de error siguen los servicios Linux de [mapeo](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) y [protección](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Los mapeos de archivos, compartidos o fijos, crecimiento descendente, páginas enormes, bloqueo, claves de protección, permisos solo de ejecución/escritura y otros indicadores siguen sin soporte explícito: se detienen antes de publicar efectos o inventar un retorno. Los errores normales de rango, longitud y alineación del subconjunto admitido devuelven errores invitados y permiten continuar. Ningún servicio reenvía punteros ni peticiones de mapeo al OS anfitrión.
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Perfil Windows PE64
+
+`windows-pe64-v1` añade procesos de consola Windows x64/ARM64 limitados: carga PE, PEB/TEB, TLS estático y dinámico, callbacks de inicio/salida y modelos Win32 por nombre. Usa la capa CPU sin depender de la emulación de controladores; carga DLL/CRT, GUI, SEH de usuario, hilos y compatibilidad general con Windows siguen pendientes.
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+Este modelo versionado de un hilo carga EXE de consola PE32+ AMD64/ARM64 en su base preferida. Verifica bytes originales y datos del cargador, conserva permisos de usuario y huecos de protección de pila. Rechaza importaciones desconocidas, ordinales, enlazadas o diferidas, configuración de carga/CFG, imágenes administradas, GUI y entradas DLL. Valida reubicaciones sin cambiar la base. Los modelos API no son DLL instaladas: las listas del cargador solo incluyen el EXE y `GetModuleHandleW` acepta únicamente NULL.
+
+GS en x64 y x18 en ARM64 apuntan a TEB: límites de pila, puntero propio, PID/TID, PEB, parámetros, LastError y TLS. Convierte UTF-8 estricto a UTF-16 y entrecomilla argv según Microsoft CRT. Los nombres de entorno son ASCII, se rechazan duplicados sin distinguir mayúsculas, los valores pueden ser Unicode y el bloque ordenado acaba con dos NUL. No hereda entorno ni archivos del host. TLS estático copia plantilla, pone BSS a cero y escribe un índice de 32 bits; TLS dinámico usa otras ranuras TEB. Attach/detach lee la tabla viva en orden con presupuesto y plazo compartidos. Retorno de entrada y salida normal ejecutan detach; la salida recursiva durante detach se detiene explícitamente.
+
+`WindowsProcessServices.def` define `ExitProcess`, `RtlExitUserProcess`, handles de salida y `WriteFile` síncrono, LastError, ID y pseudohandles de proceso/hilo, `GetCommandLineW`, asignación/liberación/tamaño del heap, TLS dinámico y NULL `GetModuleHandleW`. Solo resuelve nombres exactos de `kernel32.dll`, `kernelbase.dll` y `ntdll.dll`. Syscalls directos y puertas falsas no seleccionan modelos. El heap pertenece al proceso y se recupera; la salida conserva bytes binarios. Los errores Win32 se separan de E/S asíncrona y excepciones de usuario no implementadas. Los alias respetan el cero inicial del contador y la dirección de retorno real.
+
+`windows.native_calls` conserva módulo/función, argumentos escalares declarados y resultados anulables, sin inventar números NT. `NeverDWindowsProcessTests` comprueba PE reales, TLS del compilador, cambios de callbacks, heap, alias, metadatos inválidos, privilegios y presupuestos; `NeverDProcessPublicTests` verifica CLI/C ABI. CI de Windows ejecuta el mismo EXE directamente como oráculo independiente y exige pruebas WHP. La evidencia ARM64 nativa aún requiere una máquina adecuada.
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

@@ -8,6 +8,7 @@
 #include "../core/ExecutionDiagnostics.h"
 #include "../os/linux/LinuxProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
+#include "../os/windows/process/WindowsProcess.h"
 #include "RuntimeValues.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -49,6 +50,8 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
     return linux_model::runProcess(Path, Options);
   case ProcessProfile::AndroidNativeAArch64:
     return android_model::runNative(Path, Options);
+  case ProcessProfile::WindowsPE64:
+    return windows_process::runProcess(Path, Options);
   }
   return diagnostic::error(runtime::ProcessProfile);
 }

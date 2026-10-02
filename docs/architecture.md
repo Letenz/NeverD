@@ -1263,6 +1263,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
+| `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1284,6 +1285,7 @@ lib/emulation/
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
+  os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
   os/linux/android/      Android native library linking, TLS and Bionic models
 ```
@@ -1330,11 +1332,10 @@ generic scheduler or a hard native cancellation deadline.
 The `os` directory describes the **guest** environment. Linux-host KVM can
 execute a Windows guest workload; the host never chooses its OS model.
 `DriverSession`, driver scenario parsing and reports belong to `os/windows`,
-because their lifecycle and objects are Windows-specific. The current Windows
-implementation remains one driver environment; moving it does not imply a
-completed Windows user-mode environment.
-When a process environment is added, keep its entry point, loader policy and
-user ABI separate from the kernel workload. Move shared OS primitives into a
+because their lifecycle and objects are Windows-specific. Windows PE64 user processes have their own `NeverDEmulationWindowsProcess`
+component under `os/windows/process`, built with CPU emulation even when the
+driver environment is disabled. Process entry, PE admission, PEB/TEB, TLS and
+named user APIs stay separate from kernel objects and driver policy. Move shared OS primitives into a
 common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
@@ -2779,3 +2780,7 @@ Concrete type recipes reuse this registered internal-protocol identity proof for
 The super-call proof retains narrow result padding and checks every argument; aggregate, variadic, stale and ambiguous declarations remain unsupported. Exact whole class or metaclass addresses materialized into pointer-sized values use the same runtime object-identity proof as direct receivers, including stores into `objc_super`. Class-reference cells, scalar immediates, partial addresses and conflicting metadata cannot acquire this binding. Publication rechecks the original class identity.
 
 UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters and setters retain the 32-byte `UIEdgeInsets` record: top, left, bottom and right are doubles in d0–d3 on arm64. Complete device and simulator SDK declarations agree, and Apple Clang independently reproduces all six encodings. Receiver lookup retains the anonymous UIButton category and the UIButton → UIControl → UIView hierarchy. Conflicting runtime declarations, other receivers, class methods, wrong providers and architectures without matching evidence remain unsupported.
+
+`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

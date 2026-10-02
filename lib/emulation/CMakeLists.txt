@@ -75,11 +75,12 @@ add_neverd_component_library(NeverDEmulationImage
 
 add_subdirectory(os/linux)
 add_subdirectory(os/linux/android)
+add_subdirectory(os/windows/process)
 add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessAndroidJSON.cpp
-  LINK_COMPONENTS EmulationLinux EmulationAndroid
+  LINK_COMPONENTS EmulationLinux EmulationAndroid EmulationWindowsProcess
   LLVM_COMPONENTS Support)
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)

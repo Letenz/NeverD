@@ -6,7 +6,7 @@
 
 `neverd emulate` 會在明確指定的客體 OS 設定檔下執行映像。CPU 傳輸、映像解析、程序進入點與 OS 服務由不同邊界負責。啟用 `NEVERD_ENABLE_CPU_EMULATION=ON`；驅動程式模擬也會包含它。
 
-首個設定檔 `linux-elf64-v1` 會在 CPL3 或 EL0 執行 x64/AArch64 ELF `ET_EXEC` 與可自行重定位的靜態 PIE `ET_DYN`。它載入真實 ELF 區段、建構初始堆疊、依指令量恢復執行，並處理明確的 Linux 系統呼叫要求。這是獨立程序模型，不是完整 Linux 發行版，也不保證任意 libc 二進位檔都能執行。動態連結、訊號、執行緒、檔案系統及不支援的服務都會明確失敗。x64 設定檔允許少數受限 SSE/SSE2 形式；AArch64 仍為整數指令設定檔。Windows、Android、Darwin 和其他核心工作負載另行處理。
+首個設定檔 `linux-elf64-v1` 會在 CPL3 或 EL0 執行 x64/AArch64 ELF `ET_EXEC` 與可自行重定位的靜態 PIE `ET_DYN`。它載入真實 ELF 區段、建構初始堆疊、依指令量恢復執行，並處理明確的 Linux 系統呼叫要求。這是獨立程序模型，不是完整 Linux 發行版，也不保證任意 libc 二進位檔都能執行。動態連結、訊號、執行緒、檔案系統及不支援的服務都會明確失敗。
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,29 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 長度向上取整至頁。`munmap` 允許空洞及重複移除；`mprotect` 遇到空洞前會修改已映射前綴，再回傳 `ENOMEM`。`PROT_NONE` 保留配置與位元組，但禁止客體存取。原始 `brk` 成功時回傳請求的位元組邊界，失敗時回傳舊邊界，不採用 libc 包裝器的零／負一慣例。初始 break 為頁對齊的映像結尾。成長受其他映射及預算限制；縮減保留剩餘部分頁的位元組。支援子集的規則與錯誤優先序遵循 Linux [映射](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)及[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)服務。
 
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Windows PE64 設定檔
+
+`windows-pe64-v1` 新增有界 Windows x64/ARM64 主控台程序：PE 載入、PEB/TEB、靜態與動態 TLS、啟動／結束回呼及具名 Win32 API 模型。它獨立使用 CPU 層，不需啟用驅動程式模擬；DLL/CRT 載入、GUI、使用者態 SEH、執行緒及通用 Windows 相容性仍待完成。
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+此版本化單執行緒模型以偏好基址載入 AMD64/ARM64 PE32+ 主控台 EXE。映射前核對原始位元組與載入器資料；保留使用者頁權限及堆疊保護間隙。未知、序號、繫結或延遲匯入、載入設定／CFG、受控映像、GUI 和 DLL 進入點明確拒絕。會驗證重定位紀錄，但不改變基址。系統 API 模型不是已安裝 DLL；載入器串列僅有實際映射的 EXE，`GetModuleHandleW` 目前僅接受 NULL。
+
+x64 GS、ARM64 x18 指向 TEB，提供堆疊邊界、自指標、PID/TID、PEB、程序參數、LastError 與 TLS。嚴格將 UTF-8 轉為 UTF-16，argv 依 Microsoft CRT 規則加引號。環境名稱限 ASCII，拒絕不分大小寫的重複名稱；值可為 Unicode，排序後以雙 NUL 結尾，不繼承主機環境或檔案系統。靜態 TLS 複製範本、清零 BSS、寫入 32 位索引；動態 TLS 使用獨立 TEB 槽位。啟動／結束依序讀取即時回呼表，共用截止時間及資源額度。進入點返回與正常退出都執行結束回呼；結束回呼內遞迴退出會明確停止。
+
+`WindowsProcessServices.def` 管理完整 API 清單：`ExitProcess`、`RtlExitUserProcess`、標準輸出控制代碼與同步 `WriteFile`、LastError、程序／執行緒識別與虛擬控制代碼、`GetCommandLineW`、程序堆配置／釋放／大小、動態 TLS、NULL `GetModuleHandleW`。提供者限 `kernel32.dll`、`kernelbase.dll`、`ntdll.dll` 並精確匹配匯出名稱。直接 syscall 與偽造回呼入口無法選擇 API。堆有程序所有權並於釋放時回收；輸出保留二進位資料，API 參數錯誤、非同步 I/O 與使用者例外限制分開處理。別名指標會看到完成計數的初始清零與實際返回位址變更。
+
+`windows.native_calls` 保留 DLL／函式名稱、宣告的純量參數及可空結果，不假造 NT syscall 編號。`NeverDWindowsProcessTests` 驗證真實 PE、編譯器 TLS、回呼修改、堆／LastError、別名、畸形資料、權限與預算；`NeverDProcessPublicTests` 驗證 CLI/C ABI。Windows CI 直接執行相同 EXE 作獨立對照，並要求 WHP 測試通過；原生 ARM64 執行證據仍需對應機器。
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

@@ -1,0 +1,29 @@
+//===- WindowsProcessServices.def - Named user API registry --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Provider families are exact. Kernel admits kernel32.dll and kernelbase.dll.
+// No wildcard API-set binding or guessed syscall number is permitted.
+#ifdef NEVERD_WINDOWS_PROCESS_API
+NEVERD_WINDOWS_PROCESS_API(ExitProcess, Kernel, 1, false)
+NEVERD_WINDOWS_PROCESS_API(RtlExitUserProcess, Native, 1, false)
+NEVERD_WINDOWS_PROCESS_API(GetStdHandle, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(WriteFile, Kernel, 5, true)
+NEVERD_WINDOWS_PROCESS_API(GetLastError, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(SetLastError, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetCurrentProcessId, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetCurrentThreadId, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetCurrentProcess, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetCurrentThread, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetCommandLineW, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetProcessHeap, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(HeapAlloc, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(HeapFree, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(HeapSize, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(TlsAlloc, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(TlsFree, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(TlsSetValue, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(TlsGetValue, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetModuleHandleW, Kernel, 1, true)
+#endif

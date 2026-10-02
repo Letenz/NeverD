@@ -587,7 +587,7 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 
 CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构、特权、地址位宽和功能。`ExecutionBudget` 为每个工作负载持有共享指令／事件计数和绝对单调 deadline；恢复执行不会重置预算。`ExecutionSession` 管理 CPU、hooks 及待处理的服务／故障续接。会话可共享内存和预算，但采用协作调度，不是并行 SMP。恢复前必须恰好消费一次待处理请求。CPU 故障优先于资源停止；无法解释的引擎停止不代表工作负载成功。
 
-`ImageMappingPlan` 使用加载器已有分段，不重新解析 header，也不解析 imports；在发布地址空间前验证完整范围和重叠。明确的 `linux-elf64-v1` 配置以初始栈、显式服务请求和有界字节输出运行 x64/AArch64 freestanding ELF `ET_EXEC` 与静态 PIE `ET_DYN`。动态链接、dynamic TLS、信号、OS 线程和不支持的服务会失败；静态 TLS 与有限的 x64 SSE/SSE2 可用；不会从 KVM 推断 Linux，也不会从 WHP 推断 Windows。详见[CPU 执行](cpu-execution.md)与[来宾进程模拟](process-emulation.md)。这不表示支持 Windows 用户态、Android 或 Darwin 应用。
+`ImageMappingPlan` 使用加载器已有分段，不重新解析 header，也不解析 imports；在发布地址空间前验证完整范围和重叠。明确的 `linux-elf64-v1` 配置以初始栈、显式服务请求和有界字节输出运行 x64/AArch64 freestanding ELF `ET_EXEC` 与静态 PIE `ET_DYN`。动态链接、dynamic TLS、信号、OS 线程和不支持的服务会失败；静态 TLS 与有限的 x64 SSE/SSE2 可用；不会从 KVM 推断 Linux，也不会从 WHP 推断 Windows。详见[CPU 执行](cpu-execution.md)与[来宾进程模拟](process-emulation.md)。
 
 `driver-strict` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在关闭 Unicorn 的配置下通过全部 359 项必跑检查：131 项 CPU 检查、26 个内置映像与 46 个 WDK 映像及 40 个场景组合在首选和重定位地址产生的 224 项驱动结果，以及 4 项 SEH 边界检查 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
@@ -931,3 +931,7 @@ ARM64 源码绑定新增十二个 UIKit 富文本属性键全局量，依据是�
 super 调用证明保留窄返回值的未定义填充位并检查每个参数；聚合、可变参数、过期或歧义声明仍不受支持。物化为指针宽度值的精确完整类或元类地址，与直接接收者复用同一运行时对象身份证明，包括写入 `objc_super` 的情形。类引用单元、标量立即数、不完整地址和冲突元数据不能获得此绑定。发布时重新检查原始类身份。
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读写方法保留完整的 32 字节 `UIEdgeInsets`：上、左、下、右四个 double 在 arm64 上由 d0–d3 传递。完整的设备与模拟器 SDK 声明一致，Apple Clang 独立复现全部六种编码。接收者查找保留 UIButton 匿名分类及 UIButton → UIControl → UIView 继承关系。运行时声明冲突、其他接收者、类方法、错误提供库及缺少匹配证据的架构仍不受支持。
+
+`windows-pe64-v1` 新增有界 Windows x64/ARM64 控制台进程：PE 装载、PEB/TEB、静态和动态 TLS、启动／退出回调及具名 Win32 API 模型。它独立使用 CPU 层，无需启用驱动模拟；DLL/CRT 装载、GUI、用户态 SEH、线程及通用 Windows 兼容性仍待完成。
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
