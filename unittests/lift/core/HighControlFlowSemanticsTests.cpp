@@ -5592,6 +5592,58 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   EXPECT_TRUE(F.Body[1].Body.empty());
 }
 
+TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
+  // __try { v = 5; goto out; } __except (1) { goto out; } return 0;
+  // out: observe(); return v;
+  // The handler runs in the protection around the try, so its jump may
+  // become a copy of `out`.  The protected body's may not: observe() would
+  // then be guarded, and a fault in it would reach the handler.
+  auto Build = [] {
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1008};
+    Try.Body = {assign(0x1000, 1, 5), jump(0x1004, 0x1020)};
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1010;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{jump(0x1010, 0x1020)}};
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Call;
+    Observe.Addr = 0x1020;
+    Observe.CallExpr = HighExpr::makeCall("observe", 0x5000, {});
+    HighFunc F;
+    F.Body = {Try, result(0x1008, HighExpr::makeConst(0, 8)), Observe,
+              result(0x1024, local(1))};
+    return F;
+  };
+  HighFunc F = Build();
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  const HighStmt &Try = F.Body.front();
+  ASSERT_EQ(Try.Kind, StmtKind::SEHTry);
+  ASSERT_FALSE(Try.Body.empty());
+  EXPECT_EQ(Try.Body.back().Kind, StmtKind::Goto);
+  ASSERT_EQ(Try.EHClauseBodies.size(), 1u);
+  ASSERT_FALSE(Try.EHClauseBodies[0].empty());
+  EXPECT_EQ(Try.EHClauseBodies[0].back().Kind, StmtKind::Return);
+
+  // With the handler ending in its own return, the protected body's jump
+  // moves after the statement, where the copy may replace it.
+  EXPECT_TRUE(hoistTryExitJumps(F.Body));
+  ASSERT_EQ(F.Body.front().Body.size(), 1u);
+  ASSERT_GE(F.Body.size(), 2u);
+  EXPECT_EQ(F.Body[1].Kind, StmtKind::Goto);
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+
+  // A handler that falls through would run the moved jump too.
+  F = Build();
+  F.Body.front().EHClauseBodies = {{assign(0x1010, 1, 7)}};
+  EXPECT_FALSE(hoistTryExitJumps(F.Body));
+  EXPECT_EQ(F.Body.front().Body.back().Kind, StmtKind::Goto);
+}
+
 TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {
   // if (c) goto fail; v = 5; return v; fail: abort(); -- the failing path
   // ends in the call, as a return tail ends in its return.
