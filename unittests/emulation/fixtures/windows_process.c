@@ -239,10 +239,20 @@ DWORD entry(void) {
   if (Mode == 'v')
     overwriteReturn(GetStdHandle(StdoutSelector), Message, 1, &Written, 0);
   if (Mode == 'e') {
-    require(!WriteFile(GetStdHandle(StdoutSelector), (void *)(ULONG_PTR)1, 8,
-                       &Written, 0));
-    require(Written == 0 && GetLastError() == NoAccess);
-    require(TlsGetValue((DWORD)-1) == 0 && GetLastError() == InvalidParameter);
+    const int Success = WriteFile(GetStdHandle(StdoutSelector),
+                                  (void *)(ULONG_PTR)1, 8, &Written, 0);
+    const DWORD WriteError = GetLastError();
+    const ULONG_PTR TLSValue = (ULONG_PTR)TlsGetValue((DWORD)-1);
+    const DWORD TLSError = GetLastError();
+    if (Success || Written || WriteError != NoAccess || TLSValue ||
+        TLSError != InvalidParameter) {
+      const ULONG_PTR Observed[] = {(DWORD)Success, Written, WriteError,
+                                    TLSValue, TLSError};
+      DWORD Reported;
+      WriteFile(GetStdHandle(StderrSelector), Observed, sizeof(Observed),
+                &Reported, 0);
+      require(0);
+    }
   }
   if (Mode == 'b')
     WriteFile(GetStdHandle(StdoutSelector), Message, 1, (void *)(ULONG_PTR)1,

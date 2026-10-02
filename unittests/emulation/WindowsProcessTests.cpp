@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
@@ -491,13 +492,16 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
         Program, {Program, Mode}, std::nullopt, Redirects, NativeTimeoutSeconds,
         0, &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
-    ASSERT_EQ(Status, ExitStatus) << LaunchError;
     const auto Out = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Out));
-    EXPECT_EQ((*Out)->getBuffer(),
-              std::string(Mode == TailExit ? Empty : Message) + Detached);
     const auto Err = llvm::MemoryBuffer::getFile(Error);
     ASSERT_TRUE(bool(Err));
+    EXPECT_EQ(Status, ExitStatus)
+        << LaunchError << llvm::toHex((*Err)->getBuffer());
+    if (Status != ExitStatus)
+      continue;
+    EXPECT_EQ((*Out)->getBuffer(),
+              std::string(Mode == TailExit ? Empty : Message) + Detached);
     EXPECT_EQ((*Err)->getBuffer(),
               Mode == TailExit
                   ? std::string()
