@@ -20,6 +20,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace neverd::emulation {
 namespace {
@@ -318,6 +319,105 @@ TEST_F(WindowsProcessImage, RejectsImportAndTLSMetadataBeforeExecution) {
   ASSERT_NE(Name, std::string::npos);
   Copy[Name] = 'Q';
   rejects(Copy);
+}
+TEST_F(WindowsProcessImage, RejectsUnknownDependenciesWithEmptyImportTables) {
+  auto Bytes = bytes();
+  auto Object = llvm::cantFail(llvm::object::COFFObjectFile::create(
+      llvm::MemoryBufferRef(Bytes, Executable)));
+  auto Offset = [&](uint64_t RVA) -> uint64_t {
+    for (const auto &Reference : Object->sections()) {
+      const auto *S = Object->getCOFFSection(Reference);
+      if (RVA >= S->VirtualAddress &&
+          RVA - S->VirtualAddress < S->SizeOfRawData)
+        return S->PointerToRawData + RVA - S->VirtualAddress;
+    }
+    llvm_unreachable(InvalidOriginalRVA);
+  };
+  llvm::object::coff_import_directory_table_entry Import;
+  std::memcpy(&Import,
+              Bytes.data() +
+                  Offset(Object->getDataDirectory(llvm::COFF::IMPORT_TABLE)
+                             ->RelativeVirtualAddress),
+              sizeof(Import));
+  ASSERT_NE(Import.ImportLookupTableRVA, 0u);
+  Bytes[Offset(Import.NameRVA)] = 'Q';
+  llvm::support::endian::write64le(
+      Bytes.data() + Offset(Import.ImportLookupTableRVA), 0);
+  llvm::support::endian::write64le(
+      Bytes.data() + Offset(Import.ImportAddressTableRVA), 0);
+  rejects(Bytes);
+}
+TEST_F(WindowsProcessImage, RejectsInconsistentExtendedDLLCharacteristics) {
+  auto Bytes = bytes();
+  auto Object = llvm::cantFail(llvm::object::COFFObjectFile::create(
+      llvm::MemoryBufferRef(Bytes, Executable)));
+  using DebugRecord = llvm::object::debug_directory;
+  const uint64_t Extra = sizeof(DebugRecord) + 2 * sizeof(uint32_t);
+  const llvm::object::coff_section *Section = nullptr;
+  for (const auto &Reference : Object->sections()) {
+    const auto *S = Object->getCOFFSection(Reference);
+    if (S->SizeOfRawData >= S->VirtualSize &&
+        S->SizeOfRawData - S->VirtualSize >= Extra) {
+      Section = S;
+      break;
+    }
+  }
+  ASSERT_NE(Section, nullptr);
+  const uint64_t Offset = Section->PointerToRawData + Section->VirtualSize;
+  const uint64_t RVA = Section->VirtualAddress + Section->VirtualSize;
+  const uint64_t SectionOffset =
+      reinterpret_cast<const char *>(Section) - Bytes.data();
+  auto *Directory = Object->getDataDirectory(llvm::COFF::DEBUG_DIRECTORY);
+  const uint64_t DirectoryOffset =
+      reinterpret_cast<const char *>(Directory) - Bytes.data();
+  llvm::support::endian::write32le(
+      Bytes.data() + SectionOffset +
+          offsetof(llvm::object::coff_section, VirtualSize),
+      Section->VirtualSize + Extra);
+  llvm::object::data_directory Entry{};
+  Entry.RelativeVirtualAddress = RVA;
+  Entry.Size = sizeof(DebugRecord);
+  std::memcpy(Bytes.data() + DirectoryOffset, &Entry, sizeof(Entry));
+  DebugRecord Debug{};
+  Debug.Type = llvm::COFF::IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS;
+  Debug.SizeOfData = sizeof(uint32_t);
+  Debug.AddressOfRawData = RVA + sizeof(Debug);
+  Debug.PointerToRawData = Offset + sizeof(Debug);
+  std::fill_n(Bytes.data() + Offset, Extra, 0);
+  std::memcpy(Bytes.data() + Offset, &Debug, sizeof(Debug));
+  const auto Input = Root / InvalidFile;
+  auto Accepts = [&](llvm::StringRef Data) {
+    std::error_code EC;
+    {
+      llvm::raw_fd_ostream OS(Input.string(), EC);
+      ASSERT_FALSE(EC);
+      OS << Data;
+    }
+    auto Valid = win::loadImage(Input, process_defaults::Memory);
+    ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+  };
+  Accepts(Bytes);
+  auto Unmapped = Bytes;
+  auto FileOnly = Debug;
+  FileOnly.AddressOfRawData = 0;
+  FileOnly.PointerToRawData = Unmapped.size();
+  std::memcpy(Unmapped.data() + Offset, &FileOnly, sizeof(FileOnly));
+  Unmapped.append(sizeof(uint32_t), '\0');
+  Accepts(Unmapped);
+  auto Copy = Bytes;
+  llvm::support::endian::write32le(Copy.data() + Debug.PointerToRawData,
+                                   ExtendedCET);
+  rejects(Copy);
+  Debug.AddressOfRawData += sizeof(uint32_t);
+  std::memcpy(Bytes.data() + Offset, &Debug, sizeof(Debug));
+  // Matching zero bytes cannot legitimize contradictory file/RVA identities.
+  rejects(Bytes);
+  llvm::support::endian::write32le(
+      Bytes.data() + Debug.PointerToRawData + sizeof(uint32_t), ExtendedCET);
+  rejects(Bytes);
+  Debug.AddressOfRawData = UINT32_MAX;
+  std::memcpy(Bytes.data() + Offset, &Debug, sizeof(Debug));
+  rejects(Bytes);
 }
 TEST_F(WindowsProcessImage, BuildsUTF16CommandLineEnvironmentAndLoaderLists) {
   const auto Image =

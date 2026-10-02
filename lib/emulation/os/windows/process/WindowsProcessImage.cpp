@@ -104,6 +104,8 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out) {
     auto Module = R.name(Entry.NameRVA);
     if (!Module)
       return Module.takeError();
+    if (!findProvider(*Module))
+      return failure(text::Import + *Module);
     const uint64_t Lookup = Entry.ImportLookupTableRVA
                                 ? uint32_t(Entry.ImportLookupTableRVA)
                                 : uint32_t(Entry.ImportAddressTableRVA);
@@ -362,11 +364,21 @@ llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
         debug_directory Debug;
         std::memcpy(&Debug, Data->data() + Offset, sizeof(Debug));
         if (Debug.Type == llvm::COFF::IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS) {
-          if (Debug.SizeOfData < DWordSize ||
+          if (Debug.SizeOfData != DWordSize ||
               Debug.PointerToRawData > R.Raw.size() ||
-              Debug.SizeOfData > R.Raw.size() - Debug.PointerToRawData ||
-              llvm::support::endian::read32le(R.Raw.data() +
-                                              Debug.PointerToRawData))
+              Debug.SizeOfData > R.Raw.size() - Debug.PointerToRawData)
+            return failure(text::Directory + llvm::Twine(I));
+          const auto *Payload = R.Raw.data() + Debug.PointerToRawData;
+          // An unmapped debug payload may have RVA zero. If both locations
+          // exist, they must identify the same bytes, not merely equal flags.
+          if (Debug.AddressOfRawData) {
+            auto Mapped = R.bytes(Debug.AddressOfRawData, Debug.SizeOfData);
+            if (!Mapped)
+              return Mapped.takeError();
+            if (Mapped->data() != Payload)
+              return failure(text::Directory + llvm::Twine(I));
+          }
+          if (llvm::support::endian::read32le(Payload))
             return failure(text::Directory + llvm::Twine(I));
         }
       }

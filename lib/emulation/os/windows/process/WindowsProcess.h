@@ -39,13 +39,16 @@ enum class API {
 #include "WindowsProcessServices.def"
 #undef NEVERD_WINDOWS_PROCESS_API
 };
+enum class APIProvider { Kernel, Native };
 struct Service {
   API Kind;
   const char *Name;
   unsigned Arguments;
-  bool Native, Returns;
+  APIProvider Provider;
+  bool Returns;
 };
 llvm::ArrayRef<Service> services();
+std::optional<APIProvider> findProvider(llvm::StringRef Module);
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name);
 struct ImageRegion {
   uint64_t Address;

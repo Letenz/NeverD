@@ -12,10 +12,9 @@
 namespace neverd::emulation::windows_process {
 namespace {
 using namespace value;
-constexpr bool Kernel = false, Native = true;
 constexpr Service Registry[] = {
 #define NEVERD_WINDOWS_PROCESS_API(Name, Provider, Count, Returns)             \
-  {API::Name, #Name, Count, Provider, Returns},
+  {API::Name, #Name, Count, APIProvider::Provider, Returns},
 #include "WindowsProcessServices.def"
 #undef NEVERD_WINDOWS_PROCESS_API
 };
@@ -28,12 +27,18 @@ static_assert([] {
 }());
 } // namespace
 llvm::ArrayRef<Service> services() { return Registry; }
-const Service *findService(llvm::StringRef Module, llvm::StringRef Name) {
+std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   const auto Lower = Module.lower();
+  if (Lower == text::NTDLL)
+    return APIProvider::Native;
+  if (Lower == text::Kernel32 || Lower == text::KernelBase)
+    return APIProvider::Kernel;
+  return std::nullopt;
+}
+const Service *findService(llvm::StringRef Module, llvm::StringRef Name) {
+  const auto Provider = findProvider(Module);
   for (const auto &S : Registry)
-    if (Name == S.Name &&
-        (S.Native ? Lower == text::NTDLL
-                  : (Lower == text::Kernel32 || Lower == text::KernelBase)))
+    if (Name == S.Name && Provider == S.Provider)
       return &S;
   return nullptr;
 }
