@@ -2465,6 +2465,129 @@ TEST(ObjCSourceBindings, PrivateSwiftWitnessUsesRegisteredClassConformance) {
   }
 }
 
+TEST(ObjCSourceBindings, PrivateSwiftWitnessFindsRegisteredInternalProtocol) {
+  for (bool Indirect : {false, true}) {
+    PrivateSwiftWitnessFixture F(Indirect);
+    F.Image.Exports.clear();
+    auto Records = F.Image.Sections.back();
+    Records.Name = "__swift5_protos";
+    Records.VA = Records.FileOff = 0x4310;
+    F.Image.Sections.push_back(Records);
+    F.relative(Records.VA, F.Protocol);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftWitnessTables.size(), 1U);
+    const auto &Expression = Bound.Function.Body.front().RetVal;
+    ASSERT_TRUE(Expression->SourceCallHint);
+    EXPECT_TRUE(objcSourceCallBound(*Expression, F.Image, {}));
+    std::set<std::string> Helpers;
+    const auto Source = renderObjCSwiftWitnessTableHelpers(
+        F.Image, Bound.SwiftWitnessTables, Helpers);
+    EXPECT_NE(Source.find("swift_getTypeByMangledNameInContext"),
+              std::string::npos);
+    EXPECT_NE(Source.find("14WitnessFixture5Proto_p"), std::string::npos);
+    EXPECT_EQ(Source.find("__asm__(\"" + F.ProtocolName + "\")"),
+              std::string::npos);
+    F.relative(Records.VA, F.Type);
+    EXPECT_FALSE(objcSourceCallBound(*Expression, F.Image, {}));
+    EXPECT_THROW(renderObjCSwiftWitnessTableHelpers(
+                     F.Image, Bound.SwiftWitnessTables, Helpers),
+                 std::runtime_error);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     PrivateSwiftWitnessRejectsChangedProtocolRegistration) {
+  for (unsigned Mutation = 0; Mutation < 20; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    PrivateSwiftWitnessFixture F;
+    F.Image.Exports.clear();
+    auto Records = F.Image.Sections.back();
+    Records.Name = "__swift5_protos";
+    Records.VA = Records.FileOff = 0x4310;
+    F.Image.Sections.push_back(Records);
+    F.relative(Records.VA, F.Protocol);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftWitnessTables.size(), 1U);
+    switch (Mutation) {
+    case 0:
+      F.Image.Sections.pop_back();
+      break;
+    case 1:
+      F.relative(Records.VA, F.Type);
+      break;
+    case 2:
+      F.relative(Records.VA, F.Protocol, true);
+      break;
+    case 3:
+      F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+      F.relative(Records.VA + 4, 0x4180);
+      F.put32(0x4180, 0x10043);
+      F.relative(0x4184, F.Module);
+      F.relative(0x4188, 0x41d0);
+      break;
+    case 4:
+      F.Image.Symbols.push_back({F.ProtocolName, 0x4180, 0, false});
+      break;
+    case 5:
+      F.text(0x41d0, "Other");
+      break;
+    case 6:
+      F.text(0x41f0, "OtherFixture");
+      break;
+    case 7:
+      F.put32(F.Protocol, 0x100c3);
+      break;
+    case 8:
+      F.put32(F.Protocol + 16, 513);
+      break;
+    case 9:
+      F.put32(F.Protocol + 12, 1);
+      break;
+    case 10:
+      F.relative(F.Protocol + 20, 0x41d0);
+      break;
+    case 11:
+      F.Image.Segments[0].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      F.Image.Segments[0].ReadOnlyAfterRelocations = false;
+      break;
+    case 12:
+      F.Image.Exports.push_back({F.ProtocolName, 0, F.Protocol + 4});
+      break;
+    case 13:
+      F.Image.Sections.push_back(Records);
+      break;
+    case 14:
+      F.Image.Sections.back().FileSz = 3;
+      break;
+    case 15:
+      F.relative(Records.VA, 0x2000);
+      break;
+    case 16:
+      F.put32(F.Protocol, 0x10143);
+      break;
+    case 17:
+      F.put32(F.Protocol, 0x50043);
+      break;
+    case 18:
+      F.Image.Symbols.push_back(
+          {"_$s14WitnessFixture5OtherMp", F.Protocol, 0, false});
+      break;
+    case 19:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    }
+    EXPECT_FALSE(
+        objc_binding_detail::swiftWitnessTableAddressHint(F.Image, F.Table));
+    EXPECT_FALSE(
+        objcSourceCallBound(*Bound.Function.Body.front().RetVal, F.Image, {}));
+    std::set<std::string> Helpers;
+    EXPECT_THROW(renderObjCSwiftWitnessTableHelpers(
+                     F.Image, Bound.SwiftWitnessTables, Helpers),
+                 std::runtime_error);
+  }
+}
+
 TEST(ObjCSourceBindings, PrivateSwiftWitnessRejectsIncompleteIdentityProofs) {
   for (unsigned Mutation = 0; Mutation < 32; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -2619,18 +2742,43 @@ TEST(ObjCSourceBindings, PrivateSwiftWitnessDistinguishesImportedTypeRecords) {
   }
 }
 
-TEST(ObjCSourceBindings, PrivateSwiftWitnessHelperPreservesRuntimeIdentity) {
+static void checkPrivateSwiftWitnessHelper(bool InternalProtocol) {
   PrivateSwiftWitnessFixture F;
+  if (InternalProtocol) {
+    F.Image.Exports.clear();
+    auto Records = F.Image.Sections.back();
+    Records.Name = "__swift5_protos";
+    Records.VA = Records.FileOff = 0x4310;
+    F.Image.Sections.push_back(Records);
+    F.relative(Records.VA, F.Protocol);
+  }
   const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
   ASSERT_EQ(Bound.SwiftWitnessTables.size(), 1U);
   std::set<std::string> Helpers;
   std::string Source = "#include <stdint.h>\n#include <string.h>\n" +
                        renderObjCSwiftWitnessTableHelpers(
                            F.Image, Bound.SwiftWitnessTables, Helpers);
+  Source +=
+      "\n#define INTERNAL_PROTOCOL " + std::to_string(InternalProtocol) + "\n";
   Source += R"(
 static unsigned char metadata, table;
-unsigned char protocol[1] __asm__("_$s14WitnessFixture5ProtoMp") = {0};
-static unsigned queries, classes;
+_Alignas(8) unsigned char protocol[8] __asm__("_$s14WitnessFixture5ProtoMp") = {0};
+static unsigned queries, classes, lookups;
+static struct {
+  uintptr_t kind;
+  uint32_t flags, count;
+  const void *protocol;
+} existential = {0x303, 0x80000001, 1, protocol};
+const void *lookup(const char *, uintptr_t, const void *, const void *)
+    __asm__("_swift_getTypeByMangledNameInContext");
+const void *lookup(const char *name, uintptr_t length, const void *context,
+                   const void *arguments) {
+  const char expected[] = "14WitnessFixture5Proto_p";
+  if (length != sizeof(expected) - 1 || memcmp(name, expected, length) ||
+      context || arguments) __builtin_trap();
+  ++lookups;
+  return &existential;
+}
 void *objc_getClass(const char *name) {
   if (strcmp(name, "_TtC14WitnessFixture5Store")) __builtin_trap();
   ++classes;
@@ -2645,7 +2793,8 @@ const void *query(const void *type, const void *descriptor) {
 int main(void) {
   for (unsigned i = 0; i < 1024; ++i)
     if ((void *)neverd_swift_witness_table_6420_address() != &table) return 1;
-  return queries == 1024 && classes == 1024 ? 0 : 2;
+  return queries == 1024 && classes == 1024 &&
+         lookups == (INTERNAL_PROTOCOL ? 1024 : 0) ? 0 : 2;
 }
 )";
   llvm::SmallString<128> Directory;
@@ -2685,6 +2834,15 @@ int main(void) {
               0)
         << Error;
   }
+}
+
+TEST(ObjCSourceBindings, PrivateSwiftWitnessHelperPreservesRuntimeIdentity) {
+  checkPrivateSwiftWitnessHelper(false);
+}
+
+TEST(ObjCSourceBindings,
+     PrivateSwiftWitnessInternalProtocolHelperPreservesRuntimeIdentity) {
+  checkPrivateSwiftWitnessHelper(true);
 }
 
 TEST(ObjCSourceBindings, SwiftSingletonMetadataRejectsForgedProvider) {
