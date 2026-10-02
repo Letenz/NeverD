@@ -59,6 +59,26 @@ CLI и все версии C API восстановления исходного
 
 В C используются `neverd_devirtualize_source_v3()` или `neverd_devirtualize_machine_source_v3()`. Обнулите `neverd_devirtualize_options_v3` и задайте `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Установите `max_control_fields`, `max_solver_queries` и при необходимости `base.max_control_refinements`; ноль выбирает прежнее значение по умолчанию. Все три поля reserved должны быть нулевыми. v1/v2 игнорируют хвост v3, включая reserved; v3 игнорирует будущие хвосты. Отчёт фиксирует фактическую работу и действующие `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+Восстановление также поддерживает `--vm-chain-transfers=N` (по умолчанию 0) и `--vm-no-control-discovery`. Цепочки сохраняют символические связи между переходами с доказанной единственной целью; при достижении лимита возвращаются обычные границы CFG. В режиме машинного состояния `--vm-entry-frame=begin:end` объявляет не проверяемый при исполнении диапазон смещений от входного RSP без циклического переполнения. Точная числовая предпосылка сохраняется в C и отчёте, не разрешая доступ к памяти и не доказывая эквивалентность.
+
+Совместимые API v4: `neverd_devirtualize_source_v4()` и `neverd_devirtualize_machine_source_v4()`. Обнулите `neverd_devirtualize_options_v4` и задайте полный размер в `base.base.base.struct_size`. Счётчик CLI принимает неотрицательное 32-битное десятичное число; ноль отключает цепочки. Границы — знаковые 64-битные десятичные числа с `begin < end`, требуют `--vm-machine-state` и ограничивают физический входной RSP, а не изменённое значение. В C флаг границ требует API машинного состояния; без флага обе границы должны быть нулевыми. Неизвестные флаги и ненулевые старые резервные поля отклоняются. v1/v2/v3 игнорируют весь хвост v4; v4 игнорирует будущие хвосты. Нулевой указатель опций сохраняет прежние настройки. Отчёт добавляет `maxChainedTransfers`, `entryFrameBounds` и фактический `discoverControlState`. Все CLI-опции требуют `--devirtualize`. Предпосылка не проверяется при исполнении и не гарантирует доступность, инициализацию или отсутствие алиасов. Она не включает политику нативных доказательств.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 В JSON-отчёт добавлены `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` и `discoveryVisits`: они описывают включённое поведение, ограничения и объём анализа. Само обнаружение полей не доказывает успешность восстановления.
 
 Если условие сужает зависимость адреса до части байтов, уточнение также сохраняет в качестве кандидатов контекста уже отслеживаемые полные восьмибайтовые поля прямого адреса, содержащие эту часть. Исходное узкое поле и битовая маска его производителя не меняются; несвязанные широкие поля не повышаются до контекстных. Константы и смещения относительно входа по-прежнему требуют доказательства, а все контексты используют общие действующие лимиты.

@@ -59,6 +59,26 @@ CLI 옵션 `--vm-max-refinements=N`은 양의 정수를 요구하며 기본값�
 
 C 호출자는 `neverd_devirtualize_source_v3()` 또는 `neverd_devirtualize_machine_source_v3()`를 사용합니다. `neverd_devirtualize_options_v3`를 0으로 초기화하고 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`를 설정합니다. `max_control_fields`, `max_solver_queries`, 선택적으로 `base.max_control_refinements`를 설정하며 0은 기존 기본값을 선택합니다. 세 reserved 필드는 모두 0이어야 합니다. v1/v2 진입점은 reserved를 포함한 v3 꼬리를 무시하고 v3는 미래 확장 꼬리를 무시합니다. 보고서는 실제 작업량과 유효한 `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`를 기록합니다.
 
+복원은 `--vm-chain-transfers=N`(기본값 0)과 `--vm-no-control-discovery`도 제공합니다. 연결은 단일 대상이 증명된 제어 전송 사이의 기호 상관관계를 보존하며 한도에 도달하면 일반 CFG 경계로 돌아갑니다. 기계 상태 복원은 `--vm-entry-frame=begin:end`로 실행 시 검사하지 않는 비래핑 진입 RSP 오프셋 범위를 선언할 수 있습니다. 정확한 숫자 전제는 생성 C와 보고서에 남으며 메모리 접근 권한이나 동등성 증명을 제공하지 않습니다.
+
+호환 v4 API는 `neverd_devirtualize_source_v4()`와 `neverd_devirtualize_machine_source_v4()`입니다. `neverd_devirtualize_options_v4`를 0으로 초기화하고 `base.base.base.struct_size`를 전체 크기로 설정합니다. CLI 연결 횟수는 음이 아닌 32비트 십진 정수이며 0은 비활성화입니다. 범위 끝점은 부호 있는 64비트 십진 정수이고 `begin < end` 및 `--vm-machine-state`가 필요하며 조정된 값이 아닌 물리적 진입 RSP를 제한합니다. C의 범위 플래그는 기계 상태 API를 요구하며 플래그가 없으면 두 끝점은 0이어야 합니다. 알 수 없는 플래그와 기존 예약 필드의 0이 아닌 값은 거부합니다. v1/v2/v3은 v4 확장 전체를 무시하고 v4는 미래 확장을 무시합니다. null 옵션은 기존 기본값을 유지합니다. 보고서는 `maxChainedTransfers`, `entryFrameBounds`, 실제 `discoverControlState`를 기록합니다. 모든 CLI 옵션은 `--devirtualize`가 필요합니다. 숫자 전제는 실행 시 검사되지 않으며 접근 가능성, 초기화, 비별칭을 보장하지 않습니다. 네이티브 증명 정책도 활성화하지 않습니다.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements`, `discoveryVisits`가 추가되어 활성화 상태, 제한 및 분석 작업량을 기록합니다. 필드를 찾았다는 사실만으로 복원 성공이 입증되지는 않습니다.
 
 조건에 의해 주소 의존성이 바이트 조각으로 좁아지면, 정밀화는 해당 조각을 포함하는 이미 추적 중인 완전한 8바이트 직접 주소 필드도 문맥 후보로 유지합니다. 기존의 좁은 필드와 생성자 비트 마스크는 그대로 두며, 관련 없는 넓은 필드는 승격하지 않습니다. 상수와 진입점 상대 오프셋은 여전히 증명이 필요하고 모든 문맥은 기존 한도를 공유합니다.

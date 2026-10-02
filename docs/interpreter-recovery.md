@@ -182,6 +182,26 @@ work and proof budgets still apply.
 
 C callers use `neverd_devirtualize_source_v3()` or `neverd_devirtualize_machine_source_v3()`. Zero-initialize `neverd_devirtualize_options_v3` and set `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Set `max_control_fields`, `max_solver_queries` and optionally `base.max_control_refinements`; zero selects the corresponding unchanged default. All three reserved fields must be zero. v1/v2 entry points ignore the v3 tail, including its reserved member, while v3 ignores future tails. The report records effective `maxControlFields`, `maxControlRefinements` and `maxSolverQueries` alongside actual work.
 
+Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
+
+The compatible v4 APIs are `neverd_devirtualize_source_v4()` and `neverd_devirtualize_machine_source_v4()`. Zero-initialize `neverd_devirtualize_options_v4` and set `base.base.base.struct_size` to its full size. Chaining accepts a nonnegative 32-bit decimal CLI count, including zero to disable it. Bounds use signed 64-bit decimal endpoints with `begin < end`, require `--vm-machine-state`, and constrain the physical entry RSP rather than its adjusted value. In C, the bounds flag requires the machine-state API; without it both endpoints must be zero. Unknown flags and old reserved fields are rejected. v1/v2/v3 ignore the entire v4 tail; v4 ignores future tails. Null options retain old defaults. The report adds `maxChainedTransfers` and `entryFrameBounds`; `discoverControlState` records the effective switch. All CLI options require `--devirtualize`. The numeric premise is not checked at runtime and establishes no accessibility, initialization or nonalias guarantee. These options do not enable a native proof policy.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,

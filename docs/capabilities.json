@@ -11264,7 +11264,9 @@
           "neverd_devirtualize_source_v2",
           "neverd_devirtualize_machine_source_v2",
           "neverd_devirtualize_source_v3",
-          "neverd_devirtualize_machine_source_v3"
+          "neverd_devirtualize_machine_source_v3",
+        "neverd_devirtualize_source_v4",
+        "neverd_devirtualize_machine_source_v4"
         ],
         "python": [],
         "cli": [
@@ -11278,7 +11280,10 @@
           "neverd decompile --vm-max-operations",
           "neverd decompile --vm-max-refinements",
           "neverd decompile --vm-max-fields",
-          "neverd decompile --vm-max-queries"
+          "neverd decompile --vm-max-queries",
+        "neverd decompile --vm-chain-transfers",
+        "neverd decompile --vm-entry-frame",
+        "neverd decompile --vm-no-control-discovery"
         ],
         "json": []
       }

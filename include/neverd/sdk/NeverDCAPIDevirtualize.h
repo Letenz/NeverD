@@ -24,7 +24,7 @@ typedef struct neverd_devirtualize_frame_slot_v1 {
 
 /// Experimental, bounded x64 interpreter specialization. Control registers
 /// select context separation; they never supply concrete entry input values.
-/// Both recovery entry points enable automatic control-state discovery. Its
+/// v1/v2/v3 recovery enables automatic control-state discovery. Its
 /// ordinary finite projections do not create context keys. Repeated unresolved
 /// memory dependencies may additionally separate proven incoming constants;
 /// no extra guest-memory reads or multivalue edge partitions are introduced.
@@ -71,6 +71,33 @@ typedef struct neverd_devirtualize_options_v3 {
   uint32_t max_solver_queries;
   uint32_t reserved;
 } neverd_devirtualize_options_v3;
+
+typedef enum neverd_devirtualize_flag_v4 {
+  NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY = 1,
+  NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS = 2
+} neverd_devirtualize_flag_v4;
+
+/// Version 4 adds bounded transfer chaining, optional discovery suppression,
+/// and an explicit numeric entry-RSP domain for the machine-state API only.
+/// Zero the structure and set base.base.base.struct_size to its complete size.
+/// max_chained_transfers == 0 disables chaining; reaching the limit falls back
+/// to ordinary CFG boundaries. All operations and proofs remain budgeted.
+/// Only the declared flag bits are accepted. All older reserved fields remain
+/// zero; v1/v2/v3 entry points ignore this entire extension. v4 ignores future
+/// tails. Without HAS_ENTRY_FRAME_BOUNDS, both endpoint fields must be zero.
+/// With it, entry_frame_begin < entry_frame_end declares that entry RSP plus
+/// every signed offset in [begin,end) fits in [0,UINT64_MAX] without wrapping.
+/// This is an unchecked caller precondition, not a concrete stack address or
+/// memory accessibility, initialization or nonalias evidence. The emitted C
+/// and optional report retain the exact bounds and premise. It does not enable
+/// native equivalence proofs or change the existing source execution profile.
+typedef struct neverd_devirtualize_options_v4 {
+  neverd_devirtualize_options_v3 base;
+  uint32_t max_chained_transfers;
+  uint32_t flags;
+  int64_t entry_frame_begin;
+  int64_t entry_frame_end;
+} neverd_devirtualize_options_v4;
 
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
@@ -144,6 +171,17 @@ neverd_devirtualize_source_v3(neverd_session_t Session, neverd_va_t Entry,
 NEVERD_API const char *neverd_devirtualize_machine_source_v3(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v3 *Options, const char **Report);
+
+/// The contracts and ownership match the corresponding v1/v2/v3 APIs. Null
+/// options preserve their defaults. The ordinary source API rejects explicit
+/// entry-frame bounds; use machine_source_v4 for that numeric precondition.
+NEVERD_API const char *
+neverd_devirtualize_source_v4(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v4 *Options,
+                              const char **Report);
+NEVERD_API const char *neverd_devirtualize_machine_source_v4(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v4 *Options, const char **Report);
 
 #ifdef __cplusplus
 }

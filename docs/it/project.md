@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 550d06aa2524f607ef154513ea47ba3219e370665f211cbabbe64646839c142a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ Il flusso iOS sperimentale `neverd mobile App.ipa -o recovered-ios` esporta C na
 Il [recupero sperimentale del sorgente degli interpreti](interpreter-recovery.md) usa `neverd decompile --devirtualize --func ENTRY` per specializzare gli interpreti x64 ELF/PE collegati supportati in HighC o LLVMC tramite la pipeline LowIR/MedIR comune. Gli indizi di controllo separano i contesti del decoder senza fissare gli input di esecuzione. Controllo irrisolto, semantica non supportata e budget esauriti causano errori espliciti; questa modalità non certifica la sostituzione del binario né l’equivalenza delle eccezioni.
 
 I budget di recupero sono espliciti: `--vm-max-fields`, `--vm-max-refinements` e `--vm-max-queries` mantengono i valori predefiniti 16, 16 e 4096. La guida descrive l’API C v3 compatibile e le regole di errore.
+
+Il recupero espone anche `--vm-chain-transfers=N` (predefinito 0) e `--vm-no-control-discovery`. Il concatenamento mantiene le correlazioni simboliche tra trasferimenti con destinazione unica dimostrata; al limite torna ai normali confini CFG. Il recupero dello stato macchina può dichiarare offset rispetto a RSP d’ingresso senza riavvolgimento, non verificati a runtime, con `--vm-entry-frame=begin:end`. La premessa numerica esatta accompagna C e rapporto; non autorizza memoria né dimostra equivalenza.
 
 L’API C++ separata per le prove dei cicli inferisce invarianti limitati e ranghi lessicografici per cicli annidati, poi ricontrolla il raffinamento dal nativo a LowIR. Consultare la [guida al recupero](interpreter-recovery.md); non certifica il C emesso.
 

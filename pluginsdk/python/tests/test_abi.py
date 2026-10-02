@@ -68,7 +68,32 @@ class ABIInventoryTests(unittest.TestCase):
         self.assertEqual(options_v3.max_solver_queries, 0)
         self.assertEqual(options_v3.base.reserved, 0)
         self.assertEqual(options_v3.reserved, 0)
-        for version in (1, 2, 3):
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV4._fields_,
+            [("base", abi.NeverDDevirtualizeOptionsV3),
+             ("max_chained_transfers", ctypes.c_uint32),
+             ("flags", ctypes.c_uint32),
+             ("entry_frame_begin", ctypes.c_int64),
+             ("entry_frame_end", ctypes.c_int64)],
+        )
+        self.assertEqual(abi.NeverDDevirtualizeOptionsV4.base.offset, 0)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV4.max_chained_transfers.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV3),
+        )
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDDevirtualizeOptionsV4), 120)
+        options_v4 = abi.NeverDDevirtualizeOptionsV4()
+        options_v4.base.base.base.struct_size = ctypes.sizeof(options_v4)
+        self.assertEqual(options_v4.max_chained_transfers, 0)
+        self.assertEqual(options_v4.flags, 0)
+        options_v4.entry_frame_begin = -(1 << 63)
+        options_v4.entry_frame_end = (1 << 63) - 1
+        self.assertEqual(options_v4.entry_frame_begin, -(1 << 63))
+        self.assertEqual(options_v4.entry_frame_end, (1 << 63) - 1)
+        self.assertEqual(int(abi.DevirtualizeFlagsV4.DISABLE_CONTROL_DISCOVERY), 1)
+        self.assertEqual(int(abi.DevirtualizeFlagsV4.HAS_ENTRY_FRAME_BOUNDS), 2)
+        for version in (1, 2, 3, 4):
             for prefix in ("source", "machine_source"):
                 spec = abi.FUNCTION_SPECS[f"neverd_devirtualize_{prefix}_v{version}"]
                 self.assertEqual(

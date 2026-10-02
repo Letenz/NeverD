@@ -76,6 +76,26 @@ La opción CLI `--vm-max-refinements=N` exige un entero positivo y tiene el valo
 
 Desde C se usa `neverd_devirtualize_source_v3()` o `neverd_devirtualize_machine_source_v3()`. Inicialice `neverd_devirtualize_options_v3` a cero y defina `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Configure `max_control_fields`, `max_solver_queries` y opcionalmente `base.max_control_refinements`; cero selecciona el valor predeterminado sin cambios. Los tres campos reserved deben ser cero. v1/v2 ignoran la cola v3, incluido reserved; v3 ignora colas futuras. El informe registra el trabajo real y los límites efectivos `maxControlFields`, `maxControlRefinements` y `maxSolverQueries`.
 
+La recuperación también ofrece `--vm-chain-transfers=N` (0 por defecto) y `--vm-no-control-discovery`. El encadenamiento conserva correlaciones simbólicas entre transferencias de destino único demostrado; al alcanzar el límite vuelve a fronteras CFG ordinarias. El modo de estado de máquina permite declarar offsets de RSP de entrada sin desbordamiento modular y sin comprobación en ejecución con `--vm-entry-frame=begin:end`. La premisa numérica exacta acompaña al C y al informe; no autoriza memoria ni prueba equivalencia.
+
+Las API v4 compatibles son `neverd_devirtualize_source_v4()` y `neverd_devirtualize_machine_source_v4()`. Inicialice a cero `neverd_devirtualize_options_v4` y fije `base.base.base.struct_size` al tamaño completo. El contador CLI admite enteros decimales no negativos de 32 bits; cero desactiva el encadenamiento. Los extremos son enteros decimales con signo de 64 bits con `begin < end`, requieren `--vm-machine-state` y restringen el RSP físico de entrada, no su valor ajustado. En C, la bandera de límites requiere la API de estado de máquina; sin ella ambos extremos deben ser cero. Se rechazan banderas desconocidas y campos reservados anteriores no nulos. v1/v2/v3 ignoran toda la extensión v4; v4 ignora extensiones futuras. Las opciones nulas preservan los valores por defecto. El informe añade `maxChainedTransfers`, `entryFrameBounds` y el estado efectivo de `discoverControlState`. Todas las opciones CLI requieren `--devirtualize`. La premisa no se comprueba en ejecución ni garantiza acceso, inicialización o ausencia de alias. No activa políticas de prueba nativa.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 El informe JSON añade `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` y `discoveryVisits` para registrar activación, límites y trabajo de análisis. Descubrir campos no demuestra por sí solo que la recuperación haya tenido éxito.
 
 Cuando una condición reduce una dependencia de dirección a una porción de bytes, el refinamiento también conserva como candidatos de contexto los campos completos de dirección directa de ocho bytes ya seguidos que la contienen. El campo estrecho y la máscara de su productor no cambian; no se promueven campos más anchos ajenos a la dirección. Las constantes y los desplazamientos relativos a la entrada siguen requiriendo pruebas, y todos los contextos comparten los límites existentes.

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 550d06aa2524f607ef154513ea47ba3219e370665f211cbabbe64646839c142a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ El flujo iOS experimental `neverd mobile App.ipa -o recovered-ios` exporta C nat
 La [recuperación experimental de fuentes de intérpretes](interpreter-recovery.md) utiliza `neverd decompile --devirtualize --func ENTRY` para especializar intérpretes x64 ELF/PE enlazados compatibles en HighC o LLVMC mediante el pipeline LowIR/MedIR compartido. Las indicaciones de control separan contextos del decodificador sin fijar entradas de ejecución. El control sin resolver, la semántica no compatible y los presupuestos agotados fallan explícitamente; este modo no certifica el reemplazo binario ni la equivalencia de excepciones.
 
 Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-refinements` y `--vm-max-queries` mantienen los valores predeterminados 16, 16 y 4096. La guía describe la API C v3 compatible y las reglas de fallo.
+
+La recuperación también ofrece `--vm-chain-transfers=N` (0 por defecto) y `--vm-no-control-discovery`. El encadenamiento conserva correlaciones simbólicas entre transferencias de destino único demostrado; al alcanzar el límite vuelve a fronteras CFG ordinarias. El modo de estado de máquina permite declarar offsets de RSP de entrada sin desbordamiento modular y sin comprobación en ejecución con `--vm-entry-frame=begin:end`. La premisa numérica exacta acompaña al C y al informe; no autoriza memoria ni prueba equivalencia.
 
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
 

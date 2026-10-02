@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 550d06aa2524f607ef154513ea47ba3219e370665f211cbabbe64646839c142a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ input format, host contract와 제한은 [EVM 가이드](evm.md)와 [Solana SBF 
 실험적인 [인터프리터 소스 복원](interpreter-recovery.md)은 `neverd decompile --devirtualize --func ENTRY`를 사용하여 지원하는 링크된 x64 ELF/PE 인터프리터를 공통 LowIR/MedIR 파이프라인을 거쳐 HighC 또는 LLVMC로 특수화합니다. 제어 힌트는 디코더 컨텍스트를 구분하며 실행 시 입력을 고정하지 않습니다. 미해결 제어 흐름, 미지원 의미론, 예산 소진은 명시적으로 실패합니다. 이 모드는 바이너리 교체나 예외 동등성을 증명하지 않습니다.
 
 복구 예산은 `--vm-max-fields`, `--vm-max-refinements`, `--vm-max-queries`로 명시하며 기본값은 16, 16, 4096으로 유지됩니다. 호환되는 v3 C API와 실패 규칙은 복구 가이드를 참고하세요.
+
+복원은 `--vm-chain-transfers=N`(기본값 0)과 `--vm-no-control-discovery`도 제공합니다. 연결은 단일 대상이 증명된 제어 전송 사이의 기호 상관관계를 보존하며 한도에 도달하면 일반 CFG 경계로 돌아갑니다. 기계 상태 복원은 `--vm-entry-frame=begin:end`로 실행 시 검사하지 않는 비래핑 진입 RSP 오프셋 범위를 선언할 수 있습니다. 정확한 숫자 전제는 생성 C와 보고서에 남으며 메모리 접근 권한이나 동등성 증명을 제공하지 않습니다.
 
 별도의 C++ 루프 증명 API는 예산 내에서 중첩 루프 불변식과 사전식 순위를 추론한 후 네이티브 코드와 LowIR의 정제 관계를 다시 검사합니다. [복원 가이드](interpreter-recovery.md)를 참조하세요. 출력 C의 동등성은 증명하지 않습니다.
 

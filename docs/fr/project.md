@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 550d06aa2524f607ef154513ea47ba3219e370665f211cbabbe64646839c142a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ Le traitement iOS expérimental `neverd mobile App.ipa -o recovered-ios` exporte
 La [récupération expérimentale de sources d’interpréteur](interpreter-recovery.md) utilise `neverd decompile --devirtualize --func ENTRY` pour spécialiser les interpréteurs x64 ELF/PE liés pris en charge en HighC ou LLVMC, via le pipeline LowIR/MedIR commun. Les indications de contrôle séparent les contextes du décodeur sans fixer les entrées d’exécution. Contrôle non résolu, sémantique non prise en charge et budgets épuisés provoquent un échec explicite ; ce mode ne certifie ni le remplacement binaire ni l’équivalence des exceptions.
 
 Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
+
+La récupération expose aussi `--vm-chain-transfers=N` (0 par défaut) et `--vm-no-control-discovery`. Le chaînage conserve les corrélations symboliques entre transferts dont la cible unique est prouvée ; sa limite revient aux frontières CFG ordinaires. Le mode état machine accepte des offsets d’entrée RSP sans bouclage, non vérifiés à l’exécution, via `--vm-entry-frame=begin:end`. La prémisse numérique exacte accompagne le C et le rapport, sans autoriser d’accès mémoire ni prouver l’équivalence.
 
 L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
 
