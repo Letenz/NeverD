@@ -1103,6 +1103,8 @@ static bool endsItsBlock(const HighStmt &S) {
           libc::isNoReturnFunction(Call->CallTarget));
 }
 
+bool highStmtEndsItsBlock(const HighStmt &S) { return endsItsBlock(S); }
+
 /// Two statement lists of assignments, stores, returns and gotos that do the
 /// same thing and contain no entered label.
 static bool sameStraightLineBody(const std::vector<HighStmt> &A,

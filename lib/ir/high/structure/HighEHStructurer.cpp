@@ -18,6 +18,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HighCFSimplifyDetail.h"
+
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -25,6 +27,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 #include <cctype>
@@ -32,6 +35,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <string>
@@ -106,6 +110,9 @@ struct AddressSet {
   ExceptionAddressRange Span;
   std::vector<ExceptionAddressRange> Parts;
   bool RequireCall = false;
+  /// The parts are ranges of one split SEH scope: a plain union, not the two
+  /// arms of a C++ cleanup diamond.
+  bool SplitScope = false;
 
   AddressSet(ExceptionAddressRange R) : Span(R) {}
   AddressSet(ExceptionAddressRange R, std::vector<ExceptionAddressRange> P)
@@ -276,7 +283,7 @@ bool extractAddressSlice(std::vector<HighStmt> &Statements,
       if (Classes[I] == RangeClass::Outside)
         Contiguous = false;
   }
-  if (Contiguous && !Range.Parts.empty()) {
+  if (Contiguous && !Range.Parts.empty() && !Range.SplitScope) {
     // A split cleanup IP set is the two arms of one diamond.  A lone
     // if-goto that merely sits in one fragment is not.
     if (*Last != *First || !isCoverDiamondIfElse(Statements[*First], Range))
@@ -309,7 +316,7 @@ bool extractAddressSlice(std::vector<HighStmt> &Statements,
   // Split-cover cleanup is either one IfElse whose arms each contain a
   // covered call, or an if/goto plus the later sibling that holds the
   // other arm.  A lone if-goto in one fragment has no covered call.
-  if (!Range.Parts.empty()) {
+  if (!Range.Parts.empty() && !Range.SplitScope) {
     std::optional<size_t> FirstCall;
     std::optional<size_t> LastCall;
     unsigned SeenParts = 0;
@@ -1030,6 +1037,136 @@ bool hasCrossingRegions(const std::vector<RegionCandidate> &Candidates,
   return false;
 }
 
+/// The list and index of the try statement of \p Kind over \p Range.  A
+/// slice extraction moves statements, so callers look it up again after one.
+std::optional<std::pair<std::vector<HighStmt> *, size_t>>
+findTryStmt(std::vector<HighStmt> &List, StmtKind Kind,
+            const ExceptionAddressRange &Range) {
+  for (size_t I = 0; I < List.size(); ++I) {
+    HighStmt &S = List[I];
+    if (S.Kind == Kind && S.EHRange.Begin == Range.Begin &&
+        S.EHRange.End == Range.End)
+      return std::make_pair(&List, I);
+    for (std::vector<HighStmt> *Child : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      if (auto Found = findTryStmt(*Child, Kind, Range))
+        return Found;
+    for (SwitchCase &Case : S.Cases)
+      if (auto Found = findTryStmt(Case.Body, Kind, Range))
+        return Found;
+    for (std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+      if (auto Found = findTryStmt(ClauseBody, Kind, Range))
+        return Found;
+  }
+  return std::nullopt;
+}
+
+/// Whether a break or continue in \p List leaves it.
+bool loopJumpLeaves(const std::vector<HighStmt> &List, bool BreakOwned = false,
+                    bool ContinueOwned = false) {
+  for (const HighStmt &S : List) {
+    if ((S.Kind == StmtKind::Break && !BreakOwned) ||
+        (S.Kind == StmtKind::Continue && !ContinueOwned))
+      return true;
+    const bool Loop = S.Kind == StmtKind::While ||
+                      S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For;
+    const bool Breaks = BreakOwned || Loop || S.Kind == StmtKind::Switch;
+    const bool Continues = ContinueOwned || Loop;
+    if (loopJumpLeaves(S.Body, Breaks, Continues) ||
+        loopJumpLeaves(S.ElseBody, Breaks, Continues) ||
+        loopJumpLeaves(S.DefaultBody, Breaks, Continues))
+      return true;
+    for (const SwitchCase &Case : S.Cases)
+      if (loopJumpLeaves(Case.Body, Breaks, Continues))
+        return true;
+    for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+      if (loopJumpLeaves(ClauseBody, BreakOwned, ContinueOwned))
+        return true;
+  }
+  return false;
+}
+
+/// MSVC can split one __try into ranges sharing its clauses: parts of the
+/// protected body it placed after the handler.  Move the statements of
+/// \p Part to the end of the try of \p Kind over \p TryRange when only that
+/// try's body enters them and neither runs into the other; a try body that
+/// would fall off its end first gets an explicit jump to what follows it.
+bool absorbSplitTryPart(std::vector<HighStmt> &Body, StmtKind Kind,
+                        const ExceptionAddressRange &TryRange,
+                        const ExceptionAddressRange &Part,
+                        const ExceptionAddressRange &FunctionRange) {
+  std::vector<HighStmt> Slice;
+  size_t SliceAt = 0;
+  std::vector<HighStmt> *SliceHost = nullptr;
+  if (!extractAddressSlice(Body, Part, FunctionRange, Slice, SliceAt,
+                           /*IncludeFunctionEdgeUnknown=*/false, &SliceHost) ||
+      !SliceHost || Slice.empty())
+    return false;
+  // Nothing falls into the part, and the part falls into nothing.
+  const bool Isolated =
+      SliceAt != 0 && highStmtEndsItsBlock((*SliceHost)[SliceAt - 1]) &&
+      highStmtEndsItsBlock(Slice.back()) && !loopJumpLeaves(Slice);
+  auto Restore = [&] {
+    SliceHost->insert(SliceHost->begin() + static_cast<ptrdiff_t>(SliceAt),
+                      std::make_move_iterator(Slice.begin()),
+                      std::make_move_iterator(Slice.end()));
+    return false;
+  };
+  const auto TrySite = findTryStmt(Body, Kind, TryRange);
+  if (!Isolated || !TrySite)
+    return Restore();
+  std::vector<HighStmt> &TryHost = *TrySite->first;
+  const size_t TryAt = TrySite->second;
+
+  // Only the try's own body may jump into the part.
+  std::set<va_t> Labels;
+  walkStmts(Slice, [&](const HighStmt &S) {
+    if (S.Addr != 0 && S.Addr != InvalidVA)
+      Labels.insert(S.Addr);
+  });
+  bool Entered = false;
+  std::map<va_t, unsigned> LabelStarts;
+  std::function<void(const std::vector<HighStmt> &, bool)> Scan =
+      [&](const std::vector<HighStmt> &List, bool InTry) {
+        for (size_t I = 0; I < List.size(); ++I) {
+          const HighStmt &S = List[I];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || List[I - 1].Addr != S.Addr))
+            ++LabelStarts[S.Addr];
+          Entered |=
+              !InTry && S.Kind == StmtKind::Goto && Labels.count(S.GotoTarget);
+          const bool Protected = InTry || &S == &TryHost[TryAt];
+          Scan(S.Body, Protected);
+          Scan(S.ElseBody, InTry);
+          Scan(S.DefaultBody, InTry);
+          for (const SwitchCase &Case : S.Cases)
+            Scan(Case.Body, InTry);
+          for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+            Scan(ClauseBody, InTry);
+        }
+      };
+  Scan(Body, false);
+  if (Entered)
+    return Restore();
+
+  HighStmt &Try = TryHost[TryAt];
+  if (Try.Body.empty() || !highStmtEndsItsBlock(Try.Body.back())) {
+    // Falling off the try body continues after the try statement.
+    if (TryAt + 1 >= TryHost.size())
+      return Restore();
+    const va_t Next = TryHost[TryAt + 1].Addr;
+    if (Next == 0 || Next == InvalidVA || Next == Try.Addr ||
+        LabelStarts[Next] != 1)
+      return Restore();
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = Next;
+    Try.Body.push_back(std::move(Jump));
+  }
+  Try.Body.insert(Try.Body.end(), std::make_move_iterator(Slice.begin()),
+                  std::make_move_iterator(Slice.end()));
+  return true;
+}
+
 std::optional<va_t> windowsClauseBodyTarget(const HighEHClause &Clause) {
   if (Clause.Kind == HighEHClauseKind::SEHExcept ||
       Clause.Kind == HighEHClauseKind::CxxCatch)
@@ -1148,7 +1285,62 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
           Target && *Target != 0 && *Target != InvalidVA)
         ++WindowsTargetUses[*Target];
 
-  for (size_t I = 0; I < Candidates.size(); ++I) {
+  // SEH ranges with the same clauses are one __try split by the compiler.
+  // The largest range anchors the try and the others join its body; a part
+  // waits for its anchor and stands alone only if it cannot join.
+  std::vector<std::optional<size_t>> SplitAnchor(Candidates.size());
+  std::vector<std::vector<size_t>> SplitParts(Candidates.size());
+  {
+    using ClauseKey = std::tuple<HighEHClauseKind, va_t, va_t>;
+    std::map<std::vector<ClauseKey>, std::vector<size_t>> Groups;
+    for (size_t I = 0; I < Candidates.size(); ++I) {
+      const RegionCandidate &Candidate = Candidates[I];
+      if (Candidate.Kind != StmtKind::SEHTry || !Candidate.Cover.empty() ||
+          Candidate.Clauses.empty())
+        continue;
+      std::vector<ClauseKey> Key;
+      for (const HighEHClause &Clause : Candidate.Clauses)
+        Key.emplace_back(Clause.Kind, Clause.FilterOrActionVA,
+                         Clause.HandlerVA);
+      Groups[std::move(Key)].push_back(I);
+    }
+    for (const auto &[Key, Members] : Groups) {
+      if (Members.size() < 2)
+        continue;
+      bool Disjoint = true;
+      for (size_t A = 0; A < Members.size(); ++A)
+        for (size_t B = A + 1; B < Members.size(); ++B)
+          Disjoint &= !Candidates[Members[A]].Range.overlaps(
+              Candidates[Members[B]].Range);
+      if (!Disjoint)
+        continue;
+      const size_t Anchor = *std::max_element(
+          Members.begin(), Members.end(), [&](size_t A, size_t B) {
+            const ExceptionAddressRange &L = Candidates[A].Range;
+            const ExceptionAddressRange &R = Candidates[B].Range;
+            return L.size() != R.size() ? L.size() < R.size()
+                                        : L.Begin > R.Begin;
+          });
+      for (size_t Member : Members)
+        if (Member != Anchor) {
+          SplitAnchor[Member] = Anchor;
+          SplitParts[Anchor].push_back(Member);
+        }
+    }
+  }
+  std::vector<size_t> Order(Candidates.size());
+  std::iota(Order.begin(), Order.end(), size_t{0});
+  std::vector<bool> Processed(Candidates.size(), false);
+  std::vector<bool> Absorbed(Candidates.size(), false);
+  for (size_t K = 0; K < Order.size(); ++K) {
+    const size_t I = Order[K];
+    if (Absorbed[I])
+      continue;
+    if (SplitAnchor[I] && !Processed[*SplitAnchor[I]]) {
+      Order.push_back(I);
+      continue;
+    }
+    Processed[I] = true;
     RegionCandidate &Candidate = Candidates[I];
     if (hasCrossingRegions(Candidates, I)) {
       Rejected += Candidate.NativeRegionCount;
@@ -1157,10 +1349,44 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     std::vector<HighStmt> ProtectedBody;
     size_t InsertAt = 0;
     std::vector<HighStmt> *Host = nullptr;
-    if (!extractAddressSlice(Func.Body,
-                             AddressSet{Candidate.Range, Candidate.Cover},
-                             EH.CodeRange, ProtectedBody, InsertAt,
-                             /*IncludeFunctionEdgeUnknown=*/true, &Host) ||
+    // Split parts the anchor's statements contain come along with them,
+    // such as a part that is the arm of a branch in the anchor range.
+    std::vector<size_t> NestedParts;
+    AddressSet Union(Candidate.Range);
+    Union.SplitScope = true;
+    for (size_t Part : SplitParts[I])
+      if (!Processed[Part]) {
+        Union.Parts.push_back(Candidates[Part].Range);
+        NestedParts.push_back(Part);
+      }
+    if (!NestedParts.empty()) {
+      Union.Parts.push_back(Candidate.Range);
+      if (extractAddressSlice(Func.Body, Union, EH.CodeRange, ProtectedBody,
+                              InsertAt, /*IncludeFunctionEdgeUnknown=*/true,
+                              &Host) &&
+          Host) {
+        bool Stray = false;
+        walkStmts(Func.Body, [&](const HighStmt &S) {
+          for (size_t Part : NestedParts)
+            Stray |= S.Addr != 0 && Candidates[Part].Range.contains(S.Addr);
+        });
+        if (Stray) {
+          Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
+                       std::make_move_iterator(ProtectedBody.begin()),
+                       std::make_move_iterator(ProtectedBody.end()));
+          ProtectedBody.clear();
+          Host = nullptr;
+        }
+      } else {
+        Host = nullptr;
+      }
+      if (!Host)
+        NestedParts.clear();
+    }
+    if ((!Host && !extractAddressSlice(
+                      Func.Body, AddressSet{Candidate.Range, Candidate.Cover},
+                      EH.CodeRange, ProtectedBody, InsertAt,
+                      /*IncludeFunctionEdgeUnknown=*/true, &Host)) ||
         !Host) {
       Rejected += Candidate.NativeRegionCount;
       continue;
@@ -1190,11 +1416,36 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
                  std::move(Try));
 
+    // The parts that join this try no longer use its clauses on their own.
+    unsigned JoinedParts = 0;
+    for (size_t Part : NestedParts) {
+      Processed[Part] = Absorbed[Part] = true;
+      Candidate.NativeRegionCount += Candidates[Part].NativeRegionCount;
+      ++JoinedParts;
+    }
+    for (size_t Part : SplitParts[I]) {
+      if (Processed[Part] ||
+          !absorbSplitTryPart(Func.Body, Candidate.Kind, Candidate.Range,
+                              Candidates[Part].Range, EH.CodeRange))
+        continue;
+      Processed[Part] = Absorbed[Part] = true;
+      Candidate.NativeRegionCount += Candidates[Part].NativeRegionCount;
+      ++JoinedParts;
+    }
+    if (JoinedParts != NestedParts.size()) {
+      const auto TrySite =
+          findTryStmt(Func.Body, Candidate.Kind, Candidate.Range);
+      if (!TrySite)
+        llvm::report_fatal_error("structured try vanished while joining "
+                                 "its split ranges");
+      Host = TrySite->first;
+    }
+
     std::vector<std::vector<HighStmt>> ClauseBodies(ClauseTargets.size());
     for (size_t ClauseIndex = 0; ClauseIndex < ClauseTargets.size();
          ++ClauseIndex) {
       std::optional<va_t> Target = ClauseTargets[ClauseIndex];
-      if (!Target || WindowsTargetUses[*Target] != 1)
+      if (!Target || WindowsTargetUses[*Target] - JoinedParts != 1)
         continue;
       std::optional<ExceptionAddressRange> HandlerRange =
           uniqueHandlerBlockRange(Med, EH, *Target, Candidates);
