@@ -11365,6 +11365,77 @@ TEST(ObjCSourceBindings,
   }
 }
 
+TEST(ObjCSourceBindings, StoredClassAddressesPreserveOriginalRuntimeIdentity) {
+  for (va_t Address :
+       {ObjectFixture::ClassAddress, ObjectFixture::MetaAddress}) {
+    for (bool Pointer : {false, true}) {
+      ObjectFixture Fixture;
+      const auto Type = Pointer ? NdType::makePtr(NdType::makeVoid())
+                                : NdType::makeInt(8, false);
+      auto Value = HighExpr::makeConst(Address, 8,
+                                       ConstantAddressProvenance::DataAddress);
+      Value->Type = Type;
+      MedVar Destination;
+      Destination.Kind = MedVar::Param;
+      Destination.Id = 0;
+      Destination.Size = 8;
+      Destination.TheArch = Fixture.Image.Arch;
+      HighStmt Store;
+      Store.Kind = StmtKind::Store;
+      Store.StoreAddr =
+          HighExpr::makeVar(Destination, NdType::makePtr(NdType::makeVoid()));
+      Store.StoreVal = Value;
+      HighFunc Function;
+      Function.Body = {Store};
+      auto Result = bindObjCSourceReferences(Function, Fixture.Image);
+      ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      const auto Bound = Result.Function.Body[0].StoreVal;
+      ASSERT_TRUE(Bound->SourceCallHint);
+      EXPECT_EQ(Bound->SourceCallHint->TargetAddress, Address);
+      EXPECT_EQ(Bound->SourceCallHint->TargetName, "Receiver");
+      EXPECT_EQ(Bound->SourceCallHint->CallKind,
+                Address == ObjectFixture::ClassAddress
+                    ? SourceCallTypeHint::Kind::RuntimeClass
+                    : SourceCallTypeHint::Kind::RuntimeMetaclass);
+      EXPECT_TRUE(objcSourceCallBound(*Bound, Fixture.Image, {}));
+      EXPECT_EQ(Function.Body[0].StoreVal->Kind, ExprKind::Const);
+      Fixture.Image.ObjCClasses.clear();
+      EXPECT_FALSE(objcSourceCallBound(*Bound, Fixture.Image, {}));
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, StoredClassAddressRequiresWholeExactAddressEvidence) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjectFixture Fixture;
+    auto Value = HighExpr::makeConst(ObjectFixture::MetaAddress, 8,
+                                     ConstantAddressProvenance::DataAddress);
+    if (Mutation == 0)
+      Value->ConstProvenance = ConstantAddressProvenance::Scalar;
+    if (Mutation == 1)
+      Value->Type = NdType::makeInt(4);
+    if (Mutation == 2)
+      Value->AddressOwnerVA = ObjectFixture::ClassAddress;
+    if (Mutation == 3)
+      Value->ConstVal = ObjectFixture::ClassSlot;
+    if (Mutation == 4)
+      Fixture.Image.ObjCClasses.push_back(Fixture.Image.ObjCClasses.front());
+    if (Mutation == 5)
+      Fixture.put(0x2280, 0);
+    if (Mutation == 6)
+      Fixture.Image.MachOHasChainedFixups = true;
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(0, 8);
+    Store.StoreVal = Value;
+    HighFunc Function;
+    Function.Body = {Store};
+    const auto Result = bindObjCSourceReferences(Function, Fixture.Image);
+    EXPECT_FALSE(Result.Function.Body[0].StoreVal->SourceCallHint);
+  }
+}
+
 TEST(ObjCSourceBindings, DirectClassRuntimeArgumentsUseVerifiedObjectIdentity) {
   ObjectFixture Fixture;
   for (va_t Address :
