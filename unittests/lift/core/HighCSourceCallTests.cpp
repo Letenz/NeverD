@@ -4052,3 +4052,86 @@ TEST(HighCSourceCalls, SwiftBooleanRejectsForeignBindingsAndBytePrototypes) {
                 .find("conflicting Swift Boolean runtime declaration"),
             std::string::npos);
 }
+
+TEST(HighCSourceCalls, SwiftCancellableCallsPreserveEveryCarrierAndOccurrence) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const bool Sink : {false, true}) {
+    auto Image = runtime_function_address_test::image(Architecture);
+    const va_t Slot = runtime_function_address_test::Slot;
+    const std::string Name =
+        Sink ? "_$"
+               "s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValue"
+               "AA14AnyCancellableCy6OutputQzc_tF"
+             : "_$s7Combine14AnyCancellableC5store2inyShyACGz_tF";
+    Image.ImportPtrSlots[Slot] = Name;
+    Image.DyldBindSlots[Slot] = {
+        Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    HighFunc F;
+    F.Name = Sink ? "recovered_sink" : "recovered_store";
+    F.ReturnType = Hint->Signature.ReturnType;
+    std::vector<ExprPtr> Args;
+    for (unsigned I = 0; I < (Sink ? 5U : 2U); ++I) {
+      F.Params.push_back({"arg" + std::to_string(I), Pointer});
+      Args.push_back(parameter(I, Pointer));
+    }
+    auto Call = call(*Hint, F.ReturnType, Args);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    HighStmt Statement;
+    Statement.Kind = Sink ? StmtKind::Return : StmtKind::ExprStmt;
+    if (Sink)
+      Statement.RetVal = Call;
+    else
+      Statement.Val = Call;
+    F.Body = {Statement};
+    Functions.push_back(std::move(F));
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  // Independent carrier oracles. Real SDK ownership/callback behavior is
+  // exercised separately with the original machine fixture and Combine.
+  const auto Program = Source + R"(
+struct State { unsigned calls; void *words[4]; uintptr_t result; };
+void *__attribute__((swiftcall)) sink_oracle(void *,void *,void *,void *,
+    struct State *__attribute__((swift_context)))
+    __asm__("_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValueAA14AnyCancellableCy6OutputQzc_tF");
+void *__attribute__((swiftcall)) sink_oracle(void *a,void *b,void *c,void *d,
+    struct State *s __attribute__((swift_context))) {
+  ++s->calls; s->words[0]=a; s->words[1]=b; s->words[2]=c; s->words[3]=d;
+  s->result=(uintptr_t)a ^ (uintptr_t)b ^ (uintptr_t)c ^ (uintptr_t)d;
+  return &s->result;
+}
+void __attribute__((swiftcall)) store_oracle(void *,void *__attribute__((swift_context)))
+    __asm__("_$s7Combine14AnyCancellableC5store2inyShyACGz_tF");
+void __attribute__((swiftcall)) store_oracle(void *out,void *object __attribute__((swift_context))) {
+  __builtin_memcpy(out,&object,sizeof(object));
+}
+int main(void) {
+  for (unsigned i=0;i<1024;++i) {
+    struct { uintptr_t guard; struct State s; uintptr_t tail; } box={0};
+    uintptr_t words[4]={i,~(uintptr_t)i,(uintptr_t)i*17,(uintptr_t)i*53};
+    void *args[4]={words,words+1,words+2,words+3};
+    box.guard=0xabcdef12;box.tail=0x12345678;
+    void *result=recovered_sink(args[0],args[1],args[2],args[3],&box.s);
+    if(result!=&box.s.result||box.s.calls!=1||box.guard!=0xabcdef12||box.tail!=0x12345678)return 1;
+    uintptr_t expected=0;
+    for(unsigned j=0;j<4;++j){if(box.s.words[j]!=args[j])return 2;expected^=(uintptr_t)args[j];}
+    if(box.s.result!=expected)return 3;
+    struct { uintptr_t guard; void *value; uintptr_t tail; } out={0x76543210,0,0xfedcba98};
+    recovered_store(&out.value,result);
+    if(out.value!=result||out.guard!=0x76543210||out.tail!=0xfedcba98)return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}

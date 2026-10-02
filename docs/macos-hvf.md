@@ -106,7 +106,10 @@ exact GoogleTest identities instead of address-bearing parameter dumps.
 `self-hosted, macOS, ARM64/X64, hvf` runners. Its `hosted-intel` selection tries
 GitHub's `macos-15-intel` runner. Both choices first compile and sign
 `scripts/probe_hvf_host.c` and require actual VM/vCPU creation and teardown
-before preparing LLVM. A hosted runner that denies HVF fails at that boundary;
+before preparing LLVM. On Intel, the standalone probe additionally executes
+an original `MOV/HLT` program and verifies MTF stepping. It compares both public
+entry APIs in fresh processes with bounded timeouts. A hosted runner that
+denies HVF or cannot execute this probe fails at that boundary;
 its label does not establish virtualization support. After the CPU gate, the
 workflow also requires every matching Darwin workload. Dedicated runners are
 not assumed to be provisioned.
@@ -118,7 +121,11 @@ diagnostic profile; `full` remains the default and also requires both complete
 gates. The transport profile reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
 It can also run locally with `--require-hvf --hvf-transport-only` on
-`scripts/run_native_cpu_ci.py`.
+`scripts/run_native_cpu_ci.py`. `validation=probe` runs only host diagnostics
+without LLVM. On Intel this also compares an independent QEMU HVF engine with
+TCG using an original reset-vector program; the two explicit accelerators run
+separately without fallback. Their logs, version and ROM digest are retained.
+This independent engine check cannot establish NeverD transport correctness.
 
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
@@ -199,18 +206,21 @@ passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
 See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
 for the exact commits and scope.
 
-At `4a8f1f11a`, the Apple Silicon full gate passed 841 checks with zero failures,
-5,939 inapplicable cases skipped and all 13 then-required outcomes executed.
-The later required interruption inventory contains 16 ARM64 outcomes; its
-12-case transport subset also passed locally with no skips.
+At clean source `561ebf37b9eaaec08043ac5816b2e083ecccaf68`, the Apple Silicon full
+gate passed 841 checks with zero failures, 5,939 inapplicable cases skipped and
+all 16 required outcomes executed, including the strengthened interruption
+inventory. Its 12-case transport subset also passed locally with no skips.
+The complete evidence is in `build-hvf-native/hvf-cancellation-full-evidence/`.
 
 The first hosted Intel execution found an invalid write to the framework-owned
 VMCS link pointer. Removing that write and preserving mandatory CR0 mask bits
 passed state installation, but the [native entry diagnostic](https://github.com/NeverSight/NeverD/actions/runs/37070495008)
 at `193b891bf` still failed before guest execution with `HV_ERROR` and
-VM-instruction error 12. Intel acceptance remains incomplete while VM-entry
-ownership is corrected; neither the successful VM/vCPU availability probe nor
-the independent native-kernel reference replaces this failed execution gate.
+VM-instruction error 12. The [independent entry-API comparison](https://github.com/NeverSight/NeverD/actions/runs/37073865902)
+at `65325ca1f` reproduced that status with both `hv_vcpu_run_until` and
+`hv_vcpu_run`, without NeverD's decoder, FP packet or guest OS machinery.
+Intel acceptance remains incomplete; neither VM/vCPU creation nor the
+independent native-kernel reference replaces the failed execution gate.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait

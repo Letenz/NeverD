@@ -989,3 +989,5 @@ Swift の値ウィットネス束縛では、メタデータのリテラルア�
 CoreText の `CTFontGetSize` と `CTFramesetterCreateWithAttributedString` は、既存のコンパイラ由来の C 宣言カタログを使用します。macOS/iOS の四つのプリプロセス構成が一致し、正確な CoreText 提供元がシンボルをエクスポートしている必要があります。どちらも不透明なポインターを一つ受け取り、前者は 8 バイトの浮動小数点値、後者は不透明なポインターを返します。バインド時と公開時に、アーキテクチャ固有の完全な ABI とインポートの同一性を再検証します。これらの宣言はメモリ、寿命、非エスケープの効果を追加しません。
 
 Combine の `CurrentValueSubject` 初期化コンストラクターの正確な強いインポートには、ARM64 と x86-64 の macOS および Mac Catalyst で確認した Swift 6.1.2 の ABI を使用します。消費される不透明な値のアドレスは通常の引数レジスター、割り当て済みインスタンスは `swiftself`、ポインターの戻り値は整数戻り値レジスターに配置されます。公開時に提供元と完全な ABI を再検証します。この宣言からジェネリック値のレイアウトやプライベートフレームの借用効果を導くことはありません。
+
+Combine の正確な強いインポートである `Publisher.sink(receiveValue:)` の `Failure == Never` オーバーロードは、クロージャーのコードとコンテキスト、Publisher のメタデータと witness table、および `swiftself` に配置する不透明な Publisher アドレスの計 5 個のポインターを受け取り、`AnyCancellable` ポインターを返します。`AnyCancellable.store(in: Set<AnyCancellable>)` は可変 Set のアドレスと `swiftself` のオブジェクトを受け取り、void を返します。両宣言は ARM64 と x86-64 の macOS および Mac Catalyst に対する Swift 6.1.2 のコンパイラー出力に基づき、公開時に現在の提供元と完全な ABI を再検証します。これらの宣言はジェネリック型のレイアウト、クロージャーの生存期間、プライベートフレームの借用効果を推論しません。

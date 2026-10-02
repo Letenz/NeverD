@@ -213,6 +213,12 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 macOS/Mac Catalyst clients on arm64 and x86_64 pass
+    // the inout Set address first and AnyCancellable through swiftself.
+    {"$s7Combine14AnyCancellableC5store2inyShyACGz_tF",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vpC"},
     // Swift 6.1.2 macOS and Mac Catalyst client IR on arm64 and x86_64
     // declares the initializing constructor as swiftcc ptr (ptr value,
     // ptr swiftself). The opaque consumed value is not a by-value word;
@@ -228,6 +234,16 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Combine.framework/Combine|"
      "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
      "vIpp"},
+    // The Never-failing Publisher sink overload receives closure code and
+    // context, Publisher metadata and its witness table, then the opaque
+    // borrowed Publisher address in swiftself. The result is AnyCancellable.
+    // All five pointer carriers are compiler-observed on the same four SDK
+    // targets; this declaration grants no callback or frame escape effects.
+    {"$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValueAA14"
+     "AnyCancellableCy6OutputQzc_tF",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "pppppC"},
     // Binding.wrappedValue's generic setter receives the value address,
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",

@@ -966,3 +966,5 @@ Swift 값 위트니스 바인딩은 메타데이터 리터럴 주소와 이미�
 CoreText의 `CTFontGetSize`와 `CTFramesetterCreateWithAttributedString`은 기존 컴파일러 기반 C 선언 카탈로그를 사용합니다. 네 가지 macOS/iOS 전처리 구성이 일치하고 정확한 CoreText 제공자가 해당 심벌을 내보내야 합니다. 두 함수 모두 불투명 포인터 하나를 받으며, 전자는 8바이트 부동소수점 값을, 후자는 불투명 포인터를 반환합니다. 바인딩과 게시 시 아키텍처별 전체 ABI와 가져오기 식별 정보를 다시 검증합니다. 이 선언은 메모리, 수명 또는 비탈출 효과를 추가하지 않습니다.
 
 Combine의 정확한 강한 가져오기인 `CurrentValueSubject` 초기화 생성자는 ARM64 및 x86-64 macOS와 Mac Catalyst에서 확인한 Swift 6.1.2 ABI를 사용합니다. 소비되는 불투명 값의 주소는 일반 인수 레지스터에, 할당된 인스턴스는 `swiftself`에, 포인터 결과는 정수 반환 레지스터에 배치됩니다. 게시 시 제공자와 전체 ABI를 다시 검증합니다. 이 선언은 제네릭 값의 레이아웃을 추론하거나 전용 스택 프레임 차용 효과를 부여하지 않습니다.
+
+Combine의 정확한 강한 가져오기인 `Publisher.sink(receiveValue:)`의 `Failure == Never` 오버로드는 클로저 코드와 컨텍스트, Publisher 메타데이터와 witness table, `swiftself`로 전달되는 불투명 Publisher 주소의 다섯 포인터를 받고 `AnyCancellable` 포인터를 반환합니다. `AnyCancellable.store(in: Set<AnyCancellable>)`는 변경 가능한 Set 주소와 `swiftself`의 객체를 받고 void를 반환합니다. 두 선언은 ARM64 및 x86-64 macOS와 Mac Catalyst의 Swift 6.1.2 컴파일러 증거를 사용하며, 게시 시 현재 제공자와 전체 ABI를 다시 검증합니다. 이 선언은 제네릭 레이아웃, 클로저 수명 또는 전용 스택 프레임 차용 효과를 추론하지 않습니다.
