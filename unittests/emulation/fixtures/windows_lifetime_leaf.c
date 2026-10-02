@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsLifetimeFixture.h"
 __declspec(dllexport) DWORD LeafIndex(void) {
-  CHECK(ThreadPointer == &Sentinel && ThreadValue > Seed);
+  CHECK(ThreadPointer == &Sentinel && ThreadValue >= Seed);
   return _tls_index;
 }
 static void tls(void *Image, DWORD Reason, void *Reserved) {

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_LIFETIME_VALUE
 NEVERD_LIFETIME_VALUE(ShortInstructions, 8)
+NEVERD_LIFETIME_VALUE(NativeWaitExpired, 0xfffffffe)
 NEVERD_LIFETIME_VALUE(FaultMode, 'g')
 NEVERD_LIFETIME_VALUE(FaultAddress, 1)
 NEVERD_LIFETIME_VALUE(TemplateMarker, 0xa5)
@@ -41,6 +42,25 @@ NEVERD_LIFETIME_VALUE(AttachReason, 1)
 NEVERD_LIFETIME_VALUE(DetachReason, 0)
 #endif
 #ifdef NEVERD_LIFETIME_TEXT
+NEVERD_LIFETIME_TEXT(
+    NormalTrace,
+    "LT10\nLD11\nMT10\nMD11\nET10\nEE00\nMT00\nMD01\nLT00\nLD01\nET00\n")
+NEVERD_LIFETIME_TEXT(EntryReturnTrace, "LT10\nLD11\nMT10\nMD11\nET10\nEE00\n")
+NEVERD_LIFETIME_TEXT(FailLeafTrace, "LT10\nLD11\n")
+NEVERD_LIFETIME_TEXT(FailMiddleTrace, "LT10\nLD11\nMT10\nMD11\n")
+NEVERD_LIFETIME_TEXT(ExitLeafTLSTrace, "LT10\nET00\n")
+NEVERD_LIFETIME_TEXT(ExitLeafEntryTrace, "LT10\nLD11\nET00\n")
+NEVERD_LIFETIME_TEXT(ExitMiddleEntryTrace,
+                     "LT10\nLD11\nMT10\nMD11\nLT00\nLD01\nET00\n")
+NEVERD_LIFETIME_TEXT(
+    ExitMainTLSTrace,
+    "LT10\nLD11\nMT10\nMD11\nET10\nMT00\nMD01\nLT00\nLD01\nET00\n")
+NEVERD_LIFETIME_TEXT(
+    ReturnedThreadTrace,
+    "LT10\nLD11\nMT10\nMD11\nET10\nEE00\nMT30\nMD30\nLT30\nLD30\nET30\n")
+NEVERD_LIFETIME_TEXT(NoEntryTrace, "LT10\nMT10\nET10\nEE00\nMT00\nLT00\nET00\n")
+NEVERD_LIFETIME_TEXT(NoEntryDirectory, "noentry")
+NEVERD_LIFETIME_TEXT(InvalidTLSFile, "invalid-tls.dll")
 NEVERD_LIFETIME_TEXT(FaultArgument, "/g")
 NEVERD_LIFETIME_TEXT(FirstAttach, "LT10\n")
 NEVERD_LIFETIME_TEXT(LeafFile, "life-leaf.dll")
@@ -57,13 +77,20 @@ NEVERD_LIFETIME_TEXT(NativeOnly, "requires native Windows x64")
 #endif
 #ifdef NEVERD_LIFETIME_CASE
 NEVERD_LIFETIME_CASE(Normal, "/n", ExitStatus)
-NEVERD_LIFETIME_CASE(EntryReturn, "/r", ExitStatus)
+#endif
+#ifdef NEVERD_LIFETIME_RETURN_CASE
+NEVERD_LIFETIME_RETURN_CASE(EntryReturn, "/r", ExitStatus)
+#endif
+#ifdef NEVERD_LIFETIME_CASE
 NEVERD_LIFETIME_CASE(FailLeaf, "/a", InitFailureStatus)
 NEVERD_LIFETIME_CASE(FailMiddle, "/b", InitFailureStatus)
 NEVERD_LIFETIME_CASE(ExitLeafTLS, "/c", ExitStatus)
 NEVERD_LIFETIME_CASE(ExitLeafEntry, "/d", ExitStatus)
 NEVERD_LIFETIME_CASE(ExitMiddleEntry, "/e", ExitStatus)
 NEVERD_LIFETIME_CASE(ExitMainTLS, "/f", ExitStatus)
+#endif
+#ifdef NEVERD_LIFETIME_NOENTRY_CASE
+NEVERD_LIFETIME_NOENTRY_CASE(NoEntry, "/n", ExitStatus)
 #endif
 #ifdef NEVERD_LIFETIME_ASM
 #if defined(_M_X64) || defined(__x86_64__)

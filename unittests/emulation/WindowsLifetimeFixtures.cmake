@@ -43,6 +43,21 @@ foreach(_arch X64 AArch64)
     DEPENDS fixtures/windows_lifetime_process.c fixtures/WindowsLifetimeFixture.h
       fixtures/WindowsLifetimeCases.def "${_dir}/life-middle.lib" "${_dir}/life-leaf.lib" "${_kernel}"
     VERBATIM)
+  file(MAKE_DIRECTORY "${_dir}/noentry")
+  foreach(_module leaf middle)
+    set(_imports "${_kernel}")
+    if(_module STREQUAL "middle")
+      list(APPEND _imports "${_dir}/life-leaf.lib")
+    endif()
+    add_custom_command(OUTPUT "${_dir}/noentry/life-${_module}.dll"
+      COMMAND "${NEVERD_PROCESS_LLD_LINK}" /dll /noentry /nodefaultlib /subsystem:console
+        "/machine:${_machine}" /base:0x180000000 /timestamp:0 /include:_tls_used
+        "${_dir}/${_module}.obj" ${_imports}
+        "/out:${_dir}/noentry/life-${_module}.dll"
+      DEPENDS "${_dir}/${_module}.obj" ${_imports}
+      VERBATIM)
+    list(APPEND _lifetime_outputs "${_dir}/noentry/life-${_module}.dll")
+  endforeach()
   list(APPEND _lifetime_outputs "${_dir}/lifetime.exe")
 endforeach()
 add_custom_target(NeverDWindowsLifetimeFixtures DEPENDS ${_lifetime_outputs})

@@ -6,7 +6,7 @@
 #include "WindowsLifetimeFixture.h"
 __declspec(dllimport) DWORD LeafIndex(void);
 __declspec(dllexport) DWORD MiddleIndex(void) {
-  CHECK(ThreadPointer == &Sentinel && ThreadValue > Seed);
+  CHECK(ThreadPointer == &Sentinel && ThreadValue >= Seed);
   CHECK(LeafIndex() != _tls_index);
   return _tls_index;
 }

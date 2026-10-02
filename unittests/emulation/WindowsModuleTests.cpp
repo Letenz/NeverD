@@ -206,15 +206,17 @@ TEST_F(WindowsModuleImage, RequiresExplicitCatalogueAndRejectsAmbiguousNames) {
   auto Unused = load();
   ASSERT_TRUE(bool(Unused)) << llvm::toString(Unused.takeError());
 }
-TEST_F(WindowsModuleImage, RejectsDLLInitializersTLSAndMixedArchitectures) {
+TEST_F(WindowsModuleImage,
+       RejectsInvalidDLLInitializersTLSAndMixedArchitectures) {
   auto Bytes = bytes(LeafFile);
   {
     PE P(Bytes);
     P.mutableRecord(P.Object->getPE32PlusHeader())->AddressOfEntryPoint =
-        P.Object->getPE32PlusHeader()->BaseOfCode;
+        P.Object->getDataDirectory(llvm::COFF::EXPORT_TABLE)
+            ->RelativeVirtualAddress;
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleInit);
+  rejects(win::text::Image);
   Bytes = bytes(LeafFile);
   {
     PE P(Bytes);
@@ -222,7 +224,7 @@ TEST_F(WindowsModuleImage, RejectsDLLInitializersTLSAndMixedArchitectures) {
         *P.Object->getDataDirectory(llvm::COFF::BASE_RELOCATION_TABLE);
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleInit);
+  rejects(win::text::TLS);
   Options.Windows->Modules.front().Path =
       Directory.parent_path() / AArch64Dir / LeafFile;
   rejects(win::text::ModuleISA);

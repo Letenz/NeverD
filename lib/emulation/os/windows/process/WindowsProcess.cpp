@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
-#include "WindowsProcessModules.h"
+#include "WindowsProcessLifetime.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 
@@ -46,14 +46,6 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       if (auto E = (*Space)->write(Region.Address, Region.Bytes))
         return std::move(E);
     }
-  const auto FileName = Path.filename().u8string();
-  auto Env = prepareEnvironment(
-      **Space, *Loaded, Options,
-      llvm::StringRef(reinterpret_cast<const char *>(FileName.data()),
-                      FileName.size()),
-      Program->Identities, Program->InitializationOrder);
-  if (!Env)
-    return Env.takeError();
   if (auto E = (*Space)->map(StackBase, Options.StackSize,
                              Read | Write | UserAccessible))
     return std::move(E);
@@ -78,6 +70,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       if (auto E =
               (*Space)->writeInteger(Import.Slot, Import.Gate, PointerSize))
         return std::move(E);
+  auto Env = prepareEnvironment(**Space, *Program, Options);
+  if (!Env)
+    return Env.takeError();
   if (auto E = (*Space)->protect(GateBase, GateSize,
                                  Read | Execute | UserAccessible))
     return std::move(E);
@@ -114,70 +109,20 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   Result.InitializersEnabled = true;
   Services OS(CPU, **Space, *Loaded, *Env, Options, Result, Virtual,
               Program->Identities);
-  enum class Phase { Attach, Entry, Detach };
-  Phase Current = Phase::Attach;
-  size_t Callback = 0;
+  Lifetime Life(*Program);
+  std::optional<Lifetime::Call> Active;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
-  std::optional<uint32_t> ExitStatus;
-  uint64_t CallbackArray = 0;
-  auto ReadCallbackArray = [&]() -> llvm::Error {
-    if (!Loaded->TLSCallbackPointer) {
-      CallbackArray = 0;
-      return llvm::Error::success();
-    }
-    auto V = CPU.readInteger(Loaded->TLSCallbackPointer, PointerSize);
-    if (!V)
-      return V.takeError();
-    CallbackArray = *V;
-    return llvm::Error::success();
-  };
   auto Prepare = [&]() -> llvm::Expected<bool> {
-    uint64_t Target = 0;
-    if (Current != Phase::Entry && CallbackArray) {
-      if (Callback > MaxCallbacks || CallbackArray >= UserLimit ||
-          Callback * PointerSize + PointerSize > UserLimit - CallbackArray)
-        return failure(text::TLS);
-      const uint64_t Slot = CallbackArray + Callback * PointerSize;
-      auto Access = CPU.canAccess(Slot, PointerSize, Read | UserAccessible);
-      if (!Access)
-        return Access.takeError();
-      if (!*Access)
-        return failure(text::TLS);
-      auto V = CPU.readInteger(Slot, PointerSize);
-      if (!V)
-        return V.takeError();
-      Target = *V;
-      if (Target) {
-        if (Callback == MaxCallbacks || (!X64 && Target % DWordSize))
-          return failure(text::TLS);
-        auto Executable = CPU.canAccess(Target, 1, Execute | UserAccessible);
-        if (!Executable)
-          return Executable.takeError();
-        if (!*Executable)
-          return failure(text::TLS);
-        ++Callback;
-      }
-    }
-    if (Current != Phase::Entry && !Target) {
-      if (Current == Phase::Detach)
-        return false;
-      Current = Phase::Entry;
-    }
-    std::vector<uint64_t> Arguments;
-    if (Current == Phase::Entry) {
-      Result.PC = Loaded->Entry;
-      ExpectedGate = ReturnGate;
-      Arguments = {PEB};
-    } else {
-      Result.PC = Target;
-      ExpectedGate =
-          Current == Phase::Attach ? AttachReturnGate : DetachReturnGate;
-      Arguments = {
-          Loaded->Base,
-          Current == Phase::Attach ? DLLProcessAttach : DLLProcessDetach, 0};
-    }
+    auto Next = Life.next(CPU);
+    if (!Next)
+      return Next.takeError();
+    Active = std::move(*Next);
+    if (!Active)
+      return false;
+    Result.PC = Active->PC;
+    ExpectedGate = Active->ReturnGate;
     auto Frame = ABI->prepareCall(CPU, StackBase, Options.StackSize,
-                                  ExpectedGate, Arguments);
+                                  ExpectedGate, Active->Arguments);
     if (!Frame)
       return Frame.takeError();
     ExpectedSP = Frame->ReturnStackPointer;
@@ -185,8 +130,6 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       return std::move(E);
     return true;
   };
-  if (auto E = ReadCallbackArray())
-    return std::move(E);
   auto Prepared = Prepare();
   if (!Prepared)
     return Prepared.takeError();
@@ -195,16 +138,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Result.ExitStatus.reset();
     Result.Diagnostic = llvm::toString(std::move(E));
   };
-  auto StartExit = [&](uint32_t Status) -> llvm::Expected<bool> {
-    if (Current == Phase::Detach)
-      return failure(text::ReentrantExit);
-    ExitStatus = Status;
-    Result.ExitStatus.reset();
-    Current = Phase::Detach;
-    Callback = 0;
-    if (auto E = ReadCallbackArray())
-      return std::move(E);
-    return Prepare();
+  auto Complete = [&]() {
+    Result.Stop = ProcessStopReason::Exited;
+    Result.ExitStatus = Life.exitStatus();
   };
   while (true) {
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
@@ -261,34 +197,25 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     if (Request->PC == ExpectedGate && (*SP)[0] == ExpectedSP) {
-      if (Current == Phase::Entry) {
-        auto V = CPU.readRegister(ABI->info().Result);
-        if (!V) {
-          Failed(V.takeError());
-          break;
-        }
+      auto V = CPU.readRegister(ABI->info().Result);
+      if (!V) {
+        Failed(V.takeError());
+        break;
+      }
+      if (Active->Kind == Lifetime::CallKind::Entry)
         Result.ReturnValue = (*V)[0];
-        auto More = StartExit(uint32_t((*V)[0]));
-        if (!More) {
-          Failed(More.takeError());
-          break;
-        }
-        if (!*More) {
-          Result.Stop = ProcessStopReason::Exited;
-          Result.ExitStatus = ExitStatus;
-          break;
-        }
-      } else {
-        auto More = Prepare();
-        if (!More) {
-          Failed(More.takeError());
-          break;
-        }
-        if (!*More) {
-          Result.Stop = ProcessStopReason::Exited;
-          Result.ExitStatus = ExitStatus;
-          break;
-        }
+      if (auto E = Life.returned((*V)[0])) {
+        Failed(std::move(E));
+        break;
+      }
+      auto More = Prepare();
+      if (!More) {
+        Failed(More.takeError());
+        break;
+      }
+      if (!*More) {
+        Complete();
+        break;
       }
       continue;
     }
@@ -358,14 +285,20 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!*V) {
       if (Result.Stop != ProcessStopReason::Exited)
         break;
-      auto More = StartExit(*Result.ExitStatus);
+      const uint32_t Status = *Result.ExitStatus;
+      Result.ExitStatus.reset();
+      if (auto E = Life.exit(Status)) {
+        Failed(std::move(E));
+        break;
+      }
+      auto More = Prepare();
       if (!More) {
         Failed(More.takeError());
         break;
       }
       if (*More)
         continue;
-      Result.ExitStatus = ExitStatus;
+      Complete();
       break;
     }
     Result.NativeCalls.back().Result = **V;
