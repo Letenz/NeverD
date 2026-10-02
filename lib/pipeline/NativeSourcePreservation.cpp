@@ -100,7 +100,13 @@ bool ordinaryFrameTermination(const NativeSourceCallContract &Contract,
 // Byte identities make partial writes and overlapping spills explicit. A
 // frame address needs all eight ordered bytes before it can name a stack slot.
 struct ByteFact {
-  enum Kind { Unknown, Entry, Frame, FrameOrExternal } TheKind = Unknown;
+  enum Kind {
+    Unknown,
+    Entry,
+    Frame,
+    FrameOrExternal,
+    Constant
+  } TheKind = Unknown;
   int64_t Value = 0;
   unsigned Index = 0;
   bool MayBeFrame = false;
@@ -115,6 +121,12 @@ struct State {
   // A written unknown value has no identity in Stack, but still initializes
   // its bytes. This must-set is used only by the strict source-frame proof.
   std::set<int64_t> InitializedStack;
+  struct ScratchIdentity {
+    SourceFrameScratchEffect::Domain Domain;
+    size_t Bytes;
+    bool operator==(const ScratchIdentity &) const = default;
+  };
+  std::map<int64_t, ScratchIdentity> Scratch;
   bool operator==(const State &) const = default;
 };
 
@@ -265,7 +277,22 @@ public:
         return lookup(Current.Registers, Value.Offset + Byte);
       if (Value.isTemp())
         return lookup(Temps, Value.Offset + Byte);
+      if (Value.isConst() && Value.Size <= 8 && Byte < Value.Size &&
+          !isAddressProvenance(Value.Provenance))
+        return ByteFact{
+            ByteFact::Constant,
+            static_cast<int64_t>((Value.Offset >> (Byte * 8)) & 255)};
       return ByteFact{};
+    };
+    auto InvalidateScratch = [&](int64_t Address, size_t Bytes) {
+      if (Remaining < Current.Scratch.size())
+        return false;
+      Remaining -= Current.Scratch.size();
+      std::erase_if(Current.Scratch, [&](const auto &Item) {
+        return Address < Item.first + static_cast<int64_t>(Item.second.Bytes) &&
+               Item.first < Address + static_cast<int64_t>(Bytes);
+      });
+      return true;
     };
     auto FrameOffset = [&](const NdVar &Value) -> std::optional<int64_t> {
       if (Value.Size != 8)
@@ -404,6 +431,8 @@ public:
               if (TrackStackArguments)
                 WrittenStack.insert(*SP + I);
             }
+            if (!InvalidateScratch(*SP, 8))
+              return false;
           }
           for (const auto &[Destination, Value] : Snapshots)
             for (unsigned I = 0; I < 8; ++I)
@@ -443,6 +472,7 @@ public:
         }
         std::vector<std::pair<int64_t, size_t>> WritableFrameRanges;
         std::optional<int64_t> ReturnedFrame;
+        std::optional<int64_t> ScratchAddress;
         // Inspect the same validated physical members used by call lowering.
         // A record has no single carrier; checking only its primary location
         // would reject valid records or miss a frame address in a later member.
@@ -532,6 +562,36 @@ public:
             if (!Address || *Address < *SP ||
                 *Address > -static_cast<int64_t>(BorrowedBytes))
               return false;
+            const auto &Scratch = Found->second.Scratch;
+            if (Scratch && Scratch->Parameter == ParameterIndex) {
+              // Possible frame-or-external provenance cannot identify an
+              // opaque record. Require the exact complete frame address.
+              if (!FrameOffset(NdVar::reg(Location.RegisterOffset, 8)))
+                return false;
+              if (const auto &Condition = Scratch->Condition) {
+                const auto &Carrier =
+                    Signature.Parameters[Condition->Parameter].Location;
+                uint64_t Number = 0;
+                for (unsigned I = 0; I < 8; ++I) {
+                  const auto Byte =
+                      lookup(Current.Registers, Carrier.RegisterOffset + I);
+                  if (Byte.TheKind != ByteFact::Constant)
+                    return false;
+                  Number |= static_cast<uint64_t>(Byte.Value) << (I * 8);
+                }
+                if (!Condition->Values.count(Number))
+                  return false;
+              }
+              if (Scratch->TheAction ==
+                  SourceFrameScratchEffect::Action::Finish) {
+                const auto Record = Current.Scratch.find(*Address);
+                if (Record == Current.Scratch.end() ||
+                    Record->second != State::ScratchIdentity{Scratch->TheDomain,
+                                                             Scratch->Bytes})
+                  return false;
+              }
+              ScratchAddress = *Address;
+            }
             if (Writable != Found->second.WritableFrameParameters.end())
               WritableFrameRanges.emplace_back(*Address, BorrowedBytes);
             if (Found->second.ReturnFrameOrExternal &&
@@ -556,6 +616,8 @@ public:
           }
         }
         for (const auto &[Address, Bytes] : WritableFrameRanges) {
+          if (!InvalidateScratch(Address, Bytes))
+            return false;
           std::erase_if(Current.Stack, [&](const auto &Item) {
             return Item.first >= Address &&
                    Item.first - Address < static_cast<int64_t>(Bytes);
@@ -565,6 +627,16 @@ public:
                    Byte - Address < static_cast<int64_t>(Bytes);
           });
         }
+        if (ScratchAddress) {
+          const auto &Scratch = *Found->second.Scratch;
+          if (Scratch.TheAction == SourceFrameScratchEffect::Action::Initialize)
+            Current.Scratch[*ScratchAddress] = {Scratch.TheDomain,
+                                                Scratch.Bytes};
+          else
+            Current.Scratch.erase(*ScratchAddress);
+        }
+        if (Current.Scratch.size() > MaxFacts)
+          return false;
         if (Found->second.terminates()) {
           DidTerminate = true;
           return true;
@@ -580,6 +652,8 @@ public:
           std::erase_if(Current.Stack,
                         [&](const auto &Item) { return Item.first < *SP; });
           std::erase_if(WrittenStack, [&](int64_t Byte) { return Byte < *SP; });
+          std::erase_if(Current.Scratch,
+                        [&](const auto &Item) { return Item.first < *SP; });
           Temps.clear();
         }
         if (ReturnedFrame) {
@@ -643,6 +717,8 @@ public:
         // their exact entry or frame identity.
         for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
           Value[I] = Read(Op.Inputs[0], I);
+        for (unsigned I = Op.Inputs[0].Size; I < Value.size(); ++I)
+          Value[I] = {ByteFact::Constant, 0};
       } else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
                  Op.Inputs[1].isConst() &&
                  Op.Inputs[1].Offset <= Op.Inputs[0].Size &&
@@ -744,6 +820,8 @@ public:
           if (Address) {
             if (*Address < -MaxFrame)
               return false;
+            if (!InvalidateScratch(*Address, Memory.AccessSize))
+              return false;
             for (unsigned I = 0; I < Memory.AccessSize; ++I) {
               put(Current.Stack, *Address + I, Read(*Memory.StoredValue, I));
               if (RequirePrivateFrame)
@@ -783,16 +861,31 @@ public:
               TRI.findWideReg(Op.Output.Offset, Op.Output.Size);
           for (unsigned I = 0; I < Bytes; ++I)
             Output.erase(Offset + I);
+          for (unsigned I = Op.Output.Size; I < Bytes; ++I)
+            put(Output, Offset + I, {ByteFact::Constant, 0});
         }
         for (unsigned I = 0; I < Value.size(); ++I)
           put(Output, Op.Output.Offset + I, Value[I]);
+        if (Op.Output.isReg() && Op.Output.Offset < TRI.StackPointer + 8 &&
+            TRI.StackPointer < Op.Output.Offset + Op.Output.Size) {
+          if (Remaining < Current.Scratch.size())
+            return false;
+          Remaining -= Current.Scratch.size();
+          const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+          if (!SP)
+            Current.Scratch.clear();
+          else
+            std::erase_if(Current.Scratch,
+                          [&](const auto &Item) { return Item.first < *SP; });
+        }
       } else if (Op.Output.Size) {
         return false;
       }
       if (Current.Registers.size() > MaxFacts ||
           Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts ||
           WrittenStack.size() > MaxFacts ||
-          Current.InitializedStack.size() > MaxFacts)
+          Current.InitializedStack.size() > MaxFacts ||
+          Current.Scratch.size() > MaxFacts)
         return false;
     }
     return true;
@@ -976,6 +1069,13 @@ static bool restoresNativeSourceStateImpl(
         if (!meet(Next.Registers, Out.Registers, Proof.Remaining) ||
             !meet(Next.Stack, Out.Stack, Proof.Remaining))
           return false;
+        if (Proof.Remaining < Next.Scratch.size())
+          return false;
+        Proof.Remaining -= Next.Scratch.size();
+        std::erase_if(Next.Scratch, [&](const auto &Item) {
+          const auto Other = Out.Scratch.find(Item.first);
+          return Other == Out.Scratch.end() || Other->second != Item.second;
+        });
         if (RequirePrivateFrame) {
           if (Proof.Remaining < Next.InitializedStack.size())
             return false;

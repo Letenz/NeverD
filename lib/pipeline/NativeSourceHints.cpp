@@ -19,6 +19,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
+#include "neverd/loader/Swift/SwiftAccessEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -573,17 +574,20 @@ bool hasNativeSourceStateContract(
       }
       if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
         Contract.ReadOnlyFrameParameters.emplace(0, 16);
-      // These exact libswiftCore imports may borrow bounded private-frame
-      // storage. swift_beginAccess writes its three-word ValueBuffer and
-      // swift_endAccess may update that same private scratch record;
-      // Hasher's 72-byte value is written through x8, then passed inout to
-      // String.hash and _finalize. Independently authenticate the current
-      // import and ABI before invalidating those frame bytes. A borrow may
-      // neither escape nor overlap a saved register.
       if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
           (Binding.TargetName == "swift_beginAccess" ||
-           Binding.TargetName == "swift_endAccess" ||
-           Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" ||
+           Binding.TargetName == "swift_endAccess")) {
+        const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                           Op.Inputs[0].ConstVal};
+        const auto Effects = swiftAccessCallEffects(Image, *Low, Site, Binding);
+        if (!Effects || Op.DoesNotReturn || Op.PreservesCallerSaved)
+          return false;
+        static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
+      // Hasher's 72-byte value is written through x8, then passed inout to
+      // String.hash and _finalize. Revalidate its current import and ABI.
+      if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
+          (Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" ||
            Binding.TargetName == "$sSS4hash4intoys6HasherVz_tF" ||
            Binding.TargetName == "$ss6HasherV9_finalizeSiyF") &&
           Binding.TargetAddress && Image.Bits == Bitness::Bits64) {
@@ -597,12 +601,8 @@ bool hasNativeSourceStateContract(
             Expected->TargetName == Binding.TargetName &&
             Expected->DoesNotReturn == Binding.DoesNotReturn &&
             equalSourceABIs(Expected->Signature, Binding.Signature)) {
-          if (Binding.TargetName == "swift_beginAccess")
-            Contract.WritableFrameParameters.emplace(1, 3 * sizeof(uint64_t));
-          else if (Binding.TargetName == "swift_endAccess")
-            Contract.WritableFrameParameters.emplace(0, 3 * sizeof(uint64_t));
-          else if (Image.Arch == Arch::AArch64 &&
-                   !Binding.Signature.Parameters.empty()) {
+          if (Image.Arch == Arch::AArch64 &&
+              !Binding.Signature.Parameters.empty()) {
             const auto &Buffer = Binding.Signature.Parameters[0];
             if (Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" &&
                 Binding.Signature.Parameters.size() == 2 &&
@@ -1423,7 +1423,12 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
         if (Op.NumInputs && Op.Inputs[0].isConst())
           RequiresFrameEffectProof |=
               isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal) ||
-              isObjCContextProjection(Image, Op.Inputs[0].ConstVal);
+              isObjCContextProjection(Image, Op.Inputs[0].ConstVal) ||
+              isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal);
+        RequiresFrameEffectProof |=
+            Op.SourceCallHint &&
+            (Op.SourceCallHint->TargetName == "swift_beginAccess" ||
+             Op.SourceCallHint->TargetName == "swift_endAccess");
         RequiresImmutableCallProof |=
             Op.SourceCallHint &&
             (Op.SourceCallHint->ImmutableNativeCall ||
