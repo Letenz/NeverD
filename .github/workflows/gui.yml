@@ -23,6 +23,8 @@ jobs:
     if: ${{ github.event.action != 'closed' }}
     runs-on: ${{ matrix.runner }}
     strategy:
+      # Leave runner slots for the main builds in the shared organization pool.
+      max-parallel: 2
       fail-fast: false
       matrix:
         include:
