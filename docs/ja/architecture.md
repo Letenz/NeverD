@@ -947,3 +947,5 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 `windows-pe64-v1` は限定された Windows x64/ARM64 コンソールプロセスを追加します。PE ロード、PEB/TEB、静的・動的 TLS、起動・終了コールバック、名前付き Win32 API モデルを備えます。CPU 層を独立して使用し、ドライバーエミュレーションは不要です。DLL/CRT ロード、GUI、ユーザーモード SEH、スレッド、汎用 Windows 互換性は未完成です。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+ネイティブ依存関係の探索は、現在の完全な LowIR と不変の命令が、解決済みチェーン内の正確なコードポインタスロットを証明する場合にのみ ARM64 間接呼び出しを追跡します。専用のコードポインタ読み取り処理は、一意の読み取り専用ストレージ、競合する修正情報、現在の関数入口を確認し、通常のデータポインタ読み取りの境界は維持します。有界追跡は単一基本ブロック内に限定され、呼び出しをまたぐレジスタ保持には、特定レジスタを使う ARC インポートを含め、現在のランタイムまたはネイティブ ABI が必要です。フレームからの再読み込み、未知の呼び出し、不完全な証拠は未解決のままです。依存一覧は元の間接呼び出し位置を保持し、それ自体で ABI を結び付けたりソース公開を許可したりしません。
