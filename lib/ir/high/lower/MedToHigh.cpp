@@ -882,7 +882,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     return;
   // The join-default sink models Win64 register joins (structureIfElse).
   const bool LateJoinSink = !CurMed || CurMed->CC == CallingConv::Win64;
-  bool Dirty = duplicateSmallReturnTails(Func.Body);
+  bool Dirty = hoistTryExitJumps(Func.Body);
+  Dirty |= duplicateSmallReturnTails(Func.Body);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
@@ -914,6 +915,7 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     for (int Round = 0; Round < 8; ++Round) {
       const bool Grouped =
           groupSwitchCases(Func.Body) | dropJumpsToTheNextStatement(Func.Body) |
+          hoistTryExitJumps(Func.Body) |
           (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |

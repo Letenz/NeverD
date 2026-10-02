@@ -59,7 +59,9 @@ bool CFGBuilder::isValidTarget(const BinaryImage &Img, va_t Target,
   // runtime unwind metadata links back to this exact function may lie farther
   // away (MSVC moves cold switch arms to the end of the section).
   uint64_t Dist = Target > FuncEntry ? Target - FuncEntry : FuncEntry - Target;
-  if (Dist > limits::kMaxJumpTargetDistance &&
+  const bool LeafColdPart =
+      FuncEntry == CurrentFuncEntry && isFramelessLeafColdPart(Img, Target);
+  if (Dist > limits::kMaxJumpTargetDistance && !LeafColdPart &&
       !isExplicitlyOwnedFunctionFragment(Img, FuncEntry, Target,
                                          ExecutableCodeOwners))
     return false;
@@ -89,6 +91,7 @@ bool CFGBuilder::isValidTarget(const BinaryImage &Img, va_t Target,
   if (CurrentFuncRange &&
       (Target < CurrentFuncRange->first ||
        Target >= CurrentFuncRange->second) &&
+      !LeafColdPart &&
       !isExplicitlyOwnedFunctionFragment(Img, FuncEntry, Target,
                                          ExecutableCodeOwners))
     return false;
@@ -115,9 +118,17 @@ bool CFGBuilder::sanityCheckTargets(const BinaryImage &Img,
   int InvalidCount = 0;
 
   for (size_t I = 1; I < Targets.size(); ++I) {
+    // Distance from the first target or from the function entry, the
+    // bound kMaxJumpTargetDistance states: a first target in a cold part
+    // must not push the function's own code out of range.
     uint64_t Dist =
         Targets[I] > RefAddr ? Targets[I] - RefAddr : RefAddr - Targets[I];
+    const uint64_t EntryDist = Targets[I] > CurrentFuncEntry
+                                   ? Targets[I] - CurrentFuncEntry
+                                   : CurrentFuncEntry - Targets[I];
     if (Dist > limits::kMaxJumpTargetDistance &&
+        EntryDist > limits::kMaxJumpTargetDistance &&
+        !isFramelessLeafColdPart(Img, Targets[I]) &&
         !isExplicitlyOwnedFunctionFragment(Img, CurrentFuncEntry, Targets[I],
                                            ExecutableCodeOwners)) {
       TruncAt = I;

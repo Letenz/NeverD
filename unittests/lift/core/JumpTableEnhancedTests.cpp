@@ -3652,6 +3652,220 @@ TEST_F(JTE_X86_64, RecoversExactCOFFImageRelativeRVASwitch) {
                  "PE RVA slots cannot carry mixed relocation provenance");
 }
 
+namespace {
+enum class ColdTargetOwner { None, FramelessLeaf, FramedLeaf, ChainedFragment };
+
+/// The RVA switch above with case \p Index moved to a `ret` 2 MiB away, the
+/// way MSVC moves cold switch arms to the end of the section.
+neverd::BinaryImage makeCOFFRVASwitchWithColdCase(size_t Index,
+                                                  ColdTargetOwner Owner) {
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  constexpr neverd::va_t TableVA = ImageBase + 0x1100;
+  constexpr neverd::va_t ColdVA = ImageBase + 0x201000;
+  neverd::BinaryImage Image = makeCOFFImageRelativeRVASwitch();
+  neverd::Segment &Text = Image.Segments.front();
+  const uint32_t ColdRVA = static_cast<uint32_t>(ColdVA - ImageBase);
+  for (unsigned Byte = 0; Byte < sizeof(ColdRVA); ++Byte)
+    Text.Data[TableVA - FunctionVA + Index * sizeof(ColdRVA) + Byte] =
+        static_cast<uint8_t>(ColdRVA >> (Byte * 8));
+
+  neverd::Segment Cold;
+  Cold.Name = ".text$x";
+  Cold.VA = ColdVA;
+  Cold.Size = 0x10;
+  Cold.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Cold.Data.assign(Cold.Size, 0xcc);
+  Cold.Data[0] = 0xc3;
+  Image.Segments.push_back(std::move(Cold));
+  neverd::Section ColdSection;
+  ColdSection.Name = ".text$x";
+  ColdSection.VA = ColdVA;
+  ColdSection.Size = 0x10;
+  ColdSection.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Image.Sections.push_back(std::move(ColdSection));
+  if (Owner == ColdTargetOwner::None)
+    return Image;
+
+  neverd::ExceptionFunction Primary;
+  Primary.Kind = neverd::RuntimeFunctionKind::Primary;
+  Primary.CodeRange = {FunctionVA, FunctionVA + 0x41};
+  Primary.Encoding = neverd::ExceptionEncoding::X64UnwindV1;
+  Primary.UnwindVersion = 1;
+  if (Owner != ColdTargetOwner::FramelessLeaf) {
+    neverd::UnwindOperation Alloc;
+    Alloc.Kind = neverd::UnwindOperationKind::AllocateSmall;
+    Alloc.CodeOffset = 4;
+    Alloc.StackOffset = 0x28;
+    Primary.UnwindOperations.push_back(Alloc);
+  }
+  Image.ExceptionMetadata.Functions.push_back(std::move(Primary));
+  if (Owner == ColdTargetOwner::ChainedFragment) {
+    neverd::ExceptionFunction Fragment;
+    Fragment.Kind = neverd::RuntimeFunctionKind::Chained;
+    Fragment.CodeRange = {ColdVA, ColdVA + 0x10};
+    Fragment.Encoding = neverd::ExceptionEncoding::X64UnwindV1;
+    Fragment.UnwindVersion = 1;
+    Fragment.ChainedPrimaryRange =
+        neverd::ExceptionAddressRange{FunctionVA, FunctionVA + 0x41};
+    Fragment.PrimaryFunctionIndex = 0;
+    Image.ExceptionMetadata.Functions.push_back(std::move(Fragment));
+  }
+  Image.ExceptionMetadata.rebuildIndex();
+  return Image;
+}
+
+std::vector<neverd::va_t> recoverColdCaseSwitch(size_t Index,
+                                                ColdTargetOwner Owner) {
+  constexpr neverd::va_t FunctionVA = 0x140001000;
+  neverd::BinaryImage Image = makeCOFFRVASwitchWithColdCase(Index, Owner);
+  neverd::Decoder Decoder;
+  EXPECT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{FunctionVA};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Func =
+      Builder.build(Image, Decoder, FunctionVA, "coff_cold_case_switch");
+  return Func.JumpTables.empty() ? std::vector<neverd::va_t>{}
+                                 : Func.JumpTables.front().Targets;
+}
+} // namespace
+
+TEST_F(JTE_X86_64, ColdCaseOfAFramelessLeafNeedsNoUnwindRecord) {
+  // PipIsProblemReadonly: a leaf that moves no stack pointer needs no unwind
+  // record anywhere, so its cold switch arm has none.  A function with a
+  // frame would need a chained record there; without one the far code is
+  // not its own.
+  constexpr neverd::va_t ColdVA = 0x140201000;
+  const std::vector<neverd::va_t> Leaf =
+      recoverColdCaseSwitch(1, ColdTargetOwner::FramelessLeaf);
+  ASSERT_EQ(Leaf.size(), 6u);
+  EXPECT_EQ(Leaf[1], ColdVA);
+  for (ColdTargetOwner Owner :
+       {ColdTargetOwner::None, ColdTargetOwner::FramedLeaf}) {
+    const std::vector<neverd::va_t> Targets = recoverColdCaseSwitch(1, Owner);
+    EXPECT_EQ(std::count(Targets.begin(), Targets.end(), ColdVA), 0);
+  }
+}
+
+TEST_F(JTE_X86_64, ColdFirstCaseKeepsTheFunctionsOwnCases) {
+  // SeSetAuditParameter: the first case lives in a chained fragment 2 MiB
+  // away.  The other cases are near the function's entry, which bounds
+  // their distance; measured from the first case they looked out of range
+  // and cut the table to one entry.
+  constexpr neverd::va_t ColdVA = 0x140201000;
+  const std::vector<neverd::va_t> Targets =
+      recoverColdCaseSwitch(0, ColdTargetOwner::ChainedFragment);
+  ASSERT_EQ(Targets.size(), 6u);
+  EXPECT_EQ(Targets[0], ColdVA);
+  EXPECT_EQ(Targets[1], 0x140001032u);
+}
+
+TEST_F(JTE_X86_64, LongFunctionKeepsItsGuardAliasBudget) {
+  // NtSetInformationProcess: a guarded RVA switch placed after much other
+  // code of its function.  The guard alias search rescanned every
+  // instruction before each guard for predicated selects and ran out of
+  // evidence work, turning the dispatch into a tail call.
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  constexpr size_t Filler = 2000;
+  std::vector<uint8_t> Code;
+  auto AppendU32 = [&](uint32_t Value) {
+    for (unsigned Byte = 0; Byte < sizeof(Value); ++Byte)
+      Code.push_back(static_cast<uint8_t>(Value >> (Byte * 8)));
+  };
+  auto PatchRel32 = [&](size_t At, size_t Target) {
+    const uint32_t Rel = static_cast<uint32_t>(Target - (At + 4));
+    for (unsigned Byte = 0; Byte < sizeof(Rel); ++Byte)
+      Code[At + Byte] = static_cast<uint8_t>(Rel >> (Byte * 8));
+  };
+  Code.push_back(0xe9); // jmp start, over a path that never dispatches
+  const size_t SkipFiller = Code.size();
+  AppendU32(0);
+  const size_t FillerStart = Code.size();
+  for (size_t I = 0; I < Filler; ++I)
+    Code.insert(Code.end(), {0x83, 0xc0, 0x01}); // add eax, 1
+  Code.push_back(0xc3);
+  const size_t Start = Code.size();
+  PatchRel32(SkipFiller, Start);
+  Code.insert(Code.end(), {0x85, 0xd2, 0x0f, 0x84}); // test edx; je filler
+  Code.resize(Code.size() + 4);
+  PatchRel32(Code.size() - 4, FillerStart);
+  Code.insert(Code.end(), {0x45, 0x85, 0xc9, 0x0f, 0x85}); // test r9d; jne exit
+  const size_t ExitBranch = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x89, 0xc9,       // mov ecx, ecx
+                           0x83, 0xf9, 0x05, // cmp ecx, 5
+                           0x0f, 0x87});     // ja default
+  const size_t DefaultBranch = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x48, 0x8d, 0x15}); // lea rdx, image base
+  AppendU32(static_cast<uint32_t>(
+      static_cast<int64_t>(ImageBase) -
+      static_cast<int64_t>(FunctionVA + Code.size() + 4)));
+  Code.insert(Code.end(), {0x8b, 0x8c, 0x8a}); // mov ecx, [rdx+rcx*4+table]
+  const size_t TableSlot = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x48, 0x01, 0xd1, // add rcx, rdx
+                           0xff, 0xe1});     // jmp rcx
+  std::vector<neverd::va_t> Expected;
+  for (int Case = 0; Case < 6; ++Case) {
+    Expected.push_back(FunctionVA + Code.size());
+    Code.insert(Code.end(), {0xc3, 0xcc});
+  }
+  const size_t Default = Code.size();
+  Code.insert(Code.end(), {0xc3, 0xcc, 0xcc, 0xcc});
+  PatchRel32(DefaultBranch, Default);
+  PatchRel32(ExitBranch, Default);
+  const size_t Table = Code.size();
+  for (neverd::va_t Target : Expected)
+    AppendU32(static_cast<uint32_t>(Target - ImageBase));
+  const uint32_t TableRVA =
+      static_cast<uint32_t>(FunctionVA + Table - ImageBase);
+  for (unsigned Byte = 0; Byte < sizeof(TableRVA); ++Byte)
+    Code[TableSlot + Byte] = static_cast<uint8_t>(TableRVA >> (Byte * 8));
+
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::X64;
+  Image.Bits = neverd::Bitness::Bits64;
+  Image.Format = neverd::BinaryFormat::COFF;
+  Image.Base = ImageBase;
+  Image.Entry = FunctionVA;
+  neverd::Segment Text;
+  Text.Name = ".text";
+  Text.VA = FunctionVA;
+  Text.Size = Text.FileSz = Code.size();
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Text.Data = Code;
+  Image.Segments.push_back(std::move(Text));
+  neverd::Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = FunctionVA;
+  TextSection.Size = Code.size();
+  TextSection.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Image.Sections.push_back(std::move(TextSection));
+  neverd::Symbol Function =
+      neverd::Symbol::makeFunc(FunctionVA, static_cast<uint64_t>(Table));
+  Function.Name = "long_rva_switch";
+  Image.Symbols.push_back(std::move(Function));
+  Image.KnownCodeRanges.emplace_back(FunctionVA, FunctionVA + Table);
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{FunctionVA};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Func =
+      Builder.build(Image, Decoder, FunctionVA, "long_rva_switch");
+  ASSERT_EQ(Func.JumpTables.size(), 1u);
+  EXPECT_EQ(Func.JumpTables.front().Targets, Expected);
+  EXPECT_FALSE(lowFunctionHasOpcode(Func, neverd::NdOp::INDIR_CALL));
+}
+
 TEST_F(JTE_X86_64, AllStagesSucceed) { verifyAllStages(jteX64Obj()); }
 
 TEST_F(JTE_X86_64, LowIRHasBranchInd) {

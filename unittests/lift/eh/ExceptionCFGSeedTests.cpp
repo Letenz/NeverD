@@ -20,6 +20,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionInfo.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -574,6 +575,61 @@ TEST(ExceptionCFGEdge, KeepsExceptionalEdgesOutOfOrdinarySuccessors) {
       EXPECT_TRUE(Block.Succs.empty());
       EXPECT_EQ(Block.ExceptionalSuccs.size(), 1u);
     }
+}
+
+TEST(ExceptionCFGEdge, LinksAScopeInAChainedColdFragment) {
+  // MSVC moves cold code, __except bodies included, to chained fragments far
+  // from the hot path.  A scope there is live: unwinding a fault in the
+  // fragment follows its chain to this record's scope table.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = kBase;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = kEntry;
+  Text.Size = 0x60;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const uint8_t Hot[] = {0x85, 0xc9,                          // test ecx, ecx
+                         0x0f, 0x85, 0x38, 0x00, 0x00, 0x00,  // jne cold
+                         0xc3};                               // ret
+  const uint8_t Cold[] = {0xc7, 0x02, 0x01, 0x00, 0x00, 0x00, // mov [rdx], 1
+                          0xe9, 0xbd, 0xff, 0xff, 0xff};      // jmp ret
+  const uint8_t Handler[] = {0x31, 0xc0,                      // xor eax, eax
+                             0xe9, 0xb1, 0xff, 0xff, 0xff};   // jmp ret
+  std::copy(std::begin(Hot), std::end(Hot), Text.Data.begin());
+  std::copy(std::begin(Cold), std::end(Cold), Text.Data.begin() + 0x40);
+  std::copy(std::begin(Handler), std::end(Handler), Text.Data.begin() + 0x50);
+  Img.Segments.push_back(std::move(Text));
+
+  ExceptionFunction EH = makeRecord(ExceptionEncoding::X64UnwindV1,
+                                    ExceptionPersonality::CSpecificHandler);
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {kEntry + 0x40, kEntry + 0x46};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = kEntry + 0x50;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    BinaryImage Copy = Img;
+    ExceptionFunction Record = EH;
+    if (Chained)
+      Record.FragmentRanges = {{kEntry + 0x40, kEntry + 0x60}};
+    const LowFunc Func = buildWith(Copy, std::move(Record), Arch::X64);
+    const std::vector<va_t> Starts = blockStarts(Func);
+    EXPECT_EQ(std::count(Starts.begin(), Starts.end(), kEntry + 0x50),
+              Chained ? 1 : 0);
+    using Edges = std::vector<std::pair<ExceptionalEdgeKind, va_t>>;
+    const Edges Expected =
+        Chained ? Edges{{ExceptionalEdgeKind::SEHHandler, kEntry + 0x50}}
+                : Edges{};
+    EXPECT_EQ(edgesFrom(Func, kEntry + 0x40), Expected);
+  }
 }
 
 } // namespace

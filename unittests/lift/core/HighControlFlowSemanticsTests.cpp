@@ -2219,6 +2219,57 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   return O;
 }
 
+TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
+  // PiCMCaptureRegistryPropertyInputData: cold code falls into a `jmp` back
+  // to the hot path.  Threading that jump-only block leaves a block without a
+  // terminator whose sole successor is not the next block; it must not run
+  // into the block laid out after it.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "threaded_fallthrough";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto IsZero = machineValue(1, Architecture);
+  IsZero.Size = 1;
+  auto Result = [&](int Version) {
+    auto V = machineValue(2, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.SSAVer = Version;
+    return V;
+  };
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::INT_EQUAL, 0x1000, IsZero, {Input, C(0)}),
+                     operation(NdOp::COND_BR, 0x1004, {}, {C(0x1200), IsZero})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3};
+  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, Result(1), {C(5)})};
+  M.Blocks[2].Preds = {0};
+  M.Blocks[2].Succs = {3};
+  M.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, Result(2), {C(7)})};
+  M.Blocks[3].Preds = {1, 2};
+  M.Blocks[3].Phis = {{Result(3), {{1, Result(1)}, {2, Result(2)}}}};
+  M.Blocks[3].Ops = {operation(NdOp::RETURN, 0x1300, {}, {Result(3)})};
+  const auto F = MedToHighConverter().convert(M, Architecture);
+  for (uint64_t Condition : {0u, 1u}) {
+    SCOPED_TRACE(Condition);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Condition, true), Condition ? 5u : 7u));
+  }
+}
+
 TEST(HighControlFlowSemantics,
      IncomingRegisterBehindAVersionedSeedIsTheParameter) {
   // PiCMCaptureRegistryPropertyInputData: SSA versions a parameter
@@ -5539,6 +5590,58 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   ASSERT_EQ(F.Body[1].Kind, StmtKind::Block);
   EXPECT_EQ(F.Body[1].Addr, 0x1008u);
   EXPECT_TRUE(F.Body[1].Body.empty());
+}
+
+TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
+  // __try { v = 5; goto out; } __except (1) { goto out; } return 0;
+  // out: observe(); return v;
+  // The handler runs in the protection around the try, so its jump may
+  // become a copy of `out`.  The protected body's may not: observe() would
+  // then be guarded, and a fault in it would reach the handler.
+  auto Build = [] {
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1008};
+    Try.Body = {assign(0x1000, 1, 5), jump(0x1004, 0x1020)};
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1010;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{jump(0x1010, 0x1020)}};
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Call;
+    Observe.Addr = 0x1020;
+    Observe.CallExpr = HighExpr::makeCall("observe", 0x5000, {});
+    HighFunc F;
+    F.Body = {Try, result(0x1008, HighExpr::makeConst(0, 8)), Observe,
+              result(0x1024, local(1))};
+    return F;
+  };
+  HighFunc F = Build();
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  const HighStmt &Try = F.Body.front();
+  ASSERT_EQ(Try.Kind, StmtKind::SEHTry);
+  ASSERT_FALSE(Try.Body.empty());
+  EXPECT_EQ(Try.Body.back().Kind, StmtKind::Goto);
+  ASSERT_EQ(Try.EHClauseBodies.size(), 1u);
+  ASSERT_FALSE(Try.EHClauseBodies[0].empty());
+  EXPECT_EQ(Try.EHClauseBodies[0].back().Kind, StmtKind::Return);
+
+  // With the handler ending in its own return, the protected body's jump
+  // moves after the statement, where the copy may replace it.
+  EXPECT_TRUE(hoistTryExitJumps(F.Body));
+  ASSERT_EQ(F.Body.front().Body.size(), 1u);
+  ASSERT_GE(F.Body.size(), 2u);
+  EXPECT_EQ(F.Body[1].Kind, StmtKind::Goto);
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+
+  // A handler that falls through would run the moved jump too.
+  F = Build();
+  F.Body.front().EHClauseBodies = {{assign(0x1010, 1, 7)}};
+  EXPECT_FALSE(hoistTryExitJumps(F.Body));
+  EXPECT_EQ(F.Body.front().Body.back().Kind, StmtKind::Goto);
 }
 
 TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {

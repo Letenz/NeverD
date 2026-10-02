@@ -53,6 +53,23 @@ bool CFGBuilder::isCurrentOwnedFragment(va_t Addr) const {
                                            ExecutableCodeOwners);
 }
 
+bool CFGBuilder::isFramelessLeafColdPart(const BinaryImage &Img,
+                                         va_t Addr) const {
+  if (!CurrentFuncIsFramelessLeaf || Addr == InvalidVA || Addr < Img.Base ||
+      Img.ExceptionMetadata.findFunction(Addr))
+    return false;
+  // A restricted load decodes only the records it needs; the raw directory
+  // still lists every one.
+  const uint64_t RVA = Addr - Img.Base;
+  const auto Record = std::upper_bound(
+      Img.COFFPDataRecords.begin(), Img.COFFPDataRecords.end(), RVA,
+      [](uint64_t Value, const BinaryImage::COFFPDataRecord &Rec) {
+        return Value < Rec.BeginRVA;
+      });
+  return Record == Img.COFFPDataRecords.begin() ||
+         RVA >= std::prev(Record)->EndRVA;
+}
+
 va_t CFGBuilder::nextKnownFunctionEntry(va_t After) const {
   va_t Best = InvalidVA;
   auto Consider = [&](va_t Addr) {
@@ -391,13 +408,13 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   if (Exception) {
     // Every one of these tables spells "this field names no address" as zero,
     // so a zero has to be dropped before the range test rather than left to it.
+    // The function's code includes its chained cold fragments.
     auto AddBoundary = [&](va_t Address) {
-      if (Address != 0 && Exception->CodeRange.contains(Address) &&
-          Address != EntryAddr)
+      if (Address != 0 && Exception->ownsCode(Address) && Address != EntryAddr)
         BlockStarts.insert(Address);
     };
     auto AddExceptionalRoot = [&](va_t Address) {
-      if (Address == 0 || !Exception->CodeRange.contains(Address))
+      if (Address == 0 || !Exception->ownsCode(Address))
         return;
       AddBoundary(Address);
       PersistentCFGRoots.insert(Address);
@@ -406,18 +423,17 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
         ExceptionalRoots.push_back(Address);
     };
     auto AddContinuationRoot = [&](va_t Address) {
-      if (Address == 0 || !Exception->CodeRange.contains(Address))
+      if (Address == 0 || !Exception->ownsCode(Address))
         return;
       if (Address != EntryAddr)
         ContinuationRoots.push_back(Address);
     };
     if (Exception->SEH)
       for (const SEHScopeRecord &Scope : Exception->SEH->Scopes) {
-        if (const auto Range = getSemanticSEHGuardedRange(
-                Scope, Img.Arch, Exception->CodeRange)) {
+        if (const auto Range =
+                getSemanticSEHGuardedRange(Scope, Img.Arch, *Exception)) {
           AddBoundary(Range->Begin);
-          if (Range->End != Exception->CodeRange.End)
-            AddBoundary(Range->End);
+          AddBoundary(Range->End);
         }
         AddExceptionalRoot(Scope.FilterOrFinallyVA);
         AddExceptionalRoot(Scope.HandlerVA);
@@ -1350,6 +1366,7 @@ bool CFGBuilder::prepareCandidateFiniteProofScratch(
   Scratch.CurrentFuncEntry = CurrentFuncEntry;
   Scratch.CurrentFuncRange = CurrentFuncRange;
   Scratch.AuthoritativeCurrentFuncRange = AuthoritativeCurrentFuncRange;
+  Scratch.CurrentFuncIsFramelessLeaf = CurrentFuncIsFramelessLeaf;
   Scratch.KnownFuncEntries = KnownFuncEntries;
   Scratch.CurrentExceptionalEntries = CurrentExceptionalEntries;
   Scratch.NoReturnTargets = NoReturnTargets;

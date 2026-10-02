@@ -36,6 +36,7 @@ SegmentLimitValid,          // LSL selector check -> ZF
 Monitor, Mwait, Monitorx, Mwaitx,
 Xsetbv,                     // XCR[ECX] = EDX:EAX
 Rdrand, Rdseed,             // value with the CF byte above it
+ReadSegment, WriteSegment,  // segment selector by encoding number
 
 // Virtualization.
 Vmcall, Vmmcall,

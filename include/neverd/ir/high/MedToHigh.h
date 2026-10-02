@@ -62,6 +62,11 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 /// The original stays for other paths. Returns true when a goto was replaced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
 
+/// Move the jump that ends a `__try` body after the try statement when every
+/// `__except` body ends in a jump or return of its own, so the protected code
+/// is unchanged.  Returns true when a jump moved.
+bool hoistTryExitJumps(std::vector<HighStmt> &Body);
+
 /// Late goto reduction: merge conditional jumps to one target, move a block
 /// entered by a single forward jump into that `if`, and turn a jump over the
 /// fall-through path into `if`/`else`.  Returns true when anything changed.

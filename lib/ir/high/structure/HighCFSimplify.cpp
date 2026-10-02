@@ -37,6 +37,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 
 namespace neverd {
@@ -608,6 +609,23 @@ static std::optional<size_t> pureAssignCount(const HighStmt &S,
 static bool endsItsBlock(const HighStmt &S);
 static bool isEmptyAnchor(const HighStmt &S);
 
+/// The try statements whose protected bodies enclose a statement list,
+/// outermost first, each named by its kind and native range.  A copy that
+/// replaces a jump must stay in the same protection: copied into a protected
+/// body its faults would reach that handler, copied out of one they would
+/// escape it.  A handler body runs in the protection around its try.
+using TryContext = std::vector<std::tuple<StmtKind, va_t, va_t>>;
+
+/// The context of \p S's body, given \p Outer, that of the list holding it.
+static TryContext bodyTryContext(const TryContext &Outer, const HighStmt &S) {
+  if (S.Kind != StmtKind::SEHTry && S.Kind != StmtKind::CxxTry &&
+      S.Kind != StmtKind::ItaniumTry)
+    return Outer;
+  TryContext Inner = Outer;
+  Inner.emplace_back(S.Kind, S.EHRange.Begin, S.EHRange.End);
+  return Inner;
+}
+
 /// `goto L` where L starts a few pure assignments and a return (typically
 /// `result = 1; return result;` shared through an epilogue), or a call that
 /// never returns such as the fail-fast trap, becomes a copy of those
@@ -654,8 +672,10 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
   // forward jump, the next label, or the end of a list whose follow
   // \p After is known; the copy then jumps there.
   std::map<va_t, std::vector<HighStmt>> Tails;
-  std::function<void(const std::vector<HighStmt> &, va_t)> Collect =
-      [&](const std::vector<HighStmt> &L, va_t After) {
+  std::map<va_t, TryContext> TailContexts;
+  std::function<void(const std::vector<HighStmt> &, va_t, const TryContext &)>
+      Collect = [&](const std::vector<HighStmt> &L, va_t After,
+                    const TryContext &Ctx) {
         for (size_t I = 0; I < L.size(); ++I) {
           const va_t X = L[I].Addr;
           if (!Addressed(X) || Pinned.count(X) || UsesOf(X) < 2 ||
@@ -696,6 +716,7 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
             continue;
           Tail.push_back(std::move(Jump));
           Tails.emplace(X, std::move(Tail));
+          TailContexts.emplace(X, Ctx);
         }
         for (size_t I = 0; I < L.size(); ++I) {
           const HighStmt &S = L[I];
@@ -714,25 +735,25 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
               S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
               S.Kind == StmtKind::Block || S.Kind == StmtKind::Switch;
           const va_t Inner = Arms ? Next : 0;
-          Collect(S.Body, Inner);
-          Collect(S.ElseBody, Inner);
+          Collect(S.Body, Inner, bodyTryContext(Ctx, S));
+          Collect(S.ElseBody, Inner, Ctx);
           for (const auto &C : S.Cases)
-            Collect(C.Body, Inner);
-          Collect(S.DefaultBody, Inner);
+            Collect(C.Body, Inner, Ctx);
+          Collect(S.DefaultBody, Inner, Ctx);
           for (const auto &ClauseBody : S.EHClauseBodies)
-            Collect(ClauseBody, 0);
+            Collect(ClauseBody, 0, Ctx);
         }
       };
-  Collect(Body, 0);
+  Collect(Body, 0, TryContext());
   if (Tails.empty())
     return false;
   bool Changed = false;
-  std::function<void(std::vector<HighStmt> &)> Rewrite =
-      [&](std::vector<HighStmt> &L) {
+  std::function<void(std::vector<HighStmt> &, const TryContext &)> Rewrite =
+      [&](std::vector<HighStmt> &L, const TryContext &Ctx) {
         for (size_t I = 0; I < L.size(); ++I) {
           if (L[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(L[I].GotoTarget);
-            if (It != Tails.end()) {
+            if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
               L.erase(L.begin() + I);
               L.insert(L.begin() + I, It->second.begin(), It->second.end());
               I += It->second.size() - 1;
@@ -740,16 +761,82 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
               continue;
             }
           }
-          Rewrite(L[I].Body);
-          Rewrite(L[I].ElseBody);
+          const TryContext Inner = bodyTryContext(Ctx, L[I]);
+          Rewrite(L[I].Body, Inner);
+          Rewrite(L[I].ElseBody, Ctx);
           for (auto &C : L[I].Cases)
-            Rewrite(C.Body);
-          Rewrite(L[I].DefaultBody);
+            Rewrite(C.Body, Ctx);
+          Rewrite(L[I].DefaultBody, Ctx);
           for (auto &ClauseBody : L[I].EHClauseBodies)
-            Rewrite(ClauseBody);
+            Rewrite(ClauseBody, Ctx);
         }
       };
-  Rewrite(Body);
+  Rewrite(Body, TryContext());
+  return Changed;
+}
+
+/// `__try { ...; goto L; } __except (...) { ...; return; }` leaves the
+/// protected body through its last jump just as falling off its end would
+/// reach a `goto L` after the statement.  The jump moves there, where the
+/// late rewrites can copy or splice L into the try's own protection; they
+/// never move code into a protected body.  An `__except` body that falls
+/// through, or that has no statements of its own, keeps the jump in place,
+/// and so does a target inside the try statement.
+bool hoistTryExitJumps(std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      Targets.insert(S.GotoTarget);
+  });
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (SwitchCase &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+          if (S.Kind != StmtKind::SEHTry || S.Body.empty() ||
+              S.Body.back().Kind != StmtKind::Goto ||
+              S.EHClauses.size() != S.EHClauseBodies.size())
+            continue;
+          bool Exits = true;
+          for (size_t C = 0; C < S.EHClauses.size(); ++C)
+            Exits &= S.EHClauses[C].Kind == HighEHClauseKind::SEHExcept &&
+                     !S.EHClauseBodies[C].empty() &&
+                     endsItsBlock(S.EHClauseBodies[C].back());
+          const va_t Target = S.Body.back().GotoTarget;
+          bool Inside = false;
+          auto Find = [&](const HighStmt &N) { Inside |= N.Addr == Target; };
+          walkStmts(S.Body, Find);
+          for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+            walkStmts(ClauseBody, Find);
+          if (!Exits || Inside || Target == 0 || Target == InvalidVA)
+            continue;
+          HighStmt Jump = std::move(S.Body.back());
+          // A jump that is itself entered leaves its label behind.
+          if (Jump.Addr != 0 && Jump.Addr != InvalidVA &&
+              Targets.count(Jump.Addr) &&
+              (S.Body.size() == 1 ||
+               S.Body[S.Body.size() - 2].Addr != Jump.Addr)) {
+            HighStmt Anchor;
+            Anchor.Kind = StmtKind::Block;
+            Anchor.Addr = Jump.Addr;
+            S.Body.back() = std::move(Anchor);
+            Jump.Addr = 0;
+          } else {
+            S.Body.pop_back();
+          }
+          L.insert(L.begin() + I + 1, std::move(Jump));
+          ++I;
+          Changed = true;
+        }
+      };
+  Visit(Body);
   return Changed;
 }
 
@@ -762,12 +849,15 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
       Targets.insert(S.GotoTarget);
   });
   std::map<va_t, std::vector<HighStmt>> Tails;
+  std::map<va_t, TryContext> TailContexts;
   // The tail that runs from Stmts[I]: a few pure assignments ending in a
-  // return, in a jump to a known tail, or at the end of the list followed
-  // by \p Cont (what runs after the construct owning this list).
-  auto TailAt = [&](const std::vector<HighStmt> &Stmts, size_t I,
-                    const std::vector<HighStmt> *Cont)
-      -> std::optional<std::vector<HighStmt>> {
+  // return, in a jump to a known tail in the same protection \p Ctx, or at
+  // the end of the list followed by \p Cont (what runs after the construct
+  // owning this list).
+  auto TailAt =
+      [&](const std::vector<HighStmt> &Stmts, size_t I,
+          const std::vector<HighStmt> *Cont,
+          const TryContext &Ctx) -> std::optional<std::vector<HighStmt>> {
     // An empty block can anchor the label ahead of the tail.
     // Removed statements (Nop) print nothing and are skipped.
     size_t First = I;
@@ -798,7 +888,7 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
       // Edge copies ahead of a jump to a shared return epilogue: the
       // tail is those copies followed by the epilogue's own tail.
       auto Target = Tails.find(Stmts[J].GotoTarget);
-      if (Target != Tails.end())
+      if (Target != Tails.end() && TailContexts.at(Target->first) == Ctx)
         Rest = &Target->second;
     } else if (J == Stmts.size()) {
       Rest = Cont;
@@ -809,50 +899,53 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
     Tail.insert(Tail.end(), Rest->begin(), Rest->end());
     return Tail;
   };
-  std::function<void(std::vector<HighStmt> &, const std::vector<HighStmt> *)>
+  std::function<void(std::vector<HighStmt> &, const std::vector<HighStmt> *,
+                     const TryContext &)>
       Collect = [&](std::vector<HighStmt> &Stmts,
-                    const std::vector<HighStmt> *Cont) {
+                    const std::vector<HighStmt> *Cont, const TryContext &Ctx) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           const va_t Label = Stmts[I].Addr;
           if (Label != 0 && Label != InvalidVA && !Tails.count(Label) &&
               (I == 0 || Stmts[I - 1].Addr != Label))
-            if (auto Tail = TailAt(Stmts, I, Cont))
+            if (auto Tail = TailAt(Stmts, I, Cont, Ctx)) {
               Tails.emplace(Label, std::move(*Tail));
+              TailContexts.emplace(Label, Ctx);
+            }
           // Falling off an if/else arm or block continues after it.
           std::optional<std::vector<HighStmt>> After;
           const StmtKind K = Stmts[I].Kind;
           if (K == StmtKind::If || K == StmtKind::IfElse ||
               K == StmtKind::Block)
             After = I + 1 < Stmts.size()
-                        ? TailAt(Stmts, I + 1, Cont)
+                        ? TailAt(Stmts, I + 1, Cont, Ctx)
                         : (Cont ? std::optional(*Cont) : std::nullopt);
           const std::vector<HighStmt> *ChildCont = After ? &*After : nullptr;
-          Collect(Stmts[I].Body, ChildCont);
-          Collect(Stmts[I].ElseBody, ChildCont);
+          Collect(Stmts[I].Body, ChildCont, bodyTryContext(Ctx, Stmts[I]));
+          Collect(Stmts[I].ElseBody, ChildCont, Ctx);
           for (auto &C : Stmts[I].Cases)
-            Collect(C.Body, nullptr);
-          Collect(Stmts[I].DefaultBody, nullptr);
+            Collect(C.Body, nullptr, Ctx);
+          Collect(Stmts[I].DefaultBody, nullptr, Ctx);
           for (auto &ClauseBody : Stmts[I].EHClauseBodies)
-            Collect(ClauseBody, nullptr);
+            Collect(ClauseBody, nullptr, Ctx);
         }
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
   // follows the jumps to it, so repeat until no new tail appears.
   for (size_t Round = 0; Round < 4; ++Round) {
     const size_t Before = Tails.size();
-    Collect(Body, nullptr);
+    Collect(Body, nullptr, TryContext());
     if (Tails.size() == Before)
       break;
   }
   if (Tails.empty())
     return false;
   bool Changed = false;
-  std::function<void(std::vector<HighStmt> &)> Rewrite =
-      [&](std::vector<HighStmt> &Stmts) {
+  std::function<void(std::vector<HighStmt> &, const TryContext &)> Rewrite =
+      [&](std::vector<HighStmt> &Stmts, const TryContext &Ctx) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           if (Stmts[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(Stmts[I].GotoTarget);
-            if (It != Tails.end()) {
+            if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
               std::vector<HighStmt> Copy = It->second;
               // The copies are not jump targets; keep the label unique.
               const va_t Site = Stmts[I].Addr;
@@ -869,17 +962,18 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
               continue;
             }
           }
-          Rewrite(Stmts[I].Body);
-          Rewrite(Stmts[I].ElseBody);
+          const TryContext Inner = bodyTryContext(Ctx, Stmts[I]);
+          Rewrite(Stmts[I].Body, Inner);
+          Rewrite(Stmts[I].ElseBody, Ctx);
           for (auto &C : Stmts[I].Cases)
-            Rewrite(C.Body);
-          Rewrite(Stmts[I].DefaultBody);
+            Rewrite(C.Body, Ctx);
+          Rewrite(Stmts[I].DefaultBody, Ctx);
           // A handler that jumps to a return tail returns as the copy does.
           for (auto &ClauseBody : Stmts[I].EHClauseBodies)
-            Rewrite(ClauseBody);
+            Rewrite(ClauseBody, Ctx);
         }
       };
-  Rewrite(Body);
+  Rewrite(Body, TryContext());
   return Changed;
 }
 
@@ -1008,6 +1102,8 @@ static bool endsItsBlock(const HighStmt &S) {
          (Call->IntrinsicId == Intrinsic::None && !Call->CallTarget.empty() &&
           libc::isNoReturnFunction(Call->CallTarget));
 }
+
+bool highStmtEndsItsBlock(const HighStmt &S) { return endsItsBlock(S); }
 
 /// Two statement lists of assignments, stores, returns and gotos that do the
 /// same thing and contain no entered label.
@@ -2861,7 +2957,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
               Collect(C.Body, Try);
             Collect(S.DefaultBody, Try);
             for (auto &ClauseBody : S.EHClauseBodies)
-              Collect(ClauseBody, nullptr);
+              Collect(ClauseBody, Try);
             Chain.pop_back();
           }
         };

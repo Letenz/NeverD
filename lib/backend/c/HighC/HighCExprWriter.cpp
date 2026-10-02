@@ -2778,11 +2778,14 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.
+    // A bitwise, shift or multiplicative operator takes the address as an
+    // integer; C has no such operator on a pointer.
     if (ImageObjects.count(E.ConstVal) ||
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
       if (auto Backing = imageBackingAddress(E.ConstVal))
-        return *Backing;
+        return IntegerViewOperands.count(&E) ? "(uintptr_t)" + *Backing
+                                             : *Backing;
     if (auto Name = imageObjectName(E.ConstVal)) {
       const std::string Address = "&" + *Name;
       // Replacing a machine integer address with a C object pointer must
@@ -2790,7 +2793,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       // descriptor address stored through a uint64_t memory helper).
       if (E.Type && E.Type->Kind == NdTypeKind::Int)
         return "(" + typeToC(E.Type) + ")(uintptr_t)(" + Address + ")";
-      return Address;
+      return IntegerViewOperands.count(&E) ? "(uintptr_t)" + Address : Address;
     }
     return constStr(E.ConstVal, E.Type);
   }

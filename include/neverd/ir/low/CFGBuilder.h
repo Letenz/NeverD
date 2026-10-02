@@ -1071,6 +1071,11 @@ private:
     return CurrentExceptionalEntries.count(Address) != 0;
   }
   bool isCurrentOwnedFragment(va_t Address) const;
+  /// True when \p Address is Win64 code no unwind record covers and the
+  /// current function is a frameless leaf: a cold part of that function.
+  /// A function with a frame needs a chained record over every part of it,
+  /// so its parts never lack one.  Callers still reject known entries.
+  bool isFramelessLeafColdPart(const BinaryImage &Img, va_t Address) const;
   /// Decode relocation-proven and same-function-discovered address-taken
   /// blocks as disconnected CFG roots, without splitting decoded instructions.
   void exploreAddressTakenRoots(const BinaryImage &Img, Decoder &Dec);
@@ -2571,6 +2576,9 @@ private:
   /// primary unwind record, KnownCodeRange, or sized function symbol.  A rough
   /// next-entry boundary must never populate this range.
   std::optional<std::pair<va_t, va_t>> AuthoritativeCurrentFuncRange;
+  /// The current function is Win64 code that moves no stack pointer and
+  /// saves no register: it has no unwind record or one without operations.
+  bool CurrentFuncIsFramelessLeaf = false;
   const BinaryImage *CurrentImg = nullptr;
   /// One-build reverse index for image-global 32-bit relative-code
   /// relocations.  rebuildBlocks may run many times during resolver fixed-point

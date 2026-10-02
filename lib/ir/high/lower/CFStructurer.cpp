@@ -539,6 +539,26 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
         }
       }
     }
+    // A block without a terminator falls through to its sole successor.
+    // Threading an empty branch block out of that edge (cold code ending in a
+    // `jmp` back to the hot path) leaves a successor that need not be the next
+    // block in source order; transfer to it explicitly.
+    if (!Tree && CurBlock.Succs.size() == 1) {
+      const int Successor = CurBlock.Succs.front();
+      const bool Terminated = !CurBlock.Ops.empty() &&
+                              (CurBlock.Ops.back().Opcode == NdOp::BRANCH ||
+                               CurBlock.Ops.back().Opcode == NdOp::COND_BR ||
+                               CurBlock.Ops.back().Opcode == NdOp::INDIR_BR ||
+                               CurBlock.Ops.back().Opcode == NdOp::RETURN);
+      if (!Terminated && Successor != BlkIdx + 1 && Successor >= 0 &&
+          Successor < static_cast<int>(Med.Blocks.size()) &&
+          Med.Blocks[Successor].Id == Successor) {
+        HighStmt Transfer;
+        Transfer.Kind = StmtKind::Goto;
+        Transfer.GotoTarget = EntryOf(Med.Blocks[Successor]);
+        Func.Body.push_back(std::move(Transfer));
+      }
+    }
     const va_t Entry =
         CurBlock.StartAddr
             ? CurBlock.StartAddr
