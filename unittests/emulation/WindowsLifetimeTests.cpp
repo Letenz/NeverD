@@ -4,6 +4,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
@@ -74,6 +75,8 @@ protected:
   ProcessOptions Options;
   void SetUp() override {
 #ifndef NEVERD_WINDOWS_LIFETIME_FIXTURE_DIR
+    if (requireHvf(GetParam().Backend, GetParam().ISA))
+      FAIL() << MissingTools;
     GTEST_SKIP() << MissingTools;
 #else
     const auto &P = GetParam();
@@ -85,8 +88,11 @@ protected:
                           : ExecutionContract::CheckedUserAArch64;
     auto Probe = probeExecutionBackend(Config);
     ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-    if (Probe->Availability != BackendAvailability::Available)
+    if (Probe->Availability != BackendAvailability::Available) {
+      if (requireHvf(P.Backend, P.ISA))
+        FAIL() << Probe->Reason;
       GTEST_SKIP() << Probe->Reason;
+    }
     Directory = std::filesystem::path(NEVERD_WINDOWS_LIFETIME_FIXTURE_DIR) /
                 P.Directory;
     Options.Backend = P.Backend;

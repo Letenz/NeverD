@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
@@ -51,6 +52,8 @@ ProcessOptions options(const std::filesystem::path &Directory) {
 class WindowsModules : public testing::TestWithParam<Profile> {};
 TEST_P(WindowsModules, LinksRelocatedDLLCodeDataOrdinalAPIsAndExecutableTLS) {
 #ifndef NEVERD_WINDOWS_MODULE_FIXTURE_DIR
+  if (requireHvf(GetParam().Backend, GetParam().ISA))
+    FAIL() << MissingTools;
   GTEST_SKIP() << MissingTools;
 #else
   const auto &P = GetParam();
@@ -62,8 +65,11 @@ TEST_P(WindowsModules, LinksRelocatedDLLCodeDataOrdinalAPIsAndExecutableTLS) {
                         : ExecutionContract::CheckedUserAArch64;
   auto Probe = probeExecutionBackend(Config);
   ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-  if (Probe->Availability != BackendAvailability::Available)
+  if (Probe->Availability != BackendAvailability::Available) {
+    if (requireHvf(P.Backend, P.ISA))
+      FAIL() << Probe->Reason;
     GTEST_SKIP() << Probe->Reason;
+  }
   const auto Directory =
       std::filesystem::path(NEVERD_WINDOWS_MODULE_FIXTURE_DIR) / P.Directory;
   auto O = options(Directory);
