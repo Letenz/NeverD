@@ -63,6 +63,33 @@ public:
                                      BackendAvailability::MissingCapability);
     return vmcs(Field, Must | Required);
   }
+  llvm::Error controlRegister(uint32_t Field, uint64_t Guest) {
+    const bool IsCR4 = Field == VMCS_GUEST_CR4;
+    uint64_t Must = 0, May = 0, FixedOne = 0, AllowedOne = 0;
+    if (auto S = hv_vmx_vcpu_get_cap_write_vmcs(CPU, Field, &Must, &May))
+      return hvf::unavailable("hv_vmx_vcpu_get_cap_write_vmcs", S);
+    // The writable masks describe framework policy. VMX also imposes
+    // hardware constraints (Intel SDM 24.8 / appendix A.7-A.8), including
+    // CR4.VMXE. Those bits must not leak into the architectural guest view.
+    if (auto S = hv_vmx_read_capability(
+            IsCR4 ? HV_VMX_CAP_CR4_FIXED0 : HV_VMX_CAP_CR0_FIXED0, &FixedOne))
+      return hvf::unavailable("hv_vmx_read_capability(FIXED0)", S);
+    if (auto S = hv_vmx_read_capability(
+            IsCR4 ? HV_VMX_CAP_CR4_FIXED1 : HV_VMX_CAP_CR0_FIXED1, &AllowedOne))
+      return hvf::unavailable("hv_vmx_read_capability(FIXED1)", S);
+    const uint64_t Native = Guest | Must | FixedOne;
+    if (Native & ~(May & AllowedOne))
+      return diagnostic::unavailable(
+          "HVF lacks required Intel control-register state",
+          BackendAvailability::MissingCapability);
+    if (auto E = control(IsCR4 ? VMCS_CTRL_CR4_MASK : VMCS_CTRL_CR0_MASK,
+                         Native ^ Guest))
+      return E;
+    if (auto E =
+            vmcs(IsCR4 ? VMCS_CTRL_CR4_SHADOW : VMCS_CTRL_CR0_SHADOW, Guest))
+      return E;
+    return vmcs(Field, Native);
+  }
   llvm::Error prepare(const X64MachineState &State, uint64_t Root,
                       llvm::MutableArrayRef<uint8_t> FP) {
     // MTF leaves architectural RFLAGS untouched. The framework owns EPT and
@@ -82,15 +109,9 @@ public:
     // VM-exit controls restore the framework's host state. Retain the
     // configuration established by hv_vcpu_create instead of deriving it
     // from writable-bit masks for a guest packet.
-    if (auto E = control(VMCS_GUEST_CR0, x64::CR0))
+    if (auto E = controlRegister(VMCS_GUEST_CR0, x64::CR0))
       return E;
-    if (auto E = control(VMCS_GUEST_CR4, x64::CR4 | x64::fp::OSXsave))
-      return E;
-    // HVF owns the cache-disable bits in CR0. Preserve its mandatory mask
-    // bits rather than treating these control fields as unrestricted values.
-    if (auto E = control(VMCS_CTRL_CR0_MASK, 0))
-      return E;
-    if (auto E = control(VMCS_CTRL_CR4_MASK, 0))
+    if (auto E = controlRegister(VMCS_GUEST_CR4, x64::CR4 | x64::fp::OSXsave))
       return E;
     // The framework owns the VMCS link pointer; it is not a writable guest
     // field. Its initialization belongs to hv_vcpu_create, not this packet.
@@ -107,8 +128,6 @@ public:
         {VMCS_GUEST_DR7, 0x400},
         {VMCS_GUEST_IA32_EFER, x64::EFER},
         {VMCS_GUEST_CR3, Root},
-        {VMCS_CTRL_CR0_SHADOW, x64::CR0},
-        {VMCS_CTRL_CR4_SHADOW, x64::CR4 | x64::fp::OSXsave},
         {VMCS_GUEST_GDTR_BASE, 0},
         {VMCS_GUEST_GDTR_LIMIT, 0},
         {VMCS_GUEST_IDTR_BASE, 0},

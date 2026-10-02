@@ -34,6 +34,8 @@ llvm::Error runError(Cpu CPU, hv_return_t Status) {
   auto Text = message("hv_vcpu_run_until", Status);
   // HV_ERROR alone does not distinguish invalid VM-entry controls from
   // invalid guest state. Read diagnostics on the owner before any retirement.
+  // VM-instruction error can predate this entry, even on a successful host;
+  // this snapshot is supporting evidence rather than an attributed cause.
   const std::pair<const char *, uint32_t> Fields[] = {
       {"instruction_error", VMCS_RO_INSTR_ERROR},
       {"exit_reason", VMCS_RO_EXIT_REASON},
