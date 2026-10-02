@@ -97,6 +97,10 @@ v5 C API の `neverd_devirtualize_source_v5()` と `neverd_devirtualize_machine_
 
 v6 API `neverd_devirtualize_source_v6()` と `neverd_devirtualize_machine_source_v6()` は変更のない v5 オプションを内包します。`neverd_devirtualize_options_v6` をゼロ初期化し、`base.base.base.base.base.struct_size` に全体サイズを設定します。機械状態ソースと v4 の入口フレーム境界を使用する場合に限り、`flags` の `NEVERD_DEVIRTUALIZE_V6_EXTERNAL_STORES_DISJOINT_ENTRY_FRAME` を有効にします。通常ソースはこのフラグを拒否します。v1–v5 は拡張を、v6 は将来の末尾を無視します。レポートの `externalStoresDisjointEntryFrame` と生成 C は未検査の契約を明示します。フレーム由来または出所不明の書き込みは対象外です。完全なアフィンポインタの保存領域は全体が保護範囲に収まる必要があります。既存の事実の走査・保存・復元は共有操作予算を消費し、枯渇時は C を公開しません。
 
+v7 API の `neverd_devirtualize_source_v7()` と `neverd_devirtualize_machine_source_v7()` は、変更のない v6 接頭部に `max_node_evaluations` と `max_discovery_visits` を追加します。ゼロは既定の 16384 回の評価と 65536 回の依存走査を選びます。`neverd_devirtualize_options_v7` 全体をゼロ初期化し、`base.base.base.base.base.base.struct_size` に完全なサイズを設定します。v1–v6 はこの拡張を無視し、v7 は将来の末尾拡張を無視して既存の検証を維持します。Python は対応する `abi.NeverDDevirtualizeOptionsV7` の配置と型付き関数を公開します。`--vm-max-evaluations=N` と `--vm-max-discovery-visits=N` は `--devirtualize` と正の 32 ビット十進数を要求し、4294967295 も受理します。レポートには有効な `maxNodeEvaluations` と `maxDiscoveryVisits` を記録します。これらの累積作業上限は意味論上の前提を変えず、予算による拒否時は C も復元証拠も出力しません。
+
+v7 の `flags` は `NEVERD_DEVIRTUALIZE_V7_STOP_CHAIN_AT_REPEAT`（Python: `DevirtualizeFlagsV7.STOP_CHAIN_AT_REPEAT`）も受け付け、CLI では `--vm-chain-stop-at-repeat` に対応します。単一の転送先が証明された通常のチェーンで、同じネイティブアドレスとデコードモードの転送先を再訪する直前にチェーンを終了し、通常の辺射影に戻します。ループ展開を減らせますが、後続の制御解決に必要な相関を失い、従来成功した復元を拒否する場合があります。フラグの既定値はゼロで、チェーン上限がゼロなら効果はありません。依存関係の再実行は確定済みの命令出現順を維持します。両方のソース ABI は `stopChainingAtRepeatedDestination` を報告し、未知の v7 フラグを拒否します。この戦略は意味的な前提を追加せず、未解決の制御を含む出力を許可しません。
+
 制御状態とガードの精度改善を、任意のフレーム分割の再試行より優先します。必要な細分化は引き続き利用できます。各剰余の不動点を順番に計算しますが、結果公開には許可された全剰余の完了が必要です。入口整列条件と分割領域の共通部分を使い、分岐は実際の剰余を比較します。コンテキスト、操作、ノード、ソルバーの予算は再試行を通じて共有されます。
 
 未解決の間接分岐先は、ガードの精度低下によって生じることがあります。分岐先と遅延した生成元の精度改善で候補が増えなくなった後、失敗箇所に到達する最も近い未確定ガードを調べます。候補選択と再試行は探索と精度改善の予算を共有します。分岐を除外できるのは新たな完全証明だけです。実際に到達可能な未知の分岐先は引き続き失敗となり、残余コードや証明の証拠を公開しません。

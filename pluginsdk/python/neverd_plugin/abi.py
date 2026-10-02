@@ -653,6 +653,28 @@ class NeverDDevirtualizeOptionsV6(ctypes.Structure):
     ]
 
 
+class DevirtualizeFlagsV7(IntFlag):
+    STOP_CHAIN_AT_REPEAT = 1
+
+
+class NeverDDevirtualizeOptionsV7(ctypes.Structure):
+    """v6 prefix plus work budgets and an optional chain boundary strategy.
+
+    Set ``base.base.base.base.base.base.struct_size`` to the complete size.
+    Zero limits select 16384 evaluations and 65536 visits. Larger limits add
+    work without changing source contracts or authorizing partial output.
+    STOP_CHAIN_AT_REPEAT can reduce loop unrolling but lose correlations
+    needed to resolve control. Flags default to zero; unknown flags reject.
+    """
+
+    _fields_ = [
+        ("base", NeverDDevirtualizeOptionsV6),
+        ("max_node_evaluations", ctypes.c_uint32),
+        ("max_discovery_visits", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+    ]
+
+
 class NeverDSymbolicExploreOptions(ctypes.Structure):
     """Layout of ``neverd_symbolic_explore_options``."""
 
@@ -778,6 +800,9 @@ _C_TYPES: dict[str, object] = {
     ),
     "const neverd_devirtualize_options_v6 *": ctypes.POINTER(
         NeverDDevirtualizeOptionsV6
+    ),
+    "const neverd_devirtualize_options_v7 *": ctypes.POINTER(
+        NeverDDevirtualizeOptionsV7
     ),
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
@@ -1619,6 +1644,13 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_devirtualize_source_v7",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t",
+     "const neverd_devirtualize_options_v7 *", "const char * *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_devirtualize_machine_source_v5",
     "const char *",
     ["neverd_session_t", "neverd_va_t",
@@ -1630,6 +1662,13 @@ _declare(
     "const char *",
     ["neverd_session_t", "neverd_va_t",
      "const neverd_devirtualize_options_v6 *", "const char * *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_devirtualize_machine_source_v7",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t",
+     "const neverd_devirtualize_options_v7 *", "const char * *"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
@@ -1654,7 +1693,9 @@ __all__ = [
     "NeverDDevirtualizeOptionsV4",
     "NeverDDevirtualizeOptionsV5",
     "NeverDDevirtualizeOptionsV6",
+    "NeverDDevirtualizeOptionsV7",
     "DevirtualizeFlagsV6",
+    "DevirtualizeFlagsV7",
     "DevirtualizeFlagsV4",
     "NeverDPlugin",
     "NeverDOptimizeLLVMOptions",
