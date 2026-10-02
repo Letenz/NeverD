@@ -23,6 +23,13 @@ NEVERD_EXPORT_VALUE(ExportFunctions, 28)
 NEVERD_EXPORT_VALUE(PageSize, 0x1000)
 NEVERD_EXPORT_VALUE(MaxLookupName, 256)
 NEVERD_EXPORT_VALUE(ForwarderLimit, 64)
+NEVERD_EXPORT_VALUE(MissingCases, 6)
+NEVERD_EXPORT_VALUE(TebPEB, 0x60)
+NEVERD_EXPORT_VALUE(PebLdr, 0x18)
+NEVERD_EXPORT_VALUE(LdrInitList, 0x30)
+NEVERD_EXPORT_VALUE(InitLink, 0x20)
+NEVERD_EXPORT_VALUE(ModuleBase, 0x30)
+NEVERD_EXPORT_VALUE(MaxModules, 256)
 #endif
 #ifdef NEVERD_EXPORT_TEXT
 NEVERD_EXPORT_TEXT(LeafFile, "lookup-leaf.dll")
@@ -74,6 +81,15 @@ NEVERD_EXPORT_TEXT(TopDetach, "t")
 NEVERD_EXPORT_TEXT(ExeExtension, ".exe")
 NEVERD_EXPORT_TEXT(CommandQuote, "\"")
 NEVERD_EXPORT_TEXT(ChainForwarder, "lookup-leaf.#")
+NEVERD_EXPORT_TEXT(ObserveArgument, "P")
+NEVERD_EXPORT_TEXT(ObservationLabel, "Export observations: ")
+#endif
+#ifdef NEVERD_EXPORT_ASM
+#if defined(_M_X64) || defined(__x86_64__)
+NEVERD_EXPORT_ASM(ReadTEB, "movq %%gs:0x30, %0")
+#else
+NEVERD_EXPORT_ASM(ReadTEB, "mov %0, x18")
+#endif
 #endif
 #ifdef NEVERD_EXPORT_WIDE
 NEVERD_EXPORT_WIDE(LeafName, L"LOOKUP-LEAF.DLL")

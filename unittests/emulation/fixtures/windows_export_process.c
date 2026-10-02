@@ -10,10 +10,36 @@ __declspec(dllimport) DWORD TopData;
 __declspec(dllimport) DWORD TopPID(void);
 __declspec(dllexport) DWORD ExeProbe(void) { return Seed; }
 static char LongName[MaxLookupName];
+static DWORD Observations[MissingCases], MissingIndex;
+static int Observe;
 static void missing(void *Module, const char *Name) {
   SetLastError(LastErrorSeed);
   CHECK(!GetProcAddress(Module, Name));
-  CHECK(GetLastError() == ProcedureMissing);
+  const DWORD Error = GetLastError();
+  CHECK(MissingIndex < MissingCases);
+  Observations[MissingIndex++] = Error;
+  if (!Observe)
+    CHECK(Error == ProcedureMissing);
+}
+static void observeOrder(void *Leaf, void *Bridge, void *Top) {
+  unsigned char *TEB;
+#define NEVERD_EXPORT_ASM(Name, Text) __asm__(Text : "=r"(TEB));
+#include "WindowsExportCases.def"
+#undef NEVERD_EXPORT_ASM
+  unsigned char *PEB = *(unsigned char **)(TEB + TebPEB);
+  unsigned char *Ldr = *(unsigned char **)(PEB + PebLdr);
+  unsigned char *Head = Ldr + LdrInitList;
+  DWORD Count = 0;
+  for (unsigned char *Node = *(unsigned char **)Head; Node != Head;
+       Node = *(unsigned char **)Node) {
+    CHECK(++Count < MaxModules);
+    void *Base = *(void **)(Node - InitLink + ModuleBase);
+    if (Base == Leaf || Base == Bridge || Base == Top)
+      output(Base == Leaf     ? LeafAttach
+             : Base == Bridge ? BridgeAttach
+                              : TopAttach,
+             1);
+  }
 }
 DWORD entry(void) {
   WCHAR *Command = GetCommandLineW();
@@ -24,10 +50,13 @@ DWORD entry(void) {
     --Length;
   CHECK(Length);
   const WCHAR Mode = Command[Length - 1];
+  Observe = Mode == ObserveArgument[0];
   void *Leaf = GetModuleHandleW(LeafName);
   void *Bridge = GetModuleHandleW(BridgeName);
   void *Top = GetModuleHandleW(TopModuleName);
   CHECK(Leaf && Bridge && Top);
+  if (Observe)
+    observeOrder(Leaf, Bridge, Top);
   CHECK(TopProbe() == Seed && TopOrdinal() == Seed + 1 && TopData == Seed);
   CHECK(TopPID() == GetCurrentProcessId());
   void *Code = lookup(Leaf, ProbeName);
@@ -47,6 +76,12 @@ DWORD entry(void) {
   missing(Leaf, (const char *)OrdinalHole);
   missing(Leaf, (const char *)OrdinalAbsent);
   missing(Leaf, 0);
+  if (Observe) {
+    output((const char *)Observations, sizeof(Observations));
+    observeOrder(Leaf, Bridge, Top);
+    output(Message, sizeof(Message) - 1);
+    ExitProcess(ExitStatus);
+  }
   if (Mode == UnusedArgument[0])
     GetProcAddress(Bridge, UnusedName);
   else if (Mode == CycleArgument[0])

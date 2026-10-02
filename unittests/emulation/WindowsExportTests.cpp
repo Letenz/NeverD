@@ -16,6 +16,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace neverd::emulation {
 namespace {
@@ -294,19 +295,24 @@ TEST(WindowsExportOracle, NativeWindowsQueriesOriginalImages) {
              Error = (Root / StderrFile).string();
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
-  std::string Diagnostic;
-  bool Failed = false;
-  const int Status = llvm::sys::ExecuteAndWait(
-      Program, {Program, NormalArgument}, std::nullopt, Redirects,
-      NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
-  ASSERT_FALSE(Failed) << Diagnostic;
-  auto Out = llvm::MemoryBuffer::getFile(Output),
-       Err = llvm::MemoryBuffer::getFile(Error);
-  ASSERT_TRUE(bool(Out));
-  ASSERT_TRUE(bool(Err));
-  EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
-  EXPECT_EQ((*Out)->getBuffer(), NormalTrace);
-  EXPECT_TRUE((*Err)->getBuffer().empty());
+  for (const char *Argument : {ObserveArgument, NormalArgument}) {
+    std::string Diagnostic;
+    bool Failed = false;
+    const int Status = llvm::sys::ExecuteAndWait(
+        Program, {Program, Argument}, std::nullopt, Redirects,
+        NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
+    ASSERT_FALSE(Failed) << Diagnostic;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+    llvm::outs() << ObservationLabel << Argument << ' ' << Status << ' '
+                 << llvm::toHex((*Out)->getBuffer()) << '\n';
+    if (Argument == NormalArgument)
+      EXPECT_EQ((*Out)->getBuffer(), NormalTrace);
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+  }
 #endif
 }
 } // namespace
