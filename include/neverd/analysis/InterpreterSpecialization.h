@@ -94,6 +94,14 @@ struct SpecializationFrameSlot {
   uint16_t Bytes = 0;
 };
 
+struct SpecializationEntryFrameBounds {
+  /// Caller-declared, nonempty, nonwrapping entry-relative range [Begin, End).
+  /// This constrains only the physical entry root; it grants no accessibility,
+  /// initialization or nonalias evidence for memory operations.
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
 struct SpecializationOptions {
   /// Preserve incoming machine flags as symbolic machine-state inputs rather
   /// than claiming they are supplied by an ordinary source-language ABI.
@@ -122,6 +130,10 @@ struct SpecializationOptions {
   /// not assume ABI alignment or private/non-aliasing memory. The root must
   /// be an eight-byte register.
   std::optional<symbolic::SymRegisterRange> FrameBaseRegister;
+  /// Optional environment precondition, never inferred from a concrete run.
+  /// Requires FrameBaseRegister. Native proof APIs require the same bounds in
+  /// their explicit frame contract. Absence keeps the full modular root domain.
+  std::optional<SpecializationEntryFrameBounds> EntryFrameBounds;
   /// Context hints only: missing bytes remain unknown. Other frame facts join
   /// by intersection, so changing spilled business values do not unroll loops.
   std::vector<SpecializationFrameSlot> ControlFrameSlots;
@@ -151,6 +163,12 @@ struct SpecializationOptions {
   uint64_t MaxOperations = 262144;
   uint32_t MaxNodeEvaluations = 16384;
   uint32_t MaxIndirectTargets = 16;
+  /// Keep symbolic state across this many proved-singleton control transfers
+  /// per node before ordinary projection. Zero preserves existing boundaries.
+  /// Multiple targets retain the CFG; all proofs and operations remain charged.
+  /// Chaining can duplicate loop origins and limit automatic cutpoint
+  /// inference.
+  uint32_t MaxChainedTransfers = 0;
   /// Bounds distinct native return slots retained in one context. Native
   /// returns are physical control transfers, not assumed LIFO function exits.
   uint32_t MaxNativeReturnSlots = 64;

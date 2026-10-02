@@ -198,6 +198,10 @@ At capacity, finite-proof reuse replaces the least recently used records with el
 
 Recovery also retains complete finite domains for individual masked control fields. When a joint relation exceeds `MaxControlTuples`, these independent domains can still constrain a target without asserting correlations between fields. Joins union the masked values; an absent or overflowing domain is discarded in full. A changed domain reschedules its node even when the joint relation has already widened. Partial enumeration supplies no facts, and the existing field, tuple, symbolic-node and solver limits remain in force.
 
+`MaxChainedTransfers` is an opt-in C++ limit (default `0`) for consecutive control transfers whose target or Boolean outcome is proved unique. It preserves full symbolic state, native origins and cumulative budgets; multiple outcomes use ordinary CFG edges. Backward discovery replays committed instruction occurrences. Chaining may duplicate loop origins and limit automatic cutpoint inference.
+
+`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. It grants no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract

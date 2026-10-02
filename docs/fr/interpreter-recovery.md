@@ -88,6 +88,10 @@ Une preuve complète des dépendances peut éviter l’énumération d’une val
 
 La récupération conserve aussi les domaines finis entièrement prouvés de chaque champ de contrôle masqué. Si une relation conjointe dépasse `MaxControlTuples`, ces domaines indépendants peuvent encore contraindre une cible sans affirmer de corrélation entre les champs. Les fusions réunissent les valeurs projetées sur le masque commun ; un domaine absent ou trop grand est abandonné intégralement. Toute modification de domaine reprogramme le nœud, même après élargissement de la relation conjointe. Une énumération partielle ne fournit aucun fait ; les limites existantes sur les champs, tuples, nœuds symboliques et solveurs restent applicables.
 
+`MaxChainedTransfers` est une limite C++ facultative (`0` par défaut) pour enchaîner des transferts dont la cible ou le résultat booléen est prouvé unique. Elle préserve l’état symbolique complet, les origines natives et les budgets cumulés ; plusieurs résultats conservent les arêtes CFG ordinaires. La découverte inverse rejoue les occurrences d’instructions validées. L’enchaînement peut dupliquer les origines de boucles et limiter l’inférence automatique des points de coupure.
+
+`EntryFrameBounds` déclare explicitement une plage `[Begin, End)` sans rebouclage autour de la valeur d’entrée de `FrameBaseRegister`. Elle ne garantit ni accès mémoire ni absence d’alias. Sans cette option, les racines restent modulaires. La preuve native exige les mêmes bornes dans le contrat appelant et les lie à son justificatif ; la preuve LLVM conserve le domaine existant de cette pile. La récupération seule ne certifie pas l’équivalence.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution

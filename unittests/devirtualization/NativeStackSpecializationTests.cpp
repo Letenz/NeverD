@@ -430,6 +430,49 @@ TEST(NativeStackSpecialization, SharedCalleeKeepsDistinctReturnContexts) {
   EXPECT_EQ(Run->Stack, 0x10000u);
 }
 
+TEST(NativeStackSpecialization,
+     TransferChainsRetainRepeatedCallsAndReturnSlots) {
+  StackProvider P;
+  P.add(0x100, {operation(NdOp::COPY, r(0), {r(8)})});
+  P.nativeCall(0x101, 0x200);
+  P.nativeCall(0x102, 0x200);
+  P.nativeReturn(0x103);
+  P.nativeCall(0x200, 0x300);
+  P.nativeReturn(0x201);
+  P.add(0x300, {operation(NdOp::INT_ADD, r(0), {r(0), c(3)})});
+  P.nativeReturn(0x301);
+  std::vector<int64_t> Bytes;
+  for (int64_t Offset = -16; Offset != 8; ++Offset)
+    Bytes.push_back(Offset);
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint32_t Bound : {0, 1, 16}) {
+      auto Options = stackOptions();
+      Options.ByteOrder = Order;
+      Options.MaxChainedTransfers = Bound;
+      const auto R = specializeInterpreter(P, {0x100}, Options);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      EXPECT_EQ(std::count_if(R.Origins.begin(), R.Origins.end(),
+                              [](const auto &O) {
+                                return O.NativeInstruction.Address == 0x301;
+                              }),
+                2);
+      for (uint64_t Input : {uint64_t{0}, uint64_t{23}, UINT64_MAX}) {
+        const auto Run = execute(R.Residual, Input, 0, Order, 0x10000, Bytes);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, Input + 6);
+        EXPECT_EQ(Run->Stack, 0x10000U);
+        ASSERT_EQ(Run->Memory.size(), Bytes.size());
+        for (unsigned I = 0; I != 8; ++I) {
+          const auto Shift =
+              8 * (Order == llvm::endianness::little ? I : 7 - I);
+          EXPECT_EQ(Run->Memory[I], uint8_t(uint64_t{0x201} >> Shift));
+          EXPECT_EQ(Run->Memory[8 + I], uint8_t(uint64_t{0x103} >> Shift));
+          EXPECT_EQ(Run->Memory[16 + I], 81 + I);
+        }
+      }
+    }
+}
+
 StackProvider finiteCalls() {
   StackProvider P;
   P.add(0x100, {operation(NdOp::INT_AND, r(24), {r(8), c(1)}),
