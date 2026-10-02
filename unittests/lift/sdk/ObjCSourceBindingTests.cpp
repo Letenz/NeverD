@@ -1,3 +1,4 @@
+#include "../../../lib/ir/high/pass/HighDCEDetail.h"
 #include "../../../lib/sdk/capi/ObjCCFunctionParameterSources.h"
 #include "../../../lib/sdk/capi/ObjCImmutableNativeSources.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
@@ -25,6 +26,10 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
+
+namespace {
+void frameTableFixture(immutable_native_call_test::Fixture &F);
+}
 
 TEST(ImmutableNativeCalls,
      ProvesOneOriginalIndirectOccurrenceAcrossRuntimeCall) {
@@ -337,50 +342,56 @@ TEST(ImmutableNativeCalls, NativeInferenceRechecksTheMachineOccurrence) {
 
 TEST(ImmutableNativeCalls, GeneratedSourceMatchesOriginalARM64CallsAtO0AndO2) {
 #if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
-  using namespace immutable_native_call_test;
-  Fixture F;
-  F.bindCaller();
-  ASSERT_TRUE(F.high());
-  std::map<va_t, const HighFunc *> Functions;
-  for (const auto &Function : F.Result.HighFuncs)
-    Functions.emplace(Function.Entry, &Function);
-  auto Bound =
-      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
-  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
-  const auto Audit = std::find_if(
-      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
-      [](const auto &A) { return A.Entry == Entry; });
-  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
-  const auto Allowed = [&](const HighExpr &Expression) {
-    return objcSourceCallBound(Expression, F.Image, Functions, nullptr, nullptr,
-                               &Bound.Function) ||
-           objCImmutableNativeSourceCallBound(Expression, F.Image, F.Result,
-                                              Bound.Function);
-  };
-  ASSERT_TRUE(sourceBodyLimitation(Bound.Function,
-                                   *Bound.Function.SourceTypeHint, &*Audit,
-                                   Allowed)
-                  .empty());
-  CEmitterOptions Options;
-  Options.TheArch = Arch::AArch64;
-  std::string Source;
-  llvm::raw_string_ostream OS(Source);
-  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
-                                  Options));
-  EXPECT_EQ(Source.find("0x3028"), std::string::npos);
-  llvm::SmallString<128> Directory;
-  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-immutable-native",
-                                                    Directory));
-  const std::filesystem::path Work(Directory.str().str());
-  struct Cleanup {
-    std::filesystem::path Work;
-    ~Cleanup() {
-      std::error_code Error;
-      std::filesystem::remove_all(Work, Error);
-    }
-  } Cleanup{Work};
-  const auto Path = (Work / "calls.c").string();
-  std::ofstream(Path) << Source << R"(
+  for (bool FrameReload : {false, true}) {
+    SCOPED_TRACE(FrameReload);
+    using namespace immutable_native_call_test;
+    Fixture F;
+    if (FrameReload)
+      frameTableFixture(F);
+    F.bindCaller();
+    ASSERT_TRUE(F.high());
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &Function : F.Result.HighFuncs)
+      Functions.emplace(Function.Entry, &Function);
+    auto Bound =
+        bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+    const auto Audit = std::find_if(
+        F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+        [](const auto &A) { return A.Entry == Entry; });
+    ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+    const auto Allowed = [&](const HighExpr &Expression) {
+      return objcSourceCallBound(Expression, F.Image, Functions, nullptr,
+                                 nullptr, &Bound.Function) ||
+             objCImmutableNativeSourceCallBound(Expression, F.Image, F.Result,
+                                                Bound.Function);
+    };
+    ASSERT_TRUE(sourceBodyLimitation(Bound.Function,
+                                     *Bound.Function.SourceTypeHint, &*Audit,
+                                     Allowed)
+                    .empty());
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                    Options));
+    EXPECT_EQ(Source.find("0x3028"), std::string::npos);
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-immutable-native",
+                                                      Directory));
+    const std::filesystem::path Work(Directory.str().str());
+    struct Cleanup {
+      std::filesystem::path Work;
+      ~Cleanup() {
+        std::error_code Error;
+        std::filesystem::remove_all(Work, Error);
+      }
+    } Cleanup{Work};
+    const auto Path = (Work / "calls.c").string();
+    std::ofstream(Path) << (FrameReload ? "#define FRAME_RELOAD 1\n" : "")
+                        << Source << R"(
 #include <stddef.h>
 static unsigned calls;
 static uintptr_t observed;
@@ -388,11 +399,19 @@ void swift_release(void *object) { ++calls; observed = (uintptr_t)object; }
 extern uint64_t original_indirect_native(void *);
 __asm__(".text\n.p2align 2\n.globl _original_indirect_native\n"
         "_original_indirect_native:\n"
+#ifdef FRAME_RELOAD
+        "sub sp,sp,#64\nstp x19,x30,[sp,#48]\n"
+        "adrp x19,_original_target_table@PAGE\n"
+        "add x19,x19,_original_target_table@PAGEOFF\nstr x19,[sp,#16]\n"
+        "bl _swift_release\nldr x19,[sp,#16]\nldr x8,[x19,#8]\nblr x8\n"
+        "ldp x19,x30,[sp,#48]\nadd sp,sp,#64\nret\n"
+#else
         "stp x19,x20,[sp,#-32]!\nstp x29,x30,[sp,#16]\nadd x29,sp,#16\n"
         "adrp x19,_original_target_table@PAGE\n"
         "add x19,x19,_original_target_table@PAGEOFF\nldr x20,[x19,#8]\n"
         "bl _swift_release\nblr x20\n"
         "ldp x29,x30,[sp,#16]\nldp x19,x20,[sp],#32\nret\n"
+#endif
         "_original_constant_result:\nmov x0,#42\nret\n"
         ".section __DATA_CONST,__const\n.p2align 3\n_original_target_table:\n"
         ".quad 0\n.quad _original_constant_result\n.text\n");
@@ -410,13 +429,14 @@ int main(void) {
   return 0;
 }
 )";
-  for (const auto *Level : {"-O0", "-O2"}) {
-    SCOPED_TRACE(Level);
-    const auto Output = (Work / (std::string("calls") + Level)).string();
-    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
-                                            "-o", Output};
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0);
+    for (const auto *Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      const auto Output = (Work / (std::string("calls") + Level)).string();
+      const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                              "-o", Output};
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0);
+    }
   }
 #else
   GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
@@ -770,6 +790,269 @@ TEST(ImmutableNativeCalls, BoundsFullWidthCopyChainsAndRejectsMixedRoots) {
   Low.ModuleAnalysisRoots.clear();
   Low.OrdinaryModuleAnalysisRoots = {Entry, Target};
   EXPECT_TRUE(immutableNativeCallTargets(F.Image, Low).empty());
+}
+
+namespace {
+void frameTableFixture(immutable_native_call_test::Fixture &F) {
+  // A complete table base survives swift_release in a private frame slot.
+  const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                            0xf9000bf3, 0x9400003b, 0xf9400bf3, 0xf9400668,
+                            0xd63f0100, 0xa9437bf3, 0x910103ff, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.run();
+}
+} // namespace
+
+TEST(ImmutableNativeCalls, RecoversAnAuthenticatedFrameTableDefinition) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  frameTableFixture(F);
+  ASSERT_TRUE(F.low());
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+  ASSERT_EQ(Targets.size(), 1U);
+  EXPECT_EQ(Targets.at(Entry + 32).Slot, Slot);
+  EXPECT_EQ(Targets.at(Entry + 32).Target, Target);
+  EXPECT_FALSE(readImmutableImagePointer(F.Image, Slot));
+}
+
+TEST(ImmutableNativeCalls, FrameTargetsRejectStaleMachineAndLowIRFacts) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    frameTableFixture(F);
+    auto Low = *F.low();
+    for (auto &Block : Low.Blocks)
+      for (auto &Op : Block.Ops) {
+        if (Case == 1 && Op.Addr == Entry + 16 && Op.Opcode == NdOp::STORE)
+          Op.Inputs[1] = NdVar::reg(a64reg::X0, 8);
+        if (Case == 2 && Op.Addr == Entry + 16 && Op.Opcode == NdOp::INT_ADD)
+          Op.Inputs[1] = NdVar::scalar(24, 8);
+        if (Op.Addr == Entry + 24 && Op.Opcode == NdOp::LOAD) {
+          if (Case == 3)
+            Op.Output.Size = 4;
+          if (Case == 4)
+            Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+          if (Case == 5)
+            Op.Opcode = NdOp::COPY;
+        }
+      }
+    switch (Case) {
+    case 0:
+      F.word(4, 0xf9000be0); // Machine stores x0, saved LowIR claims x19.
+      break;
+    case 6:
+      F.word(0, 0xd10083ff); // Changed frame allocation, stale LowIR.
+      break;
+    case 7:
+      F.word(4, 0xb90013f3); // Fresh partial store cannot identify eight bytes.
+      break;
+    case 8:
+      F.word(4, 0xf9000ff3); // Store a different frame slot.
+      break;
+    case 9:
+      F.word(6, 0xf9400ff3); // Load a different frame slot.
+      break;
+    case 10:
+      F.word(5, 0xd63f0140); // Unknown intervening call.
+      break;
+    case 11:
+      F.word(5, 0x910043ff); // Expired frame slot / changed stack base.
+      break;
+    case 12:
+      F.word(4, 0xf9000013); // Table stored externally, not to the frame.
+      break;
+    case 13:
+      F.Image.CodePtrRelocSlots.erase(Slot);
+      break;
+    default:
+      break;
+    }
+    if (Case >= 7 && Case <= 12) {
+      F.run();
+      Low = *F.low();
+    }
+    EXPECT_TRUE(immutableNativeCallTargets(F.Image, Low).empty());
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameTargetsCheckEveryMachineCFGPath) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                              0xf9000bf3, 0xb4000060, 0x9400003a, 0x14000002,
+                              0xd503201f, 0xf9400bf3, 0xf9400668, 0xd63f0100,
+                              0xa9437bf3, 0x910103ff, 0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols[0].Size = sizeof(Words);
+    if (Case == 1)
+      F.word(8, 0xb90013e0); // One reaching arm replaces bytes with w0.
+    if (Case == 2)
+      F.word(7, 0x17fffffe); // Relevant backedge.
+    F.run();
+    auto Low = *F.low();
+    if (Case == 3) {
+      // Keep reciprocal edges but hide the encoded taken arm.
+      auto &EntryBlock = Low.Blocks.front();
+      ASSERT_EQ(EntryBlock.Succs.size(), 2U);
+      const int Removed = EntryBlock.Succs.back();
+      EntryBlock.Succs.pop_back();
+      for (auto &Block : Low.Blocks)
+        if (Block.Id == Removed)
+          std::erase(Block.Preds, EntryBlock.Id);
+    }
+    if (Case == 4)
+      std::reverse(Low.Blocks.begin(), Low.Blocks.end());
+    const auto Targets = immutableNativeCallTargets(F.Image, Low);
+    EXPECT_EQ(Targets.size(), Case == 0 || Case == 4 ? 1U : 0U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 44).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameCallDependenciesUseCompletedProofRounds) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                            0xf9000bf3, 0xf9400668, 0xd63f0100, 0xf9400bf3,
+                            0xf9400668, 0xd63f0100, 0xf9400bf3, 0xf9400668,
+                            0xd63f0100, 0xa9437bf3, 0x910103ff, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.run();
+  std::map<va_t, SourceFunctionTypeHint> Callees{{Target, F.Signature}};
+  ASSERT_EQ(immutableNativeCallTargets(F.Image, *F.low()).size(), 1U);
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low(), &Callees);
+  ASSERT_EQ(Targets.size(), 3U);
+  for (unsigned Offset : {24U, 36U, 48U})
+    EXPECT_EQ(Targets.at(Entry + Offset).Target, Target);
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Bad = Callees;
+    if (Case == 0)
+      Bad.at(Target).HasExplicitABI = false;
+    if (Case == 1)
+      Bad.at(Target).Parameters.push_back({"unbound", NdType::makeInt(8)});
+    if (Case == 2)
+      Bad.at(Target).Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    EXPECT_EQ(immutableNativeCallTargets(F.Image, *F.low(), &Bad).size(), 1U);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameLoadsKeepBothPairLanesAndRejectEarlierEscape) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    frameTableFixture(F);
+    if (Case < 2) {
+      F.word(4, 0xa9014ff3); // stp x19,x19,[sp,#16]
+      F.word(6, 0xa94123f3); // ldp x19,x8,[sp,#16]
+      if (Case == 1)
+        F.word(7, 0xf9400508); // Read the code slot through the second word.
+    } else if (Case == 2) {
+      // Both possible machine paths still initialize the table, but release
+      // would receive a private frame address before the query.
+      F.word(5, 0x910003e0); // mov x0,sp
+      F.word(6, 0x9400003a); // bl release
+      F.word(7, 0xf9400bf3);
+      F.word(8, 0xf9400668);
+      F.word(9, 0xd63f0100);
+    } else {
+      F.word(9, 0xd63f0120); // An unknown suffix grants no publication proof.
+    }
+    F.run();
+    const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+    EXPECT_EQ(Targets.size(), Case == 2 ? 0U : 1U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 32).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameQueriesRetainAuthenticatedAccessConditions) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    F.Image.ImportPtrSlots[0x2000] = "_swift_beginAccess";
+    F.Image.DyldBindSlots[0x2000].Name = "_swift_beginAccess";
+    F.Image.ImportPtrSlots[0x2008] = "_swift_endAccess";
+    F.Image.DyldBindSlots[0x2008] = {
+        "_swift_endAccess", 0, "/usr/lib/swift/libswiftCore.dylib", false};
+    F.Image.Segments[1].Size = F.Image.Segments[1].FileSz = 16;
+    F.Image.Segments[1].Data.resize(16);
+    F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 16;
+    F.Image.Symbols.push_back({"_end_access_veneer", Veneer + 12, 12, true});
+    F.word((Veneer - Entry) / 4 + 3, 0xb0000010);
+    F.word((Veneer - Entry) / 4 + 4, 0xf9400610);
+    F.word((Veneer - Entry) / 4 + 5, 0xd61f0200);
+    const unsigned Flags[] = {0, 1, 32, 33, 32, 33, 2, 34, 64, 0, 0, 0};
+    const uint32_t Words[] = {0xd10103ff,
+                              0xa9037bf3,
+                              0xd0000013,
+                              0x91008273,
+                              0xf90013f3,
+                              0x910003e1,
+                              0xd2800002u | (Flags[Case] << 5),
+                              0xd2800003,
+                              0x94000038,
+                              0x910003e0,
+                              0x94000039,
+                              0xf94013f3,
+                              0xf9400668,
+                              0xd63f0100,
+                              0xa9437bf3,
+                              0x910103ff,
+                              0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols[0].Size = sizeof(Words);
+    if (Case == 4 || Case == 5)
+      F.word(10, 0xd503201f); // Tracked lifetime still open at the query.
+    if (Case == 9)
+      F.word(8, 0xd503201f); // End without initialized scratch.
+    if (Case == 10)
+      F.word(5, 0x910043e1); // Scratch overlaps the table's first eight bytes.
+    if (Case == 11)
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+    F.run();
+    const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+    EXPECT_EQ(Targets.size(), Case < 4 ? 1U : 0U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 52).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, PublicationRepeatsTheFrameMachineProof) {
+  using namespace immutable_native_call_test;
+  for (bool ChangeMachine : {false, true}) {
+    SCOPED_TRACE(ChangeMachine);
+    Fixture F;
+    frameTableFixture(F);
+    F.bindCaller();
+    ASSERT_TRUE(F.high());
+    const auto Expression = immutableNativeExpression(*F.high());
+    ASSERT_TRUE(Expression);
+    ASSERT_TRUE(objCImmutableNativeSourceCallBound(*Expression, F.Image,
+                                                   F.Result, *F.high()));
+    if (ChangeMachine) {
+      F.word(4, 0xf9000be0);
+    } else {
+      auto &Low = *const_cast<LowFunc *>(F.low());
+      for (auto &Block : Low.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Addr == Entry + 16 && Op.Opcode == NdOp::STORE)
+            Op.Inputs[1] = NdVar::reg(a64reg::X0, 8);
+    }
+    EXPECT_FALSE(objCImmutableNativeSourceCallBound(*Expression, F.Image,
+                                                    F.Result, *F.high()));
+  }
 }
 
 TEST(ObjCSourceBindings, CFunctionParameterCallRepeatsTheCurrentMachineProof) {
