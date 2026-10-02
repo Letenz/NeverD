@@ -6,11 +6,15 @@
 #include <Hypervisor/Hypervisor.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static int report(const char *Operation, hv_return_t Status) {
   printf("%s: 0x%08x\n", Operation, (uint32_t)Status);
   return Status != HV_SUCCESS;
 }
+#if defined(__x86_64__)
+#include "probe_hvf_intel.h"
+#endif
 
 int main(void) {
 #if defined(__arm64__)
@@ -31,8 +35,17 @@ int main(void) {
   Status = hv_vcpu_create(&CPU, HV_VCPU_DEFAULT);
 #endif
   int Failed = report("hv_vcpu_create", Status);
+  void *Backing = NULL;
+#if defined(__x86_64__)
   if (!Failed)
+    Failed |= probe_intel_execution(CPU, &Backing);
+#endif
+  // Guest backing remains owned until both CPU and VM have retired.
+  if (Status == HV_SUCCESS)
     Failed |= report("hv_vcpu_destroy", hv_vcpu_destroy(CPU));
-  Failed |= report("hv_vm_destroy", hv_vm_destroy());
+  const hv_return_t Destroyed = hv_vm_destroy();
+  Failed |= report("hv_vm_destroy", Destroyed);
+  if (Destroyed == HV_SUCCESS)
+    free(Backing);
   return Failed;
 }
