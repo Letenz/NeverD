@@ -87,6 +87,14 @@ public:
       return E;
     if (auto E = control(VMCS_GUEST_CR4, x64::CR4 | x64::fp::OSXsave))
       return E;
+    // HVF owns the cache-disable bits in CR0. Preserve its mandatory mask
+    // bits rather than treating these control fields as unrestricted values.
+    if (auto E = control(VMCS_CTRL_CR0_MASK, 0))
+      return E;
+    if (auto E = control(VMCS_CTRL_CR4_MASK, 0))
+      return E;
+    // The framework owns the VMCS link pointer; it is not a writable guest
+    // field. Its initialization belongs to hv_vcpu_create, not this packet.
     const std::pair<uint32_t, uint64_t> Fields[] = {
         {VMCS_CTRL_EXC_BITMAP, x64::ExceptionExitBitmap},
         {VMCS_CTRL_PF_ERROR_MASK, 0},
@@ -94,15 +102,12 @@ public:
         {VMCS_CTRL_VMENTRY_IRQ_INFO, 0},
         {VMCS_CTRL_CR3_COUNT, 0},
         {VMCS_CTRL_TPR_THRESHOLD, 0},
-        {VMCS_GUEST_LINK_POINTER, UINT64_MAX},
         {VMCS_GUEST_ACTIVITY_STATE, 0},
         {VMCS_GUEST_INTERRUPTIBILITY, 0},
         {VMCS_GUEST_DEBUG_EXC, 0},
         {VMCS_GUEST_DR7, 0x400},
         {VMCS_GUEST_IA32_EFER, x64::EFER},
         {VMCS_GUEST_CR3, Root},
-        {VMCS_CTRL_CR0_MASK, 0},
-        {VMCS_CTRL_CR4_MASK, 0},
         {VMCS_CTRL_CR0_SHADOW, x64::CR0},
         {VMCS_CTRL_CR4_SHADOW, x64::CR4 | x64::fp::OSXsave},
         {VMCS_GUEST_GDTR_BASE, 0},
