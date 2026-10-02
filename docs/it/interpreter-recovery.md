@@ -84,6 +84,8 @@ L’enumerazione facoltativa degli indirizzi immutabili si arresta quando un ind
 
 Una prova completa delle dipendenze può omettere l’enumerazione di un valore di controllo completo a 64 bit `root + constant` quando il predicato dell’arco corrente lascia liberi i 32 bit alti della nuova variabile radice. Ciò non fissa l’indirizzo della radice e non dimostra la raggiungibilità. Restano attive le maschere ristrette dei produttori e le verifiche finali di fattibilità; un predicato che limita l’intera radice segue la normale proiezione finita.
 
+Quando raggiunge la capacità, la cache delle prove finite sostituisce i record usati meno di recente con prove ammissibili che entrano singolarmente. Gli accessi riusciti aggiornano l’ordine d’uso; salvataggi duplicati, mancate corrispondenze e candidati rifiutati non lo modificano. Le prove eliminate possono dover essere ricostruite. Si conservano solo domini completi o superamenti dimostrati del loro limite, e ogni nuova chiamata al risolutore consuma ancora il budget condiviso delle query.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione

@@ -839,6 +839,8 @@ The control-dependency walk reports root-bit dependencies only after complete an
 
 The same root-dependency analysis guards full-width affine control projection. Its result is local to one edge predicate; overlarge domains produce an incomplete refusal outside the mathematical cache. Narrow masks are retried. Existing feasibility handling remains independent; the domain refusal cannot prove an edge reachable or unreachable.
 
+The finite-query cache accounts for serialized keys, numeric results and recency metadata under one storage bound. It validates the entire candidate and its standalone fit before evicting any record. Keys remain owned by stable map nodes; successful lookups refresh recency and return owning result copies that remain valid after eviction. Cache objects are neither copyable nor movable. Replacement changes proof reuse, not query semantics or result eligibility.
+
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.

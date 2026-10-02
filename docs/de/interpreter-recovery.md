@@ -85,6 +85,8 @@ Die optionale Aufzählung unveränderlicher Adressen endet, sobald einer möglic
 
 Ein vollständiger Abhängigkeitsbeweis kann die Aufzählung eines vollständigen 64-Bit-Steuerwerts `root + constant` auslassen, wenn das aktuelle Kantenprädikat die oberen 32 Bits der frischen Wurzelvariablen frei lässt. Dies legt weder die Wurzeladresse fest noch beweist es Erreichbarkeit. Schmale Produzentenmasken und abschließende Erfüllbarkeitsprüfungen bleiben erhalten; ein Prädikat, das die gesamte Wurzel begrenzt, verwendet weiterhin die normale endliche Projektion.
 
+Bei voller Kapazität ersetzt der Cache für endliche Beweise die am längsten ungenutzten Einträge durch zulässige Beweise, die jeweils allein hineinpassen. Treffer aktualisieren die Nutzungsreihenfolge; doppelte Speicherungen, Fehltreffer und abgelehnte Kandidaten nicht. Verdrängte Beweise müssen gegebenenfalls erneut erbracht werden. Nur vollständige Wertebereiche oder bewiesene Überschreitungen ihrer Grenze werden gespeichert; jeder neue Solveraufruf verbraucht weiterhin das gemeinsame Abfragebudget.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag
