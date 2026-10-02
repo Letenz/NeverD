@@ -329,6 +329,7 @@ CFGBuilder::readTableEntries(const BinaryImage &Img, const JumpTableInfo &Info,
   size_t Off = static_cast<size_t>(Info.BaseAddr - Seg->VA);
   va_t PrevTarget = InvalidVA;
   int DuplicateRun = 0;
+  uint32_t NullSlots = 0;
 
   for (uint32_t Position = 0; Position < Limit; ++Position) {
     const uint32_t I =
@@ -356,6 +357,17 @@ CFGBuilder::readTableEntries(const BinaryImage &Img, const JumpTableInfo &Info,
     }
 
     const uint8_t *P = Seg->Data.data() + EntryOff;
+    // A null image-relative entry names the image header, never code: MSVC
+    // writes one for a case its value range proves cannot reach the
+    // dispatch.  A bounded publication that keeps real slot indices skips it
+    // as a don't-care slot, so the other targets keep their case values.
+    if (Policy == JumpTableTargetReadPolicy::SwitchPublication && Bounded &&
+        Info.IsPEImageRelativeRVA && KeptIndices &&
+        std::all_of(P, P + Info.EntrySize,
+                    [](uint8_t Byte) { return Byte == 0; })) {
+      ++NullSlots;
+      continue;
+    }
     auto TargetOpt =
         decodeTableEntry(P, Info.EntrySize, Info.IsRelative, Info.IsSigned,
                          Info.BaseAddr, Info.HasTargetBase, Info.TargetBase,
@@ -391,7 +403,7 @@ CFGBuilder::readTableEntries(const BinaryImage &Img, const JumpTableInfo &Info,
       KeptIndices->push_back(I);
   }
 
-  if (Bounded && Targets.size() != Limit)
+  if (Bounded && Targets.size() + NullSlots != Limit)
     return {};
 
   return Targets;

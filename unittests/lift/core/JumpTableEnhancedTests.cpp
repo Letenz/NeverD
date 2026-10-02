@@ -3977,6 +3977,53 @@ TEST_F(JTE_X86_64, ImageBaseFromAnEarlierBlockAnchorsTheTable) {
   EXPECT_EQ(Table->Targets, Expected);
 }
 
+TEST_F(JTE_X86_64, NullImageRelativeSlotIsADontCareCase) {
+  // KiIpiProcessRequests again: `cmp esi, 4; je` sends one selector value
+  // elsewhere before `lea eax, [rsi-1]` indexes the table, and MSVC writes a
+  // zero RVA for that impossible slot.  The slot names the image header, not
+  // code; it is skipped, and the other targets keep their real case values.
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  CodeWriter W;
+  W.put({0x89, 0xd6,       // mov esi, edx
+         0x83, 0xfe, 0x04, // cmp esi, 4
+         0x0f, 0x84});     // je exit
+  const size_t ToExit = W.u32(0);
+  W.put({0x8d, 0x46, 0xff, // lea eax, [rsi-1]
+         0x83, 0xf8, 0x06, // cmp eax, 6
+         0x0f, 0x87});     // ja exit
+  const size_t ToDefault = W.u32(0);
+  W.put({0x48, 0x8d, 0x15}); // lea rdx, image base
+  W.u32(static_cast<uint32_t>(
+      static_cast<int64_t>(ImageBase) -
+      static_cast<int64_t>(FunctionVA + W.Bytes.size() + 4)));
+  W.put({0x8b, 0x8c, 0x82}); // mov ecx, [rdx+rax*4+table]
+  const size_t TableSlot = W.u32(0);
+  W.put({0x48, 0x01, 0xd1, // add rcx, rdx
+         0xff, 0xe1});     // jmp rcx
+  std::vector<neverd::va_t> Slots;
+  for (int Case = 0; Case < 7; ++Case) {
+    Slots.push_back(FunctionVA + W.Bytes.size());
+    W.put({0xc3, 0xcc});
+  }
+  const size_t Exit = W.Bytes.size();
+  W.put({0xc3, 0xcc, 0xcc, 0xcc});
+  W.branchTo(ToExit, Exit);
+  W.branchTo(ToDefault, Exit);
+  W.patch32(TableSlot,
+            static_cast<uint32_t>(FunctionVA + W.Bytes.size() - ImageBase));
+  for (int Case = 0; Case < 7; ++Case)
+    W.u32(Case == 3 ? 0 : static_cast<uint32_t>(Slots[Case] - ImageBase));
+
+  const auto Table = recoverOnlyJumpTable(
+      makeCOFFFunctionImage(FunctionVA, W.Bytes), FunctionVA);
+  ASSERT_TRUE(Table.has_value());
+  const std::vector<neverd::va_t> Expected{Slots[0], Slots[1], Slots[2],
+                                           Slots[4], Slots[5], Slots[6]};
+  EXPECT_EQ(Table->Targets, Expected);
+  EXPECT_EQ(Table->CaseLabels, (std::vector<int64_t>{0, 1, 2, 4, 5, 6}));
+}
+
 TEST_F(JTE_X86_64, AllStagesSucceed) { verifyAllStages(jteX64Obj()); }
 
 TEST_F(JTE_X86_64, LowIRHasBranchInd) {
