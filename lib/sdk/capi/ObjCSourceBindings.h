@@ -3021,10 +3021,20 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
             : swiftTypeMetadataDescriptor(Image, *DescriptorAddress);
     if (!DescriptorAddress)
       return std::nullopt;
-    if (!DescriptorSymbol && TypeBytes[I] == 1) {
-      auto Inline = swiftLocalImportedLockType(Image, *DescriptorAddress);
+    // Direct references and authenticated local GOT rebases name the same
+    // descriptor. Normalize that edge before applying its existing identity
+    // proof; an imported, writable, overlapping or unresolved slot supplies
+    // no local identity. Never copy a private descriptor or infer its layout.
+    std::optional<va_t> LocalDescriptor;
+    if (TypeBytes[I] == 1)
+      LocalDescriptor = DescriptorAddress;
+    else if (!DescriptorSymbol && *DescriptorAddress % 8 == 0 &&
+             Image.MachOResolvedChainedPointerSlots.count(*DescriptorAddress))
+      LocalDescriptor = readImmutableImagePointer(Image, *DescriptorAddress);
+    if (!DescriptorSymbol && LocalDescriptor) {
+      auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
       if (!Inline)
-        Inline = swiftLocalRegisteredNominalType(Image, *DescriptorAddress);
+        Inline = swiftLocalRegisteredNominalType(Image, *LocalDescriptor);
       if (Inline) {
         Expanded += *Inline;
         Rebuilt += *Inline;
