@@ -3597,8 +3597,9 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.",
-        "Native Windows x64 CI with Unicorn disabled passes all 329 required checks: 101 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at b2ca3cff174280e8d0fa478cfa2b20d252e5e0f8 (GitHub Actions 36973625293), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
+        "`X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).",
+        "`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE on MOVS/STOS/LODS and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.",
+        "Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 9d4c130c2f11d95a2f80f1055dfdbb34de07715c (GitHub Actions 36981864458), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "Native `FOP/FIP/FDP` follow the host\u2019s x87 save/restore rules. AMD may clear these fields without a pending unmasked exception; snapshots retain observed values. `X64MachineProbe.def` and exact NOP/context tests seed a coherent pending exception so every field remains valid and is compared without masking. The host-process FXRSTOR64/FXSAVE64 oracle checks both states; backends never substitute input metadata for host results.",
         "`X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.",
         "The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller\u2019s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.",
@@ -4969,6 +4970,171 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.AllArithmeticFlagsMatchIndependentHostInstructions/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.ConditionalRepeatsMatchHostAndStopAtFirstResult/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.ZeroCountDoesNotReadPointersOrChangeFlags/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.NarrowSourceWrapsBeforeSegmentBaseAndScanIgnoresSI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.EarlyTerminationNeverTouchesTheNextUnmappedPage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.CompleteOperandsAreValidatedBeforeAnyReadObserver/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.LaterFaultRestoresEntryFlagsAndKeepsCompletedElements/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.StopsRetainLastComparisonAndResumeFromSavedContext/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.ObserverFailureDoesNotPublishCurrentComparison/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.LockedAndScalarSSEFormsRejectBeforeReads/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.CrossPageReadOnlyOperandsMatchHostThroughAliases/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.AddressSizeWrappingRetainsConditionalRepeatProgress/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.AResumedFaultUsesTheNewEntryFlags/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.AmbiguousInactiveUpperHalvesRejectBeforeEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "filter": "*/X64StringComparison.DeviceOperandsRejectBeforeCallbacksOrObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -5154,7 +5320,7 @@
         "docs/examples/driver-kmdf-usb-pofx-scenario.json"
       ],
       "limitations": [
-        "Native Windows x64 CI with Unicorn disabled passes all 329 required checks: 101 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at b2ca3cff174280e8d0fa478cfa2b20d252e5e0f8 (GitHub Actions 36973625293), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
+        "Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 9d4c130c2f11d95a2f80f1055dfdbb34de07715c (GitHub Actions 36981864458), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.",
         "Independent MDL pages support MmAllocatePagesForMdl/Ex, MmFreePagesFromMdl and MmProtectMdlSystemAddress over the bounded physical arena. Range/chunk constraints, cache identity, partial ownership, user/system aliases and release dependencies share existing physical-page authority. KernelMode pool locks make precisely pinned paged memory resident; backend page permissions remain authoritative for all mapping views.",
         "Message interrupt assignments preserve explicit per-message addresses/data/vectors/levels/affinity/polarity. PDO-wide message registration exposes real read-only interrupt tables and independent or unified synchronization. Passive ISR waits retain ownership, serialize repeated arrivals and allow independent frames and DPCs to progress; occurrence and delivery timestamps remain distinct.",
