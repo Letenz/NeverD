@@ -41874,6 +41874,36 @@ TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
   EXPECT_EQ(HighC.find("& &"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("& (uintptr_t)&"), std::string::npos) << HighC;
 }
+TEST(HighCPointerAddresses, SegmentSelectorsMoveThroughAsm) {
+  // RtlCaptureContext stores the segment selectors into the CONTEXT and
+  // SwapContext reloads them: `mov [rcx], cs`, `mov ax, ss`, `mov ds, dx`.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x8c, 0x09,             // mov [rcx], cs
+                                     0x66, 0x8c, 0xd0,       // mov ax, ss
+                                     0x66, 0x89, 0x41, 0x02, // mov [rcx+2], ax
+                                     0x8e, 0xda,             // mov ds, dx
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("mov %%cs, %0"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("mov %%ss, %0"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("mov %w0, %%ds"), std::string::npos) << HighC;
+}
+
+TEST(LLVMCPointerAddresses, SegmentSelectorsMoveThroughInlineAsm) {
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x8c, 0x09,             // mov [rcx], cs
+                                     0x66, 0x8c, 0xd0,       // mov ax, ss
+                                     0x66, 0x89, 0x41, 0x02, // mov [rcx+2], ax
+                                     0x8e, 0xda,             // mov ds, dx
+                                     0xc3};
+  const std::string Source =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(Source.find("mov %%cs, %0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("mov %%ss, %0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("mov %w0, %%ds"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
   // After an unknown call ECX holds no defined value, so the OR must not

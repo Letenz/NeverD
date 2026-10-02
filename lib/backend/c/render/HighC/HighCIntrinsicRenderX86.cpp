@@ -14,8 +14,10 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1239,6 +1241,20 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
       llvm::report_fatal_error("invalid x87 FFREE HighC operand");
     return "__asm {{ ffree st(" + std::to_string(Call.Operands[1]->ConstVal) +
            ") }}";
+  }
+  if (Call.IntrinsicId == I::ReadSegment ||
+      Call.IntrinsicId == I::WriteSegment) {
+    // A segment selector by its register's encoding number.
+    const size_t Operands = Call.IntrinsicId == I::ReadSegment ? 1 : 2;
+    const char *Name = Call.Operands.size() == Operands && Call.Operands[0] &&
+                               Call.Operands[0]->Kind == ExprKind::Const
+                           ? x86SegmentRegisterName(Call.Operands[0]->ConstVal)
+                           : nullptr;
+    if (!Name || (Operands == 2 && !Call.Operands[1]))
+      llvm::report_fatal_error("x86 segment move has an invalid operand shape");
+    if (Call.IntrinsicId == I::ReadSegment)
+      return x86SegmentReadText(Name);
+    return x86SegmentWriteText(Name, ExprFn(*Call.Operands[1]));
   }
   if (Call.IntrinsicId == I::SegmentLimitValid) {
     // LSL's ZF: whether the selector names a segment whose limit is visible.

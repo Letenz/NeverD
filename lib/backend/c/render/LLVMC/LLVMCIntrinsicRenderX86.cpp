@@ -12,7 +12,9 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
+#include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
@@ -187,6 +189,17 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                         : "__writedr(" + Index + ", " + Value + ")";
         }
         return {Result + ";\n", true};
+      }
+      // A segment selector move (`mov %cs, $0` / `mov ${0:w}, %ds`).
+      llvm::StringRef Segment = Reg;
+      if (Segment.consume_front("%") && x86SegmentRegisterNamed(Segment) &&
+          (Read || (First == "${0:w}" && Args.size() == 1))) {
+        if (!Read)
+          return {x86SegmentWriteText(Segment, Args[0]) + ";\n", false};
+        std::string Result;
+        if (ResultLive && !ResultName.empty())
+          Result = ResultName + " = ";
+        return {Result + x86SegmentReadText(Segment) + ";\n", false};
       }
     }
   }
