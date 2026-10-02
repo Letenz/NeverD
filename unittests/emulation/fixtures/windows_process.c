@@ -87,9 +87,29 @@ static char mode(void) {
   unsigned N = 0;
   while (Line[N])
     ++N;
-  if (N && Line[N - 1] == '"')
+  // Windows launchers may append delimiters after the final argument.
+  while (N && (Line[N - 1] == ' ' || Line[N - 1] == '\t'))
     --N;
-  return N ? (char)Line[N - 1] : 'n';
+  const int Quoted = N && Line[N - 1] == '"';
+  if (Quoted)
+    --N;
+  require(N != 0);
+  unsigned Start = N - 1;
+  if (Quoted) {
+    require(Start && Line[Start - 1] == '"');
+    --Start;
+  }
+  require(Start && (Line[Start - 1] == ' ' || Line[Start - 1] == '\t'));
+  static const char *const Modes[] = {
+      Normal,        Returned,    Loop,     InitLoop,    Fault,
+      Privileged,    Unknown,     Errors,   Unsupported, BadOutput,
+      AliasedOutput, TLSMutation, TailExit, ForgedGate,  ReentrantExit,
+      ReturnSlot,    NativeExit};
+  for (unsigned I = 0; I < sizeof(Modes) / sizeof(Modes[0]); ++I)
+    if (Line[N - 1] == (unsigned char)Modes[I][0])
+      return Modes[I][0];
+  require(0);
+  return 0;
 }
 __declspec(thread) DWORD ThreadValue = TLSSeed;
 __declspec(thread) DWORD ThreadZero;

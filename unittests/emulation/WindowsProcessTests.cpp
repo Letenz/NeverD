@@ -487,8 +487,6 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
                                                         Error};
     std::string LaunchError;
     bool ExecutionFailed = false;
-    // Shell redirection can leave trailing whitespace in GetCommandLineW(),
-    // changing which scenario the fixture selects from its final argument.
     const auto Status = llvm::sys::ExecuteAndWait(
         Program, {Program, Mode}, std::nullopt, Redirects, NativeTimeoutSeconds,
         0, &LaunchError, &ExecutionFailed);
