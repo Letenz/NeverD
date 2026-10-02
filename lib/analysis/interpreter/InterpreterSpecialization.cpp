@@ -669,6 +669,7 @@ public:
   SpecializationResult closeProducerDemands(SpecializationResult Previous);
   SpecializationResult refineRegisterPartition(SpecializationResult Previous,
                                                bool &Changed);
+  void refineFailureGuards();
 
 private:
   bool fail(SpecializationStatus Status, std::string Message) {
@@ -698,7 +699,6 @@ private:
                    const FrameOrigins &Origins, const FrameFacts &Frame,
                    StepResult Flow);
   bool publish();
-  void refineUnsupportedGuards();
   SymRef controlValue(SymState &State, SymRef Root, uint32_t Field);
   SymRef controlPredicate(SymState &State, SymRef Root,
                           const ControlRelation &Relation);
@@ -2952,7 +2952,9 @@ bool Specializer::publish() {
   return true;
 }
 
-void Specializer::refineUnsupportedGuards() {
+void Specializer::refineFailureGuards() {
+  if (FailureNode < 0 || Refinement.DeferredGuardDemands.empty())
+    return;
   // Refine the nearest undecided guards that can reach this failure,
   // rather than collecting unrelated business conditions elsewhere.
   // Edges already belong to the bounded attempted graph. This reverse
@@ -3175,7 +3177,7 @@ SpecializationResult Specializer::run() {
       Refinement.PrecisionFailure = true;
     if (Result.Status == SpecializationStatus::Unsupported &&
         !Refinement.DeferredGuardDemands.empty() && FailureNode >= 0) {
-      refineUnsupportedGuards();
+      refineFailureGuards();
     }
     Result.Residual = {};
     Result.Origins.clear();
@@ -3239,8 +3241,7 @@ specializeInterpreter(SpecializationProvider &Provider,
                          !Refinement.PendingContextRegisters.empty() ||
                          !Refinement.PendingContextSlots.empty() ||
                          !Refinement.PendingProducerDemands.empty();
-    if (Result.Status == SpecializationStatus::Unsupported &&
-        !Refinement.BudgetExceeded) {
+    const auto ActivateGuardDemands = [&]() {
       for (const auto &[Demand, Carrier] : Refinement.DeferredGuardDemands) {
         const auto &[Offset, Bytes, Bits] = Carrier;
         const auto Add = [&](auto &Pending, const auto &Existing,
@@ -3295,7 +3296,10 @@ specializeInterpreter(SpecializationProvider &Provider,
               Effective, Refinement, Options.ControlRegisters.size(),
               Options.ControlFrameSlots.size()) > Options.MaxControlFields)
         Refinement.BudgetExceeded = true;
-    }
+    };
+    if (Result.Status == SpecializationStatus::Unsupported &&
+        !Refinement.BudgetExceeded)
+      ActivateGuardDemands();
     // An exhaustive finite transfer already supplies a useful abstraction.
     // Expanding all its producers eagerly can consume the field budget on
     // ordinary runtime inputs while another unresolved field needs precision.
@@ -3337,6 +3341,17 @@ specializeInterpreter(SpecializationProvider &Provider,
               Options.ControlFrameSlots.size()) > Options.MaxControlFields)
         Refinement.BudgetExceeded = true;
       HasCandidates |= !Refinement.PendingProducerDemands.empty();
+    }
+    // A widened guard can also lead to an unknown indirect target. First
+    // exhaust the target's immediate and deferred producer refinements; even
+    // selecting guard candidates consumes the shared discovery budget. Only
+    // a fresh attempt may prove that an apparent failure arm is unreachable.
+    if (!HasCandidates && !Refinement.BudgetExceeded &&
+        Result.Status == SpecializationStatus::UnresolvedControl) {
+      Attempt.refineFailureGuards();
+      Result.DiscoveryVisits = Refinement.Visits;
+      if (!Refinement.BudgetExceeded)
+        ActivateGuardDemands();
     }
     if (Refinement.BudgetExceeded ||
         (HasCandidates &&
