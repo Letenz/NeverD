@@ -35,6 +35,10 @@ writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
             const ProcessOptions &Options, ProcessResult &Result) {
   const uint32_t FD = Event.Arguments[0];
   const uint64_t Address = Event.Arguments[1], Count = Event.Arguments[2];
+  // XNU write_internal validates nbyte before descriptor lookup or copying.
+  // An invalid request cannot consume the output allowance or publish bytes.
+  if (Count > MaxWriteBytes)
+    return std::optional<ServiceResult>({InvalidArgument, true});
   if (FD != 1 && FD != 2)
     return std::optional<ServiceResult>({BadDescriptor, true});
   if (!Count)

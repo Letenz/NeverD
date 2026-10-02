@@ -125,6 +125,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
+  DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)

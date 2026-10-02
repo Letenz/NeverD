@@ -80,6 +80,21 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return (int)call(1, 37, 0, 0, 0, 0, 0, &error);
   if (equal(argv[1], "return"))
     return 37;
+  if (equal(argv[1], "write-length")) {
+    const u64 counts[] = {0x80000000UL, (u64)-1};
+    for (unsigned i = 0; i < 2; ++i)
+      for (unsigned j = 0; j < 2; ++j)
+        if (call(4, j ? 99 : 1, 0, counts[i], 0, 0, 0, &error) != 22 || !error)
+          return 127;
+    if (call(4, 99, 0, 0x7fffffffUL, 0, 0, 0, &error) != 9 || !error)
+      return 128;
+    if (call(4, 1, 0, 1, 0, 0, 0, &error) != 14 || !error)
+      return 129;
+    const char byte = 'w';
+    if (call(4, 1, (u64)&byte, 1, 0, 0, 0, &error) != 1 || error)
+      return 130;
+    return 37;
+  }
   if (equal(argv[1], "release")) {
     u64 sp;
 #if defined(__aarch64__)

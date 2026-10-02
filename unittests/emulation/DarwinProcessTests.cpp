@@ -131,6 +131,24 @@ TEST_P(DarwinProcess, PartialCopyRetainsEFAULTAndSubsequentWriteRecovers) {
   EXPECT_EQ(Result->Services[2].Result, 1);
   EXPECT_EQ(Result->Services[2].Error, false);
 }
+TEST_P(DarwinProcess, OversizedWritePrecedesDescriptorPointerAndOutputChecks) {
+  Options.OutputLimit = 1;
+  auto Result = run("write-length");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "w");
+  EXPECT_TRUE(Result->StandardError.empty());
+  ASSERT_EQ(Result->Services.size(), 7u);
+  for (size_t I = 0; I < 4; ++I) {
+    EXPECT_EQ(Result->Services[I].Result, 22u) << I;
+    EXPECT_EQ(Result->Services[I].Error, true) << I;
+  }
+  EXPECT_EQ(Result->Services[4].Result, 9u);
+  EXPECT_EQ(Result->Services[5].Result, 14u);
+  EXPECT_EQ(Result->Services[6].Result, 1u);
+  EXPECT_EQ(Result->Services[6].Error, false);
+}
 TEST_P(DarwinProcess, AnonymousMemoryAlignmentAtomicProtectionAndReuse) {
   auto Result = run("memory");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

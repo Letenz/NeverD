@@ -93,6 +93,8 @@ GID are deterministically 1000, and parent PID is 1. Output descriptors 1 and
 return EBADF. A partial readable prefix is captured, but a subsequent copy
 fault retains EFAULT, consistent with XNU's
 [write error propagation](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
+The raw write length is limited to `INT_MAX`; larger requests return EINVAL
+before descriptor lookup, guest-pointer access or output-budget admission.
 
 Memory services support private anonymous data mappings with descriptor -1
 and offset zero (`flags=0x1002`). Lengths and nonfixed hints round up to the OS
@@ -137,10 +139,16 @@ transport must be verified on its own host; the results below distinguish
 Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF remains unverified.
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 36 cases on ARM64, or 24 on x64.
+on each platform supported by the host ISA: 39 cases on ARM64, or 26 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
+On a native macOS build, `DarwinNativeTests.cpp` also runs the same authored
+object against the host kernel. A separate host executable links libSystem
+only for dyld's real main handoff; guest images remain import-free. Return,
+exit, memory protection/reuse and oversized-write error ordering must match
+the fixture's exit status and exact output. This native reference is required
+by the HVF gate; it does not establish native iOS execution.
 It preserves the full inventory and JUnit results, and fails on missing or
 skipped native workloads even when loader-only tests pass:
 

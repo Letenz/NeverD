@@ -30,6 +30,8 @@ OS 页独立持有物理内存，因此部分解除映射能释放预算，重�
 错误返回正 errno 并置 carry。JSON 中的 `error` 字段区分错误和值相同的成功结果。
 不会复用 Linux 的负 errno。内存保护跨空洞或最大权限边界失败时，整段原权限保持不变。
 部分 `write` 复制的字节会保留，后续访存错误仍返回 EFAULT。
+原始 `write` 长度超过 `INT_MAX` 时，必须先返回 EINVAL，再考虑描述符、来宾指针和
+输出预算。此顺序已有真实 macOS 系统调用对照。
 
 设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本接受不依赖动态库、重定位、
 初始化函数或 TLS 的独立可执行文件。需要 dyld 链接、Mach IPC、线程、文件系统、
@@ -42,9 +44,13 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 36 项，x64 的 macOS 和 Simulator 共 24 项。
+ARM64 三个平台共 39 项，x64 的 macOS 和 Simulator 共 26 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
+macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
+重用和超长写入的错误顺序，检查实际退出状态和逐字节输出。只有宿主程序为真实 dyld
+入口链接 libSystem，来宾镜像仍不依赖动态库。这项原生对照是 HVF 门禁必需项，
+不代表 iOS 真机执行证据。
 `scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
 Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
