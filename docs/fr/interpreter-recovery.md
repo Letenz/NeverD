@@ -84,6 +84,8 @@ L’énumération facultative des adresses immuables s’arrête dès qu’une a
 
 Une preuve complète des dépendances peut éviter l’énumération d’une valeur de contrôle complète sur 64 bits `root + constant` lorsque le prédicat de l’arête courante laisse libres les 32 bits hauts de la nouvelle variable racine. Cela ne fixe pas l’adresse racine et ne prouve pas l’accessibilité. Les masques étroits des producteurs et les vérifications finales de faisabilité restent appliqués ; un prédicat bornant la racine entière suit la projection finie normale.
 
+À capacité maximale, le cache de preuves finies remplace les enregistrements les moins récemment utilisés par des preuves admissibles qui tiennent chacune seules. Un accès réussi actualise cet ordre ; les stockages en double, les absences et les candidats rejetés ne le modifient pas. Une preuve évincée peut devoir être établie à nouveau. Seuls les domaines complets ou les dépassements de limite prouvés sont conservés, et chaque nouvel appel au solveur consomme toujours le budget de requêtes partagé.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution

@@ -84,6 +84,8 @@ La enumeración opcional de direcciones inmutables se detiene cuando una direcci
 
 Una prueba completa de dependencias puede omitir la enumeración de un valor de control completo de 64 bits `root + constant` cuando el predicado de la arista actual deja libres los 32 bits altos de la nueva variable raíz. Esto no fija la dirección raíz ni demuestra alcanzabilidad. Se siguen aplicando las máscaras estrechas de los productores y las comprobaciones finales de viabilidad; un predicado que limita la raíz completa utiliza la proyección finita normal.
 
+Al alcanzar la capacidad, la caché de pruebas finitas sustituye los registros usados menos recientemente por pruebas admisibles que caben por separado. Los aciertos actualizan el orden de uso; los almacenamientos duplicados, fallos de caché y candidatos rechazados no lo alteran. Las pruebas expulsadas pueden necesitar demostrarse de nuevo. Solo se conservan dominios completos o excesos de su límite demostrados, y cada nueva llamada al solucionador sigue consumiendo el presupuesto compartido de consultas.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución

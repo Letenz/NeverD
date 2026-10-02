@@ -194,6 +194,8 @@ Optional immutable-address enumeration stops when a feasible address lacks a cer
 
 A complete dependency proof may skip enumeration of a full 64-bit `root + constant` control value when the current edge predicate leaves the fresh root's high 32 bits free. This neither fixes the root nor proves reachability. Narrow producer masks and final feasibility checks still apply; a predicate bounding the whole root follows normal finite projection.
 
+At capacity, finite-proof reuse replaces the least recently used records with eligible proofs that fit individually. Successful lookups refresh recency; duplicate stores, misses and rejected candidates do not. Evicted proofs may need to be established again. Only complete domains or proved domain-limit excesses are retained, and every new solver call still consumes the shared query budget.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract
