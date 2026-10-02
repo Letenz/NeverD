@@ -137,6 +137,25 @@ TEST(LowIRRefinement, UnauditedNativeBoundaryOptionRejectsStaticAPIs) {
   EXPECT_FALSE(Inference.Plan);
 }
 
+TEST(LowIRRefinement, NativeOverlapOptionRejectsStaticAndLoopAPIs) {
+  Program A, B;
+  A.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  A.finish();
+  B.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  B.finish();
+  expect(A, B, Status::Proved);
+  A.Contract.AllowOverlappingNativeInstructions = true;
+  expect(A, B, Status::Unsupported);
+  const auto Loop = checkLowIRLoopRefinement(A.Function, A.Records, B.Function,
+                                             A.Contract, {});
+  EXPECT_EQ(Loop.Status, Status::Unsupported) << Loop.Diagnostic;
+  EXPECT_FALSE(Loop.Certificate);
+  const auto Inference = inferLowIRLoopRefinementPlan(B.Function, A.Contract);
+  EXPECT_EQ(Inference.Status, LowIRLoopInferenceStatus::Unsupported)
+      << Inference.Diagnostic;
+  EXPECT_FALSE(Inference.Plan);
+}
+
 TEST(LowIRRefinement, ExplicitWitnessDoesNotBecomeIndependence) {
   Program A, B, Zero;
   auto &Effect = A.instruction({op(NdOp::COPY, r(0), {r(8)})});

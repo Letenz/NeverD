@@ -138,9 +138,12 @@ TEST_F(BytecodeCLI, EmitsBothRoutesAndPreservesOutputOnRejectedInput) {
     return std::string(std::istreambuf_iterator<char>(Stream), {});
   };
   Bytes();
-  for (unsigned Route : {0u, 1u, 2u}) {
+  for (unsigned Variant : {0u, 1u, 2u, 3u, 4u, 5u}) {
+    const unsigned Route = Variant % 3;
     SCOPED_TRACE(Route);
     auto Args = Arguments;
+    if (Variant >= 3)
+      Args.push_back("--unaligned-pointers");
     if (Route)
       Args.push_back("--llvm");
     if (Route == 2)
@@ -148,6 +151,8 @@ TEST_F(BytecodeCLI, EmitsBothRoutesAndPreservesOutputOnRejectedInput) {
     auto Ran = exec(NEVERD_BYTECODE_BINARY, Args);
     ASSERT_TRUE(Ran.ok()) << Ran.err;
     const auto Source = Read();
+    if (Variant >= 3)
+      EXPECT_NE(Source.find("may_alias"), std::string::npos);
     EXPECT_NE(Source.find("example("), std::string::npos);
     EXPECT_EQ(Source.find("unknown value"), std::string::npos);
     if (hasCrossTargetClang()) {

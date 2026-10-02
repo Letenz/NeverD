@@ -113,4 +113,15 @@ TEST_F(PythonPluginTest, ReportsTerminationTracebackThroughPublicCAPI) {
       << Error;
 }
 
+TEST_F(PythonPluginTest, ExternalBytecodeRulesUseSharedRecovery) {
+  ASSERT_EQ(neverd_plugins_load_file(Session, NEVERD_PYTHON_BYTECODE_FIXTURE),
+            1)
+      << takeString(neverd_last_error(Session));
+  neverd_plugins_init(Session);
+  for (int Route : {0, 1})
+    EXPECT_EQ(neverd_plugins_run(Session, "External Bytecode Python", Route), 0)
+        << takeString(neverd_last_error(Session));
+  neverd_plugins_term(Session);
+}
+
 } // namespace

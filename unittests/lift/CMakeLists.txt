@@ -229,6 +229,7 @@ add_neverd_unittest(NeverDLiftTests
   core/NdOpEmulatorMemoryTests.cpp
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
+  core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
   format/PatchFormatCOFFARMTests.cpp
@@ -981,6 +982,23 @@ target_include_directories(NeverDLiftTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDJumpTableTests
+  core/JumpTableEnhancedTests.cpp
+  core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableProposalLFPTests.cpp
+  LINK_COMPONENTS Pipeline Support
+)
+target_compile_definitions(NeverDJumpTableTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+target_include_directories(NeverDJumpTableTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/pipeline ${LLVM_INCLUDE_DIRS})
+add_dependencies(NeverDJumpTableTests neverd)
+
 # Run source call ABI, binding, and emitted-code checks without rebuilding the
 # complete fixture inventory during mobile decompiler development.
 # MSVC's standard COFF object section limit is too small for this large test
@@ -1180,6 +1198,15 @@ target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
+
+add_neverd_unittest(NeverDMedMutableSourceTests
+  core/MedMutableSourceTests.cpp
+  LINK_COMPONENTS BackendLLVM BackendC IRMed
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDMedMutableSourceTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 
 add_neverd_unittest(NeverDLLVMCVectorTests
   core/LLVMCVectorTests.cpp
@@ -3156,6 +3183,7 @@ endif()
 
 add_custom_target(lift-test-objects DEPENDS ${TEST_OBJECTS} ${ELF_EXECUTABLES})
 add_dependencies(NeverDLiftTests lift-test-objects)
+add_dependencies(NeverDJumpTableTests lift-test-objects)
 add_dependencies(NeverDNativePointerRelocationBoundaryTests lift-test-objects)
 if(COFF_NATIVE_EH_TEST_OBJECTS)
   add_custom_target(lift-coff-native-eh-test-objects

@@ -96,7 +96,8 @@ struct StosFixture {
 // renderer that prints a plausible mnemonic but drops the memory effect fails.
 void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
                      llvm::ArrayRef<llvm::StringRef> ExpectedIR = {},
-                     llvm::StringRef Optimization = "-O1") {
+                     llvm::StringRef Optimization = "-O1",
+                     bool CheckUndefined = false) {
   auto Compiler = llvm::sys::findProgramByName("clang");
   ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
   llvm::SmallString<128> Input, Output, Errors;
@@ -126,6 +127,8 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
       Output};
   if (LLVMOnly)
     Args.append({"-target", "x86_64-pc-windows-msvc", "-S", "-emit-llvm"});
+  if (CheckUndefined)
+    Args.append({"-fsanitize=undefined", "-fsanitize-trap=undefined"});
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, Errors.str()};
   std::string Error;
@@ -152,6 +155,167 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
                                         0, &Error),
               0)
         << Error << Source;
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, SaturatingConversionsClampBeforeCasting) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("saturating-conversions", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Wide = Builder.getInt128Ty();
+  auto Producer = Module.getOrInsertFunction(
+      "produce_double", Builder.getDoubleTy(), Builder.getDoubleTy());
+  std::string Table;
+  for (unsigned Bits : {1u, 8u, 16u, 32u, 64u, 128u})
+    for (bool Signed : {false, true})
+      for (bool Single : {false, true})
+        for (bool Assigned : {false, true}) {
+          const std::string Name =
+              "sat_" + std::to_string(Bits) + "_" + std::to_string(Signed) +
+              "_" + std::to_string(Single) + "_" + std::to_string(Assigned);
+          Table += Name + ",";
+          auto *Function = llvm::Function::Create(
+              llvm::FunctionType::get(
+                  Wide, {Builder.getDoubleTy(), Builder.getPtrTy()}, false),
+              llvm::GlobalValue::ExternalLinkage, Name, Module);
+          Builder.SetInsertPoint(
+              llvm::BasicBlock::Create(Context, "entry", Function));
+          llvm::Value *Input =
+              Builder.CreateCall(Producer, {Function->getArg(0)});
+          if (Single)
+            Input = Builder.CreateFPTrunc(Input, Builder.getFloatTy());
+          auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+              &Module,
+              Signed ? llvm::Intrinsic::fptosi_sat
+                     : llvm::Intrinsic::fptoui_sat,
+              {Builder.getIntNTy(Bits), Input->getType()});
+          auto *Result = Builder.CreateCall(Intrinsic, {Input});
+          Builder.CreateStore(Assigned
+                                  ? Builder.CreateZExtOrBitCast(Result, Wide)
+                                  : llvm::ConstantInt::get(Wide, 42),
+                              Function->getArg(1));
+          Builder.CreateRet(Builder.CreateZExtOrBitCast(Result, Wide));
+        }
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x2E_"), std::string::npos) << Text;
+  const std::string Source = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                             Text + R"(
+typedef unsigned __int128 U128;
+static unsigned calls;
+double produce_double(double value) { ++calls; return value; }
+int main(void) {
+  U128 (*functions[])(double, void *) = {)" +
+                             Table + R"(};
+  const unsigned widths[] = {1, 8, 16, 32, 64, 128};
+  for (unsigned w = 0; w < 6; ++w)
+    for (unsigned sign = 0; sign < 2; ++sign) {
+      const unsigned bits = widths[w];
+      const U128 mask = ~(U128)0 >> (128 - bits);
+      const U128 max = mask >> sign;
+      const U128 min = sign ? (U128)1 << (bits - 1) : 0;
+      double bound = 1;
+      for (unsigned b = 0; b < bits - sign; ++b) bound *= 2;
+      const double inputs[] = {0, -0.0, 0.75, -0.75, 1.75, -1.75,
+          __builtin_inf(), -__builtin_inf(), __builtin_nan(""),
+          bound, -bound, bound * 2, -bound * 2};
+      const U128 expected[] = {0, 0, 0, 0, max ? 1 : 0, sign ? mask : 0,
+          max, min, 0, max, min, max, min};
+      for (unsigned single = 0; single < 2; ++single)
+        for (unsigned assigned = 0; assigned < 2; ++assigned)
+          for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+            calls = 0;
+            U128 stored = 99;
+            if (functions[w * 8 + sign * 4 + single * 2 + assigned](
+                    inputs[i], &stored) != expected[i]) return 1;
+            if (stored != (assigned ? expected[i] : 42)) return 2;
+            if (calls != 1) return 3;
+          }
+    }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, BitReverseUsesTheExactIntegerWidth) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("bit-reverse", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Wide = Builder.getInt128Ty();
+  std::string Table;
+  for (unsigned Bits : {1u, 3u, 7u, 8u, 16u, 24u, 32u, 64u, 65u, 128u}) {
+    const std::string Name = "reverse_" + std::to_string(Bits);
+    Table += Name + ",";
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Wide, {Wide, Builder.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Name, Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::bitreverse, {Integer});
+    auto *Result = Builder.CreateCall(
+        Intrinsic,
+        {Builder.CreateTruncOrBitCast(Function->getArg(0), Integer)});
+    Builder.CreateStore(Builder.CreateZExtOrBitCast(Result, Wide),
+                        Function->getArg(1));
+    Builder.CreateRet(Builder.CreateZExtOrBitCast(Result, Wide));
+  }
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x2E_"), std::string::npos) << Text;
+  const std::string Source = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                             Text + R"(
+typedef unsigned __int128 U128;
+int main(void) {
+  U128 (*functions[])(U128, void *) = {)" +
+                             Table + R"(};
+  const unsigned widths[] = {1, 3, 7, 8, 16, 24, 32, 64, 65, 128};
+  for (unsigned w = 0; w < 10; ++w) {
+    const unsigned bits = widths[w];
+    const U128 mask = ~(U128)0 >> (128 - bits);
+    U128 stored = 0;
+    if (functions[w](~(U128)0, &stored) != mask || stored != mask) return 1;
+    for (unsigned bit = 0; bit < 128; ++bit) {
+      const U128 expected = bit < bits ? (U128)1 << (bits - bit - 1) : 0;
+      if (functions[w]((U128)1 << bit, &stored) != expected ||
+          stored != expected) return 2;
+    }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, ScalarUnaryRejectsUnsupportedShapes) {
+  for (const auto Kind :
+       {llvm::Intrinsic::bitreverse, llvm::Intrinsic::fptosi_sat,
+        llvm::Intrinsic::fptoui_sat}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("unsupported-unary", Context);
+    llvm::IRBuilder<> Builder(Context);
+    llvm::Type *Input = Kind == llvm::Intrinsic::bitreverse
+                            ? Builder.getIntNTy(129)
+                            : Builder.getHalfTy();
+    auto *Output = Builder.getIntNTy(129);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Output, {Input}, false),
+        llvm::GlobalValue::ExternalLinkage, "bad_unary", Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    llvm::SmallVector<llvm::Type *, 2> Types{Output};
+    if (Kind != llvm::Intrinsic::bitreverse)
+      Types.push_back(Input);
+    auto *Intrinsic =
+        llvm::Intrinsic::getOrInsertDeclaration(&Module, Kind, Types);
+    Builder.CreateRet(Builder.CreateCall(Intrinsic, {Function->getArg(0)}));
+    std::string Text;
+    llvm::raw_string_ostream Stream(Text);
+    EXPECT_THROW(LLVMCEmitter().emit(Module, Stream, {}), std::runtime_error);
   }
 }
 

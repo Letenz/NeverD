@@ -61,6 +61,10 @@ C 调用方使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 恢复还提供 `--vm-chain-transfers=N`（默认 0）和 `--vm-no-control-discovery`。串接在已证明唯一目标的控制转移之间保留符号关联；达到上限后回到普通 CFG 边界。机器状态恢复可通过 `--vm-entry-frame=begin:end` 声明未经运行时检查、不会回绕的入口 RSP 偏移范围。精确数值前提会写入生成的 C 和报告；它不授予内存访问权限，也不构成等价证明。
 
+超过 SSA 构建限制的大型恢复函数可通过 `--llvm` 使用有界的标量可变存储契约。入口输入、循环携带值和较早读取的语义得到保留。不支持的隐式状态、向量寄存器参数、映像重定位、歧义存储和畸形控制流会明确失败；HighC 拒绝此回退路径。源码输出仍遵循现有机器状态契约，不新增等价证明证书。
+
+该可变子集接受 8/16/32/64/128 位标量存储，位计数输入最多为 64 位。非标准位宽和更宽存储需要单独的源码契约。
+
 兼容的 v4 接口为 `neverd_devirtualize_source_v4()` 和 `neverd_devirtualize_machine_source_v4()`。将 `neverd_devirtualize_options_v4` 清零，并将 `base.base.base.struct_size` 设为完整大小。CLI 串接数量接受非负 32 位十进制整数，零表示关闭。范围端点接受有符号 64 位十进制整数，要求 `begin < end` 及 `--vm-machine-state`，约束物理入口 RSP 而非调整后的值。在 C API 中，范围标志要求机器状态接口；未设置时两个端点必须为零。未知标志和旧版本保留字段的非零值会被拒绝。v1/v2/v3 忽略整个 v4 扩展，v4 忽略未来扩展。空选项指针保留旧默认值。报告增加 `maxChainedTransfers` 和 `entryFrameBounds`，`discoverControlState` 记录实际开关。所有 CLI 选项均要求 `--devirtualize`。数值前提不在运行时检查，也不保证可访问性、初始化或无别名。这些选项不启用原生证明策略。
 
 ```c
@@ -177,6 +181,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 节点数、每个地址的上下文数、操作数、节点求值次数和有限目标数的预算共同约束分析。预算耗尽或语义不受支持时，不发布残余函数。控制流图完整与源码成功生成是不同条件；公开 API 会检查两者并分别报告。
 
 有限读取地址集合、联合控制元组和控制字段数量也有显式上限。全局求解查询次数，以及每次查询的门、冲突、传播和监视文字访问次数限制，约束证明工作量；符号节点上限约束表达式增长。JSON 报告包含这些预算，以及 `solverQueries` 和 `relationalWidenings` 计数。
+
+`AllowOverlappingNativeInstructions` 是默认关闭的独立选项，用于有限原生独立性证明及原生到 LowIR 的精化证明。每个入口都独立解码和验证；交叠指令字节必须与此前所有指令及不可变读取证据一致，包括候选程序的读取。候选 LowIR 地址只是标签，不是字节证据。`MaxNativeInstructionBytes` 默认为 1048576，每次取得新入口时，在比较前按完整指令长度扣账，包括重复的交叠字节。预算耗尽或字节冲突均拒绝证书。选项及额度绑定到证明摘要。静态 LowIR、归纳循环证明和推断拒绝此选项，空循环计划也不例外；精确 LLVM 接口和 CLI 保持原有默认行为。
 
 <!-- i18n-section: evidence -->
 

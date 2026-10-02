@@ -10,6 +10,12 @@ call the public C API in `neverd/sdk/NeverDCAPI.h`. Use the
 [Python plugin guide](python-plugins.md) when process-local Python authoring is
 more appropriate.
 
+Native plugins can supply external instruction rules through
+`neverd_bytecode_recover_json_v1` without loading an image. The
+[bytecode profile guide](bytecode-profiles.md#c-and-python-plugin-api) documents
+the shared source pipeline and its explicit state ABI. Build the runnable
+`bytecode_plugin` example with `NEVERD_BUILD_PLUGINS=ON`.
+
 ## Compatibility and trust boundary
 
 The current `neverd_plugin_t` descriptor has no ABI version or structure-size

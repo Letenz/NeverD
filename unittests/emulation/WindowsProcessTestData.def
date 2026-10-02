@@ -1,0 +1,45 @@
+//===- WindowsProcessTestData.def - PE process assertions and inputs ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_TEST_TEXT
+NEVERD_WINDOWS_TEST_TEXT(WriteFileName, "WriteFile")
+NEVERD_WINDOWS_TEST_TEXT(WindowsReport, "windows")
+NEVERD_WINDOWS_TEST_TEXT(X64ReturnSlotOnly, "x64 stack return slot")
+NEVERD_WINDOWS_TEST_TEXT(NativeExitName, "RtlExitUserProcess")
+NEVERD_WINDOWS_TEST_TEXT(X64File, "X64.exe")
+NEVERD_WINDOWS_TEST_TEXT(AArch64File, "AArch64.exe")
+NEVERD_WINDOWS_TEST_TEXT(TempPrefix, "neverd-windows-process")
+NEVERD_WINDOWS_TEST_TEXT(InvalidFile, "invalid.exe")
+NEVERD_WINDOWS_TEST_TEXT(InvalidOriginalRVA, "invalid original fixture RVA")
+NEVERD_WINDOWS_TEST_TEXT(ExitName, "ExitProcess")
+NEVERD_WINDOWS_TEST_TEXT(Empty, "")
+NEVERD_WINDOWS_TEST_TEXT(SpacedArgument, "a b")
+NEVERD_WINDOWS_TEST_TEXT(QuotedArgument, "quote\"tail\\")
+NEVERD_WINDOWS_TEST_TEXT(UnicodeArgument, "\xf0\x9f\x99\x82")
+NEVERD_WINDOWS_TEST_TEXT(UnicodeEnvironment, "Z=\xf0\x9f\x99\x82")
+NEVERD_WINDOWS_TEST_TEXT(SortedEnvironment, "a=one")
+NEVERD_WINDOWS_TEST_TEXT(DuplicateFirst, "A=one")
+NEVERD_WINDOWS_TEST_TEXT(DuplicateSecond, "a=two")
+NEVERD_WINDOWS_TEST_TEXT(MissingEquals, "missing-equals")
+NEVERD_WINDOWS_TEST_TEXT(InvalidUTF8, "A=\xff")
+NEVERD_WINDOWS_TEST_TEXT(NativeWindowsOnly,
+                         "requires a native Windows x64 host")
+NEVERD_WINDOWS_TEST_TEXT(StdoutFile, "stdout.bin")
+NEVERD_WINDOWS_TEST_TEXT(StderrFile, "stderr.bin")
+NEVERD_WINDOWS_TEST_TEXT(Space, " ")
+NEVERD_WINDOWS_TEST_TEXT(RedirectError, " 2>")
+#endif
+#ifdef NEVERD_WINDOWS_TEST_WIDE
+NEVERD_WINDOWS_TEST_WIDE(
+    ExpectedCommandLine,
+    u"\"fixture.exe\" \"\" \"a b\" \"quote\\\"tail\\\\\" \"\U0001f642\"")
+NEVERD_WINDOWS_TEST_WIDE(ExpectedEnvironmentBlock, u"a=one\0Z=\U0001f642\0")
+#endif
+#ifdef NEVERD_WINDOWS_TEST_VALUE
+NEVERD_WINDOWS_TEST_VALUE(DOSNewHeaderOffset, 0x3c)
+NEVERD_WINDOWS_TEST_VALUE(InvalidConfigRVA, 0x1000)
+NEVERD_WINDOWS_TEST_VALUE(InvalidConfigSize, 0x100)
+NEVERD_WINDOWS_TEST_VALUE(ExtendedCET, 0x1)
+#endif

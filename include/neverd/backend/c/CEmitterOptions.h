@@ -31,6 +31,11 @@ struct CEmitterOptions {
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.
   bool PreserveLLVMFunctionTypes = false;
+  /// Spell ordinary scalar byte accesses with Clang/GCC aligned(1), may_alias
+  /// pointer types. This preserves unaligned and overlapping storage without
+  /// asserting an effective type. Ordered and unusual-width accesses retain
+  /// their existing exact semantics. The default uses portable byte copies.
+  bool UseUnalignedPointers = false;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::Unknown;
   /// When set, HighC can fold rdata integer loads, print printable

@@ -30,12 +30,14 @@
 ///   - NeverDCAPIEmulation.h -- bounded Windows driver initialization
 ///   - NeverDCAPICPU.h     -- CPU configuration and capability queries
 ///   - NeverDCAPIProcess.h -- explicit guest process workloads
+///   - NeverDCAPIBytecode.h -- external-profile bytecode source recovery
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_SDK_CAPI_H
 #define NEVERD_SDK_CAPI_H
 
+#include "neverd/sdk/NeverDCAPIBytecode.h"
 #include "neverd/sdk/NeverDCAPICPU.h"
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"

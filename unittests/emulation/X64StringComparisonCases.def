@@ -1,0 +1,36 @@
+//===- X64StringComparisonCases.def - Independent compare/scan probes ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_COMPARISON_VALUE
+NEVERD_COMPARISON_VALUE(AllFlags, 0xed7)
+NEVERD_COMPARISON_VALUE(PlainFlags, 0x202)
+NEVERD_COMPARISON_VALUE(ZeroFlag, 0x40)
+NEVERD_COMPARISON_VALUE(ArithmeticFlags, 0x8d5)
+NEVERD_COMPARISON_VALUE(AuxiliaryBoundary, 16)
+NEVERD_COMPARISON_VALUE(FillValue, 0x55)
+NEVERD_COMPARISON_VALUE(DifferentValue, 0xaa)
+NEVERD_COMPARISON_VALUE(OraclePages, 3)
+NEVERD_COMPARISON_VALUE(OracleResumeFlag, 0x10000)
+NEVERD_COMPARISON_VALUE(FaultExit, 71)
+NEVERD_COMPARISON_VALUE(SetupFailure, 72)
+#endif
+#ifdef NEVERD_COMPARISON_BYTES
+// The scalar SSE comparison has an immediate and must never reach CMPSD.
+NEVERD_COMPARISON_BYTES(ScalarSSECompare, 0xf2, 0x0f, 0xc2, 0xc0, 0x00)
+#endif
+#ifdef NEVERD_COMPARISON_CASE
+NEVERD_COMPARISON_CASE(Compare8, 1, true, 0xa6)
+NEVERD_COMPARISON_CASE(Compare16, 2, true, 0x66, 0xa7)
+NEVERD_COMPARISON_CASE(Compare32, 4, true, 0xa7)
+NEVERD_COMPARISON_CASE(Compare64, 8, true, 0x48, 0xa7)
+NEVERD_COMPARISON_CASE(Scan8, 1, false, 0xae)
+NEVERD_COMPARISON_CASE(Scan16, 2, false, 0x66, 0xaf)
+NEVERD_COMPARISON_CASE(Scan32, 4, false, 0xaf)
+NEVERD_COMPARISON_CASE(Scan64, 8, false, 0x48, 0xaf)
+#endif
+#ifdef NEVERD_COMPARISON_TEXT
+NEVERD_COMPARISON_TEXT(FaultOracleUnavailable,
+                       "the native comparison fault oracle requires Linux x64")
+#endif

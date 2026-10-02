@@ -13,3 +13,17 @@ NEVERD_RESOURCE_STRING_CASE(DWord, ULONG, 0x12345678, "rep stosl", "rep lodsl")
 NEVERD_RESOURCE_STRING_CASE(QWord, ULONG64, 0x123456789abcdef0ULL, "rep stosq",
                             "rep lodsq")
 #endif
+#ifdef NEVERD_RESOURCE_COMPARE_CASE
+NEVERD_RESOURCE_COMPARE_CASE(Byte, UCHAR, 0x55, "repe cmpsb; sete %0",
+                             "repne cmpsb; sete %0", "repe scasb; sete %0",
+                             "repne scasb; sete %0")
+NEVERD_RESOURCE_COMPARE_CASE(Word, USHORT, 0x55, "repe cmpsw; sete %0",
+                             "repne cmpsw; sete %0", "repe scasw; sete %0",
+                             "repne scasw; sete %0")
+NEVERD_RESOURCE_COMPARE_CASE(DWord, ULONG, 0x55, "repe cmpsl; sete %0",
+                             "repne cmpsl; sete %0", "repe scasl; sete %0",
+                             "repne scasl; sete %0")
+NEVERD_RESOURCE_COMPARE_CASE(QWord, ULONG64, 0x55, "repe cmpsq; sete %0",
+                             "repne cmpsq; sete %0", "repe scasq; sete %0",
+                             "repne scasq; sete %0")
+#endif

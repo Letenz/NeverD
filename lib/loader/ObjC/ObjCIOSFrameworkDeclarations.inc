@@ -308,4 +308,16 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "textLayoutManager", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "translationInView:", "{CGPoint=dd}24@0:8@16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "velocityInView:", "{CGPoint=dd}24@0:8@16", nullptr},
+// UIButton's three inset properties belong to its anonymous category in
+// both complete Xcode 26.5 Messages ASTs from artifact 11077989891. Each
+// UIEdgeInsets record contains top/left/bottom/right doubles; Apple Clang
+// independently agrees on the six arm64 device/simulator encodings.
+// iPhoneOS: 8836f6b50c979975b1d3e2a365bf23ec1b7304ff42b26393bc713d2c1be1a163
+// Simulator: a028c7a405bc849dc7f899de99fe1e4d26984b24872088a28ac01746efd868fc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "contentEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setImageEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "titleEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setTitleEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
     // clang-format on

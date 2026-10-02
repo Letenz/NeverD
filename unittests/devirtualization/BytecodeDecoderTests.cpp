@@ -293,17 +293,22 @@ TEST_F(BytecodeSourceTest,
     Med.SourceTypeHint = Bound->SourceABI;
     inferMedTypes(Med, A);
     ASSERT_TRUE(verifyMedFunc(Med, "bytecode-state-aliases"));
-    for (bool LLVM : {false, true}) {
+    for (auto [LLVM, Pointers] : {std::pair{false, false},
+                                  {true, false},
+                                  {false, true},
+                                  {true, true}}) {
       SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      SCOPED_TRACE(Pointers);
       CEmitterOptions Options;
       Options.TheArch = A;
       Options.Format = BinaryFormat::ELF;
       Options.PreserveLLVMFunctionTypes = true;
+      Options.UseUnalignedPointers = Pointers;
       std::string Source;
       llvm::raw_string_ostream OS(Source);
       if (LLVM) {
         llvm::LLVMContext Context;
-        auto Module = MedLLVMEmitter().emit({Med}, Context);
+        auto Module = MedLLVMEmitter().emit({Med}, Context, "bytecode-test", A);
         ASSERT_NE(Module, nullptr);
         ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
         ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
@@ -312,6 +317,12 @@ TEST_F(BytecodeSourceTest,
         ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
       }
       OS.flush();
+      if (Pointers) {
+        EXPECT_NE(Source.find("neverd_unaligned_u64 *)(uintptr_t)"),
+                  std::string::npos);
+        EXPECT_EQ(Source.find("neverd_mem_load"), std::string::npos);
+        EXPECT_EQ(Source.find("neverd_mem_store"), std::string::npos);
+      }
       const auto Path = tmpFile("state-aliases.c");
       std::ofstream(Path) << Source << R"(
 #include <string.h>
@@ -442,7 +453,7 @@ TEST_F(BytecodeSourceTest, BothCRoutesPreserveSignedDivisionAndExtension) {
       Options.Format = BinaryFormat::ELF;
       if (LLVM) {
         llvm::LLVMContext Context;
-        auto Module = MedLLVMEmitter().emit({Med}, Context);
+        auto Module = MedLLVMEmitter().emit({Med}, Context, "bytecode-test", A);
         ASSERT_NE(Module, nullptr);
         ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
         ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
@@ -480,6 +491,116 @@ int main(void) {
         ASSERT_TRUE(exec(Output.string(), {}).ok()) << Source;
       }
     }
+  }
+}
+
+TEST_F(BytecodeSourceTest, FloatingConversionsKeepArchitectureResultPolicies) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "source runtime checks require clang";
+  auto P = toyProfile();
+  P.RegisterBytes = 96;
+  BytecodeEncoding Convert;
+  Convert.Size = 1;
+  Convert.Match = {{0, 255, 0xc6}};
+  for (unsigned Input = 0; Input != 2; ++Input)
+    for (unsigned Kind = 0; Kind != 4; ++Kind)
+      Convert.Operations.push_back(
+          {Kind & 1 ? NdOp::FLOAT_FLOAT2UINT : NdOp::FLOAT_FLOAT2INT,
+           fixedReg(16 + Input * 32 + Kind * 8, Kind < 2 ? 4 : 8),
+           {fixedReg(Input * 8, Input ? 8 : 4)}});
+  P.Encodings.push_back(std::move(Convert));
+  auto D = BytecodeDecoder::create(std::move(P));
+  ASSERT_TRUE(bool(D));
+  const uint8_t Program[] = {0xc6, 0xe7};
+  auto F = (*D)->function(Program, 0, 0, 2, "convert_values");
+  ASSERT_TRUE(bool(F)) << llvm::toString(F.takeError());
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    auto Wrapped = lowerBytecodeState(F->Function, 96, A);
+    ASSERT_TRUE(bool(Wrapped));
+    std::map<va_t, SourceFunctionTypeHint> Hints{{0, Wrapped->SourceABI}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceEntryTypeHints(&Hints);
+    auto Med = Converter.convert(Wrapped->Function, A);
+    Med.SourceTypeHint = Wrapped->SourceABI;
+    inferMedTypes(Med, A);
+    for (bool LLVM : {false, true})
+      for (bool Pointers : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(Pointers);
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = A;
+        Options.UseUnalignedPointers = Pointers;
+        if (LLVM) {
+          llvm::LLVMContext Context;
+          auto Module =
+              MedLLVMEmitter().emit({Med}, Context, "bytecode-test", A);
+          ASSERT_NE(Module, nullptr);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+        } else {
+          auto High = MedToHighConverter().convert(Med, A);
+          ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        }
+        OS.flush();
+        const auto Path = tmpFile("float-conversions.c");
+        std::ofstream(Path) << "#define X86_POLICY " << (A == Arch::X64) << "\n"
+                            << Source << R"(
+#include <string.h>
+int main(void) {
+  const uint64_t u32 = UINT32_MAX, u64 = UINT64_MAX;
+  const uint64_t s32 = UINT64_C(1) << 31, s64 = UINT64_C(1) << 63;
+  const struct { double input; uint64_t expected[4]; } cases[] = {
+    {0, {0, 0, 0, 0}}, {-0.75, {0, 0, 0, 0}}, {3.75, {3, 3, 3, 3}},
+    {-3.75, {u32-2, X86_POLICY ? u32 : 0, u64-2, X86_POLICY ? u64 : 0}},
+    {0x1p31, {X86_POLICY ? s32 : s32-1, s32, s32, s32}},
+    {0x1p32, {X86_POLICY ? s32 : s32-1, u32, UINT64_C(1)<<32, UINT64_C(1)<<32}},
+    {0x1p63, {X86_POLICY ? s32 : s32-1, u32, X86_POLICY ? s64 : s64-1, s64}},
+    {-0x1p63, {s32, X86_POLICY ? u32 : 0, s64, X86_POLICY ? u64 : 0}},
+    {0x1p64, {X86_POLICY ? s32 : s32-1, u32, X86_POLICY ? s64 : s64-1, u64}},
+    {__builtin_inf(), {X86_POLICY ? s32 : s32-1, u32, X86_POLICY ? s64 : s64-1, u64}},
+    {-__builtin_inf(), {s32, X86_POLICY ? u32 : 0, s64, X86_POLICY ? u64 : 0}},
+    {__builtin_nan(""), {X86_POLICY ? s32 : 0, X86_POLICY ? u32 : 0,
+                        X86_POLICY ? s64 : 0, X86_POLICY ? u64 : 0}}
+  };
+  for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
+    unsigned char storage[98];
+    memset(storage, 0xa5, sizeof(storage));
+    unsigned char *state = storage + 1;
+    float single = (float)cases[i].input;
+    memcpy(state, &single, 4);
+    memcpy(state + 8, &cases[i].input, 8);
+    if (convert_values(state)) return 1;
+    for (unsigned input = 0; input < 2; ++input)
+      for (unsigned kind = 0; kind < 4; ++kind) {
+        uint64_t value = 0;
+        unsigned offset = 16 + input * 32 + kind * 8;
+        unsigned size = kind < 2 ? 4 : 8;
+        memcpy(&value, state + offset, size);
+        if (value != cases[i].expected[kind]) return 2;
+        for (unsigned byte = size; byte < 8; ++byte)
+          if (state[offset + byte] != 0xa5) return 3;
+      }
+    for (unsigned byte = 80; byte < 96; ++byte)
+      if (state[byte] != 0xa5) return 4;
+    if (storage[0] != 0xa5 || storage[97] != 0xa5) return 5;
+  }
+  return 0;
+}
+)";
+        for (const char *Opt : {"-O0", "-O2"}) {
+          const auto Output = tmpFile(std::string("fp-test") +
+                                      neverd::test::executableSuffix());
+          auto Built = exec(NEVERD_TEST_CLANG,
+                            {"-std=c11", "-Werror", Opt, "-fsanitize=undefined",
+                             "-fsanitize-trap=undefined", Path.string(), "-o",
+                             Output.string()});
+          ASSERT_TRUE(Built.ok()) << Built.err << '\n' << Source;
+          ASSERT_TRUE(exec(Output.string(), {}).ok()) << Source;
+        }
+      }
   }
 }
 
@@ -652,7 +773,7 @@ TEST_F(BytecodeSourceTest, BothCRoutesPreserveLoopsNarrowWritesAndMemory) {
       llvm::raw_string_ostream OS(Source);
       if (LLVM) {
         llvm::LLVMContext Context;
-        auto Module = MedLLVMEmitter().emit({Med}, Context);
+        auto Module = MedLLVMEmitter().emit({Med}, Context, "bytecode-test", A);
         ASSERT_NE(Module, nullptr);
         ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
         ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));

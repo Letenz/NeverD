@@ -13,6 +13,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 
@@ -71,8 +72,15 @@ std::string medRecoverySourceLimitation(const MedFunc &Function, Arch TheArch,
   std::string Error;
   if (!validateSourceABI(Hint, Error))
     return "recovered source ABI cannot establish its input domain";
-  const auto Demand = observedMedSourceEntryBytes(
-      Function, Hint, SourceEntryDemand::EffectsAndReturns);
+  std::optional<std::map<uint64_t, uint64_t>> Demand;
+  if (Function.SkippedSSA) {
+    const auto Plan = analyzeMedMutableSource(Function, TheArch);
+    if (Plan)
+      Demand = Plan->EntryBytes;
+  } else {
+    Demand = observedMedSourceEntryBytes(Function, Hint,
+                                         SourceEntryDemand::EffectsAndReturns);
+  }
   if (!Demand)
     return "recovered source entry-value proof is incomplete";
 
@@ -92,7 +100,11 @@ std::string medRecoverySourceLimitation(const MedFunc &Function, Arch TheArch,
   const auto Declared = sourceABIParameters(Hint);
   for (size_t I = 0; I < Function.Params.size(); ++I) {
     const auto &Parameter = Function.Params[I];
-    if (Parameter.RegOff == kNoParamReg || Parameter.Id < 0)
+    // A declared argument in mutable MedIR may have no synthetic SSA seed
+    // (Id == -1). It still occupies its declared ABI position; the separate
+    // mutable plan, rather than that SSA bookkeeping ID, owns entry demand.
+    if (Parameter.RegOff == kNoParamReg ||
+        (Parameter.Id < 0 && !(Function.SkippedSSA && Function.SourceTypeHint)))
       continue;
     unsigned Bytes = Parameter.Size;
     if (Function.SourceTypeHint) {
@@ -512,6 +524,9 @@ static const char *devirtualizeSource(
     if (Result.MedFuncs.empty())
       return Fail("recovery produced no source input-domain evidence");
     for (const auto &Function : Result.MedFuncs) {
+      if (!PO.LiftMode && Function.SkippedSSA)
+        return Fail("recovered mutable source requires LLVM output; HighC "
+                    "lowering is incomplete");
       const LowFunc *SourceFrame = nullptr;
       if (!MachineState) {
         const auto Count = std::count_if(

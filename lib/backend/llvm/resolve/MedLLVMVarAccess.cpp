@@ -93,7 +93,7 @@ void MedLLVMEmitter::ensureDefPhiIndex() const {
 }
 
 const MedOp *MedLLVMEmitter::lookupDef(const MedVar &V) const {
-  if (V.isConst())
+  if (V.isConst() || (CurMedFunc && CurMedFunc->SkippedSSA))
     return nullptr;
   ensureDefPhiIndex();
   auto It = DefIndex.find(medVarDefKey(V));
@@ -101,7 +101,7 @@ const MedOp *MedLLVMEmitter::lookupDef(const MedVar &V) const {
 }
 
 const PhiNode *MedLLVMEmitter::lookupPhi(const MedVar &V) const {
-  if (V.isConst())
+  if (V.isConst() || (CurMedFunc && CurMedFunc->SkippedSSA))
     return nullptr;
   ensureDefPhiIndex();
   auto It = PhiIndex.find(medVarDefKey(V));
@@ -840,6 +840,10 @@ llvm::Value *MedLLVMEmitter::getRawSegmentOffset(const MedVar &V,
 
 llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
                                     llvm::IRBuilder<> &Builder) {
+  // Validated mutable source has no image relocation. Its constants are raw
+  // occurrence values; whole-function variable roles are not SSA evidence.
+  if (CurMedFunc && CurMedFunc->SkippedSSA && V.isConst())
+    return rawIntegerConstant(*Ctx, sizeToType(V.Size), V.ConstVal);
   // Any fixed value is as good as another, but every read of one agrees.
   if (V.Kind == MedVar::Unspecified)
     return Builder.CreateFreeze(llvm::PoisonValue::get(

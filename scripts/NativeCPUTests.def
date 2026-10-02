@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64IntegerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
@@ -341,4 +342,154 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64BitString.AddressSizeWrappingPrecedesFSAndGSBases/"
     "whpUser")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AllArithmeticFlagsMatchIndependentHostInstructions/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AllArithmeticFlagsMatchIndependentHostInstructions/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ConditionalRepeatsMatchHostAndStopAtFirstResult/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ConditionalRepeatsMatchHostAndStopAtFirstResult/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ZeroCountDoesNotReadPointersOrChangeFlags/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ZeroCountDoesNotReadPointersOrChangeFlags/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "NarrowSourceWrapsBeforeSegmentBaseAndScanIgnoresSI/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "NarrowSourceWrapsBeforeSegmentBaseAndScanIgnoresSI/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "EarlyTerminationNeverTouchesTheNextUnmappedPage/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "EarlyTerminationNeverTouchesTheNextUnmappedPage/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "CompleteOperandsAreValidatedBeforeAnyReadObserver/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "CompleteOperandsAreValidatedBeforeAnyReadObserver/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "LaterFaultRestoresEntryFlagsAndKeepsCompletedElements/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "LaterFaultRestoresEntryFlagsAndKeepsCompletedElements/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "StopsRetainLastComparisonAndResumeFromSavedContext/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "StopsRetainLastComparisonAndResumeFromSavedContext/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ObserverFailureDoesNotPublishCurrentComparison/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "ObserverFailureDoesNotPublishCurrentComparison/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "LockedAndScalarSSEFormsRejectBeforeReads/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "LockedAndScalarSSEFormsRejectBeforeReads/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "CrossPageReadOnlyOperandsMatchHostThroughAliases/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "CrossPageReadOnlyOperandsMatchHostThroughAliases/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AddressSizeWrappingRetainsConditionalRepeatProgress/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AddressSizeWrappingRetainsConditionalRepeatProgress/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AResumedFaultUsesTheNewEntryFlags/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64StringComparison."
+                                "AResumedFaultUsesTheNewEntryFlags/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AmbiguousInactiveUpperHalvesRejectBeforeEffects/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "AmbiguousInactiveUpperHalvesRejectBeforeEffects/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "DeviceOperandsRejectBeforeCallbacksOrObservations/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringComparison."
+    "DeviceOperandsRejectBeforeCallbacksOrObservations/whpUser")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsProcessImage.NativeWindowsOracleRunsTheSameExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.RunsPEWithStaticAndDynamicTLSHeapAndProcessEnvironment/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.EntryReturnRunsDetachAndPreservesExitStatus/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.APIErrorsDoNotPoisonTheNextValidCall/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.SharedInstructionBudgetIncludesTLSInitialization/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.EventLimitStopsBeforeAPIOutput/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.OutputLimitDoesNotPublishPartialBytes/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.DirectSyscallsDoNotSelectWindowsServices/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.PrivilegedInstructionsCannotExecuteAsKernel/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.InvalidGuestStoresRemainCPUFaults/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.UnsupportedOverlappedWritesDoNotSucceed/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.LiveTLSCallbackMutationsAffectAttachAndDetach/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.WriteFileClearsAliasedCompletionBeforeReadingBytes/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.NonreturningTailCallDoesNotReadADeadReturnAddress/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.InvalidAPIOutputNeedsExplicitExceptionSupport/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.ForgedCallbackGateCannotTerminateAnEntryCall/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.ReentrantExitDoesNotPublishACompletedStatus/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.APIWritesToTheReturnSlotChangeTheActualReturn/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.NTDLLNamedExitHasExplicitProviderEvidence/"
+    "WhpX64")
 #endif

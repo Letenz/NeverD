@@ -56,6 +56,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -650,8 +651,7 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
         ParamTypes = {PtrTy, PtrTy};
       } else if (KindIt->second == SEHScopeKind::Finally) {
         RetType = llvm::Type::getVoidTy(*Ctx);
-        ParamTypes.assign(
-            {llvm::Type::getInt8Ty(*Ctx), PtrTy});
+        ParamTypes.assign({llvm::Type::getInt8Ty(*Ctx), PtrTy});
       }
     }
   }
@@ -699,6 +699,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                      bool MergeableGlobals_,
                      const std::vector<char> *BodyMask) {
 
+  MutableSourcePlans.clear();
+  MutableReturnValue.reset();
   if (BodyMask && BodyMask->size() != Funcs.size()) {
     // A rejected generation must not leave a reusable emitter exposing the
     // previous module's transient RETURN bindings or entry arbitration set.
@@ -707,6 +709,22 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     CxxContinuationFunctionEntries.clear();
     ActiveCxxContinuationPlan.reset();
     return nullptr;
+  }
+
+  // Module prepasses inspect every supplied function, including masked
+  // bodies. Validate mutable storage and metadata before any such traversal,
+  // then reuse the same plan during emission.
+  for (const auto &Func : Funcs) {
+    if (!Func.SkippedSSA)
+      continue;
+    if (Img_)
+      throw std::runtime_error(
+          "mutable LLVM source does not support image relocation");
+    std::string Error;
+    auto Plan = analyzeMedMutableSource(Func, TheArch, &Error);
+    if (!Plan)
+      throw std::runtime_error(Error);
+    MutableSourcePlans.emplace(&Func, std::move(*Plan));
   }
 
   Ctx = &LCtx;
@@ -993,8 +1011,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     va_t End = Func.Entry;
     if (Func.OriginalSize)
       End = Func.Entry + Func.OriginalSize;
-    if (Func.ExceptionMetadata &&
-        Func.ExceptionMetadata->CodeRange.End > End)
+    if (Func.ExceptionMetadata && Func.ExceptionMetadata->CodeRange.End > End)
       End = Func.ExceptionMetadata->CodeRange.End;
     for (const MedBlock &Block : Func.Blocks)
       if (Block.EndAddr > End)

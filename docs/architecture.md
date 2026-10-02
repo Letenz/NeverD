@@ -40,13 +40,36 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
-The standalone `neverd-bytecode` tool accepts externally specified instruction
-languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+The `neverd-bytecode` tool and C/Python plugins accept externally specified
+instruction languages through the shared `neverd_bytecode_recover_json_v1` API.
+`lib/pipeline/BytecodeRecovery.cpp` owns request validation and source orchestration;
+`lib/analysis/bytecode` owns encoding and CFG validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
 routes. Image-independent source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
+
+Native jump-table selector domains are proved in the shared LowIR resolver.
+A loader-normalized absolute table may use the same exact, point-sensitive
+finite-domain proof as a relative table. The physical pointer run supplies a
+read ceiling, not a selector bound. A long physical run may use the bounded
+finite query only after proving every feasible index fits its query ceiling;
+values beyond that ceiling cannot be silently discarded. After adding
+destinations, the resolver must replay the proof on the expanded graph; a
+newly reached backedge cannot reuse an entry-only domain. A complete
+single-consumer finite proof is not
+widened or vetoed by a weaker mask search. Module-wide storage mutation checks
+still run before source publication.
+For a single absolute consumer, a relocation-backed physical run may contain
+unused pointers to other functions. Validate target ownership for every
+admitted selector coordinate before graph growth; an excluded prefix slot
+neither truncates the selector proof nor becomes a local successor.
+The LLVM backend accepts a sparse table's logical address origin separately
+from its owned runtime slots. Eliding its target load still requires the exact
+operation witness, complete mapped slot and relocation ownership, and exclusive
+consumption by the recovered branch. The unused prefix gains no suppression
+authority from sharing that origin.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
@@ -86,6 +109,12 @@ optimization. The SDK rebuilds a cached native LLVM module when this policy
 changes and publishes the replacement only after verification succeeds.
 Both LLVM C routes retain verified output with only temporary-alloca
 promotion when an incomplete native exception contract excludes optimization.
+The C emitter clones verified LLVM IR and removes dead computations before
+rendering, including in `--no-opt` mode. This source normalization preserves
+observable calls and ordered memory accesses without modifying the cached IR.
+Generic LLVM arithmetic and control builtins do not request target ISA headers.
+Both C routes reject string-literal replacement when loader fixup provenance
+overlaps any candidate byte, including its terminator.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -147,6 +176,9 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Med-to-High lowering preserves CFG successors after branch threading, including
+sole successors with no remaining branch operation. When source order differs,
+it emits an explicit transfer after that edge's PHI copies.
 
 HighIR supports narrowing a 64-bit source local to 32 bits under the same proof used for 128-bit carriers: every definition must agree on the carrier and prefix widths, and every read must explicitly select the low prefix. A full-width integer AND also selects that prefix when its constant mask fits the low word without sign-extending from a narrower type; the narrowed local is zero-extended at that use before applying the unchanged mask. Full-width stores, escapes, upper-byte reads, or effectful upper expressions prevent narrowing. Source-parameter padding remains unknown.
 Exact whole-variable copies can share this proof through a bounded graph when a constructing definition establishes the prefix width. Every copied destination must itself qualify for narrowing; a full-width consumer invalidates all upstream exemptions. Unseeded cycles, conflicting widths and exhausted budgets preserve the original values.
@@ -816,6 +848,13 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## IR representations and routes
 
+`ir/FloatConversion.h` owns the result policy for scalar float-to-integer
+operations: saturation for the non-x86 path and x86 indefinite results for
+invalid conversions. HighC and the LLVM lowering select that same policy;
+both C routes share the guarded conversion renderer. The cast executes only
+after range and NaN checks. Architecture-specific floating control/status
+effects remain in their existing intrinsic contracts.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
@@ -859,6 +898,12 @@ The v3 recovery C API and CLI map explicit field, refinement and solver-query bu
 
 Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
 
+Large recovered functions that exceed the SSA construction limit can use `--llvm` through a bounded scalar mutable-storage contract. Entry inputs, loop-carried values and earlier reads retain their meaning. Unsupported implicit state, vector-register parameters, image relocation, ambiguous storage and malformed control fail explicitly; HighC rejects this fallback. Source output still uses the existing machine-state contract and adds no equivalence certificate.
+
+`analyzeMedMutableSource` owns normalized CFG validation, storage identities and conservative entry-byte requirements. These requirements are upper bounds on reads, not positive observability evidence. LLVM validates before module scans and reuses the plan to initialize entry values once. Block/value products and propagation work have separate bounds. C forwarding uses exact earlier stores for each load, with matching types and no partial aliases; cross-block joins retain explicit storage.
+
+The mutable subset accepts 8/16/32/64/128-bit scalar storage; bit-count inputs are limited to 64 bits. Nonstandard widths and wider storage require a separate source contract.
+
 The architecture lifter owns the transactional undefined-output sidecar: it clears prior evidence before each attempt and publishes effects only for the exact successful lift. `Missing` means absent evidence, not an empty `Complete` description. Ordinary LowIR keeps deterministic selected values. `LowIRUndefinedIndependence` owns the bounded relational proof over a supplied complete acyclic LowIR graph, sharing ordinary inputs and preserving the correlations of fresh undefined producers. It binds full instruction boundaries and operation digests and refuses incomplete proofs. General native-graph certification, loop invariants and native-to-C source equivalence remain separate work beyond the finite native-path scope below.
 
 Legacy scalar SHL/SAL, SHR and SAR carry count-dependent undefined-bit evidence for 8/16/32/64-bit operands. Masked count zero preserves every flag; nonzero counts make AF arbitrary, counts above one make OF arbitrary, and SHL/SHR counts at least the operand width make CF arbitrary. SAR retains defined carry. Instruction-local Boolean guards use the saved masked count before overlapping destination writes, and are emitted identically with or without metadata. Unsupported encodings never publish partial effects. These rules conservatively cover the [Intel SDM shift contract](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf) and [AMD APM Volume 3](https://docs.amd.com/v/u/en-US/24594_3.37).
@@ -872,6 +917,8 @@ Native immutable loads also accept exhaustively proved finite address sets, boun
 The following behavior uses the default strict audit contract. `checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`UD2` may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
 
 The explicit `RetainUnauditedNativeBoundaries` option adds refusal boundaries to finite native independence and native-to-LowIR refinement. Only strictly decoded and lifted instructions with `Missing` coverage, empty effects and a matching nonempty operation digest qualify. All structural, control, overlap, profile and resource checks remain mandatory. Collection stops only at that boundary’s successors; another edge into the following bytes is still collected. Every feasible arrival refuses before execution; unknown or exhausted solver results prove nothing. Successful certificates bind typed, versioned receipts containing the exact boundary, native-byte digest and operation digest, without changing `Missing` to `Complete`. Uncollected suffixes have no audit claim. Independence covers every arbitrary choice; selected-value refinement establishes unreachability only for its declared witness. Static LowIR, loop proof/inference and exact LLVM APIs do not enable this option.
+
+`AllowOverlappingNativeInstructions` is a separate, default-off option for finite native independence and native-to-LowIR refinement. Each entry is decoded and checked independently; intersecting instruction bytes must agree with all earlier instruction and immutable-read evidence, including candidate reads. Candidate LowIR addresses remain labels, not byte evidence. `MaxNativeInstructionBytes` defaults to 1048576 and charges the full size of every newly fetched entry, including repeated overlapping bytes, before comparison. Exhaustion or conflicting bytes refuses a certificate. The option and limit bind the proof digest. Static LowIR, inductive loop proofs and inference reject the option, even with an empty loop plan; the exact LLVM API and CLI retain their existing defaults.
 
 Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1` in the options and contract; the existing execution booleans do not enable it. Canonical shared entry flags and persistent system flags use the same scalar PUSHFQ/POPFQ transition as the machine-state source wrapper, including CPL3/IOPL0 masks. Both executions must prove every POPFQ image keeps TF/AC clear; the checker never assumes this guard. Final system flags are always compared, even without register or written-frame observations. Certificates bind the profile version and exact transition digests. Under this explicit CET-disabled profile, independently checked canonical RDSSPD/RDSSPQ bytes may project to an exact NOP with a typed receipt; the original `Missing` sidecar remains unchanged and even a 32-bit destination preserves its whole register. Canonical INCSSPD/INCSSPQ is retained as a profile-dependent #UD boundary, with a receipt for the original unreachable instruction; any feasible visit violates the nonfaulting contract, even with a zero operand. Other CET instructions, CET-enabled execution and profile use through the static LowIR API remain unsupported. Finite loop unrolling preserves state and fresh undefined choices on every visit; it does not prove an invariant.
 
@@ -1216,6 +1263,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
+| `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1237,6 +1285,7 @@ lib/emulation/
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
+  os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
   os/linux/android/      Android native library linking, TLS and Bionic models
 ```
@@ -1283,11 +1332,10 @@ generic scheduler or a hard native cancellation deadline.
 The `os` directory describes the **guest** environment. Linux-host KVM can
 execute a Windows guest workload; the host never chooses its OS model.
 `DriverSession`, driver scenario parsing and reports belong to `os/windows`,
-because their lifecycle and objects are Windows-specific. The current Windows
-implementation remains one driver environment; moving it does not imply a
-completed Windows user-mode environment.
-When a process environment is added, keep its entry point, loader policy and
-user ABI separate from the kernel workload. Move shared OS primitives into a
+because their lifecycle and objects are Windows-specific. Windows PE64 user processes have their own `NeverDEmulationWindowsProcess`
+component under `os/windows/process`, built with CPU emulation even when the
+driver environment is disabled. Process entry, PE admission, PEB/TEB, TLS and
+named user APIs stay separate from kernel objects and driver policy. Move shared OS primitives into a
 common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
@@ -1633,7 +1681,7 @@ and Darwin user/kernel workloads need their own loaders, ABI and OS models.
 The bounded Android native profile described above supports a specified API 28
 subset. CPU transport availability does not imply arbitrary OS compatibility.
 
-`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 329 required checks: 101 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+`driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
 
@@ -1657,7 +1705,9 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 `X64BitInstructions.def` admits register and ordinary-RAM `BT/BTS/BTR/BTC` at 16/32/64 bits. A register bit index is signed at the operand width and selects a complete word; an immediate stays within the base word. Address-size wrapping occurs before FS/GS base addition. The processor supplies CF and written values; `RAMTransaction` keeps the result private until observers accept it. Whole-span permission checks cover separate page allocations and aliases. Stops, callback failures and denied pages preserve the original CPU and RAM. LOCK is limited to naturally aligned modifying memory forms; MMIO and parallel hardware SMP remain unsupported. `X64BitStringTests.cpp` compares independent encodings with actual x64 host execution and checks negative indices, width truncation, cross-page accesses, cancellation and invalid LOCK forms. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
-`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.
+`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE on MOVS/STOS/LODS and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.
+
+`X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
 `WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP.
 
@@ -2713,7 +2763,9 @@ AArch64 concrete-type recipes authenticate Swift standard-library descriptor ide
 
 For the complete 14-byte, two-descriptor Swift generic recipe with a literal `String` first argument, cache/reference agreement compares bounded demangled type trees when standalone descriptor substitution indices differ from the enclosing type spelling. It checks the generic kind, both argument types, every module and nested declaration, and all node text and indices against the authenticated descriptors. The emitted symbolic references retain their original identities. Different types, extra arguments, malformed recipes and stale descriptor evidence remain rejected; native Swift execution at O0/O2 verifies the resulting metadata identity.
 
-The same bounded comparison also supports complete 12-byte recipes for an unlabeled tuple of two nominal types. It verifies both element identities and their order even when the cache name uses module substitutions. This rule requires exactly two unlabeled elements; labels, extra elements and different type trees cannot match it. Descriptor authentication, original runtime identity, fresh shared caches and publication revalidation remain mandatory.
+The same bounded comparison also supports complete 12-byte recipes for an unlabeled tuple of two nominal types. It verifies both element identities and their order even when the cache name uses module substitutions. This rule requires exactly two unlabeled elements; labels, extra elements and different type trees cannot match it. Descriptor authentication, original runtime identity, fresh shared caches and publication revalidation remain mandatory. It also supports the complete 19-byte recipe for a nominal container with one such tuple argument, authenticating the outer descriptor and both element descriptors independently and checking the container kind, argument count and element order.
+
+On AArch64, a native helper with up to eight declared register parameters may forward several concrete-type metadata pairs. A bounded scan of its complete typed body requires each unchanged cache/reference parameter to appear only in direct calls to the existing concrete-type instantiator, with matching caller/callee ABIs and code identity. Reassignment, arithmetic, escape, conflicting roles, indirect targets, incomplete flow and exhausted budgets reject the proof. Binding keeps a separate pair for each argument position and applies the same proof to unique caller locals; equal bits in unrelated scalar arguments do not inherit it. The original emitted instantiator, forwarding callers and array helper execute against native Swift tuple buffers at O0/O2.
 
 The generated Swift external-data catalog includes the Foundation `String: CVarArg` conformance descriptor only when all four Darwin compiler and SDK export profiles agree. A separate Foundation probe prevents compiler merging from replacing the required direct generic call with an indirect thunk. Extraction still requires the exact non-TLS descriptor declaration, String metadata, lazy witness accessor and release-store cache. Source binding preserves the imported descriptor address and authenticates its exact provider, symbol and strong zero-addend bind again at publication; this grants no witness-member ABI or descriptor layout.
 
@@ -2723,4 +2775,12 @@ ARM64 source binding recognizes twelve UIKit attributed-string key globals only 
 
 Private Swift witness tables can also use an internal protocol with a stable registered name. The shared type-identity proof checks the descriptor, its complete module context and all direct `__swift5_protos` records; duplicate identities, missing registrations and unsupported flags remain rejected. Only an ordinary protocol without requirement signatures or associated types qualifies. Generated C resolves its simple existential metadata, validates the metadata kind and single-protocol layout, and obtains the original protocol descriptor before querying the original class conformance. It never reconstructs witness entries or links an unexported descriptor. Publication and rendering repeat the identity proof against the current image.
 
+Concrete type recipes reuse this registered internal-protocol identity proof for direct references and authenticated local GOT references. They rebuild the stable declaration spelling while retaining the recipe’s own existential, optional or array operators, then require agreement with the entire cache type. They neither link a private protocol symbol nor copy its descriptor. Missing registrations, requirement signatures, associated types, incomplete records and stale identities remain rejected.
+
 The super-call proof retains narrow result padding and checks every argument; aggregate, variadic, stale and ambiguous declarations remain unsupported. Exact whole class or metaclass addresses materialized into pointer-sized values use the same runtime object-identity proof as direct receivers, including stores into `objc_super`. Class-reference cells, scalar immediates, partial addresses and conflicting metadata cannot acquire this binding. Publication rechecks the original class identity.
+
+UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters and setters retain the 32-byte `UIEdgeInsets` record: top, left, bottom and right are doubles in d0–d3 on arm64. Complete device and simulator SDK declarations agree, and Apple Clang independently reproduces all six encodings. Receiver lookup retains the anonymous UIButton category and the UIButton → UIControl → UIView hierarchy. Conflicting runtime declarations, other receivers, class methods, wrong providers and architectures without matching evidence remain unsupported.
+
+`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

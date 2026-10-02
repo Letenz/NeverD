@@ -147,6 +147,15 @@ TEST(LowIRUndefinedIndependence,
   expectStatus(P, Status::Unsupported);
 }
 
+TEST(LowIRUndefinedIndependence, NativeOverlapOptionRejectsStaticAPI) {
+  Program P;
+  P.instruction({op(NdOp::COPY, reg(0), {number(7)})});
+  P.finish();
+  expectStatus(P, Status::Proved);
+  P.Contract.AllowOverlappingNativeInstructions = true;
+  expectStatus(P, Status::Unsupported);
+}
+
 TEST(LowIRUndefinedIndependence, PartialRegisterOverwritePreservesOtherBits) {
   Program P;
   P.arbitrary(reg(0), 32, 1);

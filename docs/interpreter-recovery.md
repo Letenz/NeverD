@@ -184,6 +184,10 @@ C callers use `neverd_devirtualize_source_v3()` or `neverd_devirtualize_machine_
 
 Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
 
+Large recovered functions that exceed the SSA construction limit can use `--llvm` through a bounded scalar mutable-storage contract. Entry inputs, loop-carried values and earlier reads retain their meaning. Unsupported implicit state, vector-register parameters, image relocation, ambiguous storage and malformed control fail explicitly; HighC rejects this fallback. Source output still uses the existing machine-state contract and adds no equivalence certificate.
+
+The mutable subset accepts 8/16/32/64/128-bit scalar storage; bit-count inputs are limited to 64 bits. Nonstandard widths and wider storage require a separate source contract.
+
 The compatible v4 APIs are `neverd_devirtualize_source_v4()` and `neverd_devirtualize_machine_source_v4()`. Zero-initialize `neverd_devirtualize_options_v4` and set `base.base.base.struct_size` to its full size. Chaining accepts a nonnegative 32-bit decimal CLI count, including zero to disable it. Bounds use signed 64-bit decimal endpoints with `begin < end`, require `--vm-machine-state`, and constrain the physical entry RSP rather than its adjusted value. In C, the bounds flag requires the machine-state API; without it both endpoints must be zero. Unknown flags and old reserved fields are rejected. v1/v2/v3 ignore the entire v4 tail; v4 ignores future tails. Null options retain old defaults. The report adds `maxChainedTransfers` and `entryFrameBounds`; `discoverControlState` records the effective switch. All CLI options require `--devirtualize`. The numeric premise is not checked at runtime and establishes no accessibility, initialization or nonalias guarantee. These options do not enable a native proof policy.
 
 ```c
@@ -446,6 +450,8 @@ have explicit limits. Global solver-query limits and per-query limits on gates,
 conflicts, propagations and watched-literal visits bound proof work;
 symbolic-node limits bound expression growth. The JSON report includes these
 budgets together with `solverQueries` and `relationalWidenings`.
+
+`AllowOverlappingNativeInstructions` is a separate, default-off option for finite native independence and native-to-LowIR refinement. Each entry is decoded and checked independently; intersecting instruction bytes must agree with all earlier instruction and immutable-read evidence, including candidate reads. Candidate LowIR addresses remain labels, not byte evidence. `MaxNativeInstructionBytes` defaults to 1048576 and charges the full size of every newly fetched entry, including repeated overlapping bytes, before comparison. Exhaustion or conflicting bytes refuses a certificate. The option and limit bind the proof digest. Static LowIR, inductive loop proofs and inference reject the option, even with an empty loop plan; the exact LLVM API and CLI retain their existing defaults.
 
 <!-- i18n-section: evidence -->
 

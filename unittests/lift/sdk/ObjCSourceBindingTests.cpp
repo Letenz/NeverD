@@ -3619,6 +3619,143 @@ TEST(ObjCSourceBindings,
   }
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftTupleContainerRecipeFixture(Arch Architecture) {
+  auto F = swiftNominalTupleTypeFixture(Architecture);
+  const bool CoreStorage = Architecture == Arch::AArch64;
+  const std::string Outer = CoreStorage ? "_$ss23_ContiguousArrayStorageCMn"
+                                        : "_$s7Combine9PublishedVMn";
+  const std::string Base = CoreStorage
+                               ? "_$ss23_ContiguousArrayStorageCy10Foundation"
+                                 "3URLV_AC4DateVtG"
+                               : "_$s7Combine9PublishedVy10Foundation3URLV_"
+                                 "AD4DateVtG";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.DescriptorSlot, Outer, 0,
+      CoreStorage ? "/usr/lib/swift/libswiftCore.dylib"
+                  : "/System/Library/Frameworks/Combine.framework/Combine",
+      false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.NestedDescriptorSlot, "_$s10Foundation3URLVMn", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.NestedDescriptorSlot + 8, "_$s10Foundation4DateVMn", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 19);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  Type[5] = 'y';
+  Type[11] = '_';
+  Type[12] = 2;
+  llvm::support::endian::write32le(
+      Type + 13, uint32_t(F.NestedDescriptorSlot + 8 - (F.TypeReference + 13)));
+  Type[17] = 't';
+  Type[18] = 'G';
+  Type[19] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftTupleContainerRecipeKeepsAllThreeIdentities) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftTupleContainerRecipeFixture(Architecture);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 3U);
+    EXPECT_EQ(Proof->Descriptors[0].Offset, 0U);
+    EXPECT_EQ(Proof->Descriptors[1].Offset, 6U);
+    EXPECT_EQ(Proof->Descriptors[2].Offset, 12U);
+    EXPECT_EQ(Proof->Descriptors[1].Symbol, "_$s10Foundation3URLVMn");
+    EXPECT_EQ(Proof->Descriptors[2].Symbol, "_$s10Foundation4DateVMn");
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    for (const auto &Descriptor : Proof->Descriptors)
+      EXPECT_NE(Source.find("__asm__(\"" + Descriptor.Symbol + "\")"),
+                std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftTupleContainerRecipeRejectsDifferentTreesAndEdges) {
+  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftTupleContainerRecipeFixture(Arch::AArch64);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    std::string Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_"
+                       "AC4DateVtG";
+    auto *Type = F.Image.Segments[0].Data.data() + F.TypeReference - 0x1000;
+    switch (Mutation) {
+    case 0:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation4DateV_AC3URLVtG";
+      break;
+    case 1:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV3url_"
+             "AC4DateV4datetG";
+      break;
+    case 2:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVSgtG";
+      break;
+    case 3:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVSiGt";
+      break;
+    case 4:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVtSiG";
+      break;
+    case 5:
+      Type[11] = 'y';
+      break;
+    case 6:
+      Type[17] = 'G';
+      break;
+    case 7:
+      Type[18] = 't';
+      break;
+    case 8:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot + 8].Module =
+          "/tmp/foreign.dylib";
+      break;
+    case 9:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot + 8].WeakImport = true;
+      break;
+    case 10:
+      llvm::support::endian::write32le(
+          Type + 13, uint32_t(F.NestedDescriptorSlot - (F.TypeReference + 13)));
+      break;
+    case 11:
+      F.Image.ConflictingImportStorageSlots.insert(F.NestedDescriptorSlot + 8);
+      break;
+    case 12:
+      Type[19] = 'G';
+      break;
+    }
+    F.Image.Symbols[0].Name = Base + "MR";
+    F.Image.Symbols[1].Name = Base + "Md";
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
+
 TEST(ObjCSourceBindings,
      SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
   SwiftTypeMetadataFixture F(Arch::AArch64);
@@ -3682,6 +3819,268 @@ TEST(ObjCSourceBindings,
   Native->Signature.Parameters[1].Type = NdType::makeInt(4, false);
   const auto Narrow = bindObjCSourceReferences(F.Function, F.Image);
   EXPECT_TRUE(Narrow.SwiftTypeMetadataPairs.empty());
+}
+
+namespace {
+struct ForwardedMetadataFixture : SwiftTypeMetadataFixture {
+  HighFunc Helper, Instantiator;
+  static constexpr va_t SecondCache = 0x2040, SecondReference = 0x1040;
+  ExprPtr CallerCall, FirstUse, SecondUse;
+
+  static ExprPtr parameter(unsigned Index, TypeRef Type) {
+    MedVar Var;
+    Var.Kind = MedVar::Param;
+    Var.Id = Index;
+    Var.Size = Type->Size;
+    return HighExpr::makeVar(Var, Type);
+  }
+
+  ForwardedMetadataFixture() : SwiftTypeMetadataFixture(Arch::AArch64) {
+    Segment Text;
+    Text.Name = "__TEXT";
+    Text.VA = Text.FileOff = 0x5000;
+    Text.Size = Text.FileSz = 0x100;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(0x100);
+    Image.Segments.push_back(Text);
+    Section Code;
+    Code.Name = "__text";
+    Code.SegmentName = "__TEXT";
+    Code.VA = Code.FileOff = 0x5000;
+    Code.Size = Code.FileSz = 0x100;
+    Code.Flags = Text.Flags;
+    Code.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Code);
+    auto &Bytes = Image.Segments[0].Data;
+    llvm::support::endian::write32le(Bytes.data() + 0x40, 0xb0 - 0x40);
+    llvm::support::endian::write32le(Bytes.data() + 0x44, 2);
+    std::memcpy(Bytes.data() + 0xb0, "Si", 3);
+    Image.Symbols.push_back({"_$sSiMR", SecondReference, 8, false});
+    Image.Symbols.push_back({"_$sSiMd", SecondCache, 8, false});
+
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto Word = NdType::makeInt(8);
+    auto SetSignature = [&](HighFunc &Func, std::vector<TypeRef> Types) {
+      SourceFunctionTypeHint Signature;
+      Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Signature.ReturnType = Word;
+      for (size_t I = 0; I < Types.size(); ++I) {
+        const auto Name = "arg" + std::to_string(I);
+        Signature.Parameters.push_back({Name, Types[I]});
+        Func.Params.push_back({Name, Types[I]});
+      }
+      std::string Error;
+      EXPECT_TRUE(assignDarwinScalarSourceABI(Signature, Image.Arch, Error));
+      Func.ReturnType = Word;
+      Func.SourceTypeHint = Signature;
+    };
+    Instantiator.Entry = 0x5000;
+    Instantiator.Name = "___swift_instantiateConcreteTypeFromMangledNameV2";
+    Image.Symbols.push_back(
+        {Instantiator.Name, Instantiator.Entry, 0x40, true});
+    SetSignature(Instantiator, {Pointer, Pointer});
+    Helper.Entry = 0x5080;
+    Helper.Name = "outlined_array_helper";
+    SetSignature(Helper, {NdType::makeInt(4), Word, NdType::makeInt(4), Pointer,
+                          Word, Word, Word, Word});
+    auto Call = [&](const HighFunc &Target, std::vector<ExprPtr> Operands) {
+      auto Value = HighExpr::makeCall(Target.Name, Target.Entry, Operands);
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->CallKind = SourceCallTypeHint::Kind::Native;
+      Hint->TargetAddress = Target.Entry;
+      Hint->Signature = *Target.SourceTypeHint;
+      Value->SourceCallHint = Hint;
+      Value->Type = Target.ReturnType;
+      return Value;
+    };
+    FirstUse = Call(Instantiator, {parameter(4, Word), parameter(5, Word)});
+    SecondUse = Call(Instantiator, {parameter(6, Word), parameter(7, Word)});
+    for (const auto &Use : {FirstUse, SecondUse, SecondUse}) {
+      HighStmt Statement;
+      Statement.Kind = StmtKind::ExprStmt;
+      Statement.Val = Use;
+      Helper.Body.push_back(Statement);
+    }
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeConst(0, 8);
+    Helper.Body.push_back(Return);
+    Instantiator.Body = {Return};
+    std::vector<ExprPtr> Arguments;
+    for (unsigned I = 0; I < 4; ++I) {
+      auto Value = HighExpr::makeConst(I, Helper.Params[I].Type->Size,
+                                       ConstantAddressProvenance::Scalar);
+      Value->Type = Helper.Params[I].Type;
+      Arguments.push_back(Value);
+    }
+    for (const auto Address : {Cache, Reference, SecondCache, SecondReference})
+      Arguments.push_back(HighExpr::makeConst(
+          Address, 8, ConstantAddressProvenance::DataAddress));
+    CallerCall = Call(Helper, std::move(Arguments));
+    Function.Body[0].Val = CallerCall;
+  }
+
+  ObjCSourceBindingResult bind() {
+    const std::map<va_t, const HighFunc *> Functions{
+        {Helper.Entry, &Helper}, {Instantiator.Entry, &Instantiator}};
+    return bindObjCSourceReferences(Function, Image, nullptr, &Functions);
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftMetadataForwardingKeepsTwoIndependentPairs) {
+  ForwardedMetadataFixture F;
+  F.Image.Symbols.push_back(F.Image.Symbols.back());
+  const auto Bound = F.bind();
+  ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 2U);
+  EXPECT_EQ(Bound.SwiftTypeMetadataPairs.at(F.Cache).ReferenceAddress,
+            F.Reference);
+  EXPECT_EQ(Bound.SwiftTypeMetadataPairs.at(F.SecondCache).ReferenceAddress,
+            F.SecondReference);
+  const auto &Args = Bound.Function.Body[0].Val->Operands;
+  for (size_t I = 0; I < Args.size(); ++I) {
+    if (I < 4)
+      EXPECT_FALSE(Args[I]->SourceCallHint);
+    else {
+      ASSERT_TRUE(Args[I]->SourceCallHint);
+      EXPECT_TRUE(objcSourceCallBound(*Args[I], F.Image, {}));
+    }
+  }
+  EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                  .SwiftTypeMetadataPairs.empty());
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataForwardingRejectsUnprovedUsesAndEdges) {
+  for (unsigned Mutation = 0; Mutation < 24; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ForwardedMetadataFixture F;
+    const auto Word = NdType::makeInt(8);
+    auto Param = [&](unsigned I) {
+      return ForwardedMetadataFixture::parameter(I, Word);
+    };
+    HighStmt Extra;
+    Extra.Kind = StmtKind::ExprStmt;
+    Extra.Val = Param(4);
+    switch (Mutation) {
+    case 0:
+      F.Helper.Body.push_back(Extra);
+      break;
+    case 1:
+      Extra.Kind = StmtKind::Assign;
+      Extra.Dst = Param(4);
+      Extra.Val = HighExpr::makeConst(0, 8);
+      F.Helper.Body.insert(F.Helper.Body.begin(), Extra);
+      break;
+    case 2:
+      F.FirstUse->Operands[0] = HighExpr::makeBinop(NdOp::INT_ADD, Param(4),
+                                                    HighExpr::makeConst(1, 8));
+      break;
+    case 3:
+      F.FirstUse->Operands[0]->Var.SSAVer = 1;
+      break;
+    case 4:
+      std::swap(F.FirstUse->Operands[0], F.FirstUse->Operands[1]);
+      break;
+    case 5:
+      F.FirstUse->Operands[1] = Param(7);
+      break;
+    case 6:
+      F.FirstUse->IsIndirectCall = true;
+      break;
+    case 7:
+      F.FirstUse->CallAddr += 4;
+      break;
+    case 8:
+      F.Helper.SourceTypeHint->Parameters[4].Location.ValueBytes = 4;
+      break;
+    case 9:
+      F.Helper.Params[4].Type = NdType::makeFloat(8);
+      break;
+    case 10:
+      F.Helper.Body.clear();
+      break;
+    case 11:
+      F.Instantiator.SourceTypeHint.reset();
+      break;
+    case 12:
+      F.Image.Symbols.back().Name = "different_native_function";
+      break;
+    case 13:
+      F.CallerCall->IsIndirectCall = true;
+      break;
+    case 14:
+      F.FirstUse->IntrinsicOutputs.push_back(Param(4)->Var);
+      break;
+    case 15:
+      F.FirstUse->IndirectTarget = Param(4);
+      break;
+    case 16:
+      F.Helper.StructuredExceptionRegions = 1;
+      break;
+    case 17:
+      F.Helper.SourceTypeHint->HasExplicitABI = false;
+      break;
+    case 18:
+      F.Image.Symbols.push_back(F.Image.Symbols.back());
+      F.Image.Symbols.back().IsFunc = false;
+      break;
+    case 19:
+      F.FirstUse->SourceCallHint.reset();
+      break;
+    case 20:
+      Extra.Val = HighExpr::makeConst(0, 8);
+      F.Helper.Body.insert(F.Helper.Body.begin(), 20000, Extra);
+      break;
+    case 21:
+      F.FirstUse->Operands[0] = HighExpr::makeBitCast(Param(4), Word);
+      F.FirstUse->Operands[0]->Operands[0] = F.FirstUse->Operands[0];
+      break;
+    case 22:
+      F.CallerCall->Operands[4]->Type = NdType::makeFloat(8);
+      break;
+    case 23:
+      F.CallerCall->Operands[4]->Type = NdType::makeInt(4);
+      break;
+    }
+    EXPECT_FALSE(F.bind().SwiftTypeMetadataPairs.count(F.Cache));
+    if (Mutation == 21)
+      F.FirstUse->Operands[0]->Operands.clear();
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataForwardingSharesOnlyProvedCallerAliases) {
+  ForwardedMetadataFixture F;
+  const auto Word = NdType::makeInt(8);
+  for (unsigned I = 4; I < 8; ++I) {
+    MedVar Local;
+    Local.Kind = MedVar::Temp;
+    Local.Id = 500 + I;
+    Local.Size = 8;
+    HighStmt Assignment;
+    Assignment.Kind = StmtKind::Assign;
+    Assignment.Dst = HighExpr::makeVar(Local, Word);
+    Assignment.Val = F.CallerCall->Operands[I];
+    F.Function.Body.insert(F.Function.Body.end() - 1, Assignment);
+    F.CallerCall->Operands[I] = HighExpr::makeVar(Local, Word);
+  }
+  F.CallerCall->Operands[1] =
+      HighExpr::makeConst(F.Reference, 8, ConstantAddressProvenance::Scalar);
+  const auto Bound = F.bind();
+  ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 2U);
+  for (unsigned I = 0; I < 4; ++I) {
+    const auto &Value = Bound.Function.Body[I].Val;
+    ASSERT_TRUE(Value->SourceCallHint);
+    EXPECT_TRUE(objcSourceCallBound(*Value, F.Image, {}));
+  }
+  const auto Scalar = Bound.Function.Body.back().Val->Operands[1];
+  EXPECT_EQ(Scalar->Kind, ExprKind::Const);
+  EXPECT_EQ(Scalar->ConstVal, F.Reference);
+  EXPECT_FALSE(Scalar->SourceCallHint);
+  HighStmt Escape;
+  Escape.Kind = StmtKind::ExprStmt;
+  Escape.Val = F.CallerCall->Operands[4];
+  F.Function.Body.push_back(Escape);
+  EXPECT_FALSE(F.bind().Function.Body[0].Val->SourceCallHint);
 }
 
 TEST(ObjCSourceBindings, SwiftStdlibMetadataRecipeExecutesWithSharedCache) {
@@ -4155,6 +4554,143 @@ swiftRegisteredInternalTypeFixture(Arch Architecture, char TypeKind = 'C',
   return F;
 }
 } // namespace
+
+namespace {
+SwiftTypeMetadataFixture
+swiftRegisteredProtocolRecipeFixture(Arch Architecture, bool Indirect,
+                                     llvm::StringRef Container = "optional") {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, 'C', false, Indirect);
+  const std::string Type = "13WMFComponents10ArticleTab";
+  const std::string Prefix = Container == "array" ? "Say" : "";
+  const std::string Suffix = Container == "array"      ? "_pG"
+                             : Container == "optional" ? "_pSg"
+                                                       : "_p";
+  const std::string Base = "_$s" + Prefix + Type + Suffix;
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.Symbols[2].Name = "_$s" + Type + "Mp";
+  auto &Descriptor = F.Image.Segments[3].Data;
+  llvm::support::endian::write32le(
+      Descriptor.data() + F.LocalDescriptor - 0x4000, 0x10043);
+  F.Image.Sections.back().Name = "__swift5_protos";
+  auto &Reference = F.Image.Segments[0].Data;
+  auto *Bytes = Reference.data() + F.TypeReference - 0x1000;
+  std::memcpy(Bytes, Prefix.data(), Prefix.size());
+  Bytes[Prefix.size()] = Indirect ? 2 : 1;
+  llvm::support::endian::write32le(
+      Bytes + Prefix.size() + 1,
+      uint32_t((Indirect ? F.DescriptorSlot : F.LocalDescriptor) -
+               (F.TypeReference + Prefix.size() + 1)));
+  std::memcpy(Bytes + Prefix.size() + 5, Suffix.c_str(), Suffix.size() + 1);
+  llvm::support::endian::write32le(Reference.data() + F.Reference + 4 - 0x1000,
+                                   Prefix.size() + 5 + Suffix.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, RegisteredProtocolRecipesKeepTheirExactRuntimeType) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Indirect : {false, true})
+      for (const auto Container : {"optional", "plain", "array"}) {
+        SCOPED_TRACE(Container);
+        auto F = swiftRegisteredProtocolRecipeFixture(Architecture, Indirect,
+                                                      Container);
+        const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+            F.Image, F.Cache, F.Reference);
+        ASSERT_TRUE(Proof);
+        EXPECT_TRUE(Proof->Descriptors.empty());
+        EXPECT_EQ("_$s" + Proof->TypeReference + "MR", F.Image.Symbols[0].Name);
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+        for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+          EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        std::set<std::string> Names;
+        const auto Source = renderObjCSwiftTypeMetadataHelpers(
+            F.Image, Bound.SwiftTypeMetadataPairs, Names);
+        EXPECT_EQ(Source.find("__asm__("), std::string::npos);
+      }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredProtocolRecipesRejectStaleOrIncompleteProof) {
+  for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftRegisteredProtocolRecipeFixture(Arch::AArch64, true);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    auto &Data = F.Image.Segments[3].Data;
+    const auto Word = [&](unsigned Offset, uint32_t Value) {
+      llvm::support::endian::write32le(Data.data() + Offset, Value);
+    };
+    switch (Mutation) {
+    case 0:
+      F.Image.Sections.back().Name = "__swift5_types";
+      break;
+    case 1:
+      Word(0x2c, 1); // Requirement signature.
+      break;
+    case 2:
+      Word(0x34, 0x4080 - 0x4034); // Associated type names.
+      break;
+    case 3:
+      Word(0x30, 513);
+      break;
+    case 4:
+      Word(0x20, 0x50043); // Unsupported special protocol.
+      break;
+    case 5:
+      Word(0x20, 0x10143); // Unknown descriptor version.
+      break;
+    case 6:
+      Data[0x80] = 'X';
+      break;
+    case 7:
+      Data[0xa0] = 'X';
+      break;
+    case 8:
+      F.Image.MachOResolvedChainedPointerSlots.erase(F.DescriptorSlot);
+      break;
+    case 9:
+      F.Image.DataPtrRelocTargetOwners[F.DescriptorSlot] = 0x5000;
+      break;
+    case 10:
+      F.Image.Exports.push_back({F.Image.Symbols[2].Name, 0, 0x4080});
+      break;
+    case 11:
+      F.Image.Symbols.push_back({F.Image.Symbols[2].Name, 0x4080, 0, false});
+      break;
+    case 12:
+      F.Image.Symbols[0].Name = "_$s13WMFComponents10ArticleTab_pMR";
+      F.Image.Symbols[1].Name = "_$s13WMFComponents10ArticleTab_pMd";
+      break;
+    case 13:
+      F.Image.Segments[0].Data[0x89] = 'X';
+      break;
+    case 14:
+      Word(0x30, 32); // Incomplete requirement records.
+      break;
+    case 15:
+      F.Image.Symbols[2].IsFunc = true;
+      break;
+    case 16:
+      F.Image.Segments[3].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
 
 namespace {
 SwiftTypeMetadataFixture

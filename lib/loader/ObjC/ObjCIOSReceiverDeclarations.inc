@@ -139,4 +139,16 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setShowsHorizontalScrollIndicator:", "v20@0:8B16", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIScrollView", "", false, "setShowsVerticalScrollIndicator:", "v20@0:8B16", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIApplication", "", false, "endBackgroundTask:", "v24@0:8Q16", "", false, nullptr, "", false)
+// The same complete device/simulator ASTs cited for UIButton inset methods
+// in the selector catalog retain UIControl -> UIView, UIButton -> UIControl
+// plus NSCoding, and the anonymous UIButton category declaring all six APIs.
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIControl", "", "C:UIView", nullptr)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIButton", "", "C:UIControl|P:NSCoding", nullptr)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", "", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "contentEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "setContentEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "imageEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "setImageEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "titleEdgeInsets", "{UIEdgeInsets=dddd}16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "category", "UIButton", "", false, "setTitleEdgeInsets:", "v48@0:8{UIEdgeInsets=dddd}16", "", false, nullptr, "", false)
 // clang-format on
