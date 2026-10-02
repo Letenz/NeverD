@@ -46,6 +46,12 @@
 \name\()_table:
     .quad \name\()_case0, \name\()_case1
     .quad \name\()_case2, \name\()_case3
+#if TEST_CASE >= 7
+    // A long physical run must neither grant nor prevent a small exact domain.
+    .rept 92
+    .quad \name\()_case0
+    .endr
+#endif
 .size \name\()_table, .-\name\()_table
 .endm
 
@@ -81,6 +87,27 @@ begin finite_mutated
 choose
     movq %rsi, 16(%rcx)
 finish finite_mutated, 1
+#elif TEST_CASE == 7
+begin finite_large
+choose
+finish finite_large
+#elif TEST_CASE == 8
+begin finite_large_unknown
+    movl %esi, %eax
+    orl $2, %eax
+finish finite_large_unknown
+#elif TEST_CASE == 9
+begin finite_above_ceiling
+    movl $0, %eax
+    movl $64, %edx
+    testl %edi, %edi
+    cmovel %edx, %eax
+    orl $2, %eax
+finish finite_above_ceiling
+#elif TEST_CASE == 10
+begin finite_large_rw
+choose
+finish finite_large_rw, 1
 #endif
 
 .section .note.GNU-stack,"",@progbits

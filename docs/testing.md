@@ -195,8 +195,10 @@ build-release/bin/NeverDARM32InterworkingTests
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
-fixtures select slots 2 and 3 from a four-slot absolute pointer table in both
-read-only and writable storage. HighC, optimized LLVMC and `--no-opt` LLVMC
+fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
+tables in both read-only and writable storage. Separate controls retain an
+unknown large selector and ensure a feasible slot above the finite query
+ceiling cannot be dropped. HighC, optimized LLVMC and `--no-opt` LLVMC
 must compile and execute the same selection at `-O0` and `-O2` with undefined
 behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
 reached backedges, mutated table storage and exhausted evidence must prevent
@@ -207,6 +209,11 @@ are required; unavailable fixtures remain skips.
 cmake --build build-release --target NeverDJumpTableTests --parallel 4
 build-release/bin/NeverDJumpTableTests
 ```
+
+`NeverDMachOPointerRelocationBoundaryTests` checks sparse dispatch origins
+before the owned runtime slots. Missing maps, fixups or ownership, added filler
+slots, unindexed reads, malformed strides, address overflow and exhausted
+evidence must retain the ordinary load path.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image

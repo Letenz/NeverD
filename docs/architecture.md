@@ -53,11 +53,19 @@ authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive
 finite-domain proof as a relative table. The physical pointer run supplies a
-read ceiling, not a selector bound. After adding destinations, the resolver
-must replay the proof on the expanded graph; a newly reached backedge cannot
-reuse an entry-only domain. A complete single-consumer finite proof is not
+read ceiling, not a selector bound. A long physical run may use the bounded
+finite query only after proving every feasible index fits its query ceiling;
+values beyond that ceiling cannot be silently discarded. After adding
+destinations, the resolver must replay the proof on the expanded graph; a
+newly reached backedge cannot reuse an entry-only domain. A complete
+single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+The LLVM backend accepts a sparse table's logical address origin separately
+from its owned runtime slots. Eliding its target load still requires the exact
+operation witness, complete mapped slot and relocation ownership, and exclusive
+consumption by the recovered branch. The unused prefix gains no suppression
+authority from sharing that origin.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in

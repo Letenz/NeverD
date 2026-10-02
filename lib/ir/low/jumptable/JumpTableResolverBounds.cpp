@@ -1675,8 +1675,10 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             -> std::optional<std::vector<uint32_t>> {
           if (AnalysisIncomplete)
             *AnalysisIncomplete = false;
-          if (CandidateCapacity > 64)
-            return std::vector<uint32_t>{};
+          // A long physical run may still use only a small exact selector
+          // domain. The query must prove this ceiling before enumerating it;
+          // a feasible value outside the ceiling rejects the entire proof.
+          const uint32_t QueryCapacity = std::min(CandidateCapacity, 64u);
           if (OccurrenceBranches &&
               OccurrenceBranches->size() != Occurrences.size()) {
             if (IncompleteIndexDomain)
@@ -1725,7 +1727,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             Feasible.UseAddr = Index.Addr;
             Feasible.UseSeq = Index.Seq;
             Feasible.Relation = JumpTableValueRelation::UnsignedFeasibleSet;
-            Feasible.UnsignedUpperBound = CandidateCapacity;
+            Feasible.UnsignedUpperBound = QueryCapacity;
             Queries.push_back(std::move(Feasible));
           }
           std::vector<bool> QueryComplete;
@@ -1751,15 +1753,15 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             return std::nullopt;
           }
           if (!consumeBudgetProducts(
-                  {{CandidateCapacity, 3},
+                  {{QueryCapacity, 3},
                    {Occurrences.size(), 2},
                    {Occurrences.size(),
                     orderedEvidenceLookupWork(Occurrences.size()) + 4}}) ||
               !consumeBudgetFactorProduct(
-                  {Occurrences.size(), CandidateCapacity}) ||
+                  {Occurrences.size(), QueryCapacity}) ||
               !consumeBudget(*EvidenceBudget, 4))
             return std::nullopt;
-          std::vector<bool> Seen(CandidateCapacity, false);
+          std::vector<bool> Seen(QueryCapacity, false);
           std::set<va_t> PresentBranches;
           for (size_t Occurrence = 0; Occurrence < Occurrences.size();
                ++Occurrence) {
@@ -1771,7 +1773,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                                        : Rec.Addr);
             if (!Matches[Begin + 1] || FeasibleMasks[Begin + 1] == 0)
               return std::nullopt;
-            for (uint32_t Coordinate = 0; Coordinate < CandidateCapacity;
+            for (uint32_t Coordinate = 0; Coordinate < QueryCapacity;
                  ++Coordinate) {
               if ((FeasibleMasks[Begin + 1] & (uint64_t{1} << Coordinate)) == 0)
                 continue;
@@ -1780,12 +1782,12 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           }
           if (PresentBranches.size() < MinimumPresentBranches)
             return std::vector<uint32_t>{};
-          if (!consumeBudgetProducts({{CandidateCapacity, 4}}) ||
+          if (!consumeBudgetProducts({{QueryCapacity, 4}}) ||
               !consumeBudget(*EvidenceBudget, 2))
             return std::nullopt;
           std::vector<uint32_t> Coordinates;
-          Coordinates.reserve(CandidateCapacity);
-          for (uint32_t Coordinate = 0; Coordinate < CandidateCapacity;
+          Coordinates.reserve(QueryCapacity);
+          for (uint32_t Coordinate = 0; Coordinate < QueryCapacity;
                ++Coordinate)
             if (Seen[Coordinate])
               Coordinates.push_back(Coordinate);

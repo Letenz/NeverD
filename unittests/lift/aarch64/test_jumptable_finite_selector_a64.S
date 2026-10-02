@@ -54,6 +54,12 @@
 \name\()_table:
     .quad \name\()_case0, \name\()_case1
     .quad \name\()_case2, \name\()_case3
+#if TEST_CASE >= 7
+    // A long physical run must neither grant nor prevent a small exact domain.
+    .rept 92
+    .quad \name\()_case0
+    .endr
+#endif
 .size \name\()_table, .-\name\()_table
 .endm
 
@@ -92,6 +98,26 @@ begin finite_recurrent
 choose
 finite_recurrent_dispatch:
 finish finite_recurrent, 0, 1
+#elif TEST_CASE == 7
+begin finite_large
+choose
+finish finite_large
+#elif TEST_CASE == 8
+begin finite_large_unknown
+    mov w9, w1
+    orr w9, w9, #2
+finish finite_large_unknown
+#elif TEST_CASE == 9
+begin finite_above_ceiling
+    cmp w0, #0
+    cset w9, eq
+    lsl w9, w9, #6
+    orr w9, w9, #2
+finish finite_above_ceiling
+#elif TEST_CASE == 10
+begin finite_large_rw
+choose
+finish finite_large_rw, 1
 #endif
 
 .section .note.GNU-stack,"",%progbits

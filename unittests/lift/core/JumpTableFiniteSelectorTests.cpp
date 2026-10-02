@@ -87,6 +87,60 @@ TEST_F(JumpTableFiniteSelector, SparseSelectionPublishesOnlyFeasibleSlots) {
     }
 }
 
+TEST_F(JumpTableFiniteSelector,
+       PhysicalCapacityDoesNotLimitExactSelectorProof) {
+  for (const std::string Arch : {"aarch64", "x86_64"})
+    for (unsigned Case : {7u, 10u}) {
+      const std::string Name = Case == 7 ? "finite_large" : "finite_large_rw";
+      SCOPED_TRACE(Arch + ":" + Name);
+      auto Image = neverd::loadBinary(compileFixture(Arch, Case).string());
+      ASSERT_TRUE(static_cast<bool>(Image))
+          << llvm::toString(Image.takeError());
+      const auto *Storage = Image->findSymbol(Name + "_table");
+      ASSERT_NE(Storage, nullptr);
+      ASSERT_EQ(Storage->Size, 96u * 8);
+      const auto Low = build(*Image, Name);
+      ASSERT_EQ(Low.JumpTables.size(), 1u);
+      EXPECT_EQ(Low.JumpTables.front().CaseLabels,
+                (std::vector<int64_t>{2, 3}));
+      EXPECT_EQ(Low.JumpTables.front().SlotIndices,
+                (std::vector<uint32_t>{2, 3}));
+    }
+}
+
+TEST_F(JumpTableFiniteSelector,
+       AFeasibleSlotAboveTheQueryCeilingCannotDisappear) {
+  for (const std::string Arch : {"aarch64", "x86_64"}) {
+    SCOPED_TRACE(Arch);
+    auto Image = neverd::loadBinary(compileFixture(Arch, 9).string());
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const auto Low = build(*Image, "finite_above_ceiling");
+    EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+    if (Low.JumpTables.empty()) {
+      EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
+      continue;
+    }
+    // Another complete proof may recover the larger domain. A bounded query
+    // may never truncate it to the single low slot that fits its bit mask.
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().CaseLabels, (std::vector<int64_t>{2, 66}));
+    EXPECT_EQ(Low.JumpTables.front().SlotIndices,
+              (std::vector<uint32_t>{2, 66}));
+  }
+}
+
+TEST_F(JumpTableFiniteSelector,
+       AQueryCeilingDoesNotBoundAnUnknownLargeSelector) {
+  for (const std::string Arch : {"aarch64", "x86_64"}) {
+    auto Image = neverd::loadBinary(compileFixture(Arch, 8).string());
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const auto Low = build(*Image, "finite_large_unknown");
+    EXPECT_TRUE(Low.JumpTables.empty());
+    EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
+    EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+  }
+}
+
 TEST_F(JumpTableFiniteSelector, UnknownOrChangedSelectorsDoNotPublish) {
   const char *Names[] = {"finite_unknown_arm", "finite_bypassed",
                          "finite_clobbered"};
@@ -152,9 +206,12 @@ TEST_F(JumpTableFiniteSelector, ExhaustedEvidenceDoesNotPublish) {
 
 TEST_F(JumpTableFiniteSelector, BothSourceRoutesExecuteTheOriginalSelection) {
   for (const std::string Arch : {"aarch64", "x86_64"})
-    for (unsigned Case : {0u, 1u}) {
+    for (unsigned Case : {0u, 1u, 7u, 10u}) {
       const fs::path Object = compileFixture(Arch, Case);
-      const std::string Name = Case == 0 ? "finite_ro" : "finite_rw";
+      const std::string Name = Case == 0   ? "finite_ro"
+                               : Case == 1 ? "finite_rw"
+                               : Case == 7 ? "finite_large"
+                                           : "finite_large_rw";
       for (unsigned Route : {0u, 1u, 2u}) {
         SCOPED_TRACE(Arch + ":" + Name + ":" + std::to_string(Route));
         const auto File = tmpFile("selection.c");
