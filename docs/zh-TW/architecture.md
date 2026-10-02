@@ -917,3 +917,5 @@ Swift 值見證綁定區分中繼資料字面位址與從映像全域變數或�
 CoreText 的 `CTFontGetSize` 和 `CTFramesetterCreateWithAttributedString` 使用既有的編譯器衍生 C 宣告目錄。四個 macOS/iOS 前置處理設定必須一致，且精確的 CoreText 提供方必須匯出該符號。兩者皆接收一個不透明指標；前者回傳八位元組浮點值，後者回傳不透明指標。繫結和發布時重新核驗完整的架構專用 ABI 與匯入身分；這些宣告不新增記憶體、生命週期或不逃逸效果。
 
 Combine 的精確強匯入 `CurrentValueSubject` 初始化建構器使用 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上觀測到的 ABI。被消耗的不透明值位址使用一般參數暫存器，已配置的執行個體使用 `swiftself`，指標結果使用整數回傳暫存器。發布時重新核驗提供方與完整 ABI。此宣告不推斷泛型值配置，也不授予私有堆疊框架借用效果。
+
+Combine 的精確強匯入 `Publisher.sink(receiveValue:)` 多載在 `Failure == Never` 時傳遞五個指標載體：閉包程式碼和上下文、Publisher 中繼資料和見證表，以及透過 `swiftself` 傳遞的不透明 Publisher 位址；回傳 `AnyCancellable` 指標。`AnyCancellable.store(in: Set<AnyCancellable>)` 接收可變 Set 位址和透過 `swiftself` 傳遞的物件，回傳 void。兩項宣告均依據 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上的編譯器證據，發布時重新核驗目前提供方和完整 ABI。這些宣告不推斷泛型配置、閉包生命週期或私有堆疊框架借用效果。
