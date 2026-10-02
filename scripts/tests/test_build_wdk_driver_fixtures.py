@@ -1,3 +1,4 @@
+from collections import Counter
 import hashlib
 from pathlib import Path
 import re
@@ -122,14 +123,58 @@ class WDKDriverFixtureTests(unittest.TestCase):
                             source.read_text(), re.M)
         self.assertEqual(set(variables), {variable for _, variable in images})
         _, required = native.declared_inventory(fixtures.ROOT, with_drivers=True)
-        for name, _ in images:
+        scenarios = re.findall(
+            r'^NEVERD_PARITY_SCENARIO\(\s*(\w+),\s*(\w+),\s*"([^"]+)"\)',
+            source.read_text(), re.M,
+        )
+        builtins = re.findall(
+            r"^NEVERD_PARITY_IMAGE\(\s*(\w+),",
+            (source.parent / "DriverBuiltinImages.def").read_text(), re.M,
+        )
+        names = [name for name, _ in images] + [row[0] for row in scenarios]
+        names += builtins
+        self.assertEqual(len(names), len(set(names)))
+        for name in names:
             for suffix in ("Original", "Rebased"):
                 self.assertTrue(any(test.endswith(f"/whp_{suffix}_{name}")
                                     for test in required))
-        self.assertEqual(len(required), 197)
+        _, cpu_required = native.declared_inventory(fixtures.ROOT)
+        self.assertEqual(len(required), len(cpu_required) + 2 * len(names))
         for _, filename, *_ in inventory["FIXTURE"]:
             self.assertTrue((fixtures.ROOT / "unittests/emulation/fixtures"
                              / filename).is_file())
+
+    def test_all_wdk_sources_and_configured_paths_have_reproducible_builds(self):
+        inventory = fixtures.declarations()["FIXTURE"]
+        sources = fixtures.ROOT / "unittests/emulation/fixtures"
+        original = {path.name for pattern in ("driver_wdm_*.c", "driver_kmdf_*.c")
+                    for path in sources.glob(pattern)}
+        self.assertEqual({source for _, source, *_ in inventory}, original)
+        configured = re.findall(
+            r'^set\((NEVERD_(?:KMDF|WDM)\w*_FIXTURE) "" CACHE FILEPATH',
+            (sources.parent / "CMakeLists.txt").read_text(), re.M,
+        )
+        variables = {"NEVERD_" + name + suffix + "_FIXTURE"
+                     for name, *_ in inventory for suffix in ("", "_CFG")}
+        self.assertEqual(variables, set(configured))
+
+    def test_every_published_driver_scenario_has_normal_and_cfg_native_cases(self):
+        source = fixtures.ROOT / "unittests/emulation/DriverBackendParityCases.def"
+        text = source.read_text()
+        images = dict(re.findall(
+            r"^NEVERD_PARITY_IMAGE\(\s*(\w+),\s*(\w+)\)", text, re.M,
+        ))
+        scenarios = re.findall(
+            r'^NEVERD_PARITY_SCENARIO\(\s*(\w+),\s*(\w+),\s*"([^"]+)"\)',
+            text, re.M,
+        )
+        actual = Counter((path, images[image].endswith("_CFG_FIXTURE"))
+                         for _, image, path in scenarios)
+        expected = Counter((path.name, cfg)
+                           for path in (fixtures.ROOT / "docs/examples")
+                           .glob("driver-*-scenario.json")
+                           for cfg in (False, True))
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

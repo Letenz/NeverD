@@ -95,8 +95,9 @@ TEST_P(DriverBackendParity, OriginalImageAndScenarioPreserveObservableResults) {
           ? LoopLimit
           : InstructionLimit;
   Options.TimeoutMilliseconds = TimeoutMilliseconds;
-  if (Rebase)
-    Options.LoadAddress = RebasedAddress;
+  // The scenario may already request a relocation. Both variants must use
+  // their declared base instead of inheriting that example-specific address.
+  Options.LoadAddress = Rebase ? RebasedAddress : PreferredAddress;
   const auto Software = llvm::cantFail(queryExecutionBackendBuild(
       ExecutionBackendKind::Unicorn, GuestArchitecture::X64));
   if (Software.Availability != BackendAvailability::Available)
@@ -119,6 +120,10 @@ TEST_P(DriverBackendParity, OriginalImageAndScenarioPreserveObservableResults) {
   }
   ASSERT_TRUE(bool(Actual)) << llvm::toString(Actual.takeError());
   EXPECT_EQ(Actual->SelectedBackend, Backend);
+  EXPECT_EQ(Expected->ImageBase,
+            Rebase ? RebasedAddress : Expected->PreferredImageBase);
+  EXPECT_EQ(Actual->ImageBase,
+            Rebase ? RebasedAddress : Actual->PreferredImageBase);
   EXPECT_EQ(observableResult(*Actual), observableResult(*Expected))
       << driverResultJSON(*Actual) << driverResultJSON(*Expected);
 }
