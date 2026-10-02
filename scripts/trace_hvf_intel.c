@@ -1,14 +1,11 @@
 // Temporary diagnostic: observe public HVF calls in an independent executable.
 #include <Hypervisor/Hypervisor.h>
 #include <Hypervisor/hv_vmx.h>
-#include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
 
 static hv_return_t trace_vmcs(hv_vcpuid_t CPU, uint32_t Field, uint64_t Value) {
-  hv_return_t (*Original)(hv_vcpuid_t, uint32_t, uint64_t) =
-      dlsym(RTLD_NEXT, "hv_vmx_vcpu_write_vmcs");
-  const hv_return_t Status = Original(CPU, Field, Value);
+  const hv_return_t Status = hv_vmx_vcpu_write_vmcs(CPU, Field, Value);
   fprintf(stderr, "TRACE write 0x%x = 0x%llx status=0x%x\n", Field,
           (unsigned long long)Value, (uint32_t)Status);
   return Status;
@@ -47,26 +44,24 @@ static void snapshot(hv_vcpuid_t CPU, const char *Phase) {
 }
 
 static hv_return_t trace_run(hv_vcpuid_t CPU) {
-  hv_return_t (*Original)(hv_vcpuid_t) = dlsym(RTLD_NEXT, "hv_vcpu_run");
   snapshot(CPU, "before run");
-  const hv_return_t Status = Original(CPU);
+  const hv_return_t Status = hv_vcpu_run(CPU);
   fprintf(stderr, "TRACE run status=0x%x\n", (uint32_t)Status);
   snapshot(CPU, "after run");
   return Status;
 }
 
 static hv_return_t trace_until(hv_vcpuid_t CPU, uint64_t Deadline) {
-  hv_return_t (*Original)(hv_vcpuid_t, uint64_t) =
-      dlsym(RTLD_NEXT, "hv_vcpu_run_until");
   snapshot(CPU, "before until");
-  const hv_return_t Status = Original(CPU, Deadline);
+  const hv_return_t Status = hv_vcpu_run_until(CPU, Deadline);
   fprintf(stderr, "TRACE until status=0x%x\n", (uint32_t)Status);
   snapshot(CPU, "after until");
   return Status;
 }
 
 // dyld's __interpose section is a sequence of replacement/original pairs.
-__attribute__((used, section("__DATA,__interpose"))) static const struct {
+__attribute__((used,
+               section("__DATA,__interpose,interposing"))) static const struct {
   const void *Replacement;
   const void *Original;
 } Interpositions[] = {

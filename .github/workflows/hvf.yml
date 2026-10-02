@@ -43,6 +43,7 @@ jobs:
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
           if [[ "$(uname -m)" == "x86_64" ]]; then
             clang -dynamiclib scripts/trace_hvf_intel.c -framework Hypervisor -o build-hvf-probe/trace.dylib
+            codesign --force --sign - build-hvf-probe/trace.dylib
           fi
           python3 - <<'PY'
           import pathlib
@@ -65,6 +66,7 @@ jobs:
                                                   env=environment,
                                                   stdout=output, stderr=subprocess.STDOUT)
                           failed |= result.returncode != 0
+                          output.write(f"Probe {mode} return code: {result.returncode}\n")
                       except subprocess.TimeoutExpired:
                           output.write(f"Probe {mode} exceeded 10 seconds\n")
                           failed = True
