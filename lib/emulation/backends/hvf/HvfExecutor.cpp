@@ -34,6 +34,8 @@ llvm::Error runError(Cpu CPU, hv_return_t Status) {
   auto Text = message("hv_vcpu_run_until", Status);
   // HV_ERROR alone does not distinguish invalid VM-entry controls from
   // invalid guest state. Read diagnostics on the owner before any retirement.
+  // VM-instruction error can predate this entry, even on a successful host;
+  // this snapshot is supporting evidence rather than an attributed cause.
   const std::pair<const char *, uint32_t> Fields[] = {
       {"instruction_error", VMCS_RO_INSTR_ERROR},
       {"exit_reason", VMCS_RO_EXIT_REASON},
@@ -212,6 +214,19 @@ llvm::Error Executor::createCPU() {
   if (Status != HV_SUCCESS)
     return unavailable("hv_vcpu_create", Status);
   CPUCreated = true;
+#if defined(__x86_64__)
+  // Intel HVF requires a managed kernel-GS context even for ordinary long-mode
+  // instructions. Bind it on every creation, including cancellation recovery.
+  // The checked ISA does not expose this MSR; keep guest access trapped and
+  // initialize its private value rather than inheriting host state.
+  constexpr auto KernelGS = HV_MSR_IA32_KERNEL_GS_BASE;
+  if (auto S = hv_vcpu_enable_managed_msr(CPU, KernelGS, true))
+    return unavailable("hv_vcpu_enable_managed_msr(KERNEL_GS_BASE)", S);
+  if (auto S = hv_vcpu_set_msr_access(CPU, KernelGS, HV_MSR_NONE))
+    return unavailable("hv_vcpu_set_msr_access(KERNEL_GS_BASE)", S);
+  if (auto S = hv_vcpu_write_msr(CPU, KernelGS, 0))
+    return unavailable("hv_vcpu_write_msr(KERNEL_GS_BASE)", S);
+#endif
   return llvm::Error::success();
 }
 llvm::Error Executor::destroyCPU() {

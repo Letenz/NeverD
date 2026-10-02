@@ -9,7 +9,7 @@ on:
         default: self-hosted
         options: [self-hosted, hosted-intel]
       validation:
-        description: Full validation, transport tests, or the standalone host probe
+        description: Full validation, transport tests, or VM/vCPU availability only
         type: choice
         default: full
         options: [full, transport, probe]
@@ -28,7 +28,7 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Require native VM, vCPU and independent Intel instructions
+      - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
           EXPECTED_HVF_HOST: '${{ matrix.arch }}'
@@ -41,46 +41,23 @@ jobs:
           mkdir -p build-hvf-probe
           clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
-          if [[ "$(uname -m)" == "x86_64" ]]; then
-            clang -dynamiclib scripts/trace_hvf_intel.c -framework Hypervisor -o build-hvf-probe/trace.dylib
-            codesign --force --sign - build-hvf-probe/trace.dylib
-          fi
-          python3 - <<'PY'
+          python3 - <<'PYPROBE'
           import pathlib
-          import platform
           import subprocess
-          import os
           log = pathlib.Path("build-hvf-probe/result.log")
-          failed = False
+          status = 1
           try:
               with log.open("w") as output:
-                  modes = ["until", "legacy"] if platform.machine() == "x86_64" else ["until"]
-                  for mode in modes:
-                      output.write(f"Fresh process probe: {mode}\n")
-                      output.flush()
-                      try:
-                          environment = os.environ.copy()
-                          if platform.machine() == "x86_64":
-                              environment["DYLD_INSERT_LIBRARIES"] = str(pathlib.Path("build-hvf-probe/trace.dylib").resolve())
-                          result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
-                                                  env=environment,
-                                                  stdout=output, stderr=subprocess.STDOUT)
-                          failed |= result.returncode != 0
-                          output.write(f"Probe {mode} return code: {result.returncode}\n")
-                      except subprocess.TimeoutExpired:
-                          output.write(f"Probe {mode} exceeded 10 seconds\n")
-                          failed = True
+                  try:
+                      result = subprocess.run(["build-hvf-probe/probe"], timeout=10,
+                                              stdout=output, stderr=subprocess.STDOUT)
+                      status = result.returncode
+                  except subprocess.TimeoutExpired:
+                      output.write("VM/vCPU availability probe exceeded 10 seconds\n")
           finally:
               print(log.read_text(), end="")
-          raise SystemExit(1 if failed else 0)
-          PY
-      - name: Compare an independent Intel HVF engine with software execution
-        if: always() && inputs.validation == 'probe' && matrix.arch == 'X64'
-        shell: bash
-        run: |
-          brew install qemu
-          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements "$(command -v qemu-system-x86_64)"
-          python3 scripts/probe_hvf_qemu.py --evidence build-hvf-probe/qemu --trace build-hvf-probe/trace.dylib
+          raise SystemExit(status)
+          PYPROBE
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
         run: brew install ninja
