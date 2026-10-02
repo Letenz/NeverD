@@ -90,7 +90,10 @@ std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
 /// inputs may later be overwritten; preserved context inputs require either no
 /// preserved non-frame/link writes or a complete native state-restoration
 /// proof. Implicit call definitions do not establish entry inputs, including
-/// SSA zero. Both callers and definitions must use the resulting source
+/// SSA zero. An implicit full-word call argument may establish an input only
+/// when the same native-state proof tracks its complete entry bytes to the
+/// exact bound call and MedIR independently observes that entry word.
+/// Both callers and definitions must use the resulting source
 /// projection; these parameters do not describe an external C or Swift calling
 /// convention. ObserveIntegerPair requests a two-field internal record only
 /// when both complete eight-byte results can be proved. Otherwise the existing

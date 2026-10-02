@@ -8098,6 +8098,18 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
       {"UIAccessibilityTraitButton", "UIKit"},
       {"UIEdgeInsetsZero", "UIKit"},
       {"UIViewNoIntrinsicMetric", "UIKit"},
+      {"NSBackgroundColorAttributeName", "UIKit"},
+      {"NSBaselineOffsetAttributeName", "UIKit"},
+      {"NSFontAttributeName", "UIKit"},
+      {"NSForegroundColorAttributeName", "UIKit"},
+      {"NSKernAttributeName", "UIKit"},
+      {"NSLigatureAttributeName", "UIKit"},
+      {"NSLinkAttributeName", "UIKit"},
+      {"NSParagraphStyleAttributeName", "UIKit"},
+      {"NSStrikethroughStyleAttributeName", "UIKit"},
+      {"NSStrokeColorAttributeName", "UIKit"},
+      {"NSStrokeWidthAttributeName", "UIKit"},
+      {"NSUnderlineStyleAttributeName", "UIKit"},
       {"kCIContextPriorityRequestLow", "CoreImage"},
       {"kCIContextUseSoftwareRenderer", "CoreImage"}};
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
@@ -8111,7 +8123,8 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
       const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
       // These supplemental declarations cover ARM64 device and simulator.
       if ((Framework == "CoreImage" ||
-           Name == "UIApplicationDidEnterBackgroundNotification") &&
+           Name == "UIApplicationDidEnterBackgroundNotification" ||
+           Name.ends_with("AttributeName")) &&
           Architecture == Arch::X64) {
         EXPECT_FALSE(Binding);
         continue;
