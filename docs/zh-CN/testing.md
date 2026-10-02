@@ -1014,11 +1014,11 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 输入文件总字节数和映像总范围各自受 `memory_limit` 限制，运行时映射也计入映像预算。准备阶段共享 65,536 条记录、64 MiB 元数据读取、名称长度和整个任务的截止时间限制；阻塞式主机 I/O 不保证硬实时。原创 EXE→DLL→DLL 样例检查重定位指针、序号调用、共享数据、API 指针身份、`MEM_IMAGE`、加载器链表及 EXE TLS 挂接／分离。`NeverDWindowsProcessTests` 包含这些检查和直接原生 Windows 对照；`NeverDPEProgramExportsTests` 验证畸形元数据及资源计费，`NeverDProcessPublicTests` 验证 C ABI/CLI 模块目录一致性。不可用后端明确跳过。
 
-`WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
+`WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
 
-`WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。运行时可查询已驻留映像，包括在 `DllMain` 内；需要加载其他模块时明确停止。导出名称区分大小写；名称或序号缺失返回 NULL 和错误 127，成功保留 LastError。未知模块句柄仍不支持。有界 API 清单按精确提供方／名称一次性保留调用入口。解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。这不包含 `LoadLibrary`／`FreeLibrary` 或实时改写导出表。
+`WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。运行时可查询已驻留映像，包括在 `DllMain` 内；需要加载其他模块时明确停止。导出名称区分大小写；名称缺失返回 NULL／错误 127，序号缺失（包括空洞）返回 NULL／错误 182，查询参数为空指针返回错误 87，成功保留 LastError。未知模块句柄仍不支持。有界 API 清单按精确提供方／名称一次性保留调用入口。解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。这不包含 `LoadLibrary`／`FreeLibrary` 或实时改写导出表。
 
-`WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 和 EXE，验证转发的代码／数据／序号调用、别名、初始化期间查询、重定位、大小写敏感的缺失项、LastError、循环及非驻留目标、无效指针，以及成功查询后的元数据修改。同一 EXE 具有独立原生 Windows 对照；原生 CI 强制执行 WHP 用例。C ABI／CLI 测试对比完整报告。原生 ARM64 硬件证据仍待补齐。
+`WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 和 EXE，验证转发的代码／数据／序号调用、别名、初始化期间查询、重定位、大小写敏感的缺失项、LastError、循环及非驻留目标、无效指针，以及成功查询后的元数据修改。同一 EXE 具有独立原生 Windows 对照；原生 CI 强制执行 WHP 用例。C ABI／CLI 测试对比完整报告。原生 ARM64 硬件证据仍待补齐。 有导出表和无导出表的 EXE 变体覆盖两种依赖图、PEB 链表顺序、退出通知顺序，以及名称／序号／空指针的错误码。
 
 `WindowsLifetimeTests.cpp` 将冻结的通知序列与独立原生 Windows 进程及 KVM/WHP/Unicorn 执行对比，覆盖正常退出、入口返回、两个 DLL 初始化失败、四处提前退出及无入口 DLL。另行验证回调故障、共享预算、重定位 TLS 字段和 TLS 总容量。原生入口返回探针保留初始线程句柄，重复64 次核对线程退出码及精确线程／进程通知序列。观察完成后终止剩余子进程线程，不将其进程退出码当作入口返回值。
 
