@@ -15,6 +15,9 @@ static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
   if (report("probe VMCS capabilities",
              hv_vmx_vcpu_get_cap_write_vmcs(CPU, Field, &Must, &May)))
     return 1;
+  printf("probe control 0x%x: must=0x%llx may=0x%llx required=0x%llx\n", Field,
+         (unsigned long long)Must, (unsigned long long)May,
+         (unsigned long long)Required);
   if ((Required & May) != Required) {
     printf("probe control 0x%x cannot supply 0x%llx\n", Field,
            (unsigned long long)Required);
@@ -29,6 +32,13 @@ static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
 // packet or guest OS dependency. Backing lives until the caller destroys VM.
 static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
   printf("Intel entry API: %s\n", Legacy ? "hv_vcpu_run" : "hv_vcpu_run_until");
+  for (unsigned I = HV_VMX_CAP_CR0_FIXED0; I <= HV_VMX_CAP_CR4_FIXED1; ++I) {
+    uint64_t Value = 0;
+    const hv_return_t S =
+        hv_vmx_read_capability((hv_vmx_capability_t)I, &Value);
+    printf("hardware capability %u: status=0x%x value=0x%llx\n", I, (uint32_t)S,
+           (unsigned long long)Value);
+  }
   const size_t Bytes = 65536;
   if (posix_memalign(Backing, (size_t)sysconf(_SC_PAGESIZE), Bytes))
     return 1;
@@ -49,9 +59,9 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
       probe_control(CPU, VMCS_CTRL_CPU_BASED2, CPU_BASED2_EPT) ||
       probe_control(CPU, VMCS_CTRL_VMENTRY_CONTROLS, VMENTRY_GUEST_IA32E) ||
       probe_control(CPU, VMCS_GUEST_CR0, 0x80010033) ||
-      probe_control(CPU, VMCS_GUEST_CR4, 0x620) ||
+      probe_control(CPU, VMCS_GUEST_CR4, 0x2620) ||
       probe_control(CPU, VMCS_CTRL_CR0_MASK, 0) ||
-      probe_control(CPU, VMCS_CTRL_CR4_MASK, 0))
+      probe_control(CPU, VMCS_CTRL_CR4_MASK, 0x2000))
     return 1;
   const struct {
     uint32_t Field;
