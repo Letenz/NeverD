@@ -1336,6 +1336,120 @@ TEST(NativeStackSpecialization,
   }
 }
 
+StackProvider guardedFrameRelation(uint64_t Offset = 3,
+                                   bool NarrowGuard = false) {
+  StackProvider P;
+  const uint16_t GuardBytes = NarrowGuard ? 1 : 8;
+  P.add(0x100,
+        {operation(NdOp::INT_ADD, r(40), {r(32), r(8)}),
+         operation(NdOp::INT_EQUAL, r(24, 1),
+                   {r(8, GuardBytes), c(Offset, GuardBytes)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x200, 8), r(24, 1)})});
+  P.add(0x101, {operation(NdOp::COPY, r(0), {r(8)}), ret()});
+  P.add(0x200,
+        {operation(NdOp::INT_ADD, r(48), {r(32), c(Offset)}),
+         operation(NdOp::INT_EQUAL, r(24, 1), {r(40), r(48)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x300, 8), r(24, 1)})});
+  P.add(0x201, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  P.add(0x300, {operation(NdOp::COPY, r(0), {r(8)}), ret()});
+  return P;
+}
+
+TEST(NativeStackSpecialization, GuardedFrameRelationSurvivesProjection) {
+  for (bool Manual : {false, true}) {
+    for (uint64_t Offset : {uint64_t{3}, UINT64_MAX}) {
+      auto P = guardedFrameRelation(Offset);
+      auto Options = stackOptions();
+      Options.DiscoverControlState = true;
+      if (Manual)
+        Options.ControlRegisters = {{40, 8}};
+      const auto Result = specializeInterpreter(P, {0x100}, Options);
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      for (uint64_t Root : {uint64_t{0}, uint64_t{0x10000}, UINT64_MAX})
+        for (uint64_t Input :
+             {uint64_t{0}, uint64_t{3}, uint64_t{42}, UINT64_MAX}) {
+          const auto Run = execute(Result.Residual, Input, 0,
+                                   llvm::endianness::little, Root);
+          ASSERT_TRUE(Run);
+          EXPECT_EQ(Run->Value, Input);
+          EXPECT_EQ(Run->Stack, Root);
+        }
+    }
+  }
+}
+
+TEST(NativeStackSpecialization, PartialGuardCannotEstablishAWholeFrameOffset) {
+  auto P = guardedFrameRelation(3, true);
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(NativeStackSpecialization,
+     GuardedFrameOffsetsDoNotLeakAcrossSiblingJoins) {
+  for (bool DifferentOffset : {false, true}) {
+    auto P = guardedFrameRelation();
+    if (DifferentOffset)
+      P.add(0x101,
+            {operation(NdOp::INT_ADD, r(40), {r(32), c(4)}), branch(0x200)});
+    else
+      P.add(0x101, {branch(0x200)});
+    auto Options = stackOptions();
+    Options.DiscoverControlState = true;
+    const auto Result = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
+}
+
+TEST(NativeStackSpecialization, DemandedFrameProofSharesQueryLimits) {
+  auto P = guardedFrameRelation();
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Baseline = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Baseline.complete()) << Baseline.Diagnostic;
+  uint64_t Rejected = 1, Accepted = Baseline.SolverQueries;
+  ASSERT_GT(Accepted, Rejected);
+  while (Accepted - Rejected > 1) {
+    auto Probe = Options;
+    Probe.MaxSolverQueries = Rejected + (Accepted - Rejected) / 2;
+    const auto Result = specializeInterpreter(P, {0x100}, Probe);
+    EXPECT_LE(Result.SolverQueries, Probe.MaxSolverQueries);
+    if (Result.complete())
+      Accepted = Probe.MaxSolverQueries;
+    else {
+      EXPECT_EQ(Result.Status, SpecializationStatus::BudgetExceeded);
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_TRUE(Result.Origins.empty());
+      EXPECT_TRUE(Result.Reads.empty());
+      Rejected = Probe.MaxSolverQueries;
+    }
+  }
+  Options.MaxSolverQueries = Accepted;
+  EXPECT_TRUE(specializeInterpreter(P, {0x100}, Options).complete());
+  Options.MaxSolverQueries = Rejected;
+  const auto Short = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_LE(Short.SolverQueries, Rejected);
+  EXPECT_TRUE(Short.Residual.Blocks.empty());
+  EXPECT_TRUE(Short.Origins.empty());
+  EXPECT_TRUE(Short.Reads.empty());
+  Options = stackOptions();
+  Options.DiscoverControlState = true;
+  Options.MaxSolverGates = 1;
+  const auto Unknown = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_FALSE(Unknown.complete());
+  EXPECT_TRUE(Unknown.Residual.Blocks.empty());
+  EXPECT_TRUE(Unknown.Origins.empty());
+  EXPECT_TRUE(Unknown.Reads.empty());
+}
+
 TEST(NativeStackSpecialization, ReachableUnresolvedGuardIsNeverAssumedAway) {
   auto P = guardedDecoder(true);
   P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});

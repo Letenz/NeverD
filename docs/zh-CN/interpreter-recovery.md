@@ -101,6 +101,8 @@ v6 API `neverd_devirtualize_source_v6()` 和 `neverd_devirtualize_machine_source
 
 无法解析的间接目标可能源于守卫条件的精度丢失。直接目标及延后生产者细化不再增加候选后，恢复会检查能够到达失败位置的最近未决守卫。候选选择与重试共享发现和细化预算。只有新一轮完整证明才能排除分支；真实可达的未知目标仍须失败，且不发布残余代码或证明见证。
 
+控制需求也可能依赖入口相对指针关系。对于后继已提出需求的完整 64 位寄存器载体，即使没有对齐掩码，恢复器也可在当前边条件下证明其相对入口根的偏移。只有唯一的全宽结果才能写入该边的投影；未知结果不增加事实，合流会删除冲突或缺失的偏移。物理根地址保持自由。
+
 JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 和 `discoveryVisits`，分别记录启用行为、上限和分析工作量。发现字段本身不等于恢复成功。
 
 如果条件将地址依赖缩窄为字节片段，细化还会把包含该片段、已跟踪的完整八字节直接地址字段列为上下文候选。原有窄字段及其生产者位掩码保持不变，不提升无关的宽字段。常量和相对入口的偏移仍须证明，所有上下文共享现有上限。
