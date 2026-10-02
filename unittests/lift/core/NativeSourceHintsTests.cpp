@@ -19,6 +19,8 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCContextCallEffects.h"
+#include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
@@ -8036,3 +8038,349 @@ TEST(NativeSourceHints, AmbiguousValuesAndUnboundCallsDoNotSupplyPointerFacts) {
   }
 }
 } // namespace
+
+namespace {
+struct ObjCContextEffectFixture : immutable_native_call_test::Fixture {
+  static constexpr va_t Callee = immutable_native_call_test::Target;
+  static constexpr va_t Stub = 0x1280, Counter = 0x4000;
+  static constexpr va_t SiteAddress = immutable_native_call_test::Entry + 32;
+  ObjCContextEffectFixture(bool Indirect = false, bool Profile = true) {
+    using namespace immutable_native_call_test;
+    using runtime_function_address_test::Slot;
+    Image.ImportPtrSlots[Slot] = "_objc_msgSend";
+    Image.DyldBindSlots[Slot] = {"_objc_msgSend", 0, "/usr/lib/libobjc.A.dylib",
+                                 false};
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/usr/lib/libobjc.A.dylib"};
+    Image.Segments[1].Size = Image.Segments[1].FileSz = 16;
+    Image.Segments[1].Data.resize(16);
+    Image.Sections[0].Size = Image.Sections[0].FileSz = 16;
+    Image.ObjCSourceReferences[Slot + 8] = {ObjCSourceReference::Kind::Selector,
+                                            Slot + 8,
+                                            8,
+                                            "setImageEdgeInsets:",
+                                            {}};
+    Image.Sections[1].Size = Image.Sections[1].FileSz = 0x280;
+    Section Stubs;
+    Stubs.Name = "__objc_stubs";
+    Stubs.VA = Stub;
+    Stubs.FileOff = Stub - Entry;
+    Stubs.Size = Stubs.FileSz = 0x80;
+    Stubs.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Stubs.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Stubs);
+    Segment Data;
+    Data.VA = Counter;
+    Data.Size = Data.FileSz = 8;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.resize(8);
+    Image.Segments.push_back(Data);
+    Section Count;
+    Count.VA = Counter;
+    Count.Name = "__llvm_prf_cnts";
+    Count.Size = Count.FileSz = 8;
+    Count.Flags = Data.Flags;
+    Image.Sections.push_back(Count);
+    const uint32_t StubWords[] = {0xb0000001, 0xf9400421, 0xb0000010,
+                                  0xf9400210, 0xd61f0200};
+    for (size_t I = 0; I < std::size(StubWords); ++I)
+      word((Stub - Entry) / 4 + I, StubWords[I]);
+    const uint32_t ProfileWords[] = {0xf9400280, 0xf0000008, 0xf9400109,
+                                     0x91000529, 0xf9000109, 0x1400001b};
+    for (size_t I = 0; I < std::size(ProfileWords); ++I)
+      word((Callee - Entry) / 4 + I, ProfileWords[I]);
+    if (!Profile)
+      word((Callee - Entry) / 4 + 1, 0x1400001f);
+    const uint32_t Caller[] = {0xa9bc53f3, 0xa9017bfd, 0x910043fd, 0xf90013e0,
+                               0x910083f4, 0xd0000013, 0x91008273, 0xf9400670,
+                               0xd63f0200, 0xa9417bfd, 0xa8c453f3, 0xd65f03c0};
+    for (size_t I = 0; I < std::size(Caller); ++I)
+      word(I, Caller[I]);
+    if (!Indirect)
+      word((SiteAddress - Entry) / 4,
+           0x94000000 | ((Callee - SiteAddress) / 4));
+    Image.Symbols[0].Size = sizeof(Caller);
+    Image.Symbols.back().Size = Profile ? 24 : 8;
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters.clear();
+    for (unsigned I = 0; I < 4; ++I)
+      Signature.Parameters.push_back(
+          {"lane" + std::to_string(I), NdType::makeFloat(8)});
+    Signature.Parameters.push_back({"context", NdType::makeInt(8)});
+    std::string Error;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Signature, Arch::AArch64, Error));
+    Signature.Parameters.back().Location.RegisterOffset = a64reg::X20;
+    run();
+  }
+  SourceCallOccurrenceKey site(bool Indirect = false) const {
+    return {SiteAddress, 1, Indirect ? NdOp::INDIR_CALL : NdOp::CALL,
+            Indirect ? std::nullopt : std::optional<va_t>(Callee)};
+  }
+  std::optional<SourceFunctionTypeHint> infer(std::string &Error) {
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const auto &A) { return A.Entry == low()->Entry; });
+    if (Audit == Result.FunctionAudits.end())
+      return std::nullopt;
+    return inferNativeSourceTypeHint(Image, *med(), *high(), *Audit, Error,
+                                     low());
+  }
+};
+} // namespace
+
+TEST(NativeSourceHints, ContextBorrowAuthenticatesBodyDispatchAndABI) {
+  for (bool Indirect : {false, true})
+    for (bool Profile : {false, true}) {
+      ObjCContextEffectFixture F(Indirect, Profile);
+      ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+      ASSERT_TRUE(F.low());
+      ASSERT_TRUE(isObjCContextProjection(F.Image, F.Callee));
+      const auto Effects =
+          objcContextProjectionEffects(F.Image, F.Callee, F.Signature);
+      ASSERT_TRUE(Effects);
+      EXPECT_EQ(Effects->ReadOnlyFrameParameters.at(4), 8U);
+      EXPECT_TRUE(Effects->WritableFrameParameters.empty());
+      EXPECT_FALSE(Effects->ReturnFrameOrExternal);
+      const std::map<va_t, SourceFunctionTypeHint> Callees{
+          {F.Callee, F.Signature}};
+      EXPECT_EQ(objcContextCallEffects(F.Image, *F.low(), F.site(Indirect),
+                                       F.Signature, &Callees),
+                Effects);
+      std::string Error;
+      const auto Hint = F.infer(Error);
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+    }
+}
+
+TEST(NativeSourceHints, ContextBorrowRejectsStaleBodyStorageAndDeclarations) {
+  ObjCContextEffectFixture F;
+  ASSERT_TRUE(objcContextProjectionEffects(F.Image, F.Callee, F.Signature));
+  for (unsigned Mutation = 0; Mutation < 35; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = F.Image;
+    auto ABI = F.Signature;
+    auto Word = [&](unsigned I, uint32_t W) {
+      llvm::support::endian::write32le(
+          Image.Segments[0].Data.data() + F.Callee - Image.Entry + I * 4, W);
+    };
+    switch (Mutation) {
+    case 0:
+      Word(0, 0xb9400280);
+      break; // Partial context load.
+    case 1:
+      Word(0, 0xf9400680);
+      break; // Offset beyond proved first word.
+    case 2:
+      Word(0, 0xaa1403e0);
+      break; // Escaping context, not loaded object.
+    case 3:
+      Word(0, 0xf9400260);
+      break; // Different context carrier.
+    case 4:
+      Word(0, 0xf94003e0);
+      break; // Incoming stack, not context.
+    case 5:
+      Word(1, 0xf0000009);
+      break; // Wrong counter base.
+    case 6:
+      Word(2, 0xf9400289);
+      break; // Context-based counter read.
+    case 7:
+      Word(3, 0x91000929);
+      break; // Different counter operation.
+    case 8:
+      Word(4, 0xf9000509);
+      break; // Different write range.
+    case 9:
+      Word(4, 0xf9000114);
+      break; // Context escapes to image storage.
+    case 10:
+      Word(5, 0x9400001b);
+      break; // Not a tail branch.
+    case 11:
+      Word(5, 0x1400001c);
+      break; // Interior selector entry.
+    case 12:
+      Image.Segments.back().ReadOnlyAfterRelocations = true;
+      break;
+    case 13:
+      Image.Sections.back().FileSz = 7;
+      break;
+    case 14:
+      Image.Segments.push_back(Image.Segments.back());
+      break;
+    case 15:
+      Image.Sections.back().Type = llvm::MachO::S_ZEROFILL;
+      break;
+    case 16:
+      Image.Symbols.push_back({"interior", F.Callee + 4, 4, true});
+      break;
+    case 17:
+      Image.CodePtrRelocSlots.insert(F.Callee + 8);
+      break;
+    case 18:
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 19:
+      Image.DyldBindSlots[0x2000].WeakImport = true;
+      break;
+    case 20:
+      Image.DyldBindSlots[0x2000].Module = "/usr/lib/other.dylib";
+      break;
+    case 21:
+      Image.DyldBindSlots[0x2000].Addend = 8;
+      break;
+    case 22:
+      Image.ObjCSourceReferences[0x2008].Name = "missingDeclaration:";
+      break;
+    case 23:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 24:
+      ABI.ReturnType = NdType::makeInt(8);
+      break;
+    case 25:
+      ABI.Parameters.back().Type = NdType::makeInt(4);
+      ABI.Parameters.back().Location.ValueBytes = 4;
+      break;
+    case 26:
+      ABI.Parameters.back().Location.RegisterOffset = a64reg::X19;
+      break;
+    case 27:
+      ABI.Parameters[0].Type = NdType::makeFloat(4);
+      ABI.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 28:
+      ABI.Parameters.erase(ABI.Parameters.begin());
+      break;
+    case 29:
+      ABI.Parameters[0].Location.RegisterOffset =
+          ABI.Parameters[1].Location.RegisterOffset;
+      break;
+    case 30:
+      ABI.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+      break;
+    case 31:
+      Image.Arch = Arch::X64;
+      break;
+    case 32:
+      Image.IsRelocatable = true;
+      break;
+    case 33:
+      Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 34: {
+      auto Hint = parseObjCMethodEncoding("setImageEdgeInsets:", "v24@0:8q16");
+      ASSERT_TRUE(Hint);
+      std::string Error;
+      ASSERT_TRUE(assignDarwinObjCSourceABI(*Hint, Arch::AArch64, Error));
+      ObjCMethod Method;
+      Method.ClassName = "Conflict";
+      Method.Selector = "setImageEdgeInsets:";
+      Method.Implementation = 0x1400;
+      Method.TypeHint = *Hint;
+      Image.ObjCMethods.push_back(Method);
+      break;
+    }
+    }
+    EXPECT_FALSE(objcContextProjectionEffects(Image, F.Callee, ABI));
+  }
+  auto Renamed = F.Image;
+  for (auto &S : Renamed.Symbols)
+    S.Name = "unrelated";
+  EXPECT_TRUE(objcContextProjectionEffects(Renamed, F.Callee, F.Signature));
+}
+
+TEST(NativeSourceHints, ContextBorrowRechecksOriginalCallAndCallerFrame) {
+  for (bool Indirect : {false, true}) {
+    ObjCContextEffectFixture F(Indirect);
+    const std::map<va_t, SourceFunctionTypeHint> Callees{
+        {F.Callee, F.Signature}};
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      SCOPED_TRACE(Indirect);
+      SCOPED_TRACE(Mutation);
+      auto Image = F.Image;
+      auto Low = *F.low();
+      auto Site = F.site(Indirect);
+      if (Mutation == 0)
+        ++Site.Sequence;
+      if (Mutation == 1)
+        Site.Instruction += 4;
+      if (Mutation == 2)
+        Low.DecodedInstructionCount = 0;
+      if (Mutation == 3)
+        Low.Blocks[0].InstructionBoundaries.clear();
+      if (Mutation == 4) {
+        for (auto &B : Low.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.Addr == Site.Instruction && Op.Seq == 1)
+              Op.Inputs[0] = NdVar::reg(a64reg::X17, 8);
+      }
+      if (Mutation == 5)
+        llvm::support::endian::write32le(Image.Segments[0].Data.data() +
+                                             Site.Instruction - Image.Entry,
+                                         0xd503201f);
+      if (Mutation == 6)
+        Site.StaticTarget = F.Callee + 4;
+      EXPECT_FALSE(
+          objcContextCallEffects(Image, Low, Site, F.Signature, &Callees));
+    }
+    // The borrow certificate does not allow placing any private-frame bytes
+    // into the object word that the callee forwards to external dispatch.
+    auto *Low = const_cast<LowFunc *>(F.low());
+    auto &Ops = Low->Blocks[0].Ops;
+    auto Store = std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+      return Op.Addr == 0x100c && Op.Opcode == NdOp::STORE;
+    });
+    ASSERT_NE(Store, Ops.end());
+    Store->Inputs[1] = NdVar::reg(a64reg::SP, 8);
+    std::string Error;
+    EXPECT_FALSE(F.infer(Error)) << Error;
+  }
+}
+
+TEST(NativeSourceHints, ContextBorrowInferenceRejectsChangedCallEvidence) {
+  for (bool Indirect : {false, true})
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      SCOPED_TRACE(Indirect);
+      SCOPED_TRACE(Mutation);
+      ObjCContextEffectFixture F(Indirect);
+      auto &Ops = F.med()->Blocks[0].Ops;
+      auto Call = std::find_if(Ops.begin(), Ops.end(), [&](const auto &Op) {
+        return Op.Addr == F.SiteAddress &&
+               (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL);
+      });
+      ASSERT_NE(Call, Ops.end());
+      ASSERT_TRUE(Call->SourceCallHint);
+      auto Mutable =
+          std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+      Call->SourceCallHint = Mutable;
+      auto &Binding = *Mutable;
+      if (Mutation == 0)
+        ++Call->OriginSeq;
+      if (Mutation == 1)
+        Call->PreservesCallerSaved = true;
+      if (Mutation == 2)
+        Binding.DoesNotReturn = Call->DoesNotReturn = true;
+      if (Mutation == 3) {
+        Binding.Signature.Parameters.back().Type = NdType::makeInt(4);
+        Binding.Signature.Parameters.back().Location.ValueBytes = 4;
+        Call->Inputs[Call->NumInputs - 1].Size = 4;
+      }
+      if (Mutation == 4) {
+        Binding.Signature.ReturnType = NdType::makeInt(8);
+        Binding.Signature.ReturnLocation = {
+            SourceABICarrierKind::IntegerRegister, a64reg::X0, 0, 8};
+      }
+      if (Mutation == 5)
+        Binding.Signature.Parameters.back().Location.RegisterOffset =
+            a64reg::X19;
+      if (Mutation == 6)
+        --Call->NumInputs;
+      std::string Error;
+      EXPECT_FALSE(F.infer(Error)) << Error;
+    }
+}

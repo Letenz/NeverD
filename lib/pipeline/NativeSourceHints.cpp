@@ -18,6 +18,7 @@
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
+#include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -551,6 +552,20 @@ bool hasNativeSourceStateContract(
                                            Op.Inputs[0].ConstVal};
         const auto Effects =
             swiftValueBufferCallEffects(Image, *Low, Site, Binding.Signature);
+        if (!Effects || Binding.DoesNotReturn || Op.DoesNotReturn ||
+            Op.PreservesCallerSaved)
+          return false;
+        static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
+      if ((StaticNative || ImmutableNative) &&
+          isObjCContextProjection(Image, Binding.TargetAddress)) {
+        const SourceCallOccurrenceKey Site{
+            Op.Addr, Op.OriginSeq, Op.Opcode,
+            Op.Inputs[0].isConst() ? std::optional<va_t>(Op.Inputs[0].ConstVal)
+                                   : std::nullopt};
+        const auto NativeCallees = boundNativeBooleanCallees(Med);
+        const auto Effects = objcContextCallEffects(
+            Image, *Low, Site, Binding.Signature, &NativeCallees);
         if (!Effects || Binding.DoesNotReturn || Op.DoesNotReturn ||
             Op.PreservesCallerSaved)
           return false;
@@ -1392,7 +1407,7 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   }
 
   bool HasReturn = false, RequiresImmutableCallProof = false;
-  bool RequiresFrameAliasProof = false;
+  bool RequiresFrameEffectProof = false;
   for (const auto &Block : Med.Blocks) {
     if (!Block.ExceptionalSuccs.empty() || !Block.ExceptionalPreds.empty())
       return Reject("native exception-dependent parameters are unsupported");
@@ -1406,8 +1421,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
         return Reject("native intrinsic requires explicit scalar ABI evidence");
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs && Op.Inputs[0].isConst())
-          RequiresFrameAliasProof |=
-              isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal);
+          RequiresFrameEffectProof |=
+              isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal) ||
+              isObjCContextProjection(Image, Op.Inputs[0].ConstVal);
         RequiresImmutableCallProof |=
             Op.SourceCallHint &&
             (Op.SourceCallHint->ImmutableNativeCall ||
@@ -1506,17 +1522,17 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
   // A defined scalar result alone authenticates neither an indirect native
-  // target nor a possible borrowed-frame alias. Revalidate the original
+  // target nor a borrowed-frame effect. Revalidate the original
   // occurrence even when return inference did not need the frame proof.
-  if ((RequiresImmutableCallProof || RequiresFrameAliasProof ||
+  if ((RequiresImmutableCallProof || RequiresFrameEffectProof ||
        !Med.RegisterCopyProjections.empty()) &&
       !hasNativeSourceStateContract(Image, Low, Med, false, nullptr, false,
                                     CalleeContracts, &Hint))
     return Reject(
         RequiresImmutableCallProof
             ? "immutable native calls lack current machine state proof"
-        : RequiresFrameAliasProof
-            ? "borrowed frame result lacks current machine state proof"
+        : RequiresFrameEffectProof
+            ? "borrowed frame effect lacks current machine state proof"
             : "projected register copies do not restore native call state");
   auto Exact = compilerRTPlatformVersionContract(Image, Med, Hint, Diagnostic);
   if (Exact.Recognized)
