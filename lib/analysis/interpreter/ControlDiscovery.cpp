@@ -203,6 +203,71 @@ private:
       enqueue(Operand, Low - Shift, End - Low);
   }
 
+  /// A shallow overapproximation for a word-sized operand. Bits omitted from
+  /// the mask are structurally zero for every input; unknown syntax keeps all
+  /// bits possible. Each inspected node/operand costs discovery work.
+  uint64_t possibleOneBits(SymRef Value) {
+    const uint32_t Width = Ctx.width(Value);
+    const uint64_t All = UINT64_MAX >> (64 - Width);
+    if (!charge())
+      return All;
+    if (Ctx.isConst(Value))
+      return Ctx.constValue(Value).getZExtValue();
+    const auto Operands = Ctx.operands(Value);
+    switch (Ctx.op(Value)) {
+    case SymOp::And: {
+      uint64_t Mask = All;
+      for (auto Operand : Operands) {
+        if (!charge() || !valid(Operand) || Ctx.width(Operand) != Width)
+          return All;
+        if (Ctx.isConst(Operand))
+          Mask &= Ctx.constValue(Operand).getZExtValue();
+      }
+      return Mask;
+    }
+    case SymOp::Mul: {
+      uint32_t Shift = 0;
+      for (auto Operand : Operands) {
+        if (!charge() || !valid(Operand) || Ctx.width(Operand) != Width)
+          return All;
+        if (Ctx.isConst(Operand))
+          Shift =
+              std::min(Width, Shift + Ctx.constValue(Operand).countr_zero());
+      }
+      return Shift >= Width ? 0 : (All << Shift) & All;
+    }
+    case SymOp::ZExt:
+      if (Operands.size() == 1 && charge() && valid(Operands.front()) &&
+          Ctx.width(Operands.front()) < Width)
+        return UINT64_MAX >> (64 - Ctx.width(Operands.front()));
+      return All;
+    case SymOp::Shl:
+    case SymOp::LShr:
+      if (Operands.size() != 2 || !charge(2) || !valid(Operands[0]) ||
+          !valid(Operands[1]) || Ctx.width(Operands[0]) != Width ||
+          Ctx.width(Operands[1]) > 64 || !Ctx.isConst(Operands[1]))
+        return All;
+      if (const uint64_t Shift = Ctx.constValue(Operands[1]).getZExtValue();
+          Shift < Width)
+        return Ctx.op(Value) == SymOp::Shl ? (All << Shift) & All
+                                           : All >> Shift;
+      return 0;
+    default:
+      return All;
+    }
+  }
+
+  bool carryFreeSum(llvm::ArrayRef<SymRef> Operands) {
+    uint64_t Occupied = 0;
+    for (auto Operand : Operands) {
+      const uint64_t Bits = possibleOneBits(Operand);
+      if (exhausted() || (Occupied & Bits))
+        return false;
+      Occupied |= Bits;
+    }
+    return true;
+  }
+
   void visit(const Demand &Current) {
     if (Ctx.isConst(Current.Value))
       return;
@@ -295,6 +360,20 @@ private:
     case SymOp::Mul: {
       if (!sameWidth(Current, Operands))
         return;
+      // Pairwise-disjoint possible-one bits prove that this sum cannot carry
+      // at any position. Its selected upper slice then depends only on those
+      // same operand bits, as with OR. Otherwise retain the full low prefix.
+      // No solver premise or sampled value is used to omit dependencies.
+      if (Ctx.op(Current.Value) == SymOp::Add && Current.Low &&
+          Ctx.width(Current.Value) <= 64 && carryFreeSum(Operands)) {
+        for (auto Operand : Operands) {
+          if (!Ctx.isConst(Operand))
+            enqueue(Operand, Current.Low, Current.Bits);
+          if (exhausted())
+            return;
+        }
+        return;
+      }
       // Modulo 2^N arithmetic cannot carry from a higher bit into a lower
       // one. Subtraction and negation are canonical Add/Mul nodes as well.
       uint32_t End = Current.Low + Current.Bits;
