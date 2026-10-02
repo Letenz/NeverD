@@ -149,7 +149,8 @@ def main():
     frameworks = ("CoreGraphics", "ImageIO")
     framework_headers = ("CoreGraphics/CoreGraphics.h",
                          "CoreLocation/CLLocation.h", "ImageIO/ImageIO.h",
-                         "QuartzCore/CABase.h", "QuartzCore/CATransform3D.h")
+                         "QuartzCore/CABase.h", "QuartzCore/CATransform3D.h",
+                         "CoreText/CTFont.h", "CoreText/CTFramesetter.h")
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-declarations-") as work:
         source = Path(work) / "declarations.m"
         source.write_text(
@@ -172,6 +173,7 @@ def main():
     core_services = load_exports(sdk, ("CoreServices",))
     core_location = load_exports(sdk, ("CoreLocation",))
     quartz_core = load_exports(sdk, ("QuartzCore",))
+    core_text = load_exports(sdk, ("CoreText",))
     for common, extra in zip(exports, core_services):
         for name in ("UTTypeConformsTo", "UTTypeCreatePreferredIdentifierForTag",
                      "UTTypeIsDynamic"):
@@ -182,6 +184,9 @@ def main():
     for common, extra in zip(exports, quartz_core):
         for name in ("CACurrentMediaTime", "CATransform3DMakeTranslation",
                      "CATransform3DMakeScale", "CATransform3DMakeRotation"):
+            common[name] = extra[name]
+    for common, extra in zip(exports, core_text):
+        for name in ("CTFontGetSize", "CTFramesetterCreateWithAttributedString"):
             common[name] = extra[name]
     output, count = render(profiles, exports, version,
                            clang.string(clang.clang_getClangVersion()))

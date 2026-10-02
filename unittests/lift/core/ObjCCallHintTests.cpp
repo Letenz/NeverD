@@ -7907,6 +7907,134 @@ TEST(ObjCCallHints, GraphicsDeclarationsPreserveOpaquePointersAndExactExports) {
   }
 }
 
+TEST(ObjCCallHints,
+     CoreTextDeclarationsKeepPointerArgumentsAndSeparateResults) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (const auto &[Name, Kind] :
+         {std::pair{"CTFontGetSize", NdTypeKind::Float},
+          std::pair{"CTFramesetterCreateWithAttributedString",
+                    NdTypeKind::Ptr}}) {
+      SCOPED_TRACE(Name);
+      for (const char *Version : {"", "Versions/A/"}) {
+        auto Image = runtimeImage("_" + std::string(Name), Architecture);
+        Image.DyldBindSlots[0x2180] = {
+            "_" + std::string(Name), 0,
+            std::string("/System/Library/Frameworks/CoreText.framework/") +
+                Version + "CoreText",
+            false};
+        const auto Declared = darwinRuntimeSourceCallHint(Image, 0x2180);
+        ASSERT_TRUE(Declared);
+        const auto &ABI = Declared->Signature;
+        EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::DarwinSDK);
+        EXPECT_EQ(ABI.ReturnType->Kind, Kind);
+        EXPECT_EQ(ABI.ReturnType->Size, 8U);
+        EXPECT_EQ(ABI.ReturnLocation.Kind,
+                  Kind == NdTypeKind::Float
+                      ? SourceABICarrierKind::FloatingRegister
+                      : SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(ABI.ReturnLocation.RegisterOffset, Kind == NdTypeKind::Float
+                                                         ? TRI.FPParamRegs[0]
+                                                         : TRI.IntReturnReg);
+        EXPECT_EQ(ABI.ReturnLocation.ValueBytes, 8U);
+        ASSERT_EQ(ABI.Parameters.size(), 1U);
+        EXPECT_EQ(ABI.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(ABI.Parameters[0].Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(ABI.Parameters[0].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+        EXPECT_EQ(ABI.Parameters[0].Location.ValueBytes, 8U);
+        std::string Error;
+        EXPECT_TRUE(validateSourceABI(ABI, Error)) << Error;
+
+        auto Low = caller(Architecture);
+        Low.Blocks[0].Ops.back().Inputs[0] =
+            NdVar::reg(ABI.ReturnLocation.RegisterOffset, 8);
+        const auto Med = convert(Image, Low);
+        ASSERT_EQ(Med.CallInfos.size(), 1U);
+        ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+        MedToHighConverter Converter;
+        Converter.setBinaryImage(&Image);
+        const auto High = Converter.convert(Med, Architecture);
+        const auto *Call = sourceCall(High);
+        ASSERT_NE(Call, nullptr);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        EXPECT_NE(Source.find("neverd_darwin_" + std::string(Name)),
+                  std::string::npos);
+        EXPECT_NE(Source.find("__asm__(\"_" + std::string(Name) + "\")"),
+                  std::string::npos);
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, CoreTextBindingsRevalidateProviderAndCompleteABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"CTFontGetSize", "CTFramesetterCreateWithAttributedString"}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_" + std::string(Name), 0,
+          "/System/Library/Frameworks/CoreText.framework/CoreText", false};
+      const auto Med = convert(Image, caller(Architecture));
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Call = sourceCall(High);
+      ASSERT_NE(Call, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      for (const char *Module :
+           {"/tmp/CoreText.framework/CoreText",
+            "/System/Library/Frameworks/CoreText.framework/Versions/B/CoreText",
+            "/System/Library/Frameworks/CoreText.framework/Other",
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+            "/System/Library/Frameworks/Foundation.framework/Foundation",
+            "/usr/lib/libSystem.B.dylib"}) {
+        auto Changed = Image;
+        Changed.DyldBindSlots.at(0x2180).Module = Module;
+        EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      }
+      auto Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).Addend = 1;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).Name = "_CTUnknownFunction";
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).WeakImport = true;
+      const auto Weak = darwinRuntimeSourceCallHint(Changed, 0x2180);
+      ASSERT_TRUE(Weak);
+      EXPECT_TRUE(Weak->WeakImport);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+        auto Stale = *Call;
+        auto Hint = *Call->SourceCallHint;
+        auto &ABI = Hint.Signature;
+        if (Mutation == 0)
+          ABI.Parameters[0].Location.ValueBytes = 4;
+        else if (Mutation == 1)
+          ABI.Parameters[0].Location.RegisterOffset =
+              getTargetRegInfo(Architecture).IntParamRegs[1];
+        else if (Mutation == 2)
+          ABI.ReturnLocation.ValueBytes = 4;
+        else
+          ABI.ReturnType = NdType::makeInt(8);
+        Stale.SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Stale, Image, {})) << Mutation;
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Module] :
