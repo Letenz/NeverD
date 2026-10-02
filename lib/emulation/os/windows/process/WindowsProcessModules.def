@@ -11,6 +11,10 @@ NEVERD_WINDOWS_PROCESS_VALUE(ImportOrdinalMask, 0xffff)
 NEVERD_WINDOWS_PROCESS_VALUE(ModuleStride, 0x120)
 NEVERD_WINDOWS_PROCESS_VALUE(ModuleInitLink, 0x20)
 NEVERD_WINDOWS_PROCESS_VALUE(ASCIIUpperBound, 127)
+NEVERD_WINDOWS_PROCESS_VALUE(MaxForwarders, 64)
+NEVERD_WINDOWS_PROCESS_VALUE(ForwarderOrdinalRadix, 10)
+NEVERD_WINDOWS_PROCESS_VALUE(ErrorProcedureNotFound, 127)
+NEVERD_WINDOWS_PROCESS_VALUE(ErrorInvalidOrdinal, 182)
 #endif
 #ifdef NEVERD_WINDOWS_PROCESS_TEXT
 NEVERD_WINDOWS_PROCESS_TEXT(Lifetime, "invalid module lifetime continuation")
@@ -33,7 +37,17 @@ NEVERD_WINDOWS_PROCESS_TEXT(ModuleTLSBudget,
 NEVERD_WINDOWS_PROCESS_TEXT(TLSZeroFill,
                             "nonzero TLS SizeOfZeroFill is not supported")
 NEVERD_WINDOWS_PROCESS_TEXT(ModuleForwarder,
-                            "forwarded guest exports are not supported")
+                            "invalid or unsupported export forwarder")
+NEVERD_WINDOWS_PROCESS_TEXT(ForwarderCycle, "cyclic export forwarding")
+NEVERD_WINDOWS_PROCESS_TEXT(ForwarderDepth, "export forwarding depth exceeded")
+NEVERD_WINDOWS_PROCESS_TEXT(ForwarderLoad,
+                            "export query requires dynamic module loading: ")
+NEVERD_WINDOWS_PROCESS_TEXT(ExportChanged,
+                            "runtime export metadata was modified")
+NEVERD_WINDOWS_PROCESS_TEXT(ExportBudget,
+                            "export resolution metadata budget exceeded")
+NEVERD_WINDOWS_PROCESS_TEXT(ForwarderSeparator, ".")
+NEVERD_WINDOWS_PROCESS_TEXT(ForwarderOrdinal, "#")
 NEVERD_WINDOWS_PROCESS_TEXT(ModuleExport, "missing or unmapped guest export: ")
 NEVERD_WINDOWS_PROCESS_TEXT(ModuleFixup,
                             "base relocation overlaps linker metadata")

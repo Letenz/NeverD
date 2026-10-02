@@ -53,7 +53,7 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
     return failure(text::Layout);
   const auto &Image = Program.Modules.front().Loaded;
   const auto &Modules = Program.Identities;
-  const auto &InitOrder = Program.InitializationOrder;
+  const auto &InitOrder = Program.LoaderInitializationOrder;
   const llvm::StringRef ImageName = Modules.front().Name;
   if (Modules.size() > windows_process_limits::Modules + 1)
     return failure(text::ModuleBudget);
