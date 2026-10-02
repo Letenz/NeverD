@@ -1,0 +1,15 @@
+//===- driver_resource_strings.def - Original WDK string transfer probes -===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_STRING_VALUE
+NEVERD_RESOURCE_STRING_VALUE(StringCount, 3)
+#endif
+#ifdef NEVERD_RESOURCE_STRING_CASE
+NEVERD_RESOURCE_STRING_CASE(Byte, UCHAR, 0xa5, "rep stosb", "rep lodsb")
+NEVERD_RESOURCE_STRING_CASE(Word, USHORT, 0x1234, "rep stosw", "rep lodsw")
+NEVERD_RESOURCE_STRING_CASE(DWord, ULONG, 0x12345678, "rep stosl", "rep lodsl")
+NEVERD_RESOURCE_STRING_CASE(QWord, ULONG64, 0x123456789abcdef0ULL, "rep stosq",
+                            "rep lodsq")
+#endif

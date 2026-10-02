@@ -279,6 +279,22 @@ CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
+  const auto &X = I.detail->x86;
+  // MOVSD names both a scalar SSE move and a string move in the decoder.
+  // Only its string form has two implicit memory operands.
+  if (I.id != X86_INS_MOVSD ||
+      (X.op_count == 2 && X.operands[0].type == X86_OP_MEM &&
+       X.operands[1].type == X86_OP_MEM)) {
+    switch (I.id) {
+#define NEVERD_X64_STRING_INSTRUCTION(Name, Width, Kind)                       \
+  case X86_INS_##Name:                                                         \
+    return executeString(I, Width, StringOperation::Kind);
+#include "X64StringInstructions.def"
+#undef NEVERD_X64_STRING_INSTRUCTION
+    default:
+      break;
+    }
+  }
   switch (I.id) {
 #define NEVERD_CHECKED_X64_INSTRUCTION(Name)                                   \
   case X86_INS_##Name:                                                         \
@@ -287,21 +303,6 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
 #undef NEVERD_CHECKED_X64_INSTRUCTION
   default:
     return llvm::make_error<UnsupportedExecutionError>();
-  }
-  const auto &X = I.detail->x86;
-  // MOVSD names both a scalar SSE move and a string move in the decoder.
-  // String forms have two implicit memory operands and no XMM operand.
-  if (X.op_count == 2 && X.operands[0].type == X86_OP_MEM &&
-      X.operands[1].type == X86_OP_MEM) {
-    switch (I.id) {
-#define NEVERD_X64_STRING_INSTRUCTION(Name, Width)                             \
-  case X86_INS_##Name:                                                         \
-    return executeString(I, Width);
-#include "X64StringInstructions.def"
-#undef NEVERD_X64_STRING_INSTRUCTION
-    default:
-      break;
-    }
   }
   const auto Vector = vectorOperation(I.id);
   const bool Conversion = isFloatingPointConversion(I.id);

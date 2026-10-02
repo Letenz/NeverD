@@ -10,6 +10,8 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
+
 namespace neverd::emulation {
 namespace {
 #define NEVERD_CONFIGURATION_VALUE(Name, Value) constexpr uint64_t Name = Value;
@@ -65,6 +67,29 @@ TEST(ExecutionConfiguration, NativeDriverProfilesAreBackendQualified) {
   EXPECT_FALSE(C.SupportsNativeExecution);
   EXPECT_FALSE(C.HasInstructionAllowlist);
   EXPECT_EQ(C.MemoryObservation, ExecutionMemoryObservation::EngineCallbacks);
+}
+
+TEST(ExecutionConfiguration, StringFamiliesArePublishedOnceForCheckedProfiles) {
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::Unicorn})
+    for (auto Contract :
+         {ExecutionContract::CheckedX64, ExecutionContract::CheckedUserX64,
+          ExecutionContract::Legacy}) {
+      if (Contract == ExecutionContract::Legacy &&
+          Backend == ExecutionBackendKind::Unicorn)
+        continue;
+      const auto C = llvm::cantFail(
+          executionCapabilities(Contract, GuestArchitecture::X64, Backend));
+#define NEVERD_CONFIGURATION_STRING_INSTRUCTION(Name)                          \
+  EXPECT_EQ(std::count_if(C.InstructionFamilies.begin(),                       \
+                          C.InstructionFamilies.end(),                         \
+                          [](const char *Text) {                               \
+                            return llvm::StringRef(Text) == #Name;             \
+                          }),                                                  \
+            1);
+#include "ExecutionConfigurationCases.def"
+#undef NEVERD_CONFIGURATION_STRING_INSTRUCTION
+    }
 }
 
 TEST(ExecutionConfiguration, NativeDriverRequirementsFailBeforeRAMMutation) {
