@@ -52,7 +52,8 @@ struct X64MachineState {
 /// Synchronous processor faults return X64ExceptionError with their original
 /// architectural context. Transport failures do not publish partial CPU state.
 /// The architecture excludes unlisted floating-point/vector families,
-/// privileged instructions, debug/flag manipulation and unbounded execution.
+/// privileged instructions, debug/control flags and unbounded execution.
+/// CLD/STD may change the direction flag used by checked string transfers.
 class X64Machine {
 public:
   virtual ~X64Machine() = default;

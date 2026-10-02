@@ -191,36 +191,57 @@ inline bool fixedObjectMessage(const BinaryImage &Image,
 
 // This supplies only the complete physical ABI to the difference proof. The
 // existing super-dispatch publication gate still owns receiver/frame binding.
-inline bool superInit(const BinaryImage &Image,
-                      const SourceCallOccurrenceKey &Site, va_t Slot,
-                      const SourceCallTypeHint &Hint) {
+inline bool fixedSuperMessage(const BinaryImage &Image,
+                              const SourceCallOccurrenceKey &Site, va_t Slot,
+                              const SourceCallTypeHint &Hint) {
   const auto Import = darwinRuntimeImport(Image, Slot);
   const auto Bind = Image.DyldBindSlots.find(Slot);
   const auto &Signature = Hint.Signature;
-  return Hint.CallKind == SourceCallTypeHint::Kind::ObjCSuper2 &&
-         Hint.TargetAddress == Site.StaticTarget && Hint.Selector == "init" &&
-         Hint.TargetName == "objc_msgSendSuper2" && Import &&
-         *Import == "_objc_msgSendSuper2" &&
-         Bind != Image.DyldBindSlots.end() &&
-         Bind->second.Module == "/usr/lib/libobjc.A.dylib" && !Hint.Format &&
-         !Hint.NilTerminated && !Hint.WeakImport && !Hint.DoesNotReturn &&
-         Signature.Convention == SourceFunctionTypeHint::ConventionKind::C &&
-         Signature.ReturnType &&
-         Signature.ReturnType->Kind == NdTypeKind::Ptr &&
-         Signature.ReturnType->Size == 8 && Signature.Parameters.size() == 2 &&
-         std::all_of(Signature.Parameters.begin(), Signature.Parameters.end(),
-                     [](const auto &P) {
-                       return P.Type && P.Type->Kind == NdTypeKind::Ptr &&
-                              P.Type->Size == 8 &&
-                              P.TheRole ==
-                                  SourceParameterTypeHint::Role::Ordinary;
-                     });
+  std::string Error;
+  if (Hint.CallKind != SourceCallTypeHint::Kind::ObjCSuper2 ||
+      Hint.TargetAddress != Site.StaticTarget || Hint.Selector.empty() ||
+      Hint.TargetName != "objc_msgSendSuper2" || !Import ||
+      *Import != "_objc_msgSendSuper2" || Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/libobjc.A.dylib" || Hint.Format ||
+      Hint.NilTerminated || Hint.WeakImport || Hint.DoesNotReturn ||
+      Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      Signature.Architecture != Image.Arch || !Signature.HasExplicitABI ||
+      !validateSourceABI(Signature, Error) ||
+      !Signature.ReturnComponents.empty() || Signature.Parameters.size() < 2 ||
+      std::count(Hint.Selector.begin(), Hint.Selector.end(), ':') !=
+          Signature.Parameters.size() - 2)
+    return false;
+  const auto Scalar = [](const TypeRef &Type) {
+    return Type &&
+           (Type->Kind == NdTypeKind::Ptr || Type->Kind == NdTypeKind::Int ||
+            Type->Kind == NdTypeKind::Float);
+  };
+  if (!Signature.ReturnType ||
+      (Signature.ReturnType->Kind != NdTypeKind::Void &&
+       !Scalar(Signature.ReturnType)) ||
+      !std::all_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                   [&](const auto &P) {
+                     return Scalar(P.Type) && P.Components.empty() &&
+                            P.TheRole ==
+                                SourceParameterTypeHint::Role::Ordinary;
+                   }) ||
+      Signature.Parameters[0].Type->Kind != NdTypeKind::Ptr ||
+      Signature.Parameters[1].Type->Kind != NdTypeKind::Ptr)
+    return false;
+  // The shared declaration owner supplies the complete ABI, including narrow
+  // result padding. A selector name alone never grants an input/result fact.
+  const auto Expected =
+      Hint.Receiver
+          ? objcSuperSourceTypeHint(Image, Hint.Selector, *Hint.Receiver)
+                .Signature
+          : objcSelectorSourceTypeHint(Image, Hint.Selector);
+  return Expected && equalSourceABIs(*Expected, Signature);
 }
 } // namespace swift_boolean_projection_detail
 
 /// Deliberately bounded to a verified Objective-C or native entry, at most
 /// eight comparison occurrences, and other direct calls with freshly catalogued
-/// runtime ABIs, exact super init dispatch or complete eight-instruction
+/// runtime ABIs, fixed scalar super dispatch or complete eight-instruction
 /// class-accessor machine proofs, or current native source ABIs. Other direct
 /// calls require identical physical state and supply no ABI or binding facts.
 /// Indirect calls remain unsupported.
@@ -336,8 +357,8 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
       if (!Slot ||
           !((Hint->second.TargetAddress == *Slot &&
              swift_boolean_projection_detail::ordinaryRuntime(Hint->second)) ||
-            swift_boolean_projection_detail::superInit(Image, *Site, *Slot,
-                                                       Hint->second)) ||
+            swift_boolean_projection_detail::fixedSuperMessage(
+                Image, *Site, *Slot, Hint->second)) ||
           Hint->second.WeakImport || Hint->second.DoesNotReturn)
         return {};
       if (!Calls

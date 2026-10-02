@@ -61,6 +61,10 @@ C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
 
+超過 SSA 建構限制的大型恢復函式可透過 `--llvm` 使用有界的純量可變儲存契約。入口輸入、迴圈攜帶值和較早讀取的語意得到保留。不支援的隱含狀態、向量暫存器參數、映像重定位、歧義儲存和畸形控制流程會明確失敗；HighC 拒絕此回退路徑。原始碼輸出仍遵循既有機器狀態契約，不新增等價證明憑證。
+
+此可變子集接受 8/16/32/64/128 位元純量儲存，位元計數輸入最多為 64 位元。非標準位元寬度和更寬儲存需要獨立的原始碼契約。
+
 相容的 v4 介面為 `neverd_devirtualize_source_v4()` 與 `neverd_devirtualize_machine_source_v4()`。將 `neverd_devirtualize_options_v4` 清零，並將 `base.base.base.struct_size` 設為完整大小。CLI 串接數量接受非負 32 位元十進位整數，零表示關閉。範圍端點接受有號 64 位元十進位整數，要求 `begin < end` 及 `--vm-machine-state`，約束實體入口 RSP 而非調整後的值。在 C API 中，範圍旗標要求機器狀態介面；未設定時兩個端點必須為零。未知旗標與舊版本保留欄位的非零值會遭拒。v1/v2/v3 忽略整個 v4 擴充，v4 忽略未來擴充。空選項指標保留舊預設值。報告增加 `maxChainedTransfers` 與 `entryFrameBounds`，`discoverControlState` 記錄實際開關。所有 CLI 選項皆要求 `--devirtualize`。數值前提不在執行時檢查，也不保證可存取性、初始化或無別名。這些選項不啟用原生證明策略。
 
 ```c

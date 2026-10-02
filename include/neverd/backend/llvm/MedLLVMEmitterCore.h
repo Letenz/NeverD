@@ -41,6 +41,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitterState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -1932,6 +1933,8 @@ private:
 
   llvm::Function *CurFunc = nullptr;
   const MedFunc *CurMedFunc = nullptr;
+  std::optional<MedVar> MutableReturnValue;
+  std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;
 
   /// Deferred stores for a shared -O0 computed-goto dispatch recovered as a

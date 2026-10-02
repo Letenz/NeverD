@@ -53,7 +53,8 @@ private:
                              unsigned, bool);
   llvm::Error deviceTransfer(const cs_insn &, uint64_t, unsigned, unsigned,
                              uint64_t);
-  llvm::Error executeString(const cs_insn &, unsigned Size);
+  enum class StringOperation { Move, Store, Load };
+  llvm::Error executeString(const cs_insn &, unsigned Size, StringOperation);
   llvm::Error deviceResult(llvm::Error E);
   template <typename Function> auto deviceCallback(Function Call) {
     try {

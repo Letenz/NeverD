@@ -64,6 +64,9 @@ bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
             if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptosi_sat ||
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::fptoui_sat ||
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::bitreverse ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::ctpop ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::ctlz ||
+                Intrinsic->getIntrinsicID() == llvm::Intrinsic::cttz ||
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::umin ||
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::umax ||
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::smin ||

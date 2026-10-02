@@ -3081,18 +3081,34 @@ struct SwiftTypeMetadataPairProof {
 };
 
 // A descriptor's word/substitution indices are relative to its own mangling.
-// They cannot be concatenated into a surrounding generic type's spelling.
-// For this complete two-argument recipe, compare the declared type tree with
-// the two already authenticated descriptor identities and the literal String
-// argument. The emitted symbolic references remain unchanged.
-inline bool swiftStringKeyedGenericTypeMatches(
+// They cannot be concatenated into a surrounding type's spelling. For these
+// complete recipes, compare the declared type tree with the authenticated
+// descriptor identities in operand order. The emitted symbolic references
+// remain unchanged.
+inline bool swiftDescriptorTypeRecipeMatches(
     llvm::StringRef MangledType, llvm::StringRef Recipe,
     const std::vector<SwiftTypeMetadataDescriptorReference> &Descriptors) {
-  if (Descriptors.size() != 2 || Recipe.size() != 14 ||
-      Descriptors[0].Offset != 0 || Descriptors[1].Offset != 8 ||
-      (Recipe[0] != 1 && Recipe[0] != 2) ||
-      (Recipe[8] != 1 && Recipe[8] != 2) || Recipe.substr(5, 3) != "ySS" ||
-      Recipe[13] != 'G')
+  if ((Descriptors.size() != 2 && Descriptors.size() != 3) ||
+      Descriptors[0].Offset != 0)
+    return false;
+  const auto ReferenceAt = [&](size_t Offset) {
+    return Recipe.size() >= Offset + 5 &&
+           (Recipe[Offset] == 1 || Recipe[Offset] == 2);
+  };
+  const bool StringKeyedGeneric =
+      Descriptors.size() == 2 && Recipe.size() == 14 &&
+      Descriptors[1].Offset == 8 && ReferenceAt(0) && ReferenceAt(8) &&
+      Recipe.substr(5, 3) == "ySS" && Recipe[13] == 'G';
+  const bool NominalTuple = Descriptors.size() == 2 && Recipe.size() == 12 &&
+                            Descriptors[1].Offset == 6 && ReferenceAt(0) &&
+                            ReferenceAt(6) && Recipe[5] == '_' &&
+                            Recipe[11] == 't';
+  const bool TupleGeneric =
+      Descriptors.size() == 3 && Recipe.size() == 19 &&
+      Descriptors[1].Offset == 6 && Descriptors[2].Offset == 12 &&
+      ReferenceAt(0) && ReferenceAt(6) && ReferenceAt(12) && Recipe[5] == 'y' &&
+      Recipe[11] == '_' && Recipe.substr(17) == "tG";
+  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric)
     return false;
   llvm::SwiftDemangleOptions Options;
   Options.MaxInputBytes = 8000;
@@ -3122,20 +3138,6 @@ inline bool swiftStringKeyedGenericTypeMatches(
       return false;
   const auto &OuterType = Outer.Root->Children[0].Children[0];
   const auto &ValueType = Value.Root->Children[0].Children[0];
-  const auto &Generic = Type.Root->Children[0];
-  const auto &Kind = OuterType.Children[0].Kind;
-  const llvm::StringRef GenericKind = Kind == "Class" ? "BoundGenericClass"
-                                      : Kind == "Structure"
-                                          ? "BoundGenericStructure"
-                                      : Kind == "Enum" ? "BoundGenericEnum"
-                                                       : "";
-  if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
-      !Shape(Generic.Children[0], "Type", 1) ||
-      !Shape(Generic.Children[1], "TypeList", 2))
-    return false;
-  const auto &Arguments = Generic.Children[1].Children;
-  if (!Shape(Arguments[0], "Type", 1) || !Shape(Arguments[1], "Type", 1))
-    return false;
   size_t Budget = 4096;
   const auto Same = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
                         const llvm::SwiftDemangleNode &B,
@@ -3148,6 +3150,43 @@ inline bool swiftStringKeyedGenericTypeMatches(
         return false;
     return true;
   };
+  const auto TupleMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                const llvm::SwiftDemangleNode &First,
+                                const llvm::SwiftDemangleNode &Second) {
+    return Shape(Tuple, "Tuple", 2) &&
+           Shape(Tuple.Children[0], "TupleElement", 1) &&
+           Shape(Tuple.Children[1], "TupleElement", 1) &&
+           Same(Same, Tuple.Children[0].Children[0], First, 0) &&
+           Same(Same, Tuple.Children[1].Children[0], Second, 0);
+  };
+  if (NominalTuple)
+    return TupleMatches(Type.Root->Children[0], OuterType, ValueType);
+  const auto &Generic = Type.Root->Children[0];
+  const auto &Kind = OuterType.Children[0].Kind;
+  const llvm::StringRef GenericKind = Kind == "Class" ? "BoundGenericClass"
+                                      : Kind == "Structure"
+                                          ? "BoundGenericStructure"
+                                      : Kind == "Enum" ? "BoundGenericEnum"
+                                                       : "";
+  if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
+      !Shape(Generic.Children[0], "Type", 1) ||
+      !Shape(Generic.Children[1], "TypeList", TupleGeneric ? 1 : 2))
+    return false;
+  const auto &Arguments = Generic.Children[1].Children;
+  if (TupleGeneric) {
+    const auto Second = Parse(Descriptors[2].Symbol);
+    if (!Second.Root || !Second.Error.empty() ||
+        !Shape(*Second.Root, "Global", 1) ||
+        !Shape(Second.Root->Children[0], "NominalTypeDescriptor", 1) ||
+        !Shape(Second.Root->Children[0].Children[0], "Type", 1) ||
+        !Shape(Arguments[0], "Type", 1))
+      return false;
+    return Same(Same, Generic.Children[0], OuterType, 0) &&
+           TupleMatches(Arguments[0].Children[0], ValueType,
+                        Second.Root->Children[0].Children[0]);
+  }
+  if (!Shape(Arguments[0], "Type", 1) || !Shape(Arguments[1], "Type", 1))
+    return false;
   return Same(Same, Generic.Children[0], OuterType, 0) &&
          Same(Same, Arguments[0].Children[0], String.Root->Children[0], 0) &&
          Same(Same, Arguments[1], ValueType, 0);
@@ -3255,6 +3294,15 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
       if (!Inline)
         Inline = swiftLocalRegisteredNominalType(Image, *LocalDescriptor);
+      if (!Inline) {
+        // The shared protocol proof returns a simple existential spelling.
+        // Keep the recipe's own composition operator and insert only the
+        // authenticated declaration, avoiding a second "_p" suffix.
+        const auto Protocol =
+            swiftLocalRegisteredProtocolType(Image, *LocalDescriptor);
+        if (Protocol && llvm::StringRef(*Protocol).ends_with("_p"))
+          Inline = Protocol->substr(0, Protocol->size() - 2);
+      }
       if (Inline) {
         Expanded += *Inline;
         Rebuilt += *Inline;
@@ -3345,7 +3393,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
   if (Rebuilt.size() > 256 ||
       (Expanded == Base
            ? !swiftMangledType(Expanded)
-           : !swiftStringKeyedGenericTypeMatches(Base, Rebuilt, Descriptors)))
+           : !swiftDescriptorTypeRecipeMatches(Base, Rebuilt, Descriptors)))
     return std::nullopt;
 
   return SwiftTypeMetadataPairProof{
@@ -5954,11 +6002,22 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // whole-image proof until such a use exists, but keep it local to this bind
   // so another call always validates the current image again.
   std::optional<std::map<va_t, ClassObjectIdentity>> ClassObjects;
-  auto ClassObjectAt = [&](va_t Address) -> const ClassObjectIdentity * {
+  auto ClassObjectHint =
+      [&](va_t Address) -> std::optional<SourceCallTypeHint> {
     if (!ClassObjects)
       ClassObjects.emplace(classObjectIdentities(Image));
     const auto Found = ClassObjects->find(Address);
-    return Found == ClassObjects->end() ? nullptr : &Found->second;
+    if (Found == ClassObjects->end())
+      return std::nullopt;
+    SourceCallTypeHint Hint;
+    Hint.CallKind = Found->second.Kind;
+    Hint.TargetAddress = Address;
+    Hint.TargetName = Found->second.Name;
+    Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+    std::string Error;
+    return assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Error)
+               ? std::optional<SourceCallTypeHint>(std::move(Hint))
+               : std::nullopt;
   };
   auto ScalarLoads = readOnlyScalarLoadPlans(Function, Image);
   const auto LoopBytes = readOnlyLoopBytePlans(Function, Image);
@@ -6406,6 +6465,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         !(Original->Kind == ExprKind::Const &&
           Original->ConstProvenance == ConstantAddressProvenance::Scalar)) {
       const auto Address = constantAddress(*Original);
+      // A complete materialized class-object address is also an identity when
+      // stored in memory (for example, objc_super.current_class). Resolve the
+      // original runtime object through the same metadata proof used by direct
+      // receivers. Numeric immediates, partial addresses and classref cells do
+      // not acquire a class-object binding.
+      if (Address && Original->Kind == ExprKind::Const && Original->Type &&
+          Original->Type->Size == 8 && Original->Operands.empty() &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr) &&
+          isExactAddressProvenance(Original->ConstProvenance) &&
+          !isCodeAddressProvenance(Original->ConstProvenance) &&
+          (Original->AddressOwnerVA == InvalidVA ||
+           Original->AddressOwnerVA == Original->ConstVal))
+        if (auto Hint = ClassObjectHint(*Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          return Expression;
+        }
       // An immutable self-pointer's value and storage address are the same
       // identity. Preserve its pointer-sized contents as well as that alias.
       // Mutable storage cannot acquire an address binding from its initializer.
@@ -7591,22 +7670,12 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             Signature.Parameters[Index].Type->Kind == NdTypeKind::Ptr &&
             validateSourceABI(Signature, Error)) {
           const auto Address = constantAddress(*Operand);
-          const auto *Object = Address ? ClassObjectAt(*Address) : nullptr;
-          if (Object) {
-            auto Binding = std::make_shared<SourceCallTypeHint>();
-            Binding->CallKind = Object->Kind;
-            Binding->TargetAddress = *Address;
-            Binding->TargetName = Object->Name;
-            auto &Hint = Binding->Signature;
-            Hint.Architecture = Image.Arch;
-            Hint.HasExplicitABI = true;
-            Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
-            Hint.ReturnLocation = {SourceABICarrierKind::IntegerRegister,
-                                   getTargetRegInfo(Image.Arch).IntReturnReg, 0,
-                                   8};
+          auto Hint = Address ? ClassObjectHint(*Address) : std::nullopt;
+          if (Hint) {
             auto Value = HighExpr::makeCall({}, 0, {});
             Value->Type = Operand->Type;
-            Value->SourceCallHint = std::move(Binding);
+            Value->SourceCallHint =
+                std::make_shared<SourceCallTypeHint>(std::move(*Hint));
             Operand = std::move(Value);
             continue;
           }

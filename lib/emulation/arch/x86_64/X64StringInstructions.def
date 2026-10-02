@@ -1,9 +1,21 @@
-//===- X64StringInstructions.def - One bounded MOVS element -------------===//
+//===- X64StringInstructions.def - Restartable string transfers ----------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-NEVERD_X64_STRING_INSTRUCTION(MOVSB, 1)
-NEVERD_X64_STRING_INSTRUCTION(MOVSW, 2)
-NEVERD_X64_STRING_INSTRUCTION(MOVSD, 4)
-NEVERD_X64_STRING_INSTRUCTION(MOVSQ, 8)
+NEVERD_X64_STRING_INSTRUCTION(MOVSB, 1, Move)
+NEVERD_X64_STRING_INSTRUCTION(MOVSW, 2, Move)
+// MOVSD shares a decoder identity with the SSE move. A combined instruction
+// inventory may omit this row when that identity is already present.
+#ifndef NEVERD_X64_STRING_SHARED_MOVSD
+NEVERD_X64_STRING_INSTRUCTION(MOVSD, 4, Move)
+#endif
+NEVERD_X64_STRING_INSTRUCTION(MOVSQ, 8, Move)
+NEVERD_X64_STRING_INSTRUCTION(STOSB, 1, Store)
+NEVERD_X64_STRING_INSTRUCTION(STOSW, 2, Store)
+NEVERD_X64_STRING_INSTRUCTION(STOSD, 4, Store)
+NEVERD_X64_STRING_INSTRUCTION(STOSQ, 8, Store)
+NEVERD_X64_STRING_INSTRUCTION(LODSB, 1, Load)
+NEVERD_X64_STRING_INSTRUCTION(LODSW, 2, Load)
+NEVERD_X64_STRING_INSTRUCTION(LODSD, 4, Load)
+NEVERD_X64_STRING_INSTRUCTION(LODSQ, 8, Load)
