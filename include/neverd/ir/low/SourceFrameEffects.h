@@ -24,17 +24,22 @@ struct SourceFrameScalarCondition {
 };
 
 /// Opaque scratch state, not a claim about its physical bytes. A finishing
-/// borrow requires the same live, unmodified record on every reaching path.
+/// borrow requires the same live record on every reaching path. Runtime-owned
+/// links may change other retained records; their bytes are never identities.
 struct SourceFrameScratchEffect {
-  enum class Domain { SwiftUntrackedAccess } TheDomain;
+  enum class Domain { SwiftAccess } TheDomain;
   enum class Action { Initialize, Finish } TheAction;
   size_t Parameter = 0;
   size_t Bytes = 0;
   std::optional<SourceFrameScalarCondition> Condition;
+  // A subset of Condition.Values retains the scratch address until Finish.
+  // This is an explicit lifetime obligation, not a synchronous noescape grant.
+  std::set<uint64_t> RetainedValues;
   bool operator==(const SourceFrameScratchEffect &) const = default;
 };
 
-/// Synchronous, nonescaping borrows, independently authenticated by a caller.
+/// Bounded frame effects, independently authenticated by a caller. Borrows are
+/// synchronous and nonescaping unless Scratch explicitly retains its record.
 /// These bounds describe only effects on its private frame. The call may still
 /// allocate, release objects, invoke callbacks, or mutate external memory.
 struct SourceFrameEffects {
@@ -81,8 +86,7 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
       return false;
   if (const auto &Scratch = Effects.Scratch) {
     using Action = SourceFrameScratchEffect::Action;
-    if (Scratch->TheDomain !=
-            SourceFrameScratchEffect::Domain::SwiftUntrackedAccess ||
+    if (Scratch->TheDomain != SourceFrameScratchEffect::Domain::SwiftAccess ||
         (Scratch->TheAction != Action::Initialize &&
          Scratch->TheAction != Action::Finish) ||
         !Parameter(Scratch->Parameter, Scratch->Bytes) ||
@@ -102,6 +106,14 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
           Signature.Parameters[Condition->Parameter].Type->Kind !=
               NdTypeKind::Int)
         return false;
+    }
+    if (!Scratch->RetainedValues.empty()) {
+      if (Scratch->TheAction != Action::Initialize || !Scratch->Condition ||
+          Scratch->RetainedValues.size() > 16)
+        return false;
+      for (uint64_t Value : Scratch->RetainedValues)
+        if (!Scratch->Condition->Values.count(Value))
+          return false;
     }
   }
   if (const auto &Alias = Effects.ReturnFrameOrExternal) {

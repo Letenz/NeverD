@@ -8461,16 +8461,77 @@ TEST(NativeSourceHints,
       ASSERT_TRUE(End->Scratch);
       EXPECT_EQ(Begin->WritableFrameParameters.at(1), 24U);
       EXPECT_EQ(End->ReadOnlyFrameParameters.at(0), 24U);
-      EXPECT_EQ(Begin->Scratch->Condition->Values, (std::set<uint64_t>{0, 1}));
+      EXPECT_EQ(Begin->Scratch->Condition->Values,
+                (std::set<uint64_t>{0, 1, 32, 33}));
+      EXPECT_EQ(Begin->Scratch->RetainedValues, (std::set<uint64_t>{32, 33}));
+      EXPECT_TRUE(End->Scratch->RetainedValues.empty());
       std::string Error;
       EXPECT_TRUE(F.infer(Error)) << Error;
     }
 }
 
-TEST(NativeSourceHints,
-     SwiftAccessEffectsRejectTrackedUnknownAndExpiredScratch) {
+TEST(NativeSourceHints, SwiftTrackedAccessRequiresBalancedMachineLifetime) {
+  for (unsigned Flags : {0x20, 0x21})
+    for (bool Scalar : {false, true}) {
+      SwiftAccessEffectFixture F(Flags, Scalar);
+      std::string Error;
+      ASSERT_TRUE(F.infer(Error)) << Flags << ": " << Error;
+      // Keeping the result and return ABI unchanged cannot excuse a missing
+      // end: the runtime would retain this soon-to-expire frame in TLS.
+      F.word(8, 0xd503201f);
+      F.run();
+      EXPECT_FALSE(F.infer(Error));
+    }
+}
+
+TEST(NativeSourceHints, SwiftTrackedAccessAuthenticatesNestedMachineCalls) {
+  for (unsigned Flags : {32, 33})
+    for (bool Lifo : {false, true})
+      for (unsigned Case = 0; Case < 5; ++Case) {
+        SCOPED_TRACE(Case);
+        SwiftAccessEffectFixture F(Flags, true);
+        // Two records in a 96-byte frame, at +16 and +48. Their accessed
+        // objects are x20 and x20+8. Ending the older record first lets the
+        // runtime update the younger record's opaque link.
+        const uint32_t Words[] = {0xa9ba7bfd,
+                                  0x910003fd,
+                                  0xaa1403e0,
+                                  0x910043e1,
+                                  uint32_t(0xd2800002 | (Flags << 5)),
+                                  0xd2800003,
+                                  0x9400003a,
+                                  0x91002280,
+                                  0x9100c3e1,
+                                  uint32_t(0xd2800002 | (Flags << 5)),
+                                  0xd2800003,
+                                  0x94000035,
+                                  Lifo ? 0x9100c3e0u : 0x910043e0u,
+                                  0x94000037,
+                                  Lifo ? 0x910043e0u : 0x9100c3e0u,
+                                  0x94000035,
+                                  0xd28000e0,
+                                  0xa8c67bfd,
+                                  0xd65f03c0};
+        for (unsigned I = 0; I < std::size(Words); ++I)
+          F.word(I, Words[I]);
+        F.Image.Symbols[0].Size = sizeof(Words);
+        if (Case == 1)
+          F.word(13, 0xd503201f); // omit first end
+        if (Case == 2)
+          F.word(15, 0xd503201f); // omit last end
+        if (Case == 3)
+          F.word(8, 0x910043e1); // second begin overwrites first
+        if (Case == 4)
+          F.word(14, Words[12]); // end same record twice
+        F.run();
+        std::string Error;
+        EXPECT_EQ(bool(F.infer(Error)), Case == 0) << Error;
+      }
+}
+
+TEST(NativeSourceHints, SwiftAccessEffectsRejectUnknownAndExpiredScratch) {
   for (bool Scalar : {false, true}) {
-    for (unsigned Flags : {2, 0x20, 0x21, 0x100, 0xffff}) {
+    for (unsigned Flags : {2, 0x22, 0x23, 0x100, 0xffff}) {
       SwiftAccessEffectFixture F(Flags, Scalar);
       std::string Error;
       EXPECT_FALSE(F.infer(Error)) << Flags;
@@ -8724,7 +8785,7 @@ TEST(NativeSourceHints, SwiftAccessEffectsRecheckScalarInferenceAndScratchABI) {
   ASSERT_TRUE(F.infer(Error)) << Error;
   const auto Begin = swiftRuntimeSourceCallHint(F.Image, F.BeginSlot);
   ASSERT_TRUE(Begin);
-  for (unsigned Case = 0; Case < 10; ++Case) {
+  for (unsigned Case = 0; Case < 14; ++Case) {
     auto Effects = *F.effect(true);
     auto &Scratch = *Effects.Scratch;
     switch (Case) {
@@ -8758,6 +8819,18 @@ TEST(NativeSourceHints, SwiftAccessEffectsRecheckScalarInferenceAndScratchABI) {
     case 9:
       for (unsigned I = 0; I < 17; ++I)
         Scratch.Condition->Values.insert(I);
+      break;
+    case 10:
+      Scratch.Condition.reset();
+      break;
+    case 11:
+      Scratch.RetainedValues.insert(34);
+      break;
+    case 12:
+      Scratch.Condition->Values.erase(32);
+      break;
+    case 13:
+      Scratch.TheDomain = static_cast<SourceFrameScratchEffect::Domain>(99);
       break;
     }
     EXPECT_FALSE(sourceFrameEffectsMatchABI(Effects, Begin->Signature)) << Case;

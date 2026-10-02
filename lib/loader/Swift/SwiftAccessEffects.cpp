@@ -55,8 +55,10 @@ swiftAccessCallEffects(const BinaryImage &Image, const LowFunc &Caller,
       !equalSourceABIs(Binding.Signature, Current->Signature))
     return std::nullopt;
   // The runtime ABI owns ValueBuffer's opaque three-word capacity. Read and
-  // Modify without Tracking (0x20) do not retain its address. Do not infer
-  // nonescaping behavior merely from this import's name or scratch extent.
+  // Modify without Tracking (0x20) do not retain its address. With Tracking,
+  // TLS owns the live address until endAccess; unlinking may also write another
+  // retained record. The shared frame proof must close that lifetime on every
+  // path and preserve possible frame-pointer bytes after the record ends.
   // Swift 6.1.2: ABI/MetadataValues.h and runtime/Exclusivity.cpp.
   SourceFrameEffects Effects;
   const bool Begin = Current->TargetName == "swift_beginAccess";
@@ -66,12 +68,17 @@ swiftAccessCallEffects(const BinaryImage &Image, const LowFunc &Caller,
   else
     Effects.ReadOnlyFrameParameters.emplace(Parameter, 24);
   Effects.Scratch = SourceFrameScratchEffect{
-      SourceFrameScratchEffect::Domain::SwiftUntrackedAccess,
+      SourceFrameScratchEffect::Domain::SwiftAccess,
       Begin ? SourceFrameScratchEffect::Action::Initialize
             : SourceFrameScratchEffect::Action::Finish,
-      Parameter, 24, std::nullopt};
-  if (Begin)
-    Effects.Scratch->Condition = SourceFrameScalarCondition{2, {0, 1}};
+      Parameter,
+      24,
+      std::nullopt,
+      {}};
+  if (Begin) {
+    Effects.Scratch->Condition = SourceFrameScalarCondition{2, {0, 1, 32, 33}};
+    Effects.Scratch->RetainedValues = {32, 33};
+  }
   return sourceFrameEffectsMatchABI(Effects, Binding.Signature)
              ? std::optional(Effects)
              : std::nullopt;

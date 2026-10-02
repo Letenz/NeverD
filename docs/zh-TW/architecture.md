@@ -814,7 +814,7 @@ HighIR 的共用私有堆疊框架位址證明，在目標位寬整數加法中�
 
 在 AArch64 原始碼繫結中，若全寬儲存的純量位元模式碰巧等於映像位址，只有精確的本地指令序列先建構由 W 暫存器零擴充的負載與標準的內嵌 Swift String 標記，再以一條 STP 儲存相鄰兩字時，才將其保留為數值。指令位元組及無重新定位的事實會重新驗證；缺少配對或來源未獲證明時仍維持未解析。
 
-Swift 存取暫存區採用帶條件的共享堆疊框架契約。載入器驗證原始 ARM64 BL、強 libswiftCore 匯入及目前完整 ABI。逐位元組框架證明僅在實際旗標精確為非追蹤式 Read（`0`）或 Modify（`1`）時允許 `swift_beginAccess` 借用 24 位元組，並記錄不透明的已初始化暫存區，不臆造其中內容。`swift_endAccess` 只能讀取同一仍有效且在所有到達路徑上保持身分的紀錄；重疊寫入、部分指標、儲存失效或缺少初始化均拒絕證明。追蹤式存取會在呼叫結束後保留暫存區，必須另行證明生命週期。純量回傳推斷也重複檢查。[Swift 執行階段](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp)與[存取旗標](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)規定的衝突偵測與終止行為保持可觀察。
+Swift 存取暫存區採用明確的共用生命週期契約。載入器驗證原始 ARM64 BL、強 libswiftCore 匯入及目前完整 ABI。逐位元組證明接受精確的 Read/Modify 旗標 `0`/`1` 和追蹤旗標 `32`/`33`。追蹤會將 24 位元組記錄保留在 TLS，直到相符的 `swift_endAccess`；所有到達路徑必須具有一致的活躍記錄，返回、尾呼叫或釋放框架前必須全部結束。重疊寫入、重複初始化以及缺少或重複結束均被拒絕。巢狀記錄可依任意順序結束：解除連結可能修改另一活躍記錄，因此內容始終不透明，且可能包含私有框架指標。此可能來源在結束、部分寫入、可能寫入的呼叫和框架重用後仍保留，直到確定的儲存逐位元組覆寫；一般借用者不得讀取這些受污染的內容。框架載入前綴查詢拒絕仍被保留的記錄，不能假設未來的結束呼叫。未追蹤的 `swift_beginAccess` 仍是同步借用，可省略結束；若呼叫結束，每條路徑都必須有已初始化的暫存記錄。純量結果推導會重複檢查，執行階段衝突偵測與終止行為保持可觀察。 ([Swift 執行階段](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp), [存取旗標](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)).
 
 經過效能分析插樁與全模組最佳化的 Swift 合併 `@objc` `CGFloat` setter 使用 C ABI，參數依序為 self、selector、double 值、實例變數偏移指標及計數器指標。只有精確的修飾符號名稱與入口處透過 x3 進行的計數器讀取、遞增和寫回同時成立，才指派五參數 ABI；未插樁版本只有四個參數。候選函式仍須通過一般的原始碼函式主體、資料繫結及相依閉包證明。
 

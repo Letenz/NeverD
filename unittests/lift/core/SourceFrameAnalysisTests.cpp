@@ -311,12 +311,12 @@ TEST(SourceFrameAnalysis, RetainsConditionalScratchAndLiveRecordRequirements) {
   SourceFrameEffects Initialize, Finish;
   using Scratch = SourceFrameScratchEffect;
   Initialize.WritableFrameParameters[1] = 24;
-  Initialize.Scratch = {Scratch::Domain::SwiftUntrackedAccess,
+  Initialize.Scratch = {Scratch::Domain::SwiftAccess,
                         Scratch::Action::Initialize, 1, 24,
                         SourceFrameScalarCondition{2, {0, 1}}};
   Finish.ReadOnlyFrameParameters[0] = 24;
-  Finish.Scratch = {Scratch::Domain::SwiftUntrackedAccess,
-                    Scratch::Action::Finish, 0, 24, std::nullopt};
+  Finish.Scratch = {Scratch::Domain::SwiftAccess, Scratch::Action::Finish, 0,
+                    24, std::nullopt};
   auto Calls = callsAt(0x1034, Begin, Initialize);
   Calls.merge(callsAt(0x103c, End, Finish));
   for (unsigned Case = 0; Case < 12; ++Case) {
@@ -417,4 +417,303 @@ TEST(SourceFrameAnalysis, JoinsOnlyOrderedBytesOfOneDefinition) {
     if (Result)
       EXPECT_EQ(Result->Definition.Instruction, 0x1008U);
   }
+}
+
+namespace {
+// These LowIR tests isolate the shared lifetime transfer. Machine/import/ABI
+// authentication is exercised independently by NativeSourceHints' real fixture.
+struct AccessLifetimeFixture {
+  LowFunc Low;
+  NativeSourceCalls Calls;
+  SourceFunctionTypeHint Begin = signature(4), End = signature(1),
+                         Ordinary = signature(0), Borrow = signature(1);
+  SourceFrameEffects Initialize, Finish;
+  const NdVar X1 = NdVar::reg(a64reg::X1, 8), X2 = NdVar::reg(a64reg::X2, 8),
+              X3 = NdVar::reg(a64reg::X3, 8), X9 = NdVar::reg(a64reg::X9, 8),
+              X20 = NdVar::reg(a64reg::X20, 8), LR = NdVar::reg(a64reg::X30, 8);
+  va_t Next = 0x1000;
+  AccessLifetimeFixture() {
+    using Scratch = SourceFrameScratchEffect;
+    Initialize.WritableFrameParameters[1] = 24;
+    Initialize.Scratch = {Scratch::Domain::SwiftAccess,
+                          Scratch::Action::Initialize,
+                          1,
+                          24,
+                          SourceFrameScalarCondition{2, {0, 1, 32, 33}},
+                          {32, 33}};
+    Finish.ReadOnlyFrameParameters[0] = 24;
+    Finish.Scratch = {Scratch::Domain::SwiftAccess,
+                      Scratch::Action::Finish,
+                      0,
+                      24,
+                      std::nullopt,
+                      {}};
+    Low.Entry = Next;
+    Low.Blocks.emplace_back();
+    Low.Blocks[0].Id = 0;
+    Low.Blocks[0].StartAddr = Next;
+    add(NdOp::INT_SUB, SP, {SP, NdVar::scalar(96, 8)});
+    address(X9, 80);
+    add(NdOp::STORE, {}, {X9, LR});
+  }
+  void add(NdOp Opcode, NdVar Output, std::initializer_list<NdVar> Inputs) {
+    Low.Blocks[0].Ops.push_back(op(Opcode, Output, Inputs, Next));
+    Next += 4;
+  }
+  void address(NdVar Output, uint64_t Offset) {
+    add(NdOp::INT_ADD, Output, {SP, NdVar::scalar(Offset, 8)});
+  }
+  void call(const SourceFunctionTypeHint &Type,
+            const SourceFrameEffects &Effects = {}) {
+    add(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)});
+    auto &Contract = Calls[*nativeSourceCallKey(Low.Blocks[0].Ops.back())];
+    Contract.Signature = &Type;
+    static_cast<SourceFrameEffects &>(Contract) = Effects;
+  }
+  void begin(uint64_t Offset = 0, uint64_t Flags = 33) {
+    add(NdOp::COPY, X0, {X20});
+    address(X1, Offset);
+    add(NdOp::COPY, X2, {NdVar::scalar(Flags, 8)});
+    add(NdOp::COPY, X3, {NdVar::scalar(0, 8)});
+    call(Begin, Initialize);
+  }
+  void end(uint64_t Offset = 0) {
+    address(X0, Offset);
+    call(End, Finish);
+  }
+  void epilogue() {
+    address(X9, 80);
+    add(NdOp::LOAD, LR, {X9});
+    add(NdOp::INT_ADD, SP, {SP, NdVar::scalar(96, 8)});
+    add(NdOp::RETURN, {}, {LR});
+  }
+  bool proves(const SourceFunctionTypeHint *Result = nullptr) const {
+    return restoresNativeSourceState(Low, Arch::AArch64, Calls, nullptr,
+                                     Result);
+  }
+};
+} // namespace
+
+TEST(SourceFrameAnalysis, RetainedScratchClosesNestedAndNonLifoLifetimes) {
+  for (unsigned Flags : {0, 1, 32, 33})
+    for (bool Reverse : {false, true}) {
+      AccessLifetimeFixture F;
+      F.begin(0, Flags);
+      F.call(F.Ordinary);
+      F.begin(32, Flags);
+      F.end(Reverse ? 32 : 0);
+      F.call(F.Ordinary);
+      F.end(Reverse ? 0 : 32);
+      F.epilogue();
+      EXPECT_TRUE(F.proves()) << Flags << ": " << Reverse;
+    }
+}
+
+TEST(SourceFrameAnalysis, RetainedScratchRejectsLostOrCorruptedLifetimes) {
+  for (unsigned Case = 0; Case < 15; ++Case) {
+    SCOPED_TRACE(Case);
+    AccessLifetimeFixture F;
+    if (Case != 0)
+      F.begin();
+    switch (Case) {
+    case 0:
+      F.end();
+      break; // end before begin
+    case 1:
+      break; // missing end
+    case 2:
+      F.begin();
+      F.end();
+      break; // same live record twice
+    case 3:
+      F.end();
+      F.end();
+      break;
+    case 4:
+      F.end(8);
+      break;
+    case 5:
+      F.begin(16);
+      F.end(16);
+      F.end();
+      break; // overlapping records
+    case 6:
+    case 7:
+      F.address(F.X9, Case == 6 ? 0 : 23);
+      F.add(NdOp::STORE, {}, {F.X9, NdVar::scalar(0, 1)});
+      F.end();
+      break;
+    case 8:
+      F.add(NdOp::INT_ADD, SP, {SP, NdVar::scalar(16, 8)});
+      F.add(NdOp::INT_SUB, SP, {SP, NdVar::scalar(16, 8)});
+      F.end();
+      break;
+    case 9:
+      F.add(NdOp::COPY, SP, {F.X20});
+      F.end();
+      break;
+    case 10:
+      F.address(X0, 0);
+      F.Low.Blocks[0].Ops.back().Output.Size = 4;
+      F.call(F.End, F.Finish);
+      break;
+    case 11:
+    case 12: {
+      SourceFrameEffects Effect;
+      if (Case == 11)
+        Effect.WritableFrameParameters[0] = 24;
+      else
+        Effect.ReadOnlyFrameParameters[0] = 24;
+      F.address(X0, 0);
+      F.call(F.Borrow, Effect);
+      F.end();
+      break;
+    }
+    case 13: // an external record could acquire our link through TLS
+      F.begin(32);
+      F.Low.Blocks[0].Ops[F.Low.Blocks[0].Ops.size() - 4] =
+          op(NdOp::COPY, F.X1, {F.X20}, F.Next - 16);
+      F.end(32);
+      F.end();
+      break;
+    case 14: // a second untracked initialization does not unlink a live record
+      F.begin(0, 0);
+      F.end();
+      break;
+    }
+    F.epilogue();
+    EXPECT_FALSE(F.proves());
+  }
+}
+
+TEST(SourceFrameAnalysis, RetainedScratchCannotDisappearAtJoinsOrBackedges) {
+  for (unsigned Case = 0; Case < 5; ++Case)
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Case);
+      AccessLifetimeFixture F;
+      const size_t BeforeBegin = F.Low.Blocks[0].Ops.size();
+      F.begin();
+      const size_t AfterBegin = F.Low.Blocks[0].Ops.size();
+      F.end();
+      const size_t AfterEnd = F.Low.Blocks[0].Ops.size();
+      F.epilogue();
+      const auto Ops = F.Low.Blocks[0].Ops;
+      F.Low.Blocks.resize(4);
+      for (int I = 0; I < 4; ++I) {
+        F.Low.Blocks[I] = {};
+        F.Low.Blocks[I].Id = I;
+        F.Low.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      }
+      auto &Root = F.Low.Blocks[0], &Left = F.Low.Blocks[1],
+           &Right = F.Low.Blocks[2], &Join = F.Low.Blocks[3];
+      Root.Succs = {1, 2};
+      Left.Preds = Right.Preds = {0};
+      Left.Succs = Right.Succs = {3};
+      Join.Preds = {1, 2};
+      const auto Nop = op(NdOp::COPY, F.X9, {NdVar::scalar(0, 8)}, 0x1900);
+      Left.Ops = Right.Ops = {Nop};
+      if (Case < 2) {
+        Root.Ops.assign(Ops.begin(), Ops.begin() + BeforeBegin);
+        // A balanced access in one arm is fine. An unclosed access must not
+        // disappear in the other arm's empty set at the common return.
+        Left.Ops.assign(Ops.begin() + BeforeBegin,
+                        Ops.begin() + (Case == 0 ? AfterEnd : AfterBegin));
+        Join.Ops.assign(Ops.begin() + AfterEnd, Ops.end());
+      } else {
+        Root.Ops.assign(Ops.begin(), Ops.begin() + AfterBegin);
+        Join.Ops.assign(Ops.begin() + AfterBegin, Ops.end());
+        if (Case == 2)
+          Left.Ops.assign(Ops.begin() + AfterBegin, Ops.begin() + AfterEnd);
+        else {
+          Left.Preds.push_back(1);
+          Left.Succs.push_back(1);
+          if (Case == 4)
+            Left.Ops.assign(Ops.begin() + AfterBegin, Ops.begin() + AfterEnd);
+        }
+      }
+      if (Reverse)
+        std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+      EXPECT_EQ(F.proves(), Case == 0 || Case == 3);
+    }
+}
+
+TEST(SourceFrameAnalysis, OpaquePointerTaintSurvivesEndMayWritesAndFrameReuse) {
+  auto Result = signature(0);
+  Result.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Result.ReturnType = NdType::makeInt(8, false);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Result, Arch::AArch64, Error));
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    AccessLifetimeFixture F;
+    F.begin();
+    F.begin(32);
+    F.end(32);
+    F.end();
+    if (Case == 1) {
+      F.begin(0, 0);
+      F.end();
+    } // only may overwrite
+    if (Case == 2) {
+      F.add(NdOp::INT_ADD, SP, {SP, NdVar::scalar(96, 8)});
+      F.add(NdOp::INT_SUB, SP, {SP, NdVar::scalar(96, 8)});
+    }
+    if (Case == 3 || Case == 4) {
+      F.address(F.X9, 0);
+      F.add(NdOp::STORE, {}, {F.X9, NdVar::scalar(0, Case == 3 ? 1 : 8)});
+    }
+    if (Case == 5) {
+      for (unsigned I : {0, 8, 16}) {
+        F.address(F.X9, I);
+        F.add(NdOp::STORE, {}, {F.X9, NdVar::scalar(0, 8)});
+      }
+    }
+    if (Case == 8 || Case == 9) {
+      SourceFrameEffects Effect;
+      if (Case == 8)
+        Effect.ReadOnlyFrameParameters[0] = 24;
+      else
+        Effect.WritableFrameParameters[0] = 24;
+      F.address(X0, 0);
+      F.call(F.Borrow, Effect);
+    }
+    F.address(F.X9, 16);
+    F.add(NdOp::LOAD, X0, {F.X9});
+    if (Case == 6)
+      F.add(NdOp::STORE, {}, {F.X20, X0});
+    if (Case == 7)
+      F.add(NdOp::LOAD, X0, {X0}); // inexact private alias
+    if (Case == 10) {
+      F.add(NdOp::STORE, {}, {F.X9, NdVar::scalar(0, 8)});
+      // A subsequent exact overwrite cannot sanitize the prior loaded value.
+    }
+    if (Case == 11)
+      F.add(NdOp::COPY, X0, {NdVar::scalar(7, 8)});
+    F.epilogue();
+    EXPECT_EQ(F.proves(&Result), Case == 5);
+  }
+}
+
+TEST(SourceFrameAnalysis, PrefixQueryRequiresRetainedRecordsAlreadyClosed) {
+  for (unsigned Flags : {0, 1, 32, 33})
+    for (bool Closed : {false, true}) {
+      FrameFixture F;
+      AccessLifetimeFixture Protocol;
+      const auto X1 = NdVar::reg(a64reg::X1, 8);
+      F.prefix({op(NdOp::COPY, X0, {NdVar::scalar(1, 8)}, 0x1024),
+                op(NdOp::COPY, X1, {SP}, 0x1028),
+                op(NdOp::COPY, Protocol.X2, {NdVar::scalar(Flags, 8)}, 0x102c),
+                op(NdOp::COPY, Protocol.X3, {NdVar::scalar(0, 8)}, 0x1030),
+                op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x1034)});
+      auto Calls = callsAt(0x1034, Protocol.Begin, Protocol.Initialize);
+      if (Closed) {
+        // prefix() inserts at a fixed index; append end after the begin block.
+        auto &Ops = F.Low.Blocks[0].Ops;
+        Ops.insert(Ops.begin() + 11,
+                   {op(NdOp::COPY, X0, {SP}, 0x1038),
+                    op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x103c)});
+        Calls.merge(callsAt(0x103c, Protocol.End, Protocol.Finish));
+      }
+      EXPECT_EQ(bool(F.query(Calls)), Closed || Flags < 32);
+    }
 }

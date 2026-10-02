@@ -108,9 +108,14 @@ struct State {
   struct ScratchIdentity {
     SourceFrameScratchEffect::Domain Domain;
     size_t Bytes;
+    bool Retained = false;
     bool operator==(const ScratchIdentity &) const = default;
   };
   std::map<int64_t, ScratchIdentity> Scratch;
+  bool hasRetainedScratch() const {
+    return std::any_of(Scratch.begin(), Scratch.end(),
+                       [](const auto &Item) { return Item.second.Retained; });
+  }
   bool operator==(const State &) const = default;
 };
 
@@ -278,6 +283,10 @@ public:
       if (Remaining < Current.Scratch.size())
         return false;
       Remaining -= Current.Scratch.size();
+      for (const auto &[Start, Record] : Current.Scratch)
+        if (Record.Retained && Address < Start + int64_t(Record.Bytes) &&
+            Start < Address + int64_t(Bytes))
+          return false;
       std::erase_if(Current.Scratch, [&](const auto &Item) {
         return Address < Item.first + static_cast<int64_t>(Item.second.Bytes) &&
                Item.first < Address + static_cast<int64_t>(Bytes);
@@ -325,7 +334,7 @@ public:
         Instruction = Op.Addr;
       }
       if (isArchitecturalNoReturn(Op, Architecture)) {
-        if (QueryIndex)
+        if (QueryIndex || Current.hasRetainedScratch())
           return false;
         const unsigned ExpectedInputs = Architecture == Arch::AArch64 ? 1 : 2;
         if (Op.NumInputs != ExpectedInputs ||
@@ -465,6 +474,7 @@ public:
         std::vector<std::pair<int64_t, size_t>> WritableFrameRanges;
         std::optional<int64_t> ReturnedFrame;
         std::optional<int64_t> ScratchAddress;
+        bool RetainsScratch = false;
         // Inspect the same validated physical members used by call lowering.
         // A record has no single carrier; checking only its primary location
         // would reject valid records or miss a frame address in a later member.
@@ -573,16 +583,27 @@ public:
                 }
                 if (!Condition->Values.count(Number))
                   return false;
+                RetainsScratch = Scratch->RetainedValues.count(Number);
               }
               if (Scratch->TheAction ==
                   SourceFrameScratchEffect::Action::Finish) {
                 const auto Record = Current.Scratch.find(*Address);
                 if (Record == Current.Scratch.end() ||
-                    Record->second != State::ScratchIdentity{Scratch->TheDomain,
-                                                             Scratch->Bytes})
+                    Record->second.Domain != Scratch->TheDomain ||
+                    Record->second.Bytes != Scratch->Bytes)
                   return false;
               }
               ScratchAddress = *Address;
+            } else {
+              // A generic readonly/noescape pointer contract does not promise
+              // that the callee cannot publish pointers contained in memory.
+              // Only the opaque scratch protocol may consume its linked bytes.
+              if (Remaining < BorrowedBytes)
+                return false;
+              Remaining -= BorrowedBytes;
+              for (size_t I = 0; I < BorrowedBytes; ++I)
+                if (lookup(Current.Stack, *Address + int64_t(I)).MayBeFrame)
+                  return false;
             }
             if (Writable != Found->second.WritableFrameParameters.end())
               WritableFrameRanges.emplace_back(*Address, BorrowedBytes);
@@ -607,12 +628,26 @@ public:
             }
           }
         }
+        // External scratch could acquire a private record link through TLS.
+        // Without an extent/provenance proof for that storage, fail closed.
+        if (Found->second.Scratch && !ScratchAddress &&
+            Current.hasRetainedScratch())
+          return false;
         for (const auto &[Address, Bytes] : WritableFrameRanges) {
           if (!InvalidateScratch(Address, Bytes))
             return false;
-          std::erase_if(Current.Stack, [&](const auto &Item) {
-            return Item.first >= Address &&
-                   Item.first - Address < static_cast<int64_t>(Bytes);
+          const size_t Work = Current.Stack.size() + WrittenStack.size();
+          if (Remaining < Work)
+            return false;
+          Remaining -= Work;
+          // A may-write is not a complete overwrite. In particular, an
+          // untracked begin can leave a previous linked-record pointer behind.
+          for (auto &[Offset, Fact] : Current.Stack)
+            if (Offset >= Address && Offset - Address < int64_t(Bytes))
+              Fact = {ByteFact::Unknown, 0, 0, Fact.MayBeFrame};
+          std::erase_if(Current.Stack, [](const auto &Item) {
+            return Item.second.TheKind == ByteFact::Unknown &&
+                   !Item.second.MayBeFrame;
           });
           std::erase_if(WrittenStack, [&](int64_t Byte) {
             return Byte >= Address &&
@@ -621,13 +656,31 @@ public:
         }
         if (ScratchAddress) {
           const auto &Scratch = *Found->second.Scratch;
-          if (Scratch.TheAction == SourceFrameScratchEffect::Action::Initialize)
+          if (Scratch.TheAction ==
+              SourceFrameScratchEffect::Action::Initialize) {
             Current.Scratch[*ScratchAddress] = {Scratch.TheDomain,
-                                                Scratch.Bytes};
-          else
+                                                Scratch.Bytes, RetainsScratch};
+            if (RetainsScratch) {
+              if (Remaining < Scratch.Bytes)
+                return false;
+              Remaining -= Scratch.Bytes;
+              // The runtime may store links to any other live private record,
+              // and end may update those links in a non-LIFO order. Do not
+              // guess field offsets, initialized values, or exact identities.
+              for (size_t I = 0; I < Scratch.Bytes; ++I)
+                put(Current.Stack, *ScratchAddress + int64_t(I),
+                    {ByteFact::Unknown, 0, 0, true});
+            }
+          } else {
+            // Ending the lifetime does not zero the runtime-owned contents.
+            // Their possible frame provenance survives until definite stores.
             Current.Scratch.erase(*ScratchAddress);
+          }
         }
         if (Current.Scratch.size() > MaxFacts)
+          return false;
+        if ((Tail || Found->second.terminates()) &&
+            Current.hasRetainedScratch())
           return false;
         if (Found->second.terminates()) {
           if (QueryIndex)
@@ -643,8 +696,9 @@ public:
           });
           // Unallocated bytes and the x86 red zone cannot retain a spill
           // through an ordinary call. The callee owns storage below call SP.
-          std::erase_if(Current.Stack,
-                        [&](const auto &Item) { return Item.first < *SP; });
+          std::erase_if(Current.Stack, [&](const auto &Item) {
+            return Item.first < *SP && !Item.second.MayBeFrame;
+          });
           std::erase_if(WrittenStack, [&](int64_t Byte) { return Byte < *SP; });
           std::erase_if(Current.Scratch,
                         [&](const auto &Item) { return Item.first < *SP; });
@@ -661,7 +715,7 @@ public:
         continue;
       }
       if (Op.Opcode == NdOp::RETURN) {
-        if (QueryIndex)
+        if (QueryIndex || Current.hasRetainedScratch())
           return false;
         if (Index + 1 != Block.Ops.size() || !Block.Succs.empty() ||
             (CheckExits && !IsRestored()))
@@ -840,17 +894,55 @@ public:
             for (unsigned I = 0; I < Memory.AccessSize; ++I)
               if (!Current.InitializedStack.count(*Address + I))
                 return false;
+          std::optional<int64_t> PossibleAddress;
+          if (!Address) {
+            bool PossibleFrame = false;
+            for (unsigned I = 0; I < Memory.Address->Size; ++I)
+              PossibleFrame |= Read(*Memory.Address, I).MayBeFrame;
+            if (PossibleFrame) {
+              PossibleAddress =
+                  BorrowedFrame(*Memory.Address, Memory.AccessSize);
+              if (PossibleAddress &&
+                  (!SP || *PossibleAddress < *SP ||
+                   *PossibleAddress > -int64_t(Memory.AccessSize)))
+                PossibleAddress.reset();
+              if (!PossibleAddress) {
+                // An unresolved read still grants no saved-byte identity.
+                // Once opaque records can contain private pointers, however,
+                // reading an unknown frame alias must not erase their taint.
+                if (Remaining < Current.Stack.size())
+                  return false;
+                Remaining -= Current.Stack.size();
+                if (std::any_of(Current.Stack.begin(), Current.Stack.end(),
+                                [](const auto &Item) {
+                                  return Item.second.MayBeFrame;
+                                }))
+                  return false;
+              }
+            }
+          }
           for (unsigned I = 0; I < Value.size(); ++I)
             // Incoming arguments are external values. Even if a slot happens
             // to contain a saved register's bits, it cannot certify restoration
             // of this invocation's preserved state or a private-frame address.
-            Value[I] = Address && !IncomingRead
-                           ? lookup(Current.Stack, *Address + I)
-                           : ByteFact{};
+            Value[I] =
+                Address && !IncomingRead
+                    ? lookup(Current.Stack, *Address + I)
+                    : ByteFact{ByteFact::Unknown, 0, 0,
+                               PossibleAddress &&
+                                   lookup(Current.Stack, *PossibleAddress + I)
+                                       .MayBeFrame};
+          // Only the authenticated scratch protocol may interpret opaque
+          // record contents. Even a dead read could feed frame-dependent
+          // control later; no field layout or scalar value is certified here.
+          if (std::any_of(Value.begin(), Value.end(),
+                          [](const auto &Byte) { return Byte.MayBeFrame; }))
+            return false;
         }
         if (QueryIndex && Index == *QueryIndex) {
           if (!TrackDefinitions || Op.Opcode != NdOp::LOAD || !Address ||
-              IncomingRead || Memory.AccessSize != 8 || Value.size() != 8)
+              IncomingRead || Memory.AccessSize != 8 || Value.size() != 8 ||
+              Current.hasRetainedScratch())
             return false;
           const auto First = Value.front();
           if (First.TheKind != ByteFact::Definition || First.Value < 0 ||
@@ -900,6 +992,9 @@ public:
             return false;
           Remaining -= Current.Scratch.size();
           const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+          for (const auto &[Address, Record] : Current.Scratch)
+            if (Record.Retained && (!SP || Address < *SP))
+              return false;
           if (!SP)
             Current.Scratch.clear();
           else
@@ -909,11 +1004,9 @@ public:
             if (Remaining < Current.Stack.size())
               return false;
             Remaining -= Current.Stack.size();
-            if (!SP)
-              Current.Stack.clear();
-            else
-              std::erase_if(Current.Stack,
-                            [&](const auto &Item) { return Item.first < *SP; });
+            std::erase_if(Current.Stack, [&](const auto &Item) {
+              return (!SP || Item.first < *SP) && !Item.second.MayBeFrame;
+            });
           }
         }
       } else if (Op.Output.Size) {
@@ -1083,9 +1176,25 @@ static bool meetFrameState(State &Next, const State &Other, size_t &Remaining,
   if (!meet(Next.Registers, Other.Registers, Remaining) ||
       !meet(Next.Stack, Other.Stack, Remaining))
     return false;
-  if (Remaining < Next.Scratch.size())
+  if (Remaining < Next.Scratch.size() + Other.Scratch.size())
     return false;
-  Remaining -= Next.Scratch.size();
+  Remaining -= Next.Scratch.size() + Other.Scratch.size();
+  // A retained address is an obligation, not a must-value fact. It cannot
+  // disappear at a join just because one predecessor lacks initialization or
+  // has already ended its lifetime. Require agreeing live sets on all paths.
+  const auto RetainedMatch = [](const auto &Left, const auto &Right) {
+    for (const auto &[Address, Record] : Left) {
+      if (!Record.Retained)
+        continue;
+      const auto Found = Right.find(Address);
+      if (Found == Right.end() || Found->second != Record)
+        return false;
+    }
+    return true;
+  };
+  if (!RetainedMatch(Next.Scratch, Other.Scratch) ||
+      !RetainedMatch(Other.Scratch, Next.Scratch))
+    return false;
   std::erase_if(Next.Scratch, [&](const auto &Item) {
     const auto Found = Other.Scratch.find(Item.first);
     return Found == Other.Scratch.end() || Found->second != Item.second;

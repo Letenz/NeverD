@@ -14,10 +14,10 @@ struct SourceCallTypeHint;
 bool isSwiftAccessCallTarget(const BinaryImage &Image, va_t Target);
 
 /// Authenticate the original ARM64 BL, strong import and complete current ABI.
-/// beginAccess lends private scratch only when the frame analysis proves an
-/// untracked Read/Modify flag. endAccess additionally requires the same opaque
-/// initialized scratch record, with no intervening writes or expired frame.
-/// Tracked-access lifetimes cannot be represented by a synchronous borrow.
+/// beginAccess requires an exact Read/Modify flag, with or without Tracking.
+/// Tracked scratch is retained in TLS: the shared frame proof must match its
+/// end on every path before the frame expires. endAccess requires the same
+/// opaque initialized record and may update other live runtime-owned links.
 std::optional<SourceFrameEffects>
 swiftAccessCallEffects(const BinaryImage &Image, const LowFunc &Caller,
                        const SourceCallOccurrenceKey &Site,

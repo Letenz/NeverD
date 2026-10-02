@@ -874,7 +874,7 @@ HighIR 的共享私有栈帧地址证明在目标位宽整数加法中接受两�
 
 在 AArch64 源码绑定中，若全宽存储的标量位模式碰巧等于映像地址，只有精确的局部指令序列先构造由 W 寄存器零扩展的载荷及规范的内联 Swift String 标记，再用一条 STP 存储相邻两字时，才将其保留为数值。指令字节及无重定位事实会重新验证；缺少配对或来源未获证明时仍保持未解析。
 
-Swift 访问暂存区采用带条件的共享栈帧契约。加载器认证原始 ARM64 BL、强 libswiftCore 导入及当前完整 ABI。逐字节帧证明仅在实际标志精确为非跟踪式 Read（`0`）或 Modify（`1`）时允许 `swift_beginAccess` 借用 24 字节，并记录不透明的已初始化暂存区，不臆造其中内容。`swift_endAccess` 只能读取同一仍有效且在所有到达路径上保持身份的记录；重叠写入、部分指针、存储失效或缺少初始化均拒绝证明。跟踪式访问会在调用结束后保留暂存区，必须另行证明其生命周期。标量返回推断也重复检查。[Swift 运行时](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp)与[访问标志](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)规定的冲突检测和终止行为保持可观察。
+Swift 访问暂存区采用显式的共享生命周期契约。加载器认证原始 ARM64 BL、强 libswiftCore 导入及当前完整 ABI。逐字节证明接受精确的 Read/Modify 标志 `0`/`1` 和受跟踪标志 `32`/`33`。跟踪会将 24 字节记录保留在 TLS，直到匹配的 `swift_endAccess`；所有到达路径必须具有一致的活跃记录，返回、尾调用或释放栈帧前必须全部结束。重叠写入、重复初始化以及缺失或重复结束均被拒绝。嵌套记录可按任意顺序结束：解绑可能修改另一活跃记录，因此记录内容始终不透明，并可能包含私有帧指针。这种可能来源在结束、部分写入、可能写入的调用和帧复用后仍保留，直到确定性存储逐字节覆盖；普通借用方不得读取这些带污点的内容。帧加载前缀查询拒绝仍被保留的记录，不能假设未来的结束调用。未跟踪的 `swift_beginAccess` 仍是同步借用，可省略结束；若调用结束，则每条路径都必须有已初始化的暂存记录。标量结果推导重复这些检查，运行时冲突检测和终止行为保持可观察。 ([Swift 运行时](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp), [访问标志](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)).
 
 经过性能分析插桩和全模块优化的 Swift 合并 `@objc` `CGFloat` setter 使用 C ABI，参数依次为 self、selector、double 值、实例变量偏移指针和计数器指针。只有精确的符号修饰名与入口处经 x3 执行的计数器读取、递增和写回同时成立，才赋予五参数 ABI；未插桩版本只有四个参数。候选函数仍须通过常规的源码函数体、数据绑定及依赖闭包证明。
 
