@@ -1384,6 +1384,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+The Android image model assigns distinct guest traps to an explicit library
+and function catalogue. Bionic owns `dlopen` reference counts, `dlsym` handle
+lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
+same named request/call events. These catalogue entries never load host code.
+Missing entries return modeled lookup errors, while calls whose behavior or
+lookup scope is unsupported stop explicitly.
 
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.

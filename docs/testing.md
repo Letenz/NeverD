@@ -2080,5 +2080,11 @@ libraries. They exercise constructors, sectionless linking, stack arguments,
 TLS/stack guards, explicit properties, memory allocation, raw versus Bionic
 error returns, output and execution limits, unsupported imports, and SDK/CLI
 report parity. No Android device, NDK sysroot, or proprietary fixture is used.
+The dynamic lookup fixtures exercise explicit library catalogues, provider
+identity, repeated opens and NOLOAD, missing symbols, stale handles, null and
+invalid names, TLS slot 6 consume-once errors, and named calls through guest
+traps. Unknown implementations and unsupported process-wide lookup scopes
+must stop. C/CLI and Python integration tests check the same lookup names and
+returned addresses; no host library supplies those functions.
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
