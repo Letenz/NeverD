@@ -139,7 +139,8 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
             const LowIRIndependenceContract &Contract,
             const LowIRIndependenceLimits &Limits,
             llvm::ArrayRef<LowIRNativeFlagTransition> Flags = {},
-            llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {}) {
+            llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {},
+            llvm::ArrayRef<LowIRNativeAuditBoundary> AuditBoundaries = {}) {
   llvm::SHA256 Hash;
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
@@ -176,7 +177,8 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(8); // Certificate semantic schema, independent of report formatting.
+  Number(9); // Certificate semantic schema, independent of report formatting.
+  Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.X64FlagsProfile.has_value());
   if (Contract.X64FlagsProfile) {
     Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
@@ -197,6 +199,16 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
     Number(static_cast<uint64_t>(Projection.BlockId));
     Number(Projection.InstructionAddress);
     Number(static_cast<unsigned>(Projection.Kind));
+  }
+  Number(AuditBoundaries.size());
+  for (const auto &Receipt : AuditBoundaries) {
+    Number(static_cast<unsigned>(Receipt.Kind));
+    Number(Receipt.SemanticsVersion);
+    Boundary(Receipt.Boundary);
+    Number(Receipt.NativeBytesDigest.size());
+    Hash.update(Receipt.NativeBytesDigest);
+    Number(Receipt.OperationDigest.size());
+    Hash.update(Receipt.OperationDigest);
   }
   Number(F.Entry);
   Number(F.ModuleAnalysisRoots.size());
@@ -315,6 +327,14 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
 
 struct Stop {};
 
+std::vector<LowIRNativeAuditBoundary> auditBoundaryReceipts(
+    const std::map<va_t, LowIRNativeAuditBoundary> &Boundaries) {
+  std::vector<LowIRNativeAuditBoundary> Receipts;
+  for (const auto &[Address, Receipt] : Boundaries)
+    Receipts.push_back(Receipt);
+  return Receipts;
+}
+
 struct TerminalState {
   SymState State;
   SymRef Predicate, SystemFlags, ReturnOperand;
@@ -369,6 +389,8 @@ struct RefinementSession {
   // must not forget prior byte ownership, overlap checks or input budgets.
   std::map<va_t, SpecializationInstruction> NativeInstructions;
   std::map<va_t, va_t> NativeRanges;
+  std::map<va_t, LowIRNativeAuditBoundary> NativeAuditBoundaries;
+  bool NativeFinite = false;
   uint64_t NativeInputOperations = 0, NativeInputEffects = 0;
 };
 
@@ -384,6 +406,9 @@ class Checker {
       OwnedNativeInstructions;
   std::map<va_t, va_t> OwnedNativeRanges;
   std::map<va_t, va_t> &NativeRanges = OwnedNativeRanges;
+  std::map<va_t, LowIRNativeAuditBoundary> OwnedNativeAuditBoundaries;
+  std::map<va_t, LowIRNativeAuditBoundary> &NativeAuditBoundaries =
+      OwnedNativeAuditBoundaries;
   std::map<va_t, uint8_t> OwnedImmutableBytes;
   std::map<va_t, uint8_t> &ImmutableBytes = OwnedImmutableBytes;
   LowFunc NativeTrace;
@@ -948,10 +973,21 @@ class Checker {
           Limits.MaxProducers - NativeInputEffects)
         fail(Status::BudgetExceeded, "input arbitrary-effect budget exhausted");
       NativeInputEffects += Insn.UndefinedEffects.Effects.size();
-      if (!Trap && !Projection &&
-          Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
-        fail(Status::Unsupported,
-             "original instruction lacks complete undefined-output evidence");
+      const bool Unaudited =
+          !Trap && !Projection &&
+          Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete;
+      if (Unaudited) {
+        if (!Contract.RetainUnauditedNativeBoundaries ||
+            Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing)
+          fail(Status::Unsupported,
+               "original instruction lacks complete undefined-output evidence");
+        if (!Insn.UndefinedEffects.Effects.empty() ||
+            Insn.UndefinedEffects.OperationDigest.empty() ||
+            Insn.UndefinedEffects.OperationDigest !=
+                lowUndefinedOperationDigest(Insn.Ops))
+          fail(Status::Invalid,
+               "unaudited native boundary has stale or partial evidence");
+      }
       std::vector<va_t> Successors;
       bool Terminal = Trap;
       for (size_t I = 0; I != Insn.Ops.size(); ++I) {
@@ -990,9 +1026,20 @@ class Checker {
       if (ProjectedTrap)
         NativeProfileProjections.push_back(
             {-1, Address, Insn.ProfileProjection});
+      if (Unaudited) {
+        LowIRNativeAuditBoundary Receipt;
+        Receipt.Boundary = B;
+        Receipt.NativeBytesDigest =
+            llvm::toHex(llvm::SHA256::hash(Insn.NativeBytes));
+        Receipt.OperationDigest = Insn.UndefinedEffects.OperationDigest;
+        NativeAuditBoundaries.emplace(Address, std::move(Receipt));
+      }
       NativeInstructions.emplace(Address, std::move(Insn));
-      for (va_t Target : Successors)
-        Enqueue(Target);
+      // Only successor collection stops. Every structural check above still
+      // applies, and another edge may independently enter the following bytes.
+      if (!Unaudited)
+        for (va_t Target : Successors)
+          Enqueue(Target);
     }
     // Collection visits each original instruction once, including cyclic
     // arms. Execution creates a fresh trace block on every visit, preserving
@@ -1182,6 +1229,15 @@ class Checker {
   }
 
   void runPath(Path P) {
+    // This gate precedes cutpoint handling, expansion, effects and execution.
+    // Only a solver-proved-infeasible edge can avoid a retained boundary.
+    if (Provider && NativeAuditBoundaries.count(P.NativeAddress)) {
+      Result.BlockId = P.BlockId;
+      Result.InstructionAddress = P.NativeAddress;
+      Result.OpSeq = -1;
+      fail(Status::Unsupported,
+           "feasible path reaches an unaudited native boundary");
+    }
     if (stopAtCutpoint(P))
       return;
     if (++Result.BlockVisits > Limits.MaxBlockVisits)
@@ -1448,6 +1504,13 @@ class Checker {
   }
 
   void validate() {
+    if (Contract.RetainUnauditedNativeBoundaries &&
+        ((!Provider && !(CandidateExecution && ReadProvider && Refinement &&
+                         Refinement->NativeFinite)) ||
+         (Refinement && (!Refinement->NativeFinite || Refinement->LoopPlan ||
+                         Refinement->PrefixSearchCutpoint >= 0))))
+      fail(Status::Unsupported,
+           "unaudited boundaries require the finite native proof API");
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
@@ -2063,6 +2126,8 @@ public:
         NativeInstructions(Session ? Session->NativeInstructions
                                    : OwnedNativeInstructions),
         NativeRanges(Session ? Session->NativeRanges : OwnedNativeRanges),
+        NativeAuditBoundaries(Session ? Session->NativeAuditBoundaries
+                                      : OwnedNativeAuditBoundaries),
         ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
         NativeInputOperations(Session ? Session->NativeInputOperations
                                       : OwnedNativeInputOperations),
@@ -2085,6 +2150,8 @@ public:
         NativeInstructions(Session ? Session->NativeInstructions
                                    : OwnedNativeInstructions),
         NativeRanges(Session ? Session->NativeRanges : OwnedNativeRanges),
+        NativeAuditBoundaries(Session ? Session->NativeAuditBoundaries
+                                      : OwnedNativeAuditBoundaries),
         ImmutableBytes(Session ? Session->ImmutableBytes : OwnedImmutableBytes),
         NativeInputOperations(Session ? Session->NativeInputOperations
                                       : OwnedNativeInputOperations),
@@ -2287,7 +2354,8 @@ public:
             B.Succs = NativeTraceEdges[B.Id];
           const auto Digest =
               inputDigest(NativeTrace, NativeRecords, Contract, Limits,
-                          NativeFlagTransitions, NativeProfileProjections);
+                          NativeFlagTransitions, NativeProfileProjections,
+                          auditBoundaryReceipts(NativeAuditBoundaries));
           Refinement->OriginalDigest = Digest;
           if (inductive()) {
             Refinement->OriginalSegmentDigests.push_back(Digest);
@@ -2323,12 +2391,14 @@ public:
         Result.Certificate = LowIRIndependenceCertificate{
             LowIRIndependenceScope::CompleteFiniteNativePaths,
             inputDigest(NativeTrace, NativeRecords, Contract, Limits,
-                        NativeFlagTransitions, NativeProfileProjections),
+                        NativeFlagTransitions, NativeProfileProjections,
+                        auditBoundaryReceipts(NativeAuditBoundaries)),
             std::move(NativeRecords),
             Contract,
             Limits,
             std::move(NativeFlagTransitions),
-            std::move(NativeProfileProjections)};
+            std::move(NativeProfileProjections),
+            auditBoundaryReceipts(NativeAuditBoundaries)};
         for (auto &[Address, Insn] : NativeInstructions)
           NativeResult->Instructions.push_back(std::move(Insn));
       } else {
@@ -2434,9 +2504,11 @@ refinementResult(RefinementSession &Session,
   Certificate.Producers = std::move(Session.Producers);
   Certificate.NativeFlagTransitions = std::move(Session.Flags);
   Certificate.NativeProfileProjections = std::move(Session.Projections);
+  Certificate.NativeAuditBoundaries =
+      auditBoundaryReceipts(Session.NativeAuditBoundaries);
   llvm::SHA256 Hash;
   Hash.update(Session.LoopPlan ? "neverd-inductive-refinement-v2"
-                               : "neverd-selected-value-refinement-v1");
+                               : "neverd-selected-value-refinement-v2");
   const auto Number = [&](uint64_t N) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -2556,9 +2628,16 @@ LowIRRefinementResult runRefinement(
     const LowIRLoopRefinementPlan *LoopPlan = nullptr) {
   RefinementSession Session{{}, {}, Candidate, Witness, Limits};
   Session.LoopPlan = LoopPlan;
+  Session.NativeFinite = Provider && !LoopPlan;
   const auto Finish = [&](bool Success) {
     return refinementResult(Session, Contract, Provider != nullptr, Success);
   };
+  if (Contract.RetainUnauditedNativeBoundaries && !Session.NativeFinite) {
+    Session.Statistics.Status = Status::Unsupported;
+    Session.Statistics.Diagnostic =
+        "unaudited boundaries require the finite native proof API";
+    return Finish(false);
+  }
   if (Witness != LowIRRefinementWitness::LiftedBits &&
       Witness != LowIRRefinementWitness::ZeroBits) {
     Session.Statistics.Diagnostic = "unknown refinement witness policy";
@@ -4396,6 +4475,9 @@ public:
     const bool FilterBranches =
         Family == detail::LowIRLoopCutFamily::FilteredBranchArms;
     try {
+      if (Contract.RetainUnauditedNativeBoundaries)
+        stop(Status::Unsupported,
+             "unaudited boundaries are unsupported by loop inference");
       if (!prepareCandidateRecords(Session, Records) ||
           !checker().validateInput())
         throw Stop{};
