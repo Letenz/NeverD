@@ -4,6 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_LIFETIME_VALUE
+NEVERD_LIFETIME_VALUE(ShortInstructions, 8)
+NEVERD_LIFETIME_VALUE(FaultMode, 'g')
+NEVERD_LIFETIME_VALUE(FaultAddress, 1)
+NEVERD_LIFETIME_VALUE(TemplateMarker, 0xa5)
+NEVERD_LIFETIME_VALUE(PreferredDLLBase, 0x180000000)
+NEVERD_LIFETIME_VALUE(TLSVAFields, 4)
+NEVERD_LIFETIME_VALUE(RebaseDistance, 0x1000000)
 NEVERD_LIFETIME_VALUE(ExitStatus, 37)
 NEVERD_LIFETIME_VALUE(FailureStatus, 89)
 NEVERD_LIFETIME_VALUE(InitFailureStatus, 0xc0000142)
@@ -34,6 +41,8 @@ NEVERD_LIFETIME_VALUE(AttachReason, 1)
 NEVERD_LIFETIME_VALUE(DetachReason, 0)
 #endif
 #ifdef NEVERD_LIFETIME_TEXT
+NEVERD_LIFETIME_TEXT(FaultArgument, "/g")
+NEVERD_LIFETIME_TEXT(FirstAttach, "LT10\n")
 NEVERD_LIFETIME_TEXT(LeafFile, "life-leaf.dll")
 NEVERD_LIFETIME_TEXT(MiddleFile, "life-middle.dll")
 NEVERD_LIFETIME_TEXT(ProgramFile, "lifetime.exe")

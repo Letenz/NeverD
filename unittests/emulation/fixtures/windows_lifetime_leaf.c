@@ -12,6 +12,8 @@ static void tls(void *Image, DWORD Reason, void *Reserved) {
   CHECK(Image != 0);
   checkTLS(Reason);
   trace(LeafRole, TLSKind, Reason, Reserved);
+  if (Reason == AttachReason && mode() == FaultMode)
+    *(volatile DWORD *)(ULONG_PTR)FaultAddress = Seed;
   if (Reason == AttachReason && mode() == ExitLeafTLSMode)
     ExitProcess(ExitStatus);
 }

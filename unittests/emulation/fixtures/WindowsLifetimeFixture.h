@@ -42,6 +42,7 @@ static void trace(char Role, char Kind, DWORD Reason, void *Reserved) {
 static DWORD Sentinel = Seed;
 __declspec(thread) DWORD ThreadValue = Seed;
 __declspec(thread) DWORD *ThreadPointer = &Sentinel;
+__declspec(thread) unsigned char ThreadZero[ZeroTail];
 __declspec(allocate(".tls")) char TLSStart;
 __declspec(allocate(".tls$ZZZ")) char TLSEnd;
 DWORD _tls_index;
@@ -53,20 +54,13 @@ __declspec(allocate(".rdata")) const struct {
   DWORD *Index;
   const TLSCallback *Callbacks;
   DWORD ZeroFill, Characteristics;
-} _tls_used = {&TLSStart, &TLSEnd, &_tls_index, Callbacks, ZeroTail, 0};
+} _tls_used = {&TLSStart, &TLSEnd, &_tls_index, Callbacks, 0, 0};
 static void checkTLS(DWORD Reason) {
   CHECK(ThreadPointer == &Sentinel && *ThreadPointer == Seed);
   if (Reason == AttachReason) {
     CHECK(ThreadValue == Seed);
-    unsigned char *TEB;
-#define NEVERD_LIFETIME_ASM(Name, Text) __asm__(Text : "=r"(TEB));
-#include "WindowsLifetimeCases.def"
-#undef NEVERD_LIFETIME_ASM
-    unsigned char **Vector = *(unsigned char ***)(TEB + TebTLSVector);
-    unsigned char *Tail =
-        Vector[_tls_index] + (ULONG_PTR)&TLSEnd - (ULONG_PTR)&TLSStart;
     for (DWORD I = 0; I < ZeroTail; ++I)
-      CHECK(!Tail[I]);
+      CHECK(!ThreadZero[I]);
   }
   ++ThreadValue;
 }
