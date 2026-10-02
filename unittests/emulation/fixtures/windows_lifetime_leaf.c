@@ -20,8 +20,9 @@ static void tls(void *Image, DWORD Reason, void *Reserved) {
 int dllEntry(void *Image, DWORD Reason, void *Reserved) {
   CHECK(Image != 0);
   trace(LeafRole, DLLKind, Reason, Reserved);
-  ++ThreadValue;
+  // Process detach may follow thread teardown, after its TLS was released.
   if (Reason == AttachReason) {
+    ++ThreadValue;
     if (mode() == ExitLeafEntryMode)
       ExitProcess(ExitStatus);
     return mode() != FailLeafMode;

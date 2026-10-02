@@ -78,6 +78,13 @@ def run(
     with_drivers: bool = False,
 ) -> int:
     owners, required = declared_inventory(ROOT, with_drivers)
+    output_limits = re.findall(
+        r"^NEVERD_NATIVE_CPU_OUTPUT_LIMIT\(([1-9][0-9]*)\)$",
+        (ROOT / "scripts" / "NativeCPUTests.def").read_text(encoding="utf-8"),
+        re.M,
+    )
+    if len(output_limits) != 1:
+        raise ValueError("expected one native test output limit")
     configured = {
         Path(line.replace("\\", "/")).name.removesuffix(".dir")
         for line in (build / "CMakeFiles" / "TargetDirectories.txt")
@@ -117,6 +124,8 @@ def run(
     result = subprocess.run([
         *base, "--no-tests=error", "--parallel", str(parallel),
         "--output-on-failure", "--output-junit", str(junit),
+        "--test-output-size-passed", output_limits[0],
+        "--test-output-size-failed", output_limits[0],
         "--output-log", str(evidence / "ctest.log"),
     ])
     cases = parse_junit(ET.parse(junit).getroot())

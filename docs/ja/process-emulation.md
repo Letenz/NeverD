@@ -103,7 +103,7 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 `WindowsProcessLifetime` は同じ CPU と実行予算で依存順に DLL TLS コールバック、`DllMain`、続いて EXE TLS と入口を実行します。各モジュールに独立した TLS インデックスと整列済み領域を割り当て、再配置・リンク済みイメージから共有 64 KiB 領域へコピーします。TLS の予約引数はゼロ、起動／プロセス終了時の `DllMain` は不透明な非 NULL 値です。明示的なプロセス終了は初期化完了 DLL を逆順に切り離し、その後 EXE TLS を呼びます。EXE 初期化前でも同様です。起動時の `DllMain(FALSE)` は detach 通知なしで `0xc0000142` 終了します。障害や予算切れは後処理を捏造しません。ゲスト DLL がある PE 入口の return は未対応のスレッド終了を必要とするため明示停止します。非ゼロの `SizeOfZeroFill` は未対応ですが、実際の TLS テンプレート内のゼロ初期化バイトは対応します。 入口なし DLL は TLS attach を受けますが、プロセス detach 通知は受けません。
 
-`WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 8 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
+`WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
 ```json
 {"windows":{"modules":[{"name":"middle.dll","path":"inputs/middle.dll"},{"name":"leaf.dll","path":"inputs/leaf.dll"}]}}

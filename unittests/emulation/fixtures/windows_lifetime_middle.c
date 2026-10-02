@@ -16,10 +16,11 @@ static void tls(void *Image, DWORD Reason, void *Reserved) {
   trace(MiddleRole, TLSKind, Reason, Reserved);
 }
 int dllEntry(void *Image, DWORD Reason, void *Reserved) {
-  CHECK(Image != 0 && LeafIndex() != _tls_index);
+  CHECK(Image != 0);
   trace(MiddleRole, DLLKind, Reason, Reserved);
-  ++ThreadValue;
   if (Reason == AttachReason) {
+    CHECK(LeafIndex() != _tls_index);
+    ++ThreadValue;
     if (mode() == ExitMiddleEntryMode)
       ExitProcess(ExitStatus);
     return mode() != FailMiddleMode;

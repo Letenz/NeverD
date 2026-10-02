@@ -3,6 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_CPU_OUTPUT_LIMIT
+// Preserve bounded, repeated native observations in successful JUnit cases.
+NEVERD_NATIVE_CPU_OUTPUT_LIMIT(65536)
+#endif
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
