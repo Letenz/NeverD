@@ -2219,6 +2219,57 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   return O;
 }
 
+TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
+  // PiCMCaptureRegistryPropertyInputData: cold code falls into a `jmp` back
+  // to the hot path.  Threading that jump-only block leaves a block without a
+  // terminator whose sole successor is not the next block; it must not run
+  // into the block laid out after it.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "threaded_fallthrough";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto IsZero = machineValue(1, Architecture);
+  IsZero.Size = 1;
+  auto Result = [&](int Version) {
+    auto V = machineValue(2, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.SSAVer = Version;
+    return V;
+  };
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::INT_EQUAL, 0x1000, IsZero, {Input, C(0)}),
+                     operation(NdOp::COND_BR, 0x1004, {}, {C(0x1200), IsZero})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3};
+  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, Result(1), {C(5)})};
+  M.Blocks[2].Preds = {0};
+  M.Blocks[2].Succs = {3};
+  M.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, Result(2), {C(7)})};
+  M.Blocks[3].Preds = {1, 2};
+  M.Blocks[3].Phis = {{Result(3), {{1, Result(1)}, {2, Result(2)}}}};
+  M.Blocks[3].Ops = {operation(NdOp::RETURN, 0x1300, {}, {Result(3)})};
+  const auto F = MedToHighConverter().convert(M, Architecture);
+  for (uint64_t Condition : {0u, 1u}) {
+    SCOPED_TRACE(Condition);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Condition, true), Condition ? 5u : 7u));
+  }
+}
+
 TEST(HighControlFlowSemantics,
      IncomingRegisterBehindAVersionedSeedIsTheParameter) {
   // PiCMCaptureRegistryPropertyInputData: SSA versions a parameter
