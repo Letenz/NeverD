@@ -41729,6 +41729,73 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, ColdFragmentScopeStructuresItsTry) {
+  // PsIumResumeAfterHibernate's shape: the guarded store and its __except
+  // body sit in a chained cold fragment away from the hot path.  The scope is
+  // live there, so the store is the __try body and the handler's result the
+  // __except body.  Without the chain the region stays unstructured.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,             // sub rsp
+                               0x85, 0xc9,                         // test ecx
+                               0x0f, 0x85, 0x34, 0x00, 0x00, 0x00, // jne cold
+                               0x31, 0xc0,                         // xor eax
+                               0x48, 0x83, 0xc4, 0x28,             // add rsp
+                               0xc3};                              // ret
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(),
+              {0xc7, 0x02, 0x01, 0x00, 0x00, 0x00, // mov dword [rdx], 1
+               0xb8, 0x02, 0x00, 0x00, 0x00,       // mov eax, 2
+               0xe9, 0xbe, 0xff, 0xff, 0xff,       // jmp epilogue
+               0xb8, 0x03, 0x00, 0x00, 0x00,       // handler: mov eax, 3
+               0xe9, 0xb4, 0xff, 0xff, 0xff});     // jmp epilogue
+  auto Build = [&](bool Chained) {
+    BinaryImage Img = makeCodeFixture(Entry, Code);
+    ExceptionFunction EH;
+    EH.CodeRange = {Entry, Entry + 0x13};
+    EH.Encoding = ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = 1;
+    EH.UnwindFlags = 1;
+    EH.PrologueSize = 4;
+    EH.Personality = ExceptionPersonality::CSpecificHandler;
+    UnwindOperation Alloc;
+    Alloc.Kind = UnwindOperationKind::AllocateSmall;
+    Alloc.CodeOffset = 4;
+    Alloc.StackOffset = 0x28;
+    EH.UnwindOperations.push_back(Alloc);
+    EH.SEH.emplace();
+    SEHScopeRecord Scope;
+    Scope.GuardedRange = {Entry + 0x40, Entry + 0x46};
+    Scope.Kind = SEHScopeKind::CatchAll;
+    Scope.HandlerVA = Entry + 0x50;
+    EH.SEH->Scopes.push_back(Scope);
+    if (Chained)
+      EH.FragmentRanges = {{Entry + 0x40, Entry + 0x5a}};
+    Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+    Img.ExceptionMetadata.rebuildIndex();
+    return Img;
+  };
+  const std::string HighC = highcOnlyFunction(Build(true), Entry);
+  EXPECT_NE(HighC.find("structured_regions=1, fallback_regions=0"),
+            std::string::npos)
+      << HighC;
+  const size_t Try = HighC.find("__try {");
+  const size_t Except = HighC.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+  ASSERT_NE(Try, std::string::npos) << HighC;
+  ASSERT_NE(Except, std::string::npos) << HighC;
+  EXPECT_NE(HighC.substr(Try, Except - Try).find("arg1"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.substr(Try, Except - Try).find("return"), std::string::npos)
+      << HighC;
+  EXPECT_NE(
+      HighC.substr(Except, HighC.find('}', Except + 1) - Except).find(" = 3;"),
+      std::string::npos)
+      << HighC;
+
+  const std::string Unchained = highcOnlyFunction(Build(false), Entry);
+  EXPECT_NE(Unchained.find("unstructured SEH region"), std::string::npos)
+      << Unchained;
+}
+
 TEST(HighCPointerAddresses, ContextCaptureTakesOnlyItsRecord) {
   // RtlCaptureContext2(PCONTEXT) stores every register into the record.  Its
   // body reads RDX, R8 and R9 to save them, not as arguments; the SDK

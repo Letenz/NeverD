@@ -61,7 +61,7 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
       EH.PrimaryFunctionIndex || (EH.UnwindFlags & ~3u) ||
       (!HasFrameRegister && EH.FrameOffset) ||
       (HasFrameRegister && FrameRegister == TRI.StackPointer) ||
-      EH.CodeRange.Begin != Low.Entry || !EH.CodeRange.contains(Handler))
+      EH.CodeRange.Begin != Low.Entry || !EH.ownsCode(Handler))
     Fail("unsupported unwind or frame-register contract");
   if (Low.Blocks.empty() || Low.Blocks.front().StartAddr != Low.Entry ||
       EH.PrologueSize > EH.CodeRange.End - Low.Entry)
@@ -101,9 +101,11 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
     for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
       if (Scope.HandlerVA != ScopeHandler)
         continue;
-      auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+      // A cold fragment can sit below the entry; only the prologue itself
+      // is out of bounds.
+      auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
       if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range ||
-          Range->Begin < PrologueEnd)
+          (Range->Begin < PrologueEnd && Range->End > Low.Entry))
         Fail("protected scope overlaps an incomplete prologue");
       for (size_t B = 0; B < N; ++B)
         if (Low.Blocks[B].StartAddr < Range->End &&
@@ -838,8 +840,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
           if (Scope.HandlerVA != Func.Blocks[Root].StartAddr)
             continue;
-          auto Range =
-              getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+          auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
           if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range) {
             Complete = false;
             break;

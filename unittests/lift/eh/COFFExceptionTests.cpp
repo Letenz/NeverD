@@ -13,8 +13,11 @@
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -132,6 +135,105 @@ TEST(COFFExceptionParser, AcceptsAcyclicX64UnwindChainBeyondLegacyDepth) {
     EXPECT_EQ(Info.Functions[I].ParseStatus, ExceptionParseStatus::Complete);
     EXPECT_TRUE(Info.Functions[I].Diagnostics.empty());
   }
+}
+
+TEST(COFFExceptionParser, RecordsChainedFragmentsOnTheirPrimary) {
+  // A fragment chained through another fragment still belongs to the primary
+  // at the end of the chain; one whose frame contract differs does not.
+  ExceptionInfo Info;
+  auto Add = [&](va_t Begin, uint32_t UnwindRVA, RuntimeFunctionKind Kind) {
+    ExceptionFunction Function;
+    Function.CodeRange = {Begin, Begin + 0x10};
+    Function.UnwindInfoRVA = UnwindRVA;
+    Function.Kind = Kind;
+    Info.Functions.push_back(std::move(Function));
+  };
+  Add(0x140003000, 0x3020, RuntimeFunctionKind::Chained); // through [2]
+  Add(0x140001000, 0x3000, RuntimeFunctionKind::Primary);
+  Add(0x140002000, 0x3010, RuntimeFunctionKind::Chained); // to [1]
+  Add(0x140004000, 0x3030, RuntimeFunctionKind::Primary);
+  Add(0x140005000, 0x3040, RuntimeFunctionKind::Chained); // to [1], bad frame
+  Info.Functions[0].ChainedPrimaryRange = Info.Functions[2].CodeRange;
+  Info.Functions[0].ChainedUnwindInfoRVA = 0x3010;
+  Info.Functions[2].ChainedPrimaryRange = Info.Functions[1].CodeRange;
+  Info.Functions[2].ChainedUnwindInfoRVA = 0x3000;
+  Info.Functions[4].ChainedPrimaryRange = Info.Functions[1].CodeRange;
+  Info.Functions[4].ChainedUnwindInfoRVA = 0x3000;
+  Info.Functions[4].FrameRegister = 5;
+
+  for (int Pass = 0; Pass < 2; ++Pass) {
+    SCOPED_TRACE(Pass);
+    coff_loader::unwind_detail::resolveX64UnwindChains(Info);
+    const std::vector<ExceptionAddressRange> &Fragments =
+        Info.Functions[1].FragmentRanges;
+    ASSERT_EQ(Fragments.size(), 2u);
+    EXPECT_EQ(Fragments[0].Begin, 0x140002000u);
+    EXPECT_EQ(Fragments[1].Begin, 0x140003000u);
+    EXPECT_TRUE(Info.Functions[1].ownsCode(0x14000300f));
+    EXPECT_FALSE(Info.Functions[1].ownsCode(0x140003010));
+    EXPECT_FALSE(Info.Functions[1].ownsCode(0x140005000));
+    EXPECT_TRUE(Info.Functions[3].FragmentRanges.empty());
+  }
+}
+
+TEST(COFFExceptionParser, RestrictedLoadSelectsTheRequestedFunctionsFragments) {
+  constexpr va_t Base = 0x140000000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = Base;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Base + 0x1000;
+  Text.Size = Text.FileSz = 0x4000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xc3);
+  Img.Segments.push_back(std::move(Text));
+  // UNWIND_INFO: version 1, no codes; a chained one carries its parent's
+  // RUNTIME_FUNCTION right after the header.
+  Segment RData;
+  RData.Name = ".rdata";
+  RData.VA = Base + 0x6000;
+  RData.Size = RData.FileSz = 0x60;
+  RData.Flags = SegmentFlags::Readable;
+  RData.Data.assign(RData.Size, 0);
+  auto PutUnwind = [&](uint32_t Offset,
+                       std::optional<std::array<uint32_t, 3>> Parent) {
+    RData.Data[Offset] = Parent ? 0x21 : 0x01;
+    if (Parent)
+      for (size_t Word = 0; Word < 3; ++Word)
+        for (unsigned Byte = 0; Byte < 4; ++Byte)
+          RData.Data[Offset + 4 + Word * 4 + Byte] =
+              static_cast<uint8_t>((*Parent)[Word] >> (8 * Byte));
+  };
+  PutUnwind(0x00, std::nullopt);                                    // P
+  PutUnwind(0x10, std::array<uint32_t, 3>{0x1000, 0x1100, 0x6000}); // F1 -> P
+  PutUnwind(0x20, std::array<uint32_t, 3>{0x2000, 0x2010, 0x6010}); // F2 -> F1
+  PutUnwind(0x30, std::nullopt);                                    // Q
+  PutUnwind(0x40, std::array<uint32_t, 3>{0x4000, 0x4100, 0x6030}); // FQ -> Q
+  Img.Segments.push_back(std::move(RData));
+  Img.LoadOnlyFunctionEntries.insert(Base + 0x1000);
+
+  const uint32_t Records[][3] = {{0x1000, 0x1100, 0x6000},
+                                 {0x2000, 0x2010, 0x6010},
+                                 {0x3000, 0x3010, 0x6020},
+                                 {0x4000, 0x4100, 0x6030},
+                                 {0x3100, 0x3110, 0x6040}};
+  std::vector<uint8_t> Bytes;
+  for (const auto &Record : Records)
+    for (uint32_t Word : Record)
+      for (unsigned Byte = 0; Byte < 4; ++Byte)
+        Bytes.push_back(static_cast<uint8_t>(Word >> (8 * Byte)));
+
+  std::unordered_map<size_t, ExceptionFunction> Decoded;
+  const std::vector<bool> Needed =
+      coff_loader::unwind_detail::selectRestrictedX64Records(
+          Img, Base, Bytes.data(), std::size(Records), 0x7000, Decoded);
+  EXPECT_EQ(Needed, (std::vector<bool>{true, true, true, false, false}));
+  EXPECT_EQ(Decoded.size(), 3u);
+  ASSERT_TRUE(Decoded.count(2));
+  ASSERT_TRUE(Decoded.at(2).ChainedPrimaryRange.has_value());
+  EXPECT_EQ(Decoded.at(2).ChainedPrimaryRange->Begin, Base + 0x2000);
 }
 
 TEST(COFFExceptionParser, RejectsCyclicX64UnwindChainExplicitly) {

@@ -391,13 +391,13 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   if (Exception) {
     // Every one of these tables spells "this field names no address" as zero,
     // so a zero has to be dropped before the range test rather than left to it.
+    // The function's code includes its chained cold fragments.
     auto AddBoundary = [&](va_t Address) {
-      if (Address != 0 && Exception->CodeRange.contains(Address) &&
-          Address != EntryAddr)
+      if (Address != 0 && Exception->ownsCode(Address) && Address != EntryAddr)
         BlockStarts.insert(Address);
     };
     auto AddExceptionalRoot = [&](va_t Address) {
-      if (Address == 0 || !Exception->CodeRange.contains(Address))
+      if (Address == 0 || !Exception->ownsCode(Address))
         return;
       AddBoundary(Address);
       PersistentCFGRoots.insert(Address);
@@ -406,18 +406,17 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
         ExceptionalRoots.push_back(Address);
     };
     auto AddContinuationRoot = [&](va_t Address) {
-      if (Address == 0 || !Exception->CodeRange.contains(Address))
+      if (Address == 0 || !Exception->ownsCode(Address))
         return;
       if (Address != EntryAddr)
         ContinuationRoots.push_back(Address);
     };
     if (Exception->SEH)
       for (const SEHScopeRecord &Scope : Exception->SEH->Scopes) {
-        if (const auto Range = getSemanticSEHGuardedRange(
-                Scope, Img.Arch, Exception->CodeRange)) {
+        if (const auto Range =
+                getSemanticSEHGuardedRange(Scope, Img.Arch, *Exception)) {
           AddBoundary(Range->Begin);
-          if (Range->End != Exception->CodeRange.End)
-            AddBoundary(Range->End);
+          AddBoundary(Range->End);
         }
         AddExceptionalRoot(Scope.FilterOrFinallyVA);
         AddExceptionalRoot(Scope.HandlerVA);

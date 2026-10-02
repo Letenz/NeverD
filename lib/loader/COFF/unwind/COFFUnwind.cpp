@@ -92,6 +92,16 @@ bool runtimeFunctionCovers(va_t Addr, va_t End, va_t Query) {
   return Query >= Addr && Query < End;
 }
 
+/// True when the UNWIND_INFO at \p UnwindRVA chains to another record.
+/// UNWIND_INFO byte 0 is Version:3 | Flags:5.
+bool hasChainedUnwindInfo(const BinaryImage &Img, uint64_t ImageBase,
+                          uint32_t UnwindRVA) {
+  if (UnwindRVA > InvalidVA - ImageBase)
+    return false;
+  const uint8_t *Header = Img.readVA(ImageBase + UnwindRVA, 1);
+  return Header && ((*Header >> 3) & unwind::UNW_ChainInfo) != 0;
+}
+
 void commitKnownCodeRanges(BinaryImage &Img) {
   std::sort(Img.KnownCodeRanges.begin(), Img.KnownCodeRanges.end());
   Img.KnownCodeRanges.erase(
@@ -178,6 +188,12 @@ void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
     Img.COFFPDataRecords.reserve(Count);
   else
     Img.ExceptionMetadata.Functions.reserve(Count);
+  std::unordered_map<size_t, ExceptionFunction> RestrictedDecoded;
+  const std::vector<bool> RestrictedNeeded =
+      Restrict ? unwind_detail::selectRestrictedX64Records(
+                     Img, ImageBase, RFBytes, Count,
+                     ExcDir->RelativeVirtualAddress, RestrictedDecoded)
+               : std::vector<bool>();
 
   [[maybe_unused]] size_t Added = 0;
   bool SawZeroEntry = false;
@@ -211,33 +227,23 @@ void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
       End = ImageBase + RF.EndAddress;
       if (!Restrict)
         Img.KnownCodeRanges.emplace_back(Addr, End);
-      // UNWIND_INFO byte 0 is Version:3 | Flags:5.  Read the chain flag here
-      // too, because a restricted load decodes only the requested records.
-      constexpr uint8_t kChainInfoFlag = 0x4;
-      if (RF.UnwindInformation <= InvalidVA - ImageBase)
-        if (const uint8_t *Header =
-                Img.readVA(ImageBase + RF.UnwindInformation, 1);
-            Header && ((*Header >> 3) & kChainInfoFlag) != 0)
-          Img.ContinuationCodeStarts.insert(Addr);
+      // Read the chain flag here too, because a restricted load decodes only
+      // the records it selects.
+      if (hasChainedUnwindInfo(Img, ImageBase, RF.UnwindInformation))
+        Img.ContinuationCodeStarts.insert(Addr);
     }
     if (Restrict) {
       Img.COFFPDataRecords.push_back(
           {RF.BeginAddress, RF.EndAddress, RF.UnwindInformation, RecordRVA});
-      bool Needed = false;
-      if (HaveRange) {
-        for (va_t Query : Img.LoadOnlyFunctionEntries) {
-          if (runtimeFunctionCovers(Addr, End, Query)) {
-            Needed = true;
-            break;
-          }
-        }
-      }
-      if (!Needed)
+      if (!HaveRange || !RestrictedNeeded[I])
         continue;
     }
-    ExceptionFunction EF =
-        decodeX64ExceptionFunction(Img, ImageBase, RecordRVA, RF.BeginAddress,
-                                   RF.EndAddress, RF.UnwindInformation);
+    const auto Predecoded = RestrictedDecoded.find(I);
+    ExceptionFunction EF = Predecoded != RestrictedDecoded.end()
+                               ? std::move(Predecoded->second)
+                               : decodeX64ExceptionFunction(
+                                     Img, ImageBase, RecordRVA, RF.BeginAddress,
+                                     RF.EndAddress, RF.UnwindInformation);
     Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
         Img.ExceptionMetadata.ParseStatus, EF.ParseStatus);
     const bool HasRange = EF.CodeRange.isValid();
@@ -702,6 +708,10 @@ void parseARMExceptions(const COFFObjectFile &Obj, BinaryImage &Img,
 } // namespace
 
 void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
+  // Rebuilt on every call: a lazily decoded record re-runs the resolution.
+  for (ExceptionFunction &Function : Info.Functions)
+    Function.FragmentRanges.clear();
+
   // Index by start VA so a 100k-entry .pdata does not scan every record for
   // every chained entry.  Vectors keep directory order so the first match is
   // the same record the previous nested loop selected.
@@ -747,6 +757,7 @@ void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
     std::set<size_t> Visited;
     size_t Current = I;
     bool ReachedTerminal = false;
+    size_t Terminal = I;
     while (true) {
       if (Current >= Info.Functions.size()) {
         Root.ParseStatus = mergeExceptionParseStatus(
@@ -763,6 +774,7 @@ void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
       const ExceptionFunction &CurrentFunction = Info.Functions[Current];
       if (CurrentFunction.Kind != RuntimeFunctionKind::Chained) {
         ReachedTerminal = true;
+        Terminal = Current;
         if (Root.FrameRegister != CurrentFunction.FrameRegister) {
           Root.ParseStatus = mergeExceptionParseStatus(
               Root.ParseStatus, ExceptionParseStatus::Malformed);
@@ -788,9 +800,80 @@ void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
       Root.Diagnostics.push_back(
           "chained x64 unwind graph does not reach a primary record");
     }
+    // A fault in this fragment unwinds through the chain to the primary
+    // record, whose handler and scope table then govern it.
+    if (ReachedTerminal && Root.ParseStatus == ExceptionParseStatus::Complete &&
+        Root.CodeRange.isValid())
+      Info.Functions[Terminal].FragmentRanges.push_back(Root.CodeRange);
     Info.ParseStatus =
         mergeExceptionParseStatus(Info.ParseStatus, Root.ParseStatus);
   }
+  for (ExceptionFunction &Function : Info.Functions)
+    std::sort(Function.FragmentRanges.begin(), Function.FragmentRanges.end(),
+              [](const ExceptionAddressRange &A,
+                 const ExceptionAddressRange &B) { return A.Begin < B.Begin; });
+}
+
+std::vector<bool> unwind_detail::selectRestrictedX64Records(
+    const BinaryImage &Img, uint64_t ImageBase, const uint8_t *RFBytes,
+    size_t Count, uint32_t DirectoryRVA,
+    std::unordered_map<size_t, ExceptionFunction> &Decoded) {
+  using RuntimeFunc = llvm::object::coff_runtime_function_x64;
+  auto Read = [&](size_t I) {
+    RuntimeFunc RF;
+    std::memcpy(&RF, RFBytes + I * sizeof(RuntimeFunc), sizeof(RuntimeFunc));
+    return RF;
+  };
+  auto HasRange = [&](const RuntimeFunc &RF) {
+    return RF.BeginAddress < RF.EndAddress &&
+           RF.BeginAddress <= InvalidVA - ImageBase &&
+           RF.EndAddress <= InvalidVA - ImageBase;
+  };
+  std::vector<bool> Needed(Count, false);
+  std::unordered_map<va_t, std::vector<size_t>> ChainedByParent;
+  std::vector<size_t> Work;
+  for (size_t I = 0; I < Count; ++I) {
+    const RuntimeFunc RF = Read(I);
+    if (!HasRange(RF))
+      continue;
+    const va_t Addr = ImageBase + RF.BeginAddress;
+    const va_t End = ImageBase + RF.EndAddress;
+    for (va_t Query : Img.LoadOnlyFunctionEntries) {
+      if (runtimeFunctionCovers(Addr, End, Query)) {
+        Needed[I] = true;
+        Work.push_back(I);
+        break;
+      }
+    }
+    if (!hasChainedUnwindInfo(Img, ImageBase, RF.UnwindInformation))
+      continue;
+    const uint64_t RecordRVA =
+        uint64_t(DirectoryRVA) + uint64_t(I) * sizeof(RuntimeFunc);
+    ExceptionFunction EF = decodeX64ExceptionFunction(
+        Img, ImageBase,
+        RecordRVA <= std::numeric_limits<uint32_t>::max()
+            ? static_cast<uint32_t>(RecordRVA)
+            : 0,
+        RF.BeginAddress, RF.EndAddress, RF.UnwindInformation);
+    if (EF.ChainedPrimaryRange)
+      ChainedByParent[EF.ChainedPrimaryRange->Begin].push_back(I);
+    Decoded.emplace(I, std::move(EF));
+  }
+  while (!Work.empty()) {
+    const size_t I = Work.back();
+    Work.pop_back();
+    const auto Children =
+        ChainedByParent.find(ImageBase + Read(I).BeginAddress);
+    if (Children == ChainedByParent.end())
+      continue;
+    for (size_t Child : Children->second) {
+      if (Needed[Child])
+        continue;
+      Needed[Child] = true;
+      Work.push_back(Child);
+    }
+  }
+  return Needed;
 }
 
 bool ensureX64RuntimeFunction(BinaryImage &Img, va_t Address) {

@@ -480,7 +480,7 @@ void addSEHCandidates(const ExceptionFunction &EH, Arch TargetArch,
   std::map<std::pair<va_t, va_t>, size_t> ByRange;
   for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
     const std::optional<ExceptionAddressRange> SemanticRange =
-        getSemanticSEHGuardedRange(Scope, TargetArch, EH.CodeRange);
+        getSemanticSEHGuardedRange(Scope, TargetArch, EH);
     if (Scope.ParseStatus != ExceptionParseStatus::Complete ||
         !SemanticRange) {
       ++Rejected;
@@ -1062,7 +1062,7 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
     return std::nullopt;
 
   ExceptionAddressRange Range{Match->StartAddr, Match->EndAddr};
-  if (!Range.isValid() || !EH.CodeRange.contains(Range))
+  if (!Range.isValid() || !EH.ownsCode(Range))
     return std::nullopt;
   if (std::any_of(ProtectedRegions.begin(), ProtectedRegions.end(),
                   [&](const RegionCandidate &Candidate) {
