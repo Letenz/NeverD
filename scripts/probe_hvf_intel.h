@@ -27,7 +27,8 @@ static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
 // Original MOV/HALT program, identity mapped through three independently
 // authored page-table pages. This deliberately has no NeverD, decoder, FP
 // packet or guest OS dependency. Backing lives until the caller destroys VM.
-static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing) {
+static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
+  printf("Intel entry API: %s\n", Legacy ? "hv_vcpu_run" : "hv_vcpu_run_until");
   const size_t Bytes = 65536;
   if (posix_memalign(Backing, (size_t)sysconf(_SC_PAGESIZE), Bytes))
     return 1;
@@ -105,21 +106,37 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing) {
         report("probe RAX", hv_vcpu_write_register(CPU, HV_X86_RAX, 0)) ||
         report("probe RFLAGS", hv_vcpu_write_register(CPU, HV_X86_RFLAGS, 2)))
       return 1;
-    const hv_return_t Status = hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER);
-    uint64_t Reason = 0, InstructionError = 0, RAX = 0;
-    const int ReadFailed =
-        report("probe exit reason",
-               hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason)) |
-        report("probe instruction error",
-               hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_INSTR_ERROR,
-                                     &InstructionError)) |
-        report("probe RAX read", hv_vcpu_read_register(CPU, HV_X86_RAX, &RAX));
-    printf("probe result: status=0x%x reason=0x%llx instruction_error=0x%llx "
-           "rax=0x%llx\n",
-           (uint32_t)Status, (unsigned long long)Reason,
-           (unsigned long long)InstructionError, (unsigned long long)RAX);
-    if (Status != HV_SUCCESS || ReadFailed || RAX != 37 ||
-        Reason != (Step ? VMX_REASON_MTF : VMX_REASON_HLT))
+    int Completed = 0;
+    // The legacy API also returns transparently handled exits. Permit only
+    // mapped EPT faults and host IRQs, with a bound independent of the timeout.
+    for (unsigned Attempt = 0; Attempt < 32; ++Attempt) {
+      const hv_return_t Status =
+          Legacy ? hv_vcpu_run(CPU)
+                 : hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER);
+      uint64_t Reason = 0, InstructionError = 0, RAX = 0;
+      const int ReadFailed =
+          report("probe exit reason",
+                 hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason)) |
+          report("probe instruction error",
+                 hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_INSTR_ERROR,
+                                       &InstructionError)) |
+          report("probe RAX read",
+                 hv_vcpu_read_register(CPU, HV_X86_RAX, &RAX));
+      printf("probe result: status=0x%x reason=0x%llx instruction_error=0x%llx "
+             "rax=0x%llx\n",
+             (uint32_t)Status, (unsigned long long)Reason,
+             (unsigned long long)InstructionError, (unsigned long long)RAX);
+      if (Status != HV_SUCCESS || ReadFailed)
+        return 1;
+      if (Reason == (Step ? VMX_REASON_MTF : VMX_REASON_HLT)) {
+        Completed = RAX == 37;
+        break;
+      }
+      if (!Legacy ||
+          (Reason != VMX_REASON_EPT_VIOLATION && Reason != VMX_REASON_IRQ))
+        return 1;
+    }
+    if (!Completed)
       return 1;
   }
   return 0;

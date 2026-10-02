@@ -43,14 +43,26 @@ jobs:
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
           python3 - <<'PY'
           import pathlib
+          import platform
           import subprocess
           log = pathlib.Path("build-hvf-probe/result.log")
+          failed = False
           try:
               with log.open("w") as output:
-                  subprocess.run(["build-hvf-probe/probe"], check=True, timeout=10,
-                                 stdout=output, stderr=subprocess.STDOUT)
+                  modes = ["until", "legacy"] if platform.machine() == "x86_64" else ["until"]
+                  for mode in modes:
+                      output.write(f"Fresh process probe: {mode}\n")
+                      output.flush()
+                      try:
+                          result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
+                                                  stdout=output, stderr=subprocess.STDOUT)
+                          failed |= result.returncode != 0
+                      except subprocess.TimeoutExpired:
+                          output.write(f"Probe {mode} exceeded 10 seconds\n")
+                          failed = True
           finally:
               print(log.read_text(), end="")
+          raise SystemExit(1 if failed else 0)
           PY
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'

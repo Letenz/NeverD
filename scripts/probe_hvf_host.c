@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int report(const char *Operation, hv_return_t Status) {
   printf("%s: 0x%08x\n", Operation, (uint32_t)Status);
@@ -16,7 +17,12 @@ static int report(const char *Operation, hv_return_t Status) {
 #include "probe_hvf_intel.h"
 #endif
 
-int main(void) {
+int main(int Argc, char **Argv) {
+  const int Legacy = Argc == 2 && strcmp(Argv[1], "legacy") == 0;
+  if (Argc > 2 || (Argc == 2 && !Legacy && strcmp(Argv[1], "until") != 0)) {
+    fprintf(stderr, "usage: %s [until|legacy]\n", Argv[0]);
+    return 2;
+  }
 #if defined(__arm64__)
   hv_return_t Status = hv_vm_create(NULL);
   hv_vcpu_t CPU;
@@ -38,7 +44,9 @@ int main(void) {
   void *Backing = NULL;
 #if defined(__x86_64__)
   if (!Failed)
-    Failed |= probe_intel_execution(CPU, &Backing);
+    Failed |= probe_intel_execution(CPU, &Backing, Legacy);
+#else
+  (void)Legacy;
 #endif
   // Guest backing remains owned until both CPU and VM have retired.
   if (Status == HV_SUCCESS)
