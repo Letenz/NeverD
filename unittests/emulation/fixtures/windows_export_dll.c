@@ -4,6 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 #include "WindowsExportFixture.h"
+int DllMain(void *, DWORD, void *);
+static void *volatile RelocatedEntry = (void *)&DllMain;
 #if defined(EXPORT_LEAF)
 DWORD Value;
 DWORD Probe(void) { return Value; }
@@ -11,6 +13,7 @@ DWORD OrdinalProbe(void) { return Value + 1; }
 #endif
 int DllMain(void *Image, DWORD Reason, void *Reserved) {
   CHECK(Reserved != 0);
+  CHECK(RelocatedEntry == (void *)&DllMain);
   const char *Event;
 #if defined(EXPORT_LEAF)
   Event = Reason ? LeafAttach : LeafDetach;
