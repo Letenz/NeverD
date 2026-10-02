@@ -63,6 +63,13 @@ jobs:
           finally:
               print(log.read_text(), end="")
           raise SystemExit(1 if failed else 0)
+      - name: Compare an independent Intel HVF engine with software execution
+        if: always() && inputs.validation == 'probe' && matrix.arch == 'X64'
+        shell: bash
+        run: |
+          brew install qemu
+          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements "$(command -v qemu-system-x86_64)"
+          python3 scripts/probe_hvf_qemu.py --evidence build-hvf-probe/qemu
           PY
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
@@ -132,7 +139,7 @@ jobs:
         with:
           name: hvf-${{ matrix.arch }}
           path: |
-            build-hvf-probe/result.log
+            build-hvf-probe/
             build-hvf/transport-evidence/
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
