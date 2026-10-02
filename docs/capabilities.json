@@ -4660,6 +4660,149 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.MemoryResultsAndEffectiveAddressesMatchHost/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.RegisterResultsMatchHostAndPreserveUntouchedBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.NarrowIndicesIgnoreUpperRegisterBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ReadAndResultStopsRetainOriginalRAMAndCPU/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ResultObserverExceptionDiscardsNativeEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ProtectionChecksUseTheAdjustedWordRatherThanTheBitBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.MissingNegativeOffsetWordRaisesAReadFault/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ReadOnlyWordCanPrecedeAnUnmappedBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.CrossPageResultsAndStopsMatchHostWithIndependentBacking/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.CrossPageFaultPreservesBothAllocationsAndCPU/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.RejectedLockFormsHaveNoEffectsOrObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.DeviceOperandsRejectBeforeCallbacks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.AddressSizeWrappingPrecedesFSAndGSBases/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
