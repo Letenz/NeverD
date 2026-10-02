@@ -812,7 +812,7 @@ HighIR 的共用私有堆疊框架位址證明，在目標位寬整數加法中�
 
 在 AArch64 原始碼繫結中，若全寬儲存的純量位元模式碰巧等於映像位址，只有精確的本地指令序列先建構由 W 暫存器零擴充的負載與標準的內嵌 Swift String 標記，再以一條 STP 儲存相鄰兩字時，才將其保留為數值。指令位元組及無重新定位的事實會重新驗證；缺少配對或來源未獲證明時仍維持未解析。
 
-原生原始碼型別推斷可以借用傳給已驗證 libswiftCore `swift_beginAccess` 與 `swift_endAccess` 呼叫的精確 24 位元組私有暫存紀錄。begin 呼叫會寫入第二個參數指向的紀錄；end 呼叫可能修改第一個參數指向的紀錄。接受輔助函式前，既有 LowIR 證明仍會檢查呼叫 ABI、有界堆疊框架偏移、與已儲存暫存器的分離，以及完整的狀態還原。
+Swift 存取暫存區採用帶條件的共享堆疊框架契約。載入器驗證原始 ARM64 BL、強 libswiftCore 匯入及目前完整 ABI。逐位元組框架證明僅在實際旗標精確為非追蹤式 Read（`0`）或 Modify（`1`）時允許 `swift_beginAccess` 借用 24 位元組，並記錄不透明的已初始化暫存區，不臆造其中內容。`swift_endAccess` 只能讀取同一仍有效且在所有到達路徑上保持身分的紀錄；重疊寫入、部分指標、儲存失效或缺少初始化均拒絕證明。追蹤式存取會在呼叫結束後保留暫存區，必須另行證明生命週期。純量回傳推斷也重複檢查。[Swift 執行階段](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp)與[存取旗標](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)規定的衝突偵測與終止行為保持可觀察。
 
 經過效能分析插樁與全模組最佳化的 Swift 合併 `@objc` `CGFloat` setter 使用 C ABI，參數依序為 self、selector、double 值、實例變數偏移指標及計數器指標。只有精確的修飾符號名稱與入口處透過 x3 進行的計數器讀取、遞增和寫回同時成立，才指派五參數 ABI；未插樁版本只有四個參數。候選函式仍須通過一般的原始碼函式主體、資料繫結及相依閉包證明。
 

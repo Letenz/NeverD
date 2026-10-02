@@ -861,7 +861,7 @@ HighIR의 공통 비공개 프레임 주소 증명은 대상 폭의 정수 덧�
 
 AArch64 소스 바인딩에서 스칼라 비트가 이미지 주소와 일치하는 전체 폭 저장값은 정확한 로컬 명령열이 W 레지스터의 제로 확장 페이로드와 정규 인라인 Swift String 태그를 만들고 단일 STP로 연속된 두 워드를 저장할 때만 숫자로 유지합니다. 명령 바이트와 재배치가 없음을 다시 확인하며, 쌍이 없거나 출처가 증명되지 않으면 미해결로 둡니다.
 
-네이티브 소스 형식 추론은 검증된 libswiftCore `swift_beginAccess` 및 `swift_endAccess` 호출에 전달되는 정확히 24바이트의 개인 임시 레코드를 빌릴 수 있다. begin 호출은 두 번째 인수가 가리키는 레코드에 쓰고, end 호출은 첫 번째 인수가 가리키는 레코드를 수정할 수 있다. 보조 함수를 허용하기 전에 기존 LowIR 증명은 호출 ABI, 경계 내 프레임 오프셋, 저장된 레지스터와의 분리, 완전한 상태 복원을 계속 확인한다.
+Swift 접근 임시 저장소에는 조건부 공유 프레임 계약을 사용한다. 로더는 원래 ARM64 BL, 강한 libswiftCore 가져오기와 현재의 완전한 ABI를 검증한다. 바이트 단위 프레임 증명은 실제 플래그가 추적하지 않는 Read(`0`) 또는 Modify(`1`)일 때만 `swift_beginAccess`에 24바이트를 빌려준다. 내용을 추측하지 않고 초기화된 불투명 레코드로 기록한다. `swift_endAccess`는 모든 도달 경로에서 정체성이 유지된 동일한 유효 레코드만 읽을 수 있다. 겹치는 쓰기, 부분 포인터, 수명이 끝난 저장소와 초기화 누락은 거부한다. 추적 접근은 호출 이후에도 저장소를 유지하므로 별도 수명 증명이 필요하다. 스칼라 반환 추론도 다시 검증한다. [Swift 런타임](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp)과 [접근 플래그](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)에 정의된 충돌 감지와 종료 효과는 관찰 가능한 상태로 유지한다.
 
 프로파일 계측과 전체 모듈 최적화가 적용된 Swift 병합 `@objc` `CGFloat` setter는 self, selector, double 값, ivar 오프셋 포인터, 프로파일 카운터 포인터를 받는 C ABI를 사용합니다. 정확한 맹글 심벌과 함수 진입부에서 x3를 통한 카운터 읽기·증가·저장을 모두 확인한 경우에만 이 5인자 ABI를 부여합니다. 계측하지 않은 함수는 인자가 4개입니다. 후보는 일반적인 소스 본문, 데이터 바인딩, 의존성 폐쇄 증명도 통과해야 합니다.
 
