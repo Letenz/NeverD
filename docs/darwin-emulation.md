@@ -191,7 +191,10 @@ foreign architectures, unavailable transports or the disabled software backend.
 The 65 Darwin checks include loader/VM tests, every ARM64 process workload and
 the original host-kernel reference. With the later native-interruption inventory,
 the full HVF gate requires 16 checks on ARM64 or 13 on Intel, including the native reference; the focused
-Darwin gate separately requires all 39 or 26 process workloads.
+Darwin gate separately requires all 39 or 26 process workloads. The later full
+ARM64 gate at clean source `561ebf37b9eaaec08043ac5816b2e083ecccaf68` passed 841
+checks, failed none, skipped 5,939 and executed all 16 required outcomes. Its
+evidence is in `build-hvf-native/hvf-cancellation-full-evidence/`.
 
 Evidence is under `build-hvf-native/hvf-release-evidence/`,
 `build-hvf-native/darwin-release-evidence/` and

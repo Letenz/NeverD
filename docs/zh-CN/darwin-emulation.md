@@ -79,6 +79,9 @@ Apple M4 Max / macOS 15.6.1，Release 构建，源码为
 跳过项属于异架构、其他后端或关闭的软件后端。65 项 Darwin 检查包含加载器、内存、
 每个 ARM64 工作负载，以及真实宿主内核对照。加入原生中断清单后，完整 HVF 门禁
 现要求 ARM64 的 16 项或 Intel 的 13 项检查；Darwin 专项门禁另要求全部 39 / 26 项进程工作负载。
+后续干净源码 `561ebf37b9eaaec08043ac5816b2e083ecccaf68` 的 ARM64 完整门禁达到
+841 项通过、0 失败、5,939 项跳过，16 个必需用例全部执行；完整证据位于
+`build-hvf-native/hvf-cancellation-full-evidence/`。
 
 证据位于 `build-hvf-native/hvf-release-evidence/`、
 `build-hvf-native/darwin-release-evidence/` 和
