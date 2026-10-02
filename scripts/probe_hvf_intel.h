@@ -108,6 +108,13 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
                                       Code ? 0xa09b : 0xc093)))
       return 1;
   }
+  uint64_t InitialXCR0 = 0;
+  if (report("probe initial XCR0",
+             hv_vcpu_read_register(CPU, HV_X86_XCR0, &InitialXCR0)))
+    return 1;
+  printf("initial XCR0=0x%llx\n", (unsigned long long)InitialXCR0);
+  if (report("probe XCR0", hv_vcpu_write_register(CPU, HV_X86_XCR0, 3)))
+    return 1;
   for (unsigned Step = 0; Step < 2; ++Step) {
     printf("independent Intel probe: %s\n", Step ? "MTF" : "HLT");
     if (probe_control(CPU, VMCS_CTRL_CPU_BASED,
