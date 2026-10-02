@@ -8,6 +8,7 @@
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "FiniteValues.h"
+#include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
 #include "LowIRLoopInference.h"
 #include "NativeStackControl.h"
@@ -2151,18 +2152,8 @@ public:
           const auto &F = *Contract.Frame;
           EntryRoot =
               Initial.read(SymSpace::Register, F.RootRegister.Offset, 8);
-          if (F.Begin < 0)
-            Predicate = Ctx.mkAnd(
-                Predicate,
-                Ctx.mkUle(Ctx.mkConst(64, uint64_t{0} -
-                                              static_cast<uint64_t>(F.Begin)),
-                          EntryRoot));
-          if (F.End > 0)
-            Predicate = Ctx.mkAnd(
-                Predicate,
-                Ctx.mkUle(EntryRoot,
-                          Ctx.mkConst(64, UINT64_MAX - static_cast<uint64_t>(
-                                                           F.End - 1))));
+          Predicate = Ctx.mkAnd(Predicate, detail::nonwrappingFramePredicate(
+                                               Ctx, EntryRoot, F.Begin, F.End));
           // The existing root bounds make these the unsigned first and last
           // accessible bytes without wraparound. Exclusion is a symbolic entry
           // precondition: adjacency is allowed, but no byte may overlap a

@@ -89,6 +89,10 @@ Bei voller Kapazität ersetzt der Cache für endliche Beweise die am längsten u
 
 Die Wiederherstellung bewahrt auch vollständig bewiesene endliche Wertebereiche einzelner maskierter Kontrollfelder. Überschreitet eine gemeinsame Relation `MaxControlTuples`, können diese unabhängigen Bereiche weiterhin ein Ziel einschränken, ohne Korrelationen zwischen Feldern zu behaupten. Zusammenführungen vereinigen die mit der gemeinsamen Maske projizierten Werte; fehlende oder zu große Bereiche werden vollständig verworfen. Änderungen eines Bereichs planen den Knoten auch nach einer Vergröberung der gemeinsamen Relation neu ein. Teilaufzählungen liefern keine Fakten; die bestehenden Grenzen für Felder, Tupel, symbolische Knoten und Solver bleiben wirksam.
 
+`MaxChainedTransfers` ist eine optionale C++-Grenze (Standard `0`) für aufeinanderfolgende Kontrollübergänge mit nachweislich eindeutigem Ziel oder booleschem Ergebnis. Vollständiger symbolischer Zustand, native Herkunft und kumulative Budgets bleiben erhalten; mehrere Ergebnisse nutzen gewöhnliche CFG-Kanten. Rückwärtssuche spielt bestätigte Befehlsvorkommen erneut ab. Verkettung kann Schleifenursprünge duplizieren und die automatische Schnittpunktinferenz einschränken.
+
+`EntryFrameBounds` deklariert ausdrücklich einen nicht überlaufenden Bereich `[Begin, End)` relativ zum Eintrittswert von `FrameBaseRegister`. Daraus folgen weder Speicherzugriffsrechte noch Aliasfreiheit. Ohne Angabe bleibt der Wurzelbereich modular. Der native Beweis verlangt dieselben Frame-Grenzen im Aufrufervertrag und bindet sie in seinen Nachweis ein; der LLVM-Beweis behält den bestehenden Frame-Bereich. Wiederherstellung allein ist kein Äquivalenzzertifikat.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag

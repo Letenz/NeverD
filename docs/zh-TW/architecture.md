@@ -80,6 +80,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `InterpreterSpecialization` 同時負責聯合控制關係及獨立的有限欄位值域。邊投影只記錄完整的單欄證明；合流時對欄位遮罩取交集，並對重新套用遮罩後的值取聯集。重建節點時，在同一符號狀態完成初始值設定後，將這些值域與聯合述詞合取，保留框架身分及未受約束的位元。只有精確確認所有聯合元組均滿足成員約束，才可省略該約束。這項精度策略不改變上下文鍵或原生返回驗證。
 
+`FrameEntryConstraints.h` 統一管理恢復與關係證明共用的不回繞述詞。`InterpreterSpecialization` 負責有界的唯一轉移串接與已提交序列重播。這些 C++ 選項預設關閉；證明契約比對與摘要綁定仍由二進位適配層負責。
+
 `modelInterpreterMachineStateX64` 與原始碼包裝器共用同一產生器，統一處理客體暫存器分片、封裝旗標、執行設定狀態和控制流程。模型只將狀態物件存取改為明確的暫存器位元組，狀態碼與客體 RAX 分開。它不負責編譯器語意或證明策略；入口域、觀察項、堆疊框架契約和完整精化檢查仍由呼叫端負責。
 
 `NeverDLLVMInterpreterModel` 負責獨立、有界的純量 LLVM 匯入，使用相同原始狀態 ABI。`modelLLVMInterpreterMachineStateX64` 保留真實狀態碼回傳，並產生明確的語義有效性檢查。`llvmInterpreterMachineStateContract` 提供完整觀察項與零監視位元組保持義務；入口域、記憶體及完整證明由呼叫方負責。LLVM 匯入不改變一般提升或原始碼發布，也不證明編譯器。

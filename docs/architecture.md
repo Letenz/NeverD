@@ -845,6 +845,8 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 
 `InterpreterSpecialization` owns both joint control relations and independent finite field domains. Edge projection records only complete column proofs; joins intersect field masks and union the remasked values. Rebuilding a node conjoins these domains with the joint predicate after seeding the same symbolic state, preserving frame identity and unconstrained bits. Joint-implied memberships may be omitted by exact tuple containment. This precision policy does not change context keys or native-return authentication.
 
+`FrameEntryConstraints.h` owns the nonwrapping predicate shared by recovery and relational proof. `InterpreterSpecialization` owns bounded singleton chaining and committed replay. These C++ options are disabled by default; proof contract matching and digest binding remain at the binary adapter.
+
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.

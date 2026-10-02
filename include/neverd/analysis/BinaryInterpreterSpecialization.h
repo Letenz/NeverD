@@ -34,6 +34,9 @@ namespace neverd::analysis {
 /// near calls and exact returns; NormalNonfaultingExecution excludes exception
 /// dispatch rather than claiming its equivalence. X64CetDisabled certifies
 /// RDSSP destination preservation, never arbitrary CET instruction support.
+/// Optional EntryFrameBounds restrict the physical entry root to a nonwrapping
+/// interval; they do not authorize memory accesses. Native relation checks
+/// require exactly matching bounds in their explicit frame contract.
 SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});

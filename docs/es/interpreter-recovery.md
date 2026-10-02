@@ -88,6 +88,10 @@ Al alcanzar la capacidad, la caché de pruebas finitas sustituye los registros u
 
 La recuperación también conserva los dominios finitos completamente demostrados de cada campo de control con máscara. Si una relación conjunta supera `MaxControlTuples`, estos dominios independientes aún pueden restringir un destino sin afirmar correlaciones entre campos. Las uniones combinan los valores proyectados con la máscara común; los dominios ausentes o excesivos se descartan por completo. Un cambio de dominio vuelve a programar el nodo aunque la relación conjunta ya se haya ampliado. Una enumeración parcial no aporta hechos, y se mantienen los límites existentes de campos, tuplas, nodos simbólicos y solucionador.
 
+`MaxChainedTransfers` es un límite opcional de C++ (`0` por defecto) para encadenar transferencias cuyo destino o resultado booleano sea demostrablemente único. Conserva el estado simbólico completo, los orígenes nativos y los presupuestos acumulados; los resultados múltiples usan las aristas CFG habituales. El descubrimiento inverso reproduce las apariciones de instrucciones confirmadas. El encadenamiento puede duplicar orígenes de bucles y limitar la inferencia automática de puntos de corte.
+
+`EntryFrameBounds` declara explícitamente un intervalo `[Begin, End)` sin desbordamiento respecto al valor de entrada de `FrameBaseRegister`. No concede acceso a memoria ni garantiza ausencia de alias. Sin él, las raíces conservan su dominio modular. La prueba nativa exige los mismos límites en el contrato del llamador y los vincula al comprobante; la prueba LLVM conserva el dominio existente del marco. La recuperación sola no certifica equivalencia.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución

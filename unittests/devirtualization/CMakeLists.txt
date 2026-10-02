@@ -66,6 +66,7 @@ target_compile_definitions(NeverDInterpreterLLVMRefinementTests PRIVATE
 
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
+  InterpreterTransferChainTests.cpp
   NativeStackSpecializationTests.cpp
   NativeStackControlTests.cpp
   NativeUndefinedIndependenceTests.cpp

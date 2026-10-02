@@ -9,6 +9,7 @@
 #include "ControlDiscovery.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
+#include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
 #include "NativeStackControl.h"
 #include "StringTransfer.h"
@@ -677,6 +678,10 @@ private:
                 ControlDemand Demand = ControlDemand::Target);
   llvm::SmallVector<ProducerBitView, 4>
   producerViews(SpecializationCursor Successor, uint32_t Field) const;
+  bool admitDestination(SpecializationCursor Cursor);
+  std::optional<SpecializationCursor>
+  uniqueSuccessor(const SpecializationInstruction &Instruction, StepResult Flow,
+                  SymExec &Exec, SymContext &Ctx);
   int enqueue(SpecializationCursor Cursor, const Projection &Incoming);
   bool evaluate(int Id);
   bool visitDiscovery();
@@ -1442,13 +1447,45 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
   return true;
 }
 
+bool Specializer::admitDestination(SpecializationCursor Cursor) {
+  if (Cursor.Address >= (uint64_t{1} << 63))
+    return fail(SpecializationStatus::UnresolvedControl,
+                "control destination overlaps reserved residual labels");
+  return true;
+}
+
+std::optional<SpecializationCursor>
+Specializer::uniqueSuccessor(const SpecializationInstruction &Instruction,
+                             StepResult Flow, SymExec &Exec, SymContext &Ctx) {
+  const bool Conditional = Flow == StepResult::CondBranch;
+  const auto Value = Conditional ? Exec.branchCondition() : Exec.branchTarget();
+  const auto Domain = enumerate(Ctx, Exec.pathPredicate(), {Value}, 1);
+  if (Failed || Domain.Status != FiniteValueStatus::Complete ||
+      Domain.Tuples.size() != 1)
+    return std::nullopt;
+  const uint64_t Only = Domain.Tuples.front().front();
+  if (Conditional && !Only)
+    return Instruction.Fallthrough;
+  const auto Target = Conditional
+                          ? Ctx.asConst(Exec.branchTarget())
+                          : std::optional<llvm::APInt>(llvm::APInt(64, Only));
+  if (!Target || Target->getBitWidth() > 64)
+    return std::nullopt;
+  auto Canonical = canonicalizeLowControlTarget(Target->getZExtValue(),
+                                                Instruction.Origin.Mode,
+                                                Instruction.Origin.TargetMode);
+  if (!Canonical) {
+    fail(SpecializationStatus::UnresolvedControl,
+         llvm::toString(Canonical.takeError()));
+    return std::nullopt;
+  }
+  return SpecializationCursor{Canonical->Address, Canonical->Mode};
+}
+
 int Specializer::enqueue(SpecializationCursor Cursor,
                          const Projection &Incoming) {
-  if (Cursor.Address >= (uint64_t{1} << 63)) {
-    fail(SpecializationStatus::UnresolvedControl,
-         "control destination overlaps reserved residual labels");
+  if (!admitDestination(Cursor))
     return -1;
-  }
   ContextKey Key{Cursor, {}};
   Key.FrameResidue = Incoming.FrameResidue;
   const auto FrameControl = [](const auto &Values, uint64_t Offset,
@@ -1793,6 +1830,12 @@ bool Specializer::evaluate(int Id) {
   SymExec Exec(Ctx, State);
   auto IncomingPredicate =
       controlPredicate(State, FrameRoot, Draft.Incoming.Controls);
+  if (Options.EntryFrameBounds) {
+    const auto &Bounds = *Options.EntryFrameBounds;
+    IncomingPredicate = Ctx.mkAnd(
+        IncomingPredicate, detail::nonwrappingFramePredicate(
+                               Ctx, FrameRoot, Bounds.Begin, Bounds.End));
+  }
   const auto &Joint = Draft.Incoming.Controls;
   for (const auto &Column : Draft.Incoming.Marginals) {
     // Omit only a membership explicitly implied by every retained joint row.
@@ -1837,7 +1880,9 @@ bool Specializer::evaluate(int Id) {
   std::optional<bool> WideFrameRootDomain;
   SpecializationCursor Cursor = Draft.Key.Cursor;
   bool Finished = false;
+  uint32_t ChainedTransfers = 0;
   while (!Finished) {
+    std::optional<SpecializationCursor> ChainedSuccessor;
     FailureCursor = Cursor.Address;
     auto Fetched = Provider.instruction(Cursor);
     if (!Fetched)
@@ -2415,6 +2460,29 @@ bool Specializer::evaluate(int Id) {
       if (I + 1 != Operations.size())
         return fail(SpecializationStatus::Unsupported,
                     "control transfer before the end of a lifted instruction");
+      if (Flow != StepResult::Return) {
+        if (ReplayingDemands &&
+            Draft.Slices.size() + 1 < Nodes[Id].Slices.size()) {
+          // Replay the committed occurrences, including repeated addresses.
+          // This routes candidate demands only: no edge equality, new proof,
+          // state fact, witness or graph mutation is authorized by the route.
+          const auto &Next = Nodes[Id].Slices[Draft.Slices.size() + 1].Origin;
+          ChainedSuccessor = SpecializationCursor{Next.Address, Next.Mode};
+        } else if (!ReplayingDemands &&
+                   ChainedTransfers < Options.MaxChainedTransfers) {
+          ChainedSuccessor = uniqueSuccessor(Instruction, Flow, Exec, Ctx);
+          if (Failed)
+            return false;
+        }
+        if (ChainedSuccessor) {
+          if (!admitDestination(*ChainedSuccessor))
+            return false;
+          ++ChainedTransfers;
+          // The original transfer has no remaining effect; native stack
+          // expansion has already executed. Keep its provenance slice below.
+          continue;
+        }
+      }
       if (!emitTargets(Draft, Instruction, Original, std::move(Residual), Exec,
                        Ctx, State, FrameRoot, Origins, Frame, Flow))
         return false;
@@ -2426,6 +2494,10 @@ bool Specializer::evaluate(int Id) {
         ++Result.EvaluatedOperations > Options.MaxOperations)
       return fail(SpecializationStatus::BudgetExceeded,
                   "empty-instruction exploration budget exhausted");
+    if (ChainedSuccessor) {
+      Cursor = *ChainedSuccessor;
+      continue;
+    }
     if (!Finished) {
       if (Instruction.Fallthrough == Cursor)
         return fail(SpecializationStatus::InvalidInput,
@@ -2768,6 +2840,13 @@ SpecializationResult Specializer::run() {
        Options.FrameBaseRegister->Offset > InvalidVA - 7)) {
     fail(SpecializationStatus::InvalidInput,
          "frame root must name one complete 64-bit register");
+    return std::move(Result);
+  }
+  if (Options.EntryFrameBounds &&
+      (!Options.FrameBaseRegister ||
+       Options.EntryFrameBounds->Begin >= Options.EntryFrameBounds->End)) {
+    fail(SpecializationStatus::InvalidInput,
+         "entry frame bounds require a root and a nonempty range");
     return std::move(Result);
   }
   if (Options.RequireRestoredFrameAtReturn && !Options.FrameBaseRegister) {
