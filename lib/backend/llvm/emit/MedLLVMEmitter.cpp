@@ -651,8 +651,7 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
         ParamTypes = {PtrTy, PtrTy};
       } else if (KindIt->second == SEHScopeKind::Finally) {
         RetType = llvm::Type::getVoidTy(*Ctx);
-        ParamTypes.assign(
-            {llvm::Type::getInt8Ty(*Ctx), PtrTy});
+        ParamTypes.assign({llvm::Type::getInt8Ty(*Ctx), PtrTy});
       }
     }
   }
@@ -1012,8 +1011,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     va_t End = Func.Entry;
     if (Func.OriginalSize)
       End = Func.Entry + Func.OriginalSize;
-    if (Func.ExceptionMetadata &&
-        Func.ExceptionMetadata->CodeRange.End > End)
+    if (Func.ExceptionMetadata && Func.ExceptionMetadata->CodeRange.End > End)
       End = Func.ExceptionMetadata->CodeRange.End;
     for (const MedBlock &Block : Func.Blocks)
       if (Block.EndAddr > End)

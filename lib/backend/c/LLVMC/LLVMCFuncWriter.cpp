@@ -2340,7 +2340,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         OverlappingFrameAccessOffsets.insert(FrameAccesses[I].first);
     First = End;
   }
-  InferredVoid = !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
+  InferredVoid =
+      !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
 
   if (InferredVoid)
     analyzeVoidDeadChain(Analysis, Fn);
@@ -8379,9 +8380,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   std::string FName = functionIdentifier(Fn);
   writeExceptionAnnotation(Fn);
 
-  const bool IndirectReturn =
-      !Opts.PreserveLLVMFunctionTypes && DebugFn &&
-      isMsvcIndirectReturn(DebugFn->ReturnType);
+  const bool IndirectReturn = !Opts.PreserveLLVMFunctionTypes && DebugFn &&
+                              isMsvcIndirectReturn(DebugFn->ReturnType);
   const bool MemberIndirectReturn = IndirectReturn &&
                                     !DebugFn->Params.empty() &&
                                     DebugFn->Params[0].first == "this";

@@ -633,8 +633,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     llvm::IRBuilder<> Builder(BB);
     auto builderHasTerminator = [&]() {
       llvm::BasicBlock *InsertBB = Builder.GetInsertBlock();
-      return InsertBB && !InsertBB->empty() &&
-             InsertBB->back().isTerminator();
+      return InsertBB && !InsertBB->empty() && InsertBB->back().isTerminator();
     };
 
     for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
