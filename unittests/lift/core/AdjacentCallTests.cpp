@@ -73,15 +73,16 @@ TEST(AdjacentCalls, ProvenNoReturnTargetKeepsDecodedCallInsteadOfGetPCPush) {
 }
 
 TEST(AdjacentCalls, DirectTailTransferRespectsSymbolOutsideFunctionWorkSet) {
-  for (auto Architecture : {Arch::X86, Arch::X64})
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
     for (auto Format :
          {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF}) {
       SCOPED_TRACE(testing::Message() << static_cast<int>(Architecture) << " "
-                                     << static_cast<int>(Format));
+                                      << static_cast<int>(Format));
       BinaryImage Image;
       Image.Arch = Architecture;
-      Image.Bits =
-          Architecture == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
+      Image.Bits = Architecture == Arch::X64 || Architecture == Arch::AArch64
+                       ? Bitness::Bits64
+                       : Bitness::Bits32;
       Image.Format = Format;
       Image.Base = 0x1000;
       // jmp next; ret. The target symbol is not in a supplied function work
@@ -89,10 +90,19 @@ TEST(AdjacentCalls, DirectTailTransferRespectsSymbolOutsideFunctionWorkSet) {
       Segment Text;
       Text.VA = Image.Base;
       Text.Data = {0xe9, 0, 0, 0, 0, 0xc3};
+      unsigned CalleeOffset = 5;
+      if (Architecture == Arch::AArch64) {
+        Text.Data = {0x01, 0x00, 0x00, 0x14, 0xc0, 0x03, 0x5f, 0xd6};
+        CalleeOffset = 4;
+      } else if (Architecture == Arch::ARM) {
+        Image.Mode = InstructionMode::ARM;
+        Text.Data = {0xff, 0xff, 0xff, 0xea, 0x1e, 0xff, 0x2f, 0xe1};
+        CalleeOffset = 4;
+      }
       Text.Size = Text.Data.size();
       Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
       Image.Segments.push_back(std::move(Text));
-      auto Callee = Symbol::makeFunc(Image.Base + 5);
+      auto Callee = Symbol::makeFunc(Image.Base + CalleeOffset);
       Callee.Name = "returning_tail_callee";
       Image.Symbols.push_back(Callee);
       Decoder Dec;

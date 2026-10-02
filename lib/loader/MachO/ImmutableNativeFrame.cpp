@@ -4,6 +4,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/low/DirectTailCall.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/RuntimeFunctionAddress.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -12,6 +13,9 @@
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
+#include "neverd/support/BranchEncoding.h"
+
+#include "llvm/Support/Endian.h"
 
 namespace neverd {
 namespace {
@@ -33,7 +37,9 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
                                         size_t &Budget) {
   // Re-lift with the canonical decoder, including all frame address arithmetic,
   // stores, loads and flags. A saved LowIR annotation is not machine evidence.
-  // This deliberately excludes rewritten tails, opaque exits and jump tables.
+  // Direct tails replay the CFG owner's operations only after authenticating
+  // the original B and a current function entry outside this function's
+  // blocks. Indirect tails, opaque exits and jump tables remain unsupported.
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
       !Function.Entry || Function.Entry % 4 ||
@@ -93,17 +99,43 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
       } catch (const UnliftedInstruction &) {
         return false;
       }
+      const bool DirectTail = B.Control == LowInstructionControl::TailCall;
+      std::optional<va_t> TailTarget;
+      if (DirectTail) {
+        const uint32_t Word = llvm::support::endian::read32le(Bytes->data());
+        if (!branch::A64Branch.matches(Word))
+          return false;
+        TailTarget = branch::a64BranchTarget(Word, B.Address);
+        if (*TailTarget == Function.Entry || *TailTarget % 4 ||
+            !Image.hasAuthenticatedFunctionEntryAt(*TailTarget))
+          return false;
+        for (const auto &Owned : Function.Blocks) {
+          if (!Budget)
+            return false;
+          --Budget;
+          if (*TailTarget >= Owned.StartAddr && *TailTarget < Owned.EndAddr)
+            return false;
+        }
+        Ops = directTailCallOperations(Image.Arch, B.Address, *TailTarget);
+      }
       if (Ops.size() != B.OpCount)
         return false;
-      LowInstructionControl Control = LowInstructionControl::None;
-      LowInstructionControlFlag Flags = LowInstructionControlFlag::None;
-      std::optional<uint64_t> Immediate;
-      bool EndsBlock = false;
-      Successors = {Next};
+      LowInstructionControl Control = DirectTail
+                                          ? LowInstructionControl::TailCall
+                                          : LowInstructionControl::None;
+      LowInstructionControlFlag Flags =
+          DirectTail ? LowInstructionControlFlag::Call |
+                           LowInstructionControlFlag::Return
+                     : LowInstructionControlFlag::None;
+      std::optional<uint64_t> Immediate = TailTarget;
+      bool EndsBlock = DirectTail;
+      Successors = DirectTail ? std::set<va_t>{} : std::set<va_t>{Next};
       for (size_t I = 0; I < Ops.size(); ++I) {
         const auto &Op = Ops[I];
         if (!sameOperation(Op, Block.Ops[B.FirstOp + I]))
           return false;
+        if (DirectTail)
+          continue;
         using C = LowInstructionControl;
         using F = LowInstructionControlFlag;
         if (Op.Opcode == NdOp::INDIR_BR)

@@ -4439,6 +4439,20 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   ReachingCatchPtrs.clear();
   ReachingCatchFields.clear();
   ParamDisplayNames.clear();
+  // Fixed source declarations may omit parameter spellings. Allocate their
+  // names before any body analysis so the declaration, uses and local-variable
+  // exclusion all observe the same identifier. Debug declarations retain
+  // their separate parameter mapping (including hidden result parameters).
+  if (Func.SourceTypeHint && !debugFunction(Dbg, Func.Entry)) {
+    CProjectionIdentifierAllocator Identifiers;
+    for (const auto &Param : Func.Params)
+      if (!Param.Name.empty())
+        Identifiers.allocate(Param.Name, "nd_arg");
+    for (size_t I = 0; I < Func.Params.size(); ++I)
+      if (Func.Params[I].Name.empty())
+        ParamDisplayNames[static_cast<int>(I)] =
+            Identifiers.allocate("arg" + std::to_string(I), "nd_arg");
+  }
   IndirectReturnName.clear();
   if (const auto DebugFn = debugFunction(Dbg, Func.Entry);
       !Func.SourceTypeHint && DebugFn &&

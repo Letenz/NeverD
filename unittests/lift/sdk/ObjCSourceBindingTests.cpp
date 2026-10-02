@@ -1,4 +1,5 @@
 #include "../../../lib/ir/high/pass/HighDCEDetail.h"
+#include "../../../lib/loader/MachO/ImmutableNativeFrame.h"
 #include "../../../lib/sdk/capi/ObjCCFunctionParameterSources.h"
 #include "../../../lib/sdk/capi/ObjCImmutableNativeSources.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
@@ -815,6 +816,265 @@ TEST(ImmutableNativeCalls, RecoversAnAuthenticatedFrameTableDefinition) {
   EXPECT_EQ(Targets.at(Entry + 32).Slot, Slot);
   EXPECT_EQ(Targets.at(Entry + 32).Target, Target);
   EXPECT_FALSE(readImmutableImagePointer(F.Image, Slot));
+}
+
+TEST(ImmutableNativeCalls, FrameMachineReplaysDirectTailWrapper) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  // Two independently forwarded address arguments and a real B, which the
+  // CFG owner represents as CALL + RETURN without writing the link register.
+  const uint32_t Words[] = {0xd0000003, 0x9100a063, 0xd0000004, 0x9100c084,
+                            0x1400007c};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols.front().Size = sizeof(Words);
+  F.run();
+  ASSERT_TRUE(F.Result.Success);
+  ASSERT_TRUE(F.low());
+  ASSERT_EQ(F.low()->Blocks.size(), 1U);
+  ASSERT_EQ(F.low()->Blocks[0].InstructionBoundaries.back().Control,
+            LowInstructionControl::TailCall);
+  size_t Budget = 4096;
+  EXPECT_TRUE(immutableNativeFrameMachineMatches(F.Image, *F.low(), Budget));
+  // Machine equivalence alone grants neither a code-pointer identity nor a
+  // current source declaration for the additional forwarded parameters.
+  EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+}
+
+TEST(ImmutableNativeCalls, TailReplayRejectsChangedMachineAndControlFacts) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 31; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    const uint32_t Words[] = {0xd0000003, 0x9100a063, 0xd0000004, 0x9100c084,
+                              0x1400007c};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols.front().Size = sizeof(Words);
+    F.run();
+    ASSERT_TRUE(F.low());
+    auto Low = *F.low();
+    auto &Block = Low.Blocks.front();
+    auto &Boundary = Block.InstructionBoundaries.back();
+    auto &Call = Block.Ops.at(Boundary.FirstOp);
+    auto &Return = Block.Ops.at(Boundary.FirstOp + 1);
+    size_t Budget = 4096;
+    switch (Case) {
+    case 0:
+      F.word(4, 0x9400007c);
+      break; // BL writes x30, unlike B.
+    case 1:
+      F.word(4, 0x54000f80);
+      break; // Conditional transfer.
+    case 2:
+      F.word(4, 0xd65f03c0);
+      break; // RET is not a direct tail.
+    case 3:
+      F.word(4, 0xd61f0100);
+      break; // Unproven indirect branch.
+    case 4:
+      F.word(4, 0x1400003c);
+      break; // Different destination.
+    case 5:
+      F.word(0, 0xd0000004);
+      break; // Changed forwarded argument.
+    case 6:
+      Call.Inputs[0].Offset = Veneer;
+      break;
+    case 7:
+      Call.addInput(NdVar::reg(a64reg::X3, 8));
+      break;
+    case 8:
+      Call.Output.Size = 4;
+      break;
+    case 9:
+      Return.Inputs[0] = NdVar::reg(a64reg::X1, 8);
+      break;
+    case 10:
+      ++Call.Seq;
+      break;
+    case 11:
+      Return.Addr += 4;
+      break;
+    case 12:
+      Call.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 13:
+      Call.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 14:
+      Boundary.Immediate = Veneer;
+      break;
+    case 15:
+      Boundary.ControlFlags |= LowInstructionControlFlag::NoReturn;
+      break;
+    case 16:
+      Boundary.Control = LowInstructionControl::Call;
+      break;
+    case 17:
+      Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+      break;
+    case 18:
+      Block.Succs.push_back(Block.Id);
+      break;
+    case 19:
+      F.Image.Symbols.back().IsFunc = false;
+      break;
+    case 20:
+      // Machine and LowIR agree, but this is an interior instruction rather
+      // than an independently authenticated callable entry.
+      F.word(4, 0x1400007d);
+      Boundary.Immediate = Target + 4;
+      Call.Inputs[0].Offset = Target + 4;
+      break;
+    case 21:
+      Block.EndAddr += 4;
+      break;
+    case 22:
+      --Low.LiftedInstructionCount;
+      break;
+    case 23:
+      Low.TruncatedPathAddresses.push_back(Entry);
+      break;
+    case 24:
+      Low.JumpTables.emplace_back();
+      break;
+    case 25:
+      Budget = 5;
+      break;
+    case 26:
+      F.Image.Segments.front().Flags = SegmentFlags::Readable |
+                                       SegmentFlags::Writable |
+                                       SegmentFlags::Executable;
+      break;
+    case 27:
+      F.word(4, 0x17fffffc);
+      Boundary.Immediate = Entry;
+      Call.Inputs[0].Offset = Entry;
+      break;
+    case 28:
+      F.word(4, 0x17fffffd);
+      Boundary.Immediate = Entry + 4;
+      Call.Inputs[0].Offset = Entry + 4;
+      F.Image.Symbols.push_back({"internal_label", Entry + 4, 4, true});
+      break;
+    case 29:
+      Return.Output = NdVar::reg(a64reg::X0, 8);
+      break;
+    case 30:
+      Call.Inputs[0].Provenance = ConstantAddressProvenance::DataAddress;
+      break;
+    }
+    EXPECT_FALSE(immutableNativeFrameMachineMatches(F.Image, Low, Budget));
+  }
+}
+
+TEST(ImmutableNativeCalls, TailSourceMatchesOriginalARM64ForwardedArguments) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  Fixture F;
+  const uint32_t Wrapper[] = {0xaa0103e3, 0xaa0203e4, 0xca020002, 0x91000400,
+                              0x1400007c};
+  const uint32_t Body[] = {0xca010000, 0x8b020000, 0xca030000, 0x8b040000,
+                           0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Wrapper); ++I)
+    F.word(I, Wrapper[I]);
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word((Target - Entry) / 4 + I, Body[I]);
+  F.Image.Symbols.front().Size = sizeof(Wrapper);
+  F.Image.Symbols.back().Size = sizeof(Body);
+  F.Signature.Parameters.resize(5);
+  for (auto &P : F.Signature.Parameters)
+    P.Type = NdType::makeInt(8, false);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Signature, Arch::AArch64, Error));
+  F.EntrySignature = F.Signature;
+  F.EntrySignature.Parameters.resize(3);
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error));
+  F.run();
+  ASSERT_TRUE(F.Result.Success);
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.high());
+  size_t Budget = 4096;
+  ASSERT_TRUE(immutableNativeFrameMachineMatches(F.Image, *F.low(), Budget));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  const auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions);
+  };
+  EXPECT_TRUE(sourceBodyLimitation(Bound.Function,
+                                   *Bound.Function.SourceTypeHint, &*Audit,
+                                   Allowed)
+                  .empty());
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                  Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-tail-replay", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "tail.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern uint64_t original_tail_wrapper(uint64_t, uint64_t, uint64_t);
+__asm__(".text\n.p2align 2\n.globl _original_tail_wrapper\n"
+        "_original_tail_wrapper:\n"
+        ".long 0xaa0103e3, 0xaa0203e4, 0xca020002, 0x91000400, 0x1400007c\n"
+        ".space 0x1ec\n"
+        ".long 0xca010000, 0x8b020000, 0xca030000, 0x8b040000, 0xd65f03c0\n");
+int main(void) {
+  const uint32_t *machine = (const uint32_t *)(uintptr_t)original_tail_wrapper;
+  const uint32_t wrapper[] = {0xaa0103e3,0xaa0203e4,0xca020002,0x91000400,0x1400007c};
+  const uint32_t body[] = {0xca010000,0x8b020000,0xca030000,0x8b040000,0xd65f03c0};
+  for (unsigned i=0;i<5;++i)
+    if (machine[i]!=wrapper[i] || machine[128+i]!=body[i]) return 1;
+  uint64_t state=UINT64_C(0xfedcba9876543210);
+  for (unsigned i=0;i<2048;++i) {
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t a=i<4 ? (uint64_t[]){0,1,UINT64_MAX,UINT64_C(0x8000000000000000)}[i] : state;
+    uint64_t b=~(state>>1), c=(state<<7)^(state>>11);
+    uint64_t expected=((((a+1)^b)+(a^c))^b)+c;
+    uint64_t native=original_tail_wrapper(a,b,c), generated=indirect_native(a,b,c);
+    if (native!=expected || generated!=expected) {
+      fprintf(stderr,"case=%u a=%llx b=%llx c=%llx expected=%llx native=%llx generated=%llx\n",
+              i,(unsigned long long)a,(unsigned long long)b,(unsigned long long)c,
+              (unsigned long long)expected,(unsigned long long)native,(unsigned long long)generated);
+      return native!=expected ? 2 : 3;
+    }
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("tail") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-o", Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
 }
 
 TEST(ImmutableNativeCalls, FrameTargetsRejectStaleMachineAndLowIRFacts) {
