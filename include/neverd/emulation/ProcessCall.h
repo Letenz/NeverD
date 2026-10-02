@@ -25,6 +25,9 @@ struct NativeCallEvent {
   /// existing Bionic report keeps its compatible register-bank representation.
   std::string Module;
   unsigned ArgumentCount = 0;
+  /// Resolver request, or the explicit provider of a dynamically obtained call.
+  std::string Library;
+  std::string Symbol;
 };
 } // namespace neverd::emulation
 #endif

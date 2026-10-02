@@ -29,16 +29,6 @@ struct NativeMemorySnapshot {
   std::vector<uint8_t> Bytes;
 };
 
-struct NativeCallEvent {
-  uint64_t PC;
-  std::string Name;
-  std::array<uint64_t, 8> Arguments{};
-  std::optional<uint64_t> Result;
-  /// Resolver request, or the explicit provider of a dynamically obtained call.
-  std::string Library;
-  std::string Symbol;
-};
-
 /// Android 9 / API 28, little-endian AArch64, one native thread. Function
 /// arguments are AAPCS64 scalar register/stack values, not process argv.
 /// Explicit inputs never inherit host properties, files, or environment.
