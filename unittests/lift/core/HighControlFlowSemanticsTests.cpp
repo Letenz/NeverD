@@ -6727,6 +6727,69 @@ TEST(HighControlFlowSemantics, ReturnTailWithAStoreIsCopiedToEachJump) {
     EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
 }
 
+TEST(HighControlFlowSemantics, ArmJumpingIntoTheOtherArmsTailSharesIt) {
+  // v = 0; if (x & 1) { v = 1; X: v = v + 10; } else { v = 2; goto X; }
+  // return v;  -- both arms finish with `v = v + 10`, which then runs after
+  // the if/else.
+  auto Add = assign(0x1008, 1, 0);
+  Add.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1000;
+  Split.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Split.Body = {assign(0x1004, 1, 1), Add};
+  Split.ElseBody = {assign(0x100c, 1, 2), jump(0x1010, 0x1008)};
+  HighFunc F;
+  F.Body = {assign(0x0ff8, 1, 0), Split, result(0x1020, local(1))};
+  // The interpreter resolves only top-level targets, so the jump into the
+  // then arm runs only once the tail has moved.
+  ASSERT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+  EXPECT_TRUE(hoistSharedArmTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  ASSERT_EQ(F.Body.size(), 4u);
+  EXPECT_EQ(F.Body[2].Addr, 0x1008u);
+  for (uint64_t X : {1, 2, 3, 4})
+    EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X & 1 ? 11 : 12)) << X;
+}
+
+TEST(HighControlFlowSemantics, HoistedTailKeepsTheLabelItsJumpCarried) {
+  // v = 0; if (x & 1) { if (x & 2) goto Y; v = 1; X: v = v + 10; }
+  // else { Y: goto X; }  return v;  -- the else arm's jump is itself the
+  // target of a jump in the then arm, so its label stays behind as an
+  // empty anchor.
+  auto Add = assign(0x1008, 1, 0);
+  Add.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt ToY;
+  ToY.Kind = StmtKind::If;
+  ToY.Addr = 0x1002;
+  ToY.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+  ToY.Body = {jump(0x1002, 0x1010)};
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1000;
+  Split.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Split.Body = {ToY, assign(0x1004, 1, 1), Add};
+  Split.ElseBody = {jump(0x1010, 0x1008)};
+  HighFunc F;
+  F.Body = {assign(0x0ff8, 1, 0), Split, result(0x1020, local(1))};
+  EXPECT_TRUE(hoistSharedArmTails(F.Body));
+  ASSERT_EQ(F.Body.size(), 4u);
+  EXPECT_EQ(F.Body[2].Addr, 0x1008u);
+  ASSERT_EQ(F.Body[1].ElseBody.size(), 1u);
+  EXPECT_EQ(F.Body[1].ElseBody[0].Kind, StmtKind::Block);
+  EXPECT_EQ(F.Body[1].ElseBody[0].Addr, 0x1010u);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 1u);
+  // The interpreter resolves only top-level targets: run the paths that do
+  // not take the jump into the else arm.
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(11));
+  EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(10));
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.

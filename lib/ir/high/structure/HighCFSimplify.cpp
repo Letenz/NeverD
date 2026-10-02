@@ -2074,6 +2074,80 @@ bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool hoistSharedArmTails(std::vector<HighStmt> &Body) {
+  bool Changed = false;
+  // Addresses a jump enters: a removed jump that carries one leaves an empty
+  // anchor so its label still exists.
+  std::set<va_t> Entered;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      Entered.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      Entered.insert(Clause.HandlerVA);
+  });
+  // The index of the statement that starts label \p X at the top of \p Arm,
+  // past its first statement; 0 when there is none.
+  auto SuffixAt = [](const std::vector<HighStmt> &Arm, va_t X) -> size_t {
+    if (X == 0 || X == InvalidVA)
+      return 0;
+    for (size_t K = 1; K < Arm.size(); ++K)
+      if (Arm[K].Addr == X && Arm[K - 1].Addr != X)
+        return K;
+    return 0;
+  };
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (SwitchCase &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+          if (S.Kind != StmtKind::IfElse || S.Body.empty() ||
+              S.ElseBody.empty())
+            continue;
+          // `if (c) { A; X: B } else { C; goto X; }`: both arms finish with
+          // B, which then runs after the if/else instead.
+          for (bool ThenOwns : {true, false}) {
+            std::vector<HighStmt> &Owner = ThenOwns ? S.Body : S.ElseBody;
+            std::vector<HighStmt> &Other = ThenOwns ? S.ElseBody : S.Body;
+            if (Other.empty() || Other.back().Kind != StmtKind::Goto)
+              continue;
+            const size_t K = SuffixAt(Owner, Other.back().GotoTarget);
+            if (K == 0)
+              continue;
+            std::vector<HighStmt> Suffix(
+                std::make_move_iterator(Owner.begin() + K),
+                std::make_move_iterator(Owner.end()));
+            Owner.erase(Owner.begin() + K, Owner.end());
+            HighStmt &Jump = Other.back();
+            if (Jump.Addr != 0 && Jump.Addr != InvalidVA &&
+                Entered.count(Jump.Addr) &&
+                (Other.size() == 1 || Other[Other.size() - 2].Addr != Jump.Addr)) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = Jump.Addr;
+              Jump = std::move(Anchor);
+            } else {
+              Other.pop_back();
+            }
+            L.insert(L.begin() + I + 1, std::make_move_iterator(Suffix.begin()),
+                     std::make_move_iterator(Suffix.end()));
+            Changed = true;
+            break;
+          }
+          HighStmt &T = L[I];
+          if (T.Kind == StmtKind::IfElse && T.ElseBody.empty())
+            T.Kind = StmtKind::If;
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body) {
   std::map<va_t, unsigned> Uses;
   walkStmts(Body, [&](const HighStmt &S) {
