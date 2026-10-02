@@ -21,7 +21,11 @@ struct Module {
 struct Program {
   std::vector<Module> Modules;
   std::vector<ModuleIdentity> Identities;
-  std::vector<size_t> InitializationOrder;
+  /// Dependency order includes demanded forwarders before attach callbacks.
+  std::vector<size_t> AttachOrder;
+  /// Loader registration follows ordinary import traversal. Forwarded targets
+  /// discovered later do not reorder earlier entries. PEB and detach share it.
+  std::vector<size_t> LoaderInitializationOrder;
   /// One exact provider/name gate per process, independent of the caller image.
   std::vector<Import> Gates;
   std::map<std::pair<std::string, std::string>, uint64_t> ServiceGates;
@@ -31,10 +35,15 @@ struct Program {
 llvm::Expected<std::string> moduleName(llvm::StringRef Name);
 using ForwardModule =
     llvm::function_ref<llvm::Expected<size_t>(size_t, llvm::StringRef)>;
+struct ExportResolution {
+  std::optional<uint64_t> Address;
+  /// Guest lookup failure, distinct from an unsupported or malformed chain.
+  uint32_t Error;
+};
 /// Resolve one demanded identity. A missing export is distinct from a malformed
 /// chain or an unsupported runtime module load. CPU enables live metadata
 /// checks.
-llvm::Expected<std::optional<uint64_t>>
+llvm::Expected<ExportResolution>
 resolveExport(Program &Program, size_t Module, llvm::StringRef Name,
               std::optional<uint16_t> Ordinal, const ExecutionBudget &Budget,
               ExecutionBackend *CPU = nullptr, ForwardModule Load = {});

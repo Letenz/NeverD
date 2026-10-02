@@ -130,6 +130,8 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
       Edges[Index].push_back(LoadedNames.at(*Key));
     }
     Loading[Index] = false;
+    if (DLL)
+      Out.LoaderInitializationOrder.push_back(Index);
     return llvm::Error::success();
   };
   const auto FileName = Path.filename().u8string();
@@ -186,12 +188,12 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     Budget, nullptr, Forward);
         if (!Target)
           return Target.takeError();
-        if (!*Target)
+        if (!Target->Address)
           return failure(
               text::ModuleExport + I.Module +
               llvm::Twine(text::ImportSeparator) +
               (I.Ordinal ? llvm::Twine(*I.Ordinal) : llvm::Twine(I.Name)));
-        Address = **Target;
+        Address = *Target->Address;
       }
       Out.Modules[M].Loaded.Imports[N].Gate = Address;
     }
@@ -211,7 +213,7 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
     Loading[Index] = false;
     Ordered[Index] = true;
     if (Index)
-      Out.InitializationOrder.push_back(Index);
+      Out.AttachOrder.push_back(Index);
     return llvm::Error::success();
   };
   if (auto E = Order(0))

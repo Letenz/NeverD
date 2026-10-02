@@ -13,6 +13,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
@@ -39,11 +40,38 @@ constexpr Profile Profiles[] = {
 #undef NEVERD_USER_PROFILE
 };
 void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
-ProcessOptions options(const std::filesystem::path &Directory) {
+std::string observedTrace(bool Direct, bool NoExports, bool Observe) {
+  if (!Observe)
+    return Direct ? DirectTrace : NormalTrace;
+  std::string Result(AttachTrace);
+  const char *Order = Direct ? DirectLoaderOrder : LoaderOrder;
+  Result += Order;
+  auto AppendError = [&](uint32_t Error) {
+    char Bytes[sizeof(Error)];
+    llvm::support::endian::write32le(Bytes, Error);
+    Result.append(Bytes, sizeof(Bytes));
+  };
+#define NEVERD_EXPORT_MISSING(Module, Name, Error) AppendError(Error);
+#define NEVERD_EXPORT_NO_DIRECTORY_MISSING(Module, Name, Error)                \
+  if (NoExports)                                                               \
+    AppendError(Error);
+#include "fixtures/WindowsExportCases.def"
+#undef NEVERD_EXPORT_NO_DIRECTORY_MISSING
+#undef NEVERD_EXPORT_MISSING
+  Result += Order;
+  Result += Message;
+  Result += Direct ? DirectDetachTrace : DetachTrace;
+  return Result;
+}
+ProcessOptions options(const std::filesystem::path &Directory,
+                       bool Direct = false) {
   ProcessOptions O;
   O.Windows.emplace();
   for (const char *Name : {LeafFile, BridgeFile, TopFile})
-    O.Windows->Modules.push_back({Name, Directory / Name});
+    O.Windows->Modules.push_back(
+        {Name, (Direct && Name == BridgeFile ? Directory / DirectDirectory
+                                             : Directory) /
+                   Name});
   return O;
 }
 class WindowsExports : public testing::TestWithParam<Profile> {
@@ -76,20 +104,32 @@ protected:
     Options.Backend = P.Backend;
 #endif
   }
-  llvm::Expected<ProcessResult> run(const char *Argument) {
-    Options.Arguments = {ProgramFile, Argument};
-    return emulateProcess(Directory / ProgramFile, ProcessProfile::WindowsPE64,
+  llvm::Expected<ProcessResult> run(const char *Argument,
+                                    const char *File = ProgramFile,
+                                    bool Direct = false) {
+    Options.Windows = options(Directory, Direct).Windows;
+    Options.Arguments = {File, Argument};
+    return emulateProcess(Directory / File, ProcessProfile::WindowsPE64,
                           Options);
   }
 };
 TEST_P(WindowsExports, QueriesCodeDataOrdinalsAliasesAndForwarders) {
-  auto R = run(NormalArgument);
-  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-  EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
-  EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
-  EXPECT_EQ(R->StandardOutput, NormalTrace);
-  EXPECT_TRUE(R->StandardError.empty());
-  EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+  for (bool Direct : {false, true})
+    for (const char *File : {ProgramFile, NoExportsFile})
+      for (const char *Argument : {NormalArgument, ObserveArgument}) {
+        SCOPED_TRACE(Direct);
+        SCOPED_TRACE(File);
+        SCOPED_TRACE(Argument);
+        auto R = run(Argument, File, Direct);
+        ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+        EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+        EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
+        EXPECT_EQ(R->StandardOutput,
+                  observedTrace(Direct, File == NoExportsFile,
+                                Argument == ObserveArgument));
+        EXPECT_TRUE(R->StandardError.empty());
+        EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      }
 }
 TEST_P(WindowsExports, RefusesRuntimeLoadsCyclesAndInvalidOrdinalForwarders) {
   const std::pair<const char *, const char *> Cases[] = {
@@ -168,7 +208,7 @@ TEST_P(WindowsExports, ChecksHeadersEvenWhenTheImageHasNoExports) {
   };
   auto Missing = Lookup();
   ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
-  EXPECT_FALSE(*Missing);
+  EXPECT_FALSE(Missing->Address);
   const auto Address = Program->Modules.front().Loaded.Base + PEOffset;
   const auto Original =
       llvm::cantFail(Space->readInteger(Address, sizeof(uint32_t)));
@@ -186,7 +226,7 @@ TEST_P(WindowsExports, ChecksHeadersEvenWhenTheImageHasNoExports) {
   for (unsigned I = 0; I < 2; ++I) {
     auto R = Lookup();
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_FALSE(*R);
+    EXPECT_FALSE(R->Address);
   }
   auto Exhausted = Lookup();
   EXPECT_FALSE(bool(Exhausted));
@@ -210,14 +250,16 @@ TEST(WindowsExportResolution, QueriesConsumeTheSharedBudgetAndDeadline) {
   auto P = win::loadProgram(Directory / ProgramFile, O, *Budget, Memory);
   ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
   ASSERT_EQ(P->Modules.size(), 4u);
-  ASSERT_EQ(P->InitializationOrder.size(), 3u);
-  EXPECT_EQ(P->Identities[P->InitializationOrder.front()].Name, LeafFile);
+  ASSERT_EQ(P->AttachOrder.size(), 3u);
+  EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
+  ASSERT_EQ(P->LoaderInitializationOrder.size(), 3u);
+  EXPECT_EQ(P->Identities[P->LoaderInitializationOrder.front()].Name, TopFile);
   // Misses also consume work; a later call cannot create a fresh allowance.
   P->Reads.Records = 2;
   for (unsigned I = 0; I < 2; ++I) {
     auto R = win::resolveExport(*P, 0, MissingName, std::nullopt, *Budget);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_FALSE(*R);
+    EXPECT_FALSE(R->Address);
   }
   auto Exhausted =
       win::resolveExport(*P, 0, MissingName, std::nullopt, *Budget);
@@ -260,8 +302,8 @@ TEST(WindowsExportResolution,
   Entries[ForwarderLimit - 1].Kind = PEExportKind::Address;
   auto Exact = win::resolveExport(P, 0, {}, 1, *Budget);
   ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
-  ASSERT_TRUE(*Exact);
-  EXPECT_EQ(**Exact, PageSize * 2);
+  ASSERT_TRUE(Exact->Address);
+  EXPECT_EQ(*Exact->Address, PageSize * 2);
   Entries[ForwarderLimit - 1].Kind = PEExportKind::Forwarder;
   Entries[ForwarderLimit].Kind = PEExportKind::Address;
   auto TooLong = win::resolveExport(P, 0, {}, 1, *Budget);
@@ -317,8 +359,9 @@ TEST(WindowsExportOracle, NativeWindowsQueriesOriginalImages) {
         llvm::outs() << ObservationLabel << Direct << ' ' << File << ' '
                      << Argument << ' ' << Status << ' '
                      << llvm::toHex((*Out)->getBuffer()) << '\n';
-        if (Argument == NormalArgument)
-          EXPECT_EQ((*Out)->getBuffer(), NormalTrace);
+        EXPECT_EQ((*Out)->getBuffer(),
+                  observedTrace(Direct, File == NoExportsFile,
+                                Argument == ObserveArgument));
         EXPECT_TRUE((*Err)->getBuffer().empty());
       }
     }

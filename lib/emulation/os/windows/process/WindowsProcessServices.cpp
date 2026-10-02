@@ -297,6 +297,8 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
                                 [&](const auto &M) { return M.Base == A[0]; });
     if (Module == Modules.Identities.end())
       return unsupported(S);
+    if (!A[1])
+      return WinError(ErrorInvalidParameter);
     std::optional<uint16_t> Ordinal;
     std::string Name;
     if (A[1] <= ImportOrdinalMask)
@@ -333,7 +335,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
                       Name, Ordinal, Budget, &CPU);
     if (!Target)
       return Target.takeError();
-    return *Target ? Value(**Target) : WinError(ErrorProcedureNotFound);
+    return Target->Address ? Value(*Target->Address) : WinError(Target->Error);
   }
   }
   return failure(text::Service);

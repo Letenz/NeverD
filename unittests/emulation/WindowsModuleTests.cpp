@@ -191,9 +191,10 @@ TEST_F(WindowsModuleImage,
   EXPECT_EQ(Moved, 1u);
   for (const auto &G : P->Gates)
     EXPECT_TRUE(Gates.insert(G.Gate).second);
-  ASSERT_EQ(P->InitializationOrder.size(), 2u);
-  EXPECT_EQ(P->Identities[P->InitializationOrder.front()].Name, LeafFile);
-  EXPECT_EQ(P->Identities[P->InitializationOrder.back()].Name, MiddleFile);
+  ASSERT_EQ(P->AttachOrder.size(), 2u);
+  EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
+  EXPECT_EQ(P->Identities[P->AttachOrder.back()].Name, MiddleFile);
+  EXPECT_EQ(P->AttachOrder, P->LoaderInitializationOrder);
 }
 TEST_F(WindowsModuleImage, RequiresExplicitCatalogueAndRejectsAmbiguousNames) {
   const auto Valid = Options;

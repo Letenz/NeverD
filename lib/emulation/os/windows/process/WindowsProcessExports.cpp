@@ -57,7 +57,7 @@ llvm::Error validateMetadata(Program &Program, size_t Index,
 }
 } // namespace
 
-llvm::Expected<std::optional<uint64_t>>
+llvm::Expected<ExportResolution>
 resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
               std::optional<uint16_t> Ordinal, const ExecutionBudget &Budget,
               ExecutionBackend *CPU, ForwardModule Load) {
@@ -76,6 +76,8 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       if (auto E = validateMetadata(Program, Index, Budget, *CPU))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
+    const uint32_t MissingError =
+        Ordinal ? ErrorInvalidOrdinal : ErrorProcedureNotFound;
     std::optional<size_t> Entry;
     if (Ordinal) {
       auto I = Module.Ordinals.find(*Ordinal);
@@ -87,14 +89,14 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         Entry = I->second;
     }
     if (!Entry)
-      return std::nullopt;
+      return ExportResolution{std::nullopt, MissingError};
     if (!Visited.emplace(Index, *Entry).second)
       return failure(text::ForwarderCycle);
     const auto &Export = Module.Loaded.Exports.Entries[*Entry];
     if (Export.Kind == PEExportKind::Hole)
-      return std::nullopt;
+      return ExportResolution{std::nullopt, MissingError};
     if (Export.Kind == PEExportKind::Address)
-      return std::optional<uint64_t>(Module.Loaded.Base + Export.RVA);
+      return ExportResolution{Module.Loaded.Base + Export.RVA, 0};
 
     // Own these strings before Load can append and relocate the module vector.
     const auto [Library, Target] =
@@ -123,7 +125,7 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       auto Gate = Program.ServiceGates.find({*Key, Symbol});
       if (Gate == Program.ServiceGates.end())
         return failure(text::Service);
-      return std::optional<uint64_t>(Gate->second);
+      return ExportResolution{Gate->second, 0};
     }
     if (Load) {
       auto Next = Load(Index, *Key);

@@ -15,16 +15,26 @@ DWORD ExeProbe(void) {
   return Seed;
 }
 static char LongName[MaxLookupName];
-static DWORD Observations[MissingCases], MissingIndex;
+static const DWORD ExpectedErrors[] = {
+#define NEVERD_EXPORT_MISSING(Module, Name, Error) Error,
+#ifdef EXPORT_NO_EXE_EXPORTS
+#define NEVERD_EXPORT_NO_DIRECTORY_MISSING(Module, Name, Error) Error,
+#endif
+#include "WindowsExportCases.def"
+#undef NEVERD_EXPORT_NO_DIRECTORY_MISSING
+#undef NEVERD_EXPORT_MISSING
+};
+static DWORD Observations[sizeof(ExpectedErrors) / sizeof(DWORD)], MissingIndex;
 static int Observe;
 static void missing(void *Module, const char *Name) {
   SetLastError(LastErrorSeed);
   CHECK(!GetProcAddress(Module, Name));
   const DWORD Error = GetLastError();
-  CHECK(MissingIndex < MissingCases);
-  Observations[MissingIndex++] = Error;
+  CHECK(MissingIndex < sizeof(ExpectedErrors) / sizeof(DWORD));
+  Observations[MissingIndex] = Error;
   if (!Observe)
-    CHECK(Error == ProcedureMissing);
+    CHECK(Error == ExpectedErrors[MissingIndex]);
+  ++MissingIndex;
 }
 static void observeOrder(void *Leaf, void *Bridge, void *Top) {
   unsigned char *TEB;
@@ -80,16 +90,14 @@ DWORD entry(void) {
 #ifndef EXPORT_NO_EXE_EXPORTS
   CHECK(lookup(GetModuleHandleW(0), OwnName) == (void *)&ExeProbe);
 #endif
-  missing(Leaf, MissingName);
-  missing(Leaf, WrongCaseName);
-  missing(Leaf, EmptyName);
-  missing(Leaf, (const char *)OrdinalHole);
-  missing(Leaf, (const char *)OrdinalAbsent);
-  missing(Leaf, 0);
+#define NEVERD_EXPORT_MISSING(Module, Name, Error) missing(Module, Name);
 #ifdef EXPORT_NO_EXE_EXPORTS
-  missing(GetModuleHandleW(0), OwnName);
-  missing(GetModuleHandleW(0), (const char *)1);
+#define NEVERD_EXPORT_NO_DIRECTORY_MISSING(Module, Name, Error)                \
+  missing(Module, Name);
 #endif
+#include "WindowsExportCases.def"
+#undef NEVERD_EXPORT_NO_DIRECTORY_MISSING
+#undef NEVERD_EXPORT_MISSING
   if (Observe) {
     output((const char *)Observations, MissingIndex * sizeof(DWORD));
     observeOrder(Leaf, Bridge, Top);
