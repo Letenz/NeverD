@@ -9,6 +9,7 @@ https://www.qemu.org/docs/master/system/invocation.html for its accelerator CLI.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -20,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--trace", type=Path)
     args = parser.parse_args()
     root = args.evidence.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -52,7 +54,11 @@ def main():
         log = root / f"qemu-{accelerator}.log"
         with log.open("w") as output:
             try:
+                environment = os.environ.copy()
+                if args.trace and accelerator == "hvf":
+                    environment["DYLD_INSERT_LIBRARIES"] = str(args.trace.resolve())
                 process = subprocess.run(command, stdout=output,
+                                         env=environment,
                                          stderr=subprocess.STDOUT, timeout=15)
                 result["returncode"] = process.returncode
                 result["passed"] = process.returncode == summary["expected_exit_status"]

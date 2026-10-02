@@ -41,10 +41,14 @@ jobs:
           mkdir -p build-hvf-probe
           clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
+          if [[ "$(uname -m)" == "x86_64" ]]; then
+            clang -dynamiclib scripts/trace_hvf_intel.c -framework Hypervisor -o build-hvf-probe/trace.dylib
+          fi
           python3 - <<'PY'
           import pathlib
           import platform
           import subprocess
+          import os
           log = pathlib.Path("build-hvf-probe/result.log")
           failed = False
           try:
@@ -54,7 +58,11 @@ jobs:
                       output.write(f"Fresh process probe: {mode}\n")
                       output.flush()
                       try:
+                          environment = os.environ.copy()
+                          if platform.machine() == "x86_64":
+                              environment["DYLD_INSERT_LIBRARIES"] = str(pathlib.Path("build-hvf-probe/trace.dylib").resolve())
                           result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
+                                                  env=environment,
                                                   stdout=output, stderr=subprocess.STDOUT)
                           failed |= result.returncode != 0
                       except subprocess.TimeoutExpired:
@@ -70,7 +78,7 @@ jobs:
         run: |
           brew install qemu
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements "$(command -v qemu-system-x86_64)"
-          python3 scripts/probe_hvf_qemu.py --evidence build-hvf-probe/qemu
+          python3 scripts/probe_hvf_qemu.py --evidence build-hvf-probe/qemu --trace build-hvf-probe/trace.dylib
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
         run: brew install ninja
