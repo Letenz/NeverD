@@ -1023,10 +1023,20 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     Physical.TargetBase = Info.TargetBase;
     Physical.HasTargetBase = Info.HasTargetBase;
     Physical.EntryScale = Info.EntryScale;
+    // A relocation-backed absolute run can contain unused callback slots
+    // before a sparse local dispatch domain. Read its physical identities
+    // first; the already-budgeted ownership checks below gate every target
+    // admitted to graph growth. Composite and multi-consumer group proofs
+    // keep their complete local-target inventory contract.
+    const bool DeferPhysicalTargetOwnership =
+        Info.RelocAbsolute && !Info.IsRelative && !Info.PreScaledIndex &&
+        !Info.TwoTableSelect && !Info.TwoLevelIndex &&
+        (!ExactConsumerGroup || ExactConsumerGroup->BranchAddrs.size() == 1) &&
+        IndexOccurrences.size() == 1;
     // ReadableCapacity is a readable/storage ceiling, not necessarily the
-    // exact table length: an adjacent object or the first non-code entry may
-    // terminate the candidate earlier.  Find the largest completely decodable
-    // prefix without ever treating that prefix as selector authority.  Exact
+    // exact table length: owner, encoding or publication checks may terminate
+    // the candidate earlier. Find the largest completely decodable prefix
+    // without ever treating that prefix as selector authority. Exact
     // bounded reads are monotone, and the logarithmic search prepays every
     // decoded target/slot/result against the candidate's aggregate balance.
     std::vector<va_t> PhysicalTargets;
@@ -1088,8 +1098,11 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
       const uint32_t Count = Lower + (Upper - Lower) / 2;
       Physical.MaxEntries = Count;
       std::vector<uint32_t> Slots;
-      std::vector<va_t> Targets =
-          readTableEntries(*CurrentImg, Physical, &Slots);
+      std::vector<va_t> Targets = readTableEntries(
+          *CurrentImg, Physical, &Slots,
+          DeferPhysicalTargetOwnership
+              ? JumpTableTargetReadPolicy::PhysicalBranchIdentity
+              : JumpTableTargetReadPolicy::SwitchPublication);
       if (Targets.size() == Count) {
         PhysicalTargets = std::move(Targets);
         PhysicalSlots = std::move(Slots);
@@ -1103,6 +1116,22 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     if (PhysicalTargets.size() >= limits::kMinJumpTableEntries) {
       const uint32_t CandidateCapacity =
           static_cast<uint32_t>(PhysicalTargets.size());
+      std::vector<bool> LocallyOwnedTargets;
+      bool AllPhysicalTargetsOwned = true;
+      if (DeferPhysicalTargetOwnership) {
+        if (!consumeBudgetProducts({{CandidateCapacity, 2}}))
+          return 0;
+        LocallyOwnedTargets.reserve(CandidateCapacity);
+        // PhysicalBranchIdentity omitted the publication checks that were
+        // prepaid for every bounded read above. Perform each one once here
+        // and retain its result without letting excluded slots cut the run.
+        for (va_t Target : PhysicalTargets) {
+          const bool Owned =
+              isValidTarget(*CurrentImg, Target, CurrentFuncEntry);
+          LocallyOwnedTargets.push_back(Owned);
+          AllPhysicalTargetsOwned &= Owned;
+        }
+      }
       if (PhysicalSlots.empty()) {
         // Direct sized-vector construction owns its buffer, element lifetime
         // and eventual destruction; the subsequent initialization loop is a
@@ -1222,14 +1251,18 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           // so map each coordinate through the authenticated address scale
           // instead of treating it as a physical slot number.  Pay source
           // traversal, retained results, and future cleanup first.
-          const size_t WorkPerCoordinate = Info.PreScaledIndex ? 4 : 3;
+          const size_t WorkPerCoordinate =
+              (Info.PreScaledIndex ? 4 : 3) +
+              (DeferPhysicalTargetOwnership ? 1 : 0);
           if (!consumeBudgetProducts({{Coordinates.size(), WorkPerCoordinate}}))
             return std::nullopt;
           std::vector<va_t> Targets;
           Targets.reserve(Coordinates.size());
           for (uint32_t Coordinate : Coordinates) {
             if (!Info.PreScaledIndex) {
-              if (Coordinate >= PhysicalTargets.size())
+              if (Coordinate >= PhysicalTargets.size() ||
+                  (DeferPhysicalTargetOwnership &&
+                   !LocallyOwnedTargets[Coordinate]))
                 return std::nullopt;
               Targets.push_back(PhysicalTargets[Coordinate]);
               continue;
@@ -2137,11 +2170,12 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           }
           return false;
         };
-        if (CandidateProposalStageActive && CurrentImg &&
-            CurrentImg->Arch == Arch::X86 && CurrentImg->isELF() &&
-            CurrentImg->getPointerSize() == 4 && Info.RelocAbsolute &&
-            !Info.IsRelative && !Info.PreScaledIndex && !Info.TwoTableSelect &&
-            !Info.TwoLevelIndex && Info.PhysicalCapacity == CandidateCapacity &&
+        if (AllPhysicalTargetsOwned && CandidateProposalStageActive &&
+            CurrentImg && CurrentImg->Arch == Arch::X86 &&
+            CurrentImg->isELF() && CurrentImg->getPointerSize() == 4 &&
+            Info.RelocAbsolute && !Info.IsRelative && !Info.PreScaledIndex &&
+            !Info.TwoTableSelect && !Info.TwoLevelIndex &&
+            Info.PhysicalCapacity == CandidateCapacity &&
             CandidateCapacity <= 64 && IndexOccurrences.size() == 1 &&
             Authorized.size() < CandidateCapacity &&
             hasTwoSameObjectIndirectConsumers()) {

@@ -109,6 +109,44 @@ TEST_F(JumpTableFiniteSelector,
 }
 
 TEST_F(JumpTableFiniteSelector,
+       UnselectedForeignPrefixDoesNotOwnTheDispatchDomain) {
+  for (const std::string Arch : {"aarch64", "x86_64"}) {
+    SCOPED_TRACE(Arch);
+    auto Image = neverd::loadBinary(compileFixture(Arch, 11).string());
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const auto Low = build(*Image, "finite_foreign_prefix");
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    const auto &Table = Low.JumpTables.front();
+    EXPECT_EQ(Table.SlotIndices, (std::vector<uint32_t>{2, 3}));
+    const auto *Callback = Image->findSymbol("finite_callback");
+    ASSERT_NE(Callback, nullptr);
+    EXPECT_EQ(
+        std::find(Table.Targets.begin(), Table.Targets.end(), Callback->Addr),
+        Table.Targets.end());
+    EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+  }
+}
+
+TEST_F(JumpTableFiniteSelector,
+       FeasibleForeignTargetsCannotBecomeLocalSwitchCases) {
+  for (const std::string Arch : {"aarch64", "x86_64"}) {
+    SCOPED_TRACE(Arch);
+    auto Image = neverd::loadBinary(compileFixture(Arch, 12).string());
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const auto Low = build(*Image, "finite_foreign_selected");
+    EXPECT_TRUE(Low.JumpTables.empty());
+    EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
+    EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+  }
+  auto Image = neverd::loadBinary(compileFixture("aarch64", 13).string());
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const auto Low = build(*Image, "finite_foreign_recurrent");
+  EXPECT_TRUE(Low.JumpTables.empty());
+  EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
+}
+
+TEST_F(JumpTableFiniteSelector,
        AFeasibleSlotAboveTheQueryCeilingCannotDisappear) {
   for (const std::string Arch : {"aarch64", "x86_64"}) {
     SCOPED_TRACE(Arch);
@@ -206,12 +244,13 @@ TEST_F(JumpTableFiniteSelector, ExhaustedEvidenceDoesNotPublish) {
 
 TEST_F(JumpTableFiniteSelector, BothSourceRoutesExecuteTheOriginalSelection) {
   for (const std::string Arch : {"aarch64", "x86_64"})
-    for (unsigned Case : {0u, 1u, 7u, 10u}) {
+    for (unsigned Case : {0u, 1u, 7u, 10u, 11u}) {
       const fs::path Object = compileFixture(Arch, Case);
-      const std::string Name = Case == 0   ? "finite_ro"
-                               : Case == 1 ? "finite_rw"
-                               : Case == 7 ? "finite_large"
-                                           : "finite_large_rw";
+      const std::string Name = Case == 0    ? "finite_ro"
+                               : Case == 1  ? "finite_rw"
+                               : Case == 7  ? "finite_large"
+                               : Case == 10 ? "finite_large_rw"
+                                            : "finite_foreign_prefix";
       for (unsigned Route : {0u, 1u, 2u}) {
         SCOPED_TRACE(Arch + ":" + Name + ":" + std::to_string(Route));
         const auto File = tmpFile("selection.c");

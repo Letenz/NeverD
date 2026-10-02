@@ -204,6 +204,10 @@ behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
 reached backedges, mutated table storage and exhausted evidence must prevent
 unsupported source publication. Clang and the existing lift fixture tools
 are required; unavailable fixtures remain skips.
+An unselected prefix pointer to a separate function must not prevent recovery
+of local cases. A foreign target selected immediately or after a reached
+backedge must remain outside the local switch. The prefix case also runs
+through all three C routes at both optimization levels.
 
 ```sh
 cmake --build build-release --target NeverDJumpTableTests --parallel 4

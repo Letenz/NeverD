@@ -61,6 +61,10 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+For a single absolute consumer, a relocation-backed physical run may contain
+unused pointers to other functions. Validate target ownership for every
+admitted selector coordinate before graph growth; an excluded prefix slot
+neither truncates the selector proof nor becomes a local successor.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive

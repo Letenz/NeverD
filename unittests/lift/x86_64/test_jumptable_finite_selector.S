@@ -44,8 +44,16 @@
 .p2align 3
 .type \name\()_table, @object
 \name\()_table:
+#if TEST_CASE == 11
+    .quad \name\()_case0, finite_callback
+#else
     .quad \name\()_case0, \name\()_case1
+#endif
+#if TEST_CASE == 12
+    .quad finite_callback, \name\()_case3
+#else
     .quad \name\()_case2, \name\()_case3
+#endif
 #if TEST_CASE >= 7
     // A long physical run must neither grant nor prevent a small exact domain.
     .rept 92
@@ -108,6 +116,25 @@ finish finite_above_ceiling
 begin finite_large_rw
 choose
 finish finite_large_rw, 1
+#elif TEST_CASE == 11
+begin finite_foreign_prefix
+choose
+finish finite_foreign_prefix
+#elif TEST_CASE == 12
+begin finite_foreign_selected
+choose
+finish finite_foreign_selected
+#endif
+
+#if TEST_CASE >= 11
+.text
+.p2align 4
+.global finite_callback
+.type finite_callback, @function
+finite_callback:
+    movl $123, %eax
+    ret
+.size finite_callback, .-finite_callback
 #endif
 
 .section .note.GNU-stack,"",@progbits
