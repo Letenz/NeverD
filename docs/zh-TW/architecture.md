@@ -70,6 +70,10 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `FrameOffsets` 統一負責有預算的入口相對位移單值證明。恢復器正規化實際符號記憶體存取，保留殘餘位址運算式；原生檢查仍驗證兩次執行的位址相等。窮盡對齊分派與共享重試預算由恢復器負責。原生／LLVM 分區證明聚合仍是尚未完成的獨立工作。`NativeStackControl` 負責內部無符號 16 位元返回清理，二進位提供器認證彈出八位元組的規範編碼。
 
+控制與守衛精度細化優先於可選框架分區重試，必要的更細分區仍可使用。恢復先完成一個餘數的不動點，再開始下一個，但只有全部允許餘數完成後才發布結果。顯式入口對齊與分區域取交集，分派比較實際餘數。上下文、操作、節點及求解器預算仍有界，且在重試之間共用。 機器狀態恢復支援以 `--vm-entry-alignment=A:R` 宣告並檢查入口 RSP 同餘域。`A` 必須是正的二次冪，且 `R < A`。其他入口在客體記憶體存取或狀態寫入前回傳狀態 2。根位址高位仍自由，預設不假定對齊；此選項不提供原生等價認證。
+
+`SymState` 統一管理顯式分離契約下單次 STORE 對已有位元組事實的保留。真實 STORE 仍執行，其他記憶體區域、失效世代及未知值預設狀態保持寫入後的狀態，不讀取或初始化缺失位元組。`SymExec` 僅對一次一般 STORE 套用契約；恢復層另行保留範圍內完整仿射槽和來源事實，匯合仍保持保守。
+
 `StringTransfer` 負責有界、有序的純量展開。還原層負責值證明、共用預算及完整搬移指標的重新認證；產生的存取沿用一般記憶體檢查。
 
 控制相依遍歷僅在分析完整結束後回報根位址的位元相依。當已證明的相對位址仍保留至少 32 個自由高位元時，恢復層可以省略可選的映像位址列舉；這不證明可達性，也不會刪除記憶體存取。
@@ -812,7 +816,7 @@ HighIR 的共用私有堆疊框架位址證明，在目標位寬整數加法中�
 
 在 AArch64 原始碼繫結中，若全寬儲存的純量位元模式碰巧等於映像位址，只有精確的本地指令序列先建構由 W 暫存器零擴充的負載與標準的內嵌 Swift String 標記，再以一條 STP 儲存相鄰兩字時，才將其保留為數值。指令位元組及無重新定位的事實會重新驗證；缺少配對或來源未獲證明時仍維持未解析。
 
-原生原始碼型別推斷可以借用傳給已驗證 libswiftCore `swift_beginAccess` 與 `swift_endAccess` 呼叫的精確 24 位元組私有暫存紀錄。begin 呼叫會寫入第二個參數指向的紀錄；end 呼叫可能修改第一個參數指向的紀錄。接受輔助函式前，既有 LowIR 證明仍會檢查呼叫 ABI、有界堆疊框架偏移、與已儲存暫存器的分離，以及完整的狀態還原。
+Swift 存取暫存區採用明確的共用生命週期契約。載入器驗證原始 ARM64 BL、強 libswiftCore 匯入及目前完整 ABI。逐位元組證明接受精確的 Read/Modify 旗標 `0`/`1` 和追蹤旗標 `32`/`33`。追蹤會將 24 位元組記錄保留在 TLS，直到相符的 `swift_endAccess`；所有到達路徑必須具有一致的活躍記錄，返回、尾呼叫或釋放框架前必須全部結束。重疊寫入、重複初始化以及缺少或重複結束均被拒絕。巢狀記錄可依任意順序結束：解除連結可能修改另一活躍記錄，因此內容始終不透明，且可能包含私有框架指標。此可能來源在結束、部分寫入、可能寫入的呼叫和框架重用後仍保留，直到確定的儲存逐位元組覆寫；一般借用者不得讀取這些受污染的內容。框架載入前綴查詢拒絕仍被保留的記錄，不能假設未來的結束呼叫。未追蹤的 `swift_beginAccess` 仍是同步借用，可省略結束；若呼叫結束，每條路徑都必須有已初始化的暫存記錄。純量結果推導會重複檢查，執行階段衝突偵測與終止行為保持可觀察。 ([Swift 執行階段](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp), [存取旗標](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)).
 
 經過效能分析插樁與全模組最佳化的 Swift 合併 `@objc` `CGFloat` setter 使用 C ABI，參數依序為 self、selector、double 值、實例變數偏移指標及計數器指標。只有精確的修飾符號名稱與入口處透過 x3 進行的計數器讀取、遞增和寫回同時成立，才指派五參數 ABI；未插樁版本只有四個參數。候選函式仍須通過一般的原始碼函式主體、資料繫結及相依閉包證明。
 
@@ -874,7 +878,11 @@ super 呼叫證明保留窄回傳值的未定義填補位元並檢查每個參�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀寫方法保留完整的 32 位元組 `UIEdgeInsets`：上、左、下、右四個 double 在 arm64 上由 d0–d3 傳遞。完整的裝置與模擬器 SDK 宣告一致，Apple Clang 獨立重現全部六種編碼。接收者查找保留 UIButton 匿名分類及 UIButton → UIControl → UIView 繼承關係。執行階段宣告衝突、其他接收者、類別方法、錯誤提供程式庫及缺少相符證據的架構仍不受支援。
 
-`windows-pe64-v1` 新增有界 Windows x64/ARM64 主控台程序：PE 載入、PEB/TEB、靜態與動態 TLS、啟動／結束回呼及具名 Win32 API 模型。它獨立使用 CPU 層，不需啟用驅動程式模擬；DLL/CRT 載入、GUI、使用者態 SEH、執行緒及通用 Windows 相容性仍待完成。
+`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、EXE TLS、具名 Win32 API 與明確無環啟動 DLL 圖。客體 DLL 支援名稱／序號程式碼及資料匯入、DIR64 重定位及真實載入器串列身分。DLL 進入點／TLS、動態載入、轉送匯出、CRT／GUI、使用者 SEH 與執行緒仍待完成；原生 ARM64 KVM/WHP 證據仍缺。
+
+`readPEProgramExports` 擁有原始匯出身分與有界中繼資料讀取範圍；`WindowsProcessModules` 擁有模組圖和全程序精確提供者／名稱 API 跳板。`VirtualMemory` 在映射前登記全部映像，`AddressSpace` 管理頁面及權限。PEB/LDR 僅列真實映像，初始化串列依相依順序排列 DLL。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名稱，不分大小寫，無副檔名時補 `.dll`；路徑、非 ASCII 查詢及結尾點規則仍不支援。找不到名稱回傳錯誤 126，成功保留 LastError。API 模型不是已安裝系統 DLL。
+
+Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
@@ -883,5 +891,7 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 同一個不可變原生呼叫證明現在可在 SSA 之前繫結目前完整的純量 `NativeAnalysis` ABI，同時保留 LowIR/MedIR 中原始間接呼叫操作碼及呼叫位置。原生狀態推導會根據目前 LowIR 重做證明，一般呼叫破壞規則和框架檢查繼續適用。HighIR 只將已證明的不可變目標求值投影為選定的原始碼定義。發布時還要求目前呼叫端與被呼叫端的 LowIR、MedIR、HighIR 和已接受稽核一致，重新驗證指標槽、指令及 ABI，並確認每個原始已繫結呼叫恰好求值一次。儲存的提示和相依清單不能授權發布；缺漏、過時、重複或衝突的證據仍不受支援，每個被呼叫端仍須通過獨立的完整原始碼主體和相依閉合檢查。
 
 `SourceFrameEffects` 由載入器與管線共用，描述有界、同步的堆疊框架借用，以及可能指向框架內或外部儲存的回傳別名。ARM64 Swift 值緩衝區投影器必須通過完整不可變函式本體、原始 BL/LowIR 呼叫位置、目前雙參數原生 ABI 與強匯入 `swift_makeBoxUnique` 的驗證。證明保守地使三個緩衝區字失效；回傳值可能是緩衝區起始位址或外部儲存，不能證明保存位元組的身分。複製與合流保留可能的框架來源。後續借用須位於仍存活的範圍內；部分指標、逸出、已失效的框架，以及透過不確定回傳值恢復保存暫存器均被拒絕。純量回傳推斷也會重新驗證此證明。依據 [Swift 6.1.2 執行階段契約](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp)，配置、值見證複製與釋放仍是可觀察效果；這不代表純函式，也不代表完整的存在型別呼叫閉合。
+
+`SourceFrameAnalysis` 現在由 IR 元件統一負責 LowIR 位元組身分、框架逸出檢查、呼叫效果與控制流程合流；管線保留 MedIR 適配層。有界的 ARM64 框架載入查詢回傳原始完整八位元組 LowIR 定義與框架偏移。所有到達路徑都必須保留相同且有序的位元組；相關迴圈、繞過儲存的路徑、部分寫入、已失效堆疊槽與更早的框架逸出皆被拒絕，Swift scratch 條件仍須驗證。無環前綴之後的清理既不能提供也不會撤銷先前的證明。查詢結果不授予位址、程式碼指標或原始碼發布權限，映像消費者仍須獨立驗證指令、槽與被呼叫方。
 
 ARM64 Objective-C 上下文 thunk 沿用同一框架效果模型。完整且不可變的上下文讀取與尾端分支必須到達強繫結的 selector stub，並取得目前一致的宣告；每個轉送的實體引數都須符合完整原生 ABI。選用的計數器更新只能存取唯一映射的可寫映像儲存。所得證明僅允許同步借用上下文前八個位元組，且不得保留其位址。呼叫端仍拒絕將私有框架位址寫入這些位元組或任何其他記憶體，因此讀出的 receiver 不能攜帶這種逸出。訊息、物件效果與計數器更新仍可觀察。直接 BL 與不可變間接呼叫位置均由目前 LowIR 重新驗證，純量結果推導亦然；這尚未證明後續資料表重載或存在型別清理。

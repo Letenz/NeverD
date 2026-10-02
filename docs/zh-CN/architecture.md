@@ -165,6 +165,10 @@ Swift 具体类型元数据的缓存/引用对只有在零值缓存、不可变�
 
 `FrameOffsets` 统一负责有预算的入口相对位移单值证明。恢复器归一化实际符号内存访问，保留残余地址表达式；原生检查仍验证两次执行的地址相等。穷尽对齐分派和共享重试预算由恢复器负责。原生／LLVM 分区证明聚合仍是尚未完成的独立工作。`NativeStackControl` 负责内部无符号 16 位返回清理，二进制提供器认证弹出八字节的规范编码。
 
+控制和守卫精度细化优先于可选帧分区重试，必要的更细分区仍可使用。恢复先完成一个余数的不动点，再开始下一个，但只有全部允许余数完成后才发布结果。显式入口对齐与分区域取交集，分派比较实际余数。上下文、操作、节点和求解器预算仍有界，并在各次重试间共享。 机器状态恢复支持用 `--vm-entry-alignment=A:R` 声明并检查入口 RSP 同余域。`A` 必须是正的二次幂，且 `R < A`。其他入口在客体访存或状态写入前返回状态 2。根地址高位仍自由，默认不假定对齐；此选项不提供原生等价认证。
+
+`SymState` 统一管理显式分离契约下单次 STORE 对已有字节事实的保留。真实 STORE 仍执行，其他内存区域、失效代次及未知值默认状态保持写入后的状态，不读取或初始化缺失字节。`SymExec` 仅对一次普通 STORE 应用契约；恢复层另行保留范围内完整仿射槽和来源事实，汇合仍保持保守。
+
 `StringTransfer` 负责有界、有序的标量展开。恢复层负责值证明、共享预算及完整搬运指针的重新认证；生成的访问复用常规内存检查。
 
 控制依赖遍历仅在分析完整结束后报告根地址的位依赖。当已证明的相对地址仍保留至少 32 个自由高位时，恢复层可以省略可选的映像地址枚举；这不证明可达性，也不会删除内存访问。
@@ -872,7 +876,7 @@ HighIR 的共享私有栈帧地址证明在目标位宽整数加法中接受两�
 
 在 AArch64 源码绑定中，若全宽存储的标量位模式碰巧等于映像地址，只有精确的局部指令序列先构造由 W 寄存器零扩展的载荷及规范的内联 Swift String 标记，再用一条 STP 存储相邻两字时，才将其保留为数值。指令字节及无重定位事实会重新验证；缺少配对或来源未获证明时仍保持未解析。
 
-原生源码类型推断可以借用传给已认证 libswiftCore `swift_beginAccess` 和 `swift_endAccess` 调用的精确 24 字节私有暂存记录。begin 调用写入第二个参数指向的记录；end 调用可能修改第一个参数指向的记录。接纳辅助函数之前，现有 LowIR 证明仍会检查调用 ABI、有界栈帧偏移、与已保存寄存器的分离以及完整的状态恢复。
+Swift 访问暂存区采用显式的共享生命周期契约。加载器认证原始 ARM64 BL、强 libswiftCore 导入及当前完整 ABI。逐字节证明接受精确的 Read/Modify 标志 `0`/`1` 和受跟踪标志 `32`/`33`。跟踪会将 24 字节记录保留在 TLS，直到匹配的 `swift_endAccess`；所有到达路径必须具有一致的活跃记录，返回、尾调用或释放栈帧前必须全部结束。重叠写入、重复初始化以及缺失或重复结束均被拒绝。嵌套记录可按任意顺序结束：解绑可能修改另一活跃记录，因此记录内容始终不透明，并可能包含私有帧指针。这种可能来源在结束、部分写入、可能写入的调用和帧复用后仍保留，直到确定性存储逐字节覆盖；普通借用方不得读取这些带污点的内容。帧加载前缀查询拒绝仍被保留的记录，不能假设未来的结束调用。未跟踪的 `swift_beginAccess` 仍是同步借用，可省略结束；若调用结束，则每条路径都必须有已初始化的暂存记录。标量结果推导重复这些检查，运行时冲突检测和终止行为保持可观察。 ([Swift 运行时](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Exclusivity.cpp), [访问标志](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/include/swift/ABI/MetadataValues.h)).
 
 经过性能分析插桩和全模块优化的 Swift 合并 `@objc` `CGFloat` setter 使用 C ABI，参数依次为 self、selector、double 值、实例变量偏移指针和计数器指针。只有精确的符号修饰名与入口处经 x3 执行的计数器读取、递增和写回同时成立，才赋予五参数 ABI；未插桩版本只有四个参数。候选函数仍须通过常规的源码函数体、数据绑定及依赖闭包证明。
 
@@ -934,7 +938,11 @@ super 调用证明保留窄返回值的未定义填充位并检查每个参数�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读写方法保留完整的 32 字节 `UIEdgeInsets`：上、左、下、右四个 double 在 arm64 上由 d0–d3 传递。完整的设备与模拟器 SDK 声明一致，Apple Clang 独立复现全部六种编码。接收者查找保留 UIButton 匿名分类及 UIButton → UIControl → UIView 继承关系。运行时声明冲突、其他接收者、类方法、错误提供库及缺少匹配证据的架构仍不受支持。
 
-`windows-pe64-v1` 新增有界 Windows x64/ARM64 控制台进程：PE 装载、PEB/TEB、静态和动态 TLS、启动／退出回调及具名 Win32 API 模型。它独立使用 CPU 层，无需启用驱动模拟；DLL/CRT 装载、GUI、用户态 SEH、线程及通用 Windows 兼容性仍待完成。
+`windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、EXE TLS、具名 Win32 API 和显式无环启动 DLL 图。客户 DLL 支持按名称／序号导入代码及数据、DIR64 重定位和真实加载器链表身份。DLL 入口／TLS、动态加载、转发导出、CRT／GUI、用户态 SEH 和线程仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
+
+`readPEProgramExports` 拥有原始导出身份及有界元数据读取范围；`WindowsProcessModules` 拥有客户模块图和进程统一的精确提供方／名称 API 跳板。`VirtualMemory` 在映射前登记所有映像，`AddressSpace` 管理页面及权限。PEB/LDR 仅列出真实映像，初始化链表按依赖顺序排列 DLL。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名，不区分大小写，无扩展名时补 `.dll`；路径、非 ASCII 查询及末尾点规则仍不支持。名称缺失返回错误 126，成功保持 LastError。API 模型不等同于已安装的系统 DLL。
+
+Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
@@ -943,5 +951,7 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 同一个不可变原生调用证明现在可在 SSA 之前绑定当前完整的标量 `NativeAnalysis` ABI，同时保留 LowIR/MedIR 中原始间接调用操作码及调用位置。原生状态推导会根据当前 LowIR 重做证明，普通调用破坏规则和帧检查继续适用。HighIR 只将已证明的不可变目标求值投影为所选源码定义。发布时还要求当前调用方与被调用方的 LowIR、MedIR、HighIR 和已接受审计一致，重新验证指针槽、指令及 ABI，并确认每个原始已绑定调用恰好求值一次。保存的提示和依赖清单不能授权发布；缺失、陈旧、重复或冲突的证据仍不受支持，每个被调用方仍须通过独立的完整源码体和依赖闭合检查。
 
 `SourceFrameEffects` 由加载器和流水线共享，描述有界、同步的栈帧借用，以及可能指向帧内或外部存储的返回别名。ARM64 Swift 值缓冲区投影器必须通过完整不可变函数体、原始 BL/LowIR 调用位置、当前双参数原生 ABI 和强导入 `swift_makeBoxUnique` 的验证。证明保守地使三个缓冲区字失效；返回值可能是缓冲区首地址或外部存储，不能证明保存字节的身份。复制和合流保留可能的栈帧来源。后续借用须位于仍存活的范围内；部分指针、逃逸、已失效的帧，以及通过不确定返回值恢复保存寄存器均被拒绝。标量返回推断也会重验此证明。依据 [Swift 6.1.2 运行时契约](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp)，分配、值见证复制和释放仍是可观察效果；这不代表纯函数，也不代表完整的存在类型调用闭合。
+
+`SourceFrameAnalysis` 现在由 IR 组件统一负责 LowIR 字节身份、帧逃逸检查、调用效果和控制流合流；流水线保留 MedIR 适配层。有界的 ARM64 帧加载查询返回原始完整八字节 LowIR 定义和帧偏移。所有到达路径都必须保留相同且有序的字节；相关循环、绕过存储的路径、部分写入、已失效栈槽和更早的帧逃逸均被拒绝，Swift scratch 条件仍须验证。无环前缀之后的清理既不能提供也不会撤销此前的证明。查询结果不授予地址、代码指针或源码发布权限，镜像消费者仍须独立验证指令、槽和被调用方。
 
 ARM64 Objective-C 上下文 thunk 复用同一帧效果模型。完整且不可变的上下文读取和尾分支必须到达强绑定的 selector stub，并取得当前一致的声明；每个转发的物理参数都须匹配完整原生 ABI。可选的计数器更新只能访问唯一映射的可写镜像存储。所得证书仅允许同步借用上下文首八字节，且不得保留其地址。调用方仍拒绝把私有帧地址写入这些字节或任何其他内存，因此读出的 receiver 不能携带这种逃逸。消息、对象效果和计数器更新保持可观察。直接 BL 和不可变间接调用位置均从当前 LowIR 重新验证，标量结果推导也不例外；这尚未证明后续表重载或存在类型清理。

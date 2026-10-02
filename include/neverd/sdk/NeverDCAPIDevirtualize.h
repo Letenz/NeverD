@@ -99,6 +99,39 @@ typedef struct neverd_devirtualize_options_v4 {
   int64_t entry_frame_end;
 } neverd_devirtualize_options_v4;
 
+/// Version 5 adds checked entry-RSP alignment for machine-state source only
+/// and a per-node symbolic-DAG budget. max_symbolic_nodes == 0 retains the
+/// default of 262144; other values set a positive resource limit, not a
+/// premise. Zero the structure and set base.base.base.base.struct_size to its
+/// size. entry_frame_alignment == 0 leaves the domain unrestricted and requires
+/// entry_frame_residue == 0. Otherwise alignment must be a power of two and
+/// residue smaller than alignment. Generated source returns status 2 before
+/// guest accesses or state writes when entry RSP modulo alignment != residue.
+/// Accepted roots retain unconstrained high bits. No memory or native-proof
+/// guarantee is added. v1/v2/v3/v4 ignore this extension; v5 ignores future
+/// tails.
+typedef struct neverd_devirtualize_options_v5 {
+  neverd_devirtualize_options_v4 base;
+  uint32_t entry_frame_alignment;
+  uint32_t entry_frame_residue;
+  uint32_t max_symbolic_nodes;
+} neverd_devirtualize_options_v5;
+
+typedef enum neverd_devirtualize_flag_v6 {
+  NEVERD_DEVIRTUALIZE_V6_EXTERNAL_STORES_DISJOINT_ENTRY_FRAME = 1u << 0
+} neverd_devirtualize_flag_v6;
+
+/// Version 6 adds an unchecked external-STORE separation precondition.
+/// Zero-initialize and set base.base.base.base.base.struct_size to the full
+/// size. The flag requires machine source and v4 entry-frame bounds: every
+/// external-origin STORE's entire extent must avoid that range. No runtime
+/// alias check, LOAD guarantee or separation between external pointers is
+/// implied. v1-v5 ignore this extension; v6 ignores future tails.
+typedef struct neverd_devirtualize_options_v6 {
+  neverd_devirtualize_options_v5 base;
+  uint32_t flags;
+} neverd_devirtualize_options_v6;
+
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
 /// mutation and calls, and does not certify binary patching or unwind behavior.
@@ -182,6 +215,24 @@ neverd_devirtualize_source_v4(neverd_session_t Session, neverd_va_t Entry,
 NEVERD_API const char *neverd_devirtualize_machine_source_v4(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v4 *Options, const char **Report);
+
+/// Contracts and ownership match v4. Ordinary source rejects entry alignment.
+NEVERD_API const char *
+neverd_devirtualize_source_v5(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v5 *Options,
+                              const char **Report);
+NEVERD_API const char *neverd_devirtualize_machine_source_v5(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v5 *Options, const char **Report);
+
+/// Contracts and ownership match v5. Ordinary source rejects frame separation.
+NEVERD_API const char *
+neverd_devirtualize_source_v6(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v6 *Options,
+                              const char **Report);
+NEVERD_API const char *neverd_devirtualize_machine_source_v6(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v6 *Options, const char **Report);
 
 #ifdef __cplusplus
 }

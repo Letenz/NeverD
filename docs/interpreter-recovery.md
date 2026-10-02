@@ -206,6 +206,18 @@ neverd_free_string(source);
 neverd_free_string(report);
 ```
 
+Machine-state recovery accepts `--vm-entry-alignment=A:R` as an explicit, checked entry-RSP domain. `A` must be a positive power of two and `R < A`. Other roots return status 2 before guest accesses or state writes. High root bits remain free; defaults assume no alignment. This option does not provide native equivalence certification.
+
+The v5 C APIs `neverd_devirtualize_source_v5()` and `neverd_devirtualize_machine_source_v5()` extend v4 with `entry_frame_alignment` and `entry_frame_residue`. Zero-initialize `neverd_devirtualize_options_v5` and set `base.base.base.base.struct_size` to its full size. Alignment zero disables the option and requires residue zero. Nonzero alignment is accepted only by the machine-state API. v1–v4 ignore the new tail; v5 ignores future tails. The report records `entryFrameAlignment`; generated C records the same checked condition. Invalid alignment takes precedence over invalid entry flags and leaves all state words unchanged. Existing numeric frame bounds remain unchecked. C++ residual consumers must enforce the declared RSP domain themselves; source and model wrappers share the guard generator. Native proof APIs reject this domain until their contracts can bind it.
+
+`--vm-max-symbolic-nodes=N` and v5 `max_symbolic_nodes` expose the per-node symbolic DAG budget (default 262144). The CLI requires a positive 32-bit decimal count; zero in C selects the default. The same limit applies to both source ABIs. `maxSymbolicNodes` records the effective budget; increasing it supplies no semantic assumption or proof.
+
+`--vm-external-stores-disjoint-frame` adds an explicit, unchecked precondition for machine-state recovery: every external STORE extent must avoid `--vm-entry-frame`. Only existing facts inside that range survive such writes. It does not constrain LOADs or aliasing between external pointers; the default remains conservative. Native proof APIs reject this domain.
+
+The v6 APIs `neverd_devirtualize_source_v6()` and `neverd_devirtualize_machine_source_v6()` embed the unchanged v5 options. Zero-initialize `neverd_devirtualize_options_v6`, set `base.base.base.base.base.struct_size` to its full size, and enable `NEVERD_DEVIRTUALIZE_V6_EXTERNAL_STORES_DISJOINT_ENTRY_FRAME` in `flags` only with machine source and v4 entry-frame bounds. Ordinary source rejects the flag. v1–v5 ignore the extension; v6 ignores future tails. The report records `externalStoresDisjointEntryFrame` and the unchecked contract; generated C states the same premise. Frame-derived or unknown-origin writes receive no exemption. Complete affine spills must fit entirely inside the protected range. Scanning, saving and restoring existing facts consumes the shared operation budget; exhaustion publishes no C.
+
+Control and guard refinement precedes optional frame-partition retries; necessary finer partitions remain available. Recovery finishes each residue’s fixed point before starting the next, but publication requires every allowed residue to complete. Explicit entry alignment intersects the partition domain, and dispatch compares actual residues. Context, operation, node and solver budgets remain bounded and shared across retries.
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,

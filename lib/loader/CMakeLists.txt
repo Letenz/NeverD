@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDLoader
   COFF/COFFLoader.cpp
   COFF/COFFLoaderUtils.cpp
   COFF/PEFixedImage.cpp
+  COFF/PEProgramExports.cpp
   COFF/RichHeader.cpp
   COFF/eh/COFFDelphiEH.cpp
   COFF/eh/COFFException.cpp
@@ -97,6 +98,7 @@ add_neverd_component_library(NeverDLoader
   Swift/SwiftABI.cpp
   Swift/SwiftRuntimeSource.cpp
   Swift/SwiftRuntimeCalls.cpp
+  Swift/SwiftAccessEffects.cpp
   Swift/SwiftValueBufferEffects.cpp
   Swift/SwiftStringCalls.cpp
   Swift/SwiftValueWitnessCalls.cpp

@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 25dedc8471ee7617349749e8c9148b8f5d0d37563769adaa76131a20e7b95b21 -->
+<!-- i18n-source: d157cf302643e879be2748919ad949d2979c1d36798e295ee566f247834396f4 -->
 
 <div align="center">
 
@@ -49,6 +49,10 @@ La [récupération expérimentale de sources d’interpréteur](interpreter-reco
 Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
 
 La récupération expose aussi `--vm-chain-transfers=N` (0 par défaut) et `--vm-no-control-discovery`. Le chaînage conserve les corrélations symboliques entre transferts dont la cible unique est prouvée ; sa limite revient aux frontières CFG ordinaires. Le mode état machine accepte des offsets d’entrée RSP sans bouclage, non vérifiés à l’exécution, via `--vm-entry-frame=begin:end`. La prémisse numérique exacte accompagne le C et le rapport, sans autoriser d’accès mémoire ni prouver l’équivalence.
+
+La récupération en état machine accepte `--vm-entry-alignment=A:R` comme domaine explicite et vérifié du RSP initial. `A` doit être une puissance de deux positive et `R < A`. Les autres valeurs renvoient le statut 2 avant tout accès invité ou écriture d’état. Les bits hauts restent libres et aucun alignement n’est supposé par défaut. Cette option ne certifie pas l’équivalence native.
+
+`--vm-external-stores-disjoint-frame` ajoute une précondition explicite, non vérifiée à l’exécution : chaque écriture STORE externe doit éviter entièrement `--vm-entry-frame`. Seuls les faits déjà connus dans cette plage sont conservés. Aucune contrainte ne porte sur LOAD ou sur les alias entre pointeurs externes ; le comportement par défaut reste conservateur. Les API de preuve native refusent ce domaine.
 
 Les grandes fonctions récupérées qui dépassent la limite de construction SSA peuvent utiliser `--llvm` avec un contrat borné de stockage scalaire mutable. Les entrées, les valeurs portées par les boucles et les lectures antérieures conservent leur sens. Les états implicites non pris en charge, paramètres en registres vectoriels, relocalisations, stockages ambigus et contrôles mal formés échouent explicitement ; HighC refuse ce repli. La sortie reste soumise au contrat existant de l’état machine, sans certificat d’équivalence supplémentaire.
 
@@ -112,7 +116,9 @@ La récupération dépend des motifs de code pris en charge ; consultez la [vue 
 
 L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
 
-`windows-pe64-v1` ajoute des processus console Windows x64/ARM64 bornés : chargement PE, PEB/TEB, TLS statique et dynamique, callbacks de démarrage/arrêt et modèles Win32 nommés. Il utilise la couche CPU indépendamment des pilotes ; chargement DLL/CRT, GUI, SEH utilisateur, threads et compatibilité Windows générale restent inachevés.
+`windows-pe64-v1` prend en charge des processus console Windows x64/ARM64 bornés avec PEB/TEB, TLS de l’EXE, API Win32 nommées et graphes acycliques de DLL initiales explicites. Les DLL admettent les imports de code/données par nom ou ordinal, le rebasage DIR64 et de vraies identités dans les listes du chargeur. Entrées/TLS des DLL, chargement dynamique, exports redirigés, CRT/GUI, SEH utilisateur et threads restent inachevés ; les preuves natives ARM64 KVM/WHP manquent encore.
+
+La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` et `FlushInstructionCache` pour le processus courant. La couche OS possède les réservations ; `AddressSpace` reste la référence pour les pages validées, les permissions et leur stockage. Les tests couvrent la réécriture de code, les défauts d’accès et la réutilisation du budget mémoire.
 
 `driver-strict` / `checked-x64-v1` accepte KVM sur un hôte Linux x64 compatible et WHP sur un hôte Windows x64 compatible ; `auto` sélectionne ce transport natif, et les ISA différentes utilisent Unicorn. Unicorn explicite et l’API V1 conservent le profil logiciel portable. L’exécution native vérifie les adresses canoniques et les effets avant l’entrée ; le matériel indisponible provoque un échec sans repli. Instructions et comportements OS non pris en charge échouent explicitement. La CI native Windows x64 avec Unicorn désactivé réussit les 359 contrôles obligatoires : 131 contrôles CPU, 224 résultats de pilotes issus de 26 images intégrées, 46 images WDK et 40 cas de scénarios aux adresses préférées et relocalisées, ainsi que quatre contrôles de limites SEH ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Les preuves natives ARM64 restent manquantes ; aucune compatibilité universelle des pilotes ou Android/Darwin n’est établie.
 

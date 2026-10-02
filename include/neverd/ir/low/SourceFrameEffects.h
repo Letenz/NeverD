@@ -5,6 +5,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 
 namespace neverd {
 
@@ -16,17 +17,40 @@ struct SourceFrameReturnAlias {
   bool operator==(const SourceFrameReturnAlias &) const = default;
 };
 
-/// Synchronous, nonescaping borrows, independently authenticated by a caller.
+struct SourceFrameScalarCondition {
+  size_t Parameter = 0;
+  std::set<uint64_t> Values;
+  bool operator==(const SourceFrameScalarCondition &) const = default;
+};
+
+/// Opaque scratch state, not a claim about its physical bytes. A finishing
+/// borrow requires the same live record on every reaching path. Runtime-owned
+/// links may change other retained records; their bytes are never identities.
+struct SourceFrameScratchEffect {
+  enum class Domain { SwiftAccess } TheDomain;
+  enum class Action { Initialize, Finish } TheAction;
+  size_t Parameter = 0;
+  size_t Bytes = 0;
+  std::optional<SourceFrameScalarCondition> Condition;
+  // A subset of Condition.Values retains the scratch address until Finish.
+  // This is an explicit lifetime obligation, not a synchronous noescape grant.
+  std::set<uint64_t> RetainedValues;
+  bool operator==(const SourceFrameScratchEffect &) const = default;
+};
+
+/// Bounded frame effects, independently authenticated by a caller. Borrows are
+/// synchronous and nonescaping unless Scratch explicitly retains its record.
 /// These bounds describe only effects on its private frame. The call may still
 /// allocate, release objects, invoke callbacks, or mutate external memory.
 struct SourceFrameEffects {
   std::map<size_t, size_t> ReadOnlyFrameParameters;
   std::map<size_t, size_t> WritableFrameParameters;
   std::optional<SourceFrameReturnAlias> ReturnFrameOrExternal;
+  std::optional<SourceFrameScratchEffect> Scratch;
 
   bool empty() const {
     return ReadOnlyFrameParameters.empty() && WritableFrameParameters.empty() &&
-           !ReturnFrameOrExternal;
+           !ReturnFrameOrExternal && !Scratch;
   }
   bool operator==(const SourceFrameEffects &) const = default;
 };
@@ -60,6 +84,38 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
   for (const auto &[Index, Bytes] : Effects.WritableFrameParameters)
     if (!Parameter(Index, Bytes))
       return false;
+  if (const auto &Scratch = Effects.Scratch) {
+    using Action = SourceFrameScratchEffect::Action;
+    if (Scratch->TheDomain != SourceFrameScratchEffect::Domain::SwiftAccess ||
+        (Scratch->TheAction != Action::Initialize &&
+         Scratch->TheAction != Action::Finish) ||
+        !Parameter(Scratch->Parameter, Scratch->Bytes) ||
+        Effects.ReturnFrameOrExternal)
+      return false;
+    const auto &Borrows = Scratch->TheAction == Action::Initialize
+                              ? Effects.WritableFrameParameters
+                              : Effects.ReadOnlyFrameParameters;
+    const auto Borrow = Borrows.find(Scratch->Parameter);
+    if (Borrow == Borrows.end() || Borrow->second != Scratch->Bytes)
+      return false;
+    if (const auto &Condition = Scratch->Condition) {
+      if (Scratch->TheAction != Action::Initialize ||
+          Condition->Parameter == Scratch->Parameter ||
+          !Parameter(Condition->Parameter, 8) || Condition->Values.empty() ||
+          Condition->Values.size() > 16 ||
+          Signature.Parameters[Condition->Parameter].Type->Kind !=
+              NdTypeKind::Int)
+        return false;
+    }
+    if (!Scratch->RetainedValues.empty()) {
+      if (Scratch->TheAction != Action::Initialize || !Scratch->Condition ||
+          Scratch->RetainedValues.size() > 16)
+        return false;
+      for (uint64_t Value : Scratch->RetainedValues)
+        if (!Scratch->Condition->Values.count(Value))
+          return false;
+    }
+  }
   if (const auto &Alias = Effects.ReturnFrameOrExternal) {
     const auto ReadOnly =
         Effects.ReadOnlyFrameParameters.find(Alias->Parameter);

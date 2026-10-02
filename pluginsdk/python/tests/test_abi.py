@@ -93,7 +93,24 @@ class ABIInventoryTests(unittest.TestCase):
         self.assertEqual(options_v4.entry_frame_end, (1 << 63) - 1)
         self.assertEqual(int(abi.DevirtualizeFlagsV4.DISABLE_CONTROL_DISCOVERY), 1)
         self.assertEqual(int(abi.DevirtualizeFlagsV4.HAS_ENTRY_FRAME_BOUNDS), 2)
-        for version in (1, 2, 3, 4):
+        self.assertEqual(abi.NeverDDevirtualizeOptionsV5.base.offset, 0)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV5.entry_frame_alignment.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV4),
+        )
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDDevirtualizeOptionsV5), 136)
+        self.assertEqual(abi.NeverDDevirtualizeOptionsV6.base.offset, 0)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV6.flags.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV5),
+        )
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDDevirtualizeOptionsV6), 144)
+        self.assertEqual(
+            int(abi.DevirtualizeFlagsV6.EXTERNAL_STORES_DISJOINT_ENTRY_FRAME), 1
+        )
+        for version in (1, 2, 3, 4, 5, 6):
             for prefix in ("source", "machine_source"):
                 spec = abi.FUNCTION_SPECS[f"neverd_devirtualize_{prefix}_v{version}"]
                 self.assertEqual(

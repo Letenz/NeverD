@@ -214,6 +214,79 @@ TEST_P(WindowsProcess, NTDLLNamedExitHasExplicitProviderEvidence) {
                                    C.Name == NativeExitName && !C.Result;
                           }));
 }
+TEST_P(WindowsProcess, VirtualMemoryReserveCommitProtectDecommitAndRelease) {
+  auto R = run(MemoryLifecycle);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, VirtualMemoryRoundingAndReservationBoundariesAreAtomic) {
+  auto R = run(MemoryAlignment);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, VirtualQueryReportsOwnedMappingsAndValidatesOutputs) {
+  auto R = run(MemoryQuery);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess,
+       VirtualMemoryExecutesRewrittenCodeAfterProtectionChanges) {
+  auto R = run(MemoryCode);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, VirtualProtectObservesAliasedOutputPermissions) {
+  auto R = run(MemoryAlias);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, VirtualMemoryTopDownPlacementHonorsSparseReservations) {
+  auto R = run(MemoryPlacement);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, VirtualMemoryReclaimsBackingAcrossLiveCPUResumptions) {
+  Options.MemoryLimit = VMReclaimLimit;
+  Options.OutputLimit = VMPage;
+  auto R = run(MemoryReclaim);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+}
+TEST_P(WindowsProcess, ReservedPagesRemainInaccessible) {
+  auto R = run(MemoryReservedFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, NoAccessPagesRejectGuestStores) {
+  auto R = run(MemoryNoAccessFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, ReadOnlyPagesRejectGuestStores) {
+  auto R = run(MemoryReadOnlyFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, DecommittedPagesRejectGuestStores) {
+  auto R = run(MemoryDecommitFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, ReleasedPagesRejectGuestStores) {
+  auto R = run(MemoryReleaseFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, NonExecutablePagesRejectGuestInstructions) {
+  auto R = run(MemoryExecuteFault);
+  EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
+TEST_P(WindowsProcess, GuardPagesRequireExplicitExceptionSupport) {
+  auto R = run(MemoryGuard);
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+  EXPECT_FALSE(R.ExitStatus);
+}
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsProcess,
                          testing::ValuesIn(Profiles),
                          [](const auto &Info) { return Info.param.Name; });
@@ -281,6 +354,12 @@ TEST_F(WindowsProcessImage,
   for (size_t Length :
        {size_t(0), size_t(64), size_t(Optional), Bytes.size() / 2})
     rejects(Bytes.substr(0, Length));
+  Copy = Bytes;
+  llvm::support::endian::write64le(
+      Copy.data() + Optional +
+          offsetof(llvm::object::pe32plus_header, ImageBase),
+      win::value::UserLimit);
+  rejects(Copy);
 }
 TEST_F(WindowsProcessImage, RejectsImportAndTLSMetadataBeforeExecution) {
   const auto Original = bytes();
@@ -479,8 +558,10 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
   const auto Program = (Root / NativeFile).string();
   const auto EC = llvm::sys::fs::copy_file(Path.string(), Program);
   ASSERT_FALSE(EC) << EC.message();
-  for (const char *Mode : {Normal, Returned, Errors, AliasedOutput, TLSMutation,
-                           TailExit, NativeExit}) {
+  for (const char *Mode :
+       {Normal, Returned, Errors, AliasedOutput, TLSMutation, TailExit,
+        NativeExit, MemoryLifecycle, MemoryAlignment, MemoryQuery, MemoryCode,
+        MemoryAlias, MemoryPlacement, MemoryReclaim}) {
     SCOPED_TRACE(Mode);
     const auto Output = (Root / StdoutFile).string();
     const auto Error = (Root / StderrFile).string();

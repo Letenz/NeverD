@@ -1,3 +1,8 @@
+add_neverd_unittest(NeverDPEProgramExportsTests
+  format/PEProgramExportsTests.cpp
+  LINK_COMPONENTS Loader
+)
+
 add_neverd_unittest(NeverDLiftTests
   core/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
@@ -143,6 +148,7 @@ add_neverd_unittest(NeverDLiftTests
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
+  core/SourceFrameAnalysisTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
   core/SwiftBooleanRuntimeCandidateTests.cpp
@@ -1021,6 +1027,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
+  core/SourceFrameAnalysisTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
   core/SwiftBooleanRuntimeCandidateTests.cpp

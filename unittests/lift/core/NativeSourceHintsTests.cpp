@@ -21,6 +21,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
+#include "neverd/loader/Swift/SwiftAccessEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
@@ -5541,7 +5542,7 @@ TEST(NativeSourceHints,
 }
 
 TEST(NativeSourceHints,
-     SwiftBeginAccessUsesBoundedWritablePrivateFrameScratch) {
+     SwiftBeginAccessRejectsUnauthenticatedOriginalFrameCall) {
   NativeVoidFrameFixture Fixture(Arch::AArch64);
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
   constexpr va_t ImportSlot = 0x2000;
@@ -5585,8 +5586,7 @@ TEST(NativeSourceHints,
 
   std::string Error;
   const auto Hint = Fixture.inferVoid(Error);
-  ASSERT_TRUE(Hint) << Error;
-  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_FALSE(Hint);
 
   auto Overlap = Fixture;
   Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] = NdVar::cst(0, 8);
@@ -5600,7 +5600,7 @@ TEST(NativeSourceHints,
   EXPECT_FALSE(Forged.inferVoid(Error));
 }
 
-TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
+TEST(NativeSourceHints, SwiftEndAccessRejectsUninitializedPrivateFrameScratch) {
   NativeVoidFrameFixture Fixture(Arch::AArch64);
   constexpr va_t ImportSlot = 0x2000;
   constexpr llvm::StringLiteral Import = "_swift_endAccess";
@@ -5634,8 +5634,10 @@ TEST(NativeSourceHints, SwiftEndAccessUsesBoundedPrivateFrameScratch) {
 
   std::string Error;
   const auto Hint = Fixture.inferVoid(Error);
-  ASSERT_TRUE(Hint) << Error;
-  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  // An uninitialized record can carry a tracked-access link. endAccess may
+  // then unlink it through a different record; a 24-byte borrow is
+  // insufficient.
+  EXPECT_FALSE(Hint);
 
   auto Overlap = Fixture;
   Overlap.Low.Blocks[0].Ops[Overlap.CallIndex - 1].Inputs[1] = NdVar::cst(0, 8);
@@ -8383,4 +8385,474 @@ TEST(NativeSourceHints, ContextBorrowInferenceRejectsChangedCallEvidence) {
       std::string Error;
       EXPECT_FALSE(F.infer(Error)) << Error;
     }
+}
+
+namespace {
+struct SwiftAccessEffectFixture : immutable_native_call_test::Fixture {
+  static constexpr va_t BeginSite = 0x1018, EndSite = 0x1020;
+  static constexpr va_t BeginVeneer = 0x1100, EndVeneer = 0x1110;
+  static constexpr va_t BeginSlot = 0x2000, EndSlot = 0x2008;
+  SwiftAccessEffectFixture(uint64_t Flags = 0, bool ScalarResult = false) {
+    Image.Segments[1].Size = Image.Segments[1].FileSz = 16;
+    Image.Segments[1].Data.resize(16);
+    Image.Sections[0].Size = Image.Sections[0].FileSz = 16;
+    for (const auto &[Slot, Name] : {std::pair{BeginSlot, "_swift_beginAccess"},
+                                     std::pair{EndSlot, "_swift_endAccess"}}) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot] = {Name, 0, "/usr/lib/swift/libswiftCore.dylib",
+                                   false};
+    }
+    const uint32_t Words[] = {0xa9bc7bfd,
+                              0x910003fd,
+                              0xaa1403e0,
+                              0x910043e1,
+                              uint32_t(0xd2800002 | (Flags << 5)),
+                              0xd2800003,
+                              0x9400003a,
+                              0x910043e0,
+                              0x9400003c,
+                              ScalarResult ? 0xd28000e0u : 0xd503201fu,
+                              0xa8c47bfd,
+                              0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      word(I, Words[I]);
+    word((EndVeneer - 0x1000) / 4, 0xb0000010);
+    word((EndVeneer - 0x1000) / 4 + 1, 0xf9400610);
+    word((EndVeneer - 0x1000) / 4 + 2, 0xd61f0200);
+    Image.Symbols[0].Size = sizeof(Words);
+    Image.Symbols[1].Name = "_begin_veneer";
+    Image.Symbols.push_back({"_end_veneer", EndVeneer, 12, true});
+    run();
+  }
+  SourceCallOccurrenceKey site(bool Begin) const {
+    return {Begin ? BeginSite : EndSite, 1, NdOp::CALL,
+            Begin ? BeginVeneer : EndVeneer};
+  }
+  std::optional<SourceFrameEffects> effect(bool Begin) const {
+    const auto Binding =
+        swiftRuntimeSourceCallHint(Image, Begin ? BeginSlot : EndSlot);
+    return Binding && low()
+               ? swiftAccessCallEffects(Image, *low(), site(Begin), *Binding)
+               : std::nullopt;
+  }
+  std::optional<SourceFunctionTypeHint> infer(std::string &Error) {
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const auto &A) { return A.Entry == 0x1000; });
+    return Audit != Result.FunctionAudits.end() && med() && high() && low()
+               ? inferNativeSourceTypeHint(Image, *med(), *high(), *Audit,
+                                           Error, low())
+               : std::nullopt;
+  }
+};
+} // namespace
+
+TEST(NativeSourceHints,
+     SwiftAccessEffectsAuthenticateOriginalCallsAndUntrackedScratch) {
+  for (unsigned Flags : {0, 1})
+    for (bool Scalar : {false, true}) {
+      SwiftAccessEffectFixture F(Flags, Scalar);
+      ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+      ASSERT_TRUE(F.low());
+      const auto Begin = F.effect(true), End = F.effect(false);
+      ASSERT_TRUE(Begin);
+      ASSERT_TRUE(End);
+      ASSERT_TRUE(Begin->Scratch);
+      ASSERT_TRUE(End->Scratch);
+      EXPECT_EQ(Begin->WritableFrameParameters.at(1), 24U);
+      EXPECT_EQ(End->ReadOnlyFrameParameters.at(0), 24U);
+      EXPECT_EQ(Begin->Scratch->Condition->Values,
+                (std::set<uint64_t>{0, 1, 32, 33}));
+      EXPECT_EQ(Begin->Scratch->RetainedValues, (std::set<uint64_t>{32, 33}));
+      EXPECT_TRUE(End->Scratch->RetainedValues.empty());
+      std::string Error;
+      EXPECT_TRUE(F.infer(Error)) << Error;
+    }
+}
+
+TEST(NativeSourceHints, SwiftTrackedAccessRequiresBalancedMachineLifetime) {
+  for (unsigned Flags : {0x20, 0x21})
+    for (bool Scalar : {false, true}) {
+      SwiftAccessEffectFixture F(Flags, Scalar);
+      std::string Error;
+      ASSERT_TRUE(F.infer(Error)) << Flags << ": " << Error;
+      // Keeping the result and return ABI unchanged cannot excuse a missing
+      // end: the runtime would retain this soon-to-expire frame in TLS.
+      F.word(8, 0xd503201f);
+      F.run();
+      EXPECT_FALSE(F.infer(Error));
+    }
+}
+
+TEST(NativeSourceHints, SwiftTrackedAccessAuthenticatesNestedMachineCalls) {
+  for (unsigned Flags : {32, 33})
+    for (bool Lifo : {false, true})
+      for (unsigned Case = 0; Case < 5; ++Case) {
+        SCOPED_TRACE(Case);
+        SwiftAccessEffectFixture F(Flags, true);
+        // Two records in a 96-byte frame, at +16 and +48. Their accessed
+        // objects are x20 and x20+8. Ending the older record first lets the
+        // runtime update the younger record's opaque link.
+        const uint32_t Words[] = {0xa9ba7bfd,
+                                  0x910003fd,
+                                  0xaa1403e0,
+                                  0x910043e1,
+                                  uint32_t(0xd2800002 | (Flags << 5)),
+                                  0xd2800003,
+                                  0x9400003a,
+                                  0x91002280,
+                                  0x9100c3e1,
+                                  uint32_t(0xd2800002 | (Flags << 5)),
+                                  0xd2800003,
+                                  0x94000035,
+                                  Lifo ? 0x9100c3e0u : 0x910043e0u,
+                                  0x94000037,
+                                  Lifo ? 0x910043e0u : 0x9100c3e0u,
+                                  0x94000035,
+                                  0xd28000e0,
+                                  0xa8c67bfd,
+                                  0xd65f03c0};
+        for (unsigned I = 0; I < std::size(Words); ++I)
+          F.word(I, Words[I]);
+        F.Image.Symbols[0].Size = sizeof(Words);
+        if (Case == 1)
+          F.word(13, 0xd503201f); // omit first end
+        if (Case == 2)
+          F.word(15, 0xd503201f); // omit last end
+        if (Case == 3)
+          F.word(8, 0x910043e1); // second begin overwrites first
+        if (Case == 4)
+          F.word(14, Words[12]); // end same record twice
+        F.run();
+        std::string Error;
+        EXPECT_EQ(bool(F.infer(Error)), Case == 0) << Error;
+      }
+}
+
+TEST(NativeSourceHints, SwiftAccessEffectsRejectUnknownAndExpiredScratch) {
+  for (bool Scalar : {false, true}) {
+    for (unsigned Flags : {2, 0x22, 0x23, 0x100, 0xffff}) {
+      SwiftAccessEffectFixture F(Flags, Scalar);
+      std::string Error;
+      EXPECT_FALSE(F.infer(Error)) << Flags;
+    }
+    for (unsigned Case = 0; Case < 8; ++Case) {
+      SCOPED_TRACE(Case);
+      SwiftAccessEffectFixture F(0, Scalar);
+      switch (Case) {
+      case 0:
+        F.word(4, 0xaa1503e2);
+        break; // unknown flags from x21
+      case 1:
+        F.word(6, 0xd503201f);
+        break; // no initialization
+      case 2:
+        F.word(5, 0x910003e1);
+        break; // scratch overlaps fp/lr
+      case 3:
+        F.word(7, 0x910023e0);
+        break; // wrong record start
+      case 4:
+        F.word(7, 0x110043e0);
+        break; // truncated frame pointer
+      case 5:
+        F.word(7, 0xf9000bff);
+        F.word(8, 0x910043e0);
+        F.word(9, 0x9400003b);
+        break; // overwrite then end correct address
+      case 6:
+        F.word(7, 0x9100e3e0);
+        break; // out-of-bounds record
+      case 7:
+        F.word(3, 0x9100c3e1);
+        break; // begins over frame end
+      }
+      F.run();
+      std::string Error;
+      EXPECT_FALSE(F.infer(Error)) << Error;
+    }
+  }
+}
+
+TEST(NativeSourceHints, SwiftAccessEffectsRejectChangedOccurrenceImportAndABI) {
+  SwiftAccessEffectFixture F;
+  ASSERT_TRUE(F.low());
+  for (bool Begin : {false, true}) {
+    const auto Original =
+        swiftRuntimeSourceCallHint(F.Image, Begin ? F.BeginSlot : F.EndSlot);
+    ASSERT_TRUE(Original);
+    for (unsigned Case = 0; Case < 24; ++Case) {
+      SCOPED_TRACE(Case);
+      auto Image = F.Image;
+      auto Low = *F.low();
+      auto Binding = *Original;
+      auto Site = F.site(Begin);
+      auto &Import = Image.DyldBindSlots.at(Binding.TargetAddress);
+      auto &Block = Low.Blocks.front();
+      auto Call = std::find_if(
+          Block.Ops.begin(), Block.Ops.end(), [&](const LowOp &Op) {
+            return Op.Addr == Site.Instruction && Op.Opcode == NdOp::CALL;
+          });
+      ASSERT_NE(Call, Block.Ops.end());
+      switch (Case) {
+      case 0:
+        Import.WeakImport = true;
+        break;
+      case 1:
+        Import.Module = "/tmp/impostor.dylib";
+        break;
+      case 2:
+        Import.Addend = 8;
+        break;
+      case 3:
+        Image.ImportPtrSlots[Binding.TargetAddress] = "_swift_release";
+        break;
+      case 4:
+        Image.Segments[1].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 5:
+        Image.ConflictingImportStorageSlots.insert(Binding.TargetAddress);
+        break;
+      case 6:
+        llvm::support::endian::write32le(Image.Segments[0].Data.data() +
+                                             Site.Instruction - 0x1000,
+                                         0xd63f0200);
+        break;
+      case 7:
+        Call->Seq = 3;
+        break;
+      case 8:
+        Call->Inputs[0] = NdVar::cst(0x1200, 8);
+        break;
+      case 9:
+        Call->NumInputs = 2;
+        break;
+      case 10:
+        Call->Opcode = NdOp::INDIR_CALL;
+        break;
+      case 11:
+        Binding.Signature.Parameters[0].Location.RegisterOffset += 8;
+        break;
+      case 12:
+        Binding.Signature.ReturnType = NdType::makeInt(8);
+        break;
+      case 13:
+        Binding.Signature.HasExplicitABI = false;
+        break;
+      case 14:
+        Binding.Signature.Origin =
+            SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+        break;
+      case 15:
+        Binding.Signature.Convention =
+            SourceFunctionTypeHint::ConventionKind::Swift;
+        break;
+      case 16:
+        Binding.WeakImport = true;
+        break;
+      case 17:
+        Binding.TargetName += "_forged";
+        break;
+      case 18:
+        Binding.TargetAddress += 8;
+        break;
+      case 19:
+        Binding.DoesNotReturn = true;
+        break;
+      case 20:
+        Low.DecodedInstructionCount = 0;
+        break;
+      case 21:
+        Block.InstructionBoundaries.clear();
+        break;
+      case 22:
+        Block.Ops.push_back(*Call);
+        break;
+      case 23:
+        Site.Sequence = 0;
+        break;
+      }
+      EXPECT_FALSE(swiftAccessCallEffects(Image, Low, Site, Binding));
+    }
+  }
+}
+
+TEST(NativeSourceHints,
+     SwiftAccessScratchSurvivesOnlyDisjointWritesAndAllPaths) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SwiftAccessEffectFixture F;
+    if (Case == 0) // architectural W-register zero extension
+      F.word(4, 0x52800002);
+    if (Case == 1) { // an untracked access need not have an end call
+      F.word(7, 0xd503201f);
+      F.word(8, 0xd503201f);
+    }
+    if (Case >= 2) {
+      // Either outside the record or one byte at its last address.
+      F.word(7, Case == 2 ? 0xf9001bff : 0x39009fff);
+      F.word(8, 0x910043e0);
+      F.word(9, 0x9400003b);
+    }
+    F.run();
+    std::string Error;
+    EXPECT_EQ(bool(F.infer(Error)), Case != 3) << Case << ": " << Error;
+  }
+
+  SwiftAccessEffectFixture F;
+  ASSERT_TRUE(F.low());
+  auto Low = *F.low();
+  const auto Begin = swiftRuntimeSourceCallHint(F.Image, F.BeginSlot);
+  const auto End = swiftRuntimeSourceCallHint(F.Image, F.EndSlot);
+  ASSERT_TRUE(Begin);
+  ASSERT_TRUE(End);
+  NativeSourceCalls Calls;
+  for (bool IsBegin : {true, false}) {
+    auto &Contract = Calls[F.site(IsBegin)];
+    Contract.Signature = IsBegin ? &Begin->Signature : &End->Signature;
+    static_cast<SourceFrameEffects &>(Contract) = *F.effect(IsBegin);
+  }
+  ASSERT_TRUE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  // Split the real LowIR before and after beginAccess. A path that bypasses
+  // initialization must not inherit the other predecessor's scratch token.
+  auto Original = Low.Blocks.front();
+  const auto BeginOp =
+      std::find_if(Original.Ops.begin(), Original.Ops.end(),
+                   [&](const LowOp &Op) { return Op.Addr == F.BeginSite; });
+  const auto AfterBegin =
+      std::find_if(BeginOp, Original.Ops.end(),
+                   [&](const LowOp &Op) { return Op.Addr > F.BeginSite; });
+  ASSERT_NE(BeginOp, Original.Ops.end());
+  ASSERT_NE(AfterBegin, Original.Ops.end());
+  Low.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I) {
+    Low.Blocks[I] = {};
+    Low.Blocks[I].Id = I;
+  }
+  Low.Blocks[0].StartAddr = Low.Entry;
+  Low.Blocks[0].Ops.assign(Original.Ops.begin(), BeginOp);
+  Low.Blocks[1].StartAddr = F.BeginSite;
+  Low.Blocks[1].Ops.assign(BeginOp, AfterBegin);
+  Low.Blocks[2].StartAddr = F.BeginSite + 4;
+  Low.Blocks[2].Ops.assign(AfterBegin, Original.Ops.end());
+  Low.Blocks[0].Succs = {1};
+  Low.Blocks[1].Preds = {0};
+  Low.Blocks[1].Succs = {2};
+  Low.Blocks[2].Preds = {1};
+  ASSERT_TRUE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  auto Expired = Low;
+  auto &After = Expired.Blocks[2].Ops;
+  const auto SP = NdVar::reg(a64reg::SP, 8);
+  After.insert(After.begin(),
+               {NativeVoidFrameFixture::op(NdOp::INT_ADD, SP,
+                                           {SP, NdVar::cst(48, 8)}, 0x101c),
+                NativeVoidFrameFixture::op(NdOp::INT_SUB, SP,
+                                           {SP, NdVar::cst(48, 8)}, 0x101c)});
+  EXPECT_FALSE(restoresNativeSourceState(Expired, Arch::AArch64, Calls));
+  Low.Blocks[0].Succs.push_back(2);
+  Low.Blocks[2].Preds.push_back(0);
+  EXPECT_FALSE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  Low.Blocks[0].Succs = {1};
+  Low.Blocks[1].Succs = {3};
+  Low.Blocks[2].Preds = {3};
+  LowBlock Loop;
+  Loop.Id = 3;
+  Loop.StartAddr = 0x1080;
+  Loop.Preds = {1, 3};
+  Loop.Succs = {3, 2};
+  Loop.Ops = {NativeVoidFrameFixture::op(NdOp::INT_ADD,
+                                         NdVar::reg(a64reg::X10, 8),
+                                         {SP, NdVar::cst(16, 8)}, 0x1080),
+              NativeVoidFrameFixture::op(
+                  NdOp::COND_BR, {},
+                  {NdVar::cst(0x1080, 8), NdVar::reg(a64reg::X9, 1)}, 0x1084)};
+  Low.Blocks.push_back(Loop);
+  ASSERT_TRUE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  // The zero-iteration path keeps the token, but a backedge that writes one
+  // scratch byte must remove it from the fixed point before the final read.
+  Low.Blocks[3].Ops.insert(
+      Low.Blocks[3].Ops.end() - 1,
+      NativeVoidFrameFixture::op(NdOp::STORE, {},
+                                 {NdVar::reg(a64reg::X10, 8), NdVar::cst(0, 1)},
+                                 0x1080));
+  EXPECT_FALSE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+}
+
+TEST(NativeSourceHints, SwiftAccessEffectsRecheckScalarInferenceAndScratchABI) {
+  SwiftAccessEffectFixture F(0, true);
+  ASSERT_TRUE(F.med());
+  std::string Error;
+  ASSERT_TRUE(F.infer(Error)) << Error;
+  const auto Begin = swiftRuntimeSourceCallHint(F.Image, F.BeginSlot);
+  ASSERT_TRUE(Begin);
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    auto Effects = *F.effect(true);
+    auto &Scratch = *Effects.Scratch;
+    switch (Case) {
+    case 0:
+      Scratch.Parameter = 2;
+      break;
+    case 1:
+      Scratch.Bytes = 0;
+      break;
+    case 2:
+      Scratch.Bytes = 8;
+      break;
+    case 3:
+      Scratch.Condition->Parameter = 1;
+      break;
+    case 4:
+      Scratch.Condition->Parameter = 4;
+      break;
+    case 5:
+      Scratch.Condition->Values.clear();
+      break;
+    case 6:
+      Scratch.TheAction = SourceFrameScratchEffect::Action::Finish;
+      break;
+    case 7:
+      Effects.ReturnFrameOrExternal = SourceFrameReturnAlias{1, 24};
+      break;
+    case 8:
+      Effects.ReadOnlyFrameParameters[1] = 24;
+      break;
+    case 9:
+      for (unsigned I = 0; I < 17; ++I)
+        Scratch.Condition->Values.insert(I);
+      break;
+    case 10:
+      Scratch.Condition.reset();
+      break;
+    case 11:
+      Scratch.RetainedValues.insert(34);
+      break;
+    case 12:
+      Scratch.Condition->Values.erase(32);
+      break;
+    case 13:
+      Scratch.TheDomain = static_cast<SourceFrameScratchEffect::Domain>(99);
+      break;
+    }
+    EXPECT_FALSE(sourceFrameEffectsMatchABI(Effects, Begin->Signature)) << Case;
+  }
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    F.run();
+    for (auto &Block : F.med()->Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.Addr == F.BeginSite && Op.SourceCallHint) {
+          auto Binding =
+              std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+          if (Case == 0)
+            Binding->Signature.Parameters[2].Type =
+                NdType::makePtr(NdType::makeVoid());
+          if (Case == 1)
+            Binding->TargetName = "swift_release";
+          if (Case == 2)
+            Op.PreservesCallerSaved = true;
+          if (Case == 3)
+            Binding->WeakImport = true;
+          Op.SourceCallHint = std::move(Binding);
+        }
+    EXPECT_FALSE(F.infer(Error)) << Case << ": " << Error;
+  }
 }
