@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsProcessModules.h"
 
+#include "neverd/emulation/CPU.h"
+
 #include "llvm/ADT/StringExtras.h"
 
 #include <array>
