@@ -79,6 +79,17 @@ struct FrameFacts {
   std::set<uint64_t> NativeReturnSlots;
 };
 
+struct ControlMarginal {
+  uint32_t Field;
+  uint64_t Mask;
+  // A complete finite domain of one masked field. Separate domains impose
+  // no correlation; their product remains an overapproximation when a joint
+  // tuple set exceeds its bound. An absent domain denotes Top. Values are
+  // sorted by complete enumeration and by the masked union at a join.
+  std::vector<uint64_t> Values;
+  bool operator==(const ControlMarginal &) const = default;
+};
+
 struct Projection {
   uint32_t FrameResidue = 0;
   Constants Scalars;
@@ -89,6 +100,7 @@ struct Projection {
   FrameFacts Frame;
   FrameOrigins Origins;
   ControlRelation Controls;
+  std::vector<ControlMarginal> Marginals;
 };
 
 struct ContextKey {
@@ -253,6 +265,42 @@ bool joinControls(ControlRelation &Into, const ControlRelation &Incoming,
   return true;
 }
 
+bool joinMarginals(std::vector<ControlMarginal> &Into,
+                   const std::vector<ControlMarginal> &Incoming, uint32_t Limit,
+                   uint32_t &Widenings) {
+  std::vector<ControlMarginal> Joined;
+  for (const auto &Old : Into) {
+    const auto It =
+        std::lower_bound(Incoming.begin(), Incoming.end(), Old.Field,
+                         [](const auto &Column, uint32_t Field) {
+                           return Column.Field < Field;
+                         });
+    if (It == Incoming.end() || It->Field != Old.Field)
+      continue;
+    const uint64_t Mask = Old.Mask & It->Mask;
+    if (!Mask)
+      continue;
+    std::set<uint64_t> Values;
+    const auto Add = [&](const auto &Source) {
+      for (auto Value : Source) {
+        Values.insert(Value & Mask);
+        if (Values.size() > Limit)
+          return false;
+      }
+      return true;
+    };
+    if (!Add(Old.Values) || !Add(It->Values)) {
+      ++Widenings;
+      continue;
+    }
+    Joined.push_back({Old.Field, Mask, {Values.begin(), Values.end()}});
+  }
+  if (Into == Joined)
+    return false;
+  Into = std::move(Joined);
+  return true;
+}
+
 bool intersect(Projection &Into, const Projection &Incoming,
                uint32_t TupleLimit, uint32_t &Widenings) {
   bool Changed = intersectMap(Into.Scalars, Incoming.Scalars);
@@ -261,6 +309,8 @@ bool intersect(Projection &Into, const Projection &Incoming,
   Changed |= intersectMap(Into.Frame.AffineValues, Incoming.Frame.AffineValues);
   Changed |=
       joinControls(Into.Controls, Incoming.Controls, TupleLimit, Widenings);
+  Changed |=
+      joinMarginals(Into.Marginals, Incoming.Marginals, TupleLimit, Widenings);
   const auto OldUnsafe = Into.Origins.UnsafeScalars.size();
   Into.Origins.UnsafeScalars.insert(Incoming.Origins.UnsafeScalars.begin(),
                                     Incoming.Origins.UnsafeScalars.end());
@@ -1343,6 +1393,11 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
       Values.erase(Values.begin() + I - 1);
       ColumnDomains.erase(ColumnDomains.begin() + I - 1);
     }
+  // Each single-column proof is exhaustive even if their joint product is
+  // too large. Keep those independent facts before moving a varying domain.
+  // Unknown columns and unconstrained free factors have already been omitted.
+  for (size_t I = 0; I < ColumnDomains.size(); ++I)
+    Out.Marginals.push_back({Fields[I], Masks[I], ColumnDomains[I]});
   for (size_t I = 0; I < ColumnDomains.size(); ++I) {
     FirstTuple.push_back(ColumnDomains[I].front());
     if (ColumnDomains[I].size() > 1) {
@@ -1736,8 +1791,43 @@ bool Specializer::evaluate(int Id) {
   FrameOrigins Origins = Draft.Incoming.Origins;
   FrameFacts Frame = Draft.Incoming.Frame;
   SymExec Exec(Ctx, State);
-  const auto IncomingPredicate =
+  auto IncomingPredicate =
       controlPredicate(State, FrameRoot, Draft.Incoming.Controls);
+  const auto &Joint = Draft.Incoming.Controls;
+  for (const auto &Column : Draft.Incoming.Marginals) {
+    // Omit only a membership explicitly implied by every retained joint row.
+    const auto At = std::lower_bound(Joint.Fields.begin(), Joint.Fields.end(),
+                                     Column.Field);
+    if (At != Joint.Fields.end() && *At == Column.Field) {
+      const size_t Index = At - Joint.Fields.begin();
+      if ((Joint.Masks[Index] & Column.Mask) == Column.Mask &&
+          std::all_of(Joint.Tuples.begin(), Joint.Tuples.end(),
+                      [&](const auto &Row) {
+                        return std::binary_search(Column.Values.begin(),
+                                                  Column.Values.end(),
+                                                  Row[Index] & Column.Mask);
+                      }))
+        continue;
+    }
+    if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+      return fail(
+          SpecializationStatus::BudgetExceeded,
+          "control marginal predicate exceeded its symbolic-node budget");
+    auto Value = controlValue(State, FrameRoot, Column.Field);
+    Value = Ctx.mkAnd(Value, Ctx.mkConst(Ctx.width(Value), Column.Mask));
+    llvm::SmallVector<SymRef, 8> Cases;
+    for (auto Item : Column.Values) {
+      if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+        return fail(
+            SpecializationStatus::BudgetExceeded,
+            "control marginal predicate exceeded its symbolic-node budget");
+      Cases.push_back(Ctx.mkEq(Value, Ctx.mkConst(Ctx.width(Value), Item)));
+    }
+    IncomingPredicate = Ctx.mkAnd({IncomingPredicate, Ctx.mkOr(Cases)});
+  }
+  if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+    return fail(SpecializationStatus::BudgetExceeded,
+                "control marginal predicate exceeded its symbolic-node budget");
   Exec.assume(IncomingPredicate);
   if (Refinement.FrameMask)
     Exec.assume(

@@ -196,6 +196,8 @@ A complete dependency proof may skip enumeration of a full 64-bit `root + consta
 
 At capacity, finite-proof reuse replaces the least recently used records with eligible proofs that fit individually. Successful lookups refresh recency; duplicate stores, misses and rejected candidates do not. Evicted proofs may need to be established again. Only complete domains or proved domain-limit excesses are retained, and every new solver call still consumes the shared query budget.
 
+Recovery also retains complete finite domains for individual masked control fields. When a joint relation exceeds `MaxControlTuples`, these independent domains can still constrain a target without asserting correlations between fields. Joins union the masked values; an absent or overflowing domain is discarded in full. A changed domain reschedules its node even when the joint relation has already widened. Partial enumeration supplies no facts, and the existing field, tuple, symbolic-node and solver limits remain in force.
+
 <!-- i18n-section: execution-contract -->
 
 ## Default execution contract

@@ -86,6 +86,8 @@ Una prova completa delle dipendenze può omettere l’enumerazione di un valore 
 
 Quando raggiunge la capacità, la cache delle prove finite sostituisce i record usati meno di recente con prove ammissibili che entrano singolarmente. Gli accessi riusciti aggiornano l’ordine d’uso; salvataggi duplicati, mancate corrispondenze e candidati rifiutati non lo modificano. Le prove eliminate possono dover essere ricostruite. Si conservano solo domini completi o superamenti dimostrati del loro limite, e ogni nuova chiamata al risolutore consuma ancora il budget condiviso delle query.
 
+Il recupero conserva anche i domini finiti interamente dimostrati dei singoli campi di controllo mascherati. Se una relazione congiunta supera `MaxControlTuples`, questi domini indipendenti possono ancora vincolare un obiettivo senza affermare correlazioni tra campi. Le confluenze uniscono i valori proiettati con la maschera comune; un dominio assente o troppo grande viene scartato interamente. Una modifica del dominio riprogramma il nodo anche dopo l’ampliamento della relazione congiunta. Le enumerazioni parziali non forniscono fatti e restano validi i limiti esistenti su campi, tuple, nodi simbolici e risolutore.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione

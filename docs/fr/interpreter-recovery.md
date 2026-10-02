@@ -86,6 +86,8 @@ Une preuve complète des dépendances peut éviter l’énumération d’une val
 
 À capacité maximale, le cache de preuves finies remplace les enregistrements les moins récemment utilisés par des preuves admissibles qui tiennent chacune seules. Un accès réussi actualise cet ordre ; les stockages en double, les absences et les candidats rejetés ne le modifient pas. Une preuve évincée peut devoir être établie à nouveau. Seuls les domaines complets ou les dépassements de limite prouvés sont conservés, et chaque nouvel appel au solveur consomme toujours le budget de requêtes partagé.
 
+La récupération conserve aussi les domaines finis entièrement prouvés de chaque champ de contrôle masqué. Si une relation conjointe dépasse `MaxControlTuples`, ces domaines indépendants peuvent encore contraindre une cible sans affirmer de corrélation entre les champs. Les fusions réunissent les valeurs projetées sur le masque commun ; un domaine absent ou trop grand est abandonné intégralement. Toute modification de domaine reprogramme le nœud, même après élargissement de la relation conjointe. Une énumération partielle ne fournit aucun fait ; les limites existantes sur les champs, tuples, nœuds symboliques et solveurs restent applicables.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution

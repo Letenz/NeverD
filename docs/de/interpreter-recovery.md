@@ -87,6 +87,8 @@ Ein vollständiger Abhängigkeitsbeweis kann die Aufzählung eines vollständige
 
 Bei voller Kapazität ersetzt der Cache für endliche Beweise die am längsten ungenutzten Einträge durch zulässige Beweise, die jeweils allein hineinpassen. Treffer aktualisieren die Nutzungsreihenfolge; doppelte Speicherungen, Fehltreffer und abgelehnte Kandidaten nicht. Verdrängte Beweise müssen gegebenenfalls erneut erbracht werden. Nur vollständige Wertebereiche oder bewiesene Überschreitungen ihrer Grenze werden gespeichert; jeder neue Solveraufruf verbraucht weiterhin das gemeinsame Abfragebudget.
 
+Die Wiederherstellung bewahrt auch vollständig bewiesene endliche Wertebereiche einzelner maskierter Kontrollfelder. Überschreitet eine gemeinsame Relation `MaxControlTuples`, können diese unabhängigen Bereiche weiterhin ein Ziel einschränken, ohne Korrelationen zwischen Feldern zu behaupten. Zusammenführungen vereinigen die mit der gemeinsamen Maske projizierten Werte; fehlende oder zu große Bereiche werden vollständig verworfen. Änderungen eines Bereichs planen den Knoten auch nach einer Vergröberung der gemeinsamen Relation neu ein. Teilaufzählungen liefern keine Fakten; die bestehenden Grenzen für Felder, Tupel, symbolische Knoten und Solver bleiben wirksam.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag
