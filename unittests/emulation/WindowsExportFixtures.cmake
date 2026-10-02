@@ -57,6 +57,30 @@ foreach(_arch X64 AArch64)
       fixtures/WindowsExportCases.def "${_dir}/lookup-top.lib" "${_kernel}"
     VERBATIM)
   list(APPEND _export_outputs "${_dir}/export process.exe")
+  add_custom_command(OUTPUT "${_dir}/no-exports.exe" "${_dir}/no-exports.obj"
+    COMMAND ${_compile} -DEXPORT_NO_EXE_EXPORTS
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/windows_export_process.c" -o "${_dir}/no-exports.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /entry:entry /subsystem:console
+      "/machine:${_machine}" /base:0x140000000 /timestamp:0
+      "${_dir}/no-exports.obj" "${_dir}/lookup-top.lib" "${_kernel}"
+      "/out:${_dir}/no-exports.exe"
+    DEPENDS fixtures/windows_export_process.c fixtures/WindowsExportFixture.h
+      fixtures/WindowsExportCases.def "${_dir}/lookup-top.lib" "${_kernel}"
+    VERBATIM)
+  file(MAKE_DIRECTORY "${_dir}/direct")
+  add_custom_command(OUTPUT "${_dir}/direct/lookup-bridge.dll" "${_dir}/direct/bridge.obj"
+    COMMAND ${_compile} -DEXPORT_BRIDGE -DEXPORT_DIRECT
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/windows_export_dll.c" -o "${_dir}/direct/bridge.obj"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /dll /entry:DllMain /nodefaultlib /subsystem:console
+      "/machine:${_machine}" /base:0x180000000 /timestamp:0
+      "/def:${_windows_export_dir}/bridge.def"
+      "${_dir}/direct/bridge.obj" "${_dir}/lookup-leaf.lib" "${_kernel}"
+      "/out:${_dir}/direct/lookup-bridge.dll"
+    DEPENDS fixtures/windows_export_dll.c fixtures/WindowsExportFixture.h
+      fixtures/WindowsExportCases.def "${_windows_export_dir}/bridge.def"
+      "${_dir}/lookup-leaf.lib" "${_kernel}"
+    VERBATIM)
+  list(APPEND _export_outputs "${_dir}/no-exports.exe" "${_dir}/direct/lookup-bridge.dll")
 endforeach()
 add_custom_target(NeverDWindowsExportFixtures DEPENDS ${_export_outputs})
 foreach(_owner NeverDWindowsProcessTests NeverDProcessPublicTests)

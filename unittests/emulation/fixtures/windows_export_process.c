@@ -8,7 +8,12 @@ __declspec(dllimport) DWORD TopProbe(void);
 __declspec(dllimport) DWORD TopOrdinal(void);
 __declspec(dllimport) DWORD TopData;
 __declspec(dllimport) DWORD TopPID(void);
-__declspec(dllexport) DWORD ExeProbe(void) { return Seed; }
+#ifndef EXPORT_NO_EXE_EXPORTS
+__declspec(dllexport)
+#endif
+DWORD ExeProbe(void) {
+  return Seed;
+}
 static char LongName[MaxLookupName];
 static DWORD Observations[MissingCases], MissingIndex;
 static int Observe;
@@ -69,15 +74,21 @@ DWORD entry(void) {
   CHECK(((DWORD (*)(void))lookup(Leaf, (const char *)OrdinalOnly))() ==
         Seed + 1);
   CHECK(((DWORD (*)(void))Code)() == Seed);
+#ifndef EXPORT_NO_EXE_EXPORTS
   CHECK(lookup(GetModuleHandleW(0), OwnName) == (void *)&ExeProbe);
+#endif
   missing(Leaf, MissingName);
   missing(Leaf, WrongCaseName);
   missing(Leaf, EmptyName);
   missing(Leaf, (const char *)OrdinalHole);
   missing(Leaf, (const char *)OrdinalAbsent);
   missing(Leaf, 0);
+#ifdef EXPORT_NO_EXE_EXPORTS
+  missing(GetModuleHandleW(0), OwnName);
+  missing(GetModuleHandleW(0), (const char *)1);
+#endif
   if (Observe) {
-    output((const char *)Observations, sizeof(Observations));
+    output((const char *)Observations, MissingIndex * sizeof(DWORD));
     observeOrder(Leaf, Bridge, Top);
     output(Message, sizeof(Message) - 1);
     ExitProcess(ExitStatus);

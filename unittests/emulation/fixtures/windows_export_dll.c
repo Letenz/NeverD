@@ -6,6 +6,9 @@
 #include "WindowsExportFixture.h"
 int DllMain(void *, DWORD, void *);
 static void *volatile RelocatedEntry = (void *)&DllMain;
+#ifdef EXPORT_DIRECT
+__declspec(dllimport) DWORD Probe(void);
+#endif
 #if defined(EXPORT_LEAF)
 DWORD Value;
 DWORD Probe(void) { return Value; }
@@ -26,6 +29,10 @@ int DllMain(void *Image, DWORD Reason, void *Reserved) {
   Event = Reason ? BridgeAttach : BridgeDetach;
   if (Reason)
     CHECK(lookup(Image, DotName));
+#ifdef EXPORT_DIRECT
+  if (Reason)
+    CHECK(Probe() == Seed);
+#endif
 #else
   Event = Reason ? TopAttach : TopDetach;
   if (Reason)
