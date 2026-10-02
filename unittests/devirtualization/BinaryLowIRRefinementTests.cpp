@@ -85,6 +85,70 @@ TEST(BinaryLowIRRefinement, ActualResidualAndOriginalBytesAreBound) {
   EXPECT_EQ(Good.Certificate->Instructions[0].NativeBytes[1], 7);
 }
 
+TEST(BinaryLowIRRefinement, OverlappingEntriesKeepBothFeasibleBranchResults) {
+  for (uint8_t Branch : {0x74, 0x75}) {
+    // TEST ECX,ECX; JZ/JNZ second_mov; MOV EAX,0x7b8; RET; RET.
+    // second_mov starts inside the first MOV and returns 0xc3000007.
+    Program P({0x85, 0xc9, Branch, 1, 0xb8, 0xb8, 7, 0, 0, 0xc3, 0xc3});
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    refused(P.check(Recovery.Residual), Status::Unsupported);
+    P.Contract.AllowOverlappingNativeInstructions = true;
+    const auto Good = P.check(Recovery.Residual);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    ASSERT_EQ(Good.Certificate->Instructions.size(), 6u);
+    EXPECT_EQ(Good.Proof.OriginalPaths, 2u);
+    EXPECT_EQ(Good.Proof.CandidatePaths, 2u);
+    EXPECT_TRUE(
+        Good.Certificate->Relation.Contract.AllowOverlappingNativeInstructions);
+    for (uint64_t Value : {UINT64_C(0x7b8), UINT64_C(0xc3000007)}) {
+      auto Changed = Recovery.Residual;
+      bool Found = false;
+      for (auto &Block : Changed.Blocks)
+        for (auto &Op : Block.Ops)
+          // Recovery can propagate the immediate through later zero-extends.
+          // Change every data use for just this arm, not only a dead COPY.
+          if (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT)
+            for (unsigned I = 0; I != Op.NumInputs; ++I)
+              if (Op.Inputs[I].isConst() && Op.Inputs[I].Offset == Value) {
+                ++Op.Inputs[I].Offset;
+                Found = true;
+              }
+      ASSERT_TRUE(Found);
+      refused(P.check(Changed), Status::Different);
+    }
+    // The shared byte changes both native interpretations. Neither branch
+    // can be ignored merely because its entry is inside another instruction.
+    P.Image.Segments.front().Data[6] = 8;
+    refused(P.check(Recovery.Residual), Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, NativeOverlapOptionBindsDigestsAndRejectsLoopAPIs) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Strict = P.check(Recovery.Residual);
+  ASSERT_TRUE(Strict.proved()) << Strict.Proof.Diagnostic;
+  P.Contract.AllowOverlappingNativeInstructions = true;
+  const auto Finite = P.check(Recovery.Residual);
+  ASSERT_TRUE(Finite.proved()) << Finite.Proof.Diagnostic;
+  EXPECT_NE(Strict.Certificate->Relation.OriginalDigest,
+            Finite.Certificate->Relation.OriginalDigest);
+  EXPECT_NE(Strict.Certificate->Relation.InputDigest,
+            Finite.Certificate->Relation.InputDigest);
+  EXPECT_NE(Strict.Certificate->InputDigest, Finite.Certificate->InputDigest);
+  LowIRLoopRefinementPlan Plan;
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                         Recovery.Residual, P.Contract, Plan),
+          Status::Unsupported);
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  EXPECT_EQ(Inferred.Inference.Status, LowIRLoopInferenceStatus::Unsupported);
+  EXPECT_FALSE(Inferred.Inference.Plan);
+  refused(Inferred.Refinement, Status::Unsupported);
+}
+
 TEST(BinaryLowIRRefinement, UndefinedCopiesAndStackRemainObservable) {
   // xor eax,eax; pushfq; pop rcx; mov rdx,rcx; ret. AF remains observable in
   // both copied registers, the flags bank and the written push slot.

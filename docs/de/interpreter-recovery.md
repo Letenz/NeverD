@@ -247,6 +247,8 @@ die öffentliche API prüft beide Ergebnisse und meldet sie getrennt.
 
 Endliche Leseadressmengen, gemeinsame Kontrolltupel und die Anzahl der Kontrollfelder haben eigene Grenzen. Ein globales Limit für Solver-Abfragen sowie Limits pro Abfrage für Gatter, Konflikte, Propagationen und Besuche überwachter Literale begrenzen den Beweisaufwand; ein Limit für symbolische Knoten begrenzt das Ausdruckswachstum. Der JSON-Bericht enthält diese Budgets sowie `solverQueries` und `relationalWidenings`.
 
+`AllowOverlappingNativeInstructions` ist eine separate, standardmäßig deaktivierte Option für endliche native Unabhängigkeitsnachweise und Verfeinerung zu LowIR. Jeder Einstieg wird unabhängig dekodiert und geprüft; überlappende Befehlsbytes müssen mit allen bisherigen Befehls- und unveränderlichen Lesenachweisen einschließlich der Kandidatenzugriffe übereinstimmen. LowIR-Adressen des Kandidaten bleiben Marken und sind keine Byte-Nachweise. `MaxNativeInstructionBytes` beträgt standardmäßig 1048576 und berechnet vor dem Vergleich die vollständige Größe jedes neu geladenen Einstiegs einschließlich wiederholter Bytes. Erschöpftes Budget oder widersprüchliche Bytes verhindern ein Zertifikat. Option und Grenze sind im Nachweis-Hash gebunden. Statisches LowIR, induktive Schleifennachweise und Inferenz lehnen die Option auch bei einem leeren Schleifenplan ab; die exakte LLVM-API und CLI behalten ihre bisherigen Vorgaben.
+
 <!-- i18n-section: evidence -->
 
 ## Nachweise und Tests

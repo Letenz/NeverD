@@ -245,6 +245,8 @@ deux résultats.
 
 Les ensembles finis d’adresses de lecture, les tuples conjoints de contrôle et le nombre de champs de contrôle ont aussi des limites explicites. Un plafond global de requêtes au solveur et des plafonds par requête sur les portes, conflits, propagations et visites de littéraux surveillés bornent le travail de preuve ; le nombre de nœuds symboliques borne la croissance des expressions. Le rapport JSON contient ces budgets ainsi que `solverQueries` et `relationalWidenings`.
 
+`AllowOverlappingNativeInstructions` est une option distincte, désactivée par défaut, pour les preuves natives finies d’indépendance et de raffinement vers LowIR. Chaque entrée est décodée et vérifiée séparément ; les octets communs doivent correspondre à toutes les preuves antérieures d’instructions et de lectures immuables, y compris celles du candidat. Les adresses LowIR du candidat restent des étiquettes, pas des preuves d’octets. `MaxNativeInstructionBytes` vaut 1048576 par défaut et compte, avant comparaison, la taille entière de chaque nouvelle entrée, même les octets déjà partagés. L’épuisement du budget ou une contradiction interdit tout certificat. L’option et la limite sont liées au condensat de preuve. LowIR statique, preuves inductives de boucles et inférence refusent cette option, même avec un plan vide ; l’API LLVM exacte et la CLI conservent leurs valeurs par défaut.
+
 <!-- i18n-section: evidence -->
 
 ## Preuves et tests

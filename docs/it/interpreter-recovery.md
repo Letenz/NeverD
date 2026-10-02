@@ -243,6 +243,8 @@ pubblica verifica entrambi i risultati e ne segnala la differenza.
 
 Gli insiemi finiti di indirizzi di lettura, le tuple congiunte di controllo e il numero di campi di controllo hanno limiti espliciti. Un limite globale alle interrogazioni del risolutore e limiti per interrogazione a porte, conflitti, propagazioni e visite ai letterali sorvegliati delimitano il lavoro di prova; il limite ai nodi simbolici delimita la crescita delle espressioni. Il rapporto JSON include questi budget insieme a `solverQueries` e `relationalWidenings`.
 
+`AllowOverlappingNativeInstructions` è un’opzione separata, disattivata per impostazione predefinita, per prove native finite di indipendenza e raffinamento verso LowIR. Ogni ingresso viene decodificato e verificato separatamente; i byte condivisi devono concordare con tutte le prove precedenti di istruzioni e letture immutabili, comprese quelle del candidato. Gli indirizzi LowIR del candidato restano etichette, non prove sui byte. `MaxNativeInstructionBytes` vale 1048576 per impostazione predefinita e conteggia, prima del confronto, l’intera dimensione di ogni nuovo ingresso, inclusi i byte ripetuti. L’esaurimento del budget o byte contraddittori impediscono il certificato. L’opzione e il limite sono inclusi nel digest della prova. LowIR statico, prove induttive dei cicli e inferenza rifiutano l’opzione anche con un piano vuoto; l’API LLVM esatta e la CLI mantengono i valori predefiniti.
+
 <!-- i18n-section: evidence -->
 
 ## Evidenze e test
