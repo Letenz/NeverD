@@ -254,14 +254,22 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
       llvm::DenseMap<const llvm::Value *, unsigned> ExpansionCost;
       constexpr unsigned MaxForwardDepth = 8;
       constexpr unsigned MaxForwardCost = 32;
+      auto Expansion = [&](const llvm::Value *V) {
+        // A definition outside this local index may itself inline a large
+        // expression. Do not silently price an unmeasured instruction as a
+        // leaf, including when basic blocks appear out of dominance order.
+        if (llvm::isa<llvm::Instruction>(V) && !ExpansionCost.count(V))
+          return std::pair(MaxForwardDepth, MaxForwardCost);
+        return std::pair(ExpansionDepth.lookup(V),
+                         std::max(1u, ExpansionCost.lookup(V)));
+      };
       for (const auto &I : B) {
         unsigned Depth = 0, Cost = 1;
         for (const auto &Operand : I.operands()) {
-          Depth = std::max(Depth, ExpansionDepth.lookup(Operand.get()));
+          const auto [OperandDepth, OperandCost] = Expansion(Operand.get());
+          Depth = std::max(Depth, OperandDepth);
           // Count duplicate operands twice: printed expressions are trees.
-          Cost = std::min(
-              MaxForwardCost,
-              Cost + std::max(1u, ExpansionCost.lookup(Operand.get())));
+          Cost = std::min(MaxForwardCost, Cost + OperandCost);
         }
         if (!I.getType()->isVoidTy()) {
           ExpansionDepth[&I] = std::min(MaxForwardDepth, Depth + 1);
@@ -280,8 +288,8 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
           auto It = Stores.find(A);
           if (It != Stores.end() && It->second &&
               It->second->getType() == L->getType() &&
-              ExpansionDepth.lookup(It->second) < MaxForwardDepth &&
-              ExpansionCost.lookup(It->second) < MaxForwardCost) {
+              Expansion(It->second).first < MaxForwardDepth &&
+              Expansion(It->second).second < MaxForwardCost) {
             LocalLoadValues[L] = It->second;
             ExpansionDepth[L] = ExpansionDepth.lookup(It->second) + 1;
             ExpansionCost[L] = ExpansionCost.lookup(It->second) + 1;

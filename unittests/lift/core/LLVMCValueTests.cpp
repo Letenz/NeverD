@@ -96,6 +96,58 @@ TEST(LLVMCValues, EscapedByteStringsPreserveAdjacentDigitsWhenExecuted) {
   compileAndRun(Source);
 }
 
+TEST(LLVMCValues, CrossBlockStoredExpressionsKeepExpansionBounded) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("cross-block-home-expansion", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word}, false);
+  std::string Main = R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, 7, UINT64_MAX, UINT64_MAX / 3};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+)";
+  for (bool Reverse : {false, true})
+    for (bool Derived : {false, true}) {
+      const std::string Name = std::string("cross_block_") +
+                               (Reverse ? "reverse_" : "forward_") +
+                               (Derived ? "derived" : "direct");
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+      llvm::IRBuilder<llvm::NoFolder> B(Entry);
+      auto *Slot = B.CreateAlloca(Word, nullptr, "home");
+      llvm::Value *Value = B.CreateAdd(Function->getArg(0), B.getInt64(0));
+      for (unsigned I = 0; I < 32; ++I) {
+        auto *Next = llvm::BasicBlock::Create(Context, "next", Function);
+        if (Reverse)
+          Next->moveAfter(Entry);
+        B.CreateBr(Next);
+        B.SetInsertPoint(Next);
+        // Cover both a stored foreign definition and a local expression
+        // whose operand has not been measured by this block's index.
+        B.CreateStore(Derived ? B.CreateAdd(Value, B.getInt64(1)) : Value,
+                      Slot);
+        auto *Read = B.CreateLoad(Word, Slot);
+        Value = B.CreateAdd(Read, Read);
+      }
+      B.CreateRet(Value);
+      Main += "{ uint64_t expected = values[i];\n"
+              "for (unsigned n = 0; n < 32; ++n) expected = (expected + " +
+              std::to_string(Derived ? 1 : 0) +
+              ") * UINT64_C(2);\n"
+              "if (" +
+              Name + "(values[i]) != expected) return 1; }\n";
+    }
+  Main += "} return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  ASSERT_LT(Source.size(), 65536u);
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
 TEST(LLVMCValues, MutableHomesKeepBranchValuesAndEarlierReads) {
   llvm::LLVMContext Context;
   llvm::Module Module("mutable-home-joins", Context);
