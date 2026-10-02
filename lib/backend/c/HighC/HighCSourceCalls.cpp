@@ -205,13 +205,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.TargetName == "CGAffineTransformScale" ||
        Hint.TargetName == "CGAffineTransformRotate" ||
        Hint.TargetName == "CGAffineTransformConcat" ||
-       Hint.TargetName == "CATransform3DScale")) {
+       Hint.TargetName == "CATransform3DScale" ||
+       Hint.TargetName == "CGRectApplyAffineTransform")) {
     const auto Expected =
         darwinIndirectAffineTransformSignature(Opts.TheArch, Hint.TargetName);
     const auto Bytes =
-        Expected && Expected->ReturnType->Kind == NdTypeKind::Struct
-            ? Expected->ReturnType->Size
-            : 48;
+        darwinIndirectAffineTransformInputBytes(Opts.TheArch, Hint.TargetName);
     if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != Bytes || !Expected ||
         Hint.WeakImport || Hint.DoesNotReturn || Hint.Format ||
         !equalSourceABIs(Signature, *Expected))

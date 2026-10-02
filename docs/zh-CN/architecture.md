@@ -712,6 +712,8 @@ Darwin ARM64 的固定 C 调用也可通过隐藏的 x8 指针返回由恰好六
 
 精确的 arm64 QuartzCore 强导入 `CATransform3DScale` 使用同一有界变换桥接。128 字节输入指针位于 x0，三个 double 使用 d0–d2，x8 指向结果。HighC 在调用 SDK 前将完整输入复制为真正按值传递的记录，调用后写入全部十六个结果字段。O0/O2 执行覆盖输入与结果缓冲区分离及重叠两种情况、全部字段的位模式和边界保护。错误提供者、弱导入、失效宽度及其他 ABI 均被拒绝。
 
+精确的 arm64 CoreGraphics 强导入 `CGRectApplyAffineTransform` 将 x0 指向的 48 字节间接变换输入，与 d0–d3 中 32 字节的矩形输入和结果分别处理。桥接将变换的全部六个字段复制为真正按值传递的 SDK 参数；输入范围不会取自矩形结果的大小。O0/O2 执行验证浮点位模式、四个结果字段、别名缓冲区和边界保护。其他提供方、弱导入、被修改的载体或宽度以及 x86_64 仍被拒绝。
+
 UIKit 的目标/动作绑定按声明保留目标对象、`SEL` 和无符号 64 位 `UIControlEvents` 参数。`addTarget:action:forControlEvents:` 返回 void，`initWithTarget:action:` 返回对象。这些 arm64 事实要求精确 UIKit 提供者，并与嵌入声明一致。绑定注册调用不确立回调签名或 Block 生命周期。 `images` 和 `viewControllers` getter 同样要求一致的 UIKit 对象返回声明；完整设备与模拟器 AST 中的所有声明者均一致。
 
 运行时调用目录仅在准确导入的函数明确返回原参数指针时声明 `ReturnedArgument`。接收者分析先读取已声明的物理参数，再执行正常 ABI 寄存器清除，最后仅在返回值上恢复已有的接收者类型事实。SDK 会重新验证此效果；它不允许删除调用、所有权效果或内存访问。

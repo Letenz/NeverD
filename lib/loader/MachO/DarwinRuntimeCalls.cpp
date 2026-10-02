@@ -19,7 +19,8 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
   if (Architecture != Arch::AArch64 ||
       (Name != "CGContextConcatCTM" && Name != "CGAffineTransformTranslate" &&
        Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate" &&
-       Name != "CGAffineTransformConcat" && !Matrix))
+       Name != "CGAffineTransformConcat" &&
+       Name != "CGRectApplyAffineTransform" && !Matrix))
     return std::nullopt;
   SourceFunctionTypeHint Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
@@ -27,6 +28,14 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
   if (Name == "CGContextConcatCTM") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"context", Pointer}, {"transform", Pointer}};
+  } else if (Name == "CGRectApplyAffineTransform") {
+    // CGRect is a four-double HFA in d0..d3, independently of the six-double
+    // transform's indirect x0 input. The result also occupies d0..d3.
+    const auto Pair =
+        NdType::makeStruct({NdType::makeFloat(8), NdType::makeFloat(8)});
+    Signature.ReturnType = NdType::makeStruct({Pair, Pair});
+    Signature.Parameters = {{"rect", Signature.ReturnType},
+                            {"transform", Pointer}};
   } else {
     // The six-double affine and sixteen-double 3D transforms are not HFAs:
     // AAPCS64 passes the complete input via x0 and the result via the hidden
@@ -50,6 +59,20 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
   if (!assignDarwinFixedSourceABI(Signature, Architecture, Diagnostic))
     return std::nullopt;
   return Signature;
+}
+
+uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
+                                                 const std::string &Name) {
+  const auto Signature =
+      darwinIndirectAffineTransformSignature(Architecture, Name);
+  if (!Signature)
+    return 0;
+  // An affine input remains 48 bytes even when its result is void or CGRect.
+  // The larger matrix bridge returns the same complete record it accepts.
+  return Signature->ReturnLocation.Kind ==
+                 SourceABICarrierKind::IndirectResultPointer
+             ? Signature->ReturnType->Size
+             : 48;
 }
 
 std::optional<SourceCallTypeHint>
@@ -158,7 +181,8 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   // Other record imports continue through the ordinary declaration catalog.
   if (Name == "CGContextConcatCTM" || Name == "CGAffineTransformTranslate" ||
       Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate" ||
-      Name == "CGAffineTransformConcat" || Name == "CATransform3DScale") {
+      Name == "CGAffineTransformConcat" || Name == "CATransform3DScale" ||
+      Name == "CGRectApplyAffineTransform") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     const auto Signature =
         darwinIndirectAffineTransformSignature(Image.Arch, Name.str());
@@ -178,9 +202,8 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
     Result.TargetAddress = ImportSlot;
     Result.TargetName = Name.str();
-    Result.ByteCount = Signature->ReturnType->Kind == NdTypeKind::Struct
-                           ? Signature->ReturnType->Size
-                           : 48;
+    Result.ByteCount =
+        darwinIndirectAffineTransformInputBytes(Image.Arch, Name.str());
     Result.Signature = *Signature;
     return Result;
   }

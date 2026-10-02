@@ -1302,4 +1302,194 @@ TEST(DarwinIndirectRecordCalls,
             "  }\n  return mismatch;\n}\n";
   executeSource(Source);
 }
+
+TEST(DarwinIndirectRecordCalls,
+     RectangleTransformKeepsHFAAndIndirectInputIndependent) {
+  constexpr auto CoreGraphics =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  auto I = image("_CGRectApplyAffineTransform");
+  I.DynInfo.NeededLibs = {CoreGraphics};
+  I.DyldBindSlots.at(0x2180).Module = CoreGraphics;
+  const auto Hint = darwinRuntimeSourceCallHint(I, 0x2180);
+  ASSERT_TRUE(Hint);
+  const auto &Signature = Hint->Signature;
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  EXPECT_EQ(Hint->ByteCount, 48U);
+  ASSERT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Signature.ReturnType->Size, 32U);
+  ASSERT_EQ(Signature.ReturnComponents.size(), 4U);
+  ASSERT_EQ(Signature.Parameters.size(), 2U);
+  ASSERT_EQ(Signature.Parameters[0].Components.size(), 4U);
+  EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset, a64reg::X0);
+  for (size_t J = 0; J != 4; ++J) {
+    for (const auto &Carrier : {Signature.ReturnComponents[J],
+                                Signature.Parameters[0].Components[J]}) {
+      EXPECT_EQ(Carrier.Kind, SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Carrier.RegisterOffset, TRI.FPParamRegs[J]);
+      EXPECT_EQ(Carrier.ValueBytes, 8U);
+    }
+  }
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    auto Changed = I;
+    if (Mutation == 0)
+      Changed.Arch = Arch::X64;
+    else if (Mutation == 1)
+      Changed.DyldBindSlots.at(0x2180).Module = UIKit;
+    else if (Mutation == 2)
+      Changed.DyldBindSlots.at(0x2180).WeakImport = true;
+    else if (Mutation == 3)
+      Changed.DyldBindSlots.at(0x2180).Addend = 8;
+    else if (Mutation == 4)
+      Changed.IsRelocatable = true;
+    else if (Mutation == 5)
+      Changed.Bits = Bitness::Bits32;
+    else if (Mutation == 6)
+      Changed.ImportPtrSlots[0x2180] = "_CGRectApplyAffineTransform_extra";
+    else
+      Changed.ConflictingImportStorageSlots.insert(0x2180);
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+  }
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Double = NdType::makeFloat(8);
+  SourceFunctionTypeHint Entry;
+  Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Entry.ReturnType = NdType::makeInt(8, false);
+  Entry.Parameters = {{"output", Pointer}, {"transform", Pointer},
+                      {"x", Double},       {"y", Double},
+                      {"width", Double},   {"height", Double}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error));
+  LowFunc F;
+  F.Entry = 0x1200;
+  F.Name = "apply_rect";
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = F.Entry;
+  B.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                     {NdVar::reg(a64reg::X0, 8)}, 0x1200),
+           operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                     {NdVar::reg(a64reg::X1, 8)}, 0x1204),
+           operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1208)};
+  va_t Address = 0x120c;
+  for (size_t J = 0; J != 4; ++J) {
+    B.Ops.push_back(
+        operation(NdOp::INT_ADD, NdVar::reg(a64reg::X9, 8),
+                  {NdVar::reg(a64reg::X19, 8), NdVar::cst(8 * J, 8)}, Address));
+    Address += 4;
+    B.Ops.push_back(operation(
+        NdOp::STORE, {},
+        {NdVar::reg(a64reg::X9, 8), NdVar::reg(TRI.FPParamRegs[J], 8)},
+        Address));
+    Address += 4;
+  }
+  B.Ops.push_back(operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                            {NdVar::cst(0, 8)}, Address));
+  B.Ops.push_back(
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, Address + 4));
+  B.EndAddr = Address + 8;
+  F.Blocks = {B};
+  const std::map<va_t, SourceFunctionTypeHint> Entries{{F.Entry, Entry}};
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&I);
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Entries);
+  auto Med = Converter.convert(F, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  recoverCallAbi(Med, Arch::AArch64, {}, &I);
+  inferMedTypes(Med, Arch::AArch64);
+  auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+  unsigned Calls = 0;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      ASSERT_FALSE(E && E->Kind == ExprKind::Undef);
+      if (!E || E->Kind != ExprKind::Call)
+        return;
+      ++Calls;
+      ASSERT_TRUE(E->SourceCallHint);
+      EXPECT_EQ(E->Operands.size(), 2U);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*E, I, {}));
+      for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+        auto Wrong = std::make_shared<SourceCallTypeHint>(*Hint);
+        if (Mutation == 0)
+          Wrong->ByteCount = 32;
+        else if (Mutation == 1)
+          Wrong->Signature.Parameters[1].Location.RegisterOffset = a64reg::X1;
+        else if (Mutation == 2)
+          Wrong->Signature.Parameters[0].Components[3].Kind =
+              SourceABICarrierKind::IntegerRegister;
+        else if (Mutation == 3)
+          Wrong->Signature.ReturnComponents[3].RegisterOffset =
+              TRI.FPParamRegs[4];
+        else if (Mutation == 4)
+          Wrong->WeakImport = true;
+        else if (Mutation == 5)
+          Wrong->ByteCount = 0;
+        else
+          Wrong->Signature.ReturnLocation.Kind =
+              SourceABICarrierKind::IndirectResultPointer;
+        auto Changed = *E;
+        Changed.SourceCallHint = Wrong;
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, I, {})) << Mutation;
+      }
+    });
+  });
+  ASSERT_EQ(Calls, 1U);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  ASSERT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  const auto Record = typeToC(Signature.ReturnType);
+  Source +=
+      "\nstatic unsigned calls; static int mismatch;\n"
+      "static uint64_t rect_bits[4], transform_bits[6];\n" +
+      Record + " rect_probe(" + Record +
+      ", neverd_CGRectApplyAffineTransform_input) "
+      "__asm__(\"_CGRectApplyAffineTransform\");\n" +
+      Record + " rect_probe(" + Record +
+      " rect, neverd_CGRectApplyAffineTransform_input transform) {\n"
+      "  ++calls; uint64_t r[4], t[6], result_bits[4];\n"
+      "  memcpy(r, &rect, sizeof(r)); memcpy(t, &transform, sizeof(t));\n"
+      "  mismatch |= memcmp(r, rect_bits, sizeof(r)) != 0 || "
+      "memcmp(t, transform_bits, sizeof(t)) != 0;\n"
+      "  for (unsigned j = 0; j != 4; ++j)\n"
+      "    result_bits[j] = r[(j + 1) % 4] ^ t[j] ^ t[4] ^ t[5];\n  " +
+      Record +
+      " result; memcpy(&result, result_bits, sizeof(result)); "
+      "return result;\n}\n"
+      "int main(void) {\n"
+      "  static const uint64_t cases[] = {0, 0x8000000000000000ULL, "
+      "0x3ff0000000000000ULL, 0x7ff0000000000000ULL, "
+      "0xfff0000000000000ULL, 0x7ff8000000001234ULL, 1, "
+      "0x8000000000000001ULL};\n"
+      "  for (unsigned i = 0; i != 512; ++i) {\n"
+      "    for (unsigned j = 0; j != 4; ++j)\n"
+      "      rect_bits[j] = cases[(i + j) % 8] ^ ((uint64_t)(i / 8) << 8);\n"
+      "    for (unsigned j = 0; j != 6; ++j)\n"
+      "      transform_bits[j] = cases[(i + j + 3) % 8] ^ "
+      "((uint64_t)(i / 8) << 16) ^ j;\n"
+      "    double rect[4]; memcpy(rect, rect_bits, sizeof(rect));\n"
+      "    uint64_t input[8], output[6];\n"
+      "    memset(input, 0xa5, sizeof(input));\n"
+      "    memset(output, 0xa5, sizeof(output));\n"
+      "    memcpy(input + 1, transform_bits, sizeof(transform_bits));\n"
+      "    if (apply_rect(output + 1, input + 1, "
+      "rect[0], rect[1], rect[2], rect[3])) return 1;\n"
+      "    if (memcmp(input + 1, transform_bits, sizeof(transform_bits))) "
+      "return 2;\n"
+      "    if (apply_rect(input + 1, input + 1, "
+      "rect[0], rect[1], rect[2], rect[3])) return 3;\n"
+      "    for (unsigned j = 0; j != 4; ++j)\n"
+      "      if (input[j + 1] != (rect_bits[(j + 1) % 4] ^ "
+      "transform_bits[j] ^ transform_bits[4] ^ transform_bits[5]) || "
+      "output[j + 1] != input[j + 1]) return 4;\n"
+      "    if (input[5] != transform_bits[4] || "
+      "input[6] != transform_bits[5] || calls != (i + 1) * 2 || "
+      "input[0] != 0xa5a5a5a5a5a5a5a5ULL || input[7] != input[0] || "
+      "output[0] != input[0] || output[5] != input[0]) return 5;\n"
+      "  }\n  return mismatch;\n}\n";
+  executeSource(Source);
+}
 } // namespace
