@@ -12113,6 +12113,50 @@
         {
           "runner": "gtest",
           "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.DisjointSumsDoNotInventCarryDependencies",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.DisjointMaskedSumsRetainConstantsAndUnknownCarries",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.SumMasksBoundWideShiftAmountsAndKeepWideFallback",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.AdditiveCarrierRetainsReachableCarryTargets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
           "filter": "ControlStateRecovery.FiniteSubwordCannotHideAMissingTargetOrFreeSelector",
           "platforms": [

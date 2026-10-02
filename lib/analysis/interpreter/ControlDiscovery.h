@@ -47,7 +47,7 @@ struct ControlDiscovery {
   std::vector<ControlRegisterDemand> RegisterRanges;
   std::vector<ControlFrameDemand> FrameSlots;
   /// Charged unique expression/slice work items, inspected origin records,
-  /// and 64-bit words processed by constant-mask and multiplier scans.
+  /// and operands/64-bit words inspected by bounded structural mask scans.
   uint64_t Visited = 0;
 };
 
@@ -59,7 +59,9 @@ std::optional<uint64_t> frameRelativeOffset(const symbolic::SymContext &Ctx,
 
 /// Gather persistent input locations needed by Value without changing State
 /// or its context. Structural and bitwise operations, constant shifts and
-/// modular low-prefix arithmetic retain bounded bit demands; other operations
+/// modular low-prefix arithmetic retain bounded bit demands. Sums up to 64
+/// bits can retain upper slices when disjoint possible-one masks prove no
+/// carry; wider or uncertain sums keep their low prefix. Other operations
 /// conservatively visit complete operands. Only structured
 /// entry-register inputs and exact root-relative memory inputs are nominated.
 /// Memory input birth is distinct from later loads of equal/forwarded values.

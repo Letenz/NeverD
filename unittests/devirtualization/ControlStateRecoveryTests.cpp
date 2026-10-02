@@ -829,33 +829,40 @@ SpecializationOptions mixedCarrierOptions(bool Frame, llvm::endianness Order) {
 } // namespace
 
 TEST(ControlStateRecovery, MixedCarrierKeepsFiniteSubwordAndRuntimePayload) {
-  for (bool Frame : {false, true})
-    for (bool High : {false, true})
-      for (bool RootPayload : {false, true})
-        for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
-          auto Provider = makeMixedCarrierProgram(Frame, true, High);
-          auto Options = mixedCarrierOptions(Frame, Order);
-          if (RootPayload) {
-            auto Producer = Provider.Code.at(Entry).Ops;
-            Producer[2].Inputs[0] = r(FrameRegister);
-            Provider.Code.erase(Entry);
-            Provider.add(Entry, Producer);
-            Options.FrameBaseRegister =
-                symbolic::SymRegisterRange{FrameRegister, 8};
-          }
-          const auto Result = specializeInterpreter(Provider, {Entry}, Options);
-          ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
-          for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
-            for (uint64_t Payload :
-                 {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL}) {
-              const auto Mixed =
-                  High ? ((Input & 1) << 32) | (Payload & UINT32_MAX)
-                       : (Input & 1) | ((Payload & UINT32_MAX) << 32);
-              EXPECT_EQ(run(Result.Residual, Input, Payload,
-                            {{FrameRegister, Payload}}, Order),
-                        Mixed ^ (91 + (Input & 1)));
+  for (auto Packing : {NdOp::INT_XOR, NdOp::INT_ADD})
+    for (bool Frame : {false, true})
+      for (bool High : {false, true})
+        for (bool RootPayload : {false, true})
+          for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+            SCOPED_TRACE(static_cast<unsigned>(Packing));
+            SCOPED_TRACE(Frame);
+            SCOPED_TRACE(High);
+            SCOPED_TRACE(RootPayload);
+            auto Provider = makeMixedCarrierProgram(Frame, true, High);
+            Provider.Code.at(Entry).Ops[4].Opcode = Packing;
+            auto Options = mixedCarrierOptions(Frame, Order);
+            if (RootPayload) {
+              auto Producer = Provider.Code.at(Entry).Ops;
+              Producer[2].Inputs[0] = r(FrameRegister);
+              Provider.Code.erase(Entry);
+              Provider.add(Entry, Producer);
+              Options.FrameBaseRegister =
+                  symbolic::SymRegisterRange{FrameRegister, 8};
             }
-        }
+            const auto Result =
+                specializeInterpreter(Provider, {Entry}, Options);
+            ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+            for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+              for (uint64_t Payload :
+                   {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL}) {
+                const auto Mixed =
+                    High ? ((Input & 1) << 32) | (Payload & UINT32_MAX)
+                         : (Input & 1) | ((Payload & UINT32_MAX) << 32);
+                EXPECT_EQ(run(Result.Residual, Input, Payload,
+                              {{FrameRegister, Payload}}, Order),
+                          Mixed ^ (91 + (Input & 1)));
+              }
+          }
 }
 
 TEST(ControlStateRecovery,
@@ -876,6 +883,29 @@ TEST(ControlStateRecovery,
       EXPECT_TRUE(Result.Origins.empty());
       EXPECT_TRUE(Result.Reads.empty());
     }
+}
+
+TEST(ControlStateRecovery, AdditiveCarrierRetainsReachableCarryTargets) {
+  for (bool Frame : {false, true}) {
+    auto Provider = makeMixedCarrierProgram(Frame);
+    auto Producer = Provider.Code.at(Entry).Ops;
+    Producer[2].Inputs[0] = r(FrameRegister);
+    Producer[4].Opcode = NdOp::INT_ADD;
+    Producer.insert(
+        Producer.begin() + 5,
+        operation(NdOp::INT_ADD, r(ValueRegister), {r(ValueRegister), c(1)}));
+    Provider.Code.erase(Entry);
+    Provider.add(Entry, Producer);
+    auto Options = mixedCarrierOptions(Frame, llvm::endianness::little);
+    Options.FrameBaseRegister = symbolic::SymRegisterRange{FrameRegister, 8};
+    // Low root bits all one and selector one carry into the missing third
+    // target. The upper selector cannot be reused as a two-value domain.
+    const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+    EXPECT_FALSE(Result.complete());
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
 }
 
 TEST(ControlStateRecovery, LaterPredecessorInvalidatesFiniteSubwordFacts) {

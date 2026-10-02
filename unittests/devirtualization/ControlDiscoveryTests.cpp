@@ -561,6 +561,137 @@ TEST(ControlDiscovery, ModularArithmeticIncludesCarryInputsButNotHigherBits) {
   }
 }
 
+TEST(ControlDiscovery, DisjointSumsDoNotInventCarryDependencies) {
+  for (unsigned Width : {8U, 16U, 32U, 64U})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      SCOPED_TRACE(Width);
+      SymContext Ctx;
+      SymState State(Ctx, Order);
+      const unsigned Half = Width / 2;
+      const auto Root = Ctx.mkFreshVar(64, "frame");
+      const auto Low = Ctx.mkZExt(Ctx.mkExtract(Root, 0, Half), Width);
+      const auto Input = State.read(SymSpace::Register, 24, Width / 8);
+      const auto High = Ctx.mkShl(Input, Ctx.mkConst(Width, Half));
+      const auto Sum = Ctx.mkAdd(Low, High);
+      const auto Slice = Ctx.mkExtract(Sum, Half, Half);
+      const auto R = gatherControlDependencies(State, Slice, Root, 512);
+      ASSERT_EQ(R.Status, ControlDiscoveryStatus::Complete);
+      ASSERT_TRUE(R.FrameRootBits);
+      EXPECT_EQ(*R.FrameRootBits, 0U);
+      ASSERT_EQ(R.RegisterRanges.size(), 1U);
+      const unsigned Bytes = (Half + 7) / 8;
+      EXPECT_EQ(
+          R.RegisterRanges[0].Offset,
+          24U + (Order == llvm::endianness::little ? 0 : Width / 8 - Bytes));
+      EXPECT_EQ(R.RegisterRanges[0].Bytes, Bytes);
+      EXPECT_EQ(R.RegisterRanges[0].DemandedBits, (uint64_t{1} << Half) - 1);
+      const auto Payload = gatherControlDependencies(
+          State, Ctx.mkExtract(Sum, 0, Half), Root, 512);
+      ASSERT_TRUE(Payload.FrameRootBits);
+      EXPECT_EQ(*Payload.FrameRootBits, (uint64_t{1} << Half) - 1);
+      EXPECT_TRUE(Payload.RegisterRanges.empty());
+      const auto Carry = gatherControlDependencies(
+          State,
+          Ctx.mkExtract(Ctx.mkAdd(Sum, Ctx.mkConst(Width, 1)), Half, Half),
+          Root, 512);
+      ASSERT_TRUE(Carry.FrameRootBits);
+      EXPECT_EQ(*Carry.FrameRootBits, (uint64_t{1} << Half) - 1);
+      const auto Exact =
+          gatherControlDependencies(State, Slice, Root, R.Visited);
+      EXPECT_EQ(Exact.Status, ControlDiscoveryStatus::Complete);
+      for (uint64_t Budget = 0; Budget < R.Visited; ++Budget) {
+        const auto Short =
+            gatherControlDependencies(State, Slice, Root, Budget);
+        EXPECT_EQ(Short.Status, ControlDiscoveryStatus::BudgetExceeded);
+        EXPECT_TRUE(Short.RegisterRanges.empty());
+        EXPECT_TRUE(Short.FrameSlots.empty());
+        EXPECT_FALSE(Short.FrameRootBits);
+      }
+    }
+}
+
+TEST(ControlDiscovery, DisjointMaskedSumsRetainConstantsAndUnknownCarries) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto Input = State.read(SymSpace::Register, 24, 8);
+  const auto Low = Ctx.mkAnd(Root, Ctx.mkConst(64, 255));
+  const auto High = Ctx.mkMul(Input, Ctx.mkConst(64, uint64_t{1} << 32));
+  const auto Packed =
+      Ctx.mkAdd(Ctx.mkAdd(Low, High), Ctx.mkConst(64, 1U << 16));
+  const auto R = gatherControlDependencies(State, Ctx.mkExtract(Packed, 32, 32),
+                                           Root, 512);
+  ASSERT_EQ(R.Status, ControlDiscoveryStatus::Complete);
+  ASSERT_TRUE(R.FrameRootBits);
+  EXPECT_EQ(*R.FrameRootBits, 0U);
+  ASSERT_EQ(R.RegisterRanges.size(), 1U);
+  EXPECT_EQ(R.RegisterRanges[0].Offset, 24U);
+  EXPECT_EQ(R.RegisterRanges[0].Bytes, 4U);
+  EXPECT_EQ(R.RegisterRanges[0].DemandedBits, UINT32_MAX);
+  const auto Third = Ctx.mkAnd(State.read(SymSpace::Register, 56, 8),
+                               Ctx.mkConst(64, UINT32_MAX));
+  const auto Overlap = Ctx.mkAdd(Ctx.mkAdd(Low, High), Third);
+  ASSERT_EQ(Ctx.operands(Overlap).size(), 3U);
+  ASSERT_EQ(Ctx.operands(Overlap).back(), Third);
+  const auto Carry = gatherControlDependencies(
+      State, Ctx.mkExtract(Overlap, 32, 32), Root, 512);
+  ASSERT_EQ(Carry.Status, ControlDiscoveryStatus::Complete);
+  ASSERT_TRUE(Carry.FrameRootBits);
+  EXPECT_EQ(*Carry.FrameRootBits, 255U);
+  for (auto Other : {Root, Ctx.mkMul(Input, Ctx.mkConst(64, 3)),
+                     Ctx.mkMul(Input, Ctx.mkConst(64, 12)),
+                     Ctx.mkSExt(State.read(SymSpace::Register, 48, 1), 64),
+                     Ctx.mkAShr(Input, Ctx.mkConst(64, 32)),
+                     Ctx.mkShl(Input, State.read(SymSpace::Register, 48, 8))}) {
+    const auto Unknown = gatherControlDependencies(
+        State, Ctx.mkExtract(Ctx.mkAdd(Low, Other), 32, 32), Root, 512);
+    ASSERT_TRUE(Unknown.FrameRootBits);
+    EXPECT_NE(*Unknown.FrameRootBits, 0U);
+  }
+}
+
+TEST(ControlDiscovery, SumMasksBoundWideShiftAmountsAndKeepWideFallback) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto Input = State.read(SymSpace::Register, 24, 8);
+  const auto High = Ctx.mkShl(Input, Ctx.mkConst(64, 32));
+  const auto Low = Ctx.mkLShr(Root, Ctx.mkConst(64, 56));
+  const auto Precise = gatherControlDependencies(
+      State, Ctx.mkExtract(Ctx.mkAdd(Low, High), 32, 32), Root, 512);
+  ASSERT_TRUE(Precise.FrameRootBits);
+  EXPECT_EQ(*Precise.FrameRootBits, 0U);
+
+  const auto WideAmount = Ctx.mkConst(llvm::APInt(8192, 56));
+  const auto WideShift = Ctx.mkLShr(Root, WideAmount);
+  ASSERT_EQ(Ctx.op(WideShift), SymOp::LShr);
+  const auto Slice = Ctx.mkExtract(Ctx.mkAdd(WideShift, High), 32, 32);
+  const auto Full = gatherControlDependencies(State, Slice, Root, 512);
+  ASSERT_EQ(Full.Status, ControlDiscoveryStatus::Complete);
+  EXPECT_GE(Full.Visited, 128U);
+  ASSERT_TRUE(Full.FrameRootBits);
+  EXPECT_NE(*Full.FrameRootBits, 0U);
+  const auto Exact =
+      gatherControlDependencies(State, Slice, Root, Full.Visited);
+  EXPECT_EQ(Exact.Status, ControlDiscoveryStatus::Complete);
+  for (uint64_t Budget : {uint64_t{8}, Full.Visited - 1}) {
+    const auto Short = gatherControlDependencies(State, Slice, Root, Budget);
+    EXPECT_EQ(Short.Status, ControlDiscoveryStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.RegisterRanges.empty());
+    EXPECT_TRUE(Short.FrameSlots.empty());
+    EXPECT_FALSE(Short.FrameRootBits);
+  }
+
+  const auto WideSum =
+      Ctx.mkAdd(Ctx.mkZExt(Root, 128),
+                Ctx.mkShl(Ctx.mkZExt(Input, 128), Ctx.mkConst(128, 64)));
+  const auto Conservative = gatherControlDependencies(
+      State, Ctx.mkExtract(WideSum, 64, 64), Root, 512);
+  ASSERT_EQ(Conservative.Status, ControlDiscoveryStatus::Complete);
+  ASSERT_TRUE(Conservative.FrameRootBits);
+  EXPECT_EQ(*Conservative.FrameRootBits, UINT64_MAX);
+}
+
 TEST(ControlDiscovery, ConstantMultipliersRetainOnlyRelevantLowPrefixes) {
   SymContext Ctx;
   SymState State(Ctx);
