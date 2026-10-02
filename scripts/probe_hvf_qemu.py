@@ -28,11 +28,22 @@ def main():
     qemu = shutil.which(args.qemu)
     if qemu is None:
         parser.error(f"QEMU executable not found: {args.qemu}")
-    # Original reset-vector program: MOV EAX,37; MOV DX,0x501; OUT DX,EAX;
-    # HLT; JMP to itself. Operand-size prefixes select EAX in 16-bit mode.
-    rom = bytearray(b"\xff" * 65536)
-    code = bytes.fromhex("66 b8 25 00 00 00 ba 01 05 66 ef f4 eb fe")
-    rom[0xfff0:0xfff0 + len(code)] = code
+    # Original BIOS: enter protected mode, initialize three identity page-table
+    # pages, enter 64-bit mode, then return 37 via the debug-exit I/O port.
+    # Assembled from probe_hvf_qemu_long_mode.s using Clang's ELF assembler and
+    # ld.lld --image-base=0 -Ttext=0xf0000 --oformat=binary.
+    rom = bytearray(65536)
+    code = bytes.fromhex(
+        "fafc2e660f0116c0000f20c06683c8010f22c066ea1b000f000800"
+        "66b810008ed88ec08ed08ee08ee8bc00800000bf00100000b9000c000031c0f3ab"
+        "c7050010000003200000c7050020000003300000c7050030000083000000"
+        "b8200600000f22e0b8001000000f22d8b9800000c031d2b8000900000f30"
+        "0f20c025ffffff9f0d330001800f22c0ea8f000f001800"
+        "b82500000066ba0105eff4ebfe0f1f4000"
+        "0000000000000000ffff0000009bcf00ffff00000093cf00ffff0000009baf00"
+        "1f00a0000f00")
+    rom[:len(code)] = code
+    rom[0xfff0:0xfff5] = bytes.fromhex("ea000000f0")
     bios = root / "original-reset.bin"
     bios.write_bytes(rom)
     version = subprocess.run([qemu, "--version"], check=True, text=True,
@@ -59,7 +70,7 @@ def main():
                     environment["DYLD_INSERT_LIBRARIES"] = str(args.trace.resolve())
                 process = subprocess.run(command, stdout=output,
                                          env=environment,
-                                         stderr=subprocess.STDOUT, timeout=15)
+                                         stderr=subprocess.STDOUT, timeout=30)
                 result["returncode"] = process.returncode
                 result["passed"] = process.returncode == summary["expected_exit_status"]
             except subprocess.TimeoutExpired:

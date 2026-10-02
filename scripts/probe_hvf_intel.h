@@ -55,7 +55,8 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
     return 1;
   if (probe_control(CPU, VMCS_CTRL_PIN_BASED, PIN_BASED_INTR | PIN_BASED_NMI) ||
       probe_control(CPU, VMCS_CTRL_CPU_BASED,
-                    CPU_BASED_SECONDARY_CTLS | CPU_BASED_HLT) ||
+                    CPU_BASED_SECONDARY_CTLS | CPU_BASED_HLT |
+                        CPU_BASED_TPR_SHADOW) ||
       probe_control(CPU, VMCS_CTRL_CPU_BASED2, CPU_BASED2_EPT) ||
       probe_control(CPU, VMCS_CTRL_VMENTRY_CONTROLS, VMENTRY_GUEST_IA32E) ||
       probe_control(CPU, VMCS_GUEST_CR0, 0x80010033) ||
@@ -111,7 +112,7 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
     printf("independent Intel probe: %s\n", Step ? "MTF" : "HLT");
     if (probe_control(CPU, VMCS_CTRL_CPU_BASED,
                       CPU_BASED_SECONDARY_CTLS | CPU_BASED_HLT |
-                          (Step ? CPU_BASED_MTF : 0)) ||
+                          CPU_BASED_TPR_SHADOW | (Step ? CPU_BASED_MTF : 0)) ||
         report("probe RIP", hv_vcpu_write_register(CPU, HV_X86_RIP, 0x4000)) ||
         report("probe RAX", hv_vcpu_write_register(CPU, HV_X86_RAX, 0)) ||
         report("probe RFLAGS", hv_vcpu_write_register(CPU, HV_X86_RFLAGS, 2)))
