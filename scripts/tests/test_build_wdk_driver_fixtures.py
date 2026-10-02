@@ -151,13 +151,13 @@ class WDKDriverFixtureTests(unittest.TestCase):
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
-        self.assertIn(formula, definitions.read_text())
+        self.assertIn(formula, definitions.read_text(encoding="utf-8"))
         guides = [fixtures.ROOT / "docs/testing.md"]
         guides.extend((fixtures.ROOT / "docs").glob("*/testing.md"))
         for guide in guides:
             with self.subTest(guide=guide):
                 paragraph = next(
-                    part for part in guide.read_text().split("\n\n")
+                    part for part in guide.read_text(encoding="utf-8").split("\n\n")
                     if "`NativeDriverTests.def`" in part
                 )
                 self.assertIn(formula, paragraph)
