@@ -6,6 +6,7 @@
 #ifndef NEVERD_SCRIPTS_PROBE_HVF_INTEL_H
 #define NEVERD_SCRIPTS_PROBE_HVF_INTEL_H
 #include <Hypervisor/hv_vmx.h>
+#include <cpuid.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -114,6 +115,14 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
     return 1;
   printf("initial XCR0=0x%llx\n", (unsigned long long)InitialXCR0);
   if (report("probe XCR0", hv_vcpu_write_register(CPU, HV_X86_XCR0, 3)))
+    return 1;
+  unsigned A, B, C, D;
+  if (!__get_cpuid_count(0xd, 0, &A, &B, &C, &D) || B > 32768 || B < 576)
+    return 1;
+  if (report("probe initial FP state",
+             hv_vcpu_read_fpstate(CPU, RAM + 32768, B)) ||
+      report("probe restore FP state",
+             hv_vcpu_write_fpstate(CPU, RAM + 32768, B)))
     return 1;
   for (unsigned Step = 0; Step < 2; ++Step) {
     printf("independent Intel probe: %s\n", Step ? "MTF" : "HLT");
