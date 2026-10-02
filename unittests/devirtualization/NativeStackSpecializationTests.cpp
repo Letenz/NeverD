@@ -75,12 +75,16 @@ public:
       } else if (Op.Opcode == NdOp::RETURN) {
         Insn.Origin.Control = LowInstructionControl::Return;
         Insn.Origin.ControlFlags = LowInstructionControlFlag::Return;
-      } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+      } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR ||
+                 Op.Opcode == NdOp::INDIR_BR) {
         Insn.Origin.Control = LowInstructionControl::Branch;
         Insn.Origin.ControlFlags = LowInstructionControlFlag::Branch;
         if (Op.Opcode == NdOp::COND_BR)
           Insn.Origin.ControlFlags |= LowInstructionControlFlag::Conditional;
-        Insn.Origin.Immediate = Op.Inputs[0].Offset;
+        if (Op.Opcode == NdOp::INDIR_BR)
+          Insn.Origin.ControlFlags |= LowInstructionControlFlag::Indirect;
+        else
+          Insn.Origin.Immediate = Op.Inputs[0].Offset;
       }
     }
     Code[Address] = std::move(Insn);
@@ -1314,6 +1318,126 @@ TEST(NativeStackSpecialization, RefinesGuardsBeforeRejectingAnUnsupportedPath) {
   auto Limited = specializeInterpreter(P, {0x100}, Options);
   EXPECT_EQ(Limited.Status, SpecializationStatus::BudgetExceeded);
   EXPECT_TRUE(Limited.Residual.Blocks.empty());
+}
+
+TEST(NativeStackSpecialization,
+     RefinesGuardsBeforeRejectingAnUnresolvedTarget) {
+  auto P = guardedDecoder(false);
+  P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_GT(Result.ControlRefinements, 0u);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{42}, UINT64_MAX}) {
+    const auto Run = execute(Result.Residual, Input);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, Input + 17);
+  }
+}
+
+TEST(NativeStackSpecialization, ReachableUnresolvedGuardIsNeverAssumedAway) {
+  auto P = guardedDecoder(true);
+  P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(NativeStackSpecialization,
+     GuardCannotHideAnUnresolvedTargetAfterABackedge) {
+  auto P = guardedDecoder(false);
+  P.add(0x300, {operation(NdOp::COPY, r(16), {c(2)}), branch(0x200)});
+  P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(NativeStackSpecialization, UnresolvedGuardRefinementHonorsBudgets) {
+  auto P = guardedDecoder(false);
+  P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  for (bool LimitVisits : {false, true}) {
+    auto Options = stackOptions();
+    Options.DiscoverControlState = true;
+    if (LimitVisits)
+      Options.MaxDiscoveryVisits = 1;
+    else
+      Options.MaxControlRefinements = 0;
+    const auto Result = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Result.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_LE(Result.DiscoveryVisits, Options.MaxDiscoveryVisits);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
+}
+
+TEST(NativeStackSpecialization, UnresolvedGuardRefinementHasExactBudgetBounds) {
+  auto P = guardedDecoder(false);
+  P.add(0xdead, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+  auto Options = stackOptions();
+  Options.DiscoverControlState = true;
+  const auto Baseline = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Baseline.complete()) << Baseline.Diagnostic;
+  ASSERT_GT(Baseline.DiscoveryVisits, 1u);
+  ASSERT_GT(Baseline.ControlRefinements, 0u);
+  // Completed graphs may spend optional discovery work after the last
+  // required refinement. Find adjacent rejected/successful visit budgets;
+  // total baseline consumption is not itself a minimum required budget.
+  uint64_t RejectedVisits = 1;
+  uint64_t AcceptedVisits = Baseline.DiscoveryVisits;
+  while (AcceptedVisits - RejectedVisits > 1) {
+    auto Probe = Options;
+    Probe.MaxDiscoveryVisits =
+        RejectedVisits + (AcceptedVisits - RejectedVisits) / 2;
+    const auto Result = specializeInterpreter(P, {0x100}, Probe);
+    if (Result.complete())
+      AcceptedVisits = Probe.MaxDiscoveryVisits;
+    else {
+      ASSERT_EQ(Result.Status, SpecializationStatus::BudgetExceeded);
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_TRUE(Result.Origins.empty());
+      EXPECT_TRUE(Result.Reads.empty());
+      RejectedVisits = Probe.MaxDiscoveryVisits;
+    }
+  }
+  Options.MaxDiscoveryVisits = AcceptedVisits;
+  Options.MaxControlRefinements = Baseline.ControlRefinements;
+  const auto Exact = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Exact.complete()) << Exact.Diagnostic;
+  EXPECT_LE(Exact.DiscoveryVisits, AcceptedVisits);
+  EXPECT_EQ(Exact.ControlRefinements, Baseline.ControlRefinements);
+  for (bool LimitVisits : {false, true}) {
+    SCOPED_TRACE(LimitVisits ? "discovery visits" : "refinement attempts");
+    auto Limited = Options;
+    if (LimitVisits) {
+      --Limited.MaxDiscoveryVisits;
+      Limited.MaxControlRefinements = stackOptions().MaxControlRefinements;
+    } else {
+      --Limited.MaxControlRefinements;
+      Limited.MaxDiscoveryVisits = stackOptions().MaxDiscoveryVisits;
+    }
+    const auto Result = specializeInterpreter(P, {0x100}, Limited);
+    EXPECT_EQ(Result.Status, SpecializationStatus::BudgetExceeded)
+        << "baseline visits=" << Baseline.DiscoveryVisits
+        << " refinements=" << Baseline.ControlRefinements
+        << " limited visits=" << Result.DiscoveryVisits
+        << " refinements=" << Result.ControlRefinements;
+    EXPECT_LE(Result.DiscoveryVisits, Limited.MaxDiscoveryVisits);
+    EXPECT_LE(Result.ControlRefinements, Limited.MaxControlRefinements);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
 }
 
 TEST(NativeStackSpecialization,

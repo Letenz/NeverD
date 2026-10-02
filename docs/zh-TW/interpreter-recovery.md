@@ -99,6 +99,8 @@ v6 API `neverd_devirtualize_source_v6()` 與 `neverd_devirtualize_machine_source
 
 控制與守衛精度細化優先於可選框架分區重試，必要的更細分區仍可使用。恢復先完成一個餘數的不動點，再開始下一個，但只有全部允許餘數完成後才發布結果。顯式入口對齊與分區域取交集，分派比較實際餘數。上下文、操作、節點及求解器預算仍有界，且在重試之間共用。
 
+無法解析的間接目標可能源於守衛條件的精度丟失。直接目標與延後生產者細化不再增加候選後，恢復會檢查能夠到達失敗位置的最近未決守衛。候選選擇與重試共用探索和細化預算。只有新一輪完整證明才能排除分支；確實可達的未知目標仍須失敗，且不發布殘餘程式碼或證明見證。
+
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
 如果條件將位址相依縮窄為位元組片段，細化還會把包含該片段、已追蹤的完整八位元組直接位址欄位列為上下文候選。原有窄欄位及其產生者位元遮罩保持不變，不提升無關的寬欄位。常數和相對入口的偏移仍須證明，所有上下文共用現有上限。

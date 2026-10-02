@@ -144,6 +144,8 @@ Las regresiones cubren particiones más finas, todos los residuos permitidos, di
 
 `ControlDiscovery.*` y `NativeStackSpecialization.*` cubren condiciones sobre los bits bajos de la raíz, dependencias de los bits altos y de toda la raíz, recorridos incompletos, presupuestos exactos e insuficientes y la conservación de evidencias de direcciones inmutables finitas.
 
+Las pruebas de guardas ante destinos no resueltos cubren una fase inválida inalcanzable, un destino desconocido alcanzable al entrar o tras una arista de retorno, límites exactos de refinamiento y presupuestos de descubrimiento adyacentes con éxito o agotamiento. Un rechazo no publica código residual, orígenes ni testigos de lectura. El trabajo opcional tras una recuperación completa no fija un presupuesto mínimo necesario.
+
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` comprueba uniones condicionadas de punteros en registros y ranuras del marco, ambos órdenes de bytes, el desbordamiento modular y raíces altas, la restauración de la pila y 120 bytes del marco. Los contraejemplos asociados rechazan punteros corruptos y ejercitan presupuestos exactos o una unidad menores para consultas, operaciones, evaluaciones y refinamientos, además del agotamiento del descubrimiento y los contextos.
 
 Los tests del observador cubren el rechazo anticipado, constantes, proyecciones vacías y la última consulta UNSAT. Las regresiones conservan las lecturas en ejecución tras un contraejemplo, revalidan dominios de direcciones en caché para otra extensión de lectura y rechazan certificados malformados sin publicar pruebas parciales.

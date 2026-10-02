@@ -218,6 +218,8 @@ The v6 APIs `neverd_devirtualize_source_v6()` and `neverd_devirtualize_machine_s
 
 Control and guard refinement precedes optional frame-partition retries; necessary finer partitions remain available. Recovery finishes each residue’s fixed point before starting the next, but publication requires every allowed residue to complete. Explicit entry alignment intersects the partition domain, and dispatch compares actual residues. Context, operation, node and solver budgets remain bounded and shared across retries.
 
+An unresolved indirect target can result from a widened guard. After direct target and deferred producer refinements stop adding candidates, recovery examines the nearest undecided guards that reach the failure. Selection and retries share the discovery and refinement budgets. Only a fresh complete proof can rule out an arm; reachable unknown targets still fail without publishing residual code or witnesses.
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,
