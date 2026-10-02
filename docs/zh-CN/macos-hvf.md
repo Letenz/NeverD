@@ -19,7 +19,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、ARM64 原生死循环中断及重试。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
+门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 12 项、Intel 10 项；完整门禁分别要求 16 项和 13 项。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
 手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
 GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
@@ -46,7 +46,7 @@ GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `script
 | 同时关闭测试与 Unicorn | CLI 构建成功，HVF 初始化与 ARM64 ELF 进程执行通过 |
 | 打包和硬件验收脚本单元测试 | 分别 10 项和 17 项通过 |
 | 实际进程和签名检查 | 原生/自动选择成功；异架构报告 `host_isa_mismatch`；缺少 entitlement 报告 `device_access`；独立 worker 与完整桌面包签名检查通过 |
-| Intel 分支 | 三个后端源文件通过 macOS x86-64 交叉编译；尚无 Intel 真机运行结果 |
+| Intel 分支 | 后端源文件通过 macOS x86-64 交叉编译；原生 Intel 门禁已暴露初始化及入口失败，尚未通过执行验收（见下文） |
 
 格式检查使用仓库指定的 clang-format 22.1.2；文档检查覆盖 231 个文件和 10 个语言目录。能力清单与 Python SDK 审计通过，CI 验收脚本相关的 92 项测试通过。
 
@@ -96,5 +96,12 @@ Linux KVM 和 Windows WHP 已分别在关闭 Unicorn 后通过 Darwin 专项门�
 验证范围见 [Darwin 宿主验证记录](darwin-emulation.md)。这证明了有限 Darwin 环境
 及其共享 CPU 路径，不能替代各后端更广泛的 CPU 回归。
 
-剩余 HVF 硬件验收是在原生 Intel Mac 上运行上面的 `--require-hvf` 门禁。
-当前仓库未配置自托管 runner。交叉编译及 ARM64 测试不能替代 Intel 的 VMCS、异常退出和 FP 状态运行验证。
+提交 `4a8f1f11a` 的 ARM64 完整门禁达到 841 项通过、0 失败、5,939 项跳过，
+当时的 13 个必需用例全部执行。后续加入中断清单后，当前 ARM64 必需项为 16 个，
+其中 12 项 transport 子集已在本机全部通过，无跳过。
+
+Intel 原生测试发现向框架拥有的 VMCS link pointer 写入会失败。移除该写入并保留
+CR0 掩码必置位后，状态安装通过，但提交 `193b891bf` 的
+[原生入口诊断](https://github.com/NeverSight/NeverD/actions/runs/37070495008)
+仍在来宾执行前返回 `HV_ERROR`，VM 指令错误为 12。当前继续修正 VM-entry 所有权，
+Intel 验收仍未完成。VM/vCPU 创建成功及原生 macOS 内核对照都不能替代这道失败的执行门禁。

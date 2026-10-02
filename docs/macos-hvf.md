@@ -123,9 +123,12 @@ It can also run locally with `--require-hvf --hvf-transport-only` on
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
 alongside another CPU, multi-CPU isolation, owner-thread routing, partial map
-rollback, queue cancellation, native loop interruption and retry. The raw loop
-interrupt regression currently runs on ARM64. Intel compilation alone does not
-establish Intel runtime correctness; its native gate remains required.
+rollback, queue cancellation, native loop interruption and retry. Both ISAs have
+required raw loop interruption and completion-error fixtures. These must observe
+an actual native return; cancellation before entry cannot satisfy the loop test.
+The transport profile requires 12 ARM64 or 10 Intel cases, and the full profile
+requires 16 or 13 respectively. Intel compilation alone does not establish Intel
+runtime correctness; its native gate remains required.
 
 Hardware-backed execution is not automatically faster for NeverD's checked
 instruction-by-instruction contract. Startup, dispatch, state transfer and
@@ -171,7 +174,7 @@ The packaged Cocoa GUI smoke and worker EVM load/disassembly passed. A signed
 probe loaded the bundle's engine and executed HVF initialization and the ARM64
 ELF fixture. This bundle's dependencies require macOS 15.0. Three backend translation units also
 compiled against the macOS x86-64 SDK, but Intel hardware execution remains
-unverified and requires the native gate above.
+unaccepted pending the native gate above.
 
 An alternating seven-sample microbenchmark, after warmup and excluding CPU
 creation, executed the same checked ARM64 loop on both backends: two setup
@@ -195,6 +198,19 @@ passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
 26 required x64 process cases, with 51 checks passed and zero failures overall.
 See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
 for the exact commits and scope.
+
+At `4a8f1f11a`, the Apple Silicon full gate passed 841 checks with zero failures,
+5,939 inapplicable cases skipped and all 13 then-required outcomes executed.
+The later required interruption inventory contains 16 ARM64 outcomes; its
+12-case transport subset also passed locally with no skips.
+
+The first hosted Intel execution found an invalid write to the framework-owned
+VMCS link pointer. Removing that write and preserving mandatory CR0 mask bits
+passed state installation, but the [native entry diagnostic](https://github.com/NeverSight/NeverD/actions/runs/37070495008)
+at `193b891bf` still failed before guest execution with `HV_ERROR` and
+VM-instruction error 12. Intel acceptance remains incomplete while VM-entry
+ownership is corrected; neither the successful VM/vCPU availability probe nor
+the independent native-kernel reference replaces this failed execution gate.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait

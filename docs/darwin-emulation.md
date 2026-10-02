@@ -136,7 +136,9 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 The native gate requires matching HVF cases to execute, including Darwin
 fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Each
 transport must be verified on its own host; the results below distinguish
-Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF remains unverified.
+Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF's native execution gate
+has exposed initialization/entry failures and has not passed yet; see the
+[HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
 on each platform supported by the host ISA: 39 cases on ARM64, or 26 on x64.
@@ -187,8 +189,8 @@ The rows overlap and are not additive. Native summaries record clean source,
 no missing registrations and no unexecuted required cases. Skips belong to
 foreign architectures, unavailable transports or the disabled software backend.
 The 65 Darwin checks include loader/VM tests, every ARM64 process workload and
-the original host-kernel reference. The full HVF gate currently requires 13
-checks on ARM64 or 12 on Intel, including the native reference; the focused
+the original host-kernel reference. With the later native-interruption inventory,
+the full HVF gate requires 16 checks on ARM64 or 13 on Intel, including the native reference; the focused
 Darwin gate separately requires all 39 or 26 process workloads.
 
 Evidence is under `build-hvf-native/hvf-release-evidence/`,
