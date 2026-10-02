@@ -111,7 +111,7 @@ def conformance_storage(ir, probes, metadata, protocol="StringProtocol"):
     """Read descriptors used by compiler-generated lazy witness accessors.
 
     The named probe must call a zero-argument accessor and pass its result to
-    the declared generic StringProtocol probe. The accessor must in turn pass
+    the declared generic protocol probe. The accessor must in turn pass
     direct descriptor and metadata globals to swift_getWitnessTable and cache
     the result with a release store. This extracts external storage identity;
     it grants no descriptor or witness-table layout.
@@ -128,7 +128,8 @@ def conformance_storage(ir, probes, metadata, protocol="StringProtocol"):
             r'(?: local_unnamed_addr)?(?: #[0-9]+)?', runtime[0]):
         raise ValueError("witness accessor has an unexpected runtime ABI")
     generic_name = {"StringProtocol": "neverd_string_protocol_probe",
-                    "Sequence": "neverd_sequence_probe"}.get(protocol)
+                    "Sequence": "neverd_sequence_probe",
+                    "CVarArg": "neverd_cvararg_probe"}.get(protocol)
     if not generic_name:
         raise ValueError("unsupported conformance probe")
     generic = re.findall(
@@ -209,7 +210,7 @@ def render(profiles, exports, version, compiler):
         if all(modules):
             lines.append("{" + ", ".join(json.dumps(x) for x in
                          (name, *("|".join(sorted(m)) for m in modules))) + "},")
-    return "\n".join(lines + ["// clang-format on", ""])
+    return "\n".join(lines + ["    // clang-format on", ""])
 
 
 def run(command):
@@ -249,6 +250,19 @@ def main():
             '@_cdecl("witness_SubstringSequence") public func '
             'witness_SubstringSequence() { '
             'observeSequence(Swift.Substring()) }\n')
+        # Keep protocol probes in separate compiler units: Swift can merge
+        # their identical String bodies into an indirect shared thunk. The
+        # extractor intentionally accepts only direct, authenticated calls.
+        foundation_source = Path(work) / 'foundation.swift'
+        foundation_source.write_text(
+            'import Foundation\n'
+            '@_cdecl("metadata_String") public func metadata_String() '
+            '-> UnsafeRawPointer { unsafeBitCast(Swift.String.self, '
+            'to: UnsafeRawPointer.self) }\n'
+            '@_silgen_name("neverd_cvararg_probe") '
+            'func observeCVarArg<T: CVarArg>(_ value: T)\n'
+            '@_cdecl("witness_StringCVarArg") public func '
+            'witness_StringCVarArg() { observeCVarArg(Swift.String()) }\n')
         profiles = []
         for index, target in enumerate(TARGETS):
             ir = Path(work) / f'{index}.ll'
@@ -256,25 +270,39 @@ def main():
                  '-sdk', str(sdk), '-emit-ir', str(source), '-o', str(ir)])
             text = ir.read_text()
             metadata = metadata_storage(text, probes)
+            foundation_ir = Path(work) / f'foundation-{index}.ll'
+            run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
+                 '-sdk', str(sdk), '-emit-ir', str(foundation_source),
+                 '-o', str(foundation_ir)])
+            foundation_text = foundation_ir.read_text()
+            foundation_metadata = metadata_storage(foundation_text,
+                                                   ['metadata_String'])
             profiles.append(metadata |
                             witness_storage(text, witnesses, metadata) |
                             conformance_storage(text, ['witness_StringProtocol'],
                                                 metadata) |
                             conformance_storage(text,
                                                 ['witness_SubstringSequence'], metadata,
-                                                "Sequence"))
+                                                "Sequence") |
+                            conformance_storage(foundation_text,
+                                                ['witness_StringCVarArg'],
+                                                foundation_metadata,
+                                                "CVarArg"))
     class TBDLoader(yaml.SafeLoader):
         pass
     TBDLoader.add_constructor('!tapi-tbd', lambda loader, node:
                               loader.construct_mapping(node, deep=True))
-    documents = list(yaml.load_all(
-        (sdk / 'usr/lib/swift/libswiftCore.tbd').read_text(), Loader=TBDLoader))
+    documents = []
+    for tbd in ('usr/lib/swift/libswiftCore.tbd',
+                'usr/lib/swift/libswiftFoundation.tbd',
+                'System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd'):
+        documents.extend(yaml.load_all((sdk / tbd).read_text(), Loader=TBDLoader))
     exports = [export_index(documents, target) for target in EXPORT_TARGETS]
     output = render(profiles, exports,
                     json.loads((sdk / 'SDKSettings.json').read_text())['Version'],
                     run([str(args.swiftc), '--version']).strip())
     count = sum(line.startswith('{') for line in output.splitlines())
-    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 2
+    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 3
     if count != expected:
         parser.error('not all standard storage queries have complete evidence '
                      f'({count}/{expected})')

@@ -2922,6 +2922,79 @@ struct SwiftTypeMetadataPairProof {
   std::string TypeReference;
 };
 
+// A descriptor's word/substitution indices are relative to its own mangling.
+// They cannot be concatenated into a surrounding generic type's spelling.
+// For this complete two-argument recipe, compare the declared type tree with
+// the two already authenticated descriptor identities and the literal String
+// argument. The emitted symbolic references remain unchanged.
+inline bool swiftStringKeyedGenericTypeMatches(
+    llvm::StringRef MangledType, llvm::StringRef Recipe,
+    const std::vector<SwiftTypeMetadataDescriptorReference> &Descriptors) {
+  if (Descriptors.size() != 2 || Recipe.size() != 14 ||
+      Descriptors[0].Offset != 0 || Descriptors[1].Offset != 8 ||
+      (Recipe[0] != 1 && Recipe[0] != 2) ||
+      (Recipe[8] != 1 && Recipe[8] != 2) || Recipe.substr(5, 3) != "ySS" ||
+      Recipe[13] != 'G')
+    return false;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  auto Parse = [&](llvm::StringRef Name) {
+    Name.consume_front("_");
+    return llvm::swiftDemangle(Name, Options);
+  };
+  const auto Type = Parse(MangledType);
+  const auto Outer = Parse(Descriptors[0].Symbol);
+  const auto Value = Parse(Descriptors[1].Symbol);
+  const auto String = Parse("$sSS");
+  const auto Shape = [](const llvm::SwiftDemangleNode &N, llvm::StringRef Kind,
+                        size_t Count) {
+    return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Count;
+  };
+  for (const auto *Parsed : {&Type, &Outer, &Value, &String})
+    if (!Parsed->Root || !Parsed->Error.empty() ||
+        !Shape(*Parsed->Root, "Global", 1))
+      return false;
+  for (const auto *Parsed : {&Outer, &Value})
+    if (!Shape(Parsed->Root->Children[0], "NominalTypeDescriptor", 1) ||
+        !Shape(Parsed->Root->Children[0].Children[0], "Type", 1))
+      return false;
+  const auto &OuterType = Outer.Root->Children[0].Children[0];
+  const auto &ValueType = Value.Root->Children[0].Children[0];
+  const auto &Generic = Type.Root->Children[0];
+  const auto &Kind = OuterType.Children[0].Kind;
+  const llvm::StringRef GenericKind = Kind == "Class" ? "BoundGenericClass"
+                                      : Kind == "Structure"
+                                          ? "BoundGenericStructure"
+                                      : Kind == "Enum" ? "BoundGenericEnum"
+                                                       : "";
+  if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
+      !Shape(Generic.Children[0], "Type", 1) ||
+      !Shape(Generic.Children[1], "TypeList", 2))
+    return false;
+  const auto &Arguments = Generic.Children[1].Children;
+  if (!Shape(Arguments[0], "Type", 1) || !Shape(Arguments[1], "Type", 1))
+    return false;
+  size_t Budget = 4096;
+  const auto Same = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
+                        const llvm::SwiftDemangleNode &B,
+                        unsigned Depth) -> bool {
+    if (!Budget-- || Depth > 64 || A.Kind != B.Kind || A.Text != B.Text ||
+        A.Index != B.Index || A.Children.size() != B.Children.size())
+      return false;
+    for (size_t I = 0; I < A.Children.size(); ++I)
+      if (!Self(Self, A.Children[I], B.Children[I], Depth + 1))
+        return false;
+    return true;
+  };
+  return Same(Same, Generic.Children[0], OuterType, 0) &&
+         Same(Same, Arguments[0].Children[0], String.Root->Children[0], 0) &&
+         Same(Same, Arguments[1], ValueType, 0);
+}
+
 inline std::optional<SwiftTypeMetadataPairProof>
 swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
                            va_t ReferenceAddress) {
@@ -3107,7 +3180,10 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
   }
-  if (Rebuilt.size() > 256 || Expanded != Base || !swiftMangledType(Expanded))
+  if (Rebuilt.size() > 256 ||
+      (Expanded == Base
+           ? !swiftMangledType(Expanded)
+           : !swiftStringKeyedGenericTypeMatches(Base, Rebuilt, Descriptors)))
     return std::nullopt;
 
   return SwiftTypeMetadataPairProof{

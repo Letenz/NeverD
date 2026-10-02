@@ -3187,6 +3187,150 @@ TEST(ObjCSourceBindings,
                                                                F.Reference));
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftStringKeyedNestedTypeFixture(
+    llvm::StringRef Outer = "_$ss18_DictionaryStorageCMn") {
+  SwiftTypeMetadataFixture F(Arch::AArch64, false, false, false, false, true);
+  const std::string Inner = "_$s3WMF23WikipediaSiteInfoLookupV09NamespaceD0VMn";
+  const std::string Base = Outer.drop_back(2).str() +
+                           "ySS3WMF23WikipediaSiteInfoLookupV13NamespaceInfoVG";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.Symbols[2].Name = Inner;
+  F.Image.Exports[0].Name = Inner;
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(F.DescriptorSlot, Outer.str(), 0,
+                                         "/usr/lib/swift/libswiftCore.dylib",
+                                         false));
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 14);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  std::memcpy(Type + 5, "ySS", 3);
+  Type[8] = 2;
+  llvm::support::endian::write32le(
+      Type + 9, uint32_t(F.NestedDescriptorSlot - (F.TypeReference + 9)));
+  Type[13] = 'G';
+  Type[14] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, NestedSwiftGenericIdentityComparesCompleteTypeTrees) {
+  for (const auto &Outer : {"_$ss18_DictionaryStorageCMn",
+                            "_$ss17_NativeDictionaryVMn", "_$ss6ResultOMn"}) {
+    auto F = swiftStringKeyedNestedTypeFixture(Outer);
+    for (const bool CompressedName : {false, true}) {
+      if (CompressedName) {
+        if (llvm::StringRef(Outer) != "_$ss18_DictionaryStorageCMn")
+          continue;
+        F.Image.Symbols[0].Name = "_$ss18_"
+                                  "DictionaryStorageCySS3WMF23WikipediaSiteInfo"
+                                  "LookupV09NamespaceF0VGMR";
+        F.Image.Symbols[1].Name = "_$ss18_"
+                                  "DictionaryStorageCySS3WMF23WikipediaSiteInfo"
+                                  "LookupV09NamespaceF0VGMd";
+      }
+      const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference);
+      ASSERT_TRUE(Proof) << Outer << CompressedName;
+      ASSERT_EQ(Proof->Descriptors.size(), 2U);
+      EXPECT_EQ(Proof->Descriptors[1].Symbol, F.Image.Symbols[2].Name);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      const auto Source = renderObjCSwiftTypeMetadataHelpers(
+          F.Image, Bound.SwiftTypeMetadataPairs, Names);
+      EXPECT_NE(
+          Source.find(
+              "__asm__(\"_$s3WMF23WikipediaSiteInfoLookupV09NamespaceD0VMn\")"),
+          std::string::npos);
+      EXPECT_EQ(Source.find("NamespaceF0"), std::string::npos);
+    }
+  }
+}
+
+TEST(ObjCSourceBindings,
+     NestedSwiftGenericIdentityRejectsDifferentTypesAndRecipes) {
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftStringKeyedNestedTypeFixture();
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    auto Base = llvm::StringRef(F.Image.Symbols[0].Name).drop_back(2).str();
+    const auto Replace = [&](const std::string &From, const std::string &To) {
+      const auto Pos = Base.find(From);
+      ASSERT_NE(Pos, std::string::npos);
+      Base.replace(Pos, From.size(), To);
+    };
+    switch (Mutation) {
+    case 0:
+      Replace("ySS", "ySi");
+      break;
+    case 1:
+      Replace("3WMF", "3WMG");
+      break;
+    case 2:
+      Replace("13NamespaceInfoV", "14NamespaceOtherV");
+      break;
+    case 3:
+      Replace("23WikipediaSiteInfoLookupV", "10OtherOwnerV");
+      break;
+    case 4:
+      Replace("s18_DictionaryStorageC", "s17_NativeDictionaryV");
+      break;
+    case 5:
+      F.Image.Segments[0].Data[0x87] = 'i';
+      break;
+    case 6:
+      F.Image.Segments[0].Data[0x24] = 13;
+      break;
+    case 7:
+      F.Image.Segments[0].Data[0x88] = 1;
+      break;
+    case 8:
+      F.Image.Symbols[2].Name =
+          "_$s3WMG23WikipediaSiteInfoLookupV09NamespaceD0VMn";
+      break;
+    case 9:
+      F.Image.Exports.clear();
+      break;
+    case 10:
+      F.Image.DyldBindSlots[F.DescriptorSlot].WeakImport = true;
+      break;
+    case 11:
+      F.Image.DataPtrRelocTargetOwners[F.NestedDescriptorSlot] = 0x2000;
+      break;
+    case 12:
+      Replace("13NamespaceInfoV", "13NamespaceInfoC");
+      break;
+    case 13:
+      Base.insert(Base.size() - 1, "Si");
+      break;
+    case 14:
+      F.Image.Symbols[2].Name = F.Image.Exports[0].Name =
+          "_$s3WMF23WikipediaSiteInfoLookupV09NamespaceZ0VMn";
+      break;
+    }
+    F.Image.Symbols[0].Name = Base + "MR";
+    F.Image.Symbols[1].Name = Base + "Md";
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
+
 TEST(ObjCSourceBindings,
      SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
   SwiftTypeMetadataFixture F(Arch::AArch64);
