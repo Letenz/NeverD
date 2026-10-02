@@ -811,6 +811,177 @@ TEST_F(SessionCAPITest,
 }
 
 TEST_F(SessionCAPITest,
+       InterpreterRecoveryV4RejectsTruncatedAndInvalidOptions) {
+  for (auto Recover :
+       {neverd_devirtualize_source_v4, neverd_devirtualize_machine_source_v4}) {
+    size_t SizeOnly = sizeof(size_t);
+    neverd_devirtualize_options_v3 V3Only{};
+    V3Only.base.base.struct_size = sizeof(V3Only);
+    neverd_devirtualize_options_v4 Partial{};
+    Partial.base.base.base.struct_size = sizeof(Partial) - 1;
+    for (const auto *Options :
+         {reinterpret_cast<const neverd_devirtualize_options_v4 *>(&SizeOnly),
+          reinterpret_cast<const neverd_devirtualize_options_v4 *>(&V3Only),
+          static_cast<const neverd_devirtualize_options_v4 *>(&Partial)}) {
+      const char *Report = nullptr;
+      EXPECT_EQ(Recover(Session, 0, Options, &Report), nullptr);
+      EXPECT_NE(takeString(Report).find("complete v4 structure"),
+                std::string::npos);
+    }
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      neverd_devirtualize_options_v4 Options{};
+      Options.base.base.base.struct_size = sizeof(Options);
+      const char *Expected = nullptr;
+      switch (Mutation) {
+      case 0:
+        Options.base.base.base.reserved = 1;
+        Expected = "invalid devirtualize flags";
+        break;
+      case 1:
+        Options.base.base.reserved = 1;
+        Expected = "invalid devirtualize v2 flags";
+        break;
+      case 2:
+        Options.base.reserved = 1;
+        Expected = "invalid devirtualize v3 flags";
+        break;
+      case 3:
+        Options.flags = 4;
+        Expected = "invalid devirtualize v4 flags";
+        break;
+      case 4:
+        Options.entry_frame_begin = -16;
+        Expected = "entry frame endpoints require the bounds flag";
+        break;
+      }
+      const char *Report = nullptr;
+      EXPECT_EQ(Recover(Session, 0, &Options, &Report), nullptr);
+      auto Parsed = llvm::json::parse(takeString(Report));
+      ASSERT_TRUE(static_cast<bool>(Parsed));
+      const auto *Object = Parsed->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getBoolean("complete"), false);
+      EXPECT_EQ(Object->getString("error"), Expected);
+    }
+    const char *Report = "previous";
+    EXPECT_EQ(Recover(nullptr, 0, nullptr, &Report), nullptr);
+    EXPECT_EQ(Report, nullptr);
+  }
+}
+
+TEST_F(SessionCAPITest, InterpreterRecoveryV4PreservesOldAndFutureLayouts) {
+  const auto Input = write("recovery-v4-layout.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v4, base), 0u);
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v4, max_chained_transfers),
+            sizeof(neverd_devirtualize_options_v3));
+  if (sizeof(void *) == 8)
+    EXPECT_EQ(sizeof(neverd_devirtualize_options_v4), 120u);
+  for (bool Machine : {false, true}) {
+    const auto V1 = Machine ? neverd_devirtualize_machine_source_v1
+                            : neverd_devirtualize_source_v1;
+    const auto V2 = Machine ? neverd_devirtualize_machine_source_v2
+                            : neverd_devirtualize_source_v2;
+    const auto V3 = Machine ? neverd_devirtualize_machine_source_v3
+                            : neverd_devirtualize_source_v3;
+    const auto V4 = Machine ? neverd_devirtualize_machine_source_v4
+                            : neverd_devirtualize_source_v4;
+    const auto Check = [&](auto Recover, const auto *Options, uint32_t Chain,
+                           bool Discovery) {
+      const char *Report = nullptr;
+      const auto Source = takeString(Recover(Session, Entry, Options, &Report));
+      const auto Evidence = takeString(Report);
+      ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+      auto Parsed = llvm::json::parse(Evidence);
+      ASSERT_TRUE(static_cast<bool>(Parsed));
+      const auto *Object = Parsed->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getBoolean("complete"), true);
+      EXPECT_EQ(Object->getInteger("maxChainedTransfers"), Chain);
+      EXPECT_EQ(Object->getBoolean("discoverControlState"), Discovery);
+      const auto *Bounds = Object->get("entryFrameBounds");
+      ASSERT_NE(Bounds, nullptr);
+      EXPECT_TRUE(Bounds->getAsNull().has_value());
+      EXPECT_EQ(Source.find("Numeric entry-RSP precondition"),
+                std::string::npos);
+    };
+    Check(V4, static_cast<const neverd_devirtualize_options_v4 *>(nullptr), 0,
+          true);
+    neverd_devirtualize_options_v4 Options{};
+    Options.base.base.base.struct_size = sizeof(Options);
+    Check(V4, &Options, 0, true);
+    Options.max_chained_transfers = 7;
+    Options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY;
+    Check(V4, &Options, 7, false);
+    Options.flags = ~uint32_t{0};
+    Options.entry_frame_begin = INT64_MIN;
+    Options.entry_frame_end = INT64_MAX;
+    Check(V1, &Options.base.base.base, 0, true);
+    Check(V2, &Options.base.base, 0, true);
+    Check(V3, &Options.base, 0, true);
+    struct FutureOptions {
+      neverd_devirtualize_options_v4 Known;
+      uint64_t Opaque;
+    } Future{};
+    Future.Known.base.base.base.struct_size = sizeof(Future);
+    Future.Known.max_chained_transfers = 5;
+    Future.Opaque = UINT64_MAX;
+    Check(V4, &Future.Known, 5, true);
+  }
+}
+
+TEST_F(SessionCAPITest, InterpreterRecoveryV4PublishesUncheckedBoundsInSource) {
+  const auto Input = write("recovery-v4-domain.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  for (bool LLVM : {false, true}) {
+    neverd_devirtualize_options_v4 Options{};
+    Options.base.base.base.struct_size = sizeof(Options);
+    Options.base.base.base.use_llvm = LLVM;
+    Options.flags = NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+    for (int64_t Begin : {int64_t{-32}, INT64_MIN}) {
+      Options.entry_frame_begin = Begin;
+      Options.entry_frame_end = 8;
+      const char *Report = nullptr;
+      const auto Source = takeString(neverd_devirtualize_machine_source_v4(
+          Session, Entry, &Options, &Report));
+      const auto Evidence = takeString(Report);
+      ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+      EXPECT_NE(Source.find("[" + std::to_string(Begin) + ",8)"),
+                std::string::npos);
+      EXPECT_NE(Source.find("not checked at runtime"), std::string::npos);
+      auto Parsed = llvm::json::parse(Evidence);
+      ASSERT_TRUE(static_cast<bool>(Parsed));
+      const auto *Object = Parsed->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      const auto *Bounds = Object->getObject("entryFrameBounds");
+      ASSERT_NE(Bounds, nullptr);
+      EXPECT_EQ(Bounds->getInteger("begin"), Begin);
+      EXPECT_EQ(Bounds->getInteger("end"), 8);
+      EXPECT_EQ(takeString(neverd_devirtualize_machine_source_v4(
+                    Session, Entry, &Options, nullptr)),
+                Source);
+      EXPECT_EQ(
+          neverd_devirtualize_source_v4(Session, Entry, &Options, nullptr),
+          nullptr);
+      EXPECT_NE(
+          takeString(neverd_last_error(Session)).find("machine-state API"),
+          std::string::npos);
+    }
+    for (int64_t End : {int64_t{8}, int64_t{7}}) {
+      Options.entry_frame_begin = 8;
+      Options.entry_frame_end = End;
+      EXPECT_EQ(neverd_devirtualize_machine_source_v4(Session, Entry, &Options,
+                                                      nullptr),
+                nullptr);
+      EXPECT_NE(takeString(neverd_last_error(Session)).find("frame"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST_F(SessionCAPITest,
        NativeMobileObserverSeesRawImageBeforeNormalizedPublication) {
   ScopedNativePhaseEnvironment Environment;
   ASSERT_EQ(Environment.set("1"), 0);

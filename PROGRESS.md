@@ -1,5 +1,177 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-02 09:11 Asia/Shanghai (UTC+08:00)** / **2026-10-02 01:11 UTC**
+
+This is a point-in-time daily issue/PR and static-review tracker. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md), and [contribution guidance](CONTRIBUTING.md) remain authoritative. Priorities are proposals, not assigned deadlines or a completion percentage.
+
+## Current snapshot
+
+The issue/PR snapshot precedes today's review PR. Source inspection is pinned to the observed dev commit, not to a moving branch.
+
+| Measure | Verified state |
+| --- | --- |
+| Open issues | 17; unchanged |
+| Open pull requests | 0; unchanged before this review PR |
+| PRs merged since 2026-10-01 01:02 UTC | 41: #285–319 and #321, #323–327 |
+| PRs closed without merge in that window | 2: #320 and #322 |
+| Ordinary issues updated/closed in the window | 0 / 0 |
+| Observed dev commit | [d87f27d2](https://github.com/NeverSight/NeverD/commit/d87f27d29ecb097d1fa8483006797dc4765c3972) |
+| Previous observed dev commit | [6eb2e5c6](https://github.com/NeverSight/NeverD/commit/6eb2e5c6423f7b2977568fe070c7cd334f503572) |
+| Change inventory | 266 commits; 521 changed file/submodule paths |
+| Bounded source review | 31 source, test and build artifacts, with sections listed below |
+| New confirmed defects | 1 test-portability defect; one-line correction committed |
+| New production-code defects established | 0 in the sampled scope |
+
+The [comparison](https://github.com/NeverSight/NeverD/compare/6eb2e5c6423f7b2977568fe070c7cd334f503572...d87f27d29ecb097d1fa8483006797dc4765c3972) was read across three commit pages (100 + 100 + 66), followed by an empty page. GitHub limits the comparison's changed-file list to 300 paths; the 521-path inventory therefore comes from comparing complete recursive Git trees (5,154 and 5,313 entries, neither truncated). Enumeration is not a claim that every changed path was code-reviewed.
+
+### Changes since the previous snapshot
+
+- Yesterday's [tracking PR #285](https://github.com/NeverSight/NeverD/pull/285) merged at 2026-10-01 03:53:57 UTC. Its PROGRESS.md content is identical to the version on the inspected dev tree; the complete previous tracker is preserved below.
+- [#319](https://github.com/NeverSight/NeverD/pull/319) centralized width-aware absent-SIB-index handling across scalar address construction, metadata auditing and EVEX validation.
+- [#308](https://github.com/NeverSight/NeverD/pull/308), [#311](https://github.com/NeverSight/NeverD/pull/311), [#313](https://github.com/NeverSight/NeverD/pull/313) and [#316](https://github.com/NeverSight/NeverD/pull/316) refined native x64 state ownership, XSAVE handling and physical x87 transition evidence.
+- [#317](https://github.com/NeverSight/NeverD/pull/317) expanded the native driver gate from the older 97 required CPU/driver outcomes to 197, including the reproducible WDK corpus. Its PR description's queued run has since failed before native execution; today's correction addresses the observed test assertion.
+- Other delivered work includes Android ARM64 native environments, external bytecode profiles, preferred-base PE evidence, loop refinement, bounded frame transfers and Objective-C/Swift recovery. These were inventoried, not comprehensively audited.
+
+## Static review
+
+**Mode:** Source, diff, caller, configuration and existing CI-log inspection only. No repository program, build, test, linter, formatter or script was executed. No workflow was manually dispatched or rerun.
+
+### Confirmed defect and correction
+
+**Test-portability defect:** [test_build_wdk_driver_fixtures.py](scripts/tests/test_build_wdk_driver_fixtures.py), `test_cmake_paths_preserve_spaces_and_reject_list_or_code_expansion`, compared the original path spelling with a cache entry that deliberately uses `Path.resolve()`.
+
+The historical [Windows WHP job](https://github.com/NeverSight/NeverD/actions/runs/36899322120/job/110494224787), at commit `9944433cc4593a59fe899f90c4a532306a4f9ed6`, failed this exact assertion: the temporary path used the short Windows user-directory spelling while the emitted path used its resolved long spelling. The script suite reported 25 tests with one failure. The subsequent native build/verification step was skipped. This is not evidence of an XSAVE or WHP execution failure.
+
+The same raw-path assertion was still present at today's pinned dev commit. [Fix 9b5b23ef](https://github.com/NeverSight/NeverD/commit/9b5b23efa35c577cdb22f6cd18eef7d73ac19e76) changes only the expected path to `image.resolve().as_posix()`. It retains the quoted-space assertion and the separate invalid-character rejection checks. Production canonicalization and validation are unchanged.
+
+**Verification:** Independently checked the producer/test contract and historical log, then remotely read back the fixed file and commit diff. The commit changes one line in one test file. The fix has not been executed or validated by a new Windows run; it is proposed on today's topic branch and is not merged.
+
+### Source coverage
+
+The following 31 artifacts were inspected at `d87f27d2`. Whole-file reads are distinguished from selected sections.
+
+**x86 SIB address semantics: 10 artifacts**
+
+- [X86LiftDetail.h](lib/lift/X86/X86LiftDetail.h): shared `isNoSibIndex` declaration and relevant PR patch
+- [X86Lifter.cpp](lib/lift/X86/X86Lifter.cpp): `isNoSibIndex`, `computeEA`, memory read/store callers, undefined-output memory audit, unmapped-register rejection and final sidecar publication
+- [X86LiftSIMDMemory.cpp](lib/lift/X86/X86LiftSIMDMemory.cpp): ordinary memory validation, raw SIB/tail checks, EVEX/VEX3 adapters and masked memory-load construction
+- [X86LiftSIMDMove.cpp](lib/lift/X86/X86LiftSIMDMove.cpp): masked memory-operand validation and full-vector move caller, including address construction and mask handling
+- [X86Regs.cpp](lib/lift/X86/X86Regs.cpp): general-register mapping and invalid-register fallback
+- [Decoder.cpp](lib/decode/Decoder.cpp): `liftToLow` dispatch and undefined-effects initialization
+- [X86Lifter.h](include/neverd/lift/X86Lifter.h): shared memory-intrinsic/address helpers
+- [X86_64_NoIndexAddressTests.cpp](unittests/lift/x86_64/X86_64_NoIndexAddressTests.cpp): all nine regression cases
+- [X86_64_EVEXMemoryBroadcastTests.cpp](unittests/lift/x86_64/X86_64_EVEXMemoryBroadcastTests.cpp): absent-index masked-broadcast/move and contradictory-metadata cases, plus their helpers
+- [unittests/lift/CMakeLists.txt](unittests/lift/CMakeLists.txt): dedicated no-index test-target registration
+
+**XSAVE/WHP state transfer: 19 artifacts, read in full**
+
+- [X64FPState.cpp](lib/emulation/arch/x86_64/X64FPState.cpp), [.h](lib/emulation/arch/x86_64/X64FPState.h), and [.def](lib/emulation/arch/x86_64/X64FPState.def)
+- [X64Machine.h](lib/emulation/arch/x86_64/X64Machine.h), [X64MachineProbe.cpp](lib/emulation/arch/x86_64/X64MachineProbe.cpp), and [X64MachineProbe.def](lib/emulation/arch/x86_64/X64MachineProbe.def)
+- [WhpXsaveState.h](lib/emulation/backends/whp/WhpXsaveState.h), [WhpXsaveRegisters.def](lib/emulation/backends/whp/WhpXsaveRegisters.def), [WhpProtocol.def](lib/emulation/backends/whp/WhpProtocol.def), and [WhpMachine.cpp](lib/emulation/backends/whp/WhpMachine.cpp)
+- [X64XsaveTests.cpp](unittests/emulation/X64XsaveTests.cpp), [X64XsaveCases.def](unittests/emulation/X64XsaveCases.def), [WhpXsaveTests.cpp](unittests/emulation/WhpXsaveTests.cpp), and [WhpHostFailureCases.def](unittests/emulation/WhpHostFailureCases.def)
+- [X64FPStateTests.cpp](unittests/emulation/X64FPStateTests.cpp), [X64FPCases.def](unittests/emulation/X64FPCases.def), and [X64MachineProbeTests.cpp](unittests/emulation/X64MachineProbeTests.cpp)
+- [X64StateTransitionTests.cpp](unittests/emulation/X64StateTransitionTests.cpp) and [X64StateTransitionCases.def](unittests/emulation/X64StateTransitionCases.def)
+
+**WDK assertion and producer: 2 artifacts, read in full**
+
+- [build_wdk_driver_fixtures.py](scripts/build_wdk_driver_fixtures.py): especially `cache_entry`, its build caller and publication
+- [test_build_wdk_driver_fixtures.py](scripts/tests/test_build_wdk_driver_fixtures.py): especially path spelling, quoted spaces and pre-resolution rejection tests
+
+Repository guidance, relevant architecture/testing sections, roadmap hardening scope, CI/mobile trigger and concurrency definitions, and the native CI configuration step were also inspected.
+
+### Findings in the production-code sample
+
+No new production-code correctness defect was established strongly enough for an automatic fix.
+
+- Absent SIB indices are width-specific; they do not contribute a scaled register term. Effective addresses retain 32-bit wrapping/zero-extension and separate FS/GS offsets from ordinary address provenance. Real R12 indices remain ordinary mapped registers. Raw EVEX tail validation checks the encoded index extension before accepting absent-index aliases.
+- Invalid pseudo-register bases or wrong-width pseudo-indices become unmapped register operands and are rejected transactionally in strict lifting. Existing tests cover address widths, all redundant scale encodings, loads/stores, relocation ownership, undefined sidecars, masked accesses and malformed metadata. These are descriptions of test source, not new test results.
+- Standard initial-SSE XSAVE packets retain and validate MXCSR; compacted initial-SSE packets reset it. Both clear XMM lanes. The codec stages the next state before publication and rejects unsupported layout bits, inconsistent lengths and truncated extension storage.
+- WHP capture stages XSAVE decode, named metadata reads, consistency checks and supplemented-state validation before publishing. The machine caller stages complete state around the transfer. x87 transition/cancellation fixtures retain exact physical-state assertions.
+
+**Limits:** The remaining changed paths, Objective-C/Swift pipeline, Android environment, general loop/refinement work, resource-cache concurrency, ARM64 transport and PE refactor were not source-audited in this pass. Static inspection does not establish runtime behavior, compilation/linking, formatting, race freedom, release readiness or complete ISA coverage.
+
+## Existing CI evidence
+
+**Exact-head CI snapshot: 2026-10-02 01:10 UTC**, for `d87f27d29ecb097d1fa8483006797dc4765c3972`.
+
+| Workflow | Observed state | Evidence |
+| --- | --- | --- |
+| CI | In progress; Linux, macOS and Windows building; optional native WHP job skipped | [36947225176](https://github.com/NeverSight/NeverD/actions/runs/36947225176) |
+| Mobile Decompilation | Success on Ubuntu, macOS and Windows | [36947225342](https://github.com/NeverSight/NeverD/actions/runs/36947225342) |
+| Mobile Real Applications | Pending | [36949181960](https://github.com/NeverSight/NeverD/actions/runs/36949181960) |
+| Push on dev | In progress | [36947225134](https://github.com/NeverSight/NeverD/actions/runs/36947225134) |
+| LLVM Style | Success | [36947225307](https://github.com/NeverSight/NeverD/actions/runs/36947225307) |
+| Code Quality: Push on dev | Success | [36947225199](https://github.com/NeverSight/NeverD/actions/runs/36947225199) |
+| Prebuilt LLVM Audit | Success | [36947225314](https://github.com/NeverSight/NeverD/actions/runs/36947225314) |
+| EVM Upstream Audit | Success | [36947225350](https://github.com/NeverSight/NeverD/actions/runs/36947225350) |
+
+Exact-head check runs: **16 total: 11 successful, 1 skipped, 4 in progress, 0 failed**. Legacy commit statuses are empty; their combined `pending` state alone is not a failure or an all-checks pass.
+
+The dev Actions collection created from **2026-10-01 01:02 UTC through 2026-10-02 01:03 UTC** contained **929 runs**, across ten pages (nine of 100, one of 29). Its **115 main CI runs comprise 114 cancelled and one in progress**; no completed green dev main CI run was observed in that window. This is an integration-evidence gap, not proof of a code failure. Yesterday's tracked [main CI](https://github.com/NeverSight/NeverD/actions/runs/36795886427) and [mobile run](https://github.com/NeverSight/NeverD/actions/runs/36795886438) both subsequently cancelled.
+
+### Native evidence must retain its scope
+
+The older [WHP run 36894495012](https://github.com/NeverSight/NeverD/actions/runs/36894495012), at `e7f205ab4ecb5a91646e8ea9ee8dd6b74ecb230a`, succeeded. Its [job log](https://github.com/NeverSight/NeverD/actions/runs/36894495012/job/110477966198) records **803 passed, 1,522 skipped, zero failed/missing/not-run**, and all **97 required native CPU/driver outcomes executed**. This is real earlier Windows evidence, not current-head or expanded-corpus acceptance.
+
+The later [197-outcome WDK/native run](https://github.com/NeverSight/NeverD/actions/runs/36899322120) failed the path assertion before native verification. Today's one-line fix addresses that blocker but does not prove the expanded run will pass. The optional native job is skipped on today's ordinary dev push. Native ARM64 runtime evidence remains explicitly unavailable in the reviewed documentation.
+
+## Today's top priorities
+
+### 1. Obtain uninterrupted exact-head integration evidence
+
+**Status:** Mobile fixtures now pass on the inspected head; the three-platform main CI is still building. The preceding 114 dev main CI runs in the collection were cancelled.
+
+**Next action:** Inspect the existing main CI's terminal platform/test outcomes, retaining exact commit identities and all skip/missing-test distinctions. If development supersedes the run, record the new integration gap rather than transferring a previous success.
+
+**Acceptance:** All three platform jobs finish for one identified integration commit, with required test execution audited. No manual dispatch/rerun is included in this static-only review.
+
+### 2. Validate the expanded native WDK gate after the path-test correction
+
+**Status:** The older 97-outcome native gate is green; the newer 197-outcome gate stopped before CPU verification. The canonical-path assertion correction is committed on today's review branch, unexecuted.
+
+**Next action:** Review the one-line test fix and later evaluate an authorized Windows native CPU/driver run for a commit containing it. Preserve the original canonicalization and invalid-path protections.
+
+**Acceptance:** Configuration passes, all 197 required native outcomes execute, and failed, missing or skipped required cases remain failures. The observed older 97-outcome run and portable XSAVE source coverage do not satisfy this larger gate.
+
+### 3. Finish mobile real-application qualification and reconcile issue criteria
+
+**Status:** Exact-head Mobile Decompilation is green; Mobile Real Applications is pending. The 17 open issues retain unchanged planning metadata: 14 epics, no milestones, and only [#12](https://github.com/NeverSight/NeverD/issues/12) assigned.
+
+**Next action:** Record the real-application producer/consumer identities and actual result. Map merged implementation and current evidence to [#101](https://github.com/NeverSight/NeverD/issues/101), [#104](https://github.com/NeverSight/NeverD/issues/104) and [#4](https://github.com/NeverSight/NeverD/issues/4), distinguishing delivered code from outstanding acceptance. The historical Windows report in #12 was not re-audited today.
+
+**Acceptance:** Selected criteria have an implementation/evidence link or an explicit gap and a bounded next owner/action. A merged PR, stale unchecked issue or skipped consumer alone does not establish completion.
+
+## Daily log
+
+### 2026-10-02 — Static review, Windows path assertion fix and evidence refresh
+
+- Inventoried 266 commits and 521 changed paths; reviewed the bounded 31-artifact scope above.
+- Corrected one statically confirmed test-portability defect in [9b5b23ef](https://github.com/NeverSight/NeverD/commit/9b5b23efa35c577cdb22f6cd18eef7d73ac19e76). No production-code change was justified.
+- Recorded 41 PR merges, two unmerged closures, 17 open issues and no open PR before today's publication.
+- Confirmed current-head three-platform mobile fixture success and the still-incomplete main CI/real-application result.
+- Distinguished earlier 97-outcome WHP success from the later expanded 197-outcome configuration failure.
+- Preserved the complete October 1 tracker, including the September 30 history, below. Yesterday's #285 is merged; today's focused topic-branch update requires its own draft PR.
+- No repository code, builds, tests, scripts, linters or formatters ran; no manual CI trigger, merge, deployment, dependency revision or security-setting change was performed. Commits use English messages with `[skip ci]`; automatically triggered GitHub checks can still occur independently.
+
+## Tracking conventions and limits
+
+- Source, issue and CI states are point-in-time observations, not continuous monitoring. New review PRs are excluded from pre-publication counts.
+- Open issues returned 17 records and an empty second page; the separate open-PR query was empty. Updated issue/PR records returned 43 PRs and an empty second page, with no ordinary issues.
+- The recent PR collection's first 100 updated records spans past the tracking boundary. All 43 in-window PRs are present; the older complete PR history was not enumerated.
+- Exact-head workflows returned eight records and an empty second page; check runs returned 16 and an empty second page. Main/mobile job collections returned four/three records, each followed by an empty page.
+- The separate manual-event collection through 01:10 UTC returned 29 existing runs and an empty second page. This review read it only; no run was created. Only the two native jobs discussed above were examined in log detail.
+- Selected PRs #285, #308, #311, #313, #316 and #319 returned no submitted reviews, inline review threads or conversation comments. This is not an independent approval.
+- GitHub reports dev unprotected and an empty repository ruleset collection. No protection/security setting was changed. The contribution guide's topic-branch/PR workflow was followed.
+- PROGRESS.md was checked against yesterday's merged content and re-read before replacement. Preserve history and any human edits on later refreshes.
+- Remote file/diff verification proves publication of the proposed correction, not passing validation or permission to merge.
+
+## Previous snapshots (preserved)
+
+<details>
+<summary>2026-10-01 tracker, priorities, evidence and earlier history</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-01 09:02 Asia/Shanghai (UTC+08:00)** / **2026-10-01 01:02 UTC**
 
 This is a point-in-time daily issue/PR and static-review tracker. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md), and [contribution guidance](CONTRIBUTING.md) remain authoritative. Priorities are proposals, not assigned deadlines or a completion percentage.
@@ -328,5 +500,7 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>

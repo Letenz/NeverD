@@ -312,6 +312,8 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverBuiltinImages.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "71 CPU + 224 WHP + 4 SEH = 299")
 NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -325,4 +327,36 @@ NEVERD_EMULATION_DOC_PATH(DriverImage, "docs/{locale}/driver-emulation.md")
 #ifdef NEVERD_EMULATION_DOC_TOKEN
 NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverImage.def")
 NEVERD_EMULATION_DOC_TOKEN(DriverImage, "DriverProfile.def")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(SEHContinuation, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(SEHContinuation, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(SEHContinuation, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(SEHContinuation, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(SEHContinuation, "KernelSEHContinuationCases.def")
+NEVERD_EMULATION_DOC_TOKEN(SEHContinuation,
+                         "ScopeEndLabelMayOverlapTheHandlerLandingPad")
+NEVERD_EMULATION_DOC_TOKEN(SEHContinuation, "EndLabel + 1")
+NEVERD_EMULATION_DOC_TOKEN(SEHContinuation,
+                         "FinallyRespectsRawScopeEndAtHandlerTarget")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(X64BitString, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(X64BitString, "X64BitInstructions.def")
+NEVERD_EMULATION_DOC_TOKEN(X64BitString, "X64BitStringTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(X64BitString, "BT/BTS/BTR/BTC")
+NEVERD_EMULATION_DOC_TOKEN(X64BitString, "RAMTransaction")
 #endif

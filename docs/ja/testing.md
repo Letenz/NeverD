@@ -56,6 +56,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 復元 API テストは v1/v2/v3 の既定値、明示予算、切り詰めた構造体、全 reserved フィールド、将来の末尾を検査します。CLI テストは両 ABI と両バックエンドでフィールド／問い合わせ予算超過と復元成功を確認し、不正な十進上限と `--devirtualize` の欠如を拒否します。予算超過時はソースも部分残余グラフも公開しません。
 
+v4 テストはプレフィックスのサイズとパディング、切り詰めと不明フラグの拒否、旧 API/将来拡張との互換性、レポートなしでも C に残る符号付き範囲を検査します。独立した CLI 例では相関保持に連鎖が必要で、符号なしスタック比較の証明には範囲が必要です。両 C バックエンドを O0/O2 と未定義動作トラップで実行します。探索の無効化は探索依存例の結果を変える必要があります。解析テストはゼロ連鎖、整数極値、オーバーフロー、不正範囲と前提不足を網羅し、Python はレイアウト、フラグ、署名、所有権付き失敗レポートを検査します。
+
 `NeverDLowIRRefinementTests` は実際の復元グラフ、構造の異なる有限ループ、ゼロ回反復、動的生成箇所、条件付き選択、重複入力ビュー、コピーとスピルの相関、両側の不変読み取り証拠、システムフラグと戻りスロット保存を検証します。誤った候補、余分な書き込み、不完全または無限の経路、古い証拠、一時領域の衝突、共有予算超過では証明書を拒否します。既存の独立性テストは観測可能な任意値を引き続き拒否します。
 
 同じターゲットの `LowIRLoopRefinement.*` と `BinaryLowIRLoopRefinement.*` は、任意の64ビット回数、入れ子の辞書式順位、実際のネイティブ残余コード、入口接頭区間のテンプレート、重なるビューと相関した退避を検査します。誤った本体、入口領域の縮小、減少しない順位、符号なし回り込み、過去の書き込みの欠落、切断点の欠落、不正なテンプレート、共有予算の枯渇を負例で拒否します。有限の兄弟経路が成功しても不完全な帰納証明は承認されません。
@@ -106,11 +108,37 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDLowIRUndefinedIndependenceTests` は、完全な非巡回 LowIR グラフについて二つの実行の独立性を検証します。通常の入口入力は共有し、アーキテクチャ上未定義の値を新たに生成するたびに、コピー、重複書き込み、スピルと再ロードを通じた相関を保持します。制御条件は経路の仮定を追加する前に検査します。証明書には `Complete` の効果メタデータと、各命令の完全な境界および正確な操作ダイジェストとの対応が必要です。証拠不足、到達可能なループ、呼び出し、未知のエイリアス、予算切れでは証明書を拒否します。結果は明示的な観測対象と障害を起こさないフレームの契約に限られ、ネイティブコードから C への完全な等価性証明ではありません。
 
-`NeverDOriginalBinaryUndefinedIndependenceTests` は独立に作成した固定マッピングの x64 バイト列で、物理的な CALL/RET、変更された戻り先、有限な間接ターゲットの網羅、メモリからの不変値の読み込みを検査します。同じターゲットが直接分岐の完全収集、バイト列・効果・マッピング・読み込み証拠への正確な結合、外側リターン時の入口 RSP と戻りスロットの保持、フレームとイメージの分離条件を検査します。命令の欠落・重複、厳密なトラップ規則と明示的なプロファイル投影規則に該当しない未監査の分岐、停止しない、または予算を超えるループ、不完全なターゲット列挙、設定・契約の不一致、予算切れでは証明書も残余コードも返しません。成功には全実行可能経路の完了が必要です。この任意ゲートはループ不変条件、例外ディスパッチ、CET 有効実行、ネイティブコードから C への等価性を認証せず、通常の復元は別に利用できます。さらに、厳密にリフトされた `INT3`/`UD2` の終端境界と、全バイト列および操作ダイジェストへの結合を検査します。未定義出力サイドカーの `Missing` はそのまま保持します。証明書に含められるのはシンボリック実行で到達不能と証明されたトラップのみで、実行可能なトラップ到達経路は `ContractViolation` となり、証明書も残余コードも返してはいけません。トラップ後の継続や例外からの復帰はモデル化せず、`codeFollowsTrap` は使わず、静的 LowIR API の対応範囲も変更しません。
+以下は既定の厳密な監査契約での動作です。`NeverDOriginalBinaryUndefinedIndependenceTests` は独立に作成した固定マッピングの x64 バイト列で、物理的な CALL/RET、変更された戻り先、有限な間接ターゲットの網羅、メモリからの不変値の読み込みを検査します。同じターゲットが直接分岐の完全収集、バイト列・効果・マッピング・読み込み証拠への正確な結合、外側リターン時の入口 RSP と戻りスロットの保持、フレームとイメージの分離条件を検査します。命令の欠落・重複、厳密なトラップ規則と明示的なプロファイル投影規則に該当しない未監査の分岐、停止しない、または予算を超えるループ、不完全なターゲット列挙、設定・契約の不一致、予算切れでは証明書も残余コードも返しません。成功には全実行可能経路の完了が必要です。この任意ゲートはループ不変条件、例外ディスパッチ、CET 有効実行、ネイティブコードから C への等価性を認証せず、通常の復元は別に利用できます。さらに、厳密にリフトされた `INT3`/`UD2` の終端境界と、全バイト列および操作ダイジェストへの結合を検査します。未定義出力サイドカーの `Missing` はそのまま保持します。証明書に含められるのはシンボリック実行で到達不能と証明されたトラップのみで、実行可能なトラップ到達経路は `ContractViolation` となり、証明書も残余コードも返してはいけません。トラップ後の継続や例外からの復帰はモデル化せず、`codeFollowsTrap` は使わず、静的 LowIR API の対応範囲も変更しません。
+
+明示的な境界テストは、到達不能な RCL、メモリ XADD、REP MOVS、記号的な経路矛盾、任意値に依存する分岐と、入口・間接分岐・CALL・RET からの到達時の正確な拒否を検査します。到達可能な後続部分への独立した入口、候補とネイティブのアドレス重複、不正または部分的な証拠、資源切れ、静的/ループ API の拒否、精緻化ダイジェストの三層も対象です。到達不能命令の変更や、境界がない場合のオプション変更も証明書ダイジェストを変更します。これらは宣言された有限証明の範囲を検査し、未監査命令の意味を証明するものではありません。
 
 パック済みフラグのテストは、全スカラー入口フラグの組み合わせ、特権マスク、両実行の TF/AC 条件、異なる未定義値の生成、相関するコピー、ネイティブ呼び出し、兄弟経路の状態、最終システム状態の必須観測、不正な証拠、資源上限を検証します。有限ループは全実行可能入力経路が終了する必要があり、安全な分岐で無限経路や打ち切り経路を隠せません。RDSSPD/RDSSPQ は 16 汎用レジスタと両幅、上位ビット保持、`Missing` 証拠の保持、偽造投影の拒否を検証します。機械状態テストは両 C 経路の O0/O2 と未定義動作トラップを用い、独立したユーザーモードのフラグオラクルと比較し、プロファイル違反が後から消えないことも確認します。 INCSSPD/INCSSPQ は両幅と全汎用レジスタ、到達不能境界の保持、安全な兄弟経路完了後の実行可能なトラップ、ゼロオペランド、偽造したトラップ証拠を検証します。
 
 `NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
+
+`X86RotateUndefinedEffects.*` は全生カウント、オペランド幅、CL の重なり、上位バイトの別名、メモリ宛先をスカラー算術の参照実装と比較します。`X86BitTestUndefinedEffects.*` はレジスタ/即値インデックス、ソースと宛先の重なり、拡張レジスタ、定義済みフラグ、上位レジスタへの書き込みを検査します。メタデータの反例は変更されたオペランド、符号化、未対応形式を拒否します。ネイティブ証明は相関する読み取りと独立した任意フラグを区別し、生成数予算の境界と不足を検査し、観測可能な未定義 OF を拒否します。全状態の精緻化は選択した証人を受け入れ、ゼロビット証人や変更した候補を拒否します。
+
+`X86XaddAudit.*` は符号なし算術オラクルを用いて全 65,536 組のバイト入力、広い幅のフラグ境界、レジスタ/上位バイトの重なり、両書き戻し、REX のバイト幅制限、レジスタ全体の保持を検査します。ネイティブ検査は以前の依存関係を保持しつつ新たな任意ビットがゼロであることを要求します。両証人は未変更の XADD を受理し、和、交換元、定義済みフラグの改変を拒否します。`/6` 別名は完全なシフトカウント行列で検査し、グループ/デコード ID の変更による意味の取り違えを拒否します。
+
+`NeverDPEFixedImageTests` は独立に構成した PE ファイルで、再配置付き命令と不変データ、インポート書き込み範囲、不正なヘッダー／表、別名、来歴の改変を検証します。ネイティブから LowIR および正確な LLVM への証明は一致する候補を受理し、結果、ステータス、元のバイトが変わった候補を拒否します。準備予算の超過は独立に分類し、明示的に上限を増やして再試行できます。通常のロードでは、既定の解析予算を超える 40000 件の有効な再配置も受理します。
+
+`FrameOffsets.*`、`NativeStackSpecialization.*`、`OriginalBinaryUndefinedIndependence.*` は整列 2/4/8/16/32 の全剰余、自由な上位ビット、呼び出しをまたぐスピル、カウントダウンループ、エイリアス破損、誤分岐、無関係な大マスク、必要な分割拡大、ちょうど／一回不足の予算を検査します。別のネイティブ対照例は経路条件付き整列、内部の符号なし戻り解放、誤解放量、接頭辞付き戻りを検査します。分割ループの自動 native-to-LLVM 証明範囲を確立するテストではありません。
+
+`StringTransfer.*` と反復コピーの回帰テストは、重なり、回数ゼロ、一時変数の分離、容量・予算制限、ポインターの無効化を検査します。`MachineStringSourceTests.cpp` は四つの幅と両方向について、ネイティブ実行と両 C 経路の O0/O2 結果を、全レジスター・フラグ・スタックの独立した参照結果と比較します。
+
+`ControlDiscovery.*` と `NativeStackSpecialization.*` は、ルートの下位ビット条件、上位ビットとルート全体への依存、不完全な走査、ちょうど十分な走査予算と不足する予算、および有限の不変アドレス証拠の保持を検証します。
+
+`NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` は、条件付きのレジスタ・フレームスロットのポインタ合流、両バイト順、剰余演算の折り返しと高位ルートアドレス、スタック復元、120フレームバイトを検査します。関連する反例は破損ポインタを拒否し、問い合わせ・操作・評価・細分化の予算がちょうど足りる場合と1回不足する場合、および依存探索とコンテキストの上限超過を検査します。
+
+有限値の観測テストは早期拒否、定数、空の射影、最後の UNSAT クエリを対象とします。不変読み取りの回帰テストは、反例の後も実行時ロードを保持し、異なる読み取り範囲についてキャッシュ済み領域を再検証し、不正な証明書では部分的な証拠を公開しません。
+
+アフィン制御のテストでは、8 回の求解予算での下位ビット条件、両方のバイト順でのレジスタとフレームスロット、剰余演算の折り返し、フレームのバイト観測、スタックの復元を検査します。リテラル定数ではない矛盾した条件は未対応の分岐を除外し、下位 32 ビットが同じで上位ビットが異なる二つの根値は両方の間接分岐先を保持する必要があります。
+
+`FiniteQueryCache.*` は、必要量ちょうどと一単位不足の記憶量上限、ヒットによる使用順更新、サイズの異なる複数記録の置換、繰り返しの追い出し、変数名を変更したクエリを検証します。重複保存、ミス、不正な結果、過大な候補は使用順を変えません。返された証明のコピーは、対応するキャッシュ項目を追い出した後も有効です。
+
+`ControlStateRecovery.*Marginal*` は、独立したターゲット値域と業務値域の積が結合上限を超える場合、残余コードの具体的な出力、結合関係の拡大後に遅い先行ノードが追加するターゲット、到達可能なターゲットの欠落、上限超過や不完全な列挙による値域全体の破棄を検証します。独自のフィクスチャで、値域の変化による再解析と、失敗時に部分グラフを公開しないことを確認します。 フレームスロットの変種では、結合関係の拡大後に両バイト順でエイリアスによる無効化を検証します。
+
+`InterpreterTransferChain.*` は相関値、一意・動的分岐、遅れて到達する先行ノード、フレーム境界、エイリアス拒否、予算を検査します。追加のネイティブ CALL/RET テストは命令の反復、戻り先スロットのバイト、スタック復元を検査します。生成元の再生とネイティブから LLVM への検証は契約不一致、証拠の変更、誤った結果、スタック書き込みの欠落を扱います。
 
 `NeverDX86NoIndexAddressTests` は、32／64 ビットのアドレス幅でインデックスを持たない x86 SIB アドレッシングを検証します。無視されるスケールビット、宛先幅、ロード／ストア、完全な未定義出力メタデータ、セグメントオフセット、アドレスの由来を対象とします。疑似レジスタをベースや幅の異なるインデックスとして使う場合は拒否し、REX.X が選択する実際の R12 インデックスは保持します。EVEX ブロードキャストとマスク付き移動のテストも、これらの形式、非アクティブなメモリアクセスの抑制、矛盾する SIB メタデータを検証します。
 
@@ -203,7 +231,7 @@ V9 の schema テストは 8 種の名前の往復と共有最終状態検証を
 
 `DriverDMAScenarioTests.cpp` は明示能力、論理ドメイン、バイト／件数／時刻上限、方向の厳密性、設定と観測の分離を検証します。`KernelPhysicalMemoryTests.cpp` と `BackendBackingTests.cpp` は同一ページ上の割り当て境界、固定参照、CPU 権限不変、MMIO／再入の排除、全範囲検証失敗の原子性を確認します。`KernelRequestMDLTests.cpp` は構築済み記述子の別名と読み取り専用 PFN が同じ物理識別子を使うことを確認します。`KernelDMATests.cpp`、`KernelDMABridgeTests.cpp`、`SchedulerDMATests.cpp` は実 RAM、束縛されたテーブル呼び出し、インライン／待機 FIFO、別々のコールバック／マッピング寿命、ページ断片、方向違反、解放前検証、PDO 分離、世代／電源失敗を実行します。真正 WDK の独自 `driver_wdm_dma.c` は `NEVERD_WDM_DMA_FIXTURE`／`NEVERD_WDM_DMA_CFG_FIXTURE` を使い、`DriverWDMDMATests.cpp` と C API／CLI は実アダプターポインター、共通／SG ストレージ、別々に設定した DMA／割り込みを実行します。共有 [driver-dma-scenario.json](../examples/driver-dma-scenario.json)はこの fixture のプロトコルが必要です。成果物不足は明示スキップし、証拠は Linux に限定され、実ホスト DMA、PCI、一般デバイスエンジンを保証しません。`pluginsdk/python/tests/test_driver_dma_integration.py` は `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_DMA_FIXTURE`、任意の `NEVERD_TEST_WDM_DMA_CFG_FIXTURE` で同じ JSON 境界を Python から実行し、バイト列、FIFO、コールバック内完了、不正 JSON、IRP 完了後の独立 DMA 失敗を検証します。
 
-`KernelSEHTests.cpp` は純粋な展開計画、スコープ順序、不揮発 GPR の復元、有界スタック、明示的な未対応メタデータを検証します。`KernelExceptionTests.cpp` は正確な API 引数数、下位 32 ビットのステータス、型付き例外、IRQL 上限、モデル／CPU 状態を変更しないことを確認します。真正 WDK と `/GS-` の `driver_wdm_seh.c` は任意の `NEVERD_WDM_SEH_FIXTURE`／`NEVERD_WDM_SEH_CFG_FIXTURE` を使います。`DriverWDMSEHTests.cpp` は通常／有効 CFG／再配置イメージで直接およびヘルパーからの例外送出、入れ子ハンドラー、再送出、未捕捉例外、フィルター／finally／CPU フォールトの明示的拒否を実行します。C API／CLI は [driver-seh-scenario.json](../examples/driver-seh-scenario.json) を実行し、null の API 結果と実際のゲストハンドラーメッセージを確認します。`pluginsdk/python/tests/test_driver_seh_integration.py` は `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_SEH_FIXTURE`、`NEVERD_TEST_WDM_SEH_CFG_FIXTURE` を使用します。外部イメージがなければ明示スキップし、証拠は Linux に限定され、ユーザーバッファーや一般 SEH への対応を示しません。
+`KernelSEHTests.cpp` は純粋な展開計画、スコープ順序、不揮発 GPR の復元、有界スタック、明示的な未対応メタデータを検証します。`KernelExceptionTests.cpp` は正確な API 引数数、下位 32 ビットのステータス、型付き例外、IRQL 上限、モデル／CPU 状態を変更しないことを確認します。真正 WDK と `/GS-` の `driver_wdm_seh.c` は任意の `NEVERD_WDM_SEH_FIXTURE`／`NEVERD_WDM_SEH_CFG_FIXTURE` を使います。`DriverWDMSEHTests.cpp` は通常／有効 CFG／再配置イメージで直接およびヘルパーからの例外送出、入れ子ハンドラー、再送出、実際のフィルター、展開時の finally、検索順序、安定した例外レコード、対応する CPU フォールトの継続、完全な CPU 状態の復元を検証します。入れ子のフィルターと衝突した finally は関連付けられた論理スタックを使用し、無関係な CPU フォールトは明示的に拒否します。C API／CLI は [driver-seh-scenario.json](../examples/driver-seh-scenario.json) を実行し、null の API 結果と実際のゲストハンドラーメッセージを確認します。`pluginsdk/python/tests/test_driver_seh_integration.py` は `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_SEH_FIXTURE`、`NEVERD_TEST_WDM_SEH_CFG_FIXTURE` を使用します。外部イメージがなければ明示スキップし、証拠は Linux に限定され、ユーザーバッファーや一般 SEH への対応を示しません。
 
 `KernelDMAChannelTests.cpp`、`KernelDMAChannelBridgeTests.cpp`、共有の `SchedulerDMATests.cpp` は、混在する割り当ての FIFO、コールバック戻り値幅、純粋な受付／解放検証、レジスター再利用、連続ページ断片、操作全体のフラッシュ、CurrentIrp の捕捉、パケット／MDL／デバイス寿命を検証します。独自に作成し真正 WDK でビルドした `driver_wdm_dma_channel.c` には任意の `NEVERD_WDM_DMA_CHANNEL_FIXTURE`／`NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE` を使います。`DriverWDMDMAChannelTests.cpp` は通常／有効 CFG／再配置イメージを実行し、実際の MapTransfer と FlushAdapterBuffers、共通／SG／チャネルの共有上限、明示的デバイストランザクション、IRQ/DPC 完了、連続する操作、二つの PDO、失敗ケースを扱います。C API／CLI は 7 リクエストの [driver-dma-channel-scenario.json](../examples/driver-dma-channel-scenario.json)を実行し、二つのマッピング断片にまたがる単一トランザクションも含みます。`pluginsdk/python/tests/test_driver_dma_channel_integration.py` は `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_DMA_CHANNEL_FIXTURE`、`NEVERD_TEST_WDM_DMA_CHANNEL_CFG_FIXTURE` で同じ公開 JSON インターフェースを使います。成果物不足は明示的にスキップし、Linux の実行証拠はシステム DMA コントローラーや任意の HAL マッピング／フラッシュの対応を意味しません。
 
@@ -842,6 +870,69 @@ provenance/test のみです。`SBFFaultCodes.def` は execution fault の安定
 machine 固有時間は固定しません。cluster/account/slot row は通常 test を
 deterministic/offline に保ったまま `RPC activation audit` を可能にします。
 
+## Android クラス一覧の性能
+
+`neverd mobile INPUT --list-classes` を測定する前に、`NeverDMobileTests` を Release でビルドし、そのラベルを実行します。
+リーダーテストは疎なメタデータ、Unicode、不正な参照、未対応のメソッド本体、チェックサム、予算を対象とします。
+アーカイブテストは完全展開と選択ペイロードのクエリーを区別し、CLI テストは接頭辞の絞り込み、JSON の範囲、
+既存出力の保持、multidex の失敗原子性を検査します。
+
+独立したフィクスチャー／測定ハーネスは、計測サンプルを受け入れる前に各プロセスの完全な記述子一覧を検証します。
+
+```sh
+python3 -m unittest scripts.tests.test_benchmark_mobile_inventory -v
+python3 scripts/benchmark_mobile_inventory.py \
+  --output-dir /tmp/neverd-inventory-benchmark \
+  --class-count 6000 --dex-count 3 --code-units 64 \
+  --extra-string-bytes 8388608 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+実行ごとに新しい出力ディレクトリを使用します。`--generate-only` はフィクスチャーと manifest を書き込み、計時しません。
+`--workload` は任意の `--peer-command 'tool {input} {prefix}'` 用に共通入力の種類を選択し、入力準備は計測コマンドの外で行います。
+レポートにはハッシュ、コマンド、すべての新規プロセスのサンプル、ウォームキャッシュの前提、および GNU time のある Linux では
+最大子プロセス RSS を保持します。この RSS は複数プロセスを使うツールの合計ピークではありません。
+合成 APK はクエリー用コンテナーであり、インストール可能なアプリではありません。一覧取得の速度は参照検索の速度や Java 復元の品質を証明しません。
+
+ハイブリッド CPU では、ハーネスと継承される子プロセスを同じ許可済み CPU に固定します
+（Linux なら `taskset -c 4 python3 ...` など）。これにより高性能コアと高効率コアの混在を避けます。
+レポートには継承した CPU アフィニティーを記録します。
+
+## Android コード参照の性能
+
+参照クエリーは復元リーダーの命令境界とコード検証を共有します。この境界を変更したらモバイルスイートを実行してください。
+リーダーテストはオペランドプールの種類、照合モード、メソッド所有関係と共有コード、参照に見えるペイロード／即値、
+不正入力、リソース上限を対象とします。共有デバッグストリームは各所有本体のフレーム、範囲、引数に対して検査します。
+記憶領域上限のテストでは、大きなメンバー一覧と分岐が密集した本体の両方を維持します。永続索引と一時コンテナー拡張では寿命が異なります。
+順序が変わった項目や重なる項目、同じ幅でも互換性のないプロトタイプを持つ共有コード、アラインされない入力記憶領域、
+検索ブロック境界をまたぐ部分文字列一致も検査します。非公開デコーダーデータの性能変更は、完全な所有復元モデルと
+参照出現の多重集合を維持し、未対応の復元メタデータでの失敗動作も保つ必要があります。
+独立して生成した期待値と、実入力でのツール間の一致は区別してください。
+
+独立した参照ハーネスは、命令を出力する際に期待する出現を記録します。測定する毎回の実行で完全なメソッド識別情報、
+code unit 単位の PC、opcode、ターゲット識別情報、UTF-16 単位、重複数を検査します。
+独立に期待する NeverD のカバレッジ集計数と `code_scan_complete` も検査します。
+
+```sh
+NEVERD_REFERENCE_TEST_BINARY="$PWD/build-release/bin/neverd" \
+  python3 -m unittest scripts.tests.test_benchmark_mobile_references -v
+python3 scripts/benchmark_mobile_references.py \
+  --output-dir /tmp/neverd-reference-benchmark \
+  --class-count 500 --methods-per-class 64 --matching-methods 2 \
+  --dex-count 3 --resource-bytes 16777216 \
+  --repetitions 7 --neverd build-release/bin/neverd
+```
+
+`--kind` と `--workload` でケースを選択します。`--extra-strings 65536` は実際の 32 ビット文字列索引を検査します。
+ペイロードの囮は既定で有効です。`--no-payload-lookalikes` は同じレイアウトと真の参照を維持し、囮のペイロード値を置き換えて共通入力で比較できます。
+正しさと計測の両結果を保持してください。偽のペイロード参照を返す、または実際の参照を取りこぼすクエリーは検証に失敗し、計測を受け入れません。
+
+任意の `--peer-command` は `{input}`、`{kind}`、`{query}` を含む argv テンプレートを受け付けます。
+別のツールが異なる意味を使う場合はクエリー構文を明示的に調整し、完全な出現多重集合を比較します。
+宣言された検証範囲を保持し、完全なコードスキャンを行ったとは主張しません。一覧ベンチマークと同じ新規ディレクトリ、
+CPU アフィニティー、新規プロセス、ウォームキャッシュ、RSS の条件が適用されます。
+`NEVERD_REFERENCE_TEST_BINARY` がビルド済み実行ファイルを指さない限り、任意の CLI 単体テストはスキップされるため、そのスキップを報告してください。
+
 ## モバイル SDK のエクスポート証拠
 
 手動ワークフロー `Mobile SDK Export Evidence` は、固定した Xcode SDK に対して `collect_mobile_ios_sdk_declarations.py --exports-only` を実行します。iOS 実機用とシミュレータ用の両 SDK から Foundation、CoreFoundation、UIKit のリンカーマップをそのまま保存し、ターゲット、SDK バージョン、SDK 設定のハッシュ、ファイルサイズ、SHA-256 を記録します。通常の宣言収集でも同じマップを保存します。ファイルの欠落、空ファイル、サイズ超過、SDK 外のファイルは収集を失敗させ、完了済みの証拠は保持します。リンカーマップはシンボルのエクスポートの証拠であり、呼び出し ABI やメソッド復元の成功を証明するものではありません。
@@ -871,9 +962,13 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 フレーム spill の行列は両方の C バックエンドで x86-32（ELF/COFF/Mach-O）、ARM32（ARM/Thumb ELF）、AArch64（ELF/COFF/Mach-O）も対象にします。プライベートフレームの反復ロードは加減算へ簡約され、両方の最適化レベルでバイトの組、ワード境界の組、決定的な乱数ワードを正しく実行する必要があります。Clang AST は関数全体の残存 MBA 演算子を確認し、有効なアドレス式と区別します。HighFrameStoreForwarding はアクセス幅、ローカル変数の変更、メモリ書き込み、エイリアス、重複、順序付きアクセス、不正なグラフ、展開予算を検査します。HighCStoreForwarding は浮動小数点の再解釈を含む 4 アーキテクチャでキャッシュ値の定義を生存させ、SymSimplifyGuard はロードの同一性と順序、volatile/atomic、poison 境界を検査します。ELFARM32ModeTest は ARM/Thumb 選択、アドレス正規化、混在メタデータと矛盾の拒否を検査します。ELFARM32ModeCAPITest は SDK の明示的なエラーと Thumb 再ロード後のデコーダー復旧を検査し、InstructionMode はデコーダー、コードポインター、分岐、コード生成の境界を検査します。クロスターゲット Clang がなければスキップであり、形式が正しい証拠にはなりません。
 
+`NeverDHighControlFlowTests` の `HighBoundPrivateFrameCopies.*` は、呼び出し ABI のバインド後に、外部へ流出しない私有フレーム領域を通るコピーを検証します。分岐、領域の再利用、ガード条件ごとの事実の一致を含みます。x64 と AArch64 の生成 C を `-O0` と `-O2` で実行し、未定義動作をトラップさせながら独立した算術結果と比較します。フレームアドレスの流出、未知の呼び出し ABI、未定義または不一致のフレーム別名、入口引数の再代入、重複アクセス、順序付きまたはアトミックなメモリ、不正な文、循環、予算超過では元の関数を保持することを確認します。通常の値変換を PHI コピーとして扱ってはいけません。
+
+ソース投影はこの整理後にも可変引数のオブジェクトリストを再検証する。空の命令アドレスアンカーは許可し、隠れた副作用や制御移動は拒否する。同期クリーンアップでは、同じ保存済みレシーバに対する単一の `int64_t` または `uint64_t` ビューを許可するが、幅の縮小、浮動小数点変換、アドレス演算、再代入は拒否する。Foundation のオブジェクト集合と正常時・例外時の解錠トレースを `-O0` と `-O2` の両方で実行する。
+
 ## x64 のネイティブ同期例外
 
-checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない WHP/ARM64 ホストは明示的にスキップします。
+checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない ARM64 ホストは明示的にスキップします。
 
 ## 段階的な RAM 効果
 
@@ -883,7 +978,9 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
 
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 299 検査すべてに合格します。内訳は CPU 検査 71 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+上記のネイティブ検証は、宣言済みのドライバーエントリーポイントと公開シナリオを対象とします。以下の機能別回帰テストと C API／CLI／Python の検証は、Windows での実行が明記されない限り、証拠の範囲が Linux に限られます。ネイティブのサンプル群が合格しても、すべてのテスト変種を Windows で検証したことにはなりません。
 
 選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
 
@@ -906,7 +1003,7 @@ Checked ARM64 の完全な状態は一つの境界で確定します。`Register
 
 ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
 
-x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、WHP と ARM64 の独立したネイティブ負荷検証は未完了です。
+x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、ARM64 の独立したネイティブ負荷検証は未完了です。
 
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
@@ -918,9 +1015,11 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 `NativeGuestRAMDistinguishesEntryFromCaptureLoss` はゲストの FXSAVE64 が RAM に保存した完全な FP/SSE とホストの XSAVE 取得結果を比較します。両 API で直接設定とゲスト内 FXRSTOR64 を試し、既定のポインター保存機能とホスト対応値を明示指定した場合を検証します。入口、ゲスト実行、取得の境界を分離し、値を修正せず、不一致は失敗として保持します。 境界マトリックスは保留中のマスクされていない x87 例外も検証し、ホストプロセスでの FXRSTOR64/FXSAVE64 の参照結果とプロセッサーベンダーを記録して、条件付きポインター保存と WHP 転送動作を区別します。
 
-共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
+共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
+
+`X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列されたメモリ変更形式に限られ、MMIO とハードウェア並列 SMP は未対応です。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
 `WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
 
@@ -928,7 +1027,7 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 XSAVE 検証診断はサイズ照会、ローカルデータ準備、取得データのデコードを区別し、API 名、返却バイト数、容量、限定したヘッダーと制御フィールドを保持します。独立した期待値は `WhpHostFailureCases.def` にあり、ゲストのレジスターデータは出力しません。`InvalidInputReportsPreparationWithoutHostMutation` は無効な入力でホストを呼び出さず、そのデータも変更しないことを検証します。共有 ISA コーデックが検証を一元的に担当します。
 
-WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。 能力照会の失敗は型付きの利用不可結果を維持します。 `WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。 Windows 専用 CI は 45 件の実機成功を要求します。内訳はマッピング 16 件、起動 2 件、FP/コンテキスト 10 件、共有 CPU 7 件、整数 8 件、`NativeInstallRetainsFPStateBeforeAnyGuestExecution` の API 2 種類です。後者はゲスト実行前に完全な FP/SSE と個別に取得したメタデータを比較します。 未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。
+WHP の能力照会、パーティション/仮想 CPU の初期化、レジスター/XSAVE 転送、実行で発生したホスト API エラーは、HRESULT と `WhpProtocol.def` で宣言した API 名を保持します。 能力照会の失敗は型付きの利用不可結果を維持します。 `WhpHostFailureCases.def` は、キャンセルと同時に起きるホスト障害、および新旧 XSAVE API の照会・設定・取得失敗に対する独立した期待値を定義します。 Windows 専用 CI は 71 件の実機成功を要求します。内訳はマッピング 16 件、起動 2 件、FP/コンテキスト 10 件、共有 CPU 7 件、整数 8 件、`NativeInstallRetainsFPStateBeforeAnyGuestExecution` の API 2 種類です。後者はゲスト実行前に完全な FP/SSE と個別に取得したメタデータを比較します。 未登録、スキップ、無効化、未実行は原生実行証拠の監査失敗となります。 追加の 26 件は、両方の特権レベルでの `X64BitStringTests.cpp` の全ケースです。
 
 `NeverDMemoryLifecycleTests` は Unicorn と独立して構築され、ネイティブ専用構成でも登録されます。Unicorn を無効にすると専用のソフトウェア投影・デバイスケースは明示的にスキップされますが、ホストに一致する共有 CPU ケースは残ります。`WhpMemoryTests.cpp` は `WhpMemoryCases.def` の 16 ケースでネイティブメモリ API を分離します。ページ・投影サイズの領域、共有・独立した割り当て、未アクセス・常駐したバイト、最初の仮想プロセッサの有無を検証します。各ケースは二つの論理所有者を維持し、マッピング済みパーティションを繰り返し切り替え、非アクティブ所有者を破棄した後も残るマッピングが再構築なしで利用可能なことを確認します。実際のマッピングエラーは HRESULT を保持して失敗となります。これはメモリ API の証拠であり、命令実行の証明ではありません。
 
@@ -942,9 +1041,15 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 28 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 76 ワークロードについて、元のアドレスと再配置先で計 152 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 28 個、要求シナリオ 22 個です。CPU の 45 検査を合わせ、必須のネイティブ結果は 197 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 71 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 299 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `71 CPU + 224 WHP + 4 SEH = 299`.
+
+C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
+
+ターゲットへの展開も元のスコープ終端を使用します。ハンドラーの対象が `finally` の保護区間内に残る場合、そのスコープからは退出しません。`FinallyRespectsRawScopeEndAtHandlerTarget` は境界の両側を検査し、Windows x64 では `ntdll.dll!__C_specific_handler` と直接比較します。NeverD はコンパイラー生成の区間を修正しません。元のフィクスチャを Clang 20/21 で構築すると、偏った終端が選択対象を含むため `T` と `J` モードはゲストの失敗を返します。Clang 23 では両方のクリーンアップを実行します。[LLVM 変更 #144745](https://github.com/llvm/llvm-project/pull/144745) は古い `+1` バイアスを削除します。これらのコンパイラー依存の結果はバックエンド障害と区別します。
+
+ビルド一覧はすべての独自 WDM/KMDF C フィクスチャと任意の WDK CMake パスを網羅します。公開された各 `driver-*-scenario.json` には `DriverBackendParityCases.def` 内に通常版と CFG 版があり、ソース・ビルド・シナリオの対応漏れは一覧テストを失敗させます。`Original` はシナリオのロードアドレス指定を解除して推奨ベースを確認し、`Rebased` は宣言した再配置先を確認します。ドライバー所有 IRP のシナリオは子要求を意図的にキャンセルするため、正常な後処理後も `DriverNativeOutcomes.def` に集約結果の失敗を期待値として残します。
 
 ```bash
 python3 scripts/build_wdk_driver_fixtures.py \

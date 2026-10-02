@@ -12,8 +12,10 @@
 
 #include "neverd/lift/X86Lifter.h"
 
+#include "X86BitTestUndefined.h"
 #include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
+#include "X86XaddAudit.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
@@ -603,8 +605,13 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
            !(X86.operands[0].type == X86_OP_MEM &&
              X86.operands[1].type == X86_OP_MEM);
   };
-  if (shiftundefined::isSingleShift(Insn->id))
+  if (shiftundefined::isSingleShift(Insn->id) ||
+      shiftundefined::isRotate(Insn->id))
     return shiftundefined::form(Insn, TargetArch);
+  if (bitundefined::isBitTest(Insn->id))
+    return bitundefined::form(Insn, TargetArch);
+  if (Insn->id == X86_INS_XADD)
+    return xaddaudit::form(Insn, TargetArch);
   switch (Insn->id) {
   // Arithmetic defines all six arithmetic flags; logic defines five and
   // records AF below. DF is preserved.
@@ -1185,9 +1192,13 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
         EffectsDraft.Effects.front().AfterOp > 0 &&
         EffectsDraft.Effects.front().AfterOp <= EffectsDraft.OpCount;
     const bool HasExpectedEffects =
-        shiftundefined::isSingleShift(Id)
+        shiftundefined::isSingleShift(Id) || shiftundefined::isRotate(Id)
             ? shiftundefined::matches(
                   Id, X86, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
+        : bitundefined::isBitTest(Id)
+            ? bitundefined::matches(
+                  llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
                   EffectsDraft)
         : Logic ? HasLogicEffect
                 : EffectsDraft.Effects.empty();

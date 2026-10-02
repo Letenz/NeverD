@@ -194,6 +194,10 @@ struct PipelineResult {
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;
+  /// Register position of the first variadic argument of each lifted Win64
+  /// variadic callee, keyed by callee entry: a call to one passes the fixed
+  /// arguments and the variadic argument registers its caller set.
+  std::map<va_t, int> CallVariadicFrom;
   std::vector<MedFunc> MedFuncs;
   std::vector<HighFunc> HighFuncs;
   std::unique_ptr<llvm::Module> LlvmModule;

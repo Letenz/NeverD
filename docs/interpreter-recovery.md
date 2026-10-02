@@ -182,11 +182,45 @@ work and proof budgets still apply.
 
 C callers use `neverd_devirtualize_source_v3()` or `neverd_devirtualize_machine_source_v3()`. Zero-initialize `neverd_devirtualize_options_v3` and set `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Set `max_control_fields`, `max_solver_queries` and optionally `base.max_control_refinements`; zero selects the corresponding unchanged default. All three reserved fields must be zero. v1/v2 entry points ignore the v3 tail, including its reserved member, while v3 ignores future tails. The report records effective `maxControlFields`, `maxControlRefinements` and `maxSolverQueries` alongside actual work.
 
+Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
+
+The compatible v4 APIs are `neverd_devirtualize_source_v4()` and `neverd_devirtualize_machine_source_v4()`. Zero-initialize `neverd_devirtualize_options_v4` and set `base.base.base.struct_size` to its full size. Chaining accepts a nonnegative 32-bit decimal CLI count, including zero to disable it. Bounds use signed 64-bit decimal endpoints with `begin < end`, require `--vm-machine-state`, and constrain the physical entry RSP rather than its adjusted value. In C, the bounds flag requires the machine-state API; without it both endpoints must be zero. Unknown flags and old reserved fields are rejected. v1/v2/v3 ignore the entire v4 tail; v4 ignores future tails. Null options retain old defaults. The report adds `maxChainedTransfers` and `entryFrameBounds`; `discoverControlState` records the effective switch. All CLI options require `--devirtualize`. The numeric premise is not checked at runtime and establishes no accessibility, initialization or nonalias guarantee. These options do not enable a native proof policy.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,
 limits, and analysis work; field discovery alone does not establish successful
 recovery.
+
+When a guard narrows an address dependency to a byte slice, refinement also retains enclosing, already tracked eight-byte direct-address fields as context candidates. The original narrow field and producer mask remain unchanged; unrelated wider fields are not promoted. Constants and entry-relative offsets still require proof, and all contexts share the existing limits.
+
+Optional immutable-address enumeration stops when a feasible address lacks a certificate. The original runtime read remains. Observed values and certificates are used only after the complete domain is proved; cache hits still recheck the current read extent, and an observed malformed certificate remains an error.
+
+A complete dependency proof may skip enumeration of a full 64-bit `root + constant` control value when the current edge predicate leaves the fresh root's high 32 bits free. This neither fixes the root nor proves reachability. Narrow producer masks and final feasibility checks still apply; a predicate bounding the whole root follows normal finite projection.
+
+At capacity, finite-proof reuse replaces the least recently used records with eligible proofs that fit individually. Successful lookups refresh recency; duplicate stores, misses and rejected candidates do not. Evicted proofs may need to be established again. Only complete domains or proved domain-limit excesses are retained, and every new solver call still consumes the shared query budget.
+
+Recovery also retains complete finite domains for individual masked control fields. When a joint relation exceeds `MaxControlTuples`, these independent domains can still constrain a target without asserting correlations between fields. Joins union the masked values; an absent or overflowing domain is discarded in full. A changed domain reschedules its node even when the joint relation has already widened. Partial enumeration supplies no facts, and the existing field, tuple, symbolic-node and solver limits remain in force.
+
+`MaxChainedTransfers` is an opt-in C++ limit (default `0`) for consecutive control transfers whose target or Boolean outcome is proved unique. It preserves full symbolic state, native origins and cumulative budgets; multiple outcomes use ordinary CFG edges. Backward discovery replays committed instruction occurrences. Chaining may duplicate loop origins and limit automatic cutpoint inference.
+
+`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. It grants no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
 
 <!-- i18n-section: execution-contract -->
 
@@ -206,7 +240,7 @@ callers must not first restrict the session with
 with a restricted function work-set because omitted metadata cannot prove the
 absence of fixups or exceptional edges.
 
-Only complete file-backed, read-only ranges without overlapping mappings or
+Without the PE evidence below, only complete file-backed, read-only ranges without overlapping mappings or
 loader fixups can supply constant image reads. Writable tables, unresolved
 relocations, and a sampled runtime snapshot are not immutable-read evidence.
 COPY relocations and structurally incomplete exception directories are refused.
@@ -222,6 +256,12 @@ The shared frame proof rejects escaping frame addresses, frame-dependent
 scalar outputs and branches, and reads of uninitialized private bytes. The
 explicit machine-state ABI retains original guest addresses and does not use
 this private-frame precondition.
+
+`PEFixedImageView` authenticates complete x64 PE images at their preferred base. It checks raw headers, unique mappings, complete DIR64 fields and ordinary import writes; IAT bytes remain excluded. TLS, load-config, delayed/bound imports, CLR and unknown writers are refused. Recovery and native/LLVM proofs bind the same snapshot. The C++ options `MaxImagePreparationBytes` and `MaxImagePreparationRecords` default to 64 MiB and 65536; exhaustion reports `BudgetExceeded`. The image must remain unchanged. This does not establish ASLR, initialization or unpacking equivalence.
+
+Aligned-frame recovery partitions all low entry-root residues while leaving high bits free. It emits an explicit entry dispatch and proves each constant displacement before sharing the original root's symbolic memory bank. Spills, alias invalidation and context joins retain the partition identity. Candidates are tried in increasing size; unrelated wide masks cannot force the largest partition. Context and refinement limits bound partitions and retries; nodes, operations, evaluations and solver queries are cumulative. This recovery support does not yet provide automatic native/LLVM proof aggregation across partitions or duplicated loop origins. Existing checkers may prove offsets implied by their actual path predicates. With explicit physical stack semantics, canonical internal `RET imm16` reads the old return slot and advances RSP by eight plus the unsigned cleanup; outer returns still require zero cleanup. Prefixed return encodings are refused by this projection.
+
+Repeated transfers with 64-bit addresses support 1/2/4/8-byte elements after complete count and direction proofs. Zero count accesses no memory and needs no direction proof under explicit machine state; the ordinary ABI still rejects unbound flags. Each scalar access retains ordinary alias and return-slot checks. Complete copied frame pointers are re-proved from actual memory before edge projection. Unknown counts, exhausted budgets, segmented accesses and narrower address sizes are refused. Native undefined-effect certification for these original REP instructions remains unsupported.
 
 The source domain requires ordinary ABI returns: every external-origin store's
 target range is disjoint from the entry return-address slot. This is an explicit
@@ -312,7 +352,7 @@ The residual code retains one guest stack read, captures its value before the
 stack increment, and dispatches on that captured value. Reaching the preserved
 entry return slot remains an outer exit, even after discarding an internal
 frame. Unknown targets, sets containing missing or nonexecutable destinations,
-callee-pop returns and arbitrary stack pivots remain unsupported. Exact frame
+outer callee-pop returns and arbitrary stack pivots remain unsupported. Exact frame
 pointers survive complete spills, with partial or potentially aliasing writes
 invalidating the facts. Active stack positions and return-slot values separate
 contexts and are budgeted.

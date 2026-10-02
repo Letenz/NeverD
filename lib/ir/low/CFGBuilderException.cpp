@@ -70,8 +70,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       const SEHScopeRecord &Scope = Metadata.SEH->Scopes[I];
       const std::optional<ExceptionAddressRange> SemanticRange =
           getSemanticSEHGuardedRange(
-              Scope, CurrentImg ? CurrentImg->Arch : Arch::Unknown,
-              Metadata.CodeRange);
+              Scope, CurrentImg ? CurrentImg->Arch : Arch::Unknown, Metadata);
       if (!SemanticRange)
         continue;
       ForProtectedBlocks(*SemanticRange, [&](LowBlock &Block) {

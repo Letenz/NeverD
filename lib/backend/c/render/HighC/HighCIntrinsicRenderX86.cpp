@@ -14,13 +14,16 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -931,6 +934,25 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
         !Rendered.empty())
       return Rendered;
 
+  // An FS/GS MXCSR transfer moves one DWORD at a segment offset, which the
+  // <intrin.h> segment accessors read and write with the override attached.
+  if (MsvcIntrinsics &&
+      (Call.IntrinsicId == Intrinsic::Ldmxcsr ||
+       Call.IntrinsicId == Intrinsic::Stmxcsr) &&
+      (Call.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ||
+       Call.MemoryAddressSpace == NdMemoryAddressSpace::X86FS) &&
+      !Call.Operands.empty() && Call.Operands[0] &&
+      Call.Operands[0]->Kind == ExprKind::Const &&
+      Call.Operands[0]->ConstVal <= std::numeric_limits<uint32_t>::max()) {
+    const bool GS = Call.MemoryAddressSpace == NdMemoryAddressSpace::X86GS;
+    const std::string Offset = ExprFn(*Call.Operands[0]);
+    if (Call.IntrinsicId == Intrinsic::Ldmxcsr)
+      return std::string("_mm_setcsr(") + x86SegmentedReadIntrinsic(GS, 4) +
+             "(" + Offset + "));\n";
+    return std::string(GS ? "__writegsdword(" : "__writefsdword(") + Offset +
+           ", _mm_getcsr());\n";
+  }
+
   const char *Mnemonic = memoryIntrinsicMnemonic(Call.IntrinsicId);
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
   if (!Mnemonic || !Segment || Call.Operands.empty() || !Call.Operands[0] ||
@@ -1066,7 +1088,23 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
-         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg;
+         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
+         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr;
+}
+
+bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Vmcall:
+  case Intrinsic::Vmmcall:
+  case Intrinsic::Monitor:
+  case Intrinsic::Mwait:
+  case Intrinsic::Monitorx:
+  case Intrinsic::Mwaitx:
+  case Intrinsic::Xsetbv:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
@@ -1112,6 +1150,57 @@ std::string renderX86InterruptStatement(
   }
   if (Call.IntrinsicId == Intrinsic::Syscall && Call.Operands.empty())
     return renderX86InterruptAsm(0, {}, ResultVar, Reg, "syscall");
+  if (x86UsesImplicitRegisterAsm(Call.IntrinsicId)) {
+    // The lifter's operand order, register by register.
+    static const char *const Hypercall[] = {"rcx", "rdx", "r8"};
+    static const char *const MonitorRegs[] = {"rax", "rcx", "rdx"};
+    static const char *const MwaitRegs[] = {"rax", "rcx"};
+    static const char *const MwaitxRegs[] = {"rax", "rcx", "rbx"};
+    llvm::ArrayRef<const char *> Regs;
+    switch (Call.IntrinsicId) {
+    case Intrinsic::Vmcall:
+    case Intrinsic::Vmmcall:
+      Regs = Hypercall;
+      break;
+    case Intrinsic::Monitor:
+    case Intrinsic::Monitorx:
+      Regs = MonitorRegs;
+      break;
+    case Intrinsic::Mwait:
+      Regs = MwaitRegs;
+      break;
+    case Intrinsic::Mwaitx:
+      Regs = MwaitxRegs;
+      break;
+    default:
+      break;
+    }
+    std::vector<std::pair<const char *, std::string>> Inputs;
+    if (Call.IntrinsicId == Intrinsic::Xsetbv) {
+      // XCR[ECX] = EDX:EAX, from the selector and the 64-bit value.
+      if (Call.Operands.size() != 2 || !Call.Operands[0] || !Call.Operands[1])
+        llvm::report_fatal_error("x86 XSETBV has an invalid operand shape");
+      const std::string Value = ExprFn(*Call.Operands[1]);
+      Inputs = {{"rcx", ExprFn(*Call.Operands[0])},
+                {"rax", "(uint32_t)(" + Value + ")"},
+                {"rdx", "(uint32_t)((uint64_t)(" + Value + ") >> 32)"}};
+    } else {
+      if (Call.Operands.size() != Regs.size())
+        llvm::report_fatal_error(
+            "x86 implicit-register instruction has an invalid operand shape");
+      for (size_t I = 0; I < Regs.size(); ++I) {
+        if (!Call.Operands[I])
+          llvm::report_fatal_error(
+              "x86 implicit-register instruction has a missing operand");
+        Inputs.emplace_back(Regs[I], ExprFn(*Call.Operands[I]));
+      }
+    }
+    const bool HasResult = Call.IntrinsicId == Intrinsic::Vmcall ||
+                           Call.IntrinsicId == Intrinsic::Vmmcall;
+    return renderX86InterruptAsm(0, Inputs, HasResult ? ResultVar : "",
+                                 HasResult ? Reg : "",
+                                 intrinsicAsmMnemonic(Call.IntrinsicId));
+  }
   if (Call.IntrinsicId != Intrinsic::IntN || Call.Operands.size() != 1 ||
       !Call.Operands[0] || isX86FastFailCall(Call))
     return {};
@@ -1152,6 +1241,57 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
       llvm::report_fatal_error("invalid x87 FFREE HighC operand");
     return "__asm {{ ffree st(" + std::to_string(Call.Operands[1]->ConstVal) +
            ") }}";
+  }
+  // LLDT/LTR/LMSW with a register operand: an `__asm` block cannot take the
+  // computed value, so the asm statement loads it into a register.  The
+  // memory forms render with their address elsewhere.
+  if ((Call.IntrinsicId == I::Lldt || Call.IntrinsicId == I::Ltr ||
+       Call.IntrinsicId == I::Lmsw) &&
+      Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+      Call.Operands.size() == 1 && Call.Operands[0] && Call.Operands[0]->Type &&
+      Call.Operands[0]->Type->Size != 8)
+    return std::string("__asm__ volatile(\"") +
+           intrinsicAsmMnemonic(Call.IntrinsicId) +
+           " %w0\" : : \"r\"((uint32_t)(" + ExprFn(*Call.Operands[0]) +
+           ")) : \"memory\")";
+  if (Call.IntrinsicId == I::ReadSegment ||
+      Call.IntrinsicId == I::WriteSegment) {
+    // A segment selector by its register's encoding number.
+    const size_t Operands = Call.IntrinsicId == I::ReadSegment ? 1 : 2;
+    const char *Name = Call.Operands.size() == Operands && Call.Operands[0] &&
+                               Call.Operands[0]->Kind == ExprKind::Const
+                           ? x86SegmentRegisterName(Call.Operands[0]->ConstVal)
+                           : nullptr;
+    if (!Name || (Operands == 2 && !Call.Operands[1]))
+      llvm::report_fatal_error("x86 segment move has an invalid operand shape");
+    if (Call.IntrinsicId == I::ReadSegment)
+      return x86SegmentReadText(Name);
+    return x86SegmentWriteText(Name, ExprFn(*Call.Operands[1]));
+  }
+  if (Call.IntrinsicId == I::SegmentLimitValid) {
+    // LSL's ZF: whether the selector names a segment whose limit is visible.
+    if (Call.Operands.size() != 1 || !Call.Operands[0])
+      llvm::report_fatal_error("x86 LSL check has an invalid operand shape");
+    return "({ uint32_t neverd_limit; uint8_t neverd_valid; "
+           "__asm__(\"lsl %w2, %0\\n\\tsetz %1\" : \"=r\"(neverd_limit), "
+           "\"=q\"(neverd_valid) : \"r\"((uint32_t)(" +
+           ExprFn(*Call.Operands[0]) + ")) : \"cc\"); neverd_valid; })";
+  }
+  if (Call.IntrinsicId == I::Rdrand || Call.IntrinsicId == I::Rdseed) {
+    // The value, with the CF success byte above it.
+    if (!Call.Type ||
+        (Call.Type->Size != 4 && Call.Type->Size != 8 && Call.Type->Size != 16))
+      llvm::report_fatal_error("x86 RDRAND/RDSEED has an invalid result");
+    const unsigned Bytes = Call.Type->Size / 2;
+    const std::string ValueTy = typeToC(NdType::makeInt(Bytes, false));
+    const std::string PairTy = typeToC(NdType::makeInt(Call.Type->Size, false));
+    return "({ " + ValueTy + " neverd_value; uint8_t neverd_ok; " +
+           "__asm__ volatile(\"" +
+           std::string(Call.IntrinsicId == I::Rdrand ? "rdrand" : "rdseed") +
+           " %0\\n\\tsetc %1\" : \"=r\"(neverd_value), \"=q\"(neverd_ok) : : "
+           "\"cc\"); (" +
+           PairTy + ")neverd_ok << " + std::to_string(Bytes * 8) +
+           " | neverd_value; })";
   }
   if (isX86FastFailCall(Call)) {
     if (TheArch != Arch::X86 && TheArch != Arch::X64)
@@ -1260,6 +1400,56 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
   return Result;
 }
 
+namespace {
+/// VERR/VERW as inline assembly, moving ZF into \p PrimaryDst when it is
+/// live.  A memory selector keeps its FS/GS override.
+std::string
+renderSelectorAccessCheck(const HighExpr &Call, const HighExpr *PrimaryDst,
+                          std::function<std::string(const HighExpr &)> &ExprFn,
+                          std::function<std::string(const MedVar &)> &VarFn,
+                          const IsAliveFn &IsAlive) {
+  const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
+  if (Call.Operands.size() != 1 || !Call.Operands[0] ||
+      !Call.Operands[0]->Type || !Segment)
+    llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
+  std::string Zf;
+  if (PrimaryDst &&
+      (PrimaryDst->Kind == ExprKind::Var ||
+       PrimaryDst->Kind == ExprKind::Phi) &&
+      isAlive(PrimaryDst->Var, IsAlive))
+    Zf = VarFn(PrimaryDst->Var);
+  // Only an address-width operand is a memory selector.
+  const bool Memory = Call.Operands[0]->Type->Size == 8;
+  std::string Result = "do {\n";
+  std::string Operand;
+  std::string Input;
+  if (Memory) {
+    Result += "    uintptr_t neverd_address = (uintptr_t)(" +
+              ExprFn(*Call.Operands[0]) + ");\n";
+    Operand = *Segment == '\0' ? "(%[address])"
+                               : "%%" + std::string(Segment) + ":(%[address])";
+    Input = "[address] \"r\"(neverd_address)";
+  } else {
+    Result += "    uint16_t neverd_selector = (uint16_t)(" +
+              ExprFn(*Call.Operands[0]) + ");\n";
+    Operand = "%[selector]";
+    Input = "[selector] \"r\"(neverd_selector)";
+  }
+  if (!Zf.empty())
+    Result += "    uint8_t neverd_zf;\n";
+  Result +=
+      "    __asm__ volatile(\"" +
+      std::string(Call.IntrinsicId == Intrinsic::Verr ? "verr " : "verw ") +
+      Operand + (Zf.empty() ? "" : "\\n\\tsetz %[zf]") + "\"\n";
+  Result += "        : " +
+            (Zf.empty() ? std::string() : "[zf] \"=q\"(neverd_zf)") + "\n";
+  Result += "        : " + Input + "\n        : \"cc\", \"memory\");\n";
+  if (!Zf.empty())
+    Result += "    " + Zf + " = neverd_zf;\n";
+  return Result + "} while (0);\n";
+}
+} // namespace
+
 std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
@@ -1268,6 +1458,9 @@ std::string renderX86SegmentedIntrinsicStatement(
   if (Call.Kind != ExprKind::Call ||
       (TheArch != Arch::X86 && TheArch != Arch::X64))
     return {};
+  if (Call.IntrinsicId == Intrinsic::Verr ||
+      Call.IntrinsicId == Intrinsic::Verw)
+    return renderSelectorAccessCheck(Call, PrimaryDst, ExprFn, VarFn, IsAlive);
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
     return renderDivPrecondition(TheArch, Call, std::move(ExprFn),
                                  std::move(SameWidthUnsigned));

@@ -551,6 +551,40 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     return "(" + Ty + ")(" + Src + " >> " + std::to_string(ByteOff * 8) + ")";
   }
   case NdOp::CONCAT: {
+    // V's upper bytes above a new low part, `(V >> 8k) : lo` with lo k bytes
+    // wide, keep V and replace its low bytes: `(V & ~mask) | lo`, with no
+    // odd-width carrier for the upper part.
+    const HighExpr &HiE = *E.Operands[0];
+    const HighExpr &LoE = *E.Operands[1];
+    if (HiE.Kind == ExprKind::BinOp && HiE.Op == NdOp::SUBBYTES &&
+        HiE.Operands.size() == 2 && HiE.Operands[1]->Kind == ExprKind::Const &&
+        !typedCallResult(&HiE) && E.Type && E.Type->Size <= 8 && LoE.Type &&
+        LoE.Type->Size < E.Type->Size &&
+        HiE.Operands[1]->ConstVal == LoE.Type->Size && HiE.Operands[0]->Type &&
+        HiE.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        HiE.Operands[0]->Type->Size >= E.Type->Size) {
+      const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
+      const TypeRef LoCarrier = NdType::makeInt(LoE.Type->Size, false);
+      const uint64_t Width = E.Type->Size == 8
+                                 ? ~uint64_t{0}
+                                 : (uint64_t{1} << (8 * E.Type->Size)) - 1;
+      const uint64_t Low = (uint64_t{1} << (8 * LoE.Type->Size)) - 1;
+      const std::string Ty = typeToC(Carrier);
+      return "((" + Ty + ")(" + exprStr(*HiE.Operands[0], 99) + ") & " +
+             constStr(Width & ~Low, Carrier) + " | (" + Ty + ")((" +
+             typeToC(LoCarrier) + ")(" + exprStr(LoE, 99) + ")))";
+    }
+    // A constant upper part already fits its width: shift it in the carrier.
+    if (HiE.Kind == ExprKind::Const && HiE.Type && E.Type &&
+        E.Type->Size <= 8 && LoE.Type && LoE.Type->Size < E.Type->Size) {
+      const uint64_t HiMask = (uint64_t{1} << (8 * HiE.Type->Size)) - 1;
+      const TypeRef Carrier = NdType::makeInt(E.Type->Size, false);
+      const std::string Ty = typeToC(Carrier);
+      return "((" + Ty + ")" + constStr(HiE.ConstVal & HiMask, Carrier) +
+             " << " + std::to_string(LoE.Type->Size * 8) + " | (" + Ty + ")((" +
+             typeToC(NdType::makeInt(LoE.Type->Size, false)) + ")(" +
+             exprStr(LoE, 99) + ")))";
+    }
     std::string Hi = exprStr(*E.Operands[0], 99);
     std::string Lo = exprStr(*E.Operands[1], 99);
     // Concatenation shifts bit patterns, including a high half whose sign bit

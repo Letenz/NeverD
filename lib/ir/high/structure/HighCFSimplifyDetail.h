@@ -82,6 +82,9 @@ void detectAndConvertLoops(HighFunc &Func,
 /// Recover switch statements from if-chains comparing the same variable.
 /// Defined in HighIfChainToSwitch.cpp.
 void recoverSwitchStatements(HighFunc &Func);
+/// True when control never reaches the statement after \p S: a return,
+/// jump, noreturn call or endless loop.
+bool highStmtEndsItsBlock(const HighStmt &S);
 void cleanupGuardBeforeSwitch(HighFunc &Func);
 
 /// Fold if(cond){goto} patterns into if/else trees, up to \p MaxPasses

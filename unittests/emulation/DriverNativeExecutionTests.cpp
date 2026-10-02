@@ -94,8 +94,9 @@ TEST_P(DriverNativeExecution,
           ? LoopLimit
           : InstructionLimit;
   Options.TimeoutMilliseconds = TimeoutMilliseconds;
-  if (Rebase)
-    Options.LoadAddress = RebasedAddress;
+  // The scenario may already request a relocation. Both variants must use
+  // their declared base instead of inheriting that example-specific address.
+  Options.LoadAddress = Rebase ? RebasedAddress : PreferredAddress;
   Options.Backend = Backend;
   Options.Contract = ExecutionContract::Legacy;
   auto Actual = emulateDriver(Input.Image, Options);
@@ -105,6 +106,8 @@ TEST_P(DriverNativeExecution,
     return;
   }
   ASSERT_EQ(Actual->SelectedBackend, Backend);
+  EXPECT_EQ(Actual->ImageBase,
+            Rebase ? RebasedAddress : Actual->PreferredImageBase);
   EXPECT_EQ(Actual->Configuration.Contract, ExecutionContract::Legacy);
   DriverStopReason Stop = DriverStopReason::Returned;
   std::optional<uint32_t> Status = 0;

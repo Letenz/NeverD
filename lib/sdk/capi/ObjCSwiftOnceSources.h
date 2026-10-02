@@ -2357,6 +2357,7 @@ swiftOnceAddressorBound(const HighExpr &E, const BinaryImage &Image,
       Binding.ObjCIndirectResultStorage || Binding.ByteCount ||
       Binding.ImmutablePointerSlot || Binding.SwiftTypeMetadata ||
       !Binding.BorrowedByteInputs.empty() ||
+      !Binding.SwiftStaticStringInputs.empty() ||
       !Binding.SwiftStringInputs.empty() ||
       !objc_projection_detail::sameHint(Binding.Signature, Expected->Signature))
     return false;
@@ -2389,6 +2390,7 @@ swiftOnceCallbackBound(const HighExpr &E, const BinaryImage &Image,
       Binding.ObjCIndirectResultStorage || Binding.ValueWitness ||
       Binding.ReturnedArgument || Binding.RuntimeObjCResultType ||
       !Binding.BorrowedByteInputs.empty() ||
+      !Binding.SwiftStaticStringInputs.empty() ||
       !Binding.SwiftStringInputs.empty() ||
       !objc_projection_detail::sameHint(*F->second->SourceTypeHint,
                                         Expected->second))

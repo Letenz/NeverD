@@ -72,6 +72,8 @@ public:
       for (const auto &[Range, Mask] : Slots)
         Result.FrameSlots.push_back({Range.first, Range.second, Mask});
     }
+    if (Result.Status == ControlDiscoveryStatus::Complete)
+      Result.FrameRootBits = RootBits;
     return std::move(Result);
   }
 
@@ -202,8 +204,14 @@ private:
   }
 
   void visit(const Demand &Current) {
-    if (Ctx.isConst(Current.Value) || Current.Value == Root)
+    if (Ctx.isConst(Current.Value))
       return;
+    if (Current.Value == Root) {
+      RootBits |=
+          llvm::APInt::getBitsSet(64, Current.Low, Current.Low + Current.Bits)
+              .getZExtValue();
+      return;
+    }
 
     const auto Operands = Ctx.operands(Current.Value);
     switch (Ctx.op(Current.Value)) {
@@ -424,6 +432,7 @@ private:
   const SymContext &Ctx;
   SymRef Root;
   uint64_t MaxVisited;
+  uint64_t RootBits = 0;
   ControlDiscovery Result;
   llvm::SmallVector<Demand, 16> Pending;
   std::set<std::tuple<uint32_t, uint32_t, uint32_t>> Seen;

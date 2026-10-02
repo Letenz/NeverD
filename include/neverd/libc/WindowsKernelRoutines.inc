@@ -7,10 +7,13 @@
 //
 // ND_WINDOWS_PROTO(Name, Widths...)
 //   A routine whose WDK prototype (wdm.h, ntddk.h, ntifs.h) fixes its
-//   parameters.  Each width is the bytes the Win64 ABI passes for that
-//   parameter: 8 for a pointer, handle, SIZE_T, ULONG64 or LARGE_INTEGER; 4 for
-//   ULONG, LONG, NTSTATUS, ACCESS_MASK or an enum; 2 for USHORT or WCHAR; 1 for
-//   BOOLEAN, KIRQL, KPROCESSOR_MODE or UCHAR.  Variadic routines are absent.
+//   parameters, or one the kernel exports whose SDK prototype (winnt.h) does.
+//   A prototype outranks what the body reads: a context capture reads every
+//   register to save it, not as arguments.  Each width is the bytes the Win64
+//   ABI passes for that parameter: 8 for a pointer, handle, SIZE_T, ULONG64 or
+//   LARGE_INTEGER; 4 for ULONG, LONG, NTSTATUS, ACCESS_MASK or an enum; 2 for
+//   USHORT or WCHAR; 1 for BOOLEAN, KIRQL, KPROCESSOR_MODE or UCHAR.  Variadic
+//   routines are absent.
 //
 // Names are matched after leading underscores are stripped.
 
@@ -188,6 +191,7 @@ ND_WINDOWS_PROTO("RtlRaiseStatus", 4)
 ND_WINDOWS_PROTO("RtlAssert", 8, 8, 4, 8)
 ND_WINDOWS_PROTO("RtlLookupFunctionEntry", 8, 8, 8)
 ND_WINDOWS_PROTO("RtlCaptureContext", 8)
+ND_WINDOWS_PROTO("RtlCaptureContext2", 8)
 ND_WINDOWS_PROTO("RtlUpcaseUnicodeChar", 2)
 ND_WINDOWS_PROTO("RtlIntegerToUnicodeString", 4, 4, 8)
 ND_WINDOWS_PROTO("RtlUnicodeStringToInteger", 8, 4, 8)
@@ -215,6 +219,7 @@ ND_WINDOWS_PROTO("PsGetProcessId", 8)
 ND_WINDOWS_PROTO("PsCreateSystemThread", 8, 4, 8, 8, 8, 8, 8)
 ND_WINDOWS_PROTO("PsTerminateSystemThread", 4)
 ND_WINDOWS_PROTO("PsIsSystemThread", 8)
+ND_WINDOWS_PROTO("KeSetBasePriorityThread", 8, 4)
 ND_WINDOWS_PROTO("SeAccessCheck", 8, 8, 1, 4, 4, 8, 8, 1, 8, 8)
 ND_WINDOWS_PROTO("SeCaptureSubjectContext", 8)
 ND_WINDOWS_PROTO("SeReleaseSubjectContext", 8)

@@ -1,4 +1,4 @@
-//===- X86ShiftUndefined.h - Legacy scalar shift effect audit -*- C++ -*-===//
+//===- X86ShiftUndefined.h - Legacy shift/rotate effect audit -*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -18,6 +18,10 @@ inline bool isSingleShift(unsigned Id) {
          Id == X86_INS_SAR;
 }
 
+inline bool isRotate(unsigned Id) {
+  return Id == X86_INS_ROL || Id == X86_INS_ROR;
+}
+
 // Intel SDM 093, Vol. 2B, SAL/SAR/SHL/SHR, Flags Affected. Counts here
 // are already masked to five or six bits. SAR keeps a defined carry even
 // when its count exceeds a narrow operand's width. Each threshold describes
@@ -27,6 +31,12 @@ struct Rule {
   unsigned MinimumCount;
 };
 inline auto rules(unsigned Id, unsigned Bytes) {
+  // ROL/ROR use the architectural masked count, before any narrow-width
+  // modulo. Only OF is fresh for counts above one; every other flag either
+  // remains unchanged or has a defined value, including whole rotations.
+  if (isRotate(Id))
+    return std::array<Rule, 3>{
+        {{x86reg::AF, 64}, {x86reg::OF, 2}, {x86reg::CF, 64}}};
   return std::array<Rule, 3>{
       {{x86reg::AF, 1},
        {x86reg::OF, 2},
@@ -98,7 +108,8 @@ inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
         if (Op.Output != *SavedCount)
           continue;
         if (FoundCount || I >= E.AfterOp - 1 || Op.Opcode != NdOp::INT_AND ||
-            Op.NumInputs != 2 || Op.Inputs[0] != NdVar::reg(x86reg::RCX, 4) ||
+            Op.NumInputs != 2 ||
+            Op.Inputs[0] != NdVar::reg(x86reg::RCX, isRotate(Id) ? 1 : 4) ||
             Op.Inputs[1] != NdVar::scalar(Mask, Width))
           return false;
         FoundCount = true;
@@ -125,8 +136,9 @@ inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
   return Index == Effects.Effects.size();
 }
 
-// Admit only documented legacy /4, /5 and /7 encodings with matching widths
-// and count operands. General scalar/address validation remains in the shared
+// Admit documented legacy /0, /1, /4, /5 and /7 encodings and the /6 SAL/SHL
+// alias specified by Intel SDM 093, Vol. 3B, section 25.15. Widths and count
+// operands must match. General scalar/address validation remains in the shared
 // lifter audit. Duplicate, LOCK/REP, APX and vector prefixes stay unaudited.
 inline bool form(const cs_insn *Insn, Arch Target) {
   const auto &X = Insn->detail->x86;
@@ -165,7 +177,9 @@ inline bool form(const cs_insn *Insn, Arch Target) {
   if (Opcode != 0xc0 && Opcode != 0xc1 && Opcode != 0xd0 && Opcode != 0xd1 &&
       Opcode != 0xd2 && Opcode != 0xd3)
     return false;
-  const unsigned Group = Insn->id == X86_INS_SAR   ? 7
+  const unsigned Group = Insn->id == X86_INS_ROL   ? 0
+                         : Insn->id == X86_INS_ROR ? 1
+                         : Insn->id == X86_INS_SAR ? 7
                          : Insn->id == X86_INS_SHR ? 5
                                                    : 4;
   const unsigned Width = !(Opcode & 1)   ? 1
@@ -174,7 +188,10 @@ inline bool form(const cs_insn *Insn, Arch Target) {
                                          : 4;
   const unsigned AddressWidth =
       Long ? (AddressPrefix ? 4 : 8) : (AddressPrefix ? 2 : 4);
-  if (((ModRM >> 3) & 7) != Group || X.modrm != ModRM ||
+  const unsigned EncodedGroup = (ModRM >> 3) & 7;
+  const bool LeftAlias =
+      EncodedGroup == 6 && (Insn->id == X86_INS_SAL || Insn->id == X86_INS_SHL);
+  if ((EncodedGroup != Group && !LeftAlias) || X.modrm != ModRM ||
       X.encoding.modrm_offset != Pos + 1 || X.opcode[0] != Opcode ||
       X.opcode[1] || X.opcode[2] || X.opcode[3] || X.rex != Rex ||
       X.prefix[0] || X.prefix[1] != Segment || X.prefix[2] != OperandPrefix ||

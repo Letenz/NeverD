@@ -1,0 +1,95 @@
+//===- X64BitStringCases.def - Independent bit-string cases --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_BIT_VALUE
+NEVERD_BIT_VALUE(WordBytes, 8)
+NEVERD_BIT_VALUE(BufferBytes, 256)
+NEVERD_BIT_VALUE(BaseOffset, 128)
+NEVERD_BIT_VALUE(Flags, 0x246)
+NEVERD_BIT_VALUE(DefinedFlags, 0x1)
+NEVERD_BIT_VALUE(Seed, 0x5a)
+NEVERD_BIT_VALUE(PatternStep, 37)
+NEVERD_BIT_VALUE(Nop, 0x90)
+NEVERD_BIT_VALUE(Lock, 0xf0)
+NEVERD_BIT_VALUE(RegisterMode, 0xc0)
+NEVERD_BIT_VALUE(LastModRM, 1)
+NEVERD_BIT_VALUE(ImmediateModRM, 2)
+NEVERD_BIT_VALUE(NarrowIndex, 0x81234567ffffffdfULL)
+NEVERD_BIT_VALUE(AddressPrefix, 0x67)
+NEVERD_BIT_VALUE(FSPrefix, 0x64)
+NEVERD_BIT_VALUE(GSPrefix, 0x65)
+NEVERD_BIT_VALUE(SegmentBase, 0x100000000ULL)
+NEVERD_BIT_VALUE(NarrowBase, 0x1234567800000000ULL)
+NEVERD_BIT_VALUE(WrappedAddress, 0xfffffff8ULL)
+NEVERD_BIT_VALUE(TargetBefore, 0x123456789abcdef0ULL)
+NEVERD_BIT_VALUE(TargetAfter, 0x923456789abcdef0ULL)
+#endif
+#ifdef NEVERD_BIT_TEXT
+NEVERD_BIT_TEXT(OracleUnavailable, "the bit-string host oracle requires x64")
+NEVERD_BIT_TEXT(ObserverException, "bit-string result observer failure")
+#endif
+#ifdef NEVERD_BIT_BYTES
+// Preserve host flags and RBX. Argument points to {index, flags, base}.
+NEVERD_BIT_BYTES(OraclePrefix, 0x9c, 0x53)
+NEVERD_BIT_BYTES(SysVArgument, 0x48, 0x89, 0xfb)
+NEVERD_BIT_BYTES(Win64Argument, 0x48, 0x89, 0xcb)
+NEVERD_BIT_BYTES(OracleLoad, 0x48, 0x8b, 0x13, 0xff, 0x73, 0x08, 0x9d, 0x48,
+                 0x8b, 0x4b, 0x10)
+NEVERD_BIT_BYTES(OracleSave, 0x48, 0x89, 0x13, 0x9c, 0x8f, 0x43, 0x08, 0x48,
+                 0x89, 0x4b, 0x10, 0x5b, 0x9d, 0xc3)
+#endif
+#ifdef NEVERD_BIT_INDEX
+// Signed register index and independently specified byte displacements.
+NEVERD_BIT_INDEX(0, 0, 0, 0)
+NEVERD_BIT_INDEX(15, 0, 0, 0)
+NEVERD_BIT_INDEX(16, 2, 0, 0)
+NEVERD_BIT_INDEX(31, 2, 0, 0)
+NEVERD_BIT_INDEX(32, 4, 4, 0)
+NEVERD_BIT_INDEX(63, 6, 4, 0)
+NEVERD_BIT_INDEX(64, 8, 8, 8)
+NEVERD_BIT_INDEX(127, 14, 12, 8)
+NEVERD_BIT_INDEX(128, 16, 16, 16)
+NEVERD_BIT_INDEX(-1, -2, -4, -8)
+NEVERD_BIT_INDEX(-17, -4, -4, -8)
+NEVERD_BIT_INDEX(-33, -6, -8, -8)
+NEVERD_BIT_INDEX(-65, -10, -12, -16)
+#endif
+#ifdef NEVERD_BIT_CASE
+// Destination [RCX]; source DX/EDX/RDX or the raw immediate 0xff.
+NEVERD_BIT_CASE(Test16Register, 2, false, false, 0x66, 0x0f, 0xa3, 0x11)
+NEVERD_BIT_CASE(Test16Immediate, 2, false, true, 0x66, 0x0f, 0xba, 0x21, 0xff)
+NEVERD_BIT_CASE(Test32Register, 4, false, false, 0x0f, 0xa3, 0x11)
+NEVERD_BIT_CASE(Test32Immediate, 4, false, true, 0x0f, 0xba, 0x21, 0xff)
+NEVERD_BIT_CASE(Test64Register, 8, false, false, 0x48, 0x0f, 0xa3, 0x11)
+NEVERD_BIT_CASE(Test64Immediate, 8, false, true, 0x48, 0x0f, 0xba, 0x21, 0xff)
+NEVERD_BIT_CASE(Set16Register, 2, true, false, 0x66, 0x0f, 0xab, 0x11)
+NEVERD_BIT_CASE(Set16Immediate, 2, true, true, 0x66, 0x0f, 0xba, 0x29, 0xff)
+NEVERD_BIT_CASE(Set32Register, 4, true, false, 0x0f, 0xab, 0x11)
+NEVERD_BIT_CASE(Set32Immediate, 4, true, true, 0x0f, 0xba, 0x29, 0xff)
+NEVERD_BIT_CASE(Set64Register, 8, true, false, 0x48, 0x0f, 0xab, 0x11)
+NEVERD_BIT_CASE(Set64Immediate, 8, true, true, 0x48, 0x0f, 0xba, 0x29, 0xff)
+NEVERD_BIT_CASE(Reset16Register, 2, true, false, 0x66, 0x0f, 0xb3, 0x11)
+NEVERD_BIT_CASE(Reset16Immediate, 2, true, true, 0x66, 0x0f, 0xba, 0x31, 0xff)
+NEVERD_BIT_CASE(Reset32Register, 4, true, false, 0x0f, 0xb3, 0x11)
+NEVERD_BIT_CASE(Reset32Immediate, 4, true, true, 0x0f, 0xba, 0x31, 0xff)
+NEVERD_BIT_CASE(Reset64Register, 8, true, false, 0x48, 0x0f, 0xb3, 0x11)
+NEVERD_BIT_CASE(Reset64Immediate, 8, true, true, 0x48, 0x0f, 0xba, 0x31, 0xff)
+NEVERD_BIT_CASE(Complement16Register, 2, true, false, 0x66, 0x0f, 0xbb, 0x11)
+NEVERD_BIT_CASE(Complement16Immediate, 2, true, true, 0x66, 0x0f, 0xba, 0x39,
+                0xff)
+NEVERD_BIT_CASE(Complement32Register, 4, true, false, 0x0f, 0xbb, 0x11)
+NEVERD_BIT_CASE(Complement32Immediate, 4, true, true, 0x0f, 0xba, 0x39, 0xff)
+NEVERD_BIT_CASE(Complement64Register, 8, true, false, 0x48, 0x0f, 0xbb, 0x11)
+NEVERD_BIT_CASE(Complement64Immediate, 8, true, true, 0x48, 0x0f, 0xba, 0x39,
+                0xff)
+#endif
+#ifdef NEVERD_BIT_BACKEND
+NEVERD_BIT_BACKEND(kvmSupervisor, KVM, false)
+NEVERD_BIT_BACKEND(kvmUser, KVM, true)
+NEVERD_BIT_BACKEND(whpSupervisor, WHP, false)
+NEVERD_BIT_BACKEND(whpUser, WHP, true)
+NEVERD_BIT_BACKEND(unicornSupervisor, Unicorn, false)
+NEVERD_BIT_BACKEND(unicornUser, Unicorn, true)
+#endif

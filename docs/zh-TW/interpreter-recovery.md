@@ -59,7 +59,41 @@ CLI 選項 `--vm-max-refinements=N` 要求正整數，預設值為 16。C 呼叫
 
 C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_machine_source_v3()`：將 `neverd_devirtualize_options_v3` 清零，設定 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`，再設定 `max_control_fields`、`max_solver_queries`，並可設定 `base.max_control_refinements`；零表示採用對應的既有預設值。三個 reserved 欄位必須全部為零。v1/v2 入口忽略 v3 尾部（包含 reserved），v3 忽略未來擴充尾部。報告同時記錄實際工作量與生效的 `maxControlFields`、`maxControlRefinements`、`maxSolverQueries`。
 
+恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
+
+相容的 v4 介面為 `neverd_devirtualize_source_v4()` 與 `neverd_devirtualize_machine_source_v4()`。將 `neverd_devirtualize_options_v4` 清零，並將 `base.base.base.struct_size` 設為完整大小。CLI 串接數量接受非負 32 位元十進位整數，零表示關閉。範圍端點接受有號 64 位元十進位整數，要求 `begin < end` 及 `--vm-machine-state`，約束實體入口 RSP 而非調整後的值。在 C API 中，範圍旗標要求機器狀態介面；未設定時兩個端點必須為零。未知旗標與舊版本保留欄位的非零值會遭拒。v1/v2/v3 忽略整個 v4 擴充，v4 忽略未來擴充。空選項指標保留舊預設值。報告增加 `maxChainedTransfers` 與 `entryFrameBounds`，`discoverControlState` 記錄實際開關。所有 CLI 選項皆要求 `--devirtualize`。數值前提不在執行時檢查，也不保證可存取性、初始化或無別名。這些選項不啟用原生證明策略。
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
+
+如果條件將位址相依縮窄為位元組片段，細化還會把包含該片段、已追蹤的完整八位元組直接位址欄位列為上下文候選。原有窄欄位及其產生者位元遮罩保持不變，不提升無關的寬欄位。常數和相對入口的偏移仍須證明，所有上下文共用現有上限。
+
+可選的不可變位址列舉在遇到缺少憑證的可行位址時停止，保留原始執行期讀取。只有完整位址域得到證明後，才使用已觀察的值和憑證；命中快取仍須重新檢查目前讀取範圍，實際觀察到的畸形憑證仍屬錯誤。
+
+當完整的相依性證明確認目前邊述詞不約束新鮮根變數的高 32 位元時，可以略過完整 64 位元 `root + constant` 控制值的列舉。這既不固定根位址，也不證明可達性。窄生產者遮罩和最終可行性檢查仍然執行；約束整個根變數的述詞仍依正常流程投影有限值域。
+
+有限證明快取達到容量上限後，會以單獨可容納的合格證明取代最久未使用的記錄。命中會更新使用順序；重複存入、未命中和遭拒的候選不會。遭淘汰的證明可能需要重新建立。快取只保留完整值域或已證明的值域超限結果，每次新增求解仍計入共用查詢預算。
+
+復原也會保留各個帶遮罩控制欄位經完整證明的有限值域。聯合關係超過 `MaxControlTuples` 時，這些獨立值域仍可約束目標，但不會斷言欄位之間存在相關性。合流時先依共同遮罩投影，再取值的聯集；缺少或超限的值域會整個捨棄。即使聯合關係已經放寬，值域變更仍會重新排程節點。部分列舉不提供事實，既有欄位數、元組數、符號節點及求解器限制繼續生效。
+
+`MaxChainedTransfers` 是需明確啟用的 C++ 上限（預設 `0`），允許連續執行已證明目標或布林結果唯一的控制轉移。它保留完整符號狀態、原生來源及累計預算；多結果轉移仍使用一般 CFG 邊。反向探索依已提交指令的出現順序重播。串接可能重複迴圈來源，限制自動切點推導。
+
+`EntryFrameBounds` 明確宣告相對於 `FrameBaseRegister` 入口值不回繞的 `[Begin, End)` 範圍，不授予記憶體存取或非別名事實。未設定時仍使用模運算根域。原生證明要求呼叫者的框架邊界相符，並將其綁定至憑據；LLVM 證明保留該框架既有的輸入域。恢復本身不是等價性證書。
 
 <!-- i18n-section: execution-contract -->
 
@@ -69,7 +103,13 @@ JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 
 PE 恢復要求完整的映像中繼資料，包括全映像重定位與例外記錄。CLI 會先載入這些中繼資料，再套用 `--func`；C API 呼叫端不得事先用 `neverd_session_restrict_function()` 限制工作階段。二進位適配器拒絕依受限函式集合載入的映像，因為省略的中繼資料不能證明不存在修正項或例外邊。
 
-只有完整、內容由檔案提供的唯讀範圍，且沒有重疊映射或載入器修正，才能提供映像讀取常數。可寫表、未解析的重定位和執行期取樣快照，都不能作為不可變讀取的證據。COPY 重定位和結構不完整的例外目錄會被拒絕。若 PE 例外目錄及函式範圍完整，其他函式中無法解析的處理常式不會阻止目前入口分析；恢復一旦到達該處理常式涵蓋的程式碼，仍會拒絕。
+未建立下述 PE 證據時，只有完整、內容由檔案提供的唯讀範圍，且沒有重疊映射或載入器修正，才能提供映像讀取常數。可寫表、未解析的重定位和執行期取樣快照，都不能作為不可變讀取的證據。COPY 重定位和結構不完整的例外目錄會被拒絕。若 PE 例外目錄及函式範圍完整，其他函式中無法解析的處理常式不會阻止目前入口分析；恢復一旦到達該處理常式涵蓋的程式碼，仍會拒絕。
+
+`PEFixedImageView` 在偏好基底位址認證完整的 x64 PE 映像，檢查原始標頭、唯一映射、完整 DIR64 欄位及一般匯入寫入範圍，並排除 IAT 位元組。TLS、load-config、延遲／繫結匯入、CLR 與未知寫入機制會被拒絕。恢復及原生／LLVM 證明繫結同一快照。C++ 選項 `MaxImagePreparationBytes` 與 `MaxImagePreparationRecords` 預設為 64 MiB 和 65536；耗盡時回報 `BudgetExceeded`。使用期間映像必須保持不變；這不證明 ASLR、初始化或解包的等價性。
+
+對齊堆疊框架恢復會窮盡入口根的所有低位餘數，高位維持自由。恢復器產生明確入口分派，先證明每個固定位移，再共用原始根的符號記憶體區域。跨節點儲存、別名失效與脈絡合併均保留分區身分。候選由小到大嘗試，無關的大遮罩不會強迫採用最大分區。脈絡與細化上限約束分區及重試；節點、操作、求值與求解查詢累計計費。此恢復能力尚不提供跨分區或重複迴圈來源的自動原生／LLVM 證明聚合。現有檢查器可證明實際路徑述詞蘊含的位移。啟用明確物理堆疊語義時，規範編碼的內部 `RET imm16` 先讀取原返回槽，再將 RSP 增加八位元組及無符號清理量；外層返回仍要求清理量為零。此投影拒絕帶前綴的返回編碼。
+
+重複搬移支援 64 位元位址及 1/2/4/8 位元組元素，前提是完整證明次數與方向。在明確機器狀態下，零次數不存取記憶體，也不需要方向證明；一般 ABI 仍拒絕未綁定旗標。每次純量存取保留一般別名與返回槽檢查。完整搬移的框架指標在邊投影前，依實際記憶體重新證明。未知次數、預算耗盡、分段存取及較窄位址仍被拒絕。這些原始 REP 指令的原生未定義效果認證尚未支援。
 
 原始碼還原範圍要求一般 ABI 返回：每次外部來源寫入的目標範圍，都必須與入口返回位址槽不相交。這是呼叫端／環境必須滿足的明確前提，也包括由外部整數計算出的位址；缺少堆疊框架來源資訊，並不能證明數值位址不相交。由堆疊框架衍生的寫入位址必須證明與該槽不相交，返回時也必須還原原始堆疊指標。來源資訊會跨越溢出儲存與控制流程匯合保留；遺失仿射運算式不會讓位址變成外部指標。目前拒絕堆疊切換、被呼叫端額外彈出堆疊的返回，以及以 RET 派發。二進位介接層強制採用 x64 小端序語意。
 
@@ -96,7 +136,7 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 此模式限定 CPL3/IOPL0、影子堆疊關閉、無非同步事件且正常無故障執行。入口旗標須為規範值，TF/RF/VM/AC/VIF/VIP 清零；POPFQ 的 TF/AC 亦須清零，原始碼會檢查。PUSHFQ/POPFQ 使用顯式狀態；RDSSP 保留目的暫存器，仍拒絕到達的 INCSSP。完整的框架指標保存可傳播，部分或可能別名寫入會使事實失效。可經過帶例外中繼資料的程式碼，但不證明例外分派或展開等價。報告記錄 `sourceABI` 和 `executionProfile`。前述預設 ABI 的嚴格規則維持不變。
 
-此機器狀態 ABI 支援直接近 CALL，以及目標集合獲得窮盡證明的有限暫存器間接近 CALL。暫存器間接呼叫在修改 RSP 前擷取原目標暫存器，並恰好寫入一次實際順序後繼位址。內部近 RET 可在完整證明的有限目標集合中選擇；殘餘程式碼保留一次客體堆疊讀取，先擷取值再增加堆疊指標，並依擷取值派發。到達保留的入口返回槽仍是外層退出，即使先前捨棄過內部框架。未知目標、含缺失或不可執行目標的集合、額外彈出堆疊的返回及任意堆疊切換仍被拒絕。
+此機器狀態 ABI 支援直接近 CALL，以及目標集合獲得窮盡證明的有限暫存器間接近 CALL。暫存器間接呼叫在修改 RSP 前擷取原目標暫存器，並恰好寫入一次實際順序後繼位址。內部近 RET 可在完整證明的有限目標集合中選擇；殘餘程式碼保留一次客體堆疊讀取，先擷取值再增加堆疊指標，並依擷取值派發。到達保留的入口返回槽仍是外層退出，即使先前捨棄過內部框架。未知目標、含缺失或不可執行目標的集合、外層額外彈出堆疊的返回及任意堆疊切換仍被拒絕。
 
 記憶體間接近 CALL 也僅在此顯式機器狀態 ABI、影子堆疊關閉且正常無故障的模式下支援。記憶體運算元須為無區段覆寫的規範 `r/m64` 編碼，可帶位址大小覆寫（`addr32`）與 REX。共用 x64 有效位址與 LOAD 語意先讀取目標，再修改 RSP 並壓入實際順序後繼位址；即使壓棧會覆寫目標槽也遵守此順序，不能將槽位址當作載入後的被呼叫位址。唯讀指標槽或有限表須有不可變讀取證據；已證明初始化的客體堆疊值仍須具備完整的有限目標證明。可寫槽的初始映像位元組或執行期快照不構成不可變證據。未證明的外部讀取、失效的堆疊事實、無效目標、FS/GS 等區段覆寫、遠呼叫、額外或非規範前綴仍被拒絕。預設原始碼 ABI 仍拒絕原生呼叫。
 

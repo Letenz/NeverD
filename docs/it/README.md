@@ -1,6 +1,6 @@
 **Lingue**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: caf1662d537b841bff9db84cc3397bd27ae079f20aeea2132a1dc492b55ae0d5 -->
+<!-- i18n-source: 9264f9f91247663fc3d2c0eba74b24a6456cc33611a90a0c8a112e581828b4fd -->
 
 [← Progetto NeverD](project.md)
 
@@ -8,13 +8,13 @@
 
 Panoramica, build e CLI sono nel README del repository. I riferimenti di design e test per i contributor sono raccolti qui.
 
-**Supporto mobile (CLI sperimentale):** `neverd mobile` recupera Java da APK, DEX e smali [Android](android.md), e C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` e Mach-O [iOS](ios.md). I report JSON descrivono risultati e copertura. Iniziare dalla [panoramica mobile (inglese)](../mobile.md), poi consultare le guide di piattaforma per comandi e limiti.
+**Supporto mobile (CLI sperimentale):** `neverd mobile` recupera Java da APK, DEX e smali [Android](android.md), e C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` e Mach-O [iOS](ios.md). I report JSON descrivono risultati e copertura. Iniziare dalla [panoramica mobile](mobile.md), poi consultare le guide di piattaforma per comandi e limiti.
 
 Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/` e `zh-TW/`. Ogni directory contiene l’indice `README.md`, la panoramica `project.md`, guide tematiche, `CONTRIBUTING.md`, `ATTRIBUTION.md` e `roadmap.md`. Le immagini condivise sono in `assets/`.
 
 L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. Mancano prove native ARM64/WHP; non è stabilita la compatibilità universale dei driver o Android/Darwin.
+`driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. La CI nativa Windows x64 con Unicorn disattivato supera tutti i 299 controlli obbligatori: 71 controlli CPU, 224 risultati di driver da 26 immagini integrate, 46 immagini WDK e 40 casi di scenario alle basi preferite e rilocate, più quattro controlli dei limiti SEH ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). Mancano prove native ARM64; non è stabilita la compatibilità universale dei driver o Android/Darwin.
 
 `checked-aarch64-v1` e `checked-user-aarch64-v1` offrono ARM64 FP32/FP64 e SIMD fissi limitati, con stato FPCR/FPSR/vettoriale completo. Linux ARM64 corrispondente usa KVM, Windows ARM64 usa WHP e ISA diverse usano Unicorn. Le prove native ARM64 restano pendenti; il caricamento di driver Windows resta x64.
 
@@ -35,7 +35,7 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 | [Audit e hunt di sicurezza della memoria](memory-safety.md) | Analisi di vita dell’heap e overflow di copia: contratto di identità per formato, catalogo sink/source, verdetti, budget e schema JSON |
 | [Plugin nativi](plugins.md) | ABI del descrittore C puro, callback ed eventi, flusso di build/link, rilevamento e regole di compatibilità |
 | [Plugin Python](python-plugins.md) | Sviluppo, API di sessione ed eventi, isolamento, test e pubblicazione |
-| [Panoramica mobile (inglese)](../mobile.md) | CLI sperimentale Android/iOS, input, output, report e limiti |
+| [Panoramica mobile](mobile.md) | CLI sperimentale Android/iOS, input, output, report e limiti |
 | [Ricostruzione Java per Android](android.md) | APK (incluso multidex), DEX, file/directory smali → Java; CLI, report JSON, risoluzione dei problemi, limiti e verifica |
 | [Recupero dei sorgenti iOS](ios.md) | IPA/.app/Mach-O (arm64/x86_64) → C nativo e sorgenti Objective-C/Swift supportati; layout, CLI/export, copertura JSON, limiti e prove eseguibili |
 | [Decompilazione EVM](evm.md) | Input, hardfork, IR a stadi, ABI host C/LLVM, ricostruzione Solidity e limiti |
@@ -43,6 +43,6 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 | [Roadmap](roadmap.md) | Stato: formati nativi, EVM e Solana SBF implementati |
 | Documentazione tradotta | I collegamenti linguistici in alto aprono l’indice e la panoramica di ogni lingua |
 
-Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi WHP/ARM64 restano incomplete.
+Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica; le prove dei carichi nativi ARM64 restano incomplete.
 
 I campi x64 nativi `FOP/FIP/FDP` seguono le regole di salvataggio/ripristino dell’host: AMD può azzerare metadati x87 inattivi. Le sonde di avvio li verificano con un’eccezione pendente non mascherata.

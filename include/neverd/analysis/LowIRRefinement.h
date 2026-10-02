@@ -256,6 +256,7 @@ struct LowIRRefinementCertificate {
   std::vector<LowIRRefinementProducer> Producers;
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
+  std::vector<LowIRNativeAuditBoundary> NativeAuditBoundaries;
   /// Present only for inductive scopes. Binds the exact templates, predicates,
   /// projections and rankings that were checked, including their limits.
   std::optional<LowIRLoopRefinementPlan> LoopPlan;

@@ -77,7 +77,41 @@ Die CLI-Option `--vm-max-refinements=N` verlangt eine positive ganze Zahl und ha
 
 C-Aufrufer verwenden `neverd_devirtualize_source_v3()` oder `neverd_devirtualize_machine_source_v3()`. `neverd_devirtualize_options_v3` vollständig mit null initialisieren und `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` setzen. `max_control_fields`, `max_solver_queries` und optional `base.max_control_refinements` angeben; null wählt den unveränderten Standardwert. Alle drei reserved-Felder müssen null bleiben. v1/v2 ignorieren den v3-Anhang einschließlich reserved, v3 ignoriert künftige Anhänge. Der Bericht enthält tatsächliche Arbeit und wirksame Grenzen `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+Die Wiederherstellung bietet auch `--vm-chain-transfers=N` (Standard 0) und `--vm-no-control-discovery`. Verkettung erhält symbolische Korrelationen über Transfers mit bewiesenem Einzelziel; am Limit gelten wieder normale CFG-Grenzen. Maschinenzustandswiederherstellung kann mit `--vm-entry-frame=begin:end` ungeprüfte, nicht umlaufende Offsets zum Eintritts-RSP angeben. Die genaue numerische Vorbedingung bleibt im erzeugten C und Bericht; sie erlaubt keine Speicherzugriffe und beweist keine Äquivalenz.
+
+Die kompatiblen v4-APIs heißen `neverd_devirtualize_source_v4()` und `neverd_devirtualize_machine_source_v4()`. `neverd_devirtualize_options_v4` mit Null initialisieren und `base.base.base.struct_size` auf die vollständige Größe setzen. Die CLI-Verkettungszahl ist eine nichtnegative 32-Bit-Dezimalzahl; Null deaktiviert die Verkettung. Grenzen sind vorzeichenbehaftete 64-Bit-Dezimalzahlen mit `begin < end`, benötigen `--vm-machine-state` und beziehen sich auf den physischen Eintritts-RSP statt dessen angepassten Wert. Das C-Grenzflag erfordert die Maschinenzustands-API; ohne Flag müssen beide Grenzen Null sein. Unbekannte Flags und alte reservierte Felder ungleich Null werden abgelehnt. v1/v2/v3 ignorieren den gesamten v4-Anhang; v4 ignoriert zukünftige Anhänge. Nulloptionen erhalten die bisherigen Standardwerte. Der Bericht ergänzt `maxChainedTransfers`, `entryFrameBounds` und den wirksamen Schalter `discoverControlState`. Alle CLI-Optionen erfordern `--devirtualize`. Die Vorbedingung wird zur Laufzeit nicht geprüft und garantiert weder Zugänglichkeit, Initialisierung noch Aliasfreiheit. Sie aktiviert keine native Beweisrichtlinie.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 Der JSON-Bericht ergänzt `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` und `discoveryVisits` für Aktivierung, Grenzen und Analyseaufwand. Die Erkennung von Feldern allein beweist keine erfolgreiche Wiederherstellung.
+
+Verengt eine Bedingung eine Adressabhängigkeit auf einen Byteausschnitt, behält die Verfeinerung auch bereits verfolgte, umschließende direkte Adressfelder von acht Byte als Kontextkandidaten bei. Das schmale Feld und die Bitmaske seines Erzeugers bleiben unverändert; unbeteiligte breite Felder werden nicht hochgestuft. Konstanten und Offsets relativ zum Eintritt erfordern weiterhin einen Beweis; alle Kontexte teilen sich die bestehenden Grenzen.
+
+Die optionale Aufzählung unveränderlicher Adressen endet, sobald einer möglichen Adresse ein Zertifikat fehlt. Der ursprüngliche Lesezugriff bleibt erhalten. Beobachtete Werte und Zertifikate werden erst nach dem Beweis der vollständigen Wertemenge verwendet; Cache-Treffer erfordern eine erneute Prüfung des aktuellen Lesebereichs. Ein tatsächlich beobachtetes fehlerhaftes Zertifikat bleibt ein Fehler.
+
+Ein vollständiger Abhängigkeitsbeweis kann die Aufzählung eines vollständigen 64-Bit-Steuerwerts `root + constant` auslassen, wenn das aktuelle Kantenprädikat die oberen 32 Bits der frischen Wurzelvariablen frei lässt. Dies legt weder die Wurzeladresse fest noch beweist es Erreichbarkeit. Schmale Produzentenmasken und abschließende Erfüllbarkeitsprüfungen bleiben erhalten; ein Prädikat, das die gesamte Wurzel begrenzt, verwendet weiterhin die normale endliche Projektion.
+
+Bei voller Kapazität ersetzt der Cache für endliche Beweise die am längsten ungenutzten Einträge durch zulässige Beweise, die jeweils allein hineinpassen. Treffer aktualisieren die Nutzungsreihenfolge; doppelte Speicherungen, Fehltreffer und abgelehnte Kandidaten nicht. Verdrängte Beweise müssen gegebenenfalls erneut erbracht werden. Nur vollständige Wertebereiche oder bewiesene Überschreitungen ihrer Grenze werden gespeichert; jeder neue Solveraufruf verbraucht weiterhin das gemeinsame Abfragebudget.
+
+Die Wiederherstellung bewahrt auch vollständig bewiesene endliche Wertebereiche einzelner maskierter Kontrollfelder. Überschreitet eine gemeinsame Relation `MaxControlTuples`, können diese unabhängigen Bereiche weiterhin ein Ziel einschränken, ohne Korrelationen zwischen Feldern zu behaupten. Zusammenführungen vereinigen die mit der gemeinsamen Maske projizierten Werte; fehlende oder zu große Bereiche werden vollständig verworfen. Änderungen eines Bereichs planen den Knoten auch nach einer Vergröberung der gemeinsamen Relation neu ein. Teilaufzählungen liefern keine Fakten; die bestehenden Grenzen für Felder, Tupel, symbolische Knoten und Solver bleiben wirksam.
+
+`MaxChainedTransfers` ist eine optionale C++-Grenze (Standard `0`) für aufeinanderfolgende Kontrollübergänge mit nachweislich eindeutigem Ziel oder booleschem Ergebnis. Vollständiger symbolischer Zustand, native Herkunft und kumulative Budgets bleiben erhalten; mehrere Ergebnisse nutzen gewöhnliche CFG-Kanten. Rückwärtssuche spielt bestätigte Befehlsvorkommen erneut ab. Verkettung kann Schleifenursprünge duplizieren und die automatische Schnittpunktinferenz einschränken.
+
+`EntryFrameBounds` deklariert ausdrücklich einen nicht überlaufenden Bereich `[Begin, End)` relativ zum Eintrittswert von `FrameBaseRegister`. Daraus folgen weder Speicherzugriffsrechte noch Aliasfreiheit. Ohne Angabe bleibt der Wurzelbereich modular. Der native Beweis verlangt dieselben Frame-Grenzen im Aufrufervertrag und bindet sie in seinen Nachweis ein; der LLVM-Beweis behält den bestehenden Frame-Bereich. Wiederherstellung allein ist kein Äquivalenzzertifikat.
 
 <!-- i18n-section: execution-contract -->
 
@@ -93,8 +127,8 @@ Rekonstruktion.
 
 Die PE-Rekonstruktion erfordert vollständige Abbildmetadaten einschließlich aller Relokationen und Ausnahmeeinträge. Die CLI lädt sie vor der Anwendung von `--func`; C-API-Aufrufer dürfen die Sitzung nicht zuvor mit `neverd_session_restrict_function()` einschränken. Der Binäradapter lehnt Abbilder ab, die mit einer eingeschränkten Funktionsmenge geladen wurden: Ausgelassene Metadaten beweisen weder die Abwesenheit von Fixups noch die von Ausnahmekanten.
 
-Nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
-überlappende Mappings oder Loader-Fixups dürfen konstante Abbildlesevorgänge
+Ohne die nachfolgenden PE-Nachweise dürfen nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
+überlappende Mappings oder Loader-Fixups konstante Abbildlesevorgänge
 begründen. Schreibbare Tabellen, nicht aufgelöste Relokationen und punktuelle
 Laufzeitschnappschüsse belegen keine Unveränderlichkeit. COPY-Relokationen und strukturell unvollständige Ausnahmedirektoren werden
 abgelehnt. Ist das PE-Verzeichnis samt Funktionsbereichen vollständig, hindert
@@ -112,6 +146,12 @@ affinen Ausdrucks macht daraus keinen externen Zeiger. Stack-Pivots,
 Rücksprünge mit Bereinigung der Argumente durch den Aufgerufenen und RET-basierter
 Dispatch werden derzeit abgelehnt. Der Binäradapter erzwingt die
 Little-Endian-Semantik von x64.
+
+`PEFixedImageView` authentifiziert vollständige x64-PE-Abbilder an ihrer bevorzugten Basisadresse. Geprüft werden rohe Header, eindeutige Mappings, vollständige DIR64-Felder und gewöhnliche Import-Schreibzugriffe; IAT-Bytes bleiben ausgeschlossen. TLS, load-config, verzögerte/gebundene Imports, CLR und unbekannte Schreibmechanismen werden abgelehnt. Wiederherstellung und native/LLVM-Beweise binden denselben Snapshot. Die C++-Optionen `MaxImagePreparationBytes` und `MaxImagePreparationRecords` haben die Standardwerte 64 MiB und 65536; Erschöpfung ergibt `BudgetExceeded`. Das Abbild muss unverändert bleiben. Dies beweist keine Äquivalenz von ASLR, Initialisierung oder Entpacken.
+
+Die Wiederherstellung ausgerichteter Frames umfasst alle Reste der unteren Bits der Eintrittswurzel; die oberen Bits bleiben frei. Sie erzeugt eine explizite Eintrittsverzweigung und beweist jede konstante Verschiebung, bevor sie den symbolischen Speicherbereich der ursprünglichen Wurzel gemeinsam verwendet. Spills, Alias-Invalidierung und Kontextzusammenführung bewahren die Partitionsidentität. Kandidaten werden aufsteigend geprüft; unabhängige große Masken erzwingen keine maximale Partition. Kontext- und Verfeinerungslimits begrenzen Partitionen und Wiederholungen; Knoten, Operationen, Auswertungen und Solver-Abfragen werden kumuliert. Automatische native/LLVM-Beweisaggregation über Partitionen oder duplizierte Schleifenursprünge steht noch aus. Bestehende Prüfer können Verschiebungen aus tatsächlichen Pfadprädikaten beweisen. Bei expliziter physischer Stack-Semantik liest ein kanonisches internes `RET imm16` den bisherigen Rückkehrslot und erhöht RSP um acht Byte plus vorzeichenlose Bereinigung; äußere Rückkehr verlangt weiterhin Bereinigung null. Präfixbehaftete Rückkehrkodierungen werden in dieser Projektion abgelehnt.
+
+Wiederholte Übertragungen unterstützen 64-Bit-Adressen und Elemente von 1/2/4/8 Byte nach vollständigem Beweis von Anzahl und Richtung. Bei explizitem Maschinenzustand greift Anzahl null nicht auf Speicher zu und benötigt keinen Richtungsbeweis; die normale ABI lehnt ungebundene Flags weiterhin ab. Jeder skalare Zugriff behält Alias- und Rücksprungslot-Prüfungen. Vollständig kopierte Rahmenzeiger werden vor der Kantenprojektion aus dem tatsächlichen Speicher erneut bewiesen. Unbekannte Anzahlen, erschöpfte Budgets, segmentierte Zugriffe und kleinere Adressbreiten werden abgelehnt. Die native Zertifizierung undefinierter Effekte dieser ursprünglichen REP-Befehle bleibt ununterstützt.
 
 Die Ausgabe umfasst Quelltext und IR für die Analyse. Sie weist keine Sicherheit
 für Relokation, Stack-Unwinding, asynchrone Ausnahmen oder binären Ersatz nach.
@@ -139,7 +179,7 @@ Ursprüngliche Gastcode- und Datenadressen behalten ihre exakten numerischen Wer
 
 Das Profil setzt CPL3/IOPL0, deaktivierten Schattenstack, keine asynchronen Ereignisse und normale fehlerfreie Ausführung voraus. Eingangsflags müssen kanonisch mit TF/RF/VM/AC/VIF/VIP null sein; POPFQ muss TF/AC null lassen. Der erzeugte Code prüft dies. PUSHFQ/POPFQ verwenden den expliziten Zustand; RDSSP erhält das Zielregister, erreichtes INCSSP wird abgelehnt. Vollständig gespeicherte Rahmenzeiger bleiben erhalten; Teilzugriffe oder mögliche Aliase verwerfen Fakten. Ausnahmemetadaten erlauben nur den normalen Pfad, keine Ausnahme- oder Unwind-Äquivalenz. Der Bericht enthält `sourceABI` und `executionProfile`; die Standard-ABI bleibt streng.
 
-Diese Maschinenzustands-ABI unterstützt direkte Near-CALL und registerindirekte Near-CALL mit vollständig bewiesener endlicher Zielmenge. Ein registerindirekter Aufruf erfasst das ursprüngliche Zielregister vor der Änderung von RSP und speichert die tatsächliche Folgeadresse genau einmal. Interne Near-RET dürfen aus einer vollständig bewiesenen endlichen Zielmenge wählen. Der Restcode liest den Gaststack einmal, erfasst den Wert vor der Stackpointer-Erhöhung und verzweigt anhand dieses Wertes. Der erhaltene Eingangs-Rücksprungslot bleibt ein äußerer Ausgang, auch nach dem Verwerfen interner Rahmen. Unbekannte Ziele, Mengen mit fehlenden oder nicht ausführbaren Zielen, Rücksprünge mit zusätzlicher Stackbereinigung und beliebige Stackwechsel bleiben abgelehnt.
+Diese Maschinenzustands-ABI unterstützt direkte Near-CALL und registerindirekte Near-CALL mit vollständig bewiesener endlicher Zielmenge. Ein registerindirekter Aufruf erfasst das ursprüngliche Zielregister vor der Änderung von RSP und speichert die tatsächliche Folgeadresse genau einmal. Interne Near-RET dürfen aus einer vollständig bewiesenen endlichen Zielmenge wählen. Der Restcode liest den Gaststack einmal, erfasst den Wert vor der Stackpointer-Erhöhung und verzweigt anhand dieses Wertes. Der erhaltene Eingangs-Rücksprungslot bleibt ein äußerer Ausgang, auch nach dem Verwerfen interner Rahmen. Unbekannte Ziele, Mengen mit fehlenden oder nicht ausführbaren Zielen, äußere Rücksprünge mit zusätzlicher Stackbereinigung und beliebige Stackwechsel bleiben abgelehnt.
 
 Speicherindirekte Near-CALL werden ebenfalls nur unter dieser expliziten Maschinenzustands-ABI mit deaktiviertem Schattenstack und normaler fehlerfreier Ausführung unterstützt. Der Speicheroperand muss eine kanonische `r/m64`-Kodierung ohne Segmentüberschreibung verwenden, optional mit Adressgrößenpräfix (`addr32`) und REX. Die gemeinsame x64-Semantik für effektive Adressen und LOAD liest das Ziel vor der RSP-Änderung und dem Push der tatsächlichen Folgeadresse. Das gilt auch, wenn der Push den Zielslot überschreibt; seine Adresse ersetzt niemals den geladenen Aufrufwert. Schreibgeschützte Zeigerslots oder endliche Tabellen benötigen einen Nachweis unveränderlicher Lesezugriffe; nachweislich initialisierte Gaststackwerte benötigen weiterhin einen vollständigen Beweis ihrer endlichen Zielmenge. Anfangsbytes oder Laufzeitschnappschüsse beschreibbarer Slots sind kein Unveränderlichkeitsnachweis. Unbewiesene externe Lesezugriffe, verworfene Stackfakten, ungültige Ziele, FS/GS- oder andere Segmentpräfixe, Far-Aufrufe sowie zusätzliche oder nichtkanonische Präfixe bleiben abgelehnt. Die Standard-Quell-ABI lehnt native Aufrufe weiterhin ab.
 

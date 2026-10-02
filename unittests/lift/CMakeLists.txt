@@ -133,6 +133,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
   core/SwiftStringValueCallTests.cpp
+  core/SwiftStaticStringCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp
@@ -848,6 +849,8 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_UndefinedEffectsTests.cpp
   x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
+  x86_64/X86_64_BitTestUndefinedEffectsTests.cpp
+  x86_64/X86_64_XaddAuditTests.cpp
   LINK_COMPONENTS Decode Lift Loader Symbolic
 )
 
@@ -1014,6 +1017,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
   core/SwiftStringValueCallTests.cpp
+  core/SwiftStaticStringCallTests.cpp
   core/ObjCSentinelCallTests.cpp
   core/DarwinAccelerateSourceCallTests.cpp
   core/DarwinUIKitSourceCallTests.cpp
@@ -1047,6 +1051,7 @@ endif()
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
   core/HighControlFlowSemanticsTests.cpp
+  core/HighFrameStoreForwardingTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

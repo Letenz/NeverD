@@ -145,6 +145,19 @@ struct CopyFixture {
   }
 };
 
+void returnOnlyLeaf(CopyFixture &F, bool Twice = false) {
+  std::vector<uint32_t> Body{0xa9bf7bfd, CopyFixture::branch(F.Root + 4)};
+  if (Twice)
+    Body.push_back(CopyFixture::branch(F.Root + 8));
+  // Subtract and add full words only after the call(s), so all three inputs
+  // must survive the exact leaf instead of becoming external-call clobbers.
+  Body.insert(Body.end(), {0xcb010000, 0x8b020000, 0xa8c17bfd, 0xd65f03c0});
+  for (unsigned I = 0; I < Body.size(); ++I)
+    F.word(F.Root + 4 * I, Body[I]);
+  F.word(F.Leaf, 0xd65f03c0);
+  F.run();
+}
+
 uint32_t pageAddress(va_t PC, va_t Address, unsigned Register) {
   const auto Delta =
       (int64_t(Address & ~va_t(0xfff)) - int64_t(PC & ~va_t(0xfff))) / 4096;
@@ -455,6 +468,177 @@ TEST(SourceObjCArgumentTail, BindsLiteralFormatFromSavedArgumentRegister) {
   EXPECT_EQ(Messages, 1U);
 }
 
+namespace {
+void runtimeReleaseTail(CopyFixture &F) {
+  constantStrings(F);
+  F.Image.DynInfo.NeededLibs = {"/usr/lib/libobjc.A.dylib"};
+  F.Image.ImportPtrSlots[0x2180] = "_objc_release";
+  ASSERT_TRUE(F.Image.recordDyldBindSlot(0x2180, "_objc_release", 0,
+                                         "/usr/lib/libobjc.A.dylib", false));
+  const uint32_t Stub[] = {0xb0000010, 0xf940c210, 0xd61f0200};
+  for (unsigned I = 0; I < std::size(Stub); ++I)
+    F.word(0x1280 + I * 4, Stub[I]);
+  F.word(F.Leaf, 0xaa1503e0); // MOV x0, x21.
+  F.word(F.Leaf + 4, 0x14000000u | ((0x1280 - (F.Leaf + 4)) / 4));
+  const uint32_t Body[] = {
+      0xa9be7bfd, 0xa90157f6, 0xaa0003f5, 0xaa0103e0, F.branch(F.Root + 16),
+      0xa94157f6, 0xa8c27bfd, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word(F.Root + I * 4, Body[I]);
+  F.Signature.ReturnType = NdType::makeVoid();
+  F.Signature.Parameters = {{"object", NdType::makePtr(NdType::makeVoid())},
+                            {"other", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Signature, Arch::AArch64, Error));
+  F.run();
+}
+} // namespace
+
+TEST(SourceObjCRuntimeTail, ReleaseBindsSavedArgumentAndRevalidatesBridge) {
+  CopyFixture F;
+  runtimeReleaseTail(F);
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, F.Leaf);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->TargetName, "objc_release");
+  ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset, 21U * 8);
+  EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+  const auto Hints = buildObjCSourceCallHints(F.Image, F.low());
+  ASSERT_TRUE(Hints.count(F.Root + 16));
+  EXPECT_TRUE(
+      equalSourceABIs(Hints.at(F.Root + 16).Signature, Hint->Signature));
+  const auto Bound = sdk::bindObjCSourceReferences(F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const HighExpr *Release = nullptr;
+  walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && E->Kind == ExprKind::Call && E->SourceCallHint &&
+          E->SourceCallHint->TargetName == "objc_release")
+        Release = E.get();
+    });
+  });
+  ASSERT_NE(Release, nullptr);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Release, F.Image, {}));
+  const auto Original = F.Image;
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    if (Mutation == 0)
+      F.word(F.Leaf,
+             0xaa1603e0); // Another saved argument invalidates this hint.
+    else if (Mutation == 1)
+      F.word(F.Leaf, 0x2a1503e0);
+    else if (Mutation == 2)
+      F.word(F.Leaf, 0xaa1507e0);
+    else if (Mutation == 3)
+      F.word(F.Leaf + 4, 0x94000000u | ((0x1280 - (F.Leaf + 4)) / 4));
+    else if (Mutation == 4)
+      F.Image.CodePtrRelocSlots.insert(F.Leaf);
+    else if (Mutation == 5)
+      F.Image.DyldBindSlots[0x2180].WeakImport = true;
+    else if (Mutation == 6)
+      F.Image.DyldBindSlots[0x2180].Module = "/usr/lib/other.dylib";
+    else if (Mutation == 7)
+      F.Image.Symbols.push_back({"interior", F.Leaf + 4, 4, true});
+    else if (Mutation == 8)
+      F.word(0x1288, 0xd61f0220); // BR x17 is not this imported veneer.
+    else if (Mutation == 9)
+      reinterpret_cast<llvm::MachO::nlist_64 *>(
+          F.Image.Segments[0].Data.data() + 0x1800)
+          ->n_type |= llvm::MachO::N_EXT;
+    else if (Mutation == 10)
+      F.word(F.Leaf, 0xaa1503e1);
+    else if (Mutation == 11)
+      F.word(F.Leaf, 0xaa1203e0);
+    else if (Mutation == 12)
+      F.Image.DynInfo.NeededLibs.clear();
+    else if (Mutation == 13) {
+      F.Image.DyldBindSlots[0x2180].Name = "_objc_autorelease";
+      F.Image.ImportPtrSlots[0x2180] = "_objc_autorelease";
+    } else
+      F.Image.Segments[0].Flags =
+          F.Image.Segments[0].Flags | SegmentFlags::Writable;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Release, F.Image, {}));
+    F.Image = Original;
+  }
+}
+
+TEST(SourceObjCRuntimeTail, DirectBranchToImportStorageIsNotARuntimeCall) {
+  CopyFixture F;
+  runtimeReleaseTail(F);
+  ASSERT_TRUE(objcRuntimeSourceCallHint(F.Image, 0x2180));
+  F.word(F.Root + 16, 0x94000000u | ((0x2180 - (F.Root + 16)) / 4));
+  F.run();
+  EXPECT_FALSE(buildObjCSourceCallHints(F.Image, F.low()).count(F.Root + 16));
+}
+
+TEST(SourceObjCRuntimeTail, GeneratedCReleasesSavedObjectExactlyOnce) {
+#ifndef NEVERD_TEST_CLANG
+  GTEST_SKIP() << "clang is unavailable";
+#else
+  CopyFixture F;
+  runtimeReleaseTail(F);
+  auto Bound = sdk::bindObjCSourceReferences(F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  auto High = std::move(Bound.Function);
+  High.Name = "release_root";
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.EmitComments = false;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Source += R"C(
+static uintptr_t observed;
+static unsigned calls;
+void objc_release(void *object) { ++calls; observed = (uintptr_t)object; }
+int main(void) {
+  const uintptr_t values[] = {0, 1, 17, 0x7fffffffULL, 0x8000000000000000ULL,
+                              0xffffffffffffffffULL, 0xabcdef0123456789ULL};
+  unsigned expected = 0;
+  for (unsigned i = 0; i < 7; ++i) for (unsigned j = 0; j < 7; ++j) {
+    release_root((void *)values[i], (void *)values[j]);
+    if (observed != values[i] || calls != ++expected) return 1;
+  }
+  return 0;
+}
+)C";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-runtime-tail", Directory));
+  const std::filesystem::path Work(Directory.c_str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code Error;
+      std::filesystem::remove_all(Work, Error);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "source.c").string();
+  const auto Executable = (Work / "source").string();
+  const auto ErrorPath = (Work / "stderr").string();
+  std::ofstream(Path) << Source;
+  for (const auto *Level : {"-O0", "-O2"}) {
+    const std::string Compiler = NEVERD_TEST_CLANG;
+    const std::vector<std::string> Arguments{
+        Compiler, "-std=c11", Level, "-Werror", Path, "-o", Executable};
+    const std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, ErrorPath};
+    std::string Error;
+    const auto Status = llvm::sys::ExecuteAndWait(Compiler, Refs, std::nullopt,
+                                                  Redirects, 60, 0, &Error);
+    const auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Status, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "")
+                         << Source;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                        Redirects, 30, 0, &Error),
+              0)
+        << Error << Source;
+  }
+#endif
+}
+
 TEST(SourceRegisterCopy, StackStoreRetainsItsOwnValueAndRequiresAFrame) {
   CopyFixture F;
   stackStoreLeaf(F);
@@ -640,7 +824,7 @@ TEST(SourceRegisterCopy,
                            0xd65f03c0};
   for (unsigned I = 0; I < std::size(Body); ++I)
     F.word(F.Root + I * 4, Body[I]);
-  F.word(0x1200, 0xd65f03c0);
+  F.word(0x1200, 0xd61f0200); // Opaque consumer veneer: BR x16.
   SourceFunctionTypeHint Consume;
   Consume.ReturnType = NdType::makeVoid();
   Consume.Parameters = {{"tag", NdType::makeInt(8, false)},
@@ -839,7 +1023,7 @@ TEST(SourceRegisterCopy,
                            0xd65f03c0};
   for (unsigned I = 0; I < std::size(Body); ++I)
     F.word(F.Root + I * 4, Body[I]);
-  F.word(0x1200, 0xd65f03c0);
+  F.word(0x1200, 0xd61f0200); // Opaque consumer veneer: BR x16.
   SourceFunctionTypeHint Consume;
   Consume.ReturnType = NdType::makeVoid();
   Consume.Parameters = {{"tag", NdType::makeInt(8, false)},
@@ -1391,7 +1575,7 @@ TEST(SourceClassGetter, PreservesFreshFrameFactsButCannotUndoAnEarlierEscape) {
                            0xd61f0200};
   for (unsigned I = 0; I < std::size(Stub); ++I)
     F.word(0x1280 + I * 4, Stub[I]);
-  F.word(0x1260, 0xd65f03c0);
+  F.word(0x1260, 0xd61f0200); // Unknown callee, not a proved return-only leaf.
   std::vector<uint32_t> Body = {0xd100c3ff,
                                 0xa9027bfd,
                                 0xa90153f3,
@@ -1487,6 +1671,97 @@ TEST(SourceRegisterCopy, SequentialAliasesNormalizeToEntryAndBindEveryCall) {
   }
   EXPECT_NE(Copies.begin()->first, Copies.rbegin()->first);
   EXPECT_TRUE(restoresNativeSourceState(F.low(), Arch::AArch64, F.calls()));
+}
+
+TEST(SourceRegisterCopy, ReturnOnlyLeafPreservesEveryInputWithoutAnABI) {
+  for (bool Twice : {false, true}) {
+    CopyFixture F;
+    returnOnlyLeaf(F, Twice);
+    // A fixed direct branch to these exact bytes does not acquire an external
+    // ABI when the same RET also has a public symbol alias.
+    F.Image.Segments[0].Data[0x1804] |= llvm::MachO::N_EXT;
+    F.run();
+    ASSERT_EQ(F.med().RegisterCopyProjections.size(), Twice ? 2U : 1U);
+    for (const auto &[Site, Proof] : F.med().RegisterCopyProjections) {
+      EXPECT_TRUE(Proof.isReturnOnly());
+      EXPECT_EQ(Proof.Site, Site);
+    }
+    EXPECT_TRUE(
+        sdk::sourceRegisterCopyProjectionValid(F.high(), F.Image, F.Result));
+    EXPECT_TRUE(restoresNativeSourceState(F.low(), F.Image.Arch, F.calls()));
+    EXPECT_TRUE(sdk::sourceBodyLimitation(F.high(), F.Signature,
+                                          &F.Result.FunctionAudits.front())
+                    .empty());
+    unsigned OriginalCalls = 0, ProjectedCalls = 0;
+    for (const auto &Block : F.low().Blocks)
+      for (const auto &Op : Block.Ops)
+        OriginalCalls += Op.Opcode == NdOp::CALL;
+    for (const auto &Block : F.med().Blocks)
+      for (const auto &Op : Block.Ops)
+        ProjectedCalls += Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(OriginalCalls, Twice ? 2U : 1U);
+    EXPECT_EQ(ProjectedCalls, 0U);
+    LowToMedConverter Generic;
+    Generic.setBinaryImage(&F.Image);
+    const auto Unprojected =
+        Generic.convert(F.low(), Arch::AArch64, BinaryFormat::MachO);
+    EXPECT_TRUE(Unprojected.RegisterCopyProjections.empty());
+    unsigned GenericCalls = 0;
+    for (const auto &Block : Unprojected.Blocks)
+      for (const auto &Op : Block.Ops)
+        GenericCalls += Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(GenericCalls, OriginalCalls);
+
+    const auto Original = F.Image;
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      F.Image = Original;
+      if (Mutation == 0)
+        F.word(F.Leaf, 0xd65f0260); // RET x19 is not a standard return.
+      if (Mutation == 1)
+        F.word(F.Leaf, 0xd503201f); // An unproved instruction is not identity.
+      if (Mutation == 2)
+        F.Image.Segments[0].Flags =
+            F.Image.Segments[0].Flags | SegmentFlags::Writable;
+      if (Mutation == 3)
+        F.Image.CodePtrRelocSlots.insert(F.Leaf);
+      if (Mutation == 4)
+        F.Image.IsRelocatable = true;
+      if (Mutation == 5)
+        F.Image.Segments[0].Data.resize(F.Leaf + 3);
+      if (Mutation == 6)
+        for (unsigned I = 0; I < (Twice ? 2U : 1U); ++I) {
+          const auto Site = F.Root + 4 + I * 4;
+          // B cannot replace the proved BL.
+          F.word(Site, CopyFixture::branch(Site) & ~0x80000000U);
+        }
+      if (Mutation == 7) {
+        ExceptionFunction Metadata;
+        Metadata.CodeRange = {F.Leaf, F.Leaf + 4};
+        F.Image.ExceptionMetadata.Functions.push_back(Metadata);
+      }
+      if (Mutation == 8)
+        for (unsigned I = 0; I < (Twice ? 2U : 1U); ++I)
+          F.Image.CodePtrRelocSlots.insert(F.Root + 4 + I * 4);
+      EXPECT_TRUE(sourceRegisterCopies(F.Image, F.low()).empty());
+      EXPECT_FALSE(
+          sdk::sourceRegisterCopyProjectionValid(F.high(), F.Image, F.Result));
+    }
+    F.Image = Original;
+    auto Changed = F.high();
+    Changed.RegisterCopyProjections.begin()->second.LeafWords.clear();
+    EXPECT_FALSE(
+        sdk::sourceRegisterCopyProjectionValid(Changed, F.Image, F.Result));
+    for (const auto &Words :
+         {std::vector<uint32_t>{}, std::vector<uint32_t>{0xd65f0260},
+          std::vector<uint32_t>{0xd503201f, 0xd65f03c0}}) {
+      auto Proof = F.med().RegisterCopyProjections.begin()->second;
+      Proof.LeafWords = Words;
+      auto Calls = F.calls();
+      Calls.begin()->second.RegisterCopy = &Proof;
+      EXPECT_FALSE(restoresNativeSourceState(F.low(), F.Image.Arch, Calls));
+    }
+  }
 }
 
 TEST(SourceRegisterCopy, RejectsChangedMachineLinkageAndUnsupportedEffects) {
@@ -1818,9 +2093,12 @@ TEST(SourceRegisterCopy, GeneratedCExecutesSequentialCopiesAndPreservesInputs) {
 #ifndef NEVERD_TEST_CLANG
   GTEST_SKIP() << "clang is unavailable";
 #else
-  for (bool Swap : {false, true})
+  for (unsigned Form = 0; Form < 3; ++Form)
     for (bool Twice : {false, true}) {
+      const bool Swap = Form == 1;
       CopyFixture F(Swap, Twice);
+      if (Form == 2)
+        returnOnlyLeaf(F, Twice);
       ASSERT_EQ(F.med().RegisterCopyProjections.size(), Twice ? 2U : 1U);
       auto High = F.high();
       High.Name = "copy_root";
@@ -1839,7 +2117,7 @@ int main(void) {
       uint64_t a=values[i], b=values[j], c=values[k];
 )C";
       Source += std::string("      uint64_t expected = ") +
-                (Swap && !Twice ? "a - b + c;" : "b - a + c;") +
+                ((Swap && !Twice) || Form == 2 ? "a - b + c;" : "b - a + c;") +
                 "\n      if (copy_root(a,b,c) != expected) return 1;\n"
                 "    }\n  return 0;\n}\n";
       llvm::SmallString<128> Directory;

@@ -253,13 +253,16 @@ public:
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff) {
   if (Func.Blocks.empty())
     return false;
+  // An entry seed copies the incoming register.  SSA may give the copy a new
+  // version (`COPY RCX.1 = RCX` when CL is seeded too) while later reads
+  // still name the incoming one; both sides are the incoming value.
   for (const MedOp &Op : Func.Blocks.front().Ops) {
     if (Op.Opcode != NdOp::COPY)
       break;
     if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
         Op.NumInputs >= 1 && Op.Inputs[0].Kind == MedVar::Reg &&
-        Op.Inputs[0].Id == Op.Output.Id &&
-        Op.Inputs[0].SSAVer == Op.Output.SSAVer && Op.Output == V)
+        Op.Inputs[0].Id == Op.Output.Id && Op.Inputs[0].SSAVer == 0 &&
+        (Op.Output == V || Op.Inputs[0] == V))
       return true;
   }
   return false;
@@ -879,7 +882,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     return;
   // The join-default sink models Win64 register joins (structureIfElse).
   const bool LateJoinSink = !CurMed || CurMed->CC == CallingConv::Win64;
-  bool Dirty = duplicateSmallReturnTails(Func.Body);
+  bool Dirty = hoistTryExitJumps(Func.Body);
+  Dirty |= duplicateSmallReturnTails(Func.Body);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
@@ -911,6 +915,7 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     for (int Round = 0; Round < 8; ++Round) {
       const bool Grouped =
           groupSwitchCases(Func.Body) | dropJumpsToTheNextStatement(Func.Body) |
+          hoistTryExitJumps(Func.Body) |
           (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |

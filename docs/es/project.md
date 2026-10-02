@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -48,9 +48,17 @@ La [recuperación experimental de fuentes de intérpretes](interpreter-recovery.
 
 Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-refinements` y `--vm-max-queries` mantienen los valores predeterminados 16, 16 y 4096. La guía describe la API C v3 compatible y las reglas de fallo.
 
+La recuperación también ofrece `--vm-chain-transfers=N` (0 por defecto) y `--vm-no-control-discovery`. El encadenamiento conserva correlaciones simbólicas entre transferencias de destino único demostrado; al alcanzar el límite vuelve a fronteras CFG ordinarias. El modo de estado de máquina permite declarar offsets de RSP de entrada sin desbordamiento modular y sin comprobación en ejecución con `--vm-entry-frame=begin:end`. La premisa numérica exacta acompaña al C y al informe; no autoriza memoria ni prueba equivalencia.
+
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
 
 La API C++ independiente `checkBinaryLLVMRefinement` compone nuevas comprobaciones nativas y LLVM sobre un artefacto LLVM exacto; la compilación C queda fuera de su prueba.
+
+La recuperación PE también autentica bytes DIR64 en la base preferida y excluye escrituras de importaciones; el contrato no certifica ASLR ni inicialización.
+
+Bajo el contrato explícito de estado de máquina, la recuperación admite particiones acotadas de alineación de pila de entrada y limpieza interna `RET imm16`. La composición automática de pruebas nativo-a-LLVM para estas particiones sigue pendiente.
+
+La recuperación acotada de `REP MOVS/STOS` conserva el orden de los elementos y el solapamiento; la prueba de las instrucciones originales sigue pendiente.
 
 <!-- i18n-section: why-neverd -->
 
@@ -101,11 +109,11 @@ La recuperación depende de los patrones de código compatibles; consulte la [in
 
 La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. Faltan pruebas nativas ARM64/WHP; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
+`driver-strict` / `checked-x64-v1` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. La CI nativa de Windows x64 con Unicorn desactivado supera las 299 comprobaciones obligatorias: 71 de CPU, 224 resultados de controladores de 26 imágenes integradas, 46 imágenes WDK y 40 casos de escenarios en las direcciones preferidas y reubicadas, más cuatro comprobaciones de límites SEH ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). Faltan pruebas nativas ARM64; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
 
 `checked-aarch64-v1` y `checked-user-aarch64-v1` ofrecen ARM64 FP32/FP64 y SIMD fijos acotados, con estado FPCR/FPSR/vectorial completo. Linux ARM64 coincidente usa KVM, Windows ARM64 usa WHP y otra ISA usa Unicorn. Siguen pendientes las pruebas nativas ARM64; la carga de controladores Windows sigue limitada a x64.
 
-Las sondas nativas x64 y ARM64 validan ejecución completa acotada con permiso exclusivo de memoria. Los paquetes XSAVE y cachés de tablas identificados por ISA tienen una autoridad única; la evidencia de cargas nativas WHP/ARM64 sigue incompleta.
+Las sondas nativas x64 y ARM64 validan ejecución completa acotada con permiso exclusivo de memoria. Los paquetes XSAVE y cachés de tablas identificados por ISA tienen una autoridad única; la evidencia de cargas nativas ARM64 sigue incompleta.
 
 Los campos x64 nativos `FOP/FIP/FDP` siguen las reglas de guardado/restauración del host: AMD puede borrar metadatos x87 inactivos. Las pruebas de inicio los validan con una excepción pendiente sin máscara.
 

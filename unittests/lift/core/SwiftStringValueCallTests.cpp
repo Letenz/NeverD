@@ -9,6 +9,66 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 using namespace neverd;
 
+TEST(ObjCCallHints, SwiftUTF8CStringKeepsBothStringWordsAndBufferResult) {
+  using namespace runtime_function_address_test;
+  const std::string Name = "$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ImportPtrSlots[Slot] = "_" + Name;
+    Image.DyldBindSlots[Slot] = {"_" + Name, 0,
+                                 "/usr/lib/swift/libswiftCore.dylib", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_EQ(Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    for (unsigned I = 0; I < 2; ++I) {
+      EXPECT_EQ(Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Signature.Parameters[I].Type->Size, 8U);
+      EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+    }
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.ReturnType->Size, 8U);
+    EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+    EXPECT_TRUE(Signature.ReturnComponents.empty());
+    auto Call =
+        HighExpr::makeCall("untrusted", Slot,
+                           {HighExpr::makeConst(0, 8),
+                            HighExpr::makeConst(0xe000000000000000, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[Slot].Module = "/tmp/libswiftCore.dylib";
+      if (Mutation == 1)
+        Wrong.DyldBindSlots[Slot].WeakImport = true;
+      if (Mutation == 2)
+        Wrong.DyldBindSlots[Slot].Addend = 8;
+      if (Mutation == 3)
+        Wrong.DyldBindSlots[Slot].Name += "invalid";
+      if (Mutation == 4)
+        Wrong.DyldBindSlots.erase(Slot);
+      if (Mutation == 5)
+        Wrong.ConflictingImportStorageSlots.insert(Slot);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, Slot));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    }
+    auto Changed = *Hint;
+    Changed.Signature.Parameters[0].Type = NdType::makeInt(4);
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Changed);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, SwiftStringValueOperationsKeepContextAndResultCarriers) {
   using namespace runtime_function_address_test;
   for (const auto Architecture : {Arch::AArch64, Arch::X64})

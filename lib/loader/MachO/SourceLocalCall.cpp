@@ -12,11 +12,9 @@
 #include "llvm/Support/Endian.h"
 
 namespace neverd {
-bool sourceLocalLeafRange(const BinaryImage &Image, va_t Entry, uint32_t Size) {
+bool sourceLeafCodeRange(const BinaryImage &Image, va_t Entry, uint32_t Size) {
   if (!Size || Size > 68 || Entry > UINT64_MAX - Size ||
-      !readImmutableCodeBytes(Image, Entry, Size) ||
-      !isMachOLocalFunctionRange(Image, Entry, Size,
-                                 MachOLocalFunctionAliases::SameAddress))
+      !readImmutableCodeBytes(Image, Entry, Size))
     return false;
   for (const auto &Symbol : Image.Symbols)
     if (Symbol.IsFunc && Symbol.Addr > Entry && Symbol.Addr - Entry < Size)
@@ -30,6 +28,12 @@ bool sourceLocalLeafRange(const BinaryImage &Image, va_t Entry, uint32_t Size) {
          !isPlainSourceUnwind(Metadata)))
       return false;
   return true;
+}
+
+bool sourceLocalLeafRange(const BinaryImage &Image, va_t Entry, uint32_t Size) {
+  return sourceLeafCodeRange(Image, Entry, Size) &&
+         isMachOLocalFunctionRange(Image, Entry, Size,
+                                   MachOLocalFunctionAliases::SameAddress);
 }
 
 SourceLocalCalls sourceLocalCalls(const BinaryImage &Image,

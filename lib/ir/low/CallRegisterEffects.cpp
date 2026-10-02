@@ -111,12 +111,42 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const IntegerArgumentLayout Layout = TRI.integerArgumentLayout(true);
   const StackKey SP{false, TRI.StackPointer};
+  const size_t NumArgRegs = Layout.Registers.size();
+  // The home slot of argument register K lies just above the return address.
+  auto HomeSlot = [&](size_t K) {
+    return static_cast<int64_t>(TRI.PointerSize + K * Layout.SlotBytes);
+  };
+  // Spills of an incoming argument register to its own home slot in the
+  // entry block, by register position: the step that spills it.
+  std::vector<std::optional<size_t>> HomeSpill(NumArgRegs);
+  // Home slots a load reads back.
+  std::vector<bool> HomeLoaded(NumArgRegs);
+  // The lowest incoming-area offset a pointer that escapes addresses.
+  std::optional<int64_t> LowestEscape;
   // A pointer at or above the home area can reach the incoming arguments.
   auto Escapes = [&](const StackValue &V) {
-    return V.K == StackValue::Unknown ||
-           (V.K == StackValue::Range &&
-            V.Hi >= static_cast<int64_t>(TRI.PointerSize));
+    const bool Reaches = V.K == StackValue::Unknown ||
+                         (V.K == StackValue::Range &&
+                          V.Hi >= static_cast<int64_t>(TRI.PointerSize));
+    if (Reaches && V.K == StackValue::Range)
+      LowestEscape = LowestEscape ? std::min(*LowestEscape, V.Lo) : V.Lo;
+    return Reaches;
   };
+  // Argument registers the entry block writes before each of its operations;
+  // a call clobbers them all.
+  std::vector<uint8_t> EntryWrittenBefore;
+  {
+    uint8_t Written = 0;
+    for (const LowOp &Op : F.Blocks.front().Ops) {
+      EntryWrittenBefore.push_back(Written);
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        Written = 0xFF;
+      else if (Op.Output.isReg())
+        for (size_t K = 0; K < NumArgRegs; ++K)
+          if (Op.Output.Offset / 8 == Layout.Registers[K] / 8)
+            Written |= uint8_t(1u << K);
+    }
+  }
   bool Unknown = false;
   int StackArgs = 0;
   auto Run = [&](const LowBlock &Block, StackState &S) {
@@ -196,6 +226,10 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
           } else if (A.K == StackValue::Range) {
             const int64_t Last =
                 A.Hi + std::max<int64_t>(Op.Output.Size, 1) - 1;
+            for (size_t K = 0; K < NumArgRegs; ++K)
+              if (A.Lo < HomeSlot(K) + static_cast<int64_t>(Layout.SlotBytes) &&
+                  HomeSlot(K) <= Last)
+                HomeLoaded[K] = true;
             if (Last >= Layout.EntryStackBase)
               StackArgs = std::max<int64_t>(
                   StackArgs,
@@ -208,11 +242,20 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
           Unknown |= Escapes(In(K));
         Set(Op.Output, {});
         continue;
-      case NdOp::STORE:
+      case NdOp::STORE: {
         // Writing the slots reads none; storing a pointer to them lets
         // other code read them.
         Unknown |= Escapes(In(1));
+        const StackValue A = In(0);
+        if (&Block == &F.Blocks.front() && A.K == StackValue::Range &&
+            A.Lo == A.Hi && Op.NumInputs >= 2)
+          for (size_t K = 0; K < NumArgRegs; ++K)
+            if (A.Lo == HomeSlot(K) &&
+                Op.Inputs[1] == NdVar::reg(Layout.Registers[K], 8) &&
+                !((EntryWrittenBefore[I] >> K) & 1))
+              HomeSpill[K] = I;
         continue;
+      }
       case NdOp::CALL:
       case NdOp::INDIR_CALL:
       case NdOp::BRANCH:
@@ -306,6 +349,33 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
     Work.push_back(BI);
     Drain();
   }
+  // A variadic prologue spills the first variadic argument register and
+  // every later one to their home slots and hands a pointer to the first of
+  // those slots on as the va_list.  A caller passes only the variadic
+  // arguments it sets, so those spills read none.  Any other spill that no
+  // load reads back, with no pointer to the incoming area escaping, reads
+  // nothing either: only this function could observe its home slots.
+  int VariadicFrom = -1;
+  if (LowestEscape && *LowestEscape >= HomeSlot(1) &&
+      (*LowestEscape - HomeSlot(0)) % Layout.SlotBytes == 0) {
+    const size_t First =
+        static_cast<size_t>((*LowestEscape - HomeSlot(0)) / Layout.SlotBytes);
+    bool Spilled = First < NumArgRegs;
+    for (size_t K = First; Spilled && K < NumArgRegs; ++K)
+      Spilled = HomeSpill[K].has_value();
+    if (Spilled)
+      VariadicFrom = static_cast<int>(First);
+  }
+  for (size_t K = 0; K < NumArgRegs; ++K) {
+    if (!HomeSpill[K])
+      continue;
+    const bool Reads = VariadicFrom >= 0 ? static_cast<int>(K) < VariadicFrom
+                                         : Unknown || HomeLoaded[K];
+    if (auto Family = gprFamilyOf(Img.Arch, Layout.Registers[K]);
+        Family && !Reads)
+      Effect.Blocks.front().Steps[*HomeSpill[K]].Reads[*Family] = 0;
+  }
+  Effect.VariadicFrom = VariadicFrom;
   Effect.UnknownStackReads |= Unknown;
   Effect.StackArgs = StackArgs;
 }
@@ -625,6 +695,9 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       }
     }
   }
+  for (const auto &[Entry, Effect] : Funcs)
+    if (Effect.VariadicFrom >= 0)
+      Result.VariadicFrom[Entry] = Effect.VariadicFrom;
   std::map<va_t, int> &StackArgs = Result.EntryStackArgs;
   for (const auto &[Entry, Effect] : Funcs)
     if (!UnknownStack.count(Entry))

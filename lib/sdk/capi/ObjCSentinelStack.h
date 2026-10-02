@@ -102,7 +102,17 @@ sentinelPrivateStackLoads(const HighFunc &Function, const HighExpr &Call,
         Statement.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return {};
     --Budget;
-    if (Statement.Kind == StmtKind::Store) {
+    if (Statement.Kind == StmtKind::Nop) {
+      // Shared liveness and private-frame forwarding keep empty statements
+      // as instruction-address anchors. They neither erase slot facts nor
+      // introduce a control edge. A disguised payload is not such an anchor.
+      bool HasExpression = false;
+      forEachExpr(Statement, [&](const ExprPtr &) { HasExpression = true; });
+      if (HasExpression || Statement.GotoTarget || Statement.LoopHeaderAddr ||
+          Statement.EHRange.Begin || Statement.EHRange.End ||
+          !Statement.EHClauses.empty() || Statement.EHIsReducible)
+        return {};
+    } else if (Statement.Kind == StmtKind::Store) {
       if (!Statement.StoreVal || !Statement.StoreVal->Type)
         return {};
       const auto Bytes = Statement.StoreVal->Type->Size;

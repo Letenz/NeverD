@@ -22,6 +22,11 @@ add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   LINK_COMPONENTS BinaryInterpreterSpecialization
 )
 
+add_neverd_unittest(NeverDPEFixedImageTests
+  PEFixedImageTests.cpp
+  LINK_COMPONENTS InterpreterLLVMRefinement Loader
+)
+
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
   LowIRLoopAlignmentTests.cpp
@@ -61,6 +66,7 @@ target_compile_definitions(NeverDInterpreterLLVMRefinementTests PRIVATE
 
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
+  InterpreterTransferChainTests.cpp
   NativeStackSpecializationTests.cpp
   NativeStackControlTests.cpp
   NativeUndefinedIndependenceTests.cpp
@@ -71,6 +77,8 @@ add_neverd_unittest(NeverDInterpreterSpecializationTests
   ControlDiscoveryTests.cpp
   FiniteValuesTests.cpp
   FiniteQueryCacheTests.cpp
+  FrameOffsetsTests.cpp
+  StringTransferTests.cpp
   LINK_COMPONENTS InterpreterSpecialization
 )
 
@@ -93,6 +101,7 @@ add_neverd_unittest(NeverDInterpreterMachineStateTests
   InterpreterMachineStateTests.cpp
   MachineControlSourceTests.cpp
   MachineMemoryCallSourceTests.cpp
+  MachineStringSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC Support
 )
 target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE

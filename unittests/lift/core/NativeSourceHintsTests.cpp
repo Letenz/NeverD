@@ -142,7 +142,8 @@ TEST(NativeSourceHints,
       Block.Succs.push_back(Block.Id);
       break;
     case 16:
-      Image.Segments[0].Flags = Image.Segments[0].Flags | SegmentFlags::Writable;
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
       break;
     case 17:
       Signature.Parameters[1].Location.ExtendTo32Bits = true;
@@ -2249,6 +2250,255 @@ TEST(NativeSourceHints,
     }
 }
 
+TEST(NativeSourceHints, FourWordDemandRequiresOneCompleteCallObservation) {
+  const auto &Regs = getTargetRegInfo(Arch::AArch64).IntParamRegs;
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    LowFunc F;
+    F.Blocks.emplace_back();
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.addInput(NdVar::cst(0x1080, 8));
+    F.Blocks[0].Ops.push_back(Call);
+    for (unsigned I = 0; I < 4; ++I) {
+      LowOp Read;
+      Read.Opcode = NdOp::COPY;
+      Read.Output = NdVar::reg(a64reg::X19 + I * 8, 8);
+      Read.addInput(NdVar::reg(Regs[I], 8));
+      F.Blocks[0].Ops.push_back(Read);
+    }
+    if (Mutation == 1)
+      F.Blocks[0].Ops.back().Inputs[0].Size = 4;
+    if (Mutation == 2)
+      F.Blocks[0].Ops.front().Opcode = NdOp::INDIR_CALL;
+    if (Mutation >= 3 && Mutation <= 5) {
+      LowOp Stop;
+      Stop.Opcode = Mutation == 3 ? NdOp::INTRINSIC : NdOp::COPY;
+      Stop.Output = NdVar::reg(Regs[3] + (Mutation == 5 ? 4 : 0), 4);
+      Stop.addInput(NdVar::cst(0, 4));
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Stop);
+    }
+    if (Mutation == 6) {
+      auto &Read = F.Blocks[0].Ops.back();
+      Read.Opcode = NdOp::INT_XOR;
+      Read.addInput(Read.Inputs[0]);
+    }
+    if (Mutation == 7) {
+      const auto Last = F.Blocks[0].Ops.back();
+      F.Blocks[0].Ops.pop_back();
+      F.Blocks.emplace_back();
+      F.Blocks.back().Ops.push_back(Last);
+    }
+    if (Mutation == 8)
+      // Seeing the same target again must not combine separate invocations.
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Call);
+    if (Mutation == 9 || Mutation == 10) {
+      LowOp Stop;
+      Stop.Opcode = Mutation == 9 ? NdOp::RETURN : NdOp::INDIR_BR;
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Stop);
+    }
+    if (Mutation == 11) {
+      // Once copied, a later clobber of the source does not lose that word.
+      LowOp Write;
+      Write.Opcode = NdOp::COPY;
+      Write.Output = NdVar::reg(Regs[0], 8);
+      Write.addInput(NdVar::cst(0, 8));
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin() + 2, Write);
+    }
+    EXPECT_EQ(observedNativeFourWordReturns(F, Arch::AArch64),
+              (Mutation == 0 || Mutation == 11) ? std::set<va_t>{0x1080}
+                                                : std::set<va_t>{});
+    EXPECT_TRUE(observedNativeFourWordReturns(F, Arch::X64).empty());
+  }
+}
+
+struct NativeFourWordFixture : NativeFixture {
+  LowFunc Low;
+  SourceFunctionTypeHint Scalar;
+
+  NativeFourWordFixture() {
+    Scalar.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Scalar.ReturnType = NdType::makeInt(8, false);
+    Scalar.Parameters = {{"flag", NdType::makeInt(4, false)},
+                         {"first", NdType::makeInt(8, false)},
+                         {"second", NdType::makeInt(8, false)},
+                         {"storage", NdType::makePtr(NdType::makeVoid())}};
+    std::string Error;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Scalar, Arch::AArch64, Error))
+        << Error;
+    Low.Entry = Med.Entry;
+    Low.Name = "native_four_words";
+    Low.DecodedInstructionCount = Low.LiftedInstructionCount = 2;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Low.Entry;
+    Block.EndAddr = Low.Entry + 8;
+    LowOp Mask;
+    Mask.Opcode = NdOp::INT_AND;
+    Mask.Addr = Low.Entry;
+    Mask.Output = NdVar::tmp(0, 4);
+    Mask.addInput(NdVar::reg(a64reg::X0, 4));
+    Mask.addInput(NdVar::cst(1, 4));
+    LowOp Extend;
+    Extend.Opcode = NdOp::INT_ZEXT;
+    Extend.Addr = Low.Entry;
+    Extend.Seq = 1;
+    Extend.Output = NdVar::reg(a64reg::X0, 8);
+    Extend.addInput(Mask.Output);
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Low.Entry + 4;
+    Return.addInput(NdVar::reg(a64reg::X30, 8));
+    Block.Ops = {Mask, Extend, Return};
+    Low.Blocks = {Block};
+    bind(Scalar);
+  }
+
+  void bind(const SourceFunctionTypeHint &Hint) {
+    std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    Converter.setSourceEntryTypeHints(&Hints);
+    Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    Med.SourceTypeHint = Hint;
+    recoverCallAbi(Med, Arch::AArch64, {});
+    inferMedTypes(Med, Arch::AArch64);
+    High = MedToHighConverter().convert(Med, Arch::AArch64);
+  }
+
+  std::optional<SourceFunctionTypeHint> refine() const {
+    return refineNativeFourWordReturnHint(Image, Low, Med, High, Audit);
+  }
+};
+
+TEST(NativeSourceHints, FourWordLeafRefinementReliftsAllForwardedInputs) {
+  NativeFourWordFixture F;
+  const auto Hint = F.refine();
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::NativeAnalysis);
+  ASSERT_EQ(Hint->ReturnComponents.size(), 4U);
+  const auto &Regs = getTargetRegInfo(Arch::AArch64).IntParamRegs;
+  for (unsigned I = 0; I < 4; ++I) {
+    EXPECT_EQ(Hint->ReturnComponents[I].RegisterOffset, Regs[I]);
+    EXPECT_EQ(Hint->ReturnComponents[I].ValueBytes, 8U);
+    EXPECT_TRUE(equalSourceTypes(Hint->Parameters[I].Type,
+                                 F.Scalar.Parameters[I].Type));
+  }
+  F.bind(*Hint);
+  ASSERT_TRUE(F.Med.SourceParametersBound);
+  EXPECT_TRUE(equalSourceTypes(F.High.ReturnType, Hint->ReturnType));
+  const auto Limitation = sdk::sourceBodyLimitation(F.High, *Hint, &F.Audit);
+  EXPECT_TRUE(Limitation.empty()) << Limitation;
+  EXPECT_FALSE(F.refine());
+  unsigned Returns = 0;
+  walkStmts(F.High.Body, [&](const HighStmt &S) {
+    if (S.Kind != StmtKind::Return)
+      return;
+    ++Returns;
+    ASSERT_TRUE(S.RetVal);
+    EXPECT_TRUE(equalSourceTypes(S.RetVal->Type, Hint->ReturnType));
+  });
+  EXPECT_EQ(Returns, 1U);
+}
+
+TEST(NativeSourceHints, FourWordLeafRestoresUnobservedForwardedInputs) {
+  NativeFourWordFixture F;
+  auto Sparse = F.Scalar;
+  Sparse.ReturnType = NdType::makeInt(4, false);
+  Sparse.ReturnLocation.ValueBytes = 4;
+  Sparse.Parameters = {F.Scalar.Parameters[0], F.Scalar.Parameters[3]};
+  std::string Error;
+  ASSERT_TRUE(validateSourceABI(Sparse, Error)) << Error;
+  F.bind(Sparse);
+  const auto Hint = F.refine();
+  ASSERT_TRUE(Hint);
+  ASSERT_EQ(Hint->Parameters.size(), 4U);
+  ASSERT_EQ(Hint->ReturnComponents.size(), 4U);
+  EXPECT_EQ(Hint->ReturnType->Fields[0]->Size, 8U);
+  EXPECT_TRUE(
+      equalSourceTypes(Hint->Parameters[3].Type, Sparse.Parameters[1].Type));
+  F.bind(*Hint);
+  const auto Limitation = sdk::sourceBodyLimitation(F.High, *Hint, &F.Audit);
+  EXPECT_TRUE(Limitation.empty()) << Limitation;
+  EXPECT_FALSE(F.refine());
+}
+
+TEST(NativeSourceHints, FourWordLeafRejectsIncompleteOrChangedEvidence) {
+  for (unsigned Mutation = 0; Mutation < 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeFourWordFixture F;
+    switch (Mutation) {
+    case 0:
+      F.Image.Arch = Arch::X64;
+      break;
+    case 1:
+      F.Image.IsRelocatable = true;
+      break;
+    case 2:
+      F.Low.Entry += 4;
+      break;
+    case 3:
+      F.Audit.Entry += 4;
+      break;
+    case 4:
+      F.Med.SourceParametersBound = false;
+      break;
+    case 5:
+      F.High.SourceTypeHint->ReturnType = NdType::makeInt(4);
+      break;
+    case 6:
+      F.Med.SourceTypeHint->Origin = F.High.SourceTypeHint->Origin =
+          SourceFunctionTypeHint::OriginKind::DarwinSDK;
+      break;
+    case 7:
+      F.Low.UnsupportedInstructionAddresses.push_back(F.Low.Entry);
+      break;
+    case 8:
+      --F.Low.LiftedInstructionCount;
+      break;
+    case 9:
+      F.High.StructuredExceptionRegions = 1;
+      break;
+    case 10:
+      F.Med.Blocks[0].ExceptionalSuccs.emplace_back();
+      break;
+    case 11:
+      F.Med.Blocks[0].Ops.clear();
+      break;
+    case 12:
+    case 13:
+    case 14:
+    case 15:
+    case 16:
+    case 17: {
+      LowOp Write;
+      Write.Opcode = NdOp::COPY;
+      Write.Output = NdVar::reg(a64reg::X1 + (Mutation - 12) * 4, 4);
+      Write.addInput(NdVar::cst(0, 4));
+      F.Low.Blocks[0].Ops.insert(F.Low.Blocks[0].Ops.begin(), Write);
+      break;
+    }
+    case 18:
+    case 19: {
+      LowOp Call;
+      Call.Opcode = Mutation == 18 ? NdOp::CALL : NdOp::INDIR_CALL;
+      Call.addInput(NdVar::cst(0x1080, 8));
+      F.Low.Blocks[0].Ops.insert(F.Low.Blocks[0].Ops.begin(), Call);
+      break;
+    }
+    case 20:
+      F.Low.Blocks[0].Ops[0].Output = NdVar::reg(a64reg::X19, 8);
+      break;
+    case 21:
+      F.Low.Blocks[0].Ops.erase(F.Low.Blocks[0].Ops.begin() + 1);
+      F.bind(F.Scalar);
+      break;
+    }
+    EXPECT_FALSE(F.refine());
+  }
+}
+
 TEST(NativeSourceHints, IntegerPairsRequireBothCompleteReturnCarriers) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
@@ -3052,6 +3302,161 @@ TEST(NativeSourceHints, VoidContractsPropagateAcrossExactNativeCallees) {
     Forged->TargetAddress += 4;
     Fixture.Med.Blocks[0].Ops[0].SourceCallHint = std::move(Forged);
     EXPECT_FALSE(Fixture.inferVoid(Error));
+  }
+}
+
+TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      NativeVoidFixture F(Architecture);
+      F.useNativeVoidCallee();
+      const auto Context =
+          Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+      auto &Call = F.Med.Blocks[0].Ops[0];
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+      Hint->Signature.Parameters.push_back(
+          {"context",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Context, 0, 8}});
+      Call.SourceCallHint = Hint;
+      MedVar Input;
+      Input.Kind = MedVar::Reg;
+      Input.RegOff = Context;
+      Input.Id = 200;
+      Input.Size = 8;
+      Input.TheArch = Architecture;
+      Call.addInput(Input);
+      auto &Ops = F.Low.Blocks[0].Ops;
+      if (Mutation == 1)
+        ++Ops[0].Seq;
+      if (Mutation == 2)
+        Ops[0].Inputs[0] = NdVar::cst(0x1084, 8);
+      if (Mutation == 3)
+        Hint->TargetAddress += 4;
+      if (Mutation == 4)
+        Call.Inputs[2].SSAVer = 1;
+      if (Mutation == 5) {
+        Hint->Signature.Parameters.back().Type = NdType::makeInt(4);
+        Hint->Signature.Parameters.back().Location.ValueBytes = 4;
+        Call.Inputs[2].Size = 4;
+      }
+      if (Mutation == 6 || Mutation == 7) {
+        LowOp Write;
+        Write.Opcode = NdOp::COPY;
+        Write.Addr = 0x1000;
+        Write.Output = NdVar::reg(Context, Mutation == 6 ? 8 : 4);
+        Write.addInput(NdVar::cst(0, Write.Output.Size));
+        Ops.insert(Ops.begin(), Write);
+      }
+      if (Mutation == 8)
+        F.Low.Blocks[0].Succs.push_back(99);
+      if (Mutation == 9)
+        Hint->Signature.Architecture = Arch::Unknown;
+      std::string Error;
+      const auto Result = F.inferVoid(Error);
+      if (Mutation == 0) {
+        ASSERT_TRUE(Result) << Error;
+        ASSERT_EQ(Result->Parameters.size(), 2U);
+        EXPECT_EQ(Result->Parameters[1].Location.RegisterOffset, Context);
+        EXPECT_EQ(Result->Parameters[1].Location.ValueBytes, 8U);
+      } else if (Result) {
+        EXPECT_TRUE(std::none_of(Result->Parameters.begin(),
+                                 Result->Parameters.end(), [&](const auto &P) {
+                                   return P.Location.RegisterOffset == Context;
+                                 }));
+      }
+    }
+}
+
+TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    NativeFixture F(Architecture);
+    const auto ContextRegister =
+        Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+    auto &Bytes = F.Image.Segments[0].Data;
+    if (Architecture == Arch::AArch64) {
+      // b helper; helper: add x0, x0, x20; ret
+      llvm::support::endian::write32le(Bytes.data(), 0x14000010);
+      llvm::support::endian::write32le(Bytes.data() + 0x40, 0x8b140000);
+      llvm::support::endian::write32le(Bytes.data() + 0x44, 0xd65f03c0);
+    } else {
+      // jmp helper; helper: lea rax, [rdi + rbx]; ret
+      const uint8_t Jump[] = {0xe9, 0x3b, 0, 0, 0};
+      const uint8_t Body[] = {0x48, 0x8d, 0x04, 0x1f, 0xc3};
+      std::copy(std::begin(Jump), std::end(Jump), Bytes.begin());
+      std::copy(std::begin(Body), std::end(Body), Bytes.begin() + 0x40);
+    }
+    F.Image.Symbols = {{"forward_context", 0x1000,
+                        Architecture == Arch::AArch64 ? 4U : 5U, true},
+                       {"read_context", 0x1040,
+                        Architecture == Arch::AArch64 ? 8U : 5U, true}};
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {0x1000, 0x1040};
+    llvm::LLVMContext Context;
+    Pipeline Engine;
+    auto Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    auto Infer = [&](va_t Entry) {
+      const LowFunc *Low = nullptr;
+      const MedFunc *Med = nullptr;
+      const HighFunc *High = nullptr;
+      const PipelineFunctionAudit *Audit = nullptr;
+      for (const auto &V : Result.LowFuncs)
+        if (V.Entry == Entry)
+          Low = &V;
+      for (const auto &V : Result.MedFuncs)
+        if (V.Entry == Entry)
+          Med = &V;
+      for (const auto &V : Result.HighFuncs)
+        if (V.Entry == Entry)
+          High = &V;
+      for (const auto &V : Result.FunctionAudits)
+        if (V.Entry == Entry)
+          Audit = &V;
+      EXPECT_TRUE(Low && Med && High && Audit);
+      std::string Error;
+      const auto Hint = Low && Med && High && Audit
+                            ? inferNativeSourceTypeHint(F.Image, *Med, *High,
+                                                        *Audit, Error, Low)
+                            : std::nullopt;
+      EXPECT_TRUE(Hint) << Error;
+      return Hint;
+    };
+    const auto Helper = Infer(0x1040);
+    ASSERT_TRUE(Helper);
+    Options.SourceTypeHints.emplace(0x1040, *Helper);
+    Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Forward = Infer(0x1000);
+    ASSERT_TRUE(Forward);
+    ASSERT_EQ(Forward->Parameters.size(), 2U);
+    EXPECT_TRUE(std::any_of(Forward->Parameters.begin(),
+                            Forward->Parameters.end(), [&](const auto &P) {
+                              return P.Location.RegisterOffset ==
+                                         ContextRegister &&
+                                     P.Location.ValueBytes == 8;
+                            }));
+    Options.SourceTypeHints.emplace(0x1000, *Forward);
+    Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    unsigned Verified = 0;
+    for (const auto &High : Result.HighFuncs) {
+      const auto Audit = std::find_if(
+          Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+          [&](const auto &A) { return A.Entry == High.Entry; });
+      ASSERT_NE(Audit, Result.FunctionAudits.end());
+      ASSERT_TRUE(High.SourceTypeHint);
+      const auto Limitation =
+          sdk::sourceBodyLimitation(High, *High.SourceTypeHint, &*Audit,
+                                    [](const HighExpr &) { return true; });
+      EXPECT_TRUE(Limitation.empty()) << Limitation;
+      ++Verified;
+    }
+    EXPECT_EQ(Verified, 2U);
   }
 }
 

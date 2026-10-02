@@ -124,6 +124,213 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     UnreachableUnauditedBoundariesRequireOptInAndRetainExactReceipts) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           {0xd1, 0xd0}, {0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
+    // CMP EAX,EAX; JNE boundary; MOV EAX,7; RET; boundary: body; RET.
+    Program P({0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3});
+    P.Image.Segments.front().Data.insert(P.Image.Segments.front().Data.end(),
+                                         Bytes.begin(), Bytes.end());
+    P.append({0xc3});
+    // Compact explicit preservation ranges isolate the instruction budget
+    // from the native wrapper's eight individual default byte obligations.
+    P.Contract.PreservedRegisters = {{x86reg::RSP, 8}};
+    P.Contract.PreservedFrameRanges = {{0, 8}};
+    expectRefusal(P, Status::Unsupported);
+    P.Contract.RetainUnauditedNativeBoundaries = true;
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    const auto &Inner = Good.Certificate->LowIR;
+    ASSERT_EQ(Inner.NativeAuditBoundaries.size(), 1u);
+    const auto &Receipt = Inner.NativeAuditBoundaries.front();
+    EXPECT_EQ(Receipt.Kind,
+              LowIRNativeAuditBoundaryKind::MissingUndefinedOutputs);
+    EXPECT_EQ(Receipt.SemanticsVersion, 1u);
+    EXPECT_EQ(Receipt.Boundary.Address, Entry + 10);
+    EXPECT_EQ(Receipt.Boundary.Size, Bytes.size());
+    EXPECT_EQ(Receipt.NativeBytesDigest.size(), 64u);
+    EXPECT_EQ(Receipt.OperationDigest.size(), 64u);
+    ASSERT_EQ(Good.Certificate->Instructions.size(), 5u);
+    for (const auto &Insn : Good.Certificate->Instructions)
+      if (Insn.Origin.Address == Entry + 10) {
+        EXPECT_EQ(Insn.NativeBytes, Bytes);
+        EXPECT_EQ(Insn.UndefinedEffects.Coverage,
+                  LowUndefinedCoverage::Missing);
+        EXPECT_EQ(Receipt.OperationDigest,
+                  lowUndefinedOperationDigest(Insn.Ops));
+      }
+    LowIRIndependenceLimits Limits;
+    Limits.MaxInstructions = 5;
+    const auto Limited = P.check(Limits);
+    ASSERT_TRUE(Limited.proved()) << Limited.Proof.Diagnostic;
+    Limits.MaxInstructions = 4;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+    Limits = {};
+    ASSERT_GT(Good.Proof.SolverQueries, 0u);
+    Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+    // Making the branch feasible cannot turn the boundary into an empty body.
+    P.Image.Segments.front().Data[2] = 0x74;
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     BoundaryRequiresProofForSymbolicAndArbitraryControl) {
+  // ECX > 7 returns; only ECX <= 7 reaches the second ECX > 9 test.
+  Program Dead({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0,
+                0, 0xc3, 0xd1, 0xd0, 0xc3});
+  Dead.Contract.RetainUnauditedNativeBoundaries = true;
+  const auto Good = Dead.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  // The second guard becomes feasible for ECX in [4,7].
+  Dead.Image.Segments.front().Data[7] = 3;
+  expectRefusal(Dead, Status::Unsupported);
+  Program Arbitrary({0x0f, 0xa3, 0xc8, 0x70, 1, 0xc3, 0xd1, 0xd0, 0xc3});
+  Arbitrary.flagsProfile();
+  Arbitrary.Contract.RetainUnauditedNativeBoundaries = true;
+  expectRefusal(Arbitrary, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     EntryIndirectCallAndReturnArrivalsCannotCrossAnUnauditedBoundary) {
+  const std::vector<std::vector<uint8_t>> Programs = {
+      {0xd1, 0xd0, 0xc3},
+      {0x48, 0x8d, 0x05, 2, 0, 0, 0, 0xff, 0xe0, 0xd1, 0xd0, 0xc3},
+      {0xe8, 1, 0, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3},
+      {0x68, 6, 0x10, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3}};
+  const uint64_t BoundaryOffsets[] = {0, 9, 6, 6};
+  for (size_t I = 0; I != Programs.size(); ++I) {
+    Program P({});
+    P.Image.Segments.front().Data = Programs[I];
+    P.append({});
+    P.Contract.RetainUnauditedNativeBoundaries = true;
+    expectRefusal(P, Status::Unsupported);
+    const auto Result = P.check();
+    EXPECT_EQ(Result.Proof.InstructionAddress, Entry + BoundaryOffsets[I]);
+    EXPECT_EQ(Result.Proof.Diagnostic,
+              "feasible path reaches an unaudited native boundary");
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RegisterXaddDefinesFlagsWithoutClearingExistingDependencies) {
+  for (const auto &Bytes :
+       std::vector<std::vector<uint8_t>>{{0x0f, 0xc0, 0xc4},
+                                         {0x0f, 0xc0, 0xe0},
+                                         {0x66, 0x0f, 0xc1, 0xc8},
+                                         {0x0f, 0xc1, 0xc8},
+                                         {0x48, 0x0f, 0xc1, 0xc0},
+                                         {0x4d, 0x0f, 0xc1, 0xc8}}) {
+    Program P({});
+    P.flagsProfile();
+    auto &Code = P.Image.Segments.front();
+    Code.Data = Bytes;
+    P.append({0xc3});
+    for (unsigned I = 1; I != 16; ++I)
+      P.Contract.ReturnRegisters.push_back({I * 8, 8});
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::DF, x86reg::OF})
+      P.Contract.ReturnRegisters.push_back({Flag, 1});
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 0;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(Good.Certificate->Instructions.front()
+                    .UndefinedEffects.Effects.empty());
+  }
+  // BT; SETO AL; MOVZX EAX,AL; XADD EAX,ECX; RET. Empty XADD effects do
+  // not turn an earlier arbitrary OF input into an independent result.
+  Program Earlier({0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xb6, 0xc0, 0x0f,
+                   0xc1, 0xc8, 0xc3});
+  Earlier.flagsProfile();
+  expectRefusal(Earlier, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     CompatibilityLeftShiftRetainsCountDependentRefusals) {
+  for (uint8_t Count : {0, 1, 7, 8, 31, 32, 33}) {
+    Program P({0xc0, 0xf0, Count, 0xc3}); // SAL /6 AL,imm8.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+    if (Count & 31) {
+      expectRefusal(P, Status::Dependent);
+    } else {
+      const auto Good = P.check();
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    }
+    P.Contract.ReturnRegisters.back() = {x86reg::CF, 1};
+    if ((Count & 31) >= 8) {
+      expectRefusal(P, Status::Dependent);
+    } else {
+      const auto Good = P.check();
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    }
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     BitTestsKeepDefinedCarryAndPreservedFlagsWithExactProducerBudget) {
+  for (uint8_t Opcode : {0xa3, 0xab, 0xb3, 0xbb}) {
+    Program P({0x0f, Opcode, 0xc8, 0xc3}); // bit-test family eax,ecx; ret.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters = {
+        {x86reg::RAX, 8}, {x86reg::CF, 1}, {x86reg::ZF, 1}, {x86reg::DF, 1}};
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 4;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    ASSERT_EQ(
+        Good.Certificate->Instructions.front().UndefinedEffects.Effects.size(),
+        4u);
+    Limits.MaxProducers = 3;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     BitTestFreshFlagsAreIndependentAndRepeatedReadsStayCorrelated) {
+  // BT; SETO DL; SETO AL; XOR AL,DL; MOVZX EAX,AL; RET.
+  Program Same({0x0f, 0xa3, 0xc8, 0x0f, 0x90, 0xc2, 0x0f, 0x90, 0xc0, 0x30,
+                0xd0, 0x0f, 0xb6, 0xc0, 0xc3});
+  Same.flagsProfile();
+  const auto Correlated = Same.check();
+  ASSERT_TRUE(Correlated.proved()) << Correlated.Proof.Diagnostic;
+  // Reading SF instead of OF must not reuse the other fresh bit.
+  Same.Image.Segments[0].Data[7] = 0x98;
+  expectRefusal(Same, Status::Dependent);
+  // Even identical terminal results cannot hide control depending on OF.
+  Program Branch({0x0f, 0xa3, 0xc8, 0x70, 1, 0x90, 0xc3});
+  Branch.flagsProfile();
+  expectRefusal(Branch, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RotateUndefinedOverflowUsesMaskedCountBeforeNarrowModulo) {
+  for (uint8_t ModRM : {0xc0, 0xc8})
+    for (uint8_t Count : {0, 1, 8, 9, 16, 32, 33}) {
+      Program P({0xc0, ModRM, Count, 0xc3}); // ROL/ROR AL,imm8.
+      P.flagsProfile();
+      P.Contract.ReturnRegisters.push_back({x86reg::OF, 1});
+      if ((Count & 31) > 1) {
+        expectRefusal(P, Status::Dependent);
+      } else {
+        const auto Good = P.check();
+        ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      }
+    }
+  for (uint8_t ModRM : {0xc0, 0xc8}) {
+    Program P({0xd2, ModRM, 0xc3}); // All symbolic CL counts.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters = {
+        {x86reg::RAX, 8}, {x86reg::CF, 1}, {x86reg::ZF, 1}, {x86reg::SF, 1},
+        {x86reg::AF, 1},  {x86reg::PF, 1}, {x86reg::DF, 1}};
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      UndefinedBranchCannotBeCertifiedAfterOrdinaryRecoveryPrunesIt) {
   // xor eax,eax; lahf; test ah,0x10; jne second; mov eax,0; ret;
   // second: mov eax,0; ret. Both return values agree, but control consumes AF.
@@ -218,6 +425,52 @@ TEST(OriginalBinaryUndefinedIndependence,
   const auto R = P.check();
   ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
   EXPECT_EQ(R.Proof.Paths, 1u);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     InternalReturnReclaimsStackArguments) {
+  // sub rsp,24; call helper; ret; helper: mov eax,7; ret 24.
+  Program P({0x48, 0x83, 0xec, 24, 0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 7, 0, 0, 0,
+             0xc2, 24, 0});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  ASSERT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 1u);
+  // Incorrect cleanup cannot establish the mandatory restored outer frame.
+  P.Image.Segments[0].Data[16] = 16;
+  const auto Bad = P.check();
+  EXPECT_FALSE(Bad.proved());
+  EXPECT_FALSE(Bad.Certificate.has_value());
+}
+
+TEST(OriginalBinaryUndefinedIndependence, PrefixedReturnsDoNotAssumePopWidth) {
+  for (auto Bytes : {std::initializer_list<uint8_t>{0x66, 0xc3},
+                     std::initializer_list<uint8_t>{0x66, 0xc2, 8, 0},
+                     std::initializer_list<uint8_t>{0xf3, 0xc3}}) {
+    Program P(Bytes);
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     GuardedAlignmentUsesTheWholeEntryDomain) {
+  // Save the physical root, compute its low bits, allocate and align. Only
+  // residue 3 calls the helper; every other residue restores the root and
+  // returns a different result. The entry domain has no alignment assertion.
+  // mov r11,rsp; mov rax,rsp; and eax,15; sub rsp,64; and rsp,-16;
+  // cmp eax,3; jne fallback; call helper; mov rsp,r11; ret;
+  // fallback: mov rsp,r11; mov eax,9; ret; helper: mov eax,7; ret.
+  Program P({0x49, 0x89, 0xe3, 0x48, 0x89, 0xe0, 0x83, 0xe0, 0x0f, 0x48,
+             0x83, 0xec, 0x40, 0x48, 0x83, 0xe4, 0xf0, 0x83, 0xf8, 0x03,
+             0x75, 0x09, 0xe8, 0x0d, 0,    0,    0,    0x4c, 0x89, 0xdc,
+             0xc3, 0x4c, 0x89, 0xdc, 0xb8, 9,    0,    0,    0,    0xc3,
+             0xb8, 7,    0,    0,    0,    0xc3});
+  P.Contract.Frame->Begin = -96;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+  EXPECT_EQ(R.Independence.Proof.Paths, 2u);
+  ASSERT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+  EXPECT_GT(R.Independence.Proof.SolverQueries, 0u);
 }
 
 TEST(OriginalBinaryUndefinedIndependence, CalleeCannotCorruptEntryReturnSlot) {
@@ -400,8 +653,8 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      StaticallyUntakenBranchStillRequiresArchitectureCoverage) {
   // XOR makes JNE false, but the original arm at 0x100a contains an unaudited
-  // ROL. Collecting its bytes alone does not establish complete evidence.
-  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xc0, 0xc3});
+  // RCL. Collecting its bytes alone does not establish complete evidence.
+  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3});
   const auto Ordinary = specializeBinaryInterpreter(P.Image, Entry, P.Options);
   ASSERT_TRUE(Ordinary.complete()) << Ordinary.Diagnostic;
   expectRefusal(P, Status::Unsupported);
@@ -457,7 +710,7 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 TEST(OriginalBinaryUndefinedIndependence,
      MissingArchitectureEffectsAndProfileProjectionRefuse) {
-  Program Rotate({0xd1, 0xc0, 0xc3}); // rol eax,1; ret
+  Program Rotate({0xd1, 0xd0, 0xc3}); // rcl eax,1; ret
   expectRefusal(Rotate, Status::Unsupported);
   // RDSSPQ is projected to NOP only by the explicit CET-disabled profile.
   // That projection must retain Missing architecture metadata.

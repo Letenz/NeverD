@@ -38,7 +38,7 @@ struct SwiftSDKDeclaration {
 
 // Compiler-observed public Foundation bridge entry points. The compact
 // signature alphabet records only physical scalar carriers: p is a pointer,
-// z is an unsigned word, b is a Boolean byte, I is swift_indirect_result,
+// z is an unsigned word, b is an unsigned byte, I is swift_indirect_result,
 // and C is swift_context.
 // A parenthesized pair is returned in the two integer result registers.
 constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
@@ -94,6 +94,13 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pp"},
+    // Swift 6.1.2 arm64 and x86_64 clients pass Optional<NSError> as i64
+    // and receive the Error object as ptr; nil retains its zero word.
+    {"$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pz"},
     // URL.pathExtension reads the URL value through swiftself and returns
     // both words of the String value.
     {"$s10Foundation3URLV13pathExtensionSSvg",
@@ -248,7 +255,18 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // then Key's Hashable witness. Swift 6.1.2 arm64 and x86_64 client IR
     // uses four ordinary pointer carriers and returns one integer word.
     {"$sSD5countSivg", "/usr/lib/swift/libswiftCore.dylib", "zpppp"},
+    // Swift 6.1.2 arm64 and x86_64 clients pass the borrowed String words
+    // and Array<CVarArg> object as three ordinary carriers, with no context.
+    {"$sSS10FoundationE6format9argumentsS2Sh_Says7CVarArg_pGhtcfC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)zpp"},
     {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib", "(zz)zp"},
+    // Swift 6.1.2 arm64/x86_64 clients at Onone and O pass the two String
+    // words as ordinary carriers and return the ContiguousArray storage.
+    {"$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg",
+     "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     // The capacity is an Int carrier; the mutable String's address is
     // swiftself in both arm64 and x86_64 Swift 6.1.2 client IR.
     {"$sSS15reserveCapacityyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
@@ -368,6 +386,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
+    // Both targets pass StaticString as (i64, i64, i8) and return both String
+    // words. Its representation flags are a byte, not a canonical Boolean.
+    {"$ss12StaticStringV11descriptionSSvg", "/usr/lib/swift/libswiftCore.dylib",
+     "(zz)zzb"},
     // Swift 6.1.2 arm64 and x86_64 Array<AnyObject> subscript clients
     // declare this exact specialization as swiftcc ptr (i64, ptr). The
     // index precedes the buffer value; neither input uses swiftself.
@@ -446,6 +468,11 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     Hint.CanonicalBooleanInputs = {1};
   if (Hint.TargetName == "$ss17_NativeDictionaryV9removeAll8isUniqueySb_tF")
     Hint.CanonicalBooleanInputs = {0};
+  if (Hint.TargetName == "$ss12StaticStringV11descriptionSSvg")
+    Hint.SwiftStaticStringInputs = {{0, 1, 2}};
+  if (Hint.TargetName ==
+      "$sSS10FoundationE6format9argumentsS2Sh_Says7CVarArg_pGhtcfC")
+    Hint.SwiftStringInputs = {{0, 1}};
   // UIKit's image-literal initializer receives the opaque String words in
   // x0/x1. Authenticate that exact SDK import before allowing its immutable
   // literal storage to be copied into the generated source.
@@ -592,10 +619,9 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
                           {"file_flags", Byte},
                           {"line", Word},
                           {"flags", NdType::makeInt(4, false)}};
-  // Both StaticString byte ranges are read synchronously and the call never
-  // returns. Rebuild their immutable contents rather than preserving image
-  // addresses; String remains an opaque two-word value with its ownership.
-  Hint.BorrowedByteInputs = {{0, 1}, {5, 6}};
+  // StaticString's data word is a pointer only when its flags say so.
+  // Rebuild bytes only for that representation; retain scalar code points.
+  Hint.SwiftStaticStringInputs = {{0, 1, 2}, {5, 6, 7}};
   Hint.SwiftStringInputs = {{3, 4}};
   Hint.DoesNotReturn = true;
   std::string Diagnostic;

@@ -766,6 +766,56 @@ bool strongObjCMessageImport(const BinaryImage &Image, va_t Slot) {
                    Image.DynInfo.NeededLibs.end(),
                    Bind->second.Module) != Image.DynInfo.NeededLibs.end();
 }
+
+std::optional<SourceCallTypeHint>
+objcReleaseTailSourceCallHint(const BinaryImage &Image, va_t Address) {
+  // An outlined release may take its object from a nonvolatile register.
+  // Authenticate the complete local bridge instead of assigning it a normal
+  // x0 entry ABI or relying on an OUTLINED_FUNCTION symbol spelling.
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      Address % 4 || Image.ImportPtrSlots.count(Address) ||
+      Image.ImportStorageSlots.count(Address) ||
+      Image.DyldBindSlots.count(Address) ||
+      Image.ConflictingImportStorageSlots.count(Address))
+    return std::nullopt;
+  const auto Bytes = readImmutableCodeBytes(Image, Address, 8);
+  if (!Bytes)
+    return std::nullopt;
+  const auto Move = llvm::support::endian::read32le(Bytes->data());
+  const auto Branch = llvm::support::endian::read32le(Bytes->data() + 4);
+  const unsigned Register = (Move >> 16) & 31;
+  if ((Move & 0xffe0ffffu) != 0xaa0003e0u || Register < 19 || Register > 28 ||
+      (Branch & 0xfc000000u) != 0x14000000u ||
+      !sourceLocalLeafRange(Image, Address, 8))
+    return std::nullopt;
+  const auto Target = branch::a64BranchTarget(Branch, Address + 4);
+  const auto Slot =
+      Target ? darwinImportVeneerSlot(Image, *Target) : std::nullopt;
+  if (!Slot)
+    return std::nullopt;
+  const auto Bind = Image.DyldBindSlots.find(*Slot);
+  if (Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Name != "_objc_release" || Bind->second.Addend ||
+      Bind->second.WeakImport ||
+      Bind->second.Module != "/usr/lib/libobjc.A.dylib" ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+    return std::nullopt;
+  auto Result = objcRuntimeSourceCallHint(Image, *Slot);
+  if (!Result || Result->TargetName != "objc_release" ||
+      Result->Signature.Parameters.size() != 1 ||
+      Result->Signature.Parameters[0].Location.Kind !=
+          SourceABICarrierKind::IntegerRegister ||
+      Result->Signature.Parameters[0].Location.RegisterOffset != a64reg::X0 ||
+      Result->Signature.Parameters[0].Location.ValueBytes != 8)
+    return std::nullopt;
+  Result->TargetAddress = Address;
+  Result->Signature.Parameters[0].Location.RegisterOffset = Register * 8;
+  std::string Error;
+  return validateSourceABI(Result->Signature, Error) ? Result : std::nullopt;
+}
 } // namespace
 
 std::optional<va_t> darwinImportVeneerSlot(const BinaryImage &Image,
@@ -787,7 +837,7 @@ std::optional<SourceCallTypeHint>
 objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import)
-    return std::nullopt;
+    return objcReleaseTailSourceCallHint(Image, ImportSlot);
   llvm::StringRef Name(*Import);
   if (!Name.consume_front("_"))
     return std::nullopt;
@@ -1567,6 +1617,10 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                 if (Target)
                   Target->ArgumentCopy = *Tail;
               }
+            if (!Target)
+              if (const auto Runtime =
+                      objcReleaseTailSourceCallHint(Image, V->Number))
+                Target = Dispatch{Runtime->TargetName, {}, 0, V->Number};
           }
         }
         if (V && V->TheKind == Value::Kind::Number && Op.Opcode == NdOp::CALL) {

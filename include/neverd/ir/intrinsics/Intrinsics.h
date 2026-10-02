@@ -685,6 +685,8 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::Sldt:
   case Intrinsic::Str:
   case Intrinsic::Smsw:
+  case Intrinsic::Verr:
+  case Intrinsic::Verw:
   case Intrinsic::AMXLoadConfig:
   case Intrinsic::AMXStoreConfig:
   case Intrinsic::AMXTileLoad:
@@ -884,6 +886,11 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::Str:
   case Intrinsic::Smsw:
     return NumInputs >= 2 && OutputSize == 0 && AddressSize == 8;
+  case Intrinsic::Verr:
+  case Intrinsic::Verw:
+    // [id, effective-address] -> ZF, or no output once ZF is dead.
+    return NumInputs == 2 && (OutputSize == 1 || OutputSize == 0) &&
+           AddressSize == 8;
   case Intrinsic::CetWrss:
   case Intrinsic::CetWruss:
     // [id, effective-address, scalar-source].  The source's NdVar width is

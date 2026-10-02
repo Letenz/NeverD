@@ -130,9 +130,11 @@ void parseTLSDirectory(const llvm::object::COFFObjectFile &Obj,
                        BinaryImage &Img, uint64_t ImageBase);
 
 /// Parse the PE base relocation table (.reloc) and populate
-/// Img.BaseRelocations.  Handles both PE32 and PE32+.
-void parseBaseRelocations(const llvm::object::COFFObjectFile &Obj,
-                          BinaryImage &Img, uint64_t ImageBase);
+/// Img.BaseRelocations only after the whole directory is valid. Unsupported
+/// relocation types retain their identity; malformed blocks return an error.
+/// Handles both PE32 and PE32+; restricted loads deliberately skip the table.
+llvm::Error parseBaseRelocations(const llvm::object::COFFObjectFile &Obj,
+                                 BinaryImage &Img, uint64_t ImageBase);
 
 /// Parse the PE debug directory and reduce all bounded CodeView RSDS/NB10
 /// entries to one typed build identity.  The path is retained only as a

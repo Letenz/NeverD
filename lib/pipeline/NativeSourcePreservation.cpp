@@ -780,7 +780,8 @@ static bool restoresNativeSourceStateImpl(
           Contract.terminates() || !Contract.ReadOnlyFrameParameters.empty() ||
           !Contract.WritableFrameParameters.empty() ||
           Copy->Caller != Function.Entry || Copy->Site != Site ||
-          Copy->Registers.empty() || Copy->Registers.size() > 16)
+          (Copy->Registers.empty() && !Copy->isReturnOnly()) ||
+          Copy->Registers.size() > 16)
         return false;
       if (Copy->StackStore) {
         const auto &Store = *Copy->StackStore;

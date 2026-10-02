@@ -800,6 +800,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       OS << ";\n";
       break;
     }
+    // An instruction reading fixed registers loads them in an `__asm` block,
+    // as a software interrupt does.
+    if (x86UsesImplicitRegisterAsm(Stmt.CallExpr->IntrinsicId)) {
+      const std::string Rendered = renderX86InterruptStatement(
+          Opts.TheArch, *Stmt.CallExpr, "", 0,
+          [this](const HighExpr &E) { return exprStr(E); });
+      if (!Rendered.empty()) {
+        emitRenderedStatement(Indent, Rendered);
+        break;
+      }
+    }
     {
       auto Rendered = renderX86SegmentedIntrinsicStatement(
           Opts.TheArch, *Stmt.CallExpr, nullptr,
@@ -1135,8 +1146,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (Stmt.EHClauseBodies.front().empty()) {
         emitIndent(Indent + 1);
         if (CurrentFunc && CurrentFunc->ExceptionMetadata &&
-            CurrentFunc->ExceptionMetadata->CodeRange.contains(
-                Clause.HandlerVA))
+            CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA))
           OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
         else
           OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)

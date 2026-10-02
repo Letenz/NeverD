@@ -30,6 +30,13 @@ In, Out, Insb, Insw, Insd, Outsb, Outsw, Outsd,
 // Privileged system control.
 Cli, Sti, Hlt, Invd, Wbinvd, Invlpg, Swapgs, Wrpkru, Rdpkru,
 Lgdt, Lidt, Lldt, Sgdt, Sidt, Sldt, Lmsw, Smsw, Ltr, Str,
+Verr, Verw,                 // segment access check -> ZF
+SegmentLimit,               // LSL limit (__segmentlimit)
+SegmentLimitValid,          // LSL selector check -> ZF
+Monitor, Mwait, Monitorx, Mwaitx,
+Xsetbv,                     // XCR[ECX] = EDX:EAX
+Rdrand, Rdseed,             // value with the CF byte above it
+ReadSegment, WriteSegment,  // segment selector by encoding number
 
 // Virtualization.
 Vmcall, Vmmcall,

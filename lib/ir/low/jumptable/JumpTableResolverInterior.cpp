@@ -79,6 +79,19 @@ void CFGBuilder::establishCurrentFuncRange(const BinaryImage &Img,
                                            const ExceptionFunction *Exception) {
   CurrentFuncRange.reset();
   AuthoritativeCurrentFuncRange.reset();
+  // Win64 requires an unwind record for every function that allocates stack
+  // or saves a register; one without operations describes neither.  An
+  // image with no exception directory at all proves nothing either way.
+  const bool HasExceptionDirectory =
+      !Img.ExceptionMetadata.Functions.empty() || !Img.COFFPDataRecords.empty();
+  CurrentFuncIsFramelessLeaf =
+      Img.Format == BinaryFormat::COFF && Img.Arch == Arch::X64 &&
+      HasExceptionDirectory &&
+      (!Exception ||
+       (Exception->Kind == RuntimeFunctionKind::Primary &&
+        Exception->CodeRange.Begin == CurrentFuncEntry &&
+        Exception->ParseStatus == ExceptionParseStatus::Complete &&
+        Exception->UnwindOperations.empty() && Exception->FrameRegister == 0));
   va_t End = InvalidVA;
   va_t AuthoritativeEnd = InvalidVA;
   auto ConsiderEnd = [&](va_t Candidate) {

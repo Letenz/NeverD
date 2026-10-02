@@ -232,13 +232,18 @@ expandNativeStackControl(const SpecializationInstruction &Instruction,
         Control.Output.Size ||
         Instruction.Origin.Control != LowInstructionControl::Return ||
         Instruction.Origin.ControlFlags != LowInstructionControlFlag::Return ||
-        (Instruction.Origin.Immediate && *Instruction.Origin.Immediate != 0))
+        Instruction.Origin.Immediate.value_or(0) > UINT16_MAX)
       return invalid("native near-return certificate does not match its LowIR");
+    if (ReturnMode == NativeReturnExpansion::OuterFunctionBoundary &&
+        Instruction.Origin.Immediate.value_or(0) != 0)
+      return invalid("outer callee-pop return has no source boundary contract");
     if (ReturnMode == NativeReturnExpansion::InternalTransfer) {
       Result.Ops.clear();
       Result.ExpandedReturn = true;
       Make(NdOp::LOAD, Scratch, {Stack});
-      Make(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(8, 8)});
+      Make(NdOp::INT_ADD, Stack,
+           {Stack,
+            NdVar::scalar(8 + Instruction.Origin.Immediate.value_or(0), 8)});
       Make(NdOp::INDIR_BR, {}, {Scratch});
       SetBranch(true, std::nullopt);
     }

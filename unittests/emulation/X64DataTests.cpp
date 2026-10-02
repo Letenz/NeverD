@@ -783,7 +783,7 @@ TEST_P(X64Data, UnmodeledFormsRemainExplicitlyUnsupported) {
   // An unsupported exit is terminal, so each independent form uses a fresh CPU.
   for (auto Bytes : {llvm::ArrayRef(X87LoadZero), llvm::ArrayRef(StringMove),
                      llvm::ArrayRef(AVXMove), llvm::ArrayRef(MMXMove),
-                     llvm::ArrayRef(BitMemory)}) {
+                     llvm::ArrayRef(LockedBitTestMemory)}) {
     SetUp();
     ASSERT_TRUE(CPU);
     auto Exit = run(Bytes);

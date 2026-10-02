@@ -59,7 +59,41 @@ CLI 选项 `--vm-max-refinements=N` 要求正整数，默认值为 16。C 调用
 
 C 调用方使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_machine_source_v3()`：将 `neverd_devirtualize_options_v3` 清零，设置 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`，再设置 `max_control_fields`、`max_solver_queries`，并可设置 `base.max_control_refinements`；零表示采用对应的既有默认值。三个 reserved 字段必须全部为零。v1/v2 入口忽略 v3 尾部（包括 reserved），v3 忽略未来扩展尾部。报告同时记录实际工作量和生效的 `maxControlFields`、`maxControlRefinements`、`maxSolverQueries`。
 
+恢复还提供 `--vm-chain-transfers=N`（默认 0）和 `--vm-no-control-discovery`。串接在已证明唯一目标的控制转移之间保留符号关联；达到上限后回到普通 CFG 边界。机器状态恢复可通过 `--vm-entry-frame=begin:end` 声明未经运行时检查、不会回绕的入口 RSP 偏移范围。精确数值前提会写入生成的 C 和报告；它不授予内存访问权限，也不构成等价证明。
+
+兼容的 v4 接口为 `neverd_devirtualize_source_v4()` 和 `neverd_devirtualize_machine_source_v4()`。将 `neverd_devirtualize_options_v4` 清零，并将 `base.base.base.struct_size` 设为完整大小。CLI 串接数量接受非负 32 位十进制整数，零表示关闭。范围端点接受有符号 64 位十进制整数，要求 `begin < end` 及 `--vm-machine-state`，约束物理入口 RSP 而非调整后的值。在 C API 中，范围标志要求机器状态接口；未设置时两个端点必须为零。未知标志和旧版本保留字段的非零值会被拒绝。v1/v2/v3 忽略整个 v4 扩展，v4 忽略未来扩展。空选项指针保留旧默认值。报告增加 `maxChainedTransfers` 和 `entryFrameBounds`，`discoverControlState` 记录实际开关。所有 CLI 选项均要求 `--devirtualize`。数值前提不在运行时检查，也不保证可访问性、初始化或无别名。这些选项不启用原生证明策略。
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 和 `discoveryVisits`，分别记录启用行为、上限和分析工作量。发现字段本身不等于恢复成功。
+
+如果条件将地址依赖缩窄为字节片段，细化还会把包含该片段、已跟踪的完整八字节直接地址字段列为上下文候选。原有窄字段及其生产者位掩码保持不变，不提升无关的宽字段。常量和相对入口的偏移仍须证明，所有上下文共享现有上限。
+
+可选的不可变地址枚举在遇到缺少证书的可行地址时停止，保留原始运行时读取。只有完整地址域得到证明后，才使用已观察的值和证书；命中缓存仍须重新检查当前读取范围，实际观察到的畸形证书仍属于错误。
+
+当完整的依赖证明确认当前边谓词不约束新鲜根变量的高 32 位时，可以跳过完整 64 位 `root + constant` 控制值的枚举。这既不固定根地址，也不证明可达性。窄生产者掩码和最终可行性检查仍然执行；约束整个根变量的谓词仍按正常流程投影有限值域。
+
+有限证明缓存达到容量上限后，会用单独可容纳的合格证明替换最久未使用的记录。命中会更新使用顺序；重复存入、未命中和被拒绝的候选不会。被淘汰的证明可能需要重新建立。缓存只保留完整值域或已证明的值域超限结果，每次新增求解仍计入共享查询预算。
+
+恢复还会保留各个带掩码控制字段经过完整证明的有限值域。当联合关系超过 `MaxControlTuples` 时，这些独立值域仍可约束目标，但不会断言字段之间存在相关性。合流时先按共同掩码投影，再取值的并集；缺失或超限的值域会被完整丢弃。即使联合关系已经放宽，值域变化仍会重新调度节点。部分枚举不提供事实，现有字段数、元组数、符号节点和求解器限制继续生效。
+
+`MaxChainedTransfers` 是显式启用的 C++ 上限（默认 `0`），允许连续执行已证明目标或布尔结果唯一的控制转移。它保留完整符号状态、原生来源和累计预算；多结果转移仍使用普通 CFG 边。反向发现按已提交指令的出现顺序重放。串接可能重复循环来源，限制自动切点推导。
+
+`EntryFrameBounds` 显式声明相对 `FrameBaseRegister` 入口值不回绕的 `[Begin, End)` 区间，不授予内存访问或非别名事实。缺省时仍使用模运算根域。原生证明要求调用者的帧边界匹配，并将其绑定到凭据；LLVM 证明保留该帧已有的输入域。恢复本身不是等价性证书。
 
 <!-- i18n-section: execution-contract -->
 
@@ -69,7 +103,13 @@ JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 
 PE 恢复要求完整的映像元数据，包括全映像重定位和异常记录。CLI 会先加载这些元数据，再应用 `--func`；C API 调用方不得事先用 `neverd_session_restrict_function()` 限制会话。二进制适配器拒绝按受限函数集合加载的映像，因为省略的元数据不能证明不存在修正项或异常边。
 
-只有完整的、由文件提供内容的只读范围，且不存在重叠映射或加载器修正，才能提供映像读取常量。可写表、未解析的重定位和运行时采样快照都不能作为不可变读取的证据。COPY 重定位和结构不完整的异常目录会被拒绝。若 PE 异常目录及函数范围完整，其他函数中未能解析的处理器不会阻止当前入口分析；恢复一旦到达该处理器覆盖的代码，仍会拒绝。
+未建立下述 PE 证据时，只有完整的、由文件提供内容的只读范围，且不存在重叠映射或加载器修正，才能提供映像读取常量。可写表、未解析的重定位和运行时采样快照都不能作为不可变读取的证据。COPY 重定位和结构不完整的异常目录会被拒绝。若 PE 异常目录及函数范围完整，其他函数中未能解析的处理器不会阻止当前入口分析；恢复一旦到达该处理器覆盖的代码，仍会拒绝。
+
+`PEFixedImageView` 在首选基址认证完整的 x64 PE 映像，检查原始头部、唯一映射、完整 DIR64 字段及普通导入写入范围，并排除 IAT 字节。TLS、load-config、延迟／绑定导入、CLR 和未知写入机制会被拒绝。恢复及原生／LLVM 证明绑定同一快照。C++ 选项 `MaxImagePreparationBytes` 和 `MaxImagePreparationRecords` 默认为 64 MiB 和 65536；耗尽时报告 `BudgetExceeded`。使用期间映像必须保持不变；这不证明 ASLR、初始化或解包的等价性。
+
+对齐栈帧恢复穷尽入口根的所有低位余数，高位保持自由。恢复器生成显式入口分派，先证明每个恒定位移，再共用原始根的符号内存区域。跨节点保存、别名失效与上下文合并均保留分区身份。候选按从小到大的顺序尝试，无关的大掩码不会强迫使用最大分区。上下文与细化上限约束分区和重试；节点、操作、求值与求解查询累计计费。此恢复能力尚不提供跨分区或重复循环来源的自动原生／LLVM 证明聚合。现有检查器可证明实际路径谓词蕴含的位移。启用显式物理栈语义时，规范编码的内部 `RET imm16` 先读取原返回槽，再将 RSP 增加八字节及无符号清理量；外层返回仍要求清理量为零。此投影拒绝带前缀的返回编码。
+
+重复搬运支持 64 位地址和 1/2/4/8 字节元素，前提是完整证明计数及方向。显式机器状态下，零计数不访问内存，也不需要方向证明；普通 ABI 仍拒绝未绑定标志。每次标量访问保留常规别名和返回槽检查。完整搬运的栈帧指针在边投影前，依据实际内存重新证明。未知计数、预算耗尽、分段访问及较窄地址仍被拒绝。这些原始 REP 指令的原生未定义效果认证尚未支持。
 
 源码恢复域要求普通 ABI 返回：每次外部来源存储的目标范围都必须与入口返回地址槽不相交。这是调用方／环境必须满足的显式前提，也包括由外部整数计算出的地址；缺少栈帧来源信息并不能证明数值地址不相交。由栈帧派生的存储地址必须证明与该槽不相交，返回时还必须恢复原始栈指针。来源信息会跨越溢出存储和控制流汇合保留；丢失仿射表达式不会使地址变成外部指针。目前拒绝栈切换、被调用方额外弹栈返回和基于 RET 的派发。二进制适配器强制使用 x64 小端语义。
 
@@ -96,7 +136,7 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 此模式明确限定 CPL3/IOPL0、影子栈关闭、无异步事件且正常不发生故障的执行。入口旗标须为规范值，TF/RF/VM/AC/VIF/VIP 清零；POPFQ 输入的 TF/AC 也须清零，源码会检查。PUSHFQ/POPFQ 使用显式状态；关闭影子栈时 RDSSP 保持目标寄存器，仍拒绝实际到达的 INCSSP。完整的栈指针溢出保存可以传播，部分写入或可能别名写入会使事实失效。此模式可经过带异常元数据的代码，但不证明异常分派或展开等价。报告记录 `sourceABI` 和 `executionProfile`。前文默认 ABI 的严格拒绝规则保持不变。
 
-此机器状态 ABI 支持直接近 CALL，以及目标集合得到穷尽证明的有限寄存器间接近 CALL。寄存器间接调用在修改 RSP 前捕获原目标寄存器，并恰好写入一次实际顺序后继地址。内部近 RET 可在完整证明的有限目标集合中选择；残余代码保留一次客户栈读取，先捕获值再增加栈指针，并按捕获值派发。到达保留的入口返回槽仍是外层退出，即使此前丢弃过内部帧。未知目标、含缺失或不可执行目标的集合、额外弹栈返回和任意栈切换仍被拒绝。
+此机器状态 ABI 支持直接近 CALL，以及目标集合得到穷尽证明的有限寄存器间接近 CALL。寄存器间接调用在修改 RSP 前捕获原目标寄存器，并恰好写入一次实际顺序后继地址。内部近 RET 可在完整证明的有限目标集合中选择；残余代码保留一次客户栈读取，先捕获值再增加栈指针，并按捕获值派发。到达保留的入口返回槽仍是外层退出，即使此前丢弃过内部帧。未知目标、含缺失或不可执行目标的集合、外层额外弹栈返回和任意栈切换仍被拒绝。
 
 内存间接近 CALL 也仅在此显式机器状态 ABI、影子栈关闭且正常无故障的模式下支持。内存操作数须为无段覆盖的规范 `r/m64` 编码，可带地址大小覆盖（`addr32`）和 REX。共享 x64 有效地址与 LOAD 语义先读取目标，再修改 RSP 并压入实际顺序后继地址；即使压栈会覆盖目标槽也遵守此顺序，不能将槽地址当作加载后的被调用地址。只读指针槽或有限表须有不可变读取证据；已证明初始化的客户栈值仍须具备完整的有限目标证明。可写槽的初始镜像字节或运行时快照不构成不可变证据。未证明的外部读取、失效的栈事实、无效目标、FS/GS 等段覆盖、远调用、额外或非规范前缀仍被拒绝。默认源码 ABI 仍拒绝原生调用。
 

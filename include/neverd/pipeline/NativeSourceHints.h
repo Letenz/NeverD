@@ -54,6 +54,12 @@ boundNativeBooleanCallees(const MedFunc &Caller);
 std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
                                                 Arch Architecture);
 
+/// arm64 direct calls whose x0..x3 results are all read as complete words
+/// before a call, intrinsic or overlapping write. Demand is per call site;
+/// unrelated observations never manufacture a complete four-word result.
+std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
+                                             Arch Architecture);
+
 /// Describe observed scalar machine inputs and a defined result for a native
 /// helper. The caller must select an exact local function target and supply IR
 /// and audit from the same pipeline/image. This is a candidate for a second
@@ -84,7 +90,10 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
 /// inputs may later be overwritten; preserved context inputs require either no
 /// preserved non-frame/link writes or a complete native state-restoration
 /// proof. Implicit call definitions do not establish entry inputs, including
-/// SSA zero. Both callers and definitions must use the resulting source
+/// SSA zero. An implicit full-word call argument may establish an input only
+/// when the same native-state proof tracks its complete entry bytes to the
+/// exact bound call and MedIR independently observes that entry word.
+/// Both callers and definitions must use the resulting source
 /// projection; these parameters do not describe an external C or Swift calling
 /// convention. ObserveIntegerPair requests a two-field internal record only
 /// when both complete eight-byte results can be proved. Otherwise the existing
@@ -110,6 +119,18 @@ bool sourceStackStoreStateContract(const BinaryImage &Image, const LowFunc &Low,
 std::optional<SourceFunctionTypeHint>
 refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                   const PipelineFunctionAudit &Audit);
+
+/// An internal arm64 leaf projection can return its defined x0 together with
+/// unchanged x1..x3 inputs. Retains already-bound scalar input locations and
+/// makes unobserved forwarded words explicit. Requires complete native lifting
+/// and no writes to the three forwarded words. The
+/// caller must demand all four results. Uses Swift's four-register source
+/// layout without claiming the original language or declaration; native
+/// source admission and a new pipeline run remain required.
+std::optional<SourceFunctionTypeHint>
+refineNativeFourWordReturnHint(const BinaryImage &Image, const LowFunc &Low,
+                               const MedFunc &Med, const HighFunc &High,
+                               const PipelineFunctionAudit &Audit);
 
 /// Refine a re-lifted native void or scalar candidate by removing auxiliary
 /// register inputs with no occurrence in its complete HighIR body. Canonical

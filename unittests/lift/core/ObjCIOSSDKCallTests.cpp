@@ -23,6 +23,9 @@ constexpr FixedAPI APIs[] = {
     {"UIKit", "CGPath", "r^{CGPath=}16@0:8"},
     {"UIKit", "addGestureRecognizer:", "v24@0:8@16"},
     {"UIKit", "addLineToPoint:", "v32@0:8{CGPoint=dd}16"},
+    // Public target/action contracts independently encoded by Apple Clang for
+    // arm64 iOS and arm64 iOS Simulator, separate from the archived SDK ASTs.
+    {"UIKit", "addTarget:action:forControlEvents:", "v40@0:8@16:24Q32"},
     {"UIKit", "animatedImageWithImages:duration:", "@32@0:8@16d24"},
     {"UIKit", "attributedText", "@16@0:8"},
     {"UIKit", "becomeFirstResponder", "B16@0:8"},
@@ -43,10 +46,12 @@ constexpr FixedAPI APIs[] = {
     {"CoreImage",
      "imageByApplyingFilter:withInputParameters:", "@32@0:8@16@24"},
     {"CoreImage", "imageWithColor:", "@24@0:8@16"},
+    {"UIKit", "images", "@16@0:8"},
     {"UIKit", "impactOccurred", "v16@0:8"},
     {"UIKit", "initForTextStyle:", "@24@0:8@16"},
     {"CoreImage", "initWithColor:", "@24@0:8@16"},
     {"UIKit", "initWithStyle:", "@24@0:8q16"},
+    {"UIKit", "initWithTarget:action:", "@32@0:8@16:24"},
     {"UIKit", "layoutDirection", "q16@0:8"},
     {"UIKit", "layoutFrame", "{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8"},
     {"UIKit", "layoutMargins", "{UIEdgeInsets=dddd}16@0:8"},
@@ -91,6 +96,7 @@ constexpr FixedAPI APIs[] = {
     {"UIKit", "textLayoutManager", "@16@0:8"},
     {"UIKit", "translationInView:", "{CGPoint=dd}24@0:8@16"},
     {"UIKit", "velocityInView:", "{CGPoint=dd}24@0:8@16"},
+    {"UIKit", "viewControllers", "@16@0:8"},
 };
 BinaryImage frameworkImage(const FixedAPI &API) {
   BinaryImage Image;

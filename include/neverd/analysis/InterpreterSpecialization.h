@@ -30,9 +30,10 @@ struct SpecializationCursor {
 
 /// Provider certificate for the omitted physical effects of a native near
 /// CALL/RETURN. The instruction uses the configured eight-byte frame register
-/// as its stack pointer. CALL pushes its exact fallthrough address; RETURN
-/// consumes one address and has no additional stack adjustment. Generic LowIR
-/// CALL/RETURN operands alone do not establish this machine-level contract.
+/// as its stack pointer. CALL pushes its exact fallthrough address. Internal
+/// RETURN consumes one address and may apply authenticated unsigned-16-bit
+/// cleanup; outer returns admit no extra cleanup. Generic LowIR CALL/RETURN
+/// operands alone do not establish this machine-level contract.
 /// A memory CALL retains a temporary-only effective-address prefix, one final
 /// ordinary eight-byte LOAD, and an INDIR_CALL of that loaded temporary. The
 /// entire target evaluation precedes the physical return-address push; a
@@ -93,6 +94,14 @@ struct SpecializationFrameSlot {
   uint16_t Bytes = 0;
 };
 
+struct SpecializationEntryFrameBounds {
+  /// Caller-declared, nonempty, nonwrapping entry-relative range [Begin, End).
+  /// This constrains only the physical entry root; it grants no accessibility,
+  /// initialization or nonalias evidence for memory operations.
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
 struct SpecializationOptions {
   /// Preserve incoming machine flags as symbolic machine-state inputs rather
   /// than claiming they are supplied by an ordinary source-language ABI.
@@ -116,17 +125,23 @@ struct SpecializationOptions {
   /// do not unroll a loop forever.
   std::vector<symbolic::SymRegisterRange> ControlRegisters;
   /// Optional entry-relative frame identity. This enables affine pointers,
-  /// complete affine pointer spills, and constant frame-byte propagation,
-  /// not a private/non-aliasing memory claim.
-  /// The initial implementation requires an eight-byte register root.
+  /// complete affine pointer spills, and constant frame-byte propagation.
+  /// Bounded alignment refinements cover every entry-root residue; they do
+  /// not assume ABI alignment or private/non-aliasing memory. The root must
+  /// be an eight-byte register.
   std::optional<symbolic::SymRegisterRange> FrameBaseRegister;
+  /// Optional environment precondition, never inferred from a concrete run.
+  /// Requires FrameBaseRegister. Native proof APIs require the same bounds in
+  /// their explicit frame contract. Absence keeps the full modular root domain.
+  std::optional<SpecializationEntryFrameBounds> EntryFrameBounds;
   /// Context hints only: missing bytes remain unknown. Other frame facts join
   /// by intersection, so changing spilled business values do not unroll loops.
   std::vector<SpecializationFrameSlot> ControlFrameSlots;
   /// An outer RETURN requires the original frame-base value and no writes to
   /// its entry [0, 8) control slot. With a provider native-stack certificate,
   /// non-entry RETURN instead loads a proved exact destination and advances
-  /// the stack. Uncertified return dispatch remains unsupported.
+  /// the stack, including certified internal imm16 cleanup. Outer cleanup
+  /// and uncertified return dispatch remain unsupported.
   bool RequireRestoredFrameAtReturn = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
@@ -138,11 +153,22 @@ struct SpecializationOptions {
   /// inputs and cannot be bound here.
   std::vector<SpecializationConstant> EntryConstants;
   llvm::endianness ByteOrder = llvm::endianness::little;
+  /// Binary-provider preparation budgets for authenticating fixed image
+  /// bytes and loader metadata. Exhaustion is distinct from unsupported
+  /// semantics; callers may increase these explicitly and retry.
+  uint64_t MaxImagePreparationBytes = 64 * 1024 * 1024;
+  uint64_t MaxImagePreparationRecords = 65536;
   uint32_t MaxNodes = 4096;
   uint32_t MaxContextsPerAddress = 64;
   uint64_t MaxOperations = 262144;
   uint32_t MaxNodeEvaluations = 16384;
   uint32_t MaxIndirectTargets = 16;
+  /// Keep symbolic state across this many proved-singleton control transfers
+  /// per node before ordinary projection. Zero preserves existing boundaries.
+  /// Multiple targets retain the CFG; all proofs and operations remain charged.
+  /// Chaining can duplicate loop origins and limit automatic cutpoint
+  /// inference.
+  uint32_t MaxChainedTransfers = 0;
   /// Bounds distinct native return slots retained in one context. Native
   /// returns are physical control transfers, not assumed LIFO function exits.
   uint32_t MaxNativeReturnSlots = 64;

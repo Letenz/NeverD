@@ -51,9 +51,17 @@ this mode does not certify binary replacement or exception equivalence.
 
 Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--vm-max-queries` keep defaults of 16, 16 and 4096. See the recovery guide for the compatible v3 C API and failure rules.
 
+Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
+
 The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
 
 The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM checks against an exact LLVM artifact; C compilation remains outside its proof scope.
+
+PE recovery also authenticates preferred-base DIR64 bytes and excludes import writes; its fixed-image contract does not certify ASLR or initialization.
+
+Interpreter recovery covers bounded entry-stack alignment partitions and internal `RET imm16` cleanup under the explicit machine-state contract. Automatic native-to-LLVM proof composition for these partitions remains pending.
+
+Bounded `REP MOVS/STOS` recovery preserves element order and overlap; original-instruction proof coverage remains pending.
 
 <!-- i18n-section: why-neverd -->
 
@@ -102,11 +110,11 @@ Recovery depends on supported code patterns; see the [mobile overview](docs/mobi
 
 CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](docs/cpu-execution.md), [Guest process emulation](docs/process-emulation.md) and [Windows driver emulation](docs/driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native ARM64/WHP runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 299 required checks: 71 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 `checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
 
-Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native WHP/ARM64 workload evidence remains incomplete.
+Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native ARM64 workload evidence remains incomplete.
 
 Native x64 `FOP/FIP/FDP` follow host save/restore rules: AMD may clear inactive x87 exception metadata. Startup probes validate these fields with a pending unmasked exception.
 

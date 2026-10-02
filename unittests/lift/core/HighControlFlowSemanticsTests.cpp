@@ -337,6 +337,51 @@ TEST(HighControlFlowSemantics, DeadGuardedPhiReadIsRemovedBeforeExecution) {
     EXPECT_EQ(execute(F, Condition), Condition ? 42u : 7u);
 }
 
+TEST(HighControlFlowSemantics, DeadIntegerViewPhiCopiesPreserveEffectBarriers) {
+  for (unsigned Variant = 0; Variant != 8; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedPhiCopy();
+    auto &Copy = F.Body[0].ElseBody[0];
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(8, false);
+    View->Operands = {Copy.Val};
+    Copy.Val = View;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      View->Operands[0] = HighExpr::makeCall("observe", 0x2000, {});
+      View->Operands[0]->Type = NdType::makeInt(8);
+      break;
+    case 2:
+      View->Operands[0] = HighExpr::makeLoad(local(2), NdType::makeInt(8));
+      break;
+    case 3:
+      View->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 4:
+      Copy.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 5:
+      View->Type = View->CastTo = NdType::makeFloat(8);
+      break;
+    case 6:
+      View->Type = View->CastTo = NdType::makeInt(4, false);
+      break;
+    case 7:
+      View->IndirectTarget = HighExpr::makeConst(0x2000, 8);
+      break;
+    }
+    EXPECT_EQ(eliminateHighDeadPhiCopies(F), Variant == 0);
+    if (Variant == 0)
+      for (uint64_t Input : {0ULL, 1ULL, 2ULL, 0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input ? 42u : 7u);
+    else
+      EXPECT_EQ(F.Body[0].ElseBody[0].Val, View);
+  }
+}
+
 TEST(HighControlFlowSemantics, RewrittenGuardKeepsTheReachingPhiValue) {
   auto F = guardedPhiCopy();
   F.Body.insert(F.Body.begin(), assign(0, 2, 19));
@@ -479,6 +524,197 @@ TEST(HighControlFlowSemantics,
   const auto MissingCopy = analyzeHighSourceFlow(F, true);
   EXPECT_TRUE(MissingCopy.Complete);
   EXPECT_FALSE(MissingCopy.Items.empty());
+}
+
+HighFunc mergedCopyEquality() {
+  auto F = copiedBooleanEquality(false);
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.Id = 0;
+  Parameter.Size = 8;
+  const auto Input = HighExpr::makeVar(Parameter);
+  F.Body[0].Val = Input;
+  const auto Copy = [](va_t Address, int Destination, int Source) {
+    auto S = assign(Address, Destination, 0);
+    S.Val = local(Source);
+    return S;
+  };
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Addr = 0x1006;
+  Branch.Cond = Input;
+  Branch.Body = {Copy(0x2000, 10, 1), Copy(0x2004, 3, 10)};
+  Branch.ElseBody = {Copy(0x2010, 11, 1), Copy(0x2014, 3, 11)};
+  F.Body[2] = std::move(Branch);
+  return F;
+}
+
+TEST(HighControlFlowSemantics, DistinctBranchCopiesShareOneDominatingRoot) {
+  const auto F = mergedCopyEquality();
+  const auto Report = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Report.Complete);
+  ASSERT_TRUE(Report.Items.empty())
+      << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+  for (uint64_t Input : {0ULL, 1ULL, 2ULL, 7ULL, 0xffffffffULL,
+                         0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, CopyViewsPreserveOnlyFullWidthIntegerBits) {
+  for (unsigned Variant = 0; Variant != 9; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Copy = F.Body[2].ElseBody.back();
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(8, false);
+    View->Operands = {Copy.Val};
+    Copy.Val = View;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      View->Type = View->CastTo = NdType::makeInt(4, false);
+      break;
+    case 2:
+      View->Type = View->CastTo = NdType::makeInt(16, false);
+      break;
+    case 3:
+      View->Type = View->CastTo = NdType::makePtr();
+      break;
+    case 4:
+      View->Type = View->CastTo = NdType::makeFloat(8);
+      break;
+    case 5:
+      View->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 6:
+      View->IndirectTarget = HighExpr::makeConst(0x1000, 8);
+      break;
+    case 7:
+      View->CastTo = NdType::makeInt(8, true);
+      break;
+    case 8:
+      View->Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), Variant == 0);
+    if (Variant == 0)
+      for (uint64_t Input : {0ULL, 1ULL, 0xffffffffULL, 0x8000000000000000ULL,
+                             0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, FullWidthCopySignednessKeepsEqualityBits) {
+  auto F = mergedCopyEquality();
+  walkStmts(F.Body, [&](HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      std::set<const HighExpr *> Seen;
+      while (!Pending.empty()) {
+        const auto E = Pending.back();
+        Pending.pop_back();
+        if (!E || !Seen.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp &&
+            E->Var.Id == 3)
+          E->Type = NdType::makeInt(8, false);
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+  for (uint64_t Input :
+       {0ULL, 1ULL, 0x8000000000000000ULL, 0xffffffffffffffffULL})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+}
+
+TEST(HighControlFlowSemantics, PartitionBudgetRetainsAnAffordableGuardSubset) {
+  for (bool OverwriteGuard : {false, true}) {
+    SCOPED_TRACE(OverwriteGuard);
+    auto F = mergedCopyEquality();
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    std::vector<HighStmt> Noise;
+    for (unsigned I = 0; I < 8; ++I) {
+      auto Definition = assign(0x3000 + I * 4, 20 + I, 0);
+      Definition.Val =
+          HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Parameter),
+                              HighExpr::makeConst(uint64_t{1} << I, 8));
+      F.Body.insert(F.Body.begin(), Definition);
+    }
+    for (unsigned Pass = 0; Pass != 2; ++Pass)
+      for (unsigned I = 0; I != 8; ++I) {
+        HighStmt Test;
+        Test.Kind = StmtKind::If;
+        Test.Addr = 0x3100 + Pass * 32 + I * 4;
+        Test.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                                        local(20 + (Pass ? 7 - I : I)),
+                                        HighExpr::makeConst(0, 8));
+        Noise.push_back(Test);
+      }
+    F.Body.insert(F.Body.end() - 2, Noise.begin(), Noise.end());
+    if (OverwriteGuard) {
+      auto Rewrite = assign(0x3200, 8, 0);
+      Rewrite.Dst->Type = NdType::makeInt(1, false);
+      Rewrite.Dst->Var.Size = 1;
+      Rewrite.Val = HighExpr::makeConst(0, 1);
+      F.Body.insert(F.Body.end() - 2, Rewrite);
+      EXPECT_THROW(execute(F, 1), std::runtime_error);
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), !OverwriteGuard)
+        << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+    if (!OverwriteGuard)
+      for (uint64_t Input = 0; Input != 256; ++Input)
+        EXPECT_EQ(execute(F, Input), Input == 1 ? 0u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, MergedCopyRootsNeedEveryDefinitionAndPath) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = mergedCopyEquality();
+    auto &Branch = F.Body[2];
+    switch (Variant) {
+    case 0:
+      // One edge carries a different stable root.
+      Branch.ElseBody[0].Val = local(2);
+      break;
+    case 1:
+      // One edge reads its alias before that alias has a definition.
+      Branch.ElseBody.erase(Branch.ElseBody.begin());
+      break;
+    case 2:
+      // A write to the original after the snapshot invalidates the relation.
+      F.Body.insert(F.Body.begin() + 4, assign(0x2020, 1, 2));
+      break;
+    case 3:
+      // The merged local is not defined on one incoming path.
+      Branch.ElseBody.pop_back();
+      break;
+    case 4:
+      // A cyclic copy graph supplies no stable root.
+      Branch.ElseBody[0].Val = local(3);
+      break;
+    case 5:
+      // A later conflicting write must not borrow the earlier alias fact.
+      F.Body.insert(F.Body.begin() + 6, assign(0x2020, 3, 2));
+      break;
+    }
+    const auto Report = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Report.Complete);
+    EXPECT_FALSE(Report.Items.empty());
+  }
 }
 
 TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
@@ -2038,6 +2274,96 @@ TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
           EXPECT_EQ(execute(F, Condition, true), Expected[Condition]));
     }
   }
+}
+
+TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
+  // PiCMCaptureRegistryPropertyInputData: cold code falls into a `jmp` back
+  // to the hot path.  Threading that jump-only block leaves a block without a
+  // terminator whose sole successor is not the next block; it must not run
+  // into the block laid out after it.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "threaded_fallthrough";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto IsZero = machineValue(1, Architecture);
+  IsZero.Size = 1;
+  auto Result = [&](int Version) {
+    auto V = machineValue(2, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.SSAVer = Version;
+    return V;
+  };
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::INT_EQUAL, 0x1000, IsZero, {Input, C(0)}),
+                     operation(NdOp::COND_BR, 0x1004, {}, {C(0x1200), IsZero})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3};
+  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, Result(1), {C(5)})};
+  M.Blocks[2].Preds = {0};
+  M.Blocks[2].Succs = {3};
+  M.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, Result(2), {C(7)})};
+  M.Blocks[3].Preds = {1, 2};
+  M.Blocks[3].Phis = {{Result(3), {{1, Result(1)}, {2, Result(2)}}}};
+  M.Blocks[3].Ops = {operation(NdOp::RETURN, 0x1300, {}, {Result(3)})};
+  const auto F = MedToHighConverter().convert(M, Architecture);
+  for (uint64_t Condition : {0u, 1u}) {
+    SCOPED_TRACE(Condition);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Condition, true), Condition ? 5u : 7u));
+  }
+}
+
+TEST(HighControlFlowSemantics,
+     IncomingRegisterBehindAVersionedSeedIsTheParameter) {
+  // PiCMCaptureRegistryPropertyInputData: SSA versions a parameter
+  // register's entry seed (`COPY RCX.1 = RCX` there, CL being seeded too)
+  // while later reads still name the incoming register.  Those reads are the
+  // first parameter, not an unknown register.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "versioned_seed";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto Incoming = machineValue(5, Architecture);
+  Incoming.Kind = MedVar::Reg;
+  Incoming.RegOff = TRI.IntParamRegs[0];
+  auto Seeded = Incoming;
+  Seeded.SSAVer = 1;
+  auto Sum = machineValue(6, Architecture);
+  auto Return = machineValue(7, Architecture);
+  Return.Kind = MedVar::Reg;
+  Return.RegOff = TRI.IntReturnReg;
+  Return.SSAVer = 1;
+  M.Blocks.resize(1);
+  M.Blocks[0].Id = 0;
+  M.Blocks[0].StartAddr = 0x1000;
+  M.Blocks[0].EndAddr = 0x1020;
+  M.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Seeded, {Incoming}),
+                     operation(NdOp::INT_ADD, 0x1004, Sum,
+                               {Incoming, MedVar::makeConst(1, 8)}),
+                     operation(NdOp::COPY, 0x1008, Return, {Sum}),
+                     operation(NdOp::RETURN, 0x100c, {}, {Return})};
+  const auto F = MedToHighConverter().convert(M, Architecture);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 41, true), 42u));
 }
 
 TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
@@ -5321,6 +5647,58 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   ASSERT_EQ(F.Body[1].Kind, StmtKind::Block);
   EXPECT_EQ(F.Body[1].Addr, 0x1008u);
   EXPECT_TRUE(F.Body[1].Body.empty());
+}
+
+TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
+  // __try { v = 5; goto out; } __except (1) { goto out; } return 0;
+  // out: observe(); return v;
+  // The handler runs in the protection around the try, so its jump may
+  // become a copy of `out`.  The protected body's may not: observe() would
+  // then be guarded, and a fault in it would reach the handler.
+  auto Build = [] {
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1008};
+    Try.Body = {assign(0x1000, 1, 5), jump(0x1004, 0x1020)};
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1010;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{jump(0x1010, 0x1020)}};
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Call;
+    Observe.Addr = 0x1020;
+    Observe.CallExpr = HighExpr::makeCall("observe", 0x5000, {});
+    HighFunc F;
+    F.Body = {Try, result(0x1008, HighExpr::makeConst(0, 8)), Observe,
+              result(0x1024, local(1))};
+    return F;
+  };
+  HighFunc F = Build();
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  const HighStmt &Try = F.Body.front();
+  ASSERT_EQ(Try.Kind, StmtKind::SEHTry);
+  ASSERT_FALSE(Try.Body.empty());
+  EXPECT_EQ(Try.Body.back().Kind, StmtKind::Goto);
+  ASSERT_EQ(Try.EHClauseBodies.size(), 1u);
+  ASSERT_FALSE(Try.EHClauseBodies[0].empty());
+  EXPECT_EQ(Try.EHClauseBodies[0].back().Kind, StmtKind::Return);
+
+  // With the handler ending in its own return, the protected body's jump
+  // moves after the statement, where the copy may replace it.
+  EXPECT_TRUE(hoistTryExitJumps(F.Body));
+  ASSERT_EQ(F.Body.front().Body.size(), 1u);
+  ASSERT_GE(F.Body.size(), 2u);
+  EXPECT_EQ(F.Body[1].Kind, StmtKind::Goto);
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+
+  // A handler that falls through would run the moved jump too.
+  F = Build();
+  F.Body.front().EHClauseBodies = {{assign(0x1010, 1, 7)}};
+  EXPECT_FALSE(hoistTryExitJumps(F.Body));
+  EXPECT_EQ(F.Body.front().Body.back().Kind, StmtKind::Goto);
 }
 
 TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {

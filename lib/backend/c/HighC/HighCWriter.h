@@ -77,6 +77,9 @@ public:
   sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
   static std::string
   sourceParameterType(const SourceParameterTypeHint &Parameter);
+  static std::optional<std::string> sourceValue(llvm::StringRef Text,
+                                                const TypeRef &Carrier,
+                                                const TypeRef &Source);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr)

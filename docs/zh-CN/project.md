@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d4ac4be1440e248ff3aedb3f1da08057fc0e4ba4ca24b138ed74ca8386b01c7a -->
+<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
 
 <div align="center">
 
@@ -48,9 +48,17 @@ CLI、集成方与 AI 智能体通过 **纯 C API** 使用同一个引擎 **`lib
 
 恢复预算可显式配置：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的默认值仍为 16、16、4096。兼容的 v3 C API 与失败规则见恢复指南。
 
+恢复还提供 `--vm-chain-transfers=N`（默认 0）和 `--vm-no-control-discovery`。串接在已证明唯一目标的控制转移之间保留符号关联；达到上限后回到普通 CFG 边界。机器状态恢复可通过 `--vm-entry-frame=begin:end` 声明未经运行时检查、不会回绕的入口 RSP 偏移范围。精确数值前提会写入生成的 C 和报告；它不授予内存访问权限，也不构成等价证明。
+
 独立的 C++ 循环证明 API 可在预算内推导嵌套循环不变量和字典序排名，再检查原生代码到 LowIR 的精化关系，详见[恢复指南](interpreter-recovery.md)；它不证明输出 C 的等价性。
 
 独立的 C++ `checkBinaryLLVMRefinement` API 对精确 LLVM 产物组合全新的原生和 LLVM 检查；C 编译仍不在证明范围内。
+
+PE 恢复还会认证首选基址下的 DIR64 字节并排除导入写入；固定映像契约不证明 ASLR 或初始化等价性。
+
+在显式机器状态契约下，解释器恢复支持有界入口栈对齐分区及内部 `RET imm16` 栈清理。这些分区的自动原生到 LLVM 证明组合尚未完成。
+
+有界 `REP MOVS/STOS` 恢复保留逐元素顺序和重叠行为；原始指令的证明覆盖仍待完成。
 
 <!-- i18n-section: why-neverd -->
 
@@ -101,11 +109,11 @@ Low/Med/High IR、已验证 LLVM、可移植 C11 与安全 stable Rust。详见
 
 CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
 
-`driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。原生 ARM64/WHP 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+`driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在关闭 Unicorn 的配置下通过全部 299 项必跑检查：71 项 CPU 检查、26 个内置映像与 46 个 WDK 映像及 40 个场景组合在首选和重定位地址产生的 224 项驱动结果，以及 4 项 SEH 边界检查 ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
 
 `checked-aarch64-v1` 和 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定宽 SIMD，以及完整 FPCR/FPSR/向量状态。匹配的 Linux ARM64 主机使用 KVM，Windows ARM64 主机使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生运行仍待实机验证；Windows 驱动加载仍限 x64。
 
-x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理；WHP/ARM64 原生工作负载证据仍未完整。
+x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理；ARM64 原生工作负载证据仍未完整。
 
 原生 x64 的 `FOP/FIP/FDP` 遵循宿主保存、恢复规则：AMD 可能清零未生效的 x87 异常元数据。启动自检通过未屏蔽的待处理异常验证这些字段。
 

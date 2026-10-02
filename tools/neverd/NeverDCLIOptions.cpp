@@ -63,6 +63,28 @@ cl::opt<bool> MobileMetadataOnly(
     "metadata-only",
     cl::desc("Export iOS metadata without native C decompilation"),
     cl::sub(MobileCmd));
+cl::opt<bool> MobileListClasses(
+    "list-classes", cl::desc("List APK/DEX class descriptors without recovery"),
+    cl::sub(MobileCmd));
+cl::opt<std::string> MobileClassPrefix(
+    "class-prefix",
+    cl::desc("Class descriptor or dotted prefix for --list-classes"),
+    cl::init(""), cl::sub(MobileCmd));
+cl::opt<std::string> MobileFindRefs(
+    "find-refs",
+    cl::desc("Find APK/DEX code references: string, type, method, field"),
+    cl::init(""), cl::sub(MobileCmd));
+cl::opt<std::string>
+    MobileReferenceQuery("query",
+                         cl::desc("Literal target text for --find-refs"),
+                         cl::init(""), cl::sub(MobileCmd));
+cl::opt<bool> MobileReferenceExact(
+    "exact", cl::desc("Match the complete target identity for --find-refs"),
+    cl::sub(MobileCmd));
+cl::opt<std::string> MobileReferenceOwner(
+    "owner",
+    cl::desc("Exact target owner descriptor for method/field references"),
+    cl::init(""), cl::sub(MobileCmd));
 cl::opt<bool> MobileInternalIOSWorker("internal-ios-worker", cl::Hidden,
                                       cl::init(false), cl::sub(MobileCmd));
 cl::opt<unsigned> MobileTimeout(
@@ -390,6 +412,19 @@ cl::opt<std::string> VMMaxQueries(
     "vm-max-queries",
     cl::desc("Cumulative recovery solver queries (positive; default: 4096)"),
     cl::value_desc("count"), cl::init("4096"), cl::sub(DecompileCmd));
+cl::opt<std::string> VMChainTransfers(
+    "vm-chain-transfers",
+    cl::desc("Proved singleton transfers per recovery node (0 disables)"),
+    cl::value_desc("count"), cl::init("0"), cl::sub(DecompileCmd));
+cl::opt<std::string> VMEntryFrame(
+    "vm-entry-frame",
+    cl::desc(
+        "Unchecked nonwrapping entry-RSP offsets for machine-state recovery"),
+    cl::value_desc("begin:end"), cl::sub(DecompileCmd));
+cl::opt<bool> VMNoControlDiscovery(
+    "vm-no-control-discovery",
+    cl::desc("Disable automatic recovery control-state discovery"),
+    cl::init(false), cl::sub(DecompileCmd));
 cl::opt<uint64_t> VMMaxOperations("vm-max-operations",
                                   cl::desc("Recovery operation budget"),
                                   cl::init(262144), cl::sub(DecompileCmd));

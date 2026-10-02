@@ -76,7 +76,41 @@ L’opzione CLI `--vm-max-refinements=N` richiede un intero positivo e ha valore
 
 In C si usa `neverd_devirtualize_source_v3()` o `neverd_devirtualize_machine_source_v3()`. Inizializzare `neverd_devirtualize_options_v3` a zero e impostare `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Definire `max_control_fields`, `max_solver_queries` e facoltativamente `base.max_control_refinements`; zero seleziona il valore predefinito invariato. Tutti e tre i campi reserved devono essere zero. v1/v2 ignorano la coda v3, incluso reserved; v3 ignora le code future. Il rapporto registra il lavoro effettivo e i limiti `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+Il recupero espone anche `--vm-chain-transfers=N` (predefinito 0) e `--vm-no-control-discovery`. Il concatenamento mantiene le correlazioni simboliche tra trasferimenti con destinazione unica dimostrata; al limite torna ai normali confini CFG. Il recupero dello stato macchina può dichiarare offset rispetto a RSP d’ingresso senza riavvolgimento, non verificati a runtime, con `--vm-entry-frame=begin:end`. La premessa numerica esatta accompagna C e rapporto; non autorizza memoria né dimostra equivalenza.
+
+Le API v4 compatibili sono `neverd_devirtualize_source_v4()` e `neverd_devirtualize_machine_source_v4()`. Azzerare `neverd_devirtualize_options_v4` e impostare `base.base.base.struct_size` alla dimensione completa. Il contatore CLI accetta interi decimali non negativi a 32 bit; zero disabilita il concatenamento. Gli estremi sono interi decimali con segno a 64 bit con `begin < end`, richiedono `--vm-machine-state` e vincolano RSP fisico all’ingresso, non il valore modificato. In C il flag dei limiti richiede l’API di stato macchina; senza flag entrambi gli estremi devono essere zero. Flag sconosciuti e vecchi campi riservati non nulli sono rifiutati. v1/v2/v3 ignorano tutta l’estensione v4; v4 ignora estensioni future. Opzioni nulle conservano i valori predefiniti. Il rapporto aggiunge `maxChainedTransfers`, `entryFrameBounds` e lo stato effettivo di `discoverControlState`. Tutte le opzioni CLI richiedono `--devirtualize`. La premessa non viene controllata a runtime e non garantisce accessibilità, inizializzazione o assenza di alias. Non abilita politiche di prova native.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 Il rapporto JSON aggiunge `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` e `discoveryVisits` per registrare attivazione, limiti e lavoro di analisi. L’individuazione dei campi, da sola, non prova il successo del recupero.
+
+Quando una condizione restringe una dipendenza di indirizzo a una porzione di byte, il raffinamento conserva come candidati di contesto anche i campi completi di indirizzo diretto di otto byte già tracciati che la contengono. Il campo ristretto e la maschera del suo produttore restano invariati; i campi più ampi non pertinenti non vengono promossi. Costanti e scostamenti relativi all’ingresso richiedono ancora una prova e tutti i contesti condividono i limiti esistenti.
+
+L’enumerazione facoltativa degli indirizzi immutabili si arresta quando un indirizzo ammissibile non ha un certificato. La lettura originale resta eseguita. Valori e certificati osservati si usano solo dopo la prova dell’intero dominio; anche un risultato in cache richiede la verifica dell’estensione di lettura attuale, e un certificato malformato effettivamente osservato resta un errore.
+
+Una prova completa delle dipendenze può omettere l’enumerazione di un valore di controllo completo a 64 bit `root + constant` quando il predicato dell’arco corrente lascia liberi i 32 bit alti della nuova variabile radice. Ciò non fissa l’indirizzo della radice e non dimostra la raggiungibilità. Restano attive le maschere ristrette dei produttori e le verifiche finali di fattibilità; un predicato che limita l’intera radice segue la normale proiezione finita.
+
+Quando raggiunge la capacità, la cache delle prove finite sostituisce i record usati meno di recente con prove ammissibili che entrano singolarmente. Gli accessi riusciti aggiornano l’ordine d’uso; salvataggi duplicati, mancate corrispondenze e candidati rifiutati non lo modificano. Le prove eliminate possono dover essere ricostruite. Si conservano solo domini completi o superamenti dimostrati del loro limite, e ogni nuova chiamata al risolutore consuma ancora il budget condiviso delle query.
+
+Il recupero conserva anche i domini finiti interamente dimostrati dei singoli campi di controllo mascherati. Se una relazione congiunta supera `MaxControlTuples`, questi domini indipendenti possono ancora vincolare un obiettivo senza affermare correlazioni tra campi. Le confluenze uniscono i valori proiettati con la maschera comune; un dominio assente o troppo grande viene scartato interamente. Una modifica del dominio riprogramma il nodo anche dopo l’ampliamento della relazione congiunta. Le enumerazioni parziali non forniscono fatti e restano validi i limiti esistenti su campi, tuple, nodi simbolici e risolutore.
+
+`MaxChainedTransfers` è un limite C++ opzionale (predefinito `0`) per concatenare trasferimenti con destinazione o risultato booleano dimostrato univoco. Conserva lo stato simbolico completo, le origini native e i budget cumulativi; i risultati multipli usano i normali archi CFG. La scoperta all’indietro riproduce le occorrenze delle istruzioni confermate. La concatenazione può duplicare le origini dei cicli e limitare l’inferenza automatica dei punti di taglio.
+
+`EntryFrameBounds` dichiara esplicitamente un intervallo `[Begin, End)` senza riavvolgimento rispetto al valore iniziale di `FrameBaseRegister`. Non autorizza accessi alla memoria né assenza di alias. Se omesso, le radici restano modulari. La prova nativa richiede gli stessi limiti nel contratto del chiamante e li vincola alla ricevuta; la prova LLVM conserva il dominio esistente del frame. Il solo recupero non certifica l’equivalenza.
 
 <!-- i18n-section: execution-contract -->
 
@@ -91,7 +125,7 @@ gestione delle eccezioni del linguaggio interrompono il recupero.
 
 Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazioni globali e i record delle eccezioni. La CLI li carica prima di applicare `--func`; chi usa l’API C non deve prima limitare la sessione con `neverd_session_restrict_function()`. L’adattatore rifiuta immagini caricate con un insieme ristretto di funzioni, perché i metadati omessi non dimostrano l’assenza di correzioni del loader o archi di eccezione.
 
-Solo intervalli completi di sola lettura, sostenuti dal file e privi di
+Senza le prove PE descritte di seguito, solo intervalli completi di sola lettura, sostenuti dal file e privi di
 mappature sovrapposte o correzioni del loader, possono fornire letture costanti
 dell’immagine. Tabelle scrivibili, rilocazioni non risolte e istantanee campionate
 durante l’esecuzione non provano l’immutabilità. Le rilocazioni COPY e le directory delle eccezioni strutturalmente incomplete
@@ -109,6 +143,12 @@ sopravvivono ai salvataggi sullo stack e alle confluenze; perdere un’espressio
 affine non la trasforma in un puntatore esterno. Pivot dello stack, ritorni che
 rimuovono gli argomenti nella funzione chiamata e dispatch basato su RET sono
 attualmente rifiutati. L’adattatore impone la semantica little-endian di x64.
+
+`PEFixedImageView` autentica immagini PE x64 complete alla base preferita. Verifica intestazioni originali, mappature univoche, campi DIR64 completi e scritture delle importazioni ordinarie; i byte IAT restano esclusi. TLS, load-config, importazioni ritardate/vincolate, CLR e meccanismi di scrittura sconosciuti vengono rifiutati. Recupero e prove native/LLVM vincolano la stessa istantanea. Le opzioni C++ `MaxImagePreparationBytes` e `MaxImagePreparationRecords` hanno valori predefiniti di 64 MiB e 65536; l’esaurimento produce `BudgetExceeded`. L’immagine deve rimanere invariata. Questo non prova l’equivalenza di ASLR, inizializzazione o decompressione.
+
+Il recupero dei frame allineati copre tutti i resti dei bit bassi della radice d’ingresso, lasciando liberi quelli alti. Emette una selezione esplicita all’ingresso e prova ogni spostamento costante prima di condividere la memoria simbolica della radice originale. Salvataggi, invalidazione degli alias e unioni conservano l’identità della partizione. I candidati sono provati in ordine crescente; maschere grandi estranee non impongono la partizione massima. I limiti di contesti e raffinamenti vincolano partizioni e tentativi; nodi, operazioni, valutazioni e interrogazioni sono cumulativi. L’aggregazione automatica delle prove native/LLVM fra partizioni o origini di ciclo duplicate resta incompleta. I verificatori esistenti possono provare spostamenti implicati dai predicati effettivi dei percorsi. Con semantica esplicita dello stack fisico, un `RET imm16` interno canonico legge il vecchio slot di ritorno e incrementa RSP di otto byte più la pulizia senza segno; i ritorni esterni richiedono ancora pulizia zero. Questa proiezione rifiuta codifiche di ritorno con prefissi.
+
+I trasferimenti ripetuti supportano indirizzi a 64 bit ed elementi di 1/2/4/8 byte dopo la prova completa di conteggio e direzione. Con stato macchina esplicito, il conteggio zero non accede alla memoria e non richiede una prova della direzione; l’ABI ordinaria continua a rifiutare flag non vincolati. Ogni accesso scalare mantiene i controlli di alias e della casella di ritorno. I puntatori di frame copiati integralmente sono nuovamente provati dalla memoria effettiva prima della proiezione degli archi. Conteggi sconosciuti, budget esauriti, accessi segmentati e indirizzi più stretti sono rifiutati. La certificazione nativa degli effetti indefiniti di queste istruzioni REP originali non è ancora supportata.
 
 Il risultato è sorgente e IR per l’analisi. Non dimostra la sicurezza di
 rilocazione, unwinding, eccezioni asincrone o sostituzione binaria. La modalità
@@ -136,7 +176,7 @@ Gli indirizzi originali del codice e dei dati ospiti conservano il loro esatto v
 
 Il profilo richiede CPL3/IOPL0, shadow stack disattivato, assenza di eventi asincroni ed esecuzione normale senza fault. I flag iniziali devono essere canonici con TF/RF/VM/AC/VIF/VIP a zero; POPFQ deve mantenere TF/AC a zero, verificato dal codice generato. PUSHFQ/POPFQ usano lo stato esplicito; RDSSP conserva la destinazione e INCSSP raggiunto viene rifiutato. I puntatori di frame salvati integralmente si propagano; scritture parziali o alias possibili invalidano i fatti. I metadati di eccezione ammettono solo il percorso normale, senza equivalenza di dispatch o unwinding. Il rapporto registra `sourceABI` e `executionProfile`; l’ABI predefinita mantiene le restrizioni.
 
-Questa ABI di stato macchina supporta CALL near dirette e indirette tramite registro con un insieme finito di destinazioni dimostrato esaustivamente. La chiamata indiretta tramite registro acquisisce il registro destinazione originale prima di modificare RSP e salva esattamente una volta l’indirizzo reale dell’istruzione successiva. Un RET near interno può scegliere da un insieme finito completamente dimostrato. Il codice residuo mantiene una lettura dello stack ospite, ne acquisisce il valore prima di incrementare il puntatore e usa quel valore per il dispatch. Raggiungere lo slot di ritorno d’ingresso preservato resta un’uscita esterna, anche dopo aver scartato frame interni. Destinazioni sconosciute, insiemi con destinazioni mancanti o non eseguibili, ritorni con pulizia aggiuntiva e cambi arbitrari dello stack restano rifiutati.
+Questa ABI di stato macchina supporta CALL near dirette e indirette tramite registro con un insieme finito di destinazioni dimostrato esaustivamente. La chiamata indiretta tramite registro acquisisce il registro destinazione originale prima di modificare RSP e salva esattamente una volta l’indirizzo reale dell’istruzione successiva. Un RET near interno può scegliere da un insieme finito completamente dimostrato. Il codice residuo mantiene una lettura dello stack ospite, ne acquisisce il valore prima di incrementare il puntatore e usa quel valore per il dispatch. Raggiungere lo slot di ritorno d’ingresso preservato resta un’uscita esterna, anche dopo aver scartato frame interni. Destinazioni sconosciute, insiemi con destinazioni mancanti o non eseguibili, ritorni esterni con pulizia aggiuntiva e cambi arbitrari dello stack restano rifiutati.
 
 Le CALL near indirette tramite memoria sono supportate solo con questa ABI di stato esplicito, shadow stack disattivato ed esecuzione normale senza fault. L’operando in memoria deve usare una codifica canonica `r/m64` senza override di segmento, con override della dimensione dell’indirizzo (`addr32`) e REX facoltativi. La semantica x64 condivisa dell’indirizzo effettivo e di LOAD legge la destinazione prima di modificare RSP e inserire nello stack l’indirizzo reale dell’istruzione successiva. Vale anche quando il push sovrascrive lo slot destinazione; l’indirizzo dello slot non sostituisce mai quello della funzione caricata. Slot di puntatori o tabelle finite in sola lettura richiedono prove di lettura immutabile; valori dello stack ospite con inizializzazione dimostrata richiedono comunque la prova completa dell’insieme finito di destinazioni. Byte iniziali o snapshot di esecuzione di slot scrivibili non provano l’immutabilità. Letture esterne non dimostrate, fatti di stack invalidati, destinazioni invalide, override FS/GS o di altri segmenti, chiamate far e prefissi aggiuntivi o non canonici restano rifiutati. L’ABI sorgente predefinita continua a rifiutare le chiamate native.
 

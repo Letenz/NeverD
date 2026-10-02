@@ -8,17 +8,19 @@ NeverD의 선택적 드라이버 에뮬레이터는 지원되는 x64 WDM 드라�
 
 ## 실행 백엔드
 
-`driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. native ARM64/WHP 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
+`driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn을 비활성화하고 필수 검사 299개를 모두 통과합니다. CPU 검사 71개, 내장 이미지 26개·WDK 이미지 46개·시나리오 사례 40개를 기본 및 재배치 주소에서 실행한 드라이버 결과 224개, SEH 경계 검사 4개를 포함합니다 ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
+
+위 네이티브 검증은 선언된 드라이버 진입점과 공개된 시나리오를 다룹니다. 아래의 기능별 회귀 테스트와 C API／CLI／Python 검사는 Windows 실행 결과가 명시된 경우 외에는 근거 범위가 Linux로 제한됩니다. 네이티브 사례 모음의 통과가 모든 테스트 변형의 Windows 검증을 뜻하지는 않습니다.
 
 `DriverImage.def`는 엄격한 PE 검증의 크기·정렬 제한과 진단 문구를 선언하며, 포인터 너비는 `DriverProfile.def`에서 가져옵니다. `DriverImage.cpp`가 검증과 재배치를 담당하며 허용되는 이미지와 오류 메시지는 바뀌지 않습니다.
 
-ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, 레지스터 BT는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식은 지원되지 않습니다. 일반 RAM 피연산자는 독립 할당 또는 별칭 페이지를 넘을 수 있습니다. 전체 범위의 권한을 확인한 뒤 쓰며 첫 접근 불가 바이트에서 실패를 보고합니다. MOVS는 완료된 요소와 오류 요소의 재시작 레지스터를 보존하고 요소 일부를 커밋하지 않습니다.
+ARM64 호스트에서는 `checked-x64-v1`이 x64 게스트에 Unicorn을 사용합니다. 각 명령과 메모리 접근을 단일 단계 전에 검사하고 Windows 객체 검사, 쓰기 observer, RAM alias, CPU 전용 context를 유지합니다. 스칼라 메모리 산술, 자연 정렬 잠금 산술, SETcc, `BT/BTS/BTR/BTC`는 읽기/쓰기 검사와 함께 허용하고 flag는 네이티브 실행이 담당합니다. 제한된 SIMD에는 legacy SSE/SSE2 이동/논리, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar 변환/뺄셈이 포함됩니다. 16개 XMM 레지스터 전체와 MXCSR는 진입/context 복원 뒤에도 보존되고, 마스크되지 않은 SIMD 예외, DAZ, x87, AVX, 미열거 연산은 거부됩니다. 전체 폭 XMM 저장은 어느 word도 바꾸기 전에 순서가 보장된 8바이트 쓰기 observer 두 개를 생성합니다. 정렬되지 않은 aligned-vector 형식은 지원되지 않습니다. 일반 RAM 피연산자는 독립 할당 또는 별칭 페이지를 넘을 수 있습니다. 전체 범위의 권한을 확인한 뒤 쓰며 첫 접근 불가 바이트에서 실패를 보고합니다. MOVS는 완료된 요소와 오류 요소의 재시작 레지스터를 보존하고 요소 일부를 커밋하지 않습니다.
 
 supervisor x64는 정렬된 1/2/4바이트 스칼라 MMIO 트랜잭션을 허용하며 장치 페이지는 네이티브 RAM mapping에 들어가지 않습니다. MOVS/REP MOVS는 재시작 경계마다 한 요소씩 실행합니다. destination observer가 device read commit 전에 중지할 수 있도록 device source는 부작용 없는 prepared read를 제공해야 합니다. Windows register bank는 이를 지원하고, 다른 장치는 string read를 효과 발생 전에 거부합니다. device RMW, 넓은 MMIO, 포트 I/O는 미지원입니다. 요청 바이트, 장치 상태, 쓰기 event는 Unicorn의 zero-count REP 종료 hook 차이와 별도로 비교합니다. KVM은 표준 XSAVE interface와 FP/SSE presence bit로 XMM/MXCSR를 전달합니다. 이 supervisor 계약은 사용자 프로세스 환경을 제공하지 않습니다. timeout/cancel은 허용된 유한 명령 사이에서 검사하며 일반 비동기 선점이나 시작 후 backend 재시작은 없습니다. 내장 corpus와 사용 가능한 WDK 시나리오는 일반/CFG/재배치 image에서 Unicorn과 비교하지만 corpus 일치가 임의 드라이버 호환성을 보장하지는 않습니다.
 
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
-빌드 옵션은 `NEVERD_EMULATION_BACKEND_KVM`, `NEVERD_EMULATION_BACKEND_WHP`입니다. KVM은 `/dev/kvm` 접근 권한이 필요합니다. WHP는 시스템 DLL을 동적으로 로드하며 Windows 실기 실행 검증이 필요합니다. 새 C API는 `neverd_emulate_driver_backend_json`이며 v1 ABI는 유지됩니다. 보고서는 백엔드, 계약과 선택 이유를 기록합니다.
+빌드 옵션은 `NEVERD_EMULATION_BACKEND_KVM`, `NEVERD_EMULATION_BACKEND_WHP`입니다. KVM은 `/dev/kvm` 접근 권한이 필요합니다. WHP는 시스템 DLL을 동적으로 로드합니다. 새 C API는 `neverd_emulate_driver_backend_json`이며 v1 ABI는 유지됩니다. 보고서는 백엔드, 계약과 선택 이유를 기록합니다.
 
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
@@ -464,6 +466,10 @@ JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 
 
 예외 전달은 이미지에서 해석한 x64 버전 1 unwind 테이블과 `__C_specific_handler` 범위를 사용하여 실제 게스트 필터, 처리기, unwind 중의 `__finally`를 실행합니다. 필터의 0은 검색 계속, 양수는 처리기 선택, 음수는 실행 재개를 뜻합니다. 음수로 재개할 수 있는 것은 포착 가능한 사용자 CPU 메모리 예외뿐이며 검증된 `CONTEXT_INTEGER | CONTEXT_CONTROL` 변경만 적용하고 나머지 원래 CPU 상태 전체를 보존합니다. 일반 헬퍼 프레임 unwind, 저장된 비휘발성 범용 레지스터 복원, 현재 스택 경계 및 `GetExceptionCode()`를 지원합니다. 정상 경로와 예외 unwind의 finally 모두 실제 게스트 코드를 실행합니다. 필터와 finally는 부모 실행의 프로세스/스레드 신원과 사용자 접근 권한을 상속하며 권한 없는 시스템 작업자의 권한을 높이지 않습니다. 처리기는 지원하는 바깥 범위로 다시 예외를 발생시킬 수 있습니다. 필터/finally의 중첩 및 충돌 unwind, 연결된 V1 메타데이터, 부분 프롤로그, 표준 에필로그, 전체 XMM6–XMM15 복원을 지원합니다. 예외 레코드 연결을 보존하고 시작한 finally를 반복하지 않습니다. C++ 처리 방식과 불완전한 메타데이터는 명시적으로 거부합니다. 잡히지 않은 API 예외는 `model_error`로 중단하며 포착 가능한 사용자 메모리 예외 이외의 CPU 오류는 실행을 종료합니다. 상수 `EXCEPTION_EXECUTE_HANDLER`는 해당 처리기를 직접 선택합니다. 처리기를 선택한 뒤 unwind할 때만 벗어나는 범위의 finally를 실행하며 검색 중이나 필터가 원래 실행을 재개할 때는 정리하지 않습니다. 필터가 반환할 때마다 `EXCEPTION_POINTERS`, 예외 레코드, 지원하지 않는 `CONTEXT` 필드를 검증하고 해당 변경은 명시적으로 실패합니다. 모델 API가 발생시킨 예외를 음수 필터로 재개하는 것은 지원하지 않습니다.
 
+C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
+
+대상까지 스택을 해제할 때도 원래 범위 끝을 사용합니다. 처리기 대상이 `finally` 보호 구간 안에 남아 있으면 해당 범위를 벗어나지 않습니다. `FinallyRespectsRawScopeEndAtHandlerTarget`는 경계 양쪽을 검사하고 Windows x64에서는 `ntdll.dll!__C_specific_handler`와 직접 비교합니다. NeverD는 컴파일러가 생성한 범위를 수정하지 않습니다. Clang 20/21로 빌드한 원본 픽스처는 편향된 끝 주소가 선택된 대상을 포함하므로 `T`, `J` 모드에서 게스트 실패를 반환합니다. Clang 23 빌드는 두 정리 루틴을 모두 실행합니다. [LLVM 변경 #144745](https://github.com/llvm/llvm-project/pull/144745)는 기존 `+1` 편향을 제거합니다. 이 컴파일러별 결과는 백엔드 오류와 구분합니다.
+
 `__GSHandlerCheck_SEH`는 검색 전과 unwind 단계에서 이미지의 현재 보안 cookie를 검사하며 finally가 없는 프레임도 포함합니다. 고정 및 동적 정렬 슬롯, 부호 있는 오프셋과 원래 프레임 포인터 인코딩을 지원하고 C 처리기 플래그와 cookie 검사를 구분합니다. 프롤로그와 에필로그에서는 아직 설정되지 않은 cookie를 읽지 않습니다. 불일치는 해당 필터, 정리 또는 처리기 실행 전에 중단됩니다. 독립 `__GSHandlerCheck`도 검색과 unwind에서 cookie를 확인하며 C 범위를 만들지 않습니다. 정확한 심볼 또는 가져오기 식별자로만 인식하며 익명 코드를 명령 패턴으로 추측하지 않습니다. GS/C++ 래퍼와 C++ 예외 personality는 지원하지 않습니다. `driver_seh_gs.h`의 독자 프레임은 연결된 WDK 검사 함수도 실행합니다.
 
 직접 작성한 `driver_wdm_seh.c` 픽스처는 실제 WDK 헤더와 `/GS-`를 사용합니다. 일반 및 활성 CFG 이미지는 `NEVERD_WDM_SEH_FIXTURE`와 `NEVERD_WDM_SEH_CFG_FIXTURE`로 설정합니다. [driver-seh-scenario.json](../examples/driver-seh-scenario.json) 예제는 이미지를 재배치하고 DriverEntry에서 API 예외를 잡은 뒤 언로드합니다. 별도의 WDM METHOD_NEITHER 경로는 사용자 접근 검사, MDL 잠금 및 처리 가능한 메모리 오류를 지원합니다.
@@ -507,7 +513,7 @@ CREATE 요청만 불리언 `asynchronous_file: true`를 지정할 수 있습니�
 
 ## x64 네이티브 동기 예외
 
-checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 WHP/ARM64 호스트는 명시적으로 건너뜁니다.
+checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합니다. KVM은 비공개 supervisor IDT/IST, WHP는 명시적인 예외 비트맵을 사용하며 원래 컨텍스트와 제공된 오류 코드를 전송 오류와 구분합니다. OS는 복구 가능한 이벤트를 소비한 뒤 계속 실행할 컨텍스트를 설치합니다. Windows 드라이버는 0으로 나누기와 몫 오버플로를 `STATUS_INTEGER_DIVIDE_BY_ZERO`로 변환하고 실제 SEH filter, `__finally`, 재시도를 실행합니다. `NeverDX64ExceptionTests`는 Unicorn 없이 빌드되며 `DriverWDMCPUException`은 원본 WDK 사례를 검증합니다. 사용할 수 없는 ARM64 호스트는 명시적으로 건너뜁니다.
 
 ## 전체 x87 상태
 
@@ -519,7 +525,7 @@ Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `R
 
 ARM64 KVM/WHP 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 성공은 이 제한된 초기화 프로그램만 검증하며 독립적인 native ARM64 워크로드 검증은 아직 필요합니다.
 
-x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 증명하며, WHP와 ARM64의 독립적인 네이티브 작업 검증은 아직 남아 있습니다.
+x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 증명하며, ARM64의 독립적인 네이티브 작업 검증은 아직 남아 있습니다.
 
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
 
@@ -529,9 +535,11 @@ x64 KVM/WHP 네이티브 초기화는 비공개 supervisor 페이지에서 `X64M
 
 네이티브 `FOP/FIP/FDP`는 호스트 x87 저장·복원 규칙을 따릅니다. 마스크되지 않은 대기 예외가 없으면 AMD는 이 필드를 0으로 만들 수 있으며 스냅샷은 관측값을 유지합니다. `X64MachineProbe.def`와 정밀 NOP/컨텍스트 테스트는 일관된 대기 예외를 설정하여 모든 필드를 유효한 상태에서 차이를 숨기지 않고 비교합니다. 호스트 프로세스 FXRSTOR64/FXSAVE64 참조는 두 상태를 검사하며, 백엔드는 호스트 결과를 입력 메타데이터로 대체하지 않습니다.
 
-공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존하며 Windows 네이티브 검증이 계속 필요합니다.
+공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
+
+`X64BitInstructions.def`는 16/32/64비트 레지스터 및 일반 RAM의 `BT/BTS/BTR/BTC`를 허용합니다. 레지스터 비트 인덱스는 피연산자 너비의 부호 있는 값으로 전체 워드를 선택하며, 즉시값은 기준 워드 안에 머뭅니다. 주소 너비에 따른 절단은 FS/GS 기준 주소를 더하기 전에 적용됩니다. 프로세서가 CF와 쓰기 값을 제공하고, `RAMTransaction`은 관찰 콜백이 수락할 때까지 결과를 비공개로 유지합니다. 전체 범위 권한 검사는 독립 페이지 할당과 별칭을 포함하며, 중지·콜백 실패·페이지 접근 거부 시 원래 CPU와 RAM을 보존합니다. LOCK은 자연 정렬된 메모리 수정 형식만 허용하며 MMIO와 하드웨어 병렬 SMP는 지원하지 않습니다. `X64BitStringTests.cpp`는 독립 인코딩을 실제 x64 호스트 실행과 비교하고 음수 인덱스, 너비 절단, 페이지 경계 접근, 취소, 잘못된 LOCK 형식을 검사합니다. [Intel 명령어 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요.
 
 `WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
 
