@@ -46,6 +46,7 @@ constexpr FixedAPI APIs[] = {
     {"CoreImage",
      "imageByApplyingFilter:withInputParameters:", "@32@0:8@16@24"},
     {"CoreImage", "imageWithColor:", "@24@0:8@16"},
+    {"UIKit", "images", "@16@0:8"},
     {"UIKit", "impactOccurred", "v16@0:8"},
     {"UIKit", "initForTextStyle:", "@24@0:8@16"},
     {"CoreImage", "initWithColor:", "@24@0:8@16"},
@@ -95,6 +96,7 @@ constexpr FixedAPI APIs[] = {
     {"UIKit", "textLayoutManager", "@16@0:8"},
     {"UIKit", "translationInView:", "{CGPoint=dd}24@0:8@16"},
     {"UIKit", "velocityInView:", "{CGPoint=dd}24@0:8@16"},
+    {"UIKit", "viewControllers", "@16@0:8"},
 };
 BinaryImage frameworkImage(const FixedAPI &API) {
   BinaryImage Image;

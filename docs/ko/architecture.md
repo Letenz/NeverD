@@ -676,7 +676,7 @@ Darwin ARM64의 고정 C 호출은 자연 배치된 double 여섯 개의 구조�
 
 정확한 arm64 QuartzCore 강한 가져오기 `CATransform3DScale`은 같은 제한된 변환 브리지를 사용합니다. 128바이트 입력 포인터는 x0, double 세 개는 d0–d2에 배치되며 x8은 결과를 가리킵니다. HighC는 SDK 호출 전에 전체 입력을 실제 값 전달 구조체로 복사하고 호출 후 16개 결과 필드를 모두 기록합니다. O0/O2 실행은 입력과 결과 버퍼가 분리되거나 겹치는 경우, 모든 필드의 비트 패턴, 경계 보호를 검증합니다. 잘못된 제공자, 약한 가져오기, 유효하지 않은 너비 및 다른 ABI는 거부합니다.
 
-UIKit 대상/동작 바인딩은 선언된 대상 객체, `SEL`, 부호 없는 64비트 `UIControlEvents` 인수를 보존합니다. `addTarget:action:forControlEvents:`는 void를, `initWithTarget:action:`은 객체를 반환합니다. 이 arm64 정보는 정확한 UIKit 제공자 및 내장 선언과의 일치를 요구합니다. 등록 호출의 바인딩으로 콜백 시그니처나 Block 수명을 확정하지 않습니다.
+UIKit 대상/동작 바인딩은 선언된 대상 객체, `SEL`, 부호 없는 64비트 `UIControlEvents` 인수를 보존합니다. `addTarget:action:forControlEvents:`는 void를, `initWithTarget:action:`은 객체를 반환합니다. 이 arm64 정보는 정확한 UIKit 제공자 및 내장 선언과의 일치를 요구합니다. 등록 호출의 바인딩으로 콜백 시그니처나 Block 수명을 확정하지 않습니다. `images`와 `viewControllers` getter도 객체를 반환하는 UIKit 선언의 일치를 요구합니다. 기기와 시뮬레이터의 전체 AST에서 모든 선언 주체가 일치합니다.
 
 런타임 호출 목록은 정확히 확인된 가져오기 함수가 원래 인수 포인터를 반환할 때만 `ReturnedArgument`를 선언합니다. 수신자 분석은 일반 ABI 레지스터 무효화 전에 선언된 물리 인수를 읽고, 결과에 입증된 수신자 타입만 복원합니다. SDK는 이 효과를 다시 검증하며 호출, 소유권 효과, 메모리 접근을 제거하지 않습니다.
 

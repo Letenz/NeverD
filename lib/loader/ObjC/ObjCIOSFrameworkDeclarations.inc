@@ -71,6 +71,11 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageOrientation", "q16@0:8", nullptr},
 // UIImage's readonly imageRendererFormat property returns an object pointer.
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageRendererFormat", "@16@0:8", nullptr},
+// All owners in the complete Xcode 26.5 Messages device/simulator ASTs
+// agree on these non-variadic NSArray* getters; Apple Clang independently
+// encodes their arm64 calls as @16@0:8. AST hashes match colorWithWhite:alpha:.
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "images", "@16@0:8", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "viewControllers", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageWithCGImage:", "@24@0:8^{CGImage=}16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageWithCIImage:scale:orientation:", "@40@0:8@16d24q32", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithCGImage:", "@24@0:8^{CGImage=}16", nullptr},
