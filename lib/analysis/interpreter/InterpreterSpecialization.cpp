@@ -1347,6 +1347,7 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
                          Options.MaxControlTuples);
       };
       auto Single = Prove();
+      bool PartialProof = false;
       if (Failed)
         return false;
       // Manual and context fields still try their full relation globally.
@@ -1360,6 +1361,95 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
         Single = Prove();
         if (Failed)
           return false;
+      }
+      // A selected word can mix a finite selector with unbounded payload or
+      // address bits. Its complete domain may be too large even though a
+      // subword still carries useful control information. Keep only an
+      // exhaustive proof in the original bit positions, never a sampled
+      // subset or a value for the rest of the word. This bounded search does
+      // not change producer demands: unproved bits still need refinement.
+      // With discovery enabled, wait for a consumer instead of searching
+      // every manual/context field globally. A retained affine pointer
+      // already has a stronger root-relative fact than numeric low bits.
+      if ((Producer || (!Options.DiscoverControlState && Manual)) &&
+          !affineDisplacement(Ctx, Value, Root) &&
+          (Single.Status == FiniteValueStatus::Unknown ||
+           Single.Status == FiniteValueStatus::TooManyValues)) {
+        const uint64_t RequestedMask = Mask;
+        const auto Offset =
+            Register
+                ? Options.ControlRegisters[Field].Offset
+                : static_cast<uint64_t>(
+                      Options
+                          .ControlFrameSlots[Field -
+                                             Options.ControlRegisters.size()]
+                          .Offset);
+        const auto AlreadyProjected = [&](uint64_t Part) {
+          for (unsigned Byte = 0; Byte < Ctx.width(Value) / 8; ++Byte) {
+            const unsigned Shift = Options.ByteOrder == llvm::endianness::little
+                                       ? 8 * Byte
+                                       : Ctx.width(Value) - 8 * (Byte + 1);
+            if (((Part >> Shift) & 0xff) &&
+                !(Register
+                      ? Out.Scalars.count({SymSpace::Register, Offset + Byte})
+                      : Out.FrameBytes.count(Offset + Byte)))
+              return false;
+          }
+          return true;
+        };
+        std::set<uint64_t> Tried;
+        bool Found = false;
+        for (unsigned Bits : {32U, 16U, 8U}) {
+          if (Bits >= Ctx.width(Value))
+            continue;
+          for (unsigned End = Ctx.width(Value); End >= Bits; End -= Bits) {
+            const uint64_t Part =
+                RequestedMask &
+                llvm::APInt::getBitsSet(64, End - Bits, End).getZExtValue();
+            if (!Part || Part == RequestedMask || !Tried.insert(Part).second)
+              continue;
+            // Structurally constant whole bytes are already projected by
+            // project(). Do not let them hide a useful varying subword or
+            // spuriously classify a producer as newly finite.
+            if (AlreadyProjected(Part))
+              continue;
+            // Numeric fragments of a frame address add redundant absolute
+            // domains and can obscure the stronger root-relative refinement.
+            // Omit this optional candidate when it may depend on the root;
+            // independent selector bits in the same word remain eligible.
+            if (Root) {
+              const auto Dependencies = detail::gatherControlDependencies(
+                  State, Ctx.mkAnd(Value, Ctx.mkConst(Ctx.width(Value), Part)),
+                  Root, Options.MaxSymbolicNodes);
+              if (!Dependencies.FrameRootBits || *Dependencies.FrameRootBits)
+                continue;
+            }
+            Mask = Part;
+            Single = Prove();
+            if (Failed)
+              return false;
+            if (Single.Status == FiniteValueStatus::Complete) {
+              if (Single.Tuples.size() == 1) {
+                // A solver-proved constant window may not have folded into
+                // structural byte facts. Retain those bytes, then keep looking
+                // for a varying selector elsewhere in the mixed carrier.
+                RecordConstant(Field, Single.Tuples.front().front(), ~Mask);
+                ProvedReachable = true;
+                if (AlreadyProjected(Mask)) {
+                  Single = {FiniteValueStatus::Unknown, {}};
+                  continue;
+                }
+              }
+              PartialProof = true;
+              Found = true;
+              break;
+            }
+          }
+          if (Found)
+            break;
+        }
+        if (!Found)
+          Mask = RequestedMask;
       }
       if (Single.Status != FiniteValueStatus::Complete) {
         if (Producer)
@@ -1375,8 +1465,11 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
       for (const auto &Tuple : Single.Tuples)
         ColumnDomain.push_back(Tuple.front());
       if (Producer)
-        DiscoverProducer(Context ? ControlDemand::Producer
-                                 : ControlDemand::DeferredProducer);
+        // A finite subword does not finish the original producer demand.
+        // Keep its dependency refinement active for the unproved bits.
+        DiscoverProducer(Context || PartialProof
+                             ? ControlDemand::Producer
+                             : ControlDemand::DeferredProducer);
       // A complete word domain can prove individual constant byte lanes even
       // when the whole word varies. Preserve those lanes for exact address
       // arithmetic without registering redundant narrow control fields.

@@ -222,6 +222,8 @@ An unresolved indirect target can result from a widened guard. After direct targ
 
 A control demand can also require an entry-relative pointer relation. For a complete 64-bit register carrier demanded by the successor, recovery may prove its displacement from the entry root under that edge’s condition even without an alignment mask. Only a unique full-width result enters that edge’s projection; unknown results add no fact, and joins discard conflicting or missing offsets. Physical root values remain free.
 
+When a selected control word mixes a finite selector with a large payload or address domain, recovery can try 32-, 16- and 8-bit windows within the requested mask. Automatic discovery waits for an active consumer; manual hints also participate when discovery is disabled. The search skips already projected bytes and candidates whose independence from the entry frame root cannot be established. Each optional dependency scan has its own `MaxSymbolicNodes` work bound, separate from cumulative `DiscoveryVisits`; all finite proofs share the existing query budget. Proved constant bytes are retained, and the search continues when they cover the complete selected mask. The first remaining exhaustive finite domain is kept in its original bit positions, while other bits remain runtime data. Original producer demands stay immediate after partial proofs. Later predecessors invalidate incompatible or missing facts. This bounded search does not guarantee every useful subfield is found.
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,
