@@ -6,6 +6,7 @@
 #ifdef NEVERD_PROCESS_PROFILE
 NEVERD_PROCESS_PROFILE(LinuxELF64, "linux-elf64-v1")
 NEVERD_PROCESS_PROFILE(AndroidNativeAArch64, "android-aarch64-api28-v1")
+NEVERD_PROCESS_PROFILE(WindowsPE64, "windows-pe64-v1")
 #endif
 #ifdef NEVERD_PROCESS_LIMIT
 NEVERD_PROCESS_LIMIT(Instructions, 100000)
@@ -27,4 +28,8 @@ NEVERD_PROCESS_STOP(OutputLimit, "output_limit")
 NEVERD_PROCESS_STOP(UnsupportedService, "unsupported_service")
 NEVERD_PROCESS_STOP(CPUFailure, "cpu_failure")
 NEVERD_PROCESS_STOP(RuntimeFailure, "runtime_failure")
+#endif
+
+#ifdef NEVERD_PROCESS_CALL_VALUE
+NEVERD_PROCESS_CALL_VALUE(MaxArguments, 8)
 #endif
