@@ -1,0 +1,65 @@
+//===- WindowsLifetimeCases.def - Original DLL lifecycle observations -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_LIFETIME_VALUE
+NEVERD_LIFETIME_VALUE(ExitStatus, 37)
+NEVERD_LIFETIME_VALUE(FailureStatus, 89)
+NEVERD_LIFETIME_VALUE(InitFailureStatus, 0xc0000142)
+NEVERD_LIFETIME_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_LIFETIME_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_LIFETIME_VALUE(TebTLSVector, 0x58)
+NEVERD_LIFETIME_VALUE(ZeroTail, 16)
+NEVERD_LIFETIME_VALUE(Seed, 23)
+NEVERD_LIFETIME_VALUE(NativeTimeoutSeconds, 10)
+NEVERD_LIFETIME_VALUE(ModePrefix, '/')
+NEVERD_LIFETIME_VALUE(NormalMode, 'n')
+NEVERD_LIFETIME_VALUE(ReturnMode, 'r')
+NEVERD_LIFETIME_VALUE(FailLeafMode, 'a')
+NEVERD_LIFETIME_VALUE(FailMiddleMode, 'b')
+NEVERD_LIFETIME_VALUE(ExitLeafTLSMode, 'c')
+NEVERD_LIFETIME_VALUE(ExitLeafEntryMode, 'd')
+NEVERD_LIFETIME_VALUE(ExitMiddleEntryMode, 'e')
+NEVERD_LIFETIME_VALUE(ExitMainTLSMode, 'f')
+NEVERD_LIFETIME_VALUE(LeafRole, 'L')
+NEVERD_LIFETIME_VALUE(MiddleRole, 'M')
+NEVERD_LIFETIME_VALUE(MainRole, 'E')
+NEVERD_LIFETIME_VALUE(TLSKind, 'T')
+NEVERD_LIFETIME_VALUE(DLLKind, 'D')
+NEVERD_LIFETIME_VALUE(EntryKind, 'E')
+NEVERD_LIFETIME_VALUE(ZeroDigit, '0')
+NEVERD_LIFETIME_VALUE(LineEnd, '\n')
+NEVERD_LIFETIME_VALUE(AttachReason, 1)
+NEVERD_LIFETIME_VALUE(DetachReason, 0)
+#endif
+#ifdef NEVERD_LIFETIME_TEXT
+NEVERD_LIFETIME_TEXT(LeafFile, "life-leaf.dll")
+NEVERD_LIFETIME_TEXT(MiddleFile, "life-middle.dll")
+NEVERD_LIFETIME_TEXT(ProgramFile, "lifetime.exe")
+NEVERD_LIFETIME_TEXT(StdoutFile, "stdout.bin")
+NEVERD_LIFETIME_TEXT(StderrFile, "stderr.bin")
+NEVERD_LIFETIME_TEXT(X64Dir, "X64")
+NEVERD_LIFETIME_TEXT(AArch64Dir, "AArch64")
+NEVERD_LIFETIME_TEXT(TempPrefix, "neverd-module-lifetime")
+NEVERD_LIFETIME_TEXT(MissingTools,
+                     "requires Clang and lld-link lifecycle fixtures")
+NEVERD_LIFETIME_TEXT(NativeOnly, "requires native Windows x64")
+#endif
+#ifdef NEVERD_LIFETIME_CASE
+NEVERD_LIFETIME_CASE(Normal, "/n", ExitStatus)
+NEVERD_LIFETIME_CASE(EntryReturn, "/r", ExitStatus)
+NEVERD_LIFETIME_CASE(FailLeaf, "/a", InitFailureStatus)
+NEVERD_LIFETIME_CASE(FailMiddle, "/b", InitFailureStatus)
+NEVERD_LIFETIME_CASE(ExitLeafTLS, "/c", ExitStatus)
+NEVERD_LIFETIME_CASE(ExitLeafEntry, "/d", ExitStatus)
+NEVERD_LIFETIME_CASE(ExitMiddleEntry, "/e", ExitStatus)
+NEVERD_LIFETIME_CASE(ExitMainTLS, "/f", ExitStatus)
+#endif
+#ifdef NEVERD_LIFETIME_ASM
+#if defined(_M_X64) || defined(__x86_64__)
+NEVERD_LIFETIME_ASM(ReadTEB, "movq %%gs:0x30, %0")
+#else
+NEVERD_LIFETIME_ASM(ReadTEB, "mov %0, x18")
+#endif
+#endif
