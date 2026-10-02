@@ -445,12 +445,48 @@ void LLVMCWriter::scanReferencedBlocks(llvm::Function &Fn) {
   }
 }
 
+void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
+  MaterializedExpressions.clear();
+  auto Expandable = [](const llvm::Value *V) {
+    const auto *I = llvm::dyn_cast<llvm::Instruction>(V);
+    return I && (I->getType()->isIntegerTy() || I->getType()->isPointerTy()) &&
+           llvm::isa<llvm::BinaryOperator, llvm::CastInst, llvm::ICmpInst,
+                     llvm::SelectInst, llvm::GetElementPtrInst>(I);
+  };
+  // Price all potentially printed operands, including repeated operands and
+  // definitions in later blocks. Choosing more boundaries only shrinks trees
+  // already checked, so this does not require dominance-ordered block storage.
+  // The bounded walk also keeps this planning linear in the instruction count.
+  for (const auto &BB : Fn) {
+    for (const auto &I : BB) {
+      if (!Expandable(&I))
+        continue;
+      unsigned Work = 64;
+      auto Fits = [&](auto &&Self, const llvm::Value *V,
+                      unsigned Depth) -> bool {
+        if (Depth > 16 || Work == 0)
+          return false;
+        --Work;
+        if (!Expandable(V) || MaterializedExpressions.count(V))
+          return true;
+        for (const auto &Operand : llvm::cast<llvm::Instruction>(V)->operands())
+          if (!Self(Self, Operand.get(), Depth + 1))
+            return false;
+        return true;
+      };
+      if (!Fits(Fits, &I, 0))
+        MaterializedExpressions.insert(&I);
+    }
+  }
+}
+
 void LLVMCWriter::markInlinable(llvm::Function &Fn) {
   Analysis.Inlinable.clear();
   InlineCache.clear();
+  planExpressionMaterialization(Fn);
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy())
+      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst))
         continue;
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
@@ -3302,7 +3338,8 @@ bool LLVMCWriter::usersOnlyFeedInlinable(const llvm::Value *V) const {
 
 void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
   auto Mark = [&](const llvm::Instruction &Inst) {
-    return Analysis.Inlinable.insert(&Inst).second;
+    return !MaterializedExpressions.count(&Inst) &&
+           Analysis.Inlinable.insert(&Inst).second;
   };
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
@@ -3363,6 +3400,8 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
       [&](const llvm::Value *Cur) -> std::string {
     if (!Cur || !Seen.insert(Cur).second)
       return {};
+    if (MaterializedExpressions.count(Cur))
+      return getName(Cur);
     if (auto Text = ValueTexts.find(Cur);
         Text != ValueTexts.end() && !Text->second.empty())
       return Text->second;

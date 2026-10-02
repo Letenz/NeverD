@@ -1411,3 +1411,130 @@ TEST(LLVMCValues, RemaindersWithInlineOperandsPublishTheirResult) {
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source + Main, Optimization);
 }
+
+TEST(LLVMCValues, LongExpressionBoundariesSurviveReorderedBlocks) {
+  for (bool Reverse : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("expression_boundaries", Context);
+    auto *Word = llvm::Type::getInt64Ty(Context);
+    auto *Signature = llvm::FunctionType::get(Word, {Word, Word}, false);
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, "chain", Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Middle = llvm::BasicBlock::Create(Context, "middle", Function);
+    auto *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
+    llvm::IRBuilder<llvm::NoFolder> B(Entry);
+    B.CreateBr(Middle);
+    B.SetInsertPoint(Middle);
+    llvm::Value *Value = Function->getArg(0);
+    for (unsigned I = 0; I != 512; ++I) {
+      if (I == 256) {
+        B.CreateBr(Tail);
+        B.SetInsertPoint(Tail);
+      }
+      Value = B.CreateAdd(
+          B.CreateXor(B.CreateMul(Value, B.getInt64(33)), Function->getArg(1)),
+          B.getInt64(I));
+    }
+    B.CreateRet(Value);
+    if (Reverse)
+      Tail->moveAfter(Entry);
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+    ASSERT_LT(Source.size(), 200000u);
+    const char *Main = R"(
+int main(void) {
+  for (uint64_t n = 0; n != 24; ++n) {
+    uint64_t k = n * UINT64_C(0x9e3779b97f4a7c15), expected = n;
+    for (uint64_t i = 0; i != 512; ++i)
+      expected = ((expected * 33) ^ k) + i;
+    if (chain(n, k) != expected) return 1;
+  }
+  return 0;
+}
+)";
+    for (const char *Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + Main, Optimization);
+  }
+}
+
+TEST(LLVMCValues, UnsupportedConstantExpressionCannotBecomeZero) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("constant_expression", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Byte = llvm::Type::getInt8Ty(Context);
+  auto *Global = new llvm::GlobalVariable(
+      Module, Byte, false, llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantInt::get(Byte, 0), "cell");
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "address_bits", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+  B.CreateRet(llvm::ConstantExpr::getXor(
+      llvm::ConstantExpr::getPtrToInt(Global, Word), B.getInt64(17)));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+               std::runtime_error);
+}
+
+TEST(LLVMCValues, LongPointerCastChainsKeepNamedBoundaries) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("pointer_cast_chain", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "pointer_chain", Module);
+  llvm::IRBuilder<llvm::NoFolder> B(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Value = Function->getArg(0);
+  for (unsigned I = 0; I != 2048; ++I)
+    Value = B.CreateIntToPtr(B.CreatePtrToInt(Value, Word), Pointer);
+  B.CreateRet(B.CreatePtrToInt(Value, Word));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  ASSERT_LT(Source.size(), 500000u);
+  const char *Main = R"(
+int main(void) {
+  uint64_t cell = 17;
+  return pointer_chain(&cell) != (uintptr_t)&cell;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
+TEST(LLVMCValues, DeepConstantExpressionsExhaustABoundedFold) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("deep_constant_expression", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Byte = llvm::Type::getInt8Ty(Context);
+  auto *Global = new llvm::GlobalVariable(
+      Module, Byte, false, llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantInt::get(Byte, 0), "cell");
+  llvm::Constant *Value = llvm::ConstantExpr::getPtrToInt(Global, Word);
+  for (unsigned I = 0; I != 256; ++I) {
+    Value = llvm::ConstantExpr::getAdd(Value, llvm::ConstantInt::get(Word, 13));
+    Value = llvm::ConstantExpr::getXor(Value, llvm::ConstantInt::get(Word, 17));
+  }
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "deep_address_bits", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+  B.CreateRet(Value);
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  try {
+    (void)neverd::LLVMCEmitter().emit(Module, Out, {});
+    FAIL() << "deep constant expression unexpectedly emitted";
+  } catch (const std::runtime_error &Error) {
+    EXPECT_STREQ(Error.what(), "LLVM C constant-fold budget exceeded");
+  }
+}

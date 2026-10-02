@@ -1472,6 +1472,31 @@ TEST(SymSimplifyGuard, SynthesisCounterexampleIsCanonical) {
   EXPECT_EQ(printFunction(*F), Before);
 }
 
+TEST(SymSimplifyGuard, AnonymousNamesRespectCurrentValueSymbolsButNotLabels) {
+  llvm::LLVMContext C;
+  llvm::Module M("anonymous_inputs", C);
+  auto *F = buildSparseEqualityIndicator(M, 0x13579bdfu);
+  F->getArg(0)->setName("");
+  F->getEntryBlock().setName("nd$2");
+  llvm::IRBuilder<> B(F->getEntryBlock().getTerminator());
+  auto *First = B.CreateAlloca(B.getInt32Ty(), nullptr, "nd$0");
+  B.CreateAlloca(B.getInt32Ty(), nullptr, "nd$1");
+  for (const char *Expected : {"nd$2", "nd$0"}) {
+    const auto Before = printFunction(*F);
+    const auto Result =
+        SymSimplifyPass::simplifyWithResult(*F, synthesisOptions());
+    ASSERT_EQ(Result.Outcome, SymSimplifyOutcome::Counterexample);
+    ASSERT_TRUE(Result.Counterexample);
+    ASSERT_EQ(Result.Counterexample->Variables.size(), 1u);
+    EXPECT_EQ(Result.Counterexample->Variables[0].Name, Expected);
+    EXPECT_EQ(Result.Counterexample->Variables[0].HexValue, "0x13579bdf");
+    EXPECT_EQ(printFunction(*F), Before);
+    // Function-owned lookup must observe renaming without a stale snapshot.
+    First->setName("renamed_slot");
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 TEST(SymSimplifyGuard,
      SynthesisMultipleRootsLaterEquivalentHasCoherentDisposition) {
   llvm::LLVMContext C;

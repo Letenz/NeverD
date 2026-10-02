@@ -14,6 +14,7 @@
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
@@ -119,11 +120,18 @@ MedFunc loop(bool ReverseBlocks = false) {
 }
 
 void compileAndRun(const MedFunc &F, const char *Main,
-                   size_t MaxSourceBytes = 0) {
+                   size_t MaxSourceBytes = 0, bool OptimizeLLVM = false) {
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64);
   ASSERT_NE(Module, nullptr);
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  if (OptimizeLLVM) {
+    Pipeline::OptimizationOptions Options;
+    const auto Result = Pipeline::optimizeModule(*Module, Options);
+    ASSERT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+    ASSERT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  }
   std::string Source;
   llvm::raw_string_ostream Stream(Source);
   ASSERT_TRUE(LLVMCEmitter().emit(*Module, Stream, CEmitterOptions{}));
@@ -647,5 +655,178 @@ TEST(MedMutableSource, LargeRepeatedWritesNeedNoPerOperationSSAProofGraph) {
   llvm::LLVMContext Context;
   EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64),
                std::runtime_error);
+}
+
+TEST(MedMutableSource, RepeatedBlockWritesKeepPrivateTrafficBounded) {
+  for (bool Reverse : {false, true}) {
+    auto F = loop(Reverse);
+    parameter(F, x86reg::RSI);
+    const auto Sum = reg(11, x86reg::RAX);
+    const auto Address = reg(20, x86reg::RSI);
+    const auto Scratch = temp(21);
+    const auto Before = temp(22);
+    const auto After = temp(23);
+    auto &Body = F.Blocks[Reverse ? 1 : 2];
+    std::vector<MedOp> Updates;
+    Updates.push_back(op(NdOp::LOAD, Before, {Address}));
+    Updates.push_back(op(NdOp::INT_ADD, Sum, {Sum, Before}));
+    for (unsigned I = 0; I < 256; ++I) {
+      Updates.push_back(op(NdOp::COPY, Scratch, {Sum}));
+      Updates.push_back(
+          op(NdOp::INT_ADD, Scratch, {Scratch, MedVar::makeConst(1, 8)}));
+      Updates.push_back(op(NdOp::COPY, Sum, {Scratch}));
+    }
+    Updates.push_back(op(NdOp::STORE, {}, {Address, Sum}));
+    Updates.push_back(op(NdOp::LOAD, After, {Address}));
+    Updates.push_back(op(NdOp::INT_ADD, Sum, {Sum, After}));
+    Body.Ops.insert(Body.Ops.begin() + 1, Updates.begin(), Updates.end());
+    auto Plan = analyzeMedMutableSource(F, Arch::X64);
+    ASSERT_TRUE(Plan);
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64);
+    ASSERT_NE(Module, nullptr);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    unsigned PrivateLoads = 0, PrivateStores = 0;
+    unsigned GuestLoads = 0, GuestStores = 0;
+    for (const auto &Block : *Module->getFunction(F.Name))
+      for (const auto &Instruction : Block) {
+        if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Instruction))
+          llvm::isa<llvm::AllocaInst>(Load->getPointerOperand())
+              ? ++PrivateLoads
+              : ++GuestLoads;
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction))
+          llvm::isa<llvm::AllocaInst>(Store->getPointerOperand())
+              ? ++PrivateStores
+              : ++GuestStores;
+      }
+    const auto BoundaryBudget = F.Blocks.size() * Plan->Variables.size();
+    EXPECT_LE(PrivateLoads, BoundaryBudget);
+    EXPECT_LE(PrivateStores, BoundaryBudget + F.Params.size());
+    EXPECT_EQ(GuestLoads, 2u);
+    EXPECT_EQ(GuestStores, 1u);
+    const char *Main = R"(
+int main(void) {
+  for (uint64_t n = 0; n != 25; ++n) {
+    for (uint64_t seed = 0; seed != 8; ++seed) {
+      uint64_t cell = UINT64_C(0x9e3779b97f4a7c15) * seed;
+      uint64_t expected_cell = cell, expected_sum = 0;
+      for (uint64_t i = n; i; --i) {
+        expected_cell = expected_sum + i + expected_cell + 256;
+        expected_sum = expected_cell + expected_cell;
+      }
+      if (mutable_probe(n, (uint64_t)(uintptr_t)&cell) != expected_sum ||
+          cell != expected_cell)
+        return 1;
+    }
+  }
+  return 0;
+}
+)";
+    for (bool OptimizeLLVM : {false, true})
+      compileAndRun(F, Main, 100000, OptimizeLLVM);
+  }
+}
+
+TEST(MedMutableSource, LongMixedUpdatesKeepExpressionsBounded) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  parameter(F, x86reg::RSI);
+  const auto R = reg(11, x86reg::RAX);
+  const auto Key = reg(12, x86reg::RSI);
+  F.Blocks[0].Ops.push_back(op(NdOp::COPY, R, {reg(10, x86reg::RDI)}));
+  for (unsigned I = 0; I < 4096; ++I) {
+    F.Blocks[0].Ops.push_back(
+        op(NdOp::INT_MULT, R, {R, MedVar::makeConst(33, 8)}));
+    F.Blocks[0].Ops.push_back(op(NdOp::INT_XOR, R, {R, Key}));
+    F.Blocks[0].Ops.push_back(
+        op(NdOp::INT_ADD, R, {R, MedVar::makeConst(I, 8)}));
+  }
+  F.Blocks[0].Ops.push_back(op(NdOp::RETURN, {}));
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n != 12; ++n) {
+    uint64_t key = n * UINT64_C(0x9e3779b97f4a7c15), expected = n;
+    for (uint64_t i = 0; i != 4096; ++i)
+      expected = ((expected * 33) ^ key) + i;
+    if (mutable_probe(n, key) != expected) return 1;
+  }
+  return 0;
+}
+)",
+                1500000);
+}
+
+TEST(MedMutableSource, ForwardedGuestSnapshotsSurviveOverlappingWrites) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  parameter(F, x86reg::RSI);
+  const auto Address = reg(10, x86reg::RDI);
+  const auto Input = reg(12, x86reg::RSI);
+  const auto Before = temp(20), After = temp(21), Interior = temp(22);
+  const auto Narrow = temp(23, 2);
+  F.Blocks[0].Ops = {
+      op(NdOp::LOAD, Before, {Address}),
+      op(NdOp::INT_ADD, Interior, {Address, MedVar::makeConst(2, 8)}),
+      op(NdOp::SUBBYTES, Narrow, {Input, MedVar::makeConst(0, 8)}),
+      op(NdOp::STORE, {}, {Interior, Narrow}),
+      op(NdOp::LOAD, After, {Address}),
+      op(NdOp::INT_XOR, reg(11, x86reg::RAX), {Before, After}),
+      op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  for (bool OptimizeLLVM : {false, true})
+    compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t i = 0; i != 128; ++i) {
+    uint64_t before = i * UINT64_C(0x9e3779b97f4a7c15), cell = before;
+    uint64_t input = i * 257 + 65521;
+    uint64_t after = (before & ~UINT64_C(0xffff0000)) |
+                     ((input & 65535) << 16);
+    if (mutable_probe((uint64_t)(uintptr_t)&cell, input) != (before ^ after) ||
+        cell != after) return 1;
+  }
+  return 0;
+}
+)",
+                  32768, OptimizeLLVM);
+}
+
+TEST(MedMutableSource, DeclaredZeroReturnSurvivesFoldingAndPromotion) {
+  auto F = base();
+  F.Blocks[0].Ops = {
+      op(NdOp::COPY, reg(11, x86reg::RAX), {MedVar::makeConst(0, 8)}),
+      op(NdOp::RETURN, {})};
+  for (bool OptimizeLLVM : {false, true})
+    compileAndRun(F, "\nint main(void) { return mutable_probe() != 0; }\n",
+                  4096, OptimizeLLVM);
+}
+
+TEST(MedMutableSource, BlockValuesCannotEscapeFunctionOrModuleGeneration) {
+  MedLLVMEmitter Emitter;
+  for (unsigned Generation = 0; Generation != 3; ++Generation) {
+    llvm::LLVMContext Context;
+    auto F = loop(Generation % 2 != 0);
+    auto G = F;
+    G.Name = "another_mutable_probe";
+    G.Entry += 0x1000;
+    for (auto &B : G.Blocks) {
+      B.StartAddr += 0x1000;
+      B.EndAddr += 0x1000;
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::BRANCH || O.Opcode == NdOp::COND_BR)
+          O.Inputs[0].ConstVal += 0x1000;
+    }
+    auto Module = Emitter.emit({F, G}, Context, "generations", Arch::X64);
+    ASSERT_NE(Module, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    Module.reset();
+    const std::vector<char> WrongMask{1, 1};
+    EXPECT_EQ(Emitter.emit({F}, Context, F.Name, Arch::X64, {}, nullptr,
+                           BinaryFormat::ELF, false, &WrongMask),
+              nullptr);
+    F.Blocks[0].Ops[0].Inputs.clear();
+    EXPECT_THROW(Emitter.emit({F}, Context, F.Name, Arch::X64),
+                 std::runtime_error);
+  }
 }
 } // namespace
