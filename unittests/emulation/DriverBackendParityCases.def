@@ -183,6 +183,122 @@ NEVERD_PARITY_IMAGE(NeverdWdmStackCfgFixtureEntry, NEVERD_WDM_STACK_CFG_FIXTURE)
 #ifdef NEVERD_PARITY_IMAGE
 NEVERD_PARITY_IMAGE(NeverdWdmStackFixtureEntry, NEVERD_WDM_STACK_FIXTURE)
 #endif
+#ifndef NEVERD_KMDF_LOCK_FIXTURE
+#define NEVERD_KMDF_LOCK_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfLockFixtureEntry, NEVERD_KMDF_LOCK_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_LOCK_CFG_FIXTURE
+#define NEVERD_KMDF_LOCK_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfLockCfgFixtureEntry, NEVERD_KMDF_LOCK_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_OWNED_IRP_FIXTURE
+#define NEVERD_WDM_OWNED_IRP_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmOwnedIrpFixtureEntry, NEVERD_WDM_OWNED_IRP_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_OWNED_IRP_CFG_FIXTURE
+#define NEVERD_WDM_OWNED_IRP_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmOwnedIrpCfgFixtureEntry,
+                    NEVERD_WDM_OWNED_IRP_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_WAIT_WAKE_FIXTURE
+#define NEVERD_WDM_WAIT_WAKE_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmWaitWakeFixtureEntry, NEVERD_WDM_WAIT_WAKE_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE
+#define NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmWaitWakeCfgFixtureEntry,
+                    NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_USB_IDLE_FIXTURE
+#define NEVERD_WDM_USB_IDLE_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmUsbIdleFixtureEntry, NEVERD_WDM_USB_IDLE_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_USB_IDLE_CFG_FIXTURE
+#define NEVERD_WDM_USB_IDLE_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmUsbIdleCfgFixtureEntry,
+                    NEVERD_WDM_USB_IDLE_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_USB_IDLE_FIXTURE
+#define NEVERD_KMDF_USB_IDLE_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfUsbIdleFixtureEntry, NEVERD_KMDF_USB_IDLE_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_USB_IDLE_CFG_FIXTURE
+#define NEVERD_KMDF_USB_IDLE_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfUsbIdleCfgFixtureEntry,
+                    NEVERD_KMDF_USB_IDLE_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_POFX_FIXTURE
+#define NEVERD_KMDF_POFX_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfPoFxFixtureEntry, NEVERD_KMDF_POFX_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_POFX_CFG_FIXTURE
+#define NEVERD_KMDF_POFX_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfPoFxCfgFixtureEntry, NEVERD_KMDF_POFX_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_CHILD_WAKE_FIXTURE
+#define NEVERD_KMDF_CHILD_WAKE_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfChildWakeFixtureEntry,
+                    NEVERD_KMDF_CHILD_WAKE_FIXTURE)
+#endif
+#ifndef NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE
+#define NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdKmdfChildWakeCfgFixtureEntry,
+                    NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_POFX_FIXTURE
+#define NEVERD_WDM_POFX_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPoFxFixtureEntry, NEVERD_WDM_POFX_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_POFX_CFG_FIXTURE
+#define NEVERD_WDM_POFX_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmPoFxCfgFixtureEntry, NEVERD_WDM_POFX_CFG_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_USER_MAPPING_FIXTURE
+#define NEVERD_WDM_USER_MAPPING_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmUserMappingFixtureEntry,
+                    NEVERD_WDM_USER_MAPPING_FIXTURE)
+#endif
+#ifndef NEVERD_WDM_USER_MAPPING_CFG_FIXTURE
+#define NEVERD_WDM_USER_MAPPING_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(NeverdWdmUserMappingCfgFixtureEntry,
+                    NEVERD_WDM_USER_MAPPING_CFG_FIXTURE)
+#endif
 #ifdef NEVERD_PARITY_SCENARIO
 NEVERD_PARITY_SCENARIO(DriverDmaScenario, NeverdWdmDmaFixtureEntry,
                        "driver-dma-scenario.json")
@@ -238,6 +354,51 @@ NEVERD_PARITY_SCENARIO(DriverD2PowerScenario, NeverdKmdfPnpFixtureEntry,
                        "driver-d2-power-scenario.json")
 NEVERD_PARITY_SCENARIO(DriverD2PowerScenarioCfg, NeverdKmdfPnpCfgFixtureEntry,
                        "driver-d2-power-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverOwnedIrpScenario, NeverdWdmOwnedIrpFixtureEntry,
+                       "driver-owned-irp-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverOwnedIrpScenarioCfg,
+                       NeverdWdmOwnedIrpCfgFixtureEntry,
+                       "driver-owned-irp-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmWaitWakeScenario, NeverdWdmWaitWakeFixtureEntry,
+                       "driver-wdm-wait-wake-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmWaitWakeScenarioCfg,
+                       NeverdWdmWaitWakeCfgFixtureEntry,
+                       "driver-wdm-wait-wake-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmUsbIdleScenario, NeverdWdmUsbIdleFixtureEntry,
+                       "driver-wdm-usb-idle-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmUsbIdleScenarioCfg,
+                       NeverdWdmUsbIdleCfgFixtureEntry,
+                       "driver-wdm-usb-idle-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfUsbIdleScenario, NeverdKmdfUsbIdleFixtureEntry,
+                       "driver-kmdf-usb-idle-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfUsbIdleScenarioCfg,
+                       NeverdKmdfUsbIdleCfgFixtureEntry,
+                       "driver-kmdf-usb-idle-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfUsbPoFxScenario, NeverdKmdfUsbIdleFixtureEntry,
+                       "driver-kmdf-usb-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfUsbPoFxScenarioCfg,
+                       NeverdKmdfUsbIdleCfgFixtureEntry,
+                       "driver-kmdf-usb-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfPoFxScenario, NeverdKmdfPoFxFixtureEntry,
+                       "driver-kmdf-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfPoFxScenarioCfg, NeverdKmdfPoFxCfgFixtureEntry,
+                       "driver-kmdf-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfChildWakeScenario,
+                       NeverdKmdfChildWakeFixtureEntry,
+                       "driver-kmdf-child-wake-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverKmdfChildWakeScenarioCfg,
+                       NeverdKmdfChildWakeCfgFixtureEntry,
+                       "driver-kmdf-child-wake-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmPoFxScenario, NeverdWdmPoFxFixtureEntry,
+                       "driver-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverWdmPoFxScenarioCfg, NeverdWdmPoFxCfgFixtureEntry,
+                       "driver-pofx-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverUserMappingScenario,
+                       NeverdWdmUserMappingFixtureEntry,
+                       "driver-user-mapping-scenario.json")
+NEVERD_PARITY_SCENARIO(DriverUserMappingScenarioCfg,
+                       NeverdWdmUserMappingCfgFixtureEntry,
+                       "driver-user-mapping-scenario.json")
 #endif
 #ifdef NEVERD_PARITY_VALUE
 NEVERD_PARITY_VALUE(MemoryLimit, 16 * 4096)
@@ -245,6 +406,7 @@ NEVERD_PARITY_VALUE(InstructionLimit, 10000)
 NEVERD_PARITY_VALUE(LoopLimit, 256)
 NEVERD_PARITY_VALUE(TimeoutMilliseconds, 30000)
 NEVERD_PARITY_VALUE(RebasedAddress, 0x1a0000000ULL)
+NEVERD_PARITY_VALUE(PreferredAddress, 0)
 #endif
 #ifdef NEVERD_PARITY_TEXT
 NEVERD_PARITY_TEXT(UnavailableFixture, "original driver fixture is unavailable")

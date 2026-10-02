@@ -1,0 +1,21 @@
+//===- KernelSEHContinuationCases.def - C SEH landing-pad layouts --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+// Original driver_wdm_seh.c DirectRaise, built by Clang 20.1.8 with the WDK.
+// The emitted scope ends at EndLabel + 1; the landing pad starts at EndLabel.
+NEVERD_SEH_CONTINUATION_VALUE(FunctionBeginRVA, 0x14a0)
+NEVERD_SEH_CONTINUATION_VALUE(FunctionEndRVA, 0x15e4)
+NEVERD_SEH_CONTINUATION_VALUE(GuardBeginRVA, 0x14b5)
+NEVERD_SEH_CONTINUATION_VALUE(GuardEndRVA, 0x14f1)
+NEVERD_SEH_CONTINUATION_VALUE(LandingPadRVA, 0x14f0)
+NEVERD_SEH_CONTINUATION_VALUE(FilterRVA, 0x2000)
+NEVERD_SEH_CONTINUATION_VALUE(RebasedImageBase, 0xfffff80000000000)
+NEVERD_SEH_CONTINUATION_TEXT(InvalidContinuation,
+                             "invalid exception handler continuation")
+NEVERD_SEH_CONTINUATION_TEXT(NotExecutable,
+                             "exception target is not executable")
+NEVERD_SEH_CONTINUATION_TEXT(NativeModule, "ntdll.dll")
+NEVERD_SEH_CONTINUATION_TEXT(NativeHandler, "__C_specific_handler")
