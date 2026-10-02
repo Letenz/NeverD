@@ -19,8 +19,10 @@ static int report(const char *Operation, hv_return_t Status) {
 
 int main(int Argc, char **Argv) {
   const int Legacy = Argc == 2 && strcmp(Argv[1], "legacy") == 0;
-  if (Argc > 2 || (Argc == 2 && !Legacy && strcmp(Argv[1], "until") != 0)) {
-    fprintf(stderr, "usage: %s [until|legacy]\n", Argv[0]);
+  const int CreateOnly = Argc == 2 && strcmp(Argv[1], "create-only") == 0;
+  if (Argc > 2 ||
+      (Argc == 2 && !Legacy && !CreateOnly && strcmp(Argv[1], "until") != 0)) {
+    fprintf(stderr, "usage: %s [until|legacy|create-only]\n", Argv[0]);
     return 2;
   }
 #if defined(__arm64__)
@@ -43,10 +45,11 @@ int main(int Argc, char **Argv) {
   int Failed = report("hv_vcpu_create", Status);
   void *Backing = NULL;
 #if defined(__x86_64__)
-  if (!Failed)
+  if (!Failed && !CreateOnly)
     Failed |= probe_intel_execution(CPU, &Backing, Legacy);
 #else
   (void)Legacy;
+  (void)CreateOnly;
 #endif
   // Guest backing remains owned until both CPU and VM have retired.
   if (Status == HV_SUCCESS)

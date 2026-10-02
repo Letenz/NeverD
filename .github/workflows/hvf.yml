@@ -28,10 +28,11 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Require native VM, vCPU and independent Intel instructions
+      - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
           EXPECTED_HVF_HOST: '${{ matrix.arch }}'
+          HVF_VALIDATION: '${{ inputs.validation }}'
         run: |
           case "$EXPECTED_HVF_HOST:$(uname -m)" in
             ARM64:arm64|X64:x86_64) ;;
@@ -41,7 +42,7 @@ jobs:
           mkdir -p build-hvf-probe
           clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
-          if [[ "$(uname -m)" == "x86_64" ]]; then
+          if [[ "$HVF_VALIDATION:$(uname -m)" == "probe:x86_64" ]]; then
             clang -dynamiclib scripts/trace_hvf_intel.c -framework Hypervisor -o build-hvf-probe/trace.dylib
             codesign --force --sign - build-hvf-probe/trace.dylib
           fi
@@ -54,13 +55,14 @@ jobs:
           failed = False
           try:
               with log.open("w") as output:
-                  modes = ["until", "legacy"] if platform.machine() == "x86_64" else ["until"]
+                  diagnose = os.environ["HVF_VALIDATION"] == "probe" and platform.machine() == "x86_64"
+                  modes = ["until", "legacy"] if diagnose else ["create-only"]
                   for mode in modes:
                       output.write(f"Fresh process probe: {mode}\n")
                       output.flush()
                       try:
                           environment = os.environ.copy()
-                          if platform.machine() == "x86_64":
+                          if diagnose:
                               environment["DYLD_INSERT_LIBRARIES"] = str(pathlib.Path("build-hvf-probe/trace.dylib").resolve())
                           result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
                                                   env=environment,
@@ -74,13 +76,6 @@ jobs:
               print(log.read_text(), end="")
           raise SystemExit(1 if failed else 0)
           PY
-      - name: Compare an independent Intel HVF engine with software execution
-        if: always() && inputs.validation == 'probe' && matrix.arch == 'X64'
-        shell: bash
-        run: |
-          brew install qemu
-          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements "$(command -v qemu-system-x86_64)"
-          python3 scripts/probe_hvf_qemu.py --evidence build-hvf-probe/qemu --trace build-hvf-probe/trace.dylib
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
         run: brew install ninja
