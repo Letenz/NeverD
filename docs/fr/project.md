@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d157cf302643e879be2748919ad949d2979c1d36798e295ee566f247834396f4 -->
+<!-- i18n-source: 78dd9f902d836d548a83d71ab8ac88bb9e93bcb4b3a3f045c0cabb4da5374170 -->
 
 <div align="center">
 
@@ -116,7 +116,7 @@ La récupération dépend des motifs de code pris en charge ; consultez la [vue 
 
 L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
 
-`windows-pe64-v1` prend en charge des processus console Windows x64/ARM64 bornés avec PEB/TEB, TLS de l’EXE, API Win32 nommées et graphes acycliques de DLL initiales explicites. Les DLL admettent les imports de code/données par nom ou ordinal, le rebasage DIR64 et de vraies identités dans les listes du chargeur. Entrées/TLS des DLL, chargement dynamique, exports redirigés, CRT/GUI, SEH utilisateur et threads restent inachevés ; les preuves natives ARM64 KVM/WHP manquent encore.
+`windows-pe64-v1` prend en charge des processus console Windows x64/ARM64 bornés avec PEB/TEB, TLS des modules et `DllMain` au démarrage, API Win32 nommées et graphes acycliques de DLL initiales explicites. Les DLL admettent les imports de code/données par nom ou ordinal, le rebasage DIR64 et de vraies identités dans les listes du chargeur. Chargement dynamique, exports redirigés, CRT/GUI, SEH utilisateur et threads restent inachevés ; les preuves natives ARM64 KVM/WHP manquent encore.
 
 La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` et `FlushInstructionCache` pour le processus courant. La couche OS possède les réservations ; `AddressSpace` reste la référence pour les pages validées, les permissions et leur stockage. Les tests couvrent la réécriture de code, les défauts d’accès et la réutilisation du budget mémoire.
 
