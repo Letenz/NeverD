@@ -263,6 +263,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftFoundation.dylib",
      "(zz)zpp"},
     {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib", "(zz)zp"},
+    // Swift 6.1.2 arm64/x86_64 clients at Onone and O pass the two String
+    // words as ordinary carriers and return the ContiguousArray storage.
+    {"$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg",
+     "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     // The capacity is an Int carrier; the mutable String's address is
     // swiftself in both arm64 and x86_64 Swift 6.1.2 client IR.
     {"$sSS15reserveCapacityyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
