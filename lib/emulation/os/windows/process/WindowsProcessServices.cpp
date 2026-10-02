@@ -196,7 +196,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
     if (!*Bytes) {
       if (auto E = CPU.writeInteger(A[3], 0, DWordSize))
         return std::move(E);
-      return WinError(ErrorNoAccess);
+      return WinError(ErrorInvalidUserBuffer);
     }
     if (Count > Options.OutputLimit - Result.StandardOutput.size() -
                     Result.StandardError.size()) {

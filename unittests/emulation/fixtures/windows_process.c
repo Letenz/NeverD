@@ -244,7 +244,7 @@ DWORD entry(void) {
     const DWORD WriteError = GetLastError();
     const ULONG_PTR TLSValue = (ULONG_PTR)TlsGetValue((DWORD)-1);
     const DWORD TLSError = GetLastError();
-    if (Success || Written || WriteError != NoAccess || TLSValue ||
+    if (Success || Written || WriteError != InvalidUserBuffer || TLSValue ||
         TLSError != InvalidParameter) {
       const ULONG_PTR Observed[] = {(DWORD)Success, Written, WriteError,
                                     TLSValue, TLSError};
