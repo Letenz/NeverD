@@ -362,6 +362,31 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+TEST(MedSEHEstablisherFrame, HandlerSharedWithTheNormalPathKeepsTheFrame) {
+  // NtLockVirtualMemory: an empty __except body resumes at the code after
+  // its __try, which ordinary flow reaches too, and that join reads the
+  // frame.  Ordinary flow brings the certified establisher frame, so both
+  // entries address one slot.
+  auto Img = makeFixedSEHFrameImage();
+  Img.ExceptionMetadata.Functions.front().SEH->Scopes.front().HandlerVA =
+      Img.Entry + 0x30;
+  Img.ExceptionMetadata.rebuildIndex();
+  auto Low = decodeFixedSEHFrame(Img);
+  MedFunc Med;
+  ASSERT_NO_THROW(
+      Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF));
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-shared-frame"));
+  bool Seen = false;
+  for (const MedBlock &B : Med.Blocks)
+    for (const MedOp &Op : B.Ops)
+      if (Op.Opcode == NdOp::LOAD && Op.Addr == Img.Entry + 0x30) {
+        ASSERT_GT(Op.NumInputs, 0u);
+        EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -100);
+        Seen = true;
+      }
+  EXPECT_TRUE(Seen);
+}
+
 BinaryImage makeFramePointerSEHFrameImage() {
   BinaryImage Img = makeFixedSEHFrameImage();
   const va_t Entry = Img.Entry;
@@ -807,9 +832,11 @@ TEST(MedSEHEstablisherFrame, RejectsUncertifiedFramesWithoutAborting) {
         }
     }
     if (Case == 9) {
+      // Ordinary flow entering the handler from the epilogue, after the
+      // frame is gone, does not bring the establisher frame.
       for (auto &B : Low.Blocks)
         if (B.StartAddr == Low.Entry + 0x20)
-          Low.Blocks.front().Succs.push_back(B.Id);
+          Low.Blocks.back().Succs.push_back(B.Id);
     }
     if (Case == 10)
       Low.DecodedInstructionCount = uint64_t(limits::kMaxSSAFunctionOps) + 1;
