@@ -24,6 +24,8 @@ jobs:
         arch: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["X64"]' || '["ARM64","X64"]') }}
     runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["macos-15-intel"]' || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
     timeout-minutes: 180
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require actual native VM and vCPU creation
@@ -43,6 +45,10 @@ jobs:
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel'
         run: brew install ninja
+      - name: Cache unchanged native and pinned LLVM compilation
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
       - name: Install hosted fixture tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'transport'
         run: |
@@ -70,6 +76,8 @@ jobs:
         run: |
           cmake -S . -B build-hvf -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DNEVERD_LLVM_PREBUILT="$HVF_PREBUILT" \
             -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=ON \
