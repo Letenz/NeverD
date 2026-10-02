@@ -11101,6 +11101,95 @@
       }
     },
     {
+      "id": "analysis.external-bytecode-recovery",
+      "kind": "analysis",
+      "status": "experimental",
+      "owner": "analysis",
+      "targets": [
+        "externally described bytecode"
+      ],
+      "docs": [
+        "docs/bytecode-profiles.md",
+        "docs/plugins.md",
+        "docs/python-plugins.md"
+      ],
+      "limitations": [
+        "Requires a complete caller-supplied version-1 declarative profile, bounded function ranges and explicit external bindings. It does not infer an instruction set or certify that the supplied rules match an engine.",
+        "Returns reachable CFG coverage or C over an explicit little-endian register-state buffer. Source ABI, object types and original source text are not recovered by this API.",
+        "State lowering currently uses the AArch64 carrier and scalar floating-conversion policy. Stateful decoder callbacks, unresolved indirect targets and arbitrary environment contracts remain unsupported.",
+        "Unknown instructions, malformed profiles, invalid ranges and exhausted decoding limits fail without partial source. Optional unaligned pointer spelling requires supported compiler extensions; portable memory helpers remain the default."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.BothSourceRoutesExecuteNarrowWritesWithCanaries",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.CheckReportsReachableCoverageWithoutPartialSource",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.InvalidRulesAndUnknownInstructionsFailWithoutSource",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.RejectsBufferLengthsBeforeAccess",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.MalformedJSONReturnsAnOwnedUTF8Error",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_bytecode_recover_json_v1"
+        ],
+        "python": [
+          "recover_bytecode"
+        ],
+        "cli": [],
+        "json": [
+          "neverd_bytecode_recover_json_v1"
+        ]
+      }
+    },
+    {
       "id": "analysis.interpreter-source-recovery",
       "kind": "analysis",
       "status": "experimental",
