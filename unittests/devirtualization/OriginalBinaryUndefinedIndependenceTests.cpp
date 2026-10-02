@@ -124,6 +124,62 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     RegisterXaddDefinesFlagsWithoutClearingExistingDependencies) {
+  for (const auto &Bytes :
+       std::vector<std::vector<uint8_t>>{{0x0f, 0xc0, 0xc4},
+                                         {0x0f, 0xc0, 0xe0},
+                                         {0x66, 0x0f, 0xc1, 0xc8},
+                                         {0x0f, 0xc1, 0xc8},
+                                         {0x48, 0x0f, 0xc1, 0xc0},
+                                         {0x4d, 0x0f, 0xc1, 0xc8}}) {
+    Program P({});
+    P.flagsProfile();
+    auto &Code = P.Image.Segments.front();
+    Code.Data = Bytes;
+    P.append({0xc3});
+    for (unsigned I = 1; I != 16; ++I)
+      P.Contract.ReturnRegisters.push_back({I * 8, 8});
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::DF, x86reg::OF})
+      P.Contract.ReturnRegisters.push_back({Flag, 1});
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 0;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(Good.Certificate->Instructions.front()
+                    .UndefinedEffects.Effects.empty());
+  }
+  // BT; SETO AL; MOVZX EAX,AL; XADD EAX,ECX; RET. Empty XADD effects do
+  // not turn an earlier arbitrary OF input into an independent result.
+  Program Earlier({0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xb6, 0xc0, 0x0f,
+                   0xc1, 0xc8, 0xc3});
+  Earlier.flagsProfile();
+  expectRefusal(Earlier, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     CompatibilityLeftShiftRetainsCountDependentRefusals) {
+  for (uint8_t Count : {0, 1, 7, 8, 31, 32, 33}) {
+    Program P({0xc0, 0xf0, Count, 0xc3}); // SAL /6 AL,imm8.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+    if (Count & 31) {
+      expectRefusal(P, Status::Dependent);
+    } else {
+      const auto Good = P.check();
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    }
+    P.Contract.ReturnRegisters.back() = {x86reg::CF, 1};
+    if ((Count & 31) >= 8) {
+      expectRefusal(P, Status::Dependent);
+    } else {
+      const auto Good = P.check();
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    }
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      BitTestsKeepDefinedCarryAndPreservedFlagsWithExactProducerBudget) {
   for (uint8_t Opcode : {0xa3, 0xab, 0xb3, 0xbb}) {
     Program P({0x0f, Opcode, 0xc8, 0xc3}); // bit-test family eax,ecx; ret.

@@ -850,6 +850,7 @@ add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_UndefinedEffectsTests.cpp
   x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
   x86_64/X86_64_BitTestUndefinedEffectsTests.cpp
+  x86_64/X86_64_XaddAuditTests.cpp
   LINK_COMPONENTS Decode Lift Loader Symbolic
 )
 

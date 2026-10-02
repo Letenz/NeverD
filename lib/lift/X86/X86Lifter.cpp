@@ -15,6 +15,7 @@
 #include "X86BitTestUndefined.h"
 #include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
+#include "X86XaddAudit.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
@@ -609,6 +610,8 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
     return shiftundefined::form(Insn, TargetArch);
   if (bitundefined::isBitTest(Insn->id))
     return bitundefined::form(Insn, TargetArch);
+  if (Insn->id == X86_INS_XADD)
+    return xaddaudit::form(Insn, TargetArch);
   switch (Insn->id) {
   // Arithmetic defines all six arithmetic flags; logic defines five and
   // records AF below. DF is preserved.

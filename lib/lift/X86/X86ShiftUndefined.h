@@ -136,10 +136,10 @@ inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
   return Index == Effects.Effects.size();
 }
 
-// Admit only documented legacy /0, /1, /4, /5 and /7 encodings with matching
-// widths and count operands. General scalar/address validation remains in the
-// shared lifter audit. Duplicate, LOCK/REP, APX and vector prefixes stay
-// unaudited.
+// Admit documented legacy /0, /1, /4, /5 and /7 encodings and the /6 SAL/SHL
+// alias specified by Intel SDM 093, Vol. 3B, section 25.15. Widths and count
+// operands must match. General scalar/address validation remains in the shared
+// lifter audit. Duplicate, LOCK/REP, APX and vector prefixes stay unaudited.
 inline bool form(const cs_insn *Insn, Arch Target) {
   const auto &X = Insn->detail->x86;
   if (X.op_count != 2)
@@ -188,7 +188,10 @@ inline bool form(const cs_insn *Insn, Arch Target) {
                                          : 4;
   const unsigned AddressWidth =
       Long ? (AddressPrefix ? 4 : 8) : (AddressPrefix ? 2 : 4);
-  if (((ModRM >> 3) & 7) != Group || X.modrm != ModRM ||
+  const unsigned EncodedGroup = (ModRM >> 3) & 7;
+  const bool LeftAlias =
+      EncodedGroup == 6 && (Insn->id == X86_INS_SAL || Insn->id == X86_INS_SHL);
+  if ((EncodedGroup != Group && !LeftAlias) || X.modrm != ModRM ||
       X.encoding.modrm_offset != Pos + 1 || X.opcode[0] != Opcode ||
       X.opcode[1] || X.opcode[2] || X.opcode[3] || X.rex != Rex ||
       X.prefix[0] || X.prefix[1] != Segment || X.prefix[2] != OperandPrefix ||
