@@ -82,6 +82,7 @@ static void require(int OK) {
   if (!OK)
     ExitProcess(Failure);
 }
+#include "WindowsMemoryFixture.inc"
 static char mode(void) {
   WCHAR *Line = GetCommandLineW();
   unsigned N = 0;
@@ -104,7 +105,11 @@ static char mode(void) {
       Normal,        Returned,    Loop,     InitLoop,    Fault,
       Privileged,    Unknown,     Errors,   Unsupported, BadOutput,
       AliasedOutput, TLSMutation, TailExit, ForgedGate,  ReentrantExit,
-      ReturnSlot,    NativeExit};
+      ReturnSlot,    NativeExit,
+#define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) Name,
+#include "WindowsMemoryCases.def"
+#undef NEVERD_WINDOWS_FIXTURE_TEXT
+  };
   for (unsigned I = 0; I < sizeof(Modes) / sizeof(Modes[0]); ++I)
     if (Line[N - 1] == (unsigned char)Modes[I][0])
       return Modes[I][0];
@@ -213,6 +218,7 @@ DWORD entry(void) {
   require(HeapSize(Heap, 0, Bytes) >= HeapBytes);
   Bytes[HeapBytes - 1] = 1;
   require(HeapFree(Heap, 0, Bytes));
+  memoryScenario(Mode);
   if (Mode == 't')
     tailExit();
   if (Mode == 'g')

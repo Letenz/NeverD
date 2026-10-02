@@ -194,6 +194,14 @@ guest pointer or mapping request to the host OS.
 
 `windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
 
+Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
+
+Private allocations support `MEM_RESERVE`, `MEM_COMMIT`, `MEM_DECOMMIT`, `MEM_RELEASE` and `MEM_TOP_DOWN`, with 64 KiB reservation alignment and 4 KiB pages. Reserve-only regions consume no guest RAM. Recommit preserves bytes and updates protection; decommit returns individual page backing. Whole-range validation and staged allocation prevent partial changes on ordinary allocation/protection failures. Query returns the 48-byte x64/ARM64 memory-information layout and coalesces forward within one allocation. The initial image, environment, heap arena, API gates and stack margins participate in placement. Stack allocation identity agrees with TEB. Failed output copy after a protection change is distinct from failure before the change.
+
+Supported protections are `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE_READ` and `PAGE_EXECUTE_READWRITE`. Guard pages, execute-only and copy-on-write policies, cache modifiers, large pages, reset/write-watch/placeholders and modification of model-owned runtime mappings remain explicit unsupported operations. Only private virtual allocations can be decommitted or released. This does not add user exception dispatch or native ARM64 hardware evidence.
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

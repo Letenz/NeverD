@@ -82,6 +82,14 @@ Los mapeos de archivos, compartidos o fijos, crecimiento descendente, páginas e
 
 `windows-pe64-v1` añade procesos de consola Windows x64/ARM64 limitados: carga PE, PEB/TEB, TLS estático y dinámico, callbacks de inicio/salida y modelos Win32 por nombre. Usa la capa CPU sin depender de la emulación de controladores; carga DLL/CRT, GUI, SEH de usuario, hilos y compatibilidad general con Windows siguen pendientes.
 
+La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
+
+Las asignaciones privadas admiten `MEM_RESERVE`, `MEM_COMMIT`, `MEM_DECOMMIT`, `MEM_RELEASE` y `MEM_TOP_DOWN`, con reservas alineadas a 64 KiB y páginas de 4 KiB. Reservar no consume RAM del invitado. Volver a confirmar conserva los bytes y actualiza permisos; desconfirmar devuelve cada página. La validación completa del rango y la preparación de asignaciones evitan cambios parciales ante errores ordinarios. La consulta devuelve la estructura x64/ARM64 de 48 bytes y agrupa páginas posteriores de una misma asignación. Imagen, entorno, área de heap, entradas API y márgenes de pila intervienen en la ubicación; la identidad de la pila coincide con el TEB. Un fallo al copiar la salida tras cambiar permisos se distingue de un fallo anterior.
+
+Las protecciones admitidas son `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE_READ` y `PAGE_EXECUTE_READWRITE`. Las páginas de guarda, solo ejecución, copia al escribir, modificadores de caché, páginas grandes, reset/write-watch/marcadores y cambios en mapeos internos del modelo siguen sin soporte explícito. Solo se pueden desconfirmar o liberar asignaciones virtuales privadas. No se añade gestión de excepciones de usuario ni evidencia de hardware ARM64 nativo.
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

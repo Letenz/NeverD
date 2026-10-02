@@ -82,6 +82,14 @@ Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seit
 
 `windows-pe64-v1` ergänzt begrenzte Windows-Konsolenprozesse für x64/ARM64: PE-Laden, PEB/TEB, statisches und dynamisches TLS, Start-/Ende-Callbacks und benannte Win32-API-Modelle. Es nutzt die CPU-Schicht ohne Treiberemulation; DLL-/CRT-Laden, GUI, Benutzer-SEH, Threads und allgemeine Windows-Kompatibilität bleiben unvollständig.
 
+Der virtuelle Windows-Speicher ergänzt `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` und `FlushInstructionCache` für den aktuellen Prozess. Die OS-Schicht verwaltet Reservierungen; `AddressSpace` bleibt maßgeblich für zugesicherte Seiten, Zugriffsrechte und deren Speicher. Tests prüfen Codeänderungen, Zugriffsfehler und die Wiederverwendung des Speicherbudgets.
+
+Private Zuweisungen unterstützen `MEM_RESERVE`, `MEM_COMMIT`, `MEM_DECOMMIT`, `MEM_RELEASE` und `MEM_TOP_DOWN` mit 64 KiB Reservierungsausrichtung und 4 KiB Seiten. Reservierungen allein verbrauchen kein Gast-RAM. Erneute Zusicherung erhält die Bytes und aktualisiert Rechte; deren Aufhebung gibt einzelne Seiten frei. Bereichsprüfung und vorbereitete Zuweisungen verhindern Teiländerungen bei gewöhnlichen Fehlern. Die Abfrage liefert die 48 Byte große x64/ARM64-Struktur und fasst nachfolgende Seiten nur innerhalb derselben Zuweisung zusammen. Abbild, Umgebung, Heap, API-Einstiege und Stapelränder werden bei der Platzierung berücksichtigt; die Stapelidentität stimmt mit dem TEB überein. Ein Ausgabekopierfehler nach der Rechteänderung wird von einem vorherigen Fehler unterschieden.
+
+Unterstützt werden `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE_READ` und `PAGE_EXECUTE_READWRITE`. Schutzseiten, reine Ausführung, Copy-on-Write, Cacheattribute, große Seiten, reset/write-watch/Platzhalter und Änderungen modellinterner Laufzeitabbildungen bleiben ausdrücklich nicht unterstützt. Nur private virtuelle Zuweisungen können zurückgenommen oder freigegeben werden. Benutzer-Ausnahmebehandlung und native ARM64-Hardwarebelege kommen dadurch nicht hinzu.
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

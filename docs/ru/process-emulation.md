@@ -82,6 +82,14 @@ output = bytes.fromhex(report["stdout_hex"])
 
 `windows-pe64-v1` добавляет ограниченные консольные процессы Windows x64/ARM64: загрузку PE, PEB/TEB, статический и динамический TLS, вызовы при запуске/завершении и модели Win32 по именам. Используется слой CPU независимо от эмуляции драйверов; загрузка DLL/CRT, GUI, пользовательский SEH, потоки и общая совместимость Windows ещё не завершены.
 
+Виртуальная память Windows поддерживает `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` и `FlushInstructionCache` для текущего процесса. Уровень ОС управляет резервированием; `AddressSpace` остаётся единственным владельцем отображений подтверждённых страниц, прав доступа и физической памяти. Тесты проверяют изменение кода, ошибки доступа и повторное использование лимита памяти.
+
+Частные выделения поддерживают `MEM_RESERVE`, `MEM_COMMIT`, `MEM_DECOMMIT`, `MEM_RELEASE` и `MEM_TOP_DOWN`: выравнивание резервирования — 64 KiB, размер страницы — 4 KiB. Резервирование не расходует RAM гостя. Повторное подтверждение сохраняет данные и обновляет права; снятие подтверждения освобождает отдельные страницы. Проверка всего диапазона и предварительное выделение предотвращают частичные изменения при обычных ошибках. Запрос возвращает 48-байтовую структуру x64/ARM64 и объединяет последующие страницы только в пределах одного выделения. Размещение учитывает образ, окружение, кучу, входы API и границы стека; идентичность стека согласована с TEB. Ошибка копирования результата после смены прав отличается от ошибки до неё.
+
+Поддерживаются `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE_READ` и `PAGE_EXECUTE_READWRITE`. Защитные страницы, только исполнение, копирование при записи, атрибуты кэша, большие страницы, reset/write-watch/заполнители и изменения служебных отображений модели явно не поддерживаются. Снятие подтверждения и освобождение разрешены только для частных виртуальных выделений. Это не добавляет доставку пользовательских исключений или доказательства выполнения на ARM64-оборудовании.
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

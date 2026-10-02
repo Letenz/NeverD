@@ -2791,6 +2791,8 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 
 `windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
 
+Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Native dependency discovery can follow an ARM64 indirect call only when the current complete LowIR and immutable instructions prove an exact resolved chained code-pointer slot. A separate code-pointer reader checks unique read-only storage, competing fixups and the current function entry; ordinary data-pointer readers retain their existing boundary. The bounded trace stays within one block and requires a current runtime or native ABI before preserving a register across a call, including register-specific ARC imports. Frame reloads, unknown calls and incomplete evidence remain unresolved. The inventory retains the original indirect occurrence and does not itself bind its ABI or authorize source publication.

@@ -82,6 +82,14 @@ output = bytes.fromhex(report["stdout_hex"])
 
 يضيف `windows-pe64-v1` عمليات وحدة تحكم Windows محدودة لـx64/ARM64: تحميل PE وPEB/TEB وTLS ثابت وديناميكي واستدعاءات بدء وإنهاء ونماذج Win32 مسماة. يستخدم طبقة CPU مستقلاً عن محاكاة برامج التشغيل؛ ولا يزال تحميل DLL/CRT وGUI وSEH المستخدم والخيوط والتوافق العام مع Windows غير مكتمل.
 
+تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
+
+تدعم التخصيصات الخاصة `MEM_RESERVE` و`MEM_COMMIT` و`MEM_DECOMMIT` و`MEM_RELEASE` و`MEM_TOP_DOWN`، بمحاذاة حجز 64 KiB وصفحات 4 KiB. الحجز وحده لا يستهلك RAM الضيف. تحافظ إعادة الالتزام على البيانات وتحدّث الصلاحيات، ويلغي فك الالتزام تخزين كل صفحة. يمنع فحص النطاق كاملاً وتجهيز التخصيص مسبقاً التغييرات الجزئية عند الأخطاء العادية. يعيد الاستعلام بنية x64/ARM64 بحجم 48 بايت ويجمع الصفحات التالية ضمن التخصيص نفسه فقط. تشمل سياسة المواضع الصورة والبيئة والكومة ومداخل API وحدود المكدس؛ وتتفق هوية تخصيص المكدس مع TEB. يُميَّز فشل نسخ الناتج بعد تعديل الصلاحيات عن الفشل السابق للتعديل.
+
+الصلاحيات المدعومة هي `PAGE_NOACCESS` و`PAGE_READONLY` و`PAGE_READWRITE` و`PAGE_EXECUTE_READ` و`PAGE_EXECUTE_READWRITE`. تبقى صفحات الحراسة والتنفيذ فقط والنسخ عند الكتابة وسمات التخزين المؤقت والصفحات الكبيرة وreset/write-watch/العناصر النائبة وتعديل خرائط وقت التشغيل المملوكة للنموذج غير مدعومة صراحةً. يمكن فك الالتزام أو التحرير للتخصيصات الافتراضية الخاصة فقط. لا تضيف هذه الميزة توزيع استثناءات المستخدم أو إثبات تنفيذ أصلي على عتاد ARM64.
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

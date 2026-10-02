@@ -156,6 +156,12 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
     return Value(Env.CommandLine);
   case API::GetProcessHeap:
     return Value(HeapHandle);
+  case API::VirtualAlloc:
+  case API::VirtualFree:
+  case API::VirtualProtect:
+  case API::VirtualQuery:
+  case API::FlushInstructionCache:
+    return memory(S, Event);
   case API::HeapAlloc:
   case API::HeapFree:
   case API::HeapSize:
