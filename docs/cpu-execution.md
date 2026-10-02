@@ -19,7 +19,7 @@ select a contract's fixed profile; explicit unsupported values fail.
 
 | JSON field | Default | Meaning |
 |------------|---------|---------|
-| `backend` | `auto` | `auto`, `unicorn`, `kvm` or `whp` |
+| `backend` | `auto` | `auto`, `unicorn`, `kvm`, `whp` or `hvf` |
 | `contract` | `software-cpu-v1` | Versioned execution semantics |
 | `architecture` | `x86_64` | `x86_64` or `aarch64` |
 | `privilege` | Contract profile | `flat`, `supervisor` or `user`; must match the chosen contract |
@@ -32,7 +32,7 @@ select a contract's fixed profile; explicit unsupported values fail.
 and execute at supervisor privilege. `checked-user-x64-v1` and
 `checked-user-aarch64-v1` execute the corresponding bounded instruction inventory
 at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
-service-request exits. They support Unicorn and matching-host KVM/WHP; `auto`
+service-request exits. They support Unicorn and matching-host KVM/WHP/HVF; `auto`
 follows the existing host selection.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
@@ -317,3 +317,9 @@ Hardware execution alone does not guarantee lower end-to-end latency. Current na
 Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance, guest execution and complete state capture. `UC_HOOK_CODE` checks the borrowed stop token and deadline at instruction entry; the synchronous engine call retires its hook borrow before returning, while the machine step retains control through publication. Unicorn and WHP stage complete CPU state and check the same control before publishing a successful step. WHP creates its allowance once before preparation. An authenticated x64 CPU exception takes precedence over a stop arriving during capture. The checked RAM transaction discards speculative stores when capture is cancelled; the unrestricted software contract is unchanged. `MachineInterruptedError` distinguishes acknowledged cancellation from host or capture failure. The shared checked CPU returns `Stopped` or `Deadline`, preserves CPU/RAM and permits retry; genuine failures remain `BackendFailure` even with a simultaneous stop.
 
 `RunDeadline::invoke` rejects a stopped or expired WHP entry before calling the host, retains an actual host result during cancellation, and acknowledges interrupt callbacks before releasing the borrowed token. KVM and WHP validate a successfully captured private packet on the owning caller before classifying a concurrent stop or deadline. Genuine host/capture failures and authenticated x64 CPU exceptions retain priority. Ordinary successful state stays private until cancellation checks finish; an acknowledged interruption discards speculative CPU/RAM effects and permits retry. Preparation, native execution and capture share one step allowance. These controls provide cooperative cancellation, without a hard wall-clock guarantee.
+
+## macOS
+
+The `hvf` backend uses Hypervisor.framework for the native host ISA: ARM64 on
+Apple Silicon and x86-64 on Intel. See [HVF setup and validation](macos-hvf.md)
+for executable signing, ownership, cancellation, tests and validation limits.

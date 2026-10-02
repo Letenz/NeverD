@@ -89,7 +89,9 @@ NEVERD_BIT_CASE(Complement64Immediate, 8, true, true, 0x48, 0x0f, 0xba, 0x39,
 NEVERD_BIT_BACKEND(kvmSupervisor, KVM, false)
 NEVERD_BIT_BACKEND(kvmUser, KVM, true)
 NEVERD_BIT_BACKEND(whpSupervisor, WHP, false)
+NEVERD_BIT_BACKEND(hvfSupervisor, HVF, false)
 NEVERD_BIT_BACKEND(whpUser, WHP, true)
+NEVERD_BIT_BACKEND(hvfUser, HVF, true)
 NEVERD_BIT_BACKEND(unicornSupervisor, Unicorn, false)
 NEVERD_BIT_BACKEND(unicornUser, Unicorn, true)
 #endif

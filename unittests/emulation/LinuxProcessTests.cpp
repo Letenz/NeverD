@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
@@ -62,6 +63,8 @@ protected:
   std::filesystem::path Path;
   void SetUp() override {
 #ifndef NEVERD_PROCESS_FIXTURE_DIR
+    if (requireHvf(GetParam().Backend, GetParam().ISA))
+      FAIL() << MissingTools;
     GTEST_SKIP() << MissingTools;
 #else
     Path =
@@ -74,8 +77,11 @@ protected:
                                  : ExecutionContract::CheckedUserAArch64;
     auto Probe = probeExecutionBackend(Configuration);
     ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-    if (Probe->Availability != BackendAvailability::Available)
+    if (Probe->Availability != BackendAvailability::Available) {
+      if (requireHvf(GetParam().Backend, GetParam().ISA))
+        FAIL() << Probe->Reason;
       GTEST_SKIP() << Probe->Reason;
+    }
     Options.Backend = GetParam().Backend;
     Options.Arguments = {ExecutableName, Normal};
     Options.Environment = {Environment};

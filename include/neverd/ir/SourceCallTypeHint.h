@@ -308,6 +308,10 @@ struct SourceCallTypeHint {
     /// The virtual receiver is the retained Objective-C method self, rather
     /// than an object loaded from one of its ivars.
     bool DirectSelf = false;
+    /// A native Swift class caller has independently declared entry self in
+    /// swiftself. Its class metadata authenticates this slot's declaration;
+    /// the receiver's live table still supplies the target at execution time.
+    va_t NativeSelfClass = 0;
     bool operator==(const SwiftVirtualEvidence &) const = default;
   };
   std::optional<SwiftVirtualEvidence> Virtual;

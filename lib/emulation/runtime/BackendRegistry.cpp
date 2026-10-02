@@ -99,6 +99,15 @@ queryExecutionBackendBuild(ExecutionBackendKind Kind, GuestArchitecture ISA) {
                                  diagnostic::NativeDisabled};
 #endif
     break;
+  case ExecutionBackendKind::HVF:
+#if !defined(__APPLE__)
+    return ExecutionBackendBuild{Availability::HostPlatformMismatch,
+                                 diagnostic::HostPlatform};
+#elif !defined(NEVERD_EMULATION_HVF)
+    return ExecutionBackendBuild{Availability::BuildDisabled,
+                                 diagnostic::NativeDisabled};
+#endif
+    break;
   case ExecutionBackendKind::WHP:
 #if !defined(_WIN32)
     return ExecutionBackendBuild{Availability::HostPlatformMismatch,
@@ -141,21 +150,23 @@ createCheckedBackend(ExecutionBackendKind Kind,
   if (auto E = (*Memory)->mutableMemory())
     return E;
   if (Architecture == GuestArchitecture::X64) {
-    auto Machine = Kind == ExecutionBackendKind::KVM
-                       ? createKvmMachine(**Memory)
-                   : Kind == ExecutionBackendKind::WHP
-                       ? createWhpMachine(**Memory)
-                       : createUnicornX64Machine(**Memory, UserMode);
+    auto Machine =
+        Kind == ExecutionBackendKind::KVM   ? createKvmMachine(**Memory)
+        : Kind == ExecutionBackendKind::WHP ? createWhpMachine(**Memory)
+        : Kind == ExecutionBackendKind::HVF
+            ? createHvfX64Machine(**Memory)
+            : createUnicornX64Machine(**Memory, UserMode);
     if (!Machine)
       return Machine.takeError();
     return CheckedX64Backend::create(std::move(*Memory), std::move(*Machine),
                                      UserMode);
   }
-  auto Machine = Kind == ExecutionBackendKind::KVM
-                     ? createKvmAArch64Machine(**Memory)
-                 : Kind == ExecutionBackendKind::WHP
-                     ? createWhpAArch64Machine(**Memory)
-                     : createUnicornAArch64Machine(**Memory, UserMode);
+  auto Machine =
+      Kind == ExecutionBackendKind::KVM   ? createKvmAArch64Machine(**Memory)
+      : Kind == ExecutionBackendKind::WHP ? createWhpAArch64Machine(**Memory)
+      : Kind == ExecutionBackendKind::HVF
+          ? createHvfAArch64Machine(**Memory)
+          : createUnicornAArch64Machine(**Memory, UserMode);
   if (!Machine)
     return Machine.takeError();
   return CheckedAArch64Backend::create(std::move(*Memory), std::move(*Machine),

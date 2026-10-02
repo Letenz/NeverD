@@ -2112,3 +2112,21 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 External-store separation regressions cover exact/short budgets, partial words, both byte orders, untouched-memory identity, complete affine-spill boundaries, late predecessor overwrites and default invalidation. Public C API/CLI checks cover v6 layout compatibility and invalid domains. HighC and LLVMC outputs execute at O0/O2 with return, memory, stack and preserved-state checks; these tests are not a native equivalence certificate.
+
+## macOS and iOS processes
+
+`NeverDDarwinProcessTests` covers the macOS/iOS device/iOS Simulator profiles,
+independent Mach-O admission and thread-entry fixtures, and Darwin 4 KiB/16 KiB
+memory rules. Clang and `ld64.lld` build the SDK-free C fixtures.
+`NeverDProcessPublicTests.DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI`
+checks all five platform/ISA combinations through the public API and CLI.
+The required HVF gate includes the Darwin target. See
+[Darwin process environments](darwin-emulation.md).
+
+## macOS HVF backend
+
+Hypervisor.framework supplies the `hvf` native transport. `auto` selects it for
+a matching macOS host ISA; x64 driver execution on Apple Silicon continues to
+use Unicorn. The existing ISA and OS contracts remain authoritative. See
+[HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
+evidence and Intel runtime coverage are reported separately.

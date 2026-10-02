@@ -376,6 +376,181 @@ TEST(SwiftValueWitnessCalls, ImageMetadataPreservesExactWitnessProvenance) {
   }
 }
 
+namespace {
+LowOp loadImageMetadata(Fixture &F, va_t Address = 0x1000) {
+  Segment Data;
+  Data.VA = 0x4000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  F.Image.Segments.push_back(Data);
+  Section Storage;
+  Storage.Name = "__data";
+  Storage.VA = Data.VA;
+  Storage.Size = Storage.FileSz = Data.Size;
+  Storage.Flags = Data.Flags;
+  F.Image.Sections.push_back(Storage);
+  LowOp Load;
+  Load.Addr = Address;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = NdVar::reg(F.Metadata, 8);
+  Load.addInput(NdVar::dataAddress(Data.VA, 8));
+  F.Function.Blocks[0].Ops.insert(F.Function.Blocks[0].Ops.begin(), Load);
+  return Load;
+}
+} // namespace
+
+TEST(SwiftValueWitnessCalls, ImageLoadedMetadataUsesTheLoadedValueIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Split : {false, true})
+      for (const auto Kind :
+           {SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
+            SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Split);
+        SCOPED_TRACE(static_cast<unsigned>(Kind));
+        Fixture F(Architecture, Split, Kind);
+        loadImageMetadata(F);
+        // There is deliberately no file-backed word before the global. Its
+        // contents are a runtime value, not the address of that global.
+        ASSERT_EQ(F.hints().size(), 1U);
+        EXPECT_EQ(F.hints().begin()->second.ValueWitness, Kind);
+        LowToMedConverter Converter;
+        Converter.setBinaryImage(&F.Image);
+        Converter.setSourceCallHintsEnabled(true);
+        const auto Med =
+            Converter.convert(F.Function, Architecture, BinaryFormat::MachO);
+        unsigned Calls = 0;
+        for (const auto &Block : Med.Blocks)
+          for (const auto &Op : Block.Ops)
+            if (Op.Opcode == NdOp::INDIR_CALL) {
+              ++Calls;
+              ASSERT_TRUE(Op.SourceCallHint);
+              EXPECT_EQ(Op.SourceCallHint->ValueWitness, Kind);
+              EXPECT_EQ(Op.NumInputs,
+                        Op.SourceCallHint->Signature.Parameters.size() + 1);
+            }
+        EXPECT_EQ(Calls, 1U);
+        std::reverse(F.Function.Blocks.begin(), F.Function.Blocks.end());
+        EXPECT_EQ(F.hints().size(), 1U);
+      }
+}
+
+TEST(SwiftValueWitnessCalls, ImageLoadedMetadataRejectsDifferentObservations) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 10; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      Fixture F(Architecture, true);
+      auto Reload = loadImageMetadata(F);
+      auto &Load = F.Function.Blocks[0].Ops[0];
+      auto &Tail = F.Function.Blocks[1].Ops;
+      switch (Case) {
+      case 0:
+      case 1:
+        Reload.Addr = 0x1012;
+        Reload.Inputs[0].Offset += Case ? 8 : 0;
+        Tail.insert(Tail.end() - 2, Reload);
+        break;
+      case 2:
+        Load.Output.Size = 4;
+        break;
+      case 3:
+        // The witness-table lookup must remain an ordinary load. The first
+        // metadata load is a value definition, not a stable-memory promise.
+        F.Function.Blocks[0].Ops[2].MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 4:
+        F.Function.Blocks[0].Ops[2].MemoryAddressSpace =
+            NdMemoryAddressSpace::X86FS;
+        break;
+      case 5:
+        Load.Inputs[0].Provenance = ConstantAddressProvenance::Scalar;
+        break;
+      case 6:
+        Load.Inputs[0].Provenance = ConstantAddressProvenance::CodeAddress;
+        break;
+      case 7:
+        Reload.Addr = 0x1012;
+        Reload.Opcode = NdOp::CALL;
+        Reload.Output =
+            NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8);
+        Reload.Inputs[0] = NdVar::cst(0x8000, 8);
+        Tail.insert(Tail.end() - 2, Reload);
+        break;
+      case 8:
+        Tail.front().Inputs[1].Offset += 1;
+        break;
+      case 9:
+        F.Function.Blocks[0].Ops[1].Inputs[1].Offset = uint64_t(-16);
+        break;
+      }
+      EXPECT_TRUE(F.hints().empty());
+    }
+}
+
+TEST(SwiftValueWitnessCalls, LoadedMetadataLoopSeedsMustPrecedeTheCycle) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 2; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      CopyLoopFixture F(Architecture);
+      auto Reload = loadImageMetadata(F);
+      ASSERT_EQ(F.hints().size(), 1U);
+      if (Case == 0) {
+        // Returning to the load can produce different metadata at the same
+        // static instruction. A previous iteration's table is not its witness.
+        F.Function.Blocks[0].Preds = {1};
+        F.Function.Blocks[1].Succs.push_back(0);
+      } else {
+        // Only the target follows an identity cycle: freshly loading the same
+        // global for the metadata argument must not match the preserved table.
+        Reload.Addr = 0x100c;
+        auto &Body = F.Function.Blocks[1].Ops;
+        Body.insert(Body.begin() + 2, Reload);
+      }
+      EXPECT_TRUE(F.hints().empty());
+      std::reverse(F.Function.Blocks.begin(), F.Function.Blocks.end());
+      EXPECT_TRUE(F.hints().empty());
+    }
+}
+
+TEST(SwiftValueWitnessCalls, LoadedMetadataJoinsCompareValuesNotGlobalStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 4; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      Fixture F(Architecture, true);
+      auto Reload = loadImageMetadata(F);
+      LowBlock Other;
+      Other.Id = 2;
+      Other.StartAddr = 0x1008;
+      Other.Preds = {0};
+      Other.Succs = {1};
+      if (Case == 1) {
+        Reload.Addr = Other.StartAddr;
+        Other.Ops.push_back(Reload);
+      }
+      if (Case == 2) {
+        // Replacing the global does not alter the already loaded register.
+        LowOp Store;
+        Store.Addr = Other.StartAddr;
+        Store.Opcode = NdOp::STORE;
+        Store.addInput(NdVar::dataAddress(0x4000, 8));
+        Store.addInput(NdVar::cst(0, 8));
+        Other.Ops.push_back(Store);
+      }
+      F.Function.Blocks[0].Succs.push_back(2);
+      F.Function.Blocks[1].Preds.push_back(2);
+      if (Case == 3)
+        Other.Succs.clear();
+      F.Function.Blocks.push_back(std::move(Other));
+      EXPECT_EQ(F.hints().size(), Case == 0 || Case == 2 ? 1U : 0U);
+      std::reverse(F.Function.Blocks.begin(), F.Function.Blocks.end());
+      EXPECT_EQ(F.hints().size(), Case == 0 || Case == 2 ? 1U : 0U);
+    }
+}
+
 TEST(SwiftValueWitnessCalls, DestroyProofRejectsNearMatchesAndAmbiguity) {
   for (unsigned Case = 0; Case < 10; ++Case) {
     SCOPED_TRACE(Case);

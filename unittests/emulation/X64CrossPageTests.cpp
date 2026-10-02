@@ -4,6 +4,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -87,7 +88,8 @@ protected:
       auto Error = Backend.takeError();
       const bool Unavailable = Error.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(Error));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -336,7 +338,8 @@ protected:
       auto Error = Backend.takeError();
       const bool Unavailable = Error.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(Error));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -478,7 +481,8 @@ TEST_P(X64CrossPageDevice,
     auto Error = Backend.takeError();
     const bool Unavailable = Error.isA<BackendUnavailableError>();
     auto Reason = llvm::toString(std::move(Error));
-    if (Unavailable)
+    if (Unavailable &&
+        !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
       GTEST_SKIP() << Reason;
     FAIL() << Reason;
   }
@@ -666,21 +670,24 @@ INSTANTIATE_TEST_SUITE_P(
     Transports, X64CrossPageCopy,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Values(ExecutionContract::CheckedX64,
                                      ExecutionContract::CheckedUserX64)));
 INSTANTIATE_TEST_SUITE_P(
     Transports, X64CrossPageDevice,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Bool(), testing::Bool()));
 
 INSTANTIATE_TEST_SUITE_P(
     Transports, X64CrossPage,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Values(ExecutionContract::CheckedX64,
                                      ExecutionContract::CheckedUserX64),
                      testing::ValuesIn(Cases)));

@@ -1,6 +1,8 @@
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
 #include "../MachO/DarwinRuntimeImport.h"
+#include "../MachO/ImmutableNativeFrame.h"
+#include "SwiftMangledClassMethodABI.h"
 #include "SwiftVirtualSlot.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -15,7 +17,9 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace neverd {
@@ -32,28 +36,50 @@ struct Definition {
   NdVar Value;
   const LowOp *Op = nullptr;
   size_t Index = 0;
+  const LowBlock *Block = nullptr;
 };
 
-class BlockTrace {
+class RegisterTrace {
   const BinaryImage &Image;
   const LowFunc &Function;
-  const LowBlock &Block;
-  size_t Budget = 4096;
+  const LowBlock &StartBlock;
+  std::map<int, const LowBlock *> Blocks;
+  using Key = std::tuple<int, size_t, va_t, VnodeSpace, uint64_t, uint16_t>;
+  std::map<Key, std::optional<Definition>> Memo;
+  std::set<Key> Active;
+  size_t Budget = 16384;
+  bool Valid = true;
 
-public:
-  BlockTrace(const BinaryImage &Image, const LowFunc &Function,
-             const LowBlock &Block)
-      : Image(Image), Function(Function), Block(Block) {}
-
-  std::optional<Definition> resolve(const NdVar &Value, size_t Before,
-                                    va_t UseAddress, unsigned Depth = 0) {
-    if (!Budget-- || Depth > 48 || Value.Size != 8 || Before > Block.Ops.size())
+  std::optional<Definition> resolveAt(const LowBlock &Block, const NdVar &Value,
+                                      size_t Before, va_t UseAddress,
+                                      unsigned Depth) {
+    if (!Valid || !Budget || Depth > 64 || Value.Size != 8 ||
+        Before > Block.Ops.size())
       return std::nullopt;
+    --Budget;
     if (Value.isConst())
       return Definition{Definition::Kind::Constant, Value};
     if (!Value.isReg() && !Value.isTemp())
       return std::nullopt;
+    const Key Query{Block.Id,    Before,       UseAddress,
+                    Value.Space, Value.Offset, Value.Size};
+    if (const auto Found = Memo.find(Query); Found != Memo.end())
+      return Found->second;
+    if (!Active.insert(Query).second)
+      return std::nullopt;
+    const auto Result = resolveImpl(Block, Value, Before, UseAddress, Depth);
+    Active.erase(Query);
+    Memo.emplace(Query, Result);
+    return Result;
+  }
+
+  std::optional<Definition> resolveImpl(const LowBlock &Block,
+                                        const NdVar &Value, size_t Before,
+                                        va_t UseAddress, unsigned Depth) {
     for (size_t Index = Before; Index-- > 0;) {
+      if (!Budget)
+        return std::nullopt;
+      --Budget;
       const LowOp &Op = Block.Ops[Index];
       if (Value.isTemp() && Op.Addr != UseAddress)
         return std::nullopt;
@@ -63,7 +89,8 @@ public:
                .isCallPreserved(Value.Offset, Value.Size)) {
         if (Op.Output == Value && Op.MemoryOrdering == NdMemoryOrdering::None &&
             Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-          return Definition{Definition::Kind::Operation, Value, &Op, Index};
+          return Definition{Definition::Kind::Operation, Value, &Op, Index,
+                            &Block};
         return std::nullopt;
       }
       if (!overlaps(Op.Output, Value))
@@ -72,19 +99,73 @@ public:
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return std::nullopt;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
-        return resolve(Op.Inputs[0], Index, Op.Addr, Depth + 1);
-      return Definition{Definition::Kind::Operation, Value, &Op, Index};
+        return resolveAt(Block, Op.Inputs[0], Index, Op.Addr, Depth + 1);
+      return Definition{Definition::Kind::Operation, Value, &Op, Index, &Block};
     }
-    if (Value.isReg() && Block.StartAddr == Function.Entry &&
-        Block.Preds.empty())
-      return Definition{Definition::Kind::Entry, Value};
-    return std::nullopt;
+    if (!Value.isReg())
+      return std::nullopt;
+    if (Block.Preds.empty())
+      return Block.StartAddr == Function.Entry
+                 ? std::optional<Definition>(
+                       Definition{Definition::Kind::Entry, Value})
+                 : std::nullopt;
+    std::optional<Definition> Result;
+    for (int Predecessor : Block.Preds) {
+      const auto &IncomingBlock = *Blocks.at(Predecessor);
+      auto Incoming = resolveAt(IncomingBlock, Value, IncomingBlock.Ops.size(),
+                                UseAddress, Depth + 1);
+      if (!Incoming || (Result && !same(*Result, *Incoming)))
+        return std::nullopt;
+      Result = Incoming;
+    }
+    return Result;
+  }
+
+public:
+  RegisterTrace(const BinaryImage &Image, const LowFunc &Function,
+                const LowBlock &Block)
+      : Image(Image), Function(Function), StartBlock(Block) {
+    if (Function.Blocks.empty() || Function.Blocks.size() > 256) {
+      Valid = false;
+      return;
+    }
+    size_t Operations = 0, Entries = 0;
+    std::set<va_t> Starts;
+    for (const auto &B : Function.Blocks) {
+      if (B.Ops.size() > 32768 - Operations || B.Preds.size() > 256 ||
+          B.Succs.size() > 256 || !Blocks.emplace(B.Id, &B).second ||
+          !Starts.insert(B.StartAddr).second) {
+        Valid = false;
+        return;
+      }
+      Operations += B.Ops.size();
+      Entries += B.StartAddr == Function.Entry && B.Preds.empty();
+    }
+    Valid = Entries == 1;
+    for (const auto &B : Function.Blocks) {
+      std::set<int> Preds, Succs;
+      for (int Id : B.Preds)
+        Valid &= Preds.insert(Id).second && Blocks.count(Id) &&
+                 std::count(Blocks.at(Id)->Succs.begin(),
+                            Blocks.at(Id)->Succs.end(), B.Id) == 1;
+      for (int Id : B.Succs)
+        Valid &= Succs.insert(Id).second && Blocks.count(Id) &&
+                 std::count(Blocks.at(Id)->Preds.begin(),
+                            Blocks.at(Id)->Preds.end(), B.Id) == 1;
+    }
+  }
+
+  bool exhausted() const { return !Budget; }
+
+  std::optional<Definition> resolve(const NdVar &Value, size_t Before,
+                                    va_t UseAddress) {
+    return resolveAt(StartBlock, Value, Before, UseAddress, 0);
   }
 
   std::optional<Definition> input(const Definition &D, unsigned Index) {
     if (D.TheKind != Definition::Kind::Operation || Index >= D.Op->NumInputs)
       return std::nullopt;
-    return resolve(D.Op->Inputs[Index], D.Index, D.Op->Addr);
+    return resolveAt(*D.Block, D.Op->Inputs[Index], D.Index, D.Op->Addr, 0);
   }
 
   std::optional<Definition> loadAddress(const Definition &D) {
@@ -96,7 +177,7 @@ public:
     const auto Memory = lowMemoryOperands(*D.Op);
     if (!Memory.Complete || !Memory.Address || Memory.AccessSize != 8)
       return std::nullopt;
-    return resolve(*Memory.Address, D.Index, D.Op->Addr);
+    return resolveAt(*D.Block, *Memory.Address, D.Index, D.Op->Addr, 0);
   }
 
   std::optional<std::pair<Definition, uint64_t>>
@@ -183,8 +264,8 @@ public:
     // retain entry reads x0. Neither authorizes an unrelated retained object.
     const auto RetainedRegister =
         Import->Name == "_objc_retain_x19" ? a64reg::X19 : a64reg::X0;
-    const auto Self = resolve(NdVar::reg(RetainedRegister, 8), Context.Index,
-                              Context.Op->Addr);
+    const auto Self = resolveAt(*Context.Block, NdVar::reg(RetainedRegister, 8),
+                                Context.Index, Context.Op->Addr, 0);
     return Self && Self->TheKind == Definition::Kind::Entry &&
            Self->Value == NdVar::reg(a64reg::X0, 8);
   }
@@ -211,7 +292,8 @@ public:
 
   std::optional<std::pair<va_t, uint32_t>>
   virtualTarget(const Definition &Target, const Definition &Context,
-                llvm::StringRef ClassName, bool DirectSelf) {
+                llvm::StringRef ClassName, bool DirectSelf,
+                bool NativeSelf = false) {
     auto Address = loadAddress(Target);
     if (!Address)
       return std::nullopt;
@@ -221,8 +303,10 @@ public:
         BaseAndOffset->first.TheKind != Definition::Kind::Operation ||
         BaseAndOffset->first.Op->Opcode != NdOp::INT_AND ||
         BaseAndOffset->first.Op->NumInputs != 2 ||
-        !(DirectSelf ? retainedMethodSelf(Context)
-                     : ivarReceiver(Context, ClassName)))
+        !(NativeSelf ? (Context.TheKind == Definition::Kind::Entry &&
+                        Context.Value == NdVar::reg(a64reg::X20, 8))
+                     : (DirectSelf ? retainedMethodSelf(Context)
+                                   : ivarReceiver(Context, ClassName))))
       return std::nullopt;
     const auto &Masked = BaseAndOffset->first;
     for (unsigned I = 0; I < 2; ++I) {
@@ -414,6 +498,138 @@ canonicalAccessor(const BinaryImage &Image, va_t Entry, va_t CallSite,
              ? std::optional<SourceCallTypeHint>(std::move(Hint))
              : std::nullopt;
 }
+
+std::optional<SourceCallTypeHint>
+canonicalNativeSelfCall(const BinaryImage &Image, va_t Entry, va_t CallSite,
+                        va_t IsaMaskImport, uint32_t Slot, va_t Class) {
+  const auto Declaration =
+      swiftMangledObjCObjectPairVoidMethodDeclaration(Image, Entry);
+  if (!Declaration || !CallSite || CallSite % 4 || !Class || Slot < 80 ||
+      Slot > 4096 || Slot % 8)
+    return std::nullopt;
+  const auto Import = darwinRuntimeImport(Image, IsaMaskImport);
+  const auto Bind = Image.DyldBindSlots.find(IsaMaskImport);
+  if (!Import || *Import != "_swift_isaMask" ||
+      Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib")
+    return std::nullopt;
+  const auto Bytes = readImmutableCodeBytes(Image, CallSite, 4);
+  constexpr std::array<uint8_t, 4> BlrX8 = {0x00, 0x01, 0x3f, 0xd6};
+  if (!Bytes || !std::equal(BlrX8.begin(), BlrX8.end(), Bytes->begin()))
+    return std::nullopt;
+  const ObjCMethod *ClassMethod = nullptr;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.Implementation == Entry)
+      return std::nullopt;
+    if (Method.ClassAddress != Class)
+      continue;
+    if (ClassMethod && ClassMethod->ClassName != Method.ClassName)
+      return std::nullopt;
+    ClassMethod = &Method;
+  }
+  if (!ClassMethod || !swift_virtual_detail::isVoidClassVirtualSlot(
+                          Image, *ClassMethod, Slot, Declaration->Module,
+                          Declaration->ClassName))
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
+  Hint.TargetName = "swift_virtual";
+  Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
+      Entry, CallSite, IsaMaskImport, Slot, 0, false, Class};
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.Signature.ReturnType = NdType::makeVoid();
+  Hint.Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Signature.Parameters[0].TheRole =
+      SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint.Signature, Image.Arch, Error)
+             ? std::optional<SourceCallTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
+std::map<va_t, SourceCallTypeHint> nativeSelfCalls(const BinaryImage &Image,
+                                                   const LowFunc &Function) {
+  std::map<va_t, SourceCallTypeHint> Result;
+  if (!Function.hasCompleteLiftCoverage() || Function.Blocks.size() > 256 ||
+      Function.DecodedInstructionCount > 4096)
+    return Result;
+  size_t Candidates = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      Candidates += Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
+                    Op.Inputs[0] == NdVar::reg(a64reg::X8, 8);
+  if (!Candidates || Candidates > 64)
+    return Result;
+  const auto Declaration =
+      swiftMangledObjCObjectPairVoidMethodDeclaration(Image, Function.Entry);
+  if (!Declaration)
+    return Result;
+  std::map<va_t, const ObjCMethod *> Classes;
+  for (const auto &Method : Image.ObjCMethods)
+    if (Method.ClassAddress) {
+      const auto [It, Inserted] = Classes.emplace(Method.ClassAddress, &Method);
+      if (!Inserted && It->second && It->second->ClassName != Method.ClassName)
+        It->second = nullptr;
+    }
+  std::map<va_t, unsigned> Occurrences;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        ++Occurrences[Op.Addr];
+  bool MachineChecked = false;
+  for (const auto &Block : Function.Blocks) {
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const auto &Op = Block.Ops[I];
+      if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 ||
+          Op.Inputs[0] != NdVar::reg(a64reg::X8, 8) ||
+          Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          Occurrences[Op.Addr] != 1)
+        continue;
+      RegisterTrace Trace(Image, Function, Block);
+      const auto Target = Trace.resolve(Op.Inputs[0], I, Op.Addr);
+      const auto Context =
+          Trace.resolve(NdVar::reg(a64reg::X20, 8), I, Op.Addr);
+      if (Trace.exhausted())
+        return {};
+      if (!Target || !Context)
+        continue;
+      const auto Virtual =
+          Trace.virtualTarget(*Target, *Context, {}, false, true);
+      if (Trace.exhausted())
+        return {};
+      if (!Virtual)
+        continue;
+      va_t Class = 0;
+      bool Ambiguous = false;
+      for (const auto &[Metadata, Method] : Classes)
+        if (Method && swift_virtual_detail::isVoidClassVirtualSlot(
+                          Image, *Method, Virtual->second, Declaration->Module,
+                          Declaration->ClassName)) {
+          if (Class) {
+            Ambiguous = true;
+            break;
+          }
+          Class = Metadata;
+        }
+      if (!Class || Ambiguous)
+        continue;
+      auto Match =
+          canonicalNativeSelfCall(Image, Function.Entry, Op.Addr,
+                                  Virtual->first, Virtual->second, Class);
+      if (!Match)
+        continue;
+      if (!MachineChecked) {
+        size_t Budget = 1U << 18;
+        if (!immutableNativeFrameMachineMatches(Image, Function, Budget))
+          return {};
+        MachineChecked = true;
+      }
+      Result.emplace(Op.Addr, std::move(*Match));
+    }
+  }
+  return Result;
+}
 } // namespace
 
 bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
@@ -433,10 +649,16 @@ bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
       Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
       Hint.ImmutablePointerSlot)
     return false;
-  const auto Expected = canonicalAccessor(
-      Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
-      Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset,
-      Hint.Virtual->ZeroArgumentWords, Hint.Virtual->DirectSelf);
+  const auto Expected =
+      Hint.Virtual->NativeSelfClass
+          ? canonicalNativeSelfCall(
+                Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
+                Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset,
+                Hint.Virtual->NativeSelfClass)
+          : canonicalAccessor(
+                Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
+                Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset,
+                Hint.Virtual->ZeroArgumentWords, Hint.Virtual->DirectSelf);
   return Expected && Expected->Virtual == Hint.Virtual &&
          equalSourceABIs(Expected->Signature, Hint.Signature);
 }
@@ -445,8 +667,11 @@ std::map<va_t, SourceCallTypeHint>
 buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
   std::map<va_t, SourceCallTypeHint> Result;
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
-      Function.Blocks.size() != 1 || Function.Blocks[0].Ops.size() > 2048)
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64)
+    return Result;
+  Result = nativeSelfCalls(Image, Function);
+  if (!Result.empty() || Function.Blocks.size() != 1 ||
+      Function.Blocks[0].Ops.size() > 2048)
     return Result;
   const auto &Block = Function.Blocks[0];
   if (Block.StartAddr != Function.Entry || !Block.Preds.empty())
@@ -494,7 +719,7 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
         ZeroArgumentWords = *Window;
       }
     }
-    BlockTrace Trace(Image, Function, Block);
+    RegisterTrace Trace(Image, Function, Block);
     auto Target = Trace.resolve(Op.Inputs[0], I, Op.Addr);
     auto Context = Trace.resolve(NdVar::reg(a64reg::X20, 8), I, Op.Addr);
     if (!Target || !Context)

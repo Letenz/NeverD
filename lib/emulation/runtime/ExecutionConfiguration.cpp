@@ -138,7 +138,8 @@ executionCapabilities(ExecutionContract Contract,
   if (Backend == ExecutionBackendKind::Unicorn)
     return Capabilities;
   if (Backend != ExecutionBackendKind::KVM &&
-      Backend != ExecutionBackendKind::WHP)
+      Backend != ExecutionBackendKind::WHP &&
+      Backend != ExecutionBackendKind::HVF)
     return diagnostic::error(diagnostic::BackendName);
   if (auto Native = nativeProfile(Contract, Architecture))
     return *Native;

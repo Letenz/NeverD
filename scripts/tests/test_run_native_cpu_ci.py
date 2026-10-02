@@ -59,9 +59,10 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             ],
         })
 
-    def run_evidence(self, with_drivers=False):
+    def run_evidence(self, with_drivers=False, require_hvf=False, host_architecture="arm64"):
         with (
             mock.patch.object(native, "ROOT", self.root),
+            mock.patch.object(native.platform, "machine", return_value=host_architecture),
             mock.patch.object(native.subprocess, "run", side_effect=self.execute),
             mock.patch.object(
                 native.subprocess, "check_output", side_effect=self.capture
@@ -69,7 +70,8 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             return native.run(
-                self.build, self.evidence, 2, True, with_drivers=with_drivers
+                self.build, self.evidence, 2, not require_hvf, with_drivers=with_drivers,
+                require_hvf=require_hvf
             )
 
     def add_drivers(self):
@@ -119,6 +121,73 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_evidence(), 0)
         self.assertEqual(self.summary()["owners"], ["Owner"])
         self.assertFalse(self.summary()["with_drivers"])
+
+    def test_hvf_profile_rejects_native_skips_and_preserves_optional_skips(self):
+        definition = (self.root / "scripts/NativeCPUTests.def").read_text()
+        (self.root / "scripts/NativeHVFTests.def").write_text(
+            definition.replace("NEVERD_NATIVE_CPU", "NEVERD_NATIVE_HVF"))
+        self.changes[self.records[-1]] = (
+            "notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "other ISA")
+        self.assertEqual(self.run_evidence(require_hvf=True), 0)
+        self.assertTrue(self.summary()["require_hvf"])
+        self.changes[self.records[0]] = (
+            "notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing entitlement")
+        self.assertEqual(self.run_evidence(require_hvf=True), 1)
+
+    def test_hvf_profile_rejects_deleted_required_registration(self):
+        definition = (self.root / "scripts/NativeCPUTests.def").read_text()
+        (self.root / "scripts/NativeHVFTests.def").write_text(
+            definition.replace("NEVERD_NATIVE_CPU", "NEVERD_NATIVE_HVF"))
+        self.records = self.records[1:]
+        with self.assertRaisesRegex(ValueError, "missing required native HVF"):
+            self.run_evidence(require_hvf=True)
+
+    def add_hvf_host_requirements(self):
+        definition = (self.root / "scripts/NativeCPUTests.def").read_text()
+        (self.root / "scripts/NativeHVFTests.def").write_text(
+            definition.replace("NEVERD_NATIVE_CPU", "NEVERD_NATIVE_HVF")
+            + 'NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(ARM64, "Darwin/ARM64")\n'
+            + 'NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(X64, "Darwin/X64")\n'
+        )
+        self.records += tuple(TestRecord(name, frozenset({"Owner"}))
+                              for name in ("Darwin/ARM64", "Darwin/X64"))
+        self.reported = self.records
+
+    def test_hvf_requires_own_host_guest_execution_and_allows_foreign_isa_skip(self):
+        self.add_hvf_host_requirements()
+        for host, current, foreign in (("arm64", self.records[-2], self.records[-1]),
+                                        ("x86_64", self.records[-1], self.records[-2])):
+            with self.subTest(host=host):
+                self.changes = {foreign: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "foreign ISA")}
+                self.assertEqual(self.run_evidence(require_hvf=True, host_architecture=host), 0)
+                self.assertEqual(self.summary()["required_native_tests"], 3)
+                self.assertEqual(self.summary()["host_architecture"], host)
+                self.assertIn(current.name, self.summary()["required_native_names"])
+                self.assertNotIn(foreign.name, self.summary()["required_native_names"])
+                self.changes[current] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing fixture")
+                self.assertEqual(self.run_evidence(require_hvf=True, host_architecture=host), 1)
+                self.assertEqual(self.summary()["required_native_unexecuted"], [current.name])
+
+    def test_deleted_host_guest_registration_fails_even_when_owner_still_has_tests(self):
+        self.add_hvf_host_requirements()
+        self.records = tuple(record for record in self.records if record.name != "Darwin/ARM64")
+        with self.assertRaisesRegex(ValueError, "missing required native HVF.*Darwin/ARM64"):
+            self.run_evidence(require_hvf=True)
+
+    def test_unknown_host_cannot_choose_an_easier_inventory(self):
+        self.add_hvf_host_requirements()
+        with self.assertRaisesRegex(ValueError, "host architecture"):
+            self.run_evidence(require_hvf=True, host_architecture="riscv64")
+
+    def test_repository_hvf_inventory_requires_all_native_darwin_platforms(self):
+        prefix = "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+        for host, suffixes in (("arm64", ("MacOSARM64", "IOSARM64", "SimulatorARM64")),
+                                ("x86_64", ("MacOSX64", "SimulatorX64"))):
+            with self.subTest(host=host):
+                _, required = native.read_inventory(native.ROOT, "NativeHVFTests.def",
+                                                     "NEVERD_NATIVE_HVF", host)
+                self.assertEqual({name for name in required if name.startswith(prefix)},
+                                 {prefix + suffix + "_hvf" for suffix in suffixes})
 
     def summary(self):
         return json.loads((self.evidence / "summary.json").read_text())

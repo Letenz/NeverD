@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/x86_64/X64ExceptionMonitor.h"
 #include "backends/MachineFactories.h"
 #include "core/MemoryProjection.h"
@@ -35,14 +36,15 @@ protected:
 
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
-    auto Created = GetParam() == ExecutionBackendKind::KVM
-                       ? createKvmMachine(*Memory)
-                       : createWhpMachine(*Memory);
+    auto Created =
+        GetParam() == ExecutionBackendKind::KVM   ? createKvmMachine(*Memory)
+        : GetParam() == ExecutionBackendKind::HVF ? createHvfX64Machine(*Memory)
+                                                  : createWhpMachine(*Memory);
     if (!Created) {
       auto E = Created.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       const auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable && !requireHvf(GetParam(), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -259,6 +261,7 @@ TEST_P(X64StateTransition,
 
 INSTANTIATE_TEST_SUITE_P(NativeTransports, X64StateTransition,
                          testing::Values(ExecutionBackendKind::KVM,
-                                         ExecutionBackendKind::WHP));
+                                         ExecutionBackendKind::WHP,
+                                         ExecutionBackendKind::HVF));
 } // namespace
 } // namespace neverd::emulation

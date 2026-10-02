@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: d615d9f900a3fb234918f3725d77c7385215434f8d6c98da6284f831d1adf8d8 -->
+<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -31,6 +31,8 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 | [CPU 실행](cpu-execution.md) | 구성, 기능 조회, 백엔드 가용성, 형식화된 결과 |
 | [비트벡터 증명 백엔드](solver.md) | 선택적 Z3 증명, 증명 게이트 합성, 독립 검사, query 내보내기 |
 | [게스트 프로세스 에뮬레이션](process-emulation.md) | Linux ELF 프로필, 시작, 서비스, 제한, 테스트 |
+| [macOS/iOS 프로세스 환경](../darwin-emulation.md) | Mach-O 시작, 기기와 시뮬레이터 구분, Darwin 서비스와 페이지 규칙 |
+| [macOS HVF](../macos-hvf.md) | 호스트와 동일한 ISA의 하드웨어 실행, 서명 권한, 패키징과 검증 |
 | [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM/KMDF 수명 주기, 요청, 하드웨어 시나리오, SEH, PnP 하위 집합, 백엔드 선택 및 제한 |
 | [메모리 안전성 감사와 헌트](memory-safety.md) | 힙 수명과 복사 오버플로 분석: 형식별 신원 계약, 싱크/소스 카탈로그, 판정, 예산, JSON 스키마 |
 | [네이티브 플러그인](plugins.md) | 순수 C descriptor ABI, callback과 event, build/link workflow, discovery 및 호환성 규칙 |

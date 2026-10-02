@@ -86,8 +86,8 @@ inline bool terminalBrk(const LowBlock &Block) {
          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Brk) &&
-         Op.Output == NdVar::reg(
-                          getTargetRegInfo(Arch::AArch64).IntReturnReg, 8);
+         Op.Output ==
+             NdVar::reg(getTargetRegInfo(Arch::AArch64).IntReturnReg, 8);
 }
 
 struct Transfer {
@@ -191,8 +191,10 @@ struct Transfer {
       if (Cost > Remaining)
         return false;
       Remaining -= Cost;
-      if (Op.Opcode == NdOp::CALL) {
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         const auto Key = sourceCallOccurrenceKey(Op);
+        // For an indirect call the complete dynamic target is an observable
+        // input, in addition to the independently supplied ABI arguments.
         if (!Key || InputDiffers ||
             Op.Output != NdVar::reg(TRI.IntReturnReg, 8))
           return false;
@@ -397,13 +399,11 @@ struct Transfer {
           // identical, and a differing input taints the whole result byte.
           const bool NarrowPredicateImmediate =
               (Op.Opcode == NdOp::INT_EQUAL ||
-               Op.Opcode == NdOp::INT_NOTEQUAL ||
-               Op.Opcode == NdOp::INT_LESS ||
+               Op.Opcode == NdOp::INT_NOTEQUAL || Op.Opcode == NdOp::INT_LESS ||
                Op.Opcode == NdOp::INT_SLESS ||
                Op.Opcode == NdOp::INT_LESSEQUAL ||
                Op.Opcode == NdOp::INT_SLESSEQUAL ||
-               Op.Opcode == NdOp::INT_CARRY ||
-               Op.Opcode == NdOp::INT_SOVF ||
+               Op.Opcode == NdOp::INT_CARRY || Op.Opcode == NdOp::INT_SOVF ||
                Op.Opcode == NdOp::INT_SBOR) &&
               ((Op.Inputs[0].isConst() &&
                 Op.Inputs[0].Size <= Op.Inputs[1].Size &&
@@ -411,9 +411,8 @@ struct Transfer {
                (Op.Inputs[1].isConst() &&
                 Op.Inputs[1].Size <= Op.Inputs[0].Size &&
                 Op.Inputs[0].Size <= 8));
-          if (Op.Output.Size != 1 ||
-              (Op.Inputs[0].Size != Op.Inputs[1].Size &&
-               !NarrowPredicateImmediate))
+          if (Op.Output.Size != 1 || (Op.Inputs[0].Size != Op.Inputs[1].Size &&
+                                      !NarrowPredicateImmediate))
             return false;
         }
       } else if (Op.Opcode == NdOp::SELECT) {
@@ -461,8 +460,9 @@ struct Transfer {
 /// supplies every exact identity.
 /// This owner checks their physical shape and exact LowIR occurrence, then
 /// proves non-observation of the replaced bits on every physical CFG path.
-/// Indirect calls, tail exits, exceptions, differing memory writes and unknown
-/// operations remain outside this deliberately bounded projection.
+/// Typed indirect calls also require an identical full-width dynamic target.
+/// Opaque indirect calls, tail exits, exceptions, differing memory writes and
+/// unknown operations remain outside this deliberately bounded projection.
 inline std::optional<SourceBooleanResultCertificate>
 proveSourceBooleanResultNormalization(
     const LowFunc &Function, Arch Architecture,
@@ -484,8 +484,13 @@ proveSourceBooleanResultNormalization(
       *Selected.StaticTarget == Function.Entry || Calls.count(Selected))
     return std::nullopt;
   for (const auto &[Key, Contract] : Calls) {
-    if (Key.Opcode != NdOp::CALL || !Key.StaticTarget ||
-        *Key.StaticTarget == Function.Entry || Contract.DoesNotReturn)
+    const bool Direct = Key.Opcode == NdOp::CALL && Key.StaticTarget &&
+                        *Key.StaticTarget != Function.Entry;
+    const bool Indirect = Key.Opcode == NdOp::INDIR_CALL && !Key.StaticTarget;
+    if ((!Direct && !Indirect) || Contract.DoesNotReturn ||
+        (Indirect &&
+         (Contract.RequiresIdenticalState || Contract.OverwritesObjCCommand ||
+          Contract.DefinesRawBooleanBit0)))
       return std::nullopt;
     if (Contract.RequiresIdenticalState) {
       if (Contract.Signature || Contract.OverwritesObjCCommand ||
@@ -501,7 +506,10 @@ proveSourceBooleanResultNormalization(
       return std::nullopt;
     if (Contract.OverwritesObjCCommand) {
       const auto &Signature = *Contract.Signature;
-      if (Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+      if ((Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK &&
+           Signature.Origin !=
+               SourceFunctionTypeHint::OriginKind::ObjCRuntime) ||
+          Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
           Signature.Parameters.size() < 2 ||
           Signature.Parameters[1].Location.Kind !=
               SourceABICarrierKind::IntegerRegister ||
@@ -543,12 +551,11 @@ proveSourceBooleanResultNormalization(
     va_t Previous = B.StartAddr;
     for (const auto &Op : B.Ops) {
       if (++Count > 8192 || Op.Addr < Previous || Op.Addr < B.StartAddr ||
-          Op.Addr >= B.EndAddr || Op.Addr % 4 ||
-          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR)
+          Op.Addr >= B.EndAddr || Op.Addr % 4 || Op.Opcode == NdOp::INDIR_BR)
         return std::nullopt;
       Previous = Op.Addr;
       Instructions.insert(Op.Addr);
-      if (Op.Opcode == NdOp::CALL) {
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         const auto Key = sourceCallOccurrenceKey(Op);
         const bool IsSelected = Key && !(*Key < Selected) && !(Selected < *Key);
         if (!Key || (!IsSelected && !Calls.count(*Key)) ||
