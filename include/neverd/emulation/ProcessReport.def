@@ -70,6 +70,8 @@ NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(Windows, "windows")
+NEVERD_PROCESS_REPORT_TEXT(Module, "module")
 NEVERD_PROCESS_REPORT_TEXT(EmptyOptions, "{}")
 NEVERD_PROCESS_REPORT_TEXT(TooLarge, "process options JSON exceeds 64 KiB")
 NEVERD_PROCESS_REPORT_TEXT(ObjectRequired,
@@ -101,7 +103,8 @@ NEVERD_PROCESS_CLI_STRING(Input, "input executable")
 NEVERD_PROCESS_CLI_STRING(ProfileOption, "profile")
 NEVERD_PROCESS_CLI_STRING(
     ProfileHelp,
-    "Guest profile (required): linux-elf64-v1 or android-aarch64-api28-v1")
+    "Guest profile (required): linux-elf64-v1, android-aarch64-api28-v1 or "
+    "windows-pe64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
 NEVERD_PROCESS_CLI_STRING(OptionsHelp,

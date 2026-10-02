@@ -114,6 +114,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 明確選項 `RetainUnauditedNativeBoundaries` 為有限原生獨立性證明及原生到 LowIR 的精化證明增加拒絕邊界。只有嚴格解碼並提升、覆蓋狀態為 `Missing`、效果為空且非空操作摘要相符的指令才符合條件。結構、控制、重疊、執行設定及資源檢查仍全部執行。僅停止該邊界後繼的收集；其他邊進入後續位元組時仍獨立收集。任何可行路徑抵達邊界都會在執行前拒絕；求解未知或預算耗盡不能證明不可達。成功證書繫結帶有類型和版本的記錄，包含精確邊界、原生位元組摘要及操作摘要，不會將 `Missing` 改為 `Complete`。未收集的後綴不具備審計結論。獨立性證明涵蓋所有任意選擇；選定值精化僅證明宣告見證下的不可達性。靜態 LowIR、迴圈證明/推斷及精確 LLVM 介面均不啟用此選項。
 
+`AllowOverlappingNativeInstructions` 是預設關閉的獨立選項，用於有限原生獨立性證明及原生到 LowIR 的精化證明。每個入口皆獨立解碼和驗證；交疊指令位元組必須與先前所有指令及不可變讀取證據一致，包括候選程式的讀取。候選 LowIR 位址只是標籤，不是位元組證據。`MaxNativeInstructionBytes` 預設為 1048576，每次取得新入口時，在比較前按完整指令長度扣帳，包括重複的交疊位元組。預算耗盡或位元組衝突均拒絕憑證。選項及額度綁定至證明摘要。靜態 LowIR、歸納循環證明和推斷拒絕此選項，空循環計畫也不例外；精確 LLVM 介面和 CLI 維持原有預設行為。
+
 原生封裝旗標證明要求選項和契約同時指定 `X64FlagsProfile = UserX64NoFaultV1`，既有執行布林選項不會自動啟用它。正規化的共享入口旗標與持續保存的系統旗標使用和機器狀態原始碼包裝器相同的 PUSHFQ/POPFQ 純量轉換，包括 CPL3/IOPL0 遮罩。每次 POPFQ 都須證明兩次執行中的 TF/AC 為零，不能將此條件當作假設。即使關閉暫存器或已寫堆疊框架觀察，仍須比較最終系統旗標。憑證綁定環境模型版本和精確轉換摘要。在此明確 CET 關閉環境下，獨立核驗的正規 RDSSPD/RDSSPQ 位元組可投影為精確 NOP，並記錄具型別的憑據；原始 `Missing` 中繼資料保持不變，32 位元目標也保留整個暫存器。正規 INCSSPD/INCSSPQ 保留為依賴環境模型的 #UD 邊界，並記錄原始不可達指令的憑據；任意可行造訪都違反無故障契約，即使運算元為零。其他 CET 指令、CET 開啟執行及靜態 LowIR API 的環境模型仍不支援。有限迴圈每次造訪均保留狀態並產生新的未定義選擇，不代表迴圈不變量證明。
 
 `checkLowIRRefinement` 與 `checkBinaryLowIRRefinement` 提供針對確定性 LowIR 候選的獨立建構式精化證明。`LiftedBits` 在每次未定義值產生時選擇原提升器計算的位元；`ZeroBits` 僅在已審核的條件生效時選擇零。證書記錄每個動態出現，複製與溢出保留同一選擇。兩邊共用純量、實體堆疊、記憶體及旗標執行器與入口快照；所有可行路徑必須終止並涵蓋完整允許入口域，比較 RETURN 運算元、指定暫存器、原生系統旗標及兩邊已寫堆疊位元組的聯集，並維持入口位置保留約束。執行與關係檢查共用預算，另設 `MaxTerminalPairs` 上限。證書分別綁定候選、原始證據、見證策略及預算。見證失敗不排除其他見證；有限展開不證明迴圈不變量、特定 CPU 相等性或 C 後端等價性，也不取代未定義狀態獨立性證明。兩類關係介面皆拒絕與證明器記憶體暫存區重疊的輸入暫存值。 二進位精化 API 要求選項與觀察契約同時使用 `UserX64NoFaultV1`。
@@ -482,6 +484,8 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/support` | 共用二進位載入 helper | Loader |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
 
+`lib/pass/ir/simplify` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
+
 公開標頭在 `include/neverd` 下對應這些區域。不要意外讓內部 C++ 類別成為 SDK
 的一部分：穩定的外部操作應放在純 C 標頭及職責明確的
 `lib/sdk/NeverDCAPI*.cpp` 檔案中。
@@ -505,9 +509,9 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 
 CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗證架構、權限、位址寬度及功能。`ExecutionBudget` 為每個工作負載擁有共用指令／事件計數與絕對單調 deadline；恢復執行不會補回預算。`ExecutionSession` 擁有 CPU、hooks 與待處理的服務／錯誤續接。工作階段可共用記憶體與預算，但採合作式排程，並非平行 SMP。恢復前必須恰好消耗一次待處理要求。CPU 錯誤優先於資源停止；無法解釋的引擎停止不代表工作負載成功。
 
-`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF `ET_EXEC` 與靜態 PIE `ET_DYN`。動態連結、dynamic TLS、訊號、OS 執行緒與不支援服務都會失敗；靜態 TLS 與有限的 x64 SSE/SSE2 可用；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。這不代表支援 Windows user-mode、Android 或 Darwin 應用程式。
+`ImageMappingPlan` 使用載入器既有區段，不重解析 header，也不解析 imports；發布位址空間前會檢查完整範圍與重疊。明確的 `linux-elf64-v1` 設定檔以初始堆疊、明確服務要求及有界位元組輸出執行 x64/AArch64 freestanding ELF `ET_EXEC` 與靜態 PIE `ET_DYN`。動態連結、dynamic TLS、訊號、OS 執行緒與不支援服務都會失敗；靜態 TLS 與有限的 x64 SSE/SSE2 可用；不會從 KVM 推斷 Linux，也不會從 WHP 推斷 Windows。詳見[CPU 執行](cpu-execution.md)與[客體程序模擬](process-emulation.md)。
 
-`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 329 項必測檢查：101 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 359 項必測檢查：131 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
 
 `DriverImage.def` 集中宣告嚴格 PE 驗證的大小、對齊限制及診斷文字；指標寬度來自 `DriverProfile.def`。`DriverImage.cpp` 負責驗證與重定位，可接受的映像和錯誤訊息保持不變。
 
@@ -533,7 +537,9 @@ x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.de
 
 `X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
-`X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。REPNE 與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
+`X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
+
+`X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
@@ -852,6 +858,8 @@ AArch64 具體型別配方透過完整解碼的 `Swift` 模組頂層名義型別
 
 同一有界比較亦支援由兩個具名型別組成、無元素標籤的完整 12 位元組元組配方。即使快取名稱使用模組替換，也會核驗兩個元素的身分及其順序。此規則嚴格要求兩個無標籤元素；標籤、額外元素和不同型別樹均不能匹配。描述符驗證、原始執行階段身分、新建共用快取及發佈時重新驗證仍為必要條件。 亦支援包含一個此類元組參數的具名容器之完整 19 位元組配方，分別驗證外層描述符和兩個元素描述符，並核驗容器種類、參數數量與元素順序。
 
+在 AArch64 上，最多宣告八個暫存器參數的原生輔助函式可轉送多組具體型別中繼資料。對完整具型別函式主體的有界掃描要求：每個快取／型別參照參數保持原值，且僅用於直接呼叫既有的具體型別實例化器，同時呼叫雙方的 ABI 與程式碼身分必須一致。重新賦值、算術運算、逸出、角色衝突、間接目標、不完整控制流程及預算耗盡均拒絕證明。繫結依參數位置分別保留配對，並對呼叫端具唯一定義的區域變數使用相同證明；其他純量參數即使位元值相同也不會繼承繫結。原樣產生的實例化器、轉送呼叫端及陣列輔助函式在 O0/O2 下使用原生 Swift 元組緩衝區執行驗證。
+
 產生的 Swift 外部資料目錄僅在四個 Darwin 編譯器及 SDK 匯出設定一致時收錄 Foundation 的 `String: CVarArg` 一致性描述符。獨立的 Foundation 探針避免編譯器合併將必要的直接泛型呼叫替換為間接跳板。擷取仍要求精確的非 TLS 描述符宣告、String 中繼資料、惰性見證存取器及 release 儲存快取。原始碼綁定保留匯入描述符的位址，並在發布時重新驗證準確的提供者、符號和強零偏移綁定；這不賦予見證成員 ABI 或描述符配置。
 
 原生輸入推斷也考慮已繫結呼叫中隱式傳遞的完整整數參數。LowIR 只列出呼叫目標，不列出 ABI 參數，因此直接尾呼叫可能遺漏被保留的上下文。既有原生狀態證明必須匹配每個呼叫位置，沿寫入、呼叫破壞和堆疊框架儲存追蹤入口值的全部八位元組，並證明狀態恢復；MedIR 還須獨立確認同一個完整入口字被觀察。部分、被覆寫、歧義或未繫結的值不能建立參數。ARM64 與 x86_64 流水線測試要求重新提升並通過完整原始碼驗證。原始 ARM64 尾跳指令與未經修改的生成 C 在 O0/O2 下對照，使用觀測被呼叫函式核對兩個輸入和兩個回傳字；此測試隔離驗證轉發，不執行字典實作。
@@ -863,3 +871,15 @@ ARM64 原始碼繫結新增十二個 UIKit 富文字屬性鍵全域量，依據�
 具體型別配方對直接參照及已驗證的本機 GOT 參照重用這項內部協定註冊身分證明。配方重建穩定的宣告名稱，保留自身的存在型別、可選型別或陣列運算子，再要求與完整快取型別一致。此過程不連結私有協定符號，也不複製其描述符。缺少註冊、要求簽章、關聯型別、不完整記錄和失效身分仍會被拒絕。
 
 super 呼叫證明保留窄回傳值的未定義填補位元並檢查每個參數；聚合、可變參數、過期或歧義宣告仍不受支援。具指標寬度的精確完整類別或元類別位址，與直接接收者共用相同的執行階段物件身分證明，包括寫入 `objc_super` 的情況。類別參照單元、純量立即值、不完整位址與衝突中繼資料不能取得此繫結。發布時重新檢查原始類別身分。
+
+UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀寫方法保留完整的 32 位元組 `UIEdgeInsets`：上、左、下、右四個 double 在 arm64 上由 d0–d3 傳遞。完整的裝置與模擬器 SDK 宣告一致，Apple Clang 獨立重現全部六種編碼。接收者查找保留 UIButton 匿名分類及 UIButton → UIControl → UIView 繼承關係。執行階段宣告衝突、其他接收者、類別方法、錯誤提供程式庫及缺少相符證據的架構仍不受支援。
+
+`windows-pe64-v1` 新增有界 Windows x64/ARM64 主控台程序：PE 載入、PEB/TEB、靜態與動態 TLS、啟動／結束回呼及具名 Win32 API 模型。它獨立使用 CPU 層，不需啟用驅動程式模擬；DLL/CRT 載入、GUI、使用者態 SEH、執行緒及通用 Windows 相容性仍待完成。
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+原生相依性探索僅在目前完整 LowIR 與不可變指令共同證明精確、已解析的鏈式程式碼指標槽時，才跟隨 ARM64 間接呼叫。獨立的程式碼指標讀取器檢查唯一唯讀儲存、衝突修正及目前函式入口；一般資料指標讀取器維持原有邊界。有界追蹤限定在一個基本區塊內，跨呼叫保留暫存器前必須取得目前執行階段或原生 ABI，包括使用特定暫存器傳參的 ARC 匯入。堆疊框架重載、未知呼叫與不完整證據仍未解析。相依性清單保留原始間接呼叫位置，本身不綁定其 ABI，也不授權發布原始碼。
+
+同一個不可變原生呼叫證明現在可在 SSA 之前繫結目前完整的純量 `NativeAnalysis` ABI，同時保留 LowIR/MedIR 中原始間接呼叫操作碼及呼叫位置。原生狀態推導會根據目前 LowIR 重做證明，一般呼叫破壞規則和框架檢查繼續適用。HighIR 只將已證明的不可變目標求值投影為選定的原始碼定義。發布時還要求目前呼叫端與被呼叫端的 LowIR、MedIR、HighIR 和已接受稽核一致，重新驗證指標槽、指令及 ABI，並確認每個原始已繫結呼叫恰好求值一次。儲存的提示和相依清單不能授權發布；缺漏、過時、重複或衝突的證據仍不受支援，每個被呼叫端仍須通過獨立的完整原始碼主體和相依閉合檢查。
+
+`SourceFrameEffects` 由載入器與管線共用，描述有界、同步的堆疊框架借用，以及可能指向框架內或外部儲存的回傳別名。ARM64 Swift 值緩衝區投影器必須通過完整不可變函式本體、原始 BL/LowIR 呼叫位置、目前雙參數原生 ABI 與強匯入 `swift_makeBoxUnique` 的驗證。證明保守地使三個緩衝區字失效；回傳值可能是緩衝區起始位址或外部儲存，不能證明保存位元組的身分。複製與合流保留可能的框架來源。後續借用須位於仍存活的範圍內；部分指標、逸出、已失效的框架，以及透過不確定回傳值恢復保存暫存器均被拒絕。純量回傳推斷也會重新驗證此證明。依據 [Swift 6.1.2 執行階段契約](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp)，配置、值見證複製與釋放仍是可觀察效果；這不代表純函式，也不代表完整的存在型別呼叫閉合。

@@ -1,0 +1,90 @@
+//===- WindowsProcessCases.def - Original PE64 process fixtures ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_FIXTURE_VALUE
+NEVERD_WINDOWS_FIXTURE_VALUE(TLSSeed, 0x19283746)
+NEVERD_WINDOWS_FIXTURE_VALUE(LastErrorSeed, 0x12345678)
+NEVERD_WINDOWS_FIXTURE_VALUE(Failure, 99)
+NEVERD_WINDOWS_FIXTURE_VALUE(ExitStatus, 37)
+NEVERD_WINDOWS_FIXTURE_VALUE(HeapBytes, 33)
+NEVERD_WINDOWS_FIXTURE_VALUE(HeapZero, 8)
+NEVERD_WINDOWS_FIXTURE_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_WINDOWS_FIXTURE_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_WINDOWS_FIXTURE_VALUE(InvalidParameter, 87)
+NEVERD_WINDOWS_FIXTURE_VALUE(InvalidUserBuffer, 1784)
+NEVERD_WINDOWS_FIXTURE_VALUE(TebPEB, 0x60)
+NEVERD_WINDOWS_FIXTURE_VALUE(TebProcessID, 0x40)
+NEVERD_WINDOWS_FIXTURE_VALUE(TebThreadID, 0x48)
+NEVERD_WINDOWS_FIXTURE_VALUE(TebLastError, 0x68)
+NEVERD_WINDOWS_FIXTURE_VALUE(TebTLSSlots, 0x1480)
+NEVERD_WINDOWS_FIXTURE_VALUE(PebImage, 0x10)
+NEVERD_WINDOWS_FIXTURE_VALUE(PebParameters, 0x20)
+NEVERD_WINDOWS_FIXTURE_VALUE(ParamsCommandLineBuffer, 0x78)
+NEVERD_WINDOWS_FIXTURE_VALUE(ParamsEnvironment, 0x80)
+NEVERD_WINDOWS_FIXTURE_VALUE(Quantum, 3)
+NEVERD_WINDOWS_FIXTURE_VALUE(InstructionLimit, 50000)
+NEVERD_WINDOWS_FIXTURE_VALUE(LoopLimit, 500)
+NEVERD_WINDOWS_FIXTURE_VALUE(LoopQuantum, 7)
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_TEXT
+NEVERD_WINDOWS_FIXTURE_TEXT(Executable, "fixture.exe")
+NEVERD_WINDOWS_FIXTURE_TEXT(Message, "Windows user process\n")
+NEVERD_WINDOWS_FIXTURE_TEXT(Detached, "TLS detached\n")
+NEVERD_WINDOWS_FIXTURE_TEXT(Binary, "A\0\xffZ")
+NEVERD_WINDOWS_FIXTURE_TEXT(Normal, "n")
+NEVERD_WINDOWS_FIXTURE_TEXT(Returned, "r")
+NEVERD_WINDOWS_FIXTURE_TEXT(Loop, "l")
+NEVERD_WINDOWS_FIXTURE_TEXT(InitLoop, "i")
+NEVERD_WINDOWS_FIXTURE_TEXT(Fault, "f")
+NEVERD_WINDOWS_FIXTURE_TEXT(Privileged, "p")
+NEVERD_WINDOWS_FIXTURE_TEXT(Unknown, "u")
+NEVERD_WINDOWS_FIXTURE_TEXT(Errors, "e")
+NEVERD_WINDOWS_FIXTURE_TEXT(Unsupported, "s")
+NEVERD_WINDOWS_FIXTURE_TEXT(Environment, "MODE=hello")
+NEVERD_WINDOWS_FIXTURE_TEXT(ProbeOptions,
+                            "{\"backend\":\"unicorn\",\"architecture\":\"x64\","
+                            "\"contract\":\"checked-user-x64\"}")
+NEVERD_WINDOWS_FIXTURE_TEXT(MissingTools,
+                            "PE process fixtures require Clang and lld-link")
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_BYTES
+NEVERD_WINDOWS_FIXTURE_BYTES(X64Syscall, 0x0f, 0x05, 0xc3)
+NEVERD_WINDOWS_FIXTURE_BYTES(X64Privileged, 0x0f, 0x20, 0xc0, 0xc3)
+NEVERD_WINDOWS_FIXTURE_BYTES(ARMSyscall, 0x01, 0x00, 0x00, 0xd4, 0xc0, 0x03,
+                             0x5f, 0xd6)
+NEVERD_WINDOWS_FIXTURE_BYTES(ARMPrivileged, 0x00, 0x10, 0x38, 0xd5, 0xc0, 0x03,
+                             0x5f, 0xd6)
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_TEXT
+NEVERD_WINDOWS_FIXTURE_TEXT(BadOutput, "b")
+NEVERD_WINDOWS_FIXTURE_TEXT(AliasedOutput, "a")
+NEVERD_WINDOWS_FIXTURE_TEXT(TLSMutation, "m")
+NEVERD_WINDOWS_FIXTURE_TEXT(TailExit, "t")
+NEVERD_WINDOWS_FIXTURE_TEXT(ForgedGate, "g")
+NEVERD_WINDOWS_FIXTURE_TEXT(ReentrantExit, "d")
+NEVERD_WINDOWS_FIXTURE_TEXT(ReturnSlot, "v")
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_ASM
+#if defined(_M_X64) || defined(__x86_64__)
+NEVERD_WINDOWS_FIXTURE_ASM(ReadTEB, "movq %%gs:0x30, %0")
+NEVERD_WINDOWS_FIXTURE_ASM(
+    TailExitCode,
+    "movq $0, (%rsp)\nmovl $37, %ecx\njmpq *__imp_ExitProcess(%rip)")
+NEVERD_WINDOWS_FIXTURE_ASM(ReturnSlotCode,
+                           "movq %rsp, %r9\njmpq *__imp_WriteFile(%rip)")
+#else
+NEVERD_WINDOWS_FIXTURE_ASM(ReadTEB, "mov %0, x18")
+NEVERD_WINDOWS_FIXTURE_ASM(
+    TailExitCode, "mov x30, xzr\nmov w0, #37\nadrp x16, __imp_ExitProcess\nldr "
+                  "x16, [x16, :lo12:__imp_ExitProcess]\nbr x16")
+NEVERD_WINDOWS_FIXTURE_ASM(ReturnSlotCode, "ret")
+#endif
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_TEXT
+NEVERD_WINDOWS_FIXTURE_TEXT(NativeExit, "q")
+#endif
+#ifdef NEVERD_WINDOWS_FIXTURE_VALUE
+NEVERD_WINDOWS_FIXTURE_VALUE(ForgedReturnGate, 0x71000010)
+#endif

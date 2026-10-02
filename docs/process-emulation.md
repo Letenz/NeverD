@@ -15,8 +15,8 @@ distribution or a promise to run arbitrary libc binaries. Dynamic linking,
 signals, threads, file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
-function calls and Bionic models. Windows user processes, Android managed
-runtimes, Darwin and other kernel workloads remain separate work.
+function calls and Bionic models. The Windows PE64 process profile is described
+below. Android managed runtimes, Darwin and other kernel workloads remain separate work.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -32,9 +32,8 @@ host/guest ISA combinations use Unicorn. An unavailable selected backend is an
 error, with no silent fallback. An ELF guest still uses the Linux process model
 when executed on Windows. See [CPU execution](cpu-execution.md) for the checked
 instruction inventory, native availability and cancellation limitations.
-The x64 profile admits the listed SSE/SSE2 moves, logical operations and masked
-scalar subtraction/conversion forms; AArch64 remains an integer instruction
-profile. Vector register storage does not imply an unrestricted SIMD ISA.
+Instruction support follows the selected checked CPU contract; vector register
+storage does not imply unrestricted SIMD execution.
 
 The CLI emits one JSON report. Its exit code is 0 for a guest exit status of
 zero, 2 for another guest exit status, 3 for incomplete execution (including
@@ -186,6 +185,31 @@ service contracts. They stop before publishing effects or inventing a syscall
 return. Ordinary range/length/alignment errors within the admitted subset return
 guest errors and allow execution to continue. No memory service forwards a
 guest pointer or mapping request to the host OS.
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Windows PE64 profile
+
+`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+The versioned single-thread model loads AMD64/ARM64 PE32+ console EXEs at their preferred base. Original file bytes and loader identities are checked before mapping; headers and sections retain user permissions and the stack has unmapped guard gaps. Unknown imports, ordinal/bound/delay imports, load configuration/CFG, managed images, GUI and DLL entry profiles fail explicitly. Relocation records are validated, but this profile does not rebase images. Named system API models are not installed system DLLs: loader lists contain only the mapped executable, and `GetModuleHandleW` currently accepts only NULL.
+
+GS on x64 and x18 on ARM64 point to TEB. Supported state includes stack bounds, self pointer, PID/TID, PEB, process parameters, LastError and TLS. Inputs are strict UTF-8 converted to UTF-16; argv is quoted for Microsoft CRT parsing. Environment names are ASCII, case-insensitive duplicates are rejected, values may be Unicode, and the sorted environment is double-NUL terminated. No host environment or filesystem is inherited. Static TLS copies its template, zeroes BSS and writes a 32-bit index; dynamic TLS uses separate TEB slots. Attach and detach read live callback arrays in order, with all instructions and named calls sharing one deadline and resource account. Entry return and normal process exit both run detach callbacks; reentrant exit during detach stops explicitly.
+
+The exact API inventory is `WindowsProcessServices.def`: `ExitProcess`, `RtlExitUserProcess`, standard-output handles and synchronous `WriteFile`, LastError, process/thread identifiers and pseudo-handles, `GetCommandLineW`, process heap allocation/free/size, dynamic TLS and NULL `GetModuleHandleW`. Provider names are restricted to `kernel32.dll`, `kernelbase.dll` and `ntdll.dll` with exact export identity. Direct syscalls and forged callback gates cannot select API models. Heap backing is owned by the process and reclaimed on free. Writes capture binary bytes; Win32 argument errors remain distinct from unsupported asynchronous I/O or user exception dispatch. Pointer aliasing observes the initial completion-count write and the live call-return slot.
+
+The `windows.native_calls` report preserves module/function names, declared scalar arguments and nullable result bits. It does not invent native NT syscall numbers. `NeverDWindowsProcessTests` covers real x64/ARM64 PE startup, compiler TLS, live callback changes, heap/LastError, aliasing, invalid metadata, privilege faults and limits across available backends. `NeverDProcessPublicTests` checks the same PE through CLI/C ABI. Native Windows CI runs the original EXE as an independent behavioral oracle and requires WHP cases; native ARM64 runtime evidence still requires a suitable machine.
+
+`WriteFile` with a nonempty unreadable input buffer returns `ERROR_INVALID_USER_BUFFER` (1784), zeros the completion count and publishes no bytes.
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

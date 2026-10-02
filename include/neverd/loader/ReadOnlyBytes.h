@@ -26,7 +26,7 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 /// rejected. This grants no ordinary pointer identity or byte-copy authority;
 /// a consumer must separately prove the value's representation and relocation.
 std::optional<uint64_t> readImmutableChainedImageValue(const BinaryImage &Image,
-                                                    va_t Address);
+                                                       va_t Address);
 
 /// Prove a complete store range lies in unique file-backed writable image
 /// storage, disjoint from a function's private frame and newly allocated
@@ -48,6 +48,13 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 /// permission to copy the target object.
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address);
+
+/// Read one exact resolved chained code pointer in unique immutable storage.
+/// The target must be a current authenticated local function entry with
+/// immutable instruction bytes. This proves an address, never its ABI or
+/// permission to use a code pointer as an ordinary data pointer.
+std::optional<va_t> readImmutableImageCodePointer(const BinaryImage &Image,
+                                                  va_t Address);
 
 /// Prove one exact strong, zero-addend import slot has unique immutable
 /// file-backed storage and no competing fixups. This authenticates the slot,

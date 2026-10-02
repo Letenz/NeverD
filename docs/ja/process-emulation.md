@@ -6,7 +6,7 @@
 
 `neverd emulate` は明示したゲスト OS プロファイルでイメージを実行します。CPU transport、イメージ解析、プロセス入口、OS サービスはそれぞれ別の責任範囲です。`NEVERD_ENABLE_CPU_EMULATION=ON` で有効にします。ドライバーエミュレーションにも含まれます。
 
-最初の `linux-elf64-v1` profile は、x64/AArch64 の ELF `ET_EXEC` と自己再配置する static PIE `ET_DYN` を CPL3/EL0 で実行します。実際の ELF segment をロードし、初期 stack を構築し、命令 quantum ごとに再開し、明示的な Linux system call request を処理します。これは独立したプロセスモデルであり、完全な Linux distribution や任意の libc binary の実行保証ではありません。dynamic linking、signal、thread、filesystem、未対応 service は明示的に失敗します。x64 profile は限定された SSE/SSE2 形式を一部許可し、AArch64 は integer-only です。Windows、Android、Darwin などの kernel workload は別途です。
+最初の `linux-elf64-v1` profile は、x64/AArch64 の ELF `ET_EXEC` と自己再配置する static PIE `ET_DYN` を CPL3/EL0 で実行します。実際の ELF segment をロードし、初期 stack を構築し、命令 quantum ごとに再開し、明示的な Linux system call request を処理します。これは独立したプロセスモデルであり、完全な Linux distribution や任意の libc binary の実行保証ではありません。dynamic linking、signal、thread、filesystem、未対応 service は明示的に失敗します。
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,31 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 長さはページ単位に切り上げます。`munmap` は穴や重複解除を許容し、`mprotect` は穴までのマッピングを変更してから `ENOMEM` を返します。`PROT_NONE` は割り当てと内容を保持しつつゲストアクセスを禁止します。生の `brk` は成功時に要求したバイト境界、失敗時に旧境界を返し、libc のゼロ／負一の規約とは異なります。初期 break はページ境界に揃えたイメージ終端です。拡張は他のマッピングと予算に従い、縮小は残る部分ページの内容を保持します。対象範囲の規則とエラー優先順位は Linux の[マッピング](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)および[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)に従います。
 
 ファイル／共有／固定マッピング、下方拡張、巨大ページ、メモリ固定、保護キー、実行専用／書き込み専用方針、その他のフラグは明示的に未対応です。効果の公開や戻り値の生成前に停止します。対応範囲内の通常の範囲・長さ・整列エラーはゲストエラーを返して実行を続けます。ゲストポインタやマッピング要求をホスト OS に転送することはありません。
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Windows PE64 プロファイル
+
+`windows-pe64-v1` は限定された Windows x64/ARM64 コンソールプロセスを追加します。PE ロード、PEB/TEB、静的・動的 TLS、起動・終了コールバック、名前付き Win32 API モデルを備えます。CPU 層を独立して使用し、ドライバーエミュレーションは不要です。DLL/CRT ロード、GUI、ユーザーモード SEH、スレッド、汎用 Windows 互換性は未完成です。
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+この版付き単一スレッドモデルは AMD64/ARM64 PE32+ コンソール EXE を推奨ベースにロードします。元のファイルとローダー情報を検証し、ユーザーページ権限と未マップのスタック保護領域を維持します。不明・序数・bound・delay import、load configuration/CFG、managed image、GUI、DLL 入口は拒否します。再配置レコードは検証しますがリベースは行いません。API モデルは実際のシステム DLL ではなく、ローダーリストは EXE のみ、`GetModuleHandleW` は NULL のみ対応です。
+
+x64 GS と ARM64 x18 は TEB を指し、スタック範囲、自身、PID/TID、PEB、プロセスパラメーター、LastError、TLS を提供します。UTF-8 を厳密に UTF-16 へ変換し、argv は Microsoft CRT 規則で引用します。環境名は ASCII、大小文字を無視した重複は拒否し、値は Unicode 可、整列した環境は二重 NUL で終端します。ホスト環境やファイルシステムは継承しません。静的 TLS はテンプレートとゼロ BSS、32 ビット索引を設定し、動的 TLS は別の TEB スロットを使います。起動・終了は変更後の回呼表を順に読み、期限と予算を共有します。入口の return と通常終了は終了回呼を実行し、その中の再帰終了は明示停止です。
+
+正確な API は `WindowsProcessServices.def` にあります。`ExitProcess`、`RtlExitUserProcess`、標準出力ハンドルと同期 `WriteFile`、LastError、プロセス・スレッド ID と疑似ハンドル、`GetCommandLineW`、ヒープ確保・解放・サイズ、動的 TLS、NULL `GetModuleHandleW` を扱います。`kernel32.dll`、`kernelbase.dll`、`ntdll.dll` の正確な名前だけを解決します。直接 syscall や偽の回呼ゲートでは API を選べません。ヒープの所有権と回収、バイナリー出力、API エラーと非同期 I/O・ユーザー例外の未対応を区別します。別名ポインターでも完了数の初期ゼロ化と実際の戻り先変更を反映します。
+
+`windows.native_calls` はモジュール・関数名、宣言されたスカラー引数、nullable な結果を記録し、NT syscall 番号を捏造しません。`NeverDWindowsProcessTests` は実 PE、コンパイラー TLS、回呼変更、ヒープ、別名、不正メタデータ、権限、予算を検証し、`NeverDProcessPublicTests` は CLI/C ABI を検証します。Windows CI は同じ EXE を直接実行して独立比較し、WHP テストも必須です。ネイティブ ARM64 の実行証拠には対応マシンが必要です。
+
+空でない入力バッファが読み取り不可の場合、`WriteFile` は `ERROR_INVALID_USER_BUFFER`（1784）を返し、書き込みバイト数をゼロにして、バイトを出力しません。
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

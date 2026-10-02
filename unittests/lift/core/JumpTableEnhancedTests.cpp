@@ -3866,6 +3866,164 @@ TEST_F(JTE_X86_64, LongFunctionKeepsItsGuardAliasBudget) {
   EXPECT_FALSE(lowFunctionHasOpcode(Func, neverd::NdOp::INDIR_CALL));
 }
 
+namespace {
+/// A one-function COFF x64 image whose text starts at the function.
+neverd::BinaryImage makeCOFFFunctionImage(neverd::va_t FunctionVA,
+                                          const std::vector<uint8_t> &Code) {
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::X64;
+  Image.Bits = neverd::Bitness::Bits64;
+  Image.Format = neverd::BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  Image.Entry = FunctionVA;
+  neverd::Segment Text;
+  Text.Name = ".text";
+  Text.VA = FunctionVA;
+  Text.Size = Text.FileSz = Code.size();
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Text.Data = Code;
+  Image.Segments.push_back(std::move(Text));
+  neverd::Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = FunctionVA;
+  TextSection.Size = Code.size();
+  TextSection.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Image.Sections.push_back(std::move(TextSection));
+  Image.Symbols.push_back(neverd::Symbol::makeFunc(FunctionVA, Code.size()));
+  Image.KnownCodeRanges.emplace_back(FunctionVA, FunctionVA + Code.size());
+  return Image;
+}
+
+std::optional<neverd::JumpTable> recoverOnlyJumpTable(neverd::BinaryImage Image,
+                                                      neverd::va_t FunctionVA) {
+  neverd::Decoder Decoder;
+  EXPECT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{FunctionVA};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Func =
+      Builder.build(Image, Decoder, FunctionVA, "coff_rva_switch");
+  if (Func.JumpTables.size() != 1 ||
+      lowFunctionHasOpcode(Func, neverd::NdOp::INDIR_CALL))
+    return std::nullopt;
+  return Func.JumpTables.front();
+}
+
+/// Little-endian helpers for hand-assembled switch fixtures.
+struct CodeWriter {
+  std::vector<uint8_t> Bytes;
+  void put(std::initializer_list<uint8_t> List) {
+    Bytes.insert(Bytes.end(), List);
+  }
+  size_t u32(uint32_t Value) {
+    const size_t At = Bytes.size();
+    for (unsigned Byte = 0; Byte < sizeof(Value); ++Byte)
+      Bytes.push_back(static_cast<uint8_t>(Value >> (Byte * 8)));
+    return At;
+  }
+  void patch32(size_t At, uint32_t Value) {
+    for (unsigned Byte = 0; Byte < sizeof(Value); ++Byte)
+      Bytes[At + Byte] = static_cast<uint8_t>(Value >> (Byte * 8));
+  }
+  /// rel32 of a branch whose displacement ends at \p At + 4.
+  void branchTo(size_t At, size_t Target) {
+    patch32(At, static_cast<uint32_t>(Target - (At + 4)));
+  }
+};
+} // namespace
+
+TEST_F(JTE_X86_64, ImageBaseFromAnEarlierBlockAnchorsTheTable) {
+  // KiIpiProcessRequests keeps the image base in r11 from before an earlier
+  // branch; the dispatch adds that register to the RVA it loads.  With no
+  // definition in the dispatch block the anchor read as the table address,
+  // the target-role proof failed, and the dispatch became a tail call.
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  CodeWriter W;
+  W.put({0x4c, 0x8d, 0x1d}); // lea r11, image base
+  W.u32(static_cast<uint32_t>(static_cast<int64_t>(ImageBase) -
+                              static_cast<int64_t>(FunctionVA + 7)));
+  W.put({0x85, 0xd2, 0x0f, 0x84}); // test edx; je exit
+  const size_t ToExit = W.u32(0);
+  W.put({0x89, 0xc9,       // mov ecx, ecx
+         0x83, 0xf9, 0x05, // cmp ecx, 5
+         0x0f, 0x87});     // ja exit
+  const size_t ToDefault = W.u32(0);
+  W.put({0x41, 0x8b, 0x8c, 0x8b}); // mov ecx, [r11+rcx*4+table]
+  const size_t TableSlot = W.u32(0);
+  W.put({0x4c, 0x01, 0xd9, // add rcx, r11
+         0xff, 0xe1});     // jmp rcx
+  std::vector<neverd::va_t> Expected;
+  for (int Case = 0; Case < 6; ++Case) {
+    Expected.push_back(FunctionVA + W.Bytes.size());
+    W.put({0xc3, 0xcc});
+  }
+  const size_t Exit = W.Bytes.size();
+  W.put({0xc3, 0xcc, 0xcc, 0xcc});
+  W.branchTo(ToExit, Exit);
+  W.branchTo(ToDefault, Exit);
+  W.patch32(TableSlot,
+            static_cast<uint32_t>(FunctionVA + W.Bytes.size() - ImageBase));
+  for (neverd::va_t Target : Expected)
+    W.u32(static_cast<uint32_t>(Target - ImageBase));
+
+  const auto Table = recoverOnlyJumpTable(
+      makeCOFFFunctionImage(FunctionVA, W.Bytes), FunctionVA);
+  ASSERT_TRUE(Table.has_value());
+  EXPECT_TRUE(Table->IsPEImageRelativeRVA);
+  EXPECT_EQ(Table->TargetBase, ImageBase);
+  EXPECT_EQ(Table->Targets, Expected);
+}
+
+TEST_F(JTE_X86_64, NullImageRelativeSlotIsADontCareCase) {
+  // KiIpiProcessRequests again: `cmp esi, 4; je` sends one selector value
+  // elsewhere before `lea eax, [rsi-1]` indexes the table, and MSVC writes a
+  // zero RVA for that impossible slot.  The slot names the image header, not
+  // code; it is skipped, and the other targets keep their real case values.
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  CodeWriter W;
+  W.put({0x89, 0xd6,       // mov esi, edx
+         0x83, 0xfe, 0x04, // cmp esi, 4
+         0x0f, 0x84});     // je exit
+  const size_t ToExit = W.u32(0);
+  W.put({0x8d, 0x46, 0xff, // lea eax, [rsi-1]
+         0x83, 0xf8, 0x06, // cmp eax, 6
+         0x0f, 0x87});     // ja exit
+  const size_t ToDefault = W.u32(0);
+  W.put({0x48, 0x8d, 0x15}); // lea rdx, image base
+  W.u32(static_cast<uint32_t>(
+      static_cast<int64_t>(ImageBase) -
+      static_cast<int64_t>(FunctionVA + W.Bytes.size() + 4)));
+  W.put({0x8b, 0x8c, 0x82}); // mov ecx, [rdx+rax*4+table]
+  const size_t TableSlot = W.u32(0);
+  W.put({0x48, 0x01, 0xd1, // add rcx, rdx
+         0xff, 0xe1});     // jmp rcx
+  std::vector<neverd::va_t> Slots;
+  for (int Case = 0; Case < 7; ++Case) {
+    Slots.push_back(FunctionVA + W.Bytes.size());
+    W.put({0xc3, 0xcc});
+  }
+  const size_t Exit = W.Bytes.size();
+  W.put({0xc3, 0xcc, 0xcc, 0xcc});
+  W.branchTo(ToExit, Exit);
+  W.branchTo(ToDefault, Exit);
+  W.patch32(TableSlot,
+            static_cast<uint32_t>(FunctionVA + W.Bytes.size() - ImageBase));
+  for (int Case = 0; Case < 7; ++Case)
+    W.u32(Case == 3 ? 0 : static_cast<uint32_t>(Slots[Case] - ImageBase));
+
+  const auto Table = recoverOnlyJumpTable(
+      makeCOFFFunctionImage(FunctionVA, W.Bytes), FunctionVA);
+  ASSERT_TRUE(Table.has_value());
+  const std::vector<neverd::va_t> Expected{Slots[0], Slots[1], Slots[2],
+                                           Slots[4], Slots[5], Slots[6]};
+  EXPECT_EQ(Table->Targets, Expected);
+  EXPECT_EQ(Table->CaseLabels, (std::vector<int64_t>{0, 1, 2, 4, 5, 6}));
+}
+
 TEST_F(JTE_X86_64, AllStagesSucceed) { verifyAllStages(jteX64Obj()); }
 
 TEST_F(JTE_X86_64, LowIRHasBranchInd) {

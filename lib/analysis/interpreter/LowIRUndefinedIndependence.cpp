@@ -177,8 +177,9 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(9); // Certificate semantic schema, independent of report formatting.
+  Number(10); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
+  Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.X64FlagsProfile.has_value());
   if (Contract.X64FlagsProfile) {
     Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
@@ -307,6 +308,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
   Number(Limits.MaxImmutableLoadAddresses);
   Number(Limits.MaxObservations);
   Number(Limits.MaxSymbolicNodes);
+  Number(Limits.MaxNativeInstructionBytes);
   Number(Limits.Solver.Blast.MaxWidth);
   Number(Limits.Solver.Blast.MaxGates);
   Number(Limits.Solver.BuildModel);
@@ -392,6 +394,7 @@ struct RefinementSession {
   std::map<va_t, LowIRNativeAuditBoundary> NativeAuditBoundaries;
   bool NativeFinite = false;
   uint64_t NativeInputOperations = 0, NativeInputEffects = 0;
+  uint64_t NativeInputBytes = 0;
 };
 
 class Checker {
@@ -419,6 +422,8 @@ class Checker {
   uint64_t OwnedNativeInputOperations = 0, OwnedNativeInputEffects = 0;
   uint64_t &NativeInputOperations = OwnedNativeInputOperations;
   uint64_t &NativeInputEffects = OwnedNativeInputEffects;
+  uint64_t OwnedNativeInputBytes = 0;
+  uint64_t &NativeInputBytes = OwnedNativeInputBytes;
   uint64_t OwnedReadEvidenceBytes = 0;
   uint64_t &NativeReadEvidenceBytes = OwnedReadEvidenceBytes;
   int NextNativeBlock = 0;
@@ -885,6 +890,19 @@ class Checker {
     }
   }
 
+  // Code and immutable data share one byte inventory across the native
+  // execution and its candidate. Candidate LowIR addresses are only labels.
+  // Callers bound the whole range's evidence before comparing any bytes.
+  void retainImmutableBytes(va_t Address, llvm::ArrayRef<uint8_t> Bytes) {
+    if (Bytes.empty() || Bytes.size() > InvalidVA - Address)
+      fail(Status::Invalid, "invalid immutable byte range");
+    for (size_t I = 0; I != Bytes.size(); ++I) {
+      const auto [It, Inserted] = ImmutableBytes.emplace(Address + I, Bytes[I]);
+      if (!Inserted && It->second != Bytes[I])
+        fail(Status::Invalid, "immutable provider bytes changed");
+    }
+  }
+
   void collectNative(va_t Entry) {
     if (NativeInstructions.count(Entry))
       return;
@@ -930,10 +948,18 @@ class Checker {
           hasLowInstructionControlFlag(
               B.ControlFlags, LowInstructionControlFlag::InstructionGuard))
         fail(Status::Unsupported, "unsupported original instruction control");
-      auto Next = NativeRanges.lower_bound(Address);
-      if ((Next != NativeRanges.end() && Next->first < Address + B.Size) ||
-          (Next != NativeRanges.begin() && std::prev(Next)->second > Address))
-        fail(Status::Unsupported, "overlapping original instruction ranges");
+      if (Contract.AllowOverlappingNativeInstructions) {
+        if (B.Size > Limits.MaxNativeInstructionBytes - NativeInputBytes)
+          fail(Status::BudgetExceeded,
+               "original instruction byte budget exhausted");
+        NativeInputBytes += B.Size;
+        retainImmutableBytes(Address, Insn.NativeBytes);
+      } else {
+        auto Next = NativeRanges.lower_bound(Address);
+        if ((Next != NativeRanges.end() && Next->first < Address + B.Size) ||
+            (Next != NativeRanges.begin() && std::prev(Next)->second > Address))
+          fail(Status::Unsupported, "overlapping original instruction ranges");
+      }
       NativeRanges.emplace(Address, Address + B.Size);
       if (Insn.Ops.size() > Limits.MaxOperations - NativeInputOperations)
         fail(Status::BudgetExceeded, "original operation budget exhausted");
@@ -1104,11 +1130,8 @@ class Checker {
         NativeReadEvidenceBytes += Size;
       }
       uint64_t Value = 0;
+      retainImmutableBytes(Candidate, Read->Bytes);
       for (uint16_t I = 0; I != Bytes; ++I) {
-        const auto [It, Inserted] =
-            ImmutableBytes.emplace(Candidate + I, Read->Bytes[I]);
-        if (!Inserted && It->second != Read->Bytes[I])
-          fail(Status::Invalid, "immutable provider bytes changed");
         const unsigned Shift =
             Contract.ByteOrder == llvm::endianness::little ? I : Bytes - 1 - I;
         Value |= uint64_t{Read->Bytes[I]} << (Shift * 8);
@@ -1504,13 +1527,17 @@ class Checker {
   }
 
   void validate() {
-    if (Contract.RetainUnauditedNativeBoundaries &&
-        ((!Provider && !(CandidateExecution && ReadProvider && Refinement &&
-                         Refinement->NativeFinite)) ||
-         (Refinement && (!Refinement->NativeFinite || Refinement->LoopPlan ||
-                         Refinement->PrefixSearchCutpoint >= 0))))
+    const bool FiniteNative =
+        (Provider || (CandidateExecution && ReadProvider && Refinement &&
+                      Refinement->NativeFinite)) &&
+        (!Refinement || (Refinement->NativeFinite && !Refinement->LoopPlan &&
+                         Refinement->PrefixSearchCutpoint < 0));
+    if (Contract.RetainUnauditedNativeBoundaries && !FiniteNative)
       fail(Status::Unsupported,
            "unaudited boundaries require the finite native proof API");
+    if (Contract.AllowOverlappingNativeInstructions && !FiniteNative)
+      fail(Status::Unsupported,
+           "overlapping instructions require the finite native proof API");
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
@@ -2133,6 +2160,8 @@ public:
                                       : OwnedNativeInputOperations),
         NativeInputEffects(Session ? Session->NativeInputEffects
                                    : OwnedNativeInputEffects),
+        NativeInputBytes(Session ? Session->NativeInputBytes
+                                 : OwnedNativeInputBytes),
         NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
@@ -2157,6 +2186,8 @@ public:
                                       : OwnedNativeInputOperations),
         NativeInputEffects(Session ? Session->NativeInputEffects
                                    : OwnedNativeInputEffects),
+        NativeInputBytes(Session ? Session->NativeInputBytes
+                                 : OwnedNativeInputBytes),
         NativeReadEvidenceBytes(Session ? Session->ReadEvidenceBytes
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
@@ -2636,6 +2667,12 @@ LowIRRefinementResult runRefinement(
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
         "unaudited boundaries require the finite native proof API";
+    return Finish(false);
+  }
+  if (Contract.AllowOverlappingNativeInstructions && !Session.NativeFinite) {
+    Session.Statistics.Status = Status::Unsupported;
+    Session.Statistics.Diagnostic =
+        "overlapping instructions require the finite native proof API";
     return Finish(false);
   }
   if (Witness != LowIRRefinementWitness::LiftedBits &&
@@ -4478,6 +4515,9 @@ public:
       if (Contract.RetainUnauditedNativeBoundaries)
         stop(Status::Unsupported,
              "unaudited boundaries are unsupported by loop inference");
+      if (Contract.AllowOverlappingNativeInstructions)
+        stop(Status::Unsupported,
+             "overlapping instructions are unsupported by loop inference");
       if (!prepareCandidateRecords(Session, Records) ||
           !checker().validateInput())
         throw Stop{};

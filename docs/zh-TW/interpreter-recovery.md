@@ -182,6 +182,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 有限讀取位址集合、聯合控制元組與控制欄位數量也有明確上限。全域求解查詢次數，以及各次查詢的邏輯閘、衝突、傳播與監視文字存取次數限制，約束證明工作量；符號節點上限約束運算式成長。JSON 報告包含這些預算，以及 `solverQueries` 和 `relationalWidenings` 計數。
 
+`AllowOverlappingNativeInstructions` 是預設關閉的獨立選項，用於有限原生獨立性證明及原生到 LowIR 的精化證明。每個入口皆獨立解碼和驗證；交疊指令位元組必須與先前所有指令及不可變讀取證據一致，包括候選程式的讀取。候選 LowIR 位址只是標籤，不是位元組證據。`MaxNativeInstructionBytes` 預設為 1048576，每次取得新入口時，在比較前按完整指令長度扣帳，包括重複的交疊位元組。預算耗盡或位元組衝突均拒絕憑證。選項及額度綁定至證明摘要。靜態 LowIR、歸納循環證明和推斷拒絕此選項，空循環計畫也不例外；精確 LLVM 介面和 CLI 維持原有預設行為。
+
 <!-- i18n-section: evidence -->
 
 ## 證據與測試

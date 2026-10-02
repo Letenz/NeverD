@@ -63,8 +63,7 @@ bool stackCheckTermination(const NativeSourceCallContract &Contract,
       Architecture != Arch::AArch64 || !Contract.Signature ||
       Contract.Signature->Origin !=
           SourceFunctionTypeHint::OriginKind::DarwinRuntime ||
-      !Contract.ReadOnlyFrameParameters.empty() ||
-      !Contract.WritableFrameParameters.empty())
+      !Contract.empty())
     return false;
   SourceFunctionTypeHint Expected;
   Expected.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
@@ -81,8 +80,7 @@ bool swiftDictionaryViolationTermination(
       Architecture != Arch::AArch64 || !Contract.Signature ||
       Contract.Signature->Origin !=
           SourceFunctionTypeHint::OriginKind::SwiftSDK ||
-      !Contract.ReadOnlyFrameParameters.empty() ||
-      !Contract.WritableFrameParameters.empty())
+      !Contract.empty())
     return false;
   SourceFunctionTypeHint Expected;
   Expected.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
@@ -102,10 +100,11 @@ bool ordinaryFrameTermination(const NativeSourceCallContract &Contract,
 // Byte identities make partial writes and overlapping spills explicit. A
 // frame address needs all eight ordered bytes before it can name a stack slot.
 struct ByteFact {
-  enum Kind { Unknown, Entry, Frame } TheKind = Unknown;
+  enum Kind { Unknown, Entry, Frame, FrameOrExternal } TheKind = Unknown;
   int64_t Value = 0;
   unsigned Index = 0;
   bool MayBeFrame = false;
+  size_t FrameBytes = 0;
   bool operator==(const ByteFact &) const = default;
 };
 using RegisterFacts = std::map<uint64_t, ByteFact>;
@@ -220,13 +219,15 @@ public:
                     bool TerminalOnly = false,
                     std::set<int64_t> IncomingStackSlots = {},
                     bool RequirePrivateFrame = false,
-                    bool ExternalMemoryDisjoint = false)
+                    bool ExternalMemoryDisjoint = false,
+                    const SourceFunctionTypeHint *EntrySignature = nullptr)
       : Architecture(Architecture), Calls(Calls),
         TRI(getTargetRegInfo(Architecture)), TerminalOnly(TerminalOnly),
         TrackStackArguments(TerminalOnly),
         IncomingStackSlots(std::move(IncomingStackSlots)),
         RequirePrivateFrame(RequirePrivateFrame),
-        ExternalMemoryDisjoint(ExternalMemoryDisjoint) {
+        ExternalMemoryDisjoint(ExternalMemoryDisjoint),
+        EntrySignature(EntrySignature) {
     if (Architecture == Arch::AArch64)
       for (const auto &[Site, Contract] : Calls)
         if (Contract.Signature)
@@ -274,6 +275,22 @@ public:
         return std::nullopt;
       for (unsigned I = 0; I < 8; ++I)
         if (Read(Value, I) != ByteFact{ByteFact::Frame, First.Value, I, true})
+          return std::nullopt;
+      return First.Value;
+    };
+    auto BorrowedFrame = [&](const NdVar &Value,
+                             size_t Bytes) -> std::optional<int64_t> {
+      if (const auto Exact = FrameOffset(Value))
+        return Exact;
+      if (Value.Size != 8)
+        return std::nullopt;
+      const auto First = Read(Value, 0);
+      if (First.TheKind != ByteFact::FrameOrExternal || !First.FrameBytes ||
+          Bytes > First.FrameBytes)
+        return std::nullopt;
+      for (unsigned I = 0; I < 8; ++I)
+        if (Read(Value, I) != ByteFact{ByteFact::FrameOrExternal, First.Value,
+                                       I, true, First.FrameBytes})
           return std::nullopt;
       return First.Value;
     };
@@ -425,6 +442,7 @@ public:
           return false;
         }
         std::vector<std::pair<int64_t, size_t>> WritableFrameRanges;
+        std::optional<int64_t> ReturnedFrame;
         // Inspect the same validated physical members used by call lowering.
         // A record has no single carrier; checking only its primary location
         // would reject valid records or miss a frame address in a later member.
@@ -508,13 +526,18 @@ public:
                     : Writable->second;
             if (!BorrowedBytes || BorrowedBytes > MaxFrame)
               return false;
-            const auto Address = FrameOffset(
-                NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
+            const auto Address = BorrowedFrame(
+                NdVar::reg(Location.RegisterOffset, Location.ValueBytes),
+                BorrowedBytes);
             if (!Address || *Address < *SP ||
                 *Address > -static_cast<int64_t>(BorrowedBytes))
               return false;
             if (Writable != Found->second.WritableFrameParameters.end())
               WritableFrameRanges.emplace_back(*Address, BorrowedBytes);
+            if (Found->second.ReturnFrameOrExternal &&
+                Found->second.ReturnFrameOrExternal->Parameter ==
+                    ParameterIndex)
+              ReturnedFrame = *Address;
           }
           if (UsedEntryRegisters &&
               Location.Kind == SourceABICarrierKind::IntegerRegister &&
@@ -559,12 +582,36 @@ public:
           std::erase_if(WrittenStack, [&](int64_t Byte) { return Byte < *SP; });
           Temps.clear();
         }
+        if (ReturnedFrame) {
+          const auto &Alias = *Found->second.ReturnFrameOrExternal;
+          const auto &Location = Signature.ReturnLocation;
+          for (unsigned I = 0; I < 8; ++I)
+            put(Current.Registers, Location.RegisterOffset + I,
+                {ByteFact::FrameOrExternal, *ReturnedFrame, I, true,
+                 Alias.Bytes});
+        }
         continue;
       }
       if (Op.Opcode == NdOp::RETURN) {
         if (Index + 1 != Block.Ops.size() || !Block.Succs.empty() ||
             (CheckExits && !IsRestored()))
           return false;
+        if (CheckExits && EntrySignature) {
+          const auto Escapes = [&](const SourceABIValueLocation &Location) {
+            if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
+                Location.Kind != SourceABICarrierKind::FloatingRegister)
+              return false;
+            for (unsigned I = 0; I < Location.ValueBytes; ++I)
+              if (lookup(Current.Registers, Location.RegisterOffset + I)
+                      .MayBeFrame)
+                return true;
+            return false;
+          };
+          if (Escapes(EntrySignature->ReturnLocation) ||
+              std::any_of(EntrySignature->ReturnComponents.begin(),
+                          EntrySignature->ReturnComponents.end(), Escapes))
+            return false;
+        }
         const bool TailReturn =
             Index && Block.Ops[Index - 1].Addr == Op.Addr &&
             (Block.Ops[Index - 1].Opcode == NdOp::CALL ||
@@ -761,6 +808,7 @@ private:
   std::set<int64_t> IncomingStackSlots;
   bool RequirePrivateFrame;
   bool ExternalMemoryDisjoint;
+  const SourceFunctionTypeHint *EntrySignature;
 };
 } // namespace
 
@@ -777,8 +825,7 @@ static bool restoresNativeSourceStateImpl(
   for (const auto &[Site, Contract] : Calls) {
     if (const auto *Copy = Contract.RegisterCopy) {
       if (Architecture != Arch::AArch64 || Contract.Signature ||
-          Contract.terminates() || !Contract.ReadOnlyFrameParameters.empty() ||
-          !Contract.WritableFrameParameters.empty() ||
+          Contract.terminates() || !Contract.empty() ||
           Copy->Caller != Function.Entry || Copy->Site != Site ||
           (Copy->Registers.empty() && !Copy->isReturnOnly()) ||
           Copy->Registers.size() > 16)
@@ -824,7 +871,8 @@ static bool restoresNativeSourceStateImpl(
         !Signature || Signature->Architecture != Architecture ||
         Signature->ReturnLocation.Kind ==
             SourceABICarrierKind::IndirectResultPointer ||
-        !validateSourceABI(*Signature, Error))
+        !validateSourceABI(*Signature, Error) ||
+        !sourceFrameEffectsMatchABI(Contract, *Signature))
       return false;
   }
   std::map<int, size_t> Blocks;
@@ -872,7 +920,7 @@ static bool restoresNativeSourceStateImpl(
   }
   PreservationProof Proof(Architecture, Calls, false,
                           std::move(IncomingStackSlots), RequirePrivateFrame,
-                          ExternalMemoryDisjoint);
+                          ExternalMemoryDisjoint, EntrySignature);
   std::vector<std::set<size_t>> Preds(Count), Succs(Count);
   for (size_t I = 0; I < Count; ++I)
     for (int Id : Function.Blocks[I].Succs) {
@@ -1004,7 +1052,7 @@ bool observesTerminalNativeSourceState(const LowFunc &Function,
     return false;
   unsigned TerminatingCalls = 0;
   for (const auto &[Site, Contract] : Calls) {
-    if (Contract.RegisterCopy)
+    if (Contract.RegisterCopy || !Contract.empty())
       return false;
     const auto *Signature = Contract.Signature;
     std::string Error;
@@ -1065,7 +1113,7 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
       return false;
     const auto *Signature = Contract.Signature;
     std::string Error;
-    if (Contract.terminates() || !Signature ||
+    if (Contract.terminates() || !Contract.empty() || !Signature ||
         Signature->Architecture != Architecture ||
         Signature->ReturnLocation.Kind ==
             SourceABICarrierKind::IndirectResultPointer ||

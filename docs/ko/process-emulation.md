@@ -6,7 +6,7 @@
 
 `neverd emulate`는 명시적 게스트 OS 프로필로 이미지를 실행합니다. CPU 전송, 이미지 파싱, 프로세스 진입, OS 서비스는 각각 별도 소유 경계입니다. `NEVERD_ENABLE_CPU_EMULATION=ON`으로 활성화합니다. 드라이버 에뮬레이션에도 포함됩니다.
 
-첫 프로필 `linux-elf64-v1`은 CPL3 또는 EL0에서 x64/AArch64 ELF `ET_EXEC`와 자체 재배치 static PIE `ET_DYN`을 실행합니다. 실제 ELF 세그먼트를 적재하고 초기 스택을 만들며 명령 quantum으로 재개하고 명시적 Linux 시스템 호출 요청을 처리합니다. 이는 완전한 Linux 배포판이나 임의 libc 바이너리 실행을 보장하지 않는 독립 프로세스 모델입니다. 동적 링크, 시그널, 스레드, 파일 시스템, 미지원 서비스는 명시적으로 실패합니다. x64 프로필은 제한된 SSE/SSE2 형식을 일부 허용하고 AArch64는 integer-only입니다. Windows, Android, Darwin 및 기타 커널 작업은 별도입니다.
+첫 프로필 `linux-elf64-v1`은 CPL3 또는 EL0에서 x64/AArch64 ELF `ET_EXEC`와 자체 재배치 static PIE `ET_DYN`을 실행합니다. 실제 ELF 세그먼트를 적재하고 초기 스택을 만들며 명령 quantum으로 재개하고 명시적 Linux 시스템 호출 요청을 처리합니다. 이는 완전한 Linux 배포판이나 임의 libc 바이너리 실행을 보장하지 않는 독립 프로세스 모델입니다. 동적 링크, 시그널, 스레드, 파일 시스템, 미지원 서비스는 명시적으로 실패합니다.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,31 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 길이는 페이지 단위로 올림합니다. `munmap`은 빈 영역과 반복 해제를 허용하며, `mprotect`는 빈 영역 앞의 매핑을 변경한 후 `ENOMEM`을 반환합니다. `PROT_NONE`은 할당과 바이트를 보존하면서 게스트 접근을 거부합니다. 원시 `brk`는 성공 시 요청한 바이트 경계, 실패 시 이전 경계를 반환하며 libc의 0/-1 규약을 사용하지 않습니다. 초기 break는 페이지 정렬된 이미지 끝입니다. 확장은 다른 매핑과 예산을 준수하며 축소는 남은 부분 페이지의 바이트를 보존합니다. 지원 범위의 규칙과 오류 우선순위는 Linux [매핑](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) 및 [보호](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)를 따릅니다.
 
 파일/공유/고정 매핑, 아래 방향 확장, 대형 페이지, 메모리 잠금, 보호 키, 실행 전용/쓰기 전용 정책 및 다른 플래그는 명시적으로 지원하지 않습니다. 효과를 게시하거나 반환값을 만들기 전에 중단합니다. 지원 범위 안의 일반 범위/길이/정렬 오류는 게스트 오류를 반환하고 실행을 계속합니다. 게스트 포인터나 매핑 요청을 호스트 OS에 전달하지 않습니다.
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Windows PE64 프로필
+
+`windows-pe64-v1`은 제한된 Windows x64/ARM64 콘솔 프로세스를 추가합니다. PE 로딩, PEB/TEB, 정적·동적 TLS, 시작·종료 콜백과 이름 기반 Win32 API 모델을 제공합니다. 드라이버 에뮬레이션 없이 CPU 계층을 사용합니다. DLL/CRT 로딩, GUI, 사용자 모드 SEH, 스레드와 일반 Windows 호환성은 아직 미완성입니다.
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+버전이 지정된 단일 스레드 모델은 AMD64/ARM64 PE32+ 콘솔 EXE를 선호 기준 주소에 로드합니다. 원본 파일과 로더 정보를 확인하고 사용자 페이지 권한과 미매핑 스택 보호 간격을 유지합니다. 알 수 없는/서수/bound/delay import, load configuration/CFG, 관리형 이미지, GUI, DLL 진입점은 거부합니다. 재배치 레코드는 검증하지만 리베이스하지 않습니다. API 모델은 설치된 시스템 DLL이 아니며 로더 목록에는 EXE만 있고 `GetModuleHandleW`는 NULL만 받습니다.
+
+x64 GS와 ARM64 x18은 TEB를 가리키며 스택 경계, self, PID/TID, PEB, 프로세스 매개변수, LastError와 TLS를 제공합니다. UTF-8을 엄격히 UTF-16으로 변환하고 argv는 Microsoft CRT 규칙으로 인용합니다. 환경 이름은 ASCII이며 대소문자 무시 중복을 거부합니다. 값은 Unicode가 가능하며 정렬된 환경은 이중 NUL로 끝납니다. 호스트 환경과 파일 시스템은 상속하지 않습니다. 정적 TLS는 템플릿/BSS/32비트 인덱스를 초기화하고 동적 TLS는 별도 TEB 슬롯을 사용합니다. 시작·종료는 변경된 콜백 배열을 순서대로 읽으며 기한과 예산을 공유합니다. 진입점 반환과 정상 종료 모두 종료 콜백을 실행하고 종료 중 재귀 종료는 명시적으로 중단합니다.
+
+정확한 API는 `WindowsProcessServices.def`에 있습니다. `ExitProcess`, `RtlExitUserProcess`, 표준 출력 핸들과 동기 `WriteFile`, LastError, 프로세스/스레드 ID와 의사 핸들, `GetCommandLineW`, 힙 할당/해제/크기, 동적 TLS, NULL `GetModuleHandleW`를 지원합니다. `kernel32.dll`, `kernelbase.dll`, `ntdll.dll`의 정확한 이름만 해석합니다. 직접 syscall과 위조 콜백 게이트는 API를 선택하지 못합니다. 힙 소유권과 회수, 이진 출력, API 오류와 미지원 비동기 I/O·사용자 예외를 구분합니다. 포인터 별칭도 완료 수 초기 0과 실제 반환 주소 변경을 반영합니다.
+
+`windows.native_calls`는 모듈/함수명, 선언된 스칼라 인수, nullable 결과를 기록하며 NT syscall 번호를 만들지 않습니다. `NeverDWindowsProcessTests`는 실제 PE, 컴파일러 TLS, 콜백 변경, 힙, 별칭, 잘못된 메타데이터, 권한과 예산을 검증합니다. `NeverDProcessPublicTests`는 CLI/C ABI를 검증합니다. Windows CI는 같은 EXE를 직접 실행해 독립 비교하고 WHP 검사도 필수입니다. 네이티브 ARM64 실행 증거에는 해당 머신이 필요합니다.
+
+비어 있지 않은 입력 버퍼를 읽을 수 없으면 `WriteFile`은 `ERROR_INVALID_USER_BUFFER`(1784)를 반환하고, 기록한 바이트 수를 0으로 설정하며 아무 바이트도 출력하지 않습니다.
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

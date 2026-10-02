@@ -56,6 +56,7 @@ add_neverd_component_library(NeverDLoader
   MachO/DarwinRuntimeCalls.cpp
   MachO/DarwinSourceDeclarations.cpp
   MachO/CFunctionParameterCalls.cpp
+  MachO/ImmutableNativeCalls.cpp
   MachO/RuntimeFunctionAddress.cpp
   MachO/MachOChainedFixups.cpp
   MachO/MachOARM32Mode.cpp
@@ -95,6 +96,7 @@ add_neverd_component_library(NeverDLoader
   Swift/SwiftABI.cpp
   Swift/SwiftRuntimeSource.cpp
   Swift/SwiftRuntimeCalls.cpp
+  Swift/SwiftValueBufferEffects.cpp
   Swift/SwiftStringCalls.cpp
   Swift/SwiftValueWitnessCalls.cpp
   Swift/SwiftVirtualCalls.cpp

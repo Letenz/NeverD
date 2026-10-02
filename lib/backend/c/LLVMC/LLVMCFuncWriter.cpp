@@ -56,6 +56,17 @@ namespace neverd {
 
 namespace {
 
+std::string byteArrayAlignment(const llvm::AllocaInst &Alloca) {
+  const auto *Array =
+      llvm::dyn_cast<llvm::ArrayType>(Alloca.getAllocatedType());
+  // Byte backing storage has no natural alignment beyond one. Preserve its
+  // LLVM alignment for typed accesses and observable address-bit operations.
+  if (!Array || !Array->getElementType()->isIntegerTy(8) ||
+      Alloca.getAlign().value() == 1)
+    return {};
+  return "_Alignas(" + std::to_string(Alloca.getAlign().value()) + ") ";
+}
+
 bool isLifetimeOrDbgUser(const llvm::User *U) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(U))
     return true;
@@ -8159,8 +8170,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         emitIndent(1);
         auto *AllocTy = AI->getAllocatedType();
         if (auto *ArrTy = llvm::dyn_cast<llvm::ArrayType>(AllocTy)) {
-          OS << typeToCLLVM(ArrTy->getElementType()) << " " << AllocName << "["
-             << ArrTy->getNumElements() << "];\n";
+          OS << byteArrayAlignment(*AI) << typeToCLLVM(ArrTy->getElementType())
+             << " " << AllocName << "[" << ArrTy->getNumElements() << "];\n";
         } else {
           if (auto It = AllocaTypes.find(AI);
               It != AllocaTypes.end() && It->second &&
@@ -9192,8 +9203,9 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
         if (const auto *Array =
                 llvm::dyn_cast<llvm::ArrayType>(AI->getAllocatedType()))
           ArrayDeclarations[It->second] =
-              typeToCLLVM(Array->getElementType()) + " " + It->second + "[" +
-              std::to_string(Array->getNumElements()) + "];";
+              byteArrayAlignment(*AI) + typeToCLLVM(Array->getElementType()) +
+              " " + It->second + "[" + std::to_string(Array->getNumElements()) +
+              "];";
       if (DeclaredNames.count(It->second))
         continue;
       const std::optional<size_t> FirstUse =
@@ -9204,7 +9216,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
       if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&Inst)) {
         llvm::Type *Allocated = AI->getAllocatedType();
         if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Allocated)) {
-          Declaration = "    " + typeToCLLVM(Array->getElementType()) + " " +
+          Declaration = "    " + byteArrayAlignment(*AI) +
+                        typeToCLLVM(Array->getElementType()) + " " +
                         It->second + "[" +
                         std::to_string(Array->getNumElements()) + "];\n";
         } else {

@@ -6,7 +6,7 @@
 
 `neverd emulate` führt ein Image unter einem expliziten Gastbetriebssystemprofil aus. CPU-Transport, Image-Parsing, Prozesseinstieg und OS-Dienste haben getrennte Zuständigkeiten. `NEVERD_ENABLE_CPU_EMULATION=ON` aktiviert die Funktion; Treiberemulation schließt sie ebenfalls ein.
 
-Das erste Profil `linux-elf64-v1` führt x64-/AArch64-ELF-`ET_EXEC` sowie selbstrelokierende statische PIE-`ET_DYN` auf CPL3 beziehungsweise EL0 aus. Es lädt echte ELF-Segmente, erstellt den initialen Stack, setzt die Ausführung in begrenzten Quanten fort und verarbeitet explizite Linux-Systemaufrufe. Dies ist ein freistehendes Prozessmodell, keine vollständige Linux-Distribution und keine Zusage für beliebige libc-Binaries. Dynamisches Linken, Signale, Threads, Dateisysteme und nicht unterstützte Dienste schlagen ausdrücklich fehl. Der begrenzte x64-Umfang enthält einige SSE/SSE2-Formen; AArch64 bleibt ein Integer-Profil. Windows-, Android-, Darwin- und andere Kernel-Workloads sind separat.
+Das erste Profil `linux-elf64-v1` führt x64-/AArch64-ELF-`ET_EXEC` sowie selbstrelokierende statische PIE-`ET_DYN` auf CPL3 beziehungsweise EL0 aus. Es lädt echte ELF-Segmente, erstellt den initialen Stack, setzt die Ausführung in begrenzten Quanten fort und verarbeitet explizite Linux-Systemaufrufe. Dies ist ein freistehendes Prozessmodell, keine vollständige Linux-Distribution und keine Zusage für beliebige libc-Binaries. Dynamisches Linken, Signale, Threads, Dateisysteme und nicht unterstützte Dienste schlagen ausdrücklich fehl.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,31 @@ Anonyme Speicherdienste nutzen denselben Prozessadressraum und dasselbe physisch
 Längen werden auf Seiten aufgerundet. `munmap` toleriert Lücken und wiederholtes Entfernen; `mprotect` ändert das gemappte Präfix und liefert an einer Lücke `ENOMEM`. `PROT_NONE` erhält Allokation und Bytes, verweigert aber Gastzugriffe. Der rohe `brk`-Aufruf liefert bei Erfolg die angeforderte Bytegrenze, sonst die alte Grenze, nicht die Null/Minus-eins-Konvention des libc-Wrappers. Die anfängliche Grenze ist das seitenausgerichtete Image-Ende. Wachstum berücksichtigt andere Mappings und das Budget; Schrumpfen erhält Bytes der verbleibenden Teilseite. Regeln und Fehlerpriorität folgen den Linux-Diensten für [Mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) und [Schutz](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seiten, Speichersperren, Schutzschlüssel, reine Ausführungs-/Schreibrechte und weitere Flags sind ausdrücklich nicht unterstützt. Sie stoppen vor veröffentlichten Effekten oder erfundenen Rückgabewerten. Normale Bereichs-, Längen- und Ausrichtungsfehler innerhalb der unterstützten Teilmenge liefern Gastfehler und erlauben die Fortsetzung. Kein Gastzeiger oder Mapping-Auftrag wird an das Host-OS weitergereicht.
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Windows-PE64-Profil
+
+`windows-pe64-v1` ergänzt begrenzte Windows-Konsolenprozesse für x64/ARM64: PE-Laden, PEB/TEB, statisches und dynamisches TLS, Start-/Ende-Callbacks und benannte Win32-API-Modelle. Es nutzt die CPU-Schicht ohne Treiberemulation; DLL-/CRT-Laden, GUI, Benutzer-SEH, Threads und allgemeine Windows-Kompatibilität bleiben unvollständig.
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+Das versionierte Einthreadmodell lädt AMD64-/ARM64-PE32+-Konsolen-EXEs an ihrer bevorzugten Basis. Originalbytes und Loader-Fakten werden geprüft; Benutzerrechte und ungemappte Stack-Schutzbereiche bleiben erhalten. Unbekannte, ordinale, gebundene oder verzögerte Imports, Load-Config/CFG, verwaltete Images, GUI und DLL-Einstiege werden abgelehnt. Relokationen werden geprüft, aber kein Rebasing durchgeführt. API-Modelle sind keine installierten System-DLLs: Loader-Listen enthalten nur das EXE; `GetModuleHandleW` akzeptiert nur NULL.
+
+x64 GS und ARM64 x18 zeigen auf den TEB mit Stack-Grenzen, Selbstzeiger, PID/TID, PEB, Prozessparametern, LastError und TLS. Striktes UTF-8 wird zu UTF-16; argv wird nach Microsoft-CRT-Regeln zitiert. Umgebungsnamen sind ASCII; Duplikate ohne Beachtung der Großschreibung werden abgelehnt. Werte dürfen Unicode enthalten; der sortierte Block endet doppelt mit NUL. Hostumgebung und Dateisystem werden nicht übernommen. Statisches TLS kopiert Vorlage und Null-BSS und setzt einen 32-Bit-Index; dynamisches TLS verwendet eigene TEB-Slots. Attach/Detach liest die jeweils aktuellen Callback-Einträge in Reihenfolge bei gemeinsamem Zeit- und Ressourcenbudget. Eintrittsreturn und normales Beenden führen Detach aus; rekursives Beenden dabei stoppt explizit.
+
+`WindowsProcessServices.def` definiert `ExitProcess`, `RtlExitUserProcess`, Ausgabehandles und synchrones `WriteFile`, LastError, Prozess-/Thread-IDs und Pseudohandles, `GetCommandLineW`, Heap-Allokation/Freigabe/Größe, dynamisches TLS und NULL `GetModuleHandleW`. Aufgelöst werden exakte Namen aus `kernel32.dll`, `kernelbase.dll` und `ntdll.dll`. Direkte Syscalls und gefälschte Callback-Gates wählen keine Modelle. Heap-Speicher gehört dem Prozess und wird freigegeben; Ausgabe bleibt binär. Win32-Fehler sind von nicht unterstützter asynchroner E/A und Benutzerexception-Verarbeitung getrennt. Aliase berücksichtigen das anfängliche Nullsetzen des Ausgabezählers und den tatsächlichen Rückkehrslot.
+
+`windows.native_calls` bewahrt Modul/Funktion, deklarierte skalare Argumente und nullable Ergebnisse ohne erfundene NT-Nummern. `NeverDWindowsProcessTests` prüft echte PE-Dateien, Compiler-TLS, Callback-Änderungen, Heap, Aliase, fehlerhafte Metadaten, Privilegien und Budgets; `NeverDProcessPublicTests` prüft CLI/C ABI. Windows-CI führt dasselbe EXE als unabhängiges Orakel aus und verlangt WHP-Tests. Native ARM64-Laufzeitnachweise benötigen weiterhin passende Hardware.
+
+Bei einem nicht leeren, nicht lesbaren Eingabepuffer liefert `WriteFile` den Fehler `ERROR_INVALID_USER_BUFFER` (1784), setzt die Anzahl geschriebener Bytes auf null und gibt keine Bytes aus.
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

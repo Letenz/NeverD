@@ -65,6 +65,17 @@ namespace memory_fixture {
 #undef NEVERD_LINUX_MEMORY_TEXT
 } // namespace memory_fixture
 
+namespace windows_fixture {
+#define NEVERD_WINDOWS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "WindowsProcessTestData.def"
+#undef NEVERD_WINDOWS_TEST_TEXT
+#define NEVERD_WINDOWS_FIXTURE_VALUE(Name, Value)                              \
+  constexpr uint64_t Name = Value;
+#define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/WindowsProcessCases.def"
+#undef NEVERD_WINDOWS_FIXTURE_TEXT
+#undef NEVERD_WINDOWS_FIXTURE_VALUE
+} // namespace windows_fixture
 std::string takeString(const char *Value) {
   if (!Value)
     return {};
@@ -138,6 +149,53 @@ TEST_F(ProcessPublic, ReturnsOutputAndGuestStatusWithoutLoadingAnalysisImage) {
   run(options(Normal));
   EXPECT_EQ(neverd_session_is_loaded(Session), 1);
   EXPECT_EQ(takeString(neverd_segments_json(Session)), Before);
+}
+
+TEST_F(ProcessPublic, WindowsPE64RunsThroughSDKAndCLIWithoutAnalysisState) {
+#ifndef NEVERD_WINDOWS_PROCESS_FIXTURE_DIR
+  GTEST_SKIP() << windows_fixture::MissingTools;
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto *File :
+       {windows_fixture::X64File, windows_fixture::AArch64File}) {
+    SCOPED_TRACE(File);
+    Path = (std::filesystem::path(NEVERD_WINDOWS_PROCESS_FIXTURE_DIR) / File)
+               .string();
+    llvm::json::Object Request;
+    Request[field::Backend] = emulation::execution::Unicorn;
+    Request[field::Arguments] =
+        llvm::json::Array{windows_fixture::Executable, windows_fixture::Normal};
+    auto Options = jsonText(std::move(Request));
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), WindowsPE64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Result = llvm::cantFail(llvm::json::parse(Text));
+    EXPECT_EQ(Result.getAsObject()->getInteger(field::ExitStatus),
+              windows_fixture::ExitStatus);
+    EXPECT_EQ(Result.getAsObject()->getString(field::Stdout),
+              llvm::toHex(std::string(windows_fixture::Message) +
+                              windows_fixture::Detached,
+                          true));
+    ASSERT_NE(Result.getAsObject()->getObject(field::Windows), nullptr);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
+                         process_cli::Command + " " + test::shellQuote(Path) +
+                         " --" + process_cli::ProfileOption + "=" +
+                         WindowsPE64 + " --" + process_cli::OptionsOption +
+                         "=" + test::shellQuote(Options) +
+                         test::redirectStdout(Output) + test::silenceStderr();
+    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+              process_cli::GuestFailure);
+    auto Buffer = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(bool(Buffer));
+    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
+              Result);
+  }
+#endif
 }
 
 TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {

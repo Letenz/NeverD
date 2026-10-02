@@ -73,6 +73,88 @@ void compileAndRun(const std::string &Source,
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
 }
 
+TEST(LLVMCValues, CompoundComparisonsPreserveConstantsAndPolarity) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("compound-comparisons", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word, Word}, false);
+  std::string Main = R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, 3, 5, 7, UINT64_MAX, UINT64_MAX / 2,
+                            UINT64_MAX / 2 + 1};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    for (unsigned j = 0; j < sizeof(values) / sizeof(values[0]); ++j) {
+      uint64_t x = values[i], y = values[j];
+)";
+  for (unsigned Mode = 0; Mode != 6; ++Mode)
+    for (unsigned Negated = 0; Negated != 4; ++Negated) {
+      const std::string Name =
+          "compare_" + std::to_string(Mode) + "_" + std::to_string(Negated);
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+      auto *Yes = llvm::BasicBlock::Create(Context, "yes", Function);
+      auto *No = llvm::BasicBlock::Create(Context, "no", Function);
+      llvm::IRBuilder<llvm::NoFolder> B(Entry);
+      llvm::Value *X = Function->getArg(0), *Y = Function->getArg(1);
+      llvm::Value *Left = nullptr, *Right = nullptr;
+      std::string LeftText, RightText;
+      if (Mode == 0) {
+        Left = B.CreateICmpEQ(X, B.getInt64(5));
+        Right = B.CreateICmpEQ(B.CreateAnd(Y, B.getInt64(3)), B.getInt64(0));
+        LeftText = "x == 5";
+        RightText = "(y & 3) == 0";
+      } else if (Mode == 1) {
+        Left = B.CreateICmpULT(X, Y);
+        Right = B.CreateICmpEQ(B.CreateSub(X, Y), B.getInt64(0));
+        LeftText = "x < y";
+        RightText = "x == y";
+      } else if (Mode < 4) {
+        Left = Mode == 2 ? B.CreateICmpSLT(X, B.getInt64(0))
+                         : B.CreateICmpSLT(B.getInt64(0), X);
+        Right = B.CreateICmpEQ(X, B.getInt64(0));
+        LeftText = Mode == 2 ? "(x >> 63) != 0" : "(x >> 63) == 0 && x != 0";
+        RightText = "x == 0";
+      } else {
+        auto *P = B.CreateICmpEQ(X, B.getInt64(0));
+        auto *Q = B.CreateICmpEQ(Y, B.getInt64(0));
+        auto *Flag = Mode == 4 ? B.CreateAnd(P, Q) : B.CreateXor(P, Q);
+        auto *Wide = B.CreateZExt(Flag, Word);
+        Left = B.CreateICmpSLT(Wide, B.getInt64(0));
+        Right = B.CreateICmpEQ(Wide, B.getInt64(0));
+        LeftText = "0"; // The widened Boolean is always nonnegative.
+        RightText =
+            Mode == 4 ? "!((x == 0) && (y == 0))" : "!((x == 0) != (y == 0))";
+      }
+      if (Negated & 1) {
+        Left = B.CreateICmpEQ(Left, B.getFalse());
+        LeftText = "!(" + LeftText + ")";
+      }
+      if (Negated & 2) {
+        Right = B.CreateICmpEQ(Right, B.getFalse());
+        RightText = "!(" + RightText + ")";
+      }
+      B.CreateCondBr(Mode >= 2 ? B.CreateOr(Left, Right)
+                               : B.CreateAnd(Left, Right),
+                     Yes, No);
+      B.SetInsertPoint(Yes);
+      B.CreateRet(B.getInt64(7));
+      B.SetInsertPoint(No);
+      B.CreateRet(B.getInt64(11));
+      Main += "if (" + Name + "(x, y) != ((" + LeftText + ")" +
+              (Mode >= 2 ? " || " : " && ") + "(" + RightText +
+              ") ? 7 : 11)) return " + std::to_string(Mode * 4 + Negated + 1) +
+              ";\n";
+    }
+  Main += "} return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
 TEST(LLVMCValues, EscapedByteStringsPreserveAdjacentDigitsWhenExecuted) {
   std::string Bytes;
   for (unsigned Byte = 0; Byte < 256; ++Byte)
@@ -257,6 +339,174 @@ TEST(LLVMCValues, SelfStoredAddressPreventsLocalLoadForwarding) {
   for (const char *Optimization : {"-O0", "-O2"})
     compileAndRun(Source + "\nint main(void) { return self_alias() != 0; }\n",
                   Optimization);
+}
+
+TEST(LLVMCValues, IntegerAddressStoresPreservePointerBits) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-address-stores", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word, Pointer}, false);
+  std::string Main = R"(
+int main(void) {
+  _Alignas(8) uint32_t slot32;
+  uint64_t slot64;
+  const uint64_t values[] = {0, 1, UINT64_C(0x123456789abcdef0), UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+)";
+  for (unsigned Width : {32u, 64u}) {
+    auto *Integer = llvm::Type::getIntNTy(Context, Width);
+    for (unsigned Alignment : {1u, 8u}) {
+      const std::string Name = "address_store_" + std::to_string(Width) + "_" +
+                               std::to_string(Alignment);
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+      llvm::IRBuilder<llvm::NoFolder> B(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 64));
+      Frame->setAlignment(llvm::Align(16));
+      auto *Data = B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(32));
+      // The aligned destination remains external, so it tests the raw typed
+      // store path rather than the byte-backing memcpy path.
+      llvm::Value *Slot =
+          Alignment == 8 ? static_cast<llvm::Value *>(Function->getArg(1))
+                         : B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(3));
+      B.CreateStore(Function->getArg(0), Data)->setAlignment(llvm::Align(8));
+      auto *Address = B.CreatePtrToInt(Data, Integer);
+      B.CreateStore(Address, Slot)->setAlignment(llvm::Align(Alignment));
+      auto *Bits = B.CreateLoad(Integer, Slot);
+      Bits->setAlignment(llvm::Align(Alignment));
+      if (Width == 64) {
+        auto *Value = B.CreateLoad(Word, B.CreateIntToPtr(Bits, Pointer));
+        Value->setAlignment(llvm::Align(8));
+        B.CreateRet(Value);
+      } else {
+        B.CreateRet(B.CreateSelect(B.CreateICmpEQ(Bits, Address),
+                                   Function->getArg(0),
+                                   B.CreateNot(Function->getArg(0))));
+      }
+      Main += "if (" + Name + "(values[i], &slot" + std::to_string(Width) +
+              ") != values[i]) return 1;\n";
+    }
+  }
+  Main += "} return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
+TEST(LLVMCValues, ByteBackingArraysRetainExplicitAlignment) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("aligned-byte-backing", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {}, false);
+  std::string Main = "int main(void) {\n";
+  for (unsigned Alignment : {16u, 64u, 4096u}) {
+    const std::string Name = "aligned_bytes_" + std::to_string(Alignment);
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    llvm::IRBuilder<llvm::NoFolder> B(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 33));
+    Frame->setAlignment(llvm::Align(Alignment));
+    B.CreateRet(
+        B.CreateAnd(B.CreatePtrToInt(Frame, Word), B.getInt64(Alignment - 1)));
+    Main += "if (" + Name + "() != 0) return 1;\n";
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
+TEST(LLVMCValues, WideIntegerAddressStoresRetainExtendedBits) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("wide-integer-address-stores", Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Signature = llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                            {Pointer, Pointer}, false);
+  for (unsigned Alignment : {1u, 16u}) {
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage,
+        "wide_address_" + std::to_string(Alignment), Module);
+    llvm::IRBuilder<llvm::NoFolder> B(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Low = B.CreatePtrToInt(Function->getArg(0), B.getInt32Ty());
+    auto *Extended = B.CreateSExt(Low, B.getInt128Ty());
+    B.CreateStore(Extended, Function->getArg(1))
+        ->setAlignment(llvm::Align(Alignment));
+    B.CreateRetVoid();
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+int main(void) {
+  const uintptr_t values[] = {0, 1, UINT32_C(0x7fffffff),
+                              UINT32_C(0x80000000), UINT32_MAX};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    _Alignas(16) __uint128_t aligned = 0;
+    unsigned char storage[17];
+    __uint128_t copied = 0;
+    wide_address_16((void *)values[i], &aligned);
+    wide_address_1((void *)values[i], storage + 1);
+    __builtin_memcpy(&copied, storage + 1, sizeof(copied));
+    const uint64_t high = values[i] & UINT32_C(0x80000000) ? UINT64_MAX : 0;
+    const uint64_t low = high ? (uint64_t)values[i] | UINT64_C(0xffffffff00000000)
+                              : (uint64_t)values[i];
+    if ((uint64_t)(aligned >> 64) != high || (uint64_t)aligned != low) return 1;
+    if ((uint64_t)(copied >> 64) != high || (uint64_t)copied != low) return 2;
+  }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, ByteBackingArraysPreserveBaseAndPartialAccesses) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("byte-backing-accesses", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "byte_backing", Module);
+  llvm::IRBuilder<llvm::NoFolder> B(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 16));
+  Frame->setAlignment(llvm::Align(8));
+  B.CreateStore(Function->getArg(0), Frame)->setAlignment(llvm::Align(8));
+  auto *Before = B.CreateLoad(Word, Frame);
+  Before->setAlignment(llvm::Align(8));
+  auto *Byte = B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(3));
+  B.CreateStore(B.getInt8(0x5a), Byte)->setAlignment(llvm::Align(1));
+  auto *After = B.CreateLoad(Word, Frame);
+  After->setAlignment(llvm::Align(8));
+  B.CreateRet(B.CreateXor(Before, After));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+int main(void) {
+  for (unsigned byte = 0; byte < 256; ++byte) {
+    uint64_t input = UINT64_C(0x1234567800abcdef) | ((uint64_t)byte << 24);
+    uint64_t changed = input;
+    ((unsigned char *)&changed)[3] = 0x5a;
+    if (byte_backing(input) != (input ^ changed)) return 1;
+  }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
 }
 
 TEST(LLVMCValues, ScalarBitCountsNormalizeConstantsAndDynamicInputs) {

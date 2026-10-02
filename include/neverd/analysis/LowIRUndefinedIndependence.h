@@ -82,6 +82,11 @@ struct LowIRIndependenceContract {
   /// LowIR and loop proof/inference APIs reject this option. In selected-value
   /// refinement, unreachability is relative to the declared witness.
   bool RetainUnauditedNativeBoundaries = false;
+  /// Finite native proofs only. Different instruction entry addresses may
+  /// cover the same immutable bytes when every overlapping byte agrees.
+  /// Each entry still requires its own complete boundary and semantic
+  /// evidence. Static LowIR and inductive loop APIs reject this option.
+  bool AllowOverlappingNativeInstructions = false;
 };
 
 struct LowIRIndependenceLimits {
@@ -113,6 +118,11 @@ struct LowIRIndependenceLimits {
     Value.Sat.MaxWatchVisits = 10000000;
     return Value;
   }();
+  /// With overlapping native entries enabled, bounds the total instruction
+  /// byte evidence. Each newly fetched entry charges its full size, including
+  /// bytes shared with earlier entries. Immutable reads retain their separate
+  /// evidence budget. Exhaustion never authorizes a partial proof.
+  uint64_t MaxNativeInstructionBytes = 1048576;
 };
 
 enum class LowIRIndependenceStatus : uint8_t {

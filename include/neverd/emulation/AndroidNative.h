@@ -6,7 +6,8 @@
 #ifndef NEVERD_EMULATION_ANDROIDNATIVE_H
 #define NEVERD_EMULATION_ANDROIDNATIVE_H
 
-#include <array>
+#include "neverd/emulation/ProcessCall.h"
+
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -27,6 +28,7 @@ struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
 };
+
 struct NativeCallEvent {
   uint64_t PC;
   std::string Name;
@@ -36,6 +38,7 @@ struct NativeCallEvent {
   std::string Library;
   std::string Symbol;
 };
+
 /// Android 9 / API 28, little-endian AArch64, one native thread. Function
 /// arguments are AAPCS64 scalar register/stack values, not process argv.
 /// Explicit inputs never inherit host properties, files, or environment.

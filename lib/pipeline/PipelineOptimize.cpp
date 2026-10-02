@@ -27,6 +27,7 @@
 #include "neverd/pass/ir/obf/MBAPass.h"
 #include "neverd/pass/ir/obf/OpaquePredicatePass.h"
 #include "neverd/pass/ir/obf/ValueLaunderingPass.h"
+#include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 #include "neverd/pass/ir/simplify/ControlFlowRecoveryPass.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -497,6 +498,12 @@ runOptimizationPipeline(llvm::Module &Mod,
   }
   llvm::FunctionPassManager FramePromotion;
   FramePromotion.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+  if (!Options.Conservative) {
+    // Let ordinary promotion handle exact scalar homes before reconstructing
+    // the overlapping accesses that still remain in byte storage.
+    FramePromotion.addPass(ByteMemoryForwardingPass());
+    FramePromotion.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+  }
   // Forward memory-equivalent frame reloads before semantic measurement.
   // MemorySSA preserves intervening stores that may alias the same slot.
   if (!Options.Conservative)

@@ -117,6 +117,8 @@ SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界�
 
 明示的な `RetainUnauditedNativeBoundaries` オプションは、有限ネイティブ独立性証明とネイティブから LowIR への精緻化証明に拒否境界を追加します。厳密にデコード・リフトされ、カバレッジが `Missing`、効果が空で、空でない操作ダイジェストが一致する命令だけが対象です。構造、制御、重複、プロファイル、資源の検査はすべて維持されます。その境界の後続収集のみを止め、別の辺から後続バイトに入る場合は独立に収集します。実行可能な到達は実行前に拒否し、ソルバーの不明結果や予算切れを到達不能の証明にはしません。成功した証明書は正確な境界、ネイティブバイトと操作のダイジェストを含む型・バージョン付き記録に結び付き、`Missing` を `Complete` に変更しません。未収集の後続部分には監査の主張を行いません。独立性はすべての任意選択を対象とし、選択値の精緻化は宣言した証人に対する到達不能性だけを示します。静的 LowIR、ループ証明/推論、厳密 LLVM API ではこのオプションを有効にしません。
 
+`AllowOverlappingNativeInstructions` は、有限ネイティブ独立性証明とネイティブから LowIR への精緻化に使う、既定で無効の独立したオプションです。各入口を個別にデコードして検証し、重なる命令バイトは、候補側の読み取りを含む、それまでの全命令および不変読み取りの証拠と一致する必要があります。候補 LowIR のアドレスはラベルであり、バイトの証拠ではありません。`MaxNativeInstructionBytes` の既定値は 1048576 で、新しく取得した各入口の命令全体を、重複バイトも含めて比較前に計上します。予算の枯渇やバイトの矛盾があれば証明書を拒否します。オプションと上限は証明ダイジェストに含まれます。静的 LowIR、帰納的ループ証明および推論では、空のループ計画でもこのオプションを拒否します。厳密な LLVM API と CLI の既定動作は変わりません。
+
 ネイティブのパック済みフラグ証明には、オプションと契約の両方で `X64FlagsProfile = UserX64NoFaultV1` を指定します。既存の実行用 Boolean 設定からは有効化されません。正規化された共有入口フラグと永続システムフラグには、機械状態ソースラッパーと同じ PUSHFQ/POPFQ スカラー変換を使用し、CPL3/IOPL0 マスクも含めます。各 POPFQ で両実行の TF/AC がゼロであることを証明し、この条件を仮定して経路を制限しません。レジスタや書き込みフレームの観測を無効にしても、最終システムフラグは必ず比較します。証明書はプロファイルの版と正確な変換ダイジェストを束縛します。この明示的な CET 無効プロファイルでは、独立に検証した正規 RDSSPD/RDSSPQ バイト列を厳密な NOP に投影し、型付き証跡を記録できます。元の `Missing` メタデータは維持され、32 ビット宛先でもレジスタ全体を保持します。正規 INCSSPD/INCSSPQ はプロファイル依存の #UD 境界として保持し、元の到達不能命令の証跡を記録します。実行可能な訪問は、オペランドがゼロでも非障害契約に違反します。他の CET 命令、CET 有効実行、静的 LowIR API でのプロファイルは未対応です。有限ループの各訪問は状態を保持し、新しい未定義値を生成しますが、不変条件の証明ではありません。
 
 `checkLowIRRefinement` と `checkBinaryLowIRRefinement` は、決定的な LowIR 候補に対する独立した構成的精緻化を検証します。`LiftedBits` は未定義値の生成ごとに元のリフターが計算したビットを選び、`ZeroBits` は監査済みの条件が成立したビットだけをゼロにします。動的な生成箇所を記録し、コピーとスピルでも同じ選択を保持します。両プログラムは既存のスカラー、物理スタック、メモリ、フラグ実行器と入口スナップショットを共有します。すべての実行可能経路が終了し、許可された入口領域全体を覆い、RETURN オペランド、指定レジスタ、必須のネイティブシステムフラグ、両側の書き込み済みフレームバイトの和集合が一致し、入口保存契約も満たす必要があります。実行と関係検証は予算を共有し、`MaxTerminalPairs` も適用します。証明書は候補、原証拠、選択方針、制限を束縛します。選択の失敗は別の選択を排除しません。有限展開はループ不変条件、特定 CPU の一致、C バックエンドの等価性を証明せず、未定義状態の独立性検証を置き換えません。両 API は証明用メモリ一時領域と重なる入力一時値を拒否します。 バイナリ精緻化 API は、オプションと観測契約の両方で一致する `UserX64NoFaultV1` を要求します。
@@ -547,6 +549,8 @@ Capstone ライブラリは網羅しません。
 | `lib/support` | 共通のバイナリ読込み helper | Loader |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
 
+`lib/pass/ir/simplify` の `ByteMemoryForwardingPass` は、単一基本ブロック内で固定長バイト alloca の各バイトの最後の書き込みから完全な整数ロードを再構成します。対象は 8〜128 ビットのバイト単位幅とオブジェクト内の正確な定数 GEP で、ターゲットのバイト順を使います。呼び出し、不明な書き込み、順序付きメモリアクセスで記録を破棄します。既存の私有アドレス復元後、二つの SROA の間で実行し、元の store を保持します。命令走査、アドレス探索、追跡バイト、置換する使用箇所、追加 IR は有限予算で制限されます。既定ではスナップショットを追加しません。明示的な `AllowStoreSnapshots` は store の直前で一度だけ freeze し、書き込みと全断片で同じ値を共有します。この任意の LLVM 精化はネイティブ値の定義性や関数シグネチャを証明しません。
+
 公開ヘッダーは `include/neverd` 以下で各領域に対応します。内部 C++ クラスを
 誤って SDK の一部にしないでください。安定した外部操作は純粋 C ヘッダーと、
 責務を絞った `lib/sdk/NeverDCAPI*.cpp` のいずれかに置きます。
@@ -570,9 +574,9 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 
 CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
 
-`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
+`ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。
 
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 329 検査すべてに合格します。内訳は CPU 検査 101 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 359 検査すべてに合格します。内訳は CPU 検査 131 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 `DriverImage.def` は厳密な PE 検証のサイズ・アラインメント制限と診断文を宣言し、ポインター幅は `DriverProfile.def` が定義します。検証と再配置は `DriverImage.cpp` が担当し、受理するイメージとエラーメッセージは変わりません。
 
@@ -598,7 +602,9 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 `X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列されたメモリ変更形式に限られ、MMIO とハードウェア並列 SMP は未対応です。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
-`X64StringInstructions.def` は通常 RAM の 8/16/32/64 ビット `MOVS/STOS/LODS` を管理し、`CLD/STD` は他のフラグを変えずに方向を制御します。REP は各要素の全範囲を観測前に検証し、再開可能な境界で確定します。後続の障害でも完了済み要素は残り、停止やコールバック例外は現在の要素を変更しません。FS/GS はアドレス幅の切り詰め後にソースだけへ加算します。AL/AX のロードは上位ビットを保持し、EAX はゼロ拡張します。32 ビットアドレスのゼロ回 REP はカウントの上位ビットがゼロである必要があり、MOVS/STOS では使用するアドレスレジスタも同様です。それ以外は実 CPU ごとに結果が異なります。REPNE と STOS/LODS のデバイス操作数は未対応です。`X64StringTransferTests.cpp` は独立したホスト命令で幅、方向、重なり、ゼロ回を照合し、権限、エイリアス、折り返し、障害、再開も検証します。独自の WDK リソースドライバは `driver_resource_strings.def` を使い STOS/LODS の全四幅を実行します。
+`X64StringInstructions.def` は通常 RAM の 8/16/32/64 ビット `MOVS/STOS/LODS` を管理し、`CLD/STD` は他のフラグを変えずに方向を制御します。REP は各要素の全範囲を観測前に検証し、再開可能な境界で確定します。後続の障害でも完了済み要素は残り、停止やコールバック例外は現在の要素を変更しません。FS/GS はアドレス幅の切り詰め後にソースだけへ加算します。AL/AX のロードは上位ビットを保持し、EAX はゼロ拡張します。32 ビットアドレスのゼロ回 REP はカウントの上位ビットがゼロである必要があり、MOVS/STOS では使用するアドレスレジスタも同様です。それ以外は実 CPU ごとに結果が異なります。MOVS/STOS/LODS の REPNE 形式と STOS/LODS のデバイス操作数は未対応です。`X64StringTransferTests.cpp` は独立したホスト命令で幅、方向、重なり、ゼロ回を照合し、権限、エイリアス、折り返し、障害、再開も検証します。独自の WDK リソースドライバは `driver_resource_strings.def` を使い STOS/LODS の全四幅を実行します。
+
+`X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
 `WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
 
@@ -924,6 +930,8 @@ AArch64 の具体型レシピは、完全にデマングルした `Swift` モジ
 
 同じ有界比較は、2 つの公称型からなるラベルなしタプルの完全な 12 バイトのレシピにも対応します。キャッシュ名でモジュールの置換表記が使われても、両要素の同一性と順序を検証します。この規則はラベルのない 2 要素だけを対象とし、ラベル、追加要素、異なる型ツリーは一致しません。記述子の認証、元の実行時同一性、新しい共有キャッシュ、公開時の再検証は引き続き必須です。 このタプルを 1 つの型引数とする公称コンテナの完全な 19 バイトのレシピにも対応し、外側の記述子と両要素の記述子を個別に認証したうえで、コンテナの種類、引数の数、要素の順序を検証します。
 
+AArch64 では、宣言済みのレジスタ引数が最大 8 個のネイティブ補助関数が、具体型メタデータの複数のペアを転送できます。型付き関数本体全体の有界走査により、キャッシュ／型参照の各引数が変更されず、既存の具体型インスタンス化関数への直接呼び出しだけに使われ、呼び出し側と呼び出し先の ABI およびコードの同一性が一致することを要求します。再代入、算術演算、エスケープ、役割の競合、間接ターゲット、不完全な制御フロー、予算超過は拒否します。引数位置ごとに別のペアを保持し、呼び出し側の定義が一意なローカル変数にも同じ証明を適用します。無関係なスカラー引数のビット値が同じでも、この結び付けは継承されません。生成したインスタンス化関数、転送元、配列補助関数を変更せず、O0/O2 でネイティブ Swift タプルバッファに対して実行検証します。
+
 生成される Swift 外部データカタログは、Darwin の 4 つのコンパイラおよび SDK エクスポート構成が一致する場合に限り、Foundation の `String: CVarArg` 適合記述子を含める。Foundation の独立したプローブにより、必要な直接ジェネリック呼び出しがコンパイラの統合で間接サンクに置き換わることを防ぐ。抽出には引き続き、正確な非 TLS 記述子宣言、String メタデータ、遅延 witness アクセサー、release ストアによるキャッシュが必要となる。ソースバインディングはインポートされた記述子のアドレスを保持し、公開時に提供元、シンボル、加算値ゼロの強いバインドを再検証する。witness メンバーの ABI や記述子のレイアウトは推定しない。
 
 ネイティブ入力推論は、結合済み呼び出しで暗黙に渡される完全な整数ワードも考慮する。LowIR は呼び出し先だけを列挙し ABI 引数を含めないため、直接末尾呼び出しで保存されたコンテキストが欠落し得る。既存のネイティブ状態証明で各呼び出し位置を一致させ、書き込み、呼び出しによる破壊、フレーム保存を通じて入口の全8バイトを追跡し、状態復元を証明する必要がある。MedIR も同じ完全な入口ワードの使用を独立に確認する。部分値、上書きされた値、曖昧な値、未結合の値から引数は作らない。ARM64 と x86_64 のパイプラインテストでは再リフトと完全なソース検証を要求する。元の ARM64 末尾分岐命令と未変更の生成 C を O0/O2 で比較し、計測用の呼び出し先で両入力と両戻りワードを検査する。この検証は転送を対象とし、辞書実装は実行しない。
@@ -935,3 +943,15 @@ ARM64 のソース結合は、完全なデバイス用・シミュレータ用 S
 具体型のレシピは、直接参照と検証済みのローカル GOT 参照に対して、登録された内部プロトコルの同じ同一性証明を再利用します。レシピ自体の存在型、Optional、配列の演算子を保ちながら安定した宣言名を再構成し、キャッシュ型全体との一致を要求します。非公開のプロトコルシンボルへのリンクや記述子のコピーは行いません。登録の欠落、要件シグネチャ、関連型、不完全なレコード、古い同一性情報は引き続き拒否されます。
 
 super 呼び出しの証明は狭い戻り値の未定義パディングを維持し、すべての引数を検査します。集約型、可変引数、古い宣言、曖昧な宣言は未対応です。ポインタ幅の値として具体化された正確で完全なクラスまたはメタクラスのアドレスは、`objc_super` への格納も含め、直接レシーバーと同じランタイムオブジェクトの同一性証明を使います。クラス参照セル、スカラー即値、不完全なアドレス、競合するメタデータにはこの束縛を与えません。公開時に元のクラスの同一性を再検証します。
+
+UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の getter/setter は、32 バイトの `UIEdgeInsets` を保持します。上・左・下・右の double は arm64 の d0–d3 で渡されます。デバイスとシミュレータの完全な SDK 宣言が一致し、Apple Clang でも六つのエンコーディングを独立に再現しています。レシーバーの検索では UIButton の無名カテゴリと UIButton → UIControl → UIView の継承関係を保持します。実行時宣言の競合、別のレシーバー、クラスメソッド、不正な提供ライブラリ、対応する証拠のないアーキテクチャは引き続き未対応です。
+
+`windows-pe64-v1` は限定された Windows x64/ARM64 コンソールプロセスを追加します。PE ロード、PEB/TEB、静的・動的 TLS、起動・終了コールバック、名前付き Win32 API モデルを備えます。CPU 層を独立して使用し、ドライバーエミュレーションは不要です。DLL/CRT ロード、GUI、ユーザーモード SEH、スレッド、汎用 Windows 互換性は未完成です。
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+ネイティブ依存関係の探索は、現在の完全な LowIR と不変の命令が、解決済みチェーン内の正確なコードポインタスロットを証明する場合にのみ ARM64 間接呼び出しを追跡します。専用のコードポインタ読み取り処理は、一意の読み取り専用ストレージ、競合する修正情報、現在の関数入口を確認し、通常のデータポインタ読み取りの境界は維持します。有界追跡は単一基本ブロック内に限定され、呼び出しをまたぐレジスタ保持には、特定レジスタを使う ARC インポートを含め、現在のランタイムまたはネイティブ ABI が必要です。フレームからの再読み込み、未知の呼び出し、不完全な証拠は未解決のままです。依存一覧は元の間接呼び出し位置を保持し、それ自体で ABI を結び付けたりソース公開を許可したりしません。
+
+同じ不変ネイティブ呼び出しの証明を使い、SSA の前に現在の完全なスカラー `NativeAnalysis` ABI を束縛します。LowIR/MedIR には元の間接呼び出し命令と出現位置を保持します。ネイティブ状態の推論は現在の LowIR から証明を再構築し、通常のレジスタ破壊規則とフレーム検査を維持します。HighIR は証明済みの不変ターゲット評価だけを選択されたソース定義に投影します。公開には呼び出し元と先の現在の LowIR、MedIR、HighIR、受理済み監査の一致が別途必要です。スロット、命令、ABI を再検証し、元の各束縛済み呼び出しがちょうど一度評価されることを確認します。保存済みヒントや依存関係一覧は公開の根拠になりません。不足、古い証拠、重複、矛盾は引き続き未対応で、各呼び出し先の完全なソース本体と依存関係の閉包も必要です。
+
+`SourceFrameEffects` は、有界で同期的なフレーム借用と、フレーム内または外部ストレージを指し得る戻り値の別名を、ローダーとパイプラインの証明で共有する。ARM64 Swift の値バッファ投影には、完全な不変の本体、元の BL/LowIR 呼び出し位置、現在の2引数ネイティブ ABI、および `swift_makeBoxUnique` の強いインポートが必要である。バッファの3ワードは保守的に無効化される。戻り値はバッファ先頭か外部ストレージであり、保存バイトの同一性は証明しない。コピーと合流でもフレーム由来の可能性を保持する。後続の借用は生存中の範囲内に限り、部分ポインター、逸出、失効したフレーム、不確定な戻り値からの保存レジスター復元を拒否する。スカラー戻り値の推論も再検証する。[Swift 6.1.2 ランタイム契約](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp) に従い、割り当て、値ウィットネスによるコピー、解放は観測可能な効果として残る。純粋性や存在型呼び出しの完全な閉包を意味しない。

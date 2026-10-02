@@ -39,6 +39,9 @@ private:
   uint64_t programCounter() const override { return CPU.reg(X64Register::PC); }
   void setProgramCounter(uint64_t PC) override {
     CPU.reg(X64Register::PC) = PC;
+    // A public entry resumes from the published architectural state. A REP
+    // fault restores the flags at the start of this uninterrupted execution.
+    StringRestart.reset();
   }
   struct SavedState : BackendContext::Storage {
     X64MachineState CPU;
@@ -53,7 +56,11 @@ private:
                              unsigned, bool);
   llvm::Error deviceTransfer(const cs_insn &, uint64_t, unsigned, unsigned,
                              uint64_t);
-  enum class StringOperation { Move, Store, Load };
+  enum class StringOperation { Move, Store, Load, Compare, Scan };
+  struct StringRestartState {
+    uint64_t PC, Flags;
+  };
+  std::optional<StringRestartState> StringRestart;
   llvm::Error executeString(const cs_insn &, unsigned Size, StringOperation);
   llvm::Error deviceResult(llvm::Error E);
   template <typename Function> auto deviceCallback(Function Call) {

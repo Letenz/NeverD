@@ -68,8 +68,11 @@ struct BinaryUndefinedIndependenceResult {
 /// paired target independence and a complete bounded target set. Every feasible
 /// path must finish; direct and indirect loops require a complete finite
 /// unrolling within the budgets, never a prefix or an assumed invariant.
-/// Missing bytes and overlapping instructions refuse proof. By default,
-/// incomplete architecture evidence also refuses. The explicit finite-only
+/// Missing bytes refuse proof. Overlapping instructions are refused by default;
+/// AllowOverlappingNativeInstructions permits independently checked entries
+/// only when all instruction and immutable-read byte evidence agrees, within
+/// the cumulative byte budget. Incomplete architecture evidence also refuses
+/// by default. The explicit finite-only
 /// RetainUnauditedNativeBoundaries contract instead retains strictly lifted
 /// Missing instructions as bound refusal frontiers: each must be unreachable,
 /// and their uncollected successors are outside the claimed byte inventory.

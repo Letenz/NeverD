@@ -363,7 +363,63 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_strings.def"
 #undef NEVERD_RESOURCE_STRING_CASE
 
+// Compare/scan every width and both conditional-repeat forms. The second
+// element ends each operation; flags, count and pointers must agree.
+#define NEVERD_RESOURCE_COMPARE_CASE(Name, Type, Fill, CompareEqual,           \
+                                     CompareUnequal, ScanEqual, ScanUnequal)   \
+  static BOOLEAN CheckComparison##Name(VOID) {                                 \
+    Type Left[StringCount] = {(Type)Fill, (Type)Fill, (Type)Fill};             \
+    Type Right[StringCount] = {(Type)Fill, (Type)~Fill, (Type)Fill};           \
+    Type *Source = Left, *Destination = Right;                                 \
+    SIZE_T Count = StringCount;                                                \
+    UCHAR Equal;                                                               \
+    __asm__ volatile(CompareEqual                                              \
+                     : "=q"(Equal), "+S"(Source), "+D"(Destination),           \
+                       "+c"(Count)                                             \
+                     :                                                         \
+                     : "memory", "cc");                                        \
+    if (Equal || Count != 1 || Source != Left + 2 || Destination != Right + 2) \
+      return FALSE;                                                            \
+    Right[0] = (Type)~Fill;                                                    \
+    Right[1] = (Type)Fill;                                                     \
+    Source = Left;                                                             \
+    Destination = Right;                                                       \
+    Count = StringCount;                                                       \
+    __asm__ volatile(CompareUnequal                                            \
+                     : "=q"(Equal), "+S"(Source), "+D"(Destination),           \
+                       "+c"(Count)                                             \
+                     :                                                         \
+                     : "memory", "cc");                                        \
+    if (!Equal || Count != 1 || Source != Left + 2 ||                          \
+        Destination != Right + 2)                                              \
+      return FALSE;                                                            \
+    Destination = Right;                                                       \
+    Count = StringCount;                                                       \
+    __asm__ volatile(ScanUnequal                                               \
+                     : "=q"(Equal), "+D"(Destination), "+c"(Count)             \
+                     : "a"((Type)Fill)                                         \
+                     : "memory", "cc");                                        \
+    if (!Equal || Count != 1 || Destination != Right + 2)                      \
+      return FALSE;                                                            \
+    Right[0] = (Type)Fill;                                                     \
+    Right[1] = (Type)~Fill;                                                    \
+    Destination = Right;                                                       \
+    Count = StringCount;                                                       \
+    __asm__ volatile(ScanEqual                                                 \
+                     : "=q"(Equal), "+D"(Destination), "+c"(Count)             \
+                     : "a"((Type)Fill)                                         \
+                     : "memory", "cc");                                        \
+    return !Equal && Count == 1 && Destination == Right + 2;                   \
+  }
+#include "driver_resource_strings.def"
+#undef NEVERD_RESOURCE_COMPARE_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_COMPARE_CASE(Name, ...)                                \
+  if (!CheckComparison##Name())                                                \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_strings.def"
+#undef NEVERD_RESOURCE_COMPARE_CASE
 #define NEVERD_RESOURCE_STRING_CASE(Name, Type, Fill, Store, Load)             \
   if (!CheckString##Name())                                                    \
     return STATUS_UNSUCCESSFUL;
