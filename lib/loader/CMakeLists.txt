@@ -70,6 +70,7 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOI386Relocations.cpp
   MachO/MachOIndirectSymbols.cpp
   MachO/MachOLoader.cpp
+  MachO/MachOExecutionImage.cpp
   MachO/MachOLoaderUtils.cpp
   MachO/MachOLocalFunction.cpp
   MachO/SourceRegisterCopy.cpp

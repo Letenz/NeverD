@@ -11,7 +11,7 @@ namespace neverd::emulation::runtime {
 /// Native transports use the architecture of their compiled host ABI. Their
 /// live probes separately validate the hypervisor's actual capabilities.
 inline bool matchesHost(GuestArchitecture Architecture) {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
   return Architecture == GuestArchitecture::AArch64;
 #elif defined(__x86_64__) || defined(_M_X64)
   return Architecture == GuestArchitecture::X64;
@@ -24,6 +24,8 @@ inline ExecutionBackendKind nativeBackend() {
   return ExecutionBackendKind::KVM;
 #elif defined(_WIN32)
   return ExecutionBackendKind::WHP;
+#elif defined(__APPLE__)
+  return ExecutionBackendKind::HVF;
 #else
   return ExecutionBackendKind::Unicorn;
 #endif

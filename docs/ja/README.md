@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: d615d9f900a3fb234918f3725d77c7385215434f8d6c98da6284f831d1adf8d8 -->
+<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -31,6 +31,8 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 | [CPU 実行](cpu-execution.md) | 構成、機能照会、バックエンド可用性、型付き結果 |
 | [Bitvector 証明バックエンド](solver.md) | オプションの Z3 証明、証明付き合成、独立検査、query export |
 | [ゲストプロセスのエミュレーション](process-emulation.md) | Linux ELF プロファイル、起動、サービス、制限、テスト |
+| [macOS/iOS プロセス環境](../darwin-emulation.md) | Mach-O 起動、デバイスとシミュレータの区別、Darwin サービスとページ規則 |
+| [macOS HVF](../macos-hvf.md) | ホストと同じ ISA のハードウェア実行、署名権限、パッケージと検証 |
 | [Windows ドライバーエミュレーション](driver-emulation.md) | 有界 x64 WDM/KMDF ライフサイクル、要求、ハードウェアシナリオ、SEH、PnP サブセット、バックエンド選択と制限 |
 | [メモリ安全性の監査とハント](memory-safety.md) | ヒープ寿命とコピー越境解析：形式ごとの識別契約、シンク／ソースカタログ、判定、予算、JSON スキーマ |
 | [ネイティブプラグイン](plugins.md) | 純粋 C descriptor ABI、callback と event、build/link workflow、discovery、互換性規則 |

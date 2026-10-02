@@ -148,6 +148,8 @@ option(NEVERD_ENABLE_DRIVER_EMULATION
 option(NEVERD_EMULATION_BACKEND_UNICORN "Build the portable Unicorn adapter" ON)
 option(NEVERD_EMULATION_BACKEND_KVM "Build the Linux x64 and ARM64 KVM adapters" ON)
 option(NEVERD_EMULATION_BACKEND_WHP "Build the Windows x64 and ARM64 WHP adapters" ON)
+option(NEVERD_EMULATION_BACKEND_HVF "Build the macOS x64 and ARM64 HVF adapters" ON)
+include(${CMAKE_SOURCE_DIR}/cmake/NeverDHypervisor.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/NeverDUnicorn.cmake)
 if((NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
    AND NEVERD_EMULATION_BACKEND_UNICORN)

@@ -16,7 +16,8 @@ enum {
 #undef NEVERD_PROCESS_REPORT_LIMIT
 };
 
-/// Execute Path under linux-elf64-v1 or android-aarch64-api28-v1.
+/// Execute Path under an explicit Linux, Android, Windows, macOS, iOS device
+/// or iOS simulator process profile. See docs/process-emulation.md.
 /// Both strings are required and nonempty. The session's loaded analysis image
 /// is neither required nor changed. Requires CPU or driver emulation enabled.
 /// OptionsJSON is NULL for defaults, or a NUL-terminated UTF-8 JSON object of
@@ -35,6 +36,7 @@ enum {
 /// execution; Android native returns use stop_reason=returned and return_value.
 /// stdout_hex/stderr_hex preserve arbitrary bytes; addresses,
 /// service numbers and raw register/result bits are hexadecimal strings.
+/// Darwin returning services also expose a Boolean error field for BSD carry.
 /// Release with neverd_free_string(). NULL means setup/API failure; inspect
 /// neverd_last_error(Sess). Guest faults and limits return a report, not NULL.
 NEVERD_API const char *neverd_emulate_process_json(neverd_session_t Sess,

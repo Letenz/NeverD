@@ -11,7 +11,7 @@
 namespace neverd {
 struct BinaryImage;
 namespace emulation {
-enum class ImagePagePadding { Zero, FilePages };
+enum class ImagePagePadding { Zero, FilePages, FilePagesPreserveTail };
 /// Analysis may patch segment bytes. Process startup must instead see the
 /// original file image when guest code owns dynamic relocations.
 enum class ImageByteSource { LoaderSegments, OriginalFile };
@@ -30,7 +30,9 @@ struct ImageMappingPlan {
 
   /// Reject overlapping page mappings, malformed segment extents and budget
   /// overflow before allocating output bytes. FilePages preserves bytes from
-  /// rounded file mappings, then clears BSS and its final page tail. Zero
+  /// rounded file mappings, then clears BSS and its final page tail.
+  /// FilePagesPreserveTail keeps the complete final file page and zeroes only
+  /// subsequent VM pages, as required by Darwin's segment loader. Zero
   /// initializes bytes outside the segment's file extent. Shared-page load
   /// policies require an explicit OS implementation; permissions are not
   /// silently combined. OriginalFile ignores analysis-patched segment bytes

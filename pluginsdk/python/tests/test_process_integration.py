@@ -1,7 +1,8 @@
-"""Run actual ELF processes through Python and the built shared engine.
+"""Run ELF and Mach-O processes through Python and the built shared engine.
 
 Set NEVERD_TEST_LIBNEVERD and NEVERD_TEST_PROCESS_FIXTURES explicitly. These
 tests use the generated freestanding ELF corpus, without invoking host programs.
+NEVERD_TEST_DARWIN_FIXTURES enables the macOS/iOS Mach-O corpus.
 """
 from __future__ import annotations
 
@@ -14,6 +15,43 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_darwin_profiles_preserve_bsd_errors_and_platform_identity(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import NeverDError, Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        options = json.dumps({"backend": "unicorn", "arguments": ["guest", "normal", "argument"],
+                              "environment": ["MODE=test"]})
+        for profile, architectures in (("macos", ("arm64", "x86_64")),
+                                       ("ios", ("arm64",)),
+                                       ("ios-simulator", ("arm64", "x86_64"))):
+            for architecture in architectures:
+                with self.subTest(profile=profile, architecture=architecture):
+                    path = str((Path(fixtures) / f"{profile}-{architecture}").resolve(strict=True))
+                    result = session.emulate_process(path, f"{profile}-macho64-v1", options)
+                    self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                    self.assertEqual(result["profile"], f"{profile}-macho64-v1")
+                    self.assertEqual(result["exit_status"], 37)
+                    self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"darwin\x00\xff\n")
+                    self.assertEqual([e["error"] for e in result["services"]], [True, False, True, False])
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                    wrong = "macos-macho64-v1" if profile == "ios" else "ios-macho64-v1"
+                    with self.assertRaises(NeverDError):
+                        session.emulate_process(path, wrong, options)
+
     def test_both_architectures_execute_and_retain_binary_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_PROCESS_FIXTURES")

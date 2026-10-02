@@ -16,7 +16,9 @@ signals, threads, file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
 function calls and Bionic models. The Windows PE64 process profile is described
-below. Android managed runtimes, Darwin and other kernel workloads remain separate work.
+below. The [Darwin profiles](darwin-emulation.md) add bounded macOS, iOS device
+and iOS Simulator Mach-O processes. Android managed runtimes and guest kernel
+workloads remain separate work.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -27,7 +29,8 @@ neverd emulate guest.elf --profile=linux-elf64-v1 \
   --options='{"backend":"auto","arguments":["guest","argument"],"environment":["MODE=test"],"instruction_limit":100000}'
 ```
 
-Matching Linux hosts select KVM and matching Windows hosts select WHP. Other
+Matching Linux hosts select KVM, matching Windows hosts select WHP, and
+matching macOS hosts select HVF. Other
 host/guest ISA combinations use Unicorn. An unavailable selected backend is an
 error, with no silent fallback. An ELF guest still uses the Linux process model
 when executed on Windows. See [CPU execution](cpu-execution.md) for the checked
@@ -66,7 +69,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 
 | Option | Default | Contract |
 |--------|---------|----------|
-| `backend` | `auto` | `auto`, `unicorn`, `kvm` or `whp` |
+| `backend` | `auto` | `auto`, `unicorn`, `kvm`, `whp` or `hvf` |
 | `arguments` | Input filename | Complete argv, including argv[0]; empty selects the default |
 | `environment` | `[]` | Explicit guest strings; never inherits the host environment |
 | `instruction_limit` | 100000 | Shared admitted instruction attempts |

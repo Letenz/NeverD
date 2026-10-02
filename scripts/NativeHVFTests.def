@@ -1,0 +1,66 @@
+//===- NativeHVFTests.def - Native macOS hardware evidence ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_HVF_OWNER
+NEVERD_NATIVE_HVF_OWNER(NeverDHvfTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDAArch64FPTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDAArch64MemoryTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDX64FPTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDX64IntegerTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDX64ExceptionTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDX64MemoryUpdateTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDRAMTransactionTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDMemoryLifecycleTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDThreadPointerTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDUserExecutionTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDServiceRequestTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDExecutionConfigurationTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDExecutionBudgetTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDExecutionSessionTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDIntegerABITests)
+NEVERD_NATIVE_HVF_OWNER(NeverDLinuxProcessTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDWindowsProcessTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDDarwinProcessTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDRunControlTests)
+#endif
+#ifdef NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST
+// Each supported guest platform must execute its real startup/service fixture
+// on the host's ISA. Loader-only registrations cannot satisfy this gate.
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+           "MacOSARM64_hvf")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+           "IOSARM64_hvf")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+           "SimulatorARM64_hvf")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+         "MacOSX64_hvf")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/"
+         "SimulatorX64_hvf")
+#endif
+#ifdef NEVERD_NATIVE_HVF_REQUIRED_TEST
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "Hvf.ConcurrentCallersKeepIndependentGuestRegisters")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfConfiguration.NativeSelectionAndBuildAvailabilityAreExplicit")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "Hvf.ExecutesAnInstructionAndCanBeCalledFromAnotherThread")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "Hvf.DistinctCPUsKeepTheirBackingAndSurvivePeerDestruction")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "Hvf.LiveInitializationProbeDoesNotChangeAnotherCPU")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "Hvf.OneGuestPageBudgetDoesNotBecomeTheHostPageBudget")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfConfiguration.VocabularyAndHostISARejectMismatchesBeforeInitialization")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfExecutor.OneOwnerThreadAndCancelledQueueAdmissionAllowsRetry")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfExecutor.PartialMappingFailureRetiresBorrowedBacking")
+#endif

@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+import plistlib
 
 
 SPEC = importlib.util.spec_from_file_location("package_macos", Path(__file__).parents[1] / "package_macos.py")
@@ -140,3 +142,31 @@ class SqlDriverDeploymentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HypervisorSigningTests(unittest.TestCase):
+    def test_final_recursive_signing_preserves_and_checks_worker_entitlements(self):
+        with tempfile.TemporaryDirectory() as root:
+            bundle = Path(root) / "NeverD.app"
+            paths = [bundle / name for name in ("Contents/MacOS/neverd-worker",
+                     "Contents/MacOS/neverd-gui", "Contents/Frameworks/libneverd.dylib")]
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(bytes.fromhex("cffaedfe"))
+            entitlements = Path(root) / "hypervisor.plist"
+            with (mock.patch.object(PACKAGE, "run") as run,
+                  mock.patch.object(PACKAGE, "output", return_value=plistlib.dumps(
+                      {"com.apple.security.hypervisor": True}).decode())):
+                PACKAGE.sign_bundle(bundle, entitlements)
+            leaf_calls = [c.args for c in run.call_args_list if c.args[-1] in paths]
+            self.assertEqual(len(leaf_calls), 3)
+            self.assertEqual([c[-1] for c in leaf_calls if "--entitlements" in c], [paths[0]])
+            run.assert_any_call("codesign", "--force", "--deep", "--sign", "-",
+                                "--preserve-metadata=entitlements", bundle)
+
+    def test_missing_worker_entitlement_fails_packaging(self):
+        with tempfile.TemporaryDirectory() as root:
+            with (mock.patch.object(PACKAGE, "run"),
+                  mock.patch.object(PACKAGE, "output", return_value=plistlib.dumps({}).decode())):
+                with self.assertRaisesRegex(RuntimeError, "lost its Hypervisor entitlement"):
+                    PACKAGE.sign_bundle(Path(root), Path(root) / "entitlements.plist")

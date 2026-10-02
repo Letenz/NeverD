@@ -60,8 +60,28 @@ TEST(ImageMapping, ZeroPaddingAndBiasDoNotGuessRelocationSemantics) {
   EXPECT_EQ(Plan.Regions[0].Bytes.front(), 0u);
   EXPECT_EQ(Plan.Regions[0].Bytes[ImageOffset], PatchedByte);
 }
+TEST(ImageMapping, DarwinTailPreservesFileBytesUntilTheNextPage) {
+  auto Image = makeImage(true);
+  Image.Raw.assign(PageSize * 3, FileByte);
+  Image.Segments[0].Size = PageSize * 2;
+  for (auto Padding :
+       {ImagePagePadding::FilePages, ImagePagePadding::FilePagesPreserveTail}) {
+    auto Plan = llvm::cantFail(
+        ImageMappingPlan::create(Image, 0, PageSize, Limit, true, Padding,
+                                 ImageByteSource::OriginalFile));
+    ASSERT_EQ(Plan.Regions.size(), 1u);
+    const auto &Bytes = Plan.Regions[0].Bytes;
+    ASSERT_EQ(Bytes.size(), PageSize * 3);
+    const uint64_t FileEnd = Padding == ImagePagePadding::FilePages
+                                 ? ImageOffset + ImageFileSize
+                                 : PageSize;
+    for (size_t I = 0; I < Bytes.size(); ++I)
+      ASSERT_EQ(Bytes[I], I < FileEnd ? FileByte : 0) << I;
+  }
+}
 TEST(ImageMapping, OriginalFileMappingsNeverImportAnalysisRelocations) {
-  for (auto Padding : {ImagePagePadding::Zero, ImagePagePadding::FilePages}) {
+  for (auto Padding : {ImagePagePadding::Zero, ImagePagePadding::FilePages,
+                       ImagePagePadding::FilePagesPreserveTail}) {
     auto Image = makeImage(true);
     // Raw file facts remain sufficient even when the analysis byte view is
     // unavailable. The caller explicitly chooses which authority to map.
@@ -74,7 +94,8 @@ TEST(ImageMapping, OriginalFileMappingsNeverImportAnalysisRelocations) {
     const auto &R = Plan.Regions[0];
     for (size_t I = 0; I < R.Bytes.size(); ++I) {
       const uint8_t Expected =
-          I < ImageOffset
+          Padding == ImagePagePadding::FilePagesPreserveTail ? FileByte
+          : I < ImageOffset
               ? (Padding == ImagePagePadding::FilePages ? FileByte : 0)
           : I < ImageOffset + ImageFileSize ? FileByte
                                             : 0;

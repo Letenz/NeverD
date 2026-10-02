@@ -1,0 +1,63 @@
+name: Native macOS HVF
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-hvf:
+    # Dedicated native hosts must expose Hypervisor.framework. Hosted/nested
+    # macOS runners are not assumed to supply native virtualization.
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ARM64, X64]
+    runs-on: [self-hosted, macOS, '${{ matrix.arch }}', hvf]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify native host and fixture tools
+        shell: bash
+        env:
+          EXPECTED_HVF_HOST: '${{ matrix.arch }}'
+        run: |
+          for tool in cmake ninja python3 clang ld.lld lld-link ld64.lld codesign; do
+            command -v "$tool"
+          done
+          case "$EXPECTED_HVF_HOST:$(uname -m)" in
+            ARM64:arm64|X64:x86_64) ;;
+            *) echo "Runner architecture does not match the HVF matrix" >&2; exit 1 ;;
+          esac
+          test "$(sysctl -n kern.hv_support)" = 1
+      - name: Prepare native dependencies
+        shell: bash
+        run: |
+          git submodule update --init --depth 1 third_party/capstone
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            echo "HVF_PREBUILT=ON" >> "$GITHUB_ENV"
+          else
+            git submodule update --init --depth 1 third_party/llvm-project
+            echo "HVF_PREBUILT=OFF" >> "$GITHUB_ENV"
+          fi
+      - name: Configure without Unicorn
+        shell: bash
+        run: |
+          cmake -S . -B build-hvf -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DNEVERD_LLVM_PREBUILT="$HVF_PREBUILT" \
+            -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+            -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
+            -DNEVERD_EMULATION_BACKEND_HVF=ON
+      - name: Require actual host execution and record every result
+        run: >-
+          python3 scripts/run_native_cpu_ci.py --build build-hvf
+          --evidence build-hvf/native-evidence --parallel 4 --require-hvf
+      - name: Preserve hardware evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hvf-${{ matrix.arch }}
+          path: build-hvf/native-evidence/
+          if-no-files-found: warn

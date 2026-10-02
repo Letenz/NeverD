@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_UNITTESTS_X64STRINGTESTSUPPORT_H
 #define NEVERD_UNITTESTS_X64STRINGTESTSUPPORT_H
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -98,7 +99,8 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(GetParam().Backend, GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }

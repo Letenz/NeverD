@@ -6,6 +6,7 @@
 #include "neverd/emulation/ProcessSession.h"
 
 #include "../core/ExecutionDiagnostics.h"
+#include "../os/darwin/DarwinProcess.h"
 #include "../os/linux/LinuxProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
 #include "../os/windows/process/WindowsProcess.h"
@@ -56,6 +57,15 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
     return android_model::runNative(Path, Options);
   case ProcessProfile::WindowsPE64:
     return windows_process::runProcess(Path, Options);
+  case ProcessProfile::MacOSMachO64:
+    return darwin_model::runProcess(Path, darwin_model::macOSProfile(),
+                                    Options);
+  case ProcessProfile::IOSMachO64:
+    return darwin_model::runProcess(Path, darwin_model::iOSProfile(false),
+                                    Options);
+  case ProcessProfile::IOSSimulatorMachO64:
+    return darwin_model::runProcess(Path, darwin_model::iOSProfile(true),
+                                    Options);
   }
   return diagnostic::error(runtime::ProcessProfile);
 }

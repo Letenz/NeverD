@@ -120,6 +120,7 @@ endfunction()
 # add_neverd_unittest(<name> source1 [source2 ...]
 #     [TIMEOUT seconds]
 #     [DISCOVERY_TIMEOUT seconds]
+#     [NO_PRETTY_VALUES]
 #     [LINK_COMPONENTS comp1 ...]
 #     [LINK_LIBS lib1 ...])
 #
@@ -132,7 +133,7 @@ set_target_properties(NeverDUnitTests PROPERTIES FOLDER "NeverD/Tests")
 
 function(add_neverd_unittest name)
   cmake_parse_arguments(ARG
-    ""
+    "NO_PRETTY_VALUES"
     "TIMEOUT;DISCOVERY_TIMEOUT"
     "LINK_COMPONENTS;LINK_LIBS"
     ${ARGN})
@@ -174,6 +175,9 @@ function(add_neverd_unittest name)
     set_property(GLOBAL APPEND PROPERTY NEVERD_SBF_TEST_TARGETS ${name})
   endif()
 
+  if(CMAKE_CURRENT_SOURCE_DIR STREQUAL "${CMAKE_SOURCE_DIR}/unittests/emulation")
+    neverd_sign_hypervisor(${name})
+  endif()
   include(GoogleTest)
   # LABELS ${name} lets `ctest -L <binary>` run just this binary's cases.
   # PRE_TEST avoids concurrent POST_BUILD discovery races across test targets.
@@ -181,7 +185,14 @@ function(add_neverd_unittest name)
   # independent per-test execution timeout.  A test keeps no signature files
   # in the user's cache (see include/neverd/sigs/SignatureCache.def); one that
   # tests the cache gives it a directory of its own.
+  # Required named parameter cases need stable identities, not diagnostic
+  # GetParam dumps that can contain process addresses.
+  set(_discovery_options)
+  if(ARG_NO_PRETTY_VALUES)
+    list(APPEND _discovery_options NO_PRETTY_VALUES)
+  endif()
   gtest_discover_tests(${name}
+    ${_discovery_options}
     PROPERTIES TIMEOUT ${ARG_TIMEOUT} LABELS ${name}
                ENVIRONMENT "NEVERD_SIGNATURE_CACHE=off"
     DISCOVERY_MODE PRE_TEST
