@@ -39,4 +39,4 @@
 {"$ss6UInt64VN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$ss6UInt64VSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sypN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
-// clang-format on
+    // clang-format on
