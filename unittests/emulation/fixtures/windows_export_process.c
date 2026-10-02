@@ -51,6 +51,9 @@ DWORD entry(void) {
   DWORD Length = 0;
   while (Command[Length])
     ++Length;
+  while (Length && (Command[Length - 1] == CommandWhitespace[0] ||
+                    Command[Length - 1] == CommandWhitespace[1]))
+    --Length;
   if (Length && Command[Length - 1] == CommandQuote[0])
     --Length;
   CHECK(Length);
