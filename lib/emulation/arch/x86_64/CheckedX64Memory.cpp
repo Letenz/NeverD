@@ -6,7 +6,9 @@
 #include "../../core/ExecutionDiagnostics.h"
 #include "CheckedX64Backend.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <climits>
 
@@ -96,12 +98,20 @@ llvm::Error CheckedX64Backend::deviceTransfer(const cs_insn &I,
 llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
                                              StringOperation Operation) {
   const auto &X = I.detail->x86;
-  const bool Repeat = X.prefix[0] == X86_PREFIX_REP;
+  const bool Compare = Operation == StringOperation::Compare ||
+                       Operation == StringOperation::Scan;
+  const bool RepeatEqual = X.prefix[0] == X86_PREFIX_REP;
+  const bool Repeat =
+      RepeatEqual || (Compare && X.prefix[0] == X86_PREFIX_REPNE);
   if ((X.prefix[0] && !Repeat) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes))
     return llvm::make_error<UnsupportedExecutionError>();
-  const bool Reads = Operation != StringOperation::Store;
-  const bool Writes = Operation != StringOperation::Load;
+  const bool Reads = Operation == StringOperation::Move ||
+                     Operation == StringOperation::Load ||
+                     Operation == StringOperation::Compare;
+  const bool Writes =
+      Operation == StringOperation::Move || Operation == StringOperation::Store;
+  const bool UsesDestination = Writes || Compare;
   const bool Narrow = X.addr_size == x64::DWordBytes;
   auto Address = [&](uint64_t V) { return Narrow ? uint64_t(uint32_t(V)) : V; };
   uint64_t Count = Address(CPU.reg(X64Register::CX));
@@ -111,14 +121,30 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
     // contract exposes a CPU model, admit only unambiguous inactive state.
     if (Narrow &&
         (CPU.reg(X64Register::CX) != Count ||
-         (Writes &&
+         (UsesDestination &&
           CPU.reg(X64Register::DI) != Address(CPU.reg(X64Register::DI))) ||
-         (Writes && Reads &&
+         (UsesDestination && Reads &&
           CPU.reg(X64Register::SI) != Address(CPU.reg(X64Register::SI)))))
       return llvm::make_error<UnsupportedExecutionError>();
     CPU.reg(X64Register::PC) = I.address + I.size;
+    StringRestart.reset();
     return llvm::Error::success();
   }
+  if (Compare && Repeat && !StringRestart)
+    StringRestart = StringRestartState{I.address, CPU.reg(X64Register::FLAGS)};
+  auto CheckAccess = [&](uint64_t A, unsigned Permission) {
+    // Permission validation has no callbacks unless it raises a guest fault.
+    // Both terminal and recoverable fault observers must see the flags from
+    // before this REP, while retaining every completed pointer/count update.
+    const uint64_t Flags = CPU.reg(X64Register::FLAGS);
+    if (Compare && Repeat)
+      CPU.reg(X64Register::FLAGS) = StringRestart->Flags;
+    auto Restore = llvm::scope_exit([&] {
+      if (!FirstFault && !RecoverableFault)
+        CPU.reg(X64Register::FLAGS) = Flags;
+    });
+    return access(A, Size, Permission, true, true);
+  };
   const uint64_t SourceOffset = Address(CPU.reg(X64Register::SI));
   const uint64_t Source =
       SourceOffset + (X.prefix[1] == X86_PREFIX_FS   ? CPU.FSBase
@@ -130,20 +156,21 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
     unsigned Permission;
     bool Used;
   };
-  const StringAccess Accesses[] = {{Source, Read, Reads},
-                                   {Destination, Write, Writes}};
+  const StringAccess Accesses[] = {
+      {Source, Read, Reads},
+      {Destination, Writes ? Write : Read, UsesDestination}};
   for (const auto &[A, Permission, Used] : Accesses) {
     if (!Used)
       continue;
     if (Size - 1 > UINT64_MAX - A)
-      return access(A, Size, Permission, true, true);
+      return CheckAccess(A, Permission);
     const uint64_t Last = A + Size - 1;
     if (A / x64::PageSize != Last / x64::PageSize &&
         (deviceAt(A) || deviceAt(Last)))
       return llvm::make_error<UnsupportedExecutionError>();
   }
   auto Input = Reads ? deviceAt(Source) : nullptr;
-  auto Output = Writes ? deviceAt(Destination) : nullptr;
+  auto Output = UsesDestination ? deviceAt(Destination) : nullptr;
   if (Operation != StringOperation::Move && (Input || Output))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Input && !Input->Callbacks.PrepareRead)
@@ -153,7 +180,7 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
   for (const auto &[A, Permission, Used] : Accesses) {
     if (!Used)
       continue;
-    if (auto E = access(A, Size, Permission, true, true))
+    if (auto E = CheckAccess(A, Permission))
       return E;
     if (StopRequested)
       return llvm::Error::success();
@@ -190,7 +217,29 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
       return R.takeError();
     Value = *R;
   }
-  Value &= UINT64_MAX >> (x64::WordBits - Size * CHAR_BIT);
+  const uint64_t Mask = UINT64_MAX >> (x64::WordBits - Size * CHAR_BIT);
+  Value &= Mask;
+  uint64_t NextFlags = CPU.reg(X64Register::FLAGS);
+  if (StopRequested || FirstFault)
+    return llvm::Error::success();
+  if (Compare) {
+    if (Hooks.Read)
+      Hooks.Read(Destination, Size);
+    if (StopRequested || FirstFault)
+      return llvm::Error::success();
+    auto Right = readInteger(Destination, Size);
+    if (!Right)
+      return Right.takeError();
+    const uint64_t Result = (Value - *Right) & Mask;
+    const uint64_t SignBit = (Mask >> 1) + 1;
+    NextFlags =
+        (NextFlags & ~x64::ArithmeticFlags) |
+        (Value < *Right ? x64::CarryFlag : 0) |
+        (!(llvm::popcount(uint8_t(Result)) & 1) ? x64::ParityFlag : 0) |
+        ((Value ^ *Right ^ Result) & x64::AuxiliaryFlag) |
+        (!Result ? x64::ZeroFlag : 0) | (Result & SignBit ? x64::SignFlag : 0) |
+        ((Value ^ *Right) & (Value ^ Result) & SignBit ? x64::OverflowFlag : 0);
+  }
   if (StopRequested || FirstFault)
     return llvm::Error::success();
   if (Writes && Hooks.Write)
@@ -216,9 +265,8 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
       *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
           uint8_t(Value >> (N * CHAR_BIT));
     }
-  } else {
+  } else if (Operation == StringOperation::Load) {
     // AL/AX preserve the untouched accumulator bits. EAX zero-extends.
-    const uint64_t Mask = UINT64_MAX >> (x64::WordBits - Size * CHAR_BIT);
     CPU.reg(X64Register::AX) =
         Value |
         (Size == x64::DWordBytes ? 0 : CPU.reg(X64Register::AX) & ~Mask);
@@ -228,13 +276,19 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
                              : Size;
   if (Reads)
     CPU.reg(X64Register::SI) = Address(SourceOffset + Delta);
-  if (Writes)
+  if (UsesDestination)
     CPU.reg(X64Register::DI) = Address(Destination + Delta);
   if (Repeat)
     CPU.reg(X64Register::CX) = --Count;
+  CPU.reg(X64Register::FLAGS) = NextFlags;
   // A REP iteration is an architectural restart boundary. The shared runner
   // rechecks stops, deadlines and budgets before observing the next element.
-  CPU.reg(X64Register::PC) = Repeat && Count ? I.address : I.address + I.size;
+  const bool Continue =
+      Repeat && Count &&
+      (!Compare || bool(NextFlags & x64::ZeroFlag) == RepeatEqual);
+  CPU.reg(X64Register::PC) = Continue ? I.address : I.address + I.size;
+  if (!Continue)
+    StringRestart.reset();
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

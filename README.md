@@ -114,6 +114,8 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 
 Checked x64 now includes ordinary-RAM `MOVS/STOS/LODS` and `CLD/STD`, with per-element restart, cancellation and cross-page checks. CPU-specific zero-count upper-bit behavior and STOS/LODS device operands remain outside this contract.
 
+Checked x64 also supports ordinary-RAM `CMPS/SCAS` with `REPE/REPNE`, including arithmetic flags, early termination, per-element stops and fault recovery. Device comparisons remain unsupported.
+
 `checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
 
 Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native ARM64 workload evidence remains incomplete.

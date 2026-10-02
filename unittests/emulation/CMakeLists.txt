@@ -52,6 +52,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64MemoryUpdateTests.cpp
   X64BitStringTests.cpp
   X64StringTransferTests.cpp
+  X64StringComparisonTests.cpp
   X64DataTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15

@@ -280,9 +280,11 @@ CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
 
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const auto &X = I.detail->x86;
-  // MOVSD names both a scalar SSE move and a string move in the decoder.
-  // Only its string form has two implicit memory operands.
-  if (I.id != X86_INS_MOVSD ||
+  if (StringRestart && StringRestart->PC != I.address)
+    StringRestart.reset();
+  // MOVSD and CMPSD share decoder identities with scalar SSE operations.
+  // Only their string forms have two implicit memory operands.
+  if ((I.id != X86_INS_MOVSD && I.id != X86_INS_CMPSD) ||
       (X.op_count == 2 && X.operands[0].type == X86_OP_MEM &&
        X.operands[1].type == X86_OP_MEM)) {
     switch (I.id) {
