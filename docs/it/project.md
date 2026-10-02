@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 9ac959406d12e9c0352ef6d8d04dc9656dc04d41fe6c78ba6efda25ae416b5d5 -->
+<!-- i18n-source: d157cf302643e879be2748919ad949d2979c1d36798e295ee566f247834396f4 -->
 
 <div align="center">
 
@@ -51,6 +51,8 @@ I budget di recupero sono espliciti: `--vm-max-fields`, `--vm-max-refinements` e
 Il recupero espone anche `--vm-chain-transfers=N` (predefinito 0) e `--vm-no-control-discovery`. Il concatenamento mantiene le correlazioni simboliche tra trasferimenti con destinazione unica dimostrata; al limite torna ai normali confini CFG. Il recupero dello stato macchina può dichiarare offset rispetto a RSP d’ingresso senza riavvolgimento, non verificati a runtime, con `--vm-entry-frame=begin:end`. La premessa numerica esatta accompagna C e rapporto; non autorizza memoria né dimostra equivalenza.
 
 Il recupero dello stato macchina accetta `--vm-entry-alignment=A:R` come dominio esplicito e verificato del RSP iniziale. `A` deve essere una potenza positiva di due e `R < A`. Gli altri valori restituiscono stato 2 prima di accessi guest o scritture dello stato. I bit alti restano liberi e non si presume alcun allineamento predefinito. Questa opzione non certifica l’equivalenza nativa.
+
+`--vm-external-stores-disjoint-frame` aggiunge una precondizione esplicita non verificata a runtime: l’intera estensione di ogni STORE esterno deve evitare `--vm-entry-frame`. Conserva solo fatti già presenti nell’intervallo. Non limita LOAD o gli alias fra puntatori esterni; il comportamento predefinito resta conservativo. Le API di prova nativa rifiutano questo dominio.
 
 Le grandi funzioni recuperate che superano il limite di costruzione SSA possono usare `--llvm` tramite un contratto limitato di memoria scalare mutabile. Input iniziali, valori trasportati dai cicli e letture precedenti mantengono il proprio significato. Stati impliciti non supportati, parametri in registri vettoriali, rilocazioni, memoria ambigua e controllo malformato falliscono esplicitamente; HighC rifiuta questo percorso alternativo. L’output segue ancora il contratto esistente dello stato macchina e non aggiunge certificati di equivalenza.
 

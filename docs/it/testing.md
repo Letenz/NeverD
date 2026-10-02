@@ -1201,3 +1201,5 @@ Byte di input ed estensioni aggregate delle immagini condividono ciascuno `memor
 La memoria virtuale Windows aggiunge `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` e `FlushInstructionCache` per il processo corrente. Il livello OS gestisce le prenotazioni; `AddressSpace` resta responsabile delle pagine impegnate, dei permessi e della memoria sottostante. I test verificano modifiche al codice, errori di accesso e riutilizzo del budget di memoria.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+Le regressioni coprono budget esatti e insufficienti, parole parziali, entrambi gli ordini dei byte, identità della memoria intatta, limiti degli slot affini, sovrascritture di predecessori tardivi e invalidazione predefinita. C API/CLI verificano compatibilità v6 e domini non validi. HighC e LLVMC eseguiti in O0/O2 controllano ritorno, memoria, stack e stato preservato, senza certificare equivalenza nativa.

@@ -114,7 +114,8 @@ struct SourceFrameLoadDefinition {
 /// must retain the same ordered bytes and must not have exposed a frame
 /// address. Reuses the preservation proof's call ABI, conditional scratch,
 /// bounded borrow and frame-or-external rules. Relevant cycles, partial or
-/// expired definitions and uncertain frame aliases fail closed. Later calls
+/// expired definitions, still-retained scratch and uncertain aliases fail
+/// closed. A later end cannot discharge a prefix's lifetime obligation. Calls
 /// outside the acyclic prefix need no contract; this grants no source gate.
 /// Calls must be freshly authenticated against the current image and LowIR.
 std::optional<SourceFrameLoadDefinition>
