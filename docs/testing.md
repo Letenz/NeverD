@@ -393,6 +393,8 @@ Unresolved-target guard tests cover an unreachable invalid phase, an unknown tar
 
 Demanded frame-projection regressions cover automatic and existing register carriers, high roots and modular wraparound, incomplete low-byte guards, conflicting or missing sibling facts, adjacent query-budget outcomes and solver unknown. A narrow demand never certifies only part of a full pointer; refused recovery publishes no residual code or witnesses.
 
+Finite-subword regressions cover selectors in either half, observable arbitrary payloads, register and frame carriers, both byte orders, narrow carriers, later domain expansion, disjoint masks and missing facts. Missing reachable targets, free selectors, exhausted shared query budgets and solver unknown must publish no residual code or witnesses. Automatic discovery with whole-word demand, unused manual hints, root-derived payloads and constant leading windows are covered too.
+
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` checks guarded pointer joins in registers and frame slots, both byte orders, modular wraparound and high roots, restored stack, and 120 frame bytes. Companion controls reject corrupted pointers and exercise exact/short query, operation, evaluation and refinement budgets, plus discovery and context exhaustion.
 
 Finite-value observer tests cover early refusal, constants, empty projections and the final UNSAT query. Immutable-read regressions keep runtime loads after a refuting witness, revalidate cached address domains for a different read extent, and reject malformed certificates without publishing partial witnesses.

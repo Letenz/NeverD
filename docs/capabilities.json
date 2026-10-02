@@ -12078,6 +12078,94 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.MixedCarrierKeepsFiniteSubwordAndRuntimePayload",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordCannotHideAMissingTargetOrFreeSelector",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LaterPredecessorInvalidatesFiniteSubwordFacts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordHandlesNarrowCarriersInBothByteOrders",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordSharesQueryBudgetsAndRejectsUnknown",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.AutomaticDiscoveryRetainsFiniteSubword",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.UndemandedManualFieldsDoNotSearchSubwords",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.ConstantLeadingWindowDoesNotHideFiniteSelector",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
