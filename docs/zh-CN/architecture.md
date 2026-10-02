@@ -939,3 +939,5 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 原生依赖发现仅在当前完整 LowIR 和不可变指令共同证明精确、已解析的链式代码指针槽时，才跟随 ARM64 间接调用。独立的代码指针读取器检查唯一只读存储、冲突修正及当前函数入口；普通数据指针读取器保持原有边界。有界追踪限定在一个基本块内，跨调用保留寄存器前必须取得当前运行时或原生 ABI，包括使用特定寄存器传参的 ARC 导入。帧重载、未知调用和不完整证据仍未解析。依赖清单保留原始间接调用位置，本身不绑定其 ABI，也不授权发布源码。
+
+同一个不可变原生调用证明现在可在 SSA 之前绑定当前完整的标量 `NativeAnalysis` ABI，同时保留 LowIR/MedIR 中原始间接调用操作码及调用位置。原生状态推导会根据当前 LowIR 重做证明，普通调用破坏规则和帧检查继续适用。HighIR 只将已证明的不可变目标求值投影为所选源码定义。发布时还要求当前调用方与被调用方的 LowIR、MedIR、HighIR 和已接受审计一致，重新验证指针槽、指令及 ABI，并确认每个原始已绑定调用恰好求值一次。保存的提示和依赖清单不能授权发布；缺失、陈旧、重复或冲突的证据仍不受支持，每个被调用方仍须通过独立的完整源码体和依赖闭合检查。

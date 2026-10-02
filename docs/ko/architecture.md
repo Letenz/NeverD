@@ -928,3 +928,5 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 네이티브 의존성 탐색은 현재의 완전한 LowIR과 불변 명령이 정확히 해석된 체인 코드 포인터 슬롯을 증명할 때만 ARM64 간접 호출을 따라갑니다. 별도 코드 포인터 판독기는 유일한 읽기 전용 저장소, 충돌하는 수정 정보, 현재 함수 진입점을 확인하며 일반 데이터 포인터 판독기의 기존 경계를 유지합니다. 제한된 추적은 하나의 기본 블록 안에서만 수행되고 호출을 넘어 레지스터 값을 유지하려면 특정 레지스터를 사용하는 ARC 임포트를 포함한 현재 런타임 또는 네이티브 ABI가 필요합니다. 프레임 재로드, 알 수 없는 호출, 불완전한 증거는 미해결 상태로 남습니다. 의존성 목록은 원래 간접 호출 위치를 보존하며 그 자체로 ABI를 바인딩하거나 소스 공개를 허용하지 않습니다.
+
+동일한 불변 네이티브 호출 증명으로 SSA 이전에 현재의 완전한 스칼라 `NativeAnalysis` ABI를 바인딩하며, LowIR/MedIR에는 원래 간접 호출 연산과 발생 위치를 보존합니다. 네이티브 상태 추론은 현재 LowIR에서 증명을 다시 구성하고 일반 호출의 레지스터 손상 규칙과 프레임 검사를 유지합니다. HighIR은 증명된 불변 대상 평가만 선택한 소스 정의로 투영합니다. 게시 단계에서는 호출자와 피호출자의 현재 LowIR, MedIR, HighIR 및 승인된 감사의 일치를 별도로 요구하고, 슬롯·명령·ABI를 다시 검증하여 각 원래 바인딩 호출이 정확히 한 번 평가되는지 확인합니다. 저장된 힌트나 의존성 목록은 게시를 승인하지 못합니다. 누락되거나 오래된 증거, 중복, 충돌은 여전히 지원하지 않으며, 각 피호출자의 완전한 소스 본문과 의존성 폐쇄도 검증해야 합니다.
