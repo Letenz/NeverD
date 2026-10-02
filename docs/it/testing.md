@@ -146,6 +146,8 @@ Le regressioni coprono partizioni più fini, tutti i residui ammessi, diversi bi
 
 I test delle guardie per obiettivi non risolti coprono una fase non valida irraggiungibile, un obiettivo sconosciuto raggiungibile all’ingresso o dopo un arco di ritorno, limiti esatti di raffinamento e budget di scoperta adiacenti con esito positivo o esaurimento. Il rifiuto non pubblica codice residuo, origini o testimoni di lettura. Il lavoro facoltativo dopo il recupero completo non stabilisce il budget minimo necessario.
 
+Le regressioni della proiezione del frame su richiesta coprono registri automatici ed esistenti, radici alte e riavvolgimento modulare, guardie limitate al byte basso, fatti incompatibili o mancanti sugli archi fratelli, budget di query adiacenti e il risultato unknown del risolutore. Una richiesta su pochi bit non trasforma una prova parziale del puntatore in una prova completa; il rifiuto non pubblica codice residuo né testimoni.
+
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` verifica ricongiungimenti condizionati di puntatori in registri e slot del frame, entrambi gli ordini dei byte, il riavvolgimento modulare e radici alte, il ripristino dello stack e 120 byte del frame. I controesempi associati rifiutano puntatori corrotti e verificano budget esatti o inferiori di una unità per query, operazioni, valutazioni e raffinamenti, oltre all’esaurimento della ricerca e dei contesti.
 
 I test dell’osservatore coprono rifiuto anticipato, costanti, proiezioni vuote e query UNSAT finale. Le regressioni mantengono le letture a runtime dopo un controesempio, riverificano domini in cache per una diversa estensione di lettura e rifiutano certificati malformati senza pubblicare prove parziali.

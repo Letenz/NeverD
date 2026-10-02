@@ -147,6 +147,8 @@ Die Regressionen prüfen feinere Partitionen, alle erlaubten Reste, unterschiedl
 
 Guard-Tests für unaufgelöste Ziele prüfen eine unerreichbare ungültige Phase, unbekannte Ziele am Eintritt oder nach einer Rückkante, exakte Verfeinerungslimits sowie benachbarte erfolgreiche und erschöpfte Entdeckungsbudgets. Eine Ablehnung veröffentlicht weder Restcode noch Herkunfts- oder Lesezeugen. Optionale Entdeckungsarbeit nach vollständiger Wiederherstellung ist keine Untergrenze des nötigen Budgets.
 
+Regressionen für angeforderte Frame-Projektionen prüfen automatische und vorhandene Register, hohe Wurzeladressen und modularen Überlauf, nur das untere Byte einschränkende Bedingungen, widersprüchliche oder fehlende Fakten auf Geschwisterkanten, benachbarte Abfragebudgets und Solver-unknown. Eine schmale Bitanforderung macht aus einem Teilbeweis keinen Beweis für den ganzen Zeiger; bei Ablehnung werden weder Restcode noch Nachweise veröffentlicht.
+
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` prüft bedingte Zeigerzusammenführungen in Registern und Frame-Slots, beide Bytefolgen, modularen Überlauf und hohe Wurzeladressen, Stack-Wiederherstellung und 120 Frame-Bytes. Zugehörige Gegenbeispiele weisen beschädigte Zeiger zurück und prüfen exakt ausreichende sowie um eins zu kleine Abfrage-, Operations-, Auswertungs- und Verfeinerungsbudgets sowie erschöpfte Such- und Kontextgrenzen.
 
 Beobachtertests prüfen frühen Abbruch, Konstanten, leere Projektionen und die abschließende UNSAT-Abfrage. Leseregressionen behalten Laufzeitzugriffe nach einem Gegenbeispiel bei, prüfen zwischengespeicherte Adressmengen bei anderer Lesebreite erneut und weisen fehlerhafte Zertifikate ohne Veröffentlichung von Teilbelegen zurück.

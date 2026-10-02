@@ -220,6 +220,8 @@ Control and guard refinement precedes optional frame-partition retries; necessar
 
 An unresolved indirect target can result from a widened guard. After direct target and deferred producer refinements stop adding candidates, recovery examines the nearest undecided guards that reach the failure. Selection and retries share the discovery and refinement budgets. Only a fresh complete proof can rule out an arm; reachable unknown targets still fail without publishing residual code or witnesses.
 
+A control demand can also require an entry-relative pointer relation. For a complete 64-bit register carrier demanded by the successor, recovery may prove its displacement from the entry root under that edge’s condition even without an alignment mask. Only a unique full-width result enters that edge’s projection; unknown results add no fact, and joins discard conflicting or missing offsets. Physical root values remain free.
+
 The JSON report adds `discoverControlState`, `maxControlRefinements`,
 `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
 `controlRefinements`, and `discoveryVisits`. These record enabled behavior,
