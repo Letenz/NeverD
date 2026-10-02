@@ -13745,6 +13745,70 @@ TEST(ObjCCallHints, UIKitBezierDrawingKeepsExactReceiverAndAggregateABI) {
   }
 }
 
+TEST(ObjCCallHints, UIButtonInsetsKeepFourDoubleLanesAndReceiverScope) {
+  for (const char *Property : {"Content", "Image", "Title"}) {
+    for (bool Setter : {false, true}) {
+      std::string Selector = Property;
+      Selector = Setter ? "set" + Selector + "EdgeInsets:"
+                        : std::string(1, char(Property[0] - 'A' + 'a')) +
+                              Selector.substr(1) + "EdgeInsets";
+      SCOPED_TRACE(Selector);
+      auto Image = receiverImage(Arch::AArch64);
+      Image.ObjCMethods.front().Selector = "useButtonInsets";
+      Image.DynInfo.NeededLibs = {
+          "/System/Library/Frameworks/UIKit.framework/UIKit",
+          "/System/Library/Frameworks/Foundation.framework/Foundation",
+          "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+      auto &Class = Image.ObjCClasses.front();
+      Class.RootClass = false;
+      Class.InheritanceStatus = "resolved";
+      Class.SuperclassName = "UIButton";
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      const auto Hint = objcReceiverSourceTypeHint(Image, Selector, *Receiver);
+      ASSERT_TRUE(Hint.Signature);
+      const auto &ABI = *Hint.Signature;
+      ASSERT_EQ(ABI.Parameters.size(), Setter ? 3U : 2U);
+      if (Setter)
+        EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Void);
+      const auto &Insets = Setter ? ABI.Parameters.back().Type : ABI.ReturnType;
+      ASSERT_TRUE(Insets);
+      ASSERT_EQ(Insets->Kind, NdTypeKind::Struct);
+      EXPECT_EQ(Insets->Size, 32U);
+      ASSERT_EQ(Insets->Fields.size(), 4U);
+      const auto &Lanes =
+          Setter ? ABI.Parameters.back().Components : ABI.ReturnComponents;
+      ASSERT_EQ(Lanes.size(), 4U);
+      const auto &TRI = getTargetRegInfo(Arch::AArch64);
+      for (unsigned I = 0; I != 4; ++I) {
+        EXPECT_EQ(Insets->Fields[I]->Kind, NdTypeKind::Float);
+        EXPECT_EQ(Insets->Fields[I]->Size, 8U);
+        EXPECT_EQ(Lanes[I].Kind, SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Lanes[I].RegisterOffset, TRI.FPParamRegs[I]);
+        EXPECT_EQ(Lanes[I].ValueBytes, 8U);
+      }
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        auto Changed = Image;
+        auto ChangedReceiver = *Receiver;
+        if (Mutation == 0)
+          Changed.Arch = Arch::X64;
+        if (Mutation == 1)
+          Changed.DynInfo.NeededLibs.front() = "/tmp/UIKit.framework/UIKit";
+        if (Mutation == 2)
+          ChangedReceiver.IsClassMethod = true;
+        if (Mutation == 3)
+          Changed.ObjCClasses.front().SuperclassName = "UIView";
+        if (Mutation == 4)
+          Changed.ObjCClasses.front().InheritanceStatus = "unresolved";
+        EXPECT_FALSE(
+            objcReceiverSourceTypeHint(Changed, Selector, ChangedReceiver)
+                .Signature)
+            << Mutation;
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, UIKitScreenResultSurvivesExactArcReturnIdentity) {
   auto Image = image(Arch::AArch64);
   Image.ObjCMethods.clear();

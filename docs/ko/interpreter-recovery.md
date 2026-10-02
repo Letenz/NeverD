@@ -182,6 +182,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 유한 읽기 주소 집합, 결합 제어 튜플 및 제어 필드 수에도 명시적 한도가 있습니다. 전체 솔버 쿼리 수와 쿼리별 게이트·충돌·전파·감시 리터럴 방문 한도가 증명 작업을 제한하며 기호 노드 한도는 식의 성장을 제한합니다. JSON 보고서에는 이 예산과 `solverQueries`, `relationalWidenings`가 포함됩니다.
 
+`AllowOverlappingNativeInstructions`는 유한 네이티브 독립성 증명과 네이티브에서 LowIR로의 정제에 사용하는 별도 옵션이며 기본값은 꺼짐입니다. 각 진입점을 독립적으로 디코딩하고 검증하며, 겹치는 명령어 바이트는 후보의 읽기를 포함한 모든 이전 명령어 및 불변 읽기 증거와 일치해야 합니다. 후보 LowIR 주소는 레이블이며 바이트 증거가 아닙니다. `MaxNativeInstructionBytes`의 기본값은 1048576이며, 새로 가져온 각 진입점의 전체 명령어 크기를 중복 바이트까지 포함하여 비교 전에 차감합니다. 예산 소진이나 바이트 충돌은 인증서를 거부합니다. 옵션과 한도는 증명 다이제스트에 포함됩니다. 정적 LowIR, 귀납적 루프 증명과 추론은 빈 루프 계획에서도 이 옵션을 거부합니다. 정확한 LLVM API와 CLI의 기본 동작은 유지됩니다.
+
 <!-- i18n-section: evidence -->
 
 ## 근거와 테스트
