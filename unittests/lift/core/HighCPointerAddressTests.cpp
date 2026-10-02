@@ -41729,6 +41729,34 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, ContextCaptureTakesOnlyItsRecord) {
+  // RtlCaptureContext2(PCONTEXT) stores every register into the record.  Its
+  // body reads RDX, R8 and R9 to save them, not as arguments; the SDK
+  // prototype keeps the call at one argument.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Routine = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x13, 0x00, 0x00, 0x00, // call routine
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Routine - Entry, 0xcc);
+  Code.insert(Code.end(),
+              {0x48, 0x89, 0x91, 0x88, 0x00, 0x00, 0x00, // mov [rcx+88h], rdx
+               0x4c, 0x89, 0x81, 0xb8, 0x00, 0x00, 0x00, // mov [rcx+0B8h], r8
+               0x4c, 0x89, 0x89, 0xc0, 0x00, 0x00, 0x00, // mov [rcx+0C0h], r9
+               0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol RSym = Symbol::makeFunc(Routine);
+  RSym.Name = "RtlCaptureContext2";
+  Img.Symbols.push_back(RSym);
+  const std::string Caller = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_TRUE(
+      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,()]+\))")))
+      << Caller;
+  EXPECT_EQ(Caller.find("unknown"), std::string::npos) << Caller;
+}
+
 TEST(HighCPointerAddresses, SegmentMxcsrTransferUsesSegmentAccessors) {
   // KiSaveProcessorControlState keeps MXCSR in the KPCR: `stmxcsr gs:[180h]`
   // and `ldmxcsr gs:[184h]` move one DWORD at a GS offset, which the
