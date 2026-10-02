@@ -1979,7 +1979,8 @@ bool Specializer::emitTargets(Node &Draft,
 
 bool Specializer::evaluate(int Id) {
   FailureNode = Id;
-  if (++Result.NodeEvaluations > Options.MaxNodeEvaluations)
+  if (Result.NodeEvaluations == UINT32_MAX ||
+      ++Result.NodeEvaluations > Options.MaxNodeEvaluations)
     return fail(SpecializationStatus::BudgetExceeded,
                 "specialization fixed-point evaluation budget exhausted");
   // No reference into Nodes survives enqueue(), which may grow the vector.
@@ -2049,6 +2050,9 @@ bool Specializer::evaluate(int Id) {
   SpecializationCursor Cursor = Draft.Key.Cursor;
   bool Finished = false;
   uint32_t ChainedTransfers = 0;
+  std::set<std::pair<va_t, InstructionMode>> ChainedDestinations;
+  if (Options.StopChainingAtRepeatedDestination && !ReplayingDemands)
+    ChainedDestinations.emplace(Cursor.Address, Cursor.Mode);
   while (!Finished) {
     std::optional<SpecializationCursor> ChainedSuccessor;
     FailureCursor = Cursor.Address;
@@ -2693,6 +2697,14 @@ bool Specializer::evaluate(int Id) {
           if (ChainedSuccessor &&
               Refinement.RegisterPartitions.count(
                   {ChainedSuccessor->Address, ChainedSuccessor->Mode}))
+            ChainedSuccessor.reset();
+          // Repeated destinations use ordinary edge projection. This bounds
+          // local unrolling without eliding any instruction or successor.
+          // Candidate-demand replay above must retain committed occurrences.
+          if (ChainedSuccessor && Options.StopChainingAtRepeatedDestination &&
+              !ChainedDestinations
+                   .emplace(ChainedSuccessor->Address, ChainedSuccessor->Mode)
+                   .second)
             ChainedSuccessor.reset();
         }
         if (ChainedSuccessor) {

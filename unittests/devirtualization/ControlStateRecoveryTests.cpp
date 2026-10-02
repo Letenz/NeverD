@@ -1326,23 +1326,26 @@ TEST(ControlStateRecovery, LongTransparentLoopCannotBoundUnknownSelectors) {
 }
 
 TEST(ControlStateRecovery, ProducerClosureReplaysCommittedTransferChains) {
-  auto Provider = makeLongControlLoop();
-  auto Options = automaticBankOptions();
-  Options.MaxChainedTransfers = 3;
-  Options.MaxContextsPerAddress = 1;
-  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
-  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
-  EXPECT_GT(Result.ControlRefinements, 0U);
-  EXPECT_GT(Result.DiscoveryVisits, 0U);
-  for (uint64_t Input : {0ULL, 1ULL, 17ULL, ~0ULL})
-    for (uint64_t Limit : {1ULL, 5ULL, 13ULL}) {
-      uint64_t Expected = 0;
-      for (uint64_t I = 0; I != Limit; ++I)
-        Expected += (Input ^ 45) + 3 + 11 * ((Input + I) & 3);
-      EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
-    }
-  Options.MaxDiscoveryVisits = 1;
-  expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+  for (bool Stop : {false, true}) {
+    auto Provider = makeLongControlLoop();
+    auto Options = automaticBankOptions();
+    Options.StopChainingAtRepeatedDestination = Stop;
+    Options.MaxChainedTransfers = 3;
+    Options.MaxContextsPerAddress = 1;
+    const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    EXPECT_GT(Result.ControlRefinements, 0U);
+    EXPECT_GT(Result.DiscoveryVisits, 0U);
+    for (uint64_t Input : {0ULL, 1ULL, 17ULL, ~0ULL})
+      for (uint64_t Limit : {1ULL, 5ULL, 13ULL}) {
+        uint64_t Expected = 0;
+        for (uint64_t I = 0; I != Limit; ++I)
+          Expected += (Input ^ 45) + 3 + 11 * ((Input + I) & 3);
+        EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
+      }
+    Options.MaxDiscoveryVisits = 1;
+    expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+  }
 }
 
 TEST(ControlStateRecovery, LongTransparentLoopKeepsRefinementAndWorkBudgets) {

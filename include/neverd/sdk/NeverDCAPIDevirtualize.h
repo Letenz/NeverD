@@ -132,6 +132,28 @@ typedef struct neverd_devirtualize_options_v6 {
   uint32_t flags;
 } neverd_devirtualize_options_v6;
 
+typedef enum neverd_devirtualize_flag_v7 {
+  NEVERD_DEVIRTUALIZE_V7_STOP_CHAIN_AT_REPEAT = 1u << 0
+} neverd_devirtualize_flag_v7;
+
+/// Version 7 exposes existing cumulative node-evaluation and dependency-visit
+/// budgets and optional repeated-destination chain boundaries. Zero budgets
+/// select the defaults (16384 evaluations and 65536 visits).
+/// Zero-initialize and set base.base.base.base.base.base.struct_size to the
+/// full size. Both source ABIs use the same budgets; larger limits authorize
+/// more work without changing semantic premises or permitting partial output.
+/// Inherited flags and reserved fields retain their validation. v1-v6 ignore
+/// this extension; v7 ignores future tails. STOP_CHAIN_AT_REPEAT ends an
+/// ordinary chain at a repeated (address, mode), which can reduce unrolling
+/// but lose correlations needed to resolve later control. Default flags are
+/// zero; unknown flags reject. A zero chain limit makes the flag a no-op.
+typedef struct neverd_devirtualize_options_v7 {
+  neverd_devirtualize_options_v6 base;
+  uint32_t max_node_evaluations;
+  uint32_t max_discovery_visits;
+  uint32_t flags;
+} neverd_devirtualize_options_v7;
+
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
 /// mutation and calls, and does not certify binary patching or unwind behavior.
@@ -233,6 +255,15 @@ neverd_devirtualize_source_v6(neverd_session_t Session, neverd_va_t Entry,
 NEVERD_API const char *neverd_devirtualize_machine_source_v6(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v6 *Options, const char **Report);
+
+/// Contracts and ownership match v6. Reports record the effective work limits.
+NEVERD_API const char *
+neverd_devirtualize_source_v7(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v7 *Options,
+                              const char **Report);
+NEVERD_API const char *neverd_devirtualize_machine_source_v7(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v7 *Options, const char **Report);
 
 #ifdef __cplusplus
 }

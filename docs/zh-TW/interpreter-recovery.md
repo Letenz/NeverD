@@ -97,6 +97,10 @@ v5 C API `neverd_devirtualize_source_v5()` 與 `neverd_devirtualize_machine_sour
 
 v6 API `neverd_devirtualize_source_v6()` 與 `neverd_devirtualize_machine_source_v6()` 嵌入未改變的 v5 選項。將 `neverd_devirtualize_options_v6` 清零，把 `base.base.base.base.base.struct_size` 設為完整大小，僅在使用機器狀態原始碼及 v4 入口框架邊界時，在 `flags` 啟用 `NEVERD_DEVIRTUALIZE_V6_EXTERNAL_STORES_DISJOINT_ENTRY_FRAME`。一般原始碼拒絕此旗標。v1–v5 忽略擴充，v6 忽略未來尾部。報告記錄 `externalStoresDisjointEntryFrame` 和未經檢查的契約，產生的 C 寫明相同前提。框架衍生或來源未知的寫入沒有豁免；完整仿射指標槽必須全部位於保護範圍內。掃描、儲存和恢復已有事實消耗共用操作預算，耗盡時不發布 C。
 
+v7 API `neverd_devirtualize_source_v7()` 和 `neverd_devirtualize_machine_source_v7()` 在不變的 v6 前綴後增加 `max_node_evaluations` 與 `max_discovery_visits`。零值選擇預設的 16384 次求值和 65536 次相依性存取。將 `neverd_devirtualize_options_v7` 整體清零，並把 `base.base.base.base.base.base.struct_size` 設為完整大小。v1–v6 忽略此擴充；v7 忽略未來尾部，保留繼承欄位的驗證。Python 提供對應的 `abi.NeverDDevirtualizeOptionsV7` 配置和型別化函式。CLI 參數 `--vm-max-evaluations=N` 與 `--vm-max-discovery-visits=N` 要求 `--devirtualize` 和正的 32 位元十進位值，包括 4294967295。報告記錄實際的 `maxNodeEvaluations` 與 `maxDiscoveryVisits`。這些累計工作量限制不改變語義前提；因預算拒絕復原時不輸出 C 或復原見證。
+
+v7 的 `flags` 也接受 `NEVERD_DEVIRTUALIZE_V7_STOP_CHAIN_AT_REPEAT`（Python：`DevirtualizeFlagsV7.STOP_CHAIN_AT_REPEAT`），CLI 對應 `--vm-chain-stop-at-repeat`。它在一般的已證明單一目標轉移鏈再次到達相同原生位址及解碼模式前結束鏈，回到一般邊投影。這可減少迴圈展開，但可能遺失解析後續控制流程所需的關聯，使原本成功的還原遭到拒絕。旗標預設為零；鏈長上限為零時此選項無效果。相依重播仍依已提交的指令出現順序進行。兩種原始碼 ABI 都回報 `stopChainingAtRepeatedDestination`；未知 v7 旗標會被拒絕。此策略不增加語義前提，也不允許發布未解析控制流程。
+
 控制與守衛精度細化優先於可選框架分區重試，必要的更細分區仍可使用。恢復先完成一個餘數的不動點，再開始下一個，但只有全部允許餘數完成後才發布結果。顯式入口對齊與分區域取交集，分派比較實際餘數。上下文、操作、節點及求解器預算仍有界，且在重試之間共用。
 
 無法解析的間接目標可能源於守衛條件的精度丟失。直接目標與延後生產者細化不再增加候選後，恢復會檢查能夠到達失敗位置的最近未決守衛。候選選擇與重試共用探索和細化預算。只有新一輪完整證明才能排除分支；確實可達的未知目標仍須失敗，且不發布殘餘程式碼或證明見證。

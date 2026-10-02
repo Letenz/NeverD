@@ -683,6 +683,79 @@ TEST_F(DevirtualizationSourceTest, CLIFieldAndQueryBudgetsAreEnforced) {
       }
 }
 
+TEST_F(DevirtualizationSourceTest, CLIWorkBudgetsAreEnforced) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery budget checks require clang";
+  const auto Binary = tmpFile("generic-work-budgets.elf");
+  const auto Compiled = buildFixture(Binary, "generic_control_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Machine : {false, true})
+    for (bool LLVM : {false, true})
+      for (unsigned Case = 0; Case < 5; ++Case) {
+        SCOPED_TRACE(Machine);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(Case);
+        const uint32_t Evaluations = Case == 1   ? 1
+                                     : Case == 3 ? UINT32_MAX
+                                                 : 16384;
+        const uint32_t Visits = Case == 2 ? 1 : Case == 3 ? UINT32_MAX : 65536;
+        const auto Stem = std::to_string(Machine) + "-" + std::to_string(LLVM) +
+                          "-" + std::to_string(Case);
+        const auto Source = tmpFile("work-" + Stem + ".c");
+        const auto Report = tmpFile("work-" + Stem + ".json");
+        std::vector<std::string> Args{"decompile",
+                                      Binary.string(),
+                                      "--func",
+                                      "generic_control_state",
+                                      "--devirtualize",
+                                      "--recovery-report=" + Report.string(),
+                                      "-o",
+                                      Source.string()};
+        if (Case) {
+          Args.push_back("--vm-max-evaluations=" + std::to_string(Evaluations));
+          Args.push_back("--vm-max-discovery-visits=" + std::to_string(Visits));
+        }
+        if (Case >= 3)
+          Args.push_back("--vm-chain-stop-at-repeat");
+        if (Case == 3)
+          Args.push_back("--vm-chain-transfers=8");
+        if (Machine)
+          Args.push_back("--vm-machine-state");
+        if (LLVM)
+          Args.push_back("--llvm");
+        const auto Recovered = exec(ndBin(), Args);
+        const bool Complete = Case == 0 || Case >= 3;
+        EXPECT_EQ(Recovered.ok(), Complete) << Recovered.err;
+        EXPECT_EQ(fs::exists(Source), Complete);
+        auto JSON = llvm::json::parse(readSource(Report));
+        ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+        const auto *Object = JSON->getAsObject();
+        ASSERT_NE(Object, nullptr);
+        EXPECT_EQ(Object->getBoolean("complete"), Complete);
+        EXPECT_EQ(Object->getInteger("maxNodeEvaluations"),
+                  int64_t(Evaluations));
+        EXPECT_EQ(Object->getInteger("maxDiscoveryVisits"), int64_t(Visits));
+        EXPECT_EQ(Object->getBoolean("stopChainingAtRepeatedDestination"),
+                  Case >= 3);
+        if (!Complete) {
+          EXPECT_EQ(Object->getString("status"), "budget-exceeded");
+          EXPECT_EQ(Object->getInteger("residualBlocks"), 0);
+          for (const char *Key : {"origins", "immutableReads"}) {
+            const auto *Evidence = Object->getArray(Key);
+            ASSERT_NE(Evidence, nullptr);
+            EXPECT_TRUE(Evidence->empty());
+          }
+        }
+      }
+  const auto Source = tmpFile("repeat-without-recovery.c");
+  const auto Refused = exec(
+      ndBin(), {"decompile", Binary.string(), "--func", "generic_control_state",
+                "--vm-chain-stop-at-repeat", "-o", Source.string()});
+  EXPECT_FALSE(Refused.ok());
+  EXPECT_NE(Refused.err.find("require --devirtualize"), std::string::npos);
+  EXPECT_FALSE(fs::exists(Source));
+}
+
 TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public recovery budget checks require clang";
@@ -691,7 +764,8 @@ TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
   const auto Source = tmpFile("invalid-refinement-options.c");
   for (const char *Option :
-       {"--vm-max-refinements", "--vm-max-fields", "--vm-max-queries"}) {
+       {"--vm-max-refinements", "--vm-max-fields", "--vm-max-queries",
+        "--vm-max-evaluations", "--vm-max-discovery-visits"}) {
     SCOPED_TRACE(Option);
     for (const char *Value : {"0", "-1", "4294967296", "1junk", "+1", "0x10"}) {
       SCOPED_TRACE(Value);

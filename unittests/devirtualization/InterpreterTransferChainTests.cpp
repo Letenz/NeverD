@@ -141,6 +141,153 @@ Program correlatedProgram() {
   return P;
 }
 
+Program countedLoop(bool Nested) {
+  Program P;
+  const auto Flag = NdVar::reg(48, 1);
+  P.add(Entry, {op(NdOp::COPY, r(0), {r(8)}), op(NdOp::COPY, r(16), {c(32)}),
+                op(NdOp::COPY, r(24), {c(4)}), jump(Middle)});
+  if (Nested)
+    P.add(Middle, {op(NdOp::COPY, r(16), {c(7)}), jump(Dispatch)});
+  P.add(Nested ? Dispatch : Middle,
+        {op(NdOp::INT_ADD, r(0), {r(0), c(3)}),
+         op(NdOp::INT_SUB, r(16), {r(16), c(1)}),
+         op(NdOp::INT_NOTEQUAL, Flag, {r(16), c(0)}),
+         op(NdOp::COND_BR, {},
+            {NdVar::cst(Nested ? Dispatch : Middle, 8), Flag})},
+        Nested ? 0x8a0 : Exit);
+  if (Nested)
+    P.add(0x8a0,
+          {op(NdOp::INT_SUB, r(24), {r(24), c(1)}),
+           op(NdOp::INT_NOTEQUAL, Flag, {r(24), c(0)}),
+           op(NdOp::COND_BR, {}, {NdVar::cst(Middle, 8), Flag})},
+          Exit);
+  P.add(Exit, {ret()});
+  return P;
+}
+
+TEST(InterpreterTransferChain, RepeatedDestinationPreservesRuntimeLoops) {
+  for (bool Nested : {false, true}) {
+    SCOPED_TRACE(Nested);
+    auto P = countedLoop(Nested);
+    SpecializationOptions O;
+    O.MaxChainedTransfers = 128;
+    O.MaxOperations = 96;
+    const auto Unrolled = specializeInterpreter(P, {Entry}, O);
+    EXPECT_EQ(Unrolled.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Unrolled.Residual.Blocks.empty());
+    EXPECT_TRUE(Unrolled.Origins.empty());
+    EXPECT_TRUE(Unrolled.Reads.empty());
+    O.StopChainingAtRepeatedDestination = true;
+    const auto R = specializeInterpreter(P, {Entry}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_LE(R.EvaluatedOperations, O.MaxOperations);
+    for (const auto &[Address, Instruction] : P.Code)
+      EXPECT_TRUE(std::any_of(
+          R.Origins.begin(), R.Origins.end(), [&](const auto &Origin) {
+            return Origin.NativeInstruction.Address == Address;
+          }));
+    for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{37}, UINT64_MAX})
+      EXPECT_EQ(execute(R.Residual, Input), Input + (Nested ? 84 : 96));
+    P.Code.erase(Exit);
+    const auto Missing = specializeInterpreter(P, {Entry}, O);
+    EXPECT_FALSE(Missing.complete());
+    EXPECT_TRUE(Missing.Residual.Blocks.empty());
+    EXPECT_TRUE(Missing.Origins.empty());
+    EXPECT_TRUE(Missing.Reads.empty());
+    O.MaxOperations = 1;
+    const auto Short = specializeInterpreter(P, {Entry}, O);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+    EXPECT_TRUE(Short.Origins.empty());
+    EXPECT_TRUE(Short.Reads.empty());
+  }
+}
+
+TEST(InterpreterTransferChain, RepeatedDestinationOptInCanLoseCorrelation) {
+  Program P;
+  const auto Flag = NdVar::reg(48, 1);
+  P.add(Entry, {op(NdOp::INT_XOR, r(16), {r(8), c(90)}),
+                op(NdOp::COPY, r(24), {c(2)}), jump(Middle)});
+  P.add(Middle,
+        {op(NdOp::INT_XOR, r(16), {r(16), c(1)}),
+         op(NdOp::INT_SUB, r(24), {r(24), c(1)}),
+         op(NdOp::INT_NOTEQUAL, Flag, {r(24), c(0)}),
+         op(NdOp::COND_BR, {}, {NdVar::cst(Middle, 8), Flag})},
+        Dispatch);
+  P.add(Dispatch, {op(NdOp::INT_XOR, r(16), {r(16), r(8)}),
+                   op(NdOp::INT_ADD, r(24), {r(16), c(Exit - 90)}),
+                   op(NdOp::INDIR_BR, {}, {r(24)})});
+  P.add(Exit, {op(NdOp::INT_ADD, r(0), {r(8), c(17)}), ret()});
+  SpecializationOptions O;
+  O.MaxChainedTransfers = 128;
+  O.DiscoverControlState = true;
+  const auto Complete = specializeInterpreter(P, {Entry}, O);
+  ASSERT_TRUE(Complete.complete()) << Complete.Diagnostic;
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{37}, UINT64_MAX})
+    EXPECT_EQ(execute(Complete.Residual, Input), Input + 17);
+  O.StopChainingAtRepeatedDestination = true;
+  const auto Cut = specializeInterpreter(P, {Entry}, O);
+  EXPECT_EQ(Cut.Status, SpecializationStatus::UnresolvedControl)
+      << Cut.Diagnostic;
+  EXPECT_TRUE(Cut.Residual.Blocks.empty());
+  EXPECT_TRUE(Cut.Origins.empty());
+  EXPECT_TRUE(Cut.Reads.empty());
+}
+
+TEST(InterpreterTransferChain, RepeatedDestinationIncludesDecodeMode) {
+  class ModeProgram : public SpecializationProvider {
+  public:
+    Program Arm, Thumb;
+    llvm::Expected<SpecializationInstruction>
+    instruction(SpecializationCursor Cursor) override {
+      return (Cursor.Mode == InstructionMode::ARM ? Arm : Thumb)
+          .instruction(Cursor);
+    }
+  } P;
+  P.Arm.add(Entry, {op(NdOp::INT_XOR, r(16), {r(8), c(90)}), jump(Entry)});
+  P.Arm.Code.at(Entry).Origin.TargetMode = LowInstructionTargetMode::Thumb;
+  P.Thumb.add(Entry, {op(NdOp::INT_XOR, r(16), {r(16), r(8)}),
+                      op(NdOp::INT_ADD, r(24), {r(16), c(Exit - 90)}),
+                      op(NdOp::INDIR_BR, {}, {r(24)})});
+  P.Thumb.add(Exit, {op(NdOp::INT_ADD, r(0), {r(8), c(17)}), ret()});
+  for (auto [Code, Mode] : {std::pair{&P.Arm, InstructionMode::ARM},
+                            std::pair{&P.Thumb, InstructionMode::Thumb}})
+    for (auto &[Address, I] : Code->Code) {
+      I.Origin.Mode = Mode;
+      I.Fallthrough.Mode = Mode;
+    }
+  SpecializationOptions O;
+  O.MaxChainedTransfers = 3;
+  O.StopChainingAtRepeatedDestination = true;
+  const auto R = specializeInterpreter(P, {Entry, InstructionMode::ARM}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  ASSERT_EQ(R.Origins.size(), 3U);
+  EXPECT_EQ(R.Origins[0].NativeInstruction.Mode, InstructionMode::ARM);
+  EXPECT_EQ(R.Origins[1].NativeInstruction.Mode, InstructionMode::Thumb);
+  EXPECT_EQ(R.Origins[0].NativeInstruction.Address,
+            R.Origins[1].NativeInstruction.Address);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{37}, UINT64_MAX})
+    EXPECT_EQ(execute(R.Residual, Input), Input + 17);
+}
+
+TEST(InterpreterTransferChain, RepeatOptionHasNoEffectWithoutChaining) {
+  for (bool Nested : {false, true}) {
+    auto P = countedLoop(Nested);
+    SpecializationOptions O;
+    const auto Default = specializeInterpreter(P, {Entry}, O);
+    ASSERT_TRUE(Default.complete()) << Default.Diagnostic;
+    O.StopChainingAtRepeatedDestination = true;
+    const auto Enabled = specializeInterpreter(P, {Entry}, O);
+    ASSERT_TRUE(Enabled.complete()) << Enabled.Diagnostic;
+    EXPECT_EQ(Default.EvaluatedOperations, Enabled.EvaluatedOperations);
+    EXPECT_EQ(Default.SolverQueries, Enabled.SolverQueries);
+    EXPECT_EQ(Default.Residual.Blocks.size(), Enabled.Residual.Blocks.size());
+    EXPECT_EQ(Default.Origins.size(), Enabled.Origins.size());
+    EXPECT_EQ(execute(Enabled.Residual, UINT64_MAX),
+              UINT64_MAX + (Nested ? 84 : 96));
+  }
+}
+
 TEST(InterpreterTransferChain, KeepsCorrelatedRuntimeValuesAndNativeOrigins) {
   auto P = correlatedProgram();
   EXPECT_FALSE(specializeInterpreter(P, {Entry}).complete());
@@ -209,37 +356,40 @@ TEST(InterpreterTransferChain, ChainedDestinationsKeepReservedLabelAdmission) {
 }
 
 TEST(InterpreterTransferChain, LaterPredecessorRebuildsAPreviouslyUniqueChain) {
-  for (bool Missing : {false, true}) {
-    Program P;
-    const auto Flag = NdVar::reg(48, 1);
-    P.add(Entry,
-          {op(NdOp::INT_EQUAL, Flag, {r(8), c(0)}),
-           op(NdOp::COND_BR, {}, {NdVar::cst(0x900, 8), Flag})},
-          0xa00);
-    P.add(0x900, {jump(0x940)});
-    P.add(0x940, {op(NdOp::COPY, r(16), {c(0xc00)}), jump(0xb00)});
-    P.add(0xa00, {jump(0xa40)});
-    P.add(0xa40, {jump(0xa80)});
-    P.add(0xa80, {jump(0xac0)});
-    P.add(0xac0, {op(NdOp::COPY, r(16), {c(0xc40)}), jump(0xb00)});
-    P.add(0xb00, {op(NdOp::INDIR_BR, {}, {r(16)})});
-    P.add(0xc00, {op(NdOp::COPY, r(0), {c(11)}), ret()});
-    if (!Missing)
-      P.add(0xc40, {op(NdOp::COPY, r(0), {c(29)}), ret()});
-    SpecializationOptions O;
-    O.MaxChainedTransfers = 1;
-    O.DiscoverControlState = true;
-    const auto R = specializeInterpreter(P, {Entry}, O);
-    if (Missing) {
-      EXPECT_FALSE(R.complete());
-      EXPECT_TRUE(R.Residual.Blocks.empty());
-      EXPECT_TRUE(R.Origins.empty());
-      EXPECT_TRUE(R.Reads.empty());
-    } else {
-      ASSERT_TRUE(R.complete()) << R.Diagnostic;
-      EXPECT_GT(R.ControlRefinements, 0U);
-      EXPECT_EQ(execute(R.Residual, 0), 11U);
-      EXPECT_EQ(execute(R.Residual, 1), 29U);
+  for (bool Stop : {false, true}) {
+    for (bool Missing : {false, true}) {
+      Program P;
+      const auto Flag = NdVar::reg(48, 1);
+      P.add(Entry,
+            {op(NdOp::INT_EQUAL, Flag, {r(8), c(0)}),
+             op(NdOp::COND_BR, {}, {NdVar::cst(0x900, 8), Flag})},
+            0xa00);
+      P.add(0x900, {jump(0x940)});
+      P.add(0x940, {op(NdOp::COPY, r(16), {c(0xc00)}), jump(0xb00)});
+      P.add(0xa00, {jump(0xa40)});
+      P.add(0xa40, {jump(0xa80)});
+      P.add(0xa80, {jump(0xac0)});
+      P.add(0xac0, {op(NdOp::COPY, r(16), {c(0xc40)}), jump(0xb00)});
+      P.add(0xb00, {op(NdOp::INDIR_BR, {}, {r(16)})});
+      P.add(0xc00, {op(NdOp::COPY, r(0), {c(11)}), ret()});
+      if (!Missing)
+        P.add(0xc40, {op(NdOp::COPY, r(0), {c(29)}), ret()});
+      SpecializationOptions O;
+      O.StopChainingAtRepeatedDestination = Stop;
+      O.MaxChainedTransfers = 1;
+      O.DiscoverControlState = true;
+      const auto R = specializeInterpreter(P, {Entry}, O);
+      if (Missing) {
+        EXPECT_FALSE(R.complete());
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+        EXPECT_TRUE(R.Origins.empty());
+        EXPECT_TRUE(R.Reads.empty());
+      } else {
+        ASSERT_TRUE(R.complete()) << R.Diagnostic;
+        EXPECT_GT(R.ControlRefinements, 0U);
+        EXPECT_EQ(execute(R.Residual, 0), 11U);
+        EXPECT_EQ(execute(R.Residual, 1), 29U);
+      }
     }
   }
 }

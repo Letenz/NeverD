@@ -11611,6 +11611,15 @@
         },
         {
           "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.CLIWorkBudgetsAreEnforced",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
           "target": "NeverDSessionCAPITests",
           "source": "unittests/SessionCAPITests.cpp",
           "filter": "SessionCAPITest.InterpreterRecoveryVersionsPreserveDefaultsAndFutureTails",
@@ -11842,6 +11851,17 @@
           "target": "NeverDSessionCAPITests",
           "source": "unittests/SessionCAPITests.cpp",
           "filter": "SessionCAPITest.InterpreterRecoveryV6ChecksSeparationAndPreservesLayouts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryV7ChecksWorkBudgetsAndPreservesLayouts",
           "platforms": [
             "darwin",
             "linux",
@@ -12166,6 +12186,50 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationPreservesRuntimeLoops",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationOptInCanLoseCorrelation",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationIncludesDecodeMode",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatOptionHasNoEffectWithoutChaining",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -12181,7 +12245,9 @@
           "neverd_devirtualize_source_v5",
           "neverd_devirtualize_machine_source_v5",
           "neverd_devirtualize_source_v6",
-          "neverd_devirtualize_machine_source_v6"
+          "neverd_devirtualize_machine_source_v6",
+          "neverd_devirtualize_source_v7",
+          "neverd_devirtualize_machine_source_v7"
         ],
         "python": [],
         "cli": [
@@ -12196,7 +12262,10 @@
           "neverd decompile --vm-max-refinements",
           "neverd decompile --vm-max-fields",
           "neverd decompile --vm-max-queries",
+          "neverd decompile --vm-max-evaluations",
+          "neverd decompile --vm-max-discovery-visits",
           "neverd decompile --vm-chain-transfers",
+          "neverd decompile --vm-chain-stop-at-repeat",
           "neverd decompile --vm-entry-frame",
           "neverd decompile --vm-entry-alignment",
           "neverd decompile --vm-external-stores-disjoint-frame",

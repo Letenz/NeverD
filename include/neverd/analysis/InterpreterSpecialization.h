@@ -182,6 +182,11 @@ struct SpecializationOptions {
   /// Chaining can duplicate loop origins and limit automatic cutpoint
   /// inference.
   uint32_t MaxChainedTransfers = 0;
+  /// End an ordinary chain before revisiting a native destination (address
+  /// and decode mode). This can preserve runtime loops and reduce unrolling,
+  /// but projection can lose correlations required to resolve later control.
+  /// Demand replay still follows the committed instruction occurrences.
+  bool StopChainingAtRepeatedDestination = false;
   /// Bounds distinct native return slots retained in one context. Native
   /// returns are physical control transfers, not assumed LIFO function exits.
   uint32_t MaxNativeReturnSlots = 64;
