@@ -67,9 +67,12 @@ from .api import (
     synthesize_expression,
     translate_x86_64_block_to_aarch64_object,
 )
+from .bytecode import BytecodeRecoveryResult, recover_bytecode
 from ._version import __version__
 
 __all__ = [
+    "BytecodeRecoveryResult",
+    "recover_bytecode",
     "ConcolicCandidate",
     "ConcolicDecision",
     "ConcolicDecisionKind",

@@ -372,7 +372,19 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
            ")" + exprStr(Inner, 99);
   }
   case NdOp::FLOAT_TRUNC:
-    return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
+  case NdOp::FLOAT_FLOAT2INT:
+  case NdOp::FLOAT_FLOAT2UINT: {
+    const auto Shape = floatToIntegerConversion(E);
+    if (!Shape)
+      throw std::runtime_error("missing HighC float conversion shape");
+    auto It = FloatToIntegerHelpers.find(Shape->key());
+    if (It == FloatToIntegerHelpers.end())
+      throw std::runtime_error("HighC float conversion was not collected");
+    std::string Call = It->second + "(" + exprStr(*E.Operands[0]) + ")";
+    return E.Type->IsSigned
+               ? "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Call + ")"
+               : Call;
+  }
   case NdOp::POPCOUNT:
     return "__builtin_popcountll(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::LZCOUNT:
@@ -395,8 +407,6 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
   case NdOp::FLOAT_UINT2FLOAT:
-  case NdOp::FLOAT_FLOAT2INT:
-  case NdOp::FLOAT_FLOAT2UINT:
   case NdOp::FLOAT_FLOAT2FLOAT:
     return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
   default:

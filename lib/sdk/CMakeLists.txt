@@ -1,6 +1,7 @@
 # libneverd shared library — core engine for CLI, GUI, and plugins.
 # All NeverD frontends link this single shared library.
 set(NEVERD_SDK_SOURCES
+    capi/NeverDCAPIBytecode.cpp
     capi/NeverDCAPI.cpp
     capi/NeverDCAPICPU.cpp
     capi/NeverDCAPIProcess.cpp
@@ -149,6 +150,7 @@ endif()
 # header so consumers can compile with `-I<libneverd_dir>/sdk` without reaching
 # back into the source tree, including with multi-configuration generators.
 set(NEVERD_SDK_HEADERS
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIBytecode.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPI.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPICPU.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIProcess.h
@@ -254,10 +256,12 @@ if(NEVERD_PYTHON_PLUGIN_HOST_ENABLED)
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/_version.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/abi.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/api.py"
+    "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/bytecode.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/ffi.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/py.typed")
   set(NEVERD_PYTHON_SDK_EXAMPLE_FILES
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/examples/analysis_report.py"
+    "${CMAKE_SOURCE_DIR}/pluginsdk/python/examples/external_bytecode.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/examples/minimal.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/examples/semantic_optimizer.py")
   add_custom_command(TARGET neverd_shared POST_BUILD

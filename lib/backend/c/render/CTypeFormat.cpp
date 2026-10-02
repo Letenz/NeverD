@@ -109,12 +109,28 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
   const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
+  auto HasStableBytes = [&](size_t Extent) {
+    if (Extent > InvalidVA - Addr)
+      return false;
+    // Pointer tables can look like short ASCII/UTF-16 strings at one load
+    // address. A fixup, including one beginning before this candidate, makes
+    // those bytes unsuitable for replacement by a string literal. Use the
+    // loader's shared storage-provenance query for every supported format.
+    const va_t First = Addr >= 7 ? Addr - 7 : 0;
+    const va_t End = Addr + Extent;
+    for (va_t Byte = First; Byte < End; ++Byte)
+      if (Img->hasRelocationProvenanceAt(Byte))
+        return false;
+    return true;
+  };
   if (Remain >= 2 && Base[1] == 0) {
     std::string Body;
     unsigned N = 0;
     for (size_t I = 0; I + 1 < Remain && N < kMaxLit; I += 2, ++N) {
       const uint16_t Unit = readLE<uint16_t>(Base + I);
       if (Unit == 0) {
+        if (!HasStableBytes(I + 2))
+          return std::nullopt;
         if (N == 0)
           return AllowEmpty ? std::optional<std::string>("L\"\"")
                             : std::nullopt;
@@ -129,6 +145,8 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   for (size_t I = 0; I < Remain && N < kMaxLit; ++I, ++N) {
     const uint8_t Ch = Base[I];
     if (Ch == 0) {
+      if (!HasStableBytes(I + 1))
+        return std::nullopt;
       if (N == 0)
         return AllowEmpty ? std::optional<std::string>("\"\"") : std::nullopt;
       return "\"" + Body + "\"";

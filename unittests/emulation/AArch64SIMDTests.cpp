@@ -190,6 +190,106 @@ TEST_P(AArch64SIMD, UnsupportedFPStateCannotBeInstalledOrTruncated) {
 TEST_P(AArch64SIMD, HalfPrecisionRequiresAnExplicitExtendedProfile) {
   expectRejected(HalfPrecisionAdd);
 }
+TEST_P(AArch64SIMD, ScalarIntegerConversionsPreserveBitsRoundingAndStatus) {
+  struct Conversion {
+    uint32_t Word;
+    uint64_t Input, Output;
+    uint32_t Control, Status;
+  };
+  // Independently assembled SCVTF/UCVTF s31,w0 and d31,x0. Results
+  // explicitly distinguish signed input, W-register width and rounding.
+  const Conversion Cases[] = {
+      {0x1e22001f, UINT64_C(0xfffffffffffffffd), 0xc0400000, 0, 0},
+      {0x1e23001f, UINT64_C(0xffffffff00000003), 0x40400000, 0, 0},
+      {0x1e23001f, 0x1000001, 0x4b800000, 0, 0x10},
+      {0x1e23001f, 0x1000001, 0x4b800001, 1u << RoundingShift, 0x10},
+      {0x9e62001f, UINT64_C(0xfffffffffffffffd), UINT64_C(0xc008000000000000),
+       0, 0},
+      {0x9e63001f, UINT64_C(0x8000000000000000), UINT64_C(0x43e0000000000000),
+       0, 0},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Word);
+    llvm::cantFail(CPU->setReg(AArch64Register::X0, C.Input));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPCR, C.Control));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 2));
+    vector(LastVector, {InitialVectorLow, InitialVectorHigh});
+    ASSERT_NO_FATAL_FAILURE(expectSuccess(run(C.Word)));
+    EXPECT_EQ(vector(LastVector), (RegisterValue{C.Output, 0}));
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::X0)), C.Input);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::FPCR)), C.Control);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::FPSR)), C.Status | 2);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), InitialNZCV);
+  }
+}
+TEST_P(AArch64SIMD, ScalarFloatConversionsSaturateAndKeepSourceState) {
+  struct Conversion {
+    uint32_t Word;
+    uint64_t Input, Output;
+    uint32_t Status;
+  };
+  // FCVTZS/FCVTZU w0,s29 and x0,d29 use round-toward-zero, even when
+  // FPCR requests round-up. W results must clear the upper word.
+  const Conversion Cases[] = {
+      {0x1e3803a0, 0xc0700000, 0xfffffffd, 0x10},
+      {0x1e3903a0, 0x40700000, 3, 0x10},
+      {0x1e3903a0, 0xbf800000, 0, 1},
+      {0x1e3903a0, 0x7fc00000, 0, 1},
+      {0x1e3903a0, 0x7f800000, 0xffffffff, 1},
+      {0x9e7803a0, UINT64_C(0xc3e0000000000000), UINT64_C(0x8000000000000000),
+       0},
+      {0x9e7903a0, UINT64_C(0x7ff0000000000000), UINT64_MAX, 1},
+      {0x9e7803a0, UINT64_C(0x7ff8000000000000), 0, 1},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Word);
+    const RegisterValue Input{C.Input, InitialVectorHigh};
+    vector(29, Input);
+    llvm::cantFail(CPU->setReg(AArch64Register::X0, UINT64_MAX));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPCR, 1u << RoundingShift));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 2));
+    ASSERT_NO_FATAL_FAILURE(expectSuccess(run(C.Word)));
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::X0)), C.Output);
+    EXPECT_EQ(vector(29), Input);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::FPSR)), C.Status | 2);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), InitialNZCV);
+  }
+}
+TEST_P(AArch64SIMD, ScalarFloatResizeRetainsRoundingAndClearsUpperLanes) {
+  struct Conversion {
+    uint32_t Word;
+    uint64_t Input, Output;
+    uint32_t Control, Status;
+  };
+  // FCVT d31,s29 and s31,d29.
+  const Conversion Cases[] = {
+      {0x1e22c3bf, 0x3fc00000, UINT64_C(0x3ff8000000000000), 0, 0},
+      {0x1e6243bf, UINT64_C(0x3ff0000010000000), 0x3f800000, 0, 0x10},
+      {0x1e6243bf, UINT64_C(0x3ff0000010000000), 0x3f800001,
+       1u << RoundingShift, 0x10},
+  };
+  for (const auto &C : Cases) {
+    const RegisterValue Input{C.Input, InitialVectorHigh};
+    vector(29, Input);
+    vector(LastVector, {InitialVectorLow, InitialVectorHigh});
+    llvm::cantFail(CPU->setReg(AArch64Register::FPCR, C.Control));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 2));
+    ASSERT_NO_FATAL_FAILURE(expectSuccess(run(C.Word)));
+    EXPECT_EQ(vector(LastVector), (RegisterValue{C.Output, 0}));
+    EXPECT_EQ(vector(29), Input);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::FPSR)), C.Status | 2);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), InitialNZCV);
+  }
+}
+TEST_P(AArch64SIMD, HalfPrecisionConversionsRemainRejected) {
+  expectRejected(0x1ee3001f);
+}
+TEST_P(AArch64SIMD, FixedPointConversionsRemainRejected) {
+  expectRejected(0x1e03fc1f);
+}
+TEST_P(AArch64SIMD, PackedConversionsRemainRejected) {
+  expectRejected(0x6e21dbbf);
+}
 TEST_P(AArch64SIMD, ScalableVectorsCannotEnterTheFixedWidthProfile) {
   expectRejected(ScalableVectorAdd);
 }

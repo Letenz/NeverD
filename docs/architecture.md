@@ -40,13 +40,36 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
-The standalone `neverd-bytecode` tool accepts externally specified instruction
-languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+The `neverd-bytecode` tool and C/Python plugins accept externally specified
+instruction languages through the shared `neverd_bytecode_recover_json_v1` API.
+`lib/pipeline/BytecodeRecovery.cpp` owns request validation and source orchestration;
+`lib/analysis/bytecode` owns encoding and CFG validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
 routes. Image-independent source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
+
+Native jump-table selector domains are proved in the shared LowIR resolver.
+A loader-normalized absolute table may use the same exact, point-sensitive
+finite-domain proof as a relative table. The physical pointer run supplies a
+read ceiling, not a selector bound. A long physical run may use the bounded
+finite query only after proving every feasible index fits its query ceiling;
+values beyond that ceiling cannot be silently discarded. After adding
+destinations, the resolver must replay the proof on the expanded graph; a
+newly reached backedge cannot reuse an entry-only domain. A complete
+single-consumer finite proof is not
+widened or vetoed by a weaker mask search. Module-wide storage mutation checks
+still run before source publication.
+For a single absolute consumer, a relocation-backed physical run may contain
+unused pointers to other functions. Validate target ownership for every
+admitted selector coordinate before graph growth; an excluded prefix slot
+neither truncates the selector proof nor becomes a local successor.
+The LLVM backend accepts a sparse table's logical address origin separately
+from its owned runtime slots. Eliding its target load still requires the exact
+operation witness, complete mapped slot and relocation ownership, and exclusive
+consumption by the recovered branch. The unused prefix gains no suppression
+authority from sharing that origin.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
@@ -86,6 +109,12 @@ optimization. The SDK rebuilds a cached native LLVM module when this policy
 changes and publishes the replacement only after verification succeeds.
 Both LLVM C routes retain verified output with only temporary-alloca
 promotion when an incomplete native exception contract excludes optimization.
+The C emitter clones verified LLVM IR and removes dead computations before
+rendering, including in `--no-opt` mode. This source normalization preserves
+observable calls and ordered memory accesses without modifying the cached IR.
+Generic LLVM arithmetic and control builtins do not request target ISA headers.
+Both C routes reject string-literal replacement when loader fixup provenance
+overlaps any candidate byte, including its terminator.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -147,6 +176,9 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Med-to-High lowering preserves CFG successors after branch threading, including
+sole successors with no remaining branch operation. When source order differs,
+it emits an explicit transfer after that edge's PHI copies.
 
 HighIR supports narrowing a 64-bit source local to 32 bits under the same proof used for 128-bit carriers: every definition must agree on the carrier and prefix widths, and every read must explicitly select the low prefix. A full-width integer AND also selects that prefix when its constant mask fits the low word without sign-extending from a narrower type; the narrowed local is zero-extended at that use before applying the unchanged mask. Full-width stores, escapes, upper-byte reads, or effectful upper expressions prevent narrowing. Source-parameter padding remains unknown.
 Exact whole-variable copies can share this proof through a bounded graph when a constructing definition establishes the prefix width. Every copied destination must itself qualify for narrowing; a full-width consumer invalidates all upstream exemptions. Unseeded cycles, conflicting widths and exhausted budgets preserve the original values.
@@ -815,6 +847,13 @@ KVO context tokens use a separate writable-identity proof. A uniquely named writ
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
 ## IR representations and routes
+
+`ir/FloatConversion.h` owns the result policy for scalar float-to-integer
+operations: saturation for the non-x86 path and x86 indefinite results for
+invalid conversions. HighC and the LLVM lowering select that same policy;
+both C routes share the guarded conversion renderer. The cast executes only
+after range and NaN checks. Architecture-specific floating control/status
+effects remain in their existing intrinsic contracts.
 
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its

@@ -907,8 +907,51 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
                         return Range.EntrySize == Load.Output.Size &&
                                Range.ownsStorageAddress(Base);
                       });
-      if (!OwnsBase)
-        continue;
+      if (!OwnsBase) {
+        // A sparse dispatch can use table[2] and table[3] without owning
+        // table[0]. The decomposed base is its logical address origin, not
+        // an additional memory read. Keep the exact Low LOAD witness above,
+        // and require complete slot ownership before accepting that origin.
+        // Whole-object identity alone cannot authorize any filler slot.
+        if (!JT.HasBaseAddr || Base != JT.BaseAddr || IndexTerms.empty() ||
+            JT.IsRelative || JT.TwoLevelIndex || !JT.HasDispatchSlotMap ||
+            JT.SlotIndices.size() != JT.Targets.size() ||
+            JT.SlotIndices.size() != JT.SuppressibleRelocationSlots.size() ||
+            JT.Targets.size() > limits::kMaxJumpTableEntries)
+          continue;
+        const uint64_t Stride = JT.EntryStride ? JT.EntryStride : JT.EntrySize;
+        if (Stride < JT.EntrySize || JT.StorageRanges.empty() ||
+            JT.StorageRanges.size() >
+                TerminalUseEvidenceRemaining / JT.Targets.size())
+          continue;
+        TerminalUseEvidenceRemaining -=
+            JT.StorageRanges.size() * JT.Targets.size();
+
+        bool CompleteStorage = true;
+        std::set<va_t> CertifiedSlots;
+        for (uint32_t Index : JT.SlotIndices) {
+          if (Index != 0 && Stride > (InvalidVA - Base) / Index) {
+            CompleteStorage = false;
+            break;
+          }
+          const va_t Slot = Base + uint64_t(Index) * Stride;
+          const bool OwnsSlot = std::any_of(
+              JT.StorageRanges.begin(), JT.StorageRanges.end(),
+              [&](const JumpTableStorageRange &Range) {
+                return Range.EntrySize == Load.Output.Size &&
+                       Range.ownsStorageAddress(Slot) &&
+                       (Slot - Range.BaseAddr) % Range.EntryStride == 0;
+              });
+          if (!OwnsSlot || !Img->CodePtrRelocSlots.count(Slot) ||
+              !JT.suppressesRelocationSlot(Slot) ||
+              !CertifiedSlots.insert(Slot).second) {
+            CompleteStorage = false;
+            break;
+          }
+        }
+        if (!CompleteStorage)
+          continue;
+      }
     }
 
     if (!RequireTerminalExclusive)

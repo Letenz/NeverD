@@ -108,14 +108,21 @@ if(NEVERD_BUILD_PLUGINS AND TARGET neverd AND TARGET example_plugin)
 endif()
 
 if(NEVERD_BUILD_SHARED)
+  add_library(neverd-bytecode-plugin-fixture SHARED
+    ${CMAKE_SOURCE_DIR}/plugins/bytecode/bytecode_plugin.c)
+  target_link_libraries(neverd-bytecode-plugin-fixture PRIVATE neverd_shared)
+  set_target_properties(neverd-bytecode-plugin-fixture PROPERTIES
+    PREFIX "" C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
   add_neverd_unittest(NeverDPluginTests
     PluginManagerTests.cpp
     LINK_LIBS neverd_shared
   )
 
   add_dependencies(NeverDPluginTests neverd-native-plugin-fixture)
+  add_dependencies(NeverDPluginTests neverd-bytecode-plugin-fixture)
   target_compile_definitions(NeverDPluginTests PRIVATE
     NEVERD_NATIVE_PLUGIN_FIXTURE="$<TARGET_FILE:neverd-native-plugin-fixture>"
+    NEVERD_BYTECODE_PLUGIN_FIXTURE="$<TARGET_FILE:neverd-bytecode-plugin-fixture>"
   )
 endif()
 
@@ -127,6 +134,7 @@ if(NEVERD_PYTHON_PLUGIN_HOST_ENABLED)
 
   target_compile_definitions(NeverDPythonPluginTests PRIVATE
     NEVERD_PYTHON_LIFECYCLE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/Inputs/LifecyclePlugin.py"
+    NEVERD_PYTHON_BYTECODE_FIXTURE="${CMAKE_SOURCE_DIR}/pluginsdk/python/examples/external_bytecode.py"
     NEVERD_PYTHON_RAISING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/Inputs/RaisingPlugin.py"
   )
 

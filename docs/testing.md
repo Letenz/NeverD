@@ -191,6 +191,39 @@ cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
 ```
 
+## Finite native dispatch
+
+`NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
+regressions with independent AArch64 and x64 finite-selector fixtures. The new
+fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
+tables in both read-only and writable storage. Separate controls retain an
+unknown large selector and ensure a feasible slot above the finite query
+ceiling cannot be dropped. HighC, optimized LLVMC and `--no-opt` LLVMC
+must compile and execute the same selection at `-O0` and `-O2` with undefined
+behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
+reached backedges, mutated table storage and exhausted evidence must prevent
+unsupported source publication. Clang and the existing lift fixture tools
+are required; unavailable fixtures remain skips.
+An unselected prefix pointer to a separate function must not prevent recovery
+of local cases. A foreign target selected immediately or after a reached
+backedge must remain outside the local switch. The prefix case also runs
+through all three C routes at both optimization levels.
+
+```sh
+cmake --build build-release --target NeverDJumpTableTests --parallel 4
+build-release/bin/NeverDJumpTableTests
+```
+
+`NeverDMachOPointerRelocationBoundaryTests` checks sparse dispatch origins
+before the owned runtime slots. Missing maps, fixups or ownership, added filler
+slots, unindexed reads, malformed strides, address overflow and exhausted
+evidence must retain the ordinary load path.
+
+`NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
+strings, generic builtins compiled for a different source ISA, and dead image
+address calculations. The latter must retain volatile/atomic loads and
+observable calls while leaving the input LLVM module unchanged.
+
 ## Interpreter recovery checks
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
@@ -200,15 +233,42 @@ and x64 state carriers through HighC and LLVMC, recompile at `-O0` and `-O2`
 with undefined-behavior traps, and verify loops, narrow writes, memory canaries,
 signed arithmetic and nested status-propagating calls. The state-forwarding
 checks include unaligned banks, overlapping register views, guest aliases and
-overwritten writes that a memory access can observe. CLI checks also exercise
+overwritten writes that a memory access can observe, using both portable byte
+copies and the optional Clang/GCC unaligned pointer spelling. CLI checks also exercise
 the optional LLVM optimization route and block-sensitive bounded graphs whose
 branch arms produce distinct values, including merged conditional targets.
 No external dialect or binary sample is needed.
+
+`FloatingConversionsKeepArchitectureResultPolicies` checks float/double to
+signed/unsigned 32/64-bit results for AArch64 saturation and x86 indefinite
+values through both C routes, both memory spellings and O0/O2 with undefined
+behavior traps. It also checks narrow-write canaries on an unaligned bank.
 
 ```sh
 cmake --build build-release --target NeverDBytecodeAnalysisTests
 build-release/bin/NeverDBytecodeAnalysisTests
 ```
+
+`NeverDBytecodeCAPITests` exercises the pure C ABI with explicit buffer lengths,
+unknown rules, truncated code, rejected options and reachable coverage. Both
+C routes, including LLVM optimization, execute independently specified narrow
+writes on an unaligned state with canaries at O0/O2 under undefined-behavior
+traps. `NeverDPluginTests` and `NeverDPythonPluginTests` load the example C and
+Python bytecode plugins and invoke the same public recovery entry point.
+
+```sh
+cmake --build build-release --target NeverDBytecodeCAPITests
+build-release/bin/NeverDBytecodeCAPITests
+PYTHONPATH=pluginsdk/python python3 -m unittest discover -s pluginsdk/python/tests -v
+PYTHONPATH=pluginsdk/python python3 scripts/check_python_plugin_sdk.py
+NEVERD_TEST_LIBNEVERD=/absolute/path/to/libneverd.so PYTHONPATH=pluginsdk/python \
+  python3 -m unittest discover -s pluginsdk/python/tests -p 'test_bytecode*.py' -v
+```
+
+The last command uses the current platform's shared-library filename. Missing
+native libraries skip the integration check explicitly; pure Python ownership
+and request tests still run. Embedded Python plugin tests require
+`NEVERD_ENABLE_PYTHON_PLUGINS=ON`.
 
 `NeverDAArch64DivisionSemanticTests` checks both instruction decoders against
 the architectural results for signed and unsigned division, including zero
@@ -415,7 +475,23 @@ integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
 results, producer ordering, and single evaluation. Unsupported scalar widths
 and malformed operands must fail explicitly.
 
+The same target executes scalar float/double saturating conversions at
+O0/O2 with undefined-behavior traps, covering NaNs, infinities, fractional
+values and exact signed/unsigned bounds through 128 bits. Bit-reversal checks
+include non-byte widths and every one-hot input bit. Unsupported shapes fail
+before source emission.
+
 ## Structured C control and call checks
+
+`FoldedStoreArmsPublishTheirOutgoingPhiValues` executes a conditional with
+side-effecting store arms and a shared PHI at O0/O2. Folding the two arms into
+C `if/else` must retain each outgoing SSA assignment.
+`RemaindersWithInlineOperandsPublishTheirResult` executes signed and unsigned
+remainders with an inline divisor at both optimization levels; an unavailable
+composed expression must not become a self-assignment.
+`ThreadedSoleSuccessorKeepsItsTransferAndPhi` checks both AArch64 and x64
+HighIR when CFG threading leaves a sole successor without a branch operation.
+Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
 
@@ -1980,7 +2056,7 @@ cmake -S . -B build-native -G Ninja \
 
 `NeverDAArch64StateTests` checks corruption of every scalar field, both words of every vector, privilege changes, missing floating-point execution and preserved transport diagnostics. `NeverDAArch64FPTests` runs `OriginalProgramChecksCompleteStateAndOneDeadline` using independently assembled `AArch64ProbeCases.def` instructions at both privileges on real transports. The test relocates these PC-independent words to guest code without granting user access to monitor pages. Unicorn execution and explicit native skips do not replace native ARM64 startup evidence.
 
-`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
