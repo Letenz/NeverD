@@ -564,6 +564,8 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/support` | 共享二进制加载 helper | Loader |
 | `lib/translate` | 带版本的 guest state/策略/退出、固定 runtime ABI、受检 guest memory、生成 IR/目标文件/LinkGraph 审计、sealed 原生链接，以及实验性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 与 JITLink 契约 |
 
+`lib/pass/ir/simplify` 中的 `ByteMemoryForwardingPass` 在单个基本块内，根据固定字节 alloca 每个字节的最后一次写入重建完整整数读取。它按目标端序处理 8 至 128 位、宽度为整字节的访问，只接受对象内的精确常量 GEP。调用、未知写入和有序内存会清空记录。流水线在既有私有地址恢复后、两次 SROA 之间运行此 pass，并保留原始 store。指令扫描、地址遍历、跟踪字节、替换用途和新增 IR 均有有限预算。默认不引入快照；显式启用 `AllowStoreSnapshots` 后，在原 store 前仅 freeze 一次，并让写入与所有片段共享该值。这种可选 LLVM 精化不证明原生值已定义，也不恢复函数签名。
+
 公共头文件在 `include/neverd` 下对应这些区域。不要意外让内部 C++ 类成为 SDK
 的一部分：稳定的外部操作应放入纯 C 头文件及某个职责明确的
 `lib/sdk/NeverDCAPI*.cpp` 文件。
@@ -937,3 +939,9 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 原生依赖发现仅在当前完整 LowIR 和不可变指令共同证明精确、已解析的链式代码指针槽时，才跟随 ARM64 间接调用。独立的代码指针读取器检查唯一只读存储、冲突修正及当前函数入口；普通数据指针读取器保持原有边界。有界追踪限定在一个基本块内，跨调用保留寄存器前必须取得当前运行时或原生 ABI，包括使用特定寄存器传参的 ARC 导入。帧重载、未知调用和不完整证据仍未解析。依赖清单保留原始间接调用位置，本身不绑定其 ABI，也不授权发布源码。
+
+同一个不可变原生调用证明现在可在 SSA 之前绑定当前完整的标量 `NativeAnalysis` ABI，同时保留 LowIR/MedIR 中原始间接调用操作码及调用位置。原生状态推导会根据当前 LowIR 重做证明，普通调用破坏规则和帧检查继续适用。HighIR 只将已证明的不可变目标求值投影为所选源码定义。发布时还要求当前调用方与被调用方的 LowIR、MedIR、HighIR 和已接受审计一致，重新验证指针槽、指令及 ABI，并确认每个原始已绑定调用恰好求值一次。保存的提示和依赖清单不能授权发布；缺失、陈旧、重复或冲突的证据仍不受支持，每个被调用方仍须通过独立的完整源码体和依赖闭合检查。
+
+`SourceFrameEffects` 由加载器和流水线共享，描述有界、同步的栈帧借用，以及可能指向帧内或外部存储的返回别名。ARM64 Swift 值缓冲区投影器必须通过完整不可变函数体、原始 BL/LowIR 调用位置、当前双参数原生 ABI 和强导入 `swift_makeBoxUnique` 的验证。证明保守地使三个缓冲区字失效；返回值可能是缓冲区首地址或外部存储，不能证明保存字节的身份。复制和合流保留可能的栈帧来源。后续借用须位于仍存活的范围内；部分指针、逃逸、已失效的帧，以及通过不确定返回值恢复保存寄存器均被拒绝。标量返回推断也会重验此证明。依据 [Swift 6.1.2 运行时契约](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp)，分配、值见证复制和释放仍是可观察效果；这不代表纯函数，也不代表完整的存在类型调用闭合。
+
+ARM64 Objective-C 上下文 thunk 复用同一帧效果模型。完整且不可变的上下文读取和尾分支必须到达强绑定的 selector stub，并取得当前一致的声明；每个转发的物理参数都须匹配完整原生 ABI。可选的计数器更新只能访问唯一映射的可写镜像存储。所得证书仅允许同步借用上下文首八字节，且不得保留其地址。调用方仍拒绝把私有帧地址写入这些字节或任何其他内存，因此读出的 receiver 不能携带这种逃逸。消息、对象效果和计数器更新保持可观察。直接 BL 和不可变间接调用位置均从当前 LowIR 重新验证，标量结果推导也不例外；这尚未证明后续表重载或存在类型清理。

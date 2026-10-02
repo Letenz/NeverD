@@ -1387,6 +1387,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+The Android image model assigns distinct guest traps to an explicit library
+and function catalogue. Bionic owns `dlopen` reference counts, `dlsym` handle
+lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
+same named request/call events. These catalogue entries never load host code.
+Missing entries return modeled lookup errors, while calls whose behavior or
+lookup scope is unsupported stop explicitly.
 
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
@@ -2403,6 +2409,8 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers | Loader |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
+`ByteMemoryForwardingPass` in `lib/pass/ir/simplify` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
+
 Public headers mirror these areas under `include/neverd`. Avoid making an
 internal C++ class part of the SDK by accident: stable external operations
 belong in the pure C header and one of the focused `lib/sdk/NeverDCAPI*.cpp`
@@ -2786,3 +2794,9 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Native dependency discovery can follow an ARM64 indirect call only when the current complete LowIR and immutable instructions prove an exact resolved chained code-pointer slot. A separate code-pointer reader checks unique read-only storage, competing fixups and the current function entry; ordinary data-pointer readers retain their existing boundary. The bounded trace stays within one block and requires a current runtime or native ABI before preserving a register across a call, including register-specific ARC imports. Frame reloads, unknown calls and incomplete evidence remain unresolved. The inventory retains the original indirect occurrence and does not itself bind its ABI or authorize source publication.
+
+The same immutable native-call proof now binds a complete current scalar `NativeAnalysis` ABI before SSA, while retaining the original LowIR/MedIR indirect opcode and occurrence. Native state inference rebuilds the proof from current LowIR; ordinary call clobbers and frame checks still apply. HighIR projects only the proven immutable target evaluation to the selected source definition. Publication separately requires matching current caller and callee LowIR, MedIR, HighIR and accepted audits, repeats slot/instruction/ABI validation, and counts each original bound call exactly once. Saved hints and dependency inventories cannot authorize publication. Missing, stale, duplicated or conflicting evidence remains unsupported, and every callee still needs its own complete source body and dependency closure.
+
+`SourceFrameEffects` shares bounded, synchronous frame borrows and a possible frame-or-external return alias between loader and pipeline proofs. The ARM64 Swift value-buffer projector requires its complete immutable body, exact original BL/LowIR occurrence, current two-parameter native ABI and strong `swift_makeBoxUnique` import. Its three-word buffer is conservatively invalidated; the result may name that buffer's base or external storage, never a proven saved-byte identity. Copies and joins preserve possible frame provenance. Subsequent borrows must fit the live bounds; partial pointers, escapes, expired frames and restoring a spill through the uncertain result are rejected. Scalar return inference repeats this proof. Allocation, value-witness copying and release remain observable, following the [Swift 6.1.2 runtime contract](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp); this is not a purity claim or a complete existential-call closure.
+
+ARM64 Objective-C context thunks share the same frame-effect model. A complete immutable context load and tail branch must reach a strong selector stub with an agreed current declaration; every forwarded physical argument must match the complete native ABI. An optional counter update must stay in uniquely mapped writable image storage. The resulting certificate lends only the first eight context bytes, synchronously and without retaining their address. The caller still rejects storing private-frame addresses into these bytes or any other memory, so a loaded receiver cannot carry such an escape. Messages, object effects and counter updates remain observable. Direct BL and immutable indirect occurrences are revalidated from current LowIR, including during scalar-result inference; this does not prove later table reloads or existential cleanup.

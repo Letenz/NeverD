@@ -484,6 +484,8 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/support` | 共用二進位載入 helper | Loader |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
 
+`lib/pass/ir/simplify` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
+
 公開標頭在 `include/neverd` 下對應這些區域。不要意外讓內部 C++ 類別成為 SDK
 的一部分：穩定的外部操作應放在純 C 標頭及職責明確的
 `lib/sdk/NeverDCAPI*.cpp` 檔案中。
@@ -877,3 +879,9 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 原生相依性探索僅在目前完整 LowIR 與不可變指令共同證明精確、已解析的鏈式程式碼指標槽時，才跟隨 ARM64 間接呼叫。獨立的程式碼指標讀取器檢查唯一唯讀儲存、衝突修正及目前函式入口；一般資料指標讀取器維持原有邊界。有界追蹤限定在一個基本區塊內，跨呼叫保留暫存器前必須取得目前執行階段或原生 ABI，包括使用特定暫存器傳參的 ARC 匯入。堆疊框架重載、未知呼叫與不完整證據仍未解析。相依性清單保留原始間接呼叫位置，本身不綁定其 ABI，也不授權發布原始碼。
+
+同一個不可變原生呼叫證明現在可在 SSA 之前繫結目前完整的純量 `NativeAnalysis` ABI，同時保留 LowIR/MedIR 中原始間接呼叫操作碼及呼叫位置。原生狀態推導會根據目前 LowIR 重做證明，一般呼叫破壞規則和框架檢查繼續適用。HighIR 只將已證明的不可變目標求值投影為選定的原始碼定義。發布時還要求目前呼叫端與被呼叫端的 LowIR、MedIR、HighIR 和已接受稽核一致，重新驗證指標槽、指令及 ABI，並確認每個原始已繫結呼叫恰好求值一次。儲存的提示和相依清單不能授權發布；缺漏、過時、重複或衝突的證據仍不受支援，每個被呼叫端仍須通過獨立的完整原始碼主體和相依閉合檢查。
+
+`SourceFrameEffects` 由載入器與管線共用，描述有界、同步的堆疊框架借用，以及可能指向框架內或外部儲存的回傳別名。ARM64 Swift 值緩衝區投影器必須通過完整不可變函式本體、原始 BL/LowIR 呼叫位置、目前雙參數原生 ABI 與強匯入 `swift_makeBoxUnique` 的驗證。證明保守地使三個緩衝區字失效；回傳值可能是緩衝區起始位址或外部儲存，不能證明保存位元組的身分。複製與合流保留可能的框架來源。後續借用須位於仍存活的範圍內；部分指標、逸出、已失效的框架，以及透過不確定回傳值恢復保存暫存器均被拒絕。純量回傳推斷也會重新驗證此證明。依據 [Swift 6.1.2 執行階段契約](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/HeapObject.cpp)，配置、值見證複製與釋放仍是可觀察效果；這不代表純函式，也不代表完整的存在型別呼叫閉合。
+
+ARM64 Objective-C 上下文 thunk 沿用同一框架效果模型。完整且不可變的上下文讀取與尾端分支必須到達強繫結的 selector stub，並取得目前一致的宣告；每個轉送的實體引數都須符合完整原生 ABI。選用的計數器更新只能存取唯一映射的可寫映像儲存。所得證明僅允許同步借用上下文前八個位元組，且不得保留其位址。呼叫端仍拒絕將私有框架位址寫入這些位元組或任何其他記憶體，因此讀出的 receiver 不能攜帶這種逸出。訊息、物件效果與計數器更新仍可觀察。直接 BL 與不可變間接呼叫位置均由目前 LowIR 重新驗證，純量結果推導亦然；這尚未證明後續資料表重載或存在型別清理。
