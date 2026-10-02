@@ -22,6 +22,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedConstantPropagation.cpp
   pass/MedDCE.cpp
   pass/MedDisplay.cpp
+  pass/MedMutableSource.cpp
   pass/MedNoReturn.cpp
   pass/MedPropagation.cpp
   pass/MedPredicatedEffects.cpp

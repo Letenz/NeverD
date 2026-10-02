@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 81494ff51590658ffc679bd85fe8bdfa7e3e14a84e574fbb406d2d60f74c63e6 -->
+<!-- i18n-source: 6dbcc992cd229fc707c3724b7e4411818f53d5e24f516e50eb6ccfb0eae55566 -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ La [récupération expérimentale de sources d’interpréteur](interpreter-reco
 Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
 
 La récupération expose aussi `--vm-chain-transfers=N` (0 par défaut) et `--vm-no-control-discovery`. Le chaînage conserve les corrélations symboliques entre transferts dont la cible unique est prouvée ; sa limite revient aux frontières CFG ordinaires. Le mode état machine accepte des offsets d’entrée RSP sans bouclage, non vérifiés à l’exécution, via `--vm-entry-frame=begin:end`. La prémisse numérique exacte accompagne le C et le rapport, sans autoriser d’accès mémoire ni prouver l’équivalence.
+
+Les grandes fonctions récupérées qui dépassent la limite de construction SSA peuvent utiliser `--llvm` avec un contrat borné de stockage scalaire mutable. Les entrées, les valeurs portées par les boucles et les lectures antérieures conservent leur sens. Les états implicites non pris en charge, paramètres en registres vectoriels, relocalisations, stockages ambigus et contrôles mal formés échouent explicitement ; HighC refuse ce repli. La sortie reste soumise au contrat existant de l’état machine, sans certificat d’équivalence supplémentaire.
 
 L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
 

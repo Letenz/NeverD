@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 81494ff51590658ffc679bd85fe8bdfa7e3e14a84e574fbb406d2d60f74c63e6 -->
+<!-- i18n-source: 6dbcc992cd229fc707c3724b7e4411818f53d5e24f516e50eb6ccfb0eae55566 -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ La [recuperación experimental de fuentes de intérpretes](interpreter-recovery.
 Los presupuestos de recuperación son explícitos: `--vm-max-fields`, `--vm-max-refinements` y `--vm-max-queries` mantienen los valores predeterminados 16, 16 y 4096. La guía describe la API C v3 compatible y las reglas de fallo.
 
 La recuperación también ofrece `--vm-chain-transfers=N` (0 por defecto) y `--vm-no-control-discovery`. El encadenamiento conserva correlaciones simbólicas entre transferencias de destino único demostrado; al alcanzar el límite vuelve a fronteras CFG ordinarias. El modo de estado de máquina permite declarar offsets de RSP de entrada sin desbordamiento modular y sin comprobación en ejecución con `--vm-entry-frame=begin:end`. La premisa numérica exacta acompaña al C y al informe; no autoriza memoria ni prueba equivalencia.
+
+Las funciones recuperadas que superan el límite de construcción SSA pueden usar `--llvm` mediante un contrato acotado de almacenamiento escalar mutable. Se conservan las entradas, los valores transportados por los bucles y las lecturas anteriores. Los estados implícitos no admitidos, parámetros en registros vectoriales, reubicaciones de imagen, almacenamiento ambiguo y control mal formado fallan explícitamente; HighC rechaza esta alternativa. La salida sigue el contrato existente del estado de máquina y no añade un certificado de equivalencia.
 
 La API C++ independiente para pruebas de bucles infiere invariantes acotados y rangos lexicográficos para bucles anidados, y vuelve a comprobar el refinamiento nativo a LowIR. Consulte la [guía de recuperación](interpreter-recovery.md); no certifica el C emitido.
 

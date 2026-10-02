@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 81494ff51590658ffc679bd85fe8bdfa7e3e14a84e574fbb406d2d60f74c63e6 -->
+<!-- i18n-source: 6dbcc992cd229fc707c3724b7e4411818f53d5e24f516e50eb6ccfb0eae55566 -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF 
 復元予算は `--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` で明示できます。既定値は 16、16、4096 のままです。互換性のある v3 C API と失敗時の規則は復元ガイドを参照してください。
 
 復元では `--vm-chain-transfers=N`（既定値 0）と `--vm-no-control-discovery` も指定できます。連鎖は単一ターゲットが証明された制御転送間で記号的な相関を保持し、上限で通常の CFG 境界に戻ります。マシン状態復元では `--vm-entry-frame=begin:end` で、実行時には検査しない非ラップの入口 RSP オフセット範囲を宣言できます。正確な数値前提は生成 C とレポートに残り、メモリアクセスや等価性の証明を与えません。
+
+SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界なスカラー可変ストレージ契約を使用できます。入口の入力、ループで引き継ぐ値、過去の読み取りの意味を保持します。未対応の暗黙状態、ベクトルレジスター引数、イメージ再配置、曖昧なストレージ、不正な制御フローは明示的に失敗し、HighC はこの代替経路を拒否します。ソース出力は既存のマシン状態契約に従い、等価性証明書は追加しません。
 
 独立した C++ ループ証明 API は予算内で入れ子ループの不変条件と辞書式順位を推論し、ネイティブから LowIR への精緻化を再検査します。[復元ガイド](interpreter-recovery.md)を参照してください。出力 C の等価性は証明しません。
 

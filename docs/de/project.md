@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 81494ff51590658ffc679bd85fe8bdfa7e3e14a84e574fbb406d2d60f74c63e6 -->
+<!-- i18n-source: 6dbcc992cd229fc707c3724b7e4411818f53d5e24f516e50eb6ccfb0eae55566 -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ Die experimentelle [Quelltextrekonstruktion aus Interpretern](interpreter-recove
 Wiederherstellungsbudgets sind explizit: `--vm-max-fields`, `--vm-max-refinements` und `--vm-max-queries` behalten die Standardwerte 16, 16 und 4096. Der Leitfaden beschreibt die kompatible C-API v3 und Fehlerregeln.
 
 Die Wiederherstellung bietet auch `--vm-chain-transfers=N` (Standard 0) und `--vm-no-control-discovery`. Verkettung erhält symbolische Korrelationen über Transfers mit bewiesenem Einzelziel; am Limit gelten wieder normale CFG-Grenzen. Maschinenzustandswiederherstellung kann mit `--vm-entry-frame=begin:end` ungeprüfte, nicht umlaufende Offsets zum Eintritts-RSP angeben. Die genaue numerische Vorbedingung bleibt im erzeugten C und Bericht; sie erlaubt keine Speicherzugriffe und beweist keine Äquivalenz.
+
+Große rekonstruierte Funktionen oberhalb der SSA-Aufbaugrenze können mit `--llvm` einen begrenzten Vertrag für veränderlichen skalaren Speicher nutzen. Eingangswerte, schleifengetragene Werte und frühere Lesezugriffe behalten ihre Bedeutung. Nicht unterstützter impliziter Zustand, Vektorregisterparameter, Image-Relokation, mehrdeutiger Speicher und fehlerhafter Kontrollfluss führen zu klaren Fehlern; HighC lehnt diesen Ersatzpfad ab. Die Ausgabe folgt weiterhin dem bestehenden Maschinenzustandsvertrag und liefert kein zusätzliches Äquivalenzzertifikat.
 
 Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
 

@@ -157,6 +157,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   // exact lifted-block address on targets without a readable PC GPR becomes a
   // relocation-aware ptrtoint identity.
   auto GetRelocatableIdentityInput = [&](uint8_t Idx) -> llvm::Value * {
+    if (CurMedFunc && CurMedFunc->SkippedSSA)
+      return GetInput(Idx);
     if (Idx >= Op.NumInputs)
       return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), 0);
     if (llvm::Value *Code =
@@ -222,6 +224,10 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   switch (Op.Opcode) {
   case NdOp::COPY: {
+    if (CurMedFunc && CurMedFunc->SkippedSSA) {
+      Result = GetInput(0);
+      break;
+    }
     // A non-ELF i386 call-next/POP keeps the real LOAD/COPY in MedIR so an
     // independently reachable POP never inherits a synthetic PC.  Only the
     // final CFG-authenticated, post-SSA occurrence may replace that exact COPY
@@ -263,6 +269,11 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     break;
   }
   case NdOp::INT_ADD: {
+    if (CurMedFunc && CurMedFunc->SkippedSSA) {
+      auto [L, R] = Coerce(GetInput(0), GetInput(1));
+      Result = Builder.CreateAdd(L, R, "add");
+      break;
+    }
     // R_386_GOTPC is a relocation-defined scalar model, not an ordinary
     // address addition.  LowIR proves the exact get-PC input and relocation
     // field on the final CFG; LowToMed then binds that exact output after SSA
@@ -319,6 +330,11 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     break;
   }
   case NdOp::INT_SUB: {
+    if (CurMedFunc && CurMedFunc->SkippedSSA) {
+      auto [L, R] = Coerce(GetInput(0), GetInput(1));
+      Result = Builder.CreateSub(L, R, "sub");
+      break;
+    }
     if (auto *Dyn = tryEmitDynamicStackAlloc(Op, Builder)) {
       Result = Dyn;
       break;
@@ -357,8 +373,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   case NdOp::INT_DIV: {
     auto [L, R] =
         Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/false,
-                               /*WantRem=*/false);
+    if (!CurMedFunc || !CurMedFunc->SkippedSSA)
+      Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/false,
+                                 /*WantRem=*/false);
     if (!Result)
       Result = GuardDivRem(L, R, /*IsSigned=*/false, /*IsRem=*/false);
     break;
@@ -366,8 +383,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   case NdOp::INT_SDIV: {
     auto [L, R] =
         Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/true,
-                               /*WantRem=*/false);
+    if (!CurMedFunc || !CurMedFunc->SkippedSSA)
+      Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/true,
+                                 /*WantRem=*/false);
     if (!Result)
       Result = GuardDivRem(L, R, /*IsSigned=*/true, /*IsRem=*/false);
     break;
@@ -375,8 +393,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   case NdOp::INT_REM: {
     auto [L, R] =
         Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/false,
-                               /*WantRem=*/true);
+    if (!CurMedFunc || !CurMedFunc->SkippedSSA)
+      Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/false,
+                                 /*WantRem=*/true);
     if (!Result)
       Result = GuardDivRem(L, R, /*IsSigned=*/false, /*IsRem=*/true);
     break;
@@ -384,8 +403,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   case NdOp::INT_SREM: {
     auto [L, R] =
         Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/true,
-                               /*WantRem=*/true);
+    if (!CurMedFunc || !CurMedFunc->SkippedSSA)
+      Result = emitX86WideDivRem(Builder, L, R, /*IsSigned=*/true,
+                                 /*WantRem=*/true);
     if (!Result)
       Result = GuardDivRem(L, R, /*IsSigned=*/true, /*IsRem=*/true);
     break;
@@ -397,6 +417,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     // negative constants so bitmasks like 0xFFFFFFFFFFFF0000 become
     // 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000 instead of being zero-extended.
     auto MaybeSExtMask = [&](llvm::Value *V) -> llvm::Value * {
+      if (CurMedFunc && CurMedFunc->SkippedSSA)
+        return V;
       auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V);
       if (!CI)
         return V;
@@ -561,22 +583,20 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     Result = Builder.CreateNeg(GetRelocatableIdentityInput(0), "neg");
     break;
   }
-  case NdOp::BOOL_AND: {
-    auto [L, R] =
-        Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = Builder.CreateAnd(L, R, "band");
-    break;
-  }
-  case NdOp::BOOL_OR: {
-    auto [L, R] =
-        Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = Builder.CreateOr(L, R, "bor");
-    break;
-  }
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
   case NdOp::BOOL_XOR: {
-    auto [L, R] =
-        Coerce(GetRelocatableIdentityInput(0), GetRelocatableIdentityInput(1));
-    Result = Builder.CreateXor(L, R, "bxor");
+    auto Truth = [&](unsigned I) {
+      auto *Value = GetRelocatableIdentityInput(I);
+      return Builder.CreateICmpNE(Value,
+                                  llvm::ConstantInt::get(Value->getType(), 0));
+    };
+    auto *Left = Truth(0);
+    auto *Right = Truth(1);
+    Result = Op.Opcode == NdOp::BOOL_AND  ? Builder.CreateAnd(Left, Right)
+             : Op.Opcode == NdOp::BOOL_OR ? Builder.CreateOr(Left, Right)
+                                          : Builder.CreateXor(Left, Right);
+    Result = Builder.CreateZExt(Result, sizeToType(Op.Output.Size));
     break;
   }
   case NdOp::BOOL_NOT: {
@@ -631,6 +651,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     // address-of used as an ordinary address keeps its existing re-based
     // handling — symbolizing it in getVar instead double-relocates those uses.
     auto LaneInput = [&](uint8_t Idx) -> llvm::Value * {
+      if (CurMedFunc && CurMedFunc->SkippedSSA)
+        return GetInput(Idx);
       if (Idx < Op.NumInputs)
         if (llvm::Value *Code =
                 tryResolveCodeIdentityOperand(Op.Inputs[Idx], Builder))
@@ -760,7 +782,7 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     Result = Builder.CreateCall(Fn, {Operand}, "popcount");
     auto *OutTy = sizeToType(Op.Output.Size);
     if (Result->getType() != OutTy)
-      Result = Builder.CreateTrunc(Result, OutTy);
+      Result = Builder.CreateZExtOrTrunc(Result, OutTy);
     break;
   }
   case NdOp::LZCOUNT: {
@@ -771,7 +793,7 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Fn, {Operand, llvm::ConstantInt::getFalse(*Ctx)}, "lzcnt");
     auto *OutTy = sizeToType(Op.Output.Size);
     if (Result->getType() != OutTy)
-      Result = Builder.CreateTrunc(Result, OutTy);
+      Result = Builder.CreateZExtOrTrunc(Result, OutTy);
     break;
   }
   case NdOp::FLOAT_ADD:
@@ -805,6 +827,14 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
   case NdOp::LOAD: {
     auto *ValTy = sizeToType(Op.Output.Size);
+    if (CurMedFunc && CurMedFunc->SkippedSSA) {
+      auto *Ptr =
+          Builder.CreateIntToPtr(GetInput(0), llvm::PointerType::get(*Ctx, 0));
+      auto *Load = Builder.CreateLoad(ValTy, Ptr, "ld");
+      Load->setAlignment(llvm::Align(1));
+      Result = Load;
+      break;
+    }
     // A resolver-authenticated target LOAD whose entire post-SSA value flow is
     // consumed by this recovered switch does not need to read the suppressed
     // code-pointer relocation bytes at all.  The branch emitter replaces its
@@ -899,6 +929,12 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
   case NdOp::STORE: {
     auto *Val = GetInput(1);
+    if (CurMedFunc && CurMedFunc->SkippedSSA) {
+      auto *Ptr =
+          Builder.CreateIntToPtr(GetInput(0), llvm::PointerType::get(*Ctx, 0));
+      Builder.CreateStore(Val, Ptr)->setAlignment(llvm::Align(1));
+      return;
+    }
     llvm::Value *Ptr = nullptr;
     const MedVar &AddrVar = Op.Inputs[0];
     const bool IsSegmentRelative =

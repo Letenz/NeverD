@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 81494ff51590658ffc679bd85fe8bdfa7e3e14a84e574fbb406d2d60f74c63e6 -->
+<!-- i18n-source: 6dbcc992cd229fc707c3724b7e4411818f53d5e24f516e50eb6ccfb0eae55566 -->
 
 <div align="center">
 
@@ -49,6 +49,8 @@ CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`lib
 恢復預算可明確設定：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的預設值仍為 16、16、4096。相容的 v3 C API 與失敗規則見恢復指南。
 
 恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
+
+超過 SSA 建構限制的大型恢復函式可透過 `--llvm` 使用有界的純量可變儲存契約。入口輸入、迴圈攜帶值和較早讀取的語意得到保留。不支援的隱含狀態、向量暫存器參數、映像重定位、歧義儲存和畸形控制流程會明確失敗；HighC 拒絕此回退路徑。原始碼輸出仍遵循既有機器狀態契約，不新增等價證明憑證。
 
 獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
 

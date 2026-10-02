@@ -220,8 +220,7 @@ bool LLVMCWriter::isNormalizedBoolean(const llvm::Value *V) const {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Current)) {
       if (!LI->isSimple())
         return false;
-      if (const auto *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const auto *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != Current) {
         Pending.push_back(Stored);
         continue;
@@ -243,8 +242,7 @@ const llvm::Value *LLVMCWriter::peelIntegerView(const llvm::Value *V) const {
       }
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         V = Stored;
         continue;
@@ -386,7 +384,7 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (const llvm::AllocaInst *Slot =
             asAllocaPointer(LI->getPointerOperand())) {
-      if (const llvm::Value *Stored = allocaStoredValue(Slot);
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V)
         if (auto Addr = imageDataVA(Stored))
           return Addr;
@@ -678,6 +676,17 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
 
 std::optional<std::string>
 LLVMCWriter::foldImmediate(const llvm::Value *V) const {
+  // The local expression walk can reenter through imageDataVA and alloca
+  // store classification. A mutable loop may then revisit this same root
+  // with a fresh local Seen set. No immediate is established by that cycle.
+  if (ActiveImmediateFolds.size() >= 128 ||
+      !ActiveImmediateFolds.insert(V).second)
+    return std::nullopt;
+  struct FoldGuard {
+    std::set<const llvm::Value *> &Active;
+    const llvm::Value *Value;
+    ~FoldGuard() { Active.erase(Value); }
+  } Guard{ActiveImmediateFolds, V};
   auto SupportsWidth = [](const llvm::Value *Value) {
     return Value && (!Value->getType()->isIntegerTy() ||
                      Value->getType()->getIntegerBitWidth() <= 64);
@@ -717,19 +726,6 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
       return std::nullopt;
     return integerConstantText(CI->getValue());
   }
-  if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (Analysis.ForwardedLoads.find(LI) == Analysis.ForwardedLoads.end()) {
-      if (const llvm::AllocaInst *Slot =
-              asAllocaPointer(LI->getPointerOperand())) {
-        if (auto Known = AllocaImmediates.find(Slot);
-            Known != AllocaImmediates.end())
-          return Known->second;
-        if (auto Known = OmittedAllocaImmediates.find(Slot);
-            Known != OmittedAllocaImmediates.end())
-          return Known->second;
-      }
-    }
-  }
 
   llvm::SmallPtrSet<const llvm::Value *, 16> Seen;
   auto Rec = [&](auto &&Self,
@@ -754,14 +750,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
         return Self(Self, Fwd->second);
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (auto Known = AllocaImmediates.find(Slot);
-            Known != AllocaImmediates.end())
-          return Known->second;
-        if (auto Known = OmittedAllocaImmediates.find(Slot);
-            Known != OmittedAllocaImmediates.end())
-          return Known->second;
-        if (auto Known = uniqueAllocaImmediate(Slot))
-          return *Known;
+        if (const auto *Stored = allocaStoredValueBefore(LI))
+          return Self(Self, Stored);
       }
       if (auto VA = imageDataVA(LI->getPointerOperand())) {
         const auto *Ty = LI->getType();
@@ -1530,7 +1520,7 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
           if (Off != 0 && isFrameFieldValueHome(Slot))
             break;
         }
-        if (const llvm::Value *Stored = allocaStoredValue(Slot);
+        if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
             Stored && Stored != V) {
           V = Stored;
           continue;
@@ -1645,8 +1635,7 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
 namespace {
 const llvm::Value *peelMulScale(
     const llvm::Value *V, uint64_t Scale,
-    const std::function<const llvm::Value *(const llvm::AllocaInst *)>
-        &StoredOf,
+    const std::function<const llvm::Value *(const llvm::LoadInst *)> &StoredOf,
     const std::function<const llvm::AllocaInst *(const llvm::Value *)> &AsSlot,
     const std::function<bool(const llvm::Value *)> &NormalizedBoolean) {
   if (!V || !Scale)
@@ -1662,7 +1651,7 @@ const llvm::Value *peelMulScale(
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Slot = AsSlot(LI->getPointerOperand())) {
-        if (const llvm::Value *Stored = StoredOf(Slot); Stored && Stored != V) {
+        if (const llvm::Value *Stored = StoredOf(LI); Stored && Stored != V) {
           V = Stored;
           continue;
         }
@@ -1703,10 +1692,9 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Addr)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (auto Last = AllocaLastValues.find(Slot);
-            Last != AllocaLastValues.end() && Last->second &&
-            Last->second != Addr) {
-          Addr = Last->second;
+        if (const auto *Stored = allocaStoredValueBefore(LI);
+            Stored && Stored != Addr) {
+          Addr = Stored;
           continue;
         }
       }
@@ -1719,8 +1707,8 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
   const llvm::Value *Base = nullptr;
   const llvm::Value *Index = nullptr;
   auto AsSlot = [this](const llvm::Value *V) { return asAllocaPointer(V); };
-  auto StoredOf = [this](const llvm::AllocaInst *Slot) {
-    return allocaStoredValue(Slot);
+  auto StoredOf = [this](const llvm::LoadInst *LI) {
+    return allocaStoredValueBefore(LI);
   };
   auto NormalizedBoolean = [this](const llvm::Value *V) {
     return isNormalizedBoolean(V);
@@ -1785,7 +1773,7 @@ std::string LLVMCWriter::indexExprStr(const llvm::Value *V) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Stored = allocaStoredValue(Slot);
+        if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
             Stored && Stored != V) {
           V = Stored;
           continue;
@@ -1861,8 +1849,7 @@ std::string LLVMCWriter::ultimateComposedText(const llvm::Value *V) {
         return Acc->Text;
       if (auto Acc = typedIndexAccess(LI->getPointerOperand()))
         return Acc->Text;
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         V = Stored;
         continue;
@@ -1944,8 +1931,7 @@ LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         V = Stored;
         continue;
@@ -1999,8 +1985,7 @@ std::string LLVMCWriter::condStr(const llvm::Value *V) {
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         V = Stored;
         continue;
@@ -2148,8 +2133,7 @@ bool LLVMCWriter::isComposedRemValue(const llvm::Value *V) {
       }
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         V = Stored;
         continue;
@@ -2220,7 +2204,7 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Stored = allocaStoredValue(Slot);
+        if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
             Stored && Stored != V && Seen.count(Stored) == 0) {
           Mark(LI);
           V = Stored;
@@ -2243,7 +2227,7 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Addr)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Stored = allocaStoredValue(Slot)) {
+        if (const llvm::Value *Stored = allocaStoredValueBefore(LI)) {
           Mark(LI);
           Addr = PeelCast(Stored, /*HideCasts=*/true);
         }
@@ -2270,7 +2254,7 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Vtbl)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand()))
-        if (const llvm::Value *Stored = allocaStoredValue(Slot); Stored) {
+        if (const llvm::Value *Stored = allocaStoredValueBefore(LI); Stored) {
           Mark(LI);
           Vtbl = PeelCast(Stored, /*HideCasts=*/true);
         }
@@ -2468,7 +2452,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
         return getName(const_cast<llvm::AllocaInst *>(Slot));
       if (isJoinCallArgAlloca(Slot) && Slot != PhiTailSlot)
         return getName(Slot);
-      if (const llvm::Value *Stored = allocaStoredValue(Slot);
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != V) {
         if (auto Imm = foldImmediate(Stored))
           return *Imm;
@@ -2539,6 +2523,16 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::FSub:
     return LHS + " - " + RHS;
   case llvm::Instruction::Mul:
+    // A full u16 product can overflow C's signed integer promotion even
+    // though the LLVM bitvector multiplication is defined.
+    if (Ty->isIntegerTy()) {
+      const std::string Carrier =
+          Ty->getIntegerBitWidth() < 32 ? "uint32_t" : typeToCLLVM(Ty);
+      const std::string Product =
+          "(" + Carrier + ")(" + LHS + ") * (" + Carrier + ")(" + RHS + ")";
+      return castStr(llvm::Instruction::Trunc, Product, Ty, Ty);
+    }
+    return LHS + " * " + RHS;
   case llvm::Instruction::FMul:
     return LHS + " * " + RHS;
   case llvm::Instruction::UDiv:
@@ -2546,7 +2540,8 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::SDiv:
     return castStr(llvm::Instruction::Trunc,
                    signedIntegerOperand(Ty, LHS) + " / " +
-                       signedIntegerOperand(Ty, RHS), Ty, Ty);
+                       signedIntegerOperand(Ty, RHS),
+                   Ty, Ty);
   case llvm::Instruction::FDiv:
     return LHS + " / " + RHS;
   case llvm::Instruction::URem:
@@ -2554,11 +2549,13 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::SRem:
     return castStr(llvm::Instruction::Trunc,
                    signedIntegerOperand(Ty, LHS) + " % " +
-                       signedIntegerOperand(Ty, RHS), Ty, Ty);
+                       signedIntegerOperand(Ty, RHS),
+                   Ty, Ty);
   case llvm::Instruction::FRem:
     return LHS + " % " + RHS;
   case llvm::Instruction::Shl:
-    return LHS + " << " + RHS;
+    return castStr(llvm::Instruction::Trunc, Unsigned(LHS) + " << " + RHS, Ty,
+                   Ty);
   case llvm::Instruction::LShr:
     return Unsigned(LHS) + " >> " + RHS;
   case llvm::Instruction::AShr:
@@ -2774,8 +2771,7 @@ std::string LLVMCWriter::logicalShiftLhs(const llvm::Instruction &Shift,
   const llvm::CastInst *Widen = nullptr;
   while (Cur && Seen.insert(Cur).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
-      if (const llvm::Value *Stored =
-              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
           Stored && Stored != Cur) {
         Cur = Stored;
         continue;

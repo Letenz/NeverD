@@ -92,6 +92,13 @@ void MedLLVMEmitter::emitReturnOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     return;
   }
 
+  if (CurMedFunc && CurMedFunc->SkippedSSA && MutableReturnValue) {
+    auto *Value = getVar(*MutableReturnValue, Builder);
+    Value = Builder.CreateZExtOrTrunc(Value, RetTy);
+    Builder.CreateRet(Value);
+    return;
+  }
+
   // A small struct returned by value across multiple registers: assemble the
   // LLVM aggregate from each field register's value so the backend places the
   // fields back in their return registers (the inverse of the call-site

@@ -234,21 +234,96 @@ bool LLVMCWriter::cursorSlotIsObserved(const llvm::AllocaInst *Slot) const {
 }
 
 const llvm::Value *
-LLVMCWriter::allocaStoredValue(const llvm::AllocaInst *Slot) const {
-  if (!Slot)
+LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
+  if (!Load || !Load->isSimple() || !Load->getFunction())
     return nullptr;
-  const llvm::Value *Stored = nullptr;
-  if (auto Last = AllocaLastValues.find(Slot);
-      Last != AllocaLastValues.end() && Last->second)
-    Stored = Last->second;
-  else if (UniqueHomes.count(Slot)) {
-    if (auto Home = AllocaHomeValues.find(Slot);
-        Home != AllocaHomeValues.end() && Home->second)
-      Stored = Home->second;
+  const auto *Slot = asAllocaPointer(Load->getPointerOperand());
+  if (!Slot || allocaAddressTaken(Slot))
+    return nullptr;
+  // Printing a stored expression may revisit a load from before that store.
+  // The current printer state is not reaching-definition evidence for it.
+  // Index the immutable instruction order once, keeping only exact local
+  // stores; cross-block joins retain their explicit load.
+  if (LocalLoadValuesFor != Load->getFunction()) {
+    LocalLoadValuesFor = Load->getFunction();
+    LocalLoadValues.clear();
+    ExactLocalLoadSlots.clear();
+    for (const auto &B : *LocalLoadValuesFor) {
+      llvm::DenseMap<const llvm::AllocaInst *, const llvm::Value *> Stores;
+      llvm::DenseMap<const llvm::Value *, unsigned> ExpansionDepth;
+      llvm::DenseMap<const llvm::Value *, unsigned> ExpansionCost;
+      constexpr unsigned MaxForwardDepth = 8;
+      constexpr unsigned MaxForwardCost = 32;
+      auto Expansion = [&](const llvm::Value *V) {
+        // A definition outside this local index may itself inline a large
+        // expression. Do not silently price an unmeasured instruction as a
+        // leaf, including when basic blocks appear out of dominance order.
+        if (llvm::isa<llvm::Instruction>(V) && !ExpansionCost.count(V))
+          return std::pair(MaxForwardDepth, MaxForwardCost);
+        return std::pair(ExpansionDepth.lookup(V),
+                         std::max(1u, ExpansionCost.lookup(V)));
+      };
+      for (const auto &I : B) {
+        unsigned Depth = 0, Cost = 1;
+        for (const auto &Operand : I.operands()) {
+          const auto [OperandDepth, OperandCost] = Expansion(Operand.get());
+          Depth = std::max(Depth, OperandDepth);
+          // Count duplicate operands twice: printed expressions are trees.
+          Cost = std::min(MaxForwardCost, Cost + OperandCost);
+        }
+        if (!I.getType()->isVoidTy()) {
+          ExpansionDepth[&I] = std::min(MaxForwardDepth, Depth + 1);
+          ExpansionCost[&I] = Cost;
+        }
+        if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+          if (const auto *A = asAllocaPointer(S->getPointerOperand()))
+            Stores[A] = S->isSimple() ? S->getValueOperand() : nullptr;
+        } else if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(&I)) {
+          // Long chains of mutable updates must not become deeply nested C
+          // expressions or repeated recursive folding. A retained load is a
+          // real snapshot and a fresh expression boundary.
+          ExpansionDepth[L] = 0;
+          ExpansionCost[L] = 1;
+          const auto *A = asAllocaPointer(L->getPointerOperand());
+          auto It = Stores.find(A);
+          if (It != Stores.end() && It->second &&
+              It->second->getType() == L->getType() &&
+              Expansion(It->second).first < MaxForwardDepth &&
+              Expansion(It->second).second < MaxForwardCost) {
+            LocalLoadValues[L] = It->second;
+            ExpansionDepth[L] = ExpansionDepth.lookup(It->second) + 1;
+            ExpansionCost[L] = ExpansionCost.lookup(It->second) + 1;
+          }
+        }
+      }
+    }
   }
-  if (!Stored || joinFieldDefaultText(Slot))
+  auto Exact = ExactLocalLoadSlots.find(Slot);
+  if (Exact == ExactLocalLoadSlots.end()) {
+    bool Valid = Slot->getAllocatedType()->isIntegerTy() ||
+                 Slot->getAllocatedType()->isPointerTy();
+    size_t Budget = 8 * 1024 * 1024;
+    for (const auto *U : Slot->users()) {
+      if (!Budget-- || !Valid) {
+        Valid = false;
+        break;
+      }
+      if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(U))
+        Valid &= L->isSimple() && L->getPointerOperand() == Slot &&
+                 L->getType() == Slot->getAllocatedType();
+      else if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(U))
+        Valid &= S->isSimple() && S->getPointerOperand() == Slot &&
+                 S->getValueOperand() != Slot &&
+                 S->getValueOperand()->getType() == Slot->getAllocatedType();
+      else
+        Valid = false;
+    }
+    Exact = ExactLocalLoadSlots.insert({Slot, Valid}).first;
+  }
+  if (!Exact->second)
     return nullptr;
-  return Stored;
+  auto It = LocalLoadValues.find(Load);
+  return It == LocalLoadValues.end() ? nullptr : It->second;
 }
 
 void LLVMCWriter::noteAllocaStore(const llvm::AllocaInst *Slot,
@@ -292,29 +367,8 @@ bool LLVMCWriter::computedAllocaLoadIsForwarded(
   const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
   if (!Slot || allocaAddressTaken(Slot) || joinFieldDefaultText(Slot))
     return false;
-  const llvm::BasicBlock *BB = LI->getParent();
-  if (BB) {
-    // This prediction also runs while deciding whether a store in another
-    // block is visible. AllocaLastValues describes the block currently being
-    // written, not necessarily the block containing this load. Only a store
-    // preceding the load in its own block can justify suppressing it here.
-    const llvm::Value *LastStored = nullptr;
-    for (const llvm::Instruction &Inst : *BB) {
-      if (&Inst == LI)
-        break;
-      const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      if (!SI || asAllocaPointer(SI->getPointerOperand()) != Slot)
-        continue;
-      LastStored = SI->getValueOperand();
-    }
-    if (LastStored)
-      return !foldImmediate(LastStored);
-  }
-  if (UniqueHomes.count(Slot)) {
-    if (auto Home = AllocaHomeValues.find(Slot);
-        Home != AllocaHomeValues.end() && Home->second)
-      return !foldImmediate(Home->second);
-  }
+  if (const auto *Stored = allocaStoredValueBefore(LI))
+    return !foldImmediate(Stored);
   return false;
 }
 
@@ -353,7 +407,7 @@ LLVMCWriter::syntheticFrameOwnerOff(const llvm::Value *V) const {
           V = It->second;
           continue;
         }
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
@@ -463,7 +517,7 @@ LLVMCWriter::leftoverPackedCallResult(const llvm::BasicBlock *BB) const {
             V = It->second;
             continue;
           }
-          if (const llvm::Value *Prev = allocaStoredValue(Home);
+          if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
               Prev && Prev != V) {
             V = Prev;
             continue;
@@ -603,7 +657,7 @@ bool LLVMCWriter::peelsToUnknown(const llvm::Value *V) const {
           V = It->second;
           continue;
         }
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
@@ -738,7 +792,7 @@ LLVMCWriter::integerCallValue(const llvm::Value *V) const {
           V = Best;
           continue;
         }
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
@@ -1380,11 +1434,6 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     if (auto Text = ValueTexts.find(LI);
         Text != ValueTexts.end() && !Text->second.empty())
       return;
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
-        Slot && !allocaAddressTaken(Slot) &&
-        (allocaHomeIsNamedParam(Slot) || (allocaOnlyHoldsImmediates(Slot) &&
-                                          allocaLoadsComposeImmediate(Slot))))
-      return;
     if (const llvm::AllocaInst *Slot =
             asAllocaPointer(LI->getPointerOperand())) {
       if (auto It = AllocaTypes.find(Slot); It != AllocaTypes.end())
@@ -1607,7 +1656,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
             if (const llvm::AllocaInst *Home =
                     asAllocaPointer(LI->getPointerOperand())) {
-              if (const llvm::Value *Prev = allocaStoredValue(Home);
+              if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
                   Prev && Prev != V) {
                 V = Prev;
                 continue;
@@ -1725,7 +1774,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Root)) {
               if (const auto *Home =
                       asAllocaPointer(Load->getPointerOperand())) {
-                if (const llvm::Value *Prev = allocaStoredValue(Home);
+                if (const llvm::Value *Prev = allocaStoredValueBefore(Load);
                     Prev && Prev != Root) {
                   Root = Prev;
                   continue;
@@ -3196,6 +3245,33 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if ((IID == llvm::Intrinsic::ctpop || IID == llvm::Intrinsic::ctlz ||
+       IID == llvm::Intrinsic::cttz) &&
+      Call.getType()->isIntegerTy() &&
+      Call.getType()->getIntegerBitWidth() <= 64) {
+    const unsigned Bits = Call.getType()->getIntegerBitWidth();
+    const std::string Source = freshVar("count_bits");
+    emitIndent(Indent);
+    OS << "{ uint64_t " << Source << " = (uint64_t)("
+       << valueStr(Call.getArgOperand(0)) << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent + 1);
+    OS << getName(&Call) << " = ";
+    if (IID != llvm::Intrinsic::ctpop)
+      OS << Source << " == 0 ? " << Bits << " : ";
+    OS << (IID == llvm::Intrinsic::ctpop  ? "__builtin_popcountll("
+           : IID == llvm::Intrinsic::ctlz ? "__builtin_clzll("
+                                          : "__builtin_ctzll(")
+       << Source << ")";
+    if (IID == llvm::Intrinsic::ctlz && Bits < 64)
+      OS << " - " << 64 - Bits;
+    OS << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
     if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
       throw std::runtime_error("BFMMLA requires an AArch64 C projection");
@@ -4069,7 +4145,7 @@ std::string LLVMCWriter::inplaceIntegerUpdate(const llvm::StoreInst &SI,
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Home =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
@@ -4126,7 +4202,7 @@ std::string LLVMCWriter::integerCallStoredText(const llvm::Value *Stored) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Home =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
