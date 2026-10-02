@@ -629,6 +629,8 @@ Darwin ARM64 的固定 C 呼叫也可透過隱藏的 x8 指標傳回由恰好六
 
 精確的 arm64 QuartzCore 強匯入 `CATransform3DScale` 使用同一有界變換橋接。128 位元組輸入指標位於 x0，三個 double 使用 d0–d2，x8 指向結果。HighC 在呼叫 SDK 前將完整輸入複製成真正以值傳遞的記錄，呼叫後寫入全部十六個結果欄位。O0/O2 執行涵蓋輸入與結果緩衝區分離及重疊兩種情況、全部欄位的位元模式及邊界保護。錯誤提供者、弱匯入、失效寬度及其他 ABI 均遭拒絕。
 
+精確的 arm64 CoreGraphics 強匯入 `CGRectApplyAffineTransform` 將 x0 指向的 48 位元組間接變換輸入，與 d0–d3 中 32 位元組的矩形輸入和結果分別處理。橋接將變換的全部六個欄位複製為真正以值傳遞的 SDK 參數；輸入範圍不會取自矩形結果的大小。O0/O2 執行驗證浮點位元模式、四個結果欄位、別名緩衝區和邊界保護。其他提供者、弱匯入、被修改的載體或寬度以及 x86_64 仍遭拒絕。
+
 UIKit 的目標／動作綁定依宣告保留目標物件、`SEL` 與無號 64 位元 `UIControlEvents` 參數。`addTarget:action:forControlEvents:` 回傳 void，`initWithTarget:action:` 回傳物件。這些 arm64 事實要求精確 UIKit 提供者，且須與內嵌宣告一致。綁定註冊呼叫不確立回呼簽章或 Block 生命週期。 `images` 與 `viewControllers` getter 同樣要求一致的 UIKit 物件回傳宣告；完整裝置與模擬器 AST 中的所有宣告者均一致。
 
 執行階段呼叫目錄僅在精確匯入的函式明確回傳原參數指標時宣告 `ReturnedArgument`。接收者分析先讀取已宣告的實體參數，再套用正常 ABI 暫存器清除，最後僅在回傳值上恢復既有的接收者型別事實。SDK 會重新驗證此效果；它不允許刪除呼叫、所有權效果或記憶體存取。
