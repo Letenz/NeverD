@@ -504,10 +504,11 @@ KernelSEH::advanceImpl(Dispatch &State,
         auto InFunction = ContainsContinuation(Scope.HandlerVA);
         if (!InFunction)
           return InFunction.takeError();
+        // C scope endpoints describe protected control PCs, not handler
+        // ownership. LLVM's EndLabel + 1 may include the landing-pad address.
         if (!(Frame.UnwindFlags & seh::ExceptionHandlerFlag) ||
             Scope.NormalizedFilterVA ||
-            Scope.HandlerVA != Scope.ContinuationVA || !*InFunction ||
-            Scope.GuardedRange.contains(Scope.HandlerVA))
+            Scope.HandlerVA != Scope.ContinuationVA || !*InFunction)
           return invalid("invalid exception handler continuation");
         auto Target = ToActual(Scope.HandlerVA);
         if (!Target)

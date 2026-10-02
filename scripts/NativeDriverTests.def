@@ -6,6 +6,16 @@
 #ifdef NEVERD_NATIVE_DRIVER_OWNER
 NEVERD_NATIVE_DRIVER_OWNER(NeverDNativeDriverTests)
 #endif
+#ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.ScopeEndLabelMayOverlapTheHandlerLandingPad")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.FinallyRespectsRawScopeEndAtHandlerTarget")
+#endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
 // Fixed images intentionally reject rebasing before guest entry. These
 // outcomes are required as well as the original-address execution outcomes.

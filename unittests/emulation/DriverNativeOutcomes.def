@@ -33,3 +33,7 @@ NEVERD_NATIVE_DRIVER_OUTCOME(DriverWdmElevatedPowerScenarioCfg, ModelError, 0,
                              false)
 NEVERD_NATIVE_DRIVER_OUTCOME(DriverD2PowerScenario, Returned, 0, false)
 NEVERD_NATIVE_DRIVER_OUTCOME(DriverD2PowerScenarioCfg, Returned, 0, false)
+// The caller-owned IRP scenario deliberately cancels one child packet. Its
+// STATUS_CANCELLED row keeps aggregate scenario success false after teardown.
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverOwnedIrpScenario, Returned, 0, false)
+NEVERD_NATIVE_DRIVER_OUTCOME(DriverOwnedIrpScenarioCfg, Returned, 0, false)

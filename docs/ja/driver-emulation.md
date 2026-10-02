@@ -8,7 +8,9 @@ NeverD のオプションのドライバーエミュレーターは、対応す�
 
 ## 実行バックエンド
 
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。native ARM64/WHP の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 273 検査すべてに合格します。内訳は CPU 検査 45 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+
+上記のネイティブ検証は、宣言済みのドライバーエントリーポイントと公開シナリオを対象とします。以下の機能別回帰テストと C API／CLI／Python の検証は、Windows での実行が明記されない限り、証拠の範囲が Linux に限られます。ネイティブのサンプル群が合格しても、すべてのテスト変種を Windows で検証したことにはなりません。
 
 `DriverImage.def` は厳密な PE 検証のサイズ・アラインメント制限と診断文を宣言し、ポインター幅は `DriverProfile.def` が定義します。検証と再配置は `DriverImage.cpp` が担当し、受理するイメージとエラーメッセージは変わりません。
 
@@ -18,7 +20,7 @@ supervisor x64 は1/2/4-byte の aligned scalar MMIO transaction を許可し、
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
 
-ビルド設定は `NEVERD_EMULATION_BACKEND_KVM` と `NEVERD_EMULATION_BACKEND_WHP` です。KVM には `/dev/kvm` へのアクセスが必要です。WHP はシステム DLL を動的にロードし、Windows 上での実行検証が別途必要です。新 C API は `neverd_emulate_driver_backend_json` で、v1 ABI は維持されます。レポートにはバックエンド、契約、選択理由が含まれます。
+ビルド設定は `NEVERD_EMULATION_BACKEND_KVM` と `NEVERD_EMULATION_BACKEND_WHP` です。KVM には `/dev/kvm` へのアクセスが必要です。WHP はシステム DLL を動的にロードします。新 C API は `neverd_emulate_driver_backend_json` で、v1 ABI は維持されます。レポートにはバックエンド、契約、選択理由が含まれます。
 
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
@@ -469,6 +471,10 @@ JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_su
 
 例外配送は、イメージから復号した x64 バージョン 1 の unwind 表と `__C_specific_handler` のスコープを使い、実際のゲストフィルター、ハンドラー、unwind 中の `__finally` を実行します。フィルターのゼロは検索継続、正値はハンドラー選択、負値は実行継続を要求します。負値で再開できるのは捕捉可能なユーザー CPU メモリー例外だけで、検証済みの `CONTEXT_INTEGER | CONTEXT_CONTROL` の変更のみを適用し、残りの完全な元 CPU 状態を維持します。通常のヘルパーフレームの unwind、保存された非揮発性汎用レジスターの復元、現在のスタック境界、`GetExceptionCode()` に対応します。正常経路の finally と例外 unwind の finally はいずれも実際のゲストコードです。フィルターと finally は親のプロセス／スレッド識別子とユーザーアクセス権を継承し、権限のないシステムワーカーを昇格させません。ハンドラーから対応範囲の外側スコープへ再度例外を発生させることもできます。フィルター／finally 内のネストと衝突 unwind、連鎖 V1 メタデータ、部分プロローグ、標準エピローグ、XMM6–XMM15 全体の復元に対応します。例外レコードのリンクを保持し、開始済み finally は繰り返しません。C++ パーソナリティーと不完全なメタデータは明示的に拒否します。未捕捉の API 例外は `model_error` で停止し、捕捉可能なユーザーメモリー例外以外の CPU 障害は実行を終了します。 定数 `EXCEPTION_EXECUTE_HANDLER` は対応するハンドラーを直接選びます。選択後の unwind でのみ、離れるスコープの finally を実行し、検索中やフィルターによる元の実行再開時にはクリーンアップを実行しません。各フィルターの戻り時に `EXCEPTION_POINTERS`、例外レコード、未対応の `CONTEXT` フィールドを検証し、それらの変更は明示的に失敗します。モデル化した API の例外発生から負のフィルターで再開することは未対応です。
 
+C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
+
+ターゲットへの展開も元のスコープ終端を使用します。ハンドラーの対象が `finally` の保護区間内に残る場合、そのスコープからは退出しません。`FinallyRespectsRawScopeEndAtHandlerTarget` は境界の両側を検査し、Windows x64 では `ntdll.dll!__C_specific_handler` と直接比較します。NeverD はコンパイラー生成の区間を修正しません。元のフィクスチャを Clang 20/21 で構築すると、偏った終端が選択対象を含むため `T` と `J` モードはゲストの失敗を返します。Clang 23 では両方のクリーンアップを実行します。[LLVM 変更 #144745](https://github.com/llvm/llvm-project/pull/144745) は古い `+1` バイアスを削除します。これらのコンパイラー依存の結果はバックエンド障害と区別します。
+
 `__GSHandlerCheck_SEH` は検索前と unwind 時にイメージ内の現在のセキュリティ cookie を検証します。finally のないフレームも対象です。固定・動的整列スロット、符号付きオフセット、元のフレームポインターによる符号化に対応し、C ハンドラーフラグと cookie 検証を区別します。プロローグやエピローグでは未確立の cookie を読みません。不一致は対象フィルター、クリーンアップ、ハンドラーの実行前に停止します。単独の `__GSHandlerCheck` も検索と unwind で cookie を検証し、C スコープを捏造しません。認識には正確なシンボルまたはインポート識別子が必要で、匿名コードを命令パターンから推測しません。GS/C++ ラッパーと C++ 例外 personality は未対応です。`driver_seh_gs.h` の独自フレームはリンクした WDK 検証関数も実行します。
 
 独自の `driver_wdm_seh.c` フィクスチャーは真正 WDK ヘッダーと `/GS-` を使います。通常イメージと有効 CFG イメージには `NEVERD_WDM_SEH_FIXTURE` と `NEVERD_WDM_SEH_CFG_FIXTURE` を設定します。[driver-seh-scenario.json](../examples/driver-seh-scenario.json) の例はイメージを再配置し、DriverEntry 内で API 例外を捕捉してアンロードします。 別個の WDM METHOD_NEITHER 経路では、ユーザープローブ、MDL ロック、捕捉可能なメモリ障害に対応します。
@@ -512,7 +518,7 @@ CREATE 要求だけが真偽値 `asynchronous_file: true` を指定できます�
 
 ## x64 のネイティブ同期例外
 
-checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない WHP/ARM64 ホストは明示的にスキップします。
+checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使用します。KVM は非公開の supervisor IDT/IST、WHP は明示的な例外ビットマップを使用し、元のコンテキストと利用可能なエラーコードを転送エラーと区別します。OS は回復可能なイベントを消費してから継続コンテキストを設定します。Windows ドライバはゼロ除算と商のオーバーフローを `STATUS_INTEGER_DIVIDE_BY_ZERO` に変換し、実際の SEH filter、`__finally`、再試行を実行します。`NeverDX64ExceptionTests` は Unicorn 無効でも構築でき、`DriverWDMCPUException` は元の WDK 用例を検証します。利用できない ARM64 ホストは明示的にスキップします。
 
 ## 完全な x87 状態
 
@@ -524,7 +530,7 @@ Checked ARM64 の完全な状態は一つの境界で確定します。`Register
 
 ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
 
-x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、WHP と ARM64 の独立したネイティブ負荷検証は未完了です。
+x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、ARM64 の独立したネイティブ負荷検証は未完了です。
 
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
@@ -534,7 +540,7 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 
 ネイティブの `FOP/FIP/FDP` はホストの x87 保存・復元規則に従います。マスクされていない保留例外がなければ AMD はこれらをゼロにでき、スナップショットは観測値を保持します。`X64MachineProbe.def` と厳密な NOP/コンテキストテストは整合する保留例外を設定し、全フィールドを有効な状態で差分を隠さず比較します。ホストプロセスの FXRSTOR64/FXSAVE64 参照は両状態を検証し、バックエンドはホストの結果を入力メタデータで置き換えません。
 
-共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。Windows ネイティブでの検証は引き続き必要です。
+共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
 
