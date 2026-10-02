@@ -11,6 +11,12 @@
 #include <string.h>
 #include <unistd.h>
 
+static int probe_variant(const char *Name) {
+  const char *Variant = getenv("NEVERD_HVF_PROBE_VARIANT");
+  return Variant &&
+         (strcmp(Variant, Name) == 0 || strcmp(Variant, "combined") == 0);
+}
+
 static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
   uint64_t Must = 0, May = 0;
   if (report("probe VMCS capabilities",
@@ -33,6 +39,15 @@ static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
 // packet or guest OS dependency. Backing lives until the caller destroys VM.
 static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
   printf("Intel entry API: %s\n", Legacy ? "hv_vcpu_run" : "hv_vcpu_run_until");
+  if (probe_variant("msrs")) {
+    const uint32_t MSRs[] = {0xc0000081, 0xc0000082, 0xc0000083, 0xc0000084,
+                             0xc0000100, 0xc0000101, 0xc0000102, 0xc0000103,
+                             0x174,      0x175,      0x176,      0x10};
+    for (unsigned I = 0; I < sizeof(MSRs) / sizeof(MSRs[0]); ++I)
+      if (report("probe native MSR",
+                 hv_vcpu_enable_native_msr(CPU, MSRs[I], 1)))
+        return 1;
+  }
   for (unsigned I = HV_VMX_CAP_CR0_FIXED0; I <= HV_VMX_CAP_CR4_FIXED1; ++I) {
     uint64_t Value = 0;
     const hv_return_t S =
@@ -50,6 +65,12 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
   ((uint64_t *)(RAM + 0x3000))[0] = 0x0083; // identity 2 MiB page
   const unsigned char Program[] = {0xb8, 37, 0, 0, 0, 0xf4}; // mov eax,37; hlt
   memcpy(RAM + 0x4000, Program, sizeof(Program));
+  if (probe_variant("tables")) {
+    uint64_t *GDT = (uint64_t *)(RAM + 0x5000);
+    GDT[1] = 0x00af9b000000ffffULL;
+    GDT[2] = 0x00cf93000000ffffULL;
+    GDT[5] = 0x00008b0060000067ULL;
+  }
   if (report("probe hv_vm_map",
              hv_vm_map(RAM, 0, Bytes,
                        HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC)))
@@ -60,15 +81,18 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
                         CPU_BASED_TPR_SHADOW) ||
       probe_control(CPU, VMCS_CTRL_CPU_BASED2, CPU_BASED2_EPT) ||
       probe_control(CPU, VMCS_CTRL_VMENTRY_CONTROLS, VMENTRY_GUEST_IA32E) ||
-      probe_control(CPU, VMCS_GUEST_CR0, 0x80010033) ||
-      probe_control(CPU, VMCS_GUEST_CR4, 0x2620) ||
-      probe_control(CPU, VMCS_CTRL_CR0_MASK, 0) ||
+      (!probe_variant("order") &&
+       (probe_control(CPU, VMCS_GUEST_CR0, 0x80010033) ||
+        probe_control(CPU, VMCS_GUEST_CR4, 0x2620))) ||
+      probe_control(CPU, VMCS_CTRL_CR0_MASK,
+                    probe_variant("cr0-mask") ? 0x80000010 : 0) ||
       probe_control(CPU, VMCS_CTRL_CR4_MASK, 0x2000))
     return 1;
   const struct {
     uint32_t Field;
     uint64_t Value;
-  } Fields[] = {{VMCS_CTRL_EXC_BITMAP, UINT32_MAX},
+  } Fields[] = {{VMCS_CTRL_EXC_BITMAP,
+                 probe_variant("exception-bitmap") ? 0 : UINT32_MAX},
                 {VMCS_CTRL_VMENTRY_IRQ_INFO, 0},
                 {VMCS_GUEST_CR3, 0x1000},
                 {VMCS_GUEST_IA32_EFER, 0xd00},
@@ -78,8 +102,8 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
                 {VMCS_GUEST_INTERRUPTIBILITY, 0},
                 {VMCS_GUEST_DEBUG_EXC, 0},
                 {VMCS_GUEST_DR7, 0x400},
-                {VMCS_GUEST_GDTR_BASE, 0},
-                {VMCS_GUEST_GDTR_LIMIT, 0},
+                {VMCS_GUEST_GDTR_BASE, probe_variant("tables") ? 0x5000 : 0},
+                {VMCS_GUEST_GDTR_LIMIT, probe_variant("tables") ? 55 : 0},
                 {VMCS_GUEST_IDTR_BASE, 0},
                 {VMCS_GUEST_IDTR_LIMIT, 0},
                 {VMCS_GUEST_LDTR, 0},
@@ -87,13 +111,20 @@ static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
                 {VMCS_GUEST_LDTR_LIMIT, 0},
                 {VMCS_GUEST_LDTR_AR, 0x10000},
                 {VMCS_GUEST_TR, 0x28},
-                {VMCS_GUEST_TR_BASE, 0},
+                {VMCS_GUEST_TR_BASE, probe_variant("tables") ? 0x6000 : 0},
                 {VMCS_GUEST_TR_LIMIT, 0x67},
                 {VMCS_GUEST_TR_AR, 0x8b}};
   for (unsigned I = 0; I < sizeof(Fields) / sizeof(Fields[0]); ++I)
     if (report("probe guest VMCS",
                hv_vmx_vcpu_write_vmcs(CPU, Fields[I].Field, Fields[I].Value)))
       return 1;
+  if (probe_variant("order") &&
+      (probe_control(CPU, VMCS_GUEST_CR4, 0x2620) ||
+       probe_control(CPU, VMCS_GUEST_CR0, 0x80010033)))
+    return 1;
+  if (probe_variant("tpr") &&
+      report("probe TPR", hv_vcpu_write_register(CPU, HV_X86_TPR, 0)))
+    return 1;
   for (unsigned I = 0; I < 6; ++I) {
     const int Code = I == 1;
     if (report("probe segment selector",

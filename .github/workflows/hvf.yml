@@ -56,21 +56,23 @@ jobs:
           try:
               with log.open("w") as output:
                   diagnose = os.environ["HVF_VALIDATION"] == "probe" and platform.machine() == "x86_64"
-                  modes = ["until", "legacy"] if diagnose else ["create-only"]
-                  for mode in modes:
-                      output.write(f"Fresh process probe: {mode}\n")
+                  variants = ["baseline", "cr0-mask", "tpr", "msrs", "tables", "exception-bitmap", "order", "combined"] if diagnose else ["create-only"]
+                  for variant in variants:
+                      mode = "until" if diagnose else "create-only"
+                      output.write(f"Fresh process probe: {mode} / {variant}\n")
                       output.flush()
                       try:
                           environment = os.environ.copy()
                           if diagnose:
                               environment["DYLD_INSERT_LIBRARIES"] = str(pathlib.Path("build-hvf-probe/trace.dylib").resolve())
+                              environment["NEVERD_HVF_PROBE_VARIANT"] = variant
                           result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
                                                   env=environment,
                                                   stdout=output, stderr=subprocess.STDOUT)
                           failed |= result.returncode != 0
-                          output.write(f"Probe {mode} return code: {result.returncode}\n")
+                          output.write(f"Probe {variant} return code: {result.returncode}\n")
                       except subprocess.TimeoutExpired:
-                          output.write(f"Probe {mode} exceeded 10 seconds\n")
+                          output.write(f"Probe {variant} exceeded 10 seconds\n")
                           failed = True
           finally:
               print(log.read_text(), end="")
