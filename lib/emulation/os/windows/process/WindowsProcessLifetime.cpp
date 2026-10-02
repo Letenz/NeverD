@@ -74,8 +74,8 @@ Lifetime::next(ExecutionBackend &CPU) {
       }
     }
     if (!Target) {
-      if (N.Kind == CallKind::DLL && !Detaching)
-        States[N.Module] = ModuleState::Attached;
+      // A no-entry DLL receives startup TLS, but native process teardown
+      // does not notify it. Only successful entry return completes attach.
       advance();
       continue;
     }

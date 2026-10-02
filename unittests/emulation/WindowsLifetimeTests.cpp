@@ -9,6 +9,7 @@
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/COFF.h"
@@ -22,6 +23,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <set>
+
+#if defined(_WIN32) && defined(_M_X64)
+#include <windows.h>
+#endif
 
 namespace neverd::emulation {
 namespace {
@@ -108,6 +113,7 @@ TEST_P(WindowsLifetimes, ExecutesStartupAndTerminationNotifications) {
     if (C.Returns) {
       EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure);
       EXPECT_FALSE(R->ExitStatus);
+      EXPECT_EQ(R->ReturnValue, ExitStatus);
       EXPECT_NE(R->Diagnostic.find(win::text::EntryThreadExit),
                 std::string::npos);
     } else {
@@ -280,6 +286,75 @@ TEST_F(WindowsModuleTLS, RejectsUnprovenZeroFillMetadataBeforeExecution) {
     EXPECT_NE(llvm::toString(Loaded.takeError()).find(win::text::TLSZeroFill),
               std::string::npos);
 }
+#if defined(_WIN32) && defined(_M_X64)
+// Retain the initial thread to observe its return independently of the
+// process's remaining threads. The child uses only original test fixtures.
+llvm::Expected<uint32_t> observeNativeThread(
+    const std::filesystem::path &Program, llvm::StringRef Argument,
+    const std::filesystem::path &Output, const std::filesystem::path &Error) {
+  struct Handle {
+    HANDLE Value;
+    ~Handle() {
+      if (Value != INVALID_HANDLE_VALUE)
+        CloseHandle(Value);
+    }
+  };
+  auto Failure = []() {
+    return llvm::errorCodeToError(
+        std::error_code(GetLastError(), std::system_category()));
+  };
+  SECURITY_ATTRIBUTES Attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+  const std::filesystem::path Null(NullDevice);
+  Handle Input{CreateFileW(Null.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                           &Attributes, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                           nullptr)};
+  if (Input.Value == INVALID_HANDLE_VALUE)
+    return Failure();
+  Handle Out{CreateFileW(Output.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                         &Attributes, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                         nullptr)};
+  if (Out.Value == INVALID_HANDLE_VALUE)
+    return Failure();
+  Handle Err{CreateFileW(Error.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                         &Attributes, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                         nullptr)};
+  if (Err.Value == INVALID_HANDLE_VALUE)
+    return Failure();
+  const std::string Name = Program.string();
+  auto Command = llvm::sys::flattenWindowsCommandLine({Name, Argument});
+  if (!Command)
+    return llvm::errorCodeToError(Command.getError());
+  STARTUPINFOW Startup{};
+  Startup.cb = sizeof(Startup);
+  Startup.dwFlags = STARTF_USESTDHANDLES;
+  Startup.hStdInput = Input.Value;
+  Startup.hStdOutput = Out.Value;
+  Startup.hStdError = Err.Value;
+  PROCESS_INFORMATION Child{};
+  if (!CreateProcessW(Program.c_str(), Command->data(), nullptr, nullptr, TRUE,
+                      0, nullptr, nullptr, &Startup, &Child))
+    return Failure();
+  auto Cleanup = llvm::scope_exit([&] {
+    if (WaitForSingleObject(Child.hProcess, 0) == WAIT_TIMEOUT) {
+      TerminateProcess(Child.hProcess, NativeCleanupStatus);
+      WaitForSingleObject(Child.hProcess,
+                          NativeTimeoutSeconds * MillisecondsPerSecond);
+    }
+    CloseHandle(Child.hThread);
+    CloseHandle(Child.hProcess);
+  });
+  const DWORD Wait = WaitForSingleObject(
+      Child.hThread, NativeTimeoutSeconds * MillisecondsPerSecond);
+  if (Wait == WAIT_TIMEOUT)
+    return llvm::createStringError(std::errc::timed_out, NativeThreadTimeout);
+  if (Wait != WAIT_OBJECT_0)
+    return Failure();
+  DWORD Status;
+  if (!GetExitCodeThread(Child.hThread, &Status))
+    return Failure();
+  return Status;
+}
+#endif
 TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
 #if !defined(NEVERD_WINDOWS_LIFETIME_FIXTURE_DIR)
   GTEST_SKIP() << MissingTools;
@@ -313,27 +388,38 @@ TEST(WindowsModuleLifetime, NativeWindowsObservesStartupAndTermination) {
                                                         Error};
     std::string Diagnostic;
     bool Failed = false;
-    const int Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, C.Argument}, std::nullopt, Redirects,
-        NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
-    EXPECT_FALSE(Failed) << Diagnostic;
-    auto Out = llvm::MemoryBuffer::getFile(Output);
-    auto Err = llvm::MemoryBuffer::getFile(Error);
-    ASSERT_TRUE(bool(Out));
-    ASSERT_TRUE(bool(Err));
-    llvm::outs() << C.Name << ": " << llvm::toHex((*Out)->getBuffer()) << "\n";
-    if (C.Returns)
-      EXPECT_TRUE(uint32_t(Status) == C.Status ||
-                  uint32_t(Status) == NativeWaitExpired)
-          << Diagnostic;
-    else
-      EXPECT_EQ(uint32_t(Status), C.Status) << llvm::toHex((*Err)->getBuffer());
-    const char *Expected =
-        C.Returns ? (uint32_t(Status) == NativeWaitExpired ? ReturnedThreadTrace
-                                                           : NormalTrace)
-                  : C.Output;
-    EXPECT_EQ((*Out)->getBuffer(), Expected);
-    EXPECT_TRUE((*Err)->getBuffer().empty());
+    const unsigned Repetitions = C.Returns ? NativeReturnRepetitions : 1;
+    for (unsigned I = 0; I < Repetitions; ++I) {
+      SCOPED_TRACE(I);
+      uint32_t Status;
+      if (C.Returns) {
+        auto Thread = observeNativeThread(Program, C.Argument, Output, Error);
+        ASSERT_TRUE(bool(Thread)) << llvm::toString(Thread.takeError());
+        Status = *Thread;
+      } else {
+        Status = uint32_t(llvm::sys::ExecuteAndWait(
+            Program, {Program, C.Argument}, std::nullopt, Redirects,
+            NativeTimeoutSeconds, 0, &Diagnostic, &Failed));
+        EXPECT_FALSE(Failed) << Diagnostic;
+      }
+      auto Out = llvm::MemoryBuffer::getFile(Output);
+      auto Err = llvm::MemoryBuffer::getFile(Error);
+      ASSERT_TRUE(bool(Out));
+      ASSERT_TRUE(bool(Err));
+      llvm::outs() << C.Name << ": " << llvm::toHex((*Out)->getBuffer())
+                   << " status=" << llvm::utohexstr(Status) << "\n";
+      EXPECT_EQ(Status, C.Status) << llvm::toHex((*Err)->getBuffer());
+      if (C.Returns) {
+        // The final initial thread exits the process; otherwise it emits
+        // thread notifications. Neither path may invent a different trace.
+        EXPECT_TRUE((*Out)->getBuffer() == ReturnedThreadTrace ||
+                    (*Out)->getBuffer() == NormalTrace)
+            << llvm::toHex((*Out)->getBuffer());
+      } else {
+        EXPECT_EQ((*Out)->getBuffer(), llvm::StringRef(C.Output));
+      }
+      EXPECT_TRUE((*Err)->getBuffer().empty());
+    }
   }
 #endif
 }
