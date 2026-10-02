@@ -3550,6 +3550,247 @@ swiftRegisteredInternalTypeFixture(Arch Architecture, char TypeKind = 'C',
 }
 } // namespace
 
+namespace {
+SwiftTypeMetadataFixture swiftPrivateFieldTypeFixture(Arch Architecture) {
+  SwiftTypeMetadataFixture F(Architecture, false, false, false, true);
+  const std::string Type =
+      "_$s4Demo6Hidden33_0123456789ABCDEF0123456789ABCDEFLLV";
+  F.Image.Symbols[0].Name = Type + "SgMR";
+  F.Image.Symbols[1].Name = Type + "SgMd";
+  F.Image.Symbols[2].Name = Type + "Mn";
+  F.Image.Exports = {{"_$s4Demo6HolderCMn", 0, 0x40a0}};
+  F.Image.Symbols.push_back({"_$s4Demo6HolderCMn", 0x40a0, 20, false});
+  auto &Data = F.Image.Segments[3].Data;
+  const auto Word = [&](unsigned Offset, uint32_t Value) {
+    llvm::support::endian::write32le(Data.data() + Offset, Value);
+  };
+  Word(0x20, 0x51);            // Private struct descriptor.
+  Word(0xa0, 0x50);            // Exported class descriptor.
+  Word(0xb0, 0x40c0 - 0x40b0); // Class -> fields.
+  Word(0xc8, (12u << 16) | 7); // ObjC class, 12-byte field record.
+  Word(0xcc, 1);
+  Word(0xd0, 2); // Mutable stored property.
+  Word(0xd4, uint32_t(F.TypeReference - 0x40d4));
+  auto &Reference = F.Image.Segments[0].Data;
+  Reference[0x80] = 1;
+  llvm::support::endian::write32le(Reference.data() + 0x81,
+                                   uint32_t(F.LocalDescriptor - 0x1081));
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     PrivateSwiftTypeKeepsDescriptorIdentityThroughExportedFieldMetadata) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftPrivateFieldTypeFixture(Architecture);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 1U);
+    ASSERT_TRUE(Proof->Descriptors[0].FieldPath);
+    EXPECT_EQ(Proof->Descriptors[0].FieldPath->ExportSymbol,
+              "_$s4Demo6HolderCMn");
+    EXPECT_EQ(Proof->Descriptors[0].FieldPath->RelativeOffsets,
+              (std::array<uint32_t, 3>{16, 20, 1}));
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Shared;
+    auto Source = "#include <stdint.h>\n#include <string.h>\n" +
+                  renderObjCSwiftTypeMetadataHelpers(
+                      F.Image, Bound.SwiftTypeMetadataPairs, Shared);
+    EXPECT_NE(Source.find("__asm__(\"_$s4Demo6HolderCMn\")"),
+              std::string::npos);
+    EXPECT_EQ(Source.find("Hidden33_"), std::string::npos);
+    Source += R"(
+unsigned char anchor[1024] __asm__("_$s4Demo6HolderCMn");
+static void relative(unsigned offset, unsigned target) {
+  int32_t delta = (int32_t)target - (int32_t)offset;
+  memcpy(anchor + offset, &delta, 4);
+}
+int main(void) {
+  relative(16, 256);
+  relative(256 + 20, 128);
+  relative(128 + 1, 512);
+  void **cache = (void **)neverd_swift_type_metadata_2020_1020_cache_address();
+  const unsigned char *ref = (const void *)
+      neverd_swift_type_metadata_2020_1020_reference_address();
+  int32_t delta; uint32_t length;
+  memcpy(&delta, ref, 4); memcpy(&length, ref + 4, 4);
+  const unsigned char *type = ref + delta;
+  if (*cache || length != 7 || type[0] != 2 || memcmp(type + 5, "Sg", 3))
+    return 1;
+  memcpy(&delta, type + 1, 4);
+  const void *descriptor;
+  memcpy(&descriptor, type + 1 + delta, sizeof(descriptor));
+  if (descriptor != anchor + 512) return 2;
+  *cache = anchor + 768;
+  for (unsigned i = 0; i != 128; ++i) {
+    if ((void **)neverd_swift_type_metadata_2020_1020_cache_address() != cache ||
+        *cache != anchor + 768 ||
+        (const void *)neverd_swift_type_metadata_2020_1020_reference_address() != ref)
+      return 3;
+  }
+  return 0;
+}
+)";
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-field-metadata",
+                                                      Directory));
+    const std::filesystem::path Work(Directory.str().str());
+    struct Cleanup {
+      std::filesystem::path Work;
+      ~Cleanup() {
+        std::error_code Error;
+        std::filesystem::remove_all(Work, Error);
+      }
+    } Cleanup{Work};
+    const auto Path = (Work / "field.c").string();
+    const auto Executable = (Work / "field").string();
+    const auto ErrorPath = (Work / "stderr").string();
+    std::ofstream(Path) << Source;
+    const std::string Compiler = NEVERD_TEST_CLANG;
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const std::vector<std::string> Arguments{
+          Compiler, "-std=c11", Optimization, "-Werror",
+          Path,     "-o",       Executable};
+      std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+      const std::optional<llvm::StringRef> Redirects[] = {
+          std::nullopt, std::nullopt, ErrorPath};
+      std::string Error;
+      const auto Status = llvm::sys::ExecuteAndWait(
+          Compiler, Refs, std::nullopt, Redirects, 30, 0, &Error);
+      auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+      ASSERT_EQ(Status, 0) << Error
+                           << (Errors ? (*Errors)->getBuffer().str() : "");
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable},
+                                          std::nullopt, Redirects, 30, 0,
+                                          &Error),
+                0)
+          << Error;
+    }
+  }
+}
+
+TEST(ObjCSourceBindings,
+     PrivateSwiftFieldPathBoundsWorkSeparatelyFromOtherExports) {
+  auto F = swiftPrivateFieldTypeFixture(Arch::AArch64);
+  const auto Root = F.Image.Exports.front();
+  F.Image.Exports.assign(75000, {});
+  F.Image.Exports.back() = Root;
+  const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+      F.Image, F.Cache, F.Reference);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->Descriptors.size(), 1U);
+  ASSERT_TRUE(Proof->Descriptors[0].FieldPath);
+  EXPECT_EQ(Proof->Descriptors[0].FieldPath->ExportSymbol, Root.Name);
+}
+
+TEST(ObjCSourceBindings,
+     PrivateSwiftFieldPathRejectsChangedEdgesExportsAndStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto F = swiftPrivateFieldTypeFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Data = F.Image.Segments[3].Data;
+      const auto Word = [&](unsigned Offset, uint32_t Value) {
+        llvm::support::endian::write32le(Data.data() + Offset, Value);
+      };
+      switch (Mutation) {
+      case 0:
+        F.Image.Exports.clear();
+        break;
+      case 1:
+        F.Image.Exports[0].Name = "_$s4Demo5OtherCMn";
+        break;
+      case 2:
+        F.Image.Exports[0].Addr += 4;
+        break;
+      case 3:
+        F.Image.Exports.push_back(F.Image.Exports[0]);
+        break;
+      case 4:
+        F.Image.Symbols.push_back(F.Image.Symbols.back());
+        break;
+      case 5:
+        F.Image.DataPtrRelocSlots.insert(0x40b0);
+        break;
+      case 6:
+        F.Image.DataPtrRelocSlots.insert(0x40d4);
+        break;
+      case 7:
+        F.Image.DataPtrRelocSlots.insert(0x1081);
+        break;
+      case 8:
+        Word(0xb0, 0);
+        break;
+      case 9:
+        Word(0xd4, 0);
+        break;
+      case 10:
+        Word(0xc8, (16u << 16) | 7);
+        break;
+      case 11:
+        Word(0xcc, 4097);
+        break;
+      case 12:
+        Word(0xcc, 0);
+        break;
+      case 13:
+        Word(0xd0, 4);
+        break;
+      case 14:
+        Word(0xa0, 0x150);
+        break;
+      case 15:
+        Word(0x20, 0x50);
+        break;
+      case 16:
+        F.Image.Symbols[2].Name += "x";
+        break;
+      case 17:
+        F.Image.Symbols[1].Name = "_$s4Demo5OtherVSgMd";
+        break;
+      case 18:
+        F.Image.Segments[3].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        F.Image.Sections[3].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 19:
+        F.Image.Segments[3].Data.resize(0xd7);
+        break;
+      case 20:
+        F.Image.Sections.push_back(F.Image.Sections[3]);
+        break;
+      case 21:
+        F.Image.Symbols.push_back(F.Image.Symbols[2]);
+        break;
+      case 22:
+        F.Image.Exports.push_back(
+            {F.Image.Symbols[2].Name, 0, F.LocalDescriptor});
+        break;
+      case 23:
+        F.Image.Exports.resize(262145);
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                      .SwiftTypeMetadataPairs.empty());
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Shared;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Shared),
+                   std::runtime_error);
+    }
+}
+
 TEST(ObjCSourceBindings,
      RegisteredNestedSwiftTypesRequireTheirCompleteNamedContext) {
   const auto Fixture = [](Arch Architecture, char ParentKind, char ChildKind,
