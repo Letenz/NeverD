@@ -12,6 +12,7 @@
 #include "ObjCForwardedInitializerSources.h"
 #include "ObjCImmutableNativeSources.h"
 #include "ObjCImmutableStringCallbackSources.h"
+#include "ObjCMergedSetterSources.h"
 #include "ObjCMetadataFactorySources.h"
 #include "ObjCNativeDependencies.h"
 #include "ObjCResumeSource.h"
@@ -77,6 +78,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     Options.MaxFunctions = MaxFunctions;
     Options.EmitDumpOutput = false;
     seedObjCForwardedInitializerAccessorHints(S->Img, Options);
+    seedObjCMergedSetterAccessorHints(S->Img, Options);
     Pipeline Engine;
     auto RunPipeline = [&](unsigned Iteration) {
       NativePhaseTrace PipelineTrace(NativePhaseTrace::Phase::Pipeline,
@@ -257,6 +259,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     const auto MetadataFactoryPlan =
         discoverObjCMetadataFactorySources(S->Img, Result, ProfileStorage);
     std::set<va_t> MetadataFactoryProjections;
+    const auto MergedSetterPlan =
+        discoverObjCMergedSetterSources(S->Img, Result, ProfileStorage);
+    std::set<va_t> MergedSetterProjections;
     const auto ForwardedInitializerPlan =
         discoverObjCForwardedInitializerSources(S->Img, Result);
     std::set<va_t> ForwardedInitializerProjections;
@@ -308,6 +313,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           MetadataFactoryBinding.Function, S->Img, ForwardedInitializerPlan);
       if (ForwardedInitializerBinding.Projected)
         ForwardedInitializerProjections.insert(Entry);
+      auto MergedSetterBinding =
+          projectObjCMergedSetter(ForwardedInitializerBinding.Function, S->Img,
+                                  MergedSetterPlan, ProfileStorage);
+      if (MergedSetterBinding.Projected)
+        MergedSetterProjections.insert(Entry);
       // The immutable callback already carries all current source bindings.
       // Its proved scalar pool offsets may numerically overlap image code;
       // reinterpreting those generated offsets as raw machine addresses would
@@ -315,16 +325,21 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       auto Binding =
           ImmutableStringInputs.count(Entry)
               ? ImmutableStringInputs.at(Entry)
-              : bindObjCSourceReferences(ForwardedInitializerBinding.Function,
-                                         S->Img, &ProfileStorage, &Functions);
+              : bindObjCSourceReferences(MergedSetterBinding.Function, S->Img,
+                                         &ProfileStorage, &Functions);
       if (const auto Immutable = ImmutableStringInputs.find(Entry);
           Immutable != ImmutableStringInputs.end()) {
-        Binding.Function = ForwardedInitializerBinding.Function;
+        Binding.Function = MergedSetterBinding.Function;
         if (!objCImmutableStringCallbackValid(Binding.Function, S->Img, Result,
                                               OncePlan))
           Binding.Limitation =
               "immutable string callback proof is no longer valid";
       }
+      Binding.Dependencies.insert(MergedSetterBinding.Dependencies.begin(),
+                                  MergedSetterBinding.Dependencies.end());
+      Binding.ProfileCounterSections.insert(
+          MergedSetterBinding.ProfileSections.begin(),
+          MergedSetterBinding.ProfileSections.end());
       Binding.Dependencies.insert(MetadataFactoryBinding.Dependencies.begin(),
                                   MetadataFactoryBinding.Dependencies.end());
       Binding.Dependencies.insert(
@@ -402,6 +417,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                                  Binding.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                     Binding.Function, Functions) ||
+                 objCMergedSetterSourceCallBound(
+                     Expression, S->Img, MergedSetterPlan, ProfileStorage,
                      Binding.Function, Functions) ||
                  objCSuperGetterSourceCallBound(Expression, S->Img,
                                                 SuperGetterPlan,
@@ -531,6 +549,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
+                     objCMergedSetterSourceCallBound(
+                         Expression, S->Img, MergedSetterPlan, ProfileStorage,
+                         Binding.Function, Functions) ||
                      objCSuperGetterSourceCallBound(
                          Expression, S->Img, SuperGetterPlan, Binding.Function,
                          Functions) ||
@@ -640,6 +661,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                                  Projection.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                     Projection.Function, Functions) ||
+                 objCMergedSetterSourceCallBound(
+                     Expression, S->Img, MergedSetterPlan, ProfileStorage,
                      Projection.Function, Functions) ||
                  objCSuperGetterSourceCallBound(
                      Expression, S->Img, SuperGetterPlan, Projection.Function,
@@ -907,6 +931,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           MetadataFactories.insert(Entry);
       IdentityHelpers += renderObjCMetadataFactoryHelpers(
           S->Img, MetadataFactoryPlan, ProfileStorage, MetadataFactories,
+          SharedIdentityFunctions);
+      std::set<va_t> MergedSetters;
+      for (const auto Entry : Included)
+        if (MergedSetterProjections.count(Entry))
+          MergedSetters.insert(Entry);
+      IdentityHelpers += renderObjCMergedSetterHelpers(
+          S->Img, MergedSetterPlan, ProfileStorage, MergedSetters,
           SharedIdentityFunctions);
       std::set<va_t> ForwardedInitializers;
       for (const auto Entry : Included)

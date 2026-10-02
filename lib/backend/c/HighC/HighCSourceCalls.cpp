@@ -423,13 +423,16 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("Swift string call has the wrong calling convention");
   if (Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
       Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
+      Hint.CallKind == Kind::RuntimeObjCMergedSetter ||
       Hint.CallKind == Kind::RuntimeObjCForwardedInitializer) {
     const bool Factory = Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
+    const bool Setter = Hint.CallKind == Kind::RuntimeObjCMergedSetter;
     const bool Forwarded =
         Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     const auto Name =
         std::string(Factory     ? "neverd_objc_metadata_factory_"
                     : Forwarded ? "neverd_objc_forwarded_initializer_"
+                    : Setter    ? "neverd_objc_merged_setter_"
                                 : "neverd_objc_super_getter_") +
         llvm::utohexstr(Hint.TargetAddress, true);
     if (!Hint.TargetAddress || Hint.TargetName != Name ||
@@ -440,10 +443,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Signature.Origin !=
             SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
         !Signature.ReturnType ||
-        Signature.ReturnType->Kind !=
-            (Factory || Forwarded ? NdTypeKind::Ptr : NdTypeKind::Int) ||
-        Signature.ReturnType->Size != (Factory || Forwarded ? 8U : 1U) ||
-        Signature.Parameters.size() != (Factory ? 2U : 4U) ||
+        Signature.ReturnType->Kind != (Factory || Forwarded ? NdTypeKind::Ptr
+                                       : Setter ? NdTypeKind::Void
+                                                : NdTypeKind::Int) ||
+        Signature.ReturnType->Size != (Factory || Forwarded ? 8U
+                                       : Setter             ? 0U
+                                                            : 1U) ||
+        Signature.Parameters.size() != (Factory  ? 2U
+                                        : Setter ? 7U
+                                                 : 4U) ||
         !Signature.HasExplicitABI || Hint.DoesNotReturn || Hint.WeakImport ||
         Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
         Hint.ValueWitness || Hint.Receiver || !Hint.Selector.empty() ||
@@ -457,10 +465,13 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
         Hint.ImmutablePointerSlot ||
         std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
-                    [](const auto &Parameter) {
+                    [&](const auto &Parameter) {
+                      const bool Value =
+                          Setter && &Parameter == &Signature.Parameters[2];
                       return !Parameter.Type ||
-                             Parameter.Type->Kind != NdTypeKind::Ptr ||
-                             Parameter.Type->Size != 8;
+                             Parameter.Type->Kind !=
+                                 (Value ? NdTypeKind::Int : NdTypeKind::Ptr) ||
+                             Parameter.Type->Size != (Value ? 1U : 8U);
                     }))
       return bad("invalid compiler getter/factory declaration");
     auto Expected = Signature;
@@ -766,6 +777,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::SwiftStringFromNSString &&
       Hint.CallKind != Kind::DarwinRuntimeCall &&
       Hint.CallKind != Kind::RuntimeObjCSuperGetter &&
+      Hint.CallKind != Kind::RuntimeObjCMergedSetter &&
       Hint.CallKind != Kind::RuntimeObjCMetadataFactory &&
       Hint.CallKind != Kind::RuntimeObjCForwardedInitializer)
     return bad("unknown binding kind");
@@ -903,6 +915,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::SwiftStringFromNSString ||
                          Hint.CallKind == Kind::DarwinRuntimeCall ||
                          Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
+                         Hint.CallKind == Kind::RuntimeObjCMergedSetter ||
                          Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
                          Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     if (Runtime)

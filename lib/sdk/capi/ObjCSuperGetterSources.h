@@ -121,12 +121,12 @@ inline const LowFunc *completeLow(const PipelineResult &Result, va_t Entry,
 
 inline std::optional<va_t> runtimeSlot(const BinaryImage &Image, va_t Target,
                                        llvm::StringRef Name) {
-  const auto *Bytes = code(Image, Target, 12);
+  const auto Bytes = readImmutableCodeBytes(Image, Target, 12);
   if (!Bytes)
     return std::nullopt;
-  const auto First = llvm::support::endian::read32le(Bytes);
-  const auto Second = llvm::support::endian::read32le(Bytes + 4);
-  const auto Third = llvm::support::endian::read32le(Bytes + 8);
+  const auto First = llvm::support::endian::read32le(Bytes->data());
+  const auto Second = llvm::support::endian::read32le(Bytes->data() + 4);
+  const auto Third = llvm::support::endian::read32le(Bytes->data() + 8);
   const auto Page = page(First, Target, 16);
   if (!Page || (Second & 0xffc003ff) != 0xf9400210u || Third != 0xd61f0200u)
     return std::nullopt;
@@ -407,10 +407,10 @@ inline bool callMatches(const HighExpr &Expression,
 }
 
 inline bool parameter(const HighExpr &Expression, unsigned Index,
-                      const TypeRef &Type) {
+                      const TypeRef &Type, uint16_t Bytes = 8) {
   return Expression.Kind == ExprKind::Var &&
          Expression.Var.Kind == MedVar::Param &&
-         Expression.Var.Id == int(Index) && Expression.Var.Size == 8 &&
+         Expression.Var.Id == int(Index) && Expression.Var.Size == Bytes &&
          Expression.Var.SSAVer == 0 && Expression.Var.RegOff == Index * 8 &&
          Expression.Var.RenameTag == -1 && Expression.Operands.empty() &&
          equalSourceTypes(Expression.Type, Type) &&

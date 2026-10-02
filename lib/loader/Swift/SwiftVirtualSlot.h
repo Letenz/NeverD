@@ -4,6 +4,7 @@
 #include "../ObjC/ObjCRuntimeData.h"
 #include "SwiftFunctionSymbols.h"
 
+#include "neverd/ir/SourceABI.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -142,6 +143,25 @@ inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
   };
   return Empty(Type.Children[0], "ArgumentTuple") &&
          Empty(Type.Children[1], "ReturnType");
+}
+
+// This declaration describes the live slot, not its initial implementation or
+// any caller. A consumer still has to prove the current receiver and dispatch.
+inline std::optional<SourceFunctionTypeHint> voidClassVirtualSlotDeclaration(
+    const BinaryImage &Image, const ObjCMethod &Method, uint32_t Slot,
+    llvm::StringRef ExpectedModule = {}, llvm::StringRef ExpectedClass = {}) {
+  if (!isVoidClassVirtualSlot(Image, Method, Slot, ExpectedModule,
+                              ExpectedClass))
+    return std::nullopt;
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Signature.ReturnType = NdType::makeVoid();
+  Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
+  Signature.Parameters[0].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Signature, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Signature))
+             : std::nullopt;
 }
 } // namespace neverd::swift_virtual_detail
 

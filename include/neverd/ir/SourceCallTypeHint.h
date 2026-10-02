@@ -250,6 +250,10 @@ struct SourceCallTypeHint {
     /// A verified ObjC initializer wrapper whose shared body calls the
     /// caller-selected class accessor before objc_msgSendSuper2.
     RuntimeObjCForwardedInitializer,
+    /// A complete merged BOOL setter, projected only for a verified ObjC
+    /// caller. Super dispatch, profiling storage and live Swift dispatch stay
+    /// observable; the merged helper receives no global inferred ABI.
+    RuntimeObjCMergedSetter,
     /// Caller-proven normalization of a raw Swift i1 result. The logical
     /// byte signature describes the source expression, never the runtime ABI.
     SwiftBooleanProjection,
