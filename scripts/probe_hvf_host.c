@@ -6,25 +6,14 @@
 #include <Hypervisor/Hypervisor.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 static int report(const char *Operation, hv_return_t Status) {
   printf("%s: 0x%08x\n", Operation, (uint32_t)Status);
+  fflush(stdout);
   return Status != HV_SUCCESS;
 }
-#if defined(__x86_64__)
-#include "probe_hvf_intel.h"
-#endif
 
-int main(int Argc, char **Argv) {
-  const int Legacy = Argc == 2 && strcmp(Argv[1], "legacy") == 0;
-  const int CreateOnly = Argc == 2 && strcmp(Argv[1], "create-only") == 0;
-  if (Argc > 2 ||
-      (Argc == 2 && !Legacy && !CreateOnly && strcmp(Argv[1], "until") != 0)) {
-    fprintf(stderr, "usage: %s [until|legacy|create-only]\n", Argv[0]);
-    return 2;
-  }
+int main(void) {
 #if defined(__arm64__)
   hv_return_t Status = hv_vm_create(NULL);
   hv_vcpu_t CPU;
@@ -43,20 +32,8 @@ int main(int Argc, char **Argv) {
   Status = hv_vcpu_create(&CPU, HV_VCPU_DEFAULT);
 #endif
   int Failed = report("hv_vcpu_create", Status);
-  void *Backing = NULL;
-#if defined(__x86_64__)
-  if (!Failed && !CreateOnly)
-    Failed |= probe_intel_execution(CPU, &Backing, Legacy);
-#else
-  (void)Legacy;
-  (void)CreateOnly;
-#endif
-  // Guest backing remains owned until both CPU and VM have retired.
   if (Status == HV_SUCCESS)
     Failed |= report("hv_vcpu_destroy", hv_vcpu_destroy(CPU));
-  const hv_return_t Destroyed = hv_vm_destroy();
-  Failed |= report("hv_vm_destroy", Destroyed);
-  if (Destroyed == HV_SUCCESS)
-    free(Backing);
+  Failed |= report("hv_vm_destroy", hv_vm_destroy());
   return Failed;
 }

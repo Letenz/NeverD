@@ -8,7 +8,7 @@ NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux
 
 独立构建 worker 或桌面程序时，导入的引擎库不提供其构建选项，因此 worker 默认仍会附加该 entitlement。若明确不需要 HVF，可设 `NEVERD_WORKER_SIGN_HVF=OFF`。
 
-实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 在每条来宾指令前单步执行 TLB/I-cache 维护，并完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。两种架构都必须通过现有完整状态启动探针。
+实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 在每条来宾指令前单步执行 TLB/I-cache 维护，并完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
 
 取消会确认原生中断已结束，再允许下一个任务进入；被取消的原生入口会重建 vCPU，防止旧中断影响后续任务。排队期间也检查停止令牌和期限。真正的宿主或状态读取错误优先保留，取消的普通 CPU/RAM 状态不提交。
 
@@ -23,19 +23,17 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
 GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
-实际创建和销毁 VM/vCPU；Intel 还必须执行独立的原始 `MOV/HLT` 程序和 MTF 单步。
-两种公开执行 API 分别在新进程中运行并设置超时，成功后才准备 LLVM。宿主拒绝 HVF
-或不能执行探针就在此处失败，不能用 runner
-名称推断硬件可用。CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
+实际创建和销毁 VM/vCPU，成功后才准备 LLVM。这项可用性探针不执行来宾指令。
+宿主拒绝 HVF 就在此处失败，不能用 runner 名称推断硬件可用。
+CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
 
 工作流会先构建只依赖 LLVM Support 和解码器的 `NeverDHvfTests`，验证原生指令执行，
 再构建完整进程测试的依赖。`validation=transport` 可单独运行这一诊断；默认 `full`
 仍要求完整 CPU 和 Darwin 两道门禁。小范围检查复用完整清单中的 HVF 必需项，并在
 摘要中标记 `hvf_transport_only=true`，不能当作完整 CPU/进程验收。
 本地脚本对应参数为 `--require-hvf --hvf-transport-only`。
-`validation=probe` 只运行宿主诊断，无需 LLVM。Intel 还会用独立 QEMU 引擎分别运行
-HVF 和 TCG，对照同一段自编复位程序；显式指定单一加速器，禁止静默回退。
-日志保留版本、ROM 摘要和两种执行结果。这个对照不能替代 NeverD 的执行门禁。
+`validation=probe` 只检查 VM/vCPU 可用性，无需 LLVM，不能作为指令执行或
+NeverD 传输层正确性的证据。
 
 硬件虚拟化不保证在逐指令 checked 执行中更快；初始化、完整状态传输和缓存维护都有成本，应与相同 checked 契约的 Unicorn 比较。该后端不增加新的跨架构模拟方案或来宾 OS 模型。
 
@@ -106,11 +104,13 @@ Linux KVM 和 Windows WHP 已分别在关闭 Unicorn 后通过 Darwin 专项门�
 其中 12 项 transport 子集也已在本机全部通过，无跳过。完整证据保存在
 `build-hvf-native/hvf-cancellation-full-evidence/`。
 
-Intel 原生测试发现向框架拥有的 VMCS link pointer 写入会失败。移除该写入并保留
-CR0 掩码必置位后，状态安装通过，但提交 `193b891bf` 的
-[原生入口诊断](https://github.com/NeverSight/NeverD/actions/runs/37070495008)
-仍在来宾执行前返回 `HV_ERROR`，VM 指令错误为 12。提交 `65325ca1f` 的
-[独立入口 API 对照](https://github.com/NeverSight/NeverD/actions/runs/37073865902)
-不依赖 NeverD 解码器、FP 状态包或来宾 OS，但在 `hv_vcpu_run_until` 和
-`hv_vcpu_run` 上都复现了相同错误。Intel 验收仍未完成。VM/vCPU 创建成功及原生
-macOS 内核对照都不能替代这道失败的执行门禁。
+Intel 诊断已移除框架拥有的 VMCS link pointer 写入、保留框架 VM-exit 控制，
+并补全硬件 CR0/CR4 必置位。[独立 64 位程序](https://github.com/NeverSight/NeverD/actions/runs/37076076219)
+已证明该 hosted runner 能通过 QEMU HVF 执行。随后逐个隔离 12 个 MSR，
+[原生对照](https://github.com/NeverSight/NeverD/actions/runs/37078094659)
+确认只有启用 `IA32_KERNEL_GS_BASE` 上下文能恢复执行和 MTF 单步。
+VM 指令错误 12 在成功执行前后同样存在，不能将这个残留值视为当前入口的失败原因。
+生产后端已在每次创建 vCPU 时初始化托管 kernel-GS 上下文；提交 `56353de29` 的
+[完整原生门禁](https://github.com/NeverSight/NeverD/actions/runs/37078537517)正在验证修复，
+Intel 验收须等完整结果。临时指令探针与 API 拦截器已移除，持续验收由实际 NeverD
+传输和进程测试负责。

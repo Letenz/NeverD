@@ -62,7 +62,11 @@ before the admitted instruction. Debug exceptions routed to EL2 cannot be
 masked using the guest's `PSTATE.D`. All scalar, TLS and FP/SIMD state uses the
 existing ARM64 capture boundary and startup probe. Intel uses negotiated VMCS
 controls, monitor-trap stepping, TLB invalidation, complete FP/SSE XSAVE packets
-and authenticated exception exits. Both architectures run the existing complete
+and authenticated exception exits. CR0/CR4 honor both framework writable masks
+and hardware fixed bits; host-required bits are hidden by the guest read
+shadows. Each Intel vCPU creation, including cancellation recovery, binds and
+initializes a private managed `IA32_KERNEL_GS_BASE`. Guest MSR access stays
+trapped, and unsupported MSR/SWAPGS instructions remain outside the checked ISA. Both architectures run the existing complete
 state startup probe before exposing a CPU.
 
 Queue admission observes the borrowed stop token and original deadline. One
@@ -106,13 +110,11 @@ exact GoogleTest identities instead of address-bearing parameter dumps.
 `self-hosted, macOS, ARM64/X64, hvf` runners. Its `hosted-intel` selection tries
 GitHub's `macos-15-intel` runner. Both choices first compile and sign
 `scripts/probe_hvf_host.c` and require actual VM/vCPU creation and teardown
-before preparing LLVM. On Intel, the standalone probe additionally executes
-an original `MOV/HLT` program and verifies MTF stepping. It compares both public
-entry APIs in fresh processes with bounded timeouts. A hosted runner that
-denies HVF or cannot execute this probe fails at that boundary;
-its label does not establish virtualization support. After the CPU gate, the
-workflow also requires every matching Darwin workload. Dedicated runners are
-not assumed to be provisioned.
+before preparing LLVM. This availability probe does not execute guest code.
+A hosted runner that denies HVF fails at that boundary; its label does not
+establish virtualization support. After the CPU gate, the workflow also
+requires every matching Darwin workload. Dedicated runners are not assumed
+to be provisioned.
 
 The workflow first builds `NeverDHvfTests`, whose dependency boundary is LLVM
 Support and the decoder, and requires native instruction execution before the
@@ -121,11 +123,9 @@ diagnostic profile; `full` remains the default and also requires both complete
 gates. The transport profile reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
 It can also run locally with `--require-hvf --hvf-transport-only` on
-`scripts/run_native_cpu_ci.py`. `validation=probe` runs only host diagnostics
-without LLVM. On Intel this also compares an independent QEMU HVF engine with
-TCG using an original reset-vector program; the two explicit accelerators run
-separately without fallback. Their logs, version and ROM digest are retained.
-This independent engine check cannot establish NeverD transport correctness.
+`scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
+availability check without LLVM; it cannot establish instruction execution
+or NeverD transport correctness.
 
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
@@ -212,15 +212,19 @@ all 16 required outcomes executed, including the strengthened interruption
 inventory. Its 12-case transport subset also passed locally with no skips.
 The complete evidence is in `build-hvf-native/hvf-cancellation-full-evidence/`.
 
-The first hosted Intel execution found an invalid write to the framework-owned
-VMCS link pointer. Removing that write and preserving mandatory CR0 mask bits
-passed state installation, but the [native entry diagnostic](https://github.com/NeverSight/NeverD/actions/runs/37070495008)
-at `193b891bf` still failed before guest execution with `HV_ERROR` and
-VM-instruction error 12. The [independent entry-API comparison](https://github.com/NeverSight/NeverD/actions/runs/37073865902)
-at `65325ca1f` reproduced that status with both `hv_vcpu_run_until` and
-`hv_vcpu_run`, without NeverD's decoder, FP packet or guest OS machinery.
-Intel acceptance remains incomplete; neither VM/vCPU creation nor the
-independent native-kernel reference replaces the failed execution gate.
+Intel diagnosis removed writes to the framework-owned VMCS link pointer,
+preserved framework VM-exit controls and applied hardware CR0/CR4 fixed bits.
+An [independent 64-bit program](https://github.com/NeverSight/NeverD/actions/runs/37076076219)
+then established that the hosted runner could execute through QEMU HVF.
+The [isolated MSR experiment](https://github.com/NeverSight/NeverD/actions/runs/37078094659)
+identified `IA32_KERNEL_GS_BASE`: enabling that context alone restored execution
+and MTF stepping; the other eleven individual MSRs did not. The retained
+VM-instruction error 12 was also present on successful runs, so it does not
+identify the failed entry's cause. Production now initializes the managed
+kernel-GS context on each vCPU creation. The [full native gate](https://github.com/NeverSight/NeverD/actions/runs/37078537517)
+at `56353de29` is validating this fix; Intel acceptance remains pending its
+complete result. Temporary instruction probes and API interposers are removed;
+the actual NeverD transport and process tests own ongoing acceptance.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
