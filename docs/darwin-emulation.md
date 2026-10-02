@@ -149,7 +149,14 @@ only for dyld's real main handoff; guest images remain import-free. Return,
 exit, memory protection/reuse and oversized-write error ordering must match
 the fixture's exit status and exact output. This native reference is required
 by the HVF gate; it does not establish native iOS execution.
-It preserves the full inventory and JUnit results, and fails on missing or
+The independent [native kernel workflow](../.github/workflows/darwin-kernel-reference.yml)
+runs these same cases on both Intel and Apple Silicon macOS without building
+NeverD or LLVM. `DarwinNativeCases.def` owns the modes and expected byte output
+for both runners. Wrong host architectures, Rosetta, timeouts and any result
+mismatch fail the reference gate; its JSON records the source, OS and compiler.
+Run it locally with `python3 scripts/run_darwin_kernel_reference.py
+--architecture arm64 --evidence build-kernel-reference` (use `x86_64` on Intel).
+The focused workload gate preserves the full inventory and JUnit results, and fails on missing or
 skipped native workloads even when loader-only tests pass:
 
 ```sh

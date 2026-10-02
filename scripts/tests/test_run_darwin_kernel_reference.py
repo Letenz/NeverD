@@ -1,0 +1,64 @@
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+from scripts import run_darwin_kernel_reference as reference
+
+
+class DarwinKernelReferenceTests(unittest.TestCase):
+    def test_formatted_inventory_is_complete_and_rejects_unparsed_cases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.def"
+            valid = 'NEVERD_DARWIN_NATIVE_CASE(\n "memory", 37, "d"\n)\n'
+            valid += 'NEVERD_DARWIN_NATIVE_CASE("slashes", 37, "//")\n'
+            path.write_text(valid)
+            self.assertEqual(reference.read_cases(path), [("memory", 37, b"d"), ("slashes", 37, b"//")])
+            for invalid in ("", valid + valid, valid + "BROKEN_CASE()", valid.replace("37", "256")):
+                with self.subTest(invalid=invalid):
+                    path.write_text(invalid)
+                    with self.assertRaises(ValueError):
+                        reference.read_cases(path)
+
+    def test_wrong_os_architecture_and_rosetta_cannot_supply_native_evidence(self):
+        for system, actual, requested, translated in (
+            ("Linux", "arm64", "arm64", ""),
+            ("Darwin", "arm64", "x86_64", "0"),
+            ("Darwin", "x86_64", "x86_64", "1"),
+        ):
+            with self.subTest(system=system, actual=actual, translated=translated):
+                with (mock.patch.object(reference.platform, "system", return_value=system),
+                      mock.patch.object(reference.platform, "machine", return_value=actual),
+                      mock.patch.object(reference.subprocess, "run", return_value=
+                                        subprocess.CompletedProcess([], 0, translated, ""))):
+                    with self.assertRaises(ValueError):
+                        reference.native_architecture(requested)
+
+    def test_intel_without_rosetta_sysctl_and_native_arm_are_accepted(self):
+        for architecture, status, translated in (("x86_64", 1, ""), ("arm64", 0, "0")):
+            with self.subTest(architecture=architecture):
+                with (mock.patch.object(reference.platform, "system", return_value="Darwin"),
+                      mock.patch.object(reference.platform, "machine", return_value=architecture),
+                      mock.patch.object(reference.subprocess, "run", return_value=
+                                        subprocess.CompletedProcess([], status, translated, ""))):
+                    self.assertEqual(reference.native_architecture(architecture), architecture)
+
+    def test_status_output_stderr_and_timeouts_cannot_pass(self):
+        outcomes = [
+            subprocess.CompletedProcess([], 37, b"d", b""),
+            subprocess.CompletedProcess([], 0, b"d", b""),
+            subprocess.CompletedProcess([], 37, b"wrong", b""),
+            subprocess.CompletedProcess([], 37, b"d", b"unexpected"),
+            subprocess.TimeoutExpired([], 5, output=b"partial"),
+        ]
+        cases = [(str(index), 37, b"d") for index in range(len(outcomes))]
+        with mock.patch.object(reference.subprocess, "run", side_effect=outcomes):
+            results = reference.execute_cases(Path("native"), cases)
+        self.assertEqual([result["passed"] for result in results], [True, False, False, False, False])
+        self.assertEqual(results[-1]["error"], "timeout")
+        self.assertEqual(results[-1]["stdout_hex"], b"partial".hex())
+
+
+if __name__ == "__main__":
+    unittest.main()

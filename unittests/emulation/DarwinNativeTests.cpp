@@ -13,6 +13,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -32,8 +33,19 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   const std::filesystem::path Root(Temporary.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
-  for (const char *Mode : {"return", "exit", "memory", "write-length"}) {
-    SCOPED_TRACE(Mode);
+  struct Case {
+    const char *Mode;
+    int Status;
+    const char *Output;
+  };
+  constexpr Case Cases[] = {
+#define NEVERD_DARWIN_NATIVE_CASE(Mode, Status, Output) {Mode, Status, Output},
+#include "fixtures/DarwinNativeCases.def"
+#undef NEVERD_DARWIN_NATIVE_CASE
+  };
+  static_assert(std::size(Cases) != 0);
+  for (const auto &Test : Cases) {
+    SCOPED_TRACE(Test.Mode);
     const auto Output = (Root / "stdout").string();
     const auto Error = (Root / "stderr").string();
     const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
@@ -41,19 +53,16 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     std::string LaunchError;
     bool ExecutionFailed = false;
     const auto Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, Mode}, std::nullopt, Redirects, 5, 0, &LaunchError,
-        &ExecutionFailed);
+        Program, {Program, Test.Mode}, std::nullopt, Redirects, 5, 0,
+        &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
     auto Out = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Out));
     auto Err = llvm::MemoryBuffer::getFile(Error);
     ASSERT_TRUE(bool(Err));
-    EXPECT_EQ(Status, 37) << LaunchError << (*Err)->getBuffer().str();
+    EXPECT_EQ(Status, Test.Status) << LaunchError << (*Err)->getBuffer().str();
     EXPECT_TRUE((*Err)->getBuffer().empty());
-    const llvm::StringRef Name(Mode);
-    EXPECT_EQ((*Out)->getBuffer(), Name == "memory"         ? "d"
-                                   : Name == "write-length" ? "w"
-                                                            : "");
+    EXPECT_EQ((*Out)->getBuffer(), Test.Output);
   }
 #endif
 }

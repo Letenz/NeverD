@@ -1,0 +1,6 @@
+// Original freestanding workloads with deterministic native macOS results.
+// This inventory is shared by the C++ oracle and standalone host CI.
+NEVERD_DARWIN_NATIVE_CASE("return", 37, "")
+NEVERD_DARWIN_NATIVE_CASE("exit", 37, "")
+NEVERD_DARWIN_NATIVE_CASE("memory", 37, "d")
+NEVERD_DARWIN_NATIVE_CASE("write-length", 37, "w")

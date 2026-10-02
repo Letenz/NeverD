@@ -51,6 +51,10 @@ macOS 本机构建还会把同一份自编目标文件链接为宿主参考程�
 重用和超长写入的错误顺序，检查实际退出状态和逐字节输出。只有宿主程序为真实 dyld
 入口链接 libSystem，来宾镜像仍不依赖动态库。这项原生对照是 HVF 门禁必需项，
 不代表 iOS 真机执行证据。
+独立的[原生内核工作流](../../.github/workflows/darwin-kernel-reference.yml)还会直接在
+Intel 与 Apple Silicon macOS 上执行这些程序，无需构建 NeverD 或 LLVM。
+`DarwinNativeCases.def` 统一维护 C++ 测试和独立宿主脚本的模式、退出状态及期望输出；
+架构不符、Rosetta、超时或结果不符均失败，JSON 保留源码、系统和编译器信息。
 `scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
 Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
