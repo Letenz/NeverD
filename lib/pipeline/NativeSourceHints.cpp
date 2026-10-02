@@ -264,6 +264,24 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
           Reads.insert(Input.Offset);
       }
     }
+  // LowIR calls list the target, not their ABI arguments. An entry word
+  // forwarded directly to a bound call can therefore have no explicit native
+  // read. Reuse the complete native-state proof to recover those uses: it
+  // matches each call occurrence and follows every byte through writes,
+  // clobbers and frame storage. MedIR must independently observe the same
+  // complete entry word; neither a call declaration nor SSA zero alone is
+  // enough to create an auxiliary parameter.
+  if (!Med.DoesNotReturn &&
+      std::any_of(Observed->begin(), Observed->end(), [&](uint64_t Register) {
+        return IntegerRegister(Register) && !Reads.count(Register);
+      })) {
+    std::set<uint64_t> Used;
+    if (hasNativeSourceStateContract(Image, Low, Med, true, &Used, false,
+                                     Callees, &Hint))
+      for (uint64_t Register : Used)
+        if (IntegerRegister(Register) && Observed->count(Register))
+          Reads.insert(Register);
+  }
   const bool ReadsPreserved =
       std::any_of(Reads.begin(), Reads.end(), [&](uint64_t Register) {
         return TRI.isCallPreserved(Register, 8);
