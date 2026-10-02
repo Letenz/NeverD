@@ -16,7 +16,9 @@ namespace neverd::swift_virtual_detail {
 // fixed vtable descriptor. Dispatch still reads the live receiver's table;
 // its initial implementation supplies type evidence, not a replacement call.
 inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
-                                   const ObjCMethod &Method, uint32_t Slot) {
+                                   const ObjCMethod &Method, uint32_t Slot,
+                                   llvm::StringRef ExpectedModule = {},
+                                   llvm::StringRef ExpectedClass = {}) {
   const va_t Metadata = Method.ClassAddress;
   objc::RuntimeData Data(Image);
   if (!Metadata || Metadata % 8 || Slot % 8 || Slot < 80 || Slot > 4096 ||
@@ -74,7 +76,9 @@ inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
   const auto Module =
       ModuleAddress ? Data.string(*ModuleAddress) : std::nullopt;
   const auto Name = Data.string(*NameAddress);
-  if (!Module || !Name)
+  if (!Module || !Name ||
+      (!ExpectedModule.empty() && *Module != ExpectedModule) ||
+      (!ExpectedClass.empty() && *Name != ExpectedClass))
     return false;
   const uint64_t RecordOffset = 52 + uint64_t(Slot / 8 - Start) * 8;
   if (*Descriptor > InvalidVA - RecordOffset - 8)

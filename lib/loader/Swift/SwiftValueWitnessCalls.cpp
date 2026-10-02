@@ -501,6 +501,36 @@ public:
       return std::nullopt;
     return Result;
   }
+
+  std::optional<Path> metadataAt(size_t Block, size_t Operation,
+                                 const NdVar &Value) {
+    auto Result = at(Block, Operation, Value);
+    if (!Result)
+      return std::nullopt;
+    bool Loaded = false;
+    for (const auto &Step : Result->Steps) {
+      if (Step.TheKind != Step::Kind::Load)
+        continue;
+      Loaded = true;
+      // A static load site inside a cycle is not a value identity shared
+      // between different iterations. Check only the metadata's own loads;
+      // the two required witness loads are derived from that runtime value.
+      if (UsedCycle &&
+          (!Step.Definition || AfterCycle.count(Step.Definition->first)))
+        return std::nullopt;
+    }
+    if (Result->Base.TheKind == Root::Kind::Constant && !Loaded) {
+      // Only a literal metadata address owns an image-backed VWT prefix.
+      // A loaded pointer instead identifies this load's runtime result; the
+      // global's address and initial contents are not the metadata object.
+      const auto Address = literalMetadataAddress(*Result);
+      if (!Address || *Address < 8 || *Address % 8 ||
+          !Image.isDataAddress(*Address) ||
+          !Image.isDataAddress(*Address - 8) || !Image.readVA(*Address - 8, 8))
+        return std::nullopt;
+    }
+    return Result;
+  }
 };
 } // namespace
 
@@ -573,21 +603,11 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
         continue;
       const SourceCallTypeHint *Match = nullptr;
       for (const auto &Witness : Witnesses) {
-        const auto Type =
-            Trace.at(BlockIndex, Index,
-                     NdVar::reg(Witness.Metadata.RegisterOffset, uint16_t(8)));
+        const auto Type = Trace.metadataAt(
+            BlockIndex, Index,
+            NdVar::reg(Witness.Metadata.RegisterOffset, uint16_t(8)));
         if (!Type)
           continue;
-        if (Type->Base.TheKind == Root::Kind::Constant) {
-          // The witness table pointer lives immediately before metadata.
-          // Verify that exact image-backed slot, not merely the page base.
-          const auto Address = literalMetadataAddress(*Type);
-          if (!Address || *Address < 8 || *Address % 8 ||
-              !Image.isDataAddress(*Address) ||
-              !Image.isDataAddress(*Address - 8) ||
-              !Image.readVA(*Address - 8, 8))
-            continue;
-        }
         Path Expected = *Type;
         if (!Expected.add(-8) || !Expected.load(8) ||
             !Expected.add(int64_t(Witness.Slot) * 8) || !Expected.load(8) ||
