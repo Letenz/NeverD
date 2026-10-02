@@ -3377,13 +3377,17 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
       IID == llvm::Intrinsic::localescape ||
       IID == llvm::Intrinsic::localrecover)
     return true;
-  if (IID == llvm::Intrinsic::returnaddress) {
+  if (IID == llvm::Intrinsic::returnaddress ||
+      IID == llvm::Intrinsic::frameaddress) {
     if (Call.arg_size() != 1 ||
         !llvm::isa<llvm::ConstantInt>(Call.getArgOperand(0)) ||
         !llvm::cast<llvm::ConstantInt>(Call.getArgOperand(0))->isZero())
-      throw std::runtime_error("unsupported return-address depth");
+      throw std::runtime_error("unsupported frame/return-address depth");
     emitIndent(Indent);
-    OS << getName(&Call) << " = __builtin_return_address(0);\n";
+    OS << getName(&Call) << " = "
+       << (IID == llvm::Intrinsic::returnaddress ? "__builtin_return_address"
+                                                 : "__builtin_frame_address")
+       << "(0);\n";
     return true;
   }
   if (IID == llvm::Intrinsic::localaddress) {

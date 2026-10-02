@@ -191,6 +191,28 @@ cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
 ```
 
+## Finite native dispatch
+
+`NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
+regressions with independent AArch64 and x64 finite-selector fixtures. The new
+fixtures select slots 2 and 3 from a four-slot absolute pointer table in both
+read-only and writable storage. HighC, optimized LLVMC and `--no-opt` LLVMC
+must compile and execute the same selection at `-O0` and `-O2` with undefined
+behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
+reached backedges, mutated table storage and exhausted evidence must prevent
+unsupported source publication. Clang and the existing lift fixture tools
+are required; unavailable fixtures remain skips.
+
+```sh
+cmake --build build-release --target NeverDJumpTableTests --parallel 4
+build-release/bin/NeverDJumpTableTests
+```
+
+`NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
+strings, generic builtins compiled for a different source ISA, and dead image
+address calculations. The latter must retain volatile/atomic loads and
+observable calls while leaving the input LLVM module unchanged.
+
 ## Interpreter recovery checks
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction

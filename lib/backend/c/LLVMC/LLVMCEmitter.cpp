@@ -206,7 +206,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           auto Name = Callee->getName().str();
 
           if (const char *Mapped = llvmIntrinsicToCName(Name.c_str())) {
-            HasCIntrinsics = true;
+            // Generic arithmetic and control builtins use host C facilities.
+            // Only mappings that actually name ISA intrinsics need the
+            // recovered image's architecture headers.
+            const llvm::StringRef RawName(Name);
+            if (RawName.starts_with("llvm.x86.") ||
+                RawName.starts_with("llvm.aarch64.") ||
+                RawName.starts_with("llvm.arm.") ||
+                IID == llvm::Intrinsic::readcyclecounter ||
+                IID == llvm::Intrinsic::debugtrap)
+              HasCIntrinsics = true;
             IntrinsicMappedNames.insert(Name);
             if (const char *Header = libc::headerFor(Mapped))
               Headers.insert(Header);
@@ -793,6 +802,13 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
+        // Validate explicitly supported scalar shapes before normalization can
+        // discard an unused malformed call, retaining the source error
+        // contract.
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
+          (void)scalarIntegerMinMax(*Call);
+          (void)scalarUnary(*Call);
+        }
         if (const auto *Allocation =
                 llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
           HasVectors |= containsVectorType(Allocation->getAllocatedType());
@@ -801,53 +817,60 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           HasVectors |= Operand->getType()->isVectorTy();
       }
   }
-  std::unique_ptr<llvm::Module> Projection;
-  const llvm::Function *ProjectionOnly = Only;
+  if (llvm::verifyModule(Mod, &llvm::errs()))
+    return false;
+  // Source normalization must not mutate the caller's IR. Remove dead
+  // computations left by recovered control flow even when semantic
+  // optimization is disabled; they can otherwise reference unneeded image
+  // tables. LLVM DCE retains volatile/atomic accesses and side-effecting calls.
+  llvm::ValueToValueMapTy ValueMap;
+  auto Projection = llvm::CloneModule(Mod, ValueMap);
+  const llvm::Function *ProjectionOnly = nullptr;
+  if (Only) {
+    ProjectionOnly =
+        llvm::dyn_cast_or_null<llvm::Function>(ValueMap.lookup(Only));
+    if (!ProjectionOnly)
+      throw std::runtime_error(
+          "C projection could not map the selected function into its clone");
+  }
   if (HasVectors) {
-    if (llvm::verifyModule(Mod, &llvm::errs()))
-      return false;
-    // Normalize vector operations on a clone so C emission preserves the
-    // caller's IR while the scalar writer receives explicit lane semantics.
-    llvm::ValueToValueMapTy ValueMap;
-    Projection = llvm::CloneModule(Mod, ValueMap);
-    if (Only) {
-      ProjectionOnly =
-          llvm::dyn_cast_or_null<llvm::Function>(ValueMap.lookup(Only));
-      if (!ProjectionOnly)
-        throw std::runtime_error(
-            "C projection could not map the selected function into its clone");
-    }
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
-    llvm::LoopAnalysisManager Loops;
-    llvm::FunctionAnalysisManager Functions;
-    llvm::CGSCCAnalysisManager CallGraph;
-    llvm::ModuleAnalysisManager Modules;
-    llvm::PassBuilder Passes;
-    Passes.registerModuleAnalyses(Modules);
-    Passes.registerCGSCCAnalyses(CallGraph);
-    Passes.registerFunctionAnalyses(Functions);
-    Passes.registerLoopAnalyses(Loops);
-    Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
-    llvm::FunctionPassManager Normalize;
+  }
+  llvm::LoopAnalysisManager Loops;
+  llvm::FunctionAnalysisManager Functions;
+  llvm::CGSCCAnalysisManager CallGraph;
+  llvm::ModuleAnalysisManager Modules;
+  llvm::PassBuilder Passes;
+  Passes.registerModuleAnalyses(Modules);
+  Passes.registerCGSCCAnalyses(CallGraph);
+  Passes.registerFunctionAnalyses(Functions);
+  Passes.registerLoopAnalyses(Loops);
+  Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
+  llvm::FunctionPassManager Normalize;
+  if (HasVectors) {
     llvm::ScalarizerPassOptions ScalarOptions;
     // LLVM only splits simple accesses: volatile and atomic vectors still
     // reach the unsupported-instruction guard below.
     ScalarOptions.ScalarizeLoadStore = true;
     Normalize.addPass(llvm::ScalarizerPass(ScalarOptions));
-    Normalize.addPass(llvm::DCEPass());
-    llvm::ModulePassManager Pipeline;
-    Pipeline.addPass(
-        llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
-    Pipeline.run(*Projection, Modules);
+  }
+  Normalize.addPass(llvm::DCEPass());
+  llvm::ModulePassManager Pipeline;
+  Pipeline.addPass(
+      llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
+  Pipeline.run(*Projection, Modules);
+  if (HasVectors) {
     // Lane-width-changing vector casts create new scalar/vector bitcasts in
     // Scalarizer. Lower those with the source layout before scalarizing their
     // explicit lane gathers, too. The second pass introduces no new casts.
     lowerPackedVectorBitcasts(*Projection);
     Modules.invalidate(*Projection, llvm::PreservedAnalyses::none());
     Pipeline.run(*Projection, Modules);
-    if (llvm::verifyModule(*Projection, &llvm::errs()))
-      return false;
+  }
+  if (llvm::verifyModule(*Projection, &llvm::errs()))
+    return false;
+  if (HasVectors) {
     if (!ProjectionOnly)
       for (const auto &Global : Projection->globals())
         if (containsVectorType(Global.getValueType()))
@@ -879,8 +902,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     }
   }
   LLVMCWriter W(Out, Opts, Dbg, Img);
-  W.writeModule(Projection ? *Projection : Mod,
-                Projection ? ProjectionOnly : Only);
+  W.writeModule(*Projection, ProjectionOnly);
   return true;
 }
 

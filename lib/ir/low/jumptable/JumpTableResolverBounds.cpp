@@ -1919,10 +1919,16 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                                    &ExactFiniteGroupBranches,
                                    ExactConsumerGroup->MinimumPresentBranches))
           return 0;
+        // A single absolute-table consumer may also have an exact finite
+        // selector without an AND/modulo producer (for example CSET/CMOV
+        // followed by OR). The physical run is only a read ceiling: the same
+        // point-sensitive query must prove the entire domain, and publication
+        // still requires replay after every admitted destination is decoded.
         if (!Info.PreScaledIndex &&
             Authorized.size() < limits::kMinJumpTableEntries &&
-            !ExactFiniteReplayOccurrences && Info.IsRelative &&
-            !Info.RelocAbsolute) {
+            !ExactFiniteReplayOccurrences &&
+            ((Info.IsRelative && !Info.RelocAbsolute) ||
+             (Info.RelocAbsolute && !Info.IsRelative))) {
           if (!seedExactFiniteDomain(IndexOccurrences,
                                      /*OccurrenceBranches=*/nullptr,
                                      /*SharedTargetBranches=*/nullptr,
@@ -1960,11 +1966,16 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
         // (for example `arg & 7`).  Run the ordinary proof once in the empty-
         // edge graph so that dynamic, but independently authenticated, entry
         // domains can seed the same monotone iteration.  A non-empty exact
-        // finite seed is extended only for loader-normalized absolute
-        // relocation tables: a relative sparse selector is already a precise
-        // coordinate set and must not be widened by a less precise dense mask.
-        if (Authorized.empty() || (Authorized.size() < CandidateCapacity &&
-                                   Info.RelocAbsolute && !Info.IsRelative)) {
+        // finite seed is extended only for loader-normalized absolute groups.
+        // A complete single-consumer finite proof owns its exact coordinates;
+        // a second, weaker mask search must neither widen that set nor reject
+        // it because the selector contains an unrecognized mask transform.
+        // If replay finds a recurrent subset, the ordinary cyclic proof below
+        // still takes over and must establish its complete domain.
+        if (Authorized.empty() ||
+            (Authorized.size() < CandidateCapacity && Info.RelocAbsolute &&
+             !Info.IsRelative &&
+             ExactFiniteReplayOccurrences != &IndexOccurrences)) {
           bool EntryReachabilityComplete = false;
           const std::set<va_t> EntryReachable = candidateReachableInstructions(
               Rec, NoTargets, Roots, Info.StorageRanges, EvidenceBudget,

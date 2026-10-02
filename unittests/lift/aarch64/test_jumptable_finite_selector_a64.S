@@ -1,0 +1,97 @@
+// Independent finite selectors. Physical slots 0 and 1 are unreachable.
+.macro begin name
+.text
+.p2align 2
+.global \name
+.type \name, %function
+\name:
+    sub sp, sp, #16
+    adrp x8, \name\()_table
+    add x8, x8, :lo12:\name\()_table
+.endm
+
+.macro choose
+    cmp w0, #0
+    cset w9, eq
+    orr w9, w9, #2
+.endm
+
+.macro finish name, writable=0, repeat=0
+    ldr x8, [x8, w9, uxtw #3]
+    br x8
+\name\()_case0:
+    mov w0, #7
+    add sp, sp, #16
+    ret
+\name\()_case1:
+    mov w0, #13
+    add sp, sp, #16
+    ret
+\name\()_case2:
+.if \repeat
+    // A reached destination makes the next selector unbounded.
+    mov w9, w1
+    adrp x8, \name\()_table
+    add x8, x8, :lo12:\name\()_table
+    b \name\()_dispatch
+.else
+    mov w0, #41
+    add sp, sp, #16
+    ret
+.endif
+\name\()_case3:
+    mov w0, #99
+    add sp, sp, #16
+    ret
+.size \name, .-\name
+.if \writable
+.section .data,"aw",%progbits
+.else
+.section .rodata,"a",%progbits
+.endif
+.p2align 3
+.type \name\()_table, %object
+\name\()_table:
+    .quad \name\()_case0, \name\()_case1
+    .quad \name\()_case2, \name\()_case3
+.size \name\()_table, .-\name\()_table
+.endm
+
+#if TEST_CASE == 0
+begin finite_ro
+choose
+finish finite_ro
+#elif TEST_CASE == 1
+begin finite_rw
+choose
+finish finite_rw, 1
+#elif TEST_CASE == 2
+begin finite_unknown_arm
+    cmp w0, #0
+    csel w9, w1, wzr, eq
+    orr w9, w9, #2
+finish finite_unknown_arm
+#elif TEST_CASE == 3
+begin finite_bypassed
+    cbnz w1, finite_bypassed_dispatch
+choose
+finite_bypassed_dispatch:
+finish finite_bypassed
+#elif TEST_CASE == 4
+begin finite_clobbered
+choose
+    mov w9, w1
+finish finite_clobbered
+#elif TEST_CASE == 5
+begin finite_mutated
+choose
+    str x1, [x8, #16]
+finish finite_mutated, 1
+#elif TEST_CASE == 6
+begin finite_recurrent
+choose
+finite_recurrent_dispatch:
+finish finite_recurrent, 0, 1
+#endif
+
+.section .note.GNU-stack,"",%progbits

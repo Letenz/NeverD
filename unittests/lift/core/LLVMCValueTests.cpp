@@ -9,6 +9,7 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
@@ -997,6 +998,127 @@ TEST(LLVMCValues, ConstantsWiderThanTheCarrierAreRejected) {
 }
 
 } // namespace
+
+TEST(LLVMCValues, ImageStringsRejectOverlappingRelocationStorage) {
+  for (bool Wide : {false, true}) {
+    neverd::BinaryImage Image;
+    Image.Arch = neverd::Arch::X64;
+    Image.Bits = neverd::Bitness::Bits64;
+    neverd::Segment Segment;
+    Segment.VA = 0x1000;
+    Segment.Size = Segment.FileSz = 64;
+    Segment.Flags = neverd::SegmentFlags::Readable;
+    Segment.Data.resize(64);
+    constexpr neverd::va_t Address = 0x1010;
+    const unsigned Stride = Wide ? 2 : 1;
+    for (unsigned I = 0; I < 5; ++I)
+      Segment.Data[16 + I * Stride] = "hello"[I];
+    Image.Segments.push_back(std::move(Segment));
+    const std::optional<std::string> Expected =
+        Wide ? "L\"hello\"" : "\"hello\"";
+    ASSERT_EQ(neverd::imageStringLiteral(&Image, Address), Expected);
+
+    // A fixup can overlap the first byte from the preceding pointer slot,
+    // start inside the text, or alter its terminator. A following slot does
+    // not invalidate the complete preceding string.
+    for (neverd::va_t Slot :
+         {Address - 7, Address, Address + 2, Address + 5 * Stride}) {
+      Image.CodePtrRelocSlots = {Slot};
+      EXPECT_FALSE(neverd::imageStringLiteral(&Image, Address));
+    }
+    Image.CodePtrRelocSlots = {Address + 6 * Stride};
+    EXPECT_EQ(neverd::imageStringLiteral(&Image, Address), Expected);
+    Image.CodePtrRelocSlots.clear();
+    neverd::BaseRelocation Fixup;
+    Fixup.Address = Address + 1;
+    Image.BaseRelocations.push_back(Fixup);
+    EXPECT_FALSE(neverd::imageStringLiteral(&Image, Address));
+  }
+}
+
+TEST(LLVMCValues, GenericFrameBuiltinsDoNotRequireForeignISAHeaders) {
+  for (auto Arch : {neverd::Arch::AArch64, neverd::Arch::X64}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("generic-frame-builtins", Context);
+    auto *Pointer = llvm::PointerType::getUnqual(Context);
+    for (auto ID :
+         {llvm::Intrinsic::returnaddress, llvm::Intrinsic::frameaddress}) {
+      const char *Name =
+          ID == llvm::Intrinsic::returnaddress ? "return_ptr" : "frame_ptr";
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(Pointer, {}, false),
+          llvm::GlobalValue::ExternalLinkage, Name, Module);
+      llvm::IRBuilder<> Builder(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      auto *Intrinsic =
+          llvm::Intrinsic::getOrInsertDeclaration(&Module, ID, {Pointer});
+      Builder.CreateRet(Builder.CreateCall(Intrinsic, {Builder.getInt32(0)}));
+    }
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Arch;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    EXPECT_EQ(Source.find("arm_acle.h"), std::string::npos);
+    EXPECT_EQ(Source.find("immintrin.h"), std::string::npos);
+    for (const char *Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + "\nint main(void) { return !return_ptr() || "
+                             "!frame_ptr(); }\n",
+                    Optimization);
+  }
+}
+
+TEST(LLVMCValues, DeadAddressComputationsKeepEffectsAndTheOriginalIR) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("dead-source-addresses", Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Table = new llvm::GlobalVariable(
+      Module, llvm::ArrayType::get(I64, 4), true,
+      llvm::GlobalValue::ExternalLinkage, nullptr, "__nd_codeptr_1000");
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, {Pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "read_effects", Module);
+  auto *Observe = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "record_event", Module);
+  llvm::IRBuilder<llvm::NoFolder> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateAdd(Builder.CreatePtrToInt(Table, I64), Builder.getInt64(8));
+  auto *Volatile = Builder.CreateLoad(I64, Function->getArg(0));
+  Volatile->setVolatile(true);
+  auto *Atomic = Builder.CreateLoad(I64, Function->getArg(0));
+  Atomic->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
+  Atomic->setAlignment(llvm::Align(8));
+  Builder.CreateCall(Observe, {Function->getArg(0)});
+  Builder.CreateRet(Builder.getInt64(17));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Before;
+  llvm::raw_string_ostream BeforeOut(Before);
+  Module.print(BeforeOut, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  EXPECT_EQ(Source.find("codeptr_1000"), std::string::npos);
+  EXPECT_NE(Source.find("volatile"), std::string::npos);
+  EXPECT_NE(Source.find("__atomic_load"), std::string::npos);
+  std::string After;
+  llvm::raw_string_ostream AfterOut(After);
+  Module.print(AfterOut, nullptr);
+  EXPECT_EQ(Before, After);
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+static unsigned events;
+void record_event(void *pointer) { ++events; *(uint64_t *)pointer += 1; }
+int main(void) {
+  uint64_t value = 71;
+  return read_effects(&value) != 17 || events != 1 || value != 72;
+}
+)",
+                  Optimization);
+}
 
 TEST(LLVMCValues, RemaindersWithInlineOperandsPublishTheirResult) {
   llvm::LLVMContext Context;
