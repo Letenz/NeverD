@@ -4500,8 +4500,10 @@ TEST(HighControlFlowSemantics, JumpTableSuccessorsKeepCallsStoresAndPhiEdges) {
           }
         });
       });
-      EXPECT_EQ(Stores, 2U);
-      EXPECT_EQ(Calls, 2U);
+      // A successor's tail may be copied to each case that jumps to it, and
+      // every copy keeps its store and its call.
+      EXPECT_GE(Stores, 2U);
+      EXPECT_EQ(Calls, Stores);
       EXPECT_TRUE(buildHighSourceFlowGraph(High).Diagnostics.Complete);
       for (unsigned Selector : {0U, 1U, 2U}) {
         SCOPED_TRACE(Selector);
@@ -6688,6 +6690,40 @@ TEST(HighControlFlowSemantics, ArmThatAlwaysLeavesForTheFollowTakesTheRest) {
   ASSERT_EQ(F.Body[1].Body.size(), 2u);
   EXPECT_EQ(F.Body[1].Body[1].Kind, StmtKind::IfElse);
   for (size_t I = 0; I < 5; ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, ReturnTailWithAStoreIsCopiedToEachJump) {
+  // if (x == 1) goto T; if (x == 2) goto T; return 5;
+  // T: *(0x5000) = x + 10; return *(0x5000);  -- each path runs the store
+  // once, so each jump can run its own copy of the tail.
+  auto Equals = [](va_t Address, uint64_t Value) {
+    HighStmt S;
+    S.Kind = StmtKind::If;
+    S.Addr = Address;
+    S.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                 HighExpr::makeConst(Value, 8));
+    S.Body = {jump(Address, 0x1020)};
+    return S;
+  };
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1020;
+  Store.StoreAddr = HighExpr::makeConst(0x5000, 8);
+  Store.StoreVal =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(10, 8));
+  HighFunc F;
+  F.Body = {Equals(0x1000, 1), Equals(0x1008, 2),
+            result(0x1010, HighExpr::makeConst(5, 8)), Store,
+            result(0x1024, HighExpr::makeLoad(HighExpr::makeConst(0x5000, 8),
+                                              NdType::makeInt(8)))};
+  const uint64_t Inputs[] = {0, 1, 2, 3};
+  const uint64_t Results[] = {5, 11, 12, 5};
+  for (size_t I = 0; I < 4; ++I)
+    ASSERT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (size_t I = 0; I < 4; ++I)
     EXPECT_EQ(execute(F, Inputs[I]), Results[I]) << Inputs[I];
 }
 

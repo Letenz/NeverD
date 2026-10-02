@@ -563,13 +563,22 @@ static bool isTailValue(const HighExpr &E, unsigned Depth = 0) {
   }
 }
 
-/// Number of pure variable assignments in \p S when it is one (or a block of
-/// only such assignments and removed statements); nullopt otherwise.  A
-/// block member may carry its own address only when no jump targets it.
+/// Number of statements in \p S that a tail may copy to each jump into it:
+/// assignments of tail values, and calls and plain stores of them, which each
+/// path still runs exactly once (or a block of only such statements and
+/// removed ones); nullopt otherwise.  A block member may carry its own
+/// address only when no jump targets it.
 static std::optional<size_t> pureAssignCount(const HighStmt &S,
                                              const std::set<va_t> &Targets) {
   if (S.Kind == StmtKind::Nop)
     return 0;
+  if (S.Kind == StmtKind::Store)
+    return S.StoreAddr && S.StoreVal &&
+                   S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+                   S.MemoryOrdering == NdMemoryOrdering::None &&
+                   isTailValue(*S.StoreAddr) && isTailValue(*S.StoreVal)
+               ? std::optional<size_t>(1)
+               : std::nullopt;
   if (S.Kind == StmtKind::Assign) {
     if (!S.Dst || S.Dst->Kind != ExprKind::Var || !S.Val)
       return std::nullopt;
