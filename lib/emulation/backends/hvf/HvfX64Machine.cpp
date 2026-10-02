@@ -79,10 +79,9 @@ public:
     if (auto E = control(VMCS_CTRL_VMENTRY_CONTROLS,
                          VMENTRY_GUEST_IA32E | VMENTRY_LOAD_EFER))
       return E;
-    if (auto E =
-            control(VMCS_CTRL_VMEXIT_CONTROLS,
-                    VMEXIT_HOST_IA32E | VMEXIT_SAVE_EFER | VMEXIT_LOAD_EFER))
-      return E;
+    // VM-exit controls restore the framework's host state. Retain the
+    // configuration established by hv_vcpu_create instead of deriving it
+    // from writable-bit masks for a guest packet.
     if (auto E = control(VMCS_GUEST_CR0, x64::CR0))
       return E;
     if (auto E = control(VMCS_GUEST_CR4, x64::CR4 | x64::fp::OSXsave))
