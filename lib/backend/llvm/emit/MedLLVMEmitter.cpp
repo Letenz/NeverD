@@ -701,6 +701,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
 
   MutableSourcePlans.clear();
   MutableReturnValue.reset();
+  EmittingMutableBody = false;
+  MutableValueBlock = nullptr;
+  MutableBlockValues.clear();
   if (BodyMask && BodyMask->size() != Funcs.size()) {
     // A rejected generation must not leave a reusable emitter exposing the
     // previous module's transient RETURN bindings or entry arbitration set.

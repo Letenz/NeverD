@@ -27,6 +27,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/ValueSymbolTable.h"
 
 #include <cstdint>
 #include <string>
@@ -214,14 +215,13 @@ private:
           F = A->getParent();
         if (!F)
           return false;
-        for (const llvm::Argument &A : F->args())
-          if (A.hasName() && A.getName() == Candidate)
-            return true;
-        for (const llvm::BasicBlock &BB : *F)
-          for (const llvm::Instruction &I : BB)
-            if (I.hasName() && I.getName() == Candidate)
-              return true;
-        return false;
+        // The function already indexes its names. Scanning its entire body
+        // for each anonymous leaf makes large symbolic rewrites quadratic.
+        // Block labels share the table but are not symbolic value inputs.
+        const auto *Symbols = F->getValueSymbolTable();
+        const llvm::Value *Named =
+            Symbols ? Symbols->lookup(Candidate) : nullptr;
+        return llvm::isa_and_nonnull<llvm::Argument, llvm::Instruction>(Named);
       };
 
       do {

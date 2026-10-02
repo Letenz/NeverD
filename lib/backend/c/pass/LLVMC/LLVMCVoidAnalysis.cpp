@@ -35,7 +35,8 @@ bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
         auto *RV = RI->getReturnValue();
         if (!RV)
           continue;
-        if (llvm_value_provenance::isExplicitMemoryReturn(*RI)) {
+        if (llvm_value_provenance::isExplicitMemoryReturn(*RI) ||
+            llvm_value_provenance::isExplicitSourceReturn(*RI)) {
           AllRetResidual = false;
           continue;
         }

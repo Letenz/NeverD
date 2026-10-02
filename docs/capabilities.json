@@ -11935,6 +11935,50 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.RepeatedBlockWritesKeepPrivateTrafficBounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.ForwardedGuestSnapshotsSurviveOverlappingWrites",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.DeclaredZeroReturnSurvivesFoldingAndPromotion",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLLVMCValueTests",
+          "source": "unittests/lift/core/LLVMCValueTests.cpp",
+          "filter": "LLVMCValues.LongExpressionBoundariesSurviveReorderedBlocks",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {

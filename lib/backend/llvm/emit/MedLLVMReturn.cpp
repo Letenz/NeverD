@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
@@ -95,7 +96,7 @@ void MedLLVMEmitter::emitReturnOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (CurMedFunc && CurMedFunc->SkippedSSA && MutableReturnValue) {
     auto *Value = getVar(*MutableReturnValue, Builder);
     Value = Builder.CreateZExtOrTrunc(Value, RetTy);
-    Builder.CreateRet(Value);
+    llvm_value_provenance::markExplicitSourceReturn(*Builder.CreateRet(Value));
     return;
   }
 

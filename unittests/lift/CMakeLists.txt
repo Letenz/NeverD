@@ -1208,7 +1208,7 @@ target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
 
 add_neverd_unittest(NeverDMedMutableSourceTests
   core/MedMutableSourceTests.cpp
-  LINK_COMPONENTS BackendLLVM BackendC IRMed
+  LINK_COMPONENTS Pipeline BackendLLVM BackendC IRMed
 )
 if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDMedMutableSourceTests PRIVATE

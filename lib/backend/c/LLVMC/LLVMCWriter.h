@@ -97,6 +97,7 @@ public:
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
+  void planExpressionMaterialization(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
   static bool isFloatingPointBitcast(const llvm::Instruction &Inst);
   static bool isNativeVectorIntrinsic(const llvm::CallBase &Call, Arch TheArch);
@@ -634,11 +635,15 @@ public:
   LLVMCAnalysisState Analysis;
   llvm::DominatorTree Dominators;
   std::map<const llvm::Value *, std::string> InlineCache;
+  /// Fixed expression boundaries, chosen before declarations or assignments
+  /// can be omitted and retained by later display-only inlining passes.
+  std::set<const llvm::Value *> MaterializedExpressions;
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
   mutable std::set<const llvm::Value *> ActiveImmediateFolds;
+  mutable unsigned ImmediateFoldWork = 0;
   mutable const llvm::Function *LocalLoadValuesFor = nullptr;
   mutable llvm::DenseMap<const llvm::LoadInst *, const llvm::Value *>
       LocalLoadValues;

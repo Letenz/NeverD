@@ -79,6 +79,28 @@ const llvm::ConstantInt *foldLiteralInteger(const llvm::Value *V,
                                      /*AllowNonDeterministic=*/false));
 }
 
+void checkConstantFoldBudget(const llvm::Constant *Root) {
+  // LLVM's layout-aware constant folder recursively visits expressions and
+  // vectors. Bound that input before entering it, independently of the scalar
+  // instruction planner and display-time immediate-fold budget.
+  constexpr unsigned MaxWork = 256, MaxDepth = 32;
+  llvm::SmallVector<std::pair<const llvm::Constant *, unsigned>, 16> Pending;
+  Pending.emplace_back(Root, 0);
+  unsigned Work = 0;
+  while (!Pending.empty()) {
+    const auto [C, Depth] = Pending.pop_back_val();
+    if (++Work > MaxWork || Depth > MaxDepth)
+      throw std::runtime_error("LLVM C constant-fold budget exceeded");
+    if (!llvm::isa<llvm::ConstantExpr, llvm::ConstantVector>(C))
+      continue;
+    if (C->getNumOperands() > MaxWork - Work - Pending.size())
+      throw std::runtime_error("LLVM C constant-fold budget exceeded");
+    for (const auto &Operand : C->operands())
+      Pending.emplace_back(llvm::cast<llvm::Constant>(Operand.get()),
+                           Depth + 1);
+  }
+}
+
 bool looksUnsignedCExpr(const std::string &S) {
   return S.starts_with("(unsigned)") || S.starts_with("(uint") ||
          S.starts_with("((unsigned)") || S.starts_with("((uint");
@@ -574,6 +596,16 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     return "((void*)0)";
 
   if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(C)) {
+    // IRBuilder can retain scalar constant expressions containing vector
+    // bitcasts/extracts. Resolve their complete bit pattern through LLVM's
+    // layout-aware folder before choosing a C spelling.
+    if (CurMod) {
+      checkConstantFoldBudget(CE);
+      if (const auto *Folded =
+              llvm::ConstantFoldConstant(CE, CurMod->getDataLayout());
+          Folded != CE)
+        return constStr(Folded);
+    }
     if (CE->getOpcode() == llvm::Instruction::GetElementPtr) {
       std::string Image = imageDataCName(CE);
       if (!Image.empty())
@@ -614,6 +646,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(" + typeToCLLVM(CE->getType()) + ")" +
              valueStr(CE->getOperand(0));
     }
+    throw std::runtime_error("LLVM C constant expression is not supported");
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
@@ -676,12 +709,16 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
 
 std::optional<std::string>
 LLVMCWriter::foldImmediate(const llvm::Value *V) const {
+  if (MaterializedExpressions.count(V))
+    return std::nullopt;
   // The local expression walk can reenter through imageDataVA and alloca
   // store classification. A mutable loop may then revisit this same root
   // with a fresh local Seen set. No immediate is established by that cycle.
-  if (ActiveImmediateFolds.size() >= 128 ||
-      !ActiveImmediateFolds.insert(V).second)
+  if (ActiveImmediateFolds.empty())
+    ImmediateFoldWork = 64;
+  if (ImmediateFoldWork == 0 || !ActiveImmediateFolds.insert(V).second)
     return std::nullopt;
+  --ImmediateFoldWork;
   struct FoldGuard {
     std::set<const llvm::Value *> &Active;
     const llvm::Value *Value;
@@ -713,8 +750,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
     if (!Load->isSimple())
       return std::nullopt;
   if (CurMod) {
-    unsigned Budget = 64;
-    if (const auto *C = foldLiteralInteger(V, CurMod->getDataLayout(), Budget))
+    if (const auto *C =
+            foldLiteralInteger(V, CurMod->getDataLayout(), ImmediateFoldWork))
       return integerConstantText(C->getValue());
   }
   if (auto Known = KnownImmediates.find(V); Known != KnownImmediates.end())
@@ -730,8 +767,13 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   llvm::SmallPtrSet<const llvm::Value *, 16> Seen;
   auto Rec = [&](auto &&Self,
                  const llvm::Value *Cur) -> std::optional<std::string> {
-    if (!SupportsWidth(Cur) || llvm::isa<llvm::FreezeInst>(Cur) ||
-        !Seen.insert(Cur).second)
+    // Share this budget with reentrant image/alloca classification. A long
+    // nonconstant SSA chain must not trigger an unbounded walk at every use.
+    if (ImmediateFoldWork == 0)
+      return std::nullopt;
+    --ImmediateFoldWork;
+    if (!SupportsWidth(Cur) || MaterializedExpressions.count(Cur) ||
+        llvm::isa<llvm::FreezeInst>(Cur) || !Seen.insert(Cur).second)
       return std::nullopt;
     if (auto Known = KnownImmediates.find(Cur); Known != KnownImmediates.end())
       return Known->second;
@@ -858,6 +900,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
       if (BO->getOpcode() == llvm::Instruction::Add ||
           BO->getOpcode() == llvm::Instruction::Sub) {
         auto LHS = Self(Self, BO->getOperand(0));
+        if (!LHS)
+          return std::nullopt;
         auto RHS = Self(Self, BO->getOperand(1));
         if (!LHS || !RHS || !BO->getType()->isIntegerTy())
           return std::nullopt;
@@ -2253,7 +2297,8 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     return {};
   if (MarkChain)
     for (const llvm::Instruction *I : Chain)
-      Analysis.Inlinable.insert(I);
+      if (!MaterializedExpressions.count(I))
+        Analysis.Inlinable.insert(I);
   if (Off == 0)
     return "(**(void ***)(" + ObjStr + "))";
   return "(*(void **)((uintptr_t)(*(void **)(" + ObjStr + ")) + " +
@@ -2270,6 +2315,11 @@ void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (MaterializedExpressions.count(V)) {
+    if (PointerSpelling)
+      *PointerSpelling = V->getType()->isPointerTy();
+    return getName(V);
+  }
   auto AddressText = [&](std::string Text) {
     if (PointerSpelling)
       *PointerSpelling = true;

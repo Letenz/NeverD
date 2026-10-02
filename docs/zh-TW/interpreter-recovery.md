@@ -67,6 +67,8 @@ C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 此可變子集接受 8/16/32/64/128 位元純量儲存，位元計數輸入最多為 64 位元。非標準位元寬度和更寬儲存需要獨立的原始碼契約。
 
+對於已驗證的可變變數函式主體，LLVM 僅在依序附加指令的同一基本區塊內轉送私有槽位的確切值，並保留最後的寫入。入口初始化以及區塊、函式和模組邊界保持獨立，客戶程式的記憶體存取仍明確保留。C 輸出限制純量運算式展開和立即值折疊的工作量，保留必要的具名中間值。可折疊的常數運算式使用 LLVM 的目標配置；不支援的運算式明確報錯。已指定的可變回傳值（包括零）不能被改成 void 回傳。
+
 相容的 v4 介面為 `neverd_devirtualize_source_v4()` 與 `neverd_devirtualize_machine_source_v4()`。將 `neverd_devirtualize_options_v4` 清零，並將 `base.base.base.struct_size` 設為完整大小。CLI 串接數量接受非負 32 位元十進位整數，零表示關閉。範圍端點接受有號 64 位元十進位整數，要求 `begin < end` 及 `--vm-machine-state`，約束實體入口 RSP 而非調整後的值。在 C API 中，範圍旗標要求機器狀態介面；未設定時兩個端點必須為零。未知旗標與舊版本保留欄位的非零值會遭拒。v1/v2/v3 忽略整個 v4 擴充，v4 忽略未來擴充。空選項指標保留舊預設值。報告增加 `maxChainedTransfers` 與 `entryFrameBounds`，`discoverControlState` 記錄實際開關。所有 CLI 選項皆要求 `--devirtualize`。數值前提不在執行時檢查，也不保證可存取性、初始化或無別名。這些選項不啟用原生證明策略。
 
 ```c

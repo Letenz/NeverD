@@ -1232,6 +1232,15 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
 
   if (HasLocalDef) {
     auto *LoadedTy = sizeToType(V.Size);
+    if (prepareMutableBlockValues(Builder)) {
+      assert(AllocIt->second->getAllocatedType() == LoadedTy);
+      auto &Cached = MutableBlockValues[Key];
+      if (!Cached.Value)
+        Cached.Value =
+            Builder.CreateLoad(LoadedTy, AllocIt->second, V.display() + "_v");
+      assert(Cached.Value->getType() == LoadedTy);
+      return Cached.Value;
+    }
     return Builder.CreateLoad(LoadedTy, AllocIt->second, V.display() + "_v");
   }
 
@@ -1389,6 +1398,21 @@ void MedLLVMEmitter::propagateToSubRegs(uint64_t RegOff, uint16_t WriteSize,
   }
 }
 
+bool MedLLVMEmitter::prepareMutableBlockValues(llvm::IRBuilder<> &Builder) {
+  auto *Block = Builder.GetInsertBlock();
+  if (!EmittingMutableBody || !Block ||
+      Builder.GetInsertPoint() != Block->end()) {
+    MutableValueBlock = nullptr;
+    MutableBlockValues.clear();
+    return false;
+  }
+  if (MutableValueBlock != Block) {
+    MutableBlockValues.clear();
+    MutableValueBlock = Block;
+  }
+  return true;
+}
+
 void MedLLVMEmitter::setVar(const MedVar &V, llvm::Value *Val,
                             llvm::IRBuilder<> &Builder) {
   if (V.isConst() || V.Size == 0)
@@ -1447,7 +1471,16 @@ void MedLLVMEmitter::setVar(const MedVar &V, llvm::Value *Val,
       Val = Builder.CreateTrunc(AsInt, TargetTy);
     }
   }
-  Builder.CreateStore(Val, Alloca);
+  auto *Store = Builder.CreateStore(Val, Alloca);
+  if (prepareMutableBlockValues(Builder)) {
+    assert(Alloca->getAllocatedType() == Val->getType());
+    auto &Cached = MutableBlockValues[Key];
+    // Every intervening read used the cached value. Keep producing loads and
+    // arithmetic in place, particularly snapshots of observable guest memory.
+    if (Cached.LastWrite)
+      Cached.LastWrite->eraseFromParent();
+    Cached = {Val, Store};
+  }
 
   if (V.Kind == MedVar::Reg && V.Size > 0 && Val->getType()->isIntegerTy()) {
     propagateToSubRegs(V.RegOff, V.Size, Val, Builder);
