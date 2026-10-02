@@ -3489,6 +3489,136 @@ TEST(ObjCSourceBindings,
   }
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftNominalTupleTypeFixture(Arch Architecture) {
+  SwiftTypeMetadataFixture F(Architecture);
+  const std::string Base = "_$s10Foundation3URLV_AA4DateVt";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.NestedDescriptorSlot, "_$s10Foundation4DateVMn", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 12);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  Type[5] = '_';
+  Type[6] = 2;
+  llvm::support::endian::write32le(
+      Type + 7, uint32_t(F.NestedDescriptorSlot - (F.TypeReference + 7)));
+  Type[11] = 't';
+  Type[12] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftNominalTupleIdentityKeepsElementOrder) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftNominalTupleTypeFixture(Architecture);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 2U);
+    EXPECT_EQ(Proof->Descriptors[0].Offset, 0U);
+    EXPECT_EQ(Proof->Descriptors[0].Symbol, "_$s10Foundation3URLVMn");
+    EXPECT_EQ(Proof->Descriptors[1].Offset, 6U);
+    EXPECT_EQ(Proof->Descriptors[1].Symbol, "_$s10Foundation4DateVMn");
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    EXPECT_NE(Source.find("__asm__(\"_$s10Foundation3URLVMn\")"),
+              std::string::npos);
+    EXPECT_NE(Source.find("__asm__(\"_$s10Foundation4DateVMn\")"),
+              std::string::npos);
+    EXPECT_EQ(Source.find("AA4Date"), std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftNominalTupleRejectsIncompleteOrDifferentIdentity) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftNominalTupleTypeFixture(Arch::AArch64);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    std::string Base = "_$s10Foundation3URLV_AA4DateVt";
+    auto *Type = F.Image.Segments[0].Data.data() + F.TypeReference - 0x1000;
+    switch (Mutation) {
+    case 0:
+      Base = "_$s10Foundation4DateV_AA3URLVt";
+      break;
+    case 1:
+      Base = "_$s10Foundation3URLV_AA4DataVt";
+      break;
+    case 2:
+      Base = "_$s10Foundation3URLV3url_AA4DateV4datet";
+      break;
+    case 3:
+      Base = "_$s10Foundation3URLV_AA4DateVSgt";
+      break;
+    case 4:
+      Base = "_$s10Foundation3URLV_AA4DateVSit";
+      break;
+    case 5:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot].WeakImport = true;
+      break;
+    case 6:
+      F.Image.DyldBindSlots[F.DescriptorSlot].Module = "/tmp/foreign.dylib";
+      break;
+    case 7:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot].Addend = 8;
+      break;
+    case 8:
+      F.Image.ConflictingImportStorageSlots.insert(F.NestedDescriptorSlot);
+      break;
+    case 9:
+      Type[5] = 'y';
+      break;
+    case 10:
+      Type[11] = 'G';
+      break;
+    case 11:
+      Type[6] = 3;
+      break;
+    case 12:
+      Type[12] = 't';
+      break;
+    case 13:
+      F.Image.Segments[0].Data[F.Reference + 4 - 0x1000] = 11;
+      break;
+    case 14:
+      llvm::support::endian::write32le(
+          Type + 7, uint32_t(F.DescriptorSlot - (F.TypeReference + 7)));
+      break;
+    case 15:
+      Base = "_$s10Foundation3URLC_AA4DateVt";
+      break;
+    case 16:
+      Base = "_$s10Foundation3URLV_ZZ4DateVt";
+      break;
+    case 17:
+      F.Image.DyldBindSlots.erase(F.NestedDescriptorSlot);
+      break;
+    }
+    F.Image.Symbols[0].Name = Base + "MR";
+    F.Image.Symbols[1].Name = Base + "Md";
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
+
 TEST(ObjCSourceBindings,
      SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
   SwiftTypeMetadataFixture F(Arch::AArch64);
