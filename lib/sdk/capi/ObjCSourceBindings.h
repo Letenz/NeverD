@@ -3082,25 +3082,33 @@ struct SwiftTypeMetadataPairProof {
 
 // A descriptor's word/substitution indices are relative to its own mangling.
 // They cannot be concatenated into a surrounding type's spelling. For these
-// complete recipes, compare the declared type tree with both authenticated
+// complete recipes, compare the declared type tree with the authenticated
 // descriptor identities in operand order. The emitted symbolic references
 // remain unchanged.
-inline bool swiftTwoDescriptorTypeRecipeMatches(
+inline bool swiftDescriptorTypeRecipeMatches(
     llvm::StringRef MangledType, llvm::StringRef Recipe,
     const std::vector<SwiftTypeMetadataDescriptorReference> &Descriptors) {
-  if (Descriptors.size() != 2 || Descriptors[0].Offset != 0)
+  if ((Descriptors.size() != 2 && Descriptors.size() != 3) ||
+      Descriptors[0].Offset != 0)
     return false;
   const auto ReferenceAt = [&](size_t Offset) {
     return Recipe.size() >= Offset + 5 &&
            (Recipe[Offset] == 1 || Recipe[Offset] == 2);
   };
   const bool StringKeyedGeneric =
-      Recipe.size() == 14 && Descriptors[1].Offset == 8 && ReferenceAt(0) &&
-      ReferenceAt(8) && Recipe.substr(5, 3) == "ySS" && Recipe[13] == 'G';
-  const bool NominalTuple = Recipe.size() == 12 && Descriptors[1].Offset == 6 &&
-                            ReferenceAt(0) && ReferenceAt(6) &&
-                            Recipe[5] == '_' && Recipe[11] == 't';
-  if (!StringKeyedGeneric && !NominalTuple)
+      Descriptors.size() == 2 && Recipe.size() == 14 &&
+      Descriptors[1].Offset == 8 && ReferenceAt(0) && ReferenceAt(8) &&
+      Recipe.substr(5, 3) == "ySS" && Recipe[13] == 'G';
+  const bool NominalTuple = Descriptors.size() == 2 && Recipe.size() == 12 &&
+                            Descriptors[1].Offset == 6 && ReferenceAt(0) &&
+                            ReferenceAt(6) && Recipe[5] == '_' &&
+                            Recipe[11] == 't';
+  const bool TupleGeneric =
+      Descriptors.size() == 3 && Recipe.size() == 19 &&
+      Descriptors[1].Offset == 6 && Descriptors[2].Offset == 12 &&
+      ReferenceAt(0) && ReferenceAt(6) && ReferenceAt(12) && Recipe[5] == 'y' &&
+      Recipe[11] == '_' && Recipe.substr(17) == "tG";
+  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric)
     return false;
   llvm::SwiftDemangleOptions Options;
   Options.MaxInputBytes = 8000;
@@ -3142,14 +3150,17 @@ inline bool swiftTwoDescriptorTypeRecipeMatches(
         return false;
     return true;
   };
-  if (NominalTuple) {
-    const auto &Tuple = Type.Root->Children[0];
+  const auto TupleMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                const llvm::SwiftDemangleNode &First,
+                                const llvm::SwiftDemangleNode &Second) {
     return Shape(Tuple, "Tuple", 2) &&
            Shape(Tuple.Children[0], "TupleElement", 1) &&
            Shape(Tuple.Children[1], "TupleElement", 1) &&
-           Same(Same, Tuple.Children[0].Children[0], OuterType, 0) &&
-           Same(Same, Tuple.Children[1].Children[0], ValueType, 0);
-  }
+           Same(Same, Tuple.Children[0].Children[0], First, 0) &&
+           Same(Same, Tuple.Children[1].Children[0], Second, 0);
+  };
+  if (NominalTuple)
+    return TupleMatches(Type.Root->Children[0], OuterType, ValueType);
   const auto &Generic = Type.Root->Children[0];
   const auto &Kind = OuterType.Children[0].Kind;
   const llvm::StringRef GenericKind = Kind == "Class" ? "BoundGenericClass"
@@ -3159,9 +3170,21 @@ inline bool swiftTwoDescriptorTypeRecipeMatches(
                                                        : "";
   if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
       !Shape(Generic.Children[0], "Type", 1) ||
-      !Shape(Generic.Children[1], "TypeList", 2))
+      !Shape(Generic.Children[1], "TypeList", TupleGeneric ? 1 : 2))
     return false;
   const auto &Arguments = Generic.Children[1].Children;
+  if (TupleGeneric) {
+    const auto Second = Parse(Descriptors[2].Symbol);
+    if (!Second.Root || !Second.Error.empty() ||
+        !Shape(*Second.Root, "Global", 1) ||
+        !Shape(Second.Root->Children[0], "NominalTypeDescriptor", 1) ||
+        !Shape(Second.Root->Children[0].Children[0], "Type", 1) ||
+        !Shape(Arguments[0], "Type", 1))
+      return false;
+    return Same(Same, Generic.Children[0], OuterType, 0) &&
+           TupleMatches(Arguments[0].Children[0], ValueType,
+                        Second.Root->Children[0].Children[0]);
+  }
   if (!Shape(Arguments[0], "Type", 1) || !Shape(Arguments[1], "Type", 1))
     return false;
   return Same(Same, Generic.Children[0], OuterType, 0) &&
@@ -3370,7 +3393,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
   if (Rebuilt.size() > 256 ||
       (Expanded == Base
            ? !swiftMangledType(Expanded)
-           : !swiftTwoDescriptorTypeRecipeMatches(Base, Rebuilt, Descriptors)))
+           : !swiftDescriptorTypeRecipeMatches(Base, Rebuilt, Descriptors)))
     return std::nullopt;
 
   return SwiftTypeMetadataPairProof{
