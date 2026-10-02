@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,28 @@
 namespace neverd::emulation {
 using diagnostic::error;
 namespace {
+enum class BitAccess { Read, Update };
+std::optional<BitAccess> bitAccess(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_BIT_INSTRUCTION(Name, Access)                               \
+  case X86_INS_##Name:                                                         \
+    return BitAccess::Access;
+#include "X64BitInstructions.def"
+#undef NEVERD_X64_BIT_INSTRUCTION
+  default:
+    return std::nullopt;
+  }
+}
+bool admitsBitOperands(const cs_x86 &X) {
+  if (X.op_count != 2)
+    return false;
+  const auto &Base = X.operands[0], &Index = X.operands[1];
+  return (Base.type == X86_OP_REG || Base.type == X86_OP_MEM) &&
+         (Base.size == x64::HalfWordBytes || Base.size == x64::DWordBytes ||
+          Base.size == x64::WordBytes) &&
+         (Index.type == X86_OP_IMM ||
+          (Index.type == X86_OP_REG && Index.size == Base.size));
+}
 std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
   const bool Carry = Flags & x64::CarryFlag;
   const bool Parity = Flags & x64::ParityFlag;
@@ -294,14 +317,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
+  const auto Bit = bitAccess(I.id);
+  const bool BitWrites = Bit == BitAccess::Update;
+  if (Bit && !admitsBitOperands(X))
+    return llvm::make_error<UnsupportedExecutionError>();
   if (Atomic &&
       (X.op_count != 2 || X.operands[1].type != X86_OP_REG ||
        (X.operands[0].type != X86_OP_REG && X.operands[0].type != X86_OP_MEM) ||
        X.operands[0].size != X.operands[1].size))
     return llvm::make_error<UnsupportedExecutionError>();
   if ((X.prefix[0] && !Locked) ||
-      (Locked &&
-       ((!updateArity(I.id) && !Atomic) || X.operands[0].type != X86_OP_MEM)) ||
+      (Locked && ((!updateArity(I.id) && !Atomic && !BitWrites) ||
+                  X.operands[0].type != X86_OP_MEM)) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
       ((I.id == X86_INS_RET || I.id == X86_INS_CALL) &&
        X.prefix[2] == X86_PREFIX_OPSIZE))
@@ -336,11 +363,6 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (O.type != X86_OP_MEM || I.id == X86_INS_LEA || I.id == X86_INS_NOP)
       continue;
-    // Memory BT uses a bit-string address beyond the decoded operand when its
-    // index crosses the word. Admit register forms only until that complete
-    // effective-address contract is implemented and observed.
-    if (I.id == X86_INS_BT)
-      return llvm::make_error<UnsupportedExecutionError>();
     if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size ||
         (O.mem.segment != X86_REG_INVALID && O.mem.segment != X86_REG_DS &&
          O.mem.segment != X86_REG_SS && O.mem.segment != X86_REG_ES &&
@@ -357,6 +379,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     uint64_t A = *B + *Index * O.mem.scale + O.mem.disp;
     if (O.mem.base == X86_REG_RIP || O.mem.base == X86_REG_EIP)
       A += I.size;
+    if (Bit && X.operands[1].type == X86_OP_REG) {
+      auto Offset = operandRegister(X.operands[1].reg);
+      if (!Offset)
+        return Offset.takeError();
+      const int64_t Bits = O.size * CHAR_BIT;
+      const int64_t Signed = llvm::SignExtend64(*Offset, Bits);
+      // A signed register index selects a whole operand-sized word. Floor
+      // division also handles negative indices; an immediate stays within
+      // the base word. Address-size wrapping precedes the segment base.
+      const int64_t Words = Signed / Bits - (Signed % Bits < 0);
+      A += uint64_t(Words) * O.size;
+    }
     if (X.addr_size == x64::DWordBytes)
       A = uint32_t(A);
     if (O.mem.segment == X86_REG_GS)
@@ -373,7 +407,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;
     if (N == 0) {
-      if ((Vector && Vector->Move) || condition(I.id, 0))
+      if (Bit)
+        OperandAccess = BitWrites ? CS_AC_READ | CS_AC_WRITE : CS_AC_READ;
+      else if ((Vector && Vector->Move) || condition(I.id, 0))
         OperandAccess = CS_AC_WRITE;
       else if (updateArity(I.id))
         OperandAccess = CS_AC_READ | CS_AC_WRITE;
@@ -399,7 +435,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (!Condition)
         return llvm::make_error<UnsupportedExecutionError>();
       Accesses.push_back({A, O.size, Write, uint64_t(*Condition)});
-    } else if (Atomic && N == 0 &&
+    } else if ((Atomic || BitWrites) && N == 0 &&
                OperandAccess == (CS_AC_READ | CS_AC_WRITE)) {
       Accesses.push_back({A, O.size, Read, 0});
       Accesses.push_back({A, O.size, Write, 0, std::nullopt, 0, true});

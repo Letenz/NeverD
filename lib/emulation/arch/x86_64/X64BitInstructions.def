@@ -1,0 +1,9 @@
+//===- X64BitInstructions.def - Bit-string operand effects --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_BIT_INSTRUCTION(BT, Read)
+NEVERD_X64_BIT_INSTRUCTION(BTC, Update)
+NEVERD_X64_BIT_INSTRUCTION(BTR, Update)
+NEVERD_X64_BIT_INSTRUCTION(BTS, Update)

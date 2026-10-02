@@ -566,7 +566,7 @@ CPU factory と capability query は同じ `ExecutionConfiguration` を使い、
 
 `ImageMappingPlan` は loader が用意した segment を使い、header の再解析や import 解決をしません。address space を公開する前に全範囲と重複を検証します。明示的な `linux-elf64-v1` profile は初期 stack、service request、上限付き byte output とともに x64/AArch64 の freestanding ELF `ET_EXEC` と static PIE `ET_DYN` を開始します。dynamic linking、dynamic TLS、signal、OS thread、未対応 service は失敗します。static TLS と限定的な x64 SSE/SSE2 はサポートします。KVM から Linux、WHP から Windows を推測しません。[CPU 実行](cpu-execution.md)と[ゲストプロセスのエミュレーション](process-emulation.md)を参照してください。Windows user-mode や Android/Darwin app の対応を意味しません。
 
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 273 検査すべてに合格します。内訳は CPU 検査 45 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 299 検査すべてに合格します。内訳は CPU 検査 71 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 `DriverImage.def` は厳密な PE 検証のサイズ・アラインメント制限と診断文を宣言し、ポインター幅は `DriverProfile.def` が定義します。検証と再配置は `DriverImage.cpp` が担当し、受理するイメージとエラーメッセージは変わりません。
 
@@ -589,6 +589,8 @@ x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページ�
 共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
+
+`X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列されたメモリ変更形式に限られ、MMIO とハードウェア並列 SMP は未対応です。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
 `WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
 
@@ -917,3 +919,5 @@ AArch64 の具体型レシピは、完全にデマングルした `Swift` モジ
 ネイティブ入力推論は、結合済み呼び出しで暗黙に渡される完全な整数ワードも考慮する。LowIR は呼び出し先だけを列挙し ABI 引数を含めないため、直接末尾呼び出しで保存されたコンテキストが欠落し得る。既存のネイティブ状態証明で各呼び出し位置を一致させ、書き込み、呼び出しによる破壊、フレーム保存を通じて入口の全8バイトを追跡し、状態復元を証明する必要がある。MedIR も同じ完全な入口ワードの使用を独立に確認する。部分値、上書きされた値、曖昧な値、未結合の値から引数は作らない。ARM64 と x86_64 のパイプラインテストでは再リフトと完全なソース検証を要求する。元の ARM64 末尾分岐命令と未変更の生成 C を O0/O2 で比較し、計測用の呼び出し先で両入力と両戻りワードを検査する。この検証は転送を対象とし、辞書実装は実行しない。
 
 ARM64 のソース結合は、完全なデバイス用・シミュレータ用 SDK の宣言が外部の非 TLS `NSString *const` ストレージを示し、両 UIKit エクスポート表が正確なリンカー識別子を確認した十二個の属性文字列キーを扱う。外部ストレージのアドレスとすべてのネイティブ読み取りを保持し、文字列内容やオブジェクト値で置き換えない。誤ったフレームワーク、変更されたシンボル、弱いインポート、ゼロ以外の加数、失効した公開証拠は拒否する。この追加カタログは x86_64 の結合を有効にしない。
+
+非公開 Swift witness テーブルは、安定した登録名を持つ内部プロトコルも利用できる。共通の型識別証明は、記述子、完全なモジュールコンテキスト、すべての直接 `__swift5_protos` レコードを検証し、重複する識別、登録の欠落、未対応のフラグを拒否する。要件シグネチャや関連型を持たない通常のプロトコルだけが対象となる。生成 C は単純な存在型メタデータを解決し、種類と単一プロトコルの配置を検証して元のプロトコル記述子を取得し、元のクラスの適合を照会する。witness エントリの再構築や非エクスポート記述子へのリンクは行わない。公開と出力生成の際に、現在のイメージに対して識別証明を再実行する。
