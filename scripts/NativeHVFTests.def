@@ -26,6 +26,15 @@ NEVERD_NATIVE_HVF_OWNER(NeverDDarwinProcessTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDRunControlTests)
 #endif
 #ifdef NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "HvfExecutor.CompletionFailureOutranksConcurrentStop")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64,
+    "HvfExecutor.GuestFaultDoesNotPublishAtEitherARMPrivilegeAndAllowsRetry")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry")
 // Each supported guest platform must execute its real startup/service fixture
 // on the host's ISA. Loader-only registrations cannot satisfy this gate.
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(

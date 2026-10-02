@@ -30,8 +30,8 @@ OS 页独立持有物理内存，因此部分解除映射能释放预算，重�
 错误返回正 errno 并置 carry。JSON 中的 `error` 字段区分错误和值相同的成功结果。
 不会复用 Linux 的负 errno。内存保护跨空洞或最大权限边界失败时，整段原权限保持不变。
 部分 `write` 复制的字节会保留，后续访存错误仍返回 EFAULT。
-原始 `write` 长度超过 `INT_MAX` 时，必须先返回 EINVAL，再考虑描述符、来宾指针和
-输出预算。此顺序已有真实 macOS 系统调用对照。
+原始 `write` 长度超过 `INT_MAX` 时，直接返回 EINVAL，检查发生在描述符、来宾指针和
+输出预算之前。此顺序已有真实 macOS 系统调用对照。
 
 设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本接受不依赖动态库、重定位、
 初始化函数或 TLS 的独立可执行文件。需要 dyld 链接、Mach IPC、线程、文件系统、
@@ -60,42 +60,65 @@ Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--eviden
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
 [原生 Darwin 专项工作流](../../.github/workflows/darwin-native.yml)提供关闭 Unicorn
 后的 x64 KVM/WHP 构建和验收；它需要 runner 实际提供虚拟化能力，保留完整测试证据。
-工作流也可以单独选择 `kvm` 或 `whp`。本机关闭 Unicorn 的完整工作负载门禁已通过：
-57 项通过、0 失败，包含全部 33 项 ARM64 必需进程用例；190 项非本机或禁用后端
-用例跳过。扩展后的脚本与 CI 审计回归共 103 项通过。
+工作流也可以单独选择 `kvm` 或 `whp`。
 
-2026-10-03 在 Apple M4 Max / macOS 15.6.1 的 Release 构建上验证：Darwin
-114 项通过、0 失败，133 项因后端或架构不适用而跳过；共享会话和镜像映射 26 项通过；
-Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的原生 HVF 门禁
-扩大到 20 个测试目标，811 项通过、0 失败，其中包含 57 项 Darwin 检查。
-五种 Mach-O 组合的 Python SDK 集成、能力清单、SDK 审计、文档和格式检查也通过。
-这些统计存在重叠，不能相加。本机统计只证明 Apple Silicon HVF 的执行结果；
-Linux KVM、Windows WHP 的独立宿主验证见下表。Intel HVF 仍需 Intel Mac 真机验证。
+## 本机验证（2026-10-03）
 
-最终桌面包已重新纳入本轮引擎，并通过 186 个 Mach-O 的依赖、签名和 Cocoa 启动检查。
-包内引擎与关闭测试、关闭 Unicorn 的 CLI，在三种 ARM64 平台的 18 个场景中报告完全一致，
-且全部实际使用 HVF；两种 x64 Mach-O 的显式 HVF 请求在 ARM64 宿主上明确拒绝。
-硬件门禁现按宿主要求每种 Darwin 平台实际执行，ARM64 共 12 个必需用例均通过；
-删除注册、跳过本机用例或无法识别宿主架构都会失败。相关脚本回归 96 项通过。
+Apple M4 Max / macOS 15.6.1，Release 构建，源码为
+`36e11ca8a3d80aecf585d3328018839ce7fdb989`：
 
-同时关闭 HVF 和 Unicorn 后，Darwin、HVF 和配置测试目标也构建成功：38 项通过、
-0 失败，231 项后端用例按预期跳过；产物没有 Hypervisor.framework 链接依赖。
-这项验证证明构建开关与诊断隔离，不算作来宾实际执行证据。
+| 范围 | 通过 | 失败 | 跳过 | 必需原生用例 |
+| --- | ---: | ---: | ---: | ---: |
+| 完整 HVF 门禁，关闭 Unicorn，20 个目标 | 834 | 0 | 5,903 | 13 / 13 |
+| 每个 Darwin 工作负载，关闭 Unicorn | 65 | 0 | 221 | 39 / 39 |
+| Darwin 与公开 C API/CLI，包含 Unicorn | 138 | 0 | 156 | — |
+
+统计有重叠，不能相加。原生摘要记录干净源码，没有缺失注册或未执行的必需用例。
+跳过项属于异架构、其他后端或关闭的软件后端。65 项 Darwin 检查包含加载器、内存、
+每个 ARM64 工作负载，以及真实宿主内核对照。完整 HVF 门禁现要求 ARM64 的 13 项或
+Intel 的 12 项检查；Darwin 专项门禁另要求全部 39 / 26 项进程工作负载。
+
+证据位于 `build-hvf-native/hvf-release-evidence/`、
+`build-hvf-native/darwin-release-evidence/` 和
+`build-hvf/verification/darwin-release-public.xml`。回归覆盖未映射尾部字节的文件预算、
+各平台的线程入口、超长写入错误顺序及格式化换行后的测试清单解析。
+原生清单、结果核对和 CI 脚本的 106 项回归通过；能力、文档、来源及格式检查也通过。
+
+较早的集成验证已覆盖五种平台/架构的 Python SDK 调用；包内引擎与关闭 Unicorn 的
+CLI 在三种 ARM64 平台的 18 个场景中报告一致。桌面包通过 186 个 Mach-O 的依赖、
+签名和 Cocoa 启动检查。同时关闭 HVF 与 Unicorn 的配置通过 38 项检查、跳过 231 项
+后端用例，且没有 Hypervisor.framework 依赖；这属于构建隔离证据。
+提交 `e078b129c` 的[桌面 GUI 工作流](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
+也在 macOS、Windows、Ubuntu 三个平台通过。
 
 ## 托管宿主原生验证（2026-10-03）
 
-两个 x64 后端都在关闭 Unicorn 后通过完整 Darwin 工作负载门禁。每个后端的
-macOS 和 iOS Simulator 共 22 项必需进程用例全部执行成功，没有缺失注册或跳过：
+两个 x64 后端都在关闭 Unicorn 后通过最新 Darwin 专项门禁，包含文件预算、独立线程
+入口及超长写入回归。源码均为 `36e11ca8a3d80aecf585d3328018839ce7fdb989`，
+macOS 与 iOS Simulator 共 26 项必需进程用例全部执行成功：
 
-| 宿主 / 后端 | 源码提交 | 通过 | 失败 | 跳过 | 必需原生用例 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| [Windows / WHP](https://github.com/NeverSight/NeverD/actions/runs/37052787958/job/110990029252) | `7594323f771467e3299a81db8a9cc3790391153a` | 45 | 0 | 202 | 22 / 22 |
-| [Ubuntu 24.04 / KVM](https://github.com/NeverSight/NeverD/actions/runs/37054174027/job/110994662033) | `7bfd4223b4a2560ee8cc5f9caad12bbf86c4ce6e` | 45 | 0 | 202 | 22 / 22 |
+| 宿主 / 后端 | 通过 | 失败 | 跳过 | 必需原生用例 |
+| --- | ---: | ---: | ---: | ---: |
+| [Windows / WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703/job/111023370601) | 51 | 0 | 235 | 26 / 26 |
+| [Ubuntu 24.04 / KVM](https://github.com/NeverSight/NeverD/actions/runs/37062839703/job/111023370857) | 51 | 0 | 235 | 26 / 26 |
 
-产物 `darwin-native-whp-x64` 和 `darwin-native-kvm-x64` 保留完整测试清单、JUnit、
-CTest 日志及源码/宿主摘要，两个源码工作区均为干净状态。跳过项属于不匹配架构或
-不可用后端，不包含本次选择的必需原生用例。第一次 Linux 任务在 `ld64.lld` 工具检查
-阶段停止；加入已安装的 LLVM 工具目录到 `PATH` 后，上表中的 KVM 重跑成功。
+产物 `darwin-native-whp-x64` 和 `darwin-native-kvm-x64` 保留完整清单、JUnit、CTest
+日志及源码/宿主摘要。两个工作区均干净，没有缺失或未执行的必需用例；下载产物的
+SHA-256 已与 GitHub 摘要核对。跳过项包括仅适用于 macOS 的内核对照、异架构和其他后端。
 
-这些结果验证有限 Darwin 环境及其经过的共享 CPU 路径；Intel Mac HVF 以及更广泛的
-各后端 CPU 回归仍需各自门禁，不能由这两个专项结果替代。
+这些结果验证所列传输上的有限 Darwin 模型。Intel Mac HVF 和各后端更广泛的 CPU
+行为仍需各自的门禁验证。
+
+## 独立 macOS 内核对照（2026-10-03）
+
+提交 `e727d3eab7086063bb392444bd55014ac48d43c3` 的原始程序使用 Apple Clang 17.0.0
+编译后，在两种 macOS 15.7.9 宿主上直接执行成功：
+
+| 宿主架构 | 原生工作负载通过 |
+| --- | ---: |
+| [Apple Silicon ARM64](https://github.com/NeverSight/NeverD/actions/runs/37064795867/job/111029848093) | 4 / 4 |
+| [Intel x86-64](https://github.com/NeverSight/NeverD/actions/runs/37064795867/job/111029847805) | 4 / 4 |
+
+两个摘要均记录干净源码，`return`、`exit`、`memory`、`write-length` 都返回 37，
+输出逐字节匹配且 stderr 为空；产物摘要也已核对。这为两种架构的原始工作负载提供
+独立内核语义依据；模拟执行仍由上面的 HVF/KVM/WHP 结果覆盖。

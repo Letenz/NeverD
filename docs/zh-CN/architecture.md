@@ -942,11 +942,13 @@ super 调用证明保留窄返回值的未定义填充位并检查每个参数�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读写方法保留完整的 32 字节 `UIEdgeInsets`：上、左、下、右四个 double 在 arm64 上由 d0–d3 传递。完整的设备与模拟器 SDK 声明一致，Apple Clang 独立复现全部六种编码。接收者查找保留 UIButton 匿名分类及 UIButton → UIControl → UIView 继承关系。运行时声明冲突、其他接收者、类方法、错误提供库及缺少匹配证据的架构仍不受支持。
 
-`windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、模块 TLS 和启动 `DllMain`、具名 Win32 API 和显式无环启动 DLL 图。客户 DLL 支持按名称／序号导入代码及数据、DIR64 重定位和真实加载器链表身份。动态加载、转发导出、CRT／GUI、用户态 SEH 和线程仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
+`windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、模块 TLS 和启动 `DllMain`、具名 Win32 API 和显式无环启动 DLL 图。客户 DLL 支持按名称／序号导入代码及数据、DIR64 重定位和真实加载器链表身份。动态加载、CRT／GUI、用户态 SEH 和线程仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。 支持有界转发导出，以及针对已驻留客户映像的 `GetProcAddress`。
 
-`readPEProgramExports` 拥有原始导出身份及有界元数据读取范围；`WindowsProcessModules` 拥有客户模块图和进程统一的精确提供方／名称 API 跳板。`VirtualMemory` 在映射前登记所有映像，`AddressSpace` 管理页面及权限。PEB/LDR 仅列出真实映像，初始化链表按依赖顺序排列 DLL。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名，不区分大小写，无扩展名时补 `.dll`；路径、非 ASCII 查询及末尾点规则仍不支持。名称缺失返回错误 126，成功保持 LastError。API 模型不等同于已安装的系统 DLL。
+`readPEProgramExports` 拥有原始导出身份及有界元数据读取范围；`WindowsProcessModules` 拥有客户模块图和进程统一的精确提供方／名称 API 跳板。`VirtualMemory` 在映射前登记所有映像，`AddressSpace` 管理页面及权限。PEB/LDR 仅列出真实映像，初始化链表保留加载器登记顺序，并与按依赖计算的挂接调用顺序分别维护。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名，不区分大小写，无扩展名时补 `.dll`；路径、非 ASCII 查询及末尾点规则仍不支持。名称缺失返回错误 126，成功保持 LastError。API 模型不等同于已安装的系统 DLL。
 
-`WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
+`WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
+
+`WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。运行时可查询已驻留映像，包括在 `DllMain` 内；需要加载其他模块时明确停止。导出名称区分大小写；名称缺失返回 NULL／错误 127，直接查询缺失序号（包括空洞）返回 NULL／错误 182，查询参数为空指针返回错误 87，成功保留 LastError。未知模块句柄仍不支持。有界 API 清单按精确提供方／名称一次性保留调用入口。解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。这不包含 `LoadLibrary`／`FreeLibrary` 或实时改写导出表。 转发到空洞时返回目标映像基址并保留 LastError；转发到零序号返回错误 87。返回基址是数据地址，不授予映像头执行权限。
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
@@ -965,6 +967,8 @@ ARM64 Objective-C 上下文 thunk 复用同一帧效果模型。完整且不可�
 `immutableNativeCallTargets` 使用共享帧查询证明 ARM64 表基址的完整重载。它先通过标准解码器重新提升不可变指令，核验当前 LowIR 与每条编码的 CFG 后继边，包括 STORE/LOAD 操作数；再由既有 ADRP/ADD 和代码指针槽证明认证原始定义。有界单调轮次只使用此前已证明的目标和当前完整 ABI。共享的 Swift 访问、值缓冲区及 Objective-C 上下文效果保留各自的条件、别名规则和生命周期义务。基本块顺序不构成证据。调用保留原始间接调用位置；源码发布仍需当前 callee 审计，以及后续清理操作的独立证明。
 
 直接尾调用的 LowIR 操作由 IR 层唯一的 `directTailCallOperations` 定义，CFG 构建与不可变机器指令重验共用它。ARM64 重验仅接受原始无条件 `B`，且目标必须是当前已认证的函数入口，位于所有所属基本块之外。随后在有界预算内核对完整的规范 `CALL + RETURN` 操作、指令边界及 CFG 后继。字节、操作数或控制事实变化，内部目标、间接跳转及不完整覆盖均被拒绝。该证明只确认机器语义一致性，不提供隐藏参数 ABI、动态目标、帧效果或源码发布权限。 对于没有独立调试声明的固定源码声明，HighC 在函数体分析前为每个无名参数分配一个不冲突的显示名称。函数定义、参数使用和局部声明排除共用该映射；源码 ABI 与原始 HighIR 名称保持不变。
+
+合并的 Objective-C BOOL setter 仅在独立确认类型的尾调用方中投影。调用方、helper、类访问器的完整不可变指令与当前 LowIR、流水线审计、selector 声明、类身份及共享计数器存储必须一致。BOOL 定义字节和两个隐藏地址参数来自这些证明，不从合并的 Swift 符号推测。`ObjCMergedSetterSources` 按原顺序保留类访问器的实际返回值、selector 读取、retain 返回值、父类消息、计数器更新、实时 masked-isa 虚分派及 release。`SwiftVirtualSlot` 为原生调用方和此类投影共同提供完整的 void/swiftself 槽声明。既有 IR 帧分析核验 16 字节 objc_super 的同步借用与状态恢复。发布时重新核验当前证据、存储内容、精确源码参数、访问器依赖及 helper 的唯一求值；HighC 在使用前输出对应声明。不据此推导全局 helper ABI、固定虚实现或通用帧/noescape 权限。
 
 Swift 值见证绑定区分元数据字面地址与从镜像全局变量或导入槽加载的元数据指针。字面地址仍须具有精确的镜像内见证表前缀。加载指针以该次加载产生的运行时值为身份；所有到达路径上的见证查询和元数据实参必须共享同一值，不能冻结全局变量的内容。独立加载、调用破坏、部分载体和循环中的重复观察都不能证明相等。此证明仅提供既有调用 ABI；可重定位数据声明和有界帧效果仍须独立证明。
 

@@ -11,7 +11,7 @@ namespace neverd::emulation::windows_process {
 using namespace value;
 Lifetime::Lifetime(const windows_process::Program &Program)
     : Program(Program), States(Program.Modules.size()) {
-  for (size_t I : Program.InitializationOrder) {
+  for (size_t I : Program.AttachOrder) {
     Pending.push_back({I, CallKind::TLS, DLLProcessAttach});
     Pending.push_back({I, CallKind::DLL, DLLProcessAttach});
   }
@@ -127,8 +127,8 @@ llvm::Error Lifetime::beginExit(uint32_t Status, bool InitializationFailed) {
   // ExitProcess only detaches DLLs whose attach call has returned success.
   if (InitializationFailed)
     return llvm::Error::success();
-  for (auto I = Program.InitializationOrder.rbegin();
-       I != Program.InitializationOrder.rend(); ++I) {
+  for (auto I = Program.LoaderInitializationOrder.rbegin();
+       I != Program.LoaderInitializationOrder.rend(); ++I) {
     if (States[*I] != ModuleState::Attached)
       continue;
     Pending.push_back({*I, CallKind::TLS, DLLProcessDetach});

@@ -828,6 +828,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                    Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeObjCSuperGetter ||
                    Hint.CallKind ==
+                       SourceCallTypeHint::Kind::RuntimeObjCMergedSetter ||
+                   Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeObjCMetadataFactory ||
                    Hint.CallKind == SourceCallTypeHint::Kind::
                                         RuntimeObjCForwardedInitializer ||
@@ -841,6 +843,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
               Hint.CallKind ==
                   SourceCallTypeHint::Kind::RuntimeObjCSuperGetter ||
+              Hint.CallKind ==
+                  SourceCallTypeHint::Kind::RuntimeObjCMergedSetter ||
               Hint.CallKind ==
                   SourceCallTypeHint::Kind::RuntimeObjCMetadataFactory ||
               Hint.CallKind ==

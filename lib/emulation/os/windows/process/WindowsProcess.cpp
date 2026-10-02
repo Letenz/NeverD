@@ -107,8 +107,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                        Backend->Kind, Backend->Reason};
   Result.Entry = Loaded->Entry;
   Result.InitializersEnabled = true;
-  Services OS(CPU, **Space, *Loaded, *Env, Options, Result, Virtual,
-              Program->Identities);
+  Services OS(CPU, **Space, *Loaded, *Env, Options, Result, Virtual, *Program,
+              *Resources);
   Lifetime Life(*Program);
   std::optional<Lifetime::Call> Active;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;

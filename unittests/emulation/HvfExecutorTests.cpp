@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #if defined(__APPLE__) && defined(NEVERD_EMULATION_HVF)
 #include "arch/aarch64/AArch64Machine.h"
+#include "arch/x86_64/X64Machine.h"
 #include "backends/MachineFactories.h"
 #include "backends/hvf/HvfExecutor.h"
 #include "core/ExecutionDiagnostics.h"
@@ -14,6 +15,9 @@
 #include "llvm/Support/Endian.h"
 
 #include <future>
+#if defined(__x86_64__)
+#include <Hypervisor/hv_vmx.h>
+#endif
 
 namespace neverd::emulation {
 namespace {
@@ -174,20 +178,26 @@ TEST_F(HvfExecutor, NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry) {
       });
     auto Control = MachineRunControl{
         Clock::now() + std::chrono::milliseconds(Deadline ? 50 : 2000), &Stop};
+    bool NativeReturned = false;
     auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
       auto Prepared = prepareRaw(Native, PC);
       Entered.set_value();
       if (Prepared)
         return Prepared;
       return Native.run(Control, [&](bool Cancelled) {
+        NativeReturned = true;
         EXPECT_TRUE(Cancelled);
         EXPECT_EQ(Native.exit().reason, HV_EXIT_REASON_CANCELED)
             << "syndrome=" << Native.exit().exception.syndrome;
         return llvm::Error::success();
       });
     });
+    if (Ready.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready)
+      Entered.set_value();
     if (Stopper.joinable())
       Stopper.join();
+    EXPECT_TRUE(NativeReturned);
     EXPECT_TRUE(E.isA<MachineInterruptedError>())
         << llvm::toString(std::move(E));
     llvm::consumeError(std::move(E));
@@ -223,6 +233,100 @@ TEST_F(HvfExecutor, CompletionFailureOutranksConcurrentStop) {
   EXPECT_FALSE(E.isA<MachineInterruptedError>());
   EXPECT_EQ(llvm::toString(std::move(E)),
             "injected complete-state capture failure");
+}
+#endif
+#if defined(__x86_64__)
+TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
+  auto Created = createHvfX64Machine(*Memory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Machine = std::move(*Created);
+  constexpr uint64_t PC = 0x10000, RetryPC = PC + 2;
+  // Keep the loop and retry code immutable. The normal adapter prepares one
+  // instruction; only this raw-executor test disables MTF for the busy loop.
+  const uint8_t Program[] = {0xeb, 0xfe, 0x90, 0x90}; // jmp .; nop; nop
+  ASSERT_EQ(llvm::toString(Memory->map(PC, 4096, Read | Write | Execute)), "");
+  ASSERT_EQ(llvm::toString(Memory->write(PC, Program)), "");
+  ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  auto Root = buildX64PageTables(*Memory);
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  X64MachineState State;
+  State.reg(X64Register::FLAGS) = x64::InitialFlags;
+  State.reg(X64Register::AX) = 0x12345678;
+  auto Prepare = [&](uint64_t Entry) {
+    State.reg(X64Register::PC) = Entry;
+    return Machine->step(State, *Root, control());
+  };
+  hvf::Binding Binding(Host, *Memory);
+  for (bool Deadline : {true, false}) {
+    SCOPED_TRACE(Deadline ? "deadline" : "stop token");
+    ASSERT_EQ(llvm::toString(Prepare(PC)), "");
+    ASSERT_EQ(State.reg(X64Register::PC), PC);
+    std::atomic<bool> Stop{false};
+    std::promise<void> Entered;
+    auto Ready = Entered.get_future();
+    std::thread Stopper;
+    if (!Deadline)
+      Stopper = std::thread([&] {
+        Ready.wait();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Stop = true;
+      });
+    auto Control = MachineRunControl{
+        Clock::now() + std::chrono::milliseconds(Deadline ? 50 : 2000), &Stop};
+    bool NativeReturned = false;
+    auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
+      auto Signal = llvm::scope_exit([&] { Entered.set_value(); });
+      uint64_t Controls = 0;
+      if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
+                                         &Controls))
+        return hvf::error("test read stepping controls", S);
+      if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
+                                          Controls & ~uint64_t(CPU_BASED_MTF)))
+        return hvf::error("test disable MTF", S);
+      Signal.release();
+      Entered.set_value();
+      return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
+        NativeReturned = true;
+        EXPECT_TRUE(Cancelled);
+        uint64_t Reason = 0;
+        if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_RO_EXIT_REASON,
+                                           &Reason))
+          return hvf::error("test read interrupted exit", S);
+        EXPECT_EQ(Reason, uint64_t(VMX_REASON_IRQ));
+        return llvm::Error::success();
+      });
+    });
+    // An admission failure must also release the helper thread.
+    if (Ready.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready)
+      Entered.set_value();
+    if (Stopper.joinable())
+      Stopper.join();
+    EXPECT_TRUE(NativeReturned);
+    EXPECT_TRUE(E.isA<MachineInterruptedError>())
+        << llvm::toString(std::move(E));
+    llvm::consumeError(std::move(E));
+    ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
+    EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
+    EXPECT_EQ(State.reg(X64Register::AX), 0x12345678u);
+  }
+  std::atomic<bool> Stop{false};
+  auto Control = control();
+  Control.Stop = &Stop;
+  auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
+    return Native.run(Control, [&](bool Cancelled) {
+      EXPECT_FALSE(Cancelled);
+      Stop = true;
+      return diagnostic::error("injected Intel complete-state capture failure");
+    });
+  });
+  EXPECT_FALSE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)),
+            "injected Intel complete-state capture failure");
+  ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
+  EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
+  EXPECT_EQ(State.reg(X64Register::AX), 0x12345678u);
 }
 #endif
 } // namespace

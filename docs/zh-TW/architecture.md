@@ -882,11 +882,13 @@ super 呼叫證明保留窄回傳值的未定義填補位元並檢查每個參�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀寫方法保留完整的 32 位元組 `UIEdgeInsets`：上、左、下、右四個 double 在 arm64 上由 d0–d3 傳遞。完整的裝置與模擬器 SDK 宣告一致，Apple Clang 獨立重現全部六種編碼。接收者查找保留 UIButton 匿名分類及 UIButton → UIControl → UIView 繼承關係。執行階段宣告衝突、其他接收者、類別方法、錯誤提供程式庫及缺少相符證據的架構仍不受支援。
 
-`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、模組 TLS 與啟動 `DllMain`、具名 Win32 API 與明確無環啟動 DLL 圖。客體 DLL 支援名稱／序號程式碼及資料匯入、DIR64 重定位及真實載入器串列身分。動態載入、轉送匯出、CRT／GUI、使用者 SEH 與執行緒仍待完成；原生 ARM64 KVM/WHP 證據仍缺。
+`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、模組 TLS 與啟動 `DllMain`、具名 Win32 API 與明確無環啟動 DLL 圖。客體 DLL 支援名稱／序號程式碼及資料匯入、DIR64 重定位及真實載入器串列身分。動態載入、CRT／GUI、使用者 SEH 與執行緒仍待完成；原生 ARM64 KVM/WHP 證據仍缺。 支援有界轉送匯出，以及針對已駐留客體映像的 `GetProcAddress`。
 
-`readPEProgramExports` 擁有原始匯出身分與有界中繼資料讀取範圍；`WindowsProcessModules` 擁有模組圖和全程序精確提供者／名稱 API 跳板。`VirtualMemory` 在映射前登記全部映像，`AddressSpace` 管理頁面及權限。PEB/LDR 僅列真實映像，初始化串列依相依順序排列 DLL。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名稱，不分大小寫，無副檔名時補 `.dll`；路徑、非 ASCII 查詢及結尾點規則仍不支援。找不到名稱回傳錯誤 126，成功保留 LastError。API 模型不是已安裝系統 DLL。
+`readPEProgramExports` 擁有原始匯出身分與有界中繼資料讀取範圍；`WindowsProcessModules` 擁有模組圖和全程序精確提供者／名稱 API 跳板。`VirtualMemory` 在映射前登記全部映像，`AddressSpace` 管理頁面及權限。PEB/LDR 僅列真實映像，初始化串列保留載入器登記順序，並與依相依關係計算的掛接呼叫順序分別維護。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名稱，不分大小寫，無副檔名時補 `.dll`；路徑、非 ASCII 查詢及結尾點規則仍不支援。找不到名稱回傳錯誤 126，成功保留 LastError。API 模型不是已安裝系統 DLL。
 
-`WindowsProcessLifetime` 在相同 CPU 與執行預算下，依相依順序執行 DLL TLS 回呼及 `DllMain`，再執行 EXE TLS 與進入點。各模組具有獨立 TLS 索引與對齊區塊，從完成重定位和匯入繫結的映像複製，共用 64 KiB 空間。TLS 保留參數為零，啟動／程序結束的 `DllMain` 接收不透明非空值。明確程序結束反向分離已完成初始化的 DLL，再執行 EXE TLS 結束回呼，即使 EXE 初始化尚未執行。啟動 `DllMain(FALSE)` 以 `0xc0000142` 結束，不發送分離通知。故障和預算耗盡不捏造清理。含客體 DLL 的 PE 進入點返回需要尚未支援的執行緒終止，因此明確停止。非零 `SizeOfZeroFill` 仍不支援；實際 TLS 範本中的零初始化位元組受支援。 無進入點 DLL 接收 TLS 掛接通知，但不接收程序分離通知。
+`WindowsProcessLifetime` 在相同 CPU 與執行預算下，依相依順序執行 DLL TLS 回呼及 `DllMain`，再執行 EXE TLS 與進入點。各模組具有獨立 TLS 索引與對齊區塊，從完成重定位和匯入繫結的映像複製，共用 64 KiB 空間。TLS 保留參數為零，啟動／程序結束的 `DllMain` 接收不透明非空值。明確程序結束依載入器串列的反向順序分離已完成初始化的 DLL，再執行 EXE TLS 結束回呼，即使 EXE 初始化尚未執行。啟動 `DllMain(FALSE)` 以 `0xc0000142` 結束，不發送分離通知。故障和預算耗盡不捏造清理。含客體 DLL 的 PE 進入點返回需要尚未支援的執行緒終止，因此明確停止。非零 `SizeOfZeroFill` 仍不支援；實際 TLS 範本中的零初始化位元組受支援。 無進入點 DLL 接收 TLS 掛接通知，但不接收程序分離通知。
+
+`WindowsProcessExports` 為靜態匯入和 `GetProcAddress` 共用名稱／序號解析，涵蓋程式碼、資料、別名與鏈式轉送。只有實際引用的啟動轉送會引入目錄模組及初始化相依；未使用的轉送不載入檔案。執行期間可查詢已駐留映像，包括在 `DllMain` 內；需要載入其他模組時明確停止。匯出名稱區分大小寫；名稱缺失回傳 NULL／錯誤 127，直接查詢缺失序號（含空洞）回傳 NULL／錯誤 182，查詢參數為空指標回傳錯誤 87，成功保留 LastError。未知模組控制代碼仍不支援。有界 API 清單依精確提供者／名稱一次保留呼叫入口。解析檢查每個映像的即時 PE 標頭與匯出中繼資料，拒絕修改或不可讀位元組，轉送鏈最多 64 項，並共用準備階段剩餘中繼資料額度及執行期限。這不包含 `LoadLibrary`／`FreeLibrary` 或即時改寫匯出表。 轉送到空洞時回傳目標映像基址並保留 LastError；轉送到零序號回傳錯誤 87。回傳基址是資料位址，不授予映像標頭執行權限。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
@@ -905,6 +907,8 @@ ARM64 Objective-C 上下文 thunk 沿用同一框架效果模型。完整且不�
 `immutableNativeCallTargets` 使用共用框架查詢證明 ARM64 表格基底位址的完整重新載入。它先透過標準解碼器重新提升不可變指令，核驗目前 LowIR 與每條編碼的 CFG 後繼邊，包括 STORE/LOAD 運算元；再由既有 ADRP/ADD 與程式碼指標槽證明認證原始定義。有界單調輪次只使用先前已證明的目標與目前完整 ABI。共用的 Swift 存取、值緩衝區及 Objective-C 上下文效果保留各自的條件、別名規則與生命週期義務。基本區塊順序不構成證據。呼叫保留原始間接呼叫位置；原始碼發布仍需目前 callee 稽核，以及後續清理操作的獨立證明。
 
 直接尾呼叫的 LowIR 操作由 IR 層唯一的 `directTailCallOperations` 定義，CFG 建構與不可變機器指令重驗共用它。ARM64 重驗僅接受原始無條件 `B`，且目標必須是目前已認證的函式入口，位於所有所屬基本區塊之外。隨後在有界預算內核對完整的標準 `CALL + RETURN` 操作、指令邊界及 CFG 後繼。位元組、運算元或控制事實變動，內部目標、間接跳躍及不完整涵蓋均被拒絕。此證明只確認機器語意一致性，不提供隱藏參數 ABI、動態目標、框架效果或原始碼發布權限。 對於沒有獨立除錯宣告的固定原始碼宣告，HighC 在函式本體分析前為每個無名參數分配一個不衝突的顯示名稱。函式定義、參數使用及區域宣告排除共用此映射；原始碼 ABI 與原始 HighIR 名稱保持不變。
+
+合併的 Objective-C BOOL setter 僅在獨立確認型別的尾呼叫端中投影。呼叫端、helper、類別存取器的完整不可變指令與目前 LowIR、管線稽核、selector 宣告、類別身分及共用計數器儲存必須一致。BOOL 定義位元組和兩個隱藏位址參數來自這些證明，不從合併的 Swift 符號猜測。`ObjCMergedSetterSources` 依原順序保留類別存取器的實際回傳值、selector 讀取、retain 回傳值、父類別訊息、計數器更新、即時 masked-isa 虛擬派送及 release。`SwiftVirtualSlot` 為原生呼叫端和此類投影共同提供完整的 void/swiftself 槽宣告。既有 IR 框架分析驗證 16 位元組 objc_super 的同步借用與狀態還原。發佈時重新驗證目前證據、儲存內容、精確原始碼參數、存取器相依性及 helper 的唯一求值；HighC 在使用前輸出對應宣告。不據此推導全域 helper ABI、固定虛擬實作或通用框架/noescape 權限。
 
 Swift 值見證綁定區分中繼資料字面位址與從映像全域變數或匯入槽載入的中繼資料指標。字面位址仍須具有精確的映像內見證表前綴。載入指標以該次載入產生的執行期值為身分；所有到達路徑上的見證查詢和中繼資料引數必須共用同一值，不能凍結全域變數的內容。獨立載入、呼叫破壞、部分載體和迴圈中的重複觀察都不能證明相等。此證明僅提供既有呼叫 ABI；可重定位資料宣告和有界框架效果仍須獨立證明。
 

@@ -14,6 +14,9 @@
 
 #include <sys/sysctl.h>
 #include <unistd.h>
+#if defined(__x86_64__)
+#include <Hypervisor/hv_vmx.h>
+#endif
 
 namespace neverd::emulation::hvf {
 namespace {
@@ -25,6 +28,40 @@ std::mutex &vmMutex() {
 std::string message(const char *Operation, hv_return_t Status) {
   return llvm::formatv("HVF {0} failed ({1:x})", Operation, uint32_t(Status))
       .str();
+}
+llvm::Error runError(Cpu CPU, hv_return_t Status) {
+#if defined(__x86_64__)
+  auto Text = message("hv_vcpu_run_until", Status);
+  // HV_ERROR alone does not distinguish invalid VM-entry controls from
+  // invalid guest state. Read diagnostics on the owner before any retirement.
+  const std::pair<const char *, uint32_t> Fields[] = {
+      {"instruction_error", VMCS_RO_INSTR_ERROR},
+      {"exit_reason", VMCS_RO_EXIT_REASON},
+      {"pin_controls", VMCS_CTRL_PIN_BASED},
+      {"cpu_controls", VMCS_CTRL_CPU_BASED},
+      {"secondary_controls", VMCS_CTRL_CPU_BASED2},
+      {"entry_controls", VMCS_CTRL_VMENTRY_CONTROLS},
+      {"exit_controls", VMCS_CTRL_VMEXIT_CONTROLS},
+      {"cr0", VMCS_GUEST_CR0},
+      {"cr3", VMCS_GUEST_CR3},
+      {"cr4", VMCS_GUEST_CR4},
+      {"efer", VMCS_GUEST_IA32_EFER},
+      {"rip", VMCS_GUEST_RIP},
+      {"rflags", VMCS_GUEST_RFLAGS},
+      {"cs_access", VMCS_GUEST_CS_AR},
+      {"ss_access", VMCS_GUEST_SS_AR}};
+  for (auto [Name, Field] : Fields) {
+    uint64_t Value = 0;
+    if (auto S = hv_vmx_vcpu_read_vmcs(CPU, Field, &Value))
+      Text +=
+          llvm::formatv("; {0} read failed ({1:x})", Name, uint32_t(S)).str();
+    else
+      Text += llvm::formatv("; {0}={1:x}", Name, Value).str();
+  }
+  return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
+#else
+  return error("hv_vcpu_run", Status);
+#endif
 }
 } // namespace
 llvm::Error error(const char *Operation, hv_return_t Status) {
@@ -284,7 +321,7 @@ llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {
   llvm::Error Result = llvm::Error::success();
   if (Entry.Value) {
     if (*Entry.Value != HV_SUCCESS)
-      Result = error("hv_vcpu_run", *Entry.Value);
+      Result = runError(CPU, *Entry.Value);
     else
       Result = Complete(Entry.Cancelled);
   }

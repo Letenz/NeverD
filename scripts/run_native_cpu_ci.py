@@ -118,11 +118,30 @@ def darwin_inventory(
     return owners, required
 
 
+def hvf_inventory(
+    root: Path, host_architecture: str, transport_only: bool = False,
+) -> tuple[list[str], set[str]]:
+    owners, required = read_inventory(
+        root, "NativeHVFTests.def", "NEVERD_NATIVE_HVF", host_architecture,
+    )
+    if transport_only:
+        owner = "NeverDHvfTests"
+        required = {name for name in required if name.startswith(
+            ("Hvf.", "HvfExecutor.", "HvfConfiguration."))}
+        if owner not in owners or not required:
+            raise ValueError("HVF transport profile requires its owner and native cases")
+        owners = [owner]
+    return owners, required
+
+
 def run(
     build: Path, evidence: Path, parallel: int, require_whp: bool,
     with_drivers: bool = False, require_hvf: bool = False,
     darwin_backend: str | None = None,
+    hvf_transport_only: bool = False,
 ) -> int:
+    if hvf_transport_only and not require_hvf:
+        raise ValueError("HVF transport profile requires --require-hvf")
     if darwin_backend and (require_whp or require_hvf or with_drivers):
         raise ValueError("Darwin workload coverage is a separate native profile")
     if require_hvf and (require_whp or with_drivers):
@@ -131,9 +150,7 @@ def run(
     if darwin_backend:
         owners, required = darwin_inventory(ROOT, darwin_backend, host_architecture)
     elif require_hvf:
-        owners, required = read_inventory(
-            ROOT, "NativeHVFTests.def", "NEVERD_NATIVE_HVF", host_architecture,
-        )
+        owners, required = hvf_inventory(ROOT, host_architecture, hvf_transport_only)
     else:
         owners, required = declared_inventory(ROOT, with_drivers)
     required_hardware = require_whp or require_hvf or bool(darwin_backend)
@@ -216,6 +233,7 @@ def run(
         "unexpected": sorted(test.name for test in actual - expected),
         "require_whp": require_whp,
         "require_hvf": require_hvf,
+        "hvf_transport_only": hvf_transport_only,
         "darwin_backend": darwin_backend,
         "with_drivers": with_drivers,
         "required_native_tests": len(required),
@@ -242,6 +260,8 @@ def main() -> int:
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--require-whp", action="store_true")
     parser.add_argument("--require-hvf", action="store_true")
+    parser.add_argument("--hvf-transport-only", action="store_true",
+                        help="only build and require the small HVF transport owner")
     parser.add_argument("--require-darwin-backend", choices=("hvf", "kvm", "whp"),
                         help="require every native Darwin workload on the host ISA")
     parser.add_argument("--with-drivers", action="store_true")
@@ -252,6 +272,7 @@ def main() -> int:
         args.build.resolve(), args.evidence.resolve(), args.parallel,
         args.require_whp, args.with_drivers, args.require_hvf,
         args.require_darwin_backend,
+        args.hvf_transport_only,
     )
 
 

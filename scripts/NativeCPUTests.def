@@ -545,6 +545,25 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsExportOracle.NativeWindowsQueriesOriginalImages")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsExports.QueriesCodeDataOrdinalsAliasesAndForwarders/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsExports.RefusesRuntimeLoadsCyclesAndInvalidOrdinalForwarders/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsExports.DetectsChangedAndUnreadableMetadataAfterSuccessfulQuery/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsExports.BoundsGuestNamesAndRejectsInvalidPointers/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsExports.ChecksHeadersEvenWhenTheImageHasNoExports/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsModuleImage.NativeWindowsLoaderRunsTheSameDLLGraph")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsModuleLifetime.NativeWindowsObservesStartupAndTermination")

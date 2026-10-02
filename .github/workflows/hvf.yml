@@ -1,4 +1,5 @@
 name: Native macOS HVF
+run-name: HVF ${{ inputs.runner }} / ${{ inputs.validation || 'full' }}
 on:
   workflow_dispatch:
     inputs:
@@ -7,6 +8,11 @@ on:
         type: choice
         default: self-hosted
         options: [self-hosted, hosted-intel]
+      validation:
+        description: Full validation or the early transport diagnostic
+        type: choice
+        default: full
+        options: [full, transport]
 permissions:
   contents: read
 jobs:
@@ -18,6 +24,8 @@ jobs:
         arch: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["X64"]' || '["ARM64","X64"]') }}
     runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["macos-15-intel"]' || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
     timeout-minutes: 180
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require actual native VM and vCPU creation
@@ -34,13 +42,21 @@ jobs:
           clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
           codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
           build-hvf-probe/probe
-      - name: Install hosted fixture tools
+      - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel'
+        run: brew install ninja
+      - name: Cache unchanged native and pinned LLVM compilation
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
+      - name: Install hosted fixture tools
+        if: inputs.runner == 'hosted-intel' && inputs.validation != 'transport'
         run: |
-          brew install ninja llvm lld
+          brew install llvm lld
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       - name: Verify fixture tools
+        if: inputs.validation != 'transport'
         run: |
           for tool in cmake ninja python3 clang ld.lld lld-link ld64.lld codesign; do
             command -v "$tool"
@@ -60,6 +76,8 @@ jobs:
         run: |
           cmake -S . -B build-hvf -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DNEVERD_LLVM_PREBUILT="$HVF_PREBUILT" \
             -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=ON \
@@ -67,11 +85,18 @@ jobs:
             -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
             -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
             -DNEVERD_EMULATION_BACKEND_HVF=ON
+      - name: Require native instruction execution before the full dependency build
+        run: >-
+          python3 scripts/run_native_cpu_ci.py --build build-hvf
+          --evidence build-hvf/transport-evidence --parallel 4
+          --require-hvf --hvf-transport-only
       - name: Require actual host execution and record every result
+        if: inputs.validation != 'transport'
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/native-evidence --parallel 4 --require-hvf
       - name: Require every native Darwin workload
+        if: inputs.validation != 'transport'
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/darwin-evidence --parallel 4 --require-darwin-backend hvf
@@ -81,6 +106,7 @@ jobs:
         with:
           name: hvf-${{ matrix.arch }}
           path: |
+            build-hvf/transport-evidence/
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
           if-no-files-found: warn

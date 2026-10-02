@@ -527,24 +527,20 @@ canonicalNativeSelfCall(const BinaryImage &Image, va_t Entry, va_t CallSite,
       return std::nullopt;
     ClassMethod = &Method;
   }
-  if (!ClassMethod || !swift_virtual_detail::isVoidClassVirtualSlot(
-                          Image, *ClassMethod, Slot, Declaration->Module,
-                          Declaration->ClassName))
+  const auto Signature =
+      ClassMethod ? swift_virtual_detail::voidClassVirtualSlotDeclaration(
+                        Image, *ClassMethod, Slot, Declaration->Module,
+                        Declaration->ClassName)
+                  : std::nullopt;
+  if (!Signature)
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
   Hint.TargetName = "swift_virtual";
   Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
       Entry, CallSite, IsaMaskImport, Slot, 0, false, Class};
-  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
-  Hint.Signature.ReturnType = NdType::makeVoid();
-  Hint.Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
-  Hint.Signature.Parameters[0].TheRole =
-      SourceParameterTypeHint::Role::SwiftContext;
-  std::string Error;
-  return assignDarwinSwiftSourceABI(Hint.Signature, Image.Arch, Error)
-             ? std::optional<SourceCallTypeHint>(std::move(Hint))
-             : std::nullopt;
+  Hint.Signature = *Signature;
+  return Hint;
 }
 
 std::map<va_t, SourceCallTypeHint> nativeSelfCalls(const BinaryImage &Image,

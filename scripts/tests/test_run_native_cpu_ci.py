@@ -64,7 +64,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         })
 
     def run_evidence(self, with_drivers=False, require_hvf=False,
-                     host_architecture="arm64", darwin_backend=None):
+                     host_architecture="arm64", darwin_backend=None, hvf_transport_only=False):
         with (
             mock.patch.object(native, "ROOT", self.root),
             mock.patch.object(native.platform, "machine", return_value=host_architecture),
@@ -78,6 +78,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 self.build, self.evidence, 2, not (require_hvf or darwin_backend),
                 with_drivers=with_drivers, require_hvf=require_hvf,
                 darwin_backend=darwin_backend,
+                hvf_transport_only=hvf_transport_only,
             )
 
     def add_drivers(self):
@@ -154,6 +155,44 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.records = self.records[1:]
         with self.assertRaisesRegex(ValueError, "missing required native HVF"):
             self.run_evidence(require_hvf=True)
+
+    def test_transport_profile_still_fails_missing_and_skipped_native_execution(self):
+        (self.root / "scripts/NativeHVFTests.def").write_text(
+            'NEVERD_NATIVE_HVF_OWNER(NeverDHvfTests)\n'
+            'NEVERD_NATIVE_HVF_OWNER(GuestOwner)\n'
+            'NEVERD_NATIVE_HVF_REQUIRED_TEST("Hvf.Executes")\n'
+            'NEVERD_NATIVE_HVF_REQUIRED_TEST("DarwinNative.Reference")\n'
+        )
+        (self.build / "CMakeFiles/TargetDirectories.txt").write_text(
+            str(self.build / "unittests/emulation/CMakeFiles/NeverDHvfTests.dir") + "\n"
+        )
+        self.records = (TestRecord("Hvf.Executes", frozenset({"NeverDHvfTests"})),)
+        self.reported = self.records
+        self.assertEqual(self.run_evidence(require_hvf=True, hvf_transport_only=True), 0)
+        self.assertEqual(self.summary()["owners"], ["NeverDHvfTests"])
+        self.assertTrue(self.summary()["hvf_transport_only"])
+        self.assertEqual(self.summary()["required_native_names"], ["Hvf.Executes"])
+        self.assertEqual(self.test_environment["NEVERD_REQUIRE_HVF"], "1")
+        self.changes[self.records[0]] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "no HVF")
+        self.assertEqual(self.run_evidence(require_hvf=True, hvf_transport_only=True), 1)
+        self.records = (TestRecord("OnlyALoader", frozenset({"NeverDHvfTests"})),)
+        with self.assertRaisesRegex(ValueError, "missing required native HVF"):
+            self.run_evidence(require_hvf=True, hvf_transport_only=True)
+
+    def test_transport_profile_cannot_disable_hardware_enforcement(self):
+        with self.assertRaisesRegex(ValueError, "requires --require-hvf"):
+            self.run_evidence(hvf_transport_only=True)
+
+    def test_repository_transport_requirements_are_the_full_gates_transport_subset(self):
+        for host in ("arm64", "x86_64"):
+            with self.subTest(host=host):
+                _, full = native.hvf_inventory(native.ROOT, host)
+                owners, transport = native.hvf_inventory(native.ROOT, host, True)
+                self.assertEqual(owners, ["NeverDHvfTests"])
+                self.assertTrue(transport)
+                self.assertLess(transport, full)
+                self.assertTrue(all(name.startswith(("Hvf.", "HvfExecutor.", "HvfConfiguration."))
+                                    for name in transport))
 
     def add_hvf_host_requirements(self):
         definition = (self.root / "scripts/NativeCPUTests.def").read_text()

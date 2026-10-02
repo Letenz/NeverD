@@ -11,7 +11,6 @@
 #include <functional>
 
 namespace neverd::emulation::windows_process {
-namespace {
 using namespace value;
 llvm::Expected<std::string> moduleName(llvm::StringRef Name) {
   if (Name.size() >= windows_process_limits::NameBytes ||
@@ -27,7 +26,6 @@ llvm::Expected<std::string> moduleName(llvm::StringRef Name) {
   return Name.lower();
 }
 
-} // namespace
 llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     const ProcessOptions &Options,
                                     const ExecutionBudget &Budget,
@@ -57,11 +55,11 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
       EnvironmentEnd - TEB + GateSize + Options.StackSize;
   if (RuntimeBytes >= Options.MemoryLimit)
     return failure(text::ModuleBudget);
-  ImageReadBudget Reads{Options.MemoryLimit,
-                        Options.MemoryLimit - RuntimeBytes};
   Program Out;
+  Out.Reads = {Options.MemoryLimit, Options.MemoryLimit - RuntimeBytes};
   std::map<std::string, size_t> LoadedNames;
   std::vector<bool> Loading;
+  std::vector<std::vector<size_t>> Edges;
   std::function<llvm::Error(const std::filesystem::path &, std::string, bool)>
       Visit;
   Visit = [&](const std::filesystem::path &File, std::string Name,
@@ -73,7 +71,7 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                 : llvm::Error::success();
     if (Out.Modules.size() > windows_process_limits::Modules)
       return failure(text::ModuleBudget);
-    auto Image = loadProgramImage(File, Reads, DLL);
+    auto Image = loadProgramImage(File, Out.Reads, DLL);
     if (!Image)
       return Image.takeError();
     if (auto E = CheckTime())
@@ -84,13 +82,37 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     DLL && Image->Relocatable);
     if (!Base)
       return Base.takeError();
-    if (auto E = relocateImage(*Image, *Base, Reads))
+    if (auto E = relocateImage(*Image, *Base, Out.Reads))
       return E;
     const size_t Index = Out.Modules.size();
     LoadedNames.emplace(Name, Index);
     Loading.push_back(true);
+    Edges.emplace_back();
     Out.Identities.push_back({Name, Image->Base, Image->Size, Image->Entry});
-    Out.Modules.push_back({std::move(*Image), {}, {}});
+    Module M{std::move(*Image), {}, {}, {}};
+    for (size_t I = 0; I < M.Loaded.Exports.Entries.size(); ++I) {
+      const auto &E = M.Loaded.Exports.Entries[I];
+      M.Ordinals.emplace(E.Ordinal, I);
+      for (const auto &Name : E.Names)
+        M.Names.emplace(Name, I);
+    }
+    auto Ranges = M.Loaded.Exports.Metadata;
+    // Export decoding reads PE headers separately from RVA metadata. Include
+    // them even when the original image has no export directory.
+    for (const auto &R : M.Loaded.Regions)
+      if (R.Address == M.Loaded.Base)
+        Ranges.push_back({0, R.ContentSize});
+    std::sort(Ranges.begin(), Ranges.end(),
+              [](const auto &A, const auto &B) { return A.RVA < B.RVA; });
+    for (const auto &R : Ranges) {
+      if (!M.ExportMetadata.empty() &&
+          R.RVA <= M.ExportMetadata.back().RVA + M.ExportMetadata.back().Size) {
+        auto &Last = M.ExportMetadata.back();
+        Last.Size = std::max(Last.Size, R.RVA + R.Size - Last.RVA);
+      } else
+        M.ExportMetadata.push_back(R);
+    }
+    Out.Modules.push_back(std::move(M));
     // A recursive append may move the module vector; retain indices, not
     // borrows.
     const auto Dependencies = Out.Modules[Index].Loaded.Dependencies;
@@ -105,10 +127,11 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
         return failure(text::ModuleMissing + Dependency);
       if (auto E = Visit(Input->second, *Key, true))
         return E;
+      Edges[Index].push_back(LoadedNames.at(*Key));
     }
     Loading[Index] = false;
     if (DLL)
-      Out.InitializationOrder.push_back(Index);
+      Out.LoaderInitializationOrder.push_back(Index);
     return llvm::Error::success();
   };
   const auto FileName = Path.filename().u8string();
@@ -118,54 +141,83 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
     return failure(text::ModuleName + MainName);
   if (auto E = Visit(Path, MainName, false))
     return std::move(E);
-  for (auto &M : Out.Modules) {
-    for (const auto &E : M.Loaded.Exports.Entries) {
-      if (E.Kind != PEExportKind::Address)
+  // The registry is small and bounded. Reserve its gates without inspecting
+  // unused forwarders, which must not load modules or fail preparation.
+  for (const char *Provider : {text::Kernel32, text::KernelBase, text::NTDLL})
+    for (const auto &S : services()) {
+      if (findProvider(Provider) != S.Provider)
         continue;
-      const uint64_t Address = M.Loaded.Base + E.RVA;
-      M.Ordinals.emplace(E.Ordinal, Address);
-      for (const auto &Name : E.Names)
-        M.Names.emplace(Name, Address);
+      if (Out.Gates.size() == MaxImports)
+        return failure(text::ModuleBudget);
+      const uint64_t Gate =
+          GateBase + (FirstImportGate + Out.Gates.size()) * GateStride;
+      Out.Gates.push_back({0, &S, Provider, Gate, S.Name, std::nullopt});
+      Out.ServiceGates.emplace(std::pair{Provider, S.Name}, Gate);
     }
-  }
-  std::map<std::pair<std::string, std::string>, uint64_t> Gates;
-  for (auto &M : Out.Modules) {
+  auto Forward = [&](size_t Owner,
+                     llvm::StringRef Name) -> llvm::Expected<size_t> {
+    auto Found = LoadedNames.find(Name.str());
+    if (Found == LoadedNames.end()) {
+      auto Input = Catalogue.find(Name.str());
+      if (Input == Catalogue.end())
+        return failure(text::ModuleMissing + Name);
+      if (auto E = Visit(Input->second, Name.str(), true))
+        return std::move(E);
+      Found = LoadedNames.find(Name.str());
+    }
+    // Distinct symbols may forward within one module without an init cycle.
+    if (Owner != Found->second)
+      Edges[Owner].push_back(Found->second);
+    return Found->second;
+  };
+  // Resolving an import can append another complete module graph. Keep indices
+  // and copies, not references into either vector, across that operation.
+  for (size_t M = 0; M < Out.Modules.size(); ++M) {
     if (auto E = CheckTime())
       return std::move(E);
-    for (auto &I : M.Loaded.Imports) {
+    for (size_t N = 0; N < Out.Modules[M].Loaded.Imports.size(); ++N) {
+      const auto I = Out.Modules[M].Loaded.Imports[N];
+      uint64_t Address = 0;
       if (I.Target) {
-        auto [Gate, New] = Gates.emplace(std::pair{I.Module, I.Name}, 0);
-        if (New) {
-          if (Out.Gates.size() == MaxImports)
-            return failure(text::ModuleBudget);
-          Gate->second =
-              GateBase + (FirstImportGate + Out.Gates.size()) * GateStride;
-          I.Gate = Gate->second;
-          Out.Gates.push_back(I);
-        } else
-          I.Gate = Gate->second;
+        Address = Out.ServiceGates.at({I.Module, I.Name});
       } else {
         auto Provider = LoadedNames.find(I.Module);
         if (Provider == LoadedNames.end())
           return failure(text::ModuleMissing + I.Module);
-        const auto &Dependency = Out.Modules[Provider->second];
-        if (I.Ordinal) {
-          auto Symbol = Dependency.Ordinals.find(*I.Ordinal);
-          if (Symbol != Dependency.Ordinals.end())
-            I.Gate = Symbol->second;
-        } else {
-          auto Symbol = Dependency.Names.find(I.Name);
-          if (Symbol != Dependency.Names.end())
-            I.Gate = Symbol->second;
-        }
-        if (!I.Gate)
+        auto Target = resolveExport(Out, Provider->second, I.Name, I.Ordinal,
+                                    Budget, nullptr, Forward);
+        if (!Target)
+          return Target.takeError();
+        if (!Target->Address)
           return failure(
               text::ModuleExport + I.Module +
               llvm::Twine(text::ImportSeparator) +
               (I.Ordinal ? llvm::Twine(*I.Ordinal) : llvm::Twine(I.Name)));
+        Address = *Target->Address;
       }
+      Out.Modules[M].Loaded.Imports[N].Gate = Address;
     }
   }
+  std::vector<bool> Ordered(Out.Modules.size());
+  std::function<llvm::Error(size_t)> Order = [&](size_t Index) -> llvm::Error {
+    if (auto E = CheckTime())
+      return E;
+    if (Loading[Index])
+      return failure(text::ModuleCycle + Out.Identities[Index].Name);
+    if (Ordered[Index])
+      return llvm::Error::success();
+    Loading[Index] = true;
+    for (size_t Dependency : Edges[Index])
+      if (auto E = Order(Dependency))
+        return E;
+    Loading[Index] = false;
+    Ordered[Index] = true;
+    if (Index)
+      Out.AttachOrder.push_back(Index);
+    return llvm::Error::success();
+  };
+  if (auto E = Order(0))
+    return std::move(E);
   if (auto E = CheckTime())
     return std::move(E);
   return Out;
