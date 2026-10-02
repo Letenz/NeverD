@@ -146,7 +146,7 @@ TEST(BinaryUndefinedIndependence,
 TEST(BinaryUndefinedIndependence,
      UncoveredNativeInstructionRefusesCertificate) {
   BinaryProgram Program;
-  Program.block(0x100, {0xd1, 0xc0, 0xc3}); // rol eax,1; ret
+  Program.block(0x100, {0xd1, 0xd0, 0xc3}); // rcl eax,1; ret
   Program.expect(Status::Unsupported);
 }
 TEST(BinaryUndefinedIndependence, ShiftGuardsBindTheCompleteOperationDigest) {

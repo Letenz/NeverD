@@ -122,6 +122,36 @@ TEST(BinaryLowIRRefinement, GuardedShiftSupportsAllSymbolicCounts) {
   refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement,
+     BitTestsAndOverlappingRotatesKeepFullStateWitnesses) {
+  const std::vector<std::vector<uint8_t>> Instructions = {
+      {0x0f, 0xa3, 0xc8}, {0x0f, 0xab, 0xc8}, {0x0f, 0xb3, 0xc8},
+      {0x0f, 0xbb, 0xc8}, {0xd2, 0xc1},       {0xd2, 0xc9}};
+  for (const auto &Bytes : Instructions) {
+    Program P({});
+    auto &Code = P.Image.Segments.front();
+    Code.Data = Bytes;
+    Code.Data.insert(Code.Data.end(),
+                     {0x9c, 0x5a, 0xc3}); // PUSHFQ; POP RDX; RET.
+    Code.Size = Code.FileSz = Code.Data.size();
+    auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    const auto Good = P.check(Recovery.Residual);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    ASSERT_FALSE(Good.Certificate->Relation.Producers.empty());
+    refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Different);
+    bool Changed = false;
+    for (auto &B : Recovery.Residual.Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::COPY && O.Output == NdVar::reg(x86reg::RDX, 8)) {
+          O.Inputs[0] = NdVar::scalar(0, 8);
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    refused(P.check(Recovery.Residual), Status::Different);
+  }
+}
+
 TEST(BinaryLowIRRefinement, PhysicalCallAndModifiedReturnTarget) {
   // call body; nop; ret; body: inc qword [rsp]; ret. The modified continuation
   // skips the NOP. Original execution must load the actual stack target.
@@ -603,9 +633,9 @@ TEST(BinaryLowIRRefinement, OriginalAndCandidateImmutableReadsHaveEvidence) {
 }
 
 TEST(BinaryLowIRRefinement, TrapsAndUnauditedOriginalArmsAreNotPruned) {
-  // xor eax,eax; jz done; rol eax,1; done: ret. Ordinary recovery prunes ROL,
+  // xor eax,eax; jz done; rcl eax,1; done: ret. Ordinary recovery prunes RCL,
   // but selected-value refinement still audits the complete direct graph.
-  Program P({0x31, 0xc0, 0x74, 2, 0xd1, 0xc0, 0xc3});
+  Program P({0x31, 0xc0, 0x74, 2, 0xd1, 0xd0, 0xc3});
   const auto Recovery = P.recover();
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
   refused(P.check(Recovery.Residual), Status::Unsupported);

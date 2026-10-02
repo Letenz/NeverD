@@ -124,6 +124,67 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     BitTestsKeepDefinedCarryAndPreservedFlagsWithExactProducerBudget) {
+  for (uint8_t Opcode : {0xa3, 0xab, 0xb3, 0xbb}) {
+    Program P({0x0f, Opcode, 0xc8, 0xc3}); // bit-test family eax,ecx; ret.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters = {
+        {x86reg::RAX, 8}, {x86reg::CF, 1}, {x86reg::ZF, 1}, {x86reg::DF, 1}};
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 4;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    ASSERT_EQ(
+        Good.Certificate->Instructions.front().UndefinedEffects.Effects.size(),
+        4u);
+    Limits.MaxProducers = 3;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     BitTestFreshFlagsAreIndependentAndRepeatedReadsStayCorrelated) {
+  // BT; SETO DL; SETO AL; XOR AL,DL; MOVZX EAX,AL; RET.
+  Program Same({0x0f, 0xa3, 0xc8, 0x0f, 0x90, 0xc2, 0x0f, 0x90, 0xc0, 0x30,
+                0xd0, 0x0f, 0xb6, 0xc0, 0xc3});
+  Same.flagsProfile();
+  const auto Correlated = Same.check();
+  ASSERT_TRUE(Correlated.proved()) << Correlated.Proof.Diagnostic;
+  // Reading SF instead of OF must not reuse the other fresh bit.
+  Same.Image.Segments[0].Data[7] = 0x98;
+  expectRefusal(Same, Status::Dependent);
+  // Even identical terminal results cannot hide control depending on OF.
+  Program Branch({0x0f, 0xa3, 0xc8, 0x70, 1, 0x90, 0xc3});
+  Branch.flagsProfile();
+  expectRefusal(Branch, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RotateUndefinedOverflowUsesMaskedCountBeforeNarrowModulo) {
+  for (uint8_t ModRM : {0xc0, 0xc8})
+    for (uint8_t Count : {0, 1, 8, 9, 16, 32, 33}) {
+      Program P({0xc0, ModRM, Count, 0xc3}); // ROL/ROR AL,imm8.
+      P.flagsProfile();
+      P.Contract.ReturnRegisters.push_back({x86reg::OF, 1});
+      if ((Count & 31) > 1) {
+        expectRefusal(P, Status::Dependent);
+      } else {
+        const auto Good = P.check();
+        ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      }
+    }
+  for (uint8_t ModRM : {0xc0, 0xc8}) {
+    Program P({0xd2, ModRM, 0xc3}); // All symbolic CL counts.
+    P.flagsProfile();
+    P.Contract.ReturnRegisters = {
+        {x86reg::RAX, 8}, {x86reg::CF, 1}, {x86reg::ZF, 1}, {x86reg::SF, 1},
+        {x86reg::AF, 1},  {x86reg::PF, 1}, {x86reg::DF, 1}};
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      UndefinedBranchCannotBeCertifiedAfterOrdinaryRecoveryPrunesIt) {
   // xor eax,eax; lahf; test ah,0x10; jne second; mov eax,0; ret;
   // second: mov eax,0; ret. Both return values agree, but control consumes AF.
@@ -446,8 +507,8 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      StaticallyUntakenBranchStillRequiresArchitectureCoverage) {
   // XOR makes JNE false, but the original arm at 0x100a contains an unaudited
-  // ROL. Collecting its bytes alone does not establish complete evidence.
-  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xc0, 0xc3});
+  // RCL. Collecting its bytes alone does not establish complete evidence.
+  Program P({0x31, 0xc0, 0x75, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3});
   const auto Ordinary = specializeBinaryInterpreter(P.Image, Entry, P.Options);
   ASSERT_TRUE(Ordinary.complete()) << Ordinary.Diagnostic;
   expectRefusal(P, Status::Unsupported);
@@ -503,7 +564,7 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 TEST(OriginalBinaryUndefinedIndependence,
      MissingArchitectureEffectsAndProfileProjectionRefuse) {
-  Program Rotate({0xd1, 0xc0, 0xc3}); // rol eax,1; ret
+  Program Rotate({0xd1, 0xd0, 0xc3}); // rcl eax,1; ret
   expectRefusal(Rotate, Status::Unsupported);
   // RDSSPQ is projected to NOP only by the explicit CET-disabled profile.
   // That projection must retain Missing architecture metadata.
