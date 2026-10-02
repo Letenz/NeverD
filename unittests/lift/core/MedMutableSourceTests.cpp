@@ -1,0 +1,651 @@
+//===- MedMutableSourceTests.cpp - Mutable source semantics ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/Limits.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedMutableSource.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
+#include "neverd/lift/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
+
+#include <stdexcept>
+
+namespace {
+using namespace neverd;
+
+MedVar reg(int ID, uint64_t Offset, unsigned Size = 8) {
+  MedVar V;
+  V.Kind = MedVar::Reg;
+  V.Id = ID;
+  V.Size = Size;
+  V.RegOff = Offset;
+  V.TheArch = Arch::X64;
+  return V;
+}
+
+MedVar temp(int ID, unsigned Size = 8) {
+  auto V = reg(ID, 0, Size);
+  V.Kind = MedVar::Temp;
+  return V;
+}
+
+MedOp op(NdOp Code, MedVar Output, std::initializer_list<MedVar> Inputs = {}) {
+  MedOp O;
+  O.Opcode = Code;
+  O.Output = Output;
+  for (const auto &I : Inputs)
+    O.addInput(I);
+  return O;
+}
+
+MedOp branch(uint64_t Target) {
+  return op(NdOp::BRANCH, {}, {MedVar::makeConst(Target, 8)});
+}
+
+void parameter(MedFunc &F, uint64_t Offset) {
+  auto P = reg(100 + F.Params.size(), Offset);
+  P.Kind = MedVar::Param;
+  F.Params.push_back(P);
+  F.TypedParams.push_back(
+      {"p" + std::to_string(F.Params.size()), NdType::makeInt(8, false)});
+}
+
+MedFunc base(unsigned Blocks = 1) {
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "mutable_probe";
+  F.CC = CallingConv::SysV_AMD64;
+  F.ReturnType = NdType::makeInt(8, false);
+  F.SkippedSSA = true;
+  F.Blocks.resize(Blocks);
+  for (unsigned I = 0; I < Blocks; ++I) {
+    auto &B = F.Blocks[I];
+    B.Id = I;
+    B.StartAddr = F.Entry + 16 * I;
+    B.EndAddr = B.StartAddr + 16;
+  }
+  return F;
+}
+
+void connect(MedFunc &F, int From, std::initializer_list<int> To) {
+  F.Blocks[From].Succs = To;
+  for (int ID : To)
+    F.Blocks[ID].Preds.push_back(From);
+}
+
+MedFunc loop(bool ReverseBlocks = false) {
+  auto F = base(4);
+  parameter(F, x86reg::RDI);
+  const auto N = reg(10, x86reg::RDI);
+  const auto Sum = reg(11, x86reg::RAX);
+  const auto Cond = temp(12, 1);
+  F.Blocks[0].Ops = {op(NdOp::COPY, Sum, {MedVar::makeConst(0, 8)}),
+                     branch(F.Blocks[1].StartAddr)};
+  F.Blocks[1].Ops = {op(NdOp::INT_NOTEQUAL, Cond, {N, MedVar::makeConst(0, 8)}),
+                     op(NdOp::COND_BR, {},
+                        {MedVar::makeConst(F.Blocks[2].StartAddr, 8), Cond})};
+  F.Blocks[2].Ops = {op(NdOp::INT_ADD, Sum, {Sum, N}),
+                     op(NdOp::INT_SUB, N, {N, MedVar::makeConst(1, 8)}),
+                     branch(F.Blocks[1].StartAddr)};
+  F.Blocks[3].Ops = {op(NdOp::RETURN, {})};
+  connect(F, 0, {1});
+  connect(F, 1, {3, 2});
+  connect(F, 2, {1});
+  if (ReverseBlocks) {
+    std::swap(F.Blocks[1], F.Blocks[2]);
+    const auto Map = [](int ID) { return ID == 1 ? 2 : ID == 2 ? 1 : ID; };
+    for (auto &B : F.Blocks) {
+      B.Id = Map(B.Id);
+      for (int &ID : B.Succs)
+        ID = Map(ID);
+      for (int &ID : B.Preds)
+        ID = Map(ID);
+    }
+  }
+  return F;
+}
+
+void compileAndRun(const MedFunc &F, const char *Main,
+                   size_t MaxSourceBytes = 0) {
+  llvm::LLVMContext Context;
+  auto Module = MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64);
+  ASSERT_NE(Module, nullptr);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, Stream, CEmitterOptions{}));
+  if (MaxSourceBytes)
+    ASSERT_LE(Source.size(), MaxSourceBytes);
+  Stream << Main;
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto Program = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(bool(Program)) << "clang is required for mutable source checks";
+  const std::string Compiler = *Program;
+#endif
+  llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("mutable-source", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("mutable-source", "exe", BinaryPath));
+  llvm::FileRemover RemoveBinary(BinaryPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("mutable-source", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    ASSERT_FALSE(EC);
+    OS << Source;
+  }
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  for (const char *Opt : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Opt);
+    std::string Error;
+    const llvm::SmallVector<llvm::StringRef, 12> Args{
+        Compiler,
+        "-std=c11",
+        Opt,
+        "-fsanitize=undefined",
+        "-fno-sanitize-recover=all",
+        SourcePath,
+        "-o",
+        BinaryPath};
+    int Status = llvm::sys::ExecuteAndWait(Compiler, Args, std::nullopt,
+                                           Redirects, 30, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Status, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "");
+    Status = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
+                                       Redirects, 10, 0, &Error);
+    ASSERT_EQ(Status, 0) << Error << '\n' << Source;
+  }
+}
+
+TEST(MedMutableSource, LoopRequiresIncomingParameterRegardlessOfBlockOrder) {
+  for (bool Reverse : {false, true}) {
+    auto F = loop(Reverse);
+    std::string Error;
+    auto Plan = analyzeMedMutableSource(F, Arch::X64, &Error);
+    ASSERT_TRUE(Plan) << Error;
+    EXPECT_EQ(Plan->EntryBytes,
+              (std::map<uint64_t, uint64_t>{{x86reg::RDI, 255}}));
+    compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n < 100; ++n)
+    if (mutable_probe(n) != n * (n + 1) / 2) return 1;
+  return 0;
+}
+)");
+  }
+}
+
+TEST(MedMutableSource, EntryBackedgeCannotReinitializeMutableArgument) {
+  auto F = base(2);
+  parameter(F, x86reg::RDI);
+  auto N = reg(10, x86reg::RDI);
+  auto R = reg(11, x86reg::RAX);
+  F.Blocks[0].Ops = {
+      op(NdOp::INT_ADD, N, {N, MedVar::makeConst(1, 8)}),
+      op(NdOp::INT_LESS, temp(12, 1), {N, MedVar::makeConst(10, 8)}),
+      op(NdOp::COND_BR, {}, {MedVar::makeConst(F.Entry, 8), temp(12, 1)})};
+  F.Blocks[1].Ops = {op(NdOp::COPY, R, {N}), op(NdOp::RETURN, {})};
+  connect(F, 0, {1, 0});
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n < 20; ++n)
+    if (mutable_probe(n) != (n < 10 ? 10 : n + 1)) return 1;
+  return 0;
+}
+)");
+}
+
+TEST(MedMutableSource, MutableStackRegisterUsesRuntimeMemoryAndArithmetic) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  parameter(F, x86reg::RSI);
+  auto Ptr = reg(10, x86reg::RDI);
+  auto Delta = reg(11, x86reg::RSI);
+  auto SP = reg(12, x86reg::RSP);
+  auto R = reg(13, x86reg::RAX);
+  F.Blocks[0].Ops = {op(NdOp::COPY, SP, {Ptr}),
+                     op(NdOp::STORE, {}, {SP, MedVar::makeConst(42, 8)}),
+                     op(NdOp::INT_SUB, SP, {SP, Delta}),
+                     op(NdOp::STORE, {}, {SP, MedVar::makeConst(17, 8)}),
+                     op(NdOp::LOAD, R, {SP}),
+                     op(NdOp::INT_ADD, SP, {SP, Delta}),
+                     op(NdOp::LOAD, temp(14), {SP}),
+                     op(NdOp::INT_ADD, R, {R, temp(14)}),
+                     op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  uint64_t words[2] = {0, 0};
+  if (mutable_probe((uintptr_t)&words[1], 8) != 59) return 1;
+  return words[0] != 17 || words[1] != 42;
+}
+)");
+}
+
+TEST(MedMutableSource, OneSidedDefinitionCannotHideUndefinedEntryTemporary) {
+  auto F = loop();
+  F.Blocks[2].Ops.insert(F.Blocks[2].Ops.begin(),
+                         op(NdOp::COPY, temp(20), {MedVar::makeConst(7, 8)}));
+  F.Blocks[3].Ops.insert(F.Blocks[3].Ops.begin(),
+                         op(NdOp::COPY, reg(11, x86reg::RAX), {temp(20)}));
+  EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64));
+  F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin(),
+                         op(NdOp::COPY, temp(20), {MedVar::makeConst(3, 8)}));
+  EXPECT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+}
+
+TEST(MedMutableSource, DeadAndPlaceholderOutputsCannotDefineTheReturn) {
+  for (bool Dead : {false, true}) {
+    auto F = base();
+    auto O = op(Dead ? NdOp::COPY : NdOp::NOP, reg(10, x86reg::RAX),
+                {MedVar::makeConst(0, 8)});
+    O.Dead = Dead;
+    F.Blocks[0].Ops = {O, op(NdOp::RETURN, {})};
+    EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64));
+  }
+}
+
+TEST(MedMutableSource, RejectsAmbiguousStorageAndUnnormalizedControl) {
+  for (unsigned Case = 0; Case < 22; ++Case) {
+    SCOPED_TRACE(Case);
+    auto F = loop();
+    auto &B = F.Blocks[2];
+    switch (Case) {
+    case 0:
+      B.Ops[0].Output.Size = 4;
+      break;
+    case 1:
+      B.Ops[0].Output.Kind = MedVar::Temp;
+      break;
+    case 2:
+      B.Ops[0].Output.SSAVer = 1;
+      break;
+    case 3:
+      B.Ops[0].Output.RegOff = x86reg::RDX;
+      break;
+    case 4:
+      B.Ops.insert(B.Ops.begin(), op(NdOp::COPY, reg(20, x86reg::RDI + 1, 1),
+                                     {MedVar::makeConst(0, 1)}));
+      break;
+    case 5:
+      B.Preds.clear();
+      break;
+    case 6:
+      B.Id = 30;
+      break;
+    case 7:
+      B.Ops.insert(B.Ops.begin(), op(NdOp::RETURN, {}));
+      break;
+    case 8:
+      B.Ops[0].Opcode = NdOp::CALL;
+      break;
+    case 9:
+      B.Phis.push_back({});
+      break;
+    case 10:
+      F.ScalarAddressModels.push_back({});
+      break;
+    case 11:
+      F.JumpTables.push_back({});
+      break;
+    case 12:
+      B.Ops[0].IntrinsicOutputs.push_back(temp(30));
+      break;
+    case 13:
+      F.DoesNotReturn = true;
+      break;
+    case 14:
+      F.TypedParams[0].Type = NdType::makeInt(4, false);
+      break;
+    case 15:
+      F.Params[0].Size = 4;
+      F.TypedParams[0].Type = NdType::makeInt(4, false);
+      break;
+    case 16:
+      B.Ops[0] = op(NdOp::SUBBYTES, temp(30, 1),
+                    {reg(10, x86reg::RDI), reg(10, x86reg::RDI)});
+      break;
+    case 17:
+      B.Ops[0] = op(NdOp::SUBBYTES, temp(30, 1),
+                    {reg(10, x86reg::RDI), MedVar::makeConst(8, 8)});
+      break;
+    case 18:
+      B.Ops[0] = op(NdOp::INT_ASHR, temp(30, 1),
+                    {MedVar::makeConst(128, 1), MedVar::makeConst(1, 8)});
+      break;
+    case 19:
+      B.Ops[0] = op(NdOp::INT_EQUAL, temp(30, 1),
+                    {MedVar::makeConst(255, 1), MedVar::makeConst(~0ULL, 8)});
+      break;
+    case 20:
+      F.FrameSize = 128;
+      break;
+    case 21:
+      B.Ops[0].Inputs[0] =
+          MedVar::makeConst(42, 8, ConstantAddressProvenance::AddressFragment);
+      break;
+    }
+    EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64));
+  }
+}
+
+TEST(MedMutableSource, BooleanInputsAreTruthValuesAndCountsMayWiden) {
+  for (NdOp Code : {NdOp::BOOL_AND, NdOp::BOOL_OR, NdOp::BOOL_XOR,
+                    NdOp::POPCOUNT, NdOp::LZCOUNT}) {
+    auto F = base();
+    auto R = reg(11, x86reg::RAX);
+    const bool Count = Code == NdOp::POPCOUNT || Code == NdOp::LZCOUNT;
+    auto O = op(Code, R, {MedVar::makeConst(2, 1)});
+    if (!Count)
+      O.addInput(MedVar::makeConst(4, 1));
+    F.Blocks[0].Ops = {O, op(NdOp::RETURN, {})};
+    ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+    const unsigned Expected = Code == NdOp::BOOL_XOR  ? 0
+                              : Code == NdOp::LZCOUNT ? 6
+                                                      : 1;
+    const auto Main = "\nint main(void) { return mutable_probe() != " +
+                      std::to_string(Expected) + "; }\n";
+    for (bool Mutable : {false, true}) {
+      F.SkippedSSA = Mutable;
+      compileAndRun(F, Main.c_str());
+    }
+  }
+}
+
+TEST(MedMutableSource, WideBitMasksKeepTheirExactRawValue) {
+  auto F = base();
+  auto Wide = temp(10, 16);
+  F.Blocks[0].Ops = {
+      op(NdOp::CONCAT, Wide,
+         {MedVar::makeConst(1, 8), MedVar::makeConst(0, 8)}),
+      op(NdOp::INT_AND, Wide, {Wide, MedVar::makeConst(~0ULL, 16)}),
+      op(NdOp::SUBBYTES, reg(11, x86reg::RAX), {Wide, MedVar::makeConst(8, 8)}),
+      op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, "\nint main(void) { return mutable_probe() != 0; }\n");
+}
+
+TEST(MedMutableSource, WideDivisionRetainsBothDividendAndDivisorHalves) {
+  for (NdOp Code :
+       {NdOp::INT_DIV, NdOp::INT_REM, NdOp::INT_SDIV, NdOp::INT_SREM}) {
+    auto F = base();
+    const bool Signed = Code == NdOp::INT_SDIV || Code == NdOp::INT_SREM;
+    auto N = temp(10, 16), D = temp(11, 16), Result = temp(12, 16);
+    F.Blocks[0].Ops = {
+        op(NdOp::CONCAT, N,
+           {MedVar::makeConst(Signed ? ~0ULL : 1, 8), MedVar::makeConst(0, 8)}),
+        op(NdOp::CONCAT, D, {MedVar::makeConst(1, 8), MedVar::makeConst(1, 8)}),
+        op(Code, Result, {N, D}),
+        op(NdOp::SUBBYTES, temp(13), {Result, MedVar::makeConst(0, 8)}),
+        op(NdOp::SUBBYTES, temp(14), {Result, MedVar::makeConst(8, 8)}),
+        op(NdOp::INT_XOR, reg(15, x86reg::RAX), {temp(13), temp(14)}),
+        op(NdOp::RETURN, {})};
+    ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+    const char *Expected = Code == NdOp::INT_REM    ? "1"
+                           : Code == NdOp::INT_SREM ? "UINT64_MAX"
+                                                    : "0";
+    const auto Main =
+        std::string("\nint main(void) { return mutable_probe() != ") +
+        Expected + "; }\n";
+    compileAndRun(F, Main.c_str());
+  }
+}
+
+TEST(MedMutableSource, DeclaredParameterWithoutAnSSASeedStillBindsItsCarrier) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  F.Params[0].Id = -1;
+  F.Blocks[0].Ops = {
+      op(NdOp::COPY, reg(11, x86reg::RAX), {reg(10, x86reg::RDI)}),
+      op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  return mutable_probe(UINT64_C(0xfedcba9876543210)) !=
+         UINT64_C(0xfedcba9876543210);
+}
+)");
+}
+
+TEST(MedMutableSource, NarrowProductsAndConstantShiftsAvoidSignedPromotion) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  auto Word = temp(20, 2);
+  F.Blocks[0].Ops = {
+      op(NdOp::SUBBYTES, Word, {reg(10, x86reg::RDI), MedVar::makeConst(0, 8)}),
+      op(NdOp::INT_MULT, Word, {Word, Word}),
+      op(NdOp::INT_ZEXT, reg(11, x86reg::RAX), {Word}), op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint32_t n = 0; n <= 65535; ++n)
+    if (mutable_probe(n) != ((n * n) & 65535)) return 1;
+  return 0;
+}
+)");
+  F.Blocks[0].Ops = {op(NdOp::INT_LEFT, reg(11, x86reg::RAX),
+                        {MedVar::makeConst(~0ULL, 8), reg(10, x86reg::RDI)}),
+                     op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (unsigned n = 0; n < 64; ++n)
+    if (mutable_probe(n) != (UINT64_MAX << n)) return 1;
+  return 0;
+}
+)");
+}
+
+TEST(MedMutableSource, EarlierReadsSurviveLaterParameterAndConstantStores) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  auto P = reg(10, x86reg::RDI);
+  auto R = reg(11, x86reg::RAX);
+  F.Blocks[0].Ops = {op(NdOp::COPY, temp(20), {P}),
+                     op(NdOp::COPY, P, {MedVar::makeConst(9, 8)}),
+                     op(NdOp::COPY, R, {MedVar::makeConst(1, 8)}),
+                     op(NdOp::COPY, temp(21), {R}),
+                     op(NdOp::COPY, R, {MedVar::makeConst(2, 8)}),
+                     op(NdOp::INT_ADD, R, {R, temp(21)}),
+                     op(NdOp::INT_ADD, R, {R, temp(20)}),
+                     op(NdOp::INT_ADD, R, {R, P}),
+                     op(NdOp::RETURN, {})};
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n < 100; ++n)
+    if (mutable_probe(n) != n + 12) return 1;
+  return 0;
+}
+)");
+}
+
+TEST(MedMutableSource, RepeatedUpdatesKeepCExpressionExpansionBounded) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  auto R = reg(11, x86reg::RAX);
+  F.Blocks[0].Ops.push_back(op(NdOp::COPY, R, {reg(10, x86reg::RDI)}));
+  for (unsigned I = 0; I < 512; ++I)
+    F.Blocks[0].Ops.push_back(
+        op(NdOp::INT_ADD, R, {R, MedVar::makeConst(1, 8)}));
+  F.Blocks[0].Ops.push_back(op(NdOp::RETURN, {}));
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n < 100; ++n)
+    if (mutable_probe(n) != n + 512) return 1;
+  return mutable_probe(UINT64_MAX) != 511;
+}
+)",
+                100000);
+  F.Blocks[0].Ops.resize(1);
+  for (unsigned I = 0; I < 64; ++I)
+    F.Blocks[0].Ops.push_back(op(NdOp::INT_ADD, R, {R, R}));
+  F.Blocks[0].Ops.push_back(op(NdOp::RETURN, {}));
+  ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+  compileAndRun(F, R"(
+int main(void) {
+  for (uint64_t n = 0; n < 100; ++n)
+    if (mutable_probe(n) != 0) return 1;
+  return mutable_probe(UINT64_MAX) != 0;
+}
+)",
+                32768);
+}
+
+TEST(MedMutableSource, LeadingZeroCountIncludesZeroAtEveryScalarWidth) {
+  for (unsigned Width : {1u, 2u, 4u, 8u}) {
+    auto F = base();
+    parameter(F, x86reg::RDI);
+    F.Blocks[0].Ops = {
+        op(NdOp::SUBBYTES, temp(20, Width),
+           {reg(10, x86reg::RDI), MedVar::makeConst(0, 8)}),
+        op(NdOp::LZCOUNT, reg(11, x86reg::RAX), {temp(20, Width)}),
+        op(NdOp::RETURN, {})};
+    ASSERT_TRUE(analyzeMedMutableSource(F, Arch::X64));
+    std::string Main = "\nint main(void) {\n  const unsigned bits = " +
+                       std::to_string(Width * 8) + R"(;
+  for (unsigned bit = 0; bit < bits; ++bit)
+    if (mutable_probe(UINT64_C(1) << bit) != bits - bit - 1) return 1;
+  return mutable_probe(0) != bits;
+}
+)";
+    compileAndRun(F, Main.c_str());
+  }
+}
+
+TEST(MedMutableSource, RelocationAndCompositeStateBudgetsFailClosed) {
+  llvm::LLVMContext Context;
+  auto F = loop();
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  EXPECT_THROW(
+      MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64, {}, &Image),
+      std::runtime_error);
+  F = base(2049);
+  for (auto &B : F.Blocks)
+    B.Ops.push_back(op(NdOp::RETURN, {}));
+  for (int I = 0; I < 2048; ++I)
+    F.Blocks[0].Ops.insert(
+        F.Blocks[0].Ops.begin(),
+        op(NdOp::COPY, temp(I + 10), {MedVar::makeConst(I, 8)}));
+  EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64));
+}
+
+TEST(MedMutableSource, EmitterRejectsMalformedInputsBeforeModulePrepasses) {
+  llvm::LLVMContext Context;
+  MedLLVMEmitter Emitter;
+  for (unsigned Case = 0; Case < 8; ++Case) {
+    SCOPED_TRACE(Case);
+    auto F = loop();
+    switch (Case) {
+    case 0:
+      F.Blocks[0].Ops[0].Inputs.clear();
+      break;
+    case 1:
+      F.Blocks[0].Ops.back().Inputs[0].Size = 1;
+      break;
+    case 2:
+      F.Blocks[1].Ops.back().Inputs[0].Size = 1;
+      break;
+    case 3:
+      F.Blocks[1].Preds.resize(4097, 0);
+      break;
+    case 4:
+      F = base();
+      parameter(F, x86reg::XMM0);
+      F.Params[0].Size = 32;
+      F.TypedParams[0].Type = NdType::makeInt(32, false);
+      F.Blocks[0].Ops = {
+          op(NdOp::SUBBYTES, reg(11, x86reg::RAX),
+             {reg(10, x86reg::XMM0, 32), MedVar::makeConst(16, 8)}),
+          op(NdOp::RETURN, {})};
+      break;
+    case 5:
+    case 6:
+      F = base();
+      F.Blocks[0].Ops = {op(Case == 5 ? NdOp::POPCOUNT : NdOp::LZCOUNT,
+                            reg(11, x86reg::RAX), {MedVar::makeConst(1, 16)}),
+                         op(NdOp::RETURN, {})};
+      break;
+    case 7:
+      F = base();
+      F.Blocks[0].Ops = {
+          op(NdOp::COPY, reg(11, x86reg::RAX), {MedVar::makeConst(1, 3)}),
+          op(NdOp::RETURN, {})};
+      break;
+    }
+    EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64));
+    EXPECT_THROW(Emitter.emit({F}, Context, F.Name, Arch::X64),
+                 std::runtime_error);
+    const std::vector<char> Mask{0};
+    EXPECT_THROW(Emitter.emit({F}, Context, F.Name, Arch::X64, {}, nullptr,
+                              BinaryFormat::ELF, false, &Mask),
+                 std::runtime_error);
+  }
+  auto F = loop();
+  auto Module = Emitter.emit({F}, Context, F.Name, Arch::X64);
+  ASSERT_NE(Module, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+}
+
+TEST(MedMutableSource, LargeRepeatedWritesNeedNoPerOperationSSAProofGraph) {
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "mutable_probe";
+  Low.Blocks.resize(1);
+  auto &B = Low.Blocks.front();
+  B.Id = 0;
+  B.StartAddr = Low.Entry;
+  B.EndAddr = Low.Entry + 16;
+  for (size_t I = 0; I <= limits::kMaxSSAFunctionOps; ++I) {
+    LowOp O;
+    O.Opcode = NdOp::COPY;
+    O.Output = NdVar::reg(x86reg::RAX, 8);
+    O.addInput(NdVar::cst(37, 8));
+    B.Ops.push_back(O);
+  }
+  LowOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  B.Ops.push_back(Ret);
+  auto F = LowToMedConverter().convert(Low, Arch::X64);
+  ASSERT_TRUE(F.SkippedSSA);
+  F.ReturnType = NdType::makeInt(8, false);
+  std::string Error;
+  auto Plan = analyzeMedMutableSource(F, Arch::X64, &Error);
+  ASSERT_TRUE(Plan) << Error;
+  EXPECT_TRUE(Plan->EntryBytes.empty());
+  EXPECT_LT(Plan->Variables.size(), 4u);
+  compileAndRun(F, "\nint main(void) { return mutable_probe() != 37; }\n");
+  auto &LastWrite = F.Blocks.front().Ops[F.Blocks.front().Ops.size() - 2];
+  LastWrite.Inputs[0] = reg(900, x86reg::RBX);
+  Plan = analyzeMedMutableSource(F, Arch::X64);
+  ASSERT_TRUE(Plan);
+  EXPECT_EQ(Plan->EntryBytes.at(x86reg::RBX), 255u);
+  llvm::LLVMContext Context;
+  EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64),
+               std::runtime_error);
+}
+} // namespace

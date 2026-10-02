@@ -55,6 +55,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保留舊介面/未來擴充行為，並驗證未要求報告時 C 中仍保留有號範圍。獨立 CLI 用例分別要求串接以保留關聯、要求範圍以證明無號堆疊比較；兩個 C 後端皆在 O0/O2 下執行並啟用未定義行為陷阱。關閉探索必須改變依賴探索的恢復結果。解析測試涵蓋零串接、整數極值、溢位、錯誤範圍與缺少前提。Python 檢查配置、旗標、簽章與具有所有權的失敗報告。
 
+`NeverDMedMutableSourceTests` 和 `NeverDLLVMCValueTests` 在 O0/O2 下執行獨立撰寫的迴圈、區塊重排、入口回邊、執行期堆疊運算、較早讀取、分支匯合、部分別名、布林真值和包含零輸入的位元計數。反例要求在發射前拒絕畸形輸入、截斷目標、歧義承載和預算耗盡。超過 SSA 限制的 CLI 案例要求 LLVMC 輸出可執行，並要求 HighC 明確拒絕。 連續更新和跨區塊儲存運算式鏈也會檢查產生 C 的大小與執行結果。
+
 `NeverDLowIRRefinementTests` 涵蓋實際恢復的殘餘圖、不同結構的有限迴圈、零次迭代、獨立動態產生者、條件見證、重疊輸入視圖、複製與溢出關聯、兩邊不可變讀取證據、強制系統旗標及返回槽保留。錯誤候選、額外寫入、不完整或無限路徑、過期證據、暫存區衝突與共享預算耗盡必須拒絕證書；既有獨立性測試仍拒絕可觀察的任意值。
 
 同一目標中的 `LowIRLoopRefinement.*` 和 `BinaryLowIRLoopRefinement.*` 涵蓋任意 64 位元計數、巢狀字典序排名、真實原生殘餘程式碼、入口前綴範本、重疊視圖及相關溢出。負例拒絕錯誤迴圈本體、縮小入口域、不下降的排名、無號回繞、遺忘先前寫入、遺漏切點、畸形範本和共用預算耗盡。成功的有限分支不能授權不完整的歸納證明。
@@ -924,7 +926,7 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
 
-`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 299 項必測檢查：71 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 329 項必測檢查：101 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
 
 上述原生驗證涵蓋已宣告的驅動程式進入點及已發佈情境。下文的逐功能回歸以及 C API／CLI／Python 檢查，除非明確記錄 Windows 執行結果，其證據範圍仍限於 Linux；原生樣例集通過不代表每一種測試變體均已在 Windows 驗證。
 
@@ -967,13 +969,15 @@ x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.de
 
 `X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
+`X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。REPNE 與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
+
 `WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
 `NeverDX64FPTests` 檢查全部 79 個啟動狀態損壞位置，並在原生傳輸上執行獨立組譯的 `X64ProbeCases.def` 指令，驗證單一時限及客體 RAM 不變。`NeverDProjectionCacheTests` 涵蓋呼叫者切換、ISA 順序、頁表根歷史、權限/監控變體、映射世代、位址空間身分及失敗重建。`NeverDRunControlTests` 的 `WhpXsaveTests.cpp` 檢查新舊 API 封包、所有 TOP、大小邊界及失敗時狀態不變；記憶體協定測試不能取代 WHP 原生證據。不可用的原生傳輸明確略過。
 
 XSAVE 驗證診斷區分長度查詢、本機資料準備和擷取資料解碼，並保留 API 名稱、傳回位元組數、容量及有限的標頭/控制欄位；獨立預期位於 `WhpHostFailureCases.def`，不輸出客體暫存器內容。`InvalidInputReportsPreparationWithoutHostMutation` 也驗證無效輸入不會呼叫主機或修改其資料。共用 ISA 編解碼器仍是唯一驗證入口。
 
-WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及執行中的主機呼叫失敗，均保留 HRESULT 和 `WhpProtocol.def` 中宣告的 API 名稱；能力查詢失敗仍傳回具型別的不可用結果。 `WhpHostFailureCases.def` 提供獨立錯誤預期，涵蓋與取消同時發生的主機失敗，以及新版/舊版 XSAVE 查詢、安裝和擷取失敗。 Windows 專項 CI 要求 71 項原生案例通過：16 項映射、2 項啟動、10 項 FP/上下文、7 項共用 CPU、8 項整數案例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的兩種 API 變體。後兩項在執行客體程式碼前比對完整 FP/SSE 與獨立讀取的中繼資料。 缺少註冊、略過、停用或未執行都會使原生證據稽核失敗。 新增的 26 項檢查涵蓋 `X64BitStringTests.cpp` 在兩種特權層級下的全部案例。
+WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及執行中的主機呼叫失敗，均保留 HRESULT 和 `WhpProtocol.def` 中宣告的 API 名稱；能力查詢失敗仍傳回具型別的不可用結果。 `WhpHostFailureCases.def` 提供獨立錯誤預期，涵蓋與取消同時發生的主機失敗，以及新版/舊版 XSAVE 查詢、安裝和擷取失敗。 Windows 專項 CI 要求 101 項原生案例通過：16 項映射、2 項啟動、10 項 FP/上下文、7 項共用 CPU、8 項整數案例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的兩種 API 變體。後兩項在執行客體程式碼前比對完整 FP/SSE 與獨立讀取的中繼資料。 缺少註冊、略過、停用或未執行都會使原生證據稽核失敗。 新增的 26 項檢查涵蓋 `X64BitStringTests.cpp` 在兩種特權層級下的全部案例。
 
 `NeverDMemoryLifecycleTests` 獨立於 Unicorn 建置，也涵蓋僅啟用原生後端的組態。停用 Unicorn 時，專用的軟體投影/裝置案例明確略過；符合主機的共用 CPU 案例仍會註冊。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 個案例隔離原生記憶體 API：單頁/投影大小的後備記憶體、共用/獨立配置、未觸頁/已駐留位元組，以及存在/不存在第一個虛擬處理器。每個案例保留兩個存活的邏輯擁有者，反覆切換其映射分割區，銷毀非作用中擁有者，並驗證剩餘映射無需重建即可繼續使用。實際映射錯誤保留 HRESULT 並使測試失敗；這是記憶體 API 證據，不是指令執行證明。
 
@@ -989,7 +993,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 71 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 299 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `71 CPU + 224 WHP + 4 SEH = 299`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 101 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 329 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `101 CPU + 224 WHP + 4 SEH = 329`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 

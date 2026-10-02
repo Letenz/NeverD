@@ -471,16 +471,14 @@ SourceCallTypeHint addOpaqueObjectMessage(
   EXPECT_TRUE(F.Image.recordDyldBindSlot(MessageSlot, "_objc_msgSend", 0,
                                          "/usr/lib/libobjc.A.dylib", false));
   F.Image.ObjCSourceReferences[SelectorSlot] = {
-      ObjCSourceReference::Kind::Selector, SelectorSlot, 8,
-      Selector.str()};
+      ObjCSourceReference::Kind::Selector, SelectorSlot, 8, Selector.str()};
   const uint32_t Stub[] = {0xb0000001, 0xf9402021, 0xb0000010, 0xf9404610,
                            0xd61f0200};
   for (unsigned I = 0; I != std::size(Stub); ++I)
     F.word(Getter + I * 4, Stub[I]);
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
-  auto Signature =
-      objcSelectorSourceTypeHint(F.Image, Selector);
+  auto Signature = objcSelectorSourceTypeHint(F.Image, Selector);
   EXPECT_TRUE(Signature);
   if (Signature)
     Hint.Signature = *Signature;
@@ -527,8 +525,8 @@ TEST(SwiftBooleanProjection, TerminalBrkRequiresCurrentImmutableOpcode) {
                                   SegmentFlags::Writable |
                                   SegmentFlags::Executable;
   EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
-  F.Image.Segments.back().Flags = SegmentFlags::Readable |
-                                  SegmentFlags::Executable;
+  F.Image.Segments.back().Flags =
+      SegmentFlags::Readable | SegmentFlags::Executable;
   Trap.Ops.front().Inputs[0].Offset = static_cast<uint64_t>(Intrinsic::Hlt_A64);
   EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
 }
@@ -580,8 +578,7 @@ TEST(SwiftBooleanProjection,
   EXPECT_EQ(Hint.Signature.Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
   EXPECT_TRUE(Hint.Signature.HasExplicitABI);
   ASSERT_TRUE(
-      swift_boolean_projection_detail::fixedObjectMessage(F.Image, Site,
-                                                            Hint));
+      swift_boolean_projection_detail::fixedObjectMessage(F.Image, Site, Hint));
   for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Image = F.Image;
@@ -662,21 +659,17 @@ TEST(SwiftBooleanProjection,
   }
 }
 
-TEST(SwiftBooleanProjection,
-     FixedObjectMessageRequiresExactPointerABI) {
+TEST(SwiftBooleanProjection, FixedObjectMessageRequiresExactPointerABI) {
   ProjectionFixture F;
-  constexpr llvm::StringLiteral Selector =
-      "localizedStringForKey:value:table:";
+  constexpr llvm::StringLiteral Selector = "localizedStringForKey:value:table:";
   auto Hint = addOpaqueObjectMessage(F, Selector);
   const SourceCallOccurrenceKey Site{0x3000, 0, NdOp::CALL, 0x1040};
   ASSERT_EQ(Hint.Signature.Parameters.size(), 5U);
-  EXPECT_TRUE(swift_boolean_projection_detail::fixedObjectMessage(F.Image,
-                                                                    Site,
-                                                                    Hint));
+  EXPECT_TRUE(
+      swift_boolean_projection_detail::fixedObjectMessage(F.Image, Site, Hint));
   Hint.Signature.Parameters[4].Type = NdType::makeInt(8, false);
-  EXPECT_FALSE(swift_boolean_projection_detail::fixedObjectMessage(F.Image,
-                                                                     Site,
-                                                                     Hint));
+  EXPECT_FALSE(
+      swift_boolean_projection_detail::fixedObjectMessage(F.Image, Site, Hint));
 }
 
 TEST(SwiftBooleanProjection,
@@ -1096,8 +1089,7 @@ TEST(SwiftBooleanProjection,
   Converter.setSourceEntryTypeHints(&EntryHints);
   Converter.setSourceCalleeTypeHints(&NativeCallees);
   Converter.setSourceCallHintsEnabled(true);
-  const auto Med =
-      Converter.convert(F.Low, F.Image.Arch, BinaryFormat::MachO);
+  const auto Med = Converter.convert(F.Low, F.Image.Arch, BinaryFormat::MachO);
   bool BoundBoolean = false;
   bool BoundNative = false;
   for (const auto &MedBlock : Med.Blocks)
@@ -1126,8 +1118,7 @@ TEST(SwiftBooleanProjection,
   F.Image.Sections.back().Flags =
       SegmentFlags::Readable | SegmentFlags::Executable;
   NativeCallees.at(0x3040).Parameters[0].Location.RegisterOffset = a64reg::X8;
-  ASSERT_TRUE(validateSourceABI(NativeCallees.at(0x3040), Error))
-      << Error;
+  ASSERT_TRUE(validateSourceABI(NativeCallees.at(0x3040), Error)) << Error;
   EXPECT_TRUE(Prove().empty());
 }
 
@@ -1178,5 +1169,59 @@ TEST(SwiftBooleanProjection,
   EXPECT_FALSE(F.qualify());
   F.Image.ObjCSourceReferences[SelectorSlot].Name = "init";
   F.Image.DyldBindSlots[SuperSlot].Module = "/tmp/libobjc.A.dylib";
+  EXPECT_FALSE(F.qualify());
+}
+
+TEST(SwiftBooleanProjection,
+     FixedSuperBooleanMessageKeepsArgumentsAndResultPadding) {
+  ProjectionFixture F;
+  const va_t SuperSlot = Slot + 16, SelectorSlot = 0x20c0;
+  F.Image.ImportPtrSlots[SuperSlot] = "_objc_msgSendSuper2";
+  ASSERT_TRUE(F.Image.recordDyldBindSlot(SuperSlot, "_objc_msgSendSuper2", 0,
+                                         "/usr/lib/libobjc.A.dylib", false));
+  F.Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+  F.Image.ObjCSourceReferences[SelectorSlot] = {
+      ObjCSourceReference::Kind::Selector, SelectorSlot, 8,
+      "needsDisplayForKey:"};
+  ObjCMethod Method;
+  Method.ClassName = "Base";
+  Method.Selector = "needsDisplayForKey:";
+  Method.TypeEncoding = "B24@0:8@16";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Method.Status = "supported";
+  F.Image.ObjCMethods.push_back(Method);
+  F.word(0x1020, 0xb0000010);
+  F.word(0x1024, 0xf9404a10);
+  F.word(0x1028, 0xd61f0200);
+  auto &B = F.Low.Blocks.front();
+  auto Call = B.Ops.front();
+  Call.Addr = 0x300c;
+  Call.Inputs[0].Offset = 0x1020;
+  auto Load = B.Ops.front();
+  Load.Opcode = NdOp::LOAD;
+  Load.Addr = 0x3008;
+  Load.Output = NdVar::reg(8, 8);
+  Load.Inputs[0] = NdVar::cst(SelectorSlot, 8);
+  B.Ops.back().Addr = 0x3010;
+  B.Ops.insert(B.Ops.end() - 1, Load);
+  B.Ops.insert(B.Ops.end() - 1, Call);
+  B.EndAddr = 0x3014;
+  F.word(0x3008, 0x58ff85c1);
+  F.word(0x300c, 0x97fff805);
+  F.word(0x3010, 0xd65f03c0);
+  const auto Hints = buildObjCSourceCallHints(F.Image, F.Low);
+  ASSERT_EQ(Hints.count(0x300c), 1U);
+  ASSERT_EQ(Hints.at(0x300c).CallKind, SourceCallTypeHint::Kind::ObjCSuper2);
+  ASSERT_EQ(Hints.at(0x300c).Signature.Parameters.size(), 3U);
+  ASSERT_TRUE(F.qualify());
+
+  B.Ops[1].Inputs[1].Offset = 3;
+  EXPECT_FALSE(F.qualify()); // Undefined bits reach the objc_super pointer.
+  B.Ops[1].Inputs[1].Offset = 1;
+  F.Image.DyldBindSlots[SuperSlot].Module = "/tmp/libobjc.A.dylib";
+  EXPECT_FALSE(F.qualify());
+  F.Image.DyldBindSlots[SuperSlot].Module = "/usr/lib/libobjc.A.dylib";
+  F.Image.DyldBindSlots[SuperSlot].Addend = 8;
   EXPECT_FALSE(F.qualify());
 }

@@ -124,6 +124,129 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "PortableAndNative/"
     "SharedCPU.ChecksExternalMappingsAtAttachmentAndBeforeExecution/NativeX64")
+
+// Every string transfer boundary must pass at both native privilege levels.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.TransfersMatchHostAcrossWidthsCountsAndDirection/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.TransfersMatchHostAcrossWidthsCountsAndDirection/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.DirectionInstructionsPreserveOtherFlagsAndRegisters/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.DirectionInstructionsPreserveOtherFlagsAndRegisters/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.ZeroCountAddressSizeMatchesHostWithoutMemory/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.ZeroCountAddressSizeMatchesHostWithoutMemory/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.AmbiguousZeroCountUpperHalvesRejectBeforeEffects/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.AmbiguousZeroCountUpperHalvesRejectBeforeEffects/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.NarrowAddressesNormalizeOnlyParticipatingRegisters/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.NarrowAddressesNormalizeOnlyParticipatingRegisters/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer."
+    "SourceSegmentsFollowAddressTruncationAndNeverBiasDestination/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer."
+    "SourceSegmentsFollowAddressTruncationAndNeverBiasDestination/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.NarrowRepeatedAddressesWrapAtEachElementBoundary/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.NarrowRepeatedAddressesWrapAtEachElementBoundary/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnusedPointersAreNeverValidatedOrObserved/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnusedPointersAreNeverValidatedOrObserved/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.CrossPageElementsAndCancellationMatchHost/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.CrossPageElementsAndCancellationMatchHost/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.LaterPageFaultHasNoPartialElementAndCanResume/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.LaterPageFaultHasNoPartialElementAndCanResume/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.RepeatedStopsRetainEarlierElementsAndResumeExactlyOnce/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.RepeatedStopsRetainEarlierElementsAndResumeExactlyOnce/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringTransfer.RepeatedFaultRetainsCompletedElements/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StringTransfer.RepeatedFaultRetainsCompletedElements/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.ObserverExceptionsLeaveTheCurrentElementUntouched/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.ObserverExceptionsLeaveTheCurrentElementUntouched/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnsupportedRepeatAndLockPrefixesFailBeforeEffects/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnsupportedRepeatAndLockPrefixesFailBeforeEffects/"
+    "whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnmodeledDeviceLoadsAndStoresRejectBeforeCallbacks/"
+    "whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StringTransfer.UnmodeledDeviceLoadsAndStoresRejectBeforeCallbacks/"
+    "whpUser")
+
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST

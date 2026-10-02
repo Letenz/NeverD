@@ -329,7 +329,46 @@ static void Unload(PDRIVER_OBJECT Driver) {
   DbgPrint("WDM resources: unloaded\n");
 }
 
+#define NEVERD_RESOURCE_STRING_VALUE(Name, Value) enum { Name = Value };
+#include "driver_resource_strings.def"
+#undef NEVERD_RESOURCE_STRING_VALUE
+
+// Original inline assembly forces the compiled WDK image to execute each
+// transfer width. Check both canaries, pointer/count updates and loaded values.
+#define NEVERD_RESOURCE_STRING_CASE(Name, Type, Fill, Store, Load)             \
+  static BOOLEAN CheckString##Name(VOID) {                                     \
+    Type Buffer[StringCount + 2] = {0};                                        \
+    Type *Destination = Buffer + 1;                                            \
+    SIZE_T Count = StringCount;                                                \
+    __asm__ volatile(Store                                                     \
+                     : "+D"(Destination), "+c"(Count)                          \
+                     : "a"((Type)Fill)                                         \
+                     : "memory");                                              \
+    if (Count || Destination != Buffer + StringCount + 1 || Buffer[0] ||       \
+        Buffer[StringCount + 1])                                               \
+      return FALSE;                                                            \
+    for (SIZE_T I = 1; I <= StringCount; ++I)                                  \
+      if (Buffer[I] != (Type)Fill)                                             \
+        return FALSE;                                                          \
+    Type *Source = Buffer + 1;                                                 \
+    Type Result = 0;                                                           \
+    Count = StringCount;                                                       \
+    __asm__ volatile(Load                                                      \
+                     : "+a"(Result), "+S"(Source), "+c"(Count)                 \
+                     :                                                         \
+                     : "memory");                                              \
+    return !Count && Source == Buffer + StringCount + 1 &&                     \
+           Result == (Type)Fill;                                               \
+  }
+#include "driver_resource_strings.def"
+#undef NEVERD_RESOURCE_STRING_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_STRING_CASE(Name, Type, Fill, Store, Load)             \
+  if (!CheckString##Name())                                                    \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_strings.def"
+#undef NEVERD_RESOURCE_STRING_CASE
   Mode = 'S';
   if (Path->Length >= sizeof(WCHAR)) {
     WCHAR Last = Path->Buffer[Path->Length / sizeof(WCHAR) - 1];
