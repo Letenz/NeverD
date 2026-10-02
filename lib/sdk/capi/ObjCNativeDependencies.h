@@ -1,10 +1,12 @@
 #ifndef NEVERD_SDK_CAPI_OBJCNATIVEDEPENDENCIES_H
 #define NEVERD_SDK_CAPI_OBJCNATIVEDEPENDENCIES_H
 
+#include "ObjCNativeSourceCallCallees.h"
 #include "SwiftMangledSourceABI.h"
 #include "SwiftMergedArrayBufferSourceABI.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -29,8 +31,9 @@ struct NativeSourceDependencyEvidence {
 };
 
 /// Both inference and reporting traverse the same supported method roots and
-/// direct native edges. Indirect calls remain recorded but never add a guessed
-/// target. Reporting can run against the final result without changing hints.
+/// native edges. Indirect edges require the shared current immutable-slot
+/// target proof and retain their original machine occurrence. Unproved targets
+/// remain incomplete; this inventory never grants source publication authority.
 inline std::set<va_t>
 walkObjCNativeDependencies(const BinaryImage &Image,
                            const PipelineResult &Result,
@@ -42,8 +45,17 @@ walkObjCNativeDependencies(const BinaryImage &Image,
   if (Evidence)
     *Evidence = {};
   std::map<va_t, const LowFunc *> Low;
-  for (const auto &Function : Result.LowFuncs)
-    Low.emplace(Function.Entry, &Function);
+  for (const auto &Function : Result.LowFuncs) {
+    const auto [It, Inserted] = Low.emplace(Function.Entry, &Function);
+    if (!Inserted)
+      It->second = nullptr;
+  }
+  std::map<va_t, const MedFunc *> Med;
+  for (const auto &Function : Result.MedFuncs) {
+    const auto [It, Inserted] = Med.emplace(Function.Entry, &Function);
+    if (!Inserted)
+      It->second = nullptr;
+  }
   std::vector<va_t> Pending;
   for (const auto &Method : Image.ObjCMethods)
     if (objcMethodHasSourceBody(Method)) {
@@ -51,6 +63,7 @@ walkObjCNativeDependencies(const BinaryImage &Image,
       if (Evidence)
         Evidence->Roots.insert(Method.Implementation);
     }
+  const NativePublicationCalleeIndex CalleeIndex(Result);
   std::set<va_t> Seen;
   std::set<va_t> Targets;
   Targets.insert(CallbackRoots.begin(), CallbackRoots.end());
@@ -61,32 +74,50 @@ walkObjCNativeDependencies(const BinaryImage &Image,
     if (!Seen.insert(Entry).second)
       continue;
     const auto Found = Low.find(Entry);
-    if (Found == Low.end()) {
+    if (Found == Low.end() || !Found->second) {
       if (Evidence) {
         Evidence->MissingFunctions.insert(Entry);
         Evidence->InventoryComplete = false;
       }
       continue;
     }
+    std::map<va_t, ImmutableNativeCallTarget> IndirectTargets;
+    bool HasIndirect = false;
+    for (const auto &Block : Found->second->Blocks)
+      for (const auto &Operation : Block.Ops)
+        HasIndirect |= Operation.Opcode == NdOp::INDIR_CALL;
+    if (HasIndirect) {
+      const auto Caller = Med.find(Entry);
+      const auto Callees = Caller != Med.end() && Caller->second
+                               ? CalleeIndex.forCaller(*Caller->second)
+                               : std::map<va_t, SourceFunctionTypeHint>{};
+      IndirectTargets =
+          immutableNativeCallTargets(Image, *Found->second, &Callees);
+    }
     for (const auto &Block : Found->second->Blocks)
       for (const auto &Operation : Block.Ops) {
-        if (Evidence && (Operation.Opcode == NdOp::CALL ||
-                         Operation.Opcode == NdOp::INDIR_CALL)) {
-          const bool Direct = Operation.Opcode == NdOp::CALL &&
-                              Operation.NumInputs &&
-                              Operation.Inputs[0].isConst();
-          Evidence->TargetsComplete &= Direct;
+        if (Operation.Opcode != NdOp::CALL &&
+            Operation.Opcode != NdOp::INDIR_CALL)
+          continue;
+        const bool Direct = Operation.Opcode == NdOp::CALL &&
+                            Operation.NumInputs &&
+                            Operation.Inputs[0].isConst();
+        const auto Proven = IndirectTargets.find(Operation.Addr);
+        const auto Site = sourceCallOccurrenceKey(Operation);
+        const bool Immutable = Proven != IndirectTargets.end() && Site &&
+                               Proven->second.Site == *Site;
+        const va_t Target = Direct      ? Operation.Inputs[0].Offset
+                            : Immutable ? Proven->second.Target
+                                        : 0;
+        if (Evidence) {
+          Evidence->TargetsComplete &= Direct || Immutable;
           if (Evidence->Calls.size() < NativeSourceDependencyEvidence::MaxCalls)
-            Evidence->Calls.push_back({Entry, Block.StartAddr, Operation.Addr,
-                                       Direct ? Operation.Inputs[0].Offset : 0,
-                                       !Direct});
+            Evidence->Calls.push_back(
+                {Entry, Block.StartAddr, Operation.Addr, Target, !Direct});
           else
             Evidence->InventoryComplete = false;
         }
-        if (Operation.Opcode == NdOp::CALL && Operation.NumInputs &&
-            Operation.Inputs[0].isConst() &&
-            Image.isCodeAddress(Operation.Inputs[0].Offset)) {
-          const va_t Target = Operation.Inputs[0].Offset;
+        if (Target && Image.isCodeAddress(Target)) {
           Targets.insert(Target);
           Pending.push_back(Target);
         }

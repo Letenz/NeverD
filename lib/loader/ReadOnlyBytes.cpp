@@ -71,11 +71,12 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
   return Image.readVA(Address, Extent);
 }
 
-// Byte copies admit no fixup. Pointer reads admit only the exact normalized
-// absolute data slot, with independently checked resolution and target owner.
+// Byte copies admit no fixup. Each pointer reader admits only its exact
+// normalized slot kind, with independently checked resolution and target.
 bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
                           uint64_t Extent, bool Pointer, bool Import = false,
-                          bool ClassReference = false) {
+                          bool ClassReference = false,
+                          bool CodePointer = false) {
   auto Touches = [&](const auto &Slots, auto Key, bool AllowExact = false) {
     auto It = Slots.lower_bound(Address >= 7 ? Address - 7 : 0);
     for (; It != Slots.end() &&
@@ -88,12 +89,13 @@ bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
   };
   auto Set = [](va_t Slot) { return Slot; };
   auto Map = [](const auto &Slot) { return Slot.first; };
-  if (Touches(Image.CodePtrRelocSlots, Set) ||
+  if (Touches(Image.CodePtrRelocSlots, Set, CodePointer) ||
       Touches(Image.DataPtrRelocSlots, Set, Pointer) ||
       Touches(Image.DataPtrRelocTargetOwners, Map, Pointer) ||
       Touches(Image.RelCodeRelocSlots, Set) ||
       Touches(Image.RelDataPtrRelocSlots, Set) ||
-      Touches(Image.MachOResolvedChainedPointerSlots, Set, Pointer || Import) ||
+      Touches(Image.MachOResolvedChainedPointerSlots, Set,
+              Pointer || Import || CodePointer) ||
       Touches(Image.ConflictingImportStorageSlots, Set) ||
       Touches(Image.ImportPtrSlots, Map, Import) ||
       Touches(Image.ImportStorageSlots, Map, Import) ||
@@ -189,6 +191,26 @@ std::optional<va_t> readResolvedPointer(const BinaryImage &Image, va_t Address,
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address) {
   return readResolvedPointer(Image, Address, true);
+}
+
+std::optional<va_t> readImmutableImageCodePointer(const BinaryImage &Image,
+                                                  va_t Address) {
+  if (!supportedImage(Image) || Address % 8 || !Image.MachOHasChainedFixups ||
+      !Image.CodePtrRelocSlots.count(Address) ||
+      !Image.MachOResolvedChainedPointerSlots.count(Address))
+    return std::nullopt;
+  const auto *Bytes = mappedBytes(Image, Address, 8, true);
+  if (!Bytes ||
+      hasConflictingFixups(Image, Address, 8, false, false, false, true))
+    return std::nullopt;
+  const auto Target = llvm::support::endian::read64le(Bytes);
+  if ((Image.Arch == Arch::AArch64 && Target % 4) ||
+      !Image.hasAuthenticatedFunctionEntryAt(Target) ||
+      Image.findImportStubAt(Target) ||
+      !readImmutableCodeBytes(Image, Target,
+                              Image.Arch == Arch::AArch64 ? 4 : 1))
+    return std::nullopt;
+  return Target;
 }
 
 namespace {

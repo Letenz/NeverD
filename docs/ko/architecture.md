@@ -924,3 +924,5 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 `windows-pe64-v1`은 제한된 Windows x64/ARM64 콘솔 프로세스를 추가합니다. PE 로딩, PEB/TEB, 정적·동적 TLS, 시작·종료 콜백과 이름 기반 Win32 API 모델을 제공합니다. 드라이버 에뮬레이션 없이 CPU 계층을 사용합니다. DLL/CRT 로딩, GUI, 사용자 모드 SEH, 스레드와 일반 Windows 호환성은 아직 미완성입니다.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+네이티브 의존성 탐색은 현재의 완전한 LowIR과 불변 명령이 정확히 해석된 체인 코드 포인터 슬롯을 증명할 때만 ARM64 간접 호출을 따라갑니다. 별도 코드 포인터 판독기는 유일한 읽기 전용 저장소, 충돌하는 수정 정보, 현재 함수 진입점을 확인하며 일반 데이터 포인터 판독기의 기존 경계를 유지합니다. 제한된 추적은 하나의 기본 블록 안에서만 수행되고 호출을 넘어 레지스터 값을 유지하려면 특정 레지스터를 사용하는 ARC 임포트를 포함한 현재 런타임 또는 네이티브 ABI가 필요합니다. 프레임 재로드, 알 수 없는 호출, 불완전한 증거는 미해결 상태로 남습니다. 의존성 목록은 원래 간접 호출 위치를 보존하며 그 자체로 ABI를 바인딩하거나 소스 공개를 허용하지 않습니다.
