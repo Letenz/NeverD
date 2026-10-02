@@ -178,7 +178,8 @@ measurement and current-change Linux KVM/Windows WHP runtime regression remain
 outstanding alongside the Intel gate; no self-hosted runner is currently
 configured for the repository.
 
-Additional existing worker tests exposed baseline issues outside this change:
-the mock server omits `neverd_session_set_load_progress`, and three real-engine
-tests consume progress responses as final replies. Worker protocol and graph
-unit tests passed; those unrelated fixtures were left unchanged.
+The subsequent integration pass repaired the test SDK's missing
+`neverd_session_set_load_progress` and made the shared worker test client wait
+for terminal responses while retaining progress for assertions. All eight
+standalone worker checks passed, including three real-engine integrations.
+The complete fixture-backed Qt/IPC/MCP suite passed all 19 checks on macOS.

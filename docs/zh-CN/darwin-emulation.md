@@ -45,6 +45,9 @@ Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--eviden
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
 [原生 Darwin 专项工作流](../../.github/workflows/darwin-native.yml)提供关闭 Unicorn
 后的 x64 KVM/WHP 构建和验收；它需要 runner 实际提供虚拟化能力，保留完整测试证据。
+工作流也可以单独选择 `kvm` 或 `whp`。本机关闭 Unicorn 的完整工作负载门禁已通过：
+57 项通过、0 失败，包含全部 33 项 ARM64 必需进程用例；190 项非本机或禁用后端
+用例跳过。扩展后的脚本与 CI 审计回归共 103 项通过。
 
 2026-10-03 在 Apple M4 Max / macOS 15.6.1 的 Release 构建上验证：Darwin
 114 项通过、0 失败，133 项因后端或架构不适用而跳过；共享会话和镜像映射 26 项通过；

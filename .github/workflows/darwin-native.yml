@@ -2,31 +2,29 @@ name: Native Darwin workloads
 
 on:
   workflow_dispatch:
+    inputs:
+      backend:
+        description: Native transport to validate
+        type: choice
+        default: both
+        options: [both, kvm, whp]
 
 permissions:
   contents: read
 
 concurrency:
-  group: darwin-native-${{ github.ref }}
+  group: darwin-native-${{ github.ref }}-${{ inputs.backend }}
   cancel-in-progress: true
 
 jobs:
   darwin-native:
     name: Darwin guests (${{ matrix.backend }}, x64)
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            backend: kvm
-            cc: clang
-            cxx: clang++
-          - runner: windows-latest
-            backend: whp
-            cc: cl
-            cxx: cl
+        backend: ${{ fromJSON(inputs.backend == 'kvm' && '["kvm"]' || inputs.backend == 'whp' && '["whp"]' || '["kvm","whp"]') }}
     steps:
       - name: Checkout native workload sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,8 +75,8 @@ jobs:
       - name: Configure native execution without Unicorn
         shell: bash
         env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
+          CC: ${{ runner.os == 'Linux' && 'clang' || 'cl' }}
+          CXX: ${{ runner.os == 'Linux' && 'clang++' || 'cl' }}
         run: |
           cmake -S . -B build-darwin-native -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

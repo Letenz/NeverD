@@ -141,6 +141,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 Use `kvm` on Linux or `whp` on Windows with the same command. The manual
 [`Native Darwin workloads` workflow](../.github/workflows/darwin-native.yml)
 builds without Unicorn and runs both x64 transports on hosted runners. It
+also accepts a single `kvm` or `whp` selection for focused reruns. It
 requires actual virtualization and `ld64.lld`; unavailable hardware or fixture
 tools fail explicitly. The result validates the bounded guest OS model and
 shared CPU contracts, not Intel HVF or native iOS hardware.
@@ -192,6 +193,11 @@ ARM64 cases; evidence is `build-hvf-native/darwin-host-gate-evidence/`.
 Its 96 script/inventory/result/CI regression tests passed, including simulated
 ARM64/Intel selection, native skips, deleted guest registrations and unknown
 host rejection.
+
+The subsequent full workload gate passed 57 Darwin checks with Unicorn
+disabled, including all 33 required ARM64 process cases, with 190 foreign or
+disabled cases skipped. Its expanded script/inventory/result/CI suite passed
+103 tests. Evidence is `build-hvf-native/darwin-workload-evidence/`.
 
 With HVF and Unicorn both disabled, the Darwin, HVF and configuration targets
 also built successfully: 38 checks passed, zero failed, and 231 backend cases
