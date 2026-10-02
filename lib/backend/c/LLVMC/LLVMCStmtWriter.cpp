@@ -123,7 +123,11 @@ const llvm::AllocaInst *
 LLVMCWriter::asAllocaPointer(const llvm::Value *V) const {
   if (!V)
     return nullptr;
-  return llvm::dyn_cast<llvm::AllocaInst>(V->stripPointerCasts());
+  const auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(V->stripPointerCasts());
+  // Arrays are backing memory, not assignable scalar homes. In particular,
+  // a scalar access at offset zero must not become an array assignment or a
+  // cached value for the whole array.
+  return Alloca && !Alloca->getAllocatedType()->isArrayTy() ? Alloca : nullptr;
 }
 
 bool LLVMCWriter::isThisFieldAddress(const llvm::Value *V) const {
@@ -1852,7 +1856,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
            << valueStr(SI->getPointerOperand()) << " = "
-           << valueStr(SI->getValueOperand()) << ";\n";
+           << integerPointerOperandStr(SI->getValueOperand()) << ";\n";
       } else {
         const auto *Init =
             llvm::dyn_cast<llvm::ConstantInt>(SI->getValueOperand());
@@ -1870,7 +1874,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
            << valueStr(SI->getPointerOperand()) << " = "
-           << valueStr(SI->getValueOperand()) << ";\n";
+           << integerPointerOperandStr(SI->getValueOperand()) << ";\n";
       }
     }
     return;
@@ -3186,13 +3190,24 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   const auto &Layout = CurMod->getDataLayout();
   const auto Alignment = Load ? Load->getAlign() : Store->getAlign();
   const auto Size = Layout.getTypeStoreSize(Type);
+  const auto *Address =
+      Load ? Load->getPointerOperand() : Store->getPointerOperand();
+  const auto Base = peelPointerOffset(Address);
+  const auto *Alloca =
+      Base ? llvm::dyn_cast<llvm::AllocaInst>(Base->first) : nullptr;
+  const auto *Array =
+      Alloca ? llvm::dyn_cast<llvm::ArrayType>(Alloca->getAllocatedType())
+             : nullptr;
+  const bool ByteBacking = Array && Array->getElementType()->isIntegerTy(8);
   // The source ABI can allow weaker alignment than the emitted C carrier
   // (for example i64:32). Its exact object size is a conservative alignment
   // bound for each native scalar type admitted above.
-  if (Size.isScalable() || Alignment.value() >= Size.getFixedValue())
+  // A byte array also needs representation copies for aligned, overlapping
+  // accesses of different scalar types; alignment alone does not establish
+  // the C effective type of its contents.
+  if (Size.isScalable() ||
+      (!ByteBacking && Alignment.value() >= Size.getFixedValue()))
     return false;
-  const auto *Address =
-      Load ? Load->getPointerOperand() : Store->getPointerOperand();
   std::string Pointer = valueStr(Address);
   if (std::string Image = imageDataCName(Address); !Image.empty())
     Pointer = "&" + Image;
