@@ -148,6 +148,7 @@ add_neverd_unittest(NeverDLiftTests
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
+  core/SourceFrameAnalysisTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
   core/SwiftBooleanRuntimeCandidateTests.cpp
@@ -1026,6 +1027,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
+  core/SourceFrameAnalysisTests.cpp
   core/NativeFloatingReturnProofTests.cpp
   core/NativeBooleanResultProofTests.cpp
   core/SwiftBooleanRuntimeCandidateTests.cpp
