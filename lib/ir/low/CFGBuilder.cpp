@@ -53,6 +53,23 @@ bool CFGBuilder::isCurrentOwnedFragment(va_t Addr) const {
                                            ExecutableCodeOwners);
 }
 
+bool CFGBuilder::isFramelessLeafColdPart(const BinaryImage &Img,
+                                         va_t Addr) const {
+  if (!CurrentFuncIsFramelessLeaf || Addr == InvalidVA || Addr < Img.Base ||
+      Img.ExceptionMetadata.findFunction(Addr))
+    return false;
+  // A restricted load decodes only the records it needs; the raw directory
+  // still lists every one.
+  const uint64_t RVA = Addr - Img.Base;
+  const auto Record = std::upper_bound(
+      Img.COFFPDataRecords.begin(), Img.COFFPDataRecords.end(), RVA,
+      [](uint64_t Value, const BinaryImage::COFFPDataRecord &Rec) {
+        return Value < Rec.BeginRVA;
+      });
+  return Record == Img.COFFPDataRecords.begin() ||
+         RVA >= std::prev(Record)->EndRVA;
+}
+
 va_t CFGBuilder::nextKnownFunctionEntry(va_t After) const {
   va_t Best = InvalidVA;
   auto Consider = [&](va_t Addr) {
@@ -1349,6 +1366,7 @@ bool CFGBuilder::prepareCandidateFiniteProofScratch(
   Scratch.CurrentFuncEntry = CurrentFuncEntry;
   Scratch.CurrentFuncRange = CurrentFuncRange;
   Scratch.AuthoritativeCurrentFuncRange = AuthoritativeCurrentFuncRange;
+  Scratch.CurrentFuncIsFramelessLeaf = CurrentFuncIsFramelessLeaf;
   Scratch.KnownFuncEntries = KnownFuncEntries;
   Scratch.CurrentExceptionalEntries = CurrentExceptionalEntries;
   Scratch.NoReturnTargets = NoReturnTargets;
