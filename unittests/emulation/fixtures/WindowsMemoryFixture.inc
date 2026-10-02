@@ -56,7 +56,12 @@ static void memoryLifecycle(void) {
   DWORD Old = LastErrorSeed;
   SetLastError(LastErrorSeed);
   VM_CHECK(!VirtualProtect(Base, 3 * VMPage, VMReadWrite, &Old));
-  VM_CHECK(GetLastError() == VMInvalidAddress && Old == LastErrorSeed);
+  VM_CHECK(GetLastError() == VMInvalidAddress);
+  if (Old != LastErrorSeed) {
+    DWORD Written;
+    WriteFile(GetStdHandle(StderrSelector), &Old, sizeof(Old), &Written, 0);
+    VM_CHECK(0);
+  }
   VM_CHECK(memoryInfo(Base + VMPage).Protection == VMReadOnly);
   VM_CHECK(VirtualFree(Base, 2 * VMPage, VMDecommit));
   VM_CHECK(VirtualFree(Base, 2 * VMPage, VMDecommit));
@@ -176,10 +181,11 @@ static void memoryAlias(void) {
   VM_CHECK(VirtualProtect(Base, VMPage, VMReadWrite, Base));
   VM_CHECK(*Base == VMReadWrite);
   *Base = LastErrorSeed;
+  SetLastError(LastErrorSeed);
   const int OK = VirtualProtect(Base, VMPage, VMReadOnly, Base);
   const DWORD Error = GetLastError();
   const MemoryInfo Info = memoryInfo(Base);
-  if (OK || Error != VMNoAccessError || *Base != LastErrorSeed ||
+  if (!OK || Error != LastErrorSeed || *Base != LastErrorSeed ||
       Info.Protection != VMReadOnly) {
     const DWORD Observed[] = {(DWORD)OK, Error, *Base, Info.Protection};
     DWORD Written;

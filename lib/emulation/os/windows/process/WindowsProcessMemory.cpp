@@ -414,10 +414,11 @@ Services::memory(const Service &S, const NativeCallEvent &Event) {
     auto Writable = access(A[3], DWordSize, Write);
     if (!Writable)
       return Writable.takeError();
-    if (!*Writable)
-      return WinError(ErrorNoAccess);
-    if (auto E = CPU.writeInteger(A[3], V->Value, DWordSize))
-      return std::move(E);
+    // Native Windows retains the successful protection change when it makes
+    // the previously writable output inaccessible. The output stays unchanged.
+    if (*Writable)
+      if (auto E = CPU.writeInteger(A[3], V->Value, DWordSize))
+        return std::move(E);
     return std::optional<uint64_t>(1);
   }
   return std::optional<uint64_t>(V->Value);
