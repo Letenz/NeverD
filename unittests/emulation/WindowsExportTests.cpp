@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ExecutionConfiguration.h"
 
 #include "llvm/ADT/ScopeExit.h"
