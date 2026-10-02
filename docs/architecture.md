@@ -597,6 +597,8 @@ The same source ABI owner admits naturally laid-out sixteen-double `CATransform3
 
 The exact strong arm64 QuartzCore import `CATransform3DScale` uses the same bounded transform bridge. Its 128-byte input pointer occupies x0, three doubles use d0–d2, and x8 addresses the result. HighC copies the complete input to a genuine by-value record before calling the SDK; all sixteen result fields are written afterward. O0/O2 execution covers both separate and aliased input/result buffers, all field bit patterns, and boundary guards. Wrong providers, weak imports, stale widths, and other ABIs are rejected.
 
+UIKit target/action bindings preserve the target object, `SEL`, and unsigned 64-bit `UIControlEvents` argument, as declared. `addTarget:action:forControlEvents:` has a void result; `initWithTarget:action:` returns an object. These arm64 facts require the exact UIKit provider and agreement with embedded declarations. Binding registration calls establishes no callback signature or block lifetime.
+
 The generated Darwin C catalog takes declarations only from its explicit public
 header set and intersects all four macOS/iOS architecture profiles with SDK
 export evidence. Public `notify.h` functions use this path, including exact

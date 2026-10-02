@@ -627,6 +627,8 @@ Darwin ARM64 的固定 C 呼叫也可透過隱藏的 x8 指標傳回由恰好六
 
 精確的 arm64 QuartzCore 強匯入 `CATransform3DScale` 使用同一有界變換橋接。128 位元組輸入指標位於 x0，三個 double 使用 d0–d2，x8 指向結果。HighC 在呼叫 SDK 前將完整輸入複製成真正以值傳遞的記錄，呼叫後寫入全部十六個結果欄位。O0/O2 執行涵蓋輸入與結果緩衝區分離及重疊兩種情況、全部欄位的位元模式及邊界保護。錯誤提供者、弱匯入、失效寬度及其他 ABI 均遭拒絕。
 
+UIKit 的目標／動作綁定依宣告保留目標物件、`SEL` 與無號 64 位元 `UIControlEvents` 參數。`addTarget:action:forControlEvents:` 回傳 void，`initWithTarget:action:` 回傳物件。這些 arm64 事實要求精確 UIKit 提供者，且須與內嵌宣告一致。綁定註冊呼叫不確立回呼簽章或 Block 生命週期。
+
 執行階段呼叫目錄僅在精確匯入的函式明確回傳原參數指標時宣告 `ReturnedArgument`。接收者分析先讀取已宣告的實體參數，再套用正常 ABI 暫存器清除，最後僅在回傳值上恢復既有的接收者型別事實。SDK 會重新驗證此效果；它不允許刪除呼叫、所有權效果或記憶體存取。
 
 編譯器產生的框架目錄與接收者目錄共用提供者清單：Foundation、CoreData、CoreLocation、CoreSpotlight、QuartzCore、UniformTypeIdentifiers 和 UserNotifications。QuartzCore 使用公開入口 `CoreAnimation.h`，其他框架的相容性匯入不提供所屬宣告。兩個產生器均保留四種前置處理設定、精確框架身分及宣告的否定證據。

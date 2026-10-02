@@ -32,6 +32,10 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "activateConstraints:", "v24@0:8@16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "addSubview:", "v24@0:8@16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "addArrangedSubview:", "v24@0:8@16", nullptr},
+// Public UIControl target/action declaration; UIControlEvents is NSUInteger.
+// Apple Clang independently agrees on arm64 iOS device/simulator encodings.
+// https://developer.apple.com/documentation/uikit/uicontrol/addtarget(_:action:for:)?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "addTarget:action:forControlEvents:", "v40@0:8@16:24Q32", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "alpha", "d16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "blackColor", "@16@0:8", nullptr},
 // UIDevice publicly declares these paired void orientation-notification
@@ -71,6 +75,10 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "imageWithCIImage:scale:orientation:", "@40@0:8@16d24q32", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithCGImage:", "@24@0:8^{CGImage=}16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithProgressViewStyle:", "@24@0:8q16", nullptr},
+// Public UIGestureRecognizer initializer: object result, target object and SEL.
+// This is an independently encoded public declaration, not a device SDK AST.
+// https://developer.apple.com/documentation/uikit/uigesturerecognizer/init(target:action:)?language=objc
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithTarget:action:", "@32@0:8@16:24", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "initWithRed:green:blue:alpha:", "@48@0:8d16d24d32d40", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "insertSubview:belowSubview:", "v32@0:8@16@24", nullptr},
 // UICollectionViewLayoutInvalidationContext declares both readonly BOOL
