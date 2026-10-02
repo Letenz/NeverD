@@ -471,6 +471,8 @@ JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_su
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 
+ターゲットへの展開も元のスコープ終端を使用します。ハンドラーの対象が `finally` の保護区間内に残る場合、そのスコープからは退出しません。`FinallyRespectsRawScopeEndAtHandlerTarget` は境界の両側を検査し、Windows x64 では `ntdll.dll!__C_specific_handler` と直接比較します。NeverD はコンパイラー生成の区間を修正しません。元のフィクスチャを Clang 20/21 で構築すると、偏った終端が選択対象を含むため `T` と `J` モードはゲストの失敗を返します。Clang 23 では両方のクリーンアップを実行します。[LLVM 変更 #144745](https://github.com/llvm/llvm-project/pull/144745) は古い `+1` バイアスを削除します。これらのコンパイラー依存の結果はバックエンド障害と区別します。
+
 `__GSHandlerCheck_SEH` は検索前と unwind 時にイメージ内の現在のセキュリティ cookie を検証します。finally のないフレームも対象です。固定・動的整列スロット、符号付きオフセット、元のフレームポインターによる符号化に対応し、C ハンドラーフラグと cookie 検証を区別します。プロローグやエピローグでは未確立の cookie を読みません。不一致は対象フィルター、クリーンアップ、ハンドラーの実行前に停止します。単独の `__GSHandlerCheck` も検索と unwind で cookie を検証し、C スコープを捏造しません。認識には正確なシンボルまたはインポート識別子が必要で、匿名コードを命令パターンから推測しません。GS/C++ ラッパーと C++ 例外 personality は未対応です。`driver_seh_gs.h` の独自フレームはリンクした WDK 検証関数も実行します。
 
 独自の `driver_wdm_seh.c` フィクスチャーは真正 WDK ヘッダーと `/GS-` を使います。通常イメージと有効 CFG イメージには `NEVERD_WDM_SEH_FIXTURE` と `NEVERD_WDM_SEH_CFG_FIXTURE` を設定します。[driver-seh-scenario.json](../examples/driver-seh-scenario.json) の例はイメージを再配置し、DriverEntry 内で API 例外を捕捉してアンロードします。 別個の WDM METHOD_NEITHER 経路では、ユーザープローブ、MDL ロック、捕捉可能なメモリ障害に対応します。

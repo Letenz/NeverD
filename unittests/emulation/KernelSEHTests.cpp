@@ -12,6 +12,13 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 using namespace neverd;
 using namespace neverd::emulation;
 
@@ -25,6 +32,53 @@ namespace continuation {
 #undef NEVERD_SEH_CONTINUATION_TEXT
 #undef NEVERD_SEH_CONTINUATION_VALUE
 } // namespace continuation
+
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+struct NativeFinallyCall {
+  unsigned Calls = 0;
+  bool Abnormal = false;
+};
+
+void __cdecl nativeFinally(BOOLEAN Abnormal, void *Frame) {
+  auto &Call = *static_cast<NativeFinallyCall *>(Frame);
+  ++Call.Calls;
+  Call.Abnormal = Abnormal != FALSE;
+}
+
+void checkNativeFinallyBoundary(uint64_t EndRVA, bool ShouldRun) {
+  const auto Module = GetModuleHandleA(continuation::NativeModule.data());
+  ASSERT_NE(Module, nullptr);
+  using NativeHandler = EXCEPTION_DISPOSITION(__cdecl *)(
+      EXCEPTION_RECORD *, void *, CONTEXT *, DISPATCHER_CONTEXT *);
+  const auto Handler = reinterpret_cast<NativeHandler>(
+      GetProcAddress(Module, continuation::NativeHandler.data()));
+  ASSERT_NE(Handler, nullptr);
+  const auto ImageBase = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
+  ASSERT_NE(ImageBase, 0u);
+  const auto Cleanup = reinterpret_cast<uintptr_t>(&nativeFinally);
+  ASSERT_GE(Cleanup, ImageBase);
+  ASSERT_LE(Cleanup - ImageBase, UINT32_MAX);
+
+  SCOPE_TABLE_AMD64 Table{};
+  Table.Count = 1;
+  Table.ScopeRecord[0].BeginAddress = continuation::GuardBeginRVA;
+  Table.ScopeRecord[0].EndAddress = static_cast<DWORD>(EndRVA);
+  Table.ScopeRecord[0].HandlerAddress = static_cast<DWORD>(Cleanup - ImageBase);
+  EXCEPTION_RECORD Exception{};
+  Exception.ExceptionFlags = EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND;
+  CONTEXT Context{};
+  DISPATCHER_CONTEXT Dispatch{};
+  Dispatch.ImageBase = ImageBase;
+  Dispatch.ControlPc = ImageBase + continuation::GuardBeginRVA;
+  Dispatch.TargetIp = ImageBase + continuation::LandingPadRVA;
+  Dispatch.HandlerData = &Table;
+  NativeFinallyCall Call;
+  EXPECT_EQ(Handler(&Exception, &Call, &Context, &Dispatch),
+            ExceptionContinueSearch);
+  EXPECT_EQ(Call.Calls, static_cast<unsigned>(ShouldRun));
+  EXPECT_EQ(Call.Abnormal, ShouldRun);
+}
+#endif
 
 class DriverKernelSEH : public ::testing::Test {
 protected:
@@ -689,6 +743,41 @@ TEST_F(DriverKernelSEH, OverlappingHandlerRetainsTargetValidationAndCanRetry) {
   EXPECT_EQ(Retried->Kind, KernelSEH::ActionKind::Handler);
   EXPECT_EQ(Retried->State.HandlerPC, Valid.HandlerVA);
   EXPECT_TRUE(Reads.empty());
+}
+
+TEST_F(DriverKernelSEH, FinallyRespectsRawScopeEndAtHandlerTarget) {
+  for (uint64_t End :
+       {continuation::LandingPadRVA, continuation::GuardEndRVA}) {
+    SCOPED_TRACE(End);
+    Metadata.Functions.clear();
+    auto &F = overlappingHandler();
+    Caller.PC = ActualBase + continuation::GuardBeginRVA;
+    auto Cleanup =
+        scope(continuation::GuardBeginRVA, End, continuation::FilterRVA);
+    Cleanup.Kind = SEHScopeKind::Finally;
+    Cleanup.FilterOrFinallyVA = Cleanup.HandlerVA;
+    Cleanup.ContinuationVA = 0;
+    F.SEH->Scopes.insert(F.SEH->Scopes.begin(), Cleanup);
+    const bool ShouldRun = End == continuation::LandingPadRVA;
+    auto Planner = planner();
+    auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
+    auto Next = Planner.advance(State);
+    ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+    if (ShouldRun) {
+      ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Finally);
+      EXPECT_EQ(Next->State.HandlerPC, Cleanup.HandlerVA);
+      Next = Planner.advance(State);
+      ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+    }
+    ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+    EXPECT_EQ(Next->State.HandlerPC, ActualBase + continuation::LandingPadRVA);
+    EXPECT_TRUE(Reads.empty());
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    // Compare identical raw endpoints against the host Windows C personality.
+    // This invokes only an owned test cleanup during target unwind.
+    checkNativeFinallyBoundary(End, ShouldRun);
+#endif
+  }
 }
 
 TEST_F(DriverKernelSEH, RebasingDoesNotRewritePreferredMetadata) {

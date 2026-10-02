@@ -313,7 +313,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "45 CPU + 224 WHP + 3 SEH = 272")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "45 CPU + 224 WHP + 4 SEH = 273")
 NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -340,4 +340,6 @@ NEVERD_EMULATION_DOC_TOKEN(SEHContinuation, "KernelSEHContinuationCases.def")
 NEVERD_EMULATION_DOC_TOKEN(SEHContinuation,
                          "ScopeEndLabelMayOverlapTheHandlerLandingPad")
 NEVERD_EMULATION_DOC_TOKEN(SEHContinuation, "EndLabel + 1")
+NEVERD_EMULATION_DOC_TOKEN(SEHContinuation,
+                         "FinallyRespectsRawScopeEndAtHandlerTarget")
 #endif

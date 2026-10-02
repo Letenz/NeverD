@@ -17,3 +17,5 @@ NEVERD_SEH_CONTINUATION_TEXT(InvalidContinuation,
                              "invalid exception handler continuation")
 NEVERD_SEH_CONTINUATION_TEXT(NotExecutable,
                              "exception target is not executable")
+NEVERD_SEH_CONTINUATION_TEXT(NativeModule, "ntdll.dll")
+NEVERD_SEH_CONTINUATION_TEXT(NativeHandler, "__C_specific_handler")

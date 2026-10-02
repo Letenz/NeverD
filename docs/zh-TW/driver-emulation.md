@@ -471,6 +471,8 @@ JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`�
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
+目標展開同樣使用原始範圍末端：若處理常式目標仍在某個 `finally` 的保護區間內，便不會離開該範圍。`FinallyRespectsRawScopeEndAtHandlerTarget` 檢查邊界兩側，並在 Windows x64 上直接對照 `ntdll.dll!__C_specific_handler`。NeverD 不修補編譯器產生的區間。Clang 20/21 建置的原始範例在 `T`、`J` 模式下傳回客體失敗，因為偏移後的末端包含選定目標；Clang 23 建置會執行兩級清理。[LLVM 修改 #144745](https://github.com/llvm/llvm-project/pull/144745) 移除了舊的 `+1` 偏移。這類編譯器相關結果與後端故障分開記錄。
+
 `__GSHandlerCheck_SEH` 在搜尋處理常式前及展開階段分別檢查映像目前的安全 cookie，包含沒有 finally 的堆疊框架。支援固定與動態對齊的位置、帶正負號的框架偏移及原始框架指標編碼；包裝層的 cookie 檢查與 C 處理常式旗標分別生效。前置程式碼及尾聲展開不會讀取尚未建立的 cookie。不匹配會在相關篩選函式、清理或處理常式執行前停止。獨立的 `__GSHandlerCheck` 也會在搜尋與展開時檢查 cookie，不虛構 C 範圍。辨識須依據精確符號或匯入身分，不從指令模式猜測匿名程式碼。GS/C++ 包裝與 C++ 例外 personality 仍不支援。`driver_seh_gs.h` 定義原創框架並實際呼叫連結的 WDK cookie 檢查函式。
 
 原創測試驅動 `driver_wdm_seh.c` 使用真正的 WDK 標頭與 `/GS-`。設定 `NEVERD_WDM_SEH_FIXTURE` 及 `NEVERD_WDM_SEH_CFG_FIXTURE`，即可提供一般及啟用 CFG 的映像。[driver-seh-scenario.json](../examples/driver-seh-scenario.json) 範例會重定位映像、在 DriverEntry 捕捉 API 例外，然後卸載。 獨立的 WDM METHOD_NEITHER 路徑現已支援使用者記憶體探測、MDL 鎖頁與可捕捉的記憶體故障。

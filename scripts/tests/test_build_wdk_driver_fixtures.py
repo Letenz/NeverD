@@ -143,10 +143,26 @@ class WDKDriverFixtureTests(unittest.TestCase):
             "DriverKernelSEH.ScopeEndLabelMayOverlapTheHandlerLandingPad",
             "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd",
             "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry",
+            "DriverKernelSEH.FinallyRespectsRawScopeEndAtHandlerTarget",
         }
         self.assertTrue(seh_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required))
+        formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
+                   f"{len(seh_required)} SEH = {len(required)}")
+        definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
+        self.assertIn(formula, definitions.read_text())
+        guides = [fixtures.ROOT / "docs/testing.md"]
+        guides.extend((fixtures.ROOT / "docs").glob("*/testing.md"))
+        for guide in guides:
+            with self.subTest(guide=guide):
+                paragraph = next(
+                    part for part in guide.read_text().split("\n\n")
+                    if "`NativeDriverTests.def`" in part
+                )
+                self.assertIn(formula, paragraph)
+                for count in (len(names), len(images), len(scenarios)):
+                    self.assertRegex(paragraph, rf"(?<!\d){count}(?!\d)")
         for _, filename, *_ in inventory["FIXTURE"]:
             self.assertTrue((fixtures.ROOT / "unittests/emulation/fixtures"
                              / filename).is_file())
