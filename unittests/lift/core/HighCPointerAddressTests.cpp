@@ -41836,6 +41836,44 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
       << HighC;
 }
 
+TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
+  // ObpStartRuntimeStackTrace selects a global's address or zero with
+  // `sbb rax, rax; and rax, rdx` after `lea rdx, [global]`.  C has no `&` on
+  // a pointer, so the address of the global's byte backing enters the AND as
+  // an integer.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Global = 0x140002000;
+  std::vector<uint8_t> Code = {
+      0x8b, 0x05, 0,    0,    0, 0,    // mov eax, [global]
+      0x41, 0x89, 0x01,                // mov [r9], eax
+      0x0f, 0xb7, 0x05, 0,    0, 0, 0, // movzx eax, word [global+2]
+      0x41, 0x89, 0x41, 0x04,          // mov [r9+4], eax
+      0x48, 0x8d, 0x15, 0,    0, 0, 0, // lea rdx, [global]
+      0xf7, 0xd9,                      // neg ecx
+      0x48, 0x19, 0xc0,                // sbb rax, rax
+      0x48, 0x21, 0xd0,                // and rax, rdx
+      0x49, 0x89, 0x00,                // mov [r8], rax
+      0xc3};
+  auto Patch = [&](size_t At, va_t Target, va_t Next) {
+    const uint32_t Disp = static_cast<uint32_t>(Target - Next);
+    for (unsigned I = 0; I < 4; ++I)
+      Code[At + I] = static_cast<uint8_t>(Disp >> (8 * I));
+  };
+  Patch(2, Global, Entry + 6);
+  Patch(12, Global + 2, Entry + 16);
+  Patch(23, Global, Entry + 27);
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Segment Data;
+  Data.Name = ".data";
+  Data.VA = Global;
+  Data.Size = 16;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.assign(16, 0);
+  Img.Segments.push_back(std::move(Data));
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("& &"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("& (uintptr_t)&"), std::string::npos) << HighC;
+}
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
   // After an unknown call ECX holds no defined value, so the OR must not
