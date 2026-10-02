@@ -25,15 +25,19 @@ static const DWORD ExpectedErrors[] = {
 #undef NEVERD_EXPORT_MISSING
 };
 static DWORD Observations[sizeof(ExpectedErrors) / sizeof(DWORD)], MissingIndex;
+static ULONG_PTR Addresses[sizeof(ExpectedErrors) / sizeof(DWORD)];
 static int Observe;
 static void missing(void *Module, const char *Name) {
   SetLastError(LastErrorSeed);
-  CHECK(!GetProcAddress(Module, Name));
+  void *Address = GetProcAddress(Module, Name);
   const DWORD Error = GetLastError();
   CHECK(MissingIndex < sizeof(ExpectedErrors) / sizeof(DWORD));
   Observations[MissingIndex] = Error;
-  if (!Observe)
+  Addresses[MissingIndex] = (ULONG_PTR)Address;
+  if (!Observe) {
+    CHECK(!Address);
     CHECK(Error == ExpectedErrors[MissingIndex]);
+  }
   ++MissingIndex;
 }
 static void observeOrder(void *Leaf, void *Bridge, void *Top) {
@@ -100,6 +104,9 @@ DWORD entry(void) {
 #undef NEVERD_EXPORT_MISSING
   if (Observe) {
     output((const char *)Observations, MissingIndex * sizeof(DWORD));
+    output((const char *)Addresses, MissingIndex * sizeof(ULONG_PTR));
+    const void *Bases[] = {Leaf, Bridge, Top};
+    output((const char *)Bases, sizeof(Bases));
     observeOrder(Leaf, Bridge, Top);
     output(Message, sizeof(Message) - 1);
     ExitProcess(ExitStatus);
