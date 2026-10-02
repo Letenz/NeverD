@@ -207,6 +207,8 @@ The exact API inventory is `WindowsProcessServices.def`: `ExitProcess`, `RtlExit
 
 The `windows.native_calls` report preserves module/function names, declared scalar arguments and nullable result bits. It does not invent native NT syscall numbers. `NeverDWindowsProcessTests` covers real x64/ARM64 PE startup, compiler TLS, live callback changes, heap/LastError, aliasing, invalid metadata, privilege faults and limits across available backends. `NeverDProcessPublicTests` checks the same PE through CLI/C ABI. Native Windows CI runs the original EXE as an independent behavioral oracle and requires WHP cases; native ARM64 runtime evidence still requires a suitable machine.
 
+`WriteFile` with a nonempty unreadable input buffer returns `ERROR_INVALID_USER_BUFFER` (1784), zeros the completion count and publishes no bytes.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->

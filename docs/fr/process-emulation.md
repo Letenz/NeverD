@@ -95,6 +95,8 @@ GS sur x64 et x18 sur ARM64 pointent vers TEB : limites de pile, pointeur propre
 
 `windows.native_calls` conserve module/fonction, arguments scalaires déclarés et résultat nullable, sans inventer de numéro NT. `NeverDWindowsProcessTests` couvre PE réel, TLS du compilateur, callbacks modifiés, tas, alias, métadonnées invalides, privilèges et budgets ; `NeverDProcessPublicTests` vérifie CLI/C ABI. La CI Windows exécute directement le même EXE comme référence indépendante et exige les tests WHP. Une preuve d’exécution ARM64 native nécessite encore une machine adaptée.
 
+Pour un tampon d’entrée non vide et inaccessible en lecture, `WriteFile` renvoie `ERROR_INVALID_USER_BUFFER` (1784), remet à zéro le nombre d’octets écrits et ne produit aucun octet.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->

@@ -95,6 +95,8 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 يحفظ `windows.native_calls` اسم الوحدة/الدالة والمعاملات العددية المعلنة والنتيجة القابلة لـNULL دون اختراع أرقام NT. يختبر `NeverDWindowsProcessTests` ملفات PE فعلية وTLS المترجم وتغيير الاستدعاءات والكومة والتداخل والبيانات التالفة والصلاحيات والميزانيات؛ ويختبر `NeverDProcessPublicTests` واجهتي CLI/C ABI. تشغّل CI Windows ملف EXE نفسه مباشرةً كمرجع مستقل وتفرض اختبارات WHP. وما زال إثبات التنفيذ الأصلي ARM64 يتطلب جهازاً مناسباً.
 
+عندما يكون مخزن الإدخال المؤقت غير فارغ وغير قابل للقراءة، تُرجع `WriteFile` الخطأ `ERROR_INVALID_USER_BUFFER` (1784)، وتصفّر عدد البايتات المكتوبة ولا تُخرج أي بايتات.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->

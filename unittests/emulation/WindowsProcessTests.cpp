@@ -3,7 +3,6 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../TestProcess.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcess.h"
 
@@ -12,15 +11,19 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <optional>
 
 namespace neverd::emulation {
 namespace {
@@ -473,21 +476,32 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
 #if !defined(_WIN32) || !defined(_M_X64)
   GTEST_SKIP() << NativeWindowsOnly;
 #else
+  const auto Program = (Root / NativeFile).string();
+  const auto EC = llvm::sys::fs::copy_file(Path.string(), Program);
+  ASSERT_FALSE(EC) << EC.message();
   for (const char *Mode : {Normal, Returned, Errors, AliasedOutput, TLSMutation,
                            TailExit, NativeExit}) {
     SCOPED_TRACE(Mode);
     const auto Output = (Root / StdoutFile).string();
     const auto Error = (Root / StderrFile).string();
-    auto Command = test::shellQuote(Path.string()) + Space + Mode +
-                   test::redirectStdout(Output) + RedirectError +
-                   test::shellQuote(Error);
-    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)), ExitStatus);
+    const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                        Error};
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status = llvm::sys::ExecuteAndWait(
+        Program, {Program, Mode}, std::nullopt, Redirects, NativeTimeoutSeconds,
+        0, &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
     const auto Out = llvm::MemoryBuffer::getFile(Output);
     ASSERT_TRUE(bool(Out));
-    EXPECT_EQ((*Out)->getBuffer(),
-              std::string(Mode == TailExit ? Empty : Message) + Detached);
     const auto Err = llvm::MemoryBuffer::getFile(Error);
     ASSERT_TRUE(bool(Err));
+    EXPECT_EQ(Status, ExitStatus)
+        << LaunchError << llvm::toHex((*Err)->getBuffer());
+    if (Status != ExitStatus)
+      continue;
+    EXPECT_EQ((*Out)->getBuffer(),
+              std::string(Mode == TailExit ? Empty : Message) + Detached);
     EXPECT_EQ((*Err)->getBuffer(),
               Mode == TailExit
                   ? std::string()
