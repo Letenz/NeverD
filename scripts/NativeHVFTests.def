@@ -46,6 +46,8 @@ NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
 #endif
 #ifdef NEVERD_NATIVE_HVF_REQUIRED_TEST
 NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "DarwinNative.OriginalMemoryAndWriteContractsMatchHostKernel")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
     "Hvf.ConcurrentCallersKeepIndependentGuestRegisters")
 NEVERD_NATIVE_HVF_REQUIRED_TEST(
     "HvfConfiguration.NativeSelectionAndBuildAvailabilityAreExplicit")

@@ -103,7 +103,7 @@ def darwin_inventory(
     prefix = "NEVERD_NATIVE_DARWIN"
     owners, templates = read_inventory(root, filename, prefix, host_architecture)
     cases = re.findall(
-        rf"^{prefix}_CASE\((\w+)\)$",
+        rf"^[ \t]*{prefix}_CASE\(\s*(\w+)\s*\)[ \t]*$",
         (root / "scripts" / filename).read_text(encoding="utf-8"), re.M,
     )
     if not cases or len(set(cases)) != len(cases):

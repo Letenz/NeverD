@@ -669,6 +669,7 @@ public:
   SpecializationResult closeProducerDemands(SpecializationResult Previous);
   SpecializationResult refineRegisterPartition(SpecializationResult Previous,
                                                bool &Changed);
+  void refineFailureGuards();
 
 private:
   bool fail(SpecializationStatus Status, std::string Message) {
@@ -698,7 +699,6 @@ private:
                    const FrameOrigins &Origins, const FrameFacts &Frame,
                    StepResult Flow);
   bool publish();
-  void refineUnsupportedGuards();
   SymRef controlValue(SymState &State, SymRef Root, uint32_t Field);
   SymRef controlPredicate(SymState &State, SymRef Root,
                           const ControlRelation &Relation);
@@ -716,9 +716,10 @@ private:
                           llvm::ArrayRef<std::pair<uint64_t, uint64_t>> Values,
                           std::vector<LowOp> &Ops);
   bool addFrameDispatch(llvm::ArrayRef<int> Entries);
-  std::optional<uint64_t> frameOffset(SymContext &Ctx, SymRef Predicate,
-                                      SymRef Value, SymRef Root,
-                                      bool Required = false);
+  enum class FrameOffsetProof { Optional, Demanded, Required };
+  std::optional<uint64_t>
+  frameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
+              FrameOffsetProof Proof = FrameOffsetProof::Optional);
 
   SpecializationProvider &Provider;
   SpecializationCursor Entry;
@@ -756,7 +757,8 @@ private:
 
 std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
                                                  SymRef Predicate, SymRef Value,
-                                                 SymRef Root, bool Required) {
+                                                 SymRef Root,
+                                                 FrameOffsetProof Proof) {
   if (const auto Offset = affineDisplacement(Ctx, Value, Root))
     return Offset;
   if (!Root || !Value || Ctx.width(Value) != 64)
@@ -805,8 +807,9 @@ std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
     return std::nullopt;
   // Alignment-shaped expressions are useful optional pointer facts. Other
   // root-dependent business arithmetic need not be proved just to preserve
-  // its original operation. A required memory/control offset still queries.
-  if (!Required && !CandidateMask)
+  // its original operation. A demanded projection or required memory/control
+  // offset also queries without an alignment-shaped nomination.
+  if (Proof == FrameOffsetProof::Optional && !CandidateMask)
     return std::nullopt;
   const auto Offset =
       detail::proveFrameOffset(Ctx, Predicate, Value, Root, Options,
@@ -818,7 +821,8 @@ std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
     fail(SpecializationStatus::InvalidInput, "invalid frame-offset proof");
     break;
   case detail::FrameOffsetStatus::BudgetExceeded:
-    if (Required || Ctx.numNodes() > Options.MaxSymbolicNodes)
+    if (Proof == FrameOffsetProof::Required ||
+        Ctx.numNodes() > Options.MaxSymbolicNodes)
       fail(SpecializationStatus::BudgetExceeded,
            "frame-offset proof exceeded its solver or symbolic-node budget");
     break;
@@ -1202,13 +1206,20 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
   // An edge guard may establish an offset that was not unique in its source
   // block. Keep the fact in this projection only: mutating State would leak
   // the guard into sibling edges evaluated from the same source state.
+  std::set<uint64_t> DemandedAffineRegisters;
+  for (uint32_t Field = 0; Field < Options.ControlRegisters.size(); ++Field)
+    if (Options.ControlRegisters[Field].Bytes == 8 &&
+        !producerViews(Successor, Field).empty())
+      DemandedAffineRegisters.insert(Options.ControlRegisters[Field].Offset);
   if (Root)
     for (uint64_t Register : AffineCandidates) {
       if (Out.AffineRegisters.count(Register))
         continue;
-      if (const auto Offset =
-              frameOffset(Ctx, Predicate,
-                          State.read(SymSpace::Register, Register, 8), Root))
+      if (const auto Offset = frameOffset(
+              Ctx, Predicate, State.read(SymSpace::Register, Register, 8), Root,
+              DemandedAffineRegisters.count(Register)
+                  ? FrameOffsetProof::Demanded
+                  : FrameOffsetProof::Optional))
         Out.AffineRegisters.emplace(Register, *Offset);
       if (Failed)
         return false;
@@ -1674,7 +1685,7 @@ bool Specializer::emitTargets(Node &Draft,
       const auto Displacement =
           frameOffset(Ctx, Exec.pathPredicate(),
                       State.read(SymSpace::Register, Base.Offset, Base.Bytes),
-                      FrameRoot, true);
+                      FrameRoot, FrameOffsetProof::Required);
       if (Failed)
         return false;
       if (!Displacement || *Displacement != 0)
@@ -2014,7 +2025,7 @@ bool Specializer::evaluate(int Id) {
       const auto Displacement =
           frameOffset(Ctx, Exec.pathPredicate(),
                       State.read(SymSpace::Register, Base.Offset, Base.Bytes),
-                      FrameRoot, true);
+                      FrameRoot, FrameOffsetProof::Required);
       if (Failed)
         return false;
       if (!Displacement)
@@ -2236,9 +2247,9 @@ bool Specializer::evaluate(int Id) {
       if (FrameRoot &&
           (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE)) {
         const auto Memory = lowMemoryOperands(Original);
-        const auto Displacement =
-            frameOffset(Ctx, Exec.pathPredicate(),
-                        Exec.operandValue(*Memory.Address), FrameRoot, true);
+        const auto Displacement = frameOffset(
+            Ctx, Exec.pathPredicate(), Exec.operandValue(*Memory.Address),
+            FrameRoot, FrameOffsetProof::Required);
         if (Failed)
           return false;
         if (Displacement) {
@@ -2952,7 +2963,9 @@ bool Specializer::publish() {
   return true;
 }
 
-void Specializer::refineUnsupportedGuards() {
+void Specializer::refineFailureGuards() {
+  if (FailureNode < 0 || Refinement.DeferredGuardDemands.empty())
+    return;
   // Refine the nearest undecided guards that can reach this failure,
   // rather than collecting unrelated business conditions elsewhere.
   // Edges already belong to the bounded attempted graph. This reverse
@@ -3175,7 +3188,7 @@ SpecializationResult Specializer::run() {
       Refinement.PrecisionFailure = true;
     if (Result.Status == SpecializationStatus::Unsupported &&
         !Refinement.DeferredGuardDemands.empty() && FailureNode >= 0) {
-      refineUnsupportedGuards();
+      refineFailureGuards();
     }
     Result.Residual = {};
     Result.Origins.clear();
@@ -3239,8 +3252,7 @@ specializeInterpreter(SpecializationProvider &Provider,
                          !Refinement.PendingContextRegisters.empty() ||
                          !Refinement.PendingContextSlots.empty() ||
                          !Refinement.PendingProducerDemands.empty();
-    if (Result.Status == SpecializationStatus::Unsupported &&
-        !Refinement.BudgetExceeded) {
+    const auto ActivateGuardDemands = [&]() {
       for (const auto &[Demand, Carrier] : Refinement.DeferredGuardDemands) {
         const auto &[Offset, Bytes, Bits] = Carrier;
         const auto Add = [&](auto &Pending, const auto &Existing,
@@ -3295,7 +3307,10 @@ specializeInterpreter(SpecializationProvider &Provider,
               Effective, Refinement, Options.ControlRegisters.size(),
               Options.ControlFrameSlots.size()) > Options.MaxControlFields)
         Refinement.BudgetExceeded = true;
-    }
+    };
+    if (Result.Status == SpecializationStatus::Unsupported &&
+        !Refinement.BudgetExceeded)
+      ActivateGuardDemands();
     // An exhaustive finite transfer already supplies a useful abstraction.
     // Expanding all its producers eagerly can consume the field budget on
     // ordinary runtime inputs while another unresolved field needs precision.
@@ -3337,6 +3352,17 @@ specializeInterpreter(SpecializationProvider &Provider,
               Options.ControlFrameSlots.size()) > Options.MaxControlFields)
         Refinement.BudgetExceeded = true;
       HasCandidates |= !Refinement.PendingProducerDemands.empty();
+    }
+    // A widened guard can also lead to an unknown indirect target. First
+    // exhaust the target's immediate and deferred producer refinements; even
+    // selecting guard candidates consumes the shared discovery budget. Only
+    // a fresh attempt may prove that an apparent failure arm is unreachable.
+    if (!HasCandidates && !Refinement.BudgetExceeded &&
+        Result.Status == SpecializationStatus::UnresolvedControl) {
+      Attempt.refineFailureGuards();
+      Result.DiscoveryVisits = Refinement.Visits;
+      if (!Refinement.BudgetExceeded)
+        ActivateGuardDemands();
     }
     if (Refinement.BudgetExceeded ||
         (HasCandidates &&

@@ -242,6 +242,20 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_evidence(darwin_backend="hvf"), 0)
         self.assertEqual(self.test_environment["NEVERD_REQUIRE_HVF"], "1")
 
+    def test_darwin_formatting_cannot_drop_a_required_workload(self):
+        self.add_darwin_requirements("hvf")
+        path = self.root / "scripts/NativeDarwinTests.def"
+        path.write_text(path.read_text().replace(
+            "NEVERD_NATIVE_DARWIN_CASE(Memory)",
+            "  NEVERD_NATIVE_DARWIN_CASE(\n    Memory\n  )  ",
+        ))
+        self.assertEqual(native.darwin_inventory(self.root, "hvf", "arm64")[1],
+                         {"Darwin/Startup/ARM64_hvf", "Darwin/Memory/ARM64_hvf"})
+        memory = self.records[-3]
+        self.changes[memory] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing fixture")
+        self.assertEqual(self.run_evidence(darwin_backend="hvf"), 1)
+        self.assertEqual(self.summary()["required_native_unexecuted"], [memory.name])
+
     def test_native_whp_cli_sets_its_test_policy_without_workflow_environment(self):
         self.assertEqual(self.run_evidence(), 0)
         self.assertEqual(self.test_environment["NEVERD_REQUIRE_NATIVE_WHP"], "1")
@@ -255,7 +269,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 12 * len(platforms))
+                    self.assertEqual(len(required), 13 * len(platforms))
                     self.assertEqual({name.rsplit("/", 1)[1] for name in required},
                                      {f"{platform}_{backend}" for platform in platforms})
                     for platform in platforms:
