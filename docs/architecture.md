@@ -40,8 +40,10 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
-The standalone `neverd-bytecode` tool accepts externally specified instruction
-languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+The `neverd-bytecode` tool and C/Python plugins accept externally specified
+instruction languages through the shared `neverd_bytecode_recover_json_v1` API.
+`lib/pipeline/BytecodeRecovery.cpp` owns request validation and source orchestration;
+`lib/analysis/bytecode` owns encoding and CFG validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
 routes. Image-independent source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.

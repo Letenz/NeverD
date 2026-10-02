@@ -11,6 +11,19 @@ target_compile_definitions(NeverDBytecodeAnalysisTests PRIVATE
 )
 add_dependencies(NeverDBytecodeAnalysisTests neverd-bytecode)
 
+add_neverd_unittest(NeverDBytecodeCAPITests
+  BytecodeCAPITests.cpp
+  LINK_LIBS neverd_shared
+)
+target_compile_definitions(NeverDBytecodeCAPITests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+)
+if(NOT APPLE)
+  target_link_libraries(NeverDBytecodeCAPITests PRIVATE LLVMSupport)
+endif()
+
 add_neverd_unittest(NeverDLowIRUndefinedIndependenceTests
   LowIRUndefinedIndependenceTests.cpp
   BinaryUndefinedIndependenceTests.cpp

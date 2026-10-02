@@ -7,6 +7,11 @@ and uses the existing MedIR, HighC and LLVM-to-C backends. Profiles and input
 containers are supplied separately. There is no built-in dialect, proprietary
 opcode table, container signature or host-service registry.
 
+The command-line tool, public C API and Python SDK use one recovery pipeline
+in `lib/pipeline/BytecodeRecovery.cpp`. The decoder remains the authority for
+encoding and CFG validation; the pipeline owns state lowering and source-route
+selection. Plugins supply their own container reader and rules.
+
 ```sh
 cmake --build build-release --target neverd-bytecode NeverDBytecodeAnalysisTests
 build-release/bin/neverd-bytecode program.bin --profile language.json \
@@ -156,6 +161,12 @@ segmented, partial-width and other unsupported carrier shapes retain their
 existing exact access paths. The shared C emitter option is
 `CEmitterOptions::UseUnalignedPointers`.
 
+Normal fields, arrays and pointer expressions require proven object and type
+information on either native architecture. ARM64 does not inherently require
+memory helper calls. The explicit bytecode state ABI alone does not establish
+original object types or alignment, so this API keeps portable copy helpers by
+default; the optional compiler-specific spelling does not supply that proof.
+
 Every bound callee has the same contract:
 
 ```c
@@ -177,6 +188,76 @@ bound dispatcher with a defined state contract; guest integers are never cast
 automatically to host function pointers. Native callbacks, suspension/resume
 behavior, pointer relocation and original high-level argument recovery remain
 the producer's responsibility.
+
+## C and Python plugin API
+
+Include `neverd/sdk/NeverDCAPI.h` and call:
+
+```c
+const char *report = neverd_bytecode_recover_json_v1(
+    code, code_size, request_json, request_size);
+/* Parse report, including its ok field; null is an allocation failure. */
+neverd_free_string(report);
+```
+
+No loaded native image or session is required. Both input pointers are borrowed
+only for this synchronous call. The JSON length is explicit and does not include
+a terminating NUL. Each input is limited to 64 MiB. The strict request is:
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": {"version": 1, "register_bytes": 8, "byte_order": "little", "encodings": []},
+  "functions": [{"entry": 0, "end": 4, "name": "example"}],
+  "bindings": [],
+  "base": 0,
+  "output": "highc",
+  "optimize": false,
+  "unaligned_pointers": false
+}
+```
+
+Replace the empty `encodings` placeholder with a nonempty profile such as the
+example above. Only `schemaVersion`, `profile` and `functions` are mandatory.
+`output` is `check`, `highc` (default) or `llvmc`; optimization requires `llvmc`.
+Unknown fields and wrong field types fail. Function declarations, bindings and
+whole-request instruction/operation budgets are validated by the same engine
+used by the CLI, including binding declarations supplied in check mode.
+
+Every non-null response is owned, including errors. Success contains
+`schemaVersion: 1`, `ok: true`, `functions`, `blocks`, `decoded_instructions`,
+`decoded_bytes`, `input_bytes`, `scope`, and `source`. Scope is `cfg` for check
+mode, whose source is empty, or `state-c` for source emission. Failure contains
+`ok: false` and `error`, without partial source. Counts cover reachable bytes;
+unvisited input is still unclassified.
+
+Python plugins can use the typed wrapper:
+
+```python
+from neverd_plugin import recover_bytecode
+
+result = recover_bytecode(
+    b"\xb4\x34\x12\xe7", profile,
+    [{"entry": 0, "end": 4, "name": "example"}],
+    output="llvmc", optimize=True,
+)
+print(result.source)
+```
+
+Here `profile` is the complete encoding example above. The wrapper owns and
+releases native responses and raises `NeverDError` for recovery failures. For
+an explicitly loaded library outside the plugin host, pass `api=HostAPI(library)`.
+See the runnable [C plugin](../plugins/bytecode/bytecode_plugin.c) and
+[Python plugin](../pluginsdk/python/examples/external_bytecode.py).
+
+These APIs accept declarative encoding profiles. They do not yet accept a
+stateful instruction-decoder callback, infer indirect targets, recover an
+original source ABI, or implement unknown host services. A profile is a supplied
+semantic specification, not proof that it matches an arbitrary interpreter.
+The current source route retains the CLI's AArch64 state carrier and floating
+conversion policy. Engine-specific policies must be modeled explicitly in the
+supplied operations. Input execution and host-service modeling are separate
+from source recovery; native and Python plugins remain trusted host code.
 
 The C++ entry points are `readBytecodeProfile`, `BytecodeDecoder::create`,
 `BytecodeDecoder::decode`, `BytecodeDecoder::function` and

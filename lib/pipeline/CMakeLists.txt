@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDPipeline
+  BytecodeRecovery.cpp
   Pipeline.cpp
   NativeSourceHints.cpp
   NativeSourcePreservation.cpp
@@ -17,6 +18,8 @@ add_neverd_component_library(NeverDPipeline
 
   LINK_COMPONENTS
   BinaryInterpreterSpecialization
+  BytecodeAnalysis
+  BackendC
   IR
   PassIR
   Decode

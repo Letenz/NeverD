@@ -1443,6 +1443,12 @@ _declare(
 )
 _declare("neverd_synthesize_result_dispose", "void", ["neverd_synthesize_result *"])
 _declare(
+    "neverd_bytecode_recover_json_v1",
+    "const char *",
+    ["const unsigned char *", "size_t", "const char *", "size_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_synthesize_expr_json_v1",
     "const char *",
     ["const char *", "const neverd_synthesize_options *"],

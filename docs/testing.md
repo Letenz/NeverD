@@ -216,6 +216,27 @@ cmake --build build-release --target NeverDBytecodeAnalysisTests
 build-release/bin/NeverDBytecodeAnalysisTests
 ```
 
+`NeverDBytecodeCAPITests` exercises the pure C ABI with explicit buffer lengths,
+unknown rules, truncated code, rejected options and reachable coverage. Both
+C routes, including LLVM optimization, execute independently specified narrow
+writes on an unaligned state with canaries at O0/O2 under undefined-behavior
+traps. `NeverDPluginTests` and `NeverDPythonPluginTests` load the example C and
+Python bytecode plugins and invoke the same public recovery entry point.
+
+```sh
+cmake --build build-release --target NeverDBytecodeCAPITests
+build-release/bin/NeverDBytecodeCAPITests
+PYTHONPATH=pluginsdk/python python3 -m unittest discover -s pluginsdk/python/tests -v
+PYTHONPATH=pluginsdk/python python3 scripts/check_python_plugin_sdk.py
+NEVERD_TEST_LIBNEVERD=/absolute/path/to/libneverd.so PYTHONPATH=pluginsdk/python \
+  python3 -m unittest discover -s pluginsdk/python/tests -p 'test_bytecode*.py' -v
+```
+
+The last command uses the current platform's shared-library filename. Missing
+native libraries skip the integration check explicitly; pure Python ownership
+and request tests still run. Embedded Python plugin tests require
+`NEVERD_ENABLE_PYTHON_PLUGINS=ON`.
+
 `NeverDAArch64DivisionSemanticTests` checks both instruction decoders against
 the architectural results for signed and unsigned division, including zero
 divisors, signed overflow, aliased destinations, W-register zero extension and
