@@ -3619,6 +3619,143 @@ TEST(ObjCSourceBindings,
   }
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftTupleContainerRecipeFixture(Arch Architecture) {
+  auto F = swiftNominalTupleTypeFixture(Architecture);
+  const bool CoreStorage = Architecture == Arch::AArch64;
+  const std::string Outer = CoreStorage ? "_$ss23_ContiguousArrayStorageCMn"
+                                        : "_$s7Combine9PublishedVMn";
+  const std::string Base = CoreStorage
+                               ? "_$ss23_ContiguousArrayStorageCy10Foundation"
+                                 "3URLV_AC4DateVtG"
+                               : "_$s7Combine9PublishedVy10Foundation3URLV_"
+                                 "AD4DateVtG";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.DescriptorSlot, Outer, 0,
+      CoreStorage ? "/usr/lib/swift/libswiftCore.dylib"
+                  : "/System/Library/Frameworks/Combine.framework/Combine",
+      false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.NestedDescriptorSlot, "_$s10Foundation3URLVMn", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.NestedDescriptorSlot + 8, "_$s10Foundation4DateVMn", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 19);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  Type[5] = 'y';
+  Type[11] = '_';
+  Type[12] = 2;
+  llvm::support::endian::write32le(
+      Type + 13, uint32_t(F.NestedDescriptorSlot + 8 - (F.TypeReference + 13)));
+  Type[17] = 't';
+  Type[18] = 'G';
+  Type[19] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftTupleContainerRecipeKeepsAllThreeIdentities) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftTupleContainerRecipeFixture(Architecture);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 3U);
+    EXPECT_EQ(Proof->Descriptors[0].Offset, 0U);
+    EXPECT_EQ(Proof->Descriptors[1].Offset, 6U);
+    EXPECT_EQ(Proof->Descriptors[2].Offset, 12U);
+    EXPECT_EQ(Proof->Descriptors[1].Symbol, "_$s10Foundation3URLVMn");
+    EXPECT_EQ(Proof->Descriptors[2].Symbol, "_$s10Foundation4DateVMn");
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    for (const auto &Descriptor : Proof->Descriptors)
+      EXPECT_NE(Source.find("__asm__(\"" + Descriptor.Symbol + "\")"),
+                std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftTupleContainerRecipeRejectsDifferentTreesAndEdges) {
+  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftTupleContainerRecipeFixture(Arch::AArch64);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    std::string Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_"
+                       "AC4DateVtG";
+    auto *Type = F.Image.Segments[0].Data.data() + F.TypeReference - 0x1000;
+    switch (Mutation) {
+    case 0:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation4DateV_AC3URLVtG";
+      break;
+    case 1:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV3url_"
+             "AC4DateV4datetG";
+      break;
+    case 2:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVSgtG";
+      break;
+    case 3:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVSiGt";
+      break;
+    case 4:
+      Base = "_$ss23_ContiguousArrayStorageCy10Foundation3URLV_AC4DateVtSiG";
+      break;
+    case 5:
+      Type[11] = 'y';
+      break;
+    case 6:
+      Type[17] = 'G';
+      break;
+    case 7:
+      Type[18] = 't';
+      break;
+    case 8:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot + 8].Module =
+          "/tmp/foreign.dylib";
+      break;
+    case 9:
+      F.Image.DyldBindSlots[F.NestedDescriptorSlot + 8].WeakImport = true;
+      break;
+    case 10:
+      llvm::support::endian::write32le(
+          Type + 13, uint32_t(F.NestedDescriptorSlot - (F.TypeReference + 13)));
+      break;
+    case 11:
+      F.Image.ConflictingImportStorageSlots.insert(F.NestedDescriptorSlot + 8);
+      break;
+    case 12:
+      Type[19] = 'G';
+      break;
+    }
+    F.Image.Symbols[0].Name = Base + "MR";
+    F.Image.Symbols[1].Name = Base + "Md";
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
+
 TEST(ObjCSourceBindings,
      SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
   SwiftTypeMetadataFixture F(Arch::AArch64);
