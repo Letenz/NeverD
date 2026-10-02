@@ -59,6 +59,26 @@ CLI オプション `--vm-max-refinements=N` は正の整数を要求し、既�
 
 C では `neverd_devirtualize_source_v3()` または `neverd_devirtualize_machine_source_v3()` を使用します。`neverd_devirtualize_options_v3` をゼロ初期化し、`base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` を設定します。`max_control_fields`、`max_solver_queries`、必要なら `base.max_control_refinements` を指定し、ゼロは従来の既定値を選択します。3 個の reserved フィールドはすべてゼロにします。v1/v2 は reserved を含む v3 末尾を無視し、v3 は将来の拡張末尾を無視します。レポートは実際の処理量と有効な `maxControlFields`、`maxControlRefinements`、`maxSolverQueries` を記録します。
 
+復元では `--vm-chain-transfers=N`（既定値 0）と `--vm-no-control-discovery` も指定できます。連鎖は単一ターゲットが証明された制御転送間で記号的な相関を保持し、上限で通常の CFG 境界に戻ります。マシン状態復元では `--vm-entry-frame=begin:end` で、実行時には検査しない非ラップの入口 RSP オフセット範囲を宣言できます。正確な数値前提は生成 C とレポートに残り、メモリアクセスや等価性の証明を与えません。
+
+互換 v4 API は `neverd_devirtualize_source_v4()` と `neverd_devirtualize_machine_source_v4()` です。`neverd_devirtualize_options_v4` をゼロ初期化し、`base.base.base.struct_size` に構造体全体のサイズを設定します。CLI の連鎖数は非負の 32 ビット十進整数で、ゼロは無効化を意味します。範囲端点は符号付き 64 ビット十進整数で、`begin < end` と `--vm-machine-state` が必要です。制約は調整後ではなく物理的な入口 RSP に適用します。C で範囲フラグを使うにはマシン状態 API が必要で、フラグがなければ両端点はゼロです。不明なフラグと旧予約フィールドの非ゼロ値は拒否します。v1/v2/v3 は v4 拡張全体を無視し、v4 は将来の拡張を無視します。null オプションは従来の既定値を維持します。レポートは `maxChainedTransfers`、`entryFrameBounds` と実際の `discoverControlState` を記録します。全 CLI オプションには `--devirtualize` が必要です。数値前提は実行時検査ではなく、アクセス可能性、初期化、非エイリアスを保証しません。ネイティブ証明ポリシーも有効にしません。
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON レポートには `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements`、`discoveryVisits` が追加され、有効な動作、上限、解析作業量を記録します。フィールドの検出だけでは復元成功を証明しません。
 
 条件によってアドレス依存がバイト部分に狭まる場合、細分化は、その部分を包含する追跡済みの完全な8バイトの直接アドレスフィールドもコンテキスト候補に保持します。元の狭いフィールドと生成元ビットマスクは変更せず、無関係な広いフィールドは昇格しません。定数と入口相対オフセットには引き続き証明が必要で、全コンテキストは既存の上限を共有します。
@@ -66,6 +86,14 @@ JSON レポートには `discoverControlState`、`maxControlRefinements`、`maxD
 任意の不変アドレス列挙は、証明書のない実行可能アドレスが見つかると停止し、元の実行時読み取りを保持します。観測した値と証明書は、完全な領域が証明された後にのみ使用します。キャッシュ命中時も現在の読み取り範囲を再検証し、実際に観測した不正な証明書はエラーになります。
 
 完全な依存関係の証明により、現在の辺の述語が新しい根変数の上位 32 ビットを制約しないと確認できる場合、完全な 64 ビットの `root + constant` 制御値の列挙を省略できます。これは根のアドレスを固定せず、到達可能性も証明しません。狭い生成元マスクの処理と最終的な実行可能性の検査は引き続き行われ、根全体を制約する述語には通常の有限値域の射影を適用します。
+
+有限証明キャッシュが容量に達すると、単独で収まる有効な証明で最も長く使われていない記録を置き換えます。ヒット時は使用順を更新しますが、重複した保存、ミス、拒否された候補では更新しません。追い出された証明は再度確立する必要が生じます。保持するのは完全な値域または値域上限の超過を証明した結果だけで、新たなソルバー呼び出しはすべて共有クエリ予算を消費します。
+
+復元では、マスク付き制御フィールドごとに完全に証明された有限値域も保持します。結合関係が `MaxControlTuples` を超えても、独立した値域でターゲットを制約できますが、フィールド間の相関は仮定しません。合流では共通マスクを適用した値の和集合を取り、欠落または上限超過の値域は全体を破棄します。結合関係が既に拡大されていても、値域が変わればノードを再処理します。部分列挙は事実として使わず、既存のフィールド数、タプル数、シンボリックノード数、ソルバーの上限を維持します。
+
+`MaxChainedTransfers` は明示的に有効化する C++ の上限（既定値 `0`）です。ターゲットまたは真偽値が一意と証明された制御移送を連続して処理し、完全なシンボリック状態、ネイティブ由来情報、累積予算を保持します。複数の結果がある場合は通常の CFG エッジを使います。逆方向の探索は確定済み命令の出現順に再生します。連結によってループの由来が重複し、自動カットポイント推論が制限されることがあります。
+
+`EntryFrameBounds` は `FrameBaseRegister` の入口値を基準に、回り込みのない `[Begin, End)` を明示します。メモリアクセスや非エイリアスの事実は与えません。省略時の根は剰余算術の領域に残ります。ネイティブ証明は呼び出し側のフレーム境界との一致を要求し、証拠に結び付けます。LLVM 証明は同じフレームの既存領域を保持します。復元だけでは等価性証明になりません。
 
 <!-- i18n-section: execution-contract -->
 

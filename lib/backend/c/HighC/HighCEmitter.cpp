@@ -724,7 +724,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 SourceCallTypeHint::Kind::RuntimeClassReferenceAddress ||
             Hint.CallKind ==
                 SourceCallTypeHint::Kind::RuntimeMetaclassReferenceAddress;
-        if (DeclaredC && Hint.ByteCount == 48 &&
+        if (DeclaredC && (Hint.ByteCount == 48 || Hint.ByteCount == 128) &&
             darwinIndirectAffineTransformSignature(Opts.TheArch,
                                                    Hint.TargetName))
           NeedsDarwinAffineTransformBridge = true;
@@ -1494,6 +1494,25 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             !equalSourceABIs(Signature, *AffineSignature))
           throw std::invalid_argument(
               "Invalid indirect CGAffineTransform source declaration");
+        if (AffineName == "CGRectApplyAffineTransform") {
+          const auto Record = typeToC(Signature.ReturnType);
+          OS << "typedef struct { double a, b, c, d, tx, ty; } "
+                "neverd_CGRectApplyAffineTransform_input;\n"
+                "extern "
+             << Record << " neverd_CGRectApplyAffineTransform_original("
+             << Record
+             << ", neverd_CGRectApplyAffineTransform_input) "
+                "__asm__(\"_CGRectApplyAffineTransform\");\n"
+                "static inline "
+             << Record << " " << Identifier << "(" << Record
+             << " rect, const void *transform) {\n"
+                "  neverd_CGRectApplyAffineTransform_input value;\n"
+                "  memcpy(&value, transform, sizeof(value));\n"
+                "  return neverd_CGRectApplyAffineTransform_original(rect, "
+                "value);\n"
+                "}\n";
+          continue;
+        }
         if (AffineName != "CGContextConcatCTM") {
           const auto Record = typeToC(Signature.ReturnType);
           const auto Original = "neverd_" + AffineName.str() + "_original";

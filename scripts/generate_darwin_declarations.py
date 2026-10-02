@@ -149,7 +149,7 @@ def main():
     frameworks = ("CoreGraphics", "ImageIO")
     framework_headers = ("CoreGraphics/CoreGraphics.h",
                          "CoreLocation/CLLocation.h", "ImageIO/ImageIO.h",
-                         "QuartzCore/CABase.h")
+                         "QuartzCore/CABase.h", "QuartzCore/CATransform3D.h")
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-declarations-") as work:
         source = Path(work) / "declarations.m"
         source.write_text(
@@ -180,7 +180,9 @@ def main():
         for name in ("CLLocationCoordinate2DIsValid", "CLLocationCoordinate2DMake"):
             common[name] = extra[name]
     for common, extra in zip(exports, quartz_core):
-        common["CACurrentMediaTime"] = extra["CACurrentMediaTime"]
+        for name in ("CACurrentMediaTime", "CATransform3DMakeTranslation",
+                     "CATransform3DMakeScale", "CATransform3DMakeRotation"):
+            common[name] = extra[name]
     output, count = render(profiles, exports, version,
                            clang.string(clang.clang_getClangVersion()))
     if args.check:

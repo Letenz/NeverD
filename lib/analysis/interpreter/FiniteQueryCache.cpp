@@ -7,6 +7,8 @@
 #include "FiniteQueryCache.h"
 
 #include <algorithm>
+#include <cassert>
+#include <iterator>
 
 namespace neverd::analysis::detail {
 namespace {
@@ -152,7 +154,9 @@ std::optional<uint64_t> resultWords(const SymContext &Ctx,
                                     uint64_t Budget) {
   // Account for entry/result containers as well as numeric tuple words, so
   // empty results and empty projections cannot create unbounded entries.
-  uint64_t Words = 8;
+  // Recency adds two list links, a key pointer, an entry charge, and a list
+  // iterator. Keys themselves remain owned only by the map.
+  uint64_t Words = 13;
   if (Budget < Words)
     return std::nullopt;
   if (Result.Status == FiniteValueStatus::TooManyValues)
@@ -181,8 +185,10 @@ std::optional<FiniteValues> FiniteQueryCache::lookup(
   if (!Key)
     return std::nullopt;
   const auto Found = Entries.find(*Key);
-  return Found == Entries.end() ? std::nullopt
-                                : std::optional<FiniteValues>(Found->second);
+  if (Found == Entries.end())
+    return std::nullopt;
+  Recency.splice(Recency.end(), Recency, Found->second.Recent);
+  return Found->second.Result;
 }
 
 void FiniteQueryCache::store(const symbolic::SymContext &Ctx,
@@ -195,15 +201,28 @@ void FiniteQueryCache::store(const symbolic::SymContext &Ctx,
   auto Key = makeKey(Ctx, Predicate, Values, Limit, MaxWords);
   if (!Key || Entries.contains(*Key))
     return;
-  const uint64_t Available = MaxWords - StoredWords;
-  if (Key->size() > Available)
+  // Validate the complete candidate against the standalone capacity before
+  // evicting any proof. A malformed or oversized result cannot flush useful
+  // entries, and the subtraction keeps the total charge overflow-safe.
+  if (Key->size() > MaxWords)
     return;
   const auto Words =
-      resultWords(Ctx, Values, Limit, Result, Available - Key->size());
+      resultWords(Ctx, Values, Limit, Result, MaxWords - Key->size());
   if (!Words)
     return;
-  StoredWords += Key->size() + *Words;
-  Entries.emplace(std::move(*Key), Result);
+  const uint64_t Total = Key->size() + *Words;
+  while (Total > MaxWords - StoredWords) {
+    assert(!Recency.empty());
+    const auto Oldest = Entries.find(*Recency.front());
+    StoredWords -= Oldest->second.Words;
+    Recency.pop_front();
+    Entries.erase(Oldest);
+  }
+  const auto Added =
+      Entries.emplace(std::move(*Key), Entry{Result, Total, {}}).first;
+  Recency.push_back(&Added->first);
+  Added->second.Recent = std::prev(Recency.end());
+  StoredWords += Total;
 }
 
 } // namespace neverd::analysis::detail

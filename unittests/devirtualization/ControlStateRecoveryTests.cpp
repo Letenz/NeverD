@@ -720,7 +720,167 @@ void expectBudgetRefusal(const SpecializationResult &Result) {
   EXPECT_TRUE(Result.Origins.empty());
   EXPECT_TRUE(Result.Reads.empty());
 }
+// Independent finite fields can exceed the joint tuple bound without either
+// field exceeding its own bound. The business field must remain observable.
+BankProvider makeMarginalDispatchProgram(bool LatePredecessor = false) {
+  BankProvider Provider;
+  const auto Producer = [&](va_t At, va_t TargetBase, va_t Next) {
+    Provider.add(
+        At,
+        {operation(NdOp::INT_AND, r(AddressRegister), {r(InputRegister), c(1)}),
+         operation(NdOp::INT_MULT, r(AddressRegister),
+                   {r(AddressRegister), c(32)}),
+         operation(NdOp::INT_ADD, r(AddressRegister),
+                   {r(AddressRegister), c(TargetBase)}),
+         operation(NdOp::INT_AND, r(ValueRegister), {r(LimitRegister), c(3)}),
+         operation(NdOp::INT_MULT, r(ValueRegister), {r(ValueRegister), c(2)}),
+         operation(NdOp::INT_ADD, r(ValueRegister), {r(ValueRegister), c(1)}),
+         jump(Next)});
+  };
+  if (LatePredecessor) {
+    Provider.add(
+        Entry,
+        {operation(NdOp::INT_AND, r(ConditionRegister),
+                   {r(UnknownPointerRegister), c(1)}),
+         operation(NdOp::COND_BR, {}, {c(Latch), r(ConditionRegister, 1)})},
+        Route);
+    Producer(Route, HandlerBase, Dispatch);
+    Producer(Latch, HandlerBase + 32, Reload);
+    Provider.add(Reload, {jump(Exit)});
+    Provider.add(Exit, {jump(Dispatch)});
+  } else {
+    Producer(Entry, HandlerBase, Dispatch);
+  }
+  Provider.add(Dispatch, {operation(NdOp::INDIR_BR, {}, {r(AddressRegister)})});
+  for (unsigned Lane = 0; Lane < (LatePredecessor ? 3u : 2u); ++Lane)
+    Provider.add(HandlerBase + Lane * 32,
+                 {operation(NdOp::INT_ADD, r(ResultRegister),
+                            {r(ValueRegister), c(17 + 11 * Lane)}),
+                  ret()});
+  return Provider;
+}
+
+SpecializationOptions marginalDispatchOptions() {
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{AddressRegister, 8}, {ValueRegister, 8}};
+  Options.MaxControlTuples = 4;
+  Options.MaxContextsPerAddress = 1;
+  return Options;
+}
+
 } // namespace
+
+TEST(ControlStateRecovery, JointOverflowKeepsCompleteControlMarginals) {
+  auto Provider = makeMarginalDispatchProgram();
+  const auto Result =
+      specializeInterpreter(Provider, {Entry}, marginalDispatchOptions());
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_GT(Result.RelationalWidenings, 0u);
+  for (uint64_t Input : {0ULL, 1ULL, 14ULL, 19ULL, ~0ULL})
+    for (uint64_t Business : {0ULL, 1ULL, 2ULL, 3ULL, 0xabcdefULL, ~0ULL})
+      EXPECT_EQ(run(Result.Residual, Input, Business),
+                2 * (Business & 3) + 1 + 17 + 11 * (Input & 1));
+}
+
+TEST(ControlStateRecovery, ControlMarginalsDoNotHideMissingReachableTarget) {
+  auto Provider = makeMarginalDispatchProgram();
+  Provider.Code.erase(HandlerBase + 32);
+  const auto Result =
+      specializeInterpreter(Provider, {Entry}, marginalDispatchOptions());
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported)
+      << Result.Diagnostic;
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(ControlStateRecovery, ChangedMarginalRevisitsWidenedJoint) {
+  auto Provider = makeMarginalDispatchProgram(true);
+  const auto Result =
+      specializeInterpreter(Provider, {Entry}, marginalDispatchOptions());
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_GT(Result.RelationalWidenings, 0u);
+  for (uint64_t Later : {0ULL, 1ULL})
+    for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+      for (uint64_t Business : {0ULL, 1ULL, 2ULL, 3ULL, ~0ULL})
+        EXPECT_EQ(run(Result.Residual, Input, Business,
+                      {{UnknownPointerRegister, Later}}),
+                  2 * (Business & 3) + 1 + 17 + 11 * ((Input & 1) + Later));
+}
+
+TEST(ControlStateRecovery, LaterMarginalCannotPublishEarlierPartialGraph) {
+  auto Provider = makeMarginalDispatchProgram(true);
+  Provider.Code.erase(HandlerBase + 64);
+  const auto Result =
+      specializeInterpreter(Provider, {Entry}, marginalDispatchOptions());
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported)
+      << Result.Diagnostic;
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(ControlStateRecovery, OverflowingMarginalDropsItsEntireTargetDomain) {
+  auto Provider = makeMarginalDispatchProgram(true);
+  auto Options = marginalDispatchOptions();
+  Options.MaxControlTuples = 2;
+  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+  // Each predecessor has two targets, but their union has three. Retaining
+  // either predecessor's bounded subset would omit a feasible transfer.
+  expectNoPublication(Result);
+}
+
+TEST(ControlStateRecovery, IncompleteMarginalsCannotSupplyTargetWitnesses) {
+  auto Provider = makeMarginalDispatchProgram();
+  auto Options = marginalDispatchOptions();
+  Options.MaxControlTuples = 1;
+  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+  expectNoPublication(Result);
+}
+
+TEST(ControlStateRecovery, AliasingStoreInvalidatesIndependentFrameMarginal) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    for (bool MayAlias : {false, true}) {
+      auto Provider = makeMarginalDispatchProgram();
+      auto ProducerOps = Provider.Code.at(Entry).Ops;
+      ProducerOps.pop_back();
+      ProducerOps.push_back(operation(NdOp::INT_ADD, r(SelectorAddressRegister),
+                                      {r(FrameRegister), c(SelectorSlot)}));
+      ProducerOps.push_back(operation(
+          NdOp::STORE, {}, {r(SelectorAddressRegister), r(AddressRegister)}));
+      ProducerOps.push_back(jump(Route));
+      Provider.Code.erase(Entry);
+      Provider.add(Entry, ProducerOps);
+      llvm::SmallVector<LowOp, 2> RouteOps;
+      if (MayAlias)
+        RouteOps.push_back(
+            operation(NdOp::STORE, {}, {r(UnknownPointerRegister), c(0)}));
+      RouteOps.push_back(jump(Dispatch));
+      Provider.add(Route, RouteOps);
+      Provider.Code.erase(Dispatch);
+      Provider.add(Dispatch,
+                   {operation(NdOp::LOAD, r(AddressRegister),
+                              {r(SelectorAddressRegister)}),
+                    operation(NdOp::INDIR_BR, {}, {r(AddressRegister)})});
+      auto Options = marginalDispatchOptions();
+      Options.ByteOrder = Order;
+      Options.FrameBaseRegister = symbolic::SymRegisterRange{FrameRegister, 8};
+      Options.ControlRegisters = {{ValueRegister, 8}};
+      Options.ControlFrameSlots = {{SelectorSlot, 8}};
+      const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+      if (MayAlias) {
+        expectNoPublication(Result);
+        continue;
+      }
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      EXPECT_GT(Result.RelationalWidenings, 0u);
+      for (uint64_t Input : {0ULL, 1ULL, ~0ULL})
+        for (uint64_t Business : {0ULL, 1ULL, 2ULL, 3ULL, ~0ULL})
+          EXPECT_EQ(run(Result.Residual, Input, Business, {}, Order),
+                    2 * (Business & 3) + 1 + 17 + 11 * (Input & 1));
+    }
+  }
+}
 
 TEST(ControlStateRecovery, SpilledSelectorNeedsBothCurrentProjectionHints) {
   auto Provider = makeBankProgram(false);
@@ -852,6 +1012,26 @@ TEST(ControlStateRecovery, LongTransparentLoopCannotBoundUnknownSelectors) {
     Options.MaxContextsPerAddress = 1;
     expectNoPublication(specializeInterpreter(Provider, {Entry}, Options));
   }
+}
+
+TEST(ControlStateRecovery, ProducerClosureReplaysCommittedTransferChains) {
+  auto Provider = makeLongControlLoop();
+  auto Options = automaticBankOptions();
+  Options.MaxChainedTransfers = 3;
+  Options.MaxContextsPerAddress = 1;
+  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_GT(Result.ControlRefinements, 0U);
+  EXPECT_GT(Result.DiscoveryVisits, 0U);
+  for (uint64_t Input : {0ULL, 1ULL, 17ULL, ~0ULL})
+    for (uint64_t Limit : {1ULL, 5ULL, 13ULL}) {
+      uint64_t Expected = 0;
+      for (uint64_t I = 0; I != Limit; ++I)
+        Expected += (Input ^ 45) + 3 + 11 * ((Input + I) & 3);
+      EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
+    }
+  Options.MaxDiscoveryVisits = 1;
+  expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
 }
 
 TEST(ControlStateRecovery, LongTransparentLoopKeepsRefinementAndWorkBudgets) {

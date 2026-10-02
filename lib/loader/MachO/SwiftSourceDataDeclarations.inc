@@ -7,6 +7,7 @@
 {"$sSSN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSSSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSSSysMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
+{"$sSSs7CVarArg10FoundationMc", "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|/usr/lib/swift/libswiftFoundation.dylib", "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|/usr/lib/swift/libswiftFoundation.dylib"},
 {"$sSbN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSbSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSdN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
@@ -38,4 +39,4 @@
 {"$ss6UInt64VN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$ss6UInt64VSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sypN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
-// clang-format on
+    // clang-format on

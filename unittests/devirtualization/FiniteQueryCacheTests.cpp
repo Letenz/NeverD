@@ -189,18 +189,19 @@ TEST(FiniteQueryCache, KeyAndResultStorageBudgetsOnlyCauseMisses) {
   const auto P = Ctx.mkTrue();
   const auto Seven = Ctx.mkConst(8, 7);
   const auto Result = prove(Ctx, P, {Seven}, 2);
-  for (uint64_t Budget : {0, 15, 27}) {
+  for (uint64_t Budget : {0, 15, 32}) {
     FiniteQueryCache Cache(Budget);
     Cache.store(Ctx, P, {Seven}, 2, Result);
     EXPECT_FALSE(Cache.lookup(Ctx, P, {Seven}, 2));
   }
-  FiniteQueryCache Exact(28);
+  FiniteQueryCache Exact(33);
   Exact.store(Ctx, P, {Seven}, 2, Result);
   expectHit(Exact.lookup(Ctx, P, {Seven}, 2), Result);
   const auto Eight = Ctx.mkConst(8, 8);
-  Exact.store(Ctx, P, {Eight}, 2, prove(Ctx, P, {Eight}, 2));
-  EXPECT_FALSE(Exact.lookup(Ctx, P, {Eight}, 2));
-  expectHit(Exact.lookup(Ctx, P, {Seven}, 2), Result);
+  const auto Other = prove(Ctx, P, {Eight}, 2);
+  Exact.store(Ctx, P, {Eight}, 2, Other);
+  expectHit(Exact.lookup(Ctx, P, {Eight}, 2), Other);
+  EXPECT_FALSE(Exact.lookup(Ctx, P, {Seven}, 2));
 
   const auto X = Ctx.mkVar("bounded", 5);
   const auto Domain = prove(Ctx, P, {X}, 32);
@@ -210,6 +211,107 @@ TEST(FiniteQueryCache, KeyAndResultStorageBudgetsOnlyCauseMisses) {
   Small.store(Ctx, P, {X}, 32, Domain);
   EXPECT_FALSE(Small.lookup(Ctx, P, {X}, 32));
   EXPECT_EQ(Domain.Tuples.size(), 32u);
+}
+
+TEST(FiniteQueryCache, RecentProofsReplaceColdEntriesAtCapacity) {
+  FiniteQueryCache Cache(66);
+  SymContext Ctx;
+  const auto P = Ctx.mkTrue();
+  const auto Seven = Ctx.mkConst(8, 7);
+  const auto Eight = Ctx.mkConst(8, 8);
+  const auto Nine = Ctx.mkConst(8, 9);
+  const auto First = prove(Ctx, P, {Seven}, 2);
+  const auto Second = prove(Ctx, P, {Eight}, 2);
+  const auto Third = prove(Ctx, P, {Nine}, 2);
+  Cache.store(Ctx, P, {Seven}, 2, First);
+  Cache.store(Ctx, P, {Eight}, 2, Second);
+  const FiniteQueryCache &ReadOnly = Cache;
+  expectHit(ReadOnly.lookup(Ctx, P, {Seven}, 2), First);
+  Cache.store(Ctx, P, {Nine}, 2, Third);
+  EXPECT_FALSE(ReadOnly.lookup(Ctx, P, {Eight}, 2));
+  expectHit(ReadOnly.lookup(Ctx, P, {Seven}, 2), First);
+  expectHit(ReadOnly.lookup(Ctx, P, {Nine}, 2), Third);
+  EXPECT_FALSE(ReadOnly.lookup(Ctx, P, {Eight}, 2));
+  Cache.store(Ctx, P, {Eight}, 2, Second);
+  EXPECT_FALSE(ReadOnly.lookup(Ctx, P, {Seven}, 2));
+  expectHit(ReadOnly.lookup(Ctx, P, {Nine}, 2), Third);
+  expectHit(ReadOnly.lookup(Ctx, P, {Eight}, 2), Second);
+}
+
+TEST(FiniteQueryCache, EvictedProofsCannotAliasRenamedReplacementKeys) {
+  FiniteQueryCache Cache(64);
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("source", 8);
+  for (uint64_t Value = 1; Value != 97; ++Value) {
+    const auto P = Ctx.mkEq(X, Ctx.mkConst(8, Value));
+    const auto Result = prove(Ctx, P, {X}, 2);
+    ASSERT_EQ(Result.Status, FiniteValueStatus::Complete);
+    Cache.store(Ctx, P, {X}, 2, Result);
+    if (Value > 1)
+      EXPECT_FALSE(
+          Cache.lookup(Ctx, Ctx.mkEq(X, Ctx.mkConst(8, Value - 1)), {X}, 2));
+    SymContext Renamed;
+    Renamed.mkVar("unrelated", 64);
+    const auto Y = Renamed.mkFreshVar(8);
+    const auto Q = Renamed.mkEq(Y, Renamed.mkConst(8, Value));
+    expectHit(Cache.lookup(Renamed, Q, {Y}, 2), Result);
+    EXPECT_EQ(Result.Tuples, (std::vector<std::vector<uint64_t>>{{Value}}));
+  }
+}
+
+TEST(FiniteQueryCache, IneligibleAdmissionsPreserveRecordsAndRecency) {
+  FiniteQueryCache Cache(66);
+  SymContext Ctx;
+  const auto P = Ctx.mkTrue();
+  const auto Seven = Ctx.mkConst(8, 7);
+  const auto Eight = Ctx.mkConst(8, 8);
+  const auto Nine = Ctx.mkConst(8, 9);
+  Cache.store(Ctx, P, {Seven}, 2, prove(Ctx, P, {Seven}, 2));
+  Cache.store(Ctx, P, {Eight}, 2, prove(Ctx, P, {Eight}, 2));
+  Cache.store(Ctx, P, {Seven}, 2, prove(Ctx, P, {Seven}, 2));
+  const auto X = Ctx.mkVar("wide_domain", 5);
+  const auto Large = prove(Ctx, P, {X}, 32);
+  ASSERT_EQ(Large.Status, FiniteValueStatus::Complete);
+  ASSERT_EQ(Large.Tuples.size(), 32u);
+  Cache.store(Ctx, P, {X}, 32, Large);
+  for (const FiniteValues &Invalid :
+       {FiniteValues{FiniteValueStatus::Unknown, {}},
+        FiniteValues{FiniteValueStatus::QueryBudgetExceeded, {}},
+        FiniteValues{FiniteValueStatus::TooManyValues, {{7}}},
+        FiniteValues{FiniteValueStatus::Complete, {{7, 8}}}}) {
+    Cache.store(Ctx, P, {Nine}, 2, Invalid);
+    Cache.store(Ctx, P, {Seven}, 2, Invalid);
+  }
+  Cache.store(Ctx, {}, {Nine}, 2, prove(Ctx, P, {Nine}, 2));
+  const auto Third = prove(Ctx, P, {Nine}, 2);
+  Cache.store(Ctx, P, {Nine}, 2, Third);
+  EXPECT_FALSE(Cache.lookup(Ctx, P, {Seven}, 2));
+  expectHit(Cache.lookup(Ctx, P, {Eight}, 2), prove(Ctx, P, {Eight}, 2));
+  expectHit(Cache.lookup(Ctx, P, {Nine}, 2), Third);
+}
+
+TEST(FiniteQueryCache, MultipleEvictionsPreserveReturnedProofCopies) {
+  FiniteQueryCache Cache(165);
+  SymContext Ctx;
+  const auto P = Ctx.mkTrue();
+  const SymRef Values[] = {Ctx.mkConst(8, 7), Ctx.mkVar("two_bits", 2),
+                           Ctx.mkVar("one_bit", 1)};
+  for (auto Value : Values)
+    Cache.store(Ctx, P, {Value}, 4, prove(Ctx, P, {Value}, 4));
+  const auto X = Ctx.mkVar("five_bits", 5);
+  const auto Large = prove(Ctx, P, {X}, 32);
+  ASSERT_EQ(Large.Status, FiniteValueStatus::Complete);
+  ASSERT_EQ(Large.Tuples.size(), 32u);
+  Cache.store(Ctx, P, {X}, 32, Large);
+  for (auto Value : Values)
+    EXPECT_FALSE(Cache.lookup(Ctx, P, {Value}, 4));
+  const auto Held = Cache.lookup(Ctx, P, {X}, 32);
+  expectHit(Held, Large);
+  const auto Replacement = prove(Ctx, P, {Values[0]}, 4);
+  Cache.store(Ctx, P, {Values[0]}, 4, Replacement);
+  EXPECT_FALSE(Cache.lookup(Ctx, P, {X}, 32));
+  expectHit(Cache.lookup(Ctx, P, {Values[0]}, 4), Replacement);
+  expectHit(Held, Large);
 }
 
 TEST(FiniteQueryCache, OversizedDagAndInvalidQueriesCannotHit) {

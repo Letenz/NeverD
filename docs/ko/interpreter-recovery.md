@@ -59,6 +59,26 @@ CLI 옵션 `--vm-max-refinements=N`은 양의 정수를 요구하며 기본값�
 
 C 호출자는 `neverd_devirtualize_source_v3()` 또는 `neverd_devirtualize_machine_source_v3()`를 사용합니다. `neverd_devirtualize_options_v3`를 0으로 초기화하고 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`를 설정합니다. `max_control_fields`, `max_solver_queries`, 선택적으로 `base.max_control_refinements`를 설정하며 0은 기존 기본값을 선택합니다. 세 reserved 필드는 모두 0이어야 합니다. v1/v2 진입점은 reserved를 포함한 v3 꼬리를 무시하고 v3는 미래 확장 꼬리를 무시합니다. 보고서는 실제 작업량과 유효한 `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`를 기록합니다.
 
+복원은 `--vm-chain-transfers=N`(기본값 0)과 `--vm-no-control-discovery`도 제공합니다. 연결은 단일 대상이 증명된 제어 전송 사이의 기호 상관관계를 보존하며 한도에 도달하면 일반 CFG 경계로 돌아갑니다. 기계 상태 복원은 `--vm-entry-frame=begin:end`로 실행 시 검사하지 않는 비래핑 진입 RSP 오프셋 범위를 선언할 수 있습니다. 정확한 숫자 전제는 생성 C와 보고서에 남으며 메모리 접근 권한이나 동등성 증명을 제공하지 않습니다.
+
+호환 v4 API는 `neverd_devirtualize_source_v4()`와 `neverd_devirtualize_machine_source_v4()`입니다. `neverd_devirtualize_options_v4`를 0으로 초기화하고 `base.base.base.struct_size`를 전체 크기로 설정합니다. CLI 연결 횟수는 음이 아닌 32비트 십진 정수이며 0은 비활성화입니다. 범위 끝점은 부호 있는 64비트 십진 정수이고 `begin < end` 및 `--vm-machine-state`가 필요하며 조정된 값이 아닌 물리적 진입 RSP를 제한합니다. C의 범위 플래그는 기계 상태 API를 요구하며 플래그가 없으면 두 끝점은 0이어야 합니다. 알 수 없는 플래그와 기존 예약 필드의 0이 아닌 값은 거부합니다. v1/v2/v3은 v4 확장 전체를 무시하고 v4는 미래 확장을 무시합니다. null 옵션은 기존 기본값을 유지합니다. 보고서는 `maxChainedTransfers`, `entryFrameBounds`, 실제 `discoverControlState`를 기록합니다. 모든 CLI 옵션은 `--devirtualize`가 필요합니다. 숫자 전제는 실행 시 검사되지 않으며 접근 가능성, 초기화, 비별칭을 보장하지 않습니다. 네이티브 증명 정책도 활성화하지 않습니다.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements`, `discoveryVisits`가 추가되어 활성화 상태, 제한 및 분석 작업량을 기록합니다. 필드를 찾았다는 사실만으로 복원 성공이 입증되지는 않습니다.
 
 조건에 의해 주소 의존성이 바이트 조각으로 좁아지면, 정밀화는 해당 조각을 포함하는 이미 추적 중인 완전한 8바이트 직접 주소 필드도 문맥 후보로 유지합니다. 기존의 좁은 필드와 생성자 비트 마스크는 그대로 두며, 관련 없는 넓은 필드는 승격하지 않습니다. 상수와 진입점 상대 오프셋은 여전히 증명이 필요하고 모든 문맥은 기존 한도를 공유합니다.
@@ -66,6 +86,14 @@ JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscov
 선택적 불변 주소 열거는 인증서가 없는 실행 가능한 주소를 만나면 중단하고 원래의 런타임 읽기를 유지합니다. 관찰한 값과 인증서는 전체 도메인이 입증된 뒤에만 사용합니다. 캐시 적중 시에도 현재 읽기 범위를 다시 확인하며, 실제로 관찰한 잘못된 인증서는 오류로 처리합니다.
 
 완전한 의존성 증명으로 현재 간선 조건이 새 루트 변수의 상위 32비트를 제약하지 않음을 확인하면, 전체 64비트 `root + constant` 제어 값의 열거를 생략할 수 있습니다. 이는 루트 주소를 고정하거나 도달 가능성을 증명하지 않습니다. 좁은 생성자 마스크와 최종 실행 가능성 검사는 그대로 수행하며, 루트 전체를 제한하는 조건에는 정상적인 유한 값 집합 투영을 적용합니다.
+
+유한 증명 캐시가 용량에 도달하면 단독으로 수용할 수 있는 적격 증명으로 가장 오래 사용하지 않은 기록을 교체합니다. 적중 시 사용 순서를 갱신하지만 중복 저장, 캐시 미스, 거부된 후보는 갱신하지 않습니다. 제거된 증명은 다시 확립해야 할 수 있습니다. 완전한 값 영역이나 값 영역 한도 초과가 증명된 결과만 보관하며, 새로운 솔버 호출은 모두 공유 질의 예산을 사용합니다.
+
+복원은 마스크가 적용된 개별 제어 필드의 완전히 증명된 유한 값 영역도 보존합니다. 결합 관계가 `MaxControlTuples`를 초과해도 독립 영역으로 대상을 제한할 수 있지만 필드 간 상관관계를 가정하지는 않습니다. 합류에서는 공통 마스크를 적용한 값의 합집합을 구하며, 없거나 한도를 초과한 영역은 전체를 버립니다. 결합 관계가 이미 확장되었어도 영역이 바뀌면 노드를 다시 처리합니다. 불완전한 열거는 사실로 사용하지 않으며 기존 필드, 튜플, 심볼릭 노드 및 솔버 한도를 유지합니다.
+
+`MaxChainedTransfers`는 명시적으로 켜는 C++ 한도이며 기본값은 `0`입니다. 대상 또는 불리언 결과가 하나임을 증명한 제어 전이를 연속 처리하며 전체 심볼릭 상태, 네이티브 출처와 누적 예산을 보존합니다. 결과가 여럿이면 일반 CFG 간선을 사용합니다. 역방향 탐색은 확정된 명령 출현 순서대로 재생합니다. 연결로 루프 출처가 중복되어 자동 절단점 추론이 제한될 수 있습니다.
+
+`EntryFrameBounds`는 `FrameBaseRegister` 진입 값 기준으로 주소가 순환하지 않는 `[Begin, End)` 범위를 명시합니다. 메모리 접근이나 비별칭 사실을 부여하지 않습니다. 생략하면 루트는 모듈러 연산 영역을 유지합니다. 네이티브 증명은 호출자 프레임 경계와의 일치를 요구하고 증거에 이를 결합합니다. LLVM 증명은 해당 프레임의 기존 영역을 유지합니다. 복구 자체는 동등성 인증서가 아닙니다.
 
 <!-- i18n-section: execution-contract -->
 

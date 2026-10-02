@@ -27,11 +27,13 @@ constexpr std::array<unsigned, 7> Flags = {x86reg::CF, x86reg::PF, x86reg::AF,
 // All fixtures are independently assembled scalar operations. Forms are
 // accumulator, count/destination alias, high byte, memory, immediate,
 // implicit 1.
-void checkShift(Arch Target, unsigned Width, unsigned Group, unsigned Form) {
+void checkShiftOrRotate(Arch Target, unsigned Width, unsigned Group,
+                        unsigned Form) {
   SCOPED_TRACE(::testing::Message() << unsigned(Target) << '/' << Width << '/'
                                     << Group << '/' << Form);
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Target));
+  const bool Rotate = Group < 2;
   const unsigned Bits = Width * 8;
   const uint64_t Mask = Width == 8 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
   const uint64_t Sign = UINT64_C(1) << (Bits - 1);
@@ -149,8 +151,13 @@ void checkShift(Arch Target, unsigned Width, unsigned Group, unsigned Form) {
         uint64_t Expected = Value;
         unsigned Carry = Old & 1;
         for (unsigned I = 0; I < Count; ++I) {
-          Carry = Group == 4 ? (Expected >= Sign) : (Expected & 1);
-          if (Group == 4)
+          Carry = Group == 0 || Group == 4 || Group == 6 ? (Expected >= Sign)
+                                                         : (Expected & 1);
+          if (Group == 0)
+            Expected = (Expected * 2 + Carry) & Mask;
+          else if (Group == 1)
+            Expected = Expected / 2 + (Carry ? Sign : 0);
+          else if (Group == 4 || Group == 6)
             Expected = (Expected * 2) & Mask;
           else
             Expected = Expected / 2 + (Group == 7 ? Expected & Sign : 0);
@@ -163,21 +170,24 @@ void checkShift(Arch Target, unsigned Width, unsigned Group, unsigned Form) {
           EXPECT_EQ(Get(x86reg::RDX) & Mask, Expected);
         else
           EXPECT_EQ(Get(Reg), Whole);
-        std::array<bool, 7> Undefined = {Group != 7 && Count >= Bits,
+        std::array<bool, 7> Undefined = {!Rotate && Group != 7 && Count >= Bits,
                                          false,
-                                         Count != 0,
+                                         !Rotate && Count != 0,
                                          false,
                                          false,
                                          false,
                                          Count > 1};
         const std::array<unsigned, 7> Defined = {
             Carry,
-            unsigned((std::popcount(uint8_t(Expected)) & 1) == 0),
-            0,
-            unsigned(Expected == 0),
-            unsigned(Expected >= Sign),
+            Rotate ? (Old >> 1) & 1
+                   : unsigned((std::popcount(uint8_t(Expected)) & 1) == 0),
+            Rotate ? (Old >> 2) & 1 : 0,
+            Rotate ? (Old >> 3) & 1 : unsigned(Expected == 0),
+            Rotate ? (Old >> 4) & 1 : unsigned(Expected >= Sign),
             (Old >> 5) & 1,
-            Group == 7   ? 0
+            Group == 1
+                ? unsigned((Expected >= Sign) != bool(Expected & (Sign / 2)))
+            : Group == 7 ? 0
             : Group == 5 ? unsigned(Value >= Sign)
                          : unsigned((Expected >= Sign) != Carry)};
         std::array<unsigned, 7> Active{};
@@ -207,12 +217,30 @@ TEST(X86ShiftUndefinedEffects,
     for (unsigned Width : {1u, 2u, 4u, 8u}) {
       if (Target == Arch::X86 && Width == 8)
         continue;
-      for (unsigned Group : {4u, 5u, 7u})
+      for (unsigned Group : {4u, 5u, 6u, 7u})
         for (unsigned Form = 0; Form < 10; ++Form) {
           if (((Form == 2 || Form >= 7) && Width != 1) ||
               (Form == 6 && Target == Arch::X86))
             continue;
-          checkShift(Target, Width, Group, Form);
+          checkShiftOrRotate(Target, Width, Group, Form);
+          if (testing::Test::HasFatalFailure())
+            return;
+        }
+    }
+}
+
+TEST(X86RotateUndefinedEffects,
+     DefinedResultsAndMaskedCountPredicatesMatchArithmeticOracle) {
+  for (Arch Target : {Arch::X86, Arch::X64})
+    for (unsigned Width : {1u, 2u, 4u, 8u}) {
+      if (Target == Arch::X86 && Width == 8)
+        continue;
+      for (unsigned Group : {0u, 1u})
+        for (unsigned Form = 0; Form < 10; ++Form) {
+          if (((Form == 2 || Form >= 7) && Width != 1) ||
+              (Form == 6 && Target == Arch::X86))
+            continue;
+          checkShiftOrRotate(Target, Width, Group, Form);
           if (testing::Test::HasFatalFailure())
             return;
         }

@@ -1677,7 +1677,8 @@ bool validReceiverRoot(const BinaryImage &Image,
 }
 
 const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
-                             uint64_t Key, bool BySlot) {
+                             uint64_t Key, bool BySlot,
+                             bool RequireObject = true) {
   const ObjCIvar *Result = nullptr;
   std::set<std::string> Visited;
   size_t Remaining = 4096;
@@ -1710,7 +1711,8 @@ const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
       if (!Match)
         continue;
       if (Result || !Ivar.MetadataAddress || !Ivar.OffsetAddress ||
-          Ivar.Size != 8 || (!BySlot && Ivar.Offset != Key) ||
+          !Ivar.Size || (RequireObject && Ivar.Size != 8) ||
+          (!BySlot && Ivar.Offset != Key) ||
           (!Ivar.Offset && Class->IvarStatus != "runtime") ||
           (Ivar.Offset &&
            (*Ivar.Offset < Class->InstanceStart ||
@@ -1723,7 +1725,7 @@ const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
           (Ref->second.Size != 4 && Ref->second.Size != 8) ||
           Ref->second.Name != Ivar.Name ||
           Ref->second.ClassName != Class->Name ||
-          (!objcEncodedObjectClass(Ivar.TypeEncoding) &&
+          (RequireObject && !objcEncodedObjectClass(Ivar.TypeEncoding) &&
            !objcEncodedObjectProtocol(Ivar.TypeEncoding)))
         return nullptr;
       Result = &Ivar;
@@ -1879,6 +1881,26 @@ objcReceiverInstanceClassName(const BinaryImage &Image,
   if (!Type || Type->IsClassMethod || Type->IsProtocol)
     return std::nullopt;
   return Type->ClassName;
+}
+
+std::optional<uint32_t>
+objcReceiverIvarStorageSize(const BinaryImage &Image,
+                            const ObjCReceiverTypeHint &Receiver,
+                            va_t OffsetSlot, unsigned OffsetWidth) {
+  const auto Type = receiverType(Image, Receiver);
+  if (!Type || Type->IsClassMethod || Type->IsProtocol)
+    return std::nullopt;
+  const auto *Ivar = receiverIvar(Image, Type->ClassName, OffsetSlot, true,
+                                  /*RequireObject=*/false);
+  if (!Ivar || !Ivar->Offset || *Ivar->Offset > INT32_MAX ||
+      Image.ObjCSourceReferences.at(OffsetSlot).Size != OffsetWidth)
+    return std::nullopt;
+  size_t End = 0;
+  const auto Storage = parseObjCSourceType(Ivar->TypeEncoding, End);
+  if (!Storage || End != Ivar->TypeEncoding.size() ||
+      Storage->Size != Ivar->Size)
+    return std::nullopt;
+  return Ivar->Size;
 }
 
 std::optional<ObjCReceiverTypeHint>

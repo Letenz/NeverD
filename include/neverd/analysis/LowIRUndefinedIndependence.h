@@ -76,6 +76,12 @@ struct LowIRIndependenceContract {
   std::vector<LowIRIndependenceFrameRange> PreservedFrameRanges;
   bool ObserveWrittenFrameBytes = true;
   llvm::endianness ByteOrder = llvm::endianness::little;
+  /// Native finite proofs only. Retain strictly lifted instructions with
+  /// Missing effect coverage as explicit refusal boundaries. Success requires
+  /// proving them unreachable; reaching one never executes its LowIR. Static
+  /// LowIR and loop proof/inference APIs reject this option. In selected-value
+  /// refinement, unreachability is relative to the declared witness.
+  bool RetainUnauditedNativeBoundaries = false;
 };
 
 struct LowIRIndependenceLimits {
@@ -145,6 +151,22 @@ struct LowIRNativeProfileProjection {
   InterpreterProfileProjection Kind = InterpreterProfileProjection::None;
 };
 
+enum class LowIRNativeAuditBoundaryKind : uint8_t {
+  MissingUndefinedOutputs = 1,
+};
+
+/// A retained refusal boundary, never an assertion of instruction semantics.
+/// The enclosing native certificate also retains the exact original bytes and
+/// operations. No claim is made about uncollected bytes after this boundary.
+struct LowIRNativeAuditBoundary {
+  LowIRNativeAuditBoundaryKind Kind =
+      LowIRNativeAuditBoundaryKind::MissingUndefinedOutputs;
+  uint32_t SemanticsVersion = 1;
+  LowInstructionBoundary Boundary;
+  std::string NativeBytesDigest;
+  std::string OperationDigest;
+};
+
 struct LowIRIndependenceCertificate {
   LowIRIndependenceScope Scope = LowIRIndependenceScope::CompleteAcyclicLowIR;
   /// SHA256 of the checked operations, CFG, boundaries, sidecars, contract and
@@ -158,6 +180,7 @@ struct LowIRIndependenceCertificate {
   LowIRIndependenceLimits Limits;
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
+  std::vector<LowIRNativeAuditBoundary> NativeAuditBoundaries;
 };
 
 struct LowIRIndependenceResult {

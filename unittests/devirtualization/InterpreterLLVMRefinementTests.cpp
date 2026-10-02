@@ -10,6 +10,66 @@ static std::string constantResult() {
   return module("store i64 7, ptr %state, align 8\nret i64 0");
 }
 
+TEST(InterpreterLLVMRefinement,
+     ExplicitFrameBoundsMatchAndBindTheNativeContract) {
+  Program P({0xb8, 7, 0, 0, 0, 0xeb, 0, 0xc3});
+  P.Options.MaxChainedTransfers = 3;
+  const auto Original = P.recover();
+  ASSERT_TRUE(Original.complete()) << Original.Diagnostic;
+  const auto Legacy = P.check(Original.Residual, constantResult());
+  ASSERT_TRUE(Legacy.proved()) << Legacy.Diagnostic;
+  P.Options.EntryFrameBounds =
+      SpecializationEntryFrameBounds{P.Frame.Begin, P.Frame.End};
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto A = P.check(R.Residual, constantResult());
+  ASSERT_TRUE(A.proved()) << A.Diagnostic;
+  EXPECT_NE(A.Native.Certificate->InputDigest,
+            Legacy.Native.Certificate->InputDigest);
+  const auto Wrong = P.check(
+      R.Residual, module("store i64 9, ptr %state, align 8\nret i64 0"));
+  rejected(Wrong, Stage::LLVM);
+  EXPECT_TRUE(Wrong.Native.proved());
+  EXPECT_EQ(Wrong.LLVM.Status, Status::Different);
+  P.Options.EntryFrameBounds->Begin = -80;
+  const auto Mismatch = P.check(R.Residual, constantResult());
+  rejected(Mismatch, Stage::Native);
+  EXPECT_EQ(Mismatch.Native.Proof.Status, Status::Invalid);
+  P.Frame.Begin = -80;
+  const auto B = P.check(R.Residual, constantResult());
+  ASSERT_TRUE(B.proved()) << B.Diagnostic;
+  EXPECT_NE(A.Native.Certificate->InputDigest,
+            B.Native.Certificate->InputDigest);
+  EXPECT_NE(A.Certificate->InputDigest, B.Certificate->InputDigest);
+}
+
+TEST(InterpreterLLVMRefinement, TransferChainsProveRepeatedNativeCalls) {
+  Program P({0xb8, 1, 0, 0, 0, 0xe8, 6,    0,    0, 0,
+             0xe8, 1, 0, 0, 0, 0xc3, 0x8d, 0x40, 3, 0xc3});
+  P.Options.EntryFrameBounds =
+      SpecializationEntryFrameBounds{P.Frame.Begin, P.Frame.End};
+  const auto IR = module(R"(
+    store i64 7, ptr %state, align 8
+    %spword = getelementptr i8, ptr %state, i64 32
+    %sp = load i64, ptr %spword, align 8
+    %slot = add i64 %sp, -8
+    %address = inttoptr i64 %slot to ptr
+    store i64 4111, ptr %address, align 1
+    ret i64 0
+  )");
+  for (uint32_t Bound : {0, 1, 16}) {
+    P.Options.MaxChainedTransfers = Bound;
+    const auto R = P.recover();
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    const auto Proof = P.check(R.Residual, IR);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    const auto MissingStackWrite = P.check(R.Residual, constantResult());
+    rejected(MissingStackWrite, Stage::LLVM);
+    EXPECT_TRUE(MissingStackWrite.Native.proved());
+    EXPECT_EQ(MissingStackWrite.LLVM.Status, Status::Different);
+  }
+}
+
 TEST(InterpreterLLVMRefinement, CompleteProofBindsMandatoryObservations) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3}); // mov eax,7; ret.
   const auto R = P.recover();

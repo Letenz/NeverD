@@ -58,9 +58,38 @@ SUBSTRING_SEQUENCE = (CONFORMANCE_IR
                                'witness_SubstringSequence')
                       .replace('neverd_string_protocol_probe',
                                'neverd_sequence_probe'))
+CVARARG = (CONFORMANCE_IR
+           .replace('$sSSSysMc', '$sSSs7CVarArg10FoundationMc')
+           .replace('$sS2SSysWl', '$sS2Ss7CVarArg10FoundationWl')
+           .replace('$sS2SSysWL', '$sS2Ss7CVarArg10FoundationWL')
+           .replace('witness_StringProtocol', 'witness_StringCVarArg')
+           .replace('neverd_string_protocol_probe', 'neverd_cvararg_probe'))
 
 
 class SwiftDataDeclarationTests(unittest.TestCase):
+    def test_cvararg_conformance_requires_complete_compiler_data_evidence(self):
+        descriptor = '$sSSs7CVarArg10FoundationMc'
+        self.assertEqual(conformance_storage(
+            CVARARG, ['witness_StringCVarArg'], {NAME}, 'CVarArg'),
+            {descriptor})
+        for invalid in [
+            CVARARG.replace('external global %swift.protocol_conformance_descriptor',
+                            'external thread_local global %swift.protocol_conformance_descriptor'),
+            CVARARG.replace('ptr nonnull @"' + descriptor + '"', 'ptr %descriptor'),
+            CVARARG.replace('ptr nonnull @"$sSSN"', 'ptr nonnull @"$sSiN"'),
+            CVARARG.replace('ptr %1) #3', 'ptr %different) #3'),
+            CVARARG.replace(' release, align 8', ' monotonic, align 8'),
+            CVARARG.replace('ptr undef)', 'ptr null)'),
+            '@"' + descriptor + '" = external global '
+            '%swift.protocol_conformance_descriptor, align 4\n' + CVARARG,
+        ]:
+            with self.subTest(invalid=invalid):
+                self.assertEqual(conformance_storage(
+                    invalid, ['witness_StringCVarArg'], {NAME}, 'CVarArg'), set())
+        with self.assertRaises(ValueError):
+            conformance_storage(CVARARG, ['witness_StringCVarArg'], {NAME},
+                                'StringProtocol')
+
     def test_metadata_only_types_do_not_invent_hashable_witnesses(self):
         self.assertIn('Any', METADATA_TYPES)
         self.assertNotIn('Any', HASHABLE_TYPES)

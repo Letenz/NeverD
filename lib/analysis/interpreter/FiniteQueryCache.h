@@ -10,6 +10,7 @@
 
 #include "FiniteValues.h"
 
+#include <list>
 #include <map>
 
 namespace neverd::analysis::detail {
@@ -20,11 +21,18 @@ namespace neverd::analysis::detail {
 /// symbolic reference, partial model, or solver resource failure is retained.
 ///
 /// MaxWords bounds both one key construction and the total retained keys and
-/// results, including structural overhead. Full caches keep existing entries;
-/// an unsupported or oversized query simply misses and is not recorded.
+/// results, including structural and recency overhead. A valid result that
+/// fits alone may evict least recently used proofs. Unsupported, malformed,
+/// or oversized candidates neither evict nor refresh existing entries.
 class FiniteQueryCache {
 public:
   explicit FiniteQueryCache(uint64_t MaxWords) : MaxWords(MaxWords) {}
+
+  // Recency nodes refer to this cache's stable map keys and vice versa.
+  FiniteQueryCache(const FiniteQueryCache &) = delete;
+  FiniteQueryCache &operator=(const FiniteQueryCache &) = delete;
+  FiniteQueryCache(FiniteQueryCache &&) = delete;
+  FiniteQueryCache &operator=(FiniteQueryCache &&) = delete;
 
   std::optional<FiniteValues> lookup(const symbolic::SymContext &Ctx,
                                      symbolic::SymRef Predicate,
@@ -39,9 +47,16 @@ public:
 
 private:
   using Key = std::vector<uint64_t>;
+  using RecencyList = std::list<const Key *>;
+  struct Entry {
+    FiniteValues Result;
+    uint64_t Words;
+    RecencyList::iterator Recent;
+  };
   uint64_t MaxWords;
   uint64_t StoredWords = 0;
-  std::map<Key, FiniteValues> Entries;
+  std::map<Key, Entry> Entries;
+  mutable RecencyList Recency;
 };
 
 } // namespace neverd::analysis::detail

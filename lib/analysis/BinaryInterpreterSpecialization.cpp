@@ -451,6 +451,11 @@ binaryExecutionDigest(const BinaryImage &Image,
   Number(Options.ExplicitMachineState);
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
+  Number(Options.EntryFrameBounds.has_value());
+  if (Options.EntryFrameBounds) {
+    Number(static_cast<uint64_t>(Options.EntryFrameBounds->Begin));
+    Number(static_cast<uint64_t>(Options.EntryFrameBounds->End));
+  }
   Number(Options.X64FlagsProfile.has_value());
   if (Options.X64FlagsProfile)
     Number(static_cast<unsigned>(*Options.X64FlagsProfile));
@@ -552,6 +557,12 @@ prepareBinaryRelation(const BinaryImage &Image,
     return Fail(
         Status::Invalid,
         "binary proof requires an accessible entry RSP frame and return slot");
+  if (Options.EntryFrameBounds &&
+      (Options.EntryFrameBounds->Begin >= Options.EntryFrameBounds->End ||
+       Options.EntryFrameBounds->Begin != Contract.Frame->Begin ||
+       Options.EntryFrameBounds->End != Contract.Frame->End))
+    return Fail(Status::Invalid,
+                "recovery entry frame bounds do not match the proof contract");
   if (Contract.X64FlagsProfile != Options.X64FlagsProfile ||
       Contract.ByteOrder != Options.ByteOrder ||
       Contract.EntryConstants.size() != Options.EntryConstants.size())
@@ -620,7 +631,7 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-control-independence-v7",
+        Image, Options, "neverd-original-native-control-independence-v9",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
@@ -639,6 +650,12 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
     LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
     const LowIRLoopRefinementPlan *LoopPlan) {
   BinaryLowIRRefinementResult Result;
+  if (LoopPlan && Contract.RetainUnauditedNativeBoundaries) {
+    Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Proof.Diagnostic =
+        "unaudited boundaries are unsupported by native loop proofs";
+    return Result;
+  }
   if (!Options.X64FlagsProfile) {
     Result.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Proof.Diagnostic =
@@ -672,7 +689,7 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
   if (Result.Proof.proved()) {
     BinaryLowIRRefinementCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-lowir-refinement-v2",
+        Image, Options, "neverd-original-native-lowir-refinement-v4",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
@@ -721,6 +738,11 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
             : LowIRRefinementStatus::Unsupported;
     Result.Refinement.Proof.Diagnostic = Result.Inference.Diagnostic;
   };
+  if (Contract.RetainUnauditedNativeBoundaries) {
+    Refuse(LowIRLoopInferenceStatus::Unsupported,
+           "unaudited boundaries are unsupported by native loop inference");
+    return Result;
+  }
   if (!Recovery.complete()) {
     Refuse(LowIRLoopInferenceStatus::Invalid,
            "automatic loop refinement requires complete recovery");

@@ -87,3 +87,14 @@ NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK_DBG", "driver_wdm_remove_lock.c", "WDM",
 NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("WDM_SEH", "driver_wdm_seh.c", "WDM", "0", "seh")
 NEVERD_WDK_FIXTURE("WDM_STACK", "driver_wdm_stack.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_LOCK", "driver_kmdf_locks.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("WDM_OWNED_IRP", "driver_wdm_owned_irp.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_WAIT_WAKE", "driver_wdm_wait_wake.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_USB_IDLE", "driver_wdm_usb_idle.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_USB_IDLE", "driver_kmdf_usb_idle.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_POFX", "driver_kmdf_pofx.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_CHILD_WAKE", "driver_kmdf_child_wake.c", "KMDF", "0",
+                   "")
+NEVERD_WDK_FIXTURE("WDM_POFX", "driver_wdm_pofx.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_USER_MAPPING", "driver_wdm_user_mapping.c", "WDM", "0",
+                   "async")

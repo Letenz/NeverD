@@ -14,12 +14,18 @@ std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
 /// Canonical arm64 carrier signature for the supported CoreGraphics affine
-/// bridges. The input transform is an indirect pointer; an affine result
-/// retains its complete record and hidden result storage. This describes the
-/// bridge ABI, without authenticating a symbol or provider.
+/// bridges and QuartzCore CATransform3DScale. The input transform is an
+/// indirect pointer; transform results retain their complete hidden result
+/// storage, while CGRect input/results use four floating registers. This
+/// describes the bridge ABI, without authenticating a symbol or provider.
 std::optional<SourceFunctionTypeHint>
 darwinIndirectAffineTransformSignature(Arch Architecture,
                                        const std::string &Name);
+
+/// Complete indirect input extent for the canonical bridge above. Returns
+/// zero for unsupported names or architectures; result size is independent.
+uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
+                                                 const std::string &Name);
 
 /// A linked compiler-rt builtin with a stable public C contract. Unlike an
 /// imported runtime call, TargetAddress is the exact local function entry.

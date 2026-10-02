@@ -712,6 +712,224 @@ TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
 }
 
 TEST_F(DevirtualizationSourceTest,
+       CLITransferChainAndEntryBoundsAffectRecovery) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery contract checks require clang";
+  const auto Binary = tmpFile("generic-recovery-contract.elf");
+  const auto Compiled = buildFixture(Binary, "generic_recovery_contract.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Bounds : {false, true})
+    for (bool Machine : {false, true}) {
+      if (Bounds && !Machine)
+        continue;
+      for (bool LLVM : {false, true})
+        for (bool Enabled : {false, true}) {
+          SCOPED_TRACE(Bounds);
+          SCOPED_TRACE(Machine);
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(Enabled);
+          const std::string Name =
+              Bounds ? "generic_recovery_bounds" : "generic_recovery_chain";
+          const auto Stem = std::to_string(Bounds) + std::to_string(Machine) +
+                            std::to_string(LLVM) + std::to_string(Enabled);
+          const auto Source = tmpFile(Stem + ".c");
+          const auto Report = tmpFile(Stem + ".json");
+          std::vector<std::string> Args{"decompile",
+                                        Binary.string(),
+                                        "--func",
+                                        Name,
+                                        "--devirtualize",
+                                        "--vm-no-control-discovery",
+                                        std::string("--vm-chain-transfers=") +
+                                            ((Bounds || Enabled) ? "4" : "0"),
+                                        "--recovery-report=" + Report.string(),
+                                        "-o",
+                                        Source.string()};
+          if (Bounds && Enabled)
+            Args.push_back("--vm-entry-frame=-96:8");
+          if (Machine)
+            Args.push_back("--vm-machine-state");
+          if (LLVM)
+            Args.push_back("--llvm");
+          const auto Recovered = exec(ndBin(), Args);
+          EXPECT_EQ(Recovered.ok(), Enabled) << Recovered.err;
+          EXPECT_EQ(fs::exists(Source), Enabled);
+          auto Parsed = llvm::json::parse(readSource(Report));
+          ASSERT_TRUE(static_cast<bool>(Parsed))
+              << llvm::toString(Parsed.takeError());
+          const auto *Object = Parsed->getAsObject();
+          ASSERT_NE(Object, nullptr);
+          EXPECT_EQ(Object->getBoolean("complete"), Enabled);
+          EXPECT_EQ(Object->getInteger("maxChainedTransfers"),
+                    (Bounds || Enabled) ? 4 : 0);
+          EXPECT_EQ(Object->getBoolean("discoverControlState"), false);
+          if (!Enabled)
+            continue;
+          const auto Text = readSource(Source);
+          if (Bounds) {
+            const auto *Range = Object->getObject("entryFrameBounds");
+            ASSERT_NE(Range, nullptr);
+            EXPECT_EQ(Range->getInteger("begin"), -96);
+            EXPECT_EQ(Range->getInteger("end"), 8);
+            EXPECT_NE(Text.find("[-96,8)"), std::string::npos);
+            EXPECT_NE(Text.find("not checked at runtime"), std::string::npos);
+          }
+          const auto Harness = tmpFile(Stem + "-run.c");
+          std::ofstream OS(Harness);
+          OS << Text << R"C(
+#include <stdint.h>
+int main(void) {
+  const uint64_t roots[] = {96, 159, 160, UINT64_C(1) << 63, UINT64_MAX - 7};
+  const uint64_t inputs[] = {0, 1, UINT64_MAX - 16, UINT64_MAX};
+  for (unsigned r = 0; r != 5; ++r)
+    for (unsigned i = 0; i != 4; ++i) {
+      uint64_t x = inputs[i];
+)C";
+          if (Machine)
+            OS << "      uint64_t state[17] = {0};\n"
+                  "      state[4] = roots[r]; state[7] = x; state[16] = 2;\n"
+                  "      if ("
+               << Name
+               << "((uint8_t *)state) != 0 ||\n"
+                  "          state[0] != x + 17 || state[4] != roots[r]) "
+                  "return 1;\n";
+          else
+            OS << "      if ((uint64_t)" << Name
+               << "(x) != x + 17) return 1;\n";
+          OS << "    }\n  return 0;\n}\n";
+          OS.close();
+          std::ofstream(tmpFile("immintrin.h")).close();
+          for (const char *Optimization : {"-O0", "-O2"}) {
+            const auto Program =
+                tmpFile(Stem + "-run" + neverd::test::executableSuffix());
+            const auto Built = exec(
+                NEVERD_TEST_CLANG,
+                {"-std=c11", Optimization, "-Werror=return-type",
+                 "-Werror=implicit-function-declaration",
+                 "-fsanitize=undefined", "-fsanitize-trap=undefined", "-I",
+                 tmp().string(), Harness.string(), "-o", Program.string()});
+            ASSERT_TRUE(Built.ok()) << Built.err;
+            const auto Ran = exec(Program.string(), {});
+            EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+          }
+        }
+    }
+}
+
+TEST_F(DevirtualizationSourceTest, CLIDiscoveryCanBeExplicitlyDisabled) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public discovery option checks require clang";
+  const auto Binary = tmpFile("generic-discovery-switch.elf");
+  const auto Compiled = buildFixture(Binary, "generic_control_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Machine : {false, true})
+    for (bool LLVM : {false, true})
+      for (bool Discovery : {false, true}) {
+        const auto Stem = std::to_string(Machine) + std::to_string(LLVM) +
+                          std::to_string(Discovery);
+        const auto Source = tmpFile(Stem + ".c");
+        const auto Report = tmpFile(Stem + ".json");
+        std::vector<std::string> Args{"decompile",
+                                      Binary.string(),
+                                      "--func",
+                                      "generic_control_state",
+                                      "--devirtualize",
+                                      "--recovery-report=" + Report.string(),
+                                      "-o",
+                                      Source.string()};
+        if (!Discovery)
+          Args.push_back("--vm-no-control-discovery");
+        if (Machine)
+          Args.push_back("--vm-machine-state");
+        if (LLVM)
+          Args.push_back("--llvm");
+        const auto Recovered = exec(ndBin(), Args);
+        EXPECT_EQ(Recovered.ok(), Discovery) << Recovered.err;
+        EXPECT_EQ(fs::exists(Source), Discovery);
+        auto Parsed = llvm::json::parse(readSource(Report));
+        ASSERT_TRUE(static_cast<bool>(Parsed));
+        const auto *Object = Parsed->getAsObject();
+        ASSERT_NE(Object, nullptr);
+        EXPECT_EQ(Object->getBoolean("complete"), Discovery);
+        EXPECT_EQ(Object->getBoolean("discoverControlState"), Discovery);
+        if (!Discovery) {
+          EXPECT_EQ(Object->getString("status"), "unresolved-control");
+          EXPECT_EQ(Object->getInteger("discoveryVisits"), 0);
+        }
+      }
+}
+
+TEST_F(DevirtualizationSourceTest, CLIRejectsMalformedEntryAndChainOptions) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery option parsing requires clang";
+  const auto Binary = tmpFile("generic-contract-options.elf");
+  const auto Compiled = buildFixture(Binary);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  const auto Source = tmpFile("invalid-contract-options.c");
+  const auto Reject = [&](const std::vector<std::string> &Options) {
+    std::vector<std::string> Args{"decompile", Binary.string(),
+                                  "--func",    "generic_vm_register_arithmetic",
+                                  "-o",        Source.string()};
+    Args.insert(Args.end(), Options.begin(), Options.end());
+    const auto Result = exec(ndBin(), Args);
+    EXPECT_FALSE(Result.ok());
+    EXPECT_FALSE(fs::exists(Source));
+  };
+  for (const char *Value : {"", "-1", "4294967296", "1junk", "+1", "0x10"})
+    Reject({"--devirtualize", std::string("--vm-chain-transfers=") + Value});
+  for (const char *Value :
+       {"", "-16", "-16:", ":8", "8:8", "8:7", "+1:8", "0x10:32", "1:8:9",
+        "-9223372036854775809:8", "-16:9223372036854775808"})
+    Reject({"--devirtualize", "--vm-machine-state",
+            std::string("--vm-entry-frame=") + Value});
+  for (const char *Option :
+       {"--vm-chain-transfers=0", "--vm-entry-frame=-16:8",
+        "--vm-no-control-discovery", "--vm-no-control-discovery=false"})
+    Reject({Option});
+  Reject({"--devirtualize", "--vm-entry-frame=-16:8"});
+}
+
+TEST_F(DevirtualizationSourceTest,
+       CLIKeepsSignedMinBoundsAndLargestChainCount) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery option limits require clang";
+  const auto Binary = tmpFile("generic-contract-extrema.elf");
+  const auto Compiled = buildFixture(Binary, "generic_recovery_contract.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool LLVM : {false, true}) {
+    const auto Source = tmpFile(LLVM ? "extrema-llvm.c" : "extrema-high.c");
+    const auto Report =
+        tmpFile(LLVM ? "extrema-llvm.json" : "extrema-high.json");
+    std::vector<std::string> Args{"decompile",
+                                  Binary.string(),
+                                  "--func",
+                                  "generic_recovery_bounds",
+                                  "--devirtualize",
+                                  "--vm-machine-state",
+                                  "--vm-no-control-discovery",
+                                  "--vm-chain-transfers=4294967295",
+                                  "--vm-entry-frame=-9223372036854775808:8",
+                                  "--recovery-report=" + Report.string(),
+                                  "-o",
+                                  Source.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    const auto Result = exec(ndBin(), Args);
+    ASSERT_TRUE(Result.ok()) << Result.err;
+    auto Parsed = llvm::json::parse(readSource(Report));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const auto *Object = Parsed->getAsObject();
+    ASSERT_NE(Object, nullptr);
+    EXPECT_EQ(Object->getInteger("maxChainedTransfers"), UINT32_MAX);
+    const auto *Bounds = Object->getObject("entryFrameBounds");
+    ASSERT_NE(Bounds, nullptr);
+    EXPECT_EQ(Bounds->getInteger("begin"), INT64_MIN);
+    EXPECT_NE(readSource(Source).find("[-9223372036854775808,8)"),
+              std::string::npos);
+  }
+}
+
+TEST_F(DevirtualizationSourceTest,
        CLIDiscoversSpilledControlWithoutManualHints) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "automatic control-state recovery requires clang";

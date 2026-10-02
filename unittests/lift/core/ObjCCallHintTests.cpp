@@ -8098,6 +8098,18 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
       {"UIAccessibilityTraitButton", "UIKit"},
       {"UIEdgeInsetsZero", "UIKit"},
       {"UIViewNoIntrinsicMetric", "UIKit"},
+      {"NSBackgroundColorAttributeName", "UIKit"},
+      {"NSBaselineOffsetAttributeName", "UIKit"},
+      {"NSFontAttributeName", "UIKit"},
+      {"NSForegroundColorAttributeName", "UIKit"},
+      {"NSKernAttributeName", "UIKit"},
+      {"NSLigatureAttributeName", "UIKit"},
+      {"NSLinkAttributeName", "UIKit"},
+      {"NSParagraphStyleAttributeName", "UIKit"},
+      {"NSStrikethroughStyleAttributeName", "UIKit"},
+      {"NSStrokeColorAttributeName", "UIKit"},
+      {"NSStrokeWidthAttributeName", "UIKit"},
+      {"NSUnderlineStyleAttributeName", "UIKit"},
       {"kCIContextPriorityRequestLow", "CoreImage"},
       {"kCIContextUseSoftwareRenderer", "CoreImage"}};
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
@@ -8111,7 +8123,8 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
       const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
       // These supplemental declarations cover ARM64 device and simulator.
       if ((Framework == "CoreImage" ||
-           Name == "UIApplicationDidEnterBackgroundNotification") &&
+           Name == "UIApplicationDidEnterBackgroundNotification" ||
+           Name.ends_with("AttributeName")) &&
           Architecture == Arch::X64) {
         EXPECT_FALSE(Binding);
         continue;
@@ -8267,6 +8280,88 @@ TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
       }
     }
   }
+}
+
+TEST(ObjCCallHints, SwiftFoundationCVarArgDescriptorKeepsExternalIdentity) {
+  const std::string Import = "_$sSSs7CVarArg10FoundationMc";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Provider :
+         {"/usr/lib/swift/libswiftFoundation.dylib",
+          "/System/Library/Frameworks/Foundation.framework/Foundation",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider, false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Provider;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front());
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+
+      HighFunc Function;
+      Function.Name = "string_cvararg_conformance";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("[] __asm__(\"" + Import + "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+      for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+        auto Changed = Image;
+        auto &Bind = Changed.DyldBindSlots[0x2180];
+        switch (Mutation) {
+        case 0:
+          Bind.Module += ".impostor";
+          break;
+        case 1:
+          Bind.Module = "/usr/lib/swift/libswiftCore.dylib";
+          break;
+        case 2:
+          Bind.WeakImport = true;
+          break;
+        case 3:
+          Bind.Addend = 8;
+          break;
+        case 4:
+          Changed.DyldBindSlots.clear();
+          break;
+        case 5:
+          Changed.ImportPtrSlots[0x2180] = "_different";
+          break;
+        case 6:
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 7:
+          Changed.IsRelocatable = true;
+          break;
+        case 8:
+          Bind.Module.clear();
+          break;
+        case 9:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] = Import + "suffix";
+          break;
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Provider << " " << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+            << Provider << " " << Mutation;
+      }
+    }
 }
 
 TEST(ObjCCallHints, SwiftMetadataAccessorsAndUnknownNominalsAreNotData) {
@@ -9608,6 +9703,68 @@ TEST(ObjCCallHints, ReceiverFieldsPreserveExactObjectTypesAcrossNestedLoads) {
         EXPECT_TRUE(
             sdk::objcSourceCallBound(*receiverCallExpression(Hint), Image, {}));
       }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverIvarStorageRevalidatesBoundsAndEncoding) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+      SCOPED_TRACE(::testing::Message()
+                   << int(Architecture) << ':' << Mutation);
+      auto Image = receiverFieldImage(Architecture);
+      const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Root);
+      const unsigned Width = Architecture == Arch::AArch64 ? 4 : 8;
+      auto &Class = Image.ObjCClasses.front();
+      auto &Ivar = Class.Ivars.front();
+      auto &Ref = Image.ObjCSourceReferences.at(0x2300);
+      Ivar.TypeEncoding = "Q";
+      EXPECT_EQ(objcReceiverIvarStorageSize(Image, *Root, 0x2300, Width), 8U);
+      if (Mutation == 0)
+        Ref.Address += 1;
+      else if (Mutation == 1)
+        Ref.ClassName = "Other";
+      else if (Mutation == 2)
+        Ref.Name = "_next";
+      else if (Mutation == 3)
+        Ref.Size = 2;
+      else if (Mutation == 4)
+        Ref.TheKind = ObjCSourceReference::Kind::Class;
+      else if (Mutation == 5)
+        Ivar.MetadataAddress = 0;
+      else if (Mutation == 6)
+        Ivar.Size = 4;
+      else if (Mutation == 7)
+        Class.InstanceSize = 12;
+      else if (Mutation == 8)
+        Class.IvarStatus = "unresolved";
+      else if (Mutation == 9)
+        Class.Ivars.push_back(Ivar);
+      else if (Mutation == 10)
+        Image.ObjCClasses.push_back(Class);
+      else if (Mutation == 11)
+        Ivar.Offset.reset();
+      else if (Mutation == 12)
+        Ivar.TypeEncoding = "?";
+      else if (Mutation == 13)
+        Ivar.TypeEncoding = "Qjunk";
+      else if (Mutation == 14)
+        Ivar.Offset = 4;
+      else if (Mutation == 15) {
+        Class.InstanceSize = UINT32_MAX;
+        Ivar.Offset = UINT32_C(0x80000000);
+      } else if (Mutation == 16) {
+        Class.RootClass = false;
+        Class.InheritanceStatus = "resolved";
+        Class.SuperclassName = Class.Name;
+      } else if (Mutation == 17)
+        Image.ObjCMethods.clear();
+      else if (Mutation == 18)
+        Ref.Size = Width == 4 ? 8 : 4;
+      else
+        Ivar.OffsetAddress += 4;
+      EXPECT_FALSE(objcReceiverIvarStorageSize(Image, *Root, 0x2300, Width));
     }
   }
 }

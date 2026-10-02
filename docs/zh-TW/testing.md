@@ -53,6 +53,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 恢復 API 測試涵蓋 v1/v2/v3 預設值、明確預算、截斷結構、各層 reserved 欄位與未來尾部相容性。CLI 測試在兩種 ABI、兩個原始碼後端下檢查欄位／查詢預算耗盡及成功恢復，拒絕非法十進位上限，並要求 `--devirtualize`。預算耗盡不得發布原始碼或部分殘餘圖。
 
+v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保留舊介面/未來擴充行為，並驗證未要求報告時 C 中仍保留有號範圍。獨立 CLI 用例分別要求串接以保留關聯、要求範圍以證明無號堆疊比較；兩個 C 後端皆在 O0/O2 下執行並啟用未定義行為陷阱。關閉探索必須改變依賴探索的恢復結果。解析測試涵蓋零串接、整數極值、溢位、錯誤範圍與缺少前提。Python 檢查配置、旗標、簽章與具有所有權的失敗報告。
+
 `NeverDLowIRRefinementTests` 涵蓋實際恢復的殘餘圖、不同結構的有限迴圈、零次迭代、獨立動態產生者、條件見證、重疊輸入視圖、複製與溢出關聯、兩邊不可變讀取證據、強制系統旗標及返回槽保留。錯誤候選、額外寫入、不完整或無限路徑、過期證據、暫存區衝突與共享預算耗盡必須拒絕證書；既有獨立性測試仍拒絕可觀察的任意值。
 
 同一目標中的 `LowIRLoopRefinement.*` 和 `BinaryLowIRLoopRefinement.*` 涵蓋任意 64 位元計數、巢狀字典序排名、真實原生殘餘程式碼、入口前綴範本、重疊視圖及相關溢出。負例拒絕錯誤迴圈本體、縮小入口域、不下降的排名、無號回繞、遺忘先前寫入、遺漏切點、畸形範本和共用預算耗盡。成功的有限分支不能授權不完整的歸納證明。
@@ -103,11 +105,17 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDLowIRUndefinedIndependenceTests` 檢查完整無環 LowIR 圖的兩次執行獨立性。兩側共用一般入口輸入；每次新產生的架構未定義值在複製、重疊寫入、溢出儲存與重新載入中保持來源關聯。控制述詞先於路徑假設接受檢查。憑證要求 `Complete` 效果中繼資料，並精確綁定每條指令的完整邊界與操作摘要。缺少證據、可達迴圈、呼叫、未知別名或預算耗盡都會拒絕憑證。結論受明確觀察項與無故障堆疊框架契約限制，並非原生程式碼到 C 的完整等價證明。
 
-`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，驗證實體原生 CALL/RET、改寫的返回目標、有限間接目標全集和不可變載入。同一測試目標也檢查直接分支完整收集、精確位元組／效果／映射／讀取見證綁定、外層返回時入口 RSP 及返回位址槽保持，以及堆疊框架與映像分離前提的可滿足性。缺失或重疊指令、不符合精確陷阱和明確環境投影規則的未審計分支、不終止或超出預算的迴圈、不完整目標列舉、執行設定／契約不符和預算耗盡均須拒絕，且不產生憑證或殘餘程式碼。成功要求每條可行原生路徑完整結束。此選用閘門不認證迴圈不變量、例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。該目標也檢查嚴格提升的 `INT3`/`UD2` 終止邊界及其完整位元組、操作摘要綁定。未定義輸出附屬中繼資料的 `Missing` 必須保持不變；僅經符號執行證明不可達的陷阱可進入憑證，任意可行陷阱路徑都須傳回 `ContractViolation`，且無憑證、無殘餘程式碼。不建模陷阱後的循序執行或例外恢復，不使用 `codeFollowsTrap`，靜態 LowIR API 的支援範圍保持不變。
+以下行為採用預設的嚴格審計契約。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，驗證實體原生 CALL/RET、改寫的返回目標、有限間接目標全集和不可變載入。同一測試目標也檢查直接分支完整收集、精確位元組／效果／映射／讀取見證綁定、外層返回時入口 RSP 及返回位址槽保持，以及堆疊框架與映像分離前提的可滿足性。缺失或重疊指令、不符合精確陷阱和明確環境投影規則的未審計分支、不終止或超出預算的迴圈、不完整目標列舉、執行設定／契約不符和預算耗盡均須拒絕，且不產生憑證或殘餘程式碼。成功要求每條可行原生路徑完整結束。此選用閘門不認證迴圈不變量、例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。該目標也檢查嚴格提升的 `INT3`/`UD2` 終止邊界及其完整位元組、操作摘要綁定。未定義輸出附屬中繼資料的 `Missing` 必須保持不變；僅經符號執行證明不可達的陷阱可進入憑證，任意可行陷阱路徑都須傳回 `ContractViolation`，且無憑證、無殘餘程式碼。不建模陷阱後的循序執行或例外恢復，不使用 `codeFollowsTrap`，靜態 LowIR API 的支援範圍保持不變。
+
+拒絕邊界的明確啟用測試涵蓋不可達的 RCL、記憶體 XADD 和 REP MOVS、符號路徑矛盾、任意值控制的分支，以及入口、間接跳躍、CALL 和 RET 抵達時的精確拒絕。測試也檢查可達後綴的獨立入口、候選與原生位址重合、格式錯誤或不完整的證據、資源耗盡、靜態/迴圈介面拒絕，以及精化證明的三層摘要繫結。修改不可達指令，或在無保留邊界時切換選項，都會改變證書摘要。這些測試驗證宣告的有限證明範圍，不證明未審計指令的語義。
 
 封裝旗標測試涵蓋全部純量入口旗標組合、特權遮罩、兩次執行的 TF/AC 條件、不同未定義產生點、相關副本、原生呼叫、兄弟路徑狀態、強制最終系統狀態觀察、畸形證據及資源計費。有限迴圈必須結束每條可行輸入路徑；安全分支不能掩蓋無限或截斷路徑。RDSSPD/RDSSPQ 檢查涵蓋 16 個通用暫存器和兩種寬度、高位元保持、保留 `Missing` 證據及偽造投影拒絕。機器狀態測試在兩個 C 後端的 O0/O2 下啟用未定義行為陷阱，與獨立使用者模式旗標預言機比較，並檢查環境失敗狀態不會被後續操作清除。 INCSSPD/INCSSPQ 測試涵蓋兩種寬度和全部通用暫存器、不可達邊界保留、安全兄弟路徑完成後的可行陷阱、零運算元及偽造陷阱證據。
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
+
+`X86RotateUndefinedEffects.*` 以純量算術基準涵蓋全部原始計數、運算元寬度、CL 重疊、高位元組別名及記憶體目的運算元。`X86BitTestUndefinedEffects.*` 涵蓋暫存器/立即數索引、來源與目的重疊、擴充暫存器、已定義旗標及暫存器高位寫入。中繼資料反例拒絕遭修改的運算元、編碼及不支援的形式。原生證明區分同一任意位的關聯讀取與不同任意位，檢查恰好及不足的產生者預算，並拒絕可觀察的未定義溢位。完整狀態細化檢查接受選定見證，拒絕零位見證或遭竄改的候選。
+
+`X86XaddAudit.*` 透過無號算術基準檢查全部 65,536 對位元組輸入、較寬位元寬度的旗標邊界、暫存器/高位元組重疊、兩次寫回、REX 位元組寬度限制及完整暫存器保留。原生檢查要求不產生新的任意位元，同時保留先前的相依性；兩種見證皆接受未修改的 XADD，竄改總和、交換來源值或已定義旗標則遭拒。`/6` 別名使用完整移位計數矩陣，並透過修改群組編號/解碼 ID 的反例拒絕語義錯配。
 
 `NeverDPEFixedImageTests` 使用獨立建構的 PE 檔案，檢查含重定位的指令與不可變資料、匯入寫入範圍、畸形標頭／表格、別名及來源資訊竄改。原生到 LowIR 與精確 LLVM 證明接受相符候選，拒絕結果、狀態或原始位元組遭修改的候選。準備預算耗盡維持獨立分類，允許明確提高限額後重試；一般載入也接受含 40000 筆有效重定位記錄、超過預設分析預算的檔案。
 
@@ -122,6 +130,12 @@ build-release/bin/NeverDLowIRRefinementTests
 有限值觀察者測試涵蓋提前拒絕、常數、空投影及最後一次 UNSAT 查詢。不可變讀取回歸確保遇到反例後保留執行期載入，對不同讀取範圍重新驗證快取位址域，並在憑證畸形時拒絕發布任何部分證據。
 
 仿射控制測試涵蓋八次求解預算下的低位元條件、兩種位元組順序中的暫存器與框架槽載體、模數回繞、框架位元組觀測及堆疊還原。非字面常數形式的矛盾條件必須剪除不支援的分支；低 32 位元相同而高位元不同的兩個根值必須保留各自的間接跳躍目標。
+
+`FiniteQueryCache.*` 檢查恰好足夠與少一個儲存單位的邊界、命中更新使用順序、一次淘汰多個不同大小記錄、反覆淘汰和變數重新命名後的查詢。重複存入、未命中、格式錯誤的結果及過大候選均不改變使用順序。快取項目淘汰後，已傳回的證明副本仍然有效。
+
+`ControlStateRecovery.*Marginal*` 涵蓋目標與業務欄位的獨立值域乘積超過聯合上限、殘餘程式的具體輸出、聯合關係放寬後由較晚前驅引入新目標、缺少可達目標，以及超限或列舉不完整時捨棄整個值域。這些原創案例驗證值域變更會重新排程分析，且失敗不會發布部分圖。 框架槽位變體驗證聯合關係放寬後，兩種位元組順序下的別名失效處理。
+
+`InterpreterTransferChain.*` 檢查相關值、唯一及動態分支、延遲前驅、框架邊界、別名拒絕與預算。新增原生 CALL/RET 測試檢查重複指令、返回槽位元組及堆疊恢復。生產者重播及原生到 LLVM 控制涵蓋契約不符、憑據變更、錯誤結果與缺少的堆疊寫入。
 
 `NeverDX86NoIndexAddressTests` 檢查 32／64 位元位址寬度下無索引的 x86 SIB 定址：忽略縮放位元、目的暫存器寬度、載入／儲存、完整未定義輸出中繼資料、區段偏移與位址來源。測試拒絕將虛擬暫存器用作基底或寬度錯誤的索引，並保留 REX.X 選取的真實 R12 索引。EVEX 廣播及遮罩移動測試也涵蓋這些形式、非作用中記憶體存取抑制與不一致的 SIB 中繼資料。
 
@@ -204,7 +218,7 @@ V9 schema 測試往返驗證八種次要功能名稱，並與生命週期完成�
 
 `DriverDMAScenarioTests.cpp` 驗證明確能力、邏輯域、位元組／數量／時間上限、嚴格方向與分離的設定／觀測。`KernelPhysicalMemoryTests.cpp` 與 `BackendBackingTests.cpp` 檢查共用頁面的配置邊界、固定參考、CPU 權限不變、MMIO／重入排除及整段失敗原子性；`KernelRequestMDLTests.cpp` 檢查唯讀 PFN 與已建立描述元別名是否使用同一實體身分。`KernelDMATests.cpp`、`KernelDMABridgeTests.cpp` 與 `SchedulerDMATests.cpp` 涵蓋真正 RAM 位元組、adapter 繫結表呼叫、直接／排隊 FIFO 所有權、獨立回呼／映射壽命、頁面片段、錯誤方向、釋放預檢、獨立 PDO 域及世代／電源失敗。原創真正 WDK 樣本 `driver_wdm_dma.c` 使用 `NEVERD_WDM_DMA_FIXTURE`／`NEVERD_WDM_DMA_CFG_FIXTURE`；`DriverWDMDMATests.cpp` 與 C API／CLI 測試執行真正 adapter 指標、common／SG 儲存及分開設定的 DMA／中斷事件。共用 [driver-dma-scenario.json](../examples/driver-dma-scenario.json) 要求該樣本協定。缺少產物時明確跳過；執行證據僅限 Linux，不代表真正主機 DMA、PCI 或一般裝置引擎支援。 `pluginsdk/python/tests/test_driver_dma_integration.py` 透過既有擁有回傳 JSON 的繫結，使用 `NEVERD_TEST_LIBNEVERD`／`NEVERD_TEST_WDM_DMA_FIXTURE`／`NEVERD_TEST_WDM_DMA_CFG_FIXTURE` 驗證資料位元組、回呼順序與失敗觀測。
 
-`KernelSEHTests.cpp` 驗證不修改狀態的展開計畫、範圍順序、非揮發性通用暫存器還原、有界堆疊及明確不支援的中繼資料；`KernelExceptionTests.cpp` 驗證精確的 API 參數數目、低 32 位元狀態、具型別例外、IRQL 限制與模型/CPU 狀態不變。以真正 WDK 和 `/GS-` 建置的 `driver_wdm_seh.c` 使用選用的 `NEVERD_WDM_SEH_FIXTURE`／`NEVERD_WDM_SEH_CFG_FIXTURE`；`DriverWDMSEHTests.cpp` 執行一般、啟用 CFG 及重定位映像，涵蓋直接與輔助函式引發例外、巢狀處理常式、處理常式再次引發例外、未處理例外，以及明確拒絕篩選函式/finally/CPU 故障復原。C API/CLI 執行 [driver-seh-scenario.json](../examples/driver-seh-scenario.json)，驗證 API 結果為 null 且真正客體處理常式輸出訊息。`pluginsdk/python/tests/test_driver_seh_integration.py` 使用 `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_SEH_FIXTURE` 及 `NEVERD_TEST_WDM_SEH_CFG_FIXTURE`。外部映像缺少時明確跳過；證據仍限 Linux，不能據此宣稱使用者緩衝區或一般 SEH 支援。
+`KernelSEHTests.cpp` 驗證不修改狀態的展開計畫、範圍順序、非揮發性通用暫存器還原、有界堆疊及明確不支援的中繼資料；`KernelExceptionTests.cpp` 驗證精確的 API 參數數目、低 32 位元狀態、具型別例外、IRQL 限制與模型/CPU 狀態不變。以真正 WDK 和 `/GS-` 建置的 `driver_wdm_seh.c` 使用選用的 `NEVERD_WDM_SEH_FIXTURE`／`NEVERD_WDM_SEH_CFG_FIXTURE`；`DriverWDMSEHTests.cpp` 執行一般、啟用 CFG 及重定位映像，涵蓋直接與輔助函式引發例外、巢狀處理常式、處理常式再次引發例外、真正的篩選函式、展開 finally、搜尋順序、穩定例外記錄、支援的 CPU 故障續接及完整 CPU 狀態還原；巢狀篩選函式與衝突 finally 使用關聯邏輯堆疊，其他 CPU 故障仍明確拒絕。C API/CLI 執行 [driver-seh-scenario.json](../examples/driver-seh-scenario.json)，驗證 API 結果為 null 且真正客體處理常式輸出訊息。`pluginsdk/python/tests/test_driver_seh_integration.py` 使用 `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_SEH_FIXTURE` 及 `NEVERD_TEST_WDM_SEH_CFG_FIXTURE`。外部映像缺少時明確跳過；證據仍限 Linux，不能據此宣稱使用者緩衝區或一般 SEH 支援。
 
 `KernelDMAChannelTests.cpp`、`KernelDMAChannelBridgeTests.cpp` 與共用 `SchedulerDMATests.cpp` 檢查混合配置 FIFO、回傳寬度、純准入／釋放預檢、register 重用、連續頁面片段、整次操作 flush、CurrentIrp 快照及封包／MDL／裝置壽命。原創真正 WDK 樣本 `driver_wdm_dma_channel.c` 使用選用路徑 `NEVERD_WDM_DMA_CHANNEL_FIXTURE`／`NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE`；`DriverWDMDMAChannelTests.cpp` 執行 normal／active-CFG／重定位驅動程式，涵蓋真正 MapTransfer／FlushAdapterBuffers、共用 common／SG／channel 配額、明確裝置交易、IRQ／DPC 完成、連續操作、兩個 PDO 及失敗案例。C API／CLI 執行七筆要求的 [driver-dma-channel-scenario.json](../examples/driver-dma-channel-scenario.json)，包含一次跨越兩個映射片段的交易。`pluginsdk/python/tests/test_driver_dma_channel_integration.py` 以 `NEVERD_TEST_LIBNEVERD`、`NEVERD_TEST_WDM_DMA_CHANNEL_FIXTURE`、`NEVERD_TEST_WDM_DMA_CHANNEL_CFG_FIXTURE` 使用相同公開 JSON 介面。缺少產物時明確跳過；Linux 證據不代表系統 DMA 控制器或任意 HAL 映射／flush 模式的支援。
 
@@ -900,7 +914,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 ## x64 原生同步例外
 
-checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 supervisor IDT/IST 接收例外，WHP 使用明確的例外攔截位圖；原始上下文與可用錯誤碼和傳輸錯誤分開保留。OS 模型先消費可恢復事件，再安裝明確的繼續執行上下文。Windows 驅動將零除與商溢位映射為 `STATUS_INTEGER_DIVIDE_BY_ZERO`，執行實際 SEH filter、`__finally` 與重試。`NeverDX64ExceptionTests` 可停用 Unicorn 建置，`DriverWDMCPUException` 驗證原始 WDK 用例；缺少 WHP/ARM64 主機時明確跳過。
+checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 supervisor IDT/IST 接收例外，WHP 使用明確的例外攔截位圖；原始上下文與可用錯誤碼和傳輸錯誤分開保留。OS 模型先消費可恢復事件，再安裝明確的繼續執行上下文。Windows 驅動將零除與商溢位映射為 `STATUS_INTEGER_DIVIDE_BY_ZERO`，執行實際 SEH filter、`__finally` 與重試。`NeverDX64ExceptionTests` 可停用 Unicorn 建置，`DriverWDMCPUException` 驗證原始 WDK 用例；缺少 ARM64 主機時明確跳過。
 
 ## 分階段提交 RAM 效果
 
@@ -910,7 +924,9 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
 
-`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。原生 ARM64/WHP 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+`driver-strict` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 273 項必測檢查：45 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`66dc8db6`](https://github.com/NeverSight/NeverD/actions/runs/36958215402)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+
+上述原生驗證涵蓋已宣告的驅動程式進入點及已發佈情境。下文的逐功能回歸以及 C API／CLI／Python 檢查，除非明確記錄 Windows 執行結果，其證據範圍仍限於 Linux；原生樣例集通過不代表每一種測試變體均已在 Windows 驗證。
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查詢所選後端的能力設定。`NativeLegacyX64` 描述原生 x64 驅動程式執行；`NeverDNativeDriverTests` 驗證原有驅動程式集，也可在停用 Unicorn 的組建中執行。
 
@@ -933,7 +949,7 @@ Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 3
 
 ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。
 
-x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。這些自檢僅證明有界初始化；WHP 和 ARM64 原生工作負載仍缺少獨立驗證。
+x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。這些自檢僅證明有界初始化；ARM64 原生工作負載仍缺少獨立驗證。
 
 共用 XSAVE 解碼器區分標準格式與壓縮格式的 SSE 初始狀態。XSTATE_BV[1] 清零時，兩種格式都初始化 XMM 暫存器；標準格式仍讀取並驗證 MXCSR，壓縮格式才初始化 MXCSR。`X64XsaveCases.def` 提供獨立的資料配置和原創主機 XRSTOR 程式。`X64XsaveTests.cpp` 檢查拒絕狀態的原子性，並以真實主機執行對照兩種格式，同時保留呼叫端 FP/SSE 狀態。主機架構或所需指令功能不可用時，對照測試明確略過。
 
@@ -945,7 +961,7 @@ x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.de
 
 `NativeGuestRAMDistinguishesEntryFromCaptureLoss` 比對客體實際執行 FXSAVE64 寫入 RAM 的完整 FP/SSE 狀態與主機 XSAVE 讀回。兩種 API 都測試直接安裝與客體內 FXRSTOR64，分別使用預設指標儲存特性及明確選擇的主機支援設定，以區分進入、客體執行和擷取邊界。測試不修補傳回值；不一致仍然失敗。 邊界矩陣亦涵蓋未遮罩的待處理 x87 例外，並記錄主機行程直接執行 FXRSTOR64/FXSAVE64 的參考結果和處理器廠商，以區分條件式指標儲存語義與 WHP 狀態傳輸行為。
 
-共用的 `encodeX64XsaveState` / `decodeX64XsaveState` 編解碼層擁有標準及壓縮 FP/SSE 封包、實體 TOP 輪轉、缺失元件的初始狀態和原子驗證。WHP 使用完整 XSAVE API，優先選擇 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，舊 XSAVE API 作為相容路徑。個別的舊 x87 暫存器介面不能取代完整封包。非初始擴充元件、格式錯誤的標頭、非法控制位元和截斷擷取明確失敗。WHP 映射錯誤保留 HRESULT、GPA 和大小供診斷；仍需 Windows 原生驗證。
+共用的 `encodeX64XsaveState` / `decodeX64XsaveState` 編解碼層擁有標準及壓縮 FP/SSE 封包、實體 TOP 輪轉、缺失元件的初始狀態和原子驗證。WHP 使用完整 XSAVE API，優先選擇 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，舊 XSAVE API 作為相容路徑。個別的舊 x87 暫存器介面不能取代完整封包。非初始擴充元件、格式錯誤的標頭、非法控制位元和截斷擷取明確失敗。WHP 映射錯誤保留 HRESULT、GPA 和大小供診斷。
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
 
@@ -969,9 +985,15 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇十個測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
 
-在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 28 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
+在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 76 個工作負載產生 152 個 WHP 結果：26 個內建映像、28 個 WDK 映像及 22 個要求情境，均涵蓋原始與重定位位址。加上 45 項 CPU 檢查，共有 197 項原生必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 45 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 273 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `45 CPU + 224 WHP + 4 SEH = 273`.
+
+C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
+
+目標展開同樣使用原始範圍末端：若處理常式目標仍在某個 `finally` 的保護區間內，便不會離開該範圍。`FinallyRespectsRawScopeEndAtHandlerTarget` 檢查邊界兩側，並在 Windows x64 上直接對照 `ntdll.dll!__C_specific_handler`。NeverD 不修補編譯器產生的區間。Clang 20/21 建置的原始範例在 `T`、`J` 模式下傳回客體失敗，因為偏移後的末端包含選定目標；Clang 23 建置會執行兩級清理。[LLVM 修改 #144745](https://github.com/llvm/llvm-project/pull/144745) 移除了舊的 `+1` 偏移。這類編譯器相關結果與後端故障分開記錄。
+
+建置清單涵蓋全部原創 WDM/KMDF C 範例及可選 WDK CMake 路徑。每個公開的 `driver-*-scenario.json` 都在 `DriverBackendParityCases.def` 中具有一般與 CFG 案例；缺少原始碼、建置或情境繫結會使清單測試失敗。`Original` 清除情境中的載入位址覆寫並核對映像慣用基底，`Rebased` 核對宣告的重定位基底。驅動程式自有 IRP 情境會主動取消一個子要求，因此 `DriverNativeOutcomes.def` 在正常清理後仍保留其預期的整體失敗結果。
 
 ```bash
 python3 scripts/build_wdk_driver_fixtures.py \

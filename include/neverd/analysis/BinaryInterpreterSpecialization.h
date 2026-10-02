@@ -34,6 +34,9 @@ namespace neverd::analysis {
 /// near calls and exact returns; NormalNonfaultingExecution excludes exception
 /// dispatch rather than claiming its equivalence. X64CetDisabled certifies
 /// RDSSP destination preservation, never arbitrary CET instruction support.
+/// Optional EntryFrameBounds restrict the physical entry root to a nonwrapping
+/// interval; they do not authorize memory accesses. Native relation checks
+/// require exactly matching bounds in their explicit frame contract.
 SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});
@@ -65,8 +68,12 @@ struct BinaryUndefinedIndependenceResult {
 /// paired target independence and a complete bounded target set. Every feasible
 /// path must finish; direct and indirect loops require a complete finite
 /// unrolling within the budgets, never a prefix or an assumed invariant.
-/// Missing bytes, overlapping instructions and incomplete architecture evidence
-/// refuse proof. Exact INT3/UD2 evidence may be retained with its Missing
+/// Missing bytes and overlapping instructions refuse proof. By default,
+/// incomplete architecture evidence also refuses. The explicit finite-only
+/// RetainUnauditedNativeBoundaries contract instead retains strictly lifted
+/// Missing instructions as bound refusal frontiers: each must be unreachable,
+/// and their uncollected successors are outside the claimed byte inventory.
+/// Exact INT3/UD2 evidence may be retained with its Missing
 /// undefined-effect coverage only when no feasible execution reaches the trap.
 /// A feasible trap violates the nonfaulting contract; no resumption is modeled.
 /// Requires an explicit normal, nonfaulting,

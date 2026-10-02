@@ -92,6 +92,9 @@ struct Value {
     CapturedBytes, // exact 16-byte context range, with its source offset
     PointerBits,
     Receiver,
+    IndependentReceiver, // strong capture root in a descriptor-bound invoke
+    IvarOffset,          // exact offset-slot address and original load width
+    InstanceField, // bounded storage in an authenticated captured receiver
     CapturedWord,
     UnprovenIdentity,
     OutParameter // exact non-context formal pointer in a proven block invoke
@@ -179,6 +182,8 @@ public:
   std::map<std::pair<int64_t, unsigned>, Value> FrameValues;
   std::function<Value(const HighExpr &, const std::vector<Value> &)> Call;
   std::function<Value(const Value &, unsigned)> ContextRead;
+  std::function<std::optional<uint32_t>(const Value &, va_t, unsigned)>
+      IvarStorage;
   Values(const ObjCBlockSourceContext &Source, const HighFunc &F,
          std::optional<size_t> Context = std::nullopt)
       : Image(Source.Image), Function(F), Imports(Source.Imports) {
@@ -287,7 +292,10 @@ public:
           Locals.find(objc_projection_detail::localIdentity(E->Var));
       if (Found != Locals.end()) {
         auto V = established(Found->second);
-        return V.K == Value::OutParameter && (Bytes != 8 || E->Var.Size != 8)
+        return (V.K == Value::OutParameter ||
+                V.K == Value::IndependentReceiver ||
+                V.K == Value::InstanceField) &&
+                       (Bytes != 8 || E->Var.Size != 8)
                    ? Value{}
                    : V;
       }
@@ -374,6 +382,27 @@ public:
       if (!E->Operands[0] || !E->Operands[0]->Type)
         throw Invalid("block source cast has no typed input value");
       auto V = Inputs[0];
+      if (V.K == Value::IvarOffset) {
+        const auto From = E->Operands[0]->Type;
+        if (E->Type->Kind == NdTypeKind::Int && From->Kind == NdTypeKind::Int &&
+            (Bytes == From->Size ||
+             (Bytes == 8 && From->Size == 4 && E->Kind != ExprKind::BitCast)))
+          return V;
+        return {};
+      }
+      if (V.K == Value::IndependentReceiver || V.K == Value::InstanceField) {
+        const auto PointerBitsType = [](const TypeRef &T) {
+          return T->Kind == NdTypeKind::Int || T->Kind == NdTypeKind::Ptr;
+        };
+        if (Bytes == 8 && E->Operands[0]->Type->Size == 8 &&
+            (E->Kind == ExprKind::BitCast ||
+             (PointerBitsType(E->Type) &&
+              PointerBitsType(E->Operands[0]->Type))))
+          return V;
+        // Numeric and partial conversions are independent scalar values, but
+        // cannot name a receiver or field even when their widths agree.
+        return {};
+      }
       if (V.K == Value::Number && scalarWidth(Bytes) &&
           scalarWidth(E->Operands[0]->Type->Size)) {
         const unsigned From = E->Operands[0]->Type->Size;
@@ -447,6 +476,19 @@ public:
       auto A = Inputs[0], B = Inputs[1];
       if (E->Op == NdOp::INT_ADD && A.K == Value::Number)
         std::swap(A, B);
+      if (E->Op == NdOp::INT_ADD && A.K == Value::IvarOffset)
+        std::swap(A, B);
+      const auto AddressWord = [](const ExprPtr &Input) {
+        return Input->Type && Input->Type->Size == 8 &&
+               (Input->Type->Kind == NdTypeKind::Int ||
+                Input->Type->Kind == NdTypeKind::Ptr);
+      };
+      if (E->Op == NdOp::INT_ADD && Bytes == 8 && E->Operands[0]->Type &&
+          AddressWord(E->Operands[0]) && AddressWord(E->Operands[1]) &&
+          A.K == Value::IndependentReceiver && B.K == Value::IvarOffset &&
+          IvarStorage)
+        if (const auto Size = IvarStorage(A, B.Bits, B.Offset))
+          return {Value::InstanceField, *Size, B.Bits, A.Name};
       if ((A.K == Value::Frame || A.K == Value::Context) &&
           B.K == Value::Number && Bytes == 8) {
         const int64_t Delta = static_cast<int64_t>(B.Bits);
@@ -493,6 +535,13 @@ public:
         }
       }
       if (Address.K == Value::Number && scalarWidth(Bytes)) {
+        const auto Ref = Image.ObjCSourceReferences.find(Address.Bits);
+        if (IvarStorage && (Bytes == 4 || Bytes == 8) &&
+            E->Type->Kind == NdTypeKind::Int &&
+            Ref != Image.ObjCSourceReferences.end() &&
+            Ref->second.TheKind == ObjCSourceReference::Kind::IvarOffset &&
+            Ref->second.Address == Address.Bits && Ref->second.Size == Bytes)
+          return {Value::IvarOffset, Bytes, Address.Bits};
         // Defer byte reading until a scalar header field consumes this load.
         // Loaded bits never supply an invoke/descriptor address identity.
         return {Value::ImageBits, 0, Address.Bits, {}, E.get()};
@@ -512,7 +561,22 @@ public:
   void assign(const HighStmt &S) {
     if (!S.Dst || S.Dst->Kind != ExprKind::Var)
       throw Invalid("block proof requires a direct SSA assignment");
-    Locals[objc_projection_detail::localIdentity(S.Dst->Var)] = eval(S.Val);
+    auto V = eval(S.Val);
+    if (V.K == Value::IndependentReceiver || V.K == Value::InstanceField ||
+        V.K == Value::IvarOffset) {
+      const auto BitsType = [](const TypeRef &T) {
+        return T && (T->Kind == NdTypeKind::Int || T->Kind == NdTypeKind::Ptr);
+      };
+      // A C assignment can convert even without an explicit cast expression.
+      // Only a complete copy may retain the field-address permission.
+      if (!S.Dst->Type || !S.Val->Type ||
+          S.Dst->Type->Size != S.Val->Type->Size ||
+          S.Dst->Var.Size != S.Dst->Type->Size ||
+          (!equalSourceTypes(S.Dst->Type, S.Val->Type) &&
+           !(BitsType(S.Dst->Type) && BitsType(S.Val->Type))))
+        V = {};
+    }
+    Locals[objc_projection_detail::localIdentity(S.Dst->Var)] = V;
   }
   void storeFrame(const Value &Address, unsigned Bytes, const Value &V) {
     if (Address.K != Value::Frame ||
@@ -658,6 +722,25 @@ noEscape(const ObjCBlockSourceContext &Source,
       throw Invalid("block consumer has no recovered parameter binding");
     const auto &F = *Found->second;
     Values State(Source, F, Parameter);
+    const std::map<uint64_t, ObjCReceiverTypeHint> *CapturedReceivers = nullptr;
+    if (AllowIndependentOutParameterStores && Parameter == 0 &&
+        ValidatedNestedBlocks &&
+        ValidatedNestedBlocks->SourceImage == &Source.Image) {
+      const auto Captures = ValidatedNestedBlocks->CaptureReceivers.find(Entry);
+      if (Captures != ValidatedNestedBlocks->CaptureReceivers.end())
+        CapturedReceivers = &Captures->second;
+    }
+    if (CapturedReceivers)
+      State.IvarStorage = [&](const Value &Receiver, va_t Slot,
+                              unsigned Width) -> std::optional<uint32_t> {
+        const auto Root = CapturedReceivers->find(Receiver.Offset);
+        if (Root == CapturedReceivers->end() ||
+            Root->second.Address != Receiver.Bits ||
+            Root->second.ClassName != Receiver.Name)
+          return std::nullopt;
+        return objcReceiverIvarStorageSize(Source.Image, Root->second, Slot,
+                                           Width);
+      };
     if (AllowIndependentOutParameterStores && F.SourceTypeHint &&
         F.Params.size() == F.SourceTypeHint->Parameters.size()) {
       for (size_t I = 0; I < F.Params.size(); ++I) {
@@ -703,6 +786,18 @@ noEscape(const ObjCBlockSourceContext &Source,
           throw Invalid("block invoke reads uninitialized capture storage");
       if (Address.Name == "copy-source" && Bytes == 8)
         return {Value::CapturedWord, Address.Offset};
+      if (CapturedReceivers && Bytes == 8) {
+        const auto Root = CapturedReceivers->find(Address.Offset);
+        if (Root != CapturedReceivers->end() &&
+            !Root->second.BlockCaptureOffset && Root->second.Steps.empty() &&
+            (Root->second.Origin ==
+                 ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+             Root->second.Origin ==
+                 ObjCReceiverTypeHint::OriginKind::MethodParameter) &&
+            objcReceiverTypeHintValid(Source.Image, Root->second))
+          return {Value::IndependentReceiver, Address.Offset,
+                  Root->second.Address, Root->second.ClassName};
+      }
       return Bytes == 16 ? Value{Value::OpaqueBytes} : Value{};
     };
     State.Call = [&](const HighExpr &E,
@@ -857,6 +952,15 @@ noEscape(const ObjCBlockSourceContext &Source,
             F.SourceTypeHint->Parameters[OutIndex].Type->Pointee &&
             Bytes <= F.SourceTypeHint->Parameters[OutIndex].Type->Pointee->Size;
         if (IndependentOutParameter && !pointerIdentity(V))
+          break;
+        // A descriptor-proven strong receiver is independent of the private
+        // literal. Only its exact authenticated ivar start carries this bound;
+        // arbitrary object arithmetic and wider writes lose the permission.
+        if (Address.K == Value::InstanceField && S.StoreAddr->Type &&
+            S.StoreAddr->Type->Size == 8 &&
+            (S.StoreAddr->Type->Kind == NdTypeKind::Int ||
+             S.StoreAddr->Type->Kind == NdTypeKind::Ptr) &&
+            Bytes && Bytes <= Address.Offset && !pointerIdentity(V))
           break;
         // A complete image range is disjoint from the private frame/context.
         // It can receive ordinary values, but never a private pointer. The

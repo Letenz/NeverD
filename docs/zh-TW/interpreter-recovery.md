@@ -59,6 +59,26 @@ CLI 選項 `--vm-max-refinements=N` 要求正整數，預設值為 16。C 呼叫
 
 C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_machine_source_v3()`：將 `neverd_devirtualize_options_v3` 清零，設定 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`，再設定 `max_control_fields`、`max_solver_queries`，並可設定 `base.max_control_refinements`；零表示採用對應的既有預設值。三個 reserved 欄位必須全部為零。v1/v2 入口忽略 v3 尾部（包含 reserved），v3 忽略未來擴充尾部。報告同時記錄實際工作量與生效的 `maxControlFields`、`maxControlRefinements`、`maxSolverQueries`。
 
+恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
+
+相容的 v4 介面為 `neverd_devirtualize_source_v4()` 與 `neverd_devirtualize_machine_source_v4()`。將 `neverd_devirtualize_options_v4` 清零，並將 `base.base.base.struct_size` 設為完整大小。CLI 串接數量接受非負 32 位元十進位整數，零表示關閉。範圍端點接受有號 64 位元十進位整數，要求 `begin < end` 及 `--vm-machine-state`，約束實體入口 RSP 而非調整後的值。在 C API 中，範圍旗標要求機器狀態介面；未設定時兩個端點必須為零。未知旗標與舊版本保留欄位的非零值會遭拒。v1/v2/v3 忽略整個 v4 擴充，v4 忽略未來擴充。空選項指標保留舊預設值。報告增加 `maxChainedTransfers` 與 `entryFrameBounds`，`discoverControlState` 記錄實際開關。所有 CLI 選項皆要求 `--devirtualize`。數值前提不在執行時檢查，也不保證可存取性、初始化或無別名。這些選項不啟用原生證明策略。
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
 如果條件將位址相依縮窄為位元組片段，細化還會把包含該片段、已追蹤的完整八位元組直接位址欄位列為上下文候選。原有窄欄位及其產生者位元遮罩保持不變，不提升無關的寬欄位。常數和相對入口的偏移仍須證明，所有上下文共用現有上限。
@@ -66,6 +86,14 @@ JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 可選的不可變位址列舉在遇到缺少憑證的可行位址時停止，保留原始執行期讀取。只有完整位址域得到證明後，才使用已觀察的值和憑證；命中快取仍須重新檢查目前讀取範圍，實際觀察到的畸形憑證仍屬錯誤。
 
 當完整的相依性證明確認目前邊述詞不約束新鮮根變數的高 32 位元時，可以略過完整 64 位元 `root + constant` 控制值的列舉。這既不固定根位址，也不證明可達性。窄生產者遮罩和最終可行性檢查仍然執行；約束整個根變數的述詞仍依正常流程投影有限值域。
+
+有限證明快取達到容量上限後，會以單獨可容納的合格證明取代最久未使用的記錄。命中會更新使用順序；重複存入、未命中和遭拒的候選不會。遭淘汰的證明可能需要重新建立。快取只保留完整值域或已證明的值域超限結果，每次新增求解仍計入共用查詢預算。
+
+復原也會保留各個帶遮罩控制欄位經完整證明的有限值域。聯合關係超過 `MaxControlTuples` 時，這些獨立值域仍可約束目標，但不會斷言欄位之間存在相關性。合流時先依共同遮罩投影，再取值的聯集；缺少或超限的值域會整個捨棄。即使聯合關係已經放寬，值域變更仍會重新排程節點。部分列舉不提供事實，既有欄位數、元組數、符號節點及求解器限制繼續生效。
+
+`MaxChainedTransfers` 是需明確啟用的 C++ 上限（預設 `0`），允許連續執行已證明目標或布林結果唯一的控制轉移。它保留完整符號狀態、原生來源及累計預算；多結果轉移仍使用一般 CFG 邊。反向探索依已提交指令的出現順序重播。串接可能重複迴圈來源，限制自動切點推導。
+
+`EntryFrameBounds` 明確宣告相對於 `FrameBaseRegister` 入口值不回繞的 `[Begin, End)` 範圍，不授予記憶體存取或非別名事實。未設定時仍使用模運算根域。原生證明要求呼叫者的框架邊界相符，並將其綁定至憑據；LLVM 證明保留該框架既有的輸入域。恢復本身不是等價性證書。
 
 <!-- i18n-section: execution-contract -->
 

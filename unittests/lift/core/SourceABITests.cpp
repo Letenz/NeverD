@@ -2940,3 +2940,60 @@ TEST(SourceABI, DarwinVariadicArgumentsKeepPromotionsAndStackBoundary) {
   EXPECT_FALSE(assignDarwinVariadicSourceABI(Packed, 0, Arch::AArch64, Error));
   EXPECT_FALSE(assignDarwinVariadicSourceABI(Packed, 12, Arch::AArch64, Error));
 }
+
+TEST(SourceABI, SixteenDoubleResultsRequireTheCompleteDarwinArm64Contract) {
+  const auto Double = NdType::makeFloat(8);
+  const auto Matrix = NdType::makeStruct(std::vector<TypeRef>(16, Double));
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = Matrix;
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    auto Invalid = Hint;
+    if (Mutation == 0)
+      Invalid.Architecture = Arch::X64;
+    else if (Mutation == 1)
+      Invalid.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+    else if (Mutation == 2)
+      Invalid.ReturnLocation.RegisterOffset = a64reg::X0;
+    else if (Mutation == 3)
+      Invalid.ReturnLocation.ValueBytes = 16;
+    else if (Mutation == 4)
+      Invalid.ReturnLocation.EntryStackOffset = 8;
+    else if (Mutation == 5)
+      Invalid.ReturnLocation.ExtendTo32Bits = true;
+    else if (Mutation == 6)
+      Invalid.ReturnComponents.push_back(
+          {SourceABICarrierKind::FloatingRegister, a64reg::V0, 0, 8});
+    else
+      Invalid.ReturnLocation.Kind = SourceABICarrierKind::FloatingRegister;
+    EXPECT_FALSE(validateSourceABI(Invalid, Error)) << Mutation;
+  }
+  for (unsigned Count : {5U, 7U, 8U, 15U, 17U}) {
+    Hint.ReturnType = NdType::makeStruct(std::vector<TypeRef>(Count, Double));
+    EXPECT_TRUE(sourceAggregateMembers(Hint.ReturnType).empty());
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
+  }
+  auto Fields = std::vector<TypeRef>(16, Double);
+  Fields[5] = NdType::makeFloat(4);
+  Hint.ReturnType = NdType::makeStruct(Fields);
+  EXPECT_TRUE(sourceAggregateMembers(Hint.ReturnType).empty());
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
+  Fields[5] = NdType::makeInt(8, false);
+  Hint.ReturnType = NdType::makeStruct(Fields);
+  EXPECT_TRUE(sourceAggregateMembers(Hint.ReturnType).empty());
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
+  Hint.ReturnType = Matrix;
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::X64, Error));
+  EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, Arch::AArch64, Error));
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Hint.Parameters = {{"self", Pointer}, {"_cmd", Pointer}};
+  EXPECT_FALSE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Error));
+  EXPECT_NE(Error.find("nil storage"), std::string::npos);
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.Parameters.push_back({"value", Matrix});
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
+  EXPECT_FALSE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Error));
+}

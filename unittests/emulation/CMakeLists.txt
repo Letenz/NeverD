@@ -1012,8 +1012,11 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
+  KernelSEHTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
+target_include_directories(NeverDNativeDriverTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
@@ -1038,7 +1041,6 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverWDMUserMappingTests.cpp
   DriverWDMNeitherTests.cpp
   DriverWDMSEHTests.cpp
-  KernelSEHTests.cpp
   KernelExceptionTests.cpp
   DriverWDMDMAChannelTests.cpp
   KernelDMAChannelTests.cpp

@@ -77,6 +77,26 @@ Die CLI-Option `--vm-max-refinements=N` verlangt eine positive ganze Zahl und ha
 
 C-Aufrufer verwenden `neverd_devirtualize_source_v3()` oder `neverd_devirtualize_machine_source_v3()`. `neverd_devirtualize_options_v3` vollständig mit null initialisieren und `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` setzen. `max_control_fields`, `max_solver_queries` und optional `base.max_control_refinements` angeben; null wählt den unveränderten Standardwert. Alle drei reserved-Felder müssen null bleiben. v1/v2 ignorieren den v3-Anhang einschließlich reserved, v3 ignoriert künftige Anhänge. Der Bericht enthält tatsächliche Arbeit und wirksame Grenzen `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+Die Wiederherstellung bietet auch `--vm-chain-transfers=N` (Standard 0) und `--vm-no-control-discovery`. Verkettung erhält symbolische Korrelationen über Transfers mit bewiesenem Einzelziel; am Limit gelten wieder normale CFG-Grenzen. Maschinenzustandswiederherstellung kann mit `--vm-entry-frame=begin:end` ungeprüfte, nicht umlaufende Offsets zum Eintritts-RSP angeben. Die genaue numerische Vorbedingung bleibt im erzeugten C und Bericht; sie erlaubt keine Speicherzugriffe und beweist keine Äquivalenz.
+
+Die kompatiblen v4-APIs heißen `neverd_devirtualize_source_v4()` und `neverd_devirtualize_machine_source_v4()`. `neverd_devirtualize_options_v4` mit Null initialisieren und `base.base.base.struct_size` auf die vollständige Größe setzen. Die CLI-Verkettungszahl ist eine nichtnegative 32-Bit-Dezimalzahl; Null deaktiviert die Verkettung. Grenzen sind vorzeichenbehaftete 64-Bit-Dezimalzahlen mit `begin < end`, benötigen `--vm-machine-state` und beziehen sich auf den physischen Eintritts-RSP statt dessen angepassten Wert. Das C-Grenzflag erfordert die Maschinenzustands-API; ohne Flag müssen beide Grenzen Null sein. Unbekannte Flags und alte reservierte Felder ungleich Null werden abgelehnt. v1/v2/v3 ignorieren den gesamten v4-Anhang; v4 ignoriert zukünftige Anhänge. Nulloptionen erhalten die bisherigen Standardwerte. Der Bericht ergänzt `maxChainedTransfers`, `entryFrameBounds` und den wirksamen Schalter `discoverControlState`. Alle CLI-Optionen erfordern `--devirtualize`. Die Vorbedingung wird zur Laufzeit nicht geprüft und garantiert weder Zugänglichkeit, Initialisierung noch Aliasfreiheit. Sie aktiviert keine native Beweisrichtlinie.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 Der JSON-Bericht ergänzt `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` und `discoveryVisits` für Aktivierung, Grenzen und Analyseaufwand. Die Erkennung von Feldern allein beweist keine erfolgreiche Wiederherstellung.
 
 Verengt eine Bedingung eine Adressabhängigkeit auf einen Byteausschnitt, behält die Verfeinerung auch bereits verfolgte, umschließende direkte Adressfelder von acht Byte als Kontextkandidaten bei. Das schmale Feld und die Bitmaske seines Erzeugers bleiben unverändert; unbeteiligte breite Felder werden nicht hochgestuft. Konstanten und Offsets relativ zum Eintritt erfordern weiterhin einen Beweis; alle Kontexte teilen sich die bestehenden Grenzen.
@@ -84,6 +104,14 @@ Verengt eine Bedingung eine Adressabhängigkeit auf einen Byteausschnitt, behäl
 Die optionale Aufzählung unveränderlicher Adressen endet, sobald einer möglichen Adresse ein Zertifikat fehlt. Der ursprüngliche Lesezugriff bleibt erhalten. Beobachtete Werte und Zertifikate werden erst nach dem Beweis der vollständigen Wertemenge verwendet; Cache-Treffer erfordern eine erneute Prüfung des aktuellen Lesebereichs. Ein tatsächlich beobachtetes fehlerhaftes Zertifikat bleibt ein Fehler.
 
 Ein vollständiger Abhängigkeitsbeweis kann die Aufzählung eines vollständigen 64-Bit-Steuerwerts `root + constant` auslassen, wenn das aktuelle Kantenprädikat die oberen 32 Bits der frischen Wurzelvariablen frei lässt. Dies legt weder die Wurzeladresse fest noch beweist es Erreichbarkeit. Schmale Produzentenmasken und abschließende Erfüllbarkeitsprüfungen bleiben erhalten; ein Prädikat, das die gesamte Wurzel begrenzt, verwendet weiterhin die normale endliche Projektion.
+
+Bei voller Kapazität ersetzt der Cache für endliche Beweise die am längsten ungenutzten Einträge durch zulässige Beweise, die jeweils allein hineinpassen. Treffer aktualisieren die Nutzungsreihenfolge; doppelte Speicherungen, Fehltreffer und abgelehnte Kandidaten nicht. Verdrängte Beweise müssen gegebenenfalls erneut erbracht werden. Nur vollständige Wertebereiche oder bewiesene Überschreitungen ihrer Grenze werden gespeichert; jeder neue Solveraufruf verbraucht weiterhin das gemeinsame Abfragebudget.
+
+Die Wiederherstellung bewahrt auch vollständig bewiesene endliche Wertebereiche einzelner maskierter Kontrollfelder. Überschreitet eine gemeinsame Relation `MaxControlTuples`, können diese unabhängigen Bereiche weiterhin ein Ziel einschränken, ohne Korrelationen zwischen Feldern zu behaupten. Zusammenführungen vereinigen die mit der gemeinsamen Maske projizierten Werte; fehlende oder zu große Bereiche werden vollständig verworfen. Änderungen eines Bereichs planen den Knoten auch nach einer Vergröberung der gemeinsamen Relation neu ein. Teilaufzählungen liefern keine Fakten; die bestehenden Grenzen für Felder, Tupel, symbolische Knoten und Solver bleiben wirksam.
+
+`MaxChainedTransfers` ist eine optionale C++-Grenze (Standard `0`) für aufeinanderfolgende Kontrollübergänge mit nachweislich eindeutigem Ziel oder booleschem Ergebnis. Vollständiger symbolischer Zustand, native Herkunft und kumulative Budgets bleiben erhalten; mehrere Ergebnisse nutzen gewöhnliche CFG-Kanten. Rückwärtssuche spielt bestätigte Befehlsvorkommen erneut ab. Verkettung kann Schleifenursprünge duplizieren und die automatische Schnittpunktinferenz einschränken.
+
+`EntryFrameBounds` deklariert ausdrücklich einen nicht überlaufenden Bereich `[Begin, End)` relativ zum Eintrittswert von `FrameBaseRegister`. Daraus folgen weder Speicherzugriffsrechte noch Aliasfreiheit. Ohne Angabe bleibt der Wurzelbereich modular. Der native Beweis verlangt dieselben Frame-Grenzen im Aufrufervertrag und bindet sie in seinen Nachweis ein; der LLVM-Beweis behält den bestehenden Frame-Bereich. Wiederherstellung allein ist kein Äquivalenzzertifikat.
 
 <!-- i18n-section: execution-contract -->
 

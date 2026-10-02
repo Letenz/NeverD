@@ -142,7 +142,8 @@ TEST(NativeSourceHints,
       Block.Succs.push_back(Block.Id);
       break;
     case 16:
-      Image.Segments[0].Flags = Image.Segments[0].Flags | SegmentFlags::Writable;
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
       break;
     case 17:
       Signature.Parameters[1].Location.ExtendTo32Bits = true;
@@ -3301,6 +3302,161 @@ TEST(NativeSourceHints, VoidContractsPropagateAcrossExactNativeCallees) {
     Forged->TargetAddress += 4;
     Fixture.Med.Blocks[0].Ops[0].SourceCallHint = std::move(Forged);
     EXPECT_FALSE(Fixture.inferVoid(Error));
+  }
+}
+
+TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      NativeVoidFixture F(Architecture);
+      F.useNativeVoidCallee();
+      const auto Context =
+          Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+      auto &Call = F.Med.Blocks[0].Ops[0];
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+      Hint->Signature.Parameters.push_back(
+          {"context",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Context, 0, 8}});
+      Call.SourceCallHint = Hint;
+      MedVar Input;
+      Input.Kind = MedVar::Reg;
+      Input.RegOff = Context;
+      Input.Id = 200;
+      Input.Size = 8;
+      Input.TheArch = Architecture;
+      Call.addInput(Input);
+      auto &Ops = F.Low.Blocks[0].Ops;
+      if (Mutation == 1)
+        ++Ops[0].Seq;
+      if (Mutation == 2)
+        Ops[0].Inputs[0] = NdVar::cst(0x1084, 8);
+      if (Mutation == 3)
+        Hint->TargetAddress += 4;
+      if (Mutation == 4)
+        Call.Inputs[2].SSAVer = 1;
+      if (Mutation == 5) {
+        Hint->Signature.Parameters.back().Type = NdType::makeInt(4);
+        Hint->Signature.Parameters.back().Location.ValueBytes = 4;
+        Call.Inputs[2].Size = 4;
+      }
+      if (Mutation == 6 || Mutation == 7) {
+        LowOp Write;
+        Write.Opcode = NdOp::COPY;
+        Write.Addr = 0x1000;
+        Write.Output = NdVar::reg(Context, Mutation == 6 ? 8 : 4);
+        Write.addInput(NdVar::cst(0, Write.Output.Size));
+        Ops.insert(Ops.begin(), Write);
+      }
+      if (Mutation == 8)
+        F.Low.Blocks[0].Succs.push_back(99);
+      if (Mutation == 9)
+        Hint->Signature.Architecture = Arch::Unknown;
+      std::string Error;
+      const auto Result = F.inferVoid(Error);
+      if (Mutation == 0) {
+        ASSERT_TRUE(Result) << Error;
+        ASSERT_EQ(Result->Parameters.size(), 2U);
+        EXPECT_EQ(Result->Parameters[1].Location.RegisterOffset, Context);
+        EXPECT_EQ(Result->Parameters[1].Location.ValueBytes, 8U);
+      } else if (Result) {
+        EXPECT_TRUE(std::none_of(Result->Parameters.begin(),
+                                 Result->Parameters.end(), [&](const auto &P) {
+                                   return P.Location.RegisterOffset == Context;
+                                 }));
+      }
+    }
+}
+
+TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    NativeFixture F(Architecture);
+    const auto ContextRegister =
+        Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+    auto &Bytes = F.Image.Segments[0].Data;
+    if (Architecture == Arch::AArch64) {
+      // b helper; helper: add x0, x0, x20; ret
+      llvm::support::endian::write32le(Bytes.data(), 0x14000010);
+      llvm::support::endian::write32le(Bytes.data() + 0x40, 0x8b140000);
+      llvm::support::endian::write32le(Bytes.data() + 0x44, 0xd65f03c0);
+    } else {
+      // jmp helper; helper: lea rax, [rdi + rbx]; ret
+      const uint8_t Jump[] = {0xe9, 0x3b, 0, 0, 0};
+      const uint8_t Body[] = {0x48, 0x8d, 0x04, 0x1f, 0xc3};
+      std::copy(std::begin(Jump), std::end(Jump), Bytes.begin());
+      std::copy(std::begin(Body), std::end(Body), Bytes.begin() + 0x40);
+    }
+    F.Image.Symbols = {{"forward_context", 0x1000,
+                        Architecture == Arch::AArch64 ? 4U : 5U, true},
+                       {"read_context", 0x1040,
+                        Architecture == Arch::AArch64 ? 8U : 5U, true}};
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {0x1000, 0x1040};
+    llvm::LLVMContext Context;
+    Pipeline Engine;
+    auto Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    auto Infer = [&](va_t Entry) {
+      const LowFunc *Low = nullptr;
+      const MedFunc *Med = nullptr;
+      const HighFunc *High = nullptr;
+      const PipelineFunctionAudit *Audit = nullptr;
+      for (const auto &V : Result.LowFuncs)
+        if (V.Entry == Entry)
+          Low = &V;
+      for (const auto &V : Result.MedFuncs)
+        if (V.Entry == Entry)
+          Med = &V;
+      for (const auto &V : Result.HighFuncs)
+        if (V.Entry == Entry)
+          High = &V;
+      for (const auto &V : Result.FunctionAudits)
+        if (V.Entry == Entry)
+          Audit = &V;
+      EXPECT_TRUE(Low && Med && High && Audit);
+      std::string Error;
+      const auto Hint = Low && Med && High && Audit
+                            ? inferNativeSourceTypeHint(F.Image, *Med, *High,
+                                                        *Audit, Error, Low)
+                            : std::nullopt;
+      EXPECT_TRUE(Hint) << Error;
+      return Hint;
+    };
+    const auto Helper = Infer(0x1040);
+    ASSERT_TRUE(Helper);
+    Options.SourceTypeHints.emplace(0x1040, *Helper);
+    Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Forward = Infer(0x1000);
+    ASSERT_TRUE(Forward);
+    ASSERT_EQ(Forward->Parameters.size(), 2U);
+    EXPECT_TRUE(std::any_of(Forward->Parameters.begin(),
+                            Forward->Parameters.end(), [&](const auto &P) {
+                              return P.Location.RegisterOffset ==
+                                         ContextRegister &&
+                                     P.Location.ValueBytes == 8;
+                            }));
+    Options.SourceTypeHints.emplace(0x1000, *Forward);
+    Result = Engine.run(F.Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    unsigned Verified = 0;
+    for (const auto &High : Result.HighFuncs) {
+      const auto Audit = std::find_if(
+          Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+          [&](const auto &A) { return A.Entry == High.Entry; });
+      ASSERT_NE(Audit, Result.FunctionAudits.end());
+      ASSERT_TRUE(High.SourceTypeHint);
+      const auto Limitation =
+          sdk::sourceBodyLimitation(High, *High.SourceTypeHint, &*Audit,
+                                    [](const HighExpr &) { return true; });
+      EXPECT_TRUE(Limitation.empty()) << Limitation;
+      ++Verified;
+    }
+    EXPECT_EQ(Verified, 2U);
   }
 }
 

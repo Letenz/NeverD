@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - dev
+    paths-ignore:
+      - '**/*.md'
   pull_request:
     # closed cancels this PR's run through its concurrency group; no job runs.
     types: [opened, synchronize, reopened, closed]
+    paths-ignore:
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       use_prebuilt_llvm:

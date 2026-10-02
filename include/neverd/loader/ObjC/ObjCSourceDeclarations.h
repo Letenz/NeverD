@@ -139,6 +139,14 @@ std::optional<std::string>
 objcReceiverInstanceClassName(const BinaryImage &Image,
                               const ObjCReceiverTypeHint &Receiver);
 
+/// Bound an instance field through its exact runtime offset slot and recorded
+/// class layout. Revalidates the receiver, slot width, field encoding and byte
+/// extent; does not turn the runtime offset into a constant or prove ownership.
+std::optional<uint32_t>
+objcReceiverIvarStorageSize(const BinaryImage &Image,
+                            const ObjCReceiverTypeHint &Receiver,
+                            va_t OffsetSlot, unsigned OffsetWidth);
+
 /// Extend a receiver proof by loading a declared object field. An exact
 /// offset reference or a complete byte offset must identify one field in its
 /// recorded class lineage; partial and ambiguous field accesses are rejected.
