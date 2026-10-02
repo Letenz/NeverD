@@ -20,6 +20,9 @@ DWORD entry(void) {
   DWORD Length = 0;
   while (Command[Length])
     ++Length;
+  if (Length && Command[Length - 1] == CommandQuote[0])
+    --Length;
+  CHECK(Length);
   const WCHAR Mode = Command[Length - 1];
   void *Leaf = GetModuleHandleW(LeafName);
   void *Bridge = GetModuleHandleW(BridgeName);
@@ -75,7 +78,7 @@ DWORD entry(void) {
       ++*Changed;
     // Query through two other images; changes to the final target count too.
     GetProcAddress(Top, TopName);
-  } else {
+  } else if (Mode == NormalArgument[0]) {
     output(Message, sizeof(Message) - 1);
     ExitProcess(ExitStatus);
   }

@@ -71,6 +71,7 @@ NEVERD_EXPORT_TEXT(BridgeDetach, "b")
 NEVERD_EXPORT_TEXT(TopAttach, "T")
 NEVERD_EXPORT_TEXT(TopDetach, "t")
 NEVERD_EXPORT_TEXT(ExeExtension, ".exe")
+NEVERD_EXPORT_TEXT(CommandQuote, "\"")
 #endif
 #ifdef NEVERD_EXPORT_WIDE
 NEVERD_EXPORT_WIDE(LeafName, L"LOOKUP-LEAF.DLL")
