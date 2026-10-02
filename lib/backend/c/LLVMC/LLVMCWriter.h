@@ -540,7 +540,7 @@ public:
   std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
   const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;
-  const llvm::Value *allocaStoredValue(const llvm::AllocaInst *Slot) const;
+  const llvm::Value *allocaStoredValueBefore(const llvm::LoadInst *Load) const;
   bool isThisFieldAddress(const llvm::Value *V) const;
   /// Last home is a load of `this+imm` (the field *value*, not the address).
   bool isThisFieldValueHome(const llvm::AllocaInst *Slot) const;
@@ -637,6 +637,11 @@ public:
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
+  mutable std::set<const llvm::Value *> ActiveImmediateFolds;
+  mutable const llvm::Function *LocalLoadValuesFor = nullptr;
+  mutable llvm::DenseMap<const llvm::LoadInst *, const llvm::Value *>
+      LocalLoadValues;
+  mutable llvm::DenseMap<const llvm::AllocaInst *, bool> ExactLocalLoadSlots;
   mutable std::map<const llvm::AllocaInst *, std::string> AllocaImmediates;
   /// Value names and cast operands do not change while this function prints.
   mutable llvm::DenseMap<const llvm::Value *, bool> UnknownPlaceholderCache;

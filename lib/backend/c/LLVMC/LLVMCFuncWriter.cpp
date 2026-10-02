@@ -444,6 +444,13 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
         continue;
+      // Bit counts need source-width normalization and one captured operand.
+      // Their C statement lowering also owns the zero guard where needed.
+      if (const auto *II = llvm::dyn_cast<llvm::IntrinsicInst>(&Inst);
+          II && (II->getIntrinsicID() == llvm::Intrinsic::ctpop ||
+                 II->getIntrinsicID() == llvm::Intrinsic::ctlz ||
+                 II->getIntrinsicID() == llvm::Intrinsic::cttz))
+        continue;
       // Updating one vector lane requires a copy followed by an assignment.
       if (llvm::isa<llvm::InsertElementInst>(&Inst))
         continue;
@@ -1978,6 +1985,8 @@ bool LLVMCWriter::allocaAddressTaken(const llvm::AllocaInst *AI) const {
       if (llvm::isa<llvm::LoadInst>(U))
         continue;
       if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(U)) {
+        if (SI->getValueOperand() == V)
+          return true;
         if (SI->getPointerOperand()->stripPointerCasts() ==
             V->stripPointerCasts())
           continue;
@@ -2177,6 +2186,9 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   KnownImmediates.clear();
   AllocaImmediates.clear();
   UnknownPlaceholderCache.clear();
+  LocalLoadValuesFor = nullptr;
+  LocalLoadValues.clear();
+  ExactLocalLoadSlots.clear();
   KilledEntryZeroCache.clear();
   AllocaAddressTakenCache.clear();
   UniqueImmediateUsers.clear();
@@ -2328,7 +2340,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         OverlappingFrameAccessOffsets.insert(FrameAccesses[I].first);
     First = End;
   }
-  InferredVoid = !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
+  InferredVoid =
+      !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
 
   if (InferredVoid)
     analyzeVoidDeadChain(Analysis, Fn);
@@ -2708,7 +2721,7 @@ bool LLVMCWriter::isTrailingLiveInCopy(const llvm::Value *V) const {
               asAllocaPointer(LI->getPointerOperand())) {
         if (OmittedAllocaImmediates.count(Home) || AllocaImmediates.count(Home))
           return false;
-        if (const llvm::Value *Prev = allocaStoredValue(Home);
+        if (const llvm::Value *Prev = allocaStoredValueBefore(LI);
             Prev && Prev != V) {
           V = Prev;
           continue;
@@ -3356,10 +3369,8 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
       const std::string Text = Rec(Cast->getOperand(0));
       if (Text.empty())
         return {};
-      if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(Cast))
-        return castStr(Cast->getOpcode(), Text, Cast->getSrcTy(),
-                       Cast->getDestTy());
-      return Text;
+      return castStr(Cast->getOpcode(), Text, Cast->getSrcTy(),
+                     Cast->getDestTy());
     }
     if (llvm::isa<llvm::FreezeInst>(Cur))
       return getName(Cur);
@@ -3393,11 +3404,9 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
       if (const llvm::AllocaInst *Home =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (UniqueHomes.count(Home) && !joinFieldDefaultText(Home)) {
-          if (auto Stored = AllocaHomeValues.find(Home);
-              Stored != AllocaHomeValues.end() && Stored->second != Cur)
-            return Rec(Stored->second);
-        }
+        if (!joinFieldDefaultText(Home))
+          if (const auto *Stored = allocaStoredValueBefore(LI))
+            return Rec(Stored);
         if (ThisHomes.count(Home) && DebugThisArg)
           return Rec(DebugThisArg);
       }
@@ -3690,12 +3699,9 @@ bool LLVMCWriter::isNamedParamValue(const llvm::Value *V) const {
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
-      if (Slot && UniqueHomes.count(Slot)) {
-        if (auto Home = AllocaHomeValues.find(Slot);
-            Home != AllocaHomeValues.end() && Home->second != V) {
-          V = Home->second;
-          continue;
-        }
+      if (const llvm::Value *Stored = allocaStoredValueBefore(LI)) {
+        V = Stored;
+        continue;
       }
       if (Slot && ThisHomes.count(Slot) && DebugThisArg) {
         V = DebugThisArg;
@@ -4150,6 +4156,10 @@ bool LLVMCWriter::allocaStoreIsHidden(const llvm::AllocaInst *Slot,
                                       const llvm::Value *Stored) {
   if (!Slot || !Stored)
     return true;
+  // A real load which retained its SSA snapshot still reads this storage.
+  // A printable/inlinable RHS is not permission to discard its assignment.
+  if (allocaHasPrintedLoad(Slot))
+    return false;
   if (std::optional<std::string> Def = joinFieldDefaultText(Slot)) {
     if (auto Imm = foldImmediate(Stored); Imm && *Imm == *Def)
       return true;
@@ -4289,11 +4299,6 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
       return false;
     if (auto Text = ValueTexts.find(LI);
         Text != ValueTexts.end() && !Text->second.empty())
-      return false;
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
-        Slot && !allocaAddressTaken(Slot) &&
-        (allocaHomeIsNamedParam(Slot) || (allocaOnlyHoldsImmediates(Slot) &&
-                                          allocaLoadsComposeImmediate(Slot))))
       return false;
     return true;
   }
@@ -7972,17 +7977,12 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
         typedIndexAccess(LI->getPointerOperand()) ||
         isTypedRecordCursorSlot(Slot))
       continue;
-    if (allocaHomeIsNamedParam(Slot) ||
-        (allocaOnlyHoldsImmediates(Slot) && allocaLoadsComposeImmediate(Slot)))
-      continue;
     // A value folded from the current print path cannot prove that every
     // predecessor stores the same value into this home. Normal branches and
     // EH joins both need their distinct stores visible in C.
     if (foldImmediate(LI) && !LI->use_empty() && uniqueAllocaImmediate(Slot))
       continue;
     if (!valueFeedsPrintedUse(LI))
-      continue;
-    if (allocaOnlyHoldsImmediates(Slot) && loadOnlyUsedAsCallArgs(LI))
       continue;
     return true;
   }
@@ -8088,20 +8088,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
             continue;
           if (!valueFeedsPrintedUse(LI))
             continue;
-          if (const llvm::AllocaInst *ImmSlot =
-                  asAllocaPointer(LI->getPointerOperand());
-              ImmSlot && allocaOnlyHoldsImmediates(ImmSlot) &&
-              loadOnlyUsedAsCallArgs(LI))
-            continue;
           if (auto Text = ValueTexts.find(LI);
               Text != ValueTexts.end() && !Text->second.empty())
-            continue;
-          if (const llvm::AllocaInst *Slot =
-                  asAllocaPointer(LI->getPointerOperand());
-              Slot && !allocaAddressTaken(Slot) &&
-              (OmittedInlined.count(Slot) || allocaHomeIsNamedParam(Slot) ||
-               (allocaOnlyHoldsImmediates(Slot) &&
-                allocaLoadsComposeImmediate(Slot))))
             continue;
         }
         if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
@@ -8392,9 +8380,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   std::string FName = functionIdentifier(Fn);
   writeExceptionAnnotation(Fn);
 
-  const bool IndirectReturn =
-      !Opts.PreserveLLVMFunctionTypes && DebugFn &&
-      isMsvcIndirectReturn(DebugFn->ReturnType);
+  const bool IndirectReturn = !Opts.PreserveLLVMFunctionTypes && DebugFn &&
+                              isMsvcIndirectReturn(DebugFn->ReturnType);
   const bool MemberIndirectReturn = IndirectReturn &&
                                     !DebugFn->Params.empty() &&
                                     DebugFn->Params[0].first == "this";

@@ -6,6 +6,8 @@
 
 #include "../lift/NeverDLiftFixture.h"
 
+#include "neverd/Limits.h"
+
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 
@@ -17,6 +19,87 @@ std::string readPublicationFile(const fs::path &Path) {
 }
 
 class RecoverySourcePublicationTest : public NeverDLiftTest {};
+
+TEST_F(RecoverySourcePublicationTest, LargeMutableRecoveryRequiresLLVMOutput) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "source recovery checks require clang";
+  const auto Assembly = tmpFile("large-mutable.S");
+  const auto Binary = tmpFile("large-mutable.elf");
+  {
+    std::ofstream Output(Assembly);
+    Output << ".text\n.globl large_probe\n.type large_probe,@function\n"
+              "large_probe:\n.rept "
+           << neverd::limits::kMaxSSAFunctionOps + 1
+           << "\n movq %rdi,%rax\n.endr\nret\n"
+              ".size large_probe,.-large_probe\n";
+  }
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-fuse-ld=lld",
+                               "-nostdlib", "-static", "-Wl,-e,large_probe",
+                               Assembly.string(), "-o", Binary.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+    const auto Source = tmpFile(LLVM ? "large-llvm.c" : "large-high.c");
+    const auto Report = tmpFile(LLVM ? "large-llvm.json" : "large-high.json");
+    std::vector<std::string> Args{"decompile",
+                                  "--func",
+                                  "large_probe",
+                                  "--devirtualize",
+                                  "--vm-machine-state",
+                                  "--vm-chain-transfers=4096",
+                                  "--vm-max-operations=10000000",
+                                  "--vm-max-nodes=1000000",
+                                  "--vm-no-control-discovery",
+                                  "--recovery-report=" + Report.string(),
+                                  "-o",
+                                  Source.string(),
+                                  Binary.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    const auto Recovered = exec(ndBin(), Args);
+    if (!LLVM) {
+      EXPECT_FALSE(Recovered.ok());
+      EXPECT_NE(Recovered.err.find("requires LLVM output"), std::string::npos)
+          << Recovered.err;
+      EXPECT_FALSE(fs::exists(Source));
+      continue;
+    }
+    ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+    auto Evidence = llvm::json::parse(readPublicationFile(Report));
+    ASSERT_TRUE(bool(Evidence));
+    ASSERT_NE(Evidence->getAsObject(), nullptr);
+    EXPECT_EQ(Evidence->getAsObject()->getBoolean("complete"), true);
+    {
+      std::ofstream Output(Source, std::ios::app);
+      Output << R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(0x123456789abcdef0)};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    uint64_t state[17] = {0}, stack[8] = {0};
+    state[4] = (uintptr_t)&stack[4];
+    state[7] = values[i];
+    state[16] = 2;
+    if (large_probe((void *)state) != 0 || state[0] != values[i]) return 1;
+    if (state[4] != (uintptr_t)&stack[4] || state[7] != values[i]) return 2;
+  }
+  return 0;
+}
+)";
+    }
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const auto Executable = tmpFile(std::string("large-check") +
+                                      neverd::test::executableSuffix());
+      const auto Compiled = exec(
+          NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-fsanitize=undefined",
+                              "-fno-sanitize-recover=all", Source.string(),
+                              "-o", Executable.string()});
+      ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+      const auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err;
+    }
+  }
+}
 
 TEST_F(RecoverySourcePublicationTest,
        NarrowArithmeticShiftCarrySurvivesBothSourceBackends) {
