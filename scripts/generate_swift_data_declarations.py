@@ -195,6 +195,175 @@ def conformance_storage(ir, probes, metadata, protocol="StringProtocol"):
     return result
 
 
+def _normalized_body(body, parameter=None):
+    """Compare complete compiler bodies modulo SSA/label names and hints."""
+    quoted = r'"(?:[^"\\\n]|\\.)*"'
+    body = re.sub(quoted + r'|;[^\n]*',
+                  lambda m: m[0] if m[0].startswith('"') else '', body)
+    body = re.sub(r'(?m)^\s*([A-Za-z_0-9.]+):', r'%\1:', body)
+    body = re.sub(quoted + r'| #[0-9]+\b|, !prof ![0-9]+\b',
+                  lambda m: m[0] if m[0].startswith('"') else '', body)
+    names = {parameter: '%arg'} if parameter else {}
+
+    def rename(match):
+        value = match[0]
+        if value.startswith('"'):
+            return value
+        if value not in names:
+            names[value] = '%v' + str(len(names))
+        return names[value]
+
+    renamed = re.sub(quoted + r'|%[A-Za-z_0-9.]+', rename, body)
+    return ' '.join(re.findall(quoted + r'|[^"\s]+', renamed))
+
+
+def _pointer_function(ir, name, argument=False):
+    symbol = '@"' + name + '"' if name.startswith('$') else '@' + name
+    parameters = r'(ptr (%[A-Za-z_0-9.]+))' if argument else r'()()'
+    matches = re.findall(
+        r'^define (?:linkonce_odr hidden )?ptr ' + re.escape(symbol) +
+        r'\(' + parameters + r'\)(?: local_unnamed_addr)?(?: #[0-9]+)?'
+        r' \{\n(.*?)^\}', ir, re.M | re.S)
+    return (matches[0][2], matches[0][1] or None) if len(matches) == 1 else None
+
+
+# One complete shared transfer shape owns concrete/abstract metadata queries.
+# This is a compiler-evidence reader, not permission to reconstruct metadata,
+# rewrite runtime arguments or infer the contents of a foreign descriptor.
+_INSTANTIATOR_BODY = '''entry:
+  %cached = load atomic i64, ptr %arg monotonic, align 8
+  %missing = icmp slt i64 %cached, 0
+  br i1 %missing, label %create, label %done
+done:
+  %word = phi i64 [ %cached, %entry ], [ %new, %create ]
+  %result = inttoptr i64 %word to ptr
+  ret ptr %result
+create:
+  %negativeLength = ashr i64 %cached, 32
+  %length = sub nsw i64 0, %negativeLength
+  %lowBits = shl i64 %cached, 32
+  %offset = ashr exact i64 %lowBits, 32
+  %base = ptrtoint ptr %arg to i64
+  %address = add i64 %offset, %base
+  %name = inttoptr i64 %address to ptr
+  %metadata = tail call swiftcc ptr @RUNTIME(ARGS)
+  %new = ptrtoint ptr %metadata to i64
+  store atomic i64 %new, ptr %arg monotonic, align 8
+  br label %done
+'''
+
+
+def generic_conformance_storage(ir, probes):
+    """Extract opaque conformance addresses for compiler-instantiated types.
+
+    Each pair names a metatype query and its Publisher-constraint probe. The
+    query, generic call and complete lazy witness accessor must use the same
+    uniquely defined metadata record. Both metadata helpers are checked in
+    full, including request state, signed offsets, cache and returned value.
+    Only the descriptor address is exported; no metadata/call-effect fact is.
+    """
+    if len(ir) > 16 * 1024 * 1024:
+        raise ValueError("generic conformance IR exceeds the input budget")
+    declarations = {}
+    for name, value in re.findall(r'^@"([^"\n]+)" = ([^\n]+)$', ir, re.M):
+        declarations.setdefault(name, []).append(value)
+    prototypes = {
+        'neverd_publisher_type_probe': ('swiftcc void', 'ptr, ptr, ptr'),
+        'swift_getWitnessTable': ('ptr', 'ptr, ptr, ptr'),
+        'swift_getTypeByMangledNameInContext2':
+            ('swiftcc ptr', 'ptr, i64, ptr, ptr'),
+        'swift_getTypeByMangledNameInContextInMetadataState2':
+            ('swiftcc ptr', 'i64, ptr, i64, ptr, ptr'),
+    }
+    for name, (result, args) in prototypes.items():
+        rows = re.findall(r'^declare ([^\n]*@' + name + r'[^\n]*)$', ir, re.M)
+        expected = result + ' @' + name + '(' + args + ')'
+        if len(rows) != 1 or not re.fullmatch(
+                re.escape(expected) + r'(?: local_unnamed_addr)?(?: #[0-9]+)?',
+                rows[0]):
+            raise ValueError("generic conformance has an unexpected ABI: " + name)
+    helper = '__swift_instantiateConcreteTypeFromMangledName'
+    for suffix, runtime, args in [
+        ('', 'swift_getTypeByMangledNameInContext2',
+         'ptr %name, i64 %length, ptr null, ptr null'),
+        ('Abstract', 'swift_getTypeByMangledNameInContextInMetadataState2',
+         'i64 255, ptr %name, i64 %length, ptr null, ptr null'),
+    ]:
+        function = _pointer_function(ir, helper + suffix, argument=True)
+        expected = _INSTANTIATOR_BODY.replace('RUNTIME', runtime).replace('ARGS', args)
+        if not function or _normalized_body(*function) != \
+                _normalized_body(expected, '%arg'):
+            return set()
+
+    result = set()
+    for metadata_probe, witness_probe in probes:
+        if not all(re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name)
+                   for name in (metadata_probe, witness_probe)):
+            raise ValueError("invalid generic conformance probe identifier")
+        query = _pointer_function(ir, metadata_probe)
+        records = re.findall(re.escape('@' + helper) +
+                             r'\(ptr nonnull @"([^"\n]+)"\)', query[0]) if query else []
+        if len(records) != 1:
+            continue
+        record = records[0]
+        values = declarations.get(record, [])
+        # The record remains opaque. Exact shared identity, not a guessed
+        # generic layout or copied initializer, links the two request states.
+        if len(values) != 1 or not re.fullmatch(
+                r'linkonce_odr hidden global \{ i32, i32 \} \{ [^\n]+ \}, align 8',
+                values[0]):
+            continue
+        query_body = ('entry:\n %metadata = tail call ptr @' + helper +
+                      '(ptr nonnull @"' + record + '")\n ret ptr %metadata')
+        if _normalized_body(query[0]) != _normalized_body(query_body):
+            continue
+        bodies = re.findall(r'^define void @' + re.escape(witness_probe) +
+                            r'\(\)(?: #[0-9]+)? \{\n(.*?)^\}', ir, re.M | re.S)
+        if len(bodies) != 1:
+            continue
+        getters = re.findall(r'tail call ptr @"([^"\n]+)"\(\)', bodies[0])
+        if len(getters) != 1:
+            continue
+        expected = (query_body[:query_body.index(' ret ptr')] +
+                    '\n %witness = tail call ptr @"' + getters[0] + '"()\n'
+                    ' tail call swiftcc void @neverd_publisher_type_probe('
+                    'ptr %metadata, ptr %metadata, ptr %witness)\n ret void')
+        if _normalized_body(bodies[0]) != _normalized_body(expected):
+            continue
+        accessor = _pointer_function(ir, getters[0])
+        if not accessor:
+            continue
+        descriptors = re.findall(
+            r'@swift_getWitnessTable\(ptr nonnull @"([^"\n]+)"', accessor[0])
+        caches = re.findall(r'load ptr, ptr @"([^"\n]+)", align 8', accessor[0])
+        if len(descriptors) != 1 or len(caches) != 1:
+            continue
+        descriptor, cache = descriptors[0], caches[0]
+        expected = '''entry:
+ %cached = load ptr, ptr @"CACHE", align 8
+ %empty = icmp eq ptr %cached, null
+ br i1 %empty, label %create, label %done
+create:
+ %metadata = tail call ptr @HELPERAbstract(ptr nonnull @"RECORD")
+ %witness = tail call ptr @swift_getWitnessTable(ptr nonnull @"DESCRIPTOR", ptr %metadata, ptr undef)
+ store atomic ptr %witness, ptr @"CACHE" release, align 8
+ br label %done
+done:
+ %result = phi ptr [ %cached, %entry ], [ %witness, %create ]
+ ret ptr %result
+'''
+        for before, after in [('CACHE', cache), ('HELPER', helper),
+                              ('RECORD', record), ('DESCRIPTOR', descriptor)]:
+            expected = expected.replace(before, after)
+        if _normalized_body(accessor[0]) == _normalized_body(expected) and \
+                declarations.get(cache) == [
+                    'linkonce_odr hidden local_unnamed_addr global ptr null, align 8'] and \
+                declarations.get(descriptor) == [
+                    'external global %swift.protocol_conformance_descriptor, align 4']:
+            result.add(descriptor)
+    return result
+
+
 def render(profiles, exports, version, compiler):
     if len(profiles) != 4 or len(exports) != 4:
         raise ValueError("all four compiler and export profiles are required")
@@ -263,6 +432,18 @@ def main():
             'func observeCVarArg<T: CVarArg>(_ value: T)\n'
             '@_cdecl("witness_StringCVarArg") public func '
             'witness_StringCVarArg() { observeCVarArg(Swift.String()) }\n')
+        combine_source = Path(work) / 'combine.swift'
+        combine_source.write_text(
+            'import Combine\n'
+            '@_silgen_name("neverd_publisher_type_probe") '
+            'func observe<P: Publisher>(_ value: P.Type)\n'
+            '@_cdecl("metadata_CurrentValueSubject") public func '
+            'metadata_CurrentValueSubject() -> UnsafeRawPointer { '
+            'unsafeBitCast(CurrentValueSubject<Int, Never>.self, '
+            'to: UnsafeRawPointer.self) }\n'
+            '@_cdecl("witness_CurrentValueSubjectPublisher") public func '
+            'witness_CurrentValueSubjectPublisher() { '
+            'observe(CurrentValueSubject<Int, Never>.self) }\n')
         profiles = []
         for index, target in enumerate(TARGETS):
             ir = Path(work) / f'{index}.ll'
@@ -277,6 +458,10 @@ def main():
             foundation_text = foundation_ir.read_text()
             foundation_metadata = metadata_storage(foundation_text,
                                                    ['metadata_String'])
+            combine_ir = Path(work) / f'combine-{index}.ll'
+            run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
+                 '-sdk', str(sdk), '-emit-ir', str(combine_source),
+                 '-o', str(combine_ir)])
             profiles.append(metadata |
                             witness_storage(text, witnesses, metadata) |
                             conformance_storage(text, ['witness_StringProtocol'],
@@ -287,7 +472,11 @@ def main():
                             conformance_storage(foundation_text,
                                                 ['witness_StringCVarArg'],
                                                 foundation_metadata,
-                                                "CVarArg"))
+                                                "CVarArg") |
+                            generic_conformance_storage(
+                                combine_ir.read_text(),
+                                [('metadata_CurrentValueSubject',
+                                  'witness_CurrentValueSubjectPublisher')]))
     class TBDLoader(yaml.SafeLoader):
         pass
     TBDLoader.add_constructor('!tapi-tbd', lambda loader, node:
@@ -295,6 +484,7 @@ def main():
     documents = []
     for tbd in ('usr/lib/swift/libswiftCore.tbd',
                 'usr/lib/swift/libswiftFoundation.tbd',
+                'System/Library/Frameworks/Combine.framework/Versions/A/Combine.tbd',
                 'System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd'):
         documents.extend(yaml.load_all((sdk / tbd).read_text(), Loader=TBDLoader))
     exports = [export_index(documents, target) for target in EXPORT_TARGETS]
@@ -302,7 +492,7 @@ def main():
                     json.loads((sdk / 'SDKSettings.json').read_text())['Version'],
                     run([str(args.swiftc), '--version']).strip())
     count = sum(line.startswith('{') for line in output.splitlines())
-    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 3
+    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 4
     if count != expected:
         parser.error('not all standard storage queries have complete evidence '
                      f'({count}/{expected})')

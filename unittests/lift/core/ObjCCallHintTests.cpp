@@ -8492,6 +8492,99 @@ TEST(ObjCCallHints, SwiftFoundationCVarArgDescriptorKeepsExternalIdentity) {
     }
 }
 
+TEST(ObjCCallHints, SwiftCombinePublisherDescriptorKeepsExternalIdentity) {
+  const std::string Import =
+      "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Provider :
+         {"/System/Library/Frameworks/Combine.framework/Combine",
+          "/System/Library/Frameworks/Combine.framework/Versions/A/"
+          "Combine"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider, false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Provider;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front());
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+
+      HighFunc Function;
+      Function.Name = "publisher_conformance";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("[] __asm__(\"" + Import + "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+      for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+        auto Changed = Image;
+        auto &Bind = Changed.DyldBindSlots[0x2180];
+        switch (Mutation) {
+        case 0:
+          Bind.Module += ".impostor";
+          break;
+        case 1:
+          Bind.Module = "/usr/lib/swift/libswiftCore.dylib";
+          break;
+        case 2:
+          Bind.WeakImport = true;
+          break;
+        case 3:
+          Bind.Addend = 8;
+          break;
+        case 4:
+          Changed.DyldBindSlots.clear();
+          break;
+        case 5:
+          Changed.ImportPtrSlots[0x2180] = "_different";
+          break;
+        case 6:
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 7:
+          Changed.IsRelocatable = true;
+          break;
+        case 8:
+          Bind.Module.clear();
+          break;
+        case 9:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] = Import + "suffix";
+          break;
+        case 10:
+          Bind.Module =
+              "/System/Library/Frameworks/Combine.framework/Versions/B/Combine";
+          break;
+        case 11:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] =
+              "_$s7Combine19CurrentValueSubjectCMa";
+          break;
+        case 12:
+          Changed.Format = BinaryFormat::ELF;
+          break;
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Provider << " " << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+            << Provider << " " << Mutation;
+      }
+    }
+}
+
 TEST(ObjCCallHints, SwiftMetadataAccessorsAndUnknownNominalsAreNotData) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64})
     for (const char *Name : {"_$sSSMa", "_$sSSMn", "_$s4Test6StringVN",

@@ -1,7 +1,10 @@
 import copy
+from pathlib import Path
+import re
 import unittest
 
 from scripts.generate_swift_data_declarations import (conformance_storage,
+                                                        generic_conformance_storage,
                                                         HASHABLE_TYPES,
                                                         METADATA_TYPES,
                                                         metadata_storage,
@@ -64,9 +67,109 @@ CVARARG = (CONFORMANCE_IR
            .replace('$sS2SSysWL', '$sS2Ss7CVarArg10FoundationWL')
            .replace('witness_StringProtocol', 'witness_StringCVarArg')
            .replace('neverd_string_protocol_probe', 'neverd_cvararg_probe'))
+PUBLISHER = '$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc'
+PUBLISHER_RECORD = '$s7Combine19CurrentValueSubjectCySis5NeverOGMD'
+PUBLISHER_PROBES = [('metadata_CurrentValueSubject',
+                     'witness_CurrentValueSubjectPublisher')]
+PUBLISHER_IR = (Path(__file__).parent / 'fixtures' /
+                'swift_publisher_conformance.ll').read_text()
 
 
 class SwiftDataDeclarationTests(unittest.TestCase):
+    def test_generic_conformance_keeps_complete_compiler_type_query(self):
+        self.assertEqual(generic_conformance_storage(PUBLISHER_IR,
+                                                    PUBLISHER_PROBES),
+                         {PUBLISHER})
+        renamed = re.sub(r'%(\d+)\b', r'%renamed_\1', PUBLISHER_IR)
+        renamed = re.sub(r'(?m)^(\d+):', r'renamed_\1:', renamed)
+        self.assertEqual(generic_conformance_storage(renamed, PUBLISHER_PROBES),
+                         {PUBLISHER})
+        self.assertNotIn(PUBLISHER, metadata_storage(
+            PUBLISHER_IR, ['metadata_CurrentValueSubject']))
+
+    def test_generic_conformance_rejects_partial_changed_or_stale_evidence(self):
+        changes = [
+            ('external global %swift.protocol_conformance_descriptor',
+             'external thread_local global %swift.protocol_conformance_descriptor'),
+            ('external global %swift.protocol_conformance_descriptor',
+             'extern_weak global %swift.protocol_conformance_descriptor'),
+            ('external global %swift.protocol_conformance_descriptor',
+             'global %swift.protocol_conformance_descriptor'),
+            ('%swift.protocol_conformance_descriptor, align 4', 'ptr, align 4'),
+            ('%swift.protocol_conformance_descriptor, align 4',
+             '%swift.protocol_conformance_descriptor, align 8'),
+            ('hidden global { i32, i32 }', 'hidden thread_local global { i32, i32 }'),
+            ('hidden local_unnamed_addr global ptr null',
+             'hidden local_unnamed_addr thread_local global ptr null'),
+            ('load atomic i64', 'load i64'),
+            ('monotonic, align 8', 'unordered, align 8'),
+            ('icmp slt i64', 'icmp ult i64'),
+            ('ashr i64 %1, 32', 'lshr i64 %1, 32'),
+            ('sub nsw i64 0, %7', 'sub nsw i64 %7, 0'),
+            ('ashr exact i64 %sext, 32', 'ashr exact i64 %sext, 16'),
+            ('shl i64 %1, 32', 'shl i64 %1, 16'),
+            ('add i64 %9, %10', 'sub i64 %9, %10'),
+            ('inttoptr i64 %11 to ptr', 'inttoptr i64 %9 to ptr'),
+            ('i64 255, ptr %12', 'i64 0, ptr %12'),
+            ('i64 %8, ptr null, ptr null', 'i64 %8, ptr %0, ptr null'),
+            ('[ %14, %6 ]', '[ %1, %6 ]'),
+            ('store atomic i64 %14', 'store atomic i64 %1'),
+            ('ret ptr %5', 'ret ptr %0'),
+            ('@neverd_publisher_type_probe(ptr %0, ptr %0, ptr %1)',
+             '@neverd_publisher_type_probe(ptr %0, ptr %1, ptr %1)'),
+            ('@neverd_publisher_type_probe(ptr %0, ptr %0, ptr %1)',
+             '@neverd_publisher_type_probe(ptr %0, ptr %0, ptr null)'),
+            ('ret ptr %0', 'ret ptr null'),
+            ('__swift_instantiateConcreteTypeFromMangledNameAbstract(ptr nonnull @"' +
+             PUBLISHER_RECORD + '")',
+             '__swift_instantiateConcreteTypeFromMangledNameAbstract(ptr nonnull @"other")'),
+            ('ptr %2, ptr undef)', 'ptr %0, ptr undef)'),
+            ('ptr %2, ptr undef)', 'ptr %2, ptr null)'),
+            ('ptr nonnull @"' + PUBLISHER + '", ptr %2', 'ptr %0, ptr %2'),
+            ('store atomic ptr %3', 'store atomic ptr %0'),
+            ('release, align 8', 'monotonic, align 8'),
+            ('icmp eq ptr %0, null', 'icmp ne ptr %0, null'),
+            ('[ %3, %cacheIsNull ]', '[ %0, %cacheIsNull ]'),
+            ('ret ptr %4', 'ret ptr %0'),
+            ('label %cacheIsNull, label %cont', 'label %cont, label %cacheIsNull'),
+            ('br label %cont', 'br label %entry'),
+            ('ptr %2, ptr undef) #6', 'ptr %2, ptr undef) #6\n  call void @escape()'),
+        ]
+        for before, after in changes:
+            with self.subTest(before=before):
+                self.assertIn(before, PUBLISHER_IR)
+                self.assertEqual(generic_conformance_storage(
+                    PUBLISHER_IR.replace(before, after), PUBLISHER_PROBES), set())
+        declaration = '@"' + PUBLISHER + '" = external global '
+        declaration += '%swift.protocol_conformance_descriptor, align 4\n'
+        self.assertEqual(generic_conformance_storage(
+            declaration + PUBLISHER_IR, PUBLISHER_PROBES), set())
+        definition = re.search(r'^define ptr @metadata_CurrentValueSubject.*?^}',
+                               PUBLISHER_IR, re.M | re.S)[0]
+        self.assertEqual(generic_conformance_storage(
+            definition + '\n' + PUBLISHER_IR, PUBLISHER_PROBES), set())
+
+    def test_generic_conformance_requires_complete_abis_and_bounded_input(self):
+        for before, after in [
+            ('declare swiftcc void @neverd_publisher_type_probe(ptr, ptr, ptr)',
+             'declare swiftcc void @neverd_publisher_type_probe(ptr, ptr)'),
+            ('declare ptr @swift_getWitnessTable',
+             'declare swiftcc ptr @swift_getWitnessTable'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContext2',
+             'declare ptr @swift_getTypeByMangledNameInContext2'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContextInMetadataState2',
+             'declare i64 @swift_getTypeByMangledNameInContextInMetadataState2'),
+        ]:
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                generic_conformance_storage(PUBLISHER_IR.replace(before, after),
+                                            PUBLISHER_PROBES)
+        for invalid in ['', PUBLISHER_IR + PUBLISHER_IR,
+                        ' ' * (16 * 1024 * 1024 + 1)]:
+            with self.subTest(size=len(invalid)), self.assertRaises(ValueError):
+                generic_conformance_storage(invalid, PUBLISHER_PROBES)
+        with self.assertRaises(ValueError):
+            generic_conformance_storage(PUBLISHER_IR, [('metadata.*', 'witness')])
+
     def test_cvararg_conformance_requires_complete_compiler_data_evidence(self):
         descriptor = '$sSSs7CVarArg10FoundationMc'
         self.assertEqual(conformance_storage(
