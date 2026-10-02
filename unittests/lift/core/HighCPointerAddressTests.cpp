@@ -41904,6 +41904,20 @@ TEST(LLVMCPointerAddresses, SegmentSelectorsMoveThroughInlineAsm) {
   EXPECT_NE(Source.find("mov %w0, %%ds"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, RegisterFormLldtLoadsItsOperand) {
+  // HalpLMStub: `lldt ax` with a selector loaded from memory.  An `__asm`
+  // block cannot name that value; the asm statement takes it in a register.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x0f, 0xb7, 0x01, // movzx eax, word [rcx]
+                                     0x0f, 0x00, 0xd0, // lldt ax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__asm__ volatile(\"lldt %w0\""), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("__asm {"), std::string::npos) << HighC;
+}
+
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
   // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
   // After an unknown call ECX holds no defined value, so the OR must not

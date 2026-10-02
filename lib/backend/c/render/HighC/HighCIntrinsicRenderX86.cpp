@@ -1242,6 +1242,18 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
     return "__asm {{ ffree st(" + std::to_string(Call.Operands[1]->ConstVal) +
            ") }}";
   }
+  // LLDT/LTR/LMSW with a register operand: an `__asm` block cannot take the
+  // computed value, so the asm statement loads it into a register.  The
+  // memory forms render with their address elsewhere.
+  if ((Call.IntrinsicId == I::Lldt || Call.IntrinsicId == I::Ltr ||
+       Call.IntrinsicId == I::Lmsw) &&
+      Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+      Call.Operands.size() == 1 && Call.Operands[0] && Call.Operands[0]->Type &&
+      Call.Operands[0]->Type->Size != 8)
+    return std::string("__asm__ volatile(\"") +
+           intrinsicAsmMnemonic(Call.IntrinsicId) +
+           " %w0\" : : \"r\"((uint32_t)(" + ExprFn(*Call.Operands[0]) +
+           ")) : \"memory\")";
   if (Call.IntrinsicId == I::ReadSegment ||
       Call.IntrinsicId == I::WriteSegment) {
     // A segment selector by its register's encoding number.
