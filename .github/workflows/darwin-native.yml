@@ -1,0 +1,108 @@
+name: Native Darwin workloads
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darwin-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  darwin-native:
+    name: Darwin guests (${{ matrix.backend }}, x64)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            backend: kvm
+            cc: clang
+            cxx: clang++
+          - runner: windows-latest
+            backend: whp
+            cc: cl
+            cxx: cl
+    steps:
+      - name: Checkout native workload sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Initialize the pinned decoder
+        shell: bash
+        run: git submodule update --init --depth 1 third_party/capstone
+
+      - name: Set up evidence tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Linux build tools and require KVM access
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang lld ninja-build
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ninja --yes --no-progress
+
+      - name: Enable the native Windows compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Require the native host and cross-target fixture tools
+        shell: bash
+        run: |
+          python -c "import platform; assert platform.machine().lower() in ('amd64', 'x86_64')"
+          clang --version
+          ld64.lld --version
+          python -m unittest scripts.tests.test_run_native_cpu_ci -q
+
+      - name: Configure native execution without Unicorn
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -S . -B build-darwin-native -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
+            -DNEVERD_LLVM_PREBUILT=ON -DBUILD_TESTING=ON \
+            -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+            -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+
+      - name: Execute and reconcile every native Darwin workload
+        shell: bash
+        env:
+          DARWIN_NATIVE_BACKEND: ${{ matrix.backend }}
+        run: |
+          python scripts/run_native_cpu_ci.py \
+            --build build-darwin-native \
+            --evidence build-darwin-native/native-evidence \
+            --parallel 4 --require-darwin-backend "$DARWIN_NATIVE_BACKEND"
+
+      - name: Preserve complete native workload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: darwin-native-${{ matrix.backend }}-x64
+          path: build-darwin-native/native-evidence/
+          if-no-files-found: warn
+          retention-days: 14

@@ -128,6 +128,23 @@ The native gate requires matching HVF cases to execute, including Darwin
 fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Intel
 HVF, Linux KVM and Windows WHP runtime evidence still require their own hosts.
 
+The focused workload gate additionally requires **every** Darwin process case
+on each platform supported by the host ISA: 33 cases on ARM64, or 22 on x64.
+It preserves the full inventory and JUnit results, and fails on missing or
+skipped native workloads even when loader-only tests pass:
+
+```sh
+python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
+  --evidence build-hvf-native/darwin-workload-evidence --require-darwin-backend hvf
+```
+
+Use `kvm` on Linux or `whp` on Windows with the same command. The manual
+[`Native Darwin workloads` workflow](../.github/workflows/darwin-native.yml)
+builds without Unicorn and runs both x64 transports on hosted runners. It
+requires actual virtualization and `ld64.lld`; unavailable hardware or fixture
+tools fail explicitly. The result validates the bounded guest OS model and
+shared CPU contracts, not Intel HVF or native iOS hardware.
+
 ### Local verification, 2026-10-03
 
 Release evidence on Apple M4 Max / macOS 15.6.1:

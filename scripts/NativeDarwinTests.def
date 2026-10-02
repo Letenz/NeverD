@@ -1,0 +1,37 @@
+//===- NativeDarwinTests.def - Required native Darwin workloads ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_DARWIN_OWNER
+NEVERD_NATIVE_DARWIN_OWNER(NeverDDarwinProcessTests)
+#endif
+
+// The host determines ISA; the explicitly selected transport never falls
+// back to software. Every listed workload must run on each native platform.
+#ifdef NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST
+NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.{case}/MacOSARM64_{backend}")
+NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.{case}/IOSARM64_{backend}")
+NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(
+    ARM64, "Transports/DarwinProcess.{case}/SimulatorARM64_{backend}")
+NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(
+    X64, "Transports/DarwinProcess.{case}/MacOSX64_{backend}")
+NEVERD_NATIVE_DARWIN_REQUIRED_HOST_TEST(
+    X64, "Transports/DarwinProcess.{case}/SimulatorX64_{backend}")
+#endif
+
+#ifdef NEVERD_NATIVE_DARWIN_CASE
+NEVERD_NATIVE_DARWIN_CASE(StartupDataBSSCarryAndBinaryOutput)
+NEVERD_NATIVE_DARWIN_CASE(MainReturnAndBSDExitHaveRealStatus)
+NEVERD_NATIVE_DARWIN_CASE(PartialCopyRetainsEFAULTAndSubsequentWriteRecovers)
+NEVERD_NATIVE_DARWIN_CASE(AnonymousMemoryAlignmentAtomicProtectionAndReuse)
+NEVERD_NATIVE_DARWIN_CASE(InitialStackAndDataPartialUnmapReleasesPhysicalBudget)
+NEVERD_NATIVE_DARWIN_CASE(FaultAndReadOnlyStoreRemainCPUFailures)
+NEVERD_NATIVE_DARWIN_CASE(UnknownBSDMachAndForeignTrapFailExplicitly)
+NEVERD_NATIVE_DARWIN_CASE(InstructionBudgetSurvivesQuanta)
+NEVERD_NATIVE_DARWIN_CASE(DeadlineTerminatesANonreturningGuestAcrossQuanta)
+NEVERD_NATIVE_DARWIN_CASE(EventAndOutputLimitsStopBeforeServiceEffects)
+NEVERD_NATIVE_DARWIN_CASE(ExplicitProfileCannotBeReplacedByHostPlatform)
+#endif
