@@ -3763,6 +3763,109 @@ TEST_F(JTE_X86_64, ColdFirstCaseKeepsTheFunctionsOwnCases) {
   EXPECT_EQ(Targets[1], 0x140001032u);
 }
 
+TEST_F(JTE_X86_64, LongFunctionKeepsItsGuardAliasBudget) {
+  // NtSetInformationProcess: a guarded RVA switch placed after much other
+  // code of its function.  The guard alias search rescanned every
+  // instruction before each guard for predicated selects and ran out of
+  // evidence work, turning the dispatch into a tail call.
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t FunctionVA = ImageBase + 0x1000;
+  constexpr size_t Filler = 2000;
+  std::vector<uint8_t> Code;
+  auto AppendU32 = [&](uint32_t Value) {
+    for (unsigned Byte = 0; Byte < sizeof(Value); ++Byte)
+      Code.push_back(static_cast<uint8_t>(Value >> (Byte * 8)));
+  };
+  auto PatchRel32 = [&](size_t At, size_t Target) {
+    const uint32_t Rel = static_cast<uint32_t>(Target - (At + 4));
+    for (unsigned Byte = 0; Byte < sizeof(Rel); ++Byte)
+      Code[At + Byte] = static_cast<uint8_t>(Rel >> (Byte * 8));
+  };
+  Code.push_back(0xe9); // jmp start, over a path that never dispatches
+  const size_t SkipFiller = Code.size();
+  AppendU32(0);
+  const size_t FillerStart = Code.size();
+  for (size_t I = 0; I < Filler; ++I)
+    Code.insert(Code.end(), {0x83, 0xc0, 0x01}); // add eax, 1
+  Code.push_back(0xc3);
+  const size_t Start = Code.size();
+  PatchRel32(SkipFiller, Start);
+  Code.insert(Code.end(), {0x85, 0xd2, 0x0f, 0x84}); // test edx; je filler
+  Code.resize(Code.size() + 4);
+  PatchRel32(Code.size() - 4, FillerStart);
+  Code.insert(Code.end(), {0x45, 0x85, 0xc9, 0x0f, 0x85}); // test r9d; jne exit
+  const size_t ExitBranch = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x89, 0xc9,       // mov ecx, ecx
+                           0x83, 0xf9, 0x05, // cmp ecx, 5
+                           0x0f, 0x87});     // ja default
+  const size_t DefaultBranch = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x48, 0x8d, 0x15}); // lea rdx, image base
+  AppendU32(static_cast<uint32_t>(
+      static_cast<int64_t>(ImageBase) -
+      static_cast<int64_t>(FunctionVA + Code.size() + 4)));
+  Code.insert(Code.end(), {0x8b, 0x8c, 0x8a}); // mov ecx, [rdx+rcx*4+table]
+  const size_t TableSlot = Code.size();
+  AppendU32(0);
+  Code.insert(Code.end(), {0x48, 0x01, 0xd1, // add rcx, rdx
+                           0xff, 0xe1});     // jmp rcx
+  std::vector<neverd::va_t> Expected;
+  for (int Case = 0; Case < 6; ++Case) {
+    Expected.push_back(FunctionVA + Code.size());
+    Code.insert(Code.end(), {0xc3, 0xcc});
+  }
+  const size_t Default = Code.size();
+  Code.insert(Code.end(), {0xc3, 0xcc, 0xcc, 0xcc});
+  PatchRel32(DefaultBranch, Default);
+  PatchRel32(ExitBranch, Default);
+  const size_t Table = Code.size();
+  for (neverd::va_t Target : Expected)
+    AppendU32(static_cast<uint32_t>(Target - ImageBase));
+  const uint32_t TableRVA =
+      static_cast<uint32_t>(FunctionVA + Table - ImageBase);
+  for (unsigned Byte = 0; Byte < sizeof(TableRVA); ++Byte)
+    Code[TableSlot + Byte] = static_cast<uint8_t>(TableRVA >> (Byte * 8));
+
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::X64;
+  Image.Bits = neverd::Bitness::Bits64;
+  Image.Format = neverd::BinaryFormat::COFF;
+  Image.Base = ImageBase;
+  Image.Entry = FunctionVA;
+  neverd::Segment Text;
+  Text.Name = ".text";
+  Text.VA = FunctionVA;
+  Text.Size = Text.FileSz = Code.size();
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Text.Data = Code;
+  Image.Segments.push_back(std::move(Text));
+  neverd::Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = FunctionVA;
+  TextSection.Size = Code.size();
+  TextSection.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Image.Sections.push_back(std::move(TextSection));
+  neverd::Symbol Function =
+      neverd::Symbol::makeFunc(FunctionVA, static_cast<uint64_t>(Table));
+  Function.Name = "long_rva_switch";
+  Image.Symbols.push_back(std::move(Function));
+  Image.KnownCodeRanges.emplace_back(FunctionVA, FunctionVA + Table);
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{FunctionVA};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Func =
+      Builder.build(Image, Decoder, FunctionVA, "long_rva_switch");
+  ASSERT_EQ(Func.JumpTables.size(), 1u);
+  EXPECT_EQ(Func.JumpTables.front().Targets, Expected);
+  EXPECT_FALSE(lowFunctionHasOpcode(Func, neverd::NdOp::INDIR_CALL));
+}
+
 TEST_F(JTE_X86_64, AllStagesSucceed) { verifyAllStages(jteX64Obj()); }
 
 TEST_F(JTE_X86_64, LowIRHasBranchInd) {
