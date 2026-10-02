@@ -10,6 +10,7 @@
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace neverd {
@@ -148,6 +149,31 @@ TEST_F(PEProgramExportsTest, SupportsHeaderBackedExportMetadata) {
   ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
   // Classification comes from the actual directory extent, not a section name.
   EXPECT_EQ(R->Entries.back().Kind, PEExportKind::Address);
+}
+TEST_F(PEProgramExportsTest,
+       RetainsExternalMetadataFootprintsAndExactWorkCharges) {
+  const uint64_t NameRVA = CodeRVA + NameStride;
+  text(HeaderBytes + NameStride, ModuleName);
+  exportField(offsetof(export_directory_table_entry, NameRVA), NameRVA);
+  auto R = readPEProgramExports(File);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  auto Covered = [&](uint64_t RVA) {
+    return std::any_of(
+        R->Metadata.begin(), R->Metadata.end(),
+        [&](const auto &M) { return RVA >= M.RVA && RVA - M.RVA < M.Size; });
+  };
+  EXPECT_TRUE(Covered(NameRVA));
+  EXPECT_TRUE(Covered(NameRVA + sizeof(ModuleName) - 1));
+  EXPECT_TRUE(Covered(ExportRVA + AddressesOffset));
+  EXPECT_FALSE(Covered(CodeRVA));
+  EXPECT_FALSE(Covered(DataRVA));
+  PEExportLimits Exact{R->BytesRead, R->RecordsRead};
+  auto Fits = readPEProgramExports(File, Exact);
+  ASSERT_TRUE(bool(Fits)) << llvm::toString(Fits.takeError());
+  --Exact.Bytes;
+  auto Short = readPEProgramExports(File, Exact);
+  EXPECT_FALSE(bool(Short));
+  llvm::consumeError(Short.takeError());
 }
 TEST_F(PEProgramExportsTest, RejectsEveryTruncatedHeaderAndSectionTable) {
   const auto Original = File;

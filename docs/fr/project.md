@@ -112,7 +112,7 @@ La récupération dépend des motifs de code pris en charge ; consultez la [vue 
 
 L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
 
-`windows-pe64-v1` ajoute des processus console Windows x64/ARM64 bornés : chargement PE, PEB/TEB, TLS statique et dynamique, callbacks de démarrage/arrêt et modèles Win32 nommés. Il utilise la couche CPU indépendamment des pilotes ; chargement DLL/CRT, GUI, SEH utilisateur, threads et compatibilité Windows générale restent inachevés.
+`windows-pe64-v1` prend en charge des processus console Windows x64/ARM64 bornés avec PEB/TEB, TLS de l’EXE, API Win32 nommées et graphes acycliques de DLL initiales explicites. Les DLL admettent les imports de code/données par nom ou ordinal, le rebasage DIR64 et de vraies identités dans les listes du chargeur. Entrées/TLS des DLL, chargement dynamique, exports redirigés, CRT/GUI, SEH utilisateur et threads restent inachevés ; les preuves natives ARM64 KVM/WHP manquent encore.
 
 La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` et `FlushInstructionCache` pour le processus courant. La couche OS possède les réservations ; `AddressSpace` reste la référence pour les pages validées, les permissions et leur stockage. Les tests couvrent la réécriture de code, les défauts d’accès et la réutilisation du budget mémoire.
 

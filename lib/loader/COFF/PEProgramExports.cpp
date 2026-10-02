@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <optional>
 
 namespace neverd {
 namespace {
@@ -67,7 +66,13 @@ class Reader {
   }
 
 public:
+  std::vector<PEMetadataRange> Metadata;
   uint64_t ImageSize = 0;
+  void finish(PEProgramExports &Out) {
+    Out.Metadata = std::move(Metadata);
+    Out.BytesRead = Bytes;
+    Out.RecordsRead = Records;
+  }
   data_directory Directory{};
   Reader(llvm::ArrayRef<uint8_t> File, const PEExportLimits &Limits)
       : File(File), Limits(Limits) {}
@@ -171,6 +176,12 @@ public:
     }
     if (auto E = charge(Size))
       return std::move(E);
+    if (!Metadata.empty() && RVA >= Metadata.back().RVA &&
+        RVA <= Metadata.back().RVA + Metadata.back().Size)
+      Metadata.back().Size =
+          std::max(Metadata.back().Size, RVA + Size - Metadata.back().RVA);
+    else
+      Metadata.push_back({RVA, Size});
     return File.slice(Offset, Size);
   }
   llvm::Expected<std::string> string(uint64_t RVA, uint64_t End) {
@@ -199,8 +210,11 @@ readPEProgramExports(llvm::ArrayRef<uint8_t> File,
     return std::move(E);
   const uint64_t Begin = R.Directory.RelativeVirtualAddress;
   const uint64_t Size = R.Directory.Size;
-  if (!Begin && !Size)
-    return PEProgramExports{};
+  if (!Begin && !Size) {
+    PEProgramExports Out;
+    R.finish(Out);
+    return Out;
+  }
   if (!Begin || Size < sizeof(export_directory_table_entry))
     return invalid(text::Directory);
   auto Bytes = R.read(Begin, Size);
@@ -221,8 +235,10 @@ readPEProgramExports(llvm::ArrayRef<uint8_t> File,
     return Module.takeError();
   PEProgramExports Out;
   Out.Module = std::move(*Module);
-  if (!Count)
+  if (!Count) {
+    R.finish(Out);
     return Out;
+  }
   auto Addresses = R.read(D.ExportAddressTableRVA, Count * sizeof(uint32_t));
   if (!Addresses)
     return Addresses.takeError();
@@ -248,8 +264,10 @@ readPEProgramExports(llvm::ArrayRef<uint8_t> File,
     }
     Out.Entries.push_back(std::move(E));
   }
-  if (!Names)
+  if (!Names) {
+    R.finish(Out);
     return Out;
+  }
   auto Pointers = R.read(D.NamePointerRVA, Names * sizeof(uint32_t));
   if (!Pointers)
     return Pointers.takeError();
@@ -272,6 +290,7 @@ readPEProgramExports(llvm::ArrayRef<uint8_t> File,
     Previous = *Name;
     Out.Entries[Ordinal].Names.push_back(std::move(*Name));
   }
+  R.finish(Out);
   return Out;
 }
 } // namespace neverd

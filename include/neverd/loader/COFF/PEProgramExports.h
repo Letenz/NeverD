@@ -35,10 +35,16 @@ struct PEProgramExport {
   std::vector<std::string> Names;
   std::string Forwarder;
 };
+struct PEMetadataRange {
+  uint64_t RVA, Size;
+};
 struct PEProgramExports {
   std::string Module;
   /// Complete address-table order, including unnamed exports and zero holes.
   std::vector<PEProgramExport> Entries;
+  /// File-backed metadata reads, coalesced in encounter order.
+  std::vector<PEMetadataRange> Metadata;
+  uint64_t BytesRead = 0, RecordsRead = 0;
 };
 
 /// Decode bounded PE32/PE32+ exports from original file bytes. Never consult
