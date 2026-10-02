@@ -235,7 +235,8 @@ TEST_F(WindowsModuleImage,
       Directory.parent_path() / AArch64Dir / LeafFile;
   rejects(win::text::ModuleISA);
 }
-TEST_F(WindowsModuleImage, RejectsMissingSymbolsOrdinalHolesAndForwarders) {
+TEST_F(WindowsModuleImage,
+       RejectsMissingSymbolsOrdinalHolesAndInvalidForwarders) {
   auto Bytes = bytes(MiddleFile);
   auto Position = Bytes.find(ProbeSymbol);
   ASSERT_NE(Position, std::string::npos);
@@ -265,7 +266,7 @@ TEST_F(WindowsModuleImage, RejectsMissingSymbolsOrdinalHolesAndForwarders) {
     llvm::support::endian::write32le(Slot, D->NameRVA);
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleForwarder);
+  rejects(win::text::ModuleExport);
 }
 TEST_F(WindowsModuleImage, RejectsCyclesFixedCollisionsAndMetadataFixups) {
   auto Bytes = bytes(LeafFile);

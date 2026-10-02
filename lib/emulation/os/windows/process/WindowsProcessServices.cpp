@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "WindowsProcess.h"
+#include "WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -280,7 +280,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
           return unsupported(S);
         if (!llvm::StringRef(Name).contains('.'))
           Name += text::DLLExtension;
-        for (const auto &M : Modules)
+        for (const auto &M : Modules.Identities)
           if (llvm::StringRef(Name).equals_insensitive(M.Name))
             return Value(M.Base);
         return WinError(ErrorModuleNotFound);
@@ -291,6 +291,49 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
       Name += char(*C);
     }
     return unsupported(S);
+  }
+  case API::GetProcAddress: {
+    auto Module = llvm::find_if(Modules.Identities,
+                                [&](const auto &M) { return M.Base == A[0]; });
+    if (Module == Modules.Identities.end())
+      return unsupported(S);
+    std::optional<uint16_t> Ordinal;
+    std::string Name;
+    if (A[1] <= ImportOrdinalMask)
+      Ordinal = uint16_t(A[1]);
+    else {
+      bool Terminated = false;
+      for (uint64_t I = 0; I < MaxName; ++I) {
+        if (!Budget.remainingMicroseconds())
+          return failure(text::ModuleTimeout);
+        if (!Modules.Reads.MetadataBytes)
+          return failure(text::ExportBudget);
+        --Modules.Reads.MetadataBytes;
+        if (A[1] >= UserLimit || I >= UserLimit - A[1])
+          return failure(text::Access);
+        auto Accessible = access(A[1] + I, 1, Read);
+        if (!Accessible)
+          return Accessible.takeError();
+        if (!*Accessible)
+          return failure(text::Access);
+        auto C = CPU.readInteger(A[1] + I, 1);
+        if (!C)
+          return C.takeError();
+        if (!*C) {
+          Terminated = true;
+          break;
+        }
+        Name += char(*C);
+      }
+      if (!Terminated)
+        return unsupported(S);
+    }
+    auto Target =
+        resolveExport(Modules, size_t(Module - Modules.Identities.begin()),
+                      Name, Ordinal, Budget, &CPU);
+    if (!Target)
+      return Target.takeError();
+    return *Target ? Value(**Target) : WinError(ErrorProcedureNotFound);
   }
   }
   return failure(text::Service);

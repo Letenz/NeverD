@@ -529,8 +529,6 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   Budget.Records -= Exports->RecordsRead;
   Out.Exports = std::move(*Exports);
   for (const auto &Export : Out.Exports.Entries) {
-    if (Export.Kind == PEExportKind::Forwarder)
-      return failure(text::ModuleForwarder);
     if (Export.Kind == PEExportKind::Address && !R.accessible(Export.RVA, 1, 0))
       return failure(text::ModuleExport);
   }
@@ -581,7 +579,8 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
                      }))
       return failure(text::LoaderDisagreement);
   ImageRegion Headers{Base, Read | UserAccessible,
-                      std::vector<uint8_t>(pages(PE.SizeOfHeaders))};
+                      std::vector<uint8_t>(pages(PE.SizeOfHeaders)),
+                      PE.SizeOfHeaders, PE.SizeOfHeaders};
   std::copy_n(R.Raw.begin(), PE.SizeOfHeaders, Headers.Bytes.begin());
   Out.Regions.insert(Out.Regions.begin(), std::move(Headers));
   return Out;

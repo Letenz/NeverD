@@ -141,6 +141,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsProcessMemoryTests.cpp
   WindowsModuleTests.cpp
   WindowsLifetimeTests.cpp
+  WindowsExportTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
@@ -148,6 +149,7 @@ target_include_directories(NeverDWindowsProcessTests PRIVATE
 include(WindowsProcessFixtures.cmake)
 include(WindowsModuleFixtures.cmake)
 include(WindowsLifetimeFixtures.cmake)
+include(WindowsExportFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp
