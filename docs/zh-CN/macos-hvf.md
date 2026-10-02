@@ -26,6 +26,12 @@ GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `script
 实际创建和销毁 VM/vCPU，成功后才准备 LLVM。宿主拒绝 HVF 就在此处失败，不能用 runner
 名称推断硬件可用。CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
 
+工作流会先构建只依赖 LLVM Support 和解码器的 `NeverDHvfTests`，验证原生指令执行，
+再构建完整进程测试的依赖。`validation=transport` 可单独运行这一诊断；默认 `full`
+仍要求完整 CPU 和 Darwin 两道门禁。小范围检查复用完整清单中的 HVF 必需项，并在
+摘要中标记 `hvf_transport_only=true`，不能当作完整 CPU/进程验收。
+本地脚本对应参数为 `--require-hvf --hvf-transport-only`。
+
 硬件虚拟化不保证在逐指令 checked 执行中更快；初始化、完整状态传输和缓存维护都有成本，应与相同 checked 契约的 Unicorn 比较。该后端不增加新的跨架构模拟方案或来宾 OS 模型。
 
 ## 本次验证记录（2026-10-02 至 2026-10-03）

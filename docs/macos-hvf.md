@@ -111,6 +111,15 @@ its label does not establish virtualization support. After the CPU gate, the
 workflow also requires every matching Darwin workload. Dedicated runners are
 not assumed to be provisioned.
 
+The workflow first builds `NeverDHvfTests`, whose dependency boundary is LLVM
+Support and the decoder, and requires native instruction execution before the
+full process/LLVM dependency build. `validation=transport` stops after this
+diagnostic profile; `full` remains the default and also requires both complete
+gates. The transport profile reuses the full inventory's HVF requirements and
+records `hvf_transport_only=true`; it is not full CPU/process acceptance.
+It can also run locally with `--require-hvf --hvf-transport-only` on
+`scripts/run_native_cpu_ci.py`.
+
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
 alongside another CPU, multi-CPU isolation, owner-thread routing, partial map
