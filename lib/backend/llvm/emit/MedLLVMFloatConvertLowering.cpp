@@ -29,26 +29,22 @@ llvm::Value *emitFPToInt(llvm::IRBuilderBase &Builder, llvm::Module &Module,
     llvm::Value *Lower = llvm::ConstantFP::get(Source->getType(), -1.0);
     llvm::Value *Upper = llvm::ConstantFP::get(
         Source->getType(), std::ldexp(1.0, static_cast<int>(Bits)));
-    llvm::Value *Below =
-        Builder.CreateFCmpOLE(Source, Lower, "x86_ucvt_low");
-    llvm::Value *Above =
-        Builder.CreateFCmpOGE(Source, Upper, "x86_ucvt_high");
-    llvm::Value *Nan =
-        Builder.CreateFCmpUNO(Source, Source, "x86_ucvt_nan");
-    llvm::Value *Invalid = Builder.CreateOr(
-        Builder.CreateOr(Below, Above, "x86_ucvt_range"), Nan,
-        "x86_ucvt_invalid");
-    llvm::Value *Indefinite = llvm::ConstantInt::get(
-        DestType, llvm::APInt::getAllOnes(Bits));
+    llvm::Value *Below = Builder.CreateFCmpOLE(Source, Lower, "x86_ucvt_low");
+    llvm::Value *Above = Builder.CreateFCmpOGE(Source, Upper, "x86_ucvt_high");
+    llvm::Value *Nan = Builder.CreateFCmpUNO(Source, Source, "x86_ucvt_nan");
+    llvm::Value *Invalid =
+        Builder.CreateOr(Builder.CreateOr(Below, Above, "x86_ucvt_range"), Nan,
+                         "x86_ucvt_invalid");
+    llvm::Value *Indefinite =
+        llvm::ConstantInt::get(DestType, llvm::APInt::getAllOnes(Bits));
     return Builder.CreateSelect(Invalid, Indefinite, Sat, "x86_ucvt");
   }
 
-  llvm::Value *IntMin = llvm::ConstantInt::get(
-      DestType, llvm::APInt::getSignedMinValue(Bits));
+  llvm::Value *IntMin =
+      llvm::ConstantInt::get(DestType, llvm::APInt::getSignedMinValue(Bits));
   llvm::Value *Bound = llvm::ConstantFP::get(
       Source->getType(), std::ldexp(1.0, static_cast<int>(Bits) - 1));
-  llvm::Value *Overflow =
-      Builder.CreateFCmpUGE(Source, Bound, "x86_cvt_ovf");
+  llvm::Value *Overflow = Builder.CreateFCmpUGE(Source, Bound, "x86_cvt_ovf");
   return Builder.CreateSelect(Overflow, IntMin, Sat, "x86_cvt");
 }
 
@@ -63,10 +59,9 @@ llvm::Value *emitIntToFP(llvm::IRBuilderBase &Builder, llvm::Value *Source,
       IsUnsigned ? llvm::Intrinsic::experimental_constrained_uitofp
                  : llvm::Intrinsic::experimental_constrained_sitofp;
   auto *Result = Builder.CreateConstrainedFPCast(
-      ID, Source, DestType, {}, IsUnsigned ? "uitofp.dynamic"
-                                          : "sitofp.dynamic",
-      nullptr, llvm::RoundingMode::Dynamic,
-      llvm::fp::ExceptionBehavior::ebStrict);
+      ID, Source, DestType, {},
+      IsUnsigned ? "uitofp.dynamic" : "sitofp.dynamic", nullptr,
+      llvm::RoundingMode::Dynamic, llvm::fp::ExceptionBehavior::ebStrict);
   Builder.setConstrainedFPFunctionAttr();
   Builder.setConstrainedFPCallAttr(Result);
   return Result;

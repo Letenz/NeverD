@@ -2550,7 +2550,8 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::SDiv:
     return castStr(llvm::Instruction::Trunc,
                    signedIntegerOperand(Ty, LHS) + " / " +
-                       signedIntegerOperand(Ty, RHS), Ty, Ty);
+                       signedIntegerOperand(Ty, RHS),
+                   Ty, Ty);
   case llvm::Instruction::FDiv:
     return LHS + " / " + RHS;
   case llvm::Instruction::URem:
@@ -2558,7 +2559,8 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::SRem:
     return castStr(llvm::Instruction::Trunc,
                    signedIntegerOperand(Ty, LHS) + " % " +
-                       signedIntegerOperand(Ty, RHS), Ty, Ty);
+                       signedIntegerOperand(Ty, RHS),
+                   Ty, Ty);
   case llvm::Instruction::FRem:
     return LHS + " % " + RHS;
   case llvm::Instruction::Shl:
