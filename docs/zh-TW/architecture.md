@@ -907,3 +907,5 @@ Swift 值見證綁定區分中繼資料字面位址與從映像全域變數或�
 原生 Swift 類別虛擬呼叫共用 loader 中完整的類別方法 ABI 分類器。有界暫存器來源分析涵蓋所有到達 CFG 路徑，並以標準解碼器重新提升，驗證入口 `swiftself`、遮罩 isa、原始間接呼叫位置及相符的 void 虛擬表槽宣告。相關迴圈、部分值、呼叫破壞、中繼資料衝突和過期指令均遭拒絕。發佈時重新檢查目前呼叫端 LowIR/MedIR/HighIR 與稽核，保留精確的動態 SSA 目標和入口 self 引數，並要求每個呼叫位置只求值一次。實際實作仍由執行期虛擬表選擇。布林正規化共用這些入口與呼叫 ABI，以及目前 Objective-C selector 所有宣告的一致性，包括僅含指標引數的 void 訊息。共用 IR 證明同時檢查完整動態目標與引數，保留真正的 Swift `i1` 契約，不增加堆疊框架借用或 noescape 權限。
 
 CoreText 的 `CTFontGetSize` 和 `CTFramesetterCreateWithAttributedString` 使用既有的編譯器衍生 C 宣告目錄。四個 macOS/iOS 前置處理設定必須一致，且精確的 CoreText 提供方必須匯出該符號。兩者皆接收一個不透明指標；前者回傳八位元組浮點值，後者回傳不透明指標。繫結和發布時重新核驗完整的架構專用 ABI 與匯入身分；這些宣告不新增記憶體、生命週期或不逃逸效果。
+
+Combine 的精確強匯入 `CurrentValueSubject` 初始化建構器使用 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上觀測到的 ABI。被消耗的不透明值位址使用一般參數暫存器，已配置的執行個體使用 `swiftself`，指標結果使用整數回傳暫存器。發布時重新核驗提供方與完整 ABI。此宣告不推斷泛型值配置，也不授予私有堆疊框架借用效果。

@@ -967,3 +967,5 @@ Swift 值见证绑定区分元数据字面地址与从镜像全局变量或导�
 原生 Swift 类虚调用复用 loader 中完整的类方法 ABI 分类器。有界寄存器来源分析覆盖所有到达 CFG 路径，并通过标准解码器重新提升，认证入口 `swiftself`、掩码 isa、原始间接调用位置及匹配的 void 虚表槽声明。相关循环、部分值、调用破坏、元数据冲突和陈旧指令均拒绝。发布时重新核验当前调用方 LowIR/MedIR/HighIR 与审计，保留精确的动态 SSA 目标和入口 self 参数，并要求每个调用位置只求值一次。实际实现仍由运行时虚表选择。布尔归一化复用这些入口和调用 ABI，以及当前 Objective-C selector 全部声明的一致性，包括仅含指针参数的 void 消息。共享 IR 证明同时检查整个动态目标和实参，并保留真实 Swift `i1` 契约，不增加帧借用或 noescape 权限。
 
 CoreText 的 `CTFontGetSize` 和 `CTFramesetterCreateWithAttributedString` 使用现有的编译器派生 C 声明目录。四个 macOS/iOS 预处理配置必须一致，且精确的 CoreText 提供方必须导出该符号。两者均接收一个不透明指针；前者返回八字节浮点值，后者返回不透明指针。绑定和发布时重新核验完整的架构专用 ABI 与导入身份；这些声明不新增内存、生命周期或不逃逸效果。
+
+Combine 的精确强导入 `CurrentValueSubject` 初始化构造器使用 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上观测到的 ABI。被消费的不透明值地址使用普通参数寄存器，已分配的实例使用 `swiftself`，指针结果使用整数返回寄存器。发布时重新核验提供方与完整 ABI。该声明不推断泛型值布局，也不授予私有帧借用效果。

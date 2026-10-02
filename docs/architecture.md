@@ -2836,3 +2836,5 @@ a matching macOS host ISA; x64 driver execution on Apple Silicon continues to
 use Unicorn. The existing ISA and OS contracts remain authoritative. See
 [HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
 evidence and Intel runtime coverage are reported separately.
+
+The exact strong Combine `CurrentValueSubject` initializing-constructor import uses the Swift 6.1.2 ABI observed on ARM64 and x86-64 macOS and Mac Catalyst. It takes the opaque consumed value address in the ordinary argument bank, the allocated instance in `swiftself`, and returns a pointer in the integer result register. Publication rechecks the provider and complete ABI. This declaration does not infer the generic value layout or grant a private-frame borrowing effect.

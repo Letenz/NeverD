@@ -213,6 +213,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 macOS and Mac Catalyst client IR on arm64 and x86_64
+    // declares the initializing constructor as swiftcc ptr (ptr value,
+    // ptr swiftself). The opaque consumed value is not a by-value word;
+    // the context is the allocated instance, not an extra metadata argument.
+    {"$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "ppC"},
     // Swift 6.1.2 arm64 and x86_64 client IR declares Published.init as
     // swiftcc void (ptr sret, ptr value, ptr genericMetadata). The result and
     // consumed input stay opaque; neither carrier uses swiftself.

@@ -573,6 +573,76 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftSubjectInitializerTransportsValueContextAndResult) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  auto Image = runtime_function_address_test::image(Architecture);
+  const va_t Slot = runtime_function_address_test::Slot;
+  const std::string Name = "_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc";
+  Image.ImportPtrSlots[Slot] = Name;
+  Image.DyldBindSlots[Slot] = {
+      Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Call =
+      call(*Hint, Pointer, {parameter(0, Pointer), parameter(1, Pointer)});
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+  const auto Function =
+      returning("recovered_subject", Call, {Pointer, Pointer});
+  const auto Source = emit({Function}, true, Architecture);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  // This is a carrier oracle, not a replacement Combine implementation. The
+  // result deliberately differs from the context, and the input stays opaque.
+  const auto Program = Source + R"(
+#include <string.h>
+struct Context { unsigned size, calls; uint64_t result; unsigned char data[80]; };
+void *__attribute__((swiftcall)) subject_oracle(
+    void *, struct Context * __attribute__((swift_context)))
+    __asm__("_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc");
+void *__attribute__((swiftcall)) subject_oracle(
+    void *value, struct Context *context __attribute__((swift_context))) {
+  unsigned char *input = value;
+  for (unsigned i = 0; i < context->size; ++i) {
+    context->data[i] = input[i];
+    input[i] ^= 0x5a;
+  }
+  ++context->calls;
+  context->result = (uint64_t)(uintptr_t)value ^ context->size;
+  return &context->result;
+}
+int main(void) {
+  for (unsigned n = 0; n <= 80; ++n) {
+    struct { uint64_t before; struct Context value; uint64_t after; } box;
+    unsigned char input[82];
+    memset(&box, 0xa5, sizeof(box));
+    memset(input, 0x6b, sizeof(input));
+    box.before = 0x0123456789abcdefULL; box.after = 0xfedcba9876543210ULL;
+    box.value.size = n; box.value.calls = 0;
+    for (unsigned i = 0; i < n; ++i) input[i + 1] = (unsigned char)(i * 13 + n);
+    void *result = recovered_subject(input + 1, &box.value);
+    if (result != &box.value.result || box.value.calls != 1 ||
+        box.value.result != ((uint64_t)(uintptr_t)(input + 1) ^ n)) return 1;
+    if (input[0] != 0x6b || input[n + 1] != 0x6b ||
+        box.before != 0x0123456789abcdefULL || box.after != 0xfedcba9876543210ULL)
+      return 2;
+    for (unsigned i = 0; i < n; ++i)
+      if (box.value.data[i] != (unsigned char)(i * 13 + n) ||
+          input[i + 1] != (unsigned char)((i * 13 + n) ^ 0x5a)) return 3;
+    for (unsigned i = n; i < 80; ++i)
+      if (box.value.data[i] != 0xa5) return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}
+
 TEST(HighCSourceCalls, SwiftPublishedInitializerTransportsOpaqueStorage) {
 #if defined(__aarch64__) || defined(_M_ARM64)
   const auto Architecture = Arch::AArch64;
