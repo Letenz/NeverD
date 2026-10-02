@@ -174,12 +174,18 @@ steps and one guest step). Registers, PC, RAM and instruction counts matched
 the independent fixtures; the Linux process's normalized reports matched
 Unicorn for normal exit, memory fault, unknown service and instruction-budget
 stop. See the [detailed measurements](zh-CN/macos-hvf.md). Quiet-host performance
-measurement and current-change Linux KVM/Windows WHP runtime regression remain
-outstanding alongside the Intel gate; no self-hosted runner is currently
-configured for the repository.
+measurement and the Intel Mac HVF gate remain outstanding; no self-hosted runner
+is currently configured for the repository. The focused Darwin gate has since
+passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
+22 required x64 process cases, with 45 checks passed and zero failures overall.
+See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
+for the exact commits and scope.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
 for terminal responses while retaining progress for assertions. All eight
 standalone worker checks passed, including three real-engine integrations.
 The complete fixture-backed Qt/IPC/MCP suite passed all 19 checks on macOS.
+The [desktop GUI workflow](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
+also passed on macOS, Windows and Ubuntu at commit `e078b129c`. This verifies
+the test fixture and worker transport repair across all three desktop hosts.

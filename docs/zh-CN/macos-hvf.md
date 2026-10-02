@@ -60,6 +60,8 @@ ARM64 平台下的正常、部分输出、匿名内存、故障、未知服务�
 `status=progress` 当成最终响应的问题，并增加进度顺序、计数及文件身份的断言。
 独立 worker 的 8 项检查通过，其中包括 3 项真实引擎集成；完整 Qt/IPC/MCP
 测试夹具构建在 macOS 上的 19 项检查也全部通过。
+提交 `e078b129c` 的[桌面 GUI 工作流](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
+也在 macOS、Windows、Ubuntu 三个平台全部通过，验证了测试夹具和 worker 传输修复。
 
 同机微基准使用 `checked-aarch64-v1`，运行两条初始化指令和 1,000 次 `ADD/SUBS/B.NE` 循环，共 3,002 条指令。创建 CPU 与启动探针不计时；预热后交替运行两个后端，各取 7 次中位数，并校验最终寄存器与 PC。Unicorn 为 **73.9 ms**，HVF 为 **95.1 ms**，HVF 耗时约多 **29%**。这是短整数循环的结果，不能代表其他负载；当前版本尚未证明性能提升。
 
@@ -77,4 +79,10 @@ ARM64 平台下的正常、部分输出、匿名内存、故障、未知服务�
 
 普通 ARM64 指令需要 5 次维护入口加 1 次来宾入口，与上述实测计数一致。所有 CPU 场景校验寄存器、PC、访存和执行次数；Linux 示例对照完整报告，仅排除后端名称和选择说明，其正常结果以及故障、未知服务、预算停止均一致。空闲主机上的稳定性能复测仍待完成；本轮未加入批量执行或修改观测语义。
 
-剩余硬件验收是在原生 Intel Mac 上运行上面的 `--require-hvf` 门禁，并在 Linux KVM / Windows WHP 环境验证此次共享接线的回归。当前仓库未配置自托管 runner。交叉编译及 ARM64 测试不能替代 Intel 的 VMCS、异常退出和 FP 状态运行验证。
+Linux KVM 和 Windows WHP 已分别在关闭 Unicorn 后通过 Darwin 专项门禁：每个后端
+45 项通过、0 失败，其中 22 项 x64 必需进程用例全部执行成功。源码提交、产物和
+验证范围见 [Darwin 宿主验证记录](darwin-emulation.md)。这证明了有限 Darwin 环境
+及其共享 CPU 路径，不能替代各后端更广泛的 CPU 回归。
+
+剩余 HVF 硬件验收是在原生 Intel Mac 上运行上面的 `--require-hvf` 门禁。
+当前仓库未配置自托管 runner。交叉编译及 ARM64 测试不能替代 Intel 的 VMCS、异常退出和 FP 状态运行验证。

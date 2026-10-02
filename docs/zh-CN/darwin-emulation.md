@@ -54,8 +54,8 @@ Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--eviden
 Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的原生 HVF 门禁
 扩大到 20 个测试目标，811 项通过、0 失败，其中包含 57 项 Darwin 检查。
 五种 Mach-O 组合的 Python SDK 集成、能力清单、SDK 审计、文档和格式检查也通过。
-这些统计存在重叠，不能相加。Intel HVF、Linux KVM、Windows WHP 的本次硬件运行验证
-仍需对应宿主；软件跨架构结果不替代这些验证。
+这些统计存在重叠，不能相加。本机统计只证明 Apple Silicon HVF 的执行结果；
+Linux KVM、Windows WHP 的独立宿主验证见下表。Intel HVF 仍需 Intel Mac 真机验证。
 
 最终桌面包已重新纳入本轮引擎，并通过 186 个 Mach-O 的依赖、签名和 Cocoa 启动检查。
 包内引擎与关闭测试、关闭 Unicorn 的 CLI，在三种 ARM64 平台的 18 个场景中报告完全一致，
@@ -66,3 +66,21 @@ Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的�
 同时关闭 HVF 和 Unicorn 后，Darwin、HVF 和配置测试目标也构建成功：38 项通过、
 0 失败，231 项后端用例按预期跳过；产物没有 Hypervisor.framework 链接依赖。
 这项验证证明构建开关与诊断隔离，不算作来宾实际执行证据。
+
+## 托管宿主原生验证（2026-10-03）
+
+两个 x64 后端都在关闭 Unicorn 后通过完整 Darwin 工作负载门禁。每个后端的
+macOS 和 iOS Simulator 共 22 项必需进程用例全部执行成功，没有缺失注册或跳过：
+
+| 宿主 / 后端 | 源码提交 | 通过 | 失败 | 跳过 | 必需原生用例 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| [Windows / WHP](https://github.com/NeverSight/NeverD/actions/runs/37052787958/job/110990029252) | `7594323f771467e3299a81db8a9cc3790391153a` | 45 | 0 | 202 | 22 / 22 |
+| [Ubuntu 24.04 / KVM](https://github.com/NeverSight/NeverD/actions/runs/37054174027/job/110994662033) | `7bfd4223b4a2560ee8cc5f9caad12bbf86c4ce6e` | 45 | 0 | 202 | 22 / 22 |
+
+产物 `darwin-native-whp-x64` 和 `darwin-native-kvm-x64` 保留完整测试清单、JUnit、
+CTest 日志及源码/宿主摘要，两个源码工作区均为干净状态。跳过项属于不匹配架构或
+不可用后端，不包含本次选择的必需原生用例。第一次 Linux 任务在 `ld64.lld` 工具检查
+阶段停止；加入已安装的 LLVM 工具目录到 `PATH` 后，上表中的 KVM 重跑成功。
+
+这些结果验证有限 Darwin 环境及其经过的共享 CPU 路径；Intel Mac HVF 以及更广泛的
+各后端 CPU 回归仍需各自门禁，不能由这两个专项结果替代。

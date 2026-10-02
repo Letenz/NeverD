@@ -125,8 +125,9 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 ```
 
 The native gate requires matching HVF cases to execute, including Darwin
-fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Intel
-HVF, Linux KVM and Windows WHP runtime evidence still require their own hosts.
+fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Each
+transport must be verified on its own host; the results below distinguish
+Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF remains unverified.
 
 The focused workload gate additionally requires **every** Darwin process case
 on each platform supported by the host ISA: 33 cases on ARM64, or 22 on x64.
@@ -175,8 +176,8 @@ entry and its focused rerun passed.
 
 Evidence stays in the disposable build trees: `build-hvf/verification/` contains
 the focused and process regression JUnit files; `build-hvf-native/darwin-evidence/`
-contains the native inventory, results, log and summary. This does not establish
-Intel HVF, Linux KVM or Windows WHP hardware execution for this change.
+contains the native inventory, results, log and summary. These local results
+establish Apple Silicon HVF execution; separate hosted results follow below.
 
 The rebuilt desktop bundle passed dependency and signature checks for 186
 Mach-O images and its Cocoa startup smoke. A signed probe loaded the packaged
@@ -205,3 +206,25 @@ skipped. `otool -L` confirmed that the Darwin test executable has no
 Hypervisor.framework dependency. This is build/diagnostic isolation evidence,
 not guest execution evidence; results are under
 `build-hvf-disabled/verification/`.
+
+### Hosted native verification, 2026-10-03
+
+Both x64 transports executed the focused Darwin workload gate with Unicorn
+disabled. Each run passed all 22 required process cases across macOS and iOS
+Simulator, with no missing registrations or unexecuted required cases:
+
+| Host / transport | Source commit | Passed | Failed | Skipped | Required native cases |
+| --- | --- | ---: | ---: | ---: | ---: |
+| [Windows / WHP](https://github.com/NeverSight/NeverD/actions/runs/37052787958/job/110990029252) | `7594323f771467e3299a81db8a9cc3790391153a` | 45 | 0 | 202 | 22 / 22 |
+| [Ubuntu 24.04 / KVM](https://github.com/NeverSight/NeverD/actions/runs/37054174027/job/110994662033) | `7bfd4223b4a2560ee8cc5f9caad12bbf86c4ce6e` | 45 | 0 | 202 | 22 / 22 |
+
+The artifacts `darwin-native-whp-x64` and `darwin-native-kvm-x64` contain the
+inventory, JUnit results, CTest log and source/host summary. Both summaries
+record clean source trees. Skips are foreign architectures or unavailable
+transports; none belongs to the selected native workload set. The first Linux
+attempt stopped at the `ld64.lld` tool check; the KVM result above is the
+successful rerun after adding the installed LLVM tool directory to `PATH`.
+
+These runs validate the bounded Darwin environment and the shared CPU paths
+it exercises. They do not establish Intel Mac HVF behavior or replace broader
+backend-specific CPU regression gates.
